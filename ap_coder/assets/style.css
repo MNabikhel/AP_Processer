@@ -245,6 +245,11 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-vrow:last-child {border-bottom: none;}
 .apc-vrow .name {font-weight: 600; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
 .apc-vrow .sub {font-size: .75rem; color: var(--apc-muted);}
+.apc-rrow {display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .75rem; align-items: center;
+  padding: .55rem 0; border-bottom: 1px solid #eef1f5;}
+.apc-rrow:last-child {border-bottom: none;}
+.apc-rrow .name {font-weight: 600; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.apc-rrow .sub {font-size: .75rem; color: var(--apc-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
 .apc-vrow .pct {text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; font-size: .88rem;}
 
 /* Setup steps */

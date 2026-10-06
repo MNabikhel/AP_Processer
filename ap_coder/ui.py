@@ -315,6 +315,31 @@ def feed_item(reviewer: str, html_text: str, when: str) -> str:
     )
 
 
+STATUS_PILLS = {
+    "attention": ("Needs attention", "warn", "flag"),
+    "review": ("In queue", "info", "inbox"),
+    "approved": ("Approved", "ok", "check_circle"),
+    "rejected": ("Rejected", "gray", "block"),
+    "failed": ("Failed", "err", "error"),
+}
+
+
+def recent_row(inv: dict[str, Any], now: dt.datetime | None = None) -> str:
+    """One line in the "recently processed" list: who, what, when, and where it is now."""
+    state = inv.get("status") or "review"
+    if state == "review" and inv.get("requires_review"):
+        state = "attention"
+    label, tone, icon_name = STATUS_PILLS.get(state, (state.title(), "gray", ""))
+    name = inv.get("vendor_name") or inv.get("file_name") or ""
+    detail = inv.get("invoice_number") or inv.get("file_name") or ""
+    when = time_ago(inv.get("created_at"), now)
+    sub = " · ".join(x for x in (detail, when) if x)
+    return (
+        f"<div class='apc-rrow'>{avatar(name, 'sm')}<div style='min-width:0'><div class='name'>{esc(name)}</div>"
+        f"<div class='sub'>{esc(sub)}</div></div>{pill(label, tone, icon_name)}</div>"
+    )
+
+
 def vendor_row(name: str, lines: int, accuracy: float, corrections: int) -> str:
     color = confidence_color(accuracy, 0.9)
     return (

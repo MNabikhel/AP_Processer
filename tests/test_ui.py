@@ -21,6 +21,7 @@ def test_all_text_is_escaped():
         ui.sidebar_profile(evil, 1, 2),
         ui.step("ok", evil, evil),
         ui.empty_state(evil, evil),
+        ui.recent_row({**inv, "status": evil}),
     ]
     for html in outputs:
         assert "<script>" not in html
@@ -74,3 +75,12 @@ def test_greeting():
     assert ui.greeting(dt.datetime(2026, 1, 1, 9)) == "Good morning"
     assert ui.greeting(dt.datetime(2026, 1, 1, 14)) == "Good afternoon"
     assert ui.greeting(dt.datetime(2026, 1, 1, 20)) == "Good evening"
+
+
+def test_recent_row_status():
+    inv = {"vendor_name": "Acme", "invoice_number": "A-1", "created_at": "2026-10-06T11:00:00"}
+    now = dt.datetime(2026, 10, 6, 12, 0, 0)
+    assert "In queue" in ui.recent_row({**inv, "status": "review"}, now)
+    assert "Needs attention" in ui.recent_row({**inv, "status": "review", "requires_review": 1}, now)
+    assert "Failed" in ui.recent_row({**inv, "status": "failed"}, now)
+    assert "A-1 · 1 hour ago" in ui.recent_row({**inv, "status": "approved"}, now)

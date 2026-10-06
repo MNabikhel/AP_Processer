@@ -582,7 +582,13 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             header: dict[str, Any] = {
                 "vendor_name": c1.text_input("Vendor", ai.get("vendor_name", ""), key=f"{key}_vendor"),
                 "invoice_number": c2.text_input("Invoice #", ai.get("invoice_number", ""), key=f"{key}_number"),
-                "invoice_date": c3.text_input("Date (YYYY-MM-DD)", ai.get("invoice_date", ""), key=f"{key}_date"),
+                "invoice_date": c3.text_input(
+                    "Invoice date",
+                    ai.get("invoice_date", ""),
+                    key=f"{key}_date",
+                    placeholder="YYYY-MM-DD",
+                    help="Format YYYY-MM-DD",
+                ),  # fmt: skip
             }
             c1, c2, c3 = st.columns([1, 2, 2])
             header["currency"] = c1.text_input("Currency", ai.get("currency", "CAD"), key=f"{key}_cur")
@@ -980,6 +986,14 @@ def page_process() -> None:
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
         if any(s != "ok" for s, _, _ in steps[2:]):
             st.page_link(PAGES["accounts"], label="Finish setup", icon=":material/arrow_forward:")
+
+    recent = sorted(store.list_invoices(), key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
+    if recent:
+        with right, card("recent"):
+            st.markdown("#### :material/history: Recently processed")
+            st.html("".join(ui.recent_row(i) for i in recent))
+            if any(i["status"] == REVIEW for i in recent):
+                st.page_link(PAGES["review"], label="Go to the review queue", icon=":material/arrow_forward:")
 
     with left:
         with card("upload"):
