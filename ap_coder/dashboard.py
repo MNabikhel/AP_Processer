@@ -203,7 +203,7 @@ def page_review() -> None:
     pending = [i for i in invoices if i["status"] == REVIEW]
     open_id = st.session_state.get("open_invoice")
     if open_id in [i["id"] for i in pending]:
-        render_invoice(store, reference, open_id, pending)
+        render_invoice(store, reference, open_id, navigation_list(pending, open_id))
         return
 
     approved = [i for i in invoices if i["status"] == APPROVED]
@@ -279,20 +279,19 @@ def page_review() -> None:
                 st.page_link(PAGES["process"], label="Process new invoices", icon=":material/arrow_forward:")
         else:
             bar_filter, bar_search, bar_sort = st.columns([3.2, 2.4, 1.8], vertical_alignment="center")
+            counts = {"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)}
+            names = {"all": "All", "attention": "Needs attention", "ready": "Ready"}
             view = (
                 bar_filter.segmented_control(
                     "Show",
-                    [
-                        f"All · {len(pending)}",
-                        f"Needs attention · {len(flagged)}",
-                        f"Ready · {len(pending) - len(flagged)}",
-                    ],
-                    default=f"All · {len(pending)}",
+                    list(counts),  # stable values; the counts are only in the labels
+                    format_func=lambda v: f"{names[v]} · {counts[v]}",
+                    default="all",
                     label_visibility="collapsed",
                     key="queue_filter",
                     persist_state="session",
                 )
-                or ""
+                or "all"
             )
             query = bar_search.text_input(
                 "Search", placeholder="Search vendor or invoice #", label_visibility="collapsed",
@@ -307,12 +306,14 @@ def page_review() -> None:
             )
             shown = (
                 flagged
-                if view.startswith("Needs")
+                if view == "attention"
                 else [i for i in pending if not i["requires_review"]]
-                if view.startswith("Ready")
+                if view == "ready"
                 else pending
             )
             shown = sort_queue(filter_queue(shown, query), order)
+            # Previous / Next on the review screen follow exactly what is shown here.
+            st.session_state["queue_order"] = [i["id"] for i in shown]
             if not shown:
                 st.caption("No invoices match.")
             for inv in shown:
@@ -395,6 +396,14 @@ def _queue_card(store: Store, inv: dict[str, Any]) -> None:
 
 NO_PROVINCE = "—"  # shown instead of an empty province (e.g. GST, which is federal)
 QUEUE_SORTS = ("Priority", "Amount: high to low", "Newest invoice date", "Vendor A–Z")
+
+
+def navigation_list(pending: list[dict[str, Any]], open_id: int) -> list[dict[str, Any]]:
+    """The invoices Previous / Next step through: the queue as last shown (filter, search, sort),
+    or the whole queue if the open invoice isn't part of that view."""
+    by_id = {i["id"]: i for i in pending}
+    shown = [by_id[i] for i in st.session_state.get("queue_order", []) if i in by_id]
+    return shown if open_id in [i["id"] for i in shown] else pending
 
 
 def filter_queue(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
@@ -795,7 +804,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 total = sum(counts.values())
                 forget_drafts(key)
                 _advance(ids, position)
-                if len(ids) == 1:
+                if not store.list_invoices(REVIEW):  # the whole queue is done, not just the current view
                     st.session_state["celebrate"] = True
                 notify(
                     f"Approved {coding.vendor_name.rstrip('.')}. Learned from {total} line(s): "
