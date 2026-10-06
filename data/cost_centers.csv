@@ -1,0 +1,11 @@
+cost_center,name,department,description
+CC100,Executive Office,Executive,"CEO office, board and company-wide leadership costs"
+CC200,Finance,Finance,"Accounting, AP/AR, treasury, audit and tax"
+CC300,Human Resources,People,"Recruiting, training programmes, employee benefits"
+CC400,IT Operations,Technology,"End-user computing, networks, helpdesk, telecoms"
+CC410,Cloud Platform Engineering,Technology,"Production cloud infrastructure and hosting for customer-facing products"
+CC500,Sales,Revenue,"Field and inside sales, client entertainment"
+CC510,Marketing,Revenue,"Brand, campaigns, events and digital advertising"
+CC600,Manufacturing - Plant 1,Operations,"Production line, raw materials and plant maintenance at Plant 1"
+CC700,Facilities,Operations,"Office buildings, rent, utilities, cleaning and maintenance"
+CC800,Legal & Compliance,Legal,"Corporate legal, contracts, compliance and regulatory"

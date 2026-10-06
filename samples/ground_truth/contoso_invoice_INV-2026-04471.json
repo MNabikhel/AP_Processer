@@ -1,0 +1,19 @@
+{
+  "vendor_name": "Contoso Cloud Solutions Ltd",
+  "invoice_number": "INV-2026-04471",
+  "invoice_date": "2026-09-14",
+  "currency": "GBP",
+  "subtotal": 23745.00,
+  "tax_total": 4749.00,
+  "grand_total": 28494.00,
+  "confidence_score": 1.0,
+  "line_items": [
+    {"line_number": 1, "description": "Azure reserved compute - production customer platform cluster (Sep 2026)", "quantity": 1, "unit_price": 4200.00, "amount": 4200.00, "predicted_gl_code": "6030", "predicted_cost_center": "CC410", "reasoning_justification": "Production cloud consumption."},
+    {"line_number": 2, "description": "Microsoft 365 E3 licences - monthly, internal staff", "quantity": 25, "unit_price": 32.00, "amount": 800.00, "predicted_gl_code": "6020", "predicted_cost_center": "CC400", "reasoning_justification": "Monthly SaaS licences for internal users."},
+    {"line_number": 3, "description": "Dell Latitude 7450 laptop, 32GB RAM", "quantity": 3, "unit_price": 1450.00, "amount": 4350.00, "predicted_gl_code": "6010", "predicted_cost_center": "CC400", "reasoning_justification": "Unit cost below 2,500 capitalisation threshold."},
+    {"line_number": 4, "description": "Dell PowerEdge R760 rack server - IT Operations datacentre", "quantity": 1, "unit_price": 8900.00, "amount": 8900.00, "predicted_gl_code": "1500", "predicted_cost_center": "CC400", "reasoning_justification": "Server above capitalisation threshold."},
+    {"line_number": 5, "description": "Implementation consulting - endpoint rollout (hours)", "quantity": 12, "unit_price": 150.00, "amount": 1800.00, "predicted_gl_code": "6110", "predicted_cost_center": "CC400", "reasoning_justification": "Technical consulting services."},
+    {"line_number": 6, "description": "Premium support contract, annual, 01 Oct 2026 - 30 Sep 2027 (paid in advance)", "quantity": 1, "unit_price": 3600.00, "amount": 3600.00, "predicted_gl_code": "1550", "predicted_cost_center": "CC400", "reasoning_justification": "12-month contract paid upfront."},
+    {"line_number": 7, "description": "Delivery & handling (hardware)", "quantity": 1, "unit_price": 95.00, "amount": 95.00, "predicted_gl_code": "6800", "predicted_cost_center": "CC400", "reasoning_justification": "Freight on non-inventory goods."}
+  ]
+}
