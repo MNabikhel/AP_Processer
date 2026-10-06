@@ -32,7 +32,7 @@ def _code_property(description: str, codes: list[str] | None) -> dict[str, Any]:
     return prop
 
 
-def _enum_or_none(codes: list[str]) -> list[str] | None:
+def enum_values_or_none(codes: list[str]) -> list[str] | None:
     values = [*codes, UNASSIGNED]
     if len(values) > _MAX_ENUM_VALUES_PER_FIELD or sum(len(v) for v in values) > _MAX_ENUM_CHARS_PER_FIELD:
         return None
@@ -53,8 +53,8 @@ def build_json_schema(
     """
     gl_codes = cc_codes = None
     if reference is not None and constrain_codes:
-        gl_codes = _enum_or_none(reference.chart_of_accounts.codes)
-        cc_codes = _enum_or_none(reference.cost_centers.codes)
+        gl_codes = enum_values_or_none(reference.chart_of_accounts.codes)
+        cc_codes = enum_values_or_none(reference.cost_centers.codes)
 
     line_properties: dict[str, Any] = {
         "line_number": {"type": "integer", "description": "1-based position of the line on the invoice."},

@@ -134,6 +134,7 @@ def validate_coding(
     line_sum = round(sum(li.amount for li in coding.line_items), 2)
     computed_total = round(coding.subtotal + coding.tax_total, 2)
     checks: dict[str, Any] = {
+        "line_count": len(coding.line_items),
         "line_sum": line_sum,
         "subtotal": coding.subtotal,
         "subtotal_plus_tax": computed_total,

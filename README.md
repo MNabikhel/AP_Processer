@@ -33,6 +33,10 @@ invoice.pdf/.tiff/.png ──► Document Intelligence ──► Markdown + tabl
                           <stem>.json (target schema) · <stem>.validation.json · <stem>.extraction.md
 ```
 
+> **Running this on real enterprise data?** Follow [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
+> All your data stays in the git-ignored `private/` folder. Only redacted reports (`doctor`, `share-report`)
+> are meant to leave your machine.
+
 ## Quick start
 
 ```bash
@@ -40,8 +44,11 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # or: pip install -r requirements.txt
 cp .env.example .env              # fill in endpoints/keys, or leave keys empty to use Entra ID (az login)
 
-# Full chain on a real document (a synthetic 2-page sample is included)
-python -m ap_coder process samples/contoso_invoice_INV-2026-04471.pdf -o output
+# Check configuration, reference data and Azure connectivity
+python -m ap_coder doctor --online
+
+# Full chain on a real document (a synthetic 2-page sample is included); results go to private/output
+python -m ap_coder process samples/contoso_invoice_INV-2026-04471.pdf
 
 # A whole folder, 4 invoices in parallel, prebuilt-invoice model, page images attached
 python -m ap_coder process ./inbox --extraction-model prebuilt-invoice --vision --workers 4
@@ -50,25 +57,31 @@ python -m ap_coder process ./inbox --extraction-model prebuilt-invoice --vision 
 python -m ap_coder process samples/contoso_invoice_INV-2026-04471.md
 
 # Measure accuracy against hand-labelled ground truth (the >90% gate for Phase 2)
-python -m ap_coder evaluate --predictions output --ground-truth samples/ground_truth --show-mismatches
+python -m ap_coder evaluate --ground-truth samples/ground_truth --show-mismatches
 ```
 
 Other commands:
 
 | Command | Purpose |
 |---|---|
-| `process <files/dirs…>` | Full extract → code → validate pipeline. Exit code 1 if any invoice failed. |
+| `doctor [--online]` | Setup, reference-data and connectivity check. Output contains no secrets or URLs. |
+| `process <files/dirs…>` | Full extract → code → validate pipeline into `private/output`. Exit code 1 if any invoice failed. |
 | `extract <files/dirs…>` | Document Intelligence only; writes `.extraction.md` and raw `.di.json`. |
+| `labels [--blind]` | Excel workbook (dropdowns of valid codes, text-typed cells) for the AP team to correct into ground truth. |
+| `evaluate [--ground-truth]` | Header, GL and cost-center accuracy against the target (default 0.9). Accepts a JSON folder, `.xlsx` or `.csv`. |
+| `share-report [--ground-truth] [--include-codes]` | Redacted aggregate summary: no vendor names, amounts, descriptions or file names. |
 | `schema [--tax-rate-field]` | Prints the exact strict JSON Schema sent to Azure OpenAI. |
-| `evaluate --predictions --ground-truth` | Header, GL and cost-center accuracy against the target (default 0.9). |
 
-Reference data defaults to `data/`. Use `--coa`, `--cost-centers`, `--tax-codes` and `--policy` to
-point at your own exports. CSV and JSON are both accepted. Set an `active` column to `false` to
-retire a code without deleting it.
+Reference data is looked up in this order: `AP_REFERENCE_DIR`, then `private/reference/`, then the
+bundled samples in `data/`. Individual files can be overridden with `--coa`, `--cost-centers`,
+`--tax-codes` and `--policy`. CSV and JSON are both accepted. Common ERP headers (*Main account*,
+*GL Account*, *SAKNR*, *Cost Centre*, *KOSTL*, *VAT code*, …) are recognised without renaming,
+and tax rates may be written `0.2`, `20` or `20%`. Set an `active` column to `false` to retire a
+code without deleting it.
 
 ## Output
 
-`output/<stem>.json` contains **exactly** the target schema, with no Markdown wrappers and no extra keys:
+`private/output/<stem>.json` contains **exactly** the target schema, with no Markdown wrappers and no extra keys:
 
 ```json
 {
@@ -175,10 +188,15 @@ ap_coder/
   validation.py      deterministic controls, adjusted confidence, review flag
   pipeline.py        unified extract → code → validate → persist chain, batch runner
   evaluation.py      accuracy scoring vs ground truth
+  labels.py          Excel/CSV labelling workbook export + import
+  share_report.py    redacted, paste-safe run summary
+  doctor.py          configuration / reference data / connectivity checks
   cli.py             `python -m ap_coder …`
 data/                sample Chart of Accounts, cost centers, tax codes, coding policy
 samples/             synthetic 2-page invoice (PDF + extracted Markdown) and its ground truth
 scripts/             sample PDF generator
+docs/                GETTING_STARTED.md – step-by-step guide for running on enterprise data
+private/             git-ignored home for your invoices, reference exports, outputs and labels
 tests/               offline test suite (Azure clients mocked)
 ```
 

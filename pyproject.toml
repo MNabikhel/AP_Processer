@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "azure-ai-documentintelligence>=1.0.0",
     "azure-identity>=1.17",
+    "openpyxl>=3.1",
     "openai>=1.68",
     "pydantic>=2.6",
     "python-dotenv>=1.0",

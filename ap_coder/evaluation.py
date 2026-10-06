@@ -1,8 +1,10 @@
 """Accuracy evaluation against hand-labelled ground truth.
 
 Phase 2 is gated on extraction and GL-coding accuracy above 90%; this module
-measures exactly that. Ground-truth files use the target schema and are
-matched to predictions by file stem; line items are matched by line_number.
+measures exactly that. Ground truth is either a directory of target-schema
+JSON files or a labels workbook/CSV corrected by the AP team (see
+``labels.py``). Documents are matched to predictions by file stem; line items
+are matched by line_number.
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ class _Counter:
 class EvaluationReport:
     target: float
     documents: int = 0
+    unreviewed_documents: list[str] = field(default_factory=list)
     missing_predictions: list[str] = field(default_factory=list)
     field_accuracy: dict[str, float | None] = field(default_factory=dict)
     header_accuracy: float | None = None
@@ -66,6 +69,7 @@ class EvaluationReport:
             "target": self.target,
             "meets_target": self.meets_target,
             "documents": self.documents,
+            "unreviewed_documents_skipped": self.unreviewed_documents,
             "missing_predictions": self.missing_predictions,
             "header_accuracy": self.header_accuracy,
             "line_count_accuracy": self.line_count_accuracy,
@@ -76,25 +80,43 @@ class EvaluationReport:
         }
 
 
-def evaluate(predictions_dir: str | Path, ground_truth_dir: str | Path, target: float = 0.9) -> EvaluationReport:
-    pred_dir, gt_dir = Path(predictions_dir), Path(ground_truth_dir)
+def _is_prediction_file(p: Path) -> bool:
+    return not p.name.endswith(".validation.json") and p.name != "batch_summary.json"
+
+
+def load_ground_truth(path: str | Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Return ``({document_stem: target-schema dict}, [unreviewed stems])``."""
+    path = Path(path)
+    if path.is_dir():
+        docs = {
+            p.stem: json.loads(p.read_text(encoding="utf-8"))
+            for p in sorted(path.glob("*.json"))
+            if _is_prediction_file(p)
+        }
+        return docs, []
+    if path.suffix.lower() in {".xlsx", ".csv"}:
+        from .labels import load_labels
+
+        return load_labels(path)
+    raise ValueError(f"{path}: ground truth must be a directory of JSON files, a .xlsx or a .csv")
+
+
+def evaluate(predictions_dir: str | Path, ground_truth: str | Path, target: float = 0.9) -> EvaluationReport:
+    pred_dir = Path(predictions_dir)
+    gt_docs, unreviewed = load_ground_truth(ground_truth)
     counters = {name: _Counter() for name in (*HEADER_TEXT_FIELDS, *HEADER_AMOUNT_FIELDS, *LINE_FIELDS)}
     header, line_count = _Counter(), _Counter()
-    report = EvaluationReport(target=target)
+    report = EvaluationReport(target=target, unreviewed_documents=unreviewed)
 
-    gt_files = sorted(
-        p for p in gt_dir.glob("*.json") if not p.name.endswith(".validation.json") and p.name != "batch_summary.json"
-    )
-    for gt_path in gt_files:
-        pred_path = pred_dir / gt_path.name
-        gt = json.loads(gt_path.read_text(encoding="utf-8"))
+    for stem, gt in gt_docs.items():
+        pred_path = pred_dir / f"{stem}.json"
         pred = json.loads(pred_path.read_text(encoding="utf-8")) if pred_path.exists() else None
         if pred is None:
-            report.missing_predictions.append(gt_path.stem)
+            report.missing_predictions.append(stem)
         report.documents += 1
         pred = pred or {"line_items": []}
 
-        def miss(field_name: str, expected: Any, got: Any, line: int | None = None, doc: str = gt_path.stem) -> None:
+        def miss(field_name: str, expected: Any, got: Any, line: int | None = None, doc: str = stem) -> None:
             report.mismatches.append(
                 {
                     "document": doc,

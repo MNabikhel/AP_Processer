@@ -160,6 +160,17 @@ def result_from_text(path: str | Path) -> ExtractionResult:
     )
 
 
+def build_credential(settings: DocumentIntelligenceSettings) -> Any:
+    """API key when configured, otherwise Entra ID via DefaultAzureCredential."""
+    if settings.api_key:
+        from azure.core.credentials import AzureKeyCredential
+
+        return AzureKeyCredential(settings.api_key)
+    from azure.identity import DefaultAzureCredential
+
+    return DefaultAzureCredential()
+
+
 class DocumentExtractor:
     """Thin wrapper around ``DocumentIntelligenceClient`` with an optional on-disk cache.
 
@@ -190,15 +201,7 @@ class DocumentExtractor:
             raise RuntimeError(
                 "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT is not set (pass a .md/.txt file to skip extraction)"
             )
-        if self.settings.api_key:
-            from azure.core.credentials import AzureKeyCredential
-
-            credential: Any = AzureKeyCredential(self.settings.api_key)
-        else:
-            from azure.identity import DefaultAzureCredential
-
-            credential = DefaultAzureCredential()
-        return DocumentIntelligenceClient(endpoint=self.settings.endpoint, credential=credential)
+        return DocumentIntelligenceClient(endpoint=self.settings.endpoint, credential=build_credential(self.settings))
 
     def _cache_path(self, data: bytes) -> Path | None:
         if not self.cache_dir:
