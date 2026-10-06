@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
-from .reference_data import ReferenceData, ReferenceTable, parse_policy_notes
+from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 
 
@@ -363,6 +363,8 @@ class Store:
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
             s_cc = suggestion.get("predicted_cost_center", "") if suggestion else None
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
+            if f_gl == UNASSIGNED:
+                continue  # not a coding decision: nothing to learn from it
             outcome = ACCEPTED if (s_gl == f_gl and (s_cc or "") == (f_cc or "")) else CORRECTED
             counts[outcome] += 1
             feedback_rows.append(

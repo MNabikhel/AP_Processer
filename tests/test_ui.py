@@ -84,3 +84,15 @@ def test_recent_row_status():
     assert "Needs attention" in ui.recent_row({**inv, "status": "review", "requires_review": 1}, now)
     assert "Failed" in ui.recent_row({**inv, "status": "failed"}, now)
     assert "A-1 · 1 hour ago" in ui.recent_row({**inv, "status": "approved"}, now)
+
+
+def test_document_text_keeps_tables_but_escapes_everything_else():
+    md = (
+        "# Invoice <b>1</b>\n<!-- PageBreak -->\n"
+        '<table><tr><th colspan="2">Item</th></tr>'
+        "<tr><td><style>body{display:none}</style>Chair</td><td onclick=x>9</td></tr></table>"
+    )
+    out = ui.document_text(md)
+    assert "<hr>" in out and '<th colspan="2">' in out and "<td>" in out
+    assert "<style>" not in out and "<b>" not in out and "<td onclick" not in out
+    assert "&lt;style&gt;" in out and "Chair" in out

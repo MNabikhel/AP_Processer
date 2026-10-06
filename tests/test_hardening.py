@@ -169,3 +169,34 @@ def test_cli_explicit_files_override_the_database(tmp_path, capsys):
     line = _line_props(json.loads(capsys.readouterr().out))
     assert line["predicted_gl_code"]["enum"] == ["6100", "UNASSIGNED"]
     assert line["predicted_cost_center"]["enum"] == ["Z1", "UNASSIGNED"]
+
+
+# --- Approvals never learn "UNASSIGNED" -------------------------------------------------------------------
+
+
+def test_unassigned_lines_are_not_learned(tmp_path, ground_truth):
+    store = Store(tmp_path / "ap.db")
+    inv_id = store.add_invoice(tmp_path / "x.pdf", ground_truth, {"requires_review": True})
+    final = copy.deepcopy(ground_truth)
+    final["line_items"][0]["predicted_gl_code"] = "UNASSIGNED"
+    store.approve_invoice(inv_id, final, reviewer="ap.clerk")
+    learned = {r["line_number"] for r in store.feedback_rows()}
+    assert 1 not in learned and len(learned) == len(final["line_items"]) - 1
+
+
+def test_added_rows_get_unassigned_cost_center_when_configured(ground_truth):
+    import pandas as pd
+
+    from ap_coder.review import coding_from_inputs
+
+    header = {k: ground_truth[k] for k in ground_truth if k not in ("line_items", "tax_lines", "confidence_score")}
+    lines = pd.concat(
+        [pd.DataFrame(ground_truth["line_items"]), pd.DataFrame([{"description": "Eco fee", "amount": 5}])],
+        ignore_index=True,
+    )
+    coding, problems = coding_from_inputs(
+        header, lines, pd.DataFrame(ground_truth["tax_lines"]), ground_truth, "UNASSIGNED"
+    )
+    assert problems == []
+    assert coding.line_items[-1].predicted_cost_center == "UNASSIGNED"
+    assert coding.line_items[0].predicted_cost_center == ground_truth["line_items"][0]["predicted_cost_center"]

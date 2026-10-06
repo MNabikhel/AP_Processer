@@ -63,7 +63,14 @@ def get_settings() -> Settings:
 
 
 def reviewer() -> str:
-    return st.session_state.get("reviewer") or os.environ.get("AP_REVIEWER") or getpass.getuser()
+    for name in (st.session_state.get("reviewer"), os.environ.get("AP_REVIEWER"), getpass.getuser()):
+        if name and str(name).strip():
+            return str(name).strip()
+    return "Reviewer"
+
+
+def first_name() -> str:
+    return reviewer().split()[0]
 
 
 def money(value: Any, currency: str = "") -> str:
@@ -138,13 +145,32 @@ def render_pages(path: str, mtime: float) -> list[bytes]:
 
 def notify(message: str, icon: str = ":material/check_circle:") -> None:
     """Show a toast after the next rerun."""
-    st.session_state["toast"] = (message, icon)
+    st.session_state.setdefault("toasts", []).append((message, icon))
 
 
 def show_toast() -> None:
-    pending = st.session_state.pop("toast", None)
-    if pending:
-        st.toast(pending[0], icon=pending[1])
+    for message, icon in st.session_state.pop("toasts", []):
+        st.toast(message, icon=icon)
+
+
+def persistent_editor(data: pd.DataFrame, key: str, **kwargs: Any) -> pd.DataFrame:
+    """``st.data_editor`` whose edits survive moving to another invoice or page and back.
+
+    Streamlit forgets a widget's edits once it is not drawn. The last edited table is kept
+    as a draft and becomes the starting point the next time the editor is created.
+    """
+    base_key, draft_key = f"_base_{key}", f"_draft_{key}"
+    if key not in st.session_state:
+        st.session_state[base_key] = st.session_state.get(draft_key, data)
+    edited = st.data_editor(st.session_state[base_key], key=key, **kwargs)
+    st.session_state[draft_key] = edited
+    return edited
+
+
+def forget_drafts(prefix: str) -> None:
+    """Drop the saved drafts of a finished invoice."""
+    for k in [k for k in st.session_state if str(k).startswith((f"_base_{prefix}_", f"_draft_{prefix}_"))]:
+        del st.session_state[k]
 
 
 def card(name: str) -> Any:
@@ -170,11 +196,7 @@ def page_review() -> None:
     reference = reference_or_none(store)
     invoices = store.list_invoices()
     if reference is None or not invoices:
-        st.html(
-            ui.page_header(
-                "Welcome", f"{ui.greeting()}, {reviewer().split()[0]}", "Four quick steps and you're reviewing."
-            )
-        )
+        st.html(ui.page_header("Welcome", f"{ui.greeting()}, {first_name()}", "Four quick steps and you're reviewing."))
         _getting_started(store)
         return
 
@@ -189,7 +211,6 @@ def page_review() -> None:
     metrics = store.metrics()
     done_today = approved_today(store)
     minutes = len(flagged) * 2 + (len(pending) - len(flagged))
-    first_name = reviewer().split()[0] if reviewer() else "there"
     total_today = done_today + len(pending)
     lead = (
         f"{len(pending)} invoice{'s' if len(pending) != 1 else ''} waiting · about {minutes} minute"
@@ -205,7 +226,7 @@ def page_review() -> None:
     st.html(
         ui.hero(
             f"{dt.date.today():%A, %B} {dt.date.today().day}",
-            f"{ui.greeting()}, {first_name}",
+            f"{ui.greeting()}, {first_name()}",
             lead,
             chips,
             done_today / total_today if total_today else 1.0,
@@ -269,14 +290,21 @@ def page_review() -> None:
                     default=f"All · {len(pending)}",
                     label_visibility="collapsed",
                     key="queue_filter",
+                    persist_state="session",
                 )
                 or ""
             )
             query = bar_search.text_input(
                 "Search", placeholder="Search vendor or invoice #", label_visibility="collapsed",
-                icon=":material/search:", key="queue_search",
+                icon=":material/search:", key="queue_search", persist_state="session",
             )  # fmt: skip
-            order = bar_sort.selectbox("Sort", list(QUEUE_SORTS), label_visibility="collapsed", key="queue_sort")
+            order = bar_sort.selectbox(
+                "Sort",
+                list(QUEUE_SORTS),
+                label_visibility="collapsed",
+                key="queue_sort",
+                persist_state="session",
+            )
             shown = (
                 flagged
                 if view.startswith("Needs")
@@ -297,7 +325,7 @@ def page_review() -> None:
             export = _export_rows(store, approved)
             st.download_button(
                 "Export GL distribution (CSV)",
-                pd.DataFrame(export).to_csv(index=False).encode("utf-8"),
+                pd.DataFrame(export).to_csv(index=False).encode("utf-8-sig"),  # BOM: Excel shows accents
                 file_name=f"approved_gl_distribution_{dt.date.today()}.csv",
                 mime="text/csv",
                 icon=":material/download:",
@@ -324,14 +352,21 @@ def page_review() -> None:
         others = [i for i in invoices if i["status"] in (FAILED, REJECTED)]
         if not others:
             st.caption("Nothing here.")
+        settings = get_settings()
+        azure_ready = bool(settings.document_intelligence.endpoint and settings.openai.endpoint)
         for inv in others:
             with card(f"failed_{inv['id']}"):
                 left, right = st.columns([5, 2], vertical_alignment="center")
-                badge = ":red-badge[Failed]" if inv["status"] == FAILED else ":gray-badge[Rejected]"
-                left.markdown(f"**{inv['vendor_name'] or inv['file_name']}** {badge}")
-                left.caption(inv.get("error") or "No reason recorded.")
+                badge = ui.pill("Failed", "err", "error") if inv["status"] == FAILED else ui.pill("Rejected", "gray")
+                left.html(
+                    f"<div style='font-weight:700'>{esc(inv['vendor_name'] or inv['file_name'])} {badge}</div>"
+                    f"<div class='apc-muted'>{esc(inv.get('error') or 'No reason recorded.')}</div>"
+                )
                 b1, b2 = right.columns(2)
-                if b1.button("Retry", key=f"retry_{inv['id']}", icon=":material/refresh:"):
+                if b1.button(
+                    "Retry", key=f"retry_{inv['id']}", icon=":material/refresh:", disabled=not azure_ready,
+                    help=None if azure_ready else "Set up Azure in .env first (see Process invoices)",
+                ):  # fmt: skip
                     full = store.get_invoice(inv["id"])
                     path = Path(full["source_path"])
                     if not path.exists():
@@ -438,29 +473,13 @@ def _document_panel(inv: dict[str, Any]) -> None:
             "Page", list(range(1, len(pages) + 1)), default=1, key=f"page_{inv['id']}",
             format_func=lambda n: f"Page {n}", label_visibility="collapsed",
         ) or 1  # fmt: skip
-    st.caption(f":material/attach_file: {inv['file_name']}")
+    st.html(f"<div class='apc-muted'>{ui.icon('attach_file', '1em')} {esc(inv['file_name'])}</div>")
     if pages:
         st.image(pages[page_no - 1], width="stretch")
     elif not path.exists():
         st.warning(f"Original file not found at {path}", icon=":material/warning:")
     with st.expander("Extracted text (what the AI read)", expanded=not pages, icon=":material/text_snippet:"):
-        st.html(f"<div style='font-size:0.85rem'>{_md_to_html(inv.get('extraction_md') or '')}</div>")
-
-
-def _md_to_html(md: str) -> str:
-    """Document Intelligence Markdown already uses HTML tables; just keep line breaks readable."""
-    out = []
-    for line in md.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("<!--"):
-            if "PageBreak" in stripped:
-                out.append("<hr>")
-            continue
-        if stripped.startswith(("<table", "</table", "<tr", "<th", "<td")):
-            out.append(stripped)
-        else:
-            out.append(html.escape(line) + "<br>")
-    return "\n".join(out)
+        st.html(f"<div style='font-size:0.85rem'>{ui.document_text(inv.get('extraction_md') or '')}</div>")
 
 
 def _checks_html(report: Any) -> str:
@@ -557,14 +576,12 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             f"<tr><td>{ui.kbd('Alt')} + {ui.kbd('↑')}</td><td>Back to the queue</td></tr>"
             "</tbody></table>"
         )
-    if nav.button("Previous", icon=":material/chevron_left:", disabled=position == 0, shortcut="Alt+Left"):
-        st.session_state["open_invoice"] = ids[position - 1]
+    # Always enabled (wrapping around), so Alt+Left/Right never fall through to the browser's Back/Forward.
+    if nav.button("Previous", icon=":material/chevron_left:", shortcut="Alt+Left"):
+        st.session_state["open_invoice"] = ids[(position - 1) % len(ids)]
         st.rerun()
-    if nav.button(
-        "Next", icon=":material/chevron_right:", icon_position="right", disabled=position == len(ids) - 1,
-        shortcut="Alt+Right",
-    ):  # fmt: skip
-        st.session_state["open_invoice"] = ids[position + 1]
+    if nav.button("Next", icon=":material/chevron_right:", icon_position="right", shortcut="Alt+Right"):
+        st.session_state["open_invoice"] = ids[(position + 1) % len(ids)]
         st.rerun()
     st.html(ui.progress(position + 1, len(ids)))
 
@@ -578,48 +595,46 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         checks_box = card("checks")
         with card("details"):
             st.markdown("#### :material/badge: Invoice details")
-            c1, c2, c3 = st.columns([2, 1.2, 1.2])
-            header: dict[str, Any] = {
-                "vendor_name": c1.text_input("Vendor", ai.get("vendor_name", ""), key=f"{key}_vendor"),
-                "invoice_number": c2.text_input("Invoice #", ai.get("invoice_number", ""), key=f"{key}_number"),
-                "invoice_date": c3.text_input(
-                    "Invoice date",
-                    ai.get("invoice_date", ""),
-                    key=f"{key}_date",
-                    placeholder="YYYY-MM-DD",
-                    help="Format YYYY-MM-DD",
-                ),  # fmt: skip
-            }
-            c1, c2, c3 = st.columns([1, 2, 2])
-            header["currency"] = c1.text_input("Currency", ai.get("currency", "CAD"), key=f"{key}_cur")
+            keep = {"persist_state": "session"}  # edits survive moving to another invoice and back
+
+            def text(col: Any, label: str, field: str, default: str = "", **kw: Any) -> str:
+                return col.text_input(label, ai.get(field, default), key=f"{key}_{field}", **keep, **kw)
+
+            def amount(col: Any, label: str, field: str) -> float:
+                value = float(ai.get(field) or 0)
+                return col.number_input(label, value=value, format="%.2f", key=f"{key}_{field}", **keep)
+
+            def province(col: Any, label: str, field: str, **kw: Any) -> str:
+                current = ai.get(field) or ""
+                return col.selectbox(
+                    label, PROVINCE_VALUES, index=PROVINCE_VALUES.index(current if current in PROVINCE_VALUES else ""),
+                    format_func=prov_label.get, key=f"{key}_{field}", **keep, **kw,
+                )  # fmt: skip
+
             prov_label = {
                 p: f"{p} · {PROVINCE_NAMES.get(p, 'Outside Canada' if p else 'Unknown')}" for p in PROVINCE_VALUES
             }
-            header["supplier_province"] = c2.selectbox(
-                "Supplier province", PROVINCE_VALUES, index=PROVINCE_VALUES.index(ai.get("supplier_province", "")),
-                format_func=prov_label.get, key=f"{key}_sprov",
-            )  # fmt: skip
-            header["ship_to_province"] = c3.selectbox(
-                "Place of supply", PROVINCE_VALUES, index=PROVINCE_VALUES.index(ai.get("ship_to_province", "")),
-                format_func=prov_label.get, key=f"{key}_tprov", help="Where goods are delivered / services performed",
-            )  # fmt: skip
+            c1, c2, c3 = st.columns([2, 1.2, 1.2])
+            header: dict[str, Any] = {
+                "vendor_name": text(c1, "Vendor", "vendor_name"),
+                "invoice_number": text(c2, "Invoice #", "invoice_number"),
+                "invoice_date": text(
+                    c3, "Invoice date", "invoice_date", placeholder="YYYY-MM-DD", help="Format YYYY-MM-DD"
+                ),
+            }
+            c1, c2, c3 = st.columns([1, 2, 2])
+            header["currency"] = text(c1, "Currency", "currency", "CAD")
+            header["supplier_province"] = province(c2, "Supplier province", "supplier_province")
+            header["ship_to_province"] = province(
+                c3, "Place of supply", "ship_to_province", help="Where goods are delivered / services performed"
+            )
             c1, c2 = st.columns(2)
-            header["gst_hst_registration_number"] = c1.text_input(
-                "Supplier GST/HST #", ai.get("gst_hst_registration_number", ""), key=f"{key}_gst"
-            )
-            header["qst_registration_number"] = c2.text_input(
-                "Supplier QST #", ai.get("qst_registration_number", ""), key=f"{key}_qst"
-            )
+            header["gst_hst_registration_number"] = text(c1, "Supplier GST/HST #", "gst_hst_registration_number")
+            header["qst_registration_number"] = text(c2, "Supplier QST #", "qst_registration_number")
             c1, c2, c3 = st.columns(3)
-            header["subtotal"] = c1.number_input(
-                "Subtotal", value=float(ai.get("subtotal", 0)), format="%.2f", key=f"{key}_sub"
-            )
-            header["tax_total"] = c2.number_input(
-                "Tax total", value=float(ai.get("tax_total", 0)), format="%.2f", key=f"{key}_tax"
-            )
-            header["grand_total"] = c3.number_input(
-                "Grand total", value=float(ai.get("grand_total", 0)), format="%.2f", key=f"{key}_total"
-            )
+            header["subtotal"] = amount(c1, "Subtotal", "subtotal")
+            header["tax_total"] = amount(c2, "Tax total", "tax_total")
+            header["grand_total"] = amount(c3, "Grand total", "grand_total")
 
     # --- Line items ---------------------------------------------------------------------------------------
     with card("lines"):
@@ -661,7 +676,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             )  # fmt: skip
             column_order.append("predicted_cost_center")
         column_order += ["taxes_applied", "quantity", "unit_price"]
-        edited_lines = st.data_editor(
+        edited_lines = persistent_editor(
             lines_df, column_config=column_config, column_order=column_order, num_rows="dynamic",
             hide_index=True, key=f"{key}_lines",
         )  # fmt: skip
@@ -675,7 +690,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         )
         tax_df["province"] = tax_df["province"].fillna("").replace("", NO_PROVINCE)
         tax_df.insert(2, "rate_pct", (pd.to_numeric(tax_df.pop("rate"), errors="coerce") * 100).round(4))
-        edited_tax = st.data_editor(
+        edited_tax = persistent_editor(
             tax_df,
             column_config={
                 "tax_type": st.column_config.SelectboxColumn("Tax", options=list(TAX_TYPES), required=True),
@@ -691,11 +706,18 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             key=f"{key}_taxlines",
         )
 
-    coding, problems = coding_from_inputs(header, edited_lines, edited_tax, ai)
+    coding, problems = coding_from_inputs(
+        header, edited_lines, edited_tax, ai, UNASSIGNED if reference.cost_centers is not None else ""
+    )
     if coding is None:
         with checks_box:
             st.markdown("#### :material/fact_check: Checks")
             st.html("".join(ui.check("error", "Fix this field", p) for p in problems))
+        with card("actionbar"):
+            left, right = st.columns([3, 1], vertical_alignment="center")
+            left.html("<div class='apc-muted'>Fix the highlighted field to see checks and approve.</div>")
+            _more_menu(right.container(horizontal=True, horizontal_alignment="right"), store, invoice_id, ids,
+                       position, key)  # fmt: skip
         return
 
     extraction = ExtractionResult(
@@ -748,39 +770,30 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             learn = f"you changed <b>{changed}</b> of its suggestions" if changed else "all as the AI suggested"
             st.html(
                 f"<div style='display:flex;gap:.8rem;align-items:center'>{ui.avatar(reviewer(), 'sm')}"
-                f"<div><div style='font-weight:700;color:#142033'>Post {money(coding.grand_total, coding.currency)}"
+                f"<div><div style='font-weight:700;color:#142033'>"
+                f"Post {money(coding.grand_total)} {esc(coding.currency)}"
                 f"</div><div class='apc-muted'>Approving teaches the AI from {len(coding.line_items)} line(s): "
                 f"{learn}.</div></div></div>"
             )
             allow = True
-            if errors:
+            uncoded = [str(li.line_number) for li in coding.line_items if li.predicted_gl_code == UNASSIGNED]
+            if uncoded:
+                allow = False  # never post to UNASSIGNED
+                st.html(ui.pill(f"Pick a GL account for line {', '.join(uncoded)} to approve", "warn", "edit_note"))
+            elif errors:
                 allow = st.checkbox(f"Approve anyway, despite {len(errors)} error(s)", key=f"{key}_override")
         with right:
             buttons = st.container(
                 horizontal=True, horizontal_alignment="right", vertical_alignment="center", wrap=False
             )
-            with buttons.popover("More", icon=":material/more_horiz:"):
-                st.markdown("**Reject this invoice**")
-                reason = st.text_input("Reason", key=f"{key}_reason", placeholder="e.g. not our invoice")
-                if st.button("Reject", key=f"{key}_reject", icon=":material/block:", width="stretch"):
-                    store.reject_invoice(invoice_id, reviewer(), reason)
-                    _advance(ids, position)
-                    notify(f"Invoice #{invoice_id} rejected.", ":material/block:")
-                    st.rerun()
-                st.divider()
-                st.markdown("**Remove from the queue**")
-                st.caption("Nothing is learned from a deleted invoice.")
-                if st.button("Delete invoice", key=f"{key}_delete", icon=":material/delete:", width="stretch"):
-                    store.delete_invoice(invoice_id)
-                    _advance(ids, position)
-                    notify(f"Invoice #{invoice_id} deleted.", ":material/delete:")
-                    st.rerun()
+            _more_menu(buttons, store, invoice_id, ids, position, key)
             if buttons.button(
                 "Approve & teach", type="primary", icon=":material/check:", disabled=not allow,
                 key=f"{key}_approve", shortcut="Ctrl+Enter",
             ):  # fmt: skip
                 counts = store.approve_invoice(invoice_id, output, reviewer())
                 total = sum(counts.values())
+                forget_drafts(key)
                 _advance(ids, position)
                 if len(ids) == 1:
                     st.session_state["celebrate"] = True
@@ -790,6 +803,28 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                     ":material/school:",
                 )
                 st.rerun()
+
+
+def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], position: int, key: str) -> None:
+    """Reject / delete, kept in a menu so the main action stays obvious."""
+    with parent.popover("More", icon=":material/more_horiz:"):
+        st.markdown("**Reject this invoice**")
+        reason = st.text_input("Reason", key=f"{key}_reason", placeholder="e.g. not our invoice")
+        if st.button("Reject", key=f"{key}_reject", icon=":material/block:", width="stretch"):
+            store.reject_invoice(invoice_id, reviewer(), reason)
+            forget_drafts(key)
+            _advance(ids, position)
+            notify(f"Invoice #{invoice_id} rejected.", ":material/block:")
+            st.rerun()
+        st.divider()
+        st.markdown("**Remove from the queue**")
+        st.caption("Nothing is learned from a deleted invoice.")
+        if st.button("Delete invoice", key=f"{key}_delete", icon=":material/delete:", width="stretch"):
+            store.delete_invoice(invoice_id)
+            forget_drafts(key)
+            _advance(ids, position)
+            notify(f"Invoice #{invoice_id} deleted.", ":material/delete:")
+            st.rerun()
 
 
 def _advance(ids: list[int], position: int) -> None:
@@ -1002,6 +1037,7 @@ def page_process() -> None:
                 "Drop PDFs, TIFFs, PNGs or JPGs here. They are saved to your private invoices folder on this computer.",
                 type=sorted(e.lstrip(".") for e in SUPPORTED_EXTENSIONS),
                 accept_multiple_files=True,
+                key=f"upload_{st.session_state.get('upload_round', 0)}",  # new key = empty uploader after a run
             )
             if uploaded and st.button(
                 f"Process {len(uploaded)} uploaded invoice(s)", type="primary", icon=":material/play_arrow:",
@@ -1017,7 +1053,16 @@ def page_process() -> None:
                         n += 1
                     target.write_bytes(f.getvalue())
                     paths.append(target)
-                run_pipeline(store, paths)
+                already = [p for p in paths if store.find_by_hash(p) is not None]
+                todo = [p for p in paths if p not in already]
+                if todo:
+                    run_pipeline(store, todo)
+                if already:
+                    notify(
+                        f"Skipped {len(already)} file(s) already in AP Coder: {', '.join(p.name for p in already)}",
+                        ":material/content_copy:",
+                    )
+                st.session_state["upload_round"] = st.session_state.get("upload_round", 0) + 1
                 st.rerun()
 
         with card("folder"):
@@ -1056,20 +1101,30 @@ def _guess(columns: list[str], hints: tuple[str, ...], default: int = 0) -> int:
     return default
 
 
-def _read_upload(upload: Any) -> pd.DataFrame:
-    if upload.name.lower().endswith((".xlsx", ".xls")):
-        sheets = pd.read_excel(upload, sheet_name=None, dtype=str)
-        names = list(sheets)
-        name = st.selectbox("Sheet", names, key=f"sheet_{upload.name}") if len(names) > 1 else names[0]
-        df = sheets[name]
-    else:
-        for encoding in ("utf-8-sig", "cp1252"):  # Excel "CSV" exports are often Windows-1252
-            try:
-                upload.seek(0)
-                df = pd.read_csv(upload, dtype=str, keep_default_na=False, encoding=encoding)
-                break
-            except UnicodeDecodeError:
-                continue
+def _read_upload(upload: Any, table: str) -> pd.DataFrame | None:
+    """The uploaded sheet as text cells, or None (with a message) if it can't be read."""
+    try:
+        if upload.name.lower().endswith((".xlsx", ".xls")):
+            sheets = pd.read_excel(upload, sheet_name=None, dtype=str)
+            names = list(sheets)
+            name = st.selectbox("Sheet", names, key=f"{table}_sheet_{upload.name}") if len(names) > 1 else names[0]
+            df = sheets[name]
+        else:
+            df = None
+            for encoding in ("utf-8-sig", "cp1252"):  # Excel "CSV" exports are often Windows-1252
+                try:
+                    upload.seek(0)
+                    df = pd.read_csv(upload, dtype=str, keep_default_na=False, encoding=encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if df is None:
+                st.error("Could not read this file. In Excel, use *Save As → CSV UTF-8* and upload it again.")
+                return None
+    except Exception as exc:  # empty file, not really a spreadsheet, damaged workbook, ...
+        st.error(f"Could not read this file: {exc}")
+        return None
+    df.columns = [str(c) for c in df.columns]  # a header like 2024 arrives as a number
     return df.fillna("")
 
 
@@ -1077,8 +1132,10 @@ def account_manager(store: Store, table: str, noun: str) -> None:
     rows = store.list_accounts(table)
     with st.expander(f"Import {noun}s from CSV or Excel", expanded=not rows, icon=":material/upload:"):
         upload = st.file_uploader("Choose a file exported from your ERP", type=["csv", "xlsx"], key=f"{table}_upload")
-        if upload is not None:
-            df = _read_upload(upload)
+        df = _read_upload(upload, table) if upload is not None else None
+        if df is not None and df.empty:
+            st.warning("This file has no rows under its header line.")
+        elif df is not None:
             st.caption(f"{len(df)} rows found. First rows:")
             st.dataframe(df.head(6), hide_index=True)
             columns = list(df.columns)
@@ -1146,7 +1203,7 @@ def account_manager(store: Store, table: str, noun: str) -> None:
             st.rerun()
     actions.download_button(
         f"Download {noun}s",
-        df.drop(columns=["delete"]).to_csv(index=False).encode("utf-8"),
+        df.drop(columns=["delete"]).to_csv(index=False).encode("utf-8-sig"),
         file_name=f"{table}.csv",
         mime="text/csv",
         key=f"{table}_download",

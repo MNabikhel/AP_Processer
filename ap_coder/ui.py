@@ -10,6 +10,7 @@ import base64
 import datetime as dt
 import hashlib
 import html
+import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -366,3 +367,28 @@ def sidebar_profile(name: str, approved_today: int, waiting: int) -> str:
         f"<div class='apc-today'><div><b>{approved_today}</b><span>done today</span></div>"
         f"<div><b>{waiting}</b><span>waiting</span></div></div>"
     )
+
+
+# Document Intelligence Markdown uses plain HTML tables. Only these bare tags are kept; everything
+# else (cell text included) is escaped, so text printed on an invoice can never become markup.
+_TABLE_TAG = re.compile(r'</?(?:table|thead|tbody|tr|th|td|caption)(?:\s+(?:rowspan|colspan)="\d+")*\s*>', re.I)
+
+
+def document_text(md: str) -> str:
+    """Extracted invoice text as safe HTML: tables kept, line breaks preserved, everything else escaped."""
+    out = []
+    for line in md.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("<!--"):
+            if "PageBreak" in stripped:
+                out.append("<hr>")
+            continue
+        if _TABLE_TAG.match(stripped):
+            parts, pos = [], 0
+            for m in _TABLE_TAG.finditer(stripped):
+                parts += [esc(stripped[pos : m.start()]), m.group(0)]
+                pos = m.end()
+            out.append("".join(parts) + esc(stripped[pos:]))
+        else:
+            out.append(esc(line) + "<br>")
+    return "\n".join(out)

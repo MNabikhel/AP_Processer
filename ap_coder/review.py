@@ -26,8 +26,17 @@ def to_number(value: Any, default: float = 0.0) -> float:
 
 
 def coding_from_inputs(
-    header: dict[str, Any], lines: pd.DataFrame, taxes: pd.DataFrame, ai: dict[str, Any]
+    header: dict[str, Any],
+    lines: pd.DataFrame,
+    taxes: pd.DataFrame,
+    ai: dict[str, Any],
+    default_cost_center: str = "",
 ) -> tuple[InvoiceCoding | None, list[str]]:
+    """Rebuild the coding from the dashboard's form and grids.
+
+    Blank GL cells become ``UNASSIGNED``; blank cost centers become ``default_cost_center``
+    (``UNASSIGNED`` when cost centers are configured, so the check says what is missing).
+    """
     problems: list[str] = []
     line_items = []
     used = {int(n) for n in lines.get("line_number", []) if not is_blank(n)}
@@ -52,7 +61,7 @@ def coding_from_inputs(
                 "unit_price": to_number(row.get("unit_price"), amount),
                 "amount": amount,
                 "predicted_gl_code": text("predicted_gl_code", UNASSIGNED),
-                "predicted_cost_center": text("predicted_cost_center"),
+                "predicted_cost_center": text("predicted_cost_center", default_cost_center),
                 "taxes_applied": []
                 if taxes_applied is None or isinstance(taxes_applied, float)
                 else list(taxes_applied),
