@@ -8,5 +8,16 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .env
+.env.*
+!.env.example
 .cache/
 output/
+
+# Enterprise data: invoices, reference exports, outputs, labels. Never commit.
+private/*
+!private/README.md
+# Belt and braces: spreadsheets and documents outside samples/ are never committed either.
+*.xlsx
+/*.pdf
+/*.tif
+/*.tiff

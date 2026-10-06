@@ -1,28 +1,27 @@
-gl_code,account_name,account_type,description,keywords,active
-1500,Computer Equipment,Asset,"Capitalisable IT hardware with unit cost at or above the capitalisation threshold","laptop, server, workstation, network switch, storage array",true
-1510,Furniture & Fixtures,Asset,"Capitalisable office furniture and fit-out","desk, chair, cabinet, partition",true
-1550,Prepaid Expenses,Asset,"Annual or multi-period prepayments covering more than 3 months","annual subscription prepaid, insurance premium, maintenance contract",true
-5000,Cost of Goods Sold - Materials,Expense,"Raw materials and components consumed in production","raw material, components, resin, steel, packaging for resale",true
-5100,Freight Inbound,Expense,"Shipping and freight charges on purchased goods","freight, shipping, delivery, courier, haulage",true
-6000,Office Supplies,Expense,"Consumable office stationery and supplies","paper, toner, pens, stationery, printer ink",true
-6010,IT Hardware - Non-Capital,Expense,"IT hardware and peripherals below the capitalisation threshold","monitor, keyboard, mouse, headset, docking station, cables, adapter",true
-6020,Software Subscriptions,Expense,"SaaS and software licences expensed in the period","saas, licence, license, subscription, seats, cloud software",true
-6030,Cloud Hosting & Infrastructure,Expense,"Public cloud consumption and hosting","azure, aws, compute, storage, hosting, bandwidth",true
-6040,Telecommunications,Expense,"Phone, mobile and internet services","mobile, phone, internet, broadband, sim, data plan",true
-6100,Professional Fees - Legal,Expense,"External legal counsel","legal, attorney, solicitor, counsel, litigation",true
-6110,Professional Fees - Consulting,Expense,"Management and technical consulting services","consulting, advisory, implementation services, professional services",true
-6120,Professional Fees - Audit & Accounting,Expense,"External audit, tax and accounting services","audit, tax advisory, bookkeeping",true
-6200,Rent & Occupancy,Expense,"Office and warehouse rent and service charges","rent, lease, service charge, office space",true
-6210,Utilities,Expense,"Electricity, gas and water","electricity, gas, water, energy",true
-6220,Repairs & Maintenance,Expense,"Building and equipment repairs and maintenance","repair, maintenance, servicing, hvac, plumbing",true
-6230,Cleaning & Facilities Services,Expense,"Janitorial and facilities management","cleaning, janitorial, waste removal, pest control",true
-6300,Travel - Airfare,Expense,"Air travel","flight, airfare, airline",true
-6310,Travel - Lodging,Expense,"Hotels and accommodation","hotel, lodging, accommodation",true
-6320,Meals & Entertainment,Expense,"Business meals and client entertainment","meals, catering, restaurant, entertainment",true
-6400,Marketing & Advertising,Expense,"Advertising, campaigns, promotional materials","advertising, ads, campaign, promotional, printing brochures, sponsorship",true
-6500,Training & Development,Expense,"Courses, conferences and certifications","training, course, conference, certification, workshop",true
-6600,Insurance Expense,Expense,"Insurance premiums for the current period","insurance, premium, policy",true
-6700,Bank Fees,Expense,"Bank and payment processing charges","bank charge, wire fee, card processing",true
-6800,Postage & Courier,Expense,"Outbound postage and courier not related to inventory purchases","postage, stamps, courier outbound",true
-6900,Miscellaneous Expense,Expense,"Expenses that fit no other account; use sparingly","misc, sundry",true
-6999,Legacy Suspense,Expense,"Retired suspense account - do not use","",false
+gl_code,description,category
+1500,Computer Equipment - capitalisable IT hardware at or above the capitalisation threshold (servers; laptops/workstations over threshold),Fixed Assets
+1510,Furniture & Fixtures - capitalisable office furniture and fit-out,Fixed Assets
+1550,Prepaid Expenses - annual or multi-period prepayments covering more than 3 months (support contracts; insurance),Prepaids
+2310,GST/HST Recoverable - input tax credits (ITC) on GST and HST paid,Sales Tax
+2320,QST Recoverable - input tax refunds (ITR) on Quebec QST paid,Sales Tax
+5000,Cost of Goods Sold - Materials - raw materials and components consumed in production,Cost of Sales
+5100,Freight Inbound - shipping and freight on purchased inventory/materials,Cost of Sales
+6000,Office Supplies - paper; toner; stationery; printer ink,Operating Expenses
+6010,IT Hardware - Non-Capital - monitors; keyboards; docking stations; cables; laptops below threshold,Operating Expenses
+6020,Software Subscriptions - SaaS and software licences expensed in the period,Operating Expenses
+6030,Cloud Hosting & Infrastructure - Azure/AWS consumption and hosting,Operating Expenses
+6040,Telecommunications - phone; mobile; internet,Operating Expenses
+6100,Professional Fees - Legal - external legal counsel,Professional Fees
+6110,Professional Fees - Consulting - management and technical consulting; implementation services,Professional Fees
+6120,Professional Fees - Audit & Accounting - audit; tax advisory; bookkeeping,Professional Fees
+6200,Rent & Occupancy - office and warehouse rent; common area costs,Facilities
+6210,Utilities - electricity; gas; water,Facilities
+6220,Repairs & Maintenance - building and equipment repairs; HVAC; plumbing,Facilities
+6230,Cleaning & Facilities Services - janitorial; waste removal; pest control,Facilities
+6300,Travel - Airfare,Travel
+6310,Travel - Lodging - hotels and accommodation,Travel
+6320,Meals & Entertainment - business meals; catering; client entertainment,Travel
+6400,Marketing & Advertising - campaigns; printing of brochures; sponsorship,Sales & Marketing
+6500,Training & Development - courses; conferences; certifications,People
+6800,Postage & Courier - outbound postage; delivery on non-inventory purchases,Operating Expenses
+6900,Miscellaneous Expense - use sparingly,Operating Expenses

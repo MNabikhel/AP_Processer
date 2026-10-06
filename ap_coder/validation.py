@@ -2,9 +2,10 @@
 
 The LLM's self-reported confidence is not enough on its own to decide
 straight-through processing. These checks reconcile the arithmetic, verify
-every code against the reference data and cross-check prebuilt-invoice
-fields, then derive an adjusted confidence and a human-review flag (the
-input for the Phase 2 Power Apps review queue).
+every code against the reference data, run the Canadian sales-tax checks,
+compare against reviewer history and cross-check prebuilt-invoice fields,
+then derive an adjusted confidence and a human-review flag that drives the
+dashboard review queue.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any
 from .extraction import ExtractionResult
 from .reference_data import UNASSIGNED, ReferenceData
 from .schema import InvoiceCoding
+from .tax import check_taxes
 
 ERROR, WARNING = "error", "warning"
 _ERROR_PENALTY = 0.6
@@ -74,11 +76,19 @@ def validate_coding(
     reference: ReferenceData,
     extraction: ExtractionResult | None = None,
     review_threshold: float = 0.85,
+    history: list[dict[str, Any]] | None = None,
+    duplicate_of: list[int] | None = None,
 ) -> ValidationReport:
+    """``history`` is ``memory.compare_with_history`` output; ``duplicate_of`` lists stored invoice ids
+    with the same vendor and invoice number."""
     issues: list[Issue] = []
 
     def add(severity: str, code: str, message: str, line: int | None = None) -> None:
         issues.append(Issue(severity, code, message, line))
+
+    if duplicate_of:
+        ids = ", ".join(f"#{i}" for i in duplicate_of)
+        add(ERROR, "DUPLICATE_INVOICE", f"same vendor and invoice number as invoice {ids}: possible duplicate payment")
 
     # --- Header -----------------------------------------------------------
     if not coding.vendor_name.strip():
@@ -95,7 +105,7 @@ def validate_coding(
     if numbers != list(range(1, len(numbers) + 1)):
         add(WARNING, "LINE_NUMBERING", f"line numbers are not sequential from 1: {numbers}")
 
-    valid_tax_rates = reference.tax_rate_values()
+    tax_gls = reference.tax.tax_gl_codes()
     for li in coding.line_items:
         expected = li.quantity * li.unit_price
         # Unit prices are often printed rounded, so allow 0.5% on the extension.
@@ -110,11 +120,13 @@ def validate_coding(
         if li.predicted_gl_code == UNASSIGNED:
             add(WARNING, "GL_UNASSIGNED", "model could not determine a GL account", li.line_number)
         elif reference.chart_of_accounts.get(li.predicted_gl_code) is None:
-            add(
-                ERROR, "GL_UNKNOWN", f"GL code {li.predicted_gl_code!r} is not in the Chart of Accounts", li.line_number
-            )
+            add(ERROR, "GL_UNKNOWN", f"GL code {li.predicted_gl_code!r} is not in the GL accounts", li.line_number)
+        elif li.predicted_gl_code in tax_gls:
+            add(ERROR, "GL_IS_TAX_ACCOUNT", f"GL {li.predicted_gl_code} is a sales-tax account", li.line_number)
 
-        if li.predicted_cost_center == UNASSIGNED:
+        if reference.cost_centers is None:
+            pass  # cost centers not configured
+        elif li.predicted_cost_center == UNASSIGNED:
             add(WARNING, "CC_UNASSIGNED", "model could not determine a cost center", li.line_number)
         elif reference.cost_centers.get(li.predicted_cost_center) is None:
             add(
@@ -124,16 +136,11 @@ def validate_coding(
                 li.line_number,
             )
 
-        if li.predicted_tax_rate is not None and valid_tax_rates:
-            if round(li.predicted_tax_rate, 6) not in valid_tax_rates:
-                add(
-                    WARNING, "TAX_RATE_UNKNOWN", f"tax rate {li.predicted_tax_rate} matches no tax code", li.line_number
-                )
-
     # --- Totals reconciliation ---------------------------------------------
     line_sum = round(sum(li.amount for li in coding.line_items), 2)
     computed_total = round(coding.subtotal + coding.tax_total, 2)
     checks: dict[str, Any] = {
+        "line_count": len(coding.line_items),
         "line_sum": line_sum,
         "subtotal": coding.subtotal,
         "subtotal_plus_tax": computed_total,
@@ -148,16 +155,36 @@ def validate_coding(
             "TOTAL_MISMATCH",
             f"subtotal + tax = {computed_total:.2f} but grand_total = {coding.grand_total:.2f}",
         )
-    rates = [li.predicted_tax_rate for li in coding.line_items]
-    if coding.line_items and all(r is not None for r in rates):
-        implied_tax = round(sum(li.amount * (li.predicted_tax_rate or 0) for li in coding.line_items), 2)
-        checks["implied_tax"] = implied_tax
-        if not _close(implied_tax, coding.tax_total, line_tolerance):
-            add(
-                WARNING,
-                "TAX_MISMATCH",
-                f"predicted tax rates imply {implied_tax:.2f} but tax_total = {coding.tax_total:.2f}",
-            )
+    # The GL posting (line amounts + tax lines) must equal the amount payable to the cent. The checks
+    # above each allow a little rounding; this catches small differences that add up (e.g. a misread line).
+    posting_total = round(line_sum + sum(t.tax_amount for t in coding.tax_lines), 2)
+    checks["posting_total"] = posting_total
+    if coding.line_items and abs(posting_total - coding.grand_total) > 0.005:
+        add(
+            ERROR,
+            "POSTING_UNBALANCED",
+            f"GL posting totals {posting_total:.2f} but the invoice total is {coding.grand_total:.2f} "
+            f"(off by {posting_total - coding.grand_total:+.2f}); correct a line amount or tax line",
+        )
+    # --- Canadian sales tax ------------------------------------------------------
+    known = set(reference.chart_of_accounts.codes)
+    for f in check_taxes(coding, reference.tax, known):
+        add(f.severity, f.code, f.message, f.line_number)
+    checks["tax_lines"] = [f"{t.tax_type} {t.province} {t.rate:g}".strip() for t in coding.tax_lines]
+
+    # --- Reviewer history -------------------------------------------------------------
+    if history:
+        checks["history"] = history
+        for h in history:
+            if h["status"] == "conflict":
+                add(
+                    WARNING,
+                    "HISTORY_CONFLICT",
+                    f"reviewers coded similar lines from this vendor to GL {h['history_gl']} "
+                    f"({h['decisions']} past decisions)",
+                    h["line_number"],
+                )
+        checks["history_matches"] = sum(1 for h in history if h["status"] == "match")
 
     # --- Cross-checks against Document Intelligence ---------------------------
     if extraction is not None:

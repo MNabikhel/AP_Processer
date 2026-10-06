@@ -1,8 +1,10 @@
 azure-ai-documentintelligence>=1.0.0
 azure-identity>=1.17
+openpyxl>=3.1
 openai>=1.68
-pydantic>=2.6
-python-dotenv>=1.0
-# Optional: vision mode (page rendering for PDFs / TIFFs)
-pymupdf>=1.24
+pandas>=2.0
 pillow>=10
+pydantic>=2.6
+pymupdf>=1.24
+python-dotenv>=1.0
+streamlit>=1.62

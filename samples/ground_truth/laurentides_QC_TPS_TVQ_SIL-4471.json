@@ -1,0 +1,74 @@
+{
+  "vendor_name": "Services Informatiques Laurentides Inc.",
+  "invoice_number": "SIL-4471",
+  "invoice_date": "2026-10-01",
+  "currency": "CAD",
+  "supplier_province": "QC",
+  "ship_to_province": "QC",
+  "gst_hst_registration_number": "987654321 RT0001",
+  "qst_registration_number": "1234567890 TQ0001",
+  "subtotal": 2400.0,
+  "tax_lines": [
+    {
+      "tax_type": "GST",
+      "province": "",
+      "rate": 0.05,
+      "taxable_amount": 2400.0,
+      "tax_amount": 120.0
+    },
+    {
+      "tax_type": "QST",
+      "province": "QC",
+      "rate": 0.09975,
+      "taxable_amount": 2400.0,
+      "tax_amount": 239.4
+    }
+  ],
+  "tax_total": 359.4,
+  "grand_total": 2759.4,
+  "confidence_score": 1.0,
+  "line_items": [
+    {
+      "line_number": 1,
+      "description": "Entretien ménager des bureaux - octobre 2026",
+      "quantity": 1,
+      "unit_price": 1200.0,
+      "amount": 1200.0,
+      "predicted_gl_code": "6230",
+      "predicted_cost_center": "CC700",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Office cleaning."
+    },
+    {
+      "line_number": 2,
+      "description": "Fournitures de bureau - papier et cartouches de toner",
+      "quantity": 1,
+      "unit_price": 340.0,
+      "amount": 340.0,
+      "predicted_gl_code": "6000",
+      "predicted_cost_center": "CC700",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Office supplies."
+    },
+    {
+      "line_number": 3,
+      "description": "Réparation du système CVC (chauffage/climatisation)",
+      "quantity": 1,
+      "unit_price": 860.0,
+      "amount": 860.0,
+      "predicted_gl_code": "6220",
+      "predicted_cost_center": "CC700",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "HVAC repair."
+    }
+  ]
+}

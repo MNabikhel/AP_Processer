@@ -1,19 +1,77 @@
-"""Enterprise reference data: GL Chart of Accounts, Cost Centers and Tax Codes.
+"""Enterprise reference data: GL accounts (cost codes), optional cost centers and tax setup.
 
-Each list is loaded from CSV or JSON and rendered into a compact Markdown
-snapshot that is injected into the LLM system prompt.
+Lists are loaded from CSV/JSON files or from the local dashboard database and
+rendered into a compact Markdown snapshot that is injected into the LLM
+system prompt.
 """
 
 from __future__ import annotations
 
-import csv
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .csvio import read_csv_rows
+from .tax import TaxSetup, TaxTreatment, load_tax_mapping
 
 UNASSIGNED = "UNASSIGNED"
 
 _FALSE_VALUES = {"0", "false", "no", "n", "inactive"}
+
+# Header names commonly produced by ERP exports (Dynamics 365, SAP, NetSuite,
+# Sage, ...), matched case/punctuation-insensitively and renamed to the
+# canonical column so files load without manual editing.
+COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "gl_code": (
+        "gl_code",
+        "gl",
+        "gl_account",
+        "gl_account_number",
+        "account",
+        "account_number",
+        "account_no",
+        "account_code",
+        "main_account",
+        "mainaccount",
+        "g_l_account",
+        "natural_account",
+        "saknr",
+        "hkont",
+        "ledger_account",
+    ),
+    "cost_center": (
+        "cost_center",
+        "cost_centre",
+        "costcenter",
+        "costcentre",
+        "cost_center_code",
+        "cost_centre_code",
+        "cc",
+        "department_code",
+        "dept_code",
+        "kostl",
+    ),
+    "active": ("active", "is_active", "enabled", "status_active"),
+}
+
+
+def _norm_header(name: str) -> str:
+    return re.sub(r"[^0-9a-z]+", "_", name.strip().lower()).strip("_")
+
+
+def _canonical_headers(headers: list[str]) -> dict[str, str]:
+    """Map each original header to its canonical name (unchanged when no alias matches)."""
+    mapping = {h: h.strip() for h in headers}
+    present = {_norm_header(h) for h in headers}
+    for canonical, aliases in COLUMN_ALIASES.items():
+        if canonical in present:
+            continue  # an exact canonical column always wins
+        for header in headers:
+            if _norm_header(header) in aliases:
+                mapping[header] = canonical
+                break
+    return mapping
 
 
 @dataclass(frozen=True)
@@ -51,30 +109,21 @@ class ReferenceTable:
 @dataclass(frozen=True)
 class ReferenceData:
     chart_of_accounts: ReferenceTable
-    cost_centers: ReferenceTable
-    tax_codes: ReferenceTable | None = None
+    cost_centers: ReferenceTable | None = None
+    tax: TaxSetup = field(default_factory=TaxSetup.default)
     notes: list[str] = field(default_factory=list)
 
-    def tax_rate_values(self) -> set[float]:
-        if not self.tax_codes:
-            return set()
-        rates = set()
-        for row in self.tax_codes.rows:
-            try:
-                rates.add(round(float(row.get("rate", "")), 6))
-            except ValueError:
-                continue
-        return rates
-
     def to_prompt_context(self) -> str:
-        sections = [
-            "### GL Chart of Accounts\n" + self.chart_of_accounts.to_markdown(),
-            "### Cost Centers\n" + self.cost_centers.to_markdown(),
-        ]
-        if self.tax_codes:
-            sections.append(
-                "### Tax Codes (rate is a decimal fraction, e.g. 0.2 = 20%)\n" + self.tax_codes.to_markdown()
-            )
+        tax_gls = self.tax.tax_gl_codes()
+        expense_accounts = ReferenceTable(
+            self.chart_of_accounts.kind,
+            self.chart_of_accounts.key_column,
+            [r for r in self.chart_of_accounts.rows if r[self.chart_of_accounts.key_column] not in tax_gls],
+        )
+        sections = ["### GL Accounts (use for line items)\n" + expense_accounts.to_markdown()]
+        if self.cost_centers is not None:
+            sections.append("### Cost Centers\n" + self.cost_centers.to_markdown())
+        sections.append("### Canadian Sales Tax Rates in force today\n" + self.tax.rates.to_markdown())
         if self.notes:
             sections.append("### Coding Policy Notes\n" + "\n".join(f"- {n}" for n in self.notes))
         return "\n\n".join(sections)
@@ -83,8 +132,7 @@ class ReferenceData:
 def _read_rows(path: Path) -> list[dict[str, str]]:
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        with path.open(newline="", encoding="utf-8-sig") as fh:
-            return [dict(row) for row in csv.DictReader(fh)]
+        return read_csv_rows(path)
     if suffix == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, dict):
@@ -104,17 +152,22 @@ def load_table(path: str | Path, kind: str, key_column: str) -> ReferenceTable:
     raw_rows = _read_rows(path)
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
+    headers = [k for k in (raw_rows[0].keys() if raw_rows else []) if k is not None]
+    rename = _canonical_headers(headers)
+    if raw_rows and key_column not in rename.values():
+        raise ValueError(
+            f"{path}: missing required column {key_column!r}. Found columns: {', '.join(headers)}. "
+            f"Rename your code column to {key_column!r} (accepted aliases: {', '.join(COLUMN_ALIASES[key_column])})"
+        )
     for i, raw in enumerate(raw_rows, start=1):
-        row = {k.strip(): (v or "").strip() for k, v in raw.items() if k is not None}
-        if key_column not in row:
-            raise ValueError(f"{path}: missing required column {key_column!r}")
+        row = {rename.get(k, k.strip()): (v or "").strip() for k, v in raw.items() if k is not None}
         code = row[key_column]
         if not code:
             raise ValueError(f"{path}: row {i} has an empty {key_column!r}")
         if code in seen:
             raise ValueError(f"{path}: duplicate {key_column} {code!r}")
         # Optional "active" column lets finance keep retired codes in the file.
-        if row.get("active", "").lower() in _FALSE_VALUES:
+        if row.get("active", "").strip().lower() in _FALSE_VALUES:
             continue
         row.pop("active", None)
         seen.add(code)
@@ -124,22 +177,29 @@ def load_table(path: str | Path, kind: str, key_column: str) -> ReferenceTable:
     return ReferenceTable(kind=kind, key_column=key_column, rows=rows)
 
 
+def parse_policy_notes(text: str) -> list[str]:
+    return [
+        line.strip().lstrip("-* ").strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
 def load_reference_data(
     chart_of_accounts: str | Path,
-    cost_centers: str | Path,
-    tax_codes: str | Path | None = None,
+    cost_centers: str | Path | None = None,
+    tax_mapping: str | Path | None = None,
     policy_notes: str | Path | None = None,
+    tax_rates: str | Path | None = None,
 ) -> ReferenceData:
-    notes: list[str] = []
-    if policy_notes:
-        notes = [
-            line.strip().lstrip("-* ").strip()
-            for line in Path(policy_notes).read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
+    from .tax import TaxRateTable
+
+    notes = parse_policy_notes(Path(policy_notes).read_text(encoding="utf-8")) if policy_notes else []
+    treatments: dict[str, TaxTreatment] = load_tax_mapping(tax_mapping) if tax_mapping else {}
+    rates = TaxRateTable.load(tax_rates) if tax_rates else TaxRateTable.load()
     return ReferenceData(
         chart_of_accounts=load_table(chart_of_accounts, "GL account", "gl_code"),
-        cost_centers=load_table(cost_centers, "cost center", "cost_center"),
-        tax_codes=load_table(tax_codes, "tax code", "tax_code") if tax_codes else None,
+        cost_centers=load_table(cost_centers, "cost center", "cost_center") if cost_centers else None,
+        tax=TaxSetup(rates, treatments),
         notes=notes,
     )

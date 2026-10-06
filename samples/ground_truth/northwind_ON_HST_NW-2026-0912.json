@@ -1,0 +1,90 @@
+{
+  "vendor_name": "Northwind IT Solutions Inc.",
+  "invoice_number": "NW-2026-0912",
+  "invoice_date": "2026-09-14",
+  "currency": "CAD",
+  "supplier_province": "ON",
+  "ship_to_province": "ON",
+  "gst_hst_registration_number": "123456789 RT0001",
+  "qst_registration_number": "",
+  "subtotal": 15945.0,
+  "tax_lines": [
+    {
+      "tax_type": "HST",
+      "province": "ON",
+      "rate": 0.13,
+      "taxable_amount": 15945.0,
+      "tax_amount": 2072.85
+    }
+  ],
+  "tax_total": 2072.85,
+  "grand_total": 18017.85,
+  "confidence_score": 1.0,
+  "line_items": [
+    {
+      "line_number": 1,
+      "description": "Dell Latitude 7450 laptop, 32GB RAM",
+      "quantity": 3,
+      "unit_price": 1450.0,
+      "amount": 4350.0,
+      "predicted_gl_code": "6010",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Below 2,500 per unit."
+    },
+    {
+      "line_number": 2,
+      "description": "Dell PowerEdge R760 rack server - datacentre",
+      "quantity": 1,
+      "unit_price": 8900.0,
+      "amount": 8900.0,
+      "predicted_gl_code": "1500",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Above threshold."
+    },
+    {
+      "line_number": 3,
+      "description": "Microsoft 365 E3 licences - monthly",
+      "quantity": 25,
+      "unit_price": 32.0,
+      "amount": 800.0,
+      "predicted_gl_code": "6020",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Monthly SaaS."
+    },
+    {
+      "line_number": 4,
+      "description": "Implementation consulting - endpoint rollout (hours)",
+      "quantity": 12,
+      "unit_price": 150.0,
+      "amount": 1800.0,
+      "predicted_gl_code": "6110",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Consulting."
+    },
+    {
+      "line_number": 5,
+      "description": "Delivery & handling",
+      "quantity": 1,
+      "unit_price": 95.0,
+      "amount": 95.0,
+      "predicted_gl_code": "6800",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Delivery on non-inventory goods."
+    }
+  ]
+}

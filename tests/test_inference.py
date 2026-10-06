@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ap_coder.config import EngineSettings, OpenAISettings, Settings
+from ap_coder.config import OpenAISettings, Settings
 from ap_coder.extraction import result_from_text
 from ap_coder.imaging import PageImage
 from ap_coder.inference import CodingError, InvoiceCoder, ModelProfile
@@ -37,7 +37,7 @@ def test_code_sends_strict_schema_and_parses(settings, reference, ground_truth, 
 
     result = coder.code(result_from_text(sample_markdown_path))
 
-    assert result.coding.invoice_number == "INV-2026-04471"
+    assert result.coding.invoice_number == "NW-2026-0912"
     assert result.usage == {
         "prompt_tokens": 1000,
         "completion_tokens": 200,
@@ -51,7 +51,7 @@ def test_code_sends_strict_schema_and_parses(settings, reference, ground_truth, 
     assert call["max_completion_tokens"] == 8000
     assert call["response_format"]["json_schema"]["strict"] is True
     system, user = call["messages"]
-    assert system["role"] == "system" and "Chart of Accounts" in system["content"]
+    assert system["role"] == "system" and "GL Accounts" in system["content"]
     assert "CC410" in system["content"]
     assert "Carried forward" in user["content"]
 
@@ -119,8 +119,16 @@ def test_terminal_failures(settings, reference, sample_markdown_path, kwargs, ma
         InvoiceCoder(settings, reference, client=client).code(result_from_text(sample_markdown_path))
 
 
-def test_tax_rate_field_prompt(reference):
-    settings = Settings(engine=EngineSettings(include_tax_rate=True))
+def test_history_is_sent_with_the_document(settings, reference, ground_truth, sample_markdown_path):
+    client = FakeOpenAI(make_completion(json.dumps(ground_truth)))
+    coder = InvoiceCoder(settings, reference, client=client)
+    coder.code(result_from_text(sample_markdown_path), history="## Approved coding history from your AP team\n| x |")
+    system, user = client.calls[0]["messages"]
+    assert user["content"].startswith("## Approved coding history")
+    assert "Approved coding history" not in system["content"].split("# Enterprise Reference Data")[1]
+
+
+def test_prompt_mentions_canadian_taxes(settings, reference):
     coder = InvoiceCoder(settings, reference, client=FakeOpenAI())
-    assert "predicted_tax_rate" in coder.system_prompt
-    assert "predicted_tax_rate" in coder.schema["properties"]["line_items"]["items"]["properties"]
+    assert "QST" in coder.system_prompt and "TVQ" in coder.system_prompt
+    assert "tax_lines" in coder.schema["properties"]

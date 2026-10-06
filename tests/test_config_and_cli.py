@@ -29,9 +29,9 @@ def test_settings_from_env(monkeypatch, tmp_path):
 
 
 def test_cli_schema_command(capsys):
-    assert cli.main(["schema", "--tax-rate-field"]) == 0
+    assert cli.main(["--db", "missing.db", "schema"]) == 0
     schema = json.loads(capsys.readouterr().out)
-    assert "predicted_tax_rate" in schema["properties"]["line_items"]["items"]["properties"]
+    assert "taxes_applied" in schema["properties"]["line_items"]["items"]["properties"]
 
 
 def test_cli_evaluate_command(capsys):
@@ -41,6 +41,6 @@ def test_cli_evaluate_command(capsys):
 
 
 def test_render_sample_pdf_pages():
-    pdf = SAMPLES / "contoso_invoice_INV-2026-04471.pdf"
+    pdf = SAMPLES / "northwind_ON_HST_NW-2026-0912.pdf"
     images = render_page_images(pdf, max_pages=1)
     assert len(images) == 1 and images[0].data.startswith(b"\x89PNG")

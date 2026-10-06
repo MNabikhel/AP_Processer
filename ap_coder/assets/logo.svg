@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="40" viewBox="0 0 200 40" role="img" aria-label="AP Coder">
+  <rect x="0" y="2" width="36" height="36" rx="9" fill="#2a78d6"/>
+  <path d="M11 10h14v20l-2.33-1.6L20.33 30 18 28.4 15.67 30l-2.34-1.6L11 30z" fill="#ffffff"/>
+  <rect x="14" y="15" width="8" height="1.8" rx="0.9" fill="#2a78d6"/>
+  <rect x="14" y="19.5" width="8" height="1.8" rx="0.9" fill="#2a78d6"/>
+  <text x="46" y="27" font-family="Source Sans Pro, Segoe UI, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#ffffff">AP Coder</text>
+</svg>
