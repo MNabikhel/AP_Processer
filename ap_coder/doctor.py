@@ -52,7 +52,7 @@ def _scrub(message: str, settings: Settings) -> str:
         settings.document_intelligence.endpoint,
         settings.document_intelligence.api_key,
     ):
-        if secret:
+        if secret and len(secret) >= 8:  # short values would mangle ordinary words
             message = message.replace(secret.rstrip("/"), "<redacted>")
     message = " ".join(message.split())
     return message[:400]

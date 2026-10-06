@@ -1,217 +1,228 @@
-# Enterprise AP Invoice Coder Engine (PoC)
+# AP Invoice Coder (prototype)
 
-Phase 1 proof of concept for automated Accounts Payable invoice coding on Azure. A single
-Python pipeline chains:
+An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
 
-1. **Extraction (Step 2):** Azure AI Document Intelligence (`prebuilt-layout` or `prebuilt-invoice`)
-   turns a raw PDF, TIFF or image invoice into reading-order Markdown with multi-page tables preserved.
-2. **Inference & GL coding (Step 3):** Azure OpenAI (`gpt-4o`, `gpt-4o-mini`, or any newer
-   deployment) reads that Markdown with a snapshot of the Chart of Accounts, Cost Centers and Tax
-   Codes. It returns the target JSON, enforced natively by **Structured Outputs (`strict: true`)**.
-
-Deterministic controls then reconcile the numbers, check every code and decide whether a person
-needs to review the invoice.
+1. **Extraction:** Azure AI Document Intelligence (`prebuilt-layout` or `prebuilt-invoice`) turns
+   a PDF, TIFF or image invoice into reading-order Markdown, keeping multi-page tables intact.
+2. **Coding:** Azure OpenAI (`gpt-4o`, `gpt-4o-mini` or any newer deployment) reads the
+   Markdown and returns structured output, enforced by **Structured Outputs (`strict: true`)**:
+   - the invoice header and every line item
+   - every sales tax charged (**GST, HST, PST, QST**)
+   - a GL account and optional cost center for each line
+3. **Controls:** deterministic checks, done in code rather than by the AI:
+   - totals reconcile
+   - tax amount = taxable amount × rate, at the official rate for the province and date
+   - the right tax regime for the province
+   - QST is charged on the pre-GST amount
+   - supplier registration numbers are present
+   - possible duplicate invoices
+   - agreement with past reviewer decisions
+4. **GL distribution:** posting lines that add up to the grand total:
+   - recoverable GST/HST and QST go to their own receivable accounts
+   - non-recoverable PST is added pro rata to the expense lines it applies to
+5. **Review dashboard and learning:** a local web app where AP reviews and approves each invoice.
+   Every approved line is remembered as *confirmed* or *corrected* and shown to the AI on the next
+   invoice from that vendor. Accuracy is tracked against the 90% target.
 
 ```
-invoice.pdf/.tiff/.png ──► Document Intelligence ──► Markdown + tables + OCR confidence
-                              (prebuilt-layout |        (+ invoice field hints)
-                               prebuilt-invoice)                 │
-                                                                 ▼
- Chart of Accounts ┐                                  Azure OpenAI Chat Completions
- Cost Centers      ├─► system prompt (stable prefix) ─►  response_format = json_schema
- Tax Codes, Policy ┘                                   strict, GL/CC codes as enums
-                                     (optional page images in vision mode)
-                                                                 │
-                                                                 ▼
-                                          Pydantic re-validation (+1 repair round-trip)
-                                                                 │
-                                                                 ▼
-                                   Validation: totals reconcile, codes exist, DI cross-check
-                                   → adjusted confidence + requires_review flag
-                                                                 │
-                                                                 ▼
-                          <stem>.json (target schema) · <stem>.validation.json · <stem>.extraction.md
+invoice ─► Document Intelligence ─► Markdown + tables + OCR confidence
+                                              │
+GL accounts, cost centers, tax rates, policy ─┤   past approvals for this vendor
+                                              ▼   (learning memory) ──────────┐
+                              Azure OpenAI, strict JSON schema ◄──────────────┘
+                              (only your GL codes allowed; tax lines per type)
+                                              │
+                                              ▼
+                     Checks: totals · tax math · province rates · QST base · registration #s
+                             duplicates · history conflicts → confidence + review flag
+                                              │
+                                              ▼
+                     GL distribution (tax GLs, PST into expense lines) ─► Review dashboard
+                                                                               │ approve
+                                                                               ▼
+                                                     learning memory + accuracy tracking
 ```
 
-> **Running this on real enterprise data?** Follow [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
-> All your data stays in the git-ignored `private/` folder. Only redacted reports (`doctor`, `share-report`)
-> are meant to leave your machine.
+> **Running this on real data?** Follow [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Everything
+> stays in the git-ignored `private/` folder, and the dashboard only listens on `localhost`. Only redacted
+> reports (`doctor`, `share-report`) are meant to leave your machine.
 
 ## Quick start
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"          # or: pip install -r requirements.txt
-cp .env.example .env              # fill in endpoints/keys, or leave keys empty to use Entra ID (az login)
+pip install -e ".[dev]"
+cp .env.example .env              # endpoints/keys, or leave keys empty to use Entra ID (az login)
 
-# Check configuration, reference data and Azure connectivity
-python -m ap_coder doctor --online
-
-# Full chain on a real document (a synthetic 2-page sample is included); results go to private/output
-python -m ap_coder process samples/contoso_invoice_INV-2026-04471.pdf
-
-# A whole folder, 4 invoices in parallel, prebuilt-invoice model, page images attached
-python -m ap_coder process ./inbox --extraction-model prebuilt-invoice --vision --workers 4
-
-# Skip Document Intelligence: feed already-extracted Markdown straight to the LLM
-python -m ap_coder process samples/contoso_invoice_INV-2026-04471.md
-
-# Measure accuracy against hand-labelled ground truth (the >90% gate for Phase 2)
-python -m ap_coder evaluate --ground-truth samples/ground_truth --show-mismatches
+python -m ap_coder doctor --online   # check configuration and Azure connectivity
+python -m ap_coder dashboard         # review app on http://localhost:8501
 ```
 
-Other commands:
+In the dashboard:
+1. **GL accounts & tax** → *Load sample setup*, or import your own accounts.
+2. **Process invoices** → upload the PDFs in `samples/`.
+3. **Review queue** → review and approve.
+
+## Dashboard
+
+| Page | What it does |
+|---|---|
+| **Review queue** | Invoice image beside the editable header; live **Checks**; a full-width line grid (GL account and cost center are dropdowns of your codes, with descriptions; taxes per line); tax lines with a tax-check table (rate vs official rate, base × rate, where it posts); and a **GL distribution** preview. *Approve & teach the AI*, *Reject* or *Delete*; approved distributions can be exported to CSV. |
+| **Process invoices** | Upload files, or process new files dropped into `private/invoices/`. |
+| **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete and download them. Optional cost centers. Map each tax type to its treatment and GL. Edit plain-English coding policy. |
+| **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). |
+
+## Canadian sales tax
+
+Rates live in [`data/canada_tax_rates.csv`](data/canada_tax_rates.csv) with effective dates. For
+example, Nova Scotia HST was 15% until 2025-03-31 and 14% from 2025-04-01. Edit that file when a
+rate changes.
+
+| Check | Severity |
+|---|---|
+| Tax amount ≠ taxable amount × rate (±1¢ per line of vendor rounding) | error |
+| Tax type not levied in that province (e.g. PST in Ontario) | error |
+| QST calculated on the GST-inclusive amount | error |
+| Tax lines don't add up to the tax total | error |
+| Tax type charged but no GL mapped in Tax setup | error |
+| Rate differs from the official rate for the province and invoice date | warning |
+| Wrong regime for the place of supply (e.g. GST only in an HST province) | warning |
+| PST/QST not charged where expected (self-assessment may be required) | warning |
+| Lines marked as taxable don't add up to the taxable amount | warning |
+| GST/HST or QST registration number missing or malformed (needed for ITC/ITR) | warning |
+
+Posting treatment per tax type is configured in the dashboard:
+- *Recoverable* posts to its own GL account. This is the default for GST, HST and QST.
+- *Add to each expense line's GL* allocates the tax pro rata across the lines it applies to. This is
+  the default for PST.
+- *Separate expense GL* posts it to one account of your choice.
+
+## Learning from reviewers
+
+This is a memory of your team's decisions. No model is retrained.
+
+- **On approval**, each line is stored with the AI's suggestion, the final coding, the reviewer,
+  and whether the reviewer *confirmed* or *corrected* it.
+- **On the next invoice**, the vendor is recognised in the document. That vendor's past decisions,
+  plus similar lines from other vendors, are added to the prompt; corrections are marked as
+  explicit overrides. A correction therefore takes effect immediately.
+- **Reinforcement:** if the AI agrees with an established pattern for that vendor, the dashboard
+  says so. If it disagrees, the line is flagged `HISTORY_CONFLICT`.
+- **Accuracy** (lines confirmed ÷ lines reviewed) is tracked overall, weekly and per vendor.
+
+## Commands
 
 | Command | Purpose |
 |---|---|
-| `doctor [--online]` | Setup, reference-data and connectivity check. Output contains no secrets or URLs. |
-| `process <files/dirs…>` | Full extract → code → validate pipeline into `private/output`. Exit code 1 if any invoice failed. |
+| `dashboard [--port]` | The review app (localhost only). |
+| `doctor [--online]` | Setup, reference-data, tax-mapping and connectivity check. No secrets or URLs in the output. |
+| `process <files/dirs…>` | Batch pipeline. Results go to `private/output` **and** the dashboard queue (`--no-db` to skip). Uses the learning memory. |
+| `share-report [--include-codes]` | Redacted summary of the dashboard database (or an output folder): no vendor names, amounts, descriptions or file names. |
 | `extract <files/dirs…>` | Document Intelligence only; writes `.extraction.md` and raw `.di.json`. |
-| `labels [--blind]` | Excel workbook (dropdowns of valid codes, text-typed cells) for the AP team to correct into ground truth. |
-| `evaluate [--ground-truth]` | Header, GL and cost-center accuracy against the target (default 0.9). Accepts a JSON folder, `.xlsx` or `.csv`. |
-| `share-report [--ground-truth] [--include-codes]` | Redacted aggregate summary: no vendor names, amounts, descriptions or file names. |
-| `schema [--tax-rate-field]` | Prints the exact strict JSON Schema sent to Azure OpenAI. |
+| `labels` / `evaluate` | Spreadsheet-based ground truth and scoring, as an alternative to dashboard review. |
+| `schema` | Prints the exact strict JSON Schema sent to Azure OpenAI. |
 
-Reference data is looked up in this order: `AP_REFERENCE_DIR`, then `private/reference/`, then the
-bundled samples in `data/`. Individual files can be overridden with `--coa`, `--cost-centers`,
-`--tax-codes` and `--policy`. CSV and JSON are both accepted. Common ERP headers (*Main account*,
-*GL Account*, *SAKNR*, *Cost Centre*, *KOSTL*, *VAT code*, …) are recognised without renaming,
-and tax rates may be written `0.2`, `20` or `20%`. Set an `active` column to `false` to retire a
-code without deleting it.
+Reference data comes from the dashboard database once GL accounts are imported. For command-line
+use without the dashboard, CSV files are looked up in this order: `AP_REFERENCE_DIR`, then
+`private/reference/`, then the samples in `data/`. Individual files can be given with `--coa`,
+`--cost-centers`, `--tax-mapping` and `--policy`.
 
 ## Output
 
-`private/output/<stem>.json` contains **exactly** the target schema, with no Markdown wrappers and no extra keys:
+Each invoice produces the original target fields plus the Canadian tax fields, and a computed
+`gl_distribution` (abbreviated here; this is the BC sample):
 
 ```json
 {
-  "vendor_name": "Contoso Cloud Solutions Ltd",
-  "invoice_number": "INV-2026-04471",
-  "invoice_date": "2026-09-14",
-  "currency": "GBP",
-  "subtotal": 23745.0,
-  "tax_total": 4749.0,
-  "grand_total": 28494.0,
+  "vendor_name": "Pacific Office Supply Ltd.",
+  "invoice_number": "PO-77120",
+  "invoice_date": "2026-10-05",
+  "currency": "CAD",
+  "supplier_province": "BC",
+  "ship_to_province": "BC",
+  "gst_hst_registration_number": "555666777 RT0001",
+  "qst_registration_number": "",
+  "subtotal": 2726.0,
+  "tax_lines": [
+    {"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": 2726.0, "tax_amount": 136.3},
+    {"tax_type": "PST", "province": "BC", "rate": 0.07, "taxable_amount": 2726.0, "tax_amount": 190.82}
+  ],
+  "tax_total": 327.12,
+  "grand_total": 3053.12,
   "confidence_score": 0.93,
   "line_items": [
     {
-      "line_number": 4,
-      "description": "Dell PowerEdge R760 rack server - IT Operations datacentre",
-      "quantity": 1,
-      "unit_price": 8900.0,
-      "amount": 8900.0,
-      "predicted_gl_code": "1500",
+      "line_number": 2,
+      "description": "Dell 27\" monitor P2725H (G, P)",
+      "quantity": 4, "unit_price": 329.0, "amount": 1316.0,
+      "predicted_gl_code": "6010",
       "predicted_cost_center": "CC400",
-      "reasoning_justification": "Unit cost 8,900 exceeds the 2,500 capitalisation threshold, so Computer Equipment (asset); explicitly for IT Operations; standard VAT 20%."
+      "taxes_applied": ["GST", "PST"],
+      "reasoning_justification": "Monitors below the capitalisation threshold; GST 5% + BC PST 7%."
     }
+  ],
+  "gl_distribution": [
+    {"kind": "expense", "line_number": 2, "gl_code": "6010", "cost_center": "CC400",
+     "net_amount": 1316.0, "non_recoverable_tax": 92.12, "amount": 1408.12, "description": "Dell 27\" monitor P2725H (G, P)"},
+    {"kind": "tax", "line_number": null, "gl_code": "2310", "cost_center": "",
+     "net_amount": 0.0, "non_recoverable_tax": 0.0, "amount": 136.3, "description": "GST 5% (recoverable)"}
   ]
 }
 ```
 
-The audit trail goes in sidecar files so it never pollutes the contract:
-
-* `<stem>.validation.json`: extraction stats (pages, tables, mean OCR word confidence), model,
-  token usage including cached prompt tokens, repair attempts, every validation issue,
-  `adjusted_confidence` and `requires_review`.
-* `<stem>.extraction.md`: the Markdown the LLM actually saw.
-* `batch_summary.json`: one row per invoice.
-
 ## Design decisions
 
-**Structured Outputs, natively enforced.** The schema is hand-written in `ap_coder/schema.py` to
-satisfy strict-mode rules: every object has `additionalProperties: false`, and every property is
-required. It is sent as `response_format={"type":"json_schema","json_schema":{"strict":true,...}}`.
-The response is re-validated with a Pydantic mirror, which checks `YYYY-MM-DD` dates and keeps
-confidence in [0, 1]. If a value-level check fails, the model gets one repair round-trip.
-
-**Codes cannot be invented.** When the reference lists fit Structured Outputs enum limits, the
-valid GL codes and cost centers are embedded in the schema as `enum`s, plus an `UNASSIGNED`
-escape hatch. The model therefore cannot return an account that does not exist. If it is
-unsure, it says so, and the invoice goes to review instead of being posted to a wrong account.
-Larger charts fall back automatically to free text plus local validation (`AP_CONSTRAIN_CODES`).
-
-**Tax rate.** The target schema has no tax field, so by default the model determines the rate
-from the Tax Codes table and states it in `reasoning_justification`. With `--tax-rate-field` (or
-`AP_INCLUDE_TAX_RATE=true`), `predicted_tax_rate` is added to every line. The engine then also
-checks that rate against the tax table and checks that `Σ amount × rate ≈ tax_total`.
-
-**Model-agnostic and ready for vision.** Deployment names are arbitrary, so capabilities are
-inferred from `AZURE_OPENAI_MODEL_NAME`:
-
-* Reasoning models (o-series, gpt-5) do not receive `temperature` or `seed`, and do receive
-  `reasoning_effort`.
-* Text-only models never receive images.
-
-Vision mode (`--vision`) renders up to `AP_VISION_MAX_PAGES` pages (PyMuPDF for PDFs, Pillow for
-multi-frame TIFFs) and sends them with the Markdown. Moving to a newer model is a configuration
-change, not a code change.
-
-**Prompt caching friendly.** Instructions plus the reference-data snapshot form an identical
-system-message prefix for every invoice, so Azure OpenAI prompt caching discounts it across a
-batch. The invoice content comes last.
-
-**Deterministic controls on top of the LLM** (`ap_coder/validation.py`):
-
-| Check | Severity |
-|---|---|
-| GL / cost center not in reference data | error |
-| `Σ line amounts ≠ subtotal` (cent-level, ±1¢ per line rounding) | error |
-| `subtotal + tax ≠ grand_total` (±2¢) | error |
-| Missing vendor / invoice number / no line items | error |
-| `UNASSIGNED` code, `qty × unit_price ≠ amount`, non-sequential lines | warning |
-| Mean OCR word confidence < 0.90 | warning |
-| Disagreement with `prebuilt-invoice` fields (InvoiceId, date, totals) | warning |
-
-`adjusted_confidence = model confidence × 0.6 per error × 0.9 per warning`. An invoice gets
-`requires_review = true` if it has any error, or if its adjusted confidence is below
-`AP_REVIEW_THRESHOLD` (default 0.85). This flag is meant to drive the Phase 2 Power Apps review queue.
-
-**Cheap iteration.** Document Intelligence results are cached on disk in `.cache/extraction`,
-keyed by file hash and options. Prompt or model experiments can therefore rerun over a corpus
-without paying for OCR again.
-
-**Enterprise auth.** If a key is not set, both services use Entra ID through
-`DefaultAzureCredential` (managed identity in Azure, `az login` locally). The OpenAI SDK retries
-429 and 5xx responses with backoff and honours `Retry-After` (`AZURE_OPENAI_MAX_RETRIES`).
+- **Structured Outputs, natively enforced.** The schema (`ap_coder/schema.py`) follows strict-mode
+  rules: closed objects, all properties required. A Pydantic mirror re-validates values (dates,
+  provinces, tax types, rate ranges). If that fails, the model gets one repair round-trip.
+- **Codes cannot be invented.** Your GL codes (excluding the tax accounts) and cost centers are
+  embedded in the schema as `enum`s, plus an `UNASSIGNED` escape hatch. Very large charts fall
+  back to free text plus local validation (`AP_CONSTRAIN_CODES`).
+- **The AI reads; code does the arithmetic.** The model copies tax lines exactly as printed.
+  Rates, regimes and amounts are verified in Python, and the GL distribution is computed in
+  Python, so the posting always balances.
+- **Model-agnostic and ready for vision.** Capabilities are inferred from
+  `AZURE_OPENAI_MODEL_NAME`:
+  - reasoning models get `reasoning_effort` instead of `temperature`/`seed`
+  - `--vision` sends page images to models that can read them
+- **Prompt-cache friendly.** Instructions and reference data form a stable system prompt. History
+  and the document go in the user message.
+- **Cheap iteration.** Document Intelligence results are cached by file hash, so re-runs only pay
+  for the LLM.
+- **Enterprise auth.** Without keys, both services use Entra ID (`DefaultAzureCredential`). The
+  SDK retries 429 and 5xx responses with backoff.
 
 ## Project layout
 
 ```
 ap_coder/
-  config.py          env-driven settings (.env supported)
-  extraction.py      Component 1 – Document Intelligence → ExtractionResult (+ cache)
-  imaging.py         page rendering for vision mode
-  reference_data.py  CoA / cost center / tax code loaders + prompt snapshot
-  prompts.py         system prompt (extraction + GL coding rules)
+  extraction.py      Document Intelligence → ExtractionResult (+ cache)
+  inference.py       Azure OpenAI Structured Outputs, model profiles, repair loop
+  prompts.py         system prompt (extraction, Canadian tax, GL coding, learning rules)
   schema.py          strict JSON Schema + Pydantic mirror
-  inference.py       Component 2 – Azure OpenAI Structured Outputs, model profiles, repair loop
+  tax.py             Canadian rates, tax checks, GL distribution
+  memory.py          learning memory: example selection, history comparison
+  store.py           local SQLite: GL accounts, tax setup, invoices, feedback, metrics
   validation.py      deterministic controls, adjusted confidence, review flag
-  pipeline.py        unified extract → code → validate → persist chain, batch runner
-  evaluation.py      accuracy scoring vs ground truth
-  labels.py          Excel/CSV labelling workbook export + import
-  share_report.py    redacted, paste-safe run summary
-  doctor.py          configuration / reference data / connectivity checks
-  cli.py             `python -m ap_coder …`
-data/                sample Chart of Accounts, cost centers, tax codes, coding policy
-samples/             synthetic 2-page invoice (PDF + extracted Markdown) and its ground truth
-scripts/             sample PDF generator
-docs/                GETTING_STARTED.md – step-by-step guide for running on enterprise data
-private/             git-ignored home for your invoices, reference exports, outputs and labels
+  pipeline.py        extract → code → validate → store
+  dashboard.py       Streamlit review app;  review.py: grid edits → InvoiceCoding
+  doctor.py · share_report.py · labels.py · evaluation.py · reference_data.py · cli.py
+data/                sample GL accounts, cost centers, tax rates and mapping, coding policy
+samples/             synthetic ON (HST), QC (TPS/TVQ) and BC (GST+PST) invoices + ground truth
+scripts/             sample invoice generator
+docs/                GETTING_STARTED.md: step-by-step guide for running on enterprise data
+private/             git-ignored: database, invoices, outputs
 tests/               offline test suite (Azure clients mocked)
 ```
 
-Run the tests with `pytest`, and lint with `ruff check . && ruff format --check .`.
+Run the tests with `pytest`; lint with `ruff check . && ruff format --check .`.
 
 ## Phase 2 hooks
 
-The pipeline is a pure function from a document path to an output plus a report.
-`InvoicePipeline.process()` can therefore be wrapped directly:
-
-* **Ingestion:** a Logic App or Power Automate flow drops attachments in Blob Storage. A Service
-  Bus message carries the blob URL, and an Azure Function or Container App worker downloads the
-  blob and calls `process()`.
-* **Throughput:** Service Bus absorbs month-end spikes. Set worker concurrency
-  (`--workers` today) to the AOAI TPM quota. Built-in retries handle 429 responses.
-* **Human-in-the-loop:** `<stem>.validation.json` already contains `requires_review`,
-  `adjusted_confidence` and line-level issues, ready to write to Dataverse for the Power Apps review
-  dashboard before ERP posting.
+- **Ingestion:** Logic Apps / Power Automate → Blob Storage → a Service Bus message → a worker
+  calling `InvoicePipeline.process()`.
+- **Throughput:** Service Bus absorbs month-end spikes. Set worker concurrency to the Azure OpenAI
+  tokens-per-minute quota.
+- **Human-in-the-loop at scale:** the store's invoice, feedback and metrics tables map directly to
+  Dataverse, either for a Power Apps version of the review screen or for hosting this dashboard
+  behind Entra ID sign-in.
