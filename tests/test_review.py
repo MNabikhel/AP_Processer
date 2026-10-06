@@ -45,3 +45,11 @@ def test_invalid_edits_are_reported_not_raised(ground_truth):
     header["invoice_date"] = "14/09/2026"
     coding, problems = coding_from_inputs(header, lines, taxes, ground_truth)
     assert coding is None and any("invoice_date" in p for p in problems)
+
+
+def test_tax_rates_edited_as_percentages(ground_truth):
+    header, lines, taxes = _inputs(ground_truth)
+    taxes.insert(2, "rate_pct", taxes.pop("rate") * 100)  # what the dashboard grid shows
+    coding, problems = coding_from_inputs(header, lines, taxes, ground_truth)
+    assert problems == []
+    assert [t.rate for t in coding.tax_lines] == [t["rate"] for t in ground_truth["tax_lines"]]

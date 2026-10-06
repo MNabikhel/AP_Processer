@@ -96,7 +96,8 @@ def gl_label_map(reference: ReferenceData | None) -> dict[str, str]:
     labels = {UNASSIGNED: f"{UNASSIGNED} · needs a code", "": "(none)"}
     if reference is not None:
         for row in reference.chart_of_accounts.rows:
-            labels[row["gl_code"]] = f"{row['gl_code']} · {row.get('description', '')[:60]}"
+            name = row.get("description", "").split(" - ")[0]
+            labels[row["gl_code"]] = f"{row['gl_code']} · {name[:40]}"
     return labels
 
 
@@ -109,7 +110,7 @@ def cc_label_map(reference: ReferenceData | None) -> dict[str, str]:
     labels = {UNASSIGNED: f"{UNASSIGNED} · needs a cost center", "": "(none)"}
     if reference is not None and reference.cost_centers is not None:
         for row in reference.cost_centers.rows:
-            labels[row["cost_center"]] = f"{row['cost_center']} · {row.get('description', '')[:50]}"
+            labels[row["cost_center"]] = f"{row['cost_center']} · {row.get('description', '')[:30]}"
     return labels
 
 
@@ -486,7 +487,8 @@ def _checks_html(report: Any) -> str:
         lines = ", ".join(str(h["line_number"]) for h in matches)
         items.append(ui.check("info", "Learned", f"Line {lines} matches how reviewers coded this vendor before."))
     if not report.issues:
-        items.append(ui.check("ok", "All clear", "Totals reconcile, taxes verified, all codes valid."))
+        title = "Numbers check out" if report.requires_review else "All clear"
+        items.append(ui.check("ok", title, "Totals reconcile, taxes verified, all codes valid."))
     return "".join(items)
 
 
@@ -576,13 +578,13 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         checks_box = card("checks")
         with card("details"):
             st.markdown("#### :material/badge: Invoice details")
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3 = st.columns([2, 1.2, 1.2])
             header: dict[str, Any] = {
                 "vendor_name": c1.text_input("Vendor", ai.get("vendor_name", ""), key=f"{key}_vendor"),
                 "invoice_number": c2.text_input("Invoice #", ai.get("invoice_number", ""), key=f"{key}_number"),
                 "invoice_date": c3.text_input("Date (YYYY-MM-DD)", ai.get("invoice_date", ""), key=f"{key}_date"),
             }
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3 = st.columns([1, 2, 2])
             header["currency"] = c1.text_input("Currency", ai.get("currency", "CAD"), key=f"{key}_cur")
             prov_label = {
                 p: f"{p} · {PROVINCE_NAMES.get(p, 'Outside Canada' if p else 'Unknown')}" for p in PROVINCE_VALUES
@@ -630,7 +632,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 gl_options.append(code)  # keep unknown codes visible so they can be fixed
         column_config: dict[str, Any] = {
             "line_number": st.column_config.NumberColumn("#", width="small", step=1),
-            "description": st.column_config.TextColumn("Description", width="medium"),
+            "description": st.column_config.TextColumn("Description", width="large"),
             "quantity": st.column_config.NumberColumn("Qty", format="%.2f"),
             "unit_price": st.column_config.NumberColumn("Unit price", format="%.2f"),
             "amount": st.column_config.NumberColumn("Amount", format="%.2f"),
@@ -638,7 +640,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 "GL account",
                 options=gl_options,
                 format_func=lambda c: gl_labels.get(c, f"{c} · unknown code"),
-                width="large",
+                width="medium",
                 required=True,
             ),  # fmt: skip
             "taxes_applied": st.column_config.MultiselectColumn("Taxes", options=list(TAX_TYPES)),
@@ -666,6 +668,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             ai.get("tax_lines", []), columns=["tax_type", "province", "rate", "taxable_amount", "tax_amount"]
         )
         tax_df["province"] = tax_df["province"].fillna("").replace("", NO_PROVINCE)
+        tax_df.insert(2, "rate_pct", (pd.to_numeric(tax_df.pop("rate"), errors="coerce") * 100).round(4))
         edited_tax = st.data_editor(
             tax_df,
             column_config={
@@ -673,9 +676,9 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 "province": st.column_config.SelectboxColumn(
                     "Province", options=[p or NO_PROVINCE for p in PROVINCE_VALUES]
                 ),
-                "rate": st.column_config.NumberColumn("Rate", format="%.5f", help="Decimal: 13% = 0.13"),
+                "rate_pct": st.column_config.NumberColumn("Rate", format="%.3f%%", help="Percent: 13% HST = 13"),
                 "taxable_amount": st.column_config.NumberColumn("Taxable", format="%.2f"),
-                "tax_amount": st.column_config.NumberColumn("Tax", format="%.2f"),
+                "tax_amount": st.column_config.NumberColumn("Amount", format="%.2f"),
             },
             num_rows="dynamic",
             hide_index=True,
@@ -808,7 +811,7 @@ def _invoice_summary(
         pills.append(ui.pill(f"{len(errors)} error{'s' if len(errors) > 1 else ''}", "err", "error"))
     if warnings:
         pills.append(ui.pill(f"{len(warnings)} to check", "warn", "warning"))
-    if not report.issues:
+    if not report.issues and not report.requires_review:
         pills.append(ui.pill("All checks passed", "ok", "check_circle"))
     if report.requires_review and not errors:
         pills.append(ui.pill("Needs a look", "warn", "visibility"))

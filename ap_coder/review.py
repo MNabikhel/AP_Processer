@@ -67,7 +67,8 @@ def coding_from_inputs(
             {
                 "tax_type": row["tax_type"],
                 "province": "" if is_blank(row.get("province")) or row["province"] == "—" else row["province"],
-                "rate": to_number(row.get("rate")),
+                # The dashboard edits rates as percentages (13 = 13%); the schema stores fractions.
+                "rate": round(to_number(row["rate_pct"]) / 100, 6) if "rate_pct" in row else to_number(row.get("rate")),
                 "taxable_amount": to_number(row.get("taxable_amount")),
                 "tax_amount": to_number(row.get("tax_amount")),
             }
