@@ -30,15 +30,15 @@ import streamlit as st
 from ap_coder import ui
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS, ExtractionResult
-from ap_coder.memory import ACCEPTED
-from ap_coder.pipeline import InvoicePipeline, finalise_coding
+from ap_coder.memory import ACCEPTED, pair_lines
+from ap_coder.pipeline import InvoicePipeline, finalise_coding, invoice_files
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
-from ap_coder.store import APPROVED, DEFAULT_DB_PATH, FAILED, REJECTED, REVIEW, Store, load_sample_setup
+from ap_coder.store import APPROVED, FAILED, REJECTED, REVIEW, Store, default_db_path, load_sample_setup
 from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, TREATMENTS, TaxRateTable
 
-DB_PATH = Path(os.environ.get("AP_DB_PATH", DEFAULT_DB_PATH))
+DB_PATH = Path(os.environ.get("AP_DB_PATH") or default_db_path())
 INVOICE_DIR = DB_PATH.parent / "invoices"
 CACHE_DIR = DB_PATH.parent / ".cache" / "extraction"
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -491,11 +491,10 @@ def _checks_html(report: Any) -> str:
 
 
 def _reasons_html(coding: InvoiceCoding, ai: dict[str, Any], report: Any, reference: ReferenceData) -> str:
-    ai_lines = {li["line_number"]: li for li in ai.get("line_items", [])}
     history = {h["line_number"]: h for h in report.checks.get("history") or []}
     rows = []
-    for li in coding.line_items:
-        before = ai_lines.get(li.line_number) or {}
+    for original, li in pair_lines(ai.get("line_items", []), list(coding.line_items)):
+        before = original or {}
         badges = []
         if not before:
             badges.append(ui.pill("Added by you", "info", "add"))
@@ -520,10 +519,8 @@ def _reasons_html(coding: InvoiceCoding, ai: dict[str, Any], report: Any, refere
 
 
 def _ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
-    ai_lines = {li["line_number"]: li for li in ai.get("line_items", [])}
     changed = 0
-    for li in coding.line_items:
-        before = ai_lines.get(li.line_number)
+    for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items)):
         if (
             before is None
             or before.get("predicted_gl_code") != li.predicted_gl_code
@@ -1009,11 +1006,7 @@ def page_process() -> None:
         with card("folder"):
             st.markdown("#### :material/folder_open: Invoices folder")
             st.caption(f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here.")
-            files = (
-                sorted(p for p in INVOICE_DIR.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS)
-                if INVOICE_DIR.exists()
-                else []
-            )
+            files = invoice_files(INVOICE_DIR) if INVOICE_DIR.exists() else []
             new_files = [p for p in files if store.find_by_hash(p) is None]
             if not new_files:
                 st.html(ui.pill("No new files", "gray", "done_all"))
@@ -1053,7 +1046,13 @@ def _read_upload(upload: Any) -> pd.DataFrame:
         name = st.selectbox("Sheet", names, key=f"sheet_{upload.name}") if len(names) > 1 else names[0]
         df = sheets[name]
     else:
-        df = pd.read_csv(upload, dtype=str, keep_default_na=False)
+        for encoding in ("utf-8-sig", "cp1252"):  # Excel "CSV" exports are often Windows-1252
+            try:
+                upload.seek(0)
+                df = pd.read_csv(upload, dtype=str, keep_default_na=False, encoding=encoding)
+                break
+            except UnicodeDecodeError:
+                continue
     return df.fillna("")
 
 

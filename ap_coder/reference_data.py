@@ -7,12 +7,12 @@ system prompt.
 
 from __future__ import annotations
 
-import csv
 import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .csvio import read_csv_rows
 from .tax import TaxSetup, TaxTreatment, load_tax_mapping
 
 UNASSIGNED = "UNASSIGNED"
@@ -132,8 +132,7 @@ class ReferenceData:
 def _read_rows(path: Path) -> list[dict[str, str]]:
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        with path.open(newline="", encoding="utf-8-sig") as fh:
-            return [dict(row) for row in csv.DictReader(fh)]
+        return read_csv_rows(path)
     if suffix == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, dict):

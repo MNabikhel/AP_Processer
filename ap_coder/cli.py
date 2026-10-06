@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import os
@@ -15,16 +16,14 @@ from .evaluation import evaluate
 from .extraction import DocumentExtractor
 from .labels import export_labels
 from .pipeline import InvoicePipeline, discover_inputs, write_outputs
-from .reference_data import ReferenceData, load_reference_data
+from .reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from .schema import build_json_schema
 from .share_report import build_share_report
-from .store import DEFAULT_DB_PATH, Store
+from .store import Store, default_db_path, private_dir
+from .tax import TaxSetup, load_tax_mapping
 
 SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # Everything enterprise-specific lives under ./private, which is git-ignored.
-PRIVATE_DIR = Path("private")
-DEFAULT_OUT = PRIVATE_DIR / "output"
-DEFAULT_CACHE = PRIVATE_DIR / ".cache" / "extraction"
 
 _REFERENCE_FILES = {
     "coa": ("chart_of_accounts", (".csv", ".json")),
@@ -39,7 +38,7 @@ def reference_dir() -> tuple[Path, bool]:
     env_dir = os.getenv("AP_REFERENCE_DIR")
     if env_dir:
         return Path(env_dir), False
-    private = PRIVATE_DIR / "reference"
+    private = private_dir() / "reference"
     if (private / "chart_of_accounts.csv").exists() or (private / "chart_of_accounts.json").exists():
         return private, False
     return SAMPLE_DATA_DIR, True
@@ -64,7 +63,7 @@ def reference_source(args: argparse.Namespace) -> str:
     """Where reference data will come from: explicit files > dashboard database > reference folder."""
     if getattr(args, "coa", None):
         return "files given on the command line"
-    db = Path(getattr(args, "db", DEFAULT_DB_PATH))
+    db = Path(getattr(args, "db", None) or default_db_path())
     if db.exists() and Store(db).has_reference():
         return "dashboard database"
     return (
@@ -74,7 +73,21 @@ def reference_source(args: argparse.Namespace) -> str:
 
 def _load_reference(args: argparse.Namespace) -> ReferenceData:
     if reference_source(args) == "dashboard database":
-        return Store(args.db).reference_data()
+        reference = Store(args.db).reference_data()
+        # Explicit optional files still apply on top of the database ('' removes them).
+        overrides: dict[str, object] = {}
+        if args.cost_centers is not None:
+            overrides["cost_centers"] = (
+                load_table(args.cost_centers, "cost center", "cost_center") if args.cost_centers else None
+            )
+        if args.tax_mapping is not None:
+            mapping = load_tax_mapping(args.tax_mapping) if args.tax_mapping else {}
+            overrides["tax"] = TaxSetup(reference.tax.rates, mapping)
+        if args.policy is not None:
+            text = Path(args.policy).read_text(encoding="utf-8") if args.policy else ""
+            overrides["notes"] = parse_policy_notes(text)
+        reference = dataclasses.replace(reference, **overrides)
+        return reference
     paths = _resolve_reference(args)
     return load_reference_data(
         paths["coa"], paths["cost_centers"], tax_mapping=paths["tax_mapping"], policy_notes=paths["policy"]
@@ -94,10 +107,12 @@ def _add_reference_args(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    private = private_dir()
+    db_path, out_dir, cache_dir = private / "ap_coder.db", private / "output", private / ".cache" / "extraction"
     parser = argparse.ArgumentParser(prog="ap_coder", description="Enterprise AP Invoice Coder Engine (PoC)")
     parser.add_argument("--env-file", default=None, help="Path to a .env file (default: ./.env if present)")
     parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help=f"Dashboard database (default: {DEFAULT_DB_PATH})")
+    parser.add_argument("--db", default=str(db_path), help=f"Dashboard database (default: {db_path})")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("dashboard", help="Open the review dashboard in your browser (runs locally)")
@@ -109,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("process", help="Extract + GL-code invoices (files or directories)")
     p.add_argument("inputs", nargs="+", help="PDF/TIFF/image invoices, or .md/.txt pre-extracted content")
-    p.add_argument("-o", "--out", default=str(DEFAULT_OUT), help=f"Output directory (default: {DEFAULT_OUT})")
+    p.add_argument("-o", "--out", default=str(out_dir), help=f"Output directory (default: {out_dir})")
     p.add_argument(
         "--extraction-model", choices=["prebuilt-layout", "prebuilt-invoice"], help="Document Intelligence model"
     )
@@ -117,35 +132,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model-name", help="Underlying model name (gpt-4o, gpt-4o-mini, gpt-4.1, o4-mini, ...)")
     p.add_argument("--vision", action=argparse.BooleanOptionalAction, default=None, help="Attach page images")
     p.add_argument("--no-db", action="store_true", help="Do not use the learning memory or add to the review queue")
-    p.add_argument("--cache-dir", default=str(DEFAULT_CACHE), help="Extraction cache directory ('' to disable)")
+    p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
     p.add_argument("--workers", type=int, default=1, help="Invoices processed in parallel")
     p.add_argument("--stdout", action="store_true", help="Also print each coded JSON to stdout")
     _add_reference_args(p)
 
     p = sub.add_parser("extract", help="Run Document Intelligence only and save Markdown + raw JSON")
     p.add_argument("inputs", nargs="+")
-    p.add_argument("-o", "--out", default=str(DEFAULT_OUT))
+    p.add_argument("-o", "--out", default=str(out_dir))
     p.add_argument("--extraction-model", choices=["prebuilt-layout", "prebuilt-invoice"])
-    p.add_argument("--cache-dir", default=str(DEFAULT_CACHE))
+    p.add_argument("--cache-dir", default=str(cache_dir))
 
     p = sub.add_parser("labels", help="Create an Excel workbook for the AP team to correct (ground truth)")
-    p.add_argument("--predictions", default=str(DEFAULT_OUT), help=f"Output folder of `process` ({DEFAULT_OUT})")
-    p.add_argument("-o", "--out", default=str(PRIVATE_DIR / "labels.xlsx"), help="Workbook path (.xlsx or .csv)")
+    p.add_argument("--predictions", default=str(out_dir), help=f"Output folder of `process` ({out_dir})")
+    p.add_argument("-o", "--out", default=str(private / "labels.xlsx"), help="Workbook path (.xlsx or .csv)")
     p.add_argument("--blind", action="store_true", help="Leave gl_code/cost_center empty to avoid anchoring bias")
     p.add_argument("--force", action="store_true", help="Overwrite an existing workbook (loses corrections in it)")
     _add_reference_args(p)
 
     p = sub.add_parser("evaluate", help="Score predictions against ground truth (JSON folder, .xlsx or .csv)")
-    p.add_argument("--predictions", default=str(DEFAULT_OUT))
-    p.add_argument("--ground-truth", default=str(PRIVATE_DIR / "labels.xlsx"))
+    p.add_argument("--predictions", default=str(out_dir))
+    p.add_argument("--ground-truth", default=str(private / "labels.xlsx"))
     p.add_argument("--target", type=float, default=0.9)
     p.add_argument("--show-mismatches", action="store_true", help="Prints invoice data; do not share the output")
 
     p = sub.add_parser("share-report", help="Redacted summary that is safe to paste into a chat")
-    p.add_argument("--predictions", default=str(DEFAULT_OUT))
+    p.add_argument("--predictions", default=str(out_dir))
     p.add_argument("--ground-truth", help="Labels workbook/CSV or JSON folder to include accuracy figures")
     p.add_argument("--include-codes", action="store_true", help="Include GL/cost-center confusion pairs")
-    p.add_argument("-o", "--out", default=str(PRIVATE_DIR / "share_report.md"))
+    p.add_argument("-o", "--out", default=str(private / "share_report.md"))
 
     p = sub.add_parser("schema", help="Print the strict JSON Schema sent to Azure OpenAI")
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")

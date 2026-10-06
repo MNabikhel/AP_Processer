@@ -62,13 +62,24 @@ class PipelineResult:
         return row
 
 
+def invoice_files(folder: Path) -> list[Path]:
+    """Supported invoice files in a folder (sorted, non-recursive).
+
+    A .md/.txt file is skipped when a PDF or image with the same name sits next to it
+    (it is a text copy of the same invoice, e.g. the bundled samples), so nothing is coded twice.
+    """
+    files = sorted(c for c in folder.iterdir() if c.is_file() and c.suffix.lower() in SUPPORTED_EXTENSIONS)
+    documents = {c.stem.lower() for c in files if c.suffix.lower() not in TEXT_EXTENSIONS}
+    return [c for c in files if c.suffix.lower() not in TEXT_EXTENSIONS or c.stem.lower() not in documents]
+
+
 def discover_inputs(paths: list[str | Path]) -> list[Path]:
     """Expand directories into supported invoice files (sorted, non-recursive)."""
     found: list[Path] = []
     for raw in paths:
         p = Path(raw)
         if p.is_dir():
-            found += sorted(c for c in p.iterdir() if c.is_file() and c.suffix.lower() in SUPPORTED_EXTENSIONS)
+            found += invoice_files(p)
         elif p.is_file():
             found.append(p)
         else:
@@ -136,7 +147,10 @@ class InvoicePipeline:
 
             images = None
             if self.settings.engine.vision and path.suffix.lower() not in TEXT_EXTENSIONS:
-                images = render_page_images(path, self.settings.engine.vision_max_pages)
+                try:
+                    images = render_page_images(path, self.settings.engine.vision_max_pages)
+                except Exception as exc:  # vision is an extra; the text extraction is enough to code
+                    log.warning("%s: could not render page images (%s); coding from text only", path.name, exc)
 
             # Reviewer history relevant to this document (immediate learning).
             feedback = self.store.feedback_rows() if self.store is not None else []

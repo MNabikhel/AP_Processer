@@ -24,12 +24,17 @@ from .tax import OUTSIDE_CANADA, PROVINCES, TAX_TYPES
 
 SCHEMA_NAME = "ap_invoice_coding"
 
-# Structured Outputs limits for enums (documented by OpenAI/Azure OpenAI). We
-# stay well under them and fall back to free-text codes + local validation.
-_MAX_ENUM_VALUES_PER_FIELD = 500
-_MAX_ENUM_CHARS_PER_FIELD = 7_500
+# Structured Outputs enum limits. Azure OpenAI documents at most 500 enum values across ALL enum
+# properties of a schema (OpenAI's own limit is higher) and a cap on their total string length, so
+# the budget is shared by every enum in the schema. Over budget, code lists fall back to free text
+# plus local validation.
+MAX_ENUM_VALUES_TOTAL = 500
+MAX_ENUM_CHARS_TOTAL = 7_500
 
 PROVINCE_VALUES = [*PROVINCES, OUTSIDE_CANADA, ""]
+# Enums that are always present: supplier/ship-to/tax-line provinces and two tax-type fields.
+FIXED_ENUM_VALUES = 3 * len(PROVINCE_VALUES) + 2 * len(TAX_TYPES)
+FIXED_ENUM_CHARS = 3 * sum(len(p) for p in PROVINCE_VALUES) + 2 * sum(len(t) for t in TAX_TYPES)
 
 
 def _code_property(description: str, codes: list[str] | None) -> dict[str, Any]:
@@ -39,11 +44,33 @@ def _code_property(description: str, codes: list[str] | None) -> dict[str, Any]:
     return prop
 
 
+def plan_code_enums(gl_codes: list[str], cc_codes: list[str] | None) -> tuple[list[str] | None, list[str] | None]:
+    """Decide which code lists can be enforced as enums within the shared budget.
+
+    GL accounts get priority (they matter most); cost centers are enforced only if both fit.
+    Returns the enum value lists (with ``UNASSIGNED``) or ``None`` for free text.
+    """
+    budget_n = MAX_ENUM_VALUES_TOTAL - FIXED_ENUM_VALUES
+    budget_c = MAX_ENUM_CHARS_TOTAL - FIXED_ENUM_CHARS
+    gl = [*gl_codes, UNASSIGNED]
+    cc = [*cc_codes, UNASSIGNED] if cc_codes is not None else None
+
+    def size(values: list[str] | None) -> tuple[int, int]:
+        return (len(values), sum(len(v) for v in values)) if values else (0, 0)
+
+    (gn, gc), (cn, cchars) = size(gl), size(cc)
+    if gn + cn <= budget_n and gc + cchars <= budget_c:
+        return gl, cc
+    if gn <= budget_n and gc <= budget_c:
+        return gl, None
+    if cc is not None and cn <= budget_n and cchars <= budget_c:
+        return None, cc
+    return None, None
+
+
 def enum_values_or_none(codes: list[str]) -> list[str] | None:
-    values = [*codes, UNASSIGNED]
-    if len(values) > _MAX_ENUM_VALUES_PER_FIELD or sum(len(v) for v in values) > _MAX_ENUM_CHARS_PER_FIELD:
-        return None
-    return values
+    """A single code list on its own within the budget (kept for callers checking one list)."""
+    return plan_code_enums(codes, None)[0]
 
 
 def line_gl_codes(reference: ReferenceData) -> list[str]:
@@ -64,9 +91,8 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
     cc_description = f"Cost center code from the Cost Center list, or {UNASSIGNED} if none fits."
     if reference is not None:
         if constrain_codes:
-            gl_codes = enum_values_or_none(line_gl_codes(reference))
-            if reference.cost_centers is not None:
-                cc_codes = enum_values_or_none(reference.cost_centers.codes)
+            cost_centers = reference.cost_centers.codes if reference.cost_centers is not None else None
+            gl_codes, cc_codes = plan_code_enums(line_gl_codes(reference), cost_centers)
         if reference.cost_centers is None:
             cc_codes, cc_description = [""], "Cost centers are not configured: always an empty string."
 

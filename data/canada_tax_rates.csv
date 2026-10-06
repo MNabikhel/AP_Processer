@@ -1,10 +1,11 @@
 tax_type,province,rate,effective_from,effective_to,notes
 GST,,0.05,2008-01-01,,Federal GST (applies in GST-only and GST+PST/QST provinces)
 HST,ON,0.13,2010-07-01,,Ontario HST
-HST,NB,0.13,2010-07-01,2016-06-30,New Brunswick HST
+HST,NB,0.13,2008-01-01,2016-06-30,New Brunswick HST
 HST,NB,0.15,2016-07-01,,New Brunswick HST
-HST,NL,0.13,2013-07-01,2016-06-30,Newfoundland and Labrador HST
+HST,NL,0.13,2008-01-01,2016-06-30,Newfoundland and Labrador HST
 HST,NL,0.15,2016-07-01,,Newfoundland and Labrador HST
+HST,NS,0.13,2008-01-01,2010-06-30,Nova Scotia HST
 HST,NS,0.15,2010-07-01,2025-03-31,Nova Scotia HST
 HST,NS,0.14,2025-04-01,,Nova Scotia HST (reduced 2025-04-01)
 HST,PE,0.14,2013-04-01,2016-09-30,Prince Edward Island HST

@@ -161,6 +161,30 @@ def format_examples(examples: list[Pattern], with_cost_center: bool = True) -> s
     return "\n".join(lines)
 
 
+def pair_lines(before: list[Any], after: list[Any]) -> list[tuple[Any | None, Any]]:
+    """Match each final line to the AI's original line.
+
+    Lines are matched on (line_number, occurrence), so invoices that repeat a line number
+    (e.g. 1, 2, 2) still pair the second "2" with the AI's second "2". Works for dicts and
+    objects with a ``line_number`` attribute. Lines the reviewer added pair with ``None``.
+    """
+
+    def number(li: Any) -> Any:
+        return li.get("line_number") if isinstance(li, dict) else li.line_number
+
+    def keyed(lines: list[Any]) -> list[tuple[tuple[Any, int], Any]]:
+        seen: dict[Any, int] = defaultdict(int)
+        out = []
+        for li in lines:
+            n = number(li)
+            out.append(((n, seen[n]), li))
+            seen[n] += 1
+        return out
+
+    originals = dict(keyed(before))
+    return [(originals.get(k), li) for k, li in keyed(after)]
+
+
 def compare_with_history(coding: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Per line: does the prediction agree with an established pattern for this vendor?"""
     key = vendor_key(coding.vendor_name)

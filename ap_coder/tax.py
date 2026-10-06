@@ -17,12 +17,13 @@ Three responsibilities, all deterministic (the LLM only reads what is printed):
 
 from __future__ import annotations
 
-import csv
 import datetime as dt
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .csvio import read_csv_rows
 
 PROVINCES = ("AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT")
 PROVINCE_NAMES = {
@@ -87,23 +88,22 @@ class TaxRateTable:
     @classmethod
     def load(cls, path: str | Path = DEFAULT_RATES_PATH) -> TaxRateTable:
         rows = []
-        with Path(path).open(newline="", encoding="utf-8-sig") as fh:
-            for row in csv.DictReader(fh):
-                tax_type = row["tax_type"].strip().upper()
-                if tax_type not in TAX_TYPES:
-                    raise ValueError(f"{path}: unknown tax_type {tax_type!r}")
-                rate = float(row["rate"])
-                rows.append(
-                    TaxRate(
-                        tax_type=tax_type,
-                        province=(row.get("province") or "").strip().upper(),
-                        rate=rate / 100 if rate >= 1 else rate,
-                        effective_from=dt.date.fromisoformat(row["effective_from"].strip()),
-                        effective_to=dt.date.fromisoformat(row["effective_to"].strip())
-                        if (row.get("effective_to") or "").strip()
-                        else None,
-                    )
+        for row in read_csv_rows(path):
+            tax_type = row["tax_type"].strip().upper()
+            if tax_type not in TAX_TYPES:
+                raise ValueError(f"{path}: unknown tax_type {tax_type!r}")
+            rate = float(row["rate"])
+            rows.append(
+                TaxRate(
+                    tax_type=tax_type,
+                    province=(row.get("province") or "").strip().upper(),
+                    rate=rate / 100 if rate >= 1 else rate,
+                    effective_from=dt.date.fromisoformat(row["effective_from"].strip()),
+                    effective_to=dt.date.fromisoformat(row["effective_to"].strip())
+                    if (row.get("effective_to") or "").strip()
+                    else None,
                 )
+            )
         return cls(tuple(rows))
 
     def rate_for(self, tax_type: str, province: str, on: dt.date | None = None) -> float | None:
@@ -165,15 +165,14 @@ class TaxSetup:
 def load_tax_mapping(path: str | Path) -> dict[str, TaxTreatment]:
     """CSV with columns tax_type, treatment, gl_code."""
     mapping = {}
-    with Path(path).open(newline="", encoding="utf-8-sig") as fh:
-        for row in csv.DictReader(fh):
-            tax_type = row["tax_type"].strip().upper()
-            treatment = row["treatment"].strip().lower()
-            if tax_type not in TAX_TYPES:
-                raise ValueError(f"{path}: unknown tax_type {tax_type!r}")
-            if treatment not in TREATMENTS:
-                raise ValueError(f"{path}: treatment must be one of {', '.join(TREATMENTS)}")
-            mapping[tax_type] = TaxTreatment(tax_type, treatment, (row.get("gl_code") or "").strip())
+    for row in read_csv_rows(path):
+        tax_type = row["tax_type"].strip().upper()
+        treatment = row["treatment"].strip().lower()
+        if tax_type not in TAX_TYPES:
+            raise ValueError(f"{path}: unknown tax_type {tax_type!r}")
+        if treatment not in TREATMENTS:
+            raise ValueError(f"{path}: treatment must be one of {', '.join(TREATMENTS)}")
+        mapping[tax_type] = TaxTreatment(tax_type, treatment, (row.get("gl_code") or "").strip())
     return mapping
 
 

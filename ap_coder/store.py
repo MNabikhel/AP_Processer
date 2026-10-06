@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -25,11 +26,29 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .memory import ACCEPTED, CORRECTED, vendor_key
+from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
 from .reference_data import ReferenceData, ReferenceTable, parse_policy_notes
 from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 
-DEFAULT_DB_PATH = Path("private") / "ap_coder.db"
+
+def private_dir() -> Path:
+    """The git-ignored folder for enterprise data.
+
+    ``AP_PRIVATE_DIR`` if set; else ``private/`` in the project folder when running from a
+    checkout (so it does not matter which folder a command is started from); else ``./private``.
+    """
+    if os.getenv("AP_PRIVATE_DIR"):
+        return Path(os.environ["AP_PRIVATE_DIR"])
+    project = Path(__file__).resolve().parent.parent
+    if (project / "pyproject.toml").exists() and (project / "ap_coder").is_dir():
+        return project / "private"
+    return Path("private")
+
+
+def default_db_path() -> Path:
+    return private_dir() / "ap_coder.db"
+
+
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -90,7 +109,8 @@ def _norm_number(value: str) -> str:
 
 
 class Store:
-    def __init__(self, path: str | Path = DEFAULT_DB_PATH) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
+        path = default_db_path() if path is None else path
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
@@ -334,14 +354,12 @@ class Store:
         if inv["status"] == APPROVED:
             raise ValueError(f"invoice {invoice_id} is already approved")
         ai = inv["ai_output"] or {"line_items": []}
-        ai_lines = {li["line_number"]: li for li in ai.get("line_items", [])}
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
         counts = {ACCEPTED: 0, CORRECTED: 0}
         feedback_rows = []
-        for li in final_output.get("line_items", []):
-            suggestion = ai_lines.get(li["line_number"])
+        for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
             s_cc = suggestion.get("predicted_cost_center", "") if suggestion else None
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")

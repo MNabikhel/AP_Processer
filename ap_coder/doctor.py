@@ -16,7 +16,7 @@ from .config import Settings
 from .extraction import ExtractionResult, build_credential
 from .inference import CodingError, InvoiceCoder, ModelProfile
 from .reference_data import ReferenceData
-from .schema import enum_values_or_none
+from .schema import line_gl_codes, plan_code_enums
 from .tax import TAX_TYPES
 
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
@@ -45,15 +45,27 @@ def _version(pkg: str) -> str | None:
         return None
 
 
+def _secrets(settings: Settings) -> list[str]:
+    """Keys, endpoints, endpoint hostnames and resource names: none of these may appear in the report."""
+    from urllib.parse import urlparse
+
+    values: list[str] = []
+    for endpoint in (settings.openai.endpoint, settings.document_intelligence.endpoint):
+        if endpoint:
+            values.append(endpoint.rstrip("/"))
+            host = urlparse(endpoint if "//" in endpoint else f"https://{endpoint}").hostname or ""
+            if host:
+                values += [host, host.split(".")[0]]
+    values += [k for k in (settings.openai.api_key, settings.document_intelligence.api_key) if k]
+    # Longest first so a hostname is removed before its own resource-name prefix.
+    return sorted({v for v in values if len(v) >= 4}, key=len, reverse=True)
+
+
 def _scrub(message: str, settings: Settings) -> str:
-    for secret in (
-        settings.openai.endpoint,
-        settings.openai.api_key,
-        settings.document_intelligence.endpoint,
-        settings.document_intelligence.api_key,
-    ):
-        if secret and len(secret) >= 8:  # short values would mangle ordinary words
-            message = message.replace(secret.rstrip("/"), "<redacted>")
+    import re
+
+    for secret in _secrets(settings):
+        message = re.sub(re.escape(secret), "<redacted>", message, flags=re.IGNORECASE)
     message = " ".join(message.split())
     return message[:400]
 
@@ -114,6 +126,8 @@ def run_checks(
     except Exception as exc:  # report and continue with the remaining checks
         add("reference data", FAIL, _scrub(str(exc), settings))
     if reference is not None:
+        cc_codes = reference.cost_centers.codes if reference.cost_centers is not None else None
+        enums = plan_code_enums(line_gl_codes(reference), cc_codes)
         tables = [
             ("GL accounts", reference.chart_of_accounts),
             ("cost centers", reference.cost_centers),
@@ -128,7 +142,8 @@ def run_checks(
             if len(table.rows[0]) < 2 or not any(v for r in table.rows for k, v in r.items() if k != table.key_column):
                 status, detail = WARN, detail + " (add descriptions: the model needs words to match)"
             if eng.constrain_codes:
-                if enum_values_or_none(table.codes) is None:
+                enforced = enums[0] if table is reference.chart_of_accounts else enums[1]
+                if enforced is None:
                     status = WARN
                     detail += "; too many codes for schema enums -> free-text codes + local validation"
                 else:

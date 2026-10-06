@@ -13,6 +13,12 @@ SAMPLES = ROOT / "samples"
 SAMPLE_STEM = "northwind_ON_HST_NW-2026-0912"
 
 
+@pytest.fixture(autouse=True)
+def isolated_private_dir(monkeypatch, tmp_path):
+    """Never let a test touch the real private/ folder (database, invoices, outputs)."""
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "private"))
+
+
 @pytest.fixture
 def reference():
     return load_reference_data(

@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .memory import pair_lines
+
 HEADER_TEXT_FIELDS = ("vendor_name", "invoice_number", "invoice_date", "currency")
 HEADER_AMOUNT_FIELDS = ("subtotal", "tax_total", "grand_total")
 LINE_FIELDS = ("amount", "predicted_gl_code", "predicted_cost_center")
@@ -81,7 +83,7 @@ class EvaluationReport:
 
 
 def _is_prediction_file(p: Path) -> bool:
-    return not p.name.endswith(".validation.json") and p.name != "batch_summary.json"
+    return not p.name.endswith((".validation.json", ".di.json")) and p.name != "batch_summary.json"
 
 
 def load_ground_truth(path: str | Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
@@ -141,11 +143,11 @@ def evaluate(predictions_dir: str | Path, ground_truth: str | Path, target: floa
                 miss(name, gt.get(name), pred.get(name))
 
         gt_lines = gt.get("line_items") or []
-        pred_lines = {li.get("line_number"): li for li in pred.get("line_items") or []}
+        pred_lines = pred.get("line_items") or []
         line_count.add(len(gt_lines) == len(pred_lines))
-        for gt_line in gt_lines:
+        for p_line, gt_line in pair_lines(pred_lines, gt_lines):
             n = gt_line.get("line_number")
-            p_line = pred_lines.get(n, {})
+            p_line = p_line or {}
             for name in LINE_FIELDS:
                 if name == "amount":
                     ok = _amount_eq(gt_line.get(name), p_line.get(name))

@@ -64,7 +64,7 @@ def _prediction_files(output_dir: Path) -> list[Path]:
     return sorted(
         p
         for p in output_dir.glob("*.json")
-        if not p.name.endswith(".validation.json") and p.name != "batch_summary.json"
+        if not p.name.endswith((".validation.json", ".di.json")) and p.name != "batch_summary.json"
     )
 
 
@@ -162,6 +162,8 @@ def _write_xlsx(dest: Path, rows: list[dict[str, str]], reference: ReferenceData
             ("GL Accounts", reference.chart_of_accounts, "gl_code"),
             ("Cost Centers", reference.cost_centers, "cost_center"),
         ):
+            if table is None:
+                continue  # cost centers are optional
             ref_ws = wb.create_sheet(sheet_name)
             name_col = next((c for c in table.rows[0] if c != table.key_column), None)
             ref_ws.append([table.key_column, name_col or ""])
