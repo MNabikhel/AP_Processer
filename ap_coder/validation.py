@@ -155,6 +155,17 @@ def validate_coding(
             "TOTAL_MISMATCH",
             f"subtotal + tax = {computed_total:.2f} but grand_total = {coding.grand_total:.2f}",
         )
+    # The GL posting (line amounts + tax lines) must equal the amount payable to the cent. The checks
+    # above each allow a little rounding; this catches small differences that add up (e.g. a misread line).
+    posting_total = round(line_sum + sum(t.tax_amount for t in coding.tax_lines), 2)
+    checks["posting_total"] = posting_total
+    if coding.line_items and abs(posting_total - coding.grand_total) > 0.005:
+        add(
+            ERROR,
+            "POSTING_UNBALANCED",
+            f"GL posting totals {posting_total:.2f} but the invoice total is {coding.grand_total:.2f} "
+            f"(off by {posting_total - coding.grand_total:+.2f}); correct a line amount or tax line",
+        )
     # --- Canadian sales tax ------------------------------------------------------
     known = set(reference.chart_of_accounts.codes)
     for f in check_taxes(coding, reference.tax, known):

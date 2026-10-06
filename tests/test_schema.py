@@ -36,7 +36,7 @@ def test_schema_structure_is_strict_and_keeps_original_fields():
     assert set(ORIGINAL_SPEC_HEADER) <= set(schema["properties"])
     assert list(schema["properties"]["line_items"]["items"]["properties"]) == TARGET_LINE
     tax_line = schema["properties"]["tax_lines"]["items"]["properties"]
-    assert tax_line["tax_type"]["enum"] == ["GST", "HST", "PST", "QST"]
+    assert tax_line["tax_type"]["enum"] == ["GST", "HST", "PST", "QST", "OTHER"]
     _assert_strict(schema)
 
 

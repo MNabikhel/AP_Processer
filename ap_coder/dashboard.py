@@ -1123,7 +1123,9 @@ def _read_upload(upload: Any, table: str) -> pd.DataFrame | None:
             for encoding in ("utf-8-sig", "cp1252"):  # Excel "CSV" exports are often Windows-1252
                 try:
                     upload.seek(0)
-                    df = pd.read_csv(upload, dtype=str, keep_default_na=False, encoding=encoding)
+                    df = pd.read_csv(  # sep=None: also semicolon CSVs from French-Canadian Excel
+                        upload, dtype=str, keep_default_na=False, encoding=encoding, sep=None, engine="python"
+                    )
                     break
                 except UnicodeDecodeError:
                     continue
@@ -1249,7 +1251,7 @@ def page_accounts() -> None:
                     f"{mapped}/{len(TAX_TYPES)}",
                     "percent",
                     "green" if mapped == len(TAX_TYPES) else "amber",
-                    "GST · HST · PST · QST",
+                    "GST · HST · PST · QST · other",
                 ),  # fmt: skip
                 ui.tile("Coding rules", len(policy), "rule", "amber", "plain-English policy"),
             ]
@@ -1311,7 +1313,7 @@ def tax_setup(store: Store) -> None:
         hash((tuple(options), tuple(sorted((t.tax_type, t.treatment, t.gl_code) for t in treatments.values()))))
     )
     where = {"GST": "Federal · all provinces", "HST": "ON · NB · NL · NS · PE", "PST": "BC · SK · MB (RST)",
-             "QST": "Quebec (TVQ)"}  # fmt: skip
+             "QST": "Quebec (TVQ)", "OTHER": "Outside Canada (US sales tax, VAT)"}  # fmt: skip
     chosen = {}
     with card("taxsetup"):
         for tax_type in TAX_TYPES:

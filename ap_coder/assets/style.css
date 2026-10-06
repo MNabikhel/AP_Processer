@@ -118,6 +118,7 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-tax.HST {color: #4a3aa7; border-color: #d3cdf5; background: #f6f5fe;}
 .apc-tax.PST {color: #8a4a12; border-color: #f0d2b6; background: #fdf6ef;}
 .apc-tax.QST {color: #127a56; border-color: #bfe5d5; background: #f0faf5;}
+.apc-tax.OTHER {color: #5b6474; border-color: #d9dee6; background: #f5f7fa;}
 
 /* ---- Avatars ----------------------------------------------------------------------------------------- */
 .apc-avatar {flex: none; display: grid; place-items: center; border-radius: 12px; color: #fff; font-weight: 700;

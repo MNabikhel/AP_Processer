@@ -49,6 +49,7 @@ def default_db_path() -> Path:
     return private_dir() / "ap_coder.db"
 
 
+SCHEMA_VERSION = 2
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -115,6 +116,25 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Bring a database made by an older version up to date (recorded as settings.schema_version)."""
+        row = conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
+        version = int(row["value"]) if row else 1
+        if version < 2:  # vendor matching now ignores accents, "&"/"and" and more legal forms
+            for table in ("invoices", "feedback"):
+                rows = conn.execute(f"SELECT id, vendor_name FROM {table}").fetchall()
+                conn.executemany(
+                    f"UPDATE {table} SET vendor_key = ? WHERE id = ?",
+                    [(vendor_key(r["vendor_name"] or ""), r["id"]) for r in rows],
+                )
+        if version < SCHEMA_VERSION:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (str(SCHEMA_VERSION),),
+            )
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -267,7 +287,7 @@ class Store:
                    requires_review, ai_output, validation, extraction_md, meta, error, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(source_path),
+                    str(source_path.resolve()),  # absolute: the dashboard may run from another folder
                     source_path.name,
                     sha,
                     FAILED if error else REVIEW,
@@ -299,17 +319,35 @@ class Store:
             ).fetchone()
         return dict(row) if row else None
 
-    def find_duplicates(self, vendor_name: str, invoice_number: str, exclude_id: int | None = None) -> list[int]:
-        """Other invoices with the same vendor and invoice number (possible duplicate payment)."""
+    def find_duplicates(
+        self,
+        vendor_name: str,
+        invoice_number: str,
+        exclude_id: int | None = None,
+        grand_total: float | None = None,
+    ) -> list[int]:
+        """Other invoices with the same vendor and invoice number (possible duplicate payment).
+
+        With ``grand_total``, a credit note (negative) is not a duplicate of the invoice it reverses.
+        """
         key, number = vendor_key(vendor_name), _norm_number(invoice_number)
         if not key or not number:
             return []
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, invoice_number FROM invoices WHERE vendor_key = ? AND status != ? AND status != ?",
+                "SELECT id, invoice_number, grand_total FROM invoices "
+                "WHERE vendor_key = ? AND status != ? AND status != ?",
                 (key, FAILED, REJECTED),
             ).fetchall()
-        return [r["id"] for r in rows if _norm_number(r["invoice_number"]) == number and r["id"] != exclude_id]
+
+        def same_sign(other: float | None) -> bool:
+            return grand_total is None or other is None or (grand_total < 0) == (other < 0)
+
+        return [
+            r["id"]
+            for r in rows
+            if _norm_number(r["invoice_number"]) == number and r["id"] != exclude_id and same_sign(r["grand_total"])
+        ]
 
     def list_invoices(self, status: str | None = None) -> list[dict[str, Any]]:
         sql = (
@@ -392,16 +430,12 @@ class Store:
         if len(ai.get("line_items", [])) != len(final_output.get("line_items", [])):
             edits.append("line_count")
         with self._conn() as conn:
-            conn.executemany(
-                """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
-                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                feedback_rows,
-            )
-            conn.execute(
+            # Claim the invoice first, in the same transaction as the feedback: if two approvals race,
+            # the second finds it already approved and records nothing.
+            cur = conn.execute(
                 """UPDATE invoices SET status = ?, final_output = ?, edits = ?, reviewer = ?, reviewed_at = ?,
                    vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?
-                   WHERE id = ?""",
+                   WHERE id = ? AND status != ?""",
                 (
                     APPROVED,
                     json.dumps(final_output),
@@ -414,15 +448,28 @@ class Store:
                     final_output.get("invoice_date"),
                     final_output.get("grand_total"),
                     invoice_id,
+                    APPROVED,
                 ),  # fmt: skip
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} is already approved")
+            conn.executemany(
+                """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
+                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                feedback_rows,
             )
         return counts
 
     # --- Learning memory ------------------------------------------------------------------------------
 
-    def feedback_rows(self, limit: int = 5000) -> list[dict[str, Any]]:
+    def feedback_rows(self, limit: int = 50_000, vendor_name: str | None = None) -> list[dict[str, Any]]:
+        """Recorded reviewer decisions, newest first (only one vendor's when ``vendor_name`` is given)."""
+        sql, args = "SELECT * FROM feedback", ()
+        if vendor_name is not None:
+            sql, args = sql + " WHERE vendor_key = ?", (vendor_key(vendor_name),)
         with self._conn() as conn:
-            return [dict(r) for r in conn.execute("SELECT * FROM feedback ORDER BY id DESC LIMIT ?", (limit,))]
+            return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit))]
 
     def delete_feedback(self, ids: list[int]) -> int:
         with self._conn() as conn:

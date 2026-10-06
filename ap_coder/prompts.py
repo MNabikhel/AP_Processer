@@ -41,6 +41,8 @@ they disagree with the document content, trust the document.
 French invoices show TPS = GST and TVQ = QST). Copy the rate, the taxable amount and the \
 tax amount as printed; if the taxable amount is not printed, use the total of the lines \
 the tax applies to. Never invent a tax that is not printed, and never recalculate amounts.
+- A tax that is not Canadian (US state/local sales tax, VAT...) is a tax line with \
+`tax_type` OTHER and an empty province.
 - `province` on a tax line is the province of that tax (empty for GST).
 - `tax_total` is the sum of all tax lines.
 - `taxes_applied` on each line item lists the taxes charged on that line. Use the \

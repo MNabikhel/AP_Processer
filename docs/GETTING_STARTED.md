@@ -39,6 +39,11 @@ before real invoices are sent.
 
 Requires Python 3.10+ and git.
 
+Clone into a normal local folder (e.g. `C:\Projects`), **not** a OneDrive / SharePoint-synced
+folder: the database is a SQLite file, and sync tools can corrupt it while it is open. If your
+machine forces everything into OneDrive, keep the code there but point the data elsewhere by
+setting `AP_PRIVATE_DIR` (e.g. `setx AP_PRIVATE_DIR C:\APCoderData`, then open a new terminal).
+
 ```bash
 git clone https://github.com/MNabikhel/AP_Processer.git
 cd AP_Processer
@@ -51,6 +56,10 @@ pytest -q                            # should end with "passed"
 
 cp .env.example .env                 # Windows: copy .env.example .env
 ```
+
+**Windows PowerShell:** if `.venv\Scripts\activate` fails with "running scripts is disabled
+on this system", run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` (this window
+only, no admin needed) and try again, or use Command Prompt (`cmd`) instead.
 
 Edit `.env`: fill in the two endpoints, the deployment name and `AZURE_OPENAI_MODEL_NAME`, plus
 the keys unless you use `az login`.
@@ -79,8 +88,13 @@ python -m ap_coder dashboard          # opens http://localhost:8501 ; Ctrl+C to 
 
 These invoices are synthetic, so screenshots of this step are fine to share.
 
-When you're done, **close the dashboard and delete `private/ap_coder.db`** so your real setup
-starts clean (this also clears the sample memory).
+When you're done, **close the dashboard** (Ctrl+C) and clear the sample data so your real setup
+starts clean:
+
+- delete `private/ap_coder.db` and, if present, `private/ap_coder.db-wal` and `private/ap_coder.db-shm`
+  (this also clears the sample memory)
+- delete the three sample PDFs from `private/invoices/`, otherwise they show up again as new files
+  and get coded against your real GL accounts
 
 ## Step 5: Your setup, in the dashboard
 
@@ -176,6 +190,6 @@ recreate the problem as a synthetic sample in `samples/` and test the fix agains
 | `dashboard` | the review app at http://localhost:8501 |
 | `doctor [--online]` | setup check; safe to paste |
 | `share-report [--include-codes]` | redacted summary; safe to paste |
-| `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue |
+| `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
 | `schema` | the exact JSON Schema sent to Azure OpenAI |

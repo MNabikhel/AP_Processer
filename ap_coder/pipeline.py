@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -101,10 +102,12 @@ def finalise_coding(
     Used after inference and again by the dashboard whenever a reviewer edits an invoice.
     """
     if feedback is None and store is not None:
-        feedback = store.feedback_rows()
+        feedback = store.feedback_rows(vendor_name=coding.vendor_name)  # history check needs this vendor only
     history = compare_with_history(coding, feedback) if feedback else None
     duplicates = (
-        store.find_duplicates(coding.vendor_name, coding.invoice_number, exclude_id=exclude_invoice_id)
+        store.find_duplicates(
+            coding.vendor_name, coding.invoice_number, exclude_id=exclude_invoice_id, grand_total=coding.grand_total
+        )
         if store is not None
         else None
     )
@@ -186,18 +189,59 @@ class InvoicePipeline:
             )
         return result
 
-    def process_many(self, paths: list[Path], workers: int = 1) -> list[PipelineResult]:
+    def process_many(
+        self,
+        paths: list[Path],
+        workers: int = 1,
+        on_result: Callable[[int, PipelineResult], None] | None = None,
+    ) -> list[PipelineResult]:
+        """Process several invoices; results come back in input order.
+
+        ``on_result(index, result)`` is called as each one finishes, so outputs can be saved
+        straight away (an interrupted batch keeps everything finished so far).
+        """
+        results: list[PipelineResult | None] = [None] * len(paths)
+
+        def done(i: int, result: PipelineResult) -> None:
+            results[i] = result
+            if on_result is not None:
+                on_result(i, result)
+
         if workers <= 1 or len(paths) <= 1:
-            return [self.process(p) for p in paths]
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            return list(pool.map(self.process, paths))
+            for i, p in enumerate(paths):
+                done(i, self.process(p))
+            return [r for r in results if r is not None]
+        pool = ThreadPoolExecutor(max_workers=workers)
+        try:
+            futures = {pool.submit(self.process, p): i for i, p in enumerate(paths)}
+            for future in as_completed(futures):
+                done(futures[future], future.result())
+        except KeyboardInterrupt:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown()
+        return [r for r in results if r is not None]
 
 
-def write_outputs(result: PipelineResult, out_dir: str | Path, save_extraction: bool = True) -> list[Path]:
+def output_stems(paths: list[Path]) -> list[str]:
+    """One output name per input. Same-named files from different folders (e.g. two vendors'
+    ``Invoice.pdf``) get ``_2``, ``_3``... so their results don't overwrite each other."""
+    seen: dict[str, int] = {}
+    stems = []
+    for p in paths:
+        key = p.stem.lower()
+        seen[key] = seen.get(key, 0) + 1
+        stems.append(p.stem if seen[key] == 1 else f"{p.stem}_{seen[key]}")
+    return stems
+
+
+def write_outputs(
+    result: PipelineResult, out_dir: str | Path, save_extraction: bool = True, stem: str | None = None
+) -> list[Path]:
     """Persist ``<stem>.json`` (target schema only), ``<stem>.validation.json`` and ``<stem>.extraction.md``."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = result.source.stem
+    stem = stem or result.source.stem
     written: list[Path] = []
 
     if result.output is not None:

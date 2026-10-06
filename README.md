@@ -116,7 +116,7 @@ This is a memory of your team's decisions. No model is retrained.
 |---|---|
 | `dashboard [--port]` | The review app (localhost only). |
 | `doctor [--online]` | Setup, reference-data, tax-mapping and connectivity check. No secrets or URLs in the output. |
-| `process <files/dirs…>` | Batch pipeline. Results go to `private/output` **and** the dashboard queue (`--no-db` to skip). Uses the learning memory. |
+| `process <files/dirs…>` | Batch pipeline. Results go to `private/output` **and** the dashboard queue (`--no-db` to skip). Uses the learning memory. Skips files already processed (`--force` to redo). |
 | `share-report [--include-codes]` | Redacted summary of the dashboard database (or an output folder): no vendor names, amounts, descriptions or file names. |
 | `extract <files/dirs…>` | Document Intelligence only; writes `.extraction.md` and raw `.di.json`. |
 | `labels` / `evaluate` | Spreadsheet-based ground truth and scoring, as an alternative to dashboard review. |
@@ -187,7 +187,8 @@ Each invoice produces the original target fields plus the Canadian tax fields, a
   back to free text plus local validation (`AP_CONSTRAIN_CODES`).
 - **The AI reads; code does the arithmetic.** The model copies tax lines exactly as printed.
   Rates, regimes and amounts are verified in Python, and the GL distribution is computed in
-  Python, so the posting always balances.
+  Python. An invoice whose posting does not equal the amount payable to the cent is flagged
+  (`POSTING_UNBALANCED`) before it can be approved without an override.
 - **Model-agnostic and ready for vision.** Capabilities are inferred from
   `AZURE_OPENAI_MODEL_NAME`:
   - reasoning models get `reasoning_effort` instead of `temperature`/`seed`

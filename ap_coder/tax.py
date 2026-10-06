@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .csvio import read_csv_rows
+from .csvio import parse_date, read_csv_rows
 
 PROVINCES = ("AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT")
 PROVINCE_NAMES = {
@@ -42,7 +42,9 @@ PROVINCE_NAMES = {
     "YT": "Yukon",
 }
 OUTSIDE_CANADA = "OUTSIDE_CANADA"
-TAX_TYPES = ("GST", "HST", "PST", "QST")
+# OTHER = a non-Canadian tax (US sales tax, VAT...): no Canadian checks, expensed by default.
+TAX_TYPES = ("GST", "HST", "PST", "QST", "OTHER")
+CANADIAN_TAX_TYPES = ("GST", "HST", "PST", "QST")
 
 # Sales taxes normally charged on a taxable supply made in each province.
 REGIME: dict[str, frozenset[str]] = {
@@ -60,7 +62,9 @@ TREATMENTS = {
     EXPENSE_TO_LINE: "Not recoverable: add to each expense line's GL",
     EXPENSE_SEPARATE: "Not recoverable: post to its own expense GL",
 }
-DEFAULT_TREATMENTS = {"GST": RECOVERABLE, "HST": RECOVERABLE, "QST": RECOVERABLE, "PST": EXPENSE_TO_LINE}
+DEFAULT_TREATMENTS = {
+    "GST": RECOVERABLE, "HST": RECOVERABLE, "QST": RECOVERABLE, "PST": EXPENSE_TO_LINE, "OTHER": EXPENSE_TO_LINE,
+}  # fmt: skip
 
 ERROR, WARNING = "error", "warning"
 _GST_NUMBER = re.compile(r"^\d{9}RT\d{4}$")
@@ -88,20 +92,23 @@ class TaxRateTable:
     @classmethod
     def load(cls, path: str | Path = DEFAULT_RATES_PATH) -> TaxRateTable:
         rows = []
-        for row in read_csv_rows(path):
-            tax_type = row["tax_type"].strip().upper()
+        for n, row in enumerate(read_csv_rows(path), start=2):  # row 1 is the header
+            where = f"{path} row {n}"
+            tax_type = (row.get("tax_type") or "").strip().upper()
             if tax_type not in TAX_TYPES:
-                raise ValueError(f"{path}: unknown tax_type {tax_type!r}")
-            rate = float(row["rate"])
+                raise ValueError(f"{where}: unknown tax_type {tax_type!r}")
+            try:
+                rate = float((row.get("rate") or "").strip().rstrip("%").replace(",", "."))
+            except ValueError:
+                raise ValueError(f"{where}: rate {row.get('rate')!r} is not a number") from None
+            end = (row.get("effective_to") or "").strip()
             rows.append(
                 TaxRate(
                     tax_type=tax_type,
                     province=(row.get("province") or "").strip().upper(),
                     rate=rate / 100 if rate >= 1 else rate,
-                    effective_from=dt.date.fromisoformat(row["effective_from"].strip()),
-                    effective_to=dt.date.fromisoformat(row["effective_to"].strip())
-                    if (row.get("effective_to") or "").strip()
-                    else None,
+                    effective_from=parse_date(row.get("effective_from") or "", where),
+                    effective_to=parse_date(end, where) if end else None,
                 )
             )
         return cls(tuple(rows))
@@ -229,7 +236,8 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
     on = _invoice_date(coding)
     prov = place_of_supply(coding)
     tax_lines = list(coding.tax_lines)
-    charged = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004}
+    # Canadian taxes actually charged (a printed "GST 0.00" on an exempt invoice is not a charge).
+    charged = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004 and tl.tax_type != "OTHER"}
     n_items = max(1, len(coding.line_items))
     tol = 0.01 * n_items + 0.01  # per-line rounding on the vendor's side
 
@@ -253,6 +261,17 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
                 f"but invoice charges {tl.tax_amount:.2f}",
             )
 
+        if tl.tax_type == "OTHER":
+            if abs(tl.tax_amount) > 0.004:
+                add(
+                    WARNING,
+                    "TAX_NON_CANADIAN",
+                    f"non-Canadian tax of {tl.tax_amount:.2f} charged (e.g. US sales tax); it is not recoverable "
+                    "here and is added to the expense lines. Confirm it should have been charged",
+                )
+            continue
+        if abs(tl.tax_amount) <= 0.004:
+            continue  # "GST 0.00" / "exempt" printed: nothing charged, nothing to allocate or verify
         rate_province = tl.province or prov
         if tl.tax_type != "GST" and not rate_province:
             add(WARNING, "TAX_PROVINCE_UNKNOWN", f"{tl.tax_type}: province unknown, rate cannot be verified")
@@ -270,18 +289,21 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         if prov and tl.province and tl.tax_type != "GST" and tl.province != prov:
             add(WARNING, "TAX_PROVINCE_DIFFERS", f"{label} charged but place of supply is {prov}")
 
-        # Which invoice lines carry this tax, and does their sum match the taxable amount?
-        flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
+    # Which invoice lines carry each tax, and does their sum match the taxable amount? Compared per
+    # tax type, because the same tax can be printed more than once (e.g. on goods and on freight).
+    for tax_type in sorted(charged):
+        flagged = [li for li in coding.line_items if tax_type in li.taxes_applied]
+        taxable = round(sum(t.taxable_amount for t in tax_lines if t.tax_type == tax_type), 2)
         if not flagged:
-            add(WARNING, "TAX_NOT_ALLOCATED", f"no line is marked as subject to {tl.tax_type}")
-        else:
-            base = round(sum(li.amount for li in flagged), 2)
-            if not _close(base, tl.taxable_amount, tol):
-                add(
-                    WARNING,
-                    "TAX_BASE_MISMATCH",
-                    f"lines marked {tl.tax_type} total {base:.2f} but taxable amount is {tl.taxable_amount:.2f}",
-                )
+            add(WARNING, "TAX_NOT_ALLOCATED", f"no line is marked as subject to {tax_type}")
+            continue
+        base = round(sum(li.amount for li in flagged), 2)
+        if not _close(base, taxable, tol):
+            add(
+                WARNING,
+                "TAX_BASE_MISMATCH",
+                f"lines marked {tax_type} total {base:.2f} but taxable amount is {taxable:.2f}",
+            )
 
     # QST is calculated on the price excluding GST (no tax-on-tax since 2013).
     gst = next((t for t in tax_lines if t.tax_type == "GST"), None)
@@ -294,7 +316,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
     if not prov:
         if charged:
             add(WARNING, "PROVINCE_UNKNOWN", "province of supply unknown; tax regime cannot be verified")
-    elif coding.subtotal > 0:
+    elif abs(coding.subtotal) > 0.004:  # credit notes (negative) are checked too
         expected_types = REGIME[prov]
         name = PROVINCE_NAMES[prov]
         if not charged:

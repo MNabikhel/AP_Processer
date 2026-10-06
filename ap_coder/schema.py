@@ -117,7 +117,11 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
         },
     }
     tax_line_properties: dict[str, Any] = {
-        "tax_type": {"type": "string", "enum": list(TAX_TYPES), "description": "GST, HST, PST (incl. MB RST) or QST."},
+        "tax_type": {
+            "type": "string",
+            "enum": list(TAX_TYPES),
+            "description": "GST, HST, PST (incl. MB RST), QST, or OTHER for a non-Canadian tax.",
+        },
         "province": {
             "type": "string",
             "enum": PROVINCE_VALUES,

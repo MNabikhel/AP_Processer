@@ -15,7 +15,7 @@ from .doctor import exit_code, format_checks, run_checks
 from .evaluation import evaluate
 from .extraction import DocumentExtractor
 from .labels import export_labels
-from .pipeline import InvoicePipeline, discover_inputs, write_outputs
+from .pipeline import InvoicePipeline, PipelineResult, discover_inputs, output_stems, write_outputs
 from .reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from .schema import build_json_schema
 from .share_report import build_share_report
@@ -134,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-db", action="store_true", help="Do not use the learning memory or add to the review queue")
     p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
     p.add_argument("--workers", type=int, default=1, help="Invoices processed in parallel")
+    p.add_argument("--force", action="store_true", help="Process files even if they were processed before")
     p.add_argument("--stdout", action="store_true", help="Also print each coded JSON to stdout")
     _add_reference_args(p)
 
@@ -210,14 +211,27 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
     if not inputs:
         print("No supported invoice files found.", file=sys.stderr)
         return 2
+    if store is not None and not args.force:
+        done = [p for p in inputs if store.find_by_hash(p) is not None]
+        if done:
+            print(
+                f"Skipping {len(done)} file(s) already in the review queue or approved "
+                "(use --force to process them again).",
+                file=sys.stderr,
+            )
+            inputs = [p for p in inputs if p not in done]
+        if not inputs:
+            return 0
 
-    results = pipeline.process_many(inputs, workers=args.workers)
-    summaries = []
-    for res in results:
-        write_outputs(res, args.out)
-        summaries.append(res.summary())
+    stems = output_stems(inputs)
+
+    def save(i: int, res: PipelineResult) -> None:  # as each invoice finishes, so Ctrl+C loses nothing done
+        write_outputs(res, args.out, stem=stems[i])
         if args.stdout and res.output:
             print(json.dumps(res.output, indent=2, ensure_ascii=False))
+
+    results = pipeline.process_many(inputs, workers=args.workers, on_result=save)
+    summaries = [res.summary() for res in results]
 
     Path(args.out).mkdir(parents=True, exist_ok=True)
     (Path(args.out) / "batch_summary.json").write_text(json.dumps(summaries, indent=2), encoding="utf-8")
@@ -247,11 +261,12 @@ def cmd_extract(args: argparse.Namespace, settings: Settings) -> int:
     extractor = DocumentExtractor(settings.document_intelligence, cache_dir=args.cache_dir or None)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    for path in discover_inputs(args.inputs):
+    paths = discover_inputs(args.inputs)
+    for path, stem in zip(paths, output_stems(paths), strict=True):
         result = extractor.extract(path)
-        (out / f"{path.stem}.extraction.md").write_text(result.content, encoding="utf-8")
+        (out / f"{stem}.extraction.md").write_text(result.content, encoding="utf-8")
         if result.raw is not None:
-            (out / f"{path.stem}.di.json").write_text(json.dumps(result.raw, indent=2), encoding="utf-8")
+            (out / f"{stem}.di.json").write_text(json.dumps(result.raw, indent=2), encoding="utf-8")
         print(f"{path.name}: {result.page_count} page(s), {result.table_count} table(s) -> {out}", file=sys.stderr)
     return 0
 

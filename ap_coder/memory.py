@@ -21,16 +21,20 @@ stronger over time; a reviewer can delete any bad record.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
 ACCEPTED, CORRECTED = "accepted", "corrected"
 
+# Legal-form words dropped from the END of a vendor name ("Mueller GmbH & Co. KG" -> "mueller").
 _LEGAL_SUFFIXES = {
-    "inc", "incorporated", "ltd", "ltée", "ltee", "limited", "corp", "corporation", "co", "company",
-    "llc", "llp", "lp", "plc", "ulc", "enr", "senc", "the",
+    "inc", "incorporated", "ltd", "ltee", "limited", "corp", "corporation", "co", "company", "cie",
+    "llc", "llp", "lp", "plc", "ulc", "pc", "pllc", "enr", "senc", "sencrl", "srl", "gmbh", "ag", "kg",
+    "sa", "sas", "sarl", "bv", "nv", "pty", "spa", "ltda", "and",
 }  # fmt: skip
+_LIGATURES = str.maketrans({"œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ß": "ss", "ø": "o", "Ø": "O", "ł": "l"})
 _STOP_WORDS = {
     "and", "for", "the", "with", "from", "per", "each", "item", "items", "qty", "unit", "units",
     "month", "monthly", "service", "services", "invoice", "total",
@@ -43,12 +47,25 @@ VENDOR_LINE_SIMILARITY = 0.6
 CROSS_VENDOR_SIMILARITY = 0.6
 
 
+def _fold(text: str) -> str:
+    """Lower-case and strip accents: "Hydro-Québec" and "Hydro Quebec" read the same."""
+    text = unicodedata.normalize("NFKD", (text or "").translate(_LIGATURES))
+    return "".join(c for c in text if not unicodedata.combining(c)).lower()
+
+
 def _normalise(text: str) -> str:
-    return " ".join(re.sub(r"[^0-9a-zà-ÿ]+", " ", (text or "").lower()).split())
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", _fold(text)).split())
 
 
 def vendor_key(name: str) -> str:
-    words = [w for w in _normalise(name).split() if w not in _LEGAL_SUFFIXES]
+    """Normalised vendor name for matching: accents, punctuation, "&"/"and" and legal forms ignored."""
+    text = _fold(name).replace("&", " and ")
+    text = re.sub(r"\b((?:[a-z]\.){2,})", lambda m: m.group(1).replace(".", ""), text)  # S.E.N.C. -> senc
+    words = _normalise(text).split()
+    if words and words[0] == "the":
+        words = words[1:]
+    while len(words) > 1 and words[-1] in _LEGAL_SUFFIXES:
+        words.pop()
     return " ".join(words)
 
 
@@ -121,13 +138,18 @@ def select_examples(
     if not patterns:
         return []
     vendors = detect_vendors(patterns, document_text, vendor_hint)
+    doc_tokens = tokens(document_text)
+
+    def relevance(p: Pattern) -> float:  # share of the past line's words that appear on this invoice
+        return len(p.tokens & doc_tokens) / len(p.tokens) if p.tokens else 0.0
+
+    # A big vendor can have hundreds of decisions: show the ones about lines on THIS invoice first,
+    # corrections before confirmations, then the most-used and most recent.
     vendor_patterns = sorted(
         (p for p in patterns if p.vendor_key in vendors),
-        key=lambda p: (p.corrections > 0, p.decisions, p.last_seen),
+        key=lambda p: (relevance(p) >= 0.5, p.corrections > 0, relevance(p), p.decisions, p.last_seen),
         reverse=True,
     )[:max_vendor]
-
-    doc_tokens = tokens(document_text)
     scored = []
     for p in patterns:
         if p.vendor_key in vendors or len(p.tokens) < 2:
