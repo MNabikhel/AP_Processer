@@ -172,6 +172,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         "--server.port", str(args.port), "--server.address", "localhost",
         "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
         "--theme.base", str(Path(__file__).resolve().parent / "assets" / "theme.toml"),
+        "--server.enableStaticServing", "true",
     ]  # fmt: skip
     print(f"Dashboard: http://localhost:{args.port}  (Ctrl+C to stop)", file=sys.stderr)
     return subprocess.call(cmd, env=env)

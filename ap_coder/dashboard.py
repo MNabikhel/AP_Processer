@@ -2,16 +2,16 @@
 
 Pages
 -----
-* Review queue: summary tiles and invoice cards; opening one switches to a focused review: invoice
-  image beside the checks and header, editable lines and taxes with live checks and GL posting
-  preview, then approve (which teaches the memory) or reject.
+* Review queue: welcome banner, today's numbers and clickable invoice cards; opening one switches to
+  a focused review (keyboard shortcuts, invoice summary, spend breakdown, live checks, editable lines
+  and taxes, GL posting preview) with a sticky approve bar. Approving teaches the memory.
 * Process invoices: setup checklist, upload or pick up new files in private/invoices.
 * GL accounts & tax: import / view / edit / delete GL accounts (cost codes) and cost centers with
   your own category column, map each sales tax to its GL, edit coding policy notes.
-* Learning & accuracy: how often the AI is right, trend over time, per vendor, most common
-  corrections, and the memory itself (forget a bad lesson).
+* Learning & accuracy: accuracy vs target, trend, recent lessons, vendors, corrections and the memory.
 
-All data stays in the local SQLite database (``private/ap_coder.db`` by default).
+Visual building blocks live in ``ui.py`` and ``assets/style.css``. All data stays in the local
+SQLite database (``private/ap_coder.db`` by default).
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from ap_coder import ui
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS, ExtractionResult
 from ap_coder.memory import ACCEPTED
@@ -46,49 +47,7 @@ SERIES_BLUE = "#2a78d6"  # categorical slot 1 (dataviz reference palette)
 TARGET_GRAY = "#8a8985"
 
 st.set_page_config(page_title="AP Coder", page_icon=str(ASSETS / "icon.svg"), layout="wide")
-
-# Small layer of CSS on top of the theme (assets/theme.toml): white cards, page headers, check list.
-st.html(
-    """
-<style>
-[data-testid="stHeaderActionElements"] {display: none;}
-.block-container {padding-top: 2.4rem; padding-bottom: 5rem; max-width: 1480px;}
-[class*="st-key-card_"], div[data-testid="stMetric"] {background: #ffffff;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, .04);}
-.apc-head {display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; margin: 0 0 .6rem;}
-.apc-eyebrow {font-size: .74rem; letter-spacing: .09em; text-transform: uppercase; color: #2a78d6;
-  font-weight: 700; margin-bottom: .15rem;}
-.apc-title {font-size: 1.85rem; font-weight: 700; color: #1c2433; line-height: 1.15; margin: 0;}
-.apc-sub {color: #5d6778; font-size: .95rem; margin-top: .25rem;}
-.apc-muted {color: #5d6778; font-size: .88rem;}
-.apc-section {font-weight: 650; font-size: 1.02rem; color: #1c2433; margin: 0 0 .35rem;}
-.apc-vendor {font-size: 1.4rem; font-weight: 700; color: #1c2433; line-height: 1.2;}
-.apc-total {text-align: right;}
-.apc-total .label {font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: #5d6778;
-  font-weight: 600;}
-.apc-total .value {font-size: 1.7rem; font-weight: 700; color: #1c2433; line-height: 1.15;}
-.apc-check {display: flex; gap: .65rem; align-items: flex-start; padding: .55rem .7rem; border-radius: 8px;
-  border: 1px solid; margin-bottom: .45rem; font-size: .9rem; color: #1c2433; line-height: 1.35;}
-.apc-check .tag {flex: none; font-weight: 700; font-size: .7rem; letter-spacing: .05em; padding: .14rem .5rem;
-  border-radius: 999px; margin-top: .05rem;}
-.apc-check .code {font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .76rem; color: #5d6778;}
-.apc-check.error {background: #fdf2f2; border-color: #f2caca;}
-.apc-check.error .tag {background: #c53030; color: #ffffff;}
-.apc-check.warning {background: #fff8e6; border-color: #f0dca6;}
-.apc-check.warning .tag {background: #f0b429; color: #3b2a00;}
-.apc-check.ok {background: #eef8f2; border-color: #c4e5d1;}
-.apc-check.ok .tag {background: #1a7f4b; color: #ffffff;}
-.apc-check.info {background: #eef4fc; border-color: #cadcf4;}
-.apc-check.info .tag {background: #1f63b5; color: #ffffff;}
-.apc-step {display: flex; align-items: center; gap: .6rem; padding: .45rem 0; border-bottom: 1px solid #eef1f5;
-  font-size: .93rem;}
-.apc-step:last-child {border-bottom: none;}
-.apc-dot {width: .62rem; height: .62rem; border-radius: 50%; flex: none;}
-.apc-dot.ok {background: #1a7f4b;} .apc-dot.todo {background: #f0b429;} .apc-dot.bad {background: #c53030;}
-.apc-step .state {margin-left: auto; color: #5d6778; font-size: .85rem;}
-</style>
-"""
-)
+st.html(f"<style>{(ASSETS / 'style.css').read_text(encoding='utf-8')}</style>")
 
 
 # --- Shared helpers -----------------------------------------------------------------------------
@@ -104,7 +63,7 @@ def get_settings() -> Settings:
 
 
 def reviewer() -> str:
-    return st.session_state.get("reviewer") or "reviewer"
+    return st.session_state.get("reviewer") or os.environ.get("AP_REVIEWER") or getpass.getuser()
 
 
 def money(value: Any, currency: str = "") -> str:
@@ -114,16 +73,16 @@ def money(value: Any, currency: str = "") -> str:
         return "-"
 
 
+def esc(value: Any) -> str:
+    return html.escape(str(value or ""))
+
+
 def short_path(path: Path) -> Path:
     """Show paths relative to the folder the dashboard was started from, when possible."""
     try:
         return path.resolve().relative_to(Path.cwd())
     except ValueError:
         return path
-
-
-def esc(value: Any) -> str:
-    return html.escape(str(value or ""))
 
 
 def reference_or_none(store: Store) -> ReferenceData | None:
@@ -139,6 +98,11 @@ def gl_label_map(reference: ReferenceData | None) -> dict[str, str]:
         for row in reference.chart_of_accounts.rows:
             labels[row["gl_code"]] = f"{row['gl_code']} · {row.get('description', '')[:60]}"
     return labels
+
+
+def gl_name(reference: ReferenceData, code: str) -> str:
+    row = reference.chart_of_accounts.get(code)
+    return (row or {}).get("description", "").split(" - ")[0] if row else ""
 
 
 def cc_label_map(reference: ReferenceData | None) -> dict[str, str]:
@@ -157,7 +121,7 @@ def render_pages(path: str, mtime: float) -> list[bytes]:
         import pymupdf
 
         with pymupdf.open(path) as doc:
-            return [page.get_pixmap(dpi=110).tobytes("png") for page in doc]
+            return [page.get_pixmap(dpi=120).tobytes("png") for page in doc]
     if suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}:
         from PIL import Image, ImageSequence
 
@@ -182,24 +146,22 @@ def show_toast() -> None:
         st.toast(pending[0], icon=pending[1])
 
 
-def page_header(eyebrow: str, title: str, subtitle: str = "") -> None:
-    sub = f"<div class='apc-sub'>{esc(subtitle)}</div>" if subtitle else ""
-    st.html(
-        f"<div class='apc-head'><div><div class='apc-eyebrow'>{esc(eyebrow)}</div>"
-        f"<div class='apc-title'>{esc(title)}</div>{sub}</div></div>"
-    )
-
-
 def card(name: str) -> Any:
     """A bordered white card (the key gives it a stable CSS class: st-key-card_<name>)."""
     return st.container(border=True, key=f"card_{name}")
 
 
+def approved_today(store: Store) -> int:
+    today = dt.date.today().isoformat()
+    return sum(1 for i in store.list_invoices(APPROVED) if (i["reviewed_at"] or "").startswith(today))
+
+
+def weekly_accuracy(metrics: dict[str, Any]) -> list[float]:
+    return [w["accepted"] / (w["accepted"] + w["corrected"]) for w in metrics["weekly"]]
+
+
 def check_item(kind: str, tag: str, message: str, code: str = "") -> str:
-    code_html = f" <span class='code'>{esc(code)}</span>" if code else ""
-    return (
-        f"<div class='apc-check {kind}'><span class='tag'>{esc(tag)}</span><div>{esc(message)}{code_html}</div></div>"
-    )
+    return ui.check(kind, tag, message, code)
 
 
 # --- Review queue --------------------------------------------------------------------------------------
@@ -210,10 +172,13 @@ def page_review() -> None:
     show_toast()
     reference = reference_or_none(store)
     if reference is None:
-        page_header("Accounts payable", "Review queue")
-        with card("c1"):
-            st.markdown("#### :material/rocket_launch: Let's get you set up")
-            st.write("Import your GL accounts first, so the AI knows which codes it may use.")
+        st.html(ui.page_header("Accounts payable", "Review queue"))
+        with card("setup"):
+            st.html(
+                ui.empty_state(
+                    "Let's get you set up", "Import your GL accounts so the AI knows which codes it may use."
+                )
+            )
             st.page_link(PAGES["accounts"], label="Go to GL accounts & tax", icon=":material/arrow_forward:")
         return
 
@@ -224,47 +189,101 @@ def page_review() -> None:
         render_invoice(store, reference, open_id, pending)
         return
 
-    page_header("Accounts payable", "Review queue", "Check the AI's coding, fix anything wrong, approve.")
     approved = [i for i in invoices if i["status"] == APPROVED]
     flagged = [i for i in pending if i["requires_review"]]
     metrics = store.metrics()
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Waiting for review", len(pending), border=True)
-    c2.metric("Flagged by checks", len(flagged), border=True)
-    c3.metric("Approved", len(approved), border=True)
-    accuracy = metrics["line_accuracy"]
-    weekly = [w["accepted"] / (w["accepted"] + w["corrected"]) for w in metrics["weekly"]]
-    c4.metric(
-        "AI coding accuracy",
-        "—" if accuracy is None else f"{accuracy:.0%}",
-        None if accuracy is None else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target",
-        border=True,
-        chart_data=weekly if len(weekly) > 1 else None,
+    done_today = approved_today(store)
+    minutes = len(flagged) * 2 + (len(pending) - len(flagged))
+    first_name = reviewer().split()[0] if reviewer() else "there"
+    total_today = done_today + len(pending)
+    lead = (
+        f"{len(pending)} invoice{'s' if len(pending) != 1 else ''} waiting · about {minutes} minute"
+        f"{'s' if minutes != 1 else ''} of review"
+        if pending
+        else "Your queue is clear. Nice work!"
     )
+    chips = [
+        f"{ui.icon('flag')} {len(flagged)} need attention",
+        f"{ui.icon('bolt')} {len(pending) - len(flagged)} ready to approve",
+        f"{ui.icon('task_alt')} {done_today} approved today",
+    ]
+    st.html(
+        ui.hero(
+            f"{dt.date.today():%A, %B} {dt.date.today().day}",
+            f"{ui.greeting()}, {first_name}",
+            lead,
+            chips,
+            done_today / total_today if total_today else 1.0,
+            f"{done_today}/{total_today}" if total_today else "✓",
+            "today's progress",
+        )
+    )
+
+    accuracy = metrics["line_accuracy"]
+    weekly = weekly_accuracy(metrics)
+    st.html(
+        ui.tiles(
+            [
+                ui.tile("Waiting for review", len(pending), "inbox", "blue", f"{len(flagged)} flagged by checks"),
+                ui.tile("Approved", len(approved), "task_alt", "green", f"{done_today} today"),
+                ui.tile(
+                    "AI coding accuracy",
+                    "—" if accuracy is None else f"{accuracy:.0%}",
+                    "auto_awesome",
+                    "violet",
+                    "" if accuracy is None else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target",
+                    "" if accuracy is None else ("up" if accuracy >= TARGET_ACCURACY else "down"),
+                    weekly if len(weekly) > 1 else None,
+                ),
+                ui.tile(
+                    "Lessons learned",
+                    metrics["lines_reviewed"],
+                    "psychology",
+                    "amber",
+                    f"{metrics['lines_corrected']} corrections taught",
+                ),
+            ]
+        )
+    )
+
+    if st.session_state.pop("celebrate", False):
+        st.balloons()
 
     tab_review, tab_approved, tab_other = st.tabs(
         [
-            f":material/inbox: To review ({len(pending)})",
-            f":material/task_alt: Approved ({len(approved)})",
-            f":material/report: Failed / rejected ({len(invoices) - len(pending) - len(approved)})",
+            f":material/inbox: To review · {len(pending)}",
+            f":material/task_alt: Approved · {len(approved)}",
+            f":material/report: Failed / rejected · {len(invoices) - len(pending) - len(approved)}",
         ]
     )
     with tab_review:
         if not pending:
-            with card("c2"):
-                st.markdown("#### :material/celebration: All caught up")
-                st.write("Nothing is waiting for review.")
+            with card("empty"):
+                st.html(ui.empty_state("Inbox zero", "Every invoice has been reviewed. Time for a coffee."))
                 st.page_link(PAGES["process"], label="Process new invoices", icon=":material/arrow_forward:")
         else:
-            view = st.segmented_control(
-                "Show", ["All", "Needs attention", "Ready to approve"], default="All", label_visibility="collapsed"
+            view = (
+                st.segmented_control(
+                    "Show",
+                    [
+                        f"All · {len(pending)}",
+                        f"Needs attention · {len(flagged)}",
+                        f"Ready · {len(pending) - len(flagged)}",
+                    ],
+                    default=f"All · {len(pending)}",
+                    label_visibility="collapsed",
+                )
+                or ""
             )
-            shown = {
-                "Needs attention": flagged,
-                "Ready to approve": [i for i in pending if not i["requires_review"]],
-            }.get(view or "All", pending)
+            shown = (
+                flagged
+                if view.startswith("Needs")
+                else [i for i in pending if not i["requires_review"]]
+                if view.startswith("Ready")
+                else pending
+            )
             for inv in shown:
-                _queue_card(inv)
+                _queue_card(store, inv)
 
     with tab_approved:
         if not approved:
@@ -278,7 +297,20 @@ def page_review() -> None:
                 mime="text/csv",
                 icon=":material/download:",
             )
-            st.dataframe(_approved_frame(approved), hide_index=True)
+            rows = [
+                [
+                    f"<div style='display:flex;gap:.6rem;align-items:center'>{ui.avatar(i['vendor_name'] or '', 'sm')}"
+                    f"<b>{esc(i['vendor_name'])}</b></div>",
+                    esc(i["invoice_number"]),
+                    esc(i["invoice_date"]),
+                    f"{money(i['grand_total'])} <span class='apc-muted'>{esc(i['currency'])}</span>",
+                    esc(i["reviewer"]),
+                    esc(ui.time_ago(i["reviewed_at"])),
+                ]
+                for i in approved
+            ]
+            with card("approved_list"):
+                st.html(ui.table(["Vendor", "Invoice #", "Date", "Total", "Approved by", "When"], rows, right=[3]))
             labels = {i["id"]: f"#{i['id']} · {i['vendor_name']} · {i['invoice_number']}" for i in approved}
             chosen = st.selectbox("View approved invoice", list(labels), format_func=labels.get, key="view_approved")
             render_approved(store, reference, chosen)
@@ -308,40 +340,17 @@ def page_review() -> None:
                     st.rerun()
 
 
-def _queue_card(inv: dict[str, Any]) -> None:
-    with card(f"queue_{inv['id']}"):
-        c1, c2, c3, c4 = st.columns([5, 2.2, 2.4, 1.3], vertical_alignment="center")
-        c1.markdown(f"**{inv['vendor_name'] or inv['file_name']}**")
-        c1.html(
-            f"<div class='apc-muted'>Invoice {esc(inv['invoice_number'] or '—')} · {esc(inv['invoice_date'] or '—')}"
-            f" · {esc(inv['file_name'])}</div>"
-        )
-        c2.markdown(f"**{money(inv['grand_total'])}** {inv['currency'] or ''}")
-        confidence = inv["adjusted_confidence"] or 0.0
-        if inv["requires_review"]:
-            c3.markdown(f":orange-badge[:material/flag: Needs attention] :gray-badge[{confidence:.0%}]")
-        else:
-            c3.markdown(f":green-badge[:material/check: Ready] :gray-badge[{confidence:.0%}]")
-        if c4.button("Review", key=f"open_{inv['id']}", icon=":material/arrow_forward:", width="stretch"):
+def _queue_card(store: Store, inv: dict[str, Any]) -> None:
+    full = store.get_invoice(inv["id"]) or {}
+    ai = full.get("ai_output") or {}
+    taxes = list(dict.fromkeys(t.get("tax_type", "") for t in ai.get("tax_lines", [])))
+    prov = ai.get("ship_to_province") or ai.get("supplier_province") or ""
+    with st.container(key=f"qcard_{inv['id']}"):
+        st.html(ui.queue_card(inv, taxes, PROVINCE_NAMES.get(prov, "")))
+        label = f"Review invoice from {inv['vendor_name'] or inv['file_name']}"
+        if st.button(label, key=f"qopen_{inv['id']}"):
             st.session_state["open_invoice"] = inv["id"]
             st.rerun()
-
-
-def _approved_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                "ID": r["id"],
-                "Vendor": r["vendor_name"] or "",
-                "Invoice #": r["invoice_number"] or "",
-                "Date": r["invoice_date"] or "",
-                "Total": money(r["grand_total"], r["currency"] or ""),
-                "Approved by": r["reviewer"] or "",
-                "Approved": (r["reviewed_at"] or "")[:16].replace("T", " "),
-            }
-            for r in rows
-        ]
-    )
 
 
 def _export_rows(store: Store, approved: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -380,7 +389,7 @@ def _document_panel(inv: dict[str, Any]) -> None:
             "Page", list(range(1, len(pages) + 1)), default=1, key=f"page_{inv['id']}",
             format_func=lambda n: f"Page {n}", label_visibility="collapsed",
         ) or 1  # fmt: skip
-    st.caption(inv["file_name"])
+    st.caption(f":material/attach_file: {inv['file_name']}")
     if pages:
         st.image(pages[page_no - 1], width="stretch")
     elif not path.exists():
@@ -409,14 +418,16 @@ def _checks_html(report: Any) -> str:
     items = []
     for issue in report.issues:
         where = f"Line {issue.line_number}: " if issue.line_number else ""
-        kind, tag = ("error", "ERROR") if issue.severity == "error" else ("warning", "CHECK")
-        items.append(check_item(kind, tag, where + issue.message, issue.code))
+        if issue.severity == "error":
+            items.append(ui.check("error", "Must fix", where + issue.message, issue.code))
+        else:
+            items.append(ui.check("warning", "Worth a look", where + issue.message, issue.code))
     errors = [i for i in report.issues if i.severity == "error"]
     if report.requires_review and not errors:
         items.append(
-            check_item(
+            ui.check(
                 "warning",
-                "REVIEW",
+                "Low confidence",
                 f"AI confidence {report.adjusted_confidence:.0%} is below the {report.review_threshold:.0%} "
                 "threshold, so a person should look it over.",
             )
@@ -425,9 +436,9 @@ def _checks_html(report: Any) -> str:
     matches = [h for h in history if h["status"] == "match"]
     if matches:
         lines = ", ".join(str(h["line_number"]) for h in matches)
-        items.append(check_item("info", "LEARNED", f"Line {lines} matches how reviewers coded this vendor before."))
+        items.append(ui.check("info", "Learned", f"Line {lines} matches how reviewers coded this vendor before."))
     if not report.issues:
-        items.append(check_item("ok", "PASS", "Totals reconcile, taxes verified, all codes valid."))
+        items.append(ui.check("ok", "All clear", "Totals reconcile, taxes verified, all codes valid."))
     return "".join(items)
 
 
@@ -454,29 +465,33 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     ids = [i["id"] for i in pending]
     position = ids.index(invoice_id)
 
-    # --- Navigation ---------------------------------------------------------------------------------
+    # --- Navigation (with keyboard shortcuts) -------------------------------------------------------
     nav = st.container(horizontal=True, vertical_alignment="center")
-    if nav.button("All invoices", icon=":material/arrow_back:", type="tertiary"):
+    if nav.button("Queue", icon=":material/arrow_back:", type="tertiary", shortcut="Alt+Up"):
         st.session_state.pop("open_invoice", None)
         st.rerun()
-    nav.caption(f"Invoice {position + 1} of {len(ids)} waiting for review")
+    nav.html(f"<span class='apc-muted'>Reviewing <b style='color:#142033'>{position + 1}</b> of {len(ids)}</span>")
     nav.space("stretch")
-    if nav.button("Previous", icon=":material/chevron_left:", disabled=position == 0):
+    if nav.button("Previous", icon=":material/chevron_left:", disabled=position == 0, shortcut="Alt+Left"):
         st.session_state["open_invoice"] = ids[position - 1]
         st.rerun()
-    if nav.button("Next", icon=":material/chevron_right:", icon_position="right", disabled=position == len(ids) - 1):
+    if nav.button(
+        "Next", icon=":material/chevron_right:", icon_position="right", disabled=position == len(ids) - 1,
+        shortcut="Alt+Right",
+    ):  # fmt: skip
         st.session_state["open_invoice"] = ids[position + 1]
         st.rerun()
+    st.html(ui.progress(position + 1, len(ids)))
 
-    summary = card("c5")
+    summary = card("summary")
 
     left, right = st.columns([5, 7], gap="medium")
-    with left, card("c6"):
+    with left, card("document"):
         _document_panel(inv)
 
     with right:
-        checks_box = card("c7")
-        with card("c8"):
+        checks_box = card("checks")
+        with card("details"):
             st.markdown("#### :material/badge: Invoice details")
             c1, c2, c3 = st.columns(3)
             header: dict[str, Any] = {
@@ -516,7 +531,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             )
 
     # --- Line items ---------------------------------------------------------------------------------------
-    with card("c9"):
+    with card("lines"):
         st.markdown("#### :material/list_alt: Line items")
         st.caption("Click a GL account or cost center cell to change it. Add or delete rows at the bottom.")
         gl_labels = gl_label_map(reference)
@@ -561,7 +576,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         )  # fmt: skip
 
     tax_col, tax_check_col = st.columns([5, 6], gap="medium")
-    with tax_col, card("c10"):
+    with tax_col, card("tax"):
         st.markdown("#### :material/percent: Sales tax")
         tax_df = pd.DataFrame(
             ai.get("tax_lines", []), columns=["tax_type", "province", "rate", "taxable_amount", "tax_amount"]
@@ -586,7 +601,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     if coding is None:
         with checks_box:
             st.markdown("#### :material/fact_check: Checks")
-            st.html("".join(check_item("error", "FIX", p) for p in problems))
+            st.html("".join(ui.check("error", "Fix this field", p) for p in problems))
         return
 
     extraction = ExtractionResult(
@@ -603,33 +618,44 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     warnings = [i for i in report.issues if i.severity == "warning"]
 
     with summary:
-        _invoice_summary(coding, report, errors, warnings)
+        _invoice_summary(coding, report, errors, warnings, output, reference)
     with checks_box:
-        st.markdown("#### :material/fact_check: Checks")
+        head, count = st.columns([3, 2], vertical_alignment="center")
+        head.markdown("#### :material/fact_check: Checks")
+        count.html(
+            "<div style='text-align:right'>"
+            + (ui.pill(f"{len(errors)} to fix", "err") + " " if errors else "")
+            + (ui.pill(f"{len(warnings)} to look at", "warn") if warnings else "")
+            + (ui.pill("All clear", "ok", "check") if not report.issues and not report.requires_review else "")
+            + (ui.pill("Needs a look", "warn", "visibility") if not report.issues and report.requires_review else "")
+            + "</div>"
+        )
         st.html(_checks_html(report))
-    with tax_check_col, card("c11"):
+    with tax_check_col, card("taxchecks"):
         st.markdown("#### :material/calculate: Tax checks")
         _tax_check_table(coding, reference)
 
-    with card("c12"):
+    with card("posting"):
         st.markdown("#### :material/account_balance: GL posting preview")
         _distribution_table(output, reference, coding.currency)
 
-    # --- Action bar --------------------------------------------------------------------------------------
+    # --- Sticky action bar --------------------------------------------------------------------------------
     changed = _ai_changes(coding, ai)
-    with card("c13"):
-        left, right = st.columns([3, 2], vertical_alignment="center")
+    with card("actionbar"):
+        left, right = st.columns([1, 1], vertical_alignment="center")
         with left:
-            st.markdown(
-                f"**Ready to post {money(coding.grand_total, coding.currency)}**  \n"
-                f"Approving teaches the AI from {len(coding.line_items)} line(s)"
-                + (f": you changed **{changed}** of its suggestions." if changed else ", all as suggested.")
+            learn = f"you changed <b>{changed}</b> of its suggestions" if changed else "all as the AI suggested"
+            st.html(
+                f"<div style='display:flex;gap:.8rem;align-items:center'>{ui.avatar(reviewer(), 'sm')}"
+                f"<div><div style='font-weight:700;color:#142033'>Post {money(coding.grand_total, coding.currency)}"
+                f"</div><div class='apc-muted'>Approving teaches the AI from {len(coding.line_items)} line(s): "
+                f"{learn}.</div></div></div>"
             )
             allow = True
             if errors:
                 allow = st.checkbox(f"Approve anyway, despite {len(errors)} error(s)", key=f"{key}_override")
         with right:
-            buttons = st.container(horizontal=True, horizontal_alignment="right")
+            buttons = st.container(horizontal=True, horizontal_alignment="right", wrap=False)
             with buttons.popover("Delete", icon=":material/delete:"):
                 st.write("Remove this invoice from the queue? Nothing is learned from it.")
                 if st.button("Delete invoice", key=f"{key}_delete", type="primary"):
@@ -645,14 +671,19 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                     notify(f"Invoice #{invoice_id} rejected.", ":material/block:")
                     st.rerun()
             if buttons.button(
-                "Approve", type="primary", icon=":material/check:", disabled=not allow, key=f"{key}_approve"
-            ):
+                "Approve & teach", type="primary", icon=":material/check:", disabled=not allow,
+                key=f"{key}_approve", shortcut="Ctrl+Enter",
+            ):  # fmt: skip
                 counts = store.approve_invoice(invoice_id, output, reviewer())
                 total = sum(counts.values())
                 _advance(ids, position)
+                if len(ids) == 1:
+                    st.session_state["celebrate"] = True
                 notify(
-                    f"Approved #{invoice_id}. Learned from {total} line(s): {counts[ACCEPTED]} confirmed, "
-                    f"{total - counts[ACCEPTED]} corrected."
+                    f"Approved {coding.vendor_name.rstrip('.')}. Learned from {total} line(s): "
+                    f"{counts[ACCEPTED]} confirmed, "
+                    f"{total - counts[ACCEPTED]} corrected.",
+                    ":material/school:",
                 )
                 st.rerun()
 
@@ -666,35 +697,47 @@ def _advance(ids: list[int], position: int) -> None:
         st.session_state.pop("open_invoice", None)
 
 
-def _invoice_summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: list[Any]) -> None:
-    left, right = st.columns([4, 1.4], vertical_alignment="center")
-    with left:
-        st.html(f"<div class='apc-vendor'>{esc(coding.vendor_name) or 'Unknown vendor'}</div>")
-        supply = coding.ship_to_province or coding.supplier_province
-        place = PROVINCE_NAMES.get(supply, "Province unknown")
-        st.html(
-            f"<div class='apc-muted'>Invoice {esc(coding.invoice_number)} · {esc(coding.invoice_date)} · "
-            f"{esc(place)}</div>"
-        )
-        badges = []
-        if errors:
-            badges.append(f":red-badge[:material/error: {len(errors)} error{'s' if len(errors) > 1 else ''}]")
-        if warnings:
-            badges.append(f":orange-badge[:material/warning: {len(warnings)} to check]")
-        if not report.issues:
-            badges.append(":green-badge[:material/check_circle: All checks passed]")
-        if report.requires_review and not errors:
-            badges.append(":orange-badge[:material/visibility: Needs a look]")
-        badges.append(f":gray-badge[AI confidence {report.adjusted_confidence:.0%}]")
-        taxes = " + ".join(dict.fromkeys(t.tax_type for t in coding.tax_lines)) or "No tax"
-        badges.append(f":blue-badge[:material/percent: {taxes}]")
-        if any(h["status"] == "match" for h in report.checks.get("history") or []):
-            badges.append(":violet-badge[:material/psychology: Learned pattern]")
-        st.markdown(" ".join(badges))
-    right.html(
-        f"<div class='apc-total'><div class='label'>Total due</div>"
-        f"<div class='value'>{money(coding.grand_total)}</div><div class='apc-muted'>{esc(coding.currency)}</div></div>"
+def _invoice_summary(
+    coding: InvoiceCoding, report: Any, errors: list[Any], warnings: list[Any], output: dict[str, Any],
+    reference: ReferenceData,
+) -> None:  # fmt: skip
+    supply = coding.ship_to_province or coding.supplier_province
+    meta = [
+        ("receipt_long", f"Invoice {coding.invoice_number}"),
+        ("event", coding.invoice_date),
+        ("location_on", PROVINCE_NAMES.get(supply, "Province unknown")),
+        ("verified", f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else ""),
+    ]
+    pills = []
+    if errors:
+        pills.append(ui.pill(f"{len(errors)} error{'s' if len(errors) > 1 else ''}", "err", "error"))
+    if warnings:
+        pills.append(ui.pill(f"{len(warnings)} to check", "warn", "warning"))
+    if not report.issues:
+        pills.append(ui.pill("All checks passed", "ok", "check_circle"))
+    if report.requires_review and not errors:
+        pills.append(ui.pill("Needs a look", "warn", "visibility"))
+    if any(h["status"] == "match" for h in report.checks.get("history") or []):
+        pills.append(ui.pill("Learned pattern", "violet", "psychology"))
+    pills += [ui.tax_chip(t) for t in dict.fromkeys(t.tax_type for t in coding.tax_lines)]
+    st.html(
+        ui.invoice_hero(
+            coding.vendor_name,
+            meta,
+            pills,
+            report.adjusted_confidence,
+            coding.grand_total,
+            coding.currency,
+            report.review_threshold,
+        )  # fmt: skip
     )
+    # Where the money goes: expense GLs (incl. non-recoverable tax) and recoverable tax accounts.
+    by_gl: dict[str, float] = {}
+    for e in output["gl_distribution"]:
+        name = gl_name(reference, e["gl_code"]) or e["gl_code"] or "Unmapped"
+        label = f"{e['gl_code']} {name}" if e["kind"] == "expense" else f"{name} (tax)"
+        by_gl[label] = by_gl.get(label, 0.0) + e["amount"]
+    st.html(ui.split_bar(sorted(by_gl.items(), key=lambda kv: -kv[1])))
 
 
 def _tax_check_table(coding: InvoiceCoding, reference: ReferenceData) -> None:
@@ -711,57 +754,67 @@ def _tax_check_table(coding: InvoiceCoding, reference: ReferenceData) -> None:
         prov = t.province or coding.ship_to_province or coding.supplier_province
         official = reference.tax.rates.rate_for(t.tax_type, prov if prov in PROVINCE_NAMES else "", on)
         treat = reference.tax.treatment(t.tax_type)
-        gl = treat.gl_code if treat.needs_gl else "added to expense lines"
+        gl = treat.gl_code if treat.needs_gl else "expense lines"
         math_ok = abs(expected - t.tax_amount) <= 0.01 * max(1, len(coding.line_items)) + 0.01
         rate_ok = official is not None and abs(official - t.rate) < 1e-6
+        mark = lambda ok: "<span class='ok'>✓</span>" if ok else "<span class='bad'>✕</span>"  # noqa: E731
         rows.append(
-            {
-                "Tax": f"{t.tax_type} {t.province}".strip(),
-                "Rate": f"{'✓' if rate_ok else '✗'} {t.rate * 100:.3f}%",
-                "Official": "not levied" if official is None else f"{official * 100:.3f}%",
-                "Base × rate": money(expected),
-                "Charged": f"{'✓' if math_ok else '✗'} {money(t.tax_amount)}",
-                "Posts to": gl or "⚠ not mapped",
-            }
+            [
+                f"{ui.tax_chip(t.tax_type)} {esc(t.province)}",
+                f"{mark(rate_ok)} {t.rate * 100:.3f}%",
+                "not levied" if official is None else f"{official * 100:.3f}%",
+                f"{mark(math_ok)} {money(t.tax_amount)}",
+                esc(gl or "⚠ not mapped"),
+            ]
         )
-    st.dataframe(pd.DataFrame(rows), hide_index=True)
+    st.html(ui.table(["Tax", "Rate", "Official", "Charged", "Posts to"], rows, right=[3]))
 
 
 def _distribution_table(output: dict[str, Any], reference: ReferenceData, currency: str) -> None:
-    labels = gl_label_map(reference)
-    rows = [
-        {
-            "": "Tax" if e["kind"] == "tax" else f"Line {e['line_number']}",
-            "GL account": labels.get(e["gl_code"], e["gl_code"] or "⚠ not mapped"),
-            "Cost center": e["cost_center"],
-            "Description": e["description"],
-            "Net": money(e["net_amount"]) if e["kind"] == "expense" else "",
-            "Non-recoverable tax": money(e["non_recoverable_tax"]) if e["non_recoverable_tax"] else "",
-            "Amount": money(e["amount"]),
-        }
-        for e in output["gl_distribution"]
-    ]
-    st.dataframe(pd.DataFrame(rows), hide_index=True)
+    rows = []
+    for e in output["gl_distribution"]:
+        kind = ui.pill("Tax", "info") if e["kind"] == "tax" else ui.pill(f"Line {e['line_number']}", "gray")
+        name = gl_name(reference, e["gl_code"])
+        gl = f"<div class='gl'>{esc(e['gl_code'] or '⚠ not mapped')}<small>{esc(name)}</small></div>"
+        rows.append(
+            [
+                kind,
+                gl,
+                esc(e["cost_center"]),
+                esc(e["description"]),
+                money(e["net_amount"]) if e["kind"] == "expense" else "",
+                money(e["non_recoverable_tax"]) if e["non_recoverable_tax"] else "",
+                f"<b>{money(e['amount'])}</b>",
+            ]
+        )
     total = round(sum(e["amount"] for e in output["gl_distribution"]), 2)
     diff = round(total - output["grand_total"], 2)
-    if abs(diff) <= 0.01:
-        st.markdown(f":green-badge[:material/balance: Balanced] Posting totals {money(total, currency)}.")
-    else:
-        st.markdown(f":red-badge[:material/error: Out of balance by {money(diff)}] Posting totals {money(total)}.")
+    balance = (
+        ui.pill("Balanced", "ok", "balance") if abs(diff) <= 0.01 else ui.pill(f"Off by {money(diff)}", "err", "error")
+    )
+    foot = ["", balance, "", "Total", "", "", f"{money(total)} {esc(currency)}"]
+    st.html(
+        ui.table(
+            ["", "GL account", "Cost center", "Description", "Net", "Non-rec. tax", "Amount"],
+            rows,
+            right=[4, 5, 6],
+            foot=foot,
+        )  # fmt: skip
+    )
 
 
 def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> None:
     inv = store.get_invoice(invoice_id)
     final = inv["final_output"] or {}
     edits = inv.get("edits") or []
-    with card("c14"):
-        st.markdown(
-            f"**{final.get('vendor_name', '')}** · invoice {final.get('invoice_number', '')} · "
-            f"{money(final.get('grand_total'), final.get('currency', ''))}"
-        )
-        st.caption(
-            f"Approved by {inv['reviewer']} on {(inv['reviewed_at'] or '')[:16].replace('T', ' ')} · "
-            + ("no changes to the AI's coding" if not edits else "reviewer changed: " + ", ".join(edits))
+    with card(f"approved_{invoice_id}"):
+        st.html(
+            f"<div style='display:flex;gap:.8rem;align-items:center;margin-bottom:.6rem'>"
+            f"{ui.avatar(final.get('vendor_name', ''))}<div><div style='font-weight:700;font-size:1.05rem'>"
+            f"{esc(final.get('vendor_name'))}</div><div class='apc-muted'>Invoice {esc(final.get('invoice_number'))}"
+            f" · approved by {esc(inv['reviewer'])} {esc(ui.time_ago(inv['reviewed_at']))} · "
+            + ("no changes to the AI's coding" if not edits else "changed: " + esc(", ".join(edits)))
+            + "</div></div></div>"
         )
         _distribution_table(final, reference, final.get("currency", ""))
 
@@ -776,14 +829,16 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
     ok = 0
     with st.status(f"Processing {len(paths)} invoice(s)…", expanded=True) as status:
         for n, path in enumerate(paths, start=1):
-            st.write(f"Reading and coding **{path.name}** ({n}/{len(paths)})")
+            st.write(f":material/document_scanner: Reading and coding **{path.name}** ({n}/{len(paths)})")
             result = pipeline.process(path)
             if result.ok:
                 ok += 1
+                flag = "needs attention" if result.report and result.report.requires_review else "ready"
+                st.write(f":material/check_circle: {result.output.get('vendor_name', path.name)}: {flag}")
             else:
                 st.error(f"{path.name}: {result.error}", icon=":material/error:")
         status.update(label=f"Processed {ok} of {len(paths)}", state="complete" if ok == len(paths) else "error")
-    notify(f"Processed {ok} of {len(paths)} invoice(s). They're waiting in the review queue.")
+    notify(f"Processed {ok} of {len(paths)} invoice(s). They're waiting in the review queue.", ":material/inbox:")
 
 
 def _setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
@@ -794,7 +849,7 @@ def _setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]
         (
             "ok" if settings.document_intelligence.endpoint else "bad",
             "Azure Document Intelligence",
-            "configured" if settings.document_intelligence.endpoint else "set the endpoint in .env",
+            "connected" if settings.document_intelligence.endpoint else "set the endpoint in .env",
         ),
         (
             "ok" if settings.openai.endpoint else "bad",
@@ -809,29 +864,29 @@ def _setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]
 def page_process() -> None:
     store = get_store()
     show_toast()
-    page_header("Inbox", "Process invoices", "Read new invoices with Azure and send them to the review queue.")
+    st.html(
+        ui.page_header("Inbox", "Process invoices", "Read new invoices with Azure and send them to the review queue.")
+    )
     settings = get_settings()
     steps = _setup_steps(store, settings)
-
-    left, right = st.columns([3, 2], gap="medium")
-    with right, card("c15"):
-        st.markdown("#### :material/checklist: Setup")
-        st.html(
-            "".join(
-                f"<div class='apc-step'><span class='apc-dot {s}'></span>{esc(label)}"
-                f"<span class='state'>{esc(state)}</span></div>"
-                for s, label, state in steps
-            )
-        )
-        if any(s != "ok" for s, _, _ in steps[2:]):
-            st.page_link(PAGES["accounts"], label="Finish setup", icon=":material/arrow_forward:")
     ready = all(s == "ok" for s, _, _ in steps[:3])
 
+    left, right = st.columns([3, 2], gap="medium")
+    with right, card("setup_steps"):
+        done = sum(1 for s, _, _ in steps if s == "ok")
+        head, gauge = st.columns([3, 1], vertical_alignment="center")
+        head.markdown("#### :material/checklist: Setup")
+        head.caption("Everything the engine needs before it can read invoices.")
+        gauge.html(ui.ring(done / len(steps), size=56, stroke=6, label=f"{done}/{len(steps)}"))
+        st.html("".join(ui.step(s, label, state) for s, label, state in steps))
+        if any(s != "ok" for s, _, _ in steps[2:]):
+            st.page_link(PAGES["accounts"], label="Finish setup", icon=":material/arrow_forward:")
+
     with left:
-        with card("c16"):
+        with card("upload"):
             st.markdown("#### :material/upload_file: Upload invoices")
             uploaded = st.file_uploader(
-                "PDF, TIFF, PNG or JPG. Files are saved to your private invoices folder on this computer.",
+                "Drop PDFs, TIFFs, PNGs or JPGs here. They are saved to your private invoices folder on this computer.",
                 type=sorted(e.lstrip(".") for e in SUPPORTED_EXTENSIONS),
                 accept_multiple_files=True,
             )
@@ -852,7 +907,7 @@ def page_process() -> None:
                 run_pipeline(store, paths)
                 st.rerun()
 
-        with card("c17"):
+        with card("folder"):
             st.markdown("#### :material/folder_open: Invoices folder")
             st.caption(f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here.")
             files = (
@@ -862,10 +917,14 @@ def page_process() -> None:
             )
             new_files = [p for p in files if store.find_by_hash(p) is None]
             if not new_files:
-                st.markdown(":gray-badge[:material/done_all: No new files]")
+                st.html(ui.pill("No new files", "gray", "done_all"))
             else:
-                st.markdown(f":blue-badge[{len(new_files)} new file(s)]")
-                st.dataframe(pd.DataFrame({"File": [p.name for p in new_files]}), hide_index=True)
+                rows = [
+                    [f"{ui.icon('picture_as_pdf' if p.suffix.lower() == '.pdf' else 'image', '1.1em', '#c53030')} "
+                     f"{esc(p.name)}", f"{p.stat().st_size / 1024:,.0f} KB"]
+                    for p in new_files
+                ]  # fmt: skip
+                st.html(ui.table(["File", "Size"], rows, right=[1]))
                 if st.button(
                     f"Process {len(new_files)} file(s)", type="primary", icon=":material/play_arrow:",
                     disabled=not ready,
@@ -938,7 +997,9 @@ def account_manager(store: Store, table: str, noun: str) -> None:
         return
 
     counts = pd.Series([r["category"] or "Uncategorised" for r in rows]).value_counts()
-    st.markdown(" ".join(f":gray-badge[{cat} · {n}]" for cat, n in counts.items()))
+    st.html(
+        " ".join(ui.pill(f"{cat} · {n}", "info" if i == 0 else "gray") for i, (cat, n) in enumerate(counts.items()))
+    )
     df = pd.DataFrame(rows)
     df.insert(0, "delete", False)
     edited = st.data_editor(
@@ -981,22 +1042,45 @@ def account_manager(store: Store, table: str, noun: str) -> None:
 def page_accounts() -> None:
     store = get_store()
     show_toast()
-    page_header("Setup", "GL accounts & tax", "The codes the AI may use, how each sales tax posts, and your rules.")
+    st.html(
+        ui.page_header(
+            "Setup", "GL accounts & tax", "The codes the AI may use, how each sales tax posts, and your rules."
+        )
+    )
     gl = store.list_accounts("gl_accounts")
     cc = store.list_accounts("cost_centers")
     treatments = store.tax_treatments()
     mapped = sum(1 for t in treatments.values() if not t.needs_gl or t.gl_code)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("GL accounts", len(gl), border=True)
-    c2.metric("Categories", len({a["category"] for a in gl if a["category"]}), border=True)
-    c3.metric("Cost centers", len(cc) or "Not used", border=True)
-    c4.metric("Sales taxes mapped", f"{mapped} of {len(TAX_TYPES)}", border=True)
+    policy = [n for n in store.get_setting("policy_notes").splitlines() if n.strip() and not n.lstrip().startswith("#")]
+    st.html(
+        ui.tiles(
+            [
+                ui.tile(
+                    "GL accounts",
+                    len(gl),
+                    "account_tree",
+                    "blue",
+                    f"{len({a['category'] for a in gl if a['category']})} categories",
+                ),  # fmt: skip
+                ui.tile("Cost centers", len(cc) or "—", "apartment", "violet", "" if cc else "optional"),
+                ui.tile(
+                    "Sales taxes mapped",
+                    f"{mapped}/{len(TAX_TYPES)}",
+                    "percent",
+                    "green" if mapped == len(TAX_TYPES) else "amber",
+                    "GST · HST · PST · QST",
+                ),  # fmt: skip
+                ui.tile("Coding rules", len(policy), "rule", "amber", "plain-English policy"),
+            ]
+        )
+    )
 
     if not gl:
-        with card("c18"):
-            st.markdown("#### :material/science: Just exploring?")
-            st.write("Load sample GL accounts, cost centers and tax setup to try the app with the sample invoices.")
-            if st.button("Load sample setup", icon=":material/download:"):
+        with card("sample"):
+            st.html(
+                ui.empty_state("Just exploring?", "Load sample GL accounts, cost centers and tax setup to try the app.")
+            )
+            if st.button("Load sample setup", icon=":material/download:", type="primary"):
                 load_sample_setup(store)
                 notify("Sample setup loaded.")
                 st.rerun()
@@ -1009,18 +1093,18 @@ def page_accounts() -> None:
             ":material/rule: Coding policy",
         ]
     )
-    with tab_gl:
+    with tab_gl, card("gl"):
         st.caption(
             "The AI may only use the codes listed here. Descriptions matter: the AI matches invoice lines "
             "against them. Use the category column to group codes your own way."
         )
         account_manager(store, "gl_accounts", "GL account")
-    with tab_cc:
+    with tab_cc, card("cc"):
         st.caption("Optional. Leave empty if you do not code invoices to cost centers.")
         account_manager(store, "cost_centers", "cost center")
     with tab_tax:
         tax_setup(store)
-    with tab_policy:
+    with tab_policy, card("policy"):
         st.caption(
             "Plain-English rules the AI follows, one per line (e.g. 'Laptops under $2,500 go to 6010'). "
             "Lines starting with # are ignored."
@@ -1045,21 +1129,24 @@ def tax_setup(store: Store) -> None:
     version = abs(
         hash((tuple(options), tuple(sorted((t.tax_type, t.treatment, t.gl_code) for t in treatments.values()))))
     )
-    names = {"GST": "GST", "HST": "HST", "PST": "PST / RST", "QST": "QST"}
-    where = {"GST": "Federal, all provinces", "HST": "ON, NB, NL, NS, PE", "PST": "BC, SK, MB", "QST": "Quebec"}
+    where = {"GST": "Federal · all provinces", "HST": "ON · NB · NL · NS · PE", "PST": "BC · SK · MB (RST)",
+             "QST": "Quebec (TVQ)"}  # fmt: skip
     chosen = {}
-    with card("c19"):
+    with card("taxsetup"):
         for tax_type in TAX_TYPES:
             current = treatments[tax_type]
             c1, c2, c3 = st.columns([2, 4, 4], vertical_alignment="center")
-            c1.markdown(f"**{names[tax_type]}**  \n:gray[{where[tax_type]}]")
+            c1.html(
+                f"<div>{ui.tax_chip(tax_type)}</div><div class='apc-muted' style='margin-top:.3rem'>"
+                f"{esc(where[tax_type])}</div>"
+            )
             treatment = c2.selectbox(
                 "Treatment", list(TREATMENTS), index=list(TREATMENTS).index(current.treatment),
                 format_func=TREATMENTS.get, key=f"treat_{tax_type}_{version}", label_visibility="collapsed",
             )  # fmt: skip
             gl = ""
             if treatment == "expense_to_line":
-                c3.markdown(":gray-badge[Posted with each expense line's GL]")
+                c3.html(ui.pill("Posted with each expense line's GL", "gray", "call_split"))
             else:
                 gl = c3.selectbox(
                     "GL account", options, index=options.index(current.gl_code) if current.gl_code in options else 0,
@@ -1073,16 +1160,17 @@ def tax_setup(store: Store) -> None:
             notify("Tax setup saved.")
             st.rerun()
 
-    st.markdown("##### Rates in force today")
-    st.caption("From `data/canada_tax_rates.csv`. Edit that file when a rate changes.")
-    today = dt.date.today()
-    rates = [
-        {"Tax": r.tax_type, "Province": r.province or "All provinces", "Rate": f"{r.rate * 100:.3f}%",
-         "Since": r.effective_from.isoformat()}
-        for r in TaxRateTable.load().rates
-        if r.effective_from <= today and (r.effective_to is None or today <= r.effective_to)
-    ]  # fmt: skip
-    st.dataframe(pd.DataFrame(rates), hide_index=True)
+    with card("rates"):
+        st.markdown("#### :material/calendar_month: Rates in force today")
+        st.caption("From `data/canada_tax_rates.csv`. Edit that file when a rate changes.")
+        today = dt.date.today()
+        rows = [
+            [ui.tax_chip(r.tax_type), esc(r.province or "All provinces"), f"<b>{r.rate * 100:.3f}%</b>",
+             esc(r.effective_from.isoformat())]
+            for r in TaxRateTable.load().rates
+            if r.effective_from <= today and (r.effective_to is None or today <= r.effective_to)
+        ]  # fmt: skip
+        st.html(ui.table(["Tax", "Province", "Rate", "Since"], rows, right=[2]))
 
 
 # --- Learning & accuracy ----------------------------------------------------------------------------------------
@@ -1093,12 +1181,19 @@ def page_learning() -> None:
 
     store = get_store()
     show_toast()
-    page_header("Insights", "Learning & accuracy", "How often the AI gets it right, and what it has learned.")
+    st.html(
+        ui.page_header("Insights", "Learning & accuracy", "How often the AI gets it right, and what it has learned.")
+    )
     m = store.metrics()
     if not m["lines_reviewed"]:
-        with card("c20"):
-            st.markdown("#### :material/school: Nothing learned yet")
-            st.write("Accuracy and the AI's memory appear here once invoices are approved in the review queue.")
+        with card("nolearning"):
+            st.html(
+                ui.empty_state(
+                    "Nothing learned yet",
+                    "Accuracy and the AI's memory appear here once invoices are approved in the review queue.",
+                    ui.LEARNING_SVG,
+                )
+            )
         return
 
     accuracy = m["line_accuracy"] or 0.0
@@ -1106,20 +1201,47 @@ def page_learning() -> None:
     weekly = pd.DataFrame(m["weekly"])
     weekly["lines"] = weekly["accepted"] + weekly["corrected"]
     weekly["accuracy"] = weekly["accepted"] / weekly["lines"]
-    spark = weekly["accuracy"].tolist() if len(weekly) > 1 else None
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(
-        "AI coding accuracy", f"{accuracy:.1%}", f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target",
-        border=True, chart_data=spark,
-    )  # fmt: skip
-    c2.metric("Lines reviewed", f"{m['lines_reviewed']:,}", border=True)
-    c3.metric("Corrections taught", f"{m['lines_corrected']:,}", border=True)
-    c4.metric("Approved without edits", f"{m['invoices_approved_without_edits']} of {approved}", border=True)
+    st.html(
+        ui.tiles(
+            [
+                ui.tile(
+                    "AI coding accuracy",
+                    f"{accuracy:.1%}",
+                    "auto_awesome",
+                    "green" if accuracy >= TARGET_ACCURACY else "violet",
+                    f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target",
+                    "up" if accuracy >= TARGET_ACCURACY else "down",
+                    weekly["accuracy"].tolist() if len(weekly) > 1 else None,
+                ),  # fmt: skip
+                ui.tile(
+                    "Lines reviewed",
+                    f"{m['lines_reviewed']:,}",
+                    "fact_check",
+                    "blue",
+                    f"{m['lines_accepted']:,} confirmed",
+                ),  # fmt: skip
+                ui.tile(
+                    "Corrections taught", f"{m['lines_corrected']:,}", "school", "amber", "used on the next invoice"
+                ),
+                ui.tile(
+                    "Approved without edits",
+                    f"{m['invoices_approved_without_edits']}/{approved}",
+                    "bolt",
+                    "green",
+                    "straight-through invoices",
+                ),  # fmt: skip
+            ]
+        )
+    )
 
-    with card("c21"):
+    chart_col, feed_col = st.columns([3, 2], gap="medium")
+    with chart_col, card("trend"):
         st.markdown("#### :material/show_chart: Accuracy by week")
         base = alt.Chart(weekly).encode(x=alt.X("week:N", title=None, axis=alt.Axis(labelAngle=0)))
-        line = base.mark_line(color=SERIES_BLUE, strokeWidth=2, point=alt.OverlayMarkDef(size=64, filled=True)).encode(
+        area = base.mark_area(color=SERIES_BLUE, opacity=0.08).encode(y=alt.Y("accuracy:Q"))
+        line = base.mark_line(
+            color=SERIES_BLUE, strokeWidth=2.5, point=alt.OverlayMarkDef(size=70, filled=True)
+        ).encode(
             y=alt.Y("accuracy:Q", title=None, scale=alt.Scale(domain=[0, 1]), axis=alt.Axis(format="%", grid=True)),
             tooltip=[
                 alt.Tooltip("week:N", title="Week"),
@@ -1138,47 +1260,81 @@ def page_learning() -> None:
             .mark_text(align="left", dx=4, dy=-6, color=TARGET_GRAY)
             .encode(y="y:Q", text="text:N", x=alt.value(0))
         )
-        chart = (line + target + label).properties(height=240, background="transparent").configure_view(strokeWidth=0)
+        chart = (
+            (area + line + target + label)
+            .properties(height=260, background="transparent")
+            .configure_view(strokeWidth=0)
+        )
         st.altair_chart(chart, width="stretch")
         with st.expander("Show as table"):
             st.dataframe(weekly[["week", "accepted", "corrected", "accuracy"]], hide_index=True)
 
+    rows = store.feedback_rows(limit=2000)
+    with feed_col, card("feed"):
+        st.markdown("#### :material/history_edu: Recent lessons")
+        items = []
+
+        def short(text: str, n: int = 42) -> str:
+            return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+        for r in rows[:6]:
+            if r["outcome"] == "corrected":
+                was = (
+                    f"<span class='apc-strike apc-mono'>{esc(r['suggested_gl'])}</span>"
+                    if r["suggested_gl"]
+                    else "<i>new line</i>"
+                )
+                text = (
+                    f"<b>{esc(r['reviewer'])}</b> corrected <b>{esc(short(r['description']))}</b> "
+                    f"{was}<span class='apc-arrow'>→</span><b class='apc-mono'>{esc(r['final_gl'])}</b>"
+                )
+            else:
+                text = (
+                    f"<b>{esc(r['reviewer'])}</b> confirmed <b>{esc(short(r['description']))}</b> "
+                    f"<span class='apc-arrow'>→</span><b class='apc-mono'>{esc(r['final_gl'])}</b>"
+                )
+            items.append(ui.feed_item(r["reviewer"] or "?", f"{text}<br><span class='apc-muted'>"
+                                      f"{esc(r['vendor_name'])}</span>", ui.time_ago(r["created_at"])))  # fmt: skip
+        st.html(f"<div class='apc-feed'>{''.join(items)}</div>")
+
     left, right = st.columns(2, gap="medium")
-    with left, card("c22"):
-        st.markdown("#### :material/storefront: By vendor")
-        vendors = pd.DataFrame(m["by_vendor"])
-        vendors["accuracy"] = vendors["accepted"] / vendors["lines"]
-        vendors["last_seen"] = vendors["last_seen"].str[:16].str.replace("T", " ")
-        st.dataframe(
-            vendors[["vendor_name", "lines", "accuracy", "corrected", "last_seen"]],
-            hide_index=True,
-            column_config={
-                "vendor_name": "Vendor",
-                "lines": "Lines",
-                "accuracy": st.column_config.ProgressColumn("AI accuracy", min_value=0, max_value=1, format="percent"),
-                "corrected": "Corrections",
-                "last_seen": "Last reviewed",
-            },
+    with left, card("vendors"):
+        st.markdown("#### :material/storefront: Accuracy by vendor")
+        st.html(
+            "".join(
+                ui.vendor_row(v["vendor_name"], v["lines"], v["accepted"] / v["lines"], v["corrected"])
+                for v in m["by_vendor"][:12]
+            )
         )
-    with right, card("c23"):
+    with right, card("corrections"):
         st.markdown("#### :material/swap_horiz: Most common corrections")
-        corrections = pd.DataFrame(m["top_corrections"])
-        if corrections.empty:
+        if not m["top_corrections"]:
             st.caption("No corrections yet: the AI has matched every reviewer decision.")
         else:
-            labels = gl_label_map(reference_or_none(store))
-            corrections["AI suggested"] = corrections["suggested_gl"].map(lambda c: labels.get(c, c))
-            corrections["Reviewer chose"] = corrections["final_gl"].map(lambda c: labels.get(c, c))
-            st.dataframe(corrections[["AI suggested", "Reviewer chose", "n"]].rename(columns={"n": "Times"}),
-                         hide_index=True)  # fmt: skip
+            reference = reference_or_none(store)
+            table_rows = []
+            for c in m["top_corrections"]:
+                before = c["suggested_gl"]
+                before_name = gl_name(reference, before) if reference and before != "(new line)" else ""
+                after_name = gl_name(reference, c["final_gl"]) if reference else ""
+                table_rows.append(
+                    [
+                        f"<div class='gl'>{esc(before)}<small>{esc(before_name)}</small></div>",
+                        "<span class='apc-arrow'>→</span>",
+                        f"<div class='gl'>{esc(c['final_gl'])}<small>{esc(after_name)}</small></div>",
+                        ui.pill(f"×{c['n']}", "violet"),
+                    ]
+                )
+            st.html(ui.table(["AI suggested", "", "Reviewer chose", "Times"], table_rows, right=[3]))
 
-    with card("c24"):
-        st.markdown("#### :material/psychology: The AI's memory")
+    with (
+        card("memory"),
+        st.expander("The AI's memory: every lesson, with the option to forget", icon=":material/psychology:"),
+    ):
         st.caption(
-            "Every approved line is a lesson. Lessons from the same vendor are shown to the AI on the next invoice; "
-            "corrections count most. Tick *Forget?* to remove a lesson a reviewer got wrong."
+            "Lessons from the same vendor are shown to the AI on the next invoice; corrections count most. "
+            "Tick *Forget?* to remove a lesson a reviewer got wrong."
         )
-        rows = store.feedback_rows(limit=2000)
         memory_version = rows[0]["id"] if rows else 0
         memory = pd.DataFrame(rows)[
             ["id", "created_at", "vendor_name", "description", "suggested_gl", "final_gl", "final_cc", "outcome",
@@ -1223,12 +1379,14 @@ PAGES = {
 
 st.logo(str(ASSETS / "logo.svg"), size="large", icon_image=str(ASSETS / "icon.svg"))
 with st.sidebar:
-    _pending = len(get_store().list_invoices(REVIEW))
-    if _pending:
-        st.markdown(f":orange-badge[:material/inbox: {_pending} waiting for review]")
-    st.text_input(
-        "Reviewer", value=os.environ.get("AP_REVIEWER") or getpass.getuser(), key="reviewer", icon=":material/person:"
-    )
+    _store = get_store()
+    st.html(ui.sidebar_profile(reviewer(), approved_today(_store), len(_store.list_invoices(REVIEW))))
+    with st.expander("Settings", icon=":material/settings:"):
+        st.text_input(
+            "Your name (recorded on approvals)",
+            value=os.environ.get("AP_REVIEWER") or getpass.getuser(),
+            key="reviewer",
+        )
     st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
 
 st.navigation(list(PAGES.values())).run()

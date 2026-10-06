@@ -1,0 +1,262 @@
+/* AP Coder dashboard styles: layered on top of assets/theme.toml. */
+:root {
+  --apc-ink: #142033;
+  --apc-muted: #5b6578;
+  --apc-faint: #8a93a5;
+  --apc-line: #e4e8ef;
+  --apc-bg: #f3f5f9;
+  --apc-card: #ffffff;
+  --apc-brand: #2a78d6;
+  --apc-brand-600: #1f63b5;
+  --apc-brand-50: #eaf2fc;
+  --apc-navy: #0d1a2d;
+  --apc-ok: #1a7f4b;
+  --apc-ok-bg: #e8f6ee;
+  --apc-warn: #8a5300;
+  --apc-warn-dot: #e59a00;
+  --apc-warn-bg: #fff4dc;
+  --apc-err: #c53030;
+  --apc-err-bg: #fdecec;
+  --apc-violet: #4a3aa7;
+  --apc-violet-bg: #efedfc;
+  --apc-shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
+  --apc-shadow-lg: 0 10px 24px -8px rgba(16, 24, 40, .18), 0 2px 6px rgba(16, 24, 40, .06);
+}
+
+/* ---- Layout ------------------------------------------------------------------------------- */
+.block-container {padding-top: 2rem; padding-bottom: 6rem; max-width: 1480px;}
+[data-testid="stHeaderActionElements"] {display: none;}
+[data-testid="stHeader"] {background: transparent;}
+
+/* White cards (st.container(key="card_*")) and tiles */
+[class*="st-key-card_"] {background: var(--apc-card); box-shadow: var(--apc-shadow); border-color: var(--apc-line) !important;}
+[class*="st-key-card_"] h4 {font-size: 1rem; letter-spacing: -.005em;}
+
+/* Tabs as a segmented pill bar */
+.stTabs [data-baseweb="tab-list"] {gap: .25rem; background: #e9edf4; padding: .3rem; border-radius: 12px; width: fit-content;}
+.stTabs [data-baseweb="tab"] {height: 2.1rem; padding: 0 .9rem; border-radius: 9px; color: var(--apc-muted); font-weight: 550;}
+.stTabs [aria-selected="true"] {background: #fff; color: var(--apc-ink); box-shadow: var(--apc-shadow);}
+.stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {display: none;}
+
+/* Buttons */
+.stButton button, .stDownloadButton button, [data-testid="stPopover"] button {
+  font-weight: 600; transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+}
+.stButton button:hover, .stDownloadButton button:hover {transform: translateY(-1px); box-shadow: var(--apc-shadow);}
+.stButton button[kind="primary"] {box-shadow: 0 6px 14px -6px rgba(42, 120, 214, .6);}
+
+/* File drop zone */
+[data-testid="stFileUploaderDropzone"] {background: var(--apc-brand-50); border: 1.5px dashed #9cc0ec; border-radius: 14px;
+  padding: 1.4rem;}
+
+/* ---- Typography helpers ---------------------------------------------------------------------- */
+.apc-eyebrow {font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--apc-brand); font-weight: 700;}
+.apc-title {font-size: 1.9rem; font-weight: 750; color: var(--apc-ink); letter-spacing: -.02em; line-height: 1.15; margin: .1rem 0 0;}
+.apc-sub {color: var(--apc-muted); font-size: .95rem; margin-top: .3rem;}
+.apc-muted {color: var(--apc-muted); font-size: .88rem;}
+.apc-num {font-variant-numeric: tabular-nums;}
+.apc-mono {font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .82em;}
+kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: var(--apc-muted); background: #fff;
+  border: 1px solid var(--apc-line); border-bottom-width: 2px; border-radius: 6px; padding: .05rem .4rem; margin: 0 .1rem;}
+
+/* ---- Entrance animation --------------------------------------------------------------------------- */
+@keyframes apc-rise {from {opacity: 0; transform: translateY(8px);} to {opacity: 1; transform: none;}}
+.apc-anim {animation: apc-rise .35s ease-out both;}
+@media (prefers-reduced-motion: reduce) {
+  .apc-anim, .stButton button {animation: none !important; transition: none !important;}
+}
+
+/* ---- Page header ---------------------------------------------------------------------------------- */
+.apc-head {display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; margin-bottom: .3rem;}
+
+/* ---- Hero banner ------------------------------------------------------------------------------------ */
+.apc-hero {position: relative; overflow: hidden; border-radius: 18px; padding: 1.6rem 1.8rem; color: #fff;
+  background: radial-gradient(1200px 300px at 110% -40%, rgba(106, 169, 242, .55), transparent 60%),
+              linear-gradient(120deg, #0d1a2d 0%, #15335c 55%, #1f5fae 100%);
+  box-shadow: var(--apc-shadow-lg); display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;}
+.apc-hero::after {content: ""; position: absolute; right: -60px; bottom: -80px; width: 260px; height: 260px;
+  border-radius: 50%; background: rgba(255, 255, 255, .05);}
+.apc-hero h1 {color: #fff; font-size: 1.75rem; font-weight: 750; margin: .15rem 0 .35rem; letter-spacing: -.02em; padding: 0;}
+.apc-hero .lead {color: #c9d8ee; font-size: 1rem; margin: 0;}
+.apc-hero .eyebrow {color: #9cc6f7; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 700;}
+.apc-hero .chips {display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1rem;}
+.apc-hero .chip {background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .16); color: #eaf2fc;
+  padding: .3rem .7rem; border-radius: 999px; font-size: .82rem; font-weight: 550;}
+.apc-hero .ring-wrap {position: relative; z-index: 1; text-align: center; flex: none;}
+.apc-hero .ring-label {color: #c9d8ee; font-size: .78rem; margin-top: .35rem;}
+
+/* ---- KPI tiles -------------------------------------------------------------------------------------- */
+.apc-tiles {display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0 .4rem;}
+@media (max-width: 900px) {.apc-tiles {grid-template-columns: repeat(2, minmax(0, 1fr));}}
+.apc-tile {background: var(--apc-card); border: 1px solid var(--apc-line); border-radius: 14px; padding: 1rem 1.1rem;
+  box-shadow: var(--apc-shadow); display: flex; flex-direction: column; gap: .35rem; transition: transform .15s ease, box-shadow .15s ease;}
+.apc-tile:hover {transform: translateY(-2px); box-shadow: var(--apc-shadow-lg);}
+.apc-tile .top {display: flex; align-items: center; justify-content: space-between;}
+.apc-tile .label {color: var(--apc-muted); font-size: .84rem; font-weight: 550;}
+.apc-tile .icon {width: 2rem; height: 2rem; border-radius: 10px; display: grid; place-items: center; font-size: 1rem;}
+.apc-tile .value {font-size: 1.75rem; font-weight: 750; color: var(--apc-ink); letter-spacing: -.02em; font-variant-numeric: tabular-nums;}
+.apc-tile .foot {display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 1.4rem;}
+.apc-tile .hint {font-size: .78rem; color: var(--apc-muted);}
+.apc-tile .hint.up {color: var(--apc-ok); font-weight: 600;} .apc-tile .hint.down {color: var(--apc-err); font-weight: 600;}
+.tone-blue .icon {background: var(--apc-brand-50); color: var(--apc-brand-600);}
+.tone-amber .icon {background: var(--apc-warn-bg); color: var(--apc-warn);}
+.tone-green .icon {background: var(--apc-ok-bg); color: var(--apc-ok);}
+.tone-violet .icon {background: var(--apc-violet-bg); color: var(--apc-violet);}
+
+/* ---- Pills / chips ------------------------------------------------------------------------------------ */
+.apc-pill {display: inline-flex; align-items: center; gap: .3rem; padding: .18rem .6rem; border-radius: 999px;
+  font-size: .76rem; font-weight: 650; white-space: nowrap; line-height: 1.4;}
+.apc-pill.ok {background: var(--apc-ok-bg); color: var(--apc-ok);}
+.apc-pill.warn {background: var(--apc-warn-bg); color: var(--apc-warn);}
+.apc-pill.err {background: var(--apc-err-bg); color: var(--apc-err);}
+.apc-pill.info {background: var(--apc-brand-50); color: var(--apc-brand-600);}
+.apc-pill.violet {background: var(--apc-violet-bg); color: var(--apc-violet);}
+.apc-pill.gray {background: #eef1f6; color: var(--apc-muted);}
+.apc-tax {display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .03em; padding: .1rem .45rem;
+  border-radius: 6px; border: 1px solid;}
+.apc-tax.GST {color: #1f63b5; border-color: #bcd5f3; background: #f2f7fd;}
+.apc-tax.HST {color: #4a3aa7; border-color: #d3cdf5; background: #f6f5fe;}
+.apc-tax.PST {color: #8a4a12; border-color: #f0d2b6; background: #fdf6ef;}
+.apc-tax.QST {color: #127a56; border-color: #bfe5d5; background: #f0faf5;}
+
+/* ---- Avatars ----------------------------------------------------------------------------------------- */
+.apc-avatar {flex: none; display: grid; place-items: center; border-radius: 12px; color: #fff; font-weight: 700;
+  letter-spacing: .02em; width: 2.6rem; height: 2.6rem; font-size: .92rem;}
+.apc-avatar.lg {width: 3.4rem; height: 3.4rem; font-size: 1.15rem; border-radius: 16px;}
+.apc-avatar.sm {width: 2rem; height: 2rem; font-size: .75rem; border-radius: 50%;}
+
+/* ---- Queue cards (whole card clickable via an invisible button overlay) ---------------------------------- */
+[class*="st-key-qcard_"] {position: relative; gap: 0 !important;}
+[class*="st-key-qopen_"] {position: absolute !important; inset: 0; z-index: 3; margin: 0 !important;
+  width: 100% !important; height: 100% !important;}
+[class*="st-key-qopen_"] > div, [class*="st-key-qopen_"] .stButton {width: 100% !important; height: 100% !important;}
+[class*="st-key-qopen_"] button {width: 100% !important; height: 100% !important; opacity: 0; cursor: pointer;}
+[class*="st-key-qcard_"]:has(button:focus-visible) .apc-qcard {outline: 3px solid #9cc0ec; outline-offset: 2px;}
+[class*="st-key-qcard_"]:hover .apc-qcard {transform: translateY(-2px); box-shadow: var(--apc-shadow-lg); border-color: #cfd8e6;}
+[class*="st-key-qcard_"]:hover .apc-qcard .chev {transform: translateX(3px); color: var(--apc-brand);}
+.apc-qcard {display: grid; grid-template-columns: auto minmax(0, 1fr) 150px 150px 150px 24px; align-items: center; gap: 1.1rem;
+  background: var(--apc-card); border: 1px solid var(--apc-line); border-radius: 14px; padding: .95rem 1.1rem .95rem 1.2rem;
+  box-shadow: var(--apc-shadow); position: relative; overflow: hidden; transition: transform .15s ease, box-shadow .15s ease;}
+.apc-qcard::before {content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent, var(--apc-line));}
+.apc-qcard.attn {--accent: var(--apc-warn-dot);} .apc-qcard.ready {--accent: var(--apc-ok);}
+.apc-qcard .who {min-width: 0;}
+.apc-qcard .vendor {font-weight: 680; color: var(--apc-ink); font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.apc-qcard .meta {display: flex; gap: .45rem; align-items: center; flex-wrap: wrap; margin-top: .25rem; color: var(--apc-muted); font-size: .8rem;}
+.apc-qcard .amount {text-align: right; font-weight: 720; font-size: 1.05rem; color: var(--apc-ink); font-variant-numeric: tabular-nums;}
+.apc-qcard .amount small {display: block; font-weight: 550; font-size: .72rem; color: var(--apc-faint);}
+.apc-qcard .chev {color: var(--apc-faint); font-size: 1.3rem; transition: transform .15s ease, color .15s ease;}
+@media (max-width: 1100px) {.apc-qcard {grid-template-columns: auto minmax(0, 1fr) 120px 24px;} .apc-qcard .conf, .apc-qcard .status {display: none;}}
+
+/* Confidence meter */
+.apc-meter {display: flex; flex-direction: column; gap: .3rem;}
+.apc-meter .bar {height: 6px; border-radius: 999px; background: #edf0f5; overflow: hidden;}
+.apc-meter .fill {height: 100%; border-radius: 999px;}
+.apc-meter .txt {font-size: .74rem; color: var(--apc-muted); display: flex; justify-content: space-between;}
+.apc-meter .txt b {color: var(--apc-ink); font-variant-numeric: tabular-nums;}
+
+/* ---- Review: progress strip, invoice hero ---------------------------------------------------------------- */
+.apc-progress {height: 4px; background: #e3e8f0; border-radius: 999px; overflow: hidden; margin: .2rem 0 .9rem;}
+.apc-progress > div {height: 100%; background: linear-gradient(90deg, #2a78d6, #6aa9f2); border-radius: 999px; transition: width .4s ease;}
+.apc-inv {display: flex; gap: 1.2rem; align-items: center;}
+.apc-inv .main {flex: 1; min-width: 0;}
+.apc-inv .vendor {font-size: 1.45rem; font-weight: 750; letter-spacing: -.015em; color: var(--apc-ink); line-height: 1.2;}
+.apc-inv .meta {display: flex; flex-wrap: wrap; gap: .4rem 1rem; color: var(--apc-muted); font-size: .86rem; margin: .3rem 0 .6rem;}
+.apc-inv .meta span {display: inline-flex; align-items: center; gap: .3rem;}
+.apc-inv .pills {display: flex; gap: .4rem; flex-wrap: wrap;}
+.apc-inv .side {display: flex; align-items: center; gap: 1.4rem; flex: none;}
+.apc-inv .total {text-align: right;}
+.apc-inv .total .label {font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--apc-muted); font-weight: 650;}
+.apc-inv .total .value {font-size: 1.9rem; font-weight: 780; letter-spacing: -.02em; color: var(--apc-ink); font-variant-numeric: tabular-nums;}
+.apc-inv .total .cur {font-size: .8rem; color: var(--apc-muted); font-weight: 600;}
+/* Donut gauge: conic gradient with a masked centre */
+.apc-ring {position: relative; display: inline-grid; place-items: center; flex: none; font-weight: 750;
+  font-variant-numeric: tabular-nums; letter-spacing: -.01em;}
+.apc-ring::before {content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(var(--c) calc(var(--p) * 1turn), var(--t) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--w)), #000 calc(100% - var(--w) + 1px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - var(--w)), #000 calc(100% - var(--w) + 1px));}
+.apc-ring span {position: relative;}
+
+/* ---- Money breakdown bar --------------------------------------------------------------------------------- */
+.apc-split {display: flex; height: 14px; border-radius: 999px; overflow: hidden; gap: 2px; background: #fff; margin: .4rem 0 .7rem;}
+.apc-split > div {height: 100%; min-width: 4px; transition: filter .15s ease;}
+.apc-split > div:hover {filter: brightness(1.1) saturate(1.1);}
+.apc-legend {display: flex; flex-wrap: wrap; gap: .45rem 1.2rem; font-size: .82rem; color: var(--apc-ink);}
+.apc-legend span {display: inline-flex; align-items: center; gap: .4rem;}
+.apc-legend i {width: .65rem; height: .65rem; border-radius: 3px; display: inline-block;}
+.apc-legend b {font-variant-numeric: tabular-nums; font-weight: 650;}
+.apc-legend em {color: var(--apc-muted); font-style: normal;}
+
+/* ---- Checks list ------------------------------------------------------------------------------------------ */
+.apc-check {display: flex; gap: .7rem; align-items: flex-start; padding: .6rem .75rem; border-radius: 10px;
+  border: 1px solid; margin-bottom: .45rem; font-size: .89rem; color: var(--apc-ink); line-height: 1.4;}
+.apc-check .ico {flex: none; width: 1.5rem; height: 1.5rem; border-radius: 50%; display: grid; place-items: center;
+  font-size: .8rem; font-weight: 800; color: #fff;}
+.apc-check .ttl {font-weight: 650; font-size: .78rem; letter-spacing: .03em; text-transform: uppercase;}
+.apc-check .code {font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .72rem; color: var(--apc-faint); margin-left: .35rem;}
+.apc-check.error {background: #fdf3f3; border-color: #f4cfcf;} .apc-check.error .ico {background: var(--apc-err);}
+.apc-check.error .ttl {color: var(--apc-err);}
+.apc-check.warning {background: #fffaf0; border-color: #f2e0b3;} .apc-check.warning .ico {background: var(--apc-warn-dot); color: #2b1d00;}
+.apc-check.warning .ttl {color: var(--apc-warn);}
+.apc-check.ok {background: #f1faf5; border-color: #c9e8d6;} .apc-check.ok .ico {background: var(--apc-ok);}
+.apc-check.ok .ttl {color: var(--apc-ok);}
+.apc-check.info {background: #f6f4fe; border-color: #dcd7f7;} .apc-check.info .ico {background: var(--apc-violet);}
+.apc-check.info .ttl {color: var(--apc-violet);}
+
+/* ---- Pretty tables ------------------------------------------------------------------------------------------ */
+.apc-table {width: 100%; border-collapse: separate; border-spacing: 0; font-size: .87rem;}
+.apc-table th {text-align: left; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--apc-muted);
+  font-weight: 650; padding: .55rem .7rem; border-bottom: 1px solid var(--apc-line); background: #f8fafc;}
+.apc-table th:first-child {border-top-left-radius: 10px;} .apc-table th:last-child {border-top-right-radius: 10px;}
+.apc-table td {padding: .6rem .7rem; border-bottom: 1px solid #eef1f5; color: var(--apc-ink); vertical-align: middle;}
+.apc-table tr:hover td {background: #fafbfd;}
+.apc-table .r {text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;}
+.apc-table .gl {font-weight: 650;} .apc-table .gl small {display: block; font-weight: 450; color: var(--apc-muted); font-size: .78rem;}
+.apc-table tfoot td {font-weight: 750; border-bottom: none; border-top: 2px solid var(--apc-line); background: #fbfcfe;}
+.apc-table .ok {color: var(--apc-ok); font-weight: 700;} .apc-table .bad {color: var(--apc-err); font-weight: 700;}
+
+/* ---- Sticky action bar --------------------------------------------------------------------------------------- */
+.st-key-card_actionbar {position: sticky; bottom: .75rem; z-index: 20; backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, .92) !important; box-shadow: 0 12px 30px -10px rgba(16, 24, 40, .3) !important;}
+
+/* ---- Empty state ------------------------------------------------------------------------------------------- */
+.apc-empty {text-align: center; padding: 2.2rem 1rem 1.4rem;}
+.apc-empty h3 {margin: .8rem 0 .3rem; font-size: 1.2rem; color: var(--apc-ink);}
+.apc-empty p {color: var(--apc-muted); margin: 0;}
+
+/* ---- Feed (recent lessons) ----------------------------------------------------------------------------------- */
+.apc-feed {display: flex; flex-direction: column;}
+.apc-feed .item {display: flex; gap: .75rem; padding: .7rem 0; border-bottom: 1px solid #eef1f5; align-items: flex-start;}
+.apc-feed .item:last-child {border-bottom: none;}
+.apc-feed .txt {font-size: .88rem; color: var(--apc-ink); line-height: 1.45;}
+.apc-feed .when {font-size: .75rem; color: var(--apc-faint);}
+.apc-arrow {color: var(--apc-faint); margin: 0 .25rem;}
+.apc-strike {text-decoration: line-through; color: var(--apc-faint);}
+
+/* Vendor accuracy rows */
+.apc-vrow {display: grid; grid-template-columns: auto minmax(0, 1fr) 46px; gap: .75rem; align-items: center; padding: .55rem 0;
+  border-bottom: 1px solid #eef1f5;}
+.apc-vrow:last-child {border-bottom: none;}
+.apc-vrow .name {font-weight: 600; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.apc-vrow .sub {font-size: .75rem; color: var(--apc-muted);}
+.apc-vrow .pct {text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; font-size: .88rem;}
+
+/* Setup steps */
+.apc-step {display: flex; align-items: center; gap: .75rem; padding: .7rem 0; border-bottom: 1px solid #eef1f5; font-size: .92rem;}
+.apc-step:last-child {border-bottom: none;}
+.apc-step .dot {width: 1.6rem; height: 1.6rem; border-radius: 50%; display: grid; place-items: center; font-size: .8rem;
+  font-weight: 800; flex: none;}
+.apc-step .dot.ok {background: var(--apc-ok-bg); color: var(--apc-ok);}
+.apc-step .dot.todo {background: var(--apc-warn-bg); color: var(--apc-warn);}
+.apc-step .dot.bad {background: var(--apc-err-bg); color: var(--apc-err);}
+.apc-step .state {margin-left: auto; color: var(--apc-muted); font-size: .84rem;}
+
+/* ---- Sidebar ---------------------------------------------------------------------------------------------------- */
+.apc-me {display: flex; gap: .7rem; align-items: center; padding: .75rem; border-radius: 14px; background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(255, 255, 255, .08);}
+.apc-me .name {font-weight: 650; color: #fff; font-size: .92rem;}
+.apc-me .role {color: #93a4bd; font-size: .76rem;}
+.apc-today {display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .6rem;}
+.apc-today div {background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .08); border-radius: 12px; padding: .55rem .7rem;}
+.apc-today b {display: block; color: #fff; font-size: 1.15rem; font-variant-numeric: tabular-nums;}
+.apc-today span {color: #93a4bd; font-size: .72rem;}
