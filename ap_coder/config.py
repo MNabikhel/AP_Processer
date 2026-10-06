@@ -66,7 +66,6 @@ class OpenAISettings:
 class EngineSettings:
     vision: bool = False  # attach page images alongside the extracted text
     vision_max_pages: int = 5
-    include_tax_rate: bool = False  # adds predicted_tax_rate to each line item
     constrain_codes: bool = True  # put valid GL/cost-center codes into the schema as enums
     review_threshold: float = 0.85
     max_document_chars: int = 200_000
@@ -110,7 +109,6 @@ class Settings:
         engine = EngineSettings(
             vision=_env_bool("AP_VISION", False),
             vision_max_pages=_env_int("AP_VISION_MAX_PAGES", 5),
-            include_tax_rate=_env_bool("AP_INCLUDE_TAX_RATE", False),
             constrain_codes=_env_bool("AP_CONSTRAIN_CODES", True),
             review_threshold=_env_float("AP_REVIEW_THRESHOLD", 0.85),
             max_document_chars=_env_int("AP_MAX_DOCUMENT_CHARS", 200_000),
@@ -124,7 +122,6 @@ class Settings:
         deployment: str | None = None,
         model_name: str | None = None,
         vision: bool | None = None,
-        include_tax_rate: bool | None = None,
     ) -> Settings:
         """Return a copy with CLI-level overrides applied."""
         di, oai, engine = self.document_intelligence, self.openai, self.engine
@@ -136,6 +133,4 @@ class Settings:
             oai = replace(oai, model_name=model_name)
         if vision is not None:
             engine = replace(engine, vision=vision)
-        if include_tax_rate is not None:
-            engine = replace(engine, include_tax_rate=include_tax_rate)
         return replace(self, document_intelligence=di, openai=oai, engine=engine)

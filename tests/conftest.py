@@ -10,7 +10,7 @@ from ap_coder.reference_data import load_reference_data
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 SAMPLES = ROOT / "samples"
-SAMPLE_STEM = "contoso_invoice_INV-2026-04471"
+SAMPLE_STEM = "northwind_ON_HST_NW-2026-0912"
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ def reference():
     return load_reference_data(
         DATA / "chart_of_accounts.csv",
         DATA / "cost_centers.csv",
-        DATA / "tax_codes.csv",
+        DATA / "tax_gl_mapping.csv",
         DATA / "coding_policy.md",
     )
 

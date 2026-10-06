@@ -6,6 +6,10 @@ Two representations are kept side by side:
   ``strict: true`` so the service itself guarantees the response shape.
 * ``InvoiceCoding`` is the Pydantic mirror used to re-validate the response
   locally (dates, ranges) before anything downstream consumes it.
+
+The original target fields are unchanged; Canadian sales tax adds the
+province fields, supplier registration numbers, ``tax_lines`` (one per tax
+type charged) and ``taxes_applied`` on each line item.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .reference_data import UNASSIGNED, ReferenceData
+from .tax import OUTSIDE_CANADA, PROVINCES, TAX_TYPES
 
 SCHEMA_NAME = "ap_invoice_coding"
 
@@ -23,6 +28,8 @@ SCHEMA_NAME = "ap_invoice_coding"
 # stay well under them and fall back to free-text codes + local validation.
 _MAX_ENUM_VALUES_PER_FIELD = 500
 _MAX_ENUM_CHARS_PER_FIELD = 7_500
+
+PROVINCE_VALUES = [*PROVINCES, OUTSIDE_CANADA, ""]
 
 
 def _code_property(description: str, codes: list[str] | None) -> dict[str, Any]:
@@ -39,22 +46,29 @@ def enum_values_or_none(codes: list[str]) -> list[str] | None:
     return values
 
 
-def build_json_schema(
-    reference: ReferenceData | None = None,
-    *,
-    constrain_codes: bool = True,
-    include_tax_rate: bool = False,
-) -> dict[str, Any]:
+def line_gl_codes(reference: ReferenceData) -> list[str]:
+    """GL codes an expense line may use: everything except accounts mapped to a tax type."""
+    tax_gls = reference.tax.tax_gl_codes()
+    return [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
+
+
+def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes: bool = True) -> dict[str, Any]:
     """Build the strict JSON Schema for the target output.
 
     When ``constrain_codes`` is set and reference data is supplied, the GL code
     and cost center fields become enums of the valid codes (plus
-    ``UNASSIGNED``), so the model physically cannot invent an account.
+    ``UNASSIGNED``), so the model physically cannot invent an account. When no
+    cost centers are configured the field is fixed to an empty string.
     """
     gl_codes = cc_codes = None
-    if reference is not None and constrain_codes:
-        gl_codes = enum_values_or_none(reference.chart_of_accounts.codes)
-        cc_codes = enum_values_or_none(reference.cost_centers.codes)
+    cc_description = f"Cost center code from the Cost Center list, or {UNASSIGNED} if none fits."
+    if reference is not None:
+        if constrain_codes:
+            gl_codes = enum_values_or_none(line_gl_codes(reference))
+            if reference.cost_centers is not None:
+                cc_codes = enum_values_or_none(reference.cost_centers.codes)
+        if reference.cost_centers is None:
+            cc_codes, cc_description = [""], "Cost centers are not configured: always an empty string."
 
     line_properties: dict[str, Any] = {
         "line_number": {"type": "integer", "description": "1-based position of the line on the invoice."},
@@ -63,59 +77,82 @@ def build_json_schema(
         "unit_price": {"type": "number", "description": "Price per unit, excluding tax."},
         "amount": {"type": "number", "description": "Line net amount, excluding tax."},
         "predicted_gl_code": _code_property(
-            f"GL account code from the Chart of Accounts, or {UNASSIGNED} if none fits.", gl_codes
+            f"Expense/asset GL account from the GL accounts list, or {UNASSIGNED} if none fits.", gl_codes
         ),
-        "predicted_cost_center": _code_property(
-            f"Cost center code from the Cost Center list, or {UNASSIGNED} if none fits.", cc_codes
-        ),
+        "predicted_cost_center": _code_property(cc_description, cc_codes),
+        "taxes_applied": {
+            "type": "array",
+            "description": "Sales taxes charged on this line (empty if exempt / zero-rated).",
+            "items": {"type": "string", "enum": list(TAX_TYPES)},
+        },
+        "reasoning_justification": {
+            "type": "string",
+            "description": "One or two sentences explaining the GL, cost center and tax determination.",
+        },
     }
-    if include_tax_rate:
-        line_properties["predicted_tax_rate"] = {
-            "type": "number",
-            "description": "Applicable tax rate as a decimal fraction (0.2 = 20%). 0 if exempt.",
-        }
-    line_properties["reasoning_justification"] = {
-        "type": "string",
-        "description": "One or two sentences explaining the GL, cost center and tax determination.",
+    tax_line_properties: dict[str, Any] = {
+        "tax_type": {"type": "string", "enum": list(TAX_TYPES), "description": "GST, HST, PST (incl. MB RST) or QST."},
+        "province": {
+            "type": "string",
+            "enum": PROVINCE_VALUES,
+            "description": "Province the tax belongs to (empty for GST).",
+        },
+        "rate": {"type": "number", "description": "Rate as a decimal fraction (13% -> 0.13, 9.975% -> 0.09975)."},
+        "taxable_amount": {"type": "number", "description": "Amount the tax was calculated on, excluding tax."},
+        "tax_amount": {"type": "number", "description": "Tax charged, as printed."},
     }
 
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": [
-            "vendor_name",
-            "invoice_number",
-            "invoice_date",
-            "currency",
-            "subtotal",
-            "tax_total",
-            "grand_total",
-            "confidence_score",
-            "line_items",
-        ],
-        "properties": {
-            "vendor_name": {"type": "string", "description": "Legal or trading name of the supplier."},
-            "invoice_number": {"type": "string", "description": "Supplier's invoice identifier."},
-            "invoice_date": {"type": "string", "description": "Invoice issue date formatted YYYY-MM-DD."},
-            "currency": {"type": "string", "description": "ISO 4217 currency code, e.g. USD, EUR, GBP."},
-            "subtotal": {"type": "number", "description": "Total before tax."},
-            "tax_total": {"type": "number", "description": "Total tax charged."},
-            "grand_total": {"type": "number", "description": "Amount due including tax."},
-            "confidence_score": {
-                "type": "number",
-                "description": "Overall confidence 0.0-1.0 in extraction accuracy and GL coding.",
+    properties: dict[str, Any] = {
+        "vendor_name": {"type": "string", "description": "Legal or trading name of the supplier."},
+        "invoice_number": {"type": "string", "description": "Supplier's invoice identifier."},
+        "invoice_date": {"type": "string", "description": "Invoice issue date formatted YYYY-MM-DD."},
+        "currency": {"type": "string", "description": "ISO 4217 currency code, e.g. CAD, USD."},
+        "supplier_province": {
+            "type": "string",
+            "enum": PROVINCE_VALUES,
+            "description": "Province of the supplier's address; OUTSIDE_CANADA or empty if unknown.",
+        },
+        "ship_to_province": {
+            "type": "string",
+            "enum": PROVINCE_VALUES,
+            "description": "Province where goods are delivered / services performed (bill-to if no ship-to).",
+        },
+        "gst_hst_registration_number": {
+            "type": "string",
+            "description": "Supplier GST/HST number as printed (e.g. 123456789 RT0001), empty if absent.",
+        },
+        "qst_registration_number": {
+            "type": "string",
+            "description": "Supplier QST number as printed (e.g. 1234567890 TQ0001), empty if absent.",
+        },
+        "subtotal": {"type": "number", "description": "Total before tax."},
+        "tax_lines": {
+            "type": "array",
+            "description": "One entry per sales tax charged, as printed on the invoice.",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(tax_line_properties),
+                "properties": tax_line_properties,
             },
-            "line_items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": list(line_properties.keys()),
-                    "properties": line_properties,
-                },
+        },
+        "tax_total": {"type": "number", "description": "Total tax charged (sum of tax_lines)."},
+        "grand_total": {"type": "number", "description": "Amount due including tax."},
+        "confidence_score": {
+            "type": "number",
+            "description": "Overall confidence 0.0-1.0 in extraction accuracy and GL coding.",
+        },
+        "line_items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(line_properties),
+                "properties": line_properties,
             },
         },
     }
+    return {"type": "object", "additionalProperties": False, "required": list(properties), "properties": properties}
 
 
 def response_format(schema: dict[str, Any]) -> dict[str, Any]:
@@ -124,6 +161,32 @@ def response_format(schema: dict[str, Any]) -> dict[str, Any]:
         "type": "json_schema",
         "json_schema": {"name": SCHEMA_NAME, "strict": True, "schema": schema},
     }
+
+
+class TaxLine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tax_type: str
+    province: str = ""
+    rate: float = Field(ge=0, le=1)
+    taxable_amount: float
+    tax_amount: float
+
+    @field_validator("tax_type")
+    @classmethod
+    def _tax_type(cls, value: str) -> str:
+        value = value.strip().upper()
+        if value not in TAX_TYPES:
+            raise ValueError(f"tax_type must be one of {TAX_TYPES}, got {value!r}")
+        return value
+
+    @field_validator("province")
+    @classmethod
+    def _province(cls, value: str) -> str:
+        value = (value or "").strip().upper()
+        if value not in PROVINCE_VALUES:
+            raise ValueError(f"province must be a Canadian province code, got {value!r}")
+        return value
 
 
 class LineItem(BaseModel):
@@ -135,9 +198,21 @@ class LineItem(BaseModel):
     unit_price: float
     amount: float
     predicted_gl_code: str
-    predicted_cost_center: str
-    predicted_tax_rate: float | None = Field(default=None, ge=0, le=1)
-    reasoning_justification: str
+    predicted_cost_center: str = ""
+    taxes_applied: list[str] = Field(default_factory=list)
+    reasoning_justification: str = ""
+
+    @field_validator("taxes_applied")
+    @classmethod
+    def _taxes(cls, value: list[str]) -> list[str]:
+        out = []
+        for v in value:
+            v = v.strip().upper()
+            if v not in TAX_TYPES:
+                raise ValueError(f"taxes_applied entries must be one of {TAX_TYPES}, got {v!r}")
+            if v not in out:
+                out.append(v)
+        return out
 
 
 class InvoiceCoding(BaseModel):
@@ -147,7 +222,12 @@ class InvoiceCoding(BaseModel):
     invoice_number: str
     invoice_date: str
     currency: str
+    supplier_province: str = ""
+    ship_to_province: str = ""
+    gst_hst_registration_number: str = ""
+    qst_registration_number: str = ""
     subtotal: float
+    tax_lines: list[TaxLine] = Field(default_factory=list)
     tax_total: float
     grand_total: float
     confidence_score: float = Field(ge=0, le=1)
@@ -169,10 +249,13 @@ class InvoiceCoding(BaseModel):
     def _currency(cls, value: str) -> str:
         return value.strip().upper()
 
+    @field_validator("supplier_province", "ship_to_province")
+    @classmethod
+    def _provinces(cls, value: str) -> str:
+        value = (value or "").strip().upper()
+        if value not in PROVINCE_VALUES:
+            raise ValueError(f"province must be a Canadian province code, got {value!r}")
+        return value
+
     def to_output(self) -> dict[str, Any]:
-        """Serialise to the target schema (drops optional fields that were not requested)."""
-        data = self.model_dump()
-        for line in data["line_items"]:
-            if line.get("predicted_tax_rate") is None:
-                line.pop("predicted_tax_rate", None)
-        return data
+        return self.model_dump()

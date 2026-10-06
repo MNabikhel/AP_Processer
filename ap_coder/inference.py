@@ -101,9 +101,8 @@ class InvoiceCoder:
         self.schema = build_json_schema(
             reference,
             constrain_codes=settings.engine.constrain_codes,
-            include_tax_rate=settings.engine.include_tax_rate,
         )
-        self.system_prompt = build_system_prompt(reference, include_tax_rate=settings.engine.include_tax_rate)
+        self.system_prompt = build_system_prompt(reference)
 
     @property
     def client(self) -> Any:
@@ -112,9 +111,14 @@ class InvoiceCoder:
         return self._client
 
     def build_messages(
-        self, extraction: ExtractionResult, images: list[PageImage] | None = None
+        self,
+        extraction: ExtractionResult,
+        images: list[PageImage] | None = None,
+        history: str = "",
     ) -> list[dict[str, Any]]:
         payload = extraction.to_prompt_payload(self.settings.engine.max_document_chars)
+        if history:
+            payload = f"{history}\n\n{payload}"
         if images and not self.profile.supports_vision:
             log.warning("Model %s is not vision-capable; ignoring page images", self.profile.name)
             images = None
@@ -149,8 +153,14 @@ class InvoiceCoder:
                 kwargs["seed"] = oai.seed
         return kwargs
 
-    def code(self, extraction: ExtractionResult, images: list[PageImage] | None = None) -> CodingResult:
-        messages = self.build_messages(extraction, images)
+    def code(
+        self,
+        extraction: ExtractionResult,
+        images: list[PageImage] | None = None,
+        history: str = "",
+    ) -> CodingResult:
+        """``history`` is the formatted reviewer history (``memory.format_examples``) for this invoice."""
+        messages = self.build_messages(extraction, images, history)
         images_attached = len(images) if images and self.profile.supports_vision else 0
         usage_total: dict[str, int] = {}
         last_error: Exception | None = None

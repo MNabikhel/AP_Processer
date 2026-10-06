@@ -1,7 +1,8 @@
-"""Enterprise reference data: GL Chart of Accounts, Cost Centers and Tax Codes.
+"""Enterprise reference data: GL accounts (cost codes), optional cost centers and tax setup.
 
-Each list is loaded from CSV or JSON and rendered into a compact Markdown
-snapshot that is injected into the LLM system prompt.
+Lists are loaded from CSV/JSON files or from the local dashboard database and
+rendered into a compact Markdown snapshot that is injected into the LLM
+system prompt.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .tax import TaxSetup, TaxTreatment, load_tax_mapping
 
 UNASSIGNED = "UNASSIGNED"
 
@@ -49,8 +52,6 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "dept_code",
         "kostl",
     ),
-    "tax_code": ("tax_code", "taxcode", "vat_code", "tax_group", "sales_tax_code", "tax_id", "mwskz"),
-    "rate": ("rate", "tax_rate", "vat_rate", "percent", "percentage", "rate_percent"),
     "active": ("active", "is_active", "enabled", "status_active"),
 }
 
@@ -108,29 +109,21 @@ class ReferenceTable:
 @dataclass(frozen=True)
 class ReferenceData:
     chart_of_accounts: ReferenceTable
-    cost_centers: ReferenceTable
-    tax_codes: ReferenceTable | None = None
+    cost_centers: ReferenceTable | None = None
+    tax: TaxSetup = field(default_factory=TaxSetup.default)
     notes: list[str] = field(default_factory=list)
 
-    def tax_rate_values(self) -> set[float]:
-        if not self.tax_codes:
-            return set()
-        rates = set()
-        for row in self.tax_codes.rows:
-            rate = _parse_rate(row.get("rate", ""))
-            if rate is not None:
-                rates.add(rate)
-        return rates
-
     def to_prompt_context(self) -> str:
-        sections = [
-            "### GL Chart of Accounts\n" + self.chart_of_accounts.to_markdown(),
-            "### Cost Centers\n" + self.cost_centers.to_markdown(),
-        ]
-        if self.tax_codes:
-            sections.append(
-                "### Tax Codes (rate is a decimal fraction, e.g. 0.2 = 20%)\n" + self.tax_codes.to_markdown()
-            )
+        tax_gls = self.tax.tax_gl_codes()
+        expense_accounts = ReferenceTable(
+            self.chart_of_accounts.kind,
+            self.chart_of_accounts.key_column,
+            [r for r in self.chart_of_accounts.rows if r[self.chart_of_accounts.key_column] not in tax_gls],
+        )
+        sections = ["### GL Accounts (use for line items)\n" + expense_accounts.to_markdown()]
+        if self.cost_centers is not None:
+            sections.append("### Cost Centers\n" + self.cost_centers.to_markdown())
+        sections.append("### Canadian Sales Tax Rates in force today\n" + self.tax.rates.to_markdown())
         if self.notes:
             sections.append("### Coding Policy Notes\n" + "\n".join(f"- {n}" for n in self.notes))
         return "\n\n".join(sections)
@@ -155,18 +148,6 @@ def _read_rows(path: Path) -> list[dict[str, str]]:
     raise ValueError(f"{path}: unsupported reference file type {suffix!r} (use .csv or .json)")
 
 
-def _parse_rate(value: str) -> float | None:
-    """Accept 0.2, 20, "20%" or "20,0" and return a decimal fraction (values >= 1 are percentages)."""
-    text = str(value).strip().rstrip("%").replace(",", ".").strip()
-    try:
-        rate = float(text)
-    except ValueError:
-        return None
-    if rate >= 1 or str(value).strip().endswith("%"):  # no real tax rate is 100%+
-        rate /= 100
-    return round(rate, 6)
-
-
 def load_table(path: str | Path, kind: str, key_column: str) -> ReferenceTable:
     path = Path(path)
     raw_rows = _read_rows(path)
@@ -181,11 +162,6 @@ def load_table(path: str | Path, kind: str, key_column: str) -> ReferenceTable:
         )
     for i, raw in enumerate(raw_rows, start=1):
         row = {rename.get(k, k.strip()): (v or "").strip() for k, v in raw.items() if k is not None}
-        if key_column == "tax_code" and "rate" in row:
-            rate = _parse_rate(row["rate"])
-            if rate is None:
-                raise ValueError(f"{path}: row {i} has an unreadable rate {row['rate']!r}")
-            row["rate"] = f"{rate:g}"
         code = row[key_column]
         if not code:
             raise ValueError(f"{path}: row {i} has an empty {key_column!r}")
@@ -202,22 +178,29 @@ def load_table(path: str | Path, kind: str, key_column: str) -> ReferenceTable:
     return ReferenceTable(kind=kind, key_column=key_column, rows=rows)
 
 
+def parse_policy_notes(text: str) -> list[str]:
+    return [
+        line.strip().lstrip("-* ").strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
 def load_reference_data(
     chart_of_accounts: str | Path,
-    cost_centers: str | Path,
-    tax_codes: str | Path | None = None,
+    cost_centers: str | Path | None = None,
+    tax_mapping: str | Path | None = None,
     policy_notes: str | Path | None = None,
+    tax_rates: str | Path | None = None,
 ) -> ReferenceData:
-    notes: list[str] = []
-    if policy_notes:
-        notes = [
-            line.strip().lstrip("-* ").strip()
-            for line in Path(policy_notes).read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
+    from .tax import TaxRateTable
+
+    notes = parse_policy_notes(Path(policy_notes).read_text(encoding="utf-8")) if policy_notes else []
+    treatments: dict[str, TaxTreatment] = load_tax_mapping(tax_mapping) if tax_mapping else {}
+    rates = TaxRateTable.load(tax_rates) if tax_rates else TaxRateTable.load()
     return ReferenceData(
         chart_of_accounts=load_table(chart_of_accounts, "GL account", "gl_code"),
-        cost_centers=load_table(cost_centers, "cost center", "cost_center"),
-        tax_codes=load_table(tax_codes, "tax code", "tax_code") if tax_codes else None,
+        cost_centers=load_table(cost_centers, "cost center", "cost_center") if cost_centers else None,
+        tax=TaxSetup(rates, treatments),
         notes=notes,
     )

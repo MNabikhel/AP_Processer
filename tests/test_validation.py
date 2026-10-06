@@ -49,17 +49,6 @@ def test_line_math_and_numbering(reference, ground_truth):
     assert {"LINE_MATH", "LINE_NUMBERING"} <= _codes(report)
 
 
-def test_tax_rate_checks(reference, ground_truth):
-    gt = copy.deepcopy(ground_truth)
-    for li in gt["line_items"]:
-        li["predicted_tax_rate"] = 0.2
-    assert validate_coding(InvoiceCoding.model_validate(gt), reference).issues == []
-
-    gt["line_items"][0]["predicted_tax_rate"] = 0.17
-    report = validate_coding(InvoiceCoding.model_validate(gt), reference)
-    assert {"TAX_RATE_UNKNOWN", "TAX_MISMATCH"} <= _codes(report)
-
-
 def test_low_model_confidence_triggers_review(reference, ground_truth):
     gt = dict(ground_truth, confidence_score=0.7)
     report = validate_coding(InvoiceCoding.model_validate(gt), reference, review_threshold=0.85)
@@ -74,9 +63,9 @@ def test_cross_check_against_prebuilt_invoice(reference, ground_truth):
         "documents": [
             {
                 "fields": {
-                    "InvoiceId": {"valueString": "INV 2026 04471", "confidence": 0.9},
+                    "InvoiceId": {"valueString": "NW 2026 0912", "confidence": 0.9},
                     "InvoiceDate": {"valueDate": "2026-09-15", "confidence": 0.9},
-                    "InvoiceTotal": {"valueCurrency": {"amount": 28000.0}, "confidence": 0.9},
+                    "InvoiceTotal": {"valueCurrency": {"amount": 18000.0}, "confidence": 0.9},
                 }
             }
         ],

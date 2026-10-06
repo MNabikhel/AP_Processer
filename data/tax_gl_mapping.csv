@@ -1,0 +1,5 @@
+tax_type,treatment,gl_code
+GST,recoverable,2310
+HST,recoverable,2310
+QST,recoverable,2320
+PST,expense_to_line,

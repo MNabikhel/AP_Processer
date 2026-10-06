@@ -1,7 +1,0 @@
-tax_code,rate,description
-STD,0.20,Standard rate VAT (20%)
-RED,0.05,Reduced rate VAT (5%)
-ZERO,0.0,Zero-rated supplies
-EXEMPT,0.0,Exempt / out of scope
-US-NY,0.08875,New York City combined sales tax
-US-NONE,0.0,US services not subject to sales tax

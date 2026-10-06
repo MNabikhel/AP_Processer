@@ -18,6 +18,7 @@ from .pipeline import InvoicePipeline, discover_inputs, write_outputs
 from .reference_data import ReferenceData, load_reference_data
 from .schema import build_json_schema
 from .share_report import build_share_report
+from .store import DEFAULT_DB_PATH, Store
 
 SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # Everything enterprise-specific lives under ./private, which is git-ignored.
@@ -28,7 +29,7 @@ DEFAULT_CACHE = PRIVATE_DIR / ".cache" / "extraction"
 _REFERENCE_FILES = {
     "coa": ("chart_of_accounts", (".csv", ".json")),
     "cost_centers": ("cost_centers", (".csv", ".json")),
-    "tax_codes": ("tax_codes", (".csv", ".json")),
+    "tax_mapping": ("tax_gl_mapping", (".csv",)),
     "policy": ("coding_policy", (".md", ".txt")),
 }
 
@@ -53,27 +54,42 @@ def _resolve_reference(args: argparse.Namespace) -> dict[str, Path | None]:
             paths[key] = Path(explicit) if explicit else None  # '' disables an optional file
             continue
         found = next((base / f"{stem}{ext}" for ext in exts if (base / f"{stem}{ext}").exists()), None)
-        if found is None and key in {"coa", "cost_centers"}:
+        if found is None and key == "coa":
             found = base / f"{stem}.csv"  # let the loader report the missing file clearly
         paths[key] = found
     return paths
 
 
+def reference_source(args: argparse.Namespace) -> str:
+    """Where reference data will come from: explicit files > dashboard database > reference folder."""
+    if getattr(args, "coa", None):
+        return "files given on the command line"
+    db = Path(getattr(args, "db", DEFAULT_DB_PATH))
+    if db.exists() and Store(db).has_reference():
+        return "dashboard database"
+    return (
+        "BUNDLED SAMPLE DATA (import your GL accounts in the dashboard)" if reference_dir()[1] else "reference folder"
+    )
+
+
 def _load_reference(args: argparse.Namespace) -> ReferenceData:
+    if reference_source(args) == "dashboard database":
+        return Store(args.db).reference_data()
     paths = _resolve_reference(args)
     return load_reference_data(
-        paths["coa"], paths["cost_centers"], tax_codes=paths["tax_codes"], policy_notes=paths["policy"]
+        paths["coa"], paths["cost_centers"], tax_mapping=paths["tax_mapping"], policy_notes=paths["policy"]
     )
 
 
 def _add_reference_args(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group(
         "reference data",
-        "Defaults to AP_REFERENCE_DIR, else ./private/reference, else the bundled sample data in ./data",
+        "Defaults to the dashboard database (if GL accounts were imported), else AP_REFERENCE_DIR, "
+        "else ./private/reference, else the bundled sample data in ./data",
     )
-    g.add_argument("--coa", help="Chart of Accounts (.csv/.json)")
-    g.add_argument("--cost-centers", help="Cost center list (.csv/.json)")
-    g.add_argument("--tax-codes", help="Tax codes (.csv/.json); '' to omit")
+    g.add_argument("--coa", help="GL accounts (.csv/.json); overrides the dashboard database")
+    g.add_argument("--cost-centers", help="Cost center list (.csv/.json); '' to omit")
+    g.add_argument("--tax-mapping", help="Tax GL mapping (tax_type,treatment,gl_code .csv); '' to omit")
     g.add_argument("--policy", help="Coding policy notes (.md/.txt); '' to omit")
 
 
@@ -81,7 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ap_coder", description="Enterprise AP Invoice Coder Engine (PoC)")
     parser.add_argument("--env-file", default=None, help="Path to a .env file (default: ./.env if present)")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help=f"Dashboard database (default: {DEFAULT_DB_PATH})")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("dashboard", help="Open the review dashboard in your browser (runs locally)")
+    p.add_argument("--port", type=int, default=8501)
 
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) Azure connectivity")
     p.add_argument("--online", action="store_true", help="Call both Azure services (costs about one invoice)")
@@ -96,12 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--deployment", help="Azure OpenAI deployment name")
     p.add_argument("--model-name", help="Underlying model name (gpt-4o, gpt-4o-mini, gpt-4.1, o4-mini, ...)")
     p.add_argument("--vision", action=argparse.BooleanOptionalAction, default=None, help="Attach page images")
-    p.add_argument(
-        "--tax-rate-field",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Add predicted_tax_rate to each line item",
-    )
+    p.add_argument("--no-db", action="store_true", help="Do not use the learning memory or add to the review queue")
     p.add_argument("--cache-dir", default=str(DEFAULT_CACHE), help="Extraction cache directory ('' to disable)")
     p.add_argument("--workers", type=int, default=1, help="Invoices processed in parallel")
     p.add_argument("--stdout", action="store_true", help="Also print each coded JSON to stdout")
@@ -133,19 +148,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--out", default=str(PRIVATE_DIR / "share_report.md"))
 
     p = sub.add_parser("schema", help="Print the strict JSON Schema sent to Azure OpenAI")
-    p.add_argument("--tax-rate-field", action="store_true")
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
     _add_reference_args(p)
     return parser
 
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
-    base, is_sample = reference_dir()
     checks = run_checks(settings, lambda: _load_reference(args), online=args.online)
     report = format_checks(checks)
-    source = "BUNDLED SAMPLE DATA (put your files in private/reference/)" if is_sample else "your reference folder"
-    print(report.replace("\n\n", f"\n\nreference data source: {source}\n\n", 1))
+    print(report.replace("\n\n", f"\n\nreference data source: {reference_source(args)}\n\n", 1))
     return exit_code(checks)
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    import subprocess
+
+    app = Path(__file__).resolve().parent / "dashboard.py"
+    env = {**os.environ, "AP_DB_PATH": str(Path(args.db).resolve())}
+    if args.env_file:
+        env["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
+    cmd = [
+        sys.executable, "-m", "streamlit", "run", str(app),
+        "--server.port", str(args.port), "--server.address", "localhost",
+        "--browser.gatherUsageStats", "false",
+    ]  # fmt: skip
+    print(f"Dashboard: http://localhost:{args.port}  (Ctrl+C to stop)", file=sys.stderr)
+    return subprocess.call(cmd, env=env)
 
 
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
@@ -154,12 +182,13 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
         deployment=args.deployment,
         model_name=args.model_name,
         vision=args.vision,
-        include_tax_rate=args.tax_rate_field,
     )
-    if reference_dir()[1] and args.coa is None:
-        print("NOTE: using the bundled SAMPLE chart of accounts (see private/reference/).", file=sys.stderr)
+    source = reference_source(args)
+    if source.startswith("BUNDLED"):
+        print("NOTE: using the bundled SAMPLE GL accounts (import yours in the dashboard).", file=sys.stderr)
     reference = _load_reference(args)
-    pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None)
+    store = None if args.no_db else Store(args.db)
+    pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
     inputs = discover_inputs(args.inputs)
     if not inputs:
         print("No supported invoice files found.", file=sys.stderr)
@@ -251,7 +280,6 @@ def cmd_schema(args: argparse.Namespace) -> int:
     schema = build_json_schema(
         _load_reference(args),
         constrain_codes=not args.no_constrain_codes,
-        include_tax_rate=args.tax_rate_field,
     )
     print(json.dumps(schema, indent=2))
     return 0
@@ -269,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = Settings.from_env(args.env_file)
     commands = {
+        "dashboard": lambda: cmd_dashboard(args),
         "doctor": lambda: cmd_doctor(args, settings),
         "process": lambda: cmd_process(args, settings),
         "extract": lambda: cmd_extract(args, settings),

@@ -17,6 +17,7 @@ from .extraction import ExtractionResult, build_credential
 from .inference import CodingError, InvoiceCoder, ModelProfile
 from .reference_data import ReferenceData
 from .schema import enum_values_or_none
+from .tax import TAX_TYPES
 
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 
@@ -103,8 +104,7 @@ def run_checks(
     add(
         "engine",
         PASS,
-        f"vision={eng.vision}, tax_rate_field={eng.include_tax_rate}, constrain_codes={eng.constrain_codes}, "
-        f"review_threshold={eng.review_threshold}",
+        f"vision={eng.vision}, constrain_codes={eng.constrain_codes}, review_threshold={eng.review_threshold}",
     )
 
     # --- Reference data -----------------------------------------------------------
@@ -115,26 +115,39 @@ def run_checks(
         add("reference data", FAIL, _scrub(str(exc), settings))
     if reference is not None:
         tables = [
-            ("chart of accounts", reference.chart_of_accounts),
+            ("GL accounts", reference.chart_of_accounts),
             ("cost centers", reference.cost_centers),
-            ("tax codes", reference.tax_codes),
         ]
         for label, table in tables:
             if table is None:
-                add(label, WARN, "not provided (tax determination will rely on the invoice only)")
+                add(label, PASS, "not configured (optional)")
                 continue
             columns = ", ".join(table.rows[0].keys())
             detail = f"{len(table.rows)} active rows; columns: {columns}"
             status = PASS
-            if len(table.rows[0]) < 2:
-                status, detail = WARN, detail + " (add a name/description column: the model needs words to match)"
-            if table is not reference.tax_codes and eng.constrain_codes:
+            if len(table.rows[0]) < 2 or not any(v for r in table.rows for k, v in r.items() if k != table.key_column):
+                status, detail = WARN, detail + " (add descriptions: the model needs words to match)"
+            if eng.constrain_codes:
                 if enum_values_or_none(table.codes) is None:
                     status = WARN
                     detail += "; too many codes for schema enums -> free-text codes + local validation"
                 else:
                     detail += "; enforced as schema enum"
             add(label, status, detail)
+
+        known = set(reference.chart_of_accounts.codes)
+        for tax_type in TAX_TYPES:
+            t = reference.tax.treatment(tax_type)
+            if not t.needs_gl:
+                add(f"tax {tax_type}", PASS, f"{t.treatment} (added to each expense line's GL)")
+            elif not t.gl_code:
+                add(
+                    f"tax {tax_type}", WARN, f"{t.treatment} but no GL account mapped yet (invoices with it will error)"
+                )
+            elif t.gl_code not in known:
+                add(f"tax {tax_type}", FAIL, "mapped GL account is not in the GL accounts list")
+            else:
+                add(f"tax {tax_type}", PASS, f"{t.treatment} -> mapped GL account")
         add("policy notes", PASS if reference.notes else WARN, f"{len(reference.notes)} rule(s)")
 
         coder = InvoiceCoder(settings, reference, client=object())

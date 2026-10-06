@@ -38,16 +38,6 @@ def test_missing_key_column_lists_found_columns(tmp_path):
         load_table(p, "GL account", "gl_code")
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [("0.2", "0.2"), ("20", "0.2"), ("20%", "0.2"), ("8,875", "0.08875"), ("0", "0"), ("1", "0.01")],
-)
-def test_tax_rate_normalisation(tmp_path, raw, expected):
-    p = tmp_path / "tax.csv"
-    p.write_text(f'VAT Code,Tax Rate\nT1,"{raw}"\n')
-    assert load_table(p, "tax code", "tax_code").rows[0]["rate"] == expected
-
-
 # --- Labels round trip ------------------------------------------------------------------
 
 
@@ -72,11 +62,11 @@ def test_labels_round_trip(tmp_path, ground_truth, reference, suffix):
     docs, unreviewed = load_labels(labels)
     assert unreviewed == []
     doc = docs["inv"]
-    assert doc["invoice_date"] == "2026-09-14" and doc["grand_total"] == 28494.0
-    assert [li["predicted_gl_code"] for li in doc["line_items"]][:2] == ["6020", "6020"]
+    assert doc["invoice_date"] == "2026-09-14" and doc["grand_total"] == 18017.85
+    assert [li["predicted_gl_code"] for li in doc["line_items"]][:2] == ["6020", "1500"]
 
     report = evaluate(out, labels)
-    assert report.gl_accuracy == round(6 / 7, 4)
+    assert report.gl_accuracy == round(4 / 5, 4)
 
 
 def _mark_reviewed(path, fix_gl):
@@ -156,13 +146,16 @@ def test_share_report_is_redacted(tmp_path, settings, reference, ground_truth, s
     write_outputs(pipe.process(sample_markdown_path), tmp_path / "out")
 
     key = tmp_path / "key.csv"
-    text = build_share_report(tmp_path / "out", SAMPLES / "ground_truth", key_file=key)
-    for secret in ("Contoso", "28494", "28,494", "INV-2026", "Azure reserved", SAMPLE_STEM, "6030", "CC410"):
+    gt_dir = tmp_path / "gt"
+    gt_dir.mkdir()
+    (gt_dir / f"{SAMPLE_STEM}.json").write_text((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    text = build_share_report(tmp_path / "out", gt_dir, key_file=key)
+    for secret in ("Northwind", "18017", "18,017", "NW-2026", "Latitude", SAMPLE_STEM, "6010", "CC400"):
         assert secret not in text, secret
     assert "doc-01" in text and "GL code accuracy: 100.0%" in text
     assert SAMPLE_STEM in key.read_text()
 
-    with_codes = build_share_report(tmp_path / "out", SAMPLES / "ground_truth", include_codes=True)
+    with_codes = build_share_report(tmp_path / "out", gt_dir, include_codes=True)
     assert "codes included: yes" in with_codes
 
 
@@ -191,9 +184,7 @@ def test_doctor_offline_never_prints_secrets(reference):
     for secret in ("secret-di", "secret-aoai", "k-di-123", "k-oai-456"):
         assert secret not in text
     by_area = {c.area: c for c in checks}
-    assert (
-        by_area["chart of accounts"].status == PASS and "enforced as schema enum" in by_area["chart of accounts"].detail
-    )
+    assert by_area["GL accounts"].status == PASS and "enforced as schema enum" in by_area["GL accounts"].detail
     assert by_area["AOAI connectivity"].status == SKIP
     assert not any(c.status == FAIL for c in checks)
 
@@ -218,7 +209,7 @@ def test_doctor_large_chart_falls_back_from_enums(tmp_path):
     from ap_coder.reference_data import load_reference_data
 
     checks = run_checks(Settings(), lambda: load_reference_data(coa, cc))
-    coa_check = next(c for c in checks if c.area == "chart of accounts")
+    coa_check = next(c for c in checks if c.area == "GL accounts")
     assert coa_check.status == WARN and "free-text" in coa_check.detail
 
 

@@ -26,9 +26,15 @@ def test_end_to_end_from_markdown(tmp_path, settings, reference, ground_truth, s
     assert names == [f"{SAMPLE_STEM}.json", f"{SAMPLE_STEM}.validation.json"]
 
     out = json.loads((tmp_path / f"{SAMPLE_STEM}.json").read_text())
-    assert out == ground_truth  # exact target schema, nothing extra
+    distribution = out.pop("gl_distribution")
+    assert out == ground_truth  # target schema fields exactly as coded
+    assert round(sum(e["amount"] for e in distribution), 2) == ground_truth["grand_total"]
+    assert {e["gl_code"] for e in distribution if e["kind"] == "tax"} == {"2310"}
 
-    report = evaluate(tmp_path, SAMPLES / "ground_truth")
+    gt_dir = tmp_path / "gt"
+    gt_dir.mkdir()
+    (gt_dir / f"{SAMPLE_STEM}.json").write_text((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    report = evaluate(tmp_path, gt_dir)
     assert report.meets_target and report.gl_accuracy == 1.0
 
 

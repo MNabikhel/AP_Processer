@@ -8,31 +8,29 @@ from ap_coder.reference_data import load_reference_data, load_table
 def test_loads_sample_reference_data(reference):
     assert "6030" in reference.chart_of_accounts.codes
     assert "CC410" in reference.cost_centers.codes
-    assert 0.2 in reference.tax_rate_values()
+    assert reference.tax.treatment("GST").gl_code == "2310"
+    assert reference.tax.treatment("PST").treatment == "expense_to_line"
+    assert reference.tax.tax_gl_codes() == {"2310", "2320"}
     assert any("Capitalisation threshold" in n for n in reference.notes)
-
-
-def test_inactive_accounts_are_excluded(reference):
-    assert "6999" not in reference.chart_of_accounts.codes
-    assert "active" not in reference.chart_of_accounts.rows[0]
 
 
 def test_prompt_context_contains_tables(reference):
     ctx = reference.to_prompt_context()
-    assert "### GL Chart of Accounts" in ctx
-    assert "| gl_code | account_name |" in ctx
+    assert "### GL Accounts" in ctx
+    assert "| gl_code | description | category |" in ctx
+    assert "| 2310 |" not in ctx, "tax accounts are not offered for expense lines"
     assert "CC410" in ctx
+    assert "Canadian Sales Tax Rates" in ctx and "| HST | ON | 0.13 |" in ctx
     assert "### Coding Policy Notes" in ctx
 
 
-def test_json_reference_files(tmp_path):
+def test_json_reference_files_and_optional_cost_centers(tmp_path):
     coa = tmp_path / "coa.json"
-    coa.write_text(json.dumps({"accounts": [{"gl_code": 6000, "account_name": "Office"}]}))
-    cc = tmp_path / "cc.json"
-    cc.write_text(json.dumps([{"cost_center": "CC1", "name": "Ops"}]))
-    ref = load_reference_data(coa, cc)
+    coa.write_text(json.dumps({"accounts": [{"gl_code": 6000, "description": "Office"}]}))
+    ref = load_reference_data(coa)
     assert ref.chart_of_accounts.codes == ["6000"]
-    assert ref.tax_codes is None
+    assert ref.cost_centers is None
+    assert "Cost Centers" not in ref.to_prompt_context()
 
 
 def test_duplicate_codes_rejected(tmp_path):

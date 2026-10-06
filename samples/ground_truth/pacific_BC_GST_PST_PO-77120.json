@@ -1,0 +1,74 @@
+{
+  "vendor_name": "Pacific Office Supply Ltd.",
+  "invoice_number": "PO-77120",
+  "invoice_date": "2026-10-05",
+  "currency": "CAD",
+  "supplier_province": "BC",
+  "ship_to_province": "BC",
+  "gst_hst_registration_number": "555666777 RT0001",
+  "qst_registration_number": "",
+  "subtotal": 2726.0,
+  "tax_lines": [
+    {
+      "tax_type": "GST",
+      "province": "",
+      "rate": 0.05,
+      "taxable_amount": 2726.0,
+      "tax_amount": 136.3
+    },
+    {
+      "tax_type": "PST",
+      "province": "BC",
+      "rate": 0.07,
+      "taxable_amount": 2726.0,
+      "tax_amount": 190.82
+    }
+  ],
+  "tax_total": 327.12,
+  "grand_total": 3053.12,
+  "confidence_score": 1.0,
+  "line_items": [
+    {
+      "line_number": 1,
+      "description": "HP 26X toner cartridges (G, P)",
+      "quantity": 10,
+      "unit_price": 89.0,
+      "amount": 890.0,
+      "predicted_gl_code": "6000",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "Printer supplies."
+    },
+    {
+      "line_number": 2,
+      "description": "Dell 27\" monitor P2725H (G, P)",
+      "quantity": 4,
+      "unit_price": 329.0,
+      "amount": 1316.0,
+      "predicted_gl_code": "6010",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "Monitors below threshold."
+    },
+    {
+      "line_number": 3,
+      "description": "Copy paper, letter, case of 10 reams (G, P)",
+      "quantity": 10,
+      "unit_price": 52.0,
+      "amount": 520.0,
+      "predicted_gl_code": "6000",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "Office paper."
+    }
+  ]
+}
