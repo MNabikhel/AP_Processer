@@ -134,7 +134,7 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 [class*="st-key-qcard_"]:has(button:focus-visible) .apc-qcard {outline: 3px solid #9cc0ec; outline-offset: 2px;}
 [class*="st-key-qcard_"]:hover .apc-qcard {transform: translateY(-2px); box-shadow: var(--apc-shadow-lg); border-color: #cfd8e6;}
 [class*="st-key-qcard_"]:hover .apc-qcard .chev {transform: translateX(3px); color: var(--apc-brand);}
-.apc-qcard {display: grid; grid-template-columns: auto minmax(0, 1fr) 150px 150px 150px 24px; align-items: center; gap: 1.1rem;
+.apc-qcard {display: grid; grid-template-columns: auto minmax(0, 1fr) 168px 130px 20px; align-items: center; gap: 1.1rem;
   background: var(--apc-card); border: 1px solid var(--apc-line); border-radius: 14px; padding: .95rem 1.1rem .95rem 1.2rem;
   box-shadow: var(--apc-shadow); position: relative; overflow: hidden; transition: transform .15s ease, box-shadow .15s ease;}
 .apc-qcard::before {content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent, var(--apc-line));}
@@ -145,7 +145,9 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-qcard .amount {text-align: right; font-weight: 720; font-size: 1.05rem; color: var(--apc-ink); font-variant-numeric: tabular-nums;}
 .apc-qcard .amount small {display: block; font-weight: 550; font-size: .72rem; color: var(--apc-faint);}
 .apc-qcard .chev {color: var(--apc-faint); font-size: 1.3rem; transition: transform .15s ease, color .15s ease;}
-@media (max-width: 1100px) {.apc-qcard {grid-template-columns: auto minmax(0, 1fr) 120px 24px;} .apc-qcard .conf, .apc-qcard .status {display: none;}}
+.apc-qcard .state {display: flex; flex-direction: column; gap: .45rem; align-items: flex-start;}
+.apc-qcard .state .apc-meter {width: 100%;}
+@media (max-width: 1000px) {.apc-qcard {grid-template-columns: auto minmax(0, 1fr) 120px 20px;} .apc-qcard .state {display: none;}}
 
 /* Confidence meter */
 .apc-meter {display: flex; flex-direction: column; gap: .3rem;}
@@ -208,7 +210,9 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-table th {text-align: left; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--apc-muted);
   font-weight: 650; padding: .55rem .7rem; border-bottom: 1px solid var(--apc-line); background: #f8fafc;}
 .apc-table th:first-child {border-top-left-radius: 10px;} .apc-table th:last-child {border-top-right-radius: 10px;}
-.apc-table td {padding: .6rem .7rem; border-bottom: 1px solid #eef1f5; color: var(--apc-ink); vertical-align: middle;}
+.apc-table td {padding: .6rem .7rem; border-bottom: 1px solid #eef1f5; color: var(--apc-ink); vertical-align: middle;
+  white-space: nowrap;}
+.apc-table td.w {white-space: normal; min-width: 12rem;}
 .apc-table tr:hover td {background: #fafbfd;}
 .apc-table .r {text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;}
 .apc-table .gl {font-weight: 650;} .apc-table .gl small {display: block; font-weight: 450; color: var(--apc-muted); font-size: .78rem;}
@@ -216,8 +220,10 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-table .ok {color: var(--apc-ok); font-weight: 700;} .apc-table .bad {color: var(--apc-err); font-weight: 700;}
 
 /* ---- Sticky action bar --------------------------------------------------------------------------------------- */
-.st-key-card_actionbar {position: sticky; bottom: .75rem; z-index: 20; backdrop-filter: blur(8px);
-  background: rgba(255, 255, 255, .92) !important; box-shadow: 0 12px 30px -10px rgba(16, 24, 40, .3) !important;}
+/* Streamlit wraps each block in a same-height stLayoutWrapper, so the wrapper is what must stick. */
+[data-testid="stLayoutWrapper"]:has(> .st-key-card_actionbar) {position: sticky; bottom: .75rem; z-index: 20;}
+.st-key-card_actionbar {padding-top: .7rem !important; padding-bottom: .7rem !important; backdrop-filter: blur(8px); background: rgba(255, 255, 255, .94) !important;
+  box-shadow: 0 12px 30px -10px rgba(16, 24, 40, .35) !important;}
 
 /* ---- Empty state ------------------------------------------------------------------------------------------- */
 .apc-empty {text-align: center; padding: 2.2rem 1rem 1.4rem;}
@@ -260,3 +266,17 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-today div {background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .08); border-radius: 12px; padding: .55rem .7rem;}
 .apc-today b {display: block; color: #fff; font-size: 1.15rem; font-variant-numeric: tabular-nums;}
 .apc-today span {color: #93a4bd; font-size: .72rem;}
+
+/* ---- "Why the AI chose these codes" ------------------------------------------------------------------------ */
+.apc-reasons {display: flex; flex-direction: column;}
+.apc-reason {display: flex; gap: .75rem; padding: .65rem 0; border-bottom: 1px solid #eef1f5; align-items: flex-start;}
+.apc-reason:last-child {border-bottom: none;}
+.apc-reason .body {min-width: 0; flex: 1;}
+.apc-reason .head {font-size: .9rem; color: var(--apc-ink);}
+.apc-reason .desc {font-weight: 600;}
+.apc-reason .why {font-size: .84rem; color: var(--apc-muted); margin-top: .2rem; line-height: 1.45;}
+.apc-reason .badges {display: flex; gap: .35rem; flex-wrap: wrap; margin-top: .35rem;}
+.apc-reason .badges:empty {display: none;}
+
+/* ---- Narrower sidebar on laptops --------------------------------------------------------------------------- */
+section[data-testid="stSidebar"] {width: 256px !important; min-width: 256px !important;}

@@ -173,8 +173,7 @@ def queue_card(inv: dict[str, Any], taxes: Sequence[str] = (), province: str = "
         f"{avatar(inv.get('vendor_name') or inv.get('file_name') or '')}"
         f"<div class='who'><div class='vendor'>{esc(inv.get('vendor_name') or inv.get('file_name'))}</div>"
         f"<div class='meta'>{''.join(meta)}</div></div>"
-        f"<div class='conf'>{meter(inv.get('adjusted_confidence') or 0.0)}</div>"
-        f"<div class='status' style='text-align:center'>{status}</div>"
+        f"<div class='state'>{status}{meter(inv.get('adjusted_confidence') or 0.0)}</div>"
         f"<div class='amount'>{money(inv.get('grand_total'))}<small>{esc(inv.get('currency') or '')}</small></div>"
         f"<div class='chev'>{icon('chevron_right')}</div></div>"
     )
@@ -219,6 +218,17 @@ def split_bar(segments: Sequence[tuple[str, float]], max_segments: int = 6) -> s
     return f"<div class='apc-split' role='img' aria-label='Spend by account'>{''.join(bars)}</div><div class='apc-legend'>{''.join(legend)}</div>"  # noqa: E501
 
 
+def reason_row(number: int, description: str, gl_code: str, gl_label: str, reasoning: str,
+               badges: Iterable[str] = ()) -> str:  # fmt: skip
+    """One line of the 'why the AI chose these codes' panel (badges are pre-built HTML)."""
+    return (
+        f"<div class='apc-reason'><span class='apc-pill gray'>{number}</span><div class='body'>"
+        f"<div class='head'><span class='desc'>{esc(description)}</span><span class='apc-arrow'>→</span>"
+        f"<b class='apc-mono'>{esc(gl_code)}</b> <span class='apc-muted'>{esc(gl_label)}</span></div>"
+        f"<div class='why'>{esc(reasoning)}</div><div class='badges'>{''.join(badges)}</div></div></div>"
+    )
+
+
 _CHECK_ICONS = {"error": "!", "warning": "!", "ok": "✓", "info": "★"}
 
 
@@ -232,14 +242,16 @@ def check(kind: str, title: str, message: str, code: str = "") -> str:
 
 
 def table(headers: Sequence[str], rows: Sequence[Sequence[str]], right: Iterable[int] = (),
-          foot: Sequence[str] | None = None) -> str:  # fmt: skip
-    """``rows`` cells are HTML (escape data before passing); ``right`` = right-aligned column indexes."""
-    right = set(right)
+          foot: Sequence[str] | None = None, wrap: Iterable[int] = ()) -> str:  # fmt: skip
+    """``rows`` cells are HTML (escape data before passing); ``right`` = right-aligned column indexes,
+    ``wrap`` = columns allowed to wrap (others stay on one line)."""
+    right, wrap = set(right), set(wrap)
 
     def cells(values: Sequence[str], tag: str) -> str:
         out = []
         for i, v in enumerate(values):
-            cls = " class='r'" if i in right else ""
+            classes = " ".join(c for c, on in (("r", i in right), ("w", i in wrap)) if on)
+            cls = f" class='{classes}'" if classes else ""
             out.append(f"<{tag}{cls}>{v}</{tag}>")
         return "".join(out)
 
@@ -326,6 +338,6 @@ def sidebar_profile(name: str, approved_today: int, waiting: int) -> str:
     return (
         f"<div class='apc-me'>{avatar(name)}<div><div class='name'>{esc(name)}</div>"
         f"<div class='role'>AP reviewer</div></div></div>"
-        f"<div class='apc-today'><div><b>{approved_today}</b><span>approved today</span></div>"
+        f"<div class='apc-today'><div><b>{approved_today}</b><span>done today</span></div>"
         f"<div><b>{waiting}</b><span>waiting</span></div></div>"
     )

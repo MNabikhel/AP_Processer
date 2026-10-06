@@ -66,7 +66,7 @@ def coding_from_inputs(
         tax_lines.append(
             {
                 "tax_type": row["tax_type"],
-                "province": "" if is_blank(row.get("province")) else row["province"],
+                "province": "" if is_blank(row.get("province")) or row["province"] == "—" else row["province"],
                 "rate": to_number(row.get("rate")),
                 "taxable_amount": to_number(row.get("taxable_amount")),
                 "tax_amount": to_number(row.get("tax_amount")),

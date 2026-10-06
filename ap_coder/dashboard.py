@@ -160,10 +160,6 @@ def weekly_accuracy(metrics: dict[str, Any]) -> list[float]:
     return [w["accepted"] / (w["accepted"] + w["corrected"]) for w in metrics["weekly"]]
 
 
-def check_item(kind: str, tag: str, message: str, code: str = "") -> str:
-    return ui.check(kind, tag, message, code)
-
-
 # --- Review queue --------------------------------------------------------------------------------------
 
 
@@ -171,18 +167,16 @@ def page_review() -> None:
     store = get_store()
     show_toast()
     reference = reference_or_none(store)
-    if reference is None:
-        st.html(ui.page_header("Accounts payable", "Review queue"))
-        with card("setup"):
-            st.html(
-                ui.empty_state(
-                    "Let's get you set up", "Import your GL accounts so the AI knows which codes it may use."
-                )
+    invoices = store.list_invoices()
+    if reference is None or not invoices:
+        st.html(
+            ui.page_header(
+                "Welcome", f"{ui.greeting()}, {reviewer().split()[0]}", "Four quick steps and you're reviewing."
             )
-            st.page_link(PAGES["accounts"], label="Go to GL accounts & tax", icon=":material/arrow_forward:")
+        )
+        _getting_started(store)
         return
 
-    invoices = store.list_invoices()
     pending = [i for i in invoices if i["status"] == REVIEW]
     open_id = st.session_state.get("open_invoice")
     if open_id in [i["id"] for i in pending]:
@@ -262,8 +256,9 @@ def page_review() -> None:
                 st.html(ui.empty_state("Inbox zero", "Every invoice has been reviewed. Time for a coffee."))
                 st.page_link(PAGES["process"], label="Process new invoices", icon=":material/arrow_forward:")
         else:
+            bar_filter, bar_search, bar_sort = st.columns([3.2, 2.4, 1.8], vertical_alignment="center")
             view = (
-                st.segmented_control(
+                bar_filter.segmented_control(
                     "Show",
                     [
                         f"All · {len(pending)}",
@@ -272,9 +267,15 @@ def page_review() -> None:
                     ],
                     default=f"All · {len(pending)}",
                     label_visibility="collapsed",
+                    key="queue_filter",
                 )
                 or ""
             )
+            query = bar_search.text_input(
+                "Search", placeholder="Search vendor or invoice #", label_visibility="collapsed",
+                icon=":material/search:", key="queue_search",
+            )  # fmt: skip
+            order = bar_sort.selectbox("Sort", list(QUEUE_SORTS), label_visibility="collapsed", key="queue_sort")
             shown = (
                 flagged
                 if view.startswith("Needs")
@@ -282,6 +283,9 @@ def page_review() -> None:
                 if view.startswith("Ready")
                 else pending
             )
+            shown = sort_queue(filter_queue(shown, query), order)
+            if not shown:
+                st.caption("No invoices match.")
             for inv in shown:
                 _queue_card(store, inv)
 
@@ -351,6 +355,50 @@ def _queue_card(store: Store, inv: dict[str, Any]) -> None:
         if st.button(label, key=f"qopen_{inv['id']}"):
             st.session_state["open_invoice"] = inv["id"]
             st.rerun()
+
+
+NO_PROVINCE = "—"  # shown instead of an empty province (e.g. GST, which is federal)
+QUEUE_SORTS = ("Priority", "Amount: high to low", "Newest invoice date", "Vendor A–Z")
+
+
+def filter_queue(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    query = (query or "").strip().lower()
+    if not query:
+        return rows
+    fields = ("vendor_name", "invoice_number", "file_name")
+    return [r for r in rows if any(query in str(r.get(f) or "").lower() for f in fields)]
+
+
+def sort_queue(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
+    if order == "Amount: high to low":
+        return sorted(rows, key=lambda r: -(r.get("grand_total") or 0))
+    if order == "Newest invoice date":
+        return sorted(rows, key=lambda r: r.get("invoice_date") or "", reverse=True)
+    if order == "Vendor A–Z":
+        return sorted(rows, key=lambda r: (r.get("vendor_name") or r.get("file_name") or "").lower())
+    return rows  # store order: flagged first, then lowest confidence
+
+
+def _getting_started(store: Store) -> None:
+    settings = get_settings()
+    steps = _setup_steps(store, settings)
+    has_invoices = bool(store.list_invoices())
+    steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
+    done = sum(1 for s, _, _ in steps if s == "ok")
+    with card("onboarding"):
+        head, gauge = st.columns([5, 1], vertical_alignment="center")
+        head.markdown("#### :material/rocket_launch: Getting started")
+        head.caption("Finish these steps and invoices will start arriving in your review queue.")
+        ring = ui.ring(done / len(steps), size=60, stroke=6, label=f"{done}/{len(steps)}")
+        gauge.html(f"<div style='text-align:right'>{ring}</div>")
+        st.html("".join(ui.step(s, label, state) for s, label, state in steps))
+        links = st.container(horizontal=True)
+        if steps[0][0] != "ok" or steps[1][0] != "ok":
+            links.caption(
+                ":material/info: Azure settings live in the `.env` file next to the app (see GETTING_STARTED.md)."
+            )
+        links.page_link(PAGES["accounts"], label="GL accounts & tax", icon=":material/account_tree:")
+        links.page_link(PAGES["process"], label="Process invoices", icon=":material/upload_file:")
 
 
 def _export_rows(store: Store, approved: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -442,6 +490,35 @@ def _checks_html(report: Any) -> str:
     return "".join(items)
 
 
+def _reasons_html(coding: InvoiceCoding, ai: dict[str, Any], report: Any, reference: ReferenceData) -> str:
+    ai_lines = {li["line_number"]: li for li in ai.get("line_items", [])}
+    history = {h["line_number"]: h for h in report.checks.get("history") or []}
+    rows = []
+    for li in coding.line_items:
+        before = ai_lines.get(li.line_number) or {}
+        badges = []
+        if not before:
+            badges.append(ui.pill("Added by you", "info", "add"))
+        elif before.get("predicted_gl_code") != li.predicted_gl_code:
+            badges.append(ui.pill(f"Changed from {before.get('predicted_gl_code')}", "info", "edit"))
+        h = history.get(li.line_number)
+        if h and h["status"] == "match":
+            badges.append(ui.pill(f"Matches {h['decisions']} past decisions", "violet", "psychology"))
+        elif h:
+            badges.append(ui.pill(f"Reviewers used {h['history_gl']} before", "warn", "history"))
+        rows.append(
+            ui.reason_row(
+                li.line_number,
+                li.description,
+                li.predicted_gl_code,
+                gl_name(reference, li.predicted_gl_code),
+                before.get("reasoning_justification") or "Line added by the reviewer.",
+                badges,
+            )  # fmt: skip
+        )
+    return f"<div class='apc-reasons'>{''.join(rows)}</div>"
+
+
 def _ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
     ai_lines = {li["line_number"]: li for li in ai.get("line_items", [])}
     changed = 0
@@ -472,6 +549,15 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         st.rerun()
     nav.html(f"<span class='apc-muted'>Reviewing <b style='color:#142033'>{position + 1}</b> of {len(ids)}</span>")
     nav.space("stretch")
+    with nav.popover("Shortcuts", icon=":material/keyboard:", type="tertiary"):
+        st.html(
+            "<table class='apc-table'><tbody>"
+            f"<tr><td>{ui.kbd('Ctrl')} + {ui.kbd('Enter')}</td><td>Approve &amp; teach</td></tr>"
+            f"<tr><td>{ui.kbd('Alt')} + {ui.kbd('→')}</td><td>Next invoice</td></tr>"
+            f"<tr><td>{ui.kbd('Alt')} + {ui.kbd('←')}</td><td>Previous invoice</td></tr>"
+            f"<tr><td>{ui.kbd('Alt')} + {ui.kbd('↑')}</td><td>Back to the queue</td></tr>"
+            "</tbody></table>"
+        )
     if nav.button("Previous", icon=":material/chevron_left:", disabled=position == 0, shortcut="Alt+Left"):
         st.session_state["open_invoice"] = ids[position - 1]
         st.rerun()
@@ -555,7 +641,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 "GL account",
                 options=gl_options,
                 format_func=lambda c: gl_labels.get(c, f"{c} · unknown code"),
-                width="medium",
+                width="large",
                 required=True,
             ),  # fmt: skip
             "taxes_applied": st.column_config.MultiselectColumn("Taxes", options=list(TAX_TYPES)),
@@ -569,24 +655,26 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 format_func=lambda c: cc_labels.get(c, c),
             )  # fmt: skip
             column_order.append("predicted_cost_center")
-        column_order += ["taxes_applied", "quantity", "unit_price", "reasoning_justification"]
+        column_order += ["taxes_applied", "quantity", "unit_price"]
         edited_lines = st.data_editor(
             lines_df, column_config=column_config, column_order=column_order, num_rows="dynamic",
             hide_index=True, key=f"{key}_lines",
         )  # fmt: skip
+        reasons_box = st.container()
 
-    tax_col, tax_check_col = st.columns([5, 6], gap="medium")
+    tax_col, tax_check_col = st.columns(2, gap="medium")
     with tax_col, card("tax"):
         st.markdown("#### :material/percent: Sales tax")
         tax_df = pd.DataFrame(
             ai.get("tax_lines", []), columns=["tax_type", "province", "rate", "taxable_amount", "tax_amount"]
         )
+        tax_df["province"] = tax_df["province"].fillna("").replace("", NO_PROVINCE)
         edited_tax = st.data_editor(
             tax_df,
             column_config={
                 "tax_type": st.column_config.SelectboxColumn("Tax", options=list(TAX_TYPES), required=True),
                 "province": st.column_config.SelectboxColumn(
-                    "Province", options=PROVINCE_VALUES, format_func=lambda p: p or "—"
+                    "Province", options=[p or NO_PROVINCE for p in PROVINCE_VALUES]
                 ),
                 "rate": st.column_config.NumberColumn("Rate", format="%.5f", help="Decimal: 13% = 0.13"),
                 "taxable_amount": st.column_config.NumberColumn("Taxable", format="%.2f"),
@@ -631,6 +719,13 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             + "</div>"
         )
         st.html(_checks_html(report))
+    with (
+        reasons_box,
+        st.expander(
+            "Why the AI chose these codes", icon=":material/psychology_alt:", expanded=len(coding.line_items) <= 6
+        ),
+    ):
+        st.html(_reasons_html(coding, ai, report, reference))
     with tax_check_col, card("taxchecks"):
         st.markdown("#### :material/calculate: Tax checks")
         _tax_check_table(coding, reference)
@@ -655,20 +750,24 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             if errors:
                 allow = st.checkbox(f"Approve anyway, despite {len(errors)} error(s)", key=f"{key}_override")
         with right:
-            buttons = st.container(horizontal=True, horizontal_alignment="right", wrap=False)
-            with buttons.popover("Delete", icon=":material/delete:"):
-                st.write("Remove this invoice from the queue? Nothing is learned from it.")
-                if st.button("Delete invoice", key=f"{key}_delete", type="primary"):
-                    store.delete_invoice(invoice_id)
-                    _advance(ids, position)
-                    notify(f"Invoice #{invoice_id} deleted.", ":material/delete:")
-                    st.rerun()
-            with buttons.popover("Reject", icon=":material/block:"):
-                reason = st.text_input("Reason", key=f"{key}_reason")
-                if st.button("Confirm reject", key=f"{key}_reject", type="primary"):
+            buttons = st.container(
+                horizontal=True, horizontal_alignment="right", vertical_alignment="center", wrap=False
+            )
+            with buttons.popover("More", icon=":material/more_horiz:"):
+                st.markdown("**Reject this invoice**")
+                reason = st.text_input("Reason", key=f"{key}_reason", placeholder="e.g. not our invoice")
+                if st.button("Reject", key=f"{key}_reject", icon=":material/block:", width="stretch"):
                     store.reject_invoice(invoice_id, reviewer(), reason)
                     _advance(ids, position)
                     notify(f"Invoice #{invoice_id} rejected.", ":material/block:")
+                    st.rerun()
+                st.divider()
+                st.markdown("**Remove from the queue**")
+                st.caption("Nothing is learned from a deleted invoice.")
+                if st.button("Delete invoice", key=f"{key}_delete", icon=":material/delete:", width="stretch"):
+                    store.delete_invoice(invoice_id)
+                    _advance(ids, position)
+                    notify(f"Invoice #{invoice_id} deleted.", ":material/delete:")
                     st.rerun()
             if buttons.button(
                 "Approve & teach", type="primary", icon=":material/check:", disabled=not allow,
@@ -681,8 +780,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                     st.session_state["celebrate"] = True
                 notify(
                     f"Approved {coding.vendor_name.rstrip('.')}. Learned from {total} line(s): "
-                    f"{counts[ACCEPTED]} confirmed, "
-                    f"{total - counts[ACCEPTED]} corrected.",
+                    f"{counts[ACCEPTED]} confirmed, {total - counts[ACCEPTED]} corrected.",
                     ":material/school:",
                 )
                 st.rerun()
@@ -799,6 +897,7 @@ def _distribution_table(output: dict[str, Any], reference: ReferenceData, curren
             rows,
             right=[4, 5, 6],
             foot=foot,
+            wrap=[3],
         )  # fmt: skip
     )
 
