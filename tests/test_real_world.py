@@ -221,3 +221,28 @@ def test_tax_rate_file_resaved_by_excel(tmp_path):
 def test_ambiguous_dates_are_refused_with_the_row():
     with pytest.raises(ValueError, match="row 3.*ambiguous"):
         parse_date("01/02/2010", "rates.csv row 3")
+
+
+# --- GL import and failed attempts --------------------------------------------------------------------------------
+
+
+def test_import_without_a_category_column_keeps_existing_categories(tmp_path):
+    store = Store(tmp_path / "ap.db")
+    store.import_accounts("gl_accounts", [{"c": "6000", "d": "Office", "k": "Opex"}], "c", "d", "k")
+    store.import_accounts("gl_accounts", [{"c": "6000", "d": "Office supplies"}], "c", "d", None)
+    assert store.list_accounts("gl_accounts") == [
+        {"code": "6000", "description": "Office supplies", "category": "Opex"}
+    ]
+
+
+def test_a_new_attempt_replaces_failed_attempts_at_the_same_file(tmp_path, ground_truth):
+    store = Store(tmp_path / "ap.db")
+    f = tmp_path / "inv.pdf"
+    f.write_bytes(b"%PDF-1.4 x")
+    store.add_invoice(f, None, None, error="boom")
+    store.add_invoice(f, None, None, error="boom again")
+    assert store.find_by_hash(f) is None  # failed attempts don't count as processed...
+    assert store.find_by_hash(f, include_failed=True)["status"] == "failed"  # ...but the folder knows them
+    assert len(store.list_invoices()) == 1
+    store.add_invoice(f, ground_truth, {})
+    assert [i["status"] for i in store.list_invoices()] == ["review"]

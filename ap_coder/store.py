@@ -158,7 +158,11 @@ class Store:
         category_column: str | None = None,
         replace_all: bool = False,
     ) -> dict[str, int]:
-        """Import rows using the columns the user picked. Existing codes are updated."""
+        """Import rows using the columns the user picked.
+
+        Existing codes are updated, but only in the columns picked: importing codes without a
+        category column keeps the categories already typed in.
+        """
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
         added = updated = skipped = 0
@@ -176,10 +180,12 @@ class Store:
                 description = _clean_code(row.get(description_column)) if description_column else ""
                 category = _clean_code(row.get(category_column)) if category_column else ""
                 if code in existing:
-                    conn.execute(
-                        f"UPDATE {table} SET description = ?, category = ? WHERE code = ?",
-                        (description, category, code),
-                    )
+                    changes = {"description": description} if description_column else {}
+                    if category_column:
+                        changes["category"] = category
+                    if changes:
+                        sets = ", ".join(f"{column} = ?" for column in changes)
+                        conn.execute(f"UPDATE {table} SET {sets} WHERE code = ?", (*changes.values(), code))
                     updated += 1
                 else:
                     conn.execute(
@@ -281,6 +287,8 @@ class Store:
         out = output or {}
         val = validation or {}
         with self._conn() as conn:
+            if sha:  # a new attempt replaces earlier failed attempts at the same file
+                conn.execute("DELETE FROM invoices WHERE file_sha256 = ? AND status = ?", (sha, FAILED))
             cur = conn.execute(
                 """INSERT INTO invoices (source_path, file_name, file_sha256, status, vendor_name, vendor_key,
                    invoice_number, invoice_date, currency, grand_total, model_confidence, adjusted_confidence,
@@ -310,13 +318,14 @@ class Store:
             )
             return int(cur.lastrowid)
 
-    def find_by_hash(self, path: str | Path) -> dict[str, Any] | None:
+    def find_by_hash(self, path: str | Path, include_failed: bool = False) -> dict[str, Any] | None:
+        """The latest invoice made from this exact file (failed attempts only if ``include_failed``)."""
         sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        sql = "SELECT id, status FROM invoices WHERE file_sha256 = ?"
+        if not include_failed:
+            sql += f" AND status != '{FAILED}'"
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT id, status FROM invoices WHERE file_sha256 = ? AND status != ? ORDER BY id DESC",
-                (sha, FAILED),
-            ).fetchone()
+            row = conn.execute(sql + " ORDER BY id DESC", (sha,)).fetchone()
         return dict(row) if row else None
 
     def find_duplicates(

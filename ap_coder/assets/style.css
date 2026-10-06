@@ -32,11 +32,15 @@
 [class*="st-key-card_"] {background: var(--apc-card); box-shadow: var(--apc-shadow); border-color: var(--apc-line) !important;}
 [class*="st-key-card_"] h4 {font-size: 1rem; letter-spacing: -.005em;}
 
-/* Tabs as a segmented pill bar */
-.stTabs [data-baseweb="tab-list"] {gap: .25rem; background: #e9edf4; padding: .3rem; border-radius: 12px; width: fit-content;}
-.stTabs [data-baseweb="tab"] {height: 2.1rem; padding: 0 .9rem; border-radius: 9px; color: var(--apc-muted); font-weight: 550;}
-.stTabs [aria-selected="true"] {background: #fff; color: var(--apc-ink); box-shadow: var(--apc-shadow);}
-.stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] {display: none;}
+/* Tabs as a segmented pill bar (Streamlit 1.62+ tab markup) */
+.stTabs [role="tablist"] {gap: .25rem; background: #e9edf4; padding: .3rem; border-radius: 12px; width: fit-content;
+  max-width: 100%; overflow-x: auto; border: none !important; box-shadow: none !important;}
+.stTabs [data-testid="stTab"] {min-height: 2.1rem; padding: 0 .9rem; border-radius: 9px; color: var(--apc-muted);
+  font-weight: 550; border: none !important; background: transparent; display: flex; align-items: center;}
+.stTabs [data-testid="stTab"] p {font-size: .9rem; white-space: nowrap;}
+.stTabs [data-testid="stTab"]:hover {color: var(--apc-ink);}
+.stTabs [data-testid="stTab"][aria-selected="true"] {background: #fff; color: var(--apc-ink); box-shadow: var(--apc-shadow);}
+.stTabs .react-aria-SelectionIndicator {display: none;}
 
 /* Buttons */
 .stButton button, .stDownloadButton button, [data-testid="stPopover"] button {

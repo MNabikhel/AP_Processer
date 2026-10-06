@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 import getpass
+import hashlib
 import html
 import io
 import os
@@ -148,7 +149,27 @@ def notify(message: str, icon: str = ":material/check_circle:") -> None:
     st.session_state.setdefault("toasts", []).append((message, icon))
 
 
+def scroll_to_top_if_asked() -> None:
+    """After approve / reject / next, start the newly opened page at the top, not where the button was.
+
+    The element is drawn on every run (only its content changes) so the page's layout stays the same;
+    adding and removing it confused Streamlit's clean-up of the previous page.
+    """
+    nonce = st.session_state.get("_scroll_nonce", 0)
+    script = ""
+    if st.session_state.pop("scroll_top", False):
+        nonce += 1
+        st.session_state["_scroll_nonce"] = nonce
+        script = (
+            "<script>for (const el of window.parent.document.querySelectorAll("
+            '\'[data-testid="stMain"], [data-testid="stAppViewContainer"], section.main\')) el.scrollTo(0, 0);'
+            "window.scrollTo(0, 0);</script>"
+        )
+    st.html(f"<span data-scroll='{nonce}' hidden></span>{script}", unsafe_allow_javascript=True)
+
+
 def show_toast() -> None:
+    scroll_to_top_if_asked()
     for message, icon in st.session_state.pop("toasts", []):
         st.toast(message, icon=icon)
 
@@ -359,10 +380,15 @@ def page_review() -> None:
             with card(f"failed_{inv['id']}"):
                 left, right = st.columns([5, 2], vertical_alignment="center")
                 badge = ui.pill("Failed", "err", "error") if inv["status"] == FAILED else ui.pill("Rejected", "gray")
+                error = (inv.get("error") or "No reason recorded.").strip()
+                first, _, details = error.partition("\n")
                 left.html(
                     f"<div style='font-weight:700'>{esc(inv['vendor_name'] or inv['file_name'])} {badge}</div>"
-                    f"<div class='apc-muted'>{esc(inv.get('error') or 'No reason recorded.')}</div>"
+                    f"<div class='apc-muted'>{esc(first[:240])}{'…' if len(first) > 240 else ''}</div>"
                 )
+                if details.strip() or len(first) > 240:
+                    with left.expander("Technical details"):
+                        st.code(error, language=None, wrap_lines=True)
                 b1, b2 = right.columns(2)
                 if b1.button(
                     "Retry", key=f"retry_{inv['id']}", icon=":material/refresh:", disabled=not azure_ready,
@@ -377,7 +403,8 @@ def page_review() -> None:
                         run_pipeline(store, [path])
                         st.rerun()
                 if b2.button("Delete", key=f"del_{inv['id']}", icon=":material/delete:"):
-                    store.delete_invoice(inv["id"])
+                    delete_invoice(store, inv["id"])
+                    notify("Deleted. The file moved to invoices/deleted.", ":material/delete:")
                     st.rerun()
 
 
@@ -588,13 +615,15 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     # Always enabled (wrapping around), so Alt+Left/Right never fall through to the browser's Back/Forward.
     if nav.button("Previous", icon=":material/chevron_left:", shortcut="Alt+Left"):
         st.session_state["open_invoice"] = ids[(position - 1) % len(ids)]
+        st.session_state["scroll_top"] = True
         st.rerun()
     if nav.button("Next", icon=":material/chevron_right:", icon_position="right", shortcut="Alt+Right"):
         st.session_state["open_invoice"] = ids[(position + 1) % len(ids)]
+        st.session_state["scroll_top"] = True
         st.rerun()
     st.html(ui.progress(position + 1, len(ids)))
 
-    summary = card("summary")
+    summary = st.container()  # the summary card is drawn here once the edits are valid
 
     left, right = st.columns([5, 7], gap="medium")
     with left, card("document"):
@@ -660,20 +689,23 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         for code in lines_df.get("predicted_gl_code", []):
             if code not in gl_options:
                 gl_options.append(code)  # keep unknown codes visible so they can be fixed
+        has_cc = reference.cost_centers is not None
         column_config: dict[str, Any] = {
-            "line_number": st.column_config.NumberColumn("#", width="small", step=1),
-            "description": st.column_config.TextColumn("Description", width="large"),
+            # pixel widths: the coding columns stay on screen on a 1366px laptop
+            "line_number": st.column_config.NumberColumn("#", width=48, step=1),
+            "description": st.column_config.TextColumn("Description", width=250 if has_cc else 380),
             "quantity": st.column_config.NumberColumn("Qty", format="%.2f"),
             "unit_price": st.column_config.NumberColumn("Unit price", format="%.2f"),
-            "amount": st.column_config.NumberColumn("Amount", format="%.2f"),
+            "amount": st.column_config.NumberColumn("Amount", format="%.2f", width=95),
             "predicted_gl_code": st.column_config.SelectboxColumn(
                 "GL account",
                 options=gl_options,
                 format_func=lambda c: gl_labels.get(c, f"{c} · unknown code"),
-                width="medium",
-                required=True,
+                width=200,
+                # not required: Streamlit would silently drop a new row whose GL is still blank;
+                # a blank GL becomes UNASSIGNED, which blocks approval until a code is picked
             ),  # fmt: skip
-            "taxes_applied": st.column_config.MultiselectColumn("Taxes", options=list(TAX_TYPES)),
+            "taxes_applied": st.column_config.MultiselectColumn("Taxes", options=list(TAX_TYPES), width=120),
             "reasoning_justification": st.column_config.TextColumn("AI reasoning", disabled=True, width="large"),
         }
         column_order = ["line_number", "description", "amount", "predicted_gl_code"]
@@ -681,7 +713,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             cc_labels = cc_label_map(reference)
             column_config["predicted_cost_center"] = st.column_config.SelectboxColumn(
                 "Cost center", options=[UNASSIGNED, *reference.cost_centers.codes],
-                format_func=lambda c: cc_labels.get(c, c),
+                format_func=lambda c: cc_labels.get(c, c), width=150,
             )  # fmt: skip
             column_order.append("predicted_cost_center")
         column_order += ["taxes_applied", "quantity", "unit_price"]
@@ -691,7 +723,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         )  # fmt: skip
         reasons_box = st.container()
 
-    tax_col, tax_check_col = st.columns(2, gap="medium")
+    tax_col, tax_check_col = st.container(), st.container()  # full width: every column readable at 1366px
     with tax_col, card("tax"):
         st.markdown("#### :material/percent: Sales tax")
         tax_df = pd.DataFrame(
@@ -742,7 +774,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
 
-    with summary:
+    with summary, card("summary"):
         _invoice_summary(coding, report, errors, warnings, output, reference)
     with checks_box:
         head, count = st.columns([3, 2], vertical_alignment="center")
@@ -827,18 +859,41 @@ def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], posit
             st.rerun()
         st.divider()
         st.markdown("**Remove from the queue**")
-        st.caption("Nothing is learned from a deleted invoice.")
-        if st.button("Delete invoice", key=f"{key}_delete", icon=":material/delete:", width="stretch"):
-            store.delete_invoice(invoice_id)
+        st.caption("Nothing is learned from a deleted invoice. Its file moves to `invoices/deleted`.")
+        sure = st.checkbox("Yes, delete this invoice", key=f"{key}_sure")
+        if st.button(
+            "Delete invoice", key=f"{key}_delete", icon=":material/delete:", width="stretch", disabled=not sure
+        ):
+            delete_invoice(store, invoice_id)
             forget_drafts(key)
             _advance(ids, position)
             notify(f"Invoice #{invoice_id} deleted.", ":material/delete:")
             st.rerun()
 
 
+def delete_invoice(store: Store, invoice_id: int) -> None:
+    """Delete an invoice; if its file is in the invoices folder, move it to ``invoices/deleted`` so the
+    folder pick-up doesn't offer it again."""
+    inv = store.get_invoice(invoice_id) or {}
+    store.delete_invoice(invoice_id)
+    path = Path(inv.get("source_path") or "")
+    try:
+        if path.is_file() and path.resolve().parent == INVOICE_DIR.resolve():
+            target = INVOICE_DIR / "deleted" / path.name
+            target.parent.mkdir(exist_ok=True)
+            n = 1
+            while target.exists():
+                target = target.with_name(f"{path.stem}_{n}{path.suffix}")
+                n += 1
+            path.rename(target)
+    except OSError:
+        pass  # the invoice is gone from the queue either way; the file just stays where it is
+
+
 def _advance(ids: list[int], position: int) -> None:
     """After an action, open the next invoice in the queue (or return to the list)."""
     remaining = ids[:position] + ids[position + 1 :]
+    st.session_state["scroll_top"] = True
     if remaining:
         st.session_state["open_invoice"] = remaining[min(position, len(remaining) - 1)]
     else:
@@ -915,7 +970,7 @@ def _tax_check_table(coding: InvoiceCoding, reference: ReferenceData) -> None:
                 esc(gl or "⚠ not mapped"),
             ]
         )
-    st.html(ui.table(["Tax", "Rate", "Official", "Charged", "Posts to"], rows, right=[3]))
+    st.html(ui.table(["Tax", "Rate", "Official", "Charged", "Posts to"], rows, right=[3], wrap=[4]))
 
 
 def _distribution_table(output: dict[str, Any], reference: ReferenceData, currency: str) -> None:
@@ -952,6 +1007,15 @@ def _distribution_table(output: dict[str, Any], reference: ReferenceData, curren
     )
 
 
+EDIT_LABELS = {
+    "line_coding": "GL coding", "line_count": "lines added or removed", "tax_lines": "sales tax",
+    "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "currency": "currency",
+    "supplier_province": "supplier province", "ship_to_province": "place of supply",
+    "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "subtotal": "subtotal",
+    "tax_total": "tax total", "grand_total": "total",
+}  # fmt: skip
+
+
 def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> None:
     inv = store.get_invoice(invoice_id)
     final = inv["final_output"] or {}
@@ -962,7 +1026,11 @@ def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> 
             f"{ui.avatar(final.get('vendor_name', ''))}<div><div style='font-weight:700;font-size:1.05rem'>"
             f"{esc(final.get('vendor_name'))}</div><div class='apc-muted'>Invoice {esc(final.get('invoice_number'))}"
             f" · approved by {esc(inv['reviewer'])} {esc(ui.time_ago(inv['reviewed_at']))} · "
-            + ("no changes to the AI's coding" if not edits else "changed: " + esc(", ".join(edits)))
+            + (
+                "no changes to the AI's coding"
+                if not edits
+                else "changed: " + esc(", ".join(EDIT_LABELS.get(e, e) for e in edits))
+            )
             + "</div></div></div>"
         )
         _distribution_table(final, reference, final.get("currency", ""))
@@ -987,12 +1055,21 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
             else:
                 st.error(f"{path.name}: {result.error}", icon=":material/error:")
         status.update(label=f"Processed {ok} of {len(paths)}", state="complete" if ok == len(paths) else "error")
-    notify(f"Processed {ok} of {len(paths)} invoice(s). They're waiting in the review queue.", ":material/inbox:")
+    failed = len(paths) - ok
+    if ok:
+        notify(f"{ok} invoice(s) read and coded. They're waiting in the review queue.", ":material/inbox:")
+    if failed:
+        notify(f"{failed} file(s) could not be processed. See Review queue → Failed / rejected.", ":material/error:")
+
+
+def tax_types_mapped(store: Store) -> int:
+    """Tax types ready to post: added to expense lines, or mapped to a GL account that still exists."""
+    codes = {a["code"] for a in store.list_accounts("gl_accounts")}
+    return sum(1 for t in store.tax_treatments().values() if not t.needs_gl or t.gl_code in codes)
 
 
 def _setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
-    treatments = store.tax_treatments()
-    mapped = sum(1 for t in treatments.values() if not t.needs_gl or t.gl_code)
+    mapped = tax_types_mapped(store)
     gl_count = len(store.list_accounts("gl_accounts"))
     return [
         (
@@ -1062,8 +1139,14 @@ def page_process() -> None:
                         n += 1
                     target.write_bytes(f.getvalue())
                     paths.append(target)
-                already = [p for p in paths if store.find_by_hash(p) is not None]
-                todo = [p for p in paths if p not in already]
+                already, todo, hashes = [], [], set()
+                for p in paths:  # skip files seen before, and repeats within this upload
+                    digest = hashlib.sha256(p.read_bytes()).hexdigest()
+                    if digest in hashes or store.find_by_hash(p) is not None:
+                        already.append(p)
+                    else:
+                        todo.append(p)
+                    hashes.add(digest)
                 if todo:
                     run_pipeline(store, todo)
                 if already:
@@ -1078,7 +1161,7 @@ def page_process() -> None:
             st.markdown("#### :material/folder_open: Invoices folder")
             st.caption(f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here.")
             files = invoice_files(INVOICE_DIR) if INVOICE_DIR.exists() else []
-            new_files = [p for p in files if store.find_by_hash(p) is None]
+            new_files = [p for p in files if store.find_by_hash(p, include_failed=True) is None]
             if not new_files:
                 st.html(ui.pill("No new files", "gray", "done_all"))
             else:
@@ -1232,8 +1315,7 @@ def page_accounts() -> None:
     )
     gl = store.list_accounts("gl_accounts")
     cc = store.list_accounts("cost_centers")
-    treatments = store.tax_treatments()
-    mapped = sum(1 for t in treatments.values() if not t.needs_gl or t.gl_code)
+    mapped = tax_types_mapped(store)
     policy = [n for n in store.get_setting("policy_notes").splitlines() if n.strip() and not n.lstrip().startswith("#")]
     st.html(
         ui.tiles(
