@@ -1,0 +1,3 @@
+# Windows batch files keep CRLF line endings, even in a ZIP download.
+*.bat -text
+*.sh text eol=lf

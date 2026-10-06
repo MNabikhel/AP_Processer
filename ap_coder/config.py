@@ -6,7 +6,9 @@ import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from dotenv import find_dotenv, load_dotenv
+from dotenv import load_dotenv
+
+from . import paths
 
 DEFAULT_AOAI_API_VERSION = "2024-10-21"  # first GA version with strict Structured Outputs
 
@@ -80,8 +82,8 @@ class Settings:
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> Settings:
         if env_file is None:
-            # Prefer a .env in the folder the command is run from, then the project folder.
-            env_file = find_dotenv(usecwd=True) or find_dotenv() or None
+            # The data folder's .env (written by the installer), else ./.env, else the project's.
+            env_file = paths.env_file()
         load_dotenv(env_file, override=False)
 
         di = DocumentIntelligenceSettings(

@@ -17,6 +17,7 @@ SAMPLE_STEM = "northwind_ON_HST_NW-2026-0912"
 def isolated_private_dir(monkeypatch, tmp_path):
     """Never let a test touch the real private/ folder (database, invoices, outputs)."""
     monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "private"))
+    monkeypatch.setenv("AP_USER_SETTINGS", str(tmp_path / "user_settings.json"))  # not the real ~/.ap_coder
 
 
 @pytest.fixture

@@ -44,10 +44,17 @@ GL accounts, cost centers, tax rates, policy ─┤   past approvals for this ve
 ```
 
 > **Running this on real data?** Follow [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Everything
-> stays in the git-ignored `private/` folder, and the dashboard only listens on `localhost`. Only redacted
-> reports (`doctor`, `share-report`) are meant to leave your machine.
+> stays in a local data folder outside the code (default `~/APCoder`), and the dashboard only listens on
+> `localhost`. Only redacted reports (`doctor`, `share-report`) are meant to leave your machine.
 
 ## Quick start
+
+**Windows:** double-click `install.bat`, then `start.bat` (or the *AP Coder* desktop shortcut).
+**macOS / Linux:** `./install.sh`, then `./start.sh`. The installer is safe to run again: it updates
+the code and packages and keeps your data folder, Azure settings and shortcut (see
+[GETTING_STARTED](docs/GETTING_STARTED.md#step-2-install-10-min-one-double-click)).
+
+By hand:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -55,7 +62,7 @@ pip install -e ".[dev]"
 cp .env.example .env              # endpoints/keys, or leave keys empty to use Entra ID (az login)
 
 python -m ap_coder doctor --online   # check configuration and Azure connectivity
-python -m ap_coder dashboard         # review app on http://localhost:8501
+python -m ap_coder dashboard         # review app on http://localhost:8501 (or the next free port)
 ```
 
 In the dashboard:
@@ -68,7 +75,7 @@ In the dashboard:
 | Page | What it does |
 |---|---|
 | **Review queue** | Invoice image beside the editable header; live **Checks**; a full-width line grid (GL account and cost center are dropdowns of your codes, with descriptions; taxes per line); tax lines with a tax-check table (rate vs official rate, base × rate, where it posts); and a **GL distribution** preview. *Approve & teach the AI*, *Reject* or *Delete*; approved distributions can be exported to CSV. |
-| **Process invoices** | Upload files, or process new files dropped into `private/invoices/`. |
+| **Process invoices** | Upload files, or process new files dropped into the data folder's `invoices/` (*Open folder* button). |
 | **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete and download them. Optional cost centers. Map each tax type to its treatment and GL. Edit plain-English coding policy. |
 | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). |
 
@@ -116,7 +123,7 @@ This is a memory of your team's decisions. No model is retrained.
 |---|---|
 | `dashboard [--port]` | The review app (localhost only). |
 | `doctor [--online]` | Setup, reference-data, tax-mapping and connectivity check. No secrets or URLs in the output. |
-| `process <files/dirs…>` | Batch pipeline. Results go to `private/output` **and** the dashboard queue (`--no-db` to skip). Uses the learning memory. Skips files already processed (`--force` to redo). |
+| `process <files/dirs…>` | Batch pipeline. Results go to `<data folder>/output` **and** the dashboard queue (`--no-db` to skip). Uses the learning memory. Skips files already processed (`--force` to redo). |
 | `share-report [--include-codes]` | Redacted summary of the dashboard database (or an output folder): no vendor names, amounts, descriptions or file names. |
 | `extract <files/dirs…>` | Document Intelligence only; writes `.extraction.md` and raw `.di.json`. |
 | `labels` / `evaluate` | Spreadsheet-based ground truth and scoring, as an alternative to dashboard review. |
@@ -124,13 +131,14 @@ This is a memory of your team's decisions. No model is retrained.
 
 Reference data comes from the dashboard database once GL accounts are imported. For command-line
 use without the dashboard, CSV files are looked up in this order: `AP_REFERENCE_DIR`, then
-`private/reference/`, then the samples in `data/`. Individual files can be given with `--coa`,
+`<data folder>/reference/`, then the samples in `data/`. Individual files can be given with `--coa`,
 `--cost-centers`, `--tax-mapping` and `--policy`; with the dashboard database, the last three apply on top
 of it (`''` leaves one out).
 
-`private/` is always the folder inside the project, whichever folder you run a command from. To keep the
-database and invoices somewhere else (e.g. an encrypted drive), set the environment variable
-`AP_PRIVATE_DIR` before starting.
+**Data folder.** The database, invoices, outputs and the `.env` live in one folder: the
+`AP_PRIVATE_DIR` environment variable if set, else the folder chosen in the installer (recorded in
+`~/.ap_coder/settings.json`), else `private/` inside the project. The `.env` is read from the data
+folder first, then the current folder, then the project folder.
 
 CSV files may be saved as "CSV UTF-8" or plain "CSV" from Excel; both encodings are read.
 
@@ -219,7 +227,7 @@ data/                sample GL accounts, cost centers, tax rates and mapping, co
 samples/             synthetic ON (HST), QC (TPS/TVQ) and BC (GST+PST) invoices + ground truth
 scripts/             sample invoice generator
 docs/                GETTING_STARTED.md: step-by-step guide for running on enterprise data
-private/             git-ignored: database, invoices, outputs
+private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients mocked)
 ```
 

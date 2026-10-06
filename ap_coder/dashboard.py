@@ -22,6 +22,7 @@ import hashlib
 import html
 import io
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -85,12 +86,33 @@ def esc(value: Any) -> str:
     return html.escape(str(value or ""))
 
 
-def short_path(path: Path) -> Path:
-    """Show paths relative to the folder the dashboard was started from, when possible."""
+def short_path(path: Path) -> str:
+    """A path as short as possible: relative to the working folder, else ``~`` for the home folder."""
+    path = path.resolve()
+    for base, prefix in ((Path.cwd(), ""), (Path.home(), "~")):
+        try:
+            rel = path.relative_to(base)
+        except ValueError:
+            continue
+        return str(Path(prefix) / rel) if prefix else str(rel)
+    return str(path)
+
+
+def open_folder(path: Path) -> bool:
+    """Open a folder in Explorer / Finder. The dashboard runs on this computer, so this is the user's."""
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
     try:
-        return path.resolve().relative_to(Path.cwd())
-    except ValueError:
-        return path
+        if sys.platform.startswith("win"):
+            os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])  # noqa: S603, S607
+        else:
+            subprocess.Popen(["xdg-open", str(path)])  # noqa: S603, S607
+        return True
+    except OSError:
+        return False
 
 
 def reference_or_none(store: Store) -> ReferenceData | None:
@@ -1159,7 +1181,11 @@ def page_process() -> None:
 
         with card("folder"):
             st.markdown("#### :material/folder_open: Invoices folder")
-            st.caption(f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here.")
+            hint, button = st.columns([3, 1], vertical_alignment="center")
+            hint.caption(f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here.")
+            if button.button("Open folder", icon=":material/folder_open:", key="open_invoices"):
+                if not open_folder(INVOICE_DIR):
+                    st.info(f"Open this folder yourself: {INVOICE_DIR}")
             files = invoice_files(INVOICE_DIR) if INVOICE_DIR.exists() else []
             new_files = [p for p in files if store.find_by_hash(p, include_failed=True) is None]
             if not new_files:

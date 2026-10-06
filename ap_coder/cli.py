@@ -116,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("dashboard", help="Open the review dashboard in your browser (runs locally)")
-    p.add_argument("--port", type=int, default=8501)
+    p.add_argument("--port", type=int, default=None, help="Default: 8501, or the next free port")
 
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) Azure connectivity")
     p.add_argument("--online", action="store_true", help="Call both Azure services (costs about one invoice)")
@@ -183,15 +183,30 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     env = {**os.environ, "AP_DB_PATH": str(Path(args.db).resolve())}
     if args.env_file:
         env["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
+    port = args.port or free_port(8501)
     cmd = [
         sys.executable, "-m", "streamlit", "run", str(app),
-        "--server.port", str(args.port), "--server.address", "localhost",
+        "--server.port", str(port), "--server.address", "localhost",
         "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
         "--theme.base", str(Path(__file__).resolve().parent / "assets" / "theme.toml"),
         "--server.enableStaticServing", "true", "--server.showEmailPrompt", "false",
     ]  # fmt: skip
-    print(f"Dashboard: http://localhost:{args.port}  (Ctrl+C to stop)", file=sys.stderr)
-    return subprocess.call(cmd, env=env)
+    print(f"Dashboard: http://localhost:{port}  (it opens in your browser; Ctrl+C here to stop)", file=sys.stderr)
+    try:
+        return subprocess.call(cmd, env=env)
+    except KeyboardInterrupt:
+        return 0
+
+
+def free_port(start: int) -> int:
+    """The first port from ``start`` that nothing on this computer is listening on."""
+    import socket
+
+    for port in range(start, start + 50):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+    return start
 
 
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:

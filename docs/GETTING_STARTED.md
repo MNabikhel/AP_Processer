@@ -1,8 +1,9 @@
 # Getting started: running the prototype on your enterprise data
 
 **How we work together.** You run everything on your own computer against your own Azure
-resources. Invoices, GL accounts, reviews and the AI's memory stay in the `private/` folder,
-which git ignores, so none of it can be pushed to GitHub. The dashboard runs at
+resources. Invoices, GL accounts, reviews and the AI's memory stay in your **data folder**
+(default `C:\Users\<you>\APCoder`, chosen during install), outside the code, so none of it can
+be pushed to GitHub. The dashboard runs at
 `http://localhost` and is not reachable from other machines. You only send back two text
 reports, and you can read both before sending:
 
@@ -12,7 +13,7 @@ reports, and you can read both before sending:
 | **Share report** | `python -m ap_coder share-report` | counts, confidence buckets, issue codes, accuracy %, token usage | vendor names, amounts, descriptions, file names, invoice numbers |
 
 Invoices appear in the share report as `doc-01`, `doc-02`, … The file
-`private/share_report_key.csv` maps them back to file names and stays on your machine. If I ask
+`share_report_key.csv` in your data folder maps them back to file names and stays on your machine. If I ask
 about `doc-07`, you can look it up there.
 
 ---
@@ -35,66 +36,89 @@ In the Azure portal, in a Canadian region if invoices must stay in Canada:
 Your compliance team may want to review Azure OpenAI's data, privacy and abuse-monitoring terms
 before real invoices are sent.
 
-## Step 2: Install (~10 min)
+## Step 2: Install (~10 min, one double-click)
 
-Requires Python 3.10+ and git.
+You need **Python 3.10 or newer** (3.12 recommended) and, ideally, **git**. If either is missing,
+install it once from a terminal (or from python.org / git-scm.com):
 
-Clone into a normal local folder (e.g. `C:\Projects`), **not** a OneDrive / SharePoint-synced
-folder: the database is a SQLite file, and sync tools can corrupt it while it is open. If your
-machine forces everything into OneDrive, keep the code there but point the data elsewhere by
-setting `AP_PRIVATE_DIR` (e.g. `setx AP_PRIVATE_DIR C:\APCoderData`, then open a new terminal).
-
-```bash
-git clone https://github.com/MNabikhel/AP_Processer.git
-cd AP_Processer
-git checkout claude/epic-feynman-r6ns86
-
-python -m venv .venv
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-pytest -q                            # should end with "passed"
-
-cp .env.example .env                 # Windows: copy .env.example .env
+```bat
+winget install Python.Python.3.12
+winget install Git.Git
 ```
 
-**Windows PowerShell:** if `.venv\Scripts\activate` fails with "running scripts is disabled
-on this system", run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` (this window
-only, no admin needed) and try again, or use Command Prompt (`cmd`) instead.
+When installing Python from python.org, tick **"Add python.exe to PATH"** on the first screen.
 
-Edit `.env`: fill in the two endpoints, the deployment name and `AZURE_OPENAI_MODEL_NAME`, plus
-the keys unless you use `az login`.
+**Get the code** into your Downloads folder, either way:
+
+- **With git (recommended: updates are one click).** Open *Command Prompt* and run:
+
+  ```bat
+  cd %USERPROFILE%\Downloads
+  git clone --branch claude/epic-feynman-r6ns86 https://github.com/MNabikhel/AP_Processer.git
+  ```
+
+- **Without git.** On GitHub, open the `claude/epic-feynman-r6ns86` branch, *Code → Download ZIP*,
+  and extract it to `Downloads\AP_Processer`. For a later version, extract the new ZIP **over the
+  same folder** (replace files) so nothing is duplicated.
+
+**Install:** open `Downloads\AP_Processer` and **double-click `install.bat`** (macOS/Linux:
+`./install.sh`). It:
+
+1. finds a suitable Python and creates a private environment (`.venv`) for AP Coder
+2. installs the packages (a few minutes the first time)
+3. asks where to keep your data. The default is `C:\Users\<you>\APCoder`, outside the code
+   folder and outside OneDrive. The database, invoices, outputs and your Azure keys live there, so
+   **every future version uses the same data**
+4. asks for your Azure details (endpoints, keys, deployment name, your name). Press Enter to
+   keep a value shown in brackets. Leave the keys empty if you use `az login`
+5. offers a desktop shortcut **AP Coder**
+6. runs a self-test and the setup check, and offers to start the dashboard
+
+**Running it again is always safe.** It updates the code in place (with git), reinstalls
+packages only when they changed, and keeps your data folder, Azure settings and shortcut. Nothing
+is duplicated. Useful options (e.g. `install.bat --fresh-start`):
+
+| Option | What it does |
+|---|---|
+| `--fresh-start` | moves the database, invoices and outputs into a dated `backup-…` folder inside the data folder (Azure settings are kept) |
+| `--yes` | no questions; keeps current answers |
+| `--no-update` | don't check GitHub for a newer version |
+| `--data-dir <folder>` | use a different data folder |
+
+To run AP Coder commands yourself (`doctor`, `share-report`, …), double-click **`terminal.bat`**:
+it opens a command prompt with everything ready, e.g. `python -m ap_coder doctor`.
 
 ## Step 3: Check the setup → paste the doctor report
 
-```bash
+At the end of the install, answer **y** to *Test the connection to Azure now?*. Or, in
+`terminal.bat`:
+
+```bat
 python -m ap_coder doctor --online
 ```
 
 `--online` makes one real call to each service with a tiny made-up invoice (about the cost of one
-invoice). **Paste the whole output into the chat.** Any FAIL line says why.
+invoice). **Paste the whole output into the chat.** Any FAIL line says why. To fix a setting, run
+`install.bat` again and answer **y** to *Change any Azure settings?*.
 
 ## Step 4: Try the dashboard with the sample data (no enterprise data)
 
-```bash
-python -m ap_coder dashboard          # opens http://localhost:8501 ; Ctrl+C to stop
-```
+Start AP Coder from the **AP Coder** desktop shortcut (or `start.bat`). It opens in your browser;
+keep the black window open while you use it and close it to stop. If another program already uses
+port 8501, AP Coder picks the next free one.
 
 1. **GL accounts & tax** → *Load sample setup*.
-2. Copy the three sample invoices into the invoices folder:
-   `samples/*.pdf` → `private/invoices/` (Ontario HST, Quebec TPS/TVQ, BC GST+PST).
+2. Copy the three sample PDFs from `samples\` into your invoices folder (**Process invoices** →
+   *Open folder* shows it): Ontario HST, Quebec TPS/TVQ, BC GST+PST.
 3. **Process invoices** → *Process 3 file(s)*.
 4. **Review queue** → open each invoice. Change a GL code in the grid and watch the checks and
    the GL distribution update. Approve, and look at **Learning & accuracy**.
 
 These invoices are synthetic, so screenshots of this step are fine to share.
 
-When you're done, **close the dashboard** (Ctrl+C) and clear the sample data so your real setup
-starts clean:
-
-- delete `private/ap_coder.db` and, if present, `private/ap_coder.db-wal` and `private/ap_coder.db-shm`
-  (this also clears the sample memory)
-- delete the three sample PDFs from `private/invoices/`, otherwise they show up again as new files
-  and get coded against your real GL accounts
+When you're done, close the AP Coder window and run **`install.bat --fresh-start`** so your real
+setup starts clean: the sample database, memory and invoices move to a backup folder, and your
+Azure settings stay.
 
 ## Step 5: Your setup, in the dashboard
 
@@ -112,13 +136,14 @@ Open **GL accounts & tax**:
 4. **Coding policy:** plain-English rules, one per line, e.g. "Laptops under $2,500 go to 6010".
    This is your fastest tuning lever.
 
-Then run `python -m ap_coder doctor` (offline is fine) and **paste the output**. From it I can see
+Then run `python -m ap_coder doctor` in `terminal.bat` (offline is fine) and **paste the output**. From it I can see
 row counts, whether every tax type is mapped, and the prompt size, but none of your codes or
 names.
 
 ## Step 6: Process a test set
 
-Put **20–50 real invoices** in `private/invoices/` (or upload them on **Process invoices**).
+Put **20–50 real invoices** in your invoices folder (**Process invoices** → *Open folder*), or
+upload them on **Process invoices**.
 Aim for a representative mix:
 
 - your top vendors by volume, and the ones AP often recodes
@@ -151,7 +176,9 @@ tracks how often the AI is right. A mistaken lesson can be removed with *Forget*
 
 ## Step 8: Send me the share report
 
-```bash
+In `terminal.bat`:
+
+```bat
 python -m ap_coder share-report --include-codes
 ```
 
@@ -162,15 +189,10 @@ through.
 
 ## Step 9: Iterate
 
-When I push improvements:
-
-```bash
-git pull
-pip install -e ".[dev]"       # only needed if dependencies changed
-python -m ap_coder dashboard
-```
-
-Your database, memory and GL accounts are untouched by updates. We repeat until the AI's coding
+When I push improvements, close AP Coder and **double-click `install.bat` again** (without git:
+extract the new ZIP over the same folder first). It pulls the new version, updates packages if
+needed and keeps everything else. Your database, memory, GL accounts and Azure settings are
+untouched by updates. We repeat until the AI's coding
 accuracy on the **Learning & accuracy** page holds at or above **90%**. That is the gate for
 Phase 2.
 
@@ -185,9 +207,11 @@ recreate the problem as a synthetic sample in `samples/` and test the fix agains
 
 ### Command cheat sheet
 
+Run these in `terminal.bat` as `python -m ap_coder <command>`.
+
 | Command | What it does |
 |---|---|
-| `dashboard` | the review app at http://localhost:8501 |
+| `dashboard` | the review app (what the desktop shortcut and `start.bat` run) |
 | `doctor [--online]` | setup check; safe to paste |
 | `share-report [--include-codes]` | redacted summary; safe to paste |
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |

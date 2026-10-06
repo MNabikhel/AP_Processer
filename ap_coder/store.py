@@ -18,7 +18,6 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
-import os
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -27,27 +26,9 @@ from pathlib import Path
 from typing import Any
 
 from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
+from .paths import default_db_path, private_dir  # noqa: F401  (re-exported)
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
-
-
-def private_dir() -> Path:
-    """The git-ignored folder for enterprise data.
-
-    ``AP_PRIVATE_DIR`` if set; else ``private/`` in the project folder when running from a
-    checkout (so it does not matter which folder a command is started from); else ``./private``.
-    """
-    if os.getenv("AP_PRIVATE_DIR"):
-        return Path(os.environ["AP_PRIVATE_DIR"])
-    project = Path(__file__).resolve().parent.parent
-    if (project / "pyproject.toml").exists() and (project / "ap_coder").is_dir():
-        return project / "private"
-    return Path("private")
-
-
-def default_db_path() -> Path:
-    return private_dir() / "ap_coder.db"
-
 
 SCHEMA_VERSION = 2
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}

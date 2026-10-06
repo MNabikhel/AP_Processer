@@ -1,4 +1,7 @@
-# private/: your enterprise data lives here (git-ignored)
+# private/: the default data folder (git-ignored)
+
+If you used the installer, your data lives in the folder you chose there instead (default
+`~/APCoder`, i.e. `C:\Users\<you>\APCoder`); it has the same layout as below, plus your `.env`.
 
 Everything in this folder except this README is ignored by git, so nothing here can be pushed to GitHub.
 
@@ -13,4 +16,4 @@ private/
   reference/               # optional: CSV files for command-line use instead of the dashboard
 ```
 
-To start over, close the dashboard and delete `ap_coder.db`.
+To start over, close the dashboard and run `install.bat --fresh-start` (or delete `ap_coder.db`).
