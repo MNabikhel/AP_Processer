@@ -125,7 +125,14 @@ This is a memory of your team's decisions. No model is retrained.
 Reference data comes from the dashboard database once GL accounts are imported. For command-line
 use without the dashboard, CSV files are looked up in this order: `AP_REFERENCE_DIR`, then
 `private/reference/`, then the samples in `data/`. Individual files can be given with `--coa`,
-`--cost-centers`, `--tax-mapping` and `--policy`.
+`--cost-centers`, `--tax-mapping` and `--policy`; with the dashboard database, the last three apply on top
+of it (`''` leaves one out).
+
+`private/` is always the folder inside the project, whichever folder you run a command from. To keep the
+database and invoices somewhere else (e.g. an encrypted drive), set the environment variable
+`AP_PRIVATE_DIR` before starting.
+
+CSV files may be saved as "CSV UTF-8" or plain "CSV" from Excel; both encodings are read.
 
 ## Output
 
