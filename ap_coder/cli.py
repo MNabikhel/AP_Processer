@@ -170,7 +170,8 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     cmd = [
         sys.executable, "-m", "streamlit", "run", str(app),
         "--server.port", str(args.port), "--server.address", "localhost",
-        "--browser.gatherUsageStats", "false",
+        "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
+        "--theme.primaryColor", "#2a78d6",
     ]  # fmt: skip
     print(f"Dashboard: http://localhost:{args.port}  (Ctrl+C to stop)", file=sys.stderr)
     return subprocess.call(cmd, env=env)
@@ -265,7 +266,9 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
 def cmd_share_report(args: argparse.Namespace) -> int:
     out = Path(args.out)
     key_file = out.with_name(out.stem + "_key.csv")
-    text = build_share_report(args.predictions, args.ground_truth, args.include_codes, key_file=key_file)
+    text = build_share_report(
+        args.predictions, args.ground_truth, args.include_codes, key_file=key_file, db_path=args.db
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
     print(text)

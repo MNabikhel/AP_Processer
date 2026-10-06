@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ap-coder"
 version = "0.1.0"
-description = "Enterprise AP Invoice Coder Engine (PoC): Azure AI Document Intelligence + Azure OpenAI Structured Outputs"
+description = "AP invoice coder (PoC): Azure Document Intelligence + Azure OpenAI, Canadian sales tax, review dashboard"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,13 +13,16 @@ dependencies = [
     "azure-identity>=1.17",
     "openpyxl>=3.1",
     "openai>=1.68",
+    "pandas>=2.0",
+    "pillow>=10",
     "pydantic>=2.6",
+    "pymupdf>=1.24",
     "python-dotenv>=1.0",
+    "streamlit>=1.60",
 ]
 
 [project.optional-dependencies]
-vision = ["pymupdf>=1.24", "pillow>=10"]
-dev = ["pytest>=8", "ruff>=0.6", "pymupdf>=1.24", "pillow>=10"]
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 ap-coder = "ap_coder.cli:main"

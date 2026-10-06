@@ -448,3 +448,23 @@ class Store:
 
 def _tax_signature(output: dict[str, Any]) -> list[tuple[str, float]]:
     return sorted((t.get("tax_type", ""), round(float(t.get("tax_amount", 0)), 2)) for t in output.get("tax_lines", []))
+
+
+SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
+    """Load the bundled sample GL accounts, cost centers, tax mapping and policy (for trying things out)."""
+    import csv
+
+    for table, filename, code_col in (
+        ("gl_accounts", "chart_of_accounts.csv", "gl_code"),
+        ("cost_centers", "cost_centers.csv", "cost_center"),
+    ):
+        with (data_dir / filename).open(encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+        store.import_accounts(table, rows, code_col, "description", "category")
+    with (data_dir / "tax_gl_mapping.csv").open(encoding="utf-8-sig", newline="") as fh:
+        for row in csv.DictReader(fh):
+            store.set_tax_treatment(row["tax_type"], row["treatment"], row.get("gl_code") or "")
+    store.set_setting("policy_notes", (data_dir / "coding_policy.md").read_text(encoding="utf-8"))

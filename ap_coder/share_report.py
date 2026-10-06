@@ -15,8 +15,10 @@ import json
 import statistics
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from .evaluation import evaluate
+from .store import FAILED, Store
 
 _CONF_BUCKETS = ((0.0, 0.5), (0.5, 0.7), (0.7, 0.85), (0.85, 0.95), (0.95, 1.01))
 
@@ -61,20 +63,28 @@ def build_share_report(
     ground_truth: str | Path | None = None,
     include_codes: bool = False,
     key_file: str | Path | None = None,
+    db_path: str | Path | None = None,
 ) -> str:
+    """Summarise the dashboard database when it has invoices, otherwise the ``process`` output folder."""
     output_dir = Path(output_dir)
-    metas = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(output_dir.glob("*.validation.json"))]
+    store = Store(db_path) if db_path and Path(db_path).exists() else None
+    metas = _metas_from_store(store) if store is not None else []
     if not metas:
-        raise FileNotFoundError(f"No *.validation.json files in {output_dir}; run `process` first")
+        metas = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(output_dir.glob("*.validation.json"))]
+    if not metas:
+        raise FileNotFoundError(f"No processed invoices found in {output_dir} or the dashboard database")
 
-    aliases = {Path(m["source"]).stem: f"doc-{i:02d}" for i, m in enumerate(metas, start=1)}
+    labels = [f"doc-{i:02d}" for i in range(1, len(metas) + 1)]  # one per invoice, even for repeated files
+    aliases: dict[str, str] = {}
+    for label, m in zip(labels, metas, strict=True):
+        aliases.setdefault(Path(m["source"]).stem, label)
     if key_file:
         Path(key_file).parent.mkdir(parents=True, exist_ok=True)
         with Path(key_file).open("w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
             writer.writerow(["alias", "file"])
-            for m in metas:
-                writer.writerow([aliases[Path(m["source"]).stem], Path(m["source"]).name])
+            for label, m in zip(labels, metas, strict=True):
+                writer.writerow([label, Path(m["source"]).name])
 
     ok = [m for m in metas if m.get("status") == "ok"]
     failed = [m for m in metas if m.get("status") != "ok"]
@@ -133,8 +143,7 @@ def build_share_report(
 
         lines += ["", "### Per invoice", "| doc | pages | lines | model conf | adj conf | review | issue codes |"]
         lines.append("|---|---|---|---|---|---|---|")
-        for m in metas:
-            alias = aliases[Path(m["source"]).stem]
+        for alias, m in zip(labels, metas, strict=True):
             v = m.get("validation")
             pages = (m.get("extraction") or {}).get("page_count", "")
             if not v:
@@ -149,6 +158,8 @@ def build_share_report(
                 f"| {'YES' if v['requires_review'] else 'no'} | {issues or '-'} |"
             )
 
+    if store is not None:
+        lines += ["", *_learning_section(store, include_codes)]
     if ground_truth:
         lines += ["", *_accuracy_section(output_dir, ground_truth, include_codes, aliases)]
 
@@ -193,4 +204,39 @@ def _accuracy_section(
         )
         if where:
             out.append("- coding mismatches per doc: " + ", ".join(f"{d} x{n}" for d, n in sorted(where.items())))
+    return out
+
+
+def _metas_from_store(store: Store) -> list[dict[str, Any]]:
+    metas = []
+    for row in store.list_invoices():
+        inv = store.get_invoice(row["id"])
+        meta = dict(inv.get("meta") or {})
+        meta["source"] = inv["source_path"]
+        meta["status"] = "failed" if inv["status"] == FAILED else "ok"
+        meta["error"] = inv.get("error")
+        if inv.get("validation"):
+            meta["validation"] = inv["validation"]
+        metas.append(meta)
+    return metas
+
+
+def _learning_section(store: Store, include_codes: bool) -> list[str]:
+    m = store.metrics()
+    statuses = ", ".join(f"{k} {v}" for k, v in sorted(m["invoices_by_status"].items()))
+    out = ["### Dashboard review & learning", f"- invoices by status: {statuses or 'none'}"]
+    if not m["lines_reviewed"]:
+        return out + ["- no approved invoices yet"]
+    approved = m["invoices_by_status"].get("approved", 0)
+    out += [
+        f"- lines reviewed: {m['lines_reviewed']}; AI coding accepted as-is: {m['line_accuracy']:.1%}",
+        f"- corrections taught: {m['lines_corrected']}",
+        f"- invoices approved without any edit: {m['invoices_approved_without_edits']} of {approved}",
+        f"- vendors in memory: {len(m['by_vendor'])}",
+        "- weekly accuracy: "
+        + ", ".join(f"{w['week']} {w['accepted'] / (w['accepted'] + w['corrected']):.0%}" for w in m["weekly"]),
+    ]
+    if include_codes and m["top_corrections"]:
+        out.append("- GL corrections (AI suggested -> reviewer chose x count):")
+        out += [f"  - {c['suggested_gl']} -> {c['final_gl']} x{c['n']}" for c in m["top_corrections"]]
     return out

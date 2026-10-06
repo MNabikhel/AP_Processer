@@ -194,3 +194,22 @@ def test_sample_reference_files_are_importable(tmp_path):
         rows = list(csv.DictReader(fh))
     result = store.import_accounts("gl_accounts", rows, "gl_code", "description", "category")
     assert result["added"] == len(rows) and result["skipped"] == 0
+
+
+def test_share_report_from_dashboard_database_is_redacted(tmp_path, ground_truth):
+    from ap_coder.share_report import build_share_report
+
+    store = Store(tmp_path / "ap.db")
+    for _ in range(2):  # the same file twice must still get two labels
+        store.add_invoice(tmp_path / "northwind.pdf", ground_truth, {"requires_review": False, "issues": [],
+                          "model_confidence": 0.9, "adjusted_confidence": 0.9, "review_threshold": 0.85})  # fmt: skip
+    final = copy.deepcopy(ground_truth)
+    final["line_items"][0]["predicted_gl_code"] = "6000"
+    store.approve_invoice(1, final, reviewer="ap.clerk")
+
+    text = build_share_report(tmp_path / "no-output", db_path=tmp_path / "ap.db")
+    assert "| doc-01 |" in text and "| doc-02 |" in text
+    assert "AI coding accepted as-is: 80.0%" in text and "corrections taught: 1" in text
+    for secret in ("Northwind", "northwind", "NW-2026", "18017", "Latitude", "6010", "6000"):
+        assert secret not in text, secret
+    assert "6010 -> 6000 x1" in build_share_report(tmp_path / "x", include_codes=True, db_path=tmp_path / "ap.db")
