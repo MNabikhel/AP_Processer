@@ -30,6 +30,9 @@ ap-coder = "ap_coder.cli:main"
 [tool.setuptools.packages.find]
 include = ["ap_coder*"]
 
+[tool.setuptools.package-data]
+ap_coder = ["assets/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

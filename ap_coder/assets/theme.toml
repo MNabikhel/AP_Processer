@@ -1,0 +1,26 @@
+# AP Coder dashboard theme (passed to Streamlit by `python -m ap_coder dashboard`).
+[theme]
+primaryColor = "#2a78d6"
+backgroundColor = "#f4f6f9"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1c2433"
+linkColor = "#1f63b5"
+borderColor = "#e1e6ed"
+showWidgetBorder = true
+baseRadius = "10px"
+buttonRadius = "8px"
+headingFontWeights = [700, 650, 650, 600, 600, 600]
+headingFontSizes = ["1.85rem", "1.35rem", "1.12rem", "1rem", "0.95rem", "0.9rem"]
+metricValueFontSize = "1.75rem"
+metricValueFontWeight = 700
+dataframeHeaderBackgroundColor = "#f1f4f8"
+dataframeBorderColor = "#e1e6ed"
+chartCategoricalColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
+
+[theme.sidebar]
+backgroundColor = "#0f1e33"
+secondaryBackgroundColor = "#1a2c47"
+textColor = "#dde5f0"
+borderColor = "#2b3f5e"
+primaryColor = "#6aa9f2"
+linkColor = "#9cc6f7"

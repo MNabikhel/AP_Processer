@@ -171,7 +171,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         sys.executable, "-m", "streamlit", "run", str(app),
         "--server.port", str(args.port), "--server.address", "localhost",
         "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
-        "--theme.primaryColor", "#2a78d6",
+        "--theme.base", str(Path(__file__).resolve().parent / "assets" / "theme.toml"),
     ]  # fmt: skip
     print(f"Dashboard: http://localhost:{args.port}  (Ctrl+C to stop)", file=sys.stderr)
     return subprocess.call(cmd, env=env)
