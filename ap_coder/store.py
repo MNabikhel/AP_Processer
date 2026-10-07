@@ -801,9 +801,10 @@ class Store:
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
             if f_gl == UNASSIGNED:
                 continue  # not a coding decision: nothing to learn from it
-            if s_gl != f_gl or (s_cc or "") != (f_cc or ""):
-                reviewer_changed += 1
             rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
+            kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
+            if not kept_rule and (s_gl != f_gl or (s_cc or "") != (f_cc or "")):
+                reviewer_changed += 1
             if rule is not None and rule.get("gl_to") == s_gl:
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
             outcome = ACCEPTED if (s_gl == f_gl and (s_cc or "") == (f_cc or "")) else CORRECTED
@@ -1187,6 +1188,24 @@ class Store:
                 )
             self._log(conn, "rules_changed", actor=actor, detail={"rules": len(keep)})
         return len(keep)
+
+    def add_rules_applied(self, invoice_id: int, changes: list[dict[str, Any]]) -> None:
+        """Remember lines a fixed coding rule set on the review screen (as rules applied at processing are), so
+        the AI's accuracy is measured on its own answer for them."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+            if row is None:
+                return
+            meta = json.loads(row["meta"] or "{}") or {}
+            known = {c["line_number"]: c for c in meta.get("rules_applied") or []}
+            for c in changes:
+                first = known.get(c["line_number"])
+                # The AI's own answer stays the one recorded first.
+                known[c["line_number"]] = (
+                    {**c, "gl_from": first["gl_from"], "cc_from": first["cc_from"]} if first else c
+                )
+            meta["rules_applied"] = sorted(known.values(), key=lambda c: c["line_number"])
+            conn.execute("UPDATE invoices SET meta = ? WHERE id = ?", (json.dumps(meta), invoice_id))
 
     def delete_empty_batches(self, batches: set[int]) -> int:
         """Delete these export batches if no invoice belongs to them any more (e.g. demo invoices removed)."""

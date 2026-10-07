@@ -181,10 +181,10 @@ def review_tab() -> None:
         )
         threshold = st.slider(
             "Send to *Needs attention* when the AI's confidence is below",
-            min_value=0.50, max_value=0.99, step=0.01, value=float(settings.engine.review_threshold),
-            format="%.2f",
+            min_value=50, max_value=99, step=1, value=round(float(settings.engine.review_threshold) * 100),
+            format="%d%%",
             help="Invoices with any error always need attention. Higher = more invoices get a closer look.",
-        )  # fmt: skip
+        ) / 100  # fmt: skip
         vision = st.toggle(
             "Also send page images to the AI (vision models only, e.g. gpt-4o)",
             value=settings.engine.vision,

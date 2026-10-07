@@ -636,7 +636,9 @@ def _reasons_html(coding: InvoiceCoding, ai: dict[str, Any], report: Any, refere
     return f"<div class='apc-reasons'>{''.join(rows)}</div>"
 
 
-def _apply_rules_button(store: Store, coding: InvoiceCoding, edited_lines: pd.DataFrame, key: str) -> None:
+def _apply_rules_button(
+    store: Store, coding: InvoiceCoding, edited_lines: pd.DataFrame, key: str, invoice_id: int, ai: dict[str, Any]
+) -> None:
     """Lines a fixed coding rule would code differently (e.g. a rule added after the invoice was processed)."""
     _, changes = rules.apply(coding, store.coding_rules())
     if not changes:
@@ -652,6 +654,12 @@ def _apply_rules_button(store: Store, coding: InvoiceCoding, edited_lines: pd.Da
             updated.loc[rows_at, "predicted_gl_code"] = c["gl_to"]
             updated.loc[rows_at, "predicted_cost_center"] = c["cc_to"]
         replace_editor(f"{key}_lines", updated)
+        ai_lines = {li.get("line_number"): li for li in ai.get("line_items") or []}
+        store.add_rules_applied(invoice_id, [
+            {**c, "gl_from": ai_lines.get(c["line_number"], {}).get("predicted_gl_code", c["gl_from"]),
+             "cc_from": ai_lines.get(c["line_number"], {}).get("predicted_cost_center", c["cc_from"])}
+            for c in changes
+        ])  # fmt: skip
         notify(f"Coding rules applied to {len(changes)} line(s).", ":material/rule_settings:")
         st.rerun()
 
@@ -948,7 +956,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         applied = meta.get("rules_applied") or []
         if applied:
             st.html("".join(ui.check("info", "Coding rule", rules.describe(c)) for c in applied))
-        _apply_rules_button(store, coding, edited_lines, key)
+        _apply_rules_button(store, coding, edited_lines, key, invoice_id, ai)
         _ask_vendor(coding, report, key)
     with (
         reasons_box,

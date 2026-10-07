@@ -318,6 +318,9 @@ def test_apply_a_rule_added_after_processing(busy_db):
     _ok(at.button(key=f"inv{invoice_id}_approve").click().run())
     lines = store.get_invoice(invoice_id)["final_output"]["line_items"]
     assert next(li for li in lines if li["line_number"] == 5)["predicted_gl_code"] == "6900"
+    assert "line_coding" not in store.get_invoice(invoice_id)["edits"]  # keeping a rule's coding is not a change
+    line5 = next(r for r in store.feedback_rows() if r["line_number"] == 5)
+    assert (line5["suggested_gl"], line5["outcome"]) == ("6800", "corrected")  # the AI's own answer was 6800
 
 
 def test_duplicate_audit_on_the_activity_page(db):
@@ -431,3 +434,15 @@ def test_a_credit_note_is_not_shown_as_due(db):
     _ok(at.run())
     hero = next(h.proto.body for h in at.get("html") if "apc-inv" in h.proto.body)
     assert "<div class='label'>Credit</div>" in hero and "Due in" not in hero and "Overdue" not in hero
+
+
+def test_find_brings_back_a_parked_invoice(busy_db):
+    store, invoice_id = busy_db
+    store.park_invoice(invoice_id, "Jane", "waiting for the buyer")
+    _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages
+    at = _page("search", "page_search")
+    _ok(at.run())
+    at.text_input(key="search_query").input("northwind")
+    _ok(at.run())
+    at.button(key=f"search_unpark_{invoice_id}").click().run()
+    assert store.get_invoice(invoice_id)["status"] == "review"
