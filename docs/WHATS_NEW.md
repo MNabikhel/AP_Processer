@@ -28,6 +28,8 @@ folder.
   email in English or French, ready to copy or open in your email program. Internal fraud checks
   are never mentioned.
 - **Split a line** across GL accounts or cost centers by percentage (shared costs).
+- **Reopen for correction.** An approved invoice not exported yet (or one rejected by mistake) goes
+  back to the queue with its coding kept; what it taught is withdrawn until it is approved again.
 - **Park and notes.** *More → Park* sets aside an invoice waiting for information, with a follow-up
   date (the **Parked** tab); **Notes** on each invoice keep the team informed.
 - **Fixed coding rules.** GL accounts & tax → *Fixed rules*: a vendor, words a line contains, or

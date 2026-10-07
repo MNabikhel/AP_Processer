@@ -896,6 +896,22 @@ class Store:
             conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
             self._log(conn, "sent_back", invoice_id, actor, {"reason": reason})
 
+    def reopen(self, invoice_id: int, actor: str, reason: str = "") -> None:
+        """Put an approved invoice that is not exported yet, or a rejected one, back in the review queue to be
+        corrected. What its approval taught is withdrawn (learned again at the next approval); the reviewer's
+        coding is kept as the starting point. An exported invoice is reopened by undoing its batch first."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                """UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL, second_reviewer = NULL,
+                   second_reviewed_at = NULL, error = NULL
+                   WHERE id = ? AND (status IN (?, ?) AND export_batch IS NULL OR status = ?)""",
+                (REVIEW, invoice_id, APPROVED, PENDING, REJECTED),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
+            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+            self._log(conn, "reopened", invoice_id, actor, {"reason": reason})
+
     # --- Purchase orders ---------------------------------------------------------------------------
 
     def import_purchase_orders(

@@ -76,3 +76,26 @@ def test_backups_are_copied_to_a_second_folder(tmp_path):
     store.copy_backup(store.backup_now())
     daily = [p for p in second.glob("ap_coder-*.db") if p.stem.count("-") == 2]
     assert len(daily) == 14
+
+
+def test_reopen_an_approved_or_rejected_invoice(tmp_path):
+    import pytest
+
+    store = Store(tmp_path / "r.db")
+    doc = _doc("chinook_AB_GST_CCO-26-10418")
+    a = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    store.approve_invoice(a, doc, "Jane")
+    assert store.feedback_rows()
+    store.reopen(a, "Sam", "wrong GL on line 2")
+    inv = store.get_invoice(a)
+    assert inv["status"] == "review" and inv["reviewer"] is None and inv["final_output"] == doc
+    assert store.feedback_rows() == []  # learned again at the next approval
+    assert store.events(a)[0]["action"] == "reopened"
+    store.approve_invoice(a, doc, "Jane")
+    store.create_export_batch([a], "csv")
+    with pytest.raises(ValueError):
+        store.reopen(a, "Sam", "too late")  # exported: undo the batch first
+    b = store.add_invoice(tmp_path / "b.pdf", {**doc, "invoice_number": "B-1"}, {})
+    store.reject_invoice(b, "Sam", "not ours")
+    store.reopen(b, "Sam", "rejected by mistake")
+    assert store.get_invoice(b)["status"] == "review" and store.get_invoice(b)["error"] is None

@@ -382,3 +382,14 @@ def test_find_an_invoice_and_open_it(db):
     _ok(at.run())
     target = next(i for i in store.list_invoices() if i["vendor_name"].startswith("Red River"))
     assert at.button(key=f"search_open_{target['id']}")
+
+
+def test_reopen_from_the_approved_view(busy_db):
+    store, invoice_id = busy_db
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Jane")
+    at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
+    at.text_input(key=f"reopen_reason_{invoice_id}").input("wrong cost center")
+    _ok(at.run())
+    _ok(at.button(key=f"reopen_{invoice_id}").click().run())
+    assert store.get_invoice(invoice_id)["status"] == "review"
+    assert at.button(key=f"inv{invoice_id}_approve")  # opened straight away for the correction

@@ -43,7 +43,7 @@ def build(store: Store, start: dt.date, end: dt.date) -> dict[str, Any]:
     overrides = [e for e in approvals if _codes(e, "error")]
     signals = [e for e in approvals if set(_codes(e)) & SIGNALS]
     finals = [e for e in events if e["action"] == "final_approved"]
-    sent_back = [e for e in events if e["action"] == "sent_back"]
+    sent_back = [e for e in events if e["action"] in ("sent_back", "reopened")]
     waiting = store.list_invoices(PENDING)
     limit = store.approval_limit()
     one_person = (
@@ -125,7 +125,7 @@ def report_html(r: dict[str, Any]) -> str:
         _section("Approved despite an error", r["overrides"], "None: no error was overridden."),
         _section("Approved while a fraud or duplicate signal was showing", r["signals"], "None."),
         _section("Second approvals", r["finals"], "None in the period."),
-        _section("Sent back to the review queue", r["sent_back"], "None."),
+        _section("Sent back or reopened for correction", r["sent_back"], "None."),
     ]
     if r["one_person"]:
         rows = "".join(

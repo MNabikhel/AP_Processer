@@ -277,7 +277,13 @@ def page_review() -> None:
                     with left.expander("Technical details"):
                         st.code(error, language=None, wrap_lines=True)
                 b1, b2 = right.columns(2)
-                if b1.button(
+                if inv["status"] == REJECTED:
+                    if b1.button("Reopen", key=f"reopen_{inv['id']}", icon=":material/undo:",
+                                 help="Back to the review queue (e.g. rejected by mistake)"):  # fmt: skip
+                        store.reopen(inv["id"], reviewer(), "rejected by mistake")
+                        notify("Back in the review queue.", ":material/undo:")
+                        st.rerun()
+                elif b1.button(
                     "Retry", key=f"retry_{inv['id']}", icon=":material/refresh:", disabled=not azure_ready,
                     help=None if azure_ready else "Set up Azure first: Settings → Azure",
                 ):  # fmt: skip
@@ -1396,11 +1402,24 @@ def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> 
             + "</div></div></div>"
         )
         _distribution_table(final, reference, final.get("currency", ""))
-        st.download_button(
+        pdf, fix = st.columns([1, 1], vertical_alignment="center")
+        pdf.download_button(
             "Approved PDF", stamp.stamped_pdf(inv, gl_label_names(reference)), file_name=stamp.file_name(inv),
             mime="application/pdf", icon=":material/approval:", key=f"approved_pdf_{invoice_id}",
             help="The invoice with an APPROVED stamp and its coding page, to attach in the ERP or to file.",
         )  # fmt: skip
+        if inv.get("export_batch"):
+            fix.caption(
+                f"Exported in batch {inv['export_batch']}: to correct it, undo the batch on the Exports page first."
+            )
+        else:
+            with fix.popover("Reopen for correction…", icon=":material/undo:"):
+                why = st.text_input("What needs correcting", key=f"reopen_reason_{invoice_id}")
+                if st.button("Reopen", key=f"reopen_{invoice_id}", type="primary", disabled=not why.strip()):
+                    store.reopen(invoice_id, reviewer(), why)
+                    st.session_state["open_invoice"] = invoice_id
+                    notify("Reopened: correct it and approve it again.", ":material/undo:")
+                    st.rerun()
         events = store.events(invoice_id)
         if events:
             with st.expander("History", icon=":material/history:"):
