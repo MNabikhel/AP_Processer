@@ -8,6 +8,7 @@ import streamlit as st
 
 from ap_coder import ui
 from ap_coder.help import AREAS, CHECKS, FAQ, QUICK_START
+from ap_coder.paths import PROJECT_DIR
 from ap_coder.webapp.common import DB_PATH, PAGES, card, esc, short_path, show_toast
 
 STEP_PAGES = ["accounts", "purchase_orders", "process", "review", "exports"]
@@ -44,6 +45,13 @@ def checks_table(query: str = "", area: str | None = None) -> tuple[str, int]:
 def page_help() -> None:
     show_toast()
     st.html(ui.page_header("Guide", "Help", "How AP Coder works, what each check means and what to do about it."))
+
+    news = PROJECT_DIR / "docs" / "WHATS_NEW.md"
+    if news.exists():
+        with st.expander("What's new in AP Coder", icon=":material/new_releases:"):
+            text = news.read_text(encoding="utf-8")
+            text = text.split("\n", 1)[1] if text.startswith("# ") else text  # without its own title
+            st.markdown(re.sub(r"\[([^\]]+)\]\([^)]*\.md[^)]*\)", r"\1", text))  # links to other docs: plain text
 
     with card("help_start"):
         st.markdown("#### :material/rocket_launch: Getting started")
