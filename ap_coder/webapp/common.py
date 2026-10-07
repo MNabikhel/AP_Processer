@@ -35,7 +35,12 @@ PAGES: dict[str, Any] = {}
 
 @st.cache_resource
 def get_store() -> Store:
-    return Store(DB_PATH)
+    store = Store(DB_PATH)
+    try:
+        store.auto_backup()  # once a day, when the dashboard starts; the newest 14 are kept
+    except OSError:
+        pass  # a backup problem must never stop the dashboard from opening
+    return store
 
 
 def get_settings() -> Settings:
@@ -43,7 +48,8 @@ def get_settings() -> Settings:
 
 
 def reviewer() -> str:
-    for name in (st.session_state.get("reviewer"), os.environ.get("AP_REVIEWER"), getpass.getuser()):
+    """The person approving: the name saved in Settings, else the computer login name."""
+    for name in (os.environ.get("AP_REVIEWER"), getpass.getuser()):
         if name and str(name).strip():
             return str(name).strip()
     return "Reviewer"

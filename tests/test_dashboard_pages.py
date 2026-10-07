@@ -4,6 +4,7 @@ These catch the mistakes unit tests can't: a wrong asset path, a missing import,
 """
 
 import json
+import os
 import sys
 
 import pytest
@@ -15,7 +16,12 @@ from ap_coder.store import APPROVED, REJECTED, REVIEW, Store, load_sample_setup
 from .conftest import ROOT, SAMPLE_STEM, SAMPLES
 
 APP = str(ROOT / "ap_coder" / "dashboard.py")
-PAGES = [("process", "page_process"), ("accounts", "page_accounts"), ("learning", "page_learning")]
+PAGES = [
+    ("process", "page_process"),
+    ("accounts", "page_accounts"),
+    ("learning", "page_learning"),
+    ("settings", "page_settings"),
+]
 TIMEOUT = 90
 
 
@@ -108,3 +114,21 @@ def test_demo_button_on_the_welcome_screen(db):
     assert len(store.list_invoices(REVIEW)) == 8
     at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
     assert len([b for b in at.button if (b.key or "").startswith("qopen_")]) == 8
+
+
+def test_settings_page_saves_to_the_env_file(db, monkeypatch):
+    from ap_coder.envfile import read_env
+
+    env = db.parent / ".env"
+    monkeypatch.setenv("AP_ENV_FILE", str(env))
+    for key in ("AP_REVIEWER", "AP_REVIEW_THRESHOLD", "AP_VISION", "AP_CONSTRAIN_CODES"):
+        monkeypatch.setenv(key, "")  # restored after the test (the page writes os.environ)
+    at = _ok(_page("settings", "page_settings").run())
+    _ok(at.button(key="backup_now").click().run())
+    assert list((db.parent / "backups").glob("ap_coder-*-manual.db"))
+    reviewer = next(t for t in at.text_input if t.label == "Your name")
+    reviewer.input("Jane Doe")
+    review_form_submit = next(b for b in at.button if b.label == "Save" and b.proto.is_form_submitter)
+    _ok(review_form_submit.click().run())
+    assert read_env(env)["AP_REVIEWER"] == "Jane Doe"
+    assert os.environ["AP_REVIEWER"] == "Jane Doe"

@@ -17,9 +17,6 @@ the local SQLite database in the data folder (see ``ap_coder/paths.py``).
 
 from __future__ import annotations
 
-import getpass
-import os
-
 import streamlit as st
 
 from ap_coder import ui
@@ -30,6 +27,7 @@ from ap_coder.webapp.common import ASSETS, DB_PATH, PAGES, approved_today, get_s
 from ap_coder.webapp.learning import page_learning
 from ap_coder.webapp.process import page_process
 from ap_coder.webapp.review import page_review
+from ap_coder.webapp.settings import page_settings
 
 st.set_page_config(page_title="AP Coder", page_icon=str(ASSETS / "icon.svg"), layout="wide")
 st.html(f"<style>{(ASSETS / 'style.css').read_text(encoding='utf-8')}</style>")
@@ -40,6 +38,7 @@ PAGES.update(
         "process": st.Page(page_process, title="Process invoices", icon=":material/upload_file:"),
         "accounts": st.Page(page_accounts, title="GL accounts & tax", icon=":material/account_tree:"),
         "learning": st.Page(page_learning, title="Learning & accuracy", icon=":material/insights:"),
+        "settings": st.Page(page_settings, title="Settings", icon=":material/settings:"),
     }
 )
 
@@ -47,12 +46,6 @@ st.logo(str(ASSETS / "logo.svg"), size="large", icon_image=str(ASSETS / "icon.sv
 with st.sidebar:
     _store = get_store()
     st.html(ui.sidebar_profile(reviewer(), approved_today(_store), len(_store.list_invoices(REVIEW))))
-    with st.expander("Settings", icon=":material/settings:"):
-        st.text_input(
-            "Your name (recorded on approvals)",
-            value=os.environ.get("AP_REVIEWER") or getpass.getuser(),
-            key="reviewer",
-        )
     if any(is_demo(i) for i in _store.list_invoices_full()):
         st.html(ui.pill("Demo invoices loaded", "violet", "science"))
     st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")

@@ -462,6 +462,66 @@ class Store:
             )
         return counts
 
+    # --- Backups -----------------------------------------------------------------------------------------
+
+    def backup_to(self, dest: str | Path) -> Path:
+        """A consistent copy of the database (safe while the dashboard is running)."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        source = sqlite3.connect(self.path)
+        target = sqlite3.connect(dest)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        return dest
+
+    def backup_dir(self) -> Path:
+        return self.path.parent / "backups"
+
+    def list_backups(self) -> list[Path]:
+        folder = self.backup_dir()
+        return sorted(folder.glob("ap_coder-*.db"), reverse=True) if folder.exists() else []
+
+    def backup_now(self, label: str = "") -> Path:
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        suffix = f"-{label}" if label else ""
+        dest = self.backup_dir() / f"ap_coder-{stamp}{suffix}.db"
+        n = 2
+        while dest.exists():  # never overwrite a backup made in the same second
+            dest = self.backup_dir() / f"ap_coder-{stamp}{suffix or '-'}{n}.db"
+            n += 1
+        return self.backup_to(dest)
+
+    def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
+        """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies."""
+        daily = [p for p in self.list_backups() if p.stem.count("-") == 2]  # ap_coder-YYYYMMDD-HHMMSS
+        if daily:
+            age = dt.datetime.now() - dt.datetime.fromtimestamp(daily[0].stat().st_mtime)
+            if age < dt.timedelta(hours=min_hours):
+                return None
+        if not self.path.exists():
+            return None
+        made = self.backup_now()
+        for old in [p for p in self.list_backups() if p.stem.count("-") == 2][keep:]:
+            old.unlink(missing_ok=True)
+        return made
+
+    def restore_from(self, backup: str | Path) -> Path:
+        """Replace the database with a backup. The current one is backed up first (returned)."""
+        safety = self.backup_now("before-restore")
+        source = sqlite3.connect(Path(backup))
+        target = sqlite3.connect(self.path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        with self._conn() as conn:
+            self._migrate(conn)  # an older backup may need upgrading
+        return safety
+
     # --- Learning memory ------------------------------------------------------------------------------
 
     def feedback_rows(self, limit: int = 50_000, vendor_name: str | None = None) -> list[dict[str, Any]]:
