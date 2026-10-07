@@ -5,8 +5,14 @@ the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
 has a short tour.
 
-Your existing data is safe. On first start the database upgrades itself (schema version 6), and a
+Your existing data is safe. On first start the database upgrades itself (schema version 9), and a
 backup of the database is made automatically each day the dashboard is opened.
+
+## Safety
+
+Text from invoices and uploaded files can no longer run as a formula when a download is opened in
+Excel, cannot turn into a link on screen, and an uploaded file cannot be saved outside the invoices
+folder.
 
 ## Review faster
 
@@ -18,6 +24,11 @@ backup of the database is made automatically each day the dashboard is opened.
   and enough confidence. Each one is re-checked at that moment; anything no longer clean stays for a
   person.
 - **Split a line** across GL accounts or cost centers by percentage (shared costs).
+- **Park and notes.** *More → Park* sets aside an invoice waiting for information, with a follow-up
+  date (the **Parked** tab); **Notes** on each invoice keep the team informed.
+- **Teach from past coding.** Import last year's posted AP lines from the ERP (Learning page) so the AI
+  knows how each vendor is coded from the first invoice. Past lines never count in the accuracy
+  figures.
 - **Due dates.** The AI now reads payment terms and printed due dates (English and French). Queue
   cards show *Overdue*, *Due in 3d* and early-payment discount deadlines (*2% off until Oct 15*), and
   the queue can be sorted by due date.
@@ -30,18 +41,26 @@ backup of the database is made automatically each day the dashboard is opened.
   more billed than ordered or received (counting earlier invoices and credit notes), lines not on
   the PO, PO total exceeded, closed POs, POs for another vendor. *Use the PO's coding* applies the
   PO's GL accounts and cost centers in one click.
+- **Vendor master from the ERP.** Import the vendor list (CSV or Excel): exports carry each vendor's
+  ERP ID, an invoice from a vendor that is not in the list is flagged (by name or GST/HST number),
+  the vendor's payment terms set the due date when the invoice shows none, and its default GL
+  account is suggested for uncoded lines.
 - **Vendor fraud and duplicate signals:** vendor on hold, changed GST/HST number (a classic fake
-  invoice sign), amount far above the vendor's usual, same amount under a new invoice number, first
-  invoice from a vendor. The **Vendors** page holds the controls (hold, expected GST/HST number,
-  notes).
+  invoice sign), amount far above the vendor's usual, same amount under a new invoice number, the
+  same bill under another vendor name, first invoice from a vendor. The **Vendors** page holds the
+  controls (hold, expected GST/HST number, notes).
 - **Second approval.** Above an approval limit (Settings → Review), an approved invoice waits for a
-  second, different person before it can be exported, or is sent back to the queue.
+  second person (another name and another computer login) before it can be exported, or is sent
+  back to the queue with the first approver's corrections kept. For two people to approve, they use
+  the same AP Coder, e.g. on a shared AP PC, each signed in to Windows as themselves (the database
+  must stay on a local disk, not a network share; a shared server version is a Phase 2 item).
 
 ## The rest of the AP cycle
 
 - **Exports:** approved invoices go to the ERP in batches, as an Excel workbook (invoices, GL lines,
-  totals by GL) or a CSV of GL lines. Each invoice goes out once; a batch can be downloaded again or
-  undone if the import failed.
+  totals by GL), a CSV of GL lines, or a **custom CSV** laid out the way your ERP's import expects
+  (columns, headers, fixed text, date format, separators). Each invoice goes out once; a batch can be
+  downloaded again or undone if the import failed.
 - **Vendor statements:** upload a vendor's statement of account and see what matches, what differs,
   what you never received and what is not on their statement.
 - **Month-end:** the accruals schedule: goods received but not invoiced (from POs), invoices not in
@@ -59,7 +78,9 @@ backup of the database is made automatically each day the dashboard is opened.
   approvals made while a fraud or PO signal was showing, second approvals, setup changes, approvals
   per person; one HTML page to download.
 - **Insights:** how much goes straight through, hours saved, Azure cost per invoice from the real
-  token usage, and a monthly projection, with a one-page business case to share (totals only).
+  token usage, and a monthly projection, with a one-page business case to share (totals only); AP
+  operations: queue ageing, days to approve, approvals after the due date, discounts approved in
+  time.
 
 ## Setup and safety
 

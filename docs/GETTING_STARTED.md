@@ -155,9 +155,14 @@ Open **GL accounts & tax**:
 
 Optional, any time later:
 
+- **Vendor master:** on **Vendors**, import the ERP's vendor list. Exports then carry vendor IDs, and
+  an invoice from a vendor that is not in the list is flagged.
+- **Past coding:** on **Learning & accuracy**, *Teach from past coding* with last year's posted AP
+  lines (vendor, description, GL, cost center) so the AI starts with your history.
 - **Purchase orders:** import your open POs (one row per PO line, from the ERP; the *Template*
   button shows the columns). Include the quantity received to get three-way matching. Re-import
   the export regularly; a PO in the file replaces its earlier lines.
+- **Exports → Custom layout for your ERP:** if your ERP's import needs its own columns.
 - **Settings → Review:** your name (shown on approvals), the confidence threshold, an **approval
   limit** above which a second person must approve, and the days to pay when an invoice shows no
   terms.

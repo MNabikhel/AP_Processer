@@ -15,8 +15,9 @@ An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
    - the right tax regime for the province
    - QST is charged on the pre-GST amount
    - supplier registration numbers are present
-   - possible duplicate invoices, and vendor fraud signals (vendor on hold, changed GST/HST number,
-     unusual amount, same amount under another number)
+   - possible duplicate invoices (also under another vendor name), and vendor fraud signals (vendor
+     not in the ERP's vendor master, on hold, changed GST/HST number, unusual amount, same amount
+     under another number)
    - purchase order match: price, quantity ordered and received, lines not on the PO, PO total
    - payment terms and due dates, early-payment discounts
    - agreement with past reviewer decisions
@@ -85,14 +86,14 @@ In the dashboard:
 
 | Section | Page | What it does |
 |---|---|---|
-| Work | **Review queue** | Invoice image beside the editable header (incl. PO #, payment terms, due date); live **Checks**, each with what to do; the line grid (GL account and cost center dropdowns of your codes); tax lines with a tax-check table; the **PO match**; **GL suggestions** for lines the AI could not code; *Split a line* across GL accounts / cost centers; a GL posting preview. *Approve & teach*, *Reject*, *Delete*. The queue shows due dates and discount deadlines, can be sorted by due date, and clean invoices can be approved in bulk. A **Second approval** tab holds invoices over the approval limit. |
+| Work | **Review queue** | Invoice image beside the editable header (incl. PO #, payment terms, due date); live **Checks**, each with what to do; the line grid (GL account and cost center dropdowns of your codes); tax lines with a tax-check table; the **PO match**; **GL suggestions** for lines the AI could not code; *Split a line* across GL accounts / cost centers; a GL posting preview. *Approve & teach*, *Reject*, *Delete*. The queue shows due dates and discount deadlines, can be sorted by due date, and clean invoices can be approved in bulk. A **Second approval** tab holds invoices over the approval limit; *Park* sets aside an invoice waiting for information (**Parked** tab); **Notes** keep the team informed. |
 | Work | **Process invoices** | Upload files, or process new files dropped into the data folder's `invoices/` (or run `watch`). |
-| Work | **Exports** | Approved invoices go to the ERP in batches (Excel or CSV); each invoice once; any batch can be downloaded again or undone. |
+| Work | **Exports** | Approved invoices go to the ERP in batches (Excel, CSV, or a **custom CSV layout** matching your ERP's import); each invoice once; any batch can be downloaded again or undone. |
 | Work | **Vendor statements** | Upload a vendor's statement of account: matched, amount differs, not received, not on the statement. |
 | Work | **Month-end** | The accruals schedule: received not invoiced (from POs), invoices not in the ERP yet, expected recurring invoices; by GL; CSV. |
-| Insight | **Insights** | Straight-through rate, hours saved, Azure cost per invoice, a monthly projection; a one-page business case to download. |
-| Insight | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). |
-| Insight | **Vendors** | Spend, AI accuracy and controls per vendor (put on hold, expected GST/HST number, notes); recurring vendors and late invoices. |
+| Insight | **Insights** | Straight-through rate, hours saved, Azure cost per invoice, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
+| Insight | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). *Teach from past coding* imports last year's AP lines from the ERP. |
+| Insight | **Vendors** | Import the **vendor master** from the ERP (vendor IDs in exports, unknown vendors flagged, vendor terms, default GL); spend, AI accuracy and controls per vendor (hold, expected GST/HST number, notes); recurring vendors and late invoices. |
 | Insight | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit. |
 | Setup | **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete. Optional cost centers. Tax treatments and GLs. Coding policy. |
 | Setup | **Purchase orders** | Import open POs (one row per line, received quantities optional); what has been invoiced against each; close, reopen, delete. |

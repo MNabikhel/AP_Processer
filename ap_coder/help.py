@@ -371,13 +371,28 @@ FAQ: list[tuple[str, str]] = [
     (
         "What is the second approval?",
         "If an approval limit is set (Settings → Review), an invoice above it is not ready to export after the "
-        "first approval: it waits in the Second approval tab until someone else approves it, or sends it back "
-        "to the queue. The two names are recorded in the Activity log.",
+        "first approval: it waits in the Second approval tab until someone else (another name and another "
+        "computer login) approves it, or sends it back to the queue. Both people use the same AP Coder (e.g. a "
+        "shared AP PC, each signed in to Windows as themselves; keep the data folder on a local disk, not a "
+        "network share). The two names are recorded in the Activity log.",
     ),
     (
         "How do I get approved invoices into the ERP?",
-        "On the Exports page, pick the approved invoices and export them as a batch (Excel or CSV). Each "
-        "invoice goes out once. If the ERP import fails, undo the batch and export again.",
+        "On the Exports page, pick the approved invoices and export them as a batch (Excel, CSV, or a custom "
+        "CSV laid out for your ERP's import under 'Custom layout for your ERP'). Each invoice goes out once. If "
+        "the ERP import fails, undo the batch and export again. Import the vendor master on the Vendors page so "
+        "exports carry the ERP vendor IDs.",
+    ),
+    (
+        "Can the AI start from what we coded last year?",
+        "Yes: on Learning & accuracy, 'Teach from past coding' imports posted AP lines from the ERP (vendor, "
+        "description, GL account, cost center). The AI then sees each vendor's usual coding from the first "
+        "invoice. Past lines never count in the accuracy figures and can be forgotten in one click.",
+    ),
+    (
+        "An invoice is waiting for someone. Where do I put it?",
+        "More → Park, with what it is waiting for and an optional follow-up date. It leaves the queue and waits "
+        "in the Parked tab until you bring it back. Notes on the invoice keep everyone informed.",
     ),
     (
         "How does PO matching work?",
