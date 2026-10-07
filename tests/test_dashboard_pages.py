@@ -346,3 +346,13 @@ def test_approved_invoice_view_offers_the_stamped_pdf(busy_db):
     _ok(at.run())
     keys = [getattr(b, "key", "") or b.proto.id for b in at.get("download_button")]  # in the Approved tab
     assert any(f"approved_pdf_{invoice_id}" in k for k in keys)
+
+
+def test_vendors_page_with_the_demo(db):
+    from ap_coder.demo import load_demo
+    from ap_coder.insights import vendor_workload
+
+    load_demo(Store(db))
+    at = _ok(_page("vendors", "page_vendors").run())
+    if vendor_workload(Store(db)):
+        assert any("make work" in m.value for m in at.markdown)

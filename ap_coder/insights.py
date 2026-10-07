@@ -291,3 +291,40 @@ def report_html(s: dict[str, Any], organisation: str = "") -> str:
         f"</table><h2>Assumptions</h2><p class='muted'>{e(assumptions)}</p></body></html>",
     ]
     return "\n".join(parts)
+
+
+def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]:
+    """Vendors whose invoices make work: how often an invoice arrived with a problem only the vendor can fix
+    (amounts that don't add up, no GST/HST number, PO issues...: the checks *Ask the vendor* covers), and how
+    often AP had to correct the coding. Worst first; vendors without problems are left out."""
+    from .memory import vendor_key
+    from .vendor_mail import ASKABLE
+
+    stats: dict[str, dict[str, Any]] = {}
+    for r in store.invoice_columns(("id", "status", "validation", "edits", "ai_output", "final_output")):
+        if r["status"] == FAILED:
+            continue
+        doc = r["final_output"] or r["ai_output"] or {}
+        name = str(doc.get("vendor_name") or "")
+        key = vendor_key(name)
+        if not key:
+            continue
+        s = stats.setdefault(key, {"vendor_name": name, "invoices": 0, "with_problems": 0, "corrected": 0,
+                                   "approved": 0, "codes": Counter()})  # fmt: skip
+        s["invoices"] += 1
+        codes = {i.get("code") for i in (r["validation"] or {}).get("issues") or []} & ASKABLE
+        if codes:
+            s["with_problems"] += 1
+            s["codes"].update(codes)
+        if r["status"] in (APPROVED, PENDING):
+            s["approved"] += 1
+            s["corrected"] += bool(r["edits"])
+    out = []
+    for key, s in stats.items():
+        if s["invoices"] < min_invoices or not (s["with_problems"] or s["corrected"]):
+            continue
+        s["vendor_key"] = key
+        s["problem_rate"] = s["with_problems"] / s["invoices"]
+        s["top_codes"] = [c for c, _ in s.pop("codes").most_common(3)]
+        out.append(s)
+    return sorted(out, key=lambda s: (-(s["with_problems"] + s["corrected"]), -s["problem_rate"], s["vendor_name"]))

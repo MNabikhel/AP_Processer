@@ -42,3 +42,26 @@ def test_operations(tmp_path):
 def test_operations_on_an_empty_database(tmp_path):
     ops = operations(Store(tmp_path / "a.db"))
     assert ops["waiting"] == 0 and ops["median_days_to_approve"] is None and ops["discounts_in_time"] == (0, 0.0)
+
+
+def test_vendors_that_make_work(tmp_path):
+    import json
+
+    from ap_coder.insights import vendor_workload
+    from ap_coder.store import Store
+
+    from .conftest import SAMPLE_STEM, SAMPLES
+
+    store = Store(tmp_path / "w.db")
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    bad = {"issues": [{"severity": "error", "code": "GST_HST_NUMBER_MISSING", "message": "x"},
+                      {"severity": "warning", "code": "VENDOR_BANK_CHANGED", "message": "internal"}]}  # fmt: skip
+    store.add_invoice(tmp_path / "a.pdf", gt, bad)
+    b = store.add_invoice(tmp_path / "b.pdf", {**gt, "invoice_number": "X-2"}, {"issues": []})
+    changed = {**gt, "invoice_number": "X-2", "line_items": [{**gt["line_items"][0], "predicted_gl_code": "6900"},
+                                                              *gt["line_items"][1:]]}  # fmt: skip
+    store.approve_invoice(b, changed, "Jane")
+    store.add_invoice(tmp_path / "c.pdf", {**gt, "vendor_name": "Solo Vendor"}, bad)  # one invoice: too few
+    (row,) = vendor_workload(store)
+    assert (row["invoices"], row["with_problems"], row["corrected"], row["approved"]) == (2, 1, 1, 1)
+    assert row["top_codes"] == ["GST_HST_NUMBER_MISSING"]  # internal checks never count as the vendor's

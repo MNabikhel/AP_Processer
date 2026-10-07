@@ -9,6 +9,8 @@ from typing import Any
 import streamlit as st
 
 from ap_coder import recurring, ui
+from ap_coder.help import help_for
+from ap_coder.insights import vendor_workload
 from ap_coder.safe import md
 from ap_coder.store import Store
 from ap_coder.vendors import ACTIVE, ON_HOLD, master_columns, master_rows
@@ -132,6 +134,7 @@ def page_vendors() -> None:
             st.caption("No vendors match.")
 
     _recurring_card(store)
+    _workload_card(store)
 
     names = {v["vendor_key"]: v["vendor_name"] for v in shown or vendors}
     chosen = st.selectbox(
@@ -188,6 +191,39 @@ def _master_importer(store: Store) -> None:
                 "on hold keeps the vendor on hold). Often the same supplier set up twice in the ERP: "
                 + "; ".join(" / ".join(n) for n in dupes[:8])
             )
+
+
+def _workload_card(store: Store) -> None:
+    rows = vendor_workload(store)
+    if not rows:
+        return
+    with card("workload"):
+        st.markdown("#### :material/construction: Vendors that make work")
+        st.caption(
+            "How often a vendor's invoice arrived with something only the vendor can fix, and how often AP "
+            "corrected the coding. Ask the worst ones for better invoices (*Ask the vendor* on an invoice drafts "
+            "the email); a fixed coding rule can settle what AP keeps correcting."
+        )
+        table = []
+        for v in rows[:10]:
+            problems = ", ".join(esc(help_for(c).title if help_for(c) else c) for c in v["top_codes"]) or "—"
+            table.append(
+                [
+                    f"<b>{esc(v['vendor_name'])}</b>",
+                    str(v["invoices"]),
+                    f"{v['with_problems']} <span class='apc-muted'>({v['problem_rate']:.0%})</span>",
+                    problems,
+                    f"{v['corrected']} of {v['approved']}" if v["approved"] else "—",
+                ]
+            )
+        st.html(
+            ui.table(
+                ["Vendor", "Invoices", "With a problem", "Usual problems", "Coding corrected"],
+                table,
+                right=[1, 2, 4],
+                wrap=[0, 3],
+            )  # fmt: skip
+        )
 
 
 def _recurring_card(store: Store) -> None:
