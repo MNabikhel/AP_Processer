@@ -1070,6 +1070,18 @@ class Store:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute("SELECT * FROM export_batches ORDER BY id DESC")]
 
+    def batch_totals(self) -> dict[int, dict[str, float]]:
+        """{batch: {currency: total}} of the invoices in each batch (an undone batch has none any more)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT export_batch, COALESCE(NULLIF(currency, ''), 'CAD') AS cur, SUM(grand_total) AS total "
+                "FROM invoices WHERE export_batch IS NOT NULL GROUP BY export_batch, cur"
+            ).fetchall()
+        out: dict[int, dict[str, float]] = {}
+        for r in rows:
+            out.setdefault(r["export_batch"], {})[r["cur"]] = round(r["total"] or 0, 2)
+        return out
+
     def batch_invoice_ids(self, batch: int) -> list[int]:
         with self._conn() as conn:
             return [
@@ -1116,7 +1128,8 @@ class Store:
         self, rows: list[dict[str, Any]], actor: str | None = None, only_new: bool = False
     ) -> dict[str, Any]:
         """Import the ERP's vendor list (``vendors.master_rows`` output). Each vendor is matched by name;
-        what the file gives (ERP ID, GST/HST #, terms, default GL, status) replaces what was there.
+        what the file gives (ERP ID, GST/HST #, terms, default GL, status) replaces what was there; what
+        it has no column for is kept.
         Rows whose names normalise to the same vendor are merged (on hold if any of them is) and reported
         in ``duplicates``: often the same supplier set up twice in the ERP. With ``only_new``, vendors
         already in the list are left alone (``inserted`` lists the new ones)."""
@@ -1134,7 +1147,7 @@ class Store:
                 if row.get("status") == "on_hold":
                     first["status"], first["status_given"] = "on_hold", True
                 for field in ("erp_id", "gst", "terms", "default_gl"):
-                    first[field] = first.get(field) or row.get(field) or ""
+                    first[field] = first.get(field) or row.get(field) or first.get(field)
             else:
                 merged[key] = dict(row)
         duplicates = [n for n in names.values() if len(n) > 1]
@@ -1147,13 +1160,17 @@ class Store:
                 conn.execute(
                     """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, erp_id,
                        terms, default_gl, in_master) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 1)
-                       ON CONFLICT(vendor_key) DO UPDATE SET erp_id = excluded.erp_id, terms = excluded.terms,
-                       default_gl = excluded.default_gl, in_master = 1, updated_at = excluded.updated_at,
+                       ON CONFLICT(vendor_key) DO UPDATE SET
+                       erp_id = CASE WHEN ? THEN excluded.erp_id ELSE vendors.erp_id END,
+                       terms = CASE WHEN ? THEN excluded.terms ELSE vendors.terms END,
+                       default_gl = CASE WHEN ? THEN excluded.default_gl ELSE vendors.default_gl END,
+                       in_master = 1, updated_at = excluded.updated_at,
                        expected_gst = CASE WHEN excluded.expected_gst != '' THEN excluded.expected_gst
                                       ELSE vendors.expected_gst END,
                        status = CASE WHEN ? THEN excluded.status ELSE vendors.status END""",
                     (key, row["vendor_name"], row.get("status") or "active", row.get("gst") or "", now,
                      row.get("erp_id") or "", row.get("terms") or "", _clean_code(row.get("default_gl")),
+                     *(row.get(f) is not None for f in ("erp_id", "terms", "default_gl")),
                      bool(row.get("status_given"))),
                 )  # fmt: skip
                 if key in existing:

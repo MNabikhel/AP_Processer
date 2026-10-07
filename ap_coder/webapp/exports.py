@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 import streamlit as st
 
@@ -9,6 +11,7 @@ from ap_coder import export_layout, exports, registers, ui
 from ap_coder.store import Store
 from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import (
+    by_currency,
     card,
     esc,
     get_store,
@@ -112,11 +115,22 @@ def _layout_editor(store: Store) -> None:
         )  # fmt: skip
         decimal_comma = c3.toggle("Decimal comma (12,50)", value=layout.decimal_comma, key="layout_comma")
         header_row = c4.toggle("Header row", value=layout.header_row, key="layout_header")
-        columns = [
-            export_layout.Column(str(r["header"]).strip(), r["field"], "" if pd.isna(r.get("text")) else str(r["text"]))
-            for r in edited.to_dict("records")
-            if isinstance(r.get("field"), str) and str(r.get("header") or "").strip()
-        ]
+
+        def cell(value: object) -> str:
+            return "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value).strip()
+
+        columns, incomplete = [], []
+        for n, r in enumerate(edited.to_dict("records"), 1):
+            header, field = cell(r.get("header")), cell(r.get("field"))
+            if header and field:
+                columns.append(export_layout.Column(header, field, cell(r.get("text"))))
+            elif header or field:
+                incomplete.append(f"row {n} ({header or labels.get(field, field)})")
+        if incomplete:
+            st.warning(
+                f"Not in the layout until it has both a Header and a Value: {', '.join(incomplete)}.",
+                icon=":material/warning:",
+            )
         new = export_layout.Layout(columns, date_format, delimiter, decimal_comma, header_row)
         if decimal_comma and delimiter == ",":
             st.warning("With a decimal comma, use a semicolon or tab as the separator.")
@@ -156,7 +170,7 @@ def page_exports() -> None:
                     len(ready),
                     "outbox",
                     "blue",
-                    f"{money(sum(i['grand_total'] or 0 for i in ready))} total",
+                    by_currency(ready) + " total" if ready else "nothing waiting",
                 ),  # fmt: skip
                 ui.tile(
                     "Batches",
@@ -243,13 +257,21 @@ def page_exports() -> None:
         if not batches:
             st.caption("No exports yet.")
             return
+        totals = store.batch_totals()
+
+        def batch_total(b: dict[str, Any]) -> str:
+            amounts = totals.get(b["id"])
+            if not amounts:  # undone: its invoices are back in the ready list
+                return money(b["total"])
+            return " · ".join(f"{money(t)} <span class='apc-muted'>{esc(c)}</span>" for c, t in sorted(amounts.items()))
+
         rows = [
             [
                 f"<b>{b['id']}</b>",
                 esc(b["created_at"].replace("T", " ")[:16]),
                 esc(b["actor"] or ""),
                 str(b["invoices"]),
-                money(b["total"]),
+                batch_total(b),
                 esc(exports.FORMATS.get(b["format"], b["format"]).split(":")[0]),
                 ui.pill("Undone", "gray", "undo") if b["undone_at"] else ui.pill("Exported", "ok", "check"),
             ]  # fmt: skip

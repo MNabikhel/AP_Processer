@@ -203,13 +203,15 @@ def review_tab() -> None:
                     "settings_changed", actor=reviewer(), detail={"keys": ["reviewer"], "reviewer": rename}
                 )
                 paths.write_user_settings(reviewer=name)
-            changed = save_settings(
-                {
-                    "AP_REVIEW_THRESHOLD": f"{threshold:.2f}",
-                    "AP_VISION": "true" if vision else "false",
-                    "AP_CONSTRAIN_CODES": "true" if constrain else "false",
-                }
-            )
+            # Only what differs from the values in effect: a default is not written to the .env as a "change".
+            updates = {}
+            if round(threshold, 2) != round(float(settings.engine.review_threshold), 2):
+                updates["AP_REVIEW_THRESHOLD"] = f"{threshold:.2f}"
+            if vision != settings.engine.vision:
+                updates["AP_VISION"] = "true" if vision else "false"
+            if constrain != settings.engine.constrain_codes:
+                updates["AP_CONSTRAIN_CODES"] = "true" if constrain else "false"
+            changed = save_settings(updates)
             if renamed:
                 st.session_state.pop("reviewer", None)
                 changed.append("reviewer")

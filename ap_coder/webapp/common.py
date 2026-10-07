@@ -110,6 +110,15 @@ def open_folder(path: Path) -> bool:
         return False
 
 
+def by_currency(invoices: list[dict[str, Any]]) -> str:
+    """ "27,864.06 CAD · 7,570.01 USD": totals per currency, never added together."""
+    totals: dict[str, float] = {}
+    for i in invoices:
+        cur = i.get("currency") or "CAD"
+        totals[cur] = totals.get(cur, 0.0) + float(i.get("grand_total") or 0)
+    return " · ".join(f"{money(t)} {c}" for c, t in sorted(totals.items(), key=lambda x: (x[0] != "CAD", x[0])))
+
+
 def reference_or_none(store: Store) -> ReferenceData | None:
     try:
         return store.reference_data()

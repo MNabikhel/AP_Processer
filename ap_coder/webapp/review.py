@@ -208,8 +208,9 @@ def page_review() -> None:
                 st.caption("No invoices match.")
             limit = st.session_state.get("queue_limit", QUEUE_PAGE)
             page_ids = [i["id"] for i in shown[:limit]]
-            ai_outputs = {
-                r["id"]: r["ai_output"] or {} for r in store.invoice_columns(("id", "ai_output"), ids=page_ids)
+            ai_outputs = {  # a sent-back invoice shows the first approver's corrections, as its review screen does
+                r["id"]: r["final_output"] or r["ai_output"] or {}
+                for r in store.invoice_columns(("id", "ai_output", "final_output"), ids=page_ids)
             }
             default_days = store.default_terms_days()
             for inv in shown[:limit]:
@@ -1085,7 +1086,7 @@ def _split_popover(
             descriptions.setdefault(int(n), str(rec.get("description") or ""))
     if not descriptions:
         return
-    with st.popover("Split a line…", icon=":material/call_split:"):
+    with st.popover("Split a line…", icon=":material/call_split:", key=f"{key}_split_menu"):
         number = st.selectbox(
             "Line", list(descriptions), format_func=lambda n: f"{n} · {descriptions[n][:50]}", key=f"{key}_split_line"
         )
@@ -1138,7 +1139,8 @@ def _fmt_qty(value: float | None) -> str:
 
 def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], position: int, key: str) -> None:
     """Reject / delete, kept in a menu so the main action stays obvious."""
-    with parent.popover("More", icon=":material/more_horiz:"):
+    # Keyed per invoice, so the next invoice opens with the menu closed.
+    with parent.popover("More", icon=":material/more_horiz:", key=f"{key}_more"):
         st.markdown("**Park it** (waiting for information)")
         why = st.text_input("Waiting for", key=f"{key}_park_reason", placeholder="e.g. buyer to confirm the price")
         follow = st.date_input("Follow up on", value=None, key=f"{key}_park_date", min_value=dt.date.today())

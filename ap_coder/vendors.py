@@ -199,10 +199,11 @@ def vendor_findings(
 MASTER_ALIASES: dict[str, tuple[str, ...]] = {
     "vendor_name": ("vendorname", "vendor", "name", "supplier", "suppliername", "fournisseur", "legalname"),
     "erp_id": ("vendorid", "vendornumber", "vendorno", "vendorcode", "supplierid", "suppliernumber", "id",
-               "number", "code", "accountnumber"),
+               "number", "no", "code", "accountnumber", "suppliercode", "numero"),  # "No." in Business Central
     "gst": ("gsthstnumber", "gstnumber", "hstnumber", "gsthst", "gst", "businessnumber", "bn", "taxnumber",
-            "tps", "numerotps"),
-    "terms": ("paymentterms", "terms", "termes", "conditions"),
+            "tps", "numerotps", "vatregistrationno", "taxregistrationno", "gstregistrationno",
+            "gsthstregistrationno"),
+    "terms": ("paymentterms", "terms", "termes", "conditions", "paymenttermscode", "termscode"),
     "status": ("status", "active", "blocked", "hold", "statut"),
     "default_gl": ("defaultgl", "glaccount", "gl", "glcode", "expenseaccount", "account", "defaultaccount"),
 }  # fmt: skip
@@ -246,8 +247,9 @@ def master_rows(records: list[dict[str, Any]], columns: dict[str, str]) -> list[
             on_hold = status in ("yes", "y", "true", "1", "x", "all", "payment", "payments", "blocked", "oui")
         else:  # a status column with words or codes
             on_hold = status in _HOLD_WORDS
-        rows.append({
-            "vendor_name": name, "erp_id": get("erp_id"), "gst": get("gst"), "terms": get("terms"),
-            "default_gl": get("default_gl"), "status": ON_HOLD if on_hold else ACTIVE, "status_given": bool(status),
-        })  # fmt: skip
+        row = {"vendor_name": name, "gst": get("gst"), "status": ON_HOLD if on_hold else ACTIVE,
+               "status_given": bool(status)}  # fmt: skip
+        for field in ("erp_id", "terms", "default_gl"):  # None: not in this file, so the vendor keeps its value
+            row[field] = get(field) if field in columns else None
+        rows.append(row)
     return rows

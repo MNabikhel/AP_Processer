@@ -144,6 +144,7 @@ def test_settings_page_saves_to_the_env_file(db, monkeypatch):
 
     assert read_user_settings()["reviewer"] == "Jane Doe"  # per Windows user, not in the shared .env
     assert "AP_REVIEWER" not in read_env(env)
+    assert "AP_REVIEW_THRESHOLD" not in read_env(env)  # only the name changed: the defaults are not written
 
 
 def test_vendor_detail_and_hold(busy_db):

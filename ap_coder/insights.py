@@ -73,7 +73,11 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     metas = {r["id"]: r["meta"] or {} for r in light}
     processed = [r for r in rows.values() if r["status"] != FAILED]
     failed = [r for r in rows.values() if r["status"] == FAILED]
-    approvals = store.events(actions=["approved"], limit=100_000)
+    # The latest approval of each invoice that is still approved: one sent back and approved again counts once.
+    latest: dict[int, dict[str, Any]] = {}
+    for e in sorted(store.events(actions=["approved"], limit=100_000), key=lambda e: (e["created_at"], e["id"])):
+        latest[e["invoice_id"]] = e
+    approvals = [e for i, e in latest.items() if i in rows and rows[i]["status"] in (APPROVED, PENDING)]
     clean = [e for e in approvals if not (e["detail"] or {}).get("changes")]
     changed = [e for e in approvals if (e["detail"] or {}).get("changes")]
 

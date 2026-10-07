@@ -107,3 +107,16 @@ def test_upgrade_adds_the_vendor_master_columns(tmp_path):
     with sqlite3.connect(path) as conn:
         conn.execute("UPDATE settings SET value = '7' WHERE key = 'schema_version'")
     assert Store(path).get_vendor("acme")["in_master"] == 0
+
+
+def test_a_partial_file_keeps_what_it_has_no_column_for(tmp_path):
+    store = Store(tmp_path / "v.db")
+    full = [{"Vendor": "Pacific Office Supply Ltd.", "No.": "V10057", "Terms": "Net 30", "GL": "6000"}]
+    store.import_vendor_master(master_rows(full, master_columns(list(full[0]))))
+    partial = [{"Vendor": "Pacific Office Supply Ltd.", "Blocked": "No", "Terms": "Net 45"}]
+    store.import_vendor_master(master_rows(partial, master_columns(list(partial[0]))))
+    v = store.get_vendor("pacific office supply")
+    assert (v["erp_id"], v["default_gl"], v["terms"]) == ("V10057", "6000", "Net 45")
+    cleared = [{"Vendor": "Pacific Office Supply Ltd.", "No.": "", "Terms": "Net 45"}]
+    store.import_vendor_master(master_rows(cleared, master_columns(list(cleared[0]))))
+    assert store.get_vendor("pacific office supply")["erp_id"] == ""  # the column is there, and empty

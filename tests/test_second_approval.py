@@ -96,3 +96,14 @@ def test_second_approval_tab(tmp_path, monkeypatch):
     at.button(key=f"second_ok_{invoice_id}").click().run()
     assert not at.exception
     assert store.get_invoice(invoice_id)["status"] == APPROVED
+
+
+def test_insights_count_a_sent_back_invoice_once(store, tmp_path):
+    from ap_coder.insights import compute
+
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
+    store.approve_invoice(invoice_id, _gt(), "Jane")
+    store.send_back(invoice_id, "Sam", "check the price")
+    assert compute(store)["approved"] == 0  # back in review: not approved any more
+    store.approve_invoice(invoice_id, _gt(), "Jane")
+    assert compute(store)["approved"] == 1
