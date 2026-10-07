@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import ui
-from ap_coder.insights import Assumptions, compute, report_html
+from ap_coder.insights import Assumptions, compute, operations, report_html
 from ap_coder.webapp.common import card, esc, get_store, notify, reviewer, show_toast
 
 OK_GREEN, WARN_AMBER = "#1baf7a", "#eda100"
@@ -30,6 +30,69 @@ LABELS = {
 
 def _pct(v: float | None) -> str:
     return "—" if v is None else f"{v:.0%}"
+
+
+def _age_color(label: str) -> str:
+    return WARN_AMBER if label.startswith(("8", "15")) else OK_GREEN
+
+
+def _operations_card(store) -> None:
+    ops = operations(store)
+    with card("operations"):
+        st.markdown("#### :material/speed: AP operations")
+        median = ops["median_days_to_approve"]
+        taken, taken_amount = ops["discounts_in_time"]
+        missed, missed_amount = ops["discounts_missed"]
+        st.html(
+            ui.tiles(
+                [
+                    ui.tile(
+                        "Waiting",
+                        ops["waiting"],
+                        "hourglass_top",
+                        "blue",
+                        f"oldest {ops['oldest_days']} day(s)" if ops["waiting"] else "queue is clear",
+                    ),
+                    ui.tile(
+                        "Days to approve",
+                        "—" if median is None else f"{median:g}",
+                        "timer",
+                        "violet",
+                        "median, from received to approved",
+                    ),
+                    ui.tile(
+                        "Approved after due",
+                        ops["approved_after_due"],
+                        "event_busy",
+                        "amber" if ops["approved_after_due"] else "green",
+                        f"of {ops['approved']} approved",
+                    ),
+                    ui.tile(
+                        "Discounts in time",
+                        f"{taken} / {taken + missed}",
+                        "sell",
+                        "green" if not missed else "amber",
+                        f"${taken_amount:,.0f} taken · ${missed_amount:,.0f} missed"
+                        if taken + missed
+                        else "no discount terms yet",
+                    ),
+                ]
+            )  # fmt: skip
+        )
+        if ops["waiting"]:
+            biggest = max(ops["ageing"].values()) or 1
+            st.html(
+                "<div style='display:flex;gap:1rem;flex-wrap:wrap'>"
+                + "".join(
+                    f"<div style='flex:1;min-width:120px'><div class='apc-muted' style='font-size:.8rem'>{esc(label)}"
+                    f"</div><div style='height:8px;background:#eef1f6;border-radius:4px;margin:.25rem 0'><div "
+                    f"style='height:8px;width:{n / biggest:.0%};background:{_age_color(label)};"
+                    f"border-radius:4px'></div></div><b>{n}</b></div>"
+                    for label, n in ops["ageing"].items()
+                )
+                + "</div>"
+            )
+            st.caption("Waiting invoices by days since they were received (queue and parked).")
 
 
 def page_insights() -> None:
@@ -88,6 +151,8 @@ def page_insights() -> None:
             ]
         )
     )
+
+    _operations_card(store)
 
     p = s["projection"]
     left, right = st.columns([3, 2], gap="medium")

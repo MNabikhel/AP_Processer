@@ -10,11 +10,14 @@ from __future__ import annotations
 import datetime as dt
 import html
 import json
+import statistics
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
-from .store import APPROVED, FAILED, Store
+from .memory import vendor_key
+from .store import APPROVED, FAILED, PARKED, PENDING, REVIEW, Store
+from .terms import payment
 
 
 @dataclass
@@ -134,6 +137,60 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
         "weekly": [{"week": w, **v} for w, v in sorted(weekly.items())],
         "projection": projection,
         "approved_status": APPROVED,
+    }
+
+
+AGE_BUCKETS = (("0–2 days", 0, 2), ("3–7 days", 3, 7), ("8–14 days", 8, 14), ("15+ days", 15, 10**6))
+
+
+def _day(iso: str | None) -> dt.date | None:
+    try:
+        return dt.date.fromisoformat((iso or "")[:10])
+    except ValueError:
+        return None
+
+
+def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
+    """AP operations: how old the queue is, how long approval takes, approvals after the due date, and
+    early-payment discounts approved in time to take them (or not)."""
+    today = today or dt.date.today()
+    rows = store.list_invoices()
+    waiting = [r for r in rows if r["status"] in (REVIEW, PARKED)]
+    ageing = {label: 0 for label, _, _ in AGE_BUCKETS}
+    for r in waiting:
+        received = _day(r["created_at"])
+        age = (today - received).days if received else 0
+        for label, low, high in AGE_BUCKETS:
+            if low <= age <= high:
+                ageing[label] += 1
+    approved = [r for r in rows if r["status"] in (APPROVED, PENDING) and r["reviewed_at"]]
+    cycle = [
+        (_day(r["reviewed_at"]) - _day(r["created_at"])).days
+        for r in approved
+        if _day(r["reviewed_at"]) and _day(r["created_at"])
+    ]
+    late = sum(1 for r in approved if r["due_date"] and (r["reviewed_at"] or "")[:10] > r["due_date"])
+    finals = {r["id"]: r["final_output"] or {} for r in store.invoice_columns(("id", "final_output"), APPROVED)}
+    taken = missed = 0
+    taken_amount = missed_amount = 0.0
+    for r in approved:
+        final = finals.get(r["id"]) or {}
+        p = payment(final, store.default_terms_days(), store.vendor_terms(vendor_key(final.get("vendor_name") or "")))
+        if p.discount_by is None:
+            continue
+        if (r["reviewed_at"] or "")[:10] <= p.discount_by.isoformat():
+            taken, taken_amount = taken + 1, taken_amount + p.discount_amount
+        else:
+            missed, missed_amount = missed + 1, missed_amount + p.discount_amount
+    return {
+        "waiting": len(waiting),
+        "ageing": ageing,
+        "oldest_days": max(((today - _day(r["created_at"])).days for r in waiting if _day(r["created_at"])), default=0),
+        "median_days_to_approve": statistics.median(cycle) if cycle else None,
+        "approved": len(approved),
+        "approved_after_due": late,
+        "discounts_in_time": (taken, round(taken_amount, 2)),
+        "discounts_missed": (missed, round(missed_amount, 2)),
     }
 
 
