@@ -20,7 +20,7 @@ from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs, split_line
 from ap_coder.safe import md
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
-from ap_coder.store import APPROVED, FAILED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
 from ap_coder.suggest import suggest_gl
 from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
@@ -136,18 +136,26 @@ def page_review() -> None:
         st.balloons()
 
     awaiting = [i for i in invoices if i["status"] == PENDING]
+    parked = [i for i in invoices if i["status"] == PARKED]
     labels = [f":material/inbox: To review · {len(pending)}"]
     if awaiting or store.approval_limit():
         labels.append(f":material/how_to_reg: Second approval · {len(awaiting)}")
+    if parked:
+        labels.append(f":material/pause_circle: Parked · {len(parked)}")
+    others_count = sum(1 for i in invoices if i["status"] in (FAILED, REJECTED))
     labels += [
         f":material/task_alt: Approved · {len(approved)}",
-        f":material/report: Failed / rejected · {len(invoices) - len(pending) - len(approved) - len(awaiting)}",
+        f":material/report: Failed / rejected · {others_count}",
     ]
     tabs = st.tabs(labels)
     tab_review, tab_approved, tab_other = tabs[0], tabs[-2], tabs[-1]
-    if len(tabs) == 4:
-        with tabs[1]:
+    extra = list(tabs[1:-2])
+    if awaiting or store.approval_limit():
+        with extra.pop(0):
             _second_approval_tab(store, reference, awaiting)
+    if parked:
+        with extra.pop(0):
+            _parked_tab(store)
     with tab_review:
         if not pending:
             with card("empty"):
@@ -279,6 +287,44 @@ def page_review() -> None:
                     delete_invoice(store, inv["id"])
                     notify("Deleted. The file moved to invoices/deleted.", ":material/delete:")
                     st.rerun()
+
+
+def _parked_tab(store: Store) -> None:
+    st.caption("Invoices waiting for information. They stay out of the queue until you bring them back.")
+    today = dt.date.today().isoformat()
+    for inv in store.parked():
+        with card(f"parked_{inv['id']}"):
+            left, right = st.columns([4, 1.4], vertical_alignment="center")
+            late = inv["follow_up"] and inv["follow_up"] <= today
+            follow = (
+                ui.pill(f"Follow up {inv['follow_up']}", "err" if late else "info", "event") if inv["follow_up"] else ""
+            )
+            left.html(
+                f"<div style='display:flex;gap:.7rem;align-items:center'>{ui.avatar(inv['vendor_name'] or '')}"
+                f"<div><b>{esc(inv['vendor_name'])}</b> · {esc(inv['invoice_number'])} · {money(inv['grand_total'])} "
+                f"{esc(inv['currency'])} {follow}<div class='apc-muted'>Waiting for: {esc(inv['parked_reason'])}"
+                "</div></div></div>"
+            )
+            if right.button("Back to the queue", key=f"unpark_{inv['id']}", icon=":material/play_circle:",
+                            width="stretch"):  # fmt: skip
+                store.unpark_invoice(inv["id"], reviewer())
+                notify(f"Invoice #{inv['id']} is back in the review queue.", ":material/play_circle:")
+                st.rerun()
+
+
+def _notes_card(store: Store, invoice_id: int, key: str) -> None:
+    notes = [e for e in store.events(invoice_id) if e["action"] in ("note", "parked", "sent_back")]
+    with card("notes"):
+        st.markdown("#### :material/sticky_note_2: Notes")
+        if notes:
+            st.html(history_html(notes))
+        with st.form(f"{key}_note_form", clear_on_submit=True, border=False):
+            text = st.text_input(
+                "Add a note for the team", key=f"{key}_note", placeholder="e.g. asked Sam about the PO"
+            )
+            if st.form_submit_button("Add note", icon=":material/add_comment:"):
+                store.add_note(invoice_id, reviewer(), text)
+                st.rerun()
 
 
 def _second_approval_tab(store: Store, reference: ReferenceData, awaiting: list[dict[str, Any]]) -> None:
@@ -577,8 +623,10 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     summary = st.container()  # the summary card is drawn here once the edits are valid
 
     left, right = st.columns([5, 7], gap="medium")
-    with left, card("document"):
-        _document_panel(inv, store)
+    with left:
+        with card("document"):
+            _document_panel(inv, store)
+        _notes_card(store, invoice_id, key)
 
     with right:
         checks_box = card("checks")
@@ -1012,6 +1060,16 @@ def _fmt_qty(value: float | None) -> str:
 def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], position: int, key: str) -> None:
     """Reject / delete, kept in a menu so the main action stays obvious."""
     with parent.popover("More", icon=":material/more_horiz:"):
+        st.markdown("**Park it** (waiting for information)")
+        why = st.text_input("Waiting for", key=f"{key}_park_reason", placeholder="e.g. buyer to confirm the price")
+        follow = st.date_input("Follow up on", value=None, key=f"{key}_park_date", min_value=dt.date.today())
+        if st.button("Park", key=f"{key}_park", icon=":material/pause_circle:", width="stretch",
+                     disabled=not why.strip()):  # fmt: skip
+            store.park_invoice(invoice_id, reviewer(), why, follow.isoformat() if follow else None)
+            _advance(ids, position)
+            notify(f"Invoice #{invoice_id} parked. It is in the Parked tab.", ":material/pause_circle:")
+            st.rerun()
+        st.divider()
         st.markdown("**Reject this invoice**")
         reason = st.text_input("Reason", key=f"{key}_reason", placeholder="e.g. not our invoice")
         if st.button("Reject", key=f"{key}_reject", icon=":material/block:", width="stretch"):

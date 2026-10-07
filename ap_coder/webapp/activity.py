@@ -13,7 +13,8 @@ from ap_coder.safe import csv_cell
 from ap_coder.webapp.common import card, get_store, history_html, show_toast
 
 GROUPS = {
-    "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "rejected", "deleted", "exported"],
+    "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "parked", "unparked", "note",
+                 "rejected", "deleted", "exported"],
     "Setup": ["accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",
               "settings_changed", "vendor_updated", "vendors_imported", "pos_imported", "po_status", "pos_deleted",
               "export_undone"],

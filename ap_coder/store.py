@@ -34,12 +34,14 @@ from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSet
 from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
 PENDING = "pending_approval"  # approved once, over the approval limit: waiting for a second approver
-ACTIVE_STATUSES = (REVIEW, PENDING, APPROVED)  # invoices that count (for POs, recurring vendors...)
+PARKED = "parked"  # out of the queue while waiting for information (a buyer, a credit note...)
+ACTIVE_STATUSES = (REVIEW, PARKED, PENDING, APPROVED)  # invoices that count (for POs, recurring vendors...)
+_ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
@@ -183,6 +185,11 @@ class Store:
             ):
                 if column not in columns:
                     conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} {kind}")
+        if version < 9:  # parked invoices: why, and when to follow up
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            for column in ("parked_reason", "follow_up"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE invoices ADD COLUMN {column} TEXT")
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -520,6 +527,42 @@ class Store:
             inv[key] = json.loads(inv[key]) if inv[key] else None
         return inv
 
+    def park_invoice(self, invoice_id: int, actor: str, reason: str, follow_up: str | None = None) -> None:
+        """Take an invoice out of the queue while waiting for information; ``follow_up``: YYYY-MM-DD."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE invoices SET status = ?, parked_reason = ?, follow_up = ? WHERE id = ? AND status = ?",
+                (PARKED, reason.strip(), follow_up or None, invoice_id, REVIEW),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} is not in the review queue")
+            self._log(conn, "parked", invoice_id, actor, {"reason": reason.strip(), "follow_up": follow_up or ""})
+
+    def unpark_invoice(self, invoice_id: int, actor: str) -> None:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE invoices SET status = ?, parked_reason = NULL, follow_up = NULL WHERE id = ? AND status = ?",
+                (REVIEW, invoice_id, PARKED),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} is not parked")
+            self._log(conn, "unparked", invoice_id, actor)
+
+    def parked(self) -> list[dict[str, Any]]:
+        """Parked invoices, the ones to follow up first."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, parked_reason, "
+                "follow_up FROM invoices WHERE status = ? ORDER BY follow_up IS NULL, follow_up, id",
+                (PARKED,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_note(self, invoice_id: int, actor: str, text: str) -> None:
+        """A note on an invoice for the team (kept in its history)."""
+        if text.strip():
+            self.log_event("note", invoice_id=invoice_id, actor=actor, detail={"text": text.strip()[:2000]})
+
     def reject_invoice(self, invoice_id: int, reviewer: str, reason: str = "") -> None:
         with self._conn() as conn:
             conn.execute(
@@ -819,7 +862,7 @@ class Store:
             billed: dict[str, dict[str, Any]] = {}
             for r in conn.execute(
                 "SELECT id, po_key, status, ai_output, final_output FROM invoices "
-                "WHERE po_key != '' AND status IN (?, ?, ?)",
+                "WHERE po_key != '' AND status IN " + _ACTIVE_IN,
                 ACTIVE_STATUSES,
             ):
                 coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
@@ -849,7 +892,7 @@ class Store:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT id, status, invoice_number, invoice_date, ai_output, final_output FROM invoices "
-                "WHERE po_key = ? AND status IN (?, ?, ?) ORDER BY id",
+                "WHERE po_key = ? AND status IN " + _ACTIVE_IN + " ORDER BY id",
                 (key, *ACTIVE_STATUSES),
             ).fetchall()
         return [
@@ -871,7 +914,7 @@ class Store:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT id, status, invoice_number, invoice_date, ai_output, final_output FROM invoices "
-                "WHERE vendor_key = ? AND po_key = '' AND status IN (?, ?, ?) ORDER BY id",
+                "WHERE vendor_key = ? AND po_key = '' AND status IN " + _ACTIVE_IN + " ORDER BY id",
                 (key, *ACTIVE_STATUSES),
             ).fetchall()
         return [
@@ -1071,7 +1114,7 @@ class Store:
                 dict(r)
                 for r in conn.execute(
                     "SELECT vendor_key, vendor_name, invoice_date, grand_total, currency FROM invoices "
-                    "WHERE vendor_key != '' AND status IN (?, ?, ?)",
+                    "WHERE vendor_key != '' AND status IN " + _ACTIVE_IN,
                     ACTIVE_STATUSES,
                 )
             ]

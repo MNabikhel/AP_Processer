@@ -22,7 +22,7 @@ from typing import Any
 from . import recurring
 from .po import CLOSED, billed_by_line, po_label
 from .safe import csv_row
-from .store import APPROVED, PENDING, REVIEW, Store
+from .store import APPROVED, PARKED, PENDING, REVIEW, Store
 
 RECEIVED, NOT_IN_ERP, RECURRING = "Received, not invoiced", "Invoice not in the ERP yet", "Expected recurring invoice"
 SOURCES = (RECEIVED, NOT_IN_ERP, RECURRING)
@@ -86,7 +86,7 @@ def _not_in_erp(store: Store, period_end: dt.date) -> list[Accrual]:
     exported = {r["id"] for r in store.list_invoices(APPROVED)} - {r["id"] for r in store.unexported_approved()}
     out = []
     for r in rows:
-        if r["status"] not in (REVIEW, PENDING, APPROVED) or r["id"] in exported:
+        if r["status"] not in (REVIEW, PARKED, PENDING, APPROVED) or r["id"] in exported:
             continue
         doc = r["final_output"] or r["ai_output"] or {}
         if not doc or str(doc.get("invoice_date") or "") > end:
@@ -95,7 +95,8 @@ def _not_in_erp(store: Store, period_end: dt.date) -> list[Accrual]:
         for e in doc.get("gl_distribution") or []:
             if e.get("kind") == "expense":
                 by_gl[(e.get("gl_code") or "", e.get("cost_center") or "")] += float(e.get("amount") or 0)
-        state = {REVIEW: "in review", PENDING: "waiting for a second approval", APPROVED: "approved, not exported"}
+        state = {REVIEW: "in review", PARKED: "parked", PENDING: "waiting for a second approval",
+                 APPROVED: "approved, not exported"}  # fmt: skip
         for (gl, cc), amount in by_gl.items():
             out.append(
                 Accrual(

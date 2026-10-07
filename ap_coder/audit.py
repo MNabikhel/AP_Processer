@@ -43,6 +43,9 @@ ACTIONS = {
     "backup_restored": ("settings_backup_restore", "warn", "Backup restored"),
     "vendor_updated": ("storefront", "info", "Vendor updated"),
     "export_undone": ("undo", "warn", "Export undone"),
+    "parked": ("pause_circle", "warn", "Parked"),
+    "unparked": ("play_circle", "info", "Back in the queue"),
+    "note": ("sticky_note_2", "violet", "Note"),
     "final_approved": ("how_to_reg", "ok", "Second approval"),
     "sent_back": ("undo", "warn", "Sent back"),
     "vendors_imported": ("storefront", "info", "Vendor master imported"),
@@ -162,6 +165,13 @@ def describe(event: dict[str, Any]) -> str:
         if "notes" in d:
             parts.append("notes changed")
         return f"{d.get('vendor', '')}: {', '.join(parts)}"
+    if action == "parked":
+        follow = f" · follow up {d['follow_up']}" if d.get("follow_up") else ""
+        return f"waiting for: {d.get('reason') or 'no reason given'}{follow}"
+    if action == "unparked":
+        return "returned to the review queue"
+    if action == "note":
+        return str(d.get("text") or "")
     if action == "final_approved":
         return f"approved after {d.get('first_approver') or '?'} (over the approval limit)"
     if action == "sent_back":
