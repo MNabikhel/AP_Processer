@@ -12,6 +12,7 @@ import streamlit as st
 from ap_coder import ui
 from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.extraction import ExtractionResult
+from ap_coder.help import help_for
 from ap_coder.memory import ACCEPTED, pair_lines
 from ap_coder.pipeline import finalise_coding
 from ap_coder.po import match_invoice, po_label
@@ -379,12 +380,14 @@ def _checks_html(report: Any) -> str:
     items = []
     for issue in report.issues:
         where = f"Line {issue.line_number}: " if issue.line_number else ""
+        about = help_for(issue.code)
+        hint = about.action if about and issue.severity != "info" else ""
         if issue.severity == "error":
-            items.append(ui.check("error", "Must fix", where + issue.message, issue.code))
+            items.append(ui.check("error", "Must fix", where + issue.message, issue.code, hint))
         elif issue.severity == "info":
             items.append(ui.check("info", "Good to know", where + issue.message, issue.code))
         else:
-            items.append(ui.check("warning", "Worth a look", where + issue.message, issue.code))
+            items.append(ui.check("warning", "Worth a look", where + issue.message, issue.code, hint))
     errors = [i for i in report.issues if i.severity == "error"]
     if report.requires_review and not errors:
         items.append(

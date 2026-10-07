@@ -26,6 +26,7 @@ PAGES = [
     ("exports", "page_exports"),
     ("insights", "page_insights"),
     ("purchase_orders", "page_purchase_orders"),
+    ("help", "page_help"),
 ]
 TIMEOUT = 90
 

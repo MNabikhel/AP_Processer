@@ -26,6 +26,7 @@ from ap_coder.webapp.accounts import page_accounts
 from ap_coder.webapp.activity import page_activity
 from ap_coder.webapp.common import ASSETS, DB_PATH, PAGES, approved_today, get_store, reviewer, short_path
 from ap_coder.webapp.exports import page_exports
+from ap_coder.webapp.help import page_help
 from ap_coder.webapp.insights import page_insights
 from ap_coder.webapp.learning import page_learning
 from ap_coder.webapp.process import page_process
@@ -49,6 +50,7 @@ PAGES.update(
         "vendors": st.Page(page_vendors, title="Vendors", icon=":material/storefront:"),
         "activity": st.Page(page_activity, title="Activity", icon=":material/history:"),
         "settings": st.Page(page_settings, title="Settings", icon=":material/settings:"),
+        "help": st.Page(page_help, title="Help", icon=":material/help:"),
     }
 )
 
@@ -63,6 +65,6 @@ with st.sidebar:
 NAV_SECTIONS = {
     "Work": ["review", "process", "exports"],
     "Insight": ["insights", "learning", "vendors", "activity"],
-    "Setup": ["accounts", "purchase_orders", "settings"],
+    "Setup": ["accounts", "purchase_orders", "settings", "help"],
 }
 st.navigation({section: [PAGES[k] for k in keys] for section, keys in NAV_SECTIONS.items()}).run()

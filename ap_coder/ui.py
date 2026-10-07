@@ -233,12 +233,14 @@ def reason_row(number: int, description: str, gl_code: str, gl_label: str, reaso
 _CHECK_ICONS = {"error": "!", "warning": "!", "ok": "✓", "info": "★"}
 
 
-def check(kind: str, title: str, message: str, code: str = "") -> str:
+def check(kind: str, title: str, message: str, code: str = "", hint: str = "") -> str:
+    """``hint``: what to do about it (plain text), shown under the message."""
     code_html = f"<span class='code'>{esc(code)}</span>" if code else ""
     mark = _CHECK_ICONS.get(kind, "•")
+    hint_html = f"<div class='todo'>{esc(hint)}</div>" if hint else ""
     return (
         f"<div class='apc-check {kind} apc-anim'><span class='ico' aria-hidden='true'>{mark}</span>"
-        f"<div><div class='ttl'>{esc(title)}{code_html}</div><div>{esc(message)}</div></div></div>"
+        f"<div><div class='ttl'>{esc(title)}{code_html}</div><div>{esc(message)}</div>{hint_html}</div></div>"
     )
 
 

@@ -201,6 +201,8 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
   font-size: .8rem; font-weight: 800; color: #fff;}
 .apc-check .ttl {font-weight: 650; font-size: .78rem; letter-spacing: .03em; text-transform: uppercase;}
 .apc-check .code {font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .72rem; color: var(--apc-faint); margin-left: .35rem;}
+.apc-check .todo {margin-top: .25rem; font-size: .82rem; color: var(--apc-muted, #5b6474);}
+.apc-check .todo::before {content: "→ "; color: var(--apc-faint);}
 .apc-check.error {background: #fdf3f3; border-color: #f4cfcf;} .apc-check.error .ico {background: var(--apc-err);}
 .apc-check.error .ttl {color: var(--apc-err);}
 .apc-check.warning {background: #fffaf0; border-color: #f2e0b3;} .apc-check.warning .ico {background: var(--apc-warn-dot); color: #2b1d00;}
