@@ -25,6 +25,7 @@ from ap_coder.store import REVIEW
 from ap_coder.webapp.accounts import page_accounts
 from ap_coder.webapp.activity import page_activity
 from ap_coder.webapp.common import ASSETS, DB_PATH, PAGES, approved_today, get_store, reviewer, short_path
+from ap_coder.webapp.exports import page_exports
 from ap_coder.webapp.learning import page_learning
 from ap_coder.webapp.process import page_process
 from ap_coder.webapp.review import page_review
@@ -38,6 +39,7 @@ PAGES.update(
     {
         "review": st.Page(page_review, title="Review queue", icon=":material/inbox:", default=True),
         "process": st.Page(page_process, title="Process invoices", icon=":material/upload_file:"),
+        "exports": st.Page(page_exports, title="Exports", icon=":material/ios_share:"),
         "accounts": st.Page(page_accounts, title="GL accounts & tax", icon=":material/account_tree:"),
         "learning": st.Page(page_learning, title="Learning & accuracy", icon=":material/insights:"),
         "vendors": st.Page(page_vendors, title="Vendors", icon=":material/storefront:"),
@@ -55,7 +57,7 @@ with st.sidebar:
     st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
 
 NAV_SECTIONS = {
-    "Work": ["review", "process"],
+    "Work": ["review", "process", "exports"],
     "Insight": ["learning", "vendors", "activity"],
     "Setup": ["accounts", "settings"],
 }

@@ -38,3 +38,13 @@ def test_auto_backup_once_a_day_keeps_the_newest(tmp_path):
     manual = store.backup_now("manual")
     store.auto_backup(keep=14, min_hours=0)
     assert manual.exists()  # labelled backups are never pruned
+
+
+def test_a_deleted_database_is_recreated_not_broken(tmp_path, ground_truth):
+    store = Store(tmp_path / "ap.db")
+    store.add_invoice(tmp_path / "a.pdf", ground_truth, {})
+    for f in tmp_path.glob("ap.db*"):
+        f.unlink()
+    assert store.list_invoices() == []  # empty, working database instead of "no such table"
+    store.add_invoice(tmp_path / "b.pdf", ground_truth, {})
+    assert len(store.list_invoices()) == 1

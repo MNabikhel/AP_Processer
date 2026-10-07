@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import ui
+from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.extraction import ExtractionResult
 from ap_coder.memory import ACCEPTED, pair_lines
 from ap_coder.pipeline import finalise_coding
@@ -172,6 +173,8 @@ def page_review() -> None:
             shown = sort_queue(filter_queue(shown, query), order)
             # Previous / Next on the review screen follow exactly what is shown here.
             st.session_state["queue_order"] = [i["id"] for i in shown]
+            if view != "attention":
+                _bulk_approve_bar(store, reference)
             if not shown:
                 st.caption("No invoices match.")
             for inv in shown:
@@ -181,13 +184,11 @@ def page_review() -> None:
         if not approved:
             st.caption("No approved invoices yet.")
         else:
-            export = _export_rows(store, approved)
-            st.download_button(
-                "Export GL distribution (CSV)",
-                pd.DataFrame(export).to_csv(index=False).encode("utf-8-sig"),  # BOM: Excel shows accents
-                file_name=f"approved_gl_distribution_{dt.date.today()}.csv",
-                mime="text/csv",
-                icon=":material/download:",
+            waiting = len(store.unexported_approved())
+            st.page_link(
+                PAGES["exports"],
+                label=f"Export to the ERP · {waiting} ready" if waiting else "Exports",
+                icon=":material/ios_share:",
             )
             rows = [
                 [
@@ -242,6 +243,44 @@ def page_review() -> None:
                     delete_invoice(store, inv["id"])
                     notify("Deleted. The file moved to invoices/deleted.", ":material/delete:")
                     st.rerun()
+
+
+def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
+    """One click for the invoices nobody needs to look at: clean when processed and still clean now."""
+    result = st.session_state.pop("bulk_result", None)
+    if result and result["skipped"]:
+        with st.expander(f"{len(result['skipped'])} invoice(s) were not approved: they need a look", expanded=True,
+                         icon=":material/info:"):  # fmt: skip
+            st.html(ui.table(["#", "Why"], [[str(i), esc(why)] for i, why in result["skipped"]], wrap=[1]))
+    candidates = clean_candidates(store)
+    if len(candidates) < 2:
+        return
+    total = sum(i["grand_total"] or 0 for i in candidates)
+    with card("bulk"):
+        text, action = st.columns([3, 1.3], vertical_alignment="center")
+        text.html(
+            f"<div><b>{len(candidates)} invoices look clean</b> <span class='apc-muted'>· no errors or warnings, "
+            f"confidence above the threshold · {money(total)} in total</span></div>"
+        )
+        with action.popover(f"Approve {len(candidates)} clean…", icon=":material/done_all:", width="stretch"):
+            st.markdown(
+                "These invoices are approved **exactly as the AI coded them**, and each one teaches the AI. "
+                "Every invoice is re-checked first; any that is no longer clean is left for you."
+            )
+            st.html(
+                ui.table(
+                    ["Vendor", "Invoice", "Total"],
+                    [[esc(i["vendor_name"]), esc(i["invoice_number"]), money(i["grand_total"])] for i in candidates],
+                    right=[2],
+                )
+            )
+            if st.button("Approve them", type="primary", icon=":material/done_all:", key="bulk_approve"):
+                result = bulk_approve(store, reference, get_settings(), [i["id"] for i in candidates], reviewer())
+                st.session_state["bulk_result"] = result
+                if not store.list_invoices(REVIEW):
+                    st.session_state["celebrate"] = True
+                notify(f"Approved {len(result['approved'])} invoice(s).", ":material/done_all:")
+                st.rerun()
 
 
 def _queue_card(store: Store, inv: dict[str, Any]) -> None:
@@ -308,31 +347,6 @@ def _getting_started(store: Store) -> None:
         links.page_link(PAGES["accounts"], label="GL accounts & tax", icon=":material/account_tree:")
         links.page_link(PAGES["process"], label="Process invoices", icon=":material/upload_file:")
     demo_card(store, "welcome")
-
-
-def _export_rows(store: Store, approved: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows = []
-    for inv in approved:
-        full = store.get_invoice(inv["id"])
-        final = full["final_output"] or {}
-        for e in final.get("gl_distribution", []):
-            rows.append(
-                {
-                    "invoice_id": inv["id"],
-                    "vendor_name": final.get("vendor_name"),
-                    "invoice_number": final.get("invoice_number"),
-                    "invoice_date": final.get("invoice_date"),
-                    "currency": final.get("currency"),
-                    "kind": e["kind"],
-                    "gl_code": e["gl_code"],
-                    "cost_center": e["cost_center"],
-                    "description": e["description"],
-                    "net_amount": e["net_amount"],
-                    "non_recoverable_tax": e["non_recoverable_tax"],
-                    "amount": e["amount"],
-                }
-            )
-    return rows
 
 
 def _document_panel(inv: dict[str, Any], store: Store) -> None:

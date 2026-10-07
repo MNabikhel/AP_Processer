@@ -23,6 +23,7 @@ PAGES = [
     ("settings", "page_settings"),
     ("activity", "page_activity"),
     ("vendors", "page_vendors"),
+    ("exports", "page_exports"),
 ]
 TIMEOUT = 90
 
@@ -145,3 +146,13 @@ def test_vendor_detail_and_hold(busy_db):
     at.radio[0].set_value("on_hold")
     _ok(next(b for b in at.button if b.label == "Save vendor").click().run())
     assert store.get_vendor("northwind it solutions")["status"] == "on_hold"
+
+
+def test_exports_page_creates_a_batch(db):
+    from ap_coder.demo import load_demo
+
+    store = Store(db)
+    load_demo(store)
+    at = _ok(_page("exports", "page_exports").run())
+    _ok(at.button(key="export_create").click().run())
+    assert store.unexported_approved() == [] and len(store.export_batches()) == 1

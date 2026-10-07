@@ -40,6 +40,7 @@ ACTIONS = {
     "backup_made": ("backup", "info", "Backup made"),
     "backup_restored": ("settings_backup_restore", "warn", "Backup restored"),
     "vendor_updated": ("storefront", "info", "Vendor updated"),
+    "export_undone": ("undo", "warn", "Export undone"),
 }
 
 
@@ -120,7 +121,8 @@ def describe(event: dict[str, Any]) -> str:
     if action == "approved":
         changes = d.get("changes") or []
         if not changes:
-            return f"{d.get('lines', 0)} line(s), all as the AI suggested"
+            bulk = " (bulk approval)" if d.get("bulk") else ""
+            return f"{d.get('lines', 0)} line(s), all as the AI suggested{bulk}"
         shown = "; ".join(f"{c['what']}: {c['before']} → {c['after']}" for c in changes[:4])
         more = f" (+{len(changes) - 4} more)" if len(changes) > 4 else ""
         return f"{len(changes)} change(s): {shown}{more}"
@@ -130,6 +132,8 @@ def describe(event: dict[str, Any]) -> str:
         return f"{d.get('vendor') or d.get('file', '')} {d.get('invoice_number') or ''}".strip()
     if action == "exported":
         return f"in export batch {d.get('batch', '')}"
+    if action == "export_undone":
+        return f"batch {d.get('batch', '')}: {d.get('invoices', 0)} invoice(s) back in the ready-to-export list"
     if action == "accounts_imported":
         return f"{d.get('table', '')}: {d.get('added', 0)} added, {d.get('updated', 0)} updated" + (
             " (replaced the list)" if d.get("replace_all") else ""

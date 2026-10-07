@@ -32,7 +32,7 @@ from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_pol
 from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     vendor_name TEXT, vendor_key TEXT, invoice_number TEXT, invoice_date TEXT, currency TEXT, grand_total REAL,
     model_confidence REAL, adjusted_confidence REAL, requires_review INTEGER,
     ai_output TEXT, final_output TEXT, validation TEXT, extraction_md TEXT, meta TEXT, edits TEXT, error TEXT,
-    created_at TEXT NOT NULL, reviewed_at TEXT, reviewer TEXT);
+    created_at TEXT NOT NULL, reviewed_at TEXT, reviewer TEXT, export_batch INTEGER);
 CREATE TABLE IF NOT EXISTS feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_id INTEGER, line_number INTEGER,
@@ -71,6 +71,9 @@ CREATE TABLE IF NOT EXISTS vendors (
     vendor_key TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
     expected_gst TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS invoices_vendor ON invoices (vendor_key);
+CREATE TABLE IF NOT EXISTS export_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, actor TEXT, format TEXT NOT NULL,
+    invoices INTEGER NOT NULL, total REAL, undone_at TEXT, undone_by TEXT);
 """
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
@@ -120,6 +123,10 @@ class Store:
                     f"UPDATE {table} SET vendor_key = ? WHERE id = ?",
                     [(vendor_key(r["vendor_name"] or ""), r["id"]) for r in rows],
                 )
+        if version < 3:  # invoices remember the ERP export batch they went out in
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            if "export_batch" not in columns:
+                conn.execute("ALTER TABLE invoices ADD COLUMN export_batch INTEGER")
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -129,9 +136,14 @@ class Store:
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
+        fresh = not self.path.exists()  # e.g. the file was deleted while the dashboard was running
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        if fresh:
+            conn.executescript(_SCHEMA)
+            self._migrate(conn)
         try:
             yield conn
             conn.commit()
@@ -472,7 +484,9 @@ class Store:
             r["meta"] = json.loads(r["meta"]) if r["meta"] else {}
         return rows
 
-    def approve_invoice(self, invoice_id: int, final_output: dict[str, Any], reviewer: str) -> dict[str, int]:
+    def approve_invoice(
+        self, invoice_id: int, final_output: dict[str, Any], reviewer: str, bulk: bool = False
+    ) -> dict[str, int]:
         """Store the reviewer's final version and record one feedback row per line."""
         inv = self.get_invoice(invoice_id)
         if inv is None:
@@ -544,6 +558,7 @@ class Store:
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
+                **({"bulk": True} if bulk else {}),
             })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
@@ -552,6 +567,61 @@ class Store:
                 feedback_rows,
             )
         return counts
+
+    # --- ERP export batches -------------------------------------------------------------------------
+
+    def unexported_approved(self) -> list[dict[str, Any]]:
+        """Approved invoices that have not been in an export batch yet (oldest approval first)."""
+        with self._conn() as conn:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer,
+                              reviewed_at FROM invoices WHERE status = ? AND export_batch IS NULL
+                       ORDER BY reviewed_at, id""",
+                    (APPROVED,),
+                )
+            ]
+
+    def create_export_batch(self, invoice_ids: list[int], fmt: str, actor: str | None = None) -> int:
+        """Mark approved, not yet exported invoices as one batch. Returns the batch number."""
+        with self._conn() as conn:
+            marks = ", ".join("?" for _ in invoice_ids)
+            eligible = conn.execute(
+                f"SELECT id, grand_total FROM invoices WHERE id IN ({marks}) AND status = ? AND export_batch IS NULL",
+                (*invoice_ids, APPROVED),
+            ).fetchall()
+            if not eligible:
+                raise ValueError("none of these invoices can be exported (not approved, or already exported)")
+            total = round(sum(r["grand_total"] or 0 for r in eligible), 2)
+            cur = conn.execute(
+                "INSERT INTO export_batches (created_at, actor, format, invoices, total) VALUES (?, ?, ?, ?, ?)",
+                (_now(), actor, fmt, len(eligible), total),
+            )
+            batch = int(cur.lastrowid)
+            conn.executemany("UPDATE invoices SET export_batch = ? WHERE id = ?", [(batch, r["id"]) for r in eligible])
+            for r in eligible:
+                self._log(conn, "exported", r["id"], actor, {"batch": batch, "format": fmt})
+        return batch
+
+    def export_batches(self) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM export_batches ORDER BY id DESC")]
+
+    def batch_invoice_ids(self, batch: int) -> list[int]:
+        with self._conn() as conn:
+            return [
+                r["id"] for r in conn.execute("SELECT id FROM invoices WHERE export_batch = ? ORDER BY id", (batch,))
+            ]
+
+    def undo_export_batch(self, batch: int, actor: str | None = None) -> int:
+        """The ERP import failed: put the batch's invoices back in the ready-to-export list."""
+        with self._conn() as conn:
+            ids = [r["id"] for r in conn.execute("SELECT id FROM invoices WHERE export_batch = ?", (batch,))]
+            conn.execute("UPDATE invoices SET export_batch = NULL WHERE export_batch = ?", (batch,))
+            conn.execute("UPDATE export_batches SET undone_at = ?, undone_by = ? WHERE id = ?", (_now(), actor, batch))
+            self._log(conn, "export_undone", actor=actor, detail={"batch": batch, "invoices": len(ids)})
+        return len(ids)
 
     # --- Vendors ----------------------------------------------------------------------------------------
 
