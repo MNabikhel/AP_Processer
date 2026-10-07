@@ -29,6 +29,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from .memory import vendor_key
+from .safe import parse_amount
 
 if TYPE_CHECKING:
     from .schema import InvoiceCoding
@@ -69,7 +70,7 @@ TEMPLATE_COLUMNS = (
 def po_key(value: Any) -> str:
     """Compare PO numbers the way people mean them: "PO-00412", "PO 412" and "412" are the same."""
     text = re.sub(r"[^0-9a-z]", "", str(value or "").lower())
-    text = re.sub(r"^(purchaseorder|po|bc|order|no|num)+", "", text) or text
+    text = re.sub(r"^(purchaseorder|po|bc|order|number|no|num)+", "", text) or text
     return text.lstrip("0") or text
 
 
@@ -94,15 +95,7 @@ def _blank(value: Any) -> bool:
 
 
 def _number(value: Any) -> float | None:
-    if _blank(value):
-        return None
-    text = str(value).replace(",", "").replace("$", "").strip()
-    if text.startswith("(") and text.endswith(")"):
-        text = "-" + text[1:-1]
-    try:
-        return float(text)
-    except ValueError:
-        return None
+    return None if _blank(value) else parse_amount(value)
 
 
 def _text(value: Any) -> str:
@@ -128,6 +121,7 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
             skipped += 1
             continue
         qty, price, amount = _number(get("quantity")), _number(get("unit_price")), _number(get("amount"))
+        amount_only = qty is None and price is None and amount is not None  # e.g. "Consulting services: 5,000"
         if qty is None:
             qty = 1.0 if price is None or amount is None or not price else amount / price
         if price is None:
@@ -145,6 +139,7 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
                 "quantity": qty,
                 "unit_price": price,
                 "amount": amount,
+                "amount_only": amount_only,
                 "received_quantity": _number(get("received_quantity")),
                 "gl_code": _text(get("gl_code")),
                 "cost_center": _text(get("cost_center")),
@@ -210,6 +205,10 @@ class LineMatch:
     po_unit_price: float | None = None
     received: float | None = None
     billed_before: float = 0.0  # quantity billed on this PO line by other invoices
+    amount: float = 0.0
+    po_amount: float | None = None
+    amount_only: bool = False  # the PO line has an amount but no quantity: compare amounts
+    billed_before_amount: float = 0.0
     po_gl: str = ""
     po_cc: str = ""
     problems: list[str] = field(default_factory=list)
@@ -263,12 +262,15 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     result.other_invoices = others
     result.billed_before = sum(float(o["coding"].get("subtotal") or 0) for o in others)
     billed_before = billed_by_line(po, others)
+    billed_before_amount = billed_by_line(po, others, amounts=True)
 
     items = [li.model_dump() for li in coding.line_items]
     pairs = pair_with_po(items, po_lines)
     billed_now: dict[int, float] = {}
+    billed_now_amount: dict[int, float] = {}
     for li in items:
-        m = LineMatch(li["line_number"], li["description"], float(li["quantity"]), float(li["unit_price"]))
+        m = LineMatch(li["line_number"], li["description"], billed_quantity(li), float(li["unit_price"]))
+        m.amount = float(li["amount"] or 0)
         result.lines.append(m)
         pl = by_line.get(pairs.get(m.invoice_line, -1))
         if pl is None:
@@ -281,8 +283,13 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
         m.po_line, m.po_description = pl["line_number"], pl["description"]
         m.po_quantity, m.po_unit_price, m.received = pl["quantity"], pl["unit_price"], pl["received_quantity"]
         m.billed_before = billed_before.get(pl["line_number"], 0.0)
+        m.billed_before_amount = billed_before_amount.get(pl["line_number"], 0.0)
+        m.po_amount, m.amount_only = pl["amount"], bool(pl.get("amount_only"))
         m.po_gl, m.po_cc = pl.get("gl_code") or "", pl.get("cost_center") or ""
-        _line_findings(m, li, result, billed_now)
+        if m.amount_only:
+            _amount_findings(m, li, result, billed_now_amount)
+        else:
+            _line_findings(m, li, result, billed_now)
 
     subtotal = float(coding.subtotal or 0)
     total = float(po.get("total") or 0)
@@ -328,6 +335,22 @@ def _header_findings(coding: InvoiceCoding, po: dict[str, Any]) -> list[Finding]
     return findings
 
 
+def _amount_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now: dict[int, float]) -> None:
+    """A PO line with only an amount (services, a lump sum): what has been billed against the amount."""
+    assert m.po_line is not None and m.po_amount is not None
+    billed_now[m.po_line] = billed_now.get(m.po_line, 0.0) + m.amount
+    billed = m.billed_before_amount + billed_now[m.po_line]
+    if m.amount > 0 and billed > m.po_amount * (1 + TOTAL_TOLERANCE) + 0.01:
+        earlier = f", {_money(m.billed_before_amount)} on earlier invoices" if m.billed_before_amount else ""
+        m.problems.append("quantity")
+        result.findings.append(
+            (WARNING, "PO_QTY_OVER",
+             f"{_money(billed)} billed on {po_label(result.po_number)} line {m.po_line}, more than the "
+             f"{_money(m.po_amount)} ordered{earlier}", m.invoice_line)
+        )  # fmt: skip
+    _coding_findings(m, li, result)
+
+
 def _line_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now: dict[int, float]) -> None:
     number = result.po_number
     assert m.po_line is not None and m.po_unit_price is not None and m.po_quantity is not None
@@ -356,6 +379,11 @@ def _line_findings(m: LineMatch, li: dict[str, Any], result: PoMatch, billed_now
              f"{_qty(billed)} billed but only {_qty(m.received)} received on {po_label(number)} line {m.po_line}",
              m.invoice_line)
         )  # fmt: skip
+    _coding_findings(m, li, result)
+
+
+def _coding_findings(m: LineMatch, li: dict[str, Any], result: PoMatch) -> None:
+    number = result.po_number
     gl, cc = li.get("predicted_gl_code") or "", li.get("predicted_cost_center") or ""
     if (m.po_gl and m.po_gl != gl) or (m.po_cc and m.po_cc != cc):
         m.problems.append("coding")
@@ -379,17 +407,28 @@ def po_findings(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | N
     return result.findings if result else []
 
 
-def billed_by_line(po: dict[str, Any], invoices: list[dict[str, Any]], positive_only: bool = False) -> dict[int, float]:
-    """Quantity billed so far on each PO line by ``invoices`` (``Store.po_invoices`` rows; credits subtract
-    unless ``positive_only``)."""
+def billed_quantity(li: dict[str, Any]) -> float:
+    """The quantity a line bills: negative for a credit, also when the credit note prints a positive
+    quantity with a negative price or amount."""
+    quantity, amount = float(li.get("quantity") or 0), float(li.get("amount") or 0)
+    return -abs(quantity) if amount < 0 else quantity
+
+
+def billed_by_line(
+    po: dict[str, Any], invoices: list[dict[str, Any]], positive_only: bool = False, amounts: bool = False
+) -> dict[int, float]:
+    """Quantity (or with ``amounts``, net amount) billed so far on each PO line by ``invoices``
+    (``Store.po_invoices`` rows); credits subtract unless ``positive_only``."""
     billed: dict[int, float] = {}
     for inv in invoices:
         lines = inv["coding"].get("line_items") or []
         if positive_only:
-            lines = [li for li in lines if float(li.get("quantity") or 0) > 0]
-        quantities = {int(li["line_number"]): float(li.get("quantity") or 0) for li in lines}
+            lines = [li for li in lines if billed_quantity(li) > 0]
+        value = {
+            int(li["line_number"]): float(li.get("amount") or 0) if amounts else billed_quantity(li) for li in lines
+        }
         for inv_line, po_line in pair_with_po(lines, po["lines"]).items():
-            billed[po_line] = billed.get(po_line, 0.0) + quantities.get(inv_line, 0.0)
+            billed[po_line] = billed.get(po_line, 0.0) + value.get(inv_line, 0.0)
     return billed
 
 

@@ -21,6 +21,7 @@ from typing import Any
 
 from . import recurring
 from .po import CLOSED, billed_by_line, po_label
+from .safe import csv_row
 from .store import APPROVED, PENDING, REVIEW, Store
 
 RECEIVED, NOT_IN_ERP, RECURRING = "Received, not invoiced", "Invoice not in the ERP yet", "Expected recurring invoice"
@@ -40,7 +41,7 @@ class Accrual:
     note: str = ""
 
 
-def _received_not_invoiced(store: Store) -> list[Accrual]:
+def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
     out = []
     for po in store.purchase_orders():
         if po["status"] == CLOSED or not po["received_lines"]:
@@ -50,10 +51,16 @@ def _received_not_invoiced(store: Store) -> list[Accrual]:
             continue
         # Returns are assumed to be reflected in the ERP's received quantity, so credits do not count here;
         # the vendor's invoices that quote no PO may still bill these lines ("PO-90155" in a description).
-        invoices = store.po_invoices(po["po_key"]) + store.vendor_invoices_without_po(full["vendor_key"])
+        # Invoices dated after the period end do not count: the goods were received, not yet invoiced, by then.
+        end = period_end.isoformat()
+        invoices = [
+            inv
+            for inv in store.po_invoices(po["po_key"]) + store.vendor_invoices_without_po(full["vendor_key"])
+            if str(inv.get("invoice_date") or inv["coding"].get("invoice_date") or "") <= end
+        ]
         billed = billed_by_line(full, invoices, positive_only=True)
         for li in full["lines"]:
-            if li["received_quantity"] is None:
+            if li["received_quantity"] is None or li.get("amount_only"):
                 continue
             qty = li["received_quantity"] - billed.get(li["line_number"], 0.0)
             if qty <= 1e-6:
@@ -129,7 +136,11 @@ def _expected_recurring(store: Store, period_end: dt.date) -> list[Accrual]:
 
 
 def build(store: Store, period_end: dt.date) -> list[Accrual]:
-    return _received_not_invoiced(store) + _not_in_erp(store, period_end) + _expected_recurring(store, period_end)
+    return (
+        _received_not_invoiced(store, period_end)
+        + _not_in_erp(store, period_end)
+        + _expected_recurring(store, period_end)
+    )
 
 
 def by_gl(accruals: list[Accrual]) -> list[tuple[str, str, float]]:
@@ -147,8 +158,8 @@ def to_csv(accruals: list[Accrual], period_end: dt.date) -> bytes:
     w.writerow(["Source", "Vendor", "Reference", "Description", "GL account", "Cost center", "Amount", "Currency",
                 "Note"])  # fmt: skip
     for a in accruals:
-        w.writerow([a.source, a.vendor, a.reference, a.description, a.gl_code, a.cost_center, f"{a.amount:.2f}",
-                    a.currency, a.note])  # fmt: skip
+        w.writerow(csv_row([a.source, a.vendor, a.reference, a.description, a.gl_code, a.cost_center,
+                            f"{a.amount:.2f}", a.currency, a.note]))  # fmt: skip
     return ("﻿" + out.getvalue()).encode("utf-8")
 
 

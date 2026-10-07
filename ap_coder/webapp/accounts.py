@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import ui
+from ap_coder.safe import csv_cell
 from ap_coder.store import Store, load_sample_setup
 from ap_coder.tax import TAX_TYPES, TREATMENTS, TaxRateTable
 from ap_coder.webapp.common import (
@@ -140,7 +141,7 @@ def account_manager(store: Store, table: str, noun: str) -> None:
             st.rerun()
     actions.download_button(
         f"Download {noun}s",
-        df.drop(columns=["delete"]).to_csv(index=False).encode("utf-8-sig"),
+        df.drop(columns=["delete"]).map(csv_cell).to_csv(index=False).encode("utf-8-sig"),
         file_name=f"{table}.csv",
         mime="text/csv",
         key=f"{table}_download",

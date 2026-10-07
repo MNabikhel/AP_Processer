@@ -22,6 +22,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from .safe import csv_row, neutralise_sheet
+
 FORMATS = {
     "xlsx": "Excel workbook: invoices, GL lines and a GL summary",
     "csv": "CSV: one row per GL line (for ERP import)",
@@ -137,6 +139,7 @@ def _sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: list[dict[
                 row[0].number_format = "#,##0.00"
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
+    neutralise_sheet(ws)  # vendor names and descriptions come from documents: never formulas
 
 
 def build_csv(invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "") -> bytes:
@@ -144,7 +147,7 @@ def build_csv(invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = 
     writer = csv.writer(buf)
     writer.writerow([label for _, label in LINE_COLUMNS])
     for r in line_rows(invoices, gl_names, batch):
-        writer.writerow([r.get(key) if r.get(key) is not None else "" for key, _ in LINE_COLUMNS])
+        writer.writerow(csv_row([r.get(key) if r.get(key) is not None else "" for key, _ in LINE_COLUMNS]))
     return buf.getvalue().encode("utf-8-sig")  # BOM: Excel shows accents correctly
 
 

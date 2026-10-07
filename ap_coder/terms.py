@@ -22,11 +22,15 @@ _RECEIPT = re.compile(
     r"\bcod\b|immediate(ly)?|due now",
     re.IGNORECASE,
 )
+_EOM = re.compile(r"\b(eom|end of (the )?month|fin de mois)\b", re.I)
+# A discount: 2/10 net 30, 2/10 EOM net 30, 1.5/15 n60 (the net part is required, and the rate must look
+# like a discount, so "Due 10/15 net 45" stays a date), 2% 10 net 30, 2% discount if paid within 10 days.
+_SLASH = re.compile(
+    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom)?\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I
+)
 _DISCOUNT = [
-    # 2/10 net 30, 2/10 n30, 1.5/15 net 60 (the net part is required: "10/31" alone is a date)
-    re.compile(r"(\d+(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I),
-    re.compile(r"(\d+(?:[.,]\d+)?)\s*%\s*(\d+)\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I),  # 2% 10 net 30
-    # 2% 10 days, 2% discount if paid within 10 days, 2 % escompte 10 jours
+    _SLASH,
+    re.compile(r"(\d+(?:[.,]\d+)?)\s*%\s*(\d+)\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I),
     re.compile(
         r"(\d+(?:[.,]\d+)?)\s*%\s*(?:discount|escompte)?\s*(?:if paid|si pay[ée]e?)?\s*(?:within|in|dans les|sous)?"
         r"\s*(\d+)\s*(?:days?|jours?)",
@@ -39,12 +43,21 @@ _NET = [
 ]
 
 
+def _net_days(text: str) -> int | None:
+    for pattern in _NET:
+        m = pattern.search(text)
+        if m and 0 <= int(m.group(1)) <= 180:
+            return int(m.group(1))
+    return None
+
+
 @dataclass(frozen=True)
 class Terms:
     net_days: int | None = None
     discount_pct: float | None = None  # 2.0 for 2%
     discount_days: int | None = None
     on_receipt: bool = False
+    eom: bool = False  # counted from the end of the invoice's month ("Net 30 EOM")
 
 
 @dataclass(frozen=True)
@@ -66,25 +79,23 @@ def parse_terms(text: str | None) -> Terms:
     text = (text or "").strip()
     if not text:
         return Terms()
+    eom = bool(_EOM.search(text))
     for pattern in _DISCOUNT:
         m = pattern.search(text)
         if m:
             pct = float(m.group(1).replace(",", "."))
             days = int(m.group(2))
             net = int(m.group(3)) if m.lastindex and m.lastindex >= 3 and m.group(3) else None
-            if net is None:  # "2% 10 days, net 30" written the other way round
-                rest = text[m.end() :]
-                n = _NET[0].search(rest) or _NET[1].search(rest)
-                net = int(n.group(1)) if n else None
+            if net is None:  # "Net 45, 1% 15 days" or "2% 10 days, net 30": the net days are elsewhere
+                net = _net_days(text[: m.start()] + " " + text[m.end() :])
             if 0 < pct < 20 and 0 < days <= 60:
-                return Terms(net_days=net, discount_pct=pct, discount_days=days)
+                return Terms(net_days=net, discount_pct=pct, discount_days=days, eom=eom)
+    net = _net_days(text)  # before "on receipt": "Net 30 days upon receipt of invoice" is net 30
+    if net is not None:
+        return Terms(net_days=net, eom=eom)
     if _RECEIPT.search(text):
         return Terms(net_days=0, on_receipt=True)
-    for pattern in _NET:
-        m = pattern.search(text)
-        if m and 0 <= int(m.group(1)) <= 180:
-            return Terms(net_days=int(m.group(1)))
-    return Terms()
+    return Terms(eom=eom)
 
 
 def _date(value: Any) -> dt.date | None:
@@ -92,6 +103,13 @@ def _date(value: Any) -> dt.date | None:
         return dt.date.fromisoformat(str(value or "")[:10]) if value else None
     except ValueError:
         return None
+
+
+def _start(invoice_date: dt.date, terms: Terms) -> dt.date:
+    """Where the terms count from: the invoice date, or the end of its month for EOM terms."""
+    if not terms.eom:
+        return invoice_date
+    return (invoice_date.replace(day=1) + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
 
 
 def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS) -> Payment:
@@ -102,7 +120,7 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS) -> P
     if printed:
         due, source = printed, "printed"
     elif invoice_date and terms.net_days is not None:
-        due, source = invoice_date + dt.timedelta(days=terms.net_days), "terms"
+        due, source = _start(invoice_date, terms) + dt.timedelta(days=terms.net_days), "terms"
     elif invoice_date:
         due, source = invoice_date + dt.timedelta(days=default_days), "default"
     else:
@@ -110,7 +128,7 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS) -> P
     discount_by, amount = None, 0.0
     total = float(coding.get("grand_total") or 0)
     if terms.discount_pct and terms.discount_days is not None and invoice_date and total > 0:
-        discount_by = invoice_date + dt.timedelta(days=terms.discount_days)
+        discount_by = _start(invoice_date, terms) + dt.timedelta(days=terms.discount_days)
         amount = round(float(coding.get("subtotal") or total) * terms.discount_pct / 100, 2)
     return Payment(due, source, terms, discount_by, amount)
 

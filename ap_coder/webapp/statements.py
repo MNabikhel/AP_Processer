@@ -8,6 +8,7 @@ import streamlit as st
 
 from ap_coder import statements as stm
 from ap_coder import ui
+from ap_coder.safe import md
 from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import card, esc, get_store, money, show_toast
 
@@ -104,7 +105,7 @@ def page_statements() -> None:
     )
     with card("stm_result"):
         head, button = st.columns([3, 1], vertical_alignment="center")
-        head.markdown(f"#### :material/fact_check: {esc(names[vendor])}")
+        head.markdown(f"#### :material/fact_check: {md(names[vendor])}")
         button.download_button("Download (CSV)", stm.to_csv(rec), file_name="statement_reconciliation.csv",
                                mime="text/csv", icon=":material/download:", width="stretch")  # fmt: skip
         rows = []

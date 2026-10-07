@@ -18,6 +18,7 @@ from ap_coder.pipeline import finalise_coding
 from ap_coder.po import match_invoice, po_label
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs, split_line
+from ap_coder.safe import md
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import APPROVED, FAILED, PENDING, REJECTED, REVIEW, Store
 from ap_coder.suggest import suggest_gl
@@ -308,7 +309,7 @@ def _second_approval_tab(store: Store, reference: ReferenceData, awaiting: list[
                 disabled=same, help="You approved it first: someone else gives the second approval" if same else None,
             ):  # fmt: skip
                 store.final_approve(inv["id"], me)
-                notify(f"{inv['vendor_name']} approved. It is ready to export.", ":material/how_to_reg:")
+                notify(f"{md(inv['vendor_name'])} approved. It is ready to export.", ":material/how_to_reg:")
                 st.rerun()
             with buttons.popover("Send back", icon=":material/undo:"):
                 reason = st.text_input("Why", key=f"second_reason_{inv['id']}", placeholder="e.g. wrong cost center")
@@ -818,7 +819,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 if not store.list_invoices(REVIEW):  # the whole queue is done, not just the current view
                     st.session_state["celebrate"] = True
                 notify(
-                    f"Approved {coding.vendor_name.rstrip('.')}. Learned from {total} line(s): "
+                    f"Approved {md(coding.vendor_name.rstrip('.'))}. Learned from {total} line(s): "
                     f"{counts[ACCEPTED]} confirmed, {total - counts[ACCEPTED]} corrected.",
                     ":material/school:",
                 )
@@ -835,14 +836,14 @@ def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines:
     with card("pomatch"):
         label = po_label(match.po_number)
         if not match.found:
-            st.markdown(f"#### :material/shopping_cart: {esc(label)}")
+            st.markdown(f"#### :material/shopping_cart: {md(label)}")
             st.caption("This PO is not in the purchase orders list. Check the number, or import the PO.")
             st.page_link(PAGES["purchase_orders"], label="Purchase orders", icon=":material/shopping_cart:")
             return
         po = match.po or {}
         problems = sum(1 for m in match.lines if set(m.problems) - {"coding"})
         head, badge = st.columns([3, 2], vertical_alignment="center")
-        head.markdown(f"#### :material/shopping_cart: Matched to {esc(label)}")
+        head.markdown(f"#### :material/shopping_cart: Matched to {md(label)}")
         badge.html(
             "<div style='text-align:right'>"
             + (
@@ -859,10 +860,12 @@ def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines:
                 rows.append([str(m.invoice_line), esc(m.description), "<span class='apc-muted'>not on the PO</span>",
                              "", "", ui.pill("Not on PO", "warn")])  # fmt: skip
                 continue
-            billed = m.billed_before + m.quantity
-            qty = f"{_fmt_qty(billed)} / {_fmt_qty(m.po_quantity)}"
-            if received:
-                qty += f" / {_fmt_qty(m.received)}"
+            if m.amount_only:  # a PO line with only an amount: compare amounts
+                qty = f"{money(m.billed_before_amount + m.amount)} / {money(m.po_amount)}"
+            else:
+                qty = f"{_fmt_qty(m.billed_before + m.quantity)} / {_fmt_qty(m.po_quantity)}"
+                if received:
+                    qty += f" / {_fmt_qty(m.received)}"
             price = money(m.unit_price)
             if "price" in m.problems:
                 price = (
@@ -886,7 +889,7 @@ def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines:
         notes.append(
             f"{'closed' if po.get('status') == 'closed' else 'open'}, for {(po.get('vendor_name') or '?').rstrip('.')}"
         )
-        st.caption(" · ".join(notes) + ". Billed quantities include earlier invoices on this PO.")
+        st.caption(md(" · ".join(notes)) + ". Billed quantities include earlier invoices on this PO.")
         differs = match.coding_differs
         if differs and st.button(
             f"Use the PO's coding on {len(differs)} line(s)", icon=":material/auto_fix_high:", key=f"{key}_po_coding",
@@ -982,7 +985,7 @@ def _split_popover(
                     float(r["pct"]),
                 )
                 for r in parts.to_dict("records")
-                if r.get("pct")
+                if pd.notna(r.get("pct")) and float(r["pct"]) > 0
             ]
             try:
                 replace_editor(f"{key}_lines", split_line(lines, number, chosen))

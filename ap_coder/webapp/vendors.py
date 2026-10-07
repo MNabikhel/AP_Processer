@@ -9,6 +9,7 @@ from typing import Any
 import streamlit as st
 
 from ap_coder import recurring, ui
+from ap_coder.safe import md
 from ap_coder.store import Store
 from ap_coder.vendors import ACTIVE, ON_HOLD
 from ap_coder.webapp.common import (
@@ -259,5 +260,5 @@ def vendor_detail(store: Store, v: dict[str, Any]) -> None:
             )
             if st.form_submit_button("Save vendor", type="primary", icon=":material/save:"):
                 store.save_vendor(key, name, status_choice, expected, notes, actor=reviewer())
-                notify(f"Saved {name.rstrip('.')}.", ":material/storefront:")
+                notify(f"Saved {md(name.rstrip('.'))}.", ":material/storefront:")
                 st.rerun()

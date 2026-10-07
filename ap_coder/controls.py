@@ -16,7 +16,7 @@ from collections import Counter
 from typing import Any
 
 from .audit import ACTIONS, describe
-from .store import PENDING, Store
+from .store import APPROVED, PENDING, Store
 
 SIGNALS = {
     "DUPLICATE_INVOICE", "POSSIBLE_DUPLICATE_AMOUNT", "VENDOR_ON_HOLD", "VENDOR_TAX_NUMBER_CHANGED",
@@ -44,14 +44,26 @@ def build(store: Store, start: dt.date, end: dt.date) -> dict[str, Any]:
     signals = [e for e in approvals if set(_codes(e)) & SIGNALS]
     finals = [e for e in events if e["action"] == "final_approved"]
     sent_back = [e for e in events if e["action"] == "sent_back"]
-    waiting = [i for i in store.list_invoices(PENDING)]
+    waiting = store.list_invoices(PENDING)
+    limit = store.approval_limit()
+    one_person = (
+        [
+            i
+            for i in store.invoice_columns(("id", "reviewed_at", "second_reviewer", "final_output"), APPROVED)
+            if not i["second_reviewer"]
+            and abs(float((i["final_output"] or {}).get("grand_total") or 0)) > limit
+            and first <= (i["reviewed_at"] or "") < last
+        ]
+        if limit
+        else []
+    )
     setup = [e for e in events if e["action"] in SETUP_ACTIONS]
     by_person = Counter(e["actor"] or "?" for e in approvals)
     bulk = Counter(e["actor"] or "?" for e in approvals if (e["detail"] or {}).get("bulk"))
     return {
         "start": start, "end": end, "events": len(events), "approvals": len(approvals),
         "overrides": overrides, "signals": signals, "finals": finals, "sent_back": sent_back,
-        "waiting": waiting, "setup": setup,
+        "waiting": waiting, "setup": setup, "one_person": one_person,
         "by_person": [(p, n, bulk.get(p, 0)) for p, n in by_person.most_common()],
         "limit": store.approval_limit(),
     }  # fmt: skip
@@ -115,6 +127,19 @@ def report_html(r: dict[str, Any]) -> str:
         _section("Second approvals", r["finals"], "None in the period."),
         _section("Sent back by the second approver", r["sent_back"], "None."),
     ]
+    if r["one_person"]:
+        rows = "".join(
+            f"<tr><td>#{i['id']}</td><td>{e((i['final_output'] or {}).get('vendor_name') or '')}</td>"
+            f"<td>{e((i['final_output'] or {}).get('invoice_number') or '')}</td>"
+            f"<td class='n'>{float((i['final_output'] or {}).get('grand_total') or 0):,.2f}</td>"
+            f"<td>{e((i['reviewed_at'] or '')[:16].replace('T', ' '))}</td></tr>"
+            for i in r["one_person"]
+        )
+        parts.append(
+            f"<h2>Over the approval limit, approved by one person ({len(r['one_person'])})</h2>"
+            "<p class='muted'>Usually approved before the limit was set or raised.</p><table><tr><th>#</th>"
+            f"<th>Vendor</th><th>Invoice</th><th class='n'>Total</th><th>Approved</th></tr>{rows}</table>"
+        )
     if r["waiting"]:
         parts.append(
             f"<h2>Waiting for a second approval now ({len(r['waiting'])})</h2><table><tr><th>#</th><th>Vendor</th>"

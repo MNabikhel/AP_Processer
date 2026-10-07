@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import streamlit as st
 
@@ -11,6 +11,7 @@ from ap_coder import ui
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS
 from ap_coder.pipeline import InvoicePipeline, invoice_files
+from ap_coder.safe import md
 from ap_coder.store import REVIEW, Store
 from ap_coder.tax import TAX_TYPES
 from ap_coder.webapp.common import (
@@ -27,6 +28,13 @@ from ap_coder.webapp.common import (
     short_path,
     show_toast,
 )
+
+
+def safe_file_name(name: str) -> str:
+    """Just the file name of an upload (no folders, Windows or POSIX), never empty or a dot name."""
+    base = PureWindowsPath(PurePosixPath(name or "").name).name.strip().lstrip(".")
+    return base or "invoice"
+
 
 # --- Process invoices --------------------------------------------------------------------------------------
 
@@ -45,7 +53,7 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
                 flag = "needs attention" if result.report and result.report.requires_review else "ready"
                 st.write(f":material/check_circle: {result.output.get('vendor_name', path.name)}: {flag}")
             else:
-                st.error(f"{path.name}: {result.error}", icon=":material/error:")
+                st.error(f"{md(path.name)}: {md(result.error)}", icon=":material/error:")
         status.update(label=f"Processed {ok} of {len(paths)}", state="complete" if ok == len(paths) else "error")
     failed = len(paths) - ok
     if ok:
@@ -127,7 +135,7 @@ def page_process() -> None:
                 INVOICE_DIR.mkdir(parents=True, exist_ok=True)
                 paths = []
                 for f in uploaded:
-                    target = INVOICE_DIR / f.name
+                    target = INVOICE_DIR / safe_file_name(f.name)
                     stem, n = target.stem, 1
                     while target.exists() and target.read_bytes() != f.getvalue():
                         target = INVOICE_DIR / f"{stem}_{n}{target.suffix}"

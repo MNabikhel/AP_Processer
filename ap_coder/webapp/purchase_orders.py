@@ -9,6 +9,7 @@ import streamlit as st
 
 from ap_coder import po as po_mod
 from ap_coder import ui
+from ap_coder.safe import md
 from ap_coder.store import Store, load_sample_purchase_orders
 from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import card, esc, get_store, money, notify, reviewer, show_toast
@@ -117,8 +118,22 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
         return
     invoices = store.po_invoices(po["po_key"])
     billed = po_mod.billed_by_line(full, invoices)
+    billed_amount = po_mod.billed_by_line(full, invoices, amounts=True)
     rows = []
     for li in full["lines"]:
+        if li.get("amount_only"):  # services / lump sums: amounts, not quantities
+            done_amount = billed_amount.get(li["line_number"], 0.0)
+            over = done_amount > li["amount"] * (1 + po_mod.TOTAL_TOLERANCE) + 0.01
+            flag = (
+                ui.pill("Over-billed", "err") if over
+                else ui.pill("Billed", "ok", "check") if done_amount >= li["amount"] - 0.01
+                else ""
+            )  # fmt: skip
+            rows.append(
+                [str(li["line_number"]), esc(li["description"]), "amount", "—", f"<b>{money(done_amount)}</b>", "—",
+                 money(li["amount"]), esc(" · ".join(x for x in (li["gl_code"], li["cost_center"]) if x)), flag]
+            )  # fmt: skip
+            continue
         done = billed.get(li["line_number"], 0.0)
         over = done > li["quantity"] + 1e-6
         unreceived = li["received_quantity"] is not None and done > li["received_quantity"] + 1e-6
@@ -175,14 +190,16 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
     if c1.button("Reopen PO" if closed else "Close PO", icon=":material/lock_open:" if closed else ":material/lock:",
                  key=f"po_toggle_{po['po_key']}", width="stretch"):  # fmt: skip
         store.set_po_status(po["po_key"], po_mod.OPEN if closed else po_mod.CLOSED, actor=reviewer())
-        notify(f"{po_mod.po_label(po['po_number'])} {'reopened' if closed else 'closed'}.", ":material/shopping_cart:")
+        notify(
+            f"{md(po_mod.po_label(po['po_number']))} {'reopened' if closed else 'closed'}.", ":material/shopping_cart:"
+        )
         st.rerun()
     with c2.popover("Delete PO", icon=":material/delete:", width="stretch"):
-        st.markdown(f"Delete **{esc(po['po_number'])}** from the list? Invoices are not affected.")
+        st.markdown(f"Delete **{md(po['po_number'])}** from the list? Invoices are not affected.")
         if st.button("Delete", type="primary", key=f"po_delete_{po['po_key']}"):
             store.delete_purchase_orders([po["po_key"]], actor=reviewer())
             st.session_state.pop("po_choice", None)
-            notify(f"{po_mod.po_label(po['po_number'])} deleted.", ":material/delete:")
+            notify(f"{md(po_mod.po_label(po['po_number']))} deleted.", ":material/delete:")
             st.rerun()
 
 

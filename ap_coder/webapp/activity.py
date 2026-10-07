@@ -9,6 +9,7 @@ import streamlit as st
 
 from ap_coder import controls, ui
 from ap_coder.audit import ACTIONS, describe
+from ap_coder.safe import csv_cell
 from ap_coder.webapp.common import card, get_store, history_html, show_toast
 
 GROUPS = {
@@ -92,7 +93,7 @@ def page_activity() -> None:
     head, download = st.columns([3, 1], vertical_alignment="center")
     head.caption(f"{len(shown)} of {len(events)} event(s)")
     download.download_button(
-        "Download CSV", table.to_csv(index=False).encode("utf-8-sig"),
+        "Download CSV", table.map(csv_cell).to_csv(index=False).encode("utf-8-sig"),
         file_name=f"ap_coder_activity_{today}.csv", mime="text/csv", icon=":material/download:", width="stretch",
     )  # fmt: skip
     timeline, grid = st.tabs([":material/timeline: Timeline", ":material/table: Table"])

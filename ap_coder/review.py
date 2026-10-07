@@ -99,6 +99,8 @@ def split_line(lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str
     part takes the rounding, and each part keeps the line's description and taxes. The first part keeps
     the line number and its place; the others are added at the end, numbered after the last line.
     """
+    if any(not isinstance(p, (int, float)) or not math.isfinite(p) for _, _, p in parts):
+        raise ValueError("every part needs a percentage")
     if not parts or abs(sum(p for _, _, p in parts) - 100) > 0.01:
         raise ValueError("the percentages must add up to 100")
     if any(p <= 0 for _, _, p in parts):

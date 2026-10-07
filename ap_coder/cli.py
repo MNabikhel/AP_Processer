@@ -280,10 +280,14 @@ def new_files(folder: Path, store: Store, now: float | None = None) -> list[Path
     now = time.time() if now is None else now
     if not folder.is_dir():
         return []
-    return [
-        p for p in invoice_files(folder)
-        if now - p.stat().st_mtime >= SETTLE_SECONDS and store.find_by_hash(p, include_failed=True) is None
-    ]  # fmt: skip
+    found = []
+    for p in invoice_files(folder):
+        try:  # a file being copied, locked by a scanner or removed meanwhile waits for the next check
+            if now - p.stat().st_mtime >= SETTLE_SECONDS and store.find_by_hash(p, include_failed=True) is None:
+                found.append(p)
+        except OSError:
+            continue
+    return found
 
 
 def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
@@ -302,7 +306,11 @@ def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
                 reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
                 pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
                 for path in files:
-                    result = pipeline.process(path)
+                    try:
+                        result = pipeline.process(path)
+                    except OSError as exc:  # unreadable now: try again at the next check
+                        print(f"{time.strftime('%H:%M:%S')} {path.name}: skipped for now ({exc})", file=sys.stderr)
+                        continue
                     stamp = time.strftime("%H:%M:%S")
                     if result.ok:
                         flag = "needs attention" if result.report and result.report.requires_review else "ready"

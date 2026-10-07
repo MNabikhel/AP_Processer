@@ -34,7 +34,7 @@ from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSet
 from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -169,6 +169,10 @@ class Store:
             for column in ("second_reviewer", "second_reviewed_at"):
                 if column not in columns:
                     conn.execute(f"ALTER TABLE invoices ADD COLUMN {column} TEXT")
+        if version < 7:  # PO lines with an amount but no quantity (services, lump sums)
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
+            if "amount_only" not in columns:
+                conn.execute("ALTER TABLE po_lines ADD COLUMN amount_only INTEGER NOT NULL DEFAULT 0")
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -536,7 +540,9 @@ class Store:
         return rows
 
     _JSON_COLUMNS = ("ai_output", "final_output", "validation", "meta", "edits")
-    _LIGHT_COLUMNS = ("id", "status", "requires_review", "created_at", "reviewed_at", *_JSON_COLUMNS)
+    _LIGHT_COLUMNS = (
+        "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer", *_JSON_COLUMNS
+    )  # fmt: skip
 
     def invoice_columns(
         self, columns: tuple[str, ...], status: str | None = None, ids: list[int] | None = None
@@ -690,9 +696,10 @@ class Store:
             raise PermissionError("the second approval must come from someone other than the first approver")
         with self._conn() as conn:
             cur = conn.execute(
+                # Same first approval as checked above: it may have been sent back and re-approved meanwhile.
                 "UPDATE invoices SET status = ?, second_reviewer = ?, second_reviewed_at = ? "
-                "WHERE id = ? AND status = ?",
-                (APPROVED, approver, _now(), invoice_id, PENDING),
+                "WHERE id = ? AND status = ? AND reviewer IS ? AND reviewed_at IS ?",
+                (APPROVED, approver, _now(), invoice_id, PENDING, inv["reviewer"], inv["reviewed_at"]),
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
@@ -755,10 +762,11 @@ class Store:
                     used.add(number)
                     conn.execute(
                         """INSERT INTO po_lines (po_key, line_number, description, quantity, unit_price, amount,
-                           received_quantity, gl_code, cost_center) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           received_quantity, gl_code, cost_center, amount_only)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (key, number, row["description"], row["quantity"], row["unit_price"], row["amount"],
                          row.get("received_quantity"), _clean_code(row.get("gl_code")),
-                         _clean_code(row.get("cost_center"))),
+                         _clean_code(row.get("cost_center")), int(bool(row.get("amount_only")))),
                     )  # fmt: skip
             counts = {
                 "orders": len(orders),
@@ -1111,7 +1119,8 @@ class Store:
             target.close()
             source.close()
         with self._conn() as conn:
-            self._migrate(conn)  # an older backup may need upgrading
+            conn.executescript(_SCHEMA)  # an older backup may lack newer tables...
+            self._migrate(conn)  # ...and columns
             self._log(conn, "backup_restored", detail={"file": Path(backup).name, "safety_copy": safety.name})
         return safety
 

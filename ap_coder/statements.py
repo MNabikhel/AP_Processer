@@ -16,11 +16,11 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
-import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .safe import csv_row, parse_amount
 from .vendors import norm_invoice_number
 
 MATCHED, DIFFERS, NOT_RECEIVED, NOT_ON_STATEMENT, PAYMENT = (
@@ -34,6 +34,7 @@ LABELS = {
     PAYMENT: "Payment / credit",
 }
 TOLERANCE = 0.01
+_PAYMENT_WORDS = re.compile(r"\b(payments?|paiements?|receipts?|cheques?|checks?|eft|wire|virement|remittance)\b")
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "number": ("invoicenumber", "invoice", "invoiceno", "invno", "number", "document", "documentnumber", "docno",
@@ -61,18 +62,7 @@ def map_columns(headers: list[str]) -> dict[str, str]:
 
 
 def _number(value: Any) -> float | None:
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return None
-    text = str(value).strip().replace("$", "").replace(",", "").replace(" ", "")
-    if not text:
-        return None
-    negative = text.startswith("(") and text.endswith(")") or text.endswith("-") or text.upper().endswith("CR")
-    text = re.sub(r"(?i)cr$", "", text).strip("()-")
-    try:
-        number = float(text)
-    except ValueError:
-        return None
-    return -number if negative else number
+    return parse_amount(value)
 
 
 def _date(value: Any) -> str:
@@ -146,7 +136,7 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         if date:
             dates.append(date)
         key = norm_invoice_number(raw_number)
-        if not key or any(w in kind for w in ("payment", "paiement", "receipt", "cheque", "check", "eft")):
+        if not key or _PAYMENT_WORDS.search(kind):
             result.lines.append(Line(PAYMENT, raw_number, date, amount, note=kind_text or "no invoice number"))
             continue
         candidates = [i for i in by_number.get(key, []) if i["id"] not in seen]
@@ -187,11 +177,11 @@ def to_csv(rec: Reconciliation) -> bytes:
     writer.writerow(["Result", "Invoice #", "Date", "Statement amount", "AP Coder amount", "Difference",
                      "AP Coder #", "AP Coder status", "Note"])  # fmt: skip
     for li in rec.lines:
-        writer.writerow([
+        writer.writerow(csv_row([
             LABELS[li.status], li.number, li.date,
             "" if li.statement_amount is None else f"{li.statement_amount:.2f}",
             "" if li.ap_amount is None else f"{li.ap_amount:.2f}",
             "" if li.difference is None else f"{li.difference:.2f}",
             li.invoice_id or "", li.ap_status, li.note,
-        ])  # fmt: skip
+        ]))  # fmt: skip
     return ("﻿" + out.getvalue()).encode("utf-8")
