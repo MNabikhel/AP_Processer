@@ -57,7 +57,8 @@ GL accounts, cost centers, tax rates, policy ─┤   past approvals for this ve
                                                      learning memory + accuracy tracking
 ```
 
-> **Running this on real data?** Follow [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Everything
+> **Running this on real data?** Follow [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), then the
+> four-week [pilot plan](docs/PILOT_PLAN.md). Everything
 > stays in a local data folder outside the code (default `~/APCoder`), and the dashboard only listens on
 > `localhost`. Only redacted reports (`doctor`, `share-report`) are meant to leave your machine.
 
@@ -262,7 +263,7 @@ ap_coder/
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement
 samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
 scripts/             sample invoice generator
-docs/                GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md
+docs/                GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients mocked)
 ```

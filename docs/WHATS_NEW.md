@@ -3,7 +3,7 @@
 Everything below was added after the first version (pull request #1). The fastest way to see it all is
 the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
-has a short tour.
+has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a decision.
 
 Your existing data is safe. On first start the database upgrades itself (schema version 13), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
