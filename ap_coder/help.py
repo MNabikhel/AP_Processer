@@ -442,6 +442,27 @@ FAQ: list[tuple[str, str]] = [
     ),
 ]
 
+# The AP routine: (when, [(task, page key)]).
+ROUTINE: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Every day", [
+        ("Process new invoices", "process"),
+        ("Review queue (see Today)", "review"),
+        ("Vendor calls: find an invoice", "search"),
+        ("Export to the ERP", "exports"),
+    ]),
+    ("Every week", [
+        ("Parked, second approvals", "review"),
+        ("Vendor statements", "statements"),
+        ("Re-import open POs", "purchase_orders"),
+    ]),
+    ("Every month", [
+        ("Accruals for the close", "month_end"),
+        ("Sales tax to claim", "sales_tax"),
+        ("Duplicate audit, controls", "activity"),
+        ("Vendors that make work", "vendors"),
+    ]),
+]  # fmt: skip
+
 QUICK_START: list[tuple[str, str]] = [
     ("Set up your accounts", "Import your GL accounts (and cost centers) and say how each sales tax is posted."),
     ("Add purchase orders (optional)", "Import open POs to check invoices against what was ordered and received."),

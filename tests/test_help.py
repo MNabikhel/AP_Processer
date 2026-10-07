@@ -44,3 +44,14 @@ def test_help_page_search_filters_the_catalog():
     assert 0 < count < len(CHECKS) and "QST_NUMBER_MISSING" in html
     assert checks_table("", "Purchase orders")[1] == sum(1 for c in CHECKS.values() if c.area == "Purchase orders")
     assert checks_table("zzzz-not-a-check") == ("", 0)
+
+
+def test_routine_links_to_real_pages():
+    import re
+
+    from ap_coder.help import ROUTINE
+
+    from .conftest import ROOT
+
+    pages = set(re.findall(r'"(\w+)": st\.Page\(', (ROOT / "ap_coder" / "dashboard.py").read_text()))
+    assert {page for _, tasks in ROUTINE for _, page in tasks} <= pages

@@ -7,7 +7,7 @@ import re
 import streamlit as st
 
 from ap_coder import ui
-from ap_coder.help import AREAS, CHECKS, FAQ, QUICK_START
+from ap_coder.help import AREAS, CHECKS, FAQ, QUICK_START, ROUTINE
 from ap_coder.paths import PROJECT_DIR
 from ap_coder.webapp.common import DB_PATH, PAGES, card, esc, short_path, show_toast
 
@@ -65,6 +65,17 @@ def page_help() -> None:
             )
             if page in PAGES:
                 c2.page_link(PAGES[page], label="Open", icon=":material/arrow_forward:")
+
+    with card("help_routine"):
+        st.markdown("#### :material/checklist: Your AP routine")
+        columns = st.columns(len(ROUTINE))
+        for col, (when, tasks) in zip(columns, ROUTINE, strict=True):
+            col.markdown(f"**{when}**")
+            for task, page in tasks:
+                if page in PAGES:
+                    col.page_link(PAGES[page], label=task, icon=":material/arrow_right:")
+                else:
+                    col.markdown(f"- {task}")
 
     with card("help_checks"):
         st.markdown("#### :material/fact_check: What the checks mean")
