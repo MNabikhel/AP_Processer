@@ -57,11 +57,22 @@ def test_formatting_variants_count_as_duplicates(tmp_path, ground_truth, referen
 
 def test_first_invoice_from_a_vendor_is_noted_without_penalty(tmp_path, ground_truth, reference):
     store = Store(tmp_path / "ap.db")
-    other = {**ground_truth, "vendor_name": "Some Other Vendor Ltd."}
+    other = {**ground_truth, "vendor_name": "Some Other Vendor Ltd.", "invoice_number": "OTHER-1"}
     store.add_invoice(tmp_path / "o.pdf", other, {})
     codes, report = _codes(store, ground_truth, reference)
     assert codes.get("VENDOR_NEW") == "info"
     assert report.adjusted_confidence == report.model_confidence  # info costs nothing
+
+
+def test_same_bill_under_another_vendor_name(tmp_path, ground_truth, reference):
+    store = Store(tmp_path / "ap.db")
+    first = store.add_invoice(tmp_path / "o.pdf", {**ground_truth, "vendor_name": "Northwind IT Solns"}, {})
+    codes, report = _codes(store, _variant(ground_truth, "NW 2026 0912"), reference)
+    assert codes.get("DUPLICATE_OTHER_VENDOR") == "warning"
+    assert f"#{first}" in next(i.message for i in report.issues if i.code == "DUPLICATE_OTHER_VENDOR")
+    assert (
+        "DUPLICATE_OTHER_VENDOR" not in _codes(store, _variant(ground_truth, "NW 2026 0912", total=99.0), reference)[0]
+    )
 
 
 def test_changed_gst_number_is_flagged(tmp_path, ground_truth, reference):

@@ -503,6 +503,22 @@ class Store:
         except ValueError:
             return DEFAULT_TERMS_DAYS
 
+    def duplicates_elsewhere(
+        self, vendor_name: str, invoice_number: str, grand_total: float, exclude_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Invoices from ANOTHER vendor with the same invoice number and total: the same bill entered under a
+        second vendor record (a common cause of duplicate payments)."""
+        key, number = vendor_key(vendor_name), _norm_number(invoice_number)
+        if not number or not grand_total:
+            return []
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, vendor_name, vendor_key, invoice_number FROM invoices "
+                "WHERE ABS(grand_total - ?) <= 0.01 AND status NOT IN (?, ?) AND vendor_key != ?",
+                (grand_total, FAILED, REJECTED, key),
+            ).fetchall()
+        return [dict(r) for r in rows if r["id"] != exclude_id and _norm_number(r["invoice_number"]) == number]
+
     def list_invoices(self, status: str | None = None) -> list[dict[str, Any]]:
         sql = (
             "SELECT id, file_name, status, vendor_name, invoice_number, invoice_date, due_date, currency, grand_total, "
@@ -1145,14 +1161,14 @@ class Store:
             lessons = {
                 r["vendor_key"]: dict(r)
                 for r in conn.execute(
-                    """SELECT vendor_key, COUNT(*) lines, SUM(outcome = 'accepted') accepted FROM feedback
-                       GROUP BY vendor_key"""
+                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome != 'history') lines,
+                              SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
                 )
             }
             masters = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors")}
         for r in rows:
             fb = lessons.get(r["vendor_key"]) or {}
-            r["lessons"] = fb.get("lines", 0)
+            r["lessons"] = fb.get("lessons", 0)
             r["accuracy"] = (fb["accepted"] / fb["lines"]) if fb.get("lines") else None
             master = masters.get(r["vendor_key"]) or {}
             r["status"] = master.get("status", "active")
@@ -1250,6 +1266,54 @@ class Store:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit))]
 
+    def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
+        """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.
+        Rows already imported (same vendor, description, GL, cost center, amount and date) are skipped."""
+        from .history import HISTORY
+
+        added = skipped = 0
+        with self._conn() as conn:
+            seen = {
+                (r[0], r[1], r[2], r[3] or "", r[4], r[5])
+                for r in conn.execute(
+                    "SELECT vendor_key, description, final_gl, final_cc, amount, created_at FROM feedback "
+                    "WHERE outcome = ?",
+                    (HISTORY,),
+                )
+            }
+            batch = []
+            for row in rows:
+                key = vendor_key(row["vendor_name"])
+                gl = _clean_code(row["gl_code"])
+                when = row.get("date") or _now()[:10]
+                ident = (key, row["description"], gl, row.get("cost_center") or "", row.get("amount"), when)
+                if not key or ident in seen:
+                    skipped += 1
+                    continue
+                seen.add(ident)
+                batch.append((key, row["vendor_name"], row["description"], row.get("amount"), gl,
+                              row.get("cost_center") or "", HISTORY, "ERP history", when))  # fmt: skip
+            conn.executemany(
+                """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
+                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at)
+                   VALUES (NULL, NULL, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?)""",
+                batch,
+            )
+            added = len(batch)
+            self._log(conn, "history_imported", actor=actor, detail={"added": added, "skipped": skipped})
+        return {"added": added, "skipped": skipped}
+
+    def history_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM feedback WHERE outcome = 'history'").fetchone()[0])
+
+    def forget_history(self, actor: str | None = None) -> int:
+        with self._conn() as conn:
+            count = conn.execute("DELETE FROM feedback WHERE outcome = 'history'").rowcount
+            if count:
+                self._log(conn, "lessons_forgotten", actor=actor, detail={"count": count, "history": True})
+            return count
+
     def delete_feedback(self, ids: list[int], actor: str | None = None) -> int:
         with self._conn() as conn:
             cur = conn.executemany("DELETE FROM feedback WHERE id = ?", [(i,) for i in ids])
@@ -1259,16 +1323,19 @@ class Store:
 
     def metrics(self) -> dict[str, Any]:
         with self._conn() as conn:
-            lines = conn.execute("SELECT outcome, COUNT(*) n FROM feedback GROUP BY outcome").fetchall()
+            # Imported ERP history is memory, not a reviewer decision: it never counts towards accuracy.
+            lines = conn.execute(
+                "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome != 'history' GROUP BY outcome"
+            ).fetchall()
             weekly = conn.execute(
                 """SELECT strftime('%Y-W%W', created_at) week,
                           SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
-                   FROM feedback GROUP BY week ORDER BY week"""
+                   FROM feedback WHERE outcome != 'history' GROUP BY week ORDER BY week"""
             ).fetchall()
             by_vendor = conn.execute(
                 """SELECT vendor_name, COUNT(*) lines, SUM(outcome = 'accepted') accepted,
                           SUM(outcome = 'corrected') corrected, MAX(created_at) last_seen
-                   FROM feedback GROUP BY vendor_key ORDER BY lines DESC"""
+                   FROM feedback WHERE outcome != 'history' GROUP BY vendor_key ORDER BY lines DESC"""
             ).fetchall()
             corrections = conn.execute(
                 """SELECT COALESCE(suggested_gl, '(new line)') suggested_gl, final_gl, COUNT(*) n

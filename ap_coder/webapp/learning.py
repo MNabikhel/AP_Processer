@@ -5,8 +5,9 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from ap_coder import ui
+from ap_coder import history, ui
 from ap_coder.store import APPROVED
+from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import (
     SERIES_BLUE,
     TARGET_ACCURACY,
@@ -21,6 +22,53 @@ from ap_coder.webapp.common import (
     show_toast,
 )
 
+HISTORY_LABELS = {"vendor_name": "Vendor *", "description": "Line description *", "gl_code": "GL account *",
+                  "cost_center": "Cost center", "amount": "Amount", "date": "Date"}  # fmt: skip
+
+
+def _history_card(store) -> None:
+    count = store.history_count()
+    title = "Teach from past coding" + (f" ({count:,} past line(s) taught)" if count else "")
+    with st.expander(title, icon=":material/history_edu:", expanded=False):
+        st.caption(
+            "Export last year's posted AP invoice lines from the ERP (vendor, line description, GL account, cost "
+            "center) and import them here: the AI then sees how each vendor was coded before, from the first "
+            "invoice. Past lines never count in the accuracy figures."
+        )
+        upload = st.file_uploader("AP line history (CSV or Excel)", type=["csv", "xlsx"], key="hist_upload")
+        df = _read_upload(upload, "hist") if upload is not None else None
+        if df is not None and not df.empty:
+            columns = list(df.columns)
+            guessed = history.map_columns(columns)
+            options = ["(none)", *columns]
+            cols = st.columns(3)
+            chosen = {}
+            for i, (field, label) in enumerate(HISTORY_LABELS.items()):
+                pick = cols[i % 3].selectbox(
+                    label, options, index=options.index(guessed[field]) if field in guessed else 0,
+                    key=f"hist_col_{field}",
+                )  # fmt: skip
+                if pick != "(none)":
+                    chosen[field] = pick
+            missing = [HISTORY_LABELS[f].rstrip(" *") for f in history.REQUIRED if f not in chosen]
+            if missing:
+                st.warning("Pick the column for: " + ", ".join(missing))
+            elif st.button(f"Teach {len(df):,} line(s)", type="primary", icon=":material/school:", key="hist_go"):
+                rows, skipped = history.rows_from_records(df.to_dict("records"), chosen)
+                result = store.import_history(rows, actor=reviewer())
+                notify(
+                    f"Taught {result['added']:,} past line(s)"
+                    + (f"; {result['skipped'] + skipped:,} skipped (incomplete or already taught)."
+                       if result["skipped"] + skipped else "."),
+                    ":material/school:",
+                )  # fmt: skip
+                st.rerun()
+        if count and st.button("Forget all past coding", icon=":material/delete_sweep:", key="hist_forget"):
+            n = store.forget_history(actor=reviewer())
+            notify(f"Forgot {n:,} past line(s).", ":material/delete_sweep:")
+            st.rerun()
+
+
 # --- Learning & accuracy ----------------------------------------------------------------------------------------
 
 
@@ -32,6 +80,7 @@ def page_learning() -> None:
     st.html(
         ui.page_header("Insights", "Learning & accuracy", "How often the AI gets it right, and what it has learned.")
     )
+    _history_card(store)
     m = store.metrics()
     if not m["lines_reviewed"]:
         with card("nolearning"):
@@ -118,6 +167,7 @@ def page_learning() -> None:
             st.dataframe(weekly[["week", "accepted", "corrected", "accuracy"]], hide_index=True)
 
     rows = store.feedback_rows(limit=2000)
+    reviewed = [r for r in rows if r["outcome"] != "history"]
     with feed_col, card("feed"):
         st.markdown("#### :material/history_edu: Recent lessons")
         items = []
@@ -125,7 +175,7 @@ def page_learning() -> None:
         def short(text: str, n: int = 42) -> str:
             return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
-        for r in rows[:6]:
+        for r in reviewed[:6]:
             if r["outcome"] == "corrected":
                 was = (
                     f"<span class='apc-strike apc-mono'>{esc(r['suggested_gl'])}</span>"
@@ -190,7 +240,9 @@ def page_learning() -> None:
         ]  # fmt: skip
         memory.insert(0, "forget", False)
         memory["created_at"] = memory["created_at"].str[:10]
-        memory["outcome"] = memory["outcome"].map({"accepted": "✓ confirmed", "corrected": "✎ corrected"})
+        memory["outcome"] = memory["outcome"].map(
+            {"accepted": "✓ confirmed", "corrected": "✎ corrected", "history": "⟲ ERP history"}
+        )
         edited = st.data_editor(
             memory,
             hide_index=True,

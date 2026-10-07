@@ -10,6 +10,7 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * AMOUNT_UNUSUAL (warning): far above what this vendor usually bills
 * POSSIBLE_DUPLICATE_AMOUNT (warning): same vendor, same total, close date, different invoice number
 * VENDOR_NEW (info): first invoice from this vendor (no penalty; just worth knowing)
+* DUPLICATE_OTHER_VENDOR (warning): same invoice number and total under another vendor name
 * VENDOR_NOT_IN_MASTER (warning): a vendor master was imported from the ERP and this vendor is not in it
   (by name or GST/HST number)
 * VENDOR_MATCHED_BY_TAX_NUMBER (info): not found by name, but the GST/HST number belongs to a master vendor
@@ -82,6 +83,14 @@ def vendor_findings(
                  "this vendor is not in the vendor master imported from the ERP: set it up (and verify it) first")
             )  # fmt: skip
     in_master = bool(master and master.get("in_master"))
+    for other in store.duplicates_elsewhere(
+        coding.vendor_name, coding.invoice_number, coding.grand_total, exclude_invoice_id
+    )[:3]:
+        findings.append(
+            (WARNING, "DUPLICATE_OTHER_VENDOR",
+             f"invoice #{other['id']} from {other['vendor_name']} has the same number and total: the same bill "
+             "under two vendor names?")
+        )  # fmt: skip
     if master and master.get("status") == ON_HOLD:
         note = f": {master['notes']}" if master.get("notes") else ""
         findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold in the vendor list{note}"))
