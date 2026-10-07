@@ -650,17 +650,25 @@ def _apply_rules_button(
         help="; ".join(rules.describe(c) for c in changes).replace("the AI chose", "now"),
     ):  # fmt: skip
         updated = edited_lines.copy()
+        done = []
+        numbers_in_grid = pd.to_numeric(updated["line_number"], errors="coerce")
         for c in changes:
-            rows_at = updated["line_number"] == c["line_number"]
+            rows_at = numbers_in_grid == c["line_number"]
+            if not rows_at.any():  # a line just added (not numbered yet): left for the reviewer to code
+                continue
             updated.loc[rows_at, "predicted_gl_code"] = c["gl_to"]
             updated.loc[rows_at, "predicted_cost_center"] = c["cc_to"]
+            done.append(c)
         replace_editor(f"{key}_lines", updated)
+        # Recorded only for the AI's own lines, so its accuracy is measured on its own answer there.
         ai_lines = {li.get("line_number"): li for li in ai.get("line_items") or []}
         store.add_rules_applied(invoice_id, [
-            {**c, "gl_from": ai_lines.get(c["line_number"], {}).get("predicted_gl_code", c["gl_from"]),
-             "cc_from": ai_lines.get(c["line_number"], {}).get("predicted_cost_center", c["cc_from"])}
-            for c in changes
+            {**c, "gl_from": ai_lines[c["line_number"]].get("predicted_gl_code", ""),
+             "cc_from": ai_lines[c["line_number"]].get("predicted_cost_center", "")}
+            for c in done
+            if c["line_number"] in ai_lines
         ])  # fmt: skip
+        changes = done
         notify(f"Coding rules applied to {len(changes)} line(s).", ":material/rule_settings:")
         st.rerun()
 

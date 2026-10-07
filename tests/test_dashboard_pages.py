@@ -456,5 +456,5 @@ def test_find_offers_the_approved_pdf(busy_db):
     at.text_input(key="search_query").input("northwind")
     _ok(at.run())
     _ok(at.button(key=f"search_pdf_make_{invoice_id}").click().run())
-    name, data = at.session_state[f"search_pdf_{invoice_id}"]
+    name, data, _ = at.session_state[f"search_pdf_{invoice_id}"]
     assert name.endswith("approved.pdf") and data[:4] == b"%PDF"

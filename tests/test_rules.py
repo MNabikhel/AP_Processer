@@ -139,3 +139,17 @@ def test_accuracy_is_measured_on_the_ais_own_answer(tmp_path, ground_truth):
     assert (rows[5]["suggested_gl"], rows[5]["final_gl"], rows[5]["outcome"]) == ("6800", "6900", "corrected")
     assert rows[1]["outcome"] == "accepted"
     assert "line_coding" not in store.get_invoice(invoice_id)["edits"]  # the reviewer changed nothing
+
+
+def test_a_later_rule_still_measures_the_ais_first_answer(tmp_path, ground_truth):
+    store = Store(tmp_path / "r.db")
+    coded, changes = rules.apply(InvoiceCoding.model_validate(ground_truth), [Rule("", "delivery", "6900")])
+    output = coded.to_output()  # the AI said 6800; a rule set 6900 when processing
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", output, {}, meta={"rules_applied": changes})
+    # The rule is changed back to 6800 and applied on the review screen.
+    store.add_rules_applied(invoice_id, [{**changes[0], "gl_from": "6900", "gl_to": "6800"}])
+    final = json.loads(json.dumps(output))
+    final["line_items"][4]["predicted_gl_code"] = "6800"
+    store.approve_invoice(invoice_id, final, "Jane")
+    line5 = next(r for r in store.feedback_rows() if r["line_number"] == 5)
+    assert (line5["suggested_gl"], line5["outcome"]) == ("6800", "accepted")

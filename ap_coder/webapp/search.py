@@ -6,7 +6,7 @@ import streamlit as st
 
 from ap_coder import search, stamp, ui
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
-from ap_coder.webapp.common import PAGES, card, esc, get_store, money, reviewer, show_toast
+from ap_coder.webapp.common import PAGES, card, esc, get_store, money, reference_or_none, reviewer, show_toast
 
 STATUS = {
     REVIEW: ("To review", "info", "inbox"),
@@ -76,8 +76,10 @@ def page_search() -> None:
                     st.session_state["open_invoice"] = r["id"]
                     st.switch_page(PAGES["review"])
             elif hit.source == "AP Coder" and r["status"] in (APPROVED, PENDING):
+                # Made again if the invoice changed since (reopened, approved again, exported).
+                version = (r.get("reviewed_at"), r.get("second_reviewed_at"), r.get("export_batch"))
                 ready = st.session_state.get(f"search_pdf_{r['id']}")
-                if ready:
+                if ready and ready[2] == version:
                     right.download_button(
                         "Download PDF", ready[1], file_name=ready[0], mime="application/pdf",
                         icon=":material/download:", key=f"search_pdf_dl_{r['id']}", width="stretch",
@@ -87,7 +89,11 @@ def page_search() -> None:
                     help="The invoice with its APPROVED stamp and coding page",
                 ):  # fmt: skip
                     inv = store.get_invoice(r["id"])
-                    st.session_state[f"search_pdf_{r['id']}"] = (stamp.file_name(inv), stamp.stamped_pdf(inv))
+                    reference = reference_or_none(store)
+                    names = {row["gl_code"]: row.get("description", "") for row in reference.chart_of_accounts.rows} \
+                        if reference else {}  # fmt: skip
+                    pdf = stamp.stamped_pdf(inv, names)
+                    st.session_state[f"search_pdf_{r['id']}"] = (stamp.file_name(inv), pdf, version)
                     st.rerun()
             elif hit.source == "AP Coder" and r["status"] == PARKED and "review" in PAGES:
                 if right.button("Bring back", icon=":material/play_circle:", key=f"search_unpark_{r['id']}",

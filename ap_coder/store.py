@@ -805,7 +805,7 @@ class Store:
             kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
             if not kept_rule and (s_gl != f_gl or (s_cc or "") != (f_cc or "")):
                 reviewer_changed += 1
-            if rule is not None and rule.get("gl_to") == s_gl:
+            if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
             outcome = ACCEPTED if (s_gl == f_gl and (s_cc or "") == (f_cc or "")) else CORRECTED
             counts[outcome] += 1
