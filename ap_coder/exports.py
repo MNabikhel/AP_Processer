@@ -28,6 +28,7 @@ from .safe import csv_row, neutralise_sheet
 FORMATS = {
     "xlsx": "Excel workbook: invoices, GL lines and a GL summary",
     "csv": "CSV: one row per GL line (for ERP import)",
+    "custom": "Custom CSV: your ERP's columns (set up below)",
 }
 
 INVOICE_COLUMNS = [
@@ -167,13 +168,31 @@ def build_csv(
     return buf.getvalue().encode("utf-8-sig")  # BOM: Excel shows accents correctly
 
 
+def custom_rows(
+    invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
+    vendor_ids: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:  # fmt: skip
+    """Posting lines, each with its invoice's fields too (for a custom layout)."""
+    heads = {r["invoice_id"]: r for r in invoice_rows(invoices, batch, vendor_ids)}
+    return [{**heads.get(r["invoice_id"], {}), **r} for r in line_rows(invoices, gl_names, batch, vendor_ids)]
+
+
 def build(
     fmt: str, invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
-    vendor_ids: dict[str, str] | None = None,
+    vendor_ids: dict[str, str] | None = None, layout: Any = None,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(file bytes, file name, mime type)."""
     name = f"ap_coder_export_{batch}" if batch != "" else "ap_coder_export"
     if fmt == "csv":
         return build_csv(invoices, gl_names, batch, vendor_ids), f"{name}.csv", "text/csv"
+    if fmt == "custom":
+        from . import export_layout
+
+        rows = custom_rows(invoices, gl_names, batch, vendor_ids)
+        return (
+            export_layout.build(rows, layout or export_layout.Layout(export_layout.default_columns())),
+            (f"{name}_custom.csv"),
+            "text/csv",
+        )
     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return build_xlsx(invoices, gl_names, batch, vendor_ids), f"{name}.xlsx", mime

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from ap_coder import exports, ui
+from ap_coder import export_layout, exports, ui
 from ap_coder.store import Store
 from ap_coder.webapp.common import (
     card,
@@ -26,9 +26,71 @@ def _gl_names(store: Store) -> dict[str, str]:
     return {row["gl_code"]: (row.get("description") or "").split(" - ")[0] for row in reference.chart_of_accounts.rows}
 
 
+LAYOUT_SETTING = "export_layout"
+
+
+def _layout(store: Store) -> export_layout.Layout:
+    return export_layout.Layout.from_json(store.get_setting(LAYOUT_SETTING))
+
+
 def _batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
     invoices = [store.get_invoice(i) for i in store.batch_invoice_ids(batch)]
-    return exports.build(fmt, [i for i in invoices if i], _gl_names(store), batch, store.vendor_ids())
+    return exports.build(
+        fmt, [i for i in invoices if i], _gl_names(store), batch, store.vendor_ids(), layout=_layout(store)
+    )
+
+
+def _layout_editor(store: Store) -> None:
+    layout = _layout(store)
+    with st.expander("Custom layout for your ERP", icon=":material/view_column:"):
+        st.caption(
+            "One row per GL posting line. Pick the columns your ERP's import expects, in order, with its headers; "
+            "a column can also be fixed text (a company code, a journal name). Then export with *Custom CSV*."
+        )
+        labels = {**{k: v for k, v in export_layout.FIELDS.items()}, export_layout.FIXED: "Fixed text…"}
+        df = pd.DataFrame([{"header": c.header, "field": c.field, "text": c.text} for c in layout.columns])
+        edited = st.data_editor(
+            df,
+            column_config={
+                "header": st.column_config.TextColumn("Header", required=True),
+                "field": st.column_config.SelectboxColumn(
+                    "Value", options=list(labels), format_func=labels.get, required=True, width="medium"
+                ),  # fmt: skip
+                "text": st.column_config.TextColumn("Fixed text", help="Used when the value is 'Fixed text…'"),
+            },
+            num_rows="dynamic",
+            hide_index=True,
+            key="layout_columns",
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        dates, separators = list(export_layout.DATE_FORMATS), list(export_layout.DELIMITERS)
+        date_format = c1.selectbox("Dates", dates, index=dates.index(layout.date_format), key="layout_date")
+        delimiter = c2.selectbox(
+            "Separator", separators, format_func=export_layout.DELIMITERS.get,
+            index=separators.index(layout.delimiter), key="layout_sep",
+        )  # fmt: skip
+        decimal_comma = c3.toggle("Decimal comma (12,50)", value=layout.decimal_comma, key="layout_comma")
+        header_row = c4.toggle("Header row", value=layout.header_row, key="layout_header")
+        columns = [
+            export_layout.Column(str(r["header"]).strip(), r["field"], "" if pd.isna(r.get("text")) else str(r["text"]))
+            for r in edited.to_dict("records")
+            if isinstance(r.get("field"), str) and str(r.get("header") or "").strip()
+        ]
+        new = export_layout.Layout(columns, date_format, delimiter, decimal_comma, header_row)
+        if decimal_comma and delimiter == ",":
+            st.warning("With a decimal comma, use a semicolon or tab as the separator.")
+        sample = store.unexported_approved()[:3] or [{"id": i} for i in store.batch_invoice_ids(1)[:3]]
+        invoices = [store.get_invoice(i["id"]) for i in sample]
+        rows = exports.custom_rows([i for i in invoices if i], _gl_names(store), "", store.vendor_ids())
+        if rows and columns:
+            preview = export_layout.build(rows[:6], new).decode("utf-8-sig")
+            st.caption("Preview")
+            st.code(preview, language=None)
+        if st.button("Save layout", type="primary", icon=":material/save:", key="layout_save", disabled=not columns):
+            store.set_setting(LAYOUT_SETTING, new.to_json(), actor=reviewer())
+            store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["export_layout"]})
+            notify("Export layout saved. Choose Custom CSV when exporting.", ":material/view_column:")
+            st.rerun()
 
 
 def page_exports() -> None:
@@ -132,6 +194,8 @@ def page_exports() -> None:
             st.download_button(f"Download {name}", data, file_name=name, mime=mime, type="primary",
                                icon=":material/download:", key="export_download_now")  # fmt: skip
 
+    _layout_editor(store)
+
     with card("export_batches"):
         st.markdown("#### :material/inventory_2: Past batches")
         if not batches:
@@ -155,7 +219,12 @@ def page_exports() -> None:
         labels = {b["id"]: f"Batch {b['id']} · {b['created_at'][:10]} · {b['invoices']} invoice(s)" for b in live}
         c1, c2, c3 = st.columns([2, 1.2, 1.2], vertical_alignment="bottom")
         chosen_batch = c1.selectbox("Batch", list(labels), format_func=labels.get, key="export_batch_choice")
-        fmt = c2.selectbox("Format", list(exports.FORMATS), format_func=lambda f: f.upper(), key="export_again_fmt")
+        fmt = c2.selectbox(
+            "Format",
+            list(exports.FORMATS),
+            format_func=lambda f: "Custom CSV" if f == "custom" else f.upper(),
+            key="export_again_fmt",
+        )
         data, name, mime = _batch_file(store, chosen_batch, fmt)
         c3.download_button("Download again", data, file_name=name, mime=mime, icon=":material/download:",
                            width="stretch", key="export_download_again")  # fmt: skip
