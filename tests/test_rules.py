@@ -104,7 +104,7 @@ def test_upgrade_from_version_10(tmp_path):
         conn.execute("DROP TABLE coding_rules")
         conn.execute("UPDATE settings SET value = '10' WHERE key = 'schema_version'")
     store = Store(path)
-    assert store.coding_rules() == [] and store.get_setting("schema_version") == "12"
+    assert store.coding_rules() == [] and store.get_setting("schema_version") == "13"
 
 
 @pytest.mark.parametrize(

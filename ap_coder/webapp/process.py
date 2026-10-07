@@ -178,7 +178,7 @@ def page_process() -> None:
 
         with card("folder"):
             st.markdown("#### :material/folder_open: Invoices folder")
-            hint, button = st.columns([3, 1], vertical_alignment="center")
+            hint, button = st.columns([2.6, 1.4], vertical_alignment="center")
             hint.caption(
                 f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here. To process them automatically "
                 "(e.g. overnight, or from a scanner or mail rule saving into this folder), run "

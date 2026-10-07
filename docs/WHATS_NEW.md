@@ -5,7 +5,7 @@ the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
 has a short tour.
 
-Your existing data is safe. On first start the database upgrades itself (schema version 12), and a
+Your existing data is safe. On first start the database upgrades itself (schema version 13), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
 ## Highlights

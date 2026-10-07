@@ -791,10 +791,14 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             c1, c2, c3 = st.columns(3)
             header["po_number"] = text(c1, "PO #", "po_number", help="Purchase order the invoice quotes, if any")
             header["payment_terms"] = text(c2, "Payment terms", "payment_terms", placeholder="e.g. Net 30, 2/10 Net 30")
-            computed = payment(
-                {**start, **header}, store.default_terms_days(),
-                store.vendor_terms(vendor_key(header.get("vendor_name") or "")),
-            ).due  # fmt: skip
+            computed = (
+                payment(
+                    {**start, **header}, store.default_terms_days(),
+                    store.vendor_terms(vendor_key(header.get("vendor_name") or "")),
+                ).due
+                if float(start.get("grand_total") or 0) > 0  # a credit note has no due date
+                else None
+            )  # fmt: skip
             header["due_date"] = text(
                 c3, "Due date", "due_date",
                 placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",

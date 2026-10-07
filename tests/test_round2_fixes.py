@@ -135,3 +135,18 @@ def test_removing_the_demo_removes_its_export_batches(tmp_path):
     store.create_export_batch([i["id"] for i in store.unexported_approved()], "csv")
     remove_demo(store)
     assert store.export_batches() == []
+
+
+def test_a_credit_note_has_no_due_date(tmp_path):
+    import sqlite3
+
+    store = Store(tmp_path / "n.db")
+    credit = _doc("northwind_ON_HST_CN-2026-0047")
+    a = store.add_invoice(tmp_path / "a.pdf", credit, {})
+    assert store.get_invoice(a)["due_date"] is None
+    store.approve_invoice(a, credit, "Jane")
+    assert store.get_invoice(a)["due_date"] is None
+    with sqlite3.connect(store.path) as conn:  # given one by an older version
+        conn.execute("UPDATE invoices SET due_date = '2026-10-28'")
+        conn.execute("UPDATE settings SET value = '12' WHERE key = 'schema_version'")
+    assert Store(store.path).get_invoice(a)["due_date"] is None

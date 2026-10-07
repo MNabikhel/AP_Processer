@@ -36,7 +36,7 @@ from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSet
 from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 12  # 10: erp_invoices, 11: coding_rules (both created by _SCHEMA), 12: currency backfill
+SCHEMA_VERSION = 13  # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -136,6 +136,8 @@ def _clean_code(value: Any) -> str:
 
 
 def _due(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vendor_terms: str = "") -> str | None:
+    if float(coding.get("grand_total") or 0) <= 0:
+        return None  # a credit note is not paid: it has no due date
     due = payment(coding, default_days, vendor_terms).due
     return due.isoformat() if due else None
 
@@ -215,6 +217,8 @@ class Store:
                 currency = str((json.loads(r["final_output"]) or {}).get("currency") or "").strip().upper()
                 if currency:
                     conn.execute("UPDATE invoices SET currency = ? WHERE id = ?", (currency, r["id"]))
+        if version < 13:  # credit notes were given a due date like invoices
+            conn.execute("UPDATE invoices SET due_date = NULL WHERE grand_total <= 0")
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
