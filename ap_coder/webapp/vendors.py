@@ -196,7 +196,7 @@ def vendor_detail(store: Store, v: dict[str, Any]) -> None:
                             esc(i["invoice_number"]),
                             esc(i["invoice_date"]),
                             f"{money(i['grand_total'])} <span class='apc-muted'>{esc(i['currency'])}</span>",
-                            esc(i["status"]),
+                            ui.pill(*ui.STATUS_PILLS.get(i["status"], (i["status"], "gray", ""))),
                         ]  # fmt: skip
                         for i in invoices[:8]
                     ],
