@@ -945,8 +945,9 @@ class Store:
             rows = [
                 dict(r)
                 for r in conn.execute(
-                    """SELECT id, status, vendor_name, invoice_number, invoice_date, currency, grand_total,
-                              adjusted_confidence, requires_review, created_at, reviewed_at, ai_output, final_output
+                    """SELECT id, status, export_batch, vendor_name, invoice_number, invoice_date, currency,
+                              grand_total, adjusted_confidence, requires_review, created_at, reviewed_at,
+                              ai_output, final_output
                        FROM invoices WHERE vendor_key = ? ORDER BY id DESC""",
                     (key,),
                 )

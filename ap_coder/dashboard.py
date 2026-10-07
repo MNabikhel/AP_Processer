@@ -32,6 +32,7 @@ from ap_coder.webapp.process import page_process
 from ap_coder.webapp.purchase_orders import page_purchase_orders
 from ap_coder.webapp.review import page_review
 from ap_coder.webapp.settings import page_settings
+from ap_coder.webapp.statements import page_statements
 from ap_coder.webapp.vendors import page_vendors
 
 st.set_page_config(page_title="AP Coder", page_icon=str(ASSETS / "icon.svg"), layout="wide")
@@ -42,6 +43,7 @@ PAGES.update(
         "review": st.Page(page_review, title="Review queue", icon=":material/inbox:", default=True),
         "process": st.Page(page_process, title="Process invoices", icon=":material/upload_file:"),
         "exports": st.Page(page_exports, title="Exports", icon=":material/ios_share:"),
+        "statements": st.Page(page_statements, title="Vendor statements", icon=":material/fact_check:"),
         "purchase_orders": st.Page(page_purchase_orders, title="Purchase orders", icon=":material/shopping_cart:"),
         "accounts": st.Page(page_accounts, title="GL accounts & tax", icon=":material/account_tree:"),
         "learning": st.Page(page_learning, title="Learning & accuracy", icon=":material/insights:"),
@@ -62,7 +64,7 @@ with st.sidebar:
     st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
 
 NAV_SECTIONS = {
-    "Work": ["review", "process", "exports"],
+    "Work": ["review", "process", "exports", "statements"],
     "Insight": ["insights", "learning", "vendors", "activity"],
     "Setup": ["accounts", "purchase_orders", "settings", "help"],
 }
