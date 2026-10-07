@@ -93,3 +93,15 @@ def test_suggestions_from_past_coding():
     assert (rule.vendor, rule.gl_code, rule.cost_center, n) == ("Acme Ltd", "6000", "CC1", 5)
     assert rules.suggest(feedback, [Rule("acme ltd", "", "6000")]) == []  # already a rule
     assert rules.suggest(feedback[:4], []) == []  # too few lines
+
+
+def test_upgrade_from_version_10(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    Store(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE coding_rules")
+        conn.execute("UPDATE settings SET value = '10' WHERE key = 'schema_version'")
+    store = Store(path)
+    assert store.coding_rules() == [] and store.get_setting("schema_version") == "11"
