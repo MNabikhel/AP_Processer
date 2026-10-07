@@ -18,6 +18,8 @@ backup of the database is made automatically once a day when AP Coder starts (th
   month-end accruals, the sales-tax claim (ITCs/ITRs) and PST/QST self-assessment.
 - **Know where you stand:** *Find an invoice*, the *Today* line, spend analysis, the duplicate
   payment audit, the controls report and the business case.
+- **A public demo on the web:** the dashboard with made-up invoices, nothing to install, for anyone
+  with the link (see [DEMO.md](DEMO.md)).
 
 ## Safety
 

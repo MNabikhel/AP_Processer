@@ -1,5 +1,25 @@
 # AP Invoice Coder (prototype)
 
+## Try the live demo
+
+[![Open the live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ap-coder-demo.streamlit.app)
+
+**[ap-coder-demo.streamlit.app](https://ap-coder-demo.streamlit.app)** opens the review dashboard in
+your browser with ten made-up invoices: no company data, no Azure, nothing to install. Review, correct
+and approve invoices, then look at Insights, Sales tax and Activity. *Reset demo* starts it over.
+
+![Review queue with today's numbers](docs/screenshots/review-queue.png)
+
+| | |
+|---|---|
+| ![An invoice in review: checks, GL split and the approve bar](docs/screenshots/invoice-review.png) | ![Insights: the business case at 500 invoices a month](docs/screenshots/insights.png) |
+| ![Sales tax: GST/HST and QST to claim back](docs/screenshots/sales-tax.png) | ![Activity: the duplicate payment audit and the audit trail](docs/screenshots/activity.png) |
+
+To run the same demo on your computer: `pip install -r requirements.txt`, then
+`streamlit run streamlit_app.py`. How the hosted demo is set up: [docs/DEMO.md](docs/DEMO.md).
+
+## What it does
+
 An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
 
 1. **Extraction:** Azure AI Document Intelligence (`prebuilt-layout` or `prebuilt-invoice`) turns
@@ -263,7 +283,9 @@ ap_coder/
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement
 samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
 scripts/             sample invoice generator
-docs/                GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md
+docs/                GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md,
+                     DEMO.md (the public web demo), screenshots/
+streamlit_app.py     the public web demo: the dashboard with made-up invoices (.streamlit/ and static/ go with it)
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients mocked)
 ```
