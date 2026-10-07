@@ -34,9 +34,14 @@ def page_month_end() -> None:
     items = accruals.build(store, end)
     totals = accruals.summary(items)
 
+    rates = store.fx_rates()
+
     def tile(source: str, n: int, by_currency: dict[str, float]) -> str:
         main = "CAD" if "CAD" in by_currency or not by_currency else sorted(by_currency)[0]
-        others = " · ".join(f"{money(t)} {c}" for c, t in sorted(by_currency.items()) if c != main)
+        rest = {c: t for c, t in sorted(by_currency.items()) if c != main}
+        others = " · ".join(f"{money(t)} {c}" for c, t in rest.items())
+        if rest and main == "CAD" and all(c in rates for c in rest):
+            others += f" (≈ {money(sum(t * rates[c] for c, t in rest.items()))} CAD)"
         hint = f"{n} line(s)" + (f" · plus {others}" if others else "")
         return ui.tile(source, f"{money(by_currency.get(main, 0))} {main}", ICONS[source], TONES[source], hint)
 
