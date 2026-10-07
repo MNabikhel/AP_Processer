@@ -26,7 +26,8 @@ ASKABLE = (
     _TOTALS | _TAX_WRONG | _PO_LINE
     | {"NO_TAX_CHARGED", "GST_HST_NUMBER_MISSING", "GST_HST_NUMBER_FORMAT", "QST_NUMBER_MISSING", "QST_NUMBER_FORMAT",
        "PO_UNKNOWN", "PO_CLOSED", "PO_VENDOR_MISMATCH", "PO_OVER_BILLED", "PO_NOT_QUOTED", "MISSING_INVOICE_NUMBER",
-       "DUE_BEFORE_INVOICE", "DUPLICATE_INVOICE", "DUPLICATE_IN_ERP"}
+       "DUE_BEFORE_INVOICE", "DUPLICATE_INVOICE", "DUPLICATE_IN_ERP", "CREDIT_NOTE_ORIGINAL_UNKNOWN",
+       "CREDIT_EXCEEDS_INVOICE"}
 )  # fmt: skip
 
 _TEXT = {
@@ -66,6 +67,10 @@ _TEXT = {
         "due_before": "The due date ({due}) is before the invoice date ({date}). Please confirm the payment terms.",
         "duplicate": "We may already have received this invoice. If it is a copy, no action is needed; if it is a "
         "new bill, please send it with its own invoice number.",
+        "credit_unknown": "This credit note refers to invoice {original}, which we cannot find. Please send us a copy "
+        "of that invoice, or confirm which invoice the credit applies to.",
+        "credit_exceeds": "This credit note is for more than invoice {original}. Please confirm the amount, or which "
+        "invoices it applies to.",
     },
     FRENCH: {
         "subject": "Facture {number} : renseignements requis avant le paiement",
@@ -109,6 +114,10 @@ _TEXT = {
         "conditions de paiement.",
         "duplicate": "Il se peut que nous ayons déjà reçu cette facture. S'il s'agit d'une copie, aucune action "
         "n'est requise; s'il s'agit d'une nouvelle facture, veuillez nous l'envoyer avec son propre numéro.",
+        "credit_unknown": "Cette note de crédit renvoie à la facture {original}, que nous ne trouvons pas. Veuillez "
+        "nous envoyer une copie de cette facture, ou nous confirmer à quelle facture le crédit s'applique.",
+        "credit_exceeds": "Cette note de crédit dépasse le montant de la facture {original}. Veuillez confirmer le "
+        "montant, ou les factures auxquelles elle s'applique.",
     },
 }
 
@@ -224,6 +233,11 @@ def points(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLIS
         li = lines_by_number.get(n) or {}
         price = _amount(li.get("unit_price"), language)
         out.append(t[keys[code]].format(line=n or "?", item=_short(li.get("description")), price=price, po=po))
+    original = (coding.get("original_invoice_number") or "").strip() or "?"
+    if "CREDIT_NOTE_ORIGINAL_UNKNOWN" in codes:
+        out.append(t["credit_unknown"].format(original=original))
+    if "CREDIT_EXCEEDS_INVOICE" in codes:
+        out.append(t["credit_exceeds"].format(original=original))
     if "DUE_BEFORE_INVOICE" in codes:
         out.append(t["due_before"].format(due=coding.get("due_date") or "", date=coding.get("invoice_date") or ""))
     return out

@@ -102,3 +102,11 @@ def test_credit_note_wording():
     assert (
         "credit note" in body and "apply it" in body and "pay it" not in body and "-" not in body.split("for ")[1][:3]
     )
+
+
+def test_credit_note_questions():
+    doc = _doc("northwind_ON_HST_CN-2026-0047")
+    body = vendor_mail.draft(doc, [Issue("info", "CREDIT_NOTE_ORIGINAL_UNKNOWN", "x")]).body
+    assert "refers to invoice NW-2026-0912, which we cannot find" in body
+    french = vendor_mail.draft(doc, [Issue("warning", "CREDIT_EXCEEDS_INVOICE", "x")], vendor_mail.FRENCH).body
+    assert "dépasse le montant de la facture NW-2026-0912" in french
