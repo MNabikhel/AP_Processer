@@ -41,6 +41,9 @@ folder.
   the queue can be sorted by due date.
 - **Stays fast** with a year of invoices: tested with 3,000. The queue shows 50 at a time.
 
+- **Find an invoice** (for a vendor on the phone): one search box for vendor, invoice or PO number
+  (however it is written) and amount; each match says where the invoice is and when it is due.
+
 ## Catch more before it is paid
 
 - **Purchase orders (2- and 3-way match).** Import open POs from the ERP (CSV or Excel, columns

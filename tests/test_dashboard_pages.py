@@ -31,6 +31,7 @@ PAGES = [
     ("month_end", "page_month_end"),
     ("sales_tax", "page_sales_tax"),
     ("spend", "page_spend"),
+    ("search", "page_search"),
 ]
 TIMEOUT = 90
 
@@ -367,3 +368,17 @@ def test_settings_backup_copy_folder(db, tmp_path):
     submit = next(b for b in at.button if b.proto.is_form_submitter and b.proto.form_id.endswith("backup_copy_form"))
     _ok(submit.click().run())
     assert Store(db).get_setting("backup_copy_dir") == str(second) and list(second.glob("ap_coder-*.db"))
+
+
+def test_find_an_invoice_and_open_it(db):
+    from ap_coder.demo import load_demo
+
+    store = Store(db)
+    load_demo(store)
+    _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages
+    at = _page("search", "page_search")
+    _ok(at.run())
+    at.text_input(key="search_query").input("red river")
+    _ok(at.run())
+    target = next(i for i in store.list_invoices() if i["vendor_name"].startswith("Red River"))
+    assert at.button(key=f"search_open_{target['id']}")

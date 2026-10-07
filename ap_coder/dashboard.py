@@ -33,6 +33,7 @@ from ap_coder.webapp.process import page_process
 from ap_coder.webapp.purchase_orders import page_purchase_orders
 from ap_coder.webapp.review import page_review
 from ap_coder.webapp.sales_tax import page_sales_tax
+from ap_coder.webapp.search import page_search
 from ap_coder.webapp.settings import page_settings
 from ap_coder.webapp.spend import page_spend
 from ap_coder.webapp.statements import page_statements
@@ -44,6 +45,7 @@ st.html(f"<style>{(ASSETS / 'style.css').read_text(encoding='utf-8')}</style>")
 PAGES.update(
     {
         "review": st.Page(page_review, title="Review queue", icon=":material/inbox:", default=True),
+        "search": st.Page(page_search, title="Find an invoice", icon=":material/search:"),
         "process": st.Page(page_process, title="Process invoices", icon=":material/upload_file:"),
         "exports": st.Page(page_exports, title="Exports", icon=":material/ios_share:"),
         "month_end": st.Page(page_month_end, title="Month-end", icon=":material/event_available:"),
@@ -70,7 +72,7 @@ with st.sidebar:
     st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
 
 NAV_SECTIONS = {
-    "Work": ["review", "process", "exports", "statements", "month_end", "sales_tax"],
+    "Work": ["review", "search", "process", "exports", "statements", "month_end", "sales_tax"],
     "Insight": ["insights", "spend", "learning", "vendors", "activity"],
     "Setup": ["accounts", "purchase_orders", "settings", "help"],
 }

@@ -124,6 +124,7 @@ few realistic mistakes to correct, plus sample purchase orders. Things to try:
 - *Split a line…* under the line grid divides a shared cost across cost centers.
 - On an invoice with something to ask (e.g. *Red River*), open **Ask the vendor** under the checks:
   the email is written for you (English, or French for a Quebec vendor).
+- **Find an invoice**: type `northwind 0912` or an amount such as `18,017.85`.
 - The **Today** line above the queue lists what is past due, parked for follow-up and ready to export.
 - Approve a few, then look at **Exports** (export a batch, then *Approved PDFs*), **Learning &
   accuracy**, **Insights**, **Spend** and **Activity** (*Run the audit* for possible duplicate payments).

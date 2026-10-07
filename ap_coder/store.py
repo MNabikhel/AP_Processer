@@ -551,6 +551,24 @@ class Store:
             conn.execute("DELETE FROM erp_invoices")
             self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
 
+    def search_rows(self) -> list[dict[str, Any]]:
+        """Every invoice's identifying fields and where it stands (for *Find an invoice*), with the date of
+        its export batch."""
+        with self._conn() as conn:
+            batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT id, status, file_name, vendor_name, invoice_number, invoice_date, due_date, currency,
+                              grand_total, po_key, created_at, reviewed_at, reviewer, second_reviewer,
+                              second_reviewed_at, export_batch, parked_reason, follow_up, error
+                       FROM invoices ORDER BY id DESC"""
+                )
+            ]
+        for r in rows:
+            r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
+        return rows
+
     def erp_register(self) -> list[dict[str, Any]]:
         """Every invoice in the imported ERP register."""
         with self._conn() as conn:
