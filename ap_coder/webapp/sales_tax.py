@@ -18,10 +18,16 @@ ISSUE_TONES = {
 }
 
 
-def _amounts(by_currency: dict[str, float]) -> tuple[str, str]:
-    """(the CAD total, the other currencies as a hint)."""
-    others = " · ".join(f"{money(t)} {c}" for c, t in sorted(by_currency.items()) if c != "CAD")
-    return f"{money(by_currency.get('CAD', 0))} CAD", (f"plus {others} to convert" if others else "")
+def _amounts(by_currency: dict[str, float], rates: dict[str, float]) -> tuple[str, str]:
+    """(the CAD total, the other currencies as a hint, with a CAD estimate when Settings has the rate)."""
+    others = {c: t for c, t in sorted(by_currency.items()) if c != "CAD"}
+    if not others:
+        return f"{money(by_currency.get('CAD', 0))} CAD", ""
+    text = " · ".join(f"{money(t)} {c}" for c, t in others.items())
+    if all(c in rates for c in others):
+        estimate = sum(t * rates[c] for c, t in others.items())
+        return f"{money(by_currency.get('CAD', 0))} CAD", f"plus {text} (≈ {money(estimate)} CAD)"
+    return f"{money(by_currency.get('CAD', 0))} CAD", f"plus {text} to convert"
 
 
 def page_sales_tax() -> None:
@@ -49,8 +55,9 @@ def page_sales_tax() -> None:
     report = taxreturn.build(store, start, end)
     totals = report.totals()
     at_risk = report.at_risk()
-    itc, itc_hint = _amounts(totals[taxreturn.ITC])
-    itr, itr_hint = _amounts(totals[taxreturn.ITR])
+    rates = store.fx_rates()
+    itc, itc_hint = _amounts(totals[taxreturn.ITC], rates)
+    itr, itr_hint = _amounts(totals[taxreturn.ITR], rates)
     invoices = len({c.invoice_id for c in report.claims})
     risky = len({c.invoice_id for c in at_risk})
     st.html(

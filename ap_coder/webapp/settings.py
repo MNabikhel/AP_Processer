@@ -235,8 +235,16 @@ def review_tab() -> None:
             min_value=0, max_value=180, step=1, value=store.default_terms_days(),
             help="Used to show when an invoice is due, to sort the queue by due date and in exports.",
         )  # fmt: skip
+        fx = st.text_input(
+            "Exchange rates to CAD (optional)", store.get_setting("fx_rates"), placeholder="e.g. USD=1.37, EUR=1.50",
+            help="CAD per unit of each foreign currency you are billed in. Used for estimates in CAD (Spend, Sales "
+            "tax); invoices and exports keep their own currency.",
+        )  # fmt: skip
         if st.form_submit_button("Save", type="primary", icon=":material/save:"):
             changed = []
+            if fx.strip() != store.get_setting("fx_rates"):
+                store.set_setting("fx_rates", fx.strip(), actor=reviewer())
+                changed.append("fx_rates")
             if int(days) != store.default_terms_days():
                 store.set_setting("default_terms_days", str(int(days)), actor=reviewer())
                 changed.append("default_terms_days")

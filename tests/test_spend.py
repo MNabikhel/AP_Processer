@@ -110,3 +110,18 @@ def test_control_characters_do_not_break_the_workbooks(tmp_path):
     wb = load_workbook(io.BytesIO(spend.workbook(store, None)))
     assert "BadVendor" in [r[2] for r in wb["Invoices"].values]
     assert exports.build_xlsx([store.get_invoice(invoice_id)])[:2] == b"PK"
+
+
+def test_exchange_rates_and_all_in_cad(tmp_path):
+    from ap_coder.store import parse_fx_rates
+
+    assert parse_fx_rates("USD=1.37, eur 1,50; GBP: 1.85, XXX=0") == {"CAD": 1.0, "USD": 1.37, "EUR": 1.5, "GBP": 1.85}
+    assert parse_fx_rates("") == {"CAD": 1.0}
+    rows = [spend.SpendLine(1, "2026-09", "A", "6000", "", 100.0, "USD"),
+            spend.SpendLine(2, "2026-09", "B", "6000", "", 50.0, "CAD"),
+            spend.SpendLine(3, "2026-09", "C", "6000", "", 10.0, "JPY")]  # fmt: skip
+    converted = spend.in_cad(rows, {"CAD": 1.0, "USD": 1.37})
+    assert [(r.amount, r.currency) for r in converted] == [(137.0, "CAD"), (50.0, "CAD")]  # no JPY rate: left out
+    store = Store(tmp_path / "s.db")
+    store.set_setting("fx_rates", "USD=1.37")
+    assert store.fx_rates()["USD"] == 1.37

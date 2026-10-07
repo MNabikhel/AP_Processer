@@ -64,6 +64,17 @@ def currencies(rows: list[SpendLine]) -> list[str]:
     return sorted(totals, key=lambda c: -totals[c])
 
 
+def in_cad(rows: list[SpendLine], rates: dict[str, float]) -> list[SpendLine]:
+    """The lines in CAD at ``rates`` (CAD per unit); lines in a currency without a rate are left out."""
+    return [
+        SpendLine(
+            r.invoice_id, r.month, r.vendor, r.gl_code, r.cost_center, round(r.amount * rates[r.currency], 2), "CAD"
+        )
+        for r in rows
+        if r.currency in rates
+    ]
+
+
 def total_by(rows: list[SpendLine], key: str, currency: str) -> list[tuple[str, float, int]]:
     """(value of ``key``, total, invoices) for one currency, largest total first."""
     totals: dict[str, float] = defaultdict(float)

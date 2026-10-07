@@ -397,3 +397,23 @@ def test_reopen_from_the_approved_view(busy_db):
     _ok(at.button(key=f"reopen_{invoice_id}").click().run())
     assert store.get_invoice(invoice_id)["status"] == "review"
     assert at.button(key=f"inv{invoice_id}_approve")  # opened straight away for the correction
+
+
+def test_spend_all_currencies_in_cad(db):
+    from ap_coder.demo import load_demo
+
+    store = Store(db)
+    load_demo(store)
+    cascade = next(i for i in store.list_invoices() if i["currency"] == "USD")
+    store.approve_invoice(cascade["id"], store.get_invoice(cascade["id"])["ai_output"], "Jane")
+    store.set_setting("fx_rates", "USD=1.37")
+    at = _page("spend", "page_spend")
+    at.session_state["spend_start"] = dt.date(2020, 1, 1)
+    at.session_state["spend_end"] = dt.date(2030, 12, 31)
+    _ok(at.run())
+    assert at.selectbox(key="spend_currency").options[0] == "All, in CAD"
+    _ok(at.selectbox(key="spend_currency").select("All, in CAD").run())
+    at = _page("sales_tax", "page_sales_tax")
+    at.session_state["tax_start"] = dt.date(2020, 1, 1)
+    at.session_state["tax_end"] = dt.date(2030, 12, 31)
+    _ok(at.run())

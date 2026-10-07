@@ -113,6 +113,16 @@ def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def parse_fx_rates(text: str) -> dict[str, float]:
+    """ "USD=1.37, EUR 1,50; GBP: 1.85" -> {"USD": 1.37, "EUR": 1.5, "GBP": 1.85} (CAD is always 1)."""
+    rates = {"CAD": 1.0}
+    for code, value in re.findall(r"([A-Za-z]{3})\s*[=:]?\s*([0-9]+(?:[.,][0-9]+)?)", text or ""):
+        rate = float(value.replace(",", "."))
+        if rate > 0:
+            rates[code.upper()] = rate
+    return rates
+
+
 def _clean_code(value: Any) -> str:
     """Codes come from spreadsheets: 6000.0 -> '6000', strip whitespace."""
     if value is None:
@@ -858,6 +868,10 @@ class Store:
         return counts
 
     # --- Second approval -----------------------------------------------------------------------------
+
+    def fx_rates(self) -> dict[str, float]:
+        """{currency: CAD per unit}, as AP set them in Settings (e.g. "USD=1.37, EUR 1.50")."""
+        return parse_fx_rates(self.get_setting("fx_rates"))
 
     def approval_limit(self) -> float:
         """Invoices above this amount need a second approver (0: no limit). Settings → Review."""

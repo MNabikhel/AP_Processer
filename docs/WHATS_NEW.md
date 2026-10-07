@@ -134,7 +134,8 @@ folder.
 
 - **Settings page:** Azure connection with a live test, review behaviour, approval limit, default
   payment days, backups (make, download, restore, and a **second backup folder** such as OneDrive so
-  a lost computer does not lose the database). Your name is kept per Windows user.
+  a lost computer does not lose the database), **exchange rates to CAD** for estimates (Spend can show
+  every currency in CAD; Sales tax estimates foreign-currency claims). Your name is kept per Windows user.
 - **Your own tax-rate table:** a `canada_tax_rates.csv` in the data folder overrides the shipped
   rates and survives updates.
 - **Demo mode** with sample invoices, purchase orders and a vendor list (plus a sample vendor

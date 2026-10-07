@@ -12,6 +12,7 @@ from ap_coder import spend, ui
 from ap_coder.webapp.common import card, esc, get_store, money, reference_or_none, show_toast
 
 TOP = 10
+ALL_IN_CAD = "All, in CAD"
 
 
 def _table(rows: list[tuple[str, float, int]], label: str, name: dict[str, str], total: float) -> str:
@@ -70,11 +71,23 @@ def page_spend() -> None:
         end = c2.date_input("To", default_end, key="spend_end")
         rows = spend.lines(store, start, end) if start <= end else []
         currencies = spend.currencies(rows) or ["CAD"]
+        rates = store.fx_rates()
+        if len(currencies) > 1 and all(c in rates for c in currencies):
+            currencies = [ALL_IN_CAD, *currencies]
         currency = c3.selectbox("Currency", currencies, key="spend_currency")
     if start > end:
         st.warning("The start date is after the end date.", icon=":material/event_busy:")
         return
-    rows = [r for r in rows if r.currency == currency]
+    if currency == ALL_IN_CAD:
+        rows = spend.in_cad(rows, rates)
+        currency = "CAD"
+        st.caption(
+            "All currencies in CAD at the rates in Settings → Review ("
+            + ", ".join(f"{c} {r:g}" for c, r in sorted(rates.items()) if c != "CAD")
+            + "): an estimate."
+        )
+    else:
+        rows = [r for r in rows if r.currency == currency]
     if not rows:
         with card("spend_empty"):
             st.html(ui.empty_state("No spend yet", f"No approved invoice dated {start} to {end} in {currency}."))
