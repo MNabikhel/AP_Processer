@@ -9,7 +9,9 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import ui
-from ap_coder.safe import csv_cell
+from ap_coder.rules import Rule
+from ap_coder.rules import suggest as suggest_rules
+from ap_coder.safe import csv_cell, md
 from ap_coder.store import Store, load_sample_setup
 from ap_coder.tax import DEFAULT_RATES_PATH, RATES_FILE, TAX_TYPES, TREATMENTS, TaxRateTable, rates_path
 from ap_coder.webapp.common import (
@@ -17,6 +19,8 @@ from ap_coder.webapp.common import (
     esc,
     get_store,
     notify,
+    persistent_editor,
+    replace_editor,
     reviewer,
     short_path,
     show_toast,
@@ -185,7 +189,13 @@ def page_accounts() -> None:
                     "green" if mapped == len(TAX_TYPES) else "amber",
                     "GST · HST · PST · QST · other",
                 ),  # fmt: skip
-                ui.tile("Coding rules", len(policy), "rule", "amber", "plain-English policy"),
+                ui.tile(
+                    "Coding policy",
+                    len(policy),
+                    "rule",
+                    "amber",
+                    f"plain-English lines · {len(store.coding_rules())} fixed rule(s)",
+                ),  # fmt: skip
             ]
         )
     )
@@ -200,12 +210,13 @@ def page_accounts() -> None:
                 notify("Sample setup loaded.")
                 st.rerun()
 
-    tab_gl, tab_cc, tab_tax, tab_policy = st.tabs(
+    tab_gl, tab_cc, tab_tax, tab_policy, tab_rules = st.tabs(
         [
             ":material/account_tree: GL accounts",
             ":material/apartment: Cost centers",
             ":material/percent: Sales tax",
             ":material/rule: Coding policy",
+            ":material/rule_settings: Fixed rules",
         ]
     )
     with tab_gl, card("gl"):
@@ -229,6 +240,81 @@ def page_accounts() -> None:
             store.set_setting("policy_notes", notes, actor=reviewer())
             notify("Coding policy saved.")
             st.rerun()
+    with tab_rules:
+        rules_editor(store, gl, cc)
+
+
+def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]]) -> None:
+    """Fixed coding rules: always this GL account (and cost center) for a vendor and/or words in a line."""
+    current = store.coding_rules()
+    with card("rules"):
+        st.caption(
+            "Lines that always go to the same account, whatever the AI thinks: a vendor (e.g. *Purolator*), words "
+            "a line contains (e.g. *freight*), or both. Applied to invoices processed from now on; the review "
+            "screen says which lines a rule changed. The most specific rule wins."
+        )
+        if not gl:
+            st.info("Import your GL accounts first.", icon=":material/account_tree:")
+            return
+        gl_codes = [a["code"] for a in gl]
+        names = {a["code"]: f"{a['code']} · {a['description']}" for a in gl}
+        cc_codes = ["", *(a["code"] for a in cc)]
+        df = pd.DataFrame(
+            [
+                {"vendor": r.vendor, "contains": r.contains, "gl_code": r.gl_code, "cost_center": r.cost_center}
+                for r in current
+            ]  # fmt: skip
+            or [],
+            columns=["vendor", "contains", "gl_code", "cost_center"],
+        )
+        edited = persistent_editor(
+            df, "rules_grid",
+            column_config={
+                "vendor": st.column_config.TextColumn("Vendor (optional)", help="Part of the name is enough"),
+                "contains": st.column_config.TextColumn("Line contains (optional)", help="Not case-sensitive"),
+                "gl_code": st.column_config.SelectboxColumn(
+                    "GL account", options=gl_codes, format_func=names.get, required=True, width="large"
+                ),
+                "cost_center": st.column_config.SelectboxColumn("Cost center", options=cc_codes)
+                if cc
+                else st.column_config.TextColumn("Cost center", disabled=True),
+            },
+            num_rows="dynamic", hide_index=True,
+        )  # fmt: skip
+
+        def cell(value: Any) -> str:
+            return "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value).strip()
+
+        new = [
+            Rule(cell(r.get("vendor")), cell(r.get("contains")), cell(r.get("gl_code")), cell(r.get("cost_center")))
+            for r in edited.to_dict("records")
+        ]
+        incomplete = [n for n, r in enumerate(new, 1) if not (r.gl_code and (r.vendor or r.contains))]
+        if incomplete:
+            st.warning(
+                f"Row {', '.join(map(str, incomplete))}: a rule needs a GL account and a vendor or words, or both. "
+                "It is left out when you save.",
+                icon=":material/warning:",
+            )
+        if st.button("Save rules", type="primary", icon=":material/save:", key="rules_save"):
+            saved = store.save_coding_rules(new, actor=reviewer())
+            notify(f"{saved} coding rule(s) saved.", ":material/rule_settings:")
+            st.rerun()
+
+    suggestions = suggest_rules(store.feedback_rows(), current)
+    if suggestions:
+        with card("rules_suggested"):
+            st.markdown("#### :material/lightbulb: Suggested from past coding")
+            st.caption("These vendors were always coded to one GL account. Add a rule to make it certain.")
+            for n, (rule, lines) in enumerate(suggestions[:8]):
+                text, button = st.columns([4, 1], vertical_alignment="center")
+                target = names.get(rule.gl_code, rule.gl_code) + (f" · {rule.cost_center}" if rule.cost_center else "")
+                text.markdown(f"**{md(rule.vendor)}** → {md(target)}  \n:gray[{lines} line(s), all coded the same]")
+                if button.button("Add rule", key=f"rule_add_{n}", icon=":material/add:", width="stretch"):
+                    store.save_coding_rules([*current, rule], actor=reviewer())
+                    replace_editor("rules_grid", pd.DataFrame())
+                    notify(f"Rule added: {rule.vendor} → {rule.gl_code}.", ":material/rule_settings:")
+                    st.rerun()
 
 
 def tax_setup(store: Store) -> None:

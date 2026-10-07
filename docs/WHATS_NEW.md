@@ -30,6 +30,9 @@ folder.
 - **Split a line** across GL accounts or cost centers by percentage (shared costs).
 - **Park and notes.** *More → Park* sets aside an invoice waiting for information, with a follow-up
   date (the **Parked** tab); **Notes** on each invoice keep the team informed.
+- **Fixed coding rules.** GL accounts & tax → *Fixed rules*: a vendor, words a line contains, or
+  both → a GL account (and cost center), whatever the AI says. The review screen shows which lines a
+  rule changed; vendors always coded to one account are suggested as rules.
 - **Teach from past coding.** Import last year's posted AP lines from the ERP (Learning page) so the AI
   knows how each vendor is coded from the first invoice. Past lines never count in the accuracy
   figures.

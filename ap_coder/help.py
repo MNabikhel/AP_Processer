@@ -373,6 +373,13 @@ FAQ: list[tuple[str, str]] = [
         "trend; a wrong lesson can be forgotten there.",
     ),
     (
+        "Some lines always go to the same account. Can I make that certain?",
+        "Yes: GL accounts & tax → Fixed rules. A rule names a vendor, words a line contains, or both, and the GL "
+        "account (and cost center) to use. Rules are applied after the AI when an invoice is processed, and the "
+        "review screen says which lines a rule changed. Vendors your team always coded to one account are "
+        "suggested as rules.",
+    ),
+    (
         "What is the difference between errors, warnings and 'good to know'?",
         "Errors must be fixed (or explicitly overridden) before approving. Warnings deserve a look: they lower "
         "the confidence score (which can send the invoice to 'Needs attention') and keep it out of bulk approval. "

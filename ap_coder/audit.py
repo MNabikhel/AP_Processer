@@ -39,6 +39,7 @@ ACTIONS = {
     "accounts_deleted": ("delete", "warn", "Accounts deleted"),
     "tax_setup_changed": ("percent", "info", "Tax setup changed"),
     "policy_changed": ("rule", "info", "Coding policy changed"),
+    "rules_changed": ("rule_settings", "info", "Coding rules changed"),
     "lessons_forgotten": ("delete_sweep", "warn", "Lessons forgotten"),
     "settings_changed": ("settings", "info", "Settings changed"),
     "backup_made": ("backup", "info", "Backup made"),

@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from ap_coder import ui, vendor_mail
+from ap_coder import rules, ui, vendor_mail
 from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.extraction import ExtractionResult
 from ap_coder.help import help_for
@@ -883,6 +883,9 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             + "</div>"
         )
         st.html(_checks_html(report))
+        applied = meta.get("rules_applied") or []
+        if applied:
+            st.html("".join(ui.check("info", "Coding rule", rules.describe(c)) for c in applied))
         _ask_vendor(coding, report, key)
     with (
         reasons_box,

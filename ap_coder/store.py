@@ -30,11 +30,12 @@ from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
 from .paths import default_db_path, private_dir  # noqa: F401  (re-exported)
 from .po import OPEN, po_key
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
+from .rules import Rule
 from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 10  # 10: erp_invoices (created by _SCHEMA)
+SCHEMA_VERSION = 11  # 10: erp_invoices, 11: coding_rules (both created by _SCHEMA)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -92,6 +93,9 @@ CREATE TABLE IF NOT EXISTS erp_invoices (
     vendor_key TEXT NOT NULL, number_key TEXT NOT NULL, total REAL NOT NULL, vendor_name TEXT NOT NULL,
     invoice_number TEXT NOT NULL, invoice_date TEXT NOT NULL DEFAULT '', imported_at TEXT NOT NULL,
     PRIMARY KEY (vendor_key, number_key, total));
+CREATE TABLE IF NOT EXISTS coding_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, vendor TEXT NOT NULL DEFAULT '', contains TEXT NOT NULL DEFAULT '',
+    gl_code TEXT NOT NULL, cost_center TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT);
 """
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
@@ -1069,6 +1073,34 @@ class Store:
     def export_batches(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute("SELECT * FROM export_batches ORDER BY id DESC")]
+
+    # --- Fixed coding rules ---------------------------------------------------------------------------
+
+    def coding_rules(self) -> list[Rule]:
+        with self._conn() as conn:
+            return [
+                Rule(r["vendor"], r["contains"], r["gl_code"], r["cost_center"], r["id"])
+                for r in conn.execute("SELECT * FROM coding_rules ORDER BY id")
+            ]
+
+    def save_coding_rules(self, rules: list[Rule], actor: str | None = None) -> int:
+        """Replace the rules (rules without a GL account, or without a vendor and words, are left out).
+        Unchanged rules keep their id, so their age (the tie-breaker) is kept."""
+        keep = [r for r in rules if r.gl_code.strip() and (r.vendor.strip() or r.contains.strip())]
+        with self._conn() as conn:
+            old = {(r["vendor"], r["contains"], r["gl_code"], r["cost_center"]): r["id"]
+                   for r in conn.execute("SELECT * FROM coding_rules")}  # fmt: skip
+            conn.execute("DELETE FROM coding_rules")
+            now = _now()
+            for r in keep:
+                values = (r.vendor.strip(), r.contains.strip(), _clean_code(r.gl_code), _clean_code(r.cost_center))
+                conn.execute(
+                    "INSERT INTO coding_rules (id, vendor, contains, gl_code, cost_center, created_at, created_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (old.get(values), *values, now, actor),
+                )
+            self._log(conn, "rules_changed", actor=actor, detail={"rules": len(keep)})
+        return len(keep)
 
     def batch_totals(self) -> dict[int, dict[str, float]]:
         """{batch: {currency: total}} of the invoices in each batch (an undone batch has none any more)."""

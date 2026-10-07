@@ -272,3 +272,29 @@ def test_sales_tax_page_self_assessment_card(db):
     at.session_state["tax_end"] = dt.date(2030, 12, 31)
     _ok(at.run())
     assert any("self-assess" in m.value for m in at.markdown)
+
+
+def test_coding_rules_tab_suggests_and_adds_a_rule(db):
+    store = Store(db)
+    load_sample_setup(store)
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    same = {**gt, "line_items": [{**li, "predicted_gl_code": "6010"} for li in gt["line_items"]]}
+    store.approve_invoice(store.add_invoice(db.parent / "a.pdf", same, {}), same, "Jane")
+    at = _ok(_page("accounts", "page_accounts").run())
+    _ok(at.button(key="rule_add_0").click().run())
+    (rule,) = store.coding_rules()
+    assert (rule.vendor, rule.gl_code) == (gt["vendor_name"], "6010")
+    assert not [b for b in at.button if b.key == "rule_add_0"]  # covered now: no longer suggested
+
+
+def test_review_screen_shows_the_rules_applied(db):
+    store = Store(db)
+    load_sample_setup(store)
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    change = {"line_number": 5, "rule": "any vendor, line contains “delivery”", "gl_from": "6800", "gl_to": "6900",
+              "cc_from": "CC400", "cc_to": "CC400"}  # fmt: skip
+    invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", gt, {}, meta={"rules_applied": [change]})
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = invoice_id
+    _ok(at.run())
+    assert any("by the rule" in h.proto.body for h in at.get("html"))
