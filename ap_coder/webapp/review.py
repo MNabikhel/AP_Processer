@@ -22,6 +22,8 @@ from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import APPROVED, FAILED, REJECTED, REVIEW, Store
 from ap_coder.suggest import suggest_gl
 from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, province_label
+from ap_coder.terms import DUE_SOON_DAYS, payment
+from ap_coder.terms import describe as terms_describe
 from ap_coder.webapp.common import (
     INVOICE_DIR,
     PAGES,
@@ -190,8 +192,9 @@ def page_review() -> None:
             ai_outputs = {
                 r["id"]: r["ai_output"] or {} for r in store.invoice_columns(("id", "ai_output"), ids=page_ids)
             }
+            default_days = store.default_terms_days()
             for inv in shown[:limit]:
-                _queue_card(inv, ai_outputs.get(inv["id"], {}))
+                _queue_card(inv, ai_outputs.get(inv["id"], {}), default_days)
             if len(shown) > limit:
                 more = min(QUEUE_PAGE, len(shown) - limit)
                 if st.button(f"Show {more} more · {len(shown) - limit} not shown", icon=":material/expand_more:",
@@ -308,11 +311,25 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
                 st.rerun()
 
 
-def _queue_card(inv: dict[str, Any], ai: dict[str, Any]) -> None:
+def _due_pill(ai: dict[str, Any], default_days: int) -> str:
+    p = payment(ai, default_days)
+    if p.discount_open():
+        return ui.pill(f"{p.terms.discount_pct:g}% off until {p.discount_by:%b} {p.discount_by.day}", "violet", "sell")
+    left = p.days_left()
+    if left is None or (ai.get("grand_total") or 0) <= 0:
+        return ""
+    if left < 0:
+        return ui.pill(f"Overdue {-left}d", "err", "schedule")
+    if left <= DUE_SOON_DAYS:
+        return ui.pill("Due today" if left == 0 else f"Due in {left}d", "warn", "schedule")
+    return ""
+
+
+def _queue_card(inv: dict[str, Any], ai: dict[str, Any], default_days: int = 30) -> None:
     taxes = list(dict.fromkeys(t.get("tax_type", "") for t in ai.get("tax_lines", [])))
     prov = ai.get("ship_to_province") or ai.get("supplier_province") or ""
     with st.container(key=f"qcard_{inv['id']}"):
-        st.html(ui.queue_card(inv, taxes, province_label(prov, "")))
+        st.html(ui.queue_card(inv, taxes, province_label(prov, ""), _due_pill(ai, default_days)))
         label = f"Review invoice from {inv['vendor_name'] or inv['file_name']}"
         if st.button(label, key=f"qopen_{inv['id']}"):
             st.session_state["open_invoice"] = inv["id"]
@@ -320,7 +337,7 @@ def _queue_card(inv: dict[str, Any], ai: dict[str, Any]) -> None:
 
 
 NO_PROVINCE = "—"  # shown instead of an empty province (e.g. GST, which is federal)
-QUEUE_SORTS = ("Priority", "Amount: high to low", "Newest invoice date", "Vendor A–Z")
+QUEUE_SORTS = ("Priority", "Due date: soonest", "Amount: high to low", "Newest invoice date", "Vendor A–Z")
 
 
 def navigation_list(pending: list[dict[str, Any]], open_id: int) -> list[dict[str, Any]]:
@@ -340,6 +357,8 @@ def filter_queue(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]
 
 
 def sort_queue(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
+    if order == "Due date: soonest":
+        return sorted(rows, key=lambda r: (not r.get("due_date"), r.get("due_date") or ""))
     if order == "Amount: high to low":
         return sorted(rows, key=lambda r: -(r.get("grand_total") or 0))
     if order == "Newest invoice date":
@@ -552,6 +571,12 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             header["gst_hst_registration_number"] = text(c1, "Supplier GST/HST #", "gst_hst_registration_number")
             header["qst_registration_number"] = text(c2, "Supplier QST #", "qst_registration_number")
             header["po_number"] = text(c3, "PO #", "po_number", help="Purchase order the invoice quotes, if any")
+            c1, c2 = st.columns([2, 1])
+            header["payment_terms"] = text(c1, "Payment terms", "payment_terms", placeholder="e.g. Net 30, 2/10 Net 30")
+            header["due_date"] = text(
+                c2, "Due date", "due_date", placeholder="YYYY-MM-DD",
+                help="Only if printed; otherwise it comes from the terms",
+            )  # fmt: skip
             c1, c2, c3 = st.columns(3)
             header["subtotal"] = amount(c1, "Subtotal", "subtotal")
             header["tax_total"] = amount(c2, "Tax total", "tax_total")
@@ -660,7 +685,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     warnings = [i for i in report.issues if i.severity == "warning"]
 
     with summary, card("summary"):
-        _invoice_summary(coding, report, errors, warnings, output, reference)
+        _invoice_summary(coding, report, errors, warnings, output, reference, store.default_terms_days())
     with checks_box:
         head, count = st.columns([3, 2], vertical_alignment="center")
         head.markdown("#### :material/fact_check: Checks")
@@ -918,9 +943,17 @@ def _advance(ids: list[int], position: int) -> None:
         st.session_state.pop("open_invoice", None)
 
 
+def due_text(coding: dict[str, Any], default_days: int) -> str:
+    p = payment(coding, default_days)
+    text = terms_describe(p)
+    if p.discount_open():
+        text += f" · {p.terms.discount_pct:g}% off until {p.discount_by:%b} {p.discount_by.day}"
+    return text
+
+
 def _invoice_summary(
     coding: InvoiceCoding, report: Any, errors: list[Any], warnings: list[Any], output: dict[str, Any],
-    reference: ReferenceData,
+    reference: ReferenceData, default_days: int = 30,
 ) -> None:  # fmt: skip
     supply = coding.ship_to_province or coding.supplier_province
     meta = [
@@ -928,6 +961,7 @@ def _invoice_summary(
         ("event", coding.invoice_date),
         ("location_on", province_label(supply)),
         ("verified", f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else ""),
+        ("schedule", due_text(coding.to_output(), default_days)),
     ]
     pills = []
     if errors:
@@ -1028,6 +1062,7 @@ def _distribution_table(output: dict[str, Any], reference: ReferenceData, curren
 EDIT_LABELS = {
     "line_coding": "GL coding", "line_count": "lines added or removed", "tax_lines": "sales tax",
     "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "po_number": "PO #",
+    "payment_terms": "terms", "due_date": "due date",
     "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",
     "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "subtotal": "subtotal",

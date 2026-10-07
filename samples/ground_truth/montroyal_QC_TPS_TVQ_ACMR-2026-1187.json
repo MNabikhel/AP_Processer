@@ -3,6 +3,8 @@
   "invoice_number": "ACMR-2026-1187",
   "invoice_date": "2026-09-22",
   "po_number": "",
+  "payment_terms": "Payable dans les 30 jours",
+  "due_date": "",
   "currency": "CAD",
   "supplier_province": "QC",
   "ship_to_province": "QC",

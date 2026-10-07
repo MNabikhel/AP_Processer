@@ -13,6 +13,7 @@ from .memory import pair_lines
 
 HEADER_LABELS = {
     "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "po_number": "PO #",
+    "payment_terms": "terms", "due_date": "due date",
     "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",
     "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "subtotal": "subtotal",

@@ -6,14 +6,16 @@ from ap_coder.help import AREAS, CHECKS, help_for
 
 from .conftest import ROOT
 
-SOURCES = ["validation.py", "tax.py", "vendors.py", "po.py"]
+SOURCES = ["validation.py", "tax.py", "vendors.py", "po.py", "terms.py"]
 
 
 def _raised_codes():
     codes = set()
     for name in SOURCES:
         text = (ROOT / "ap_coder" / name).read_text(encoding="utf-8")
-        codes |= set(re.findall(r"\b(?:ERROR|WARNING|INFO)\s*,\s*\"([A-Z][A-Z0-9_]+)\"", text))
+        codes |= set(
+            re.findall(r"\b(?:ERROR|WARNING|INFO|\"error\"|\"warning\"|\"info\")\s*,\s*\"([A-Z][A-Z0-9_]+)\"", text)
+        )
     return codes
 
 

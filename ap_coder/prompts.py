@@ -35,6 +35,9 @@ other dates on the document.
 - `po_number` is the buyer's purchase order number when printed ("PO #", "Customer PO", \
 "Order Ref", "Bon de commande"), copied exactly; an empty string if there is none. A PO \
 reference inside one line description is not the invoice's PO number.
+- `payment_terms` copies the terms as printed ("Net 30", "2/10 Net 30", "Due on receipt", \
+"Payable dans les 30 jours"), or an empty string. `due_date` is the due date only when one \
+is printed (YYYY-MM-DD); never calculate it from the terms.
 - Pre-extracted invoice fields, when supplied, are hints from a second model; when \
 they disagree with the document content, trust the document.
 

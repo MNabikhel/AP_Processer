@@ -3,6 +3,8 @@
   "invoice_number": "INV-30981",
   "invoice_date": "2026-10-01",
   "po_number": "",
+  "payment_terms": "",
+  "due_date": "2026-10-31",
   "currency": "USD",
   "supplier_province": "OUTSIDE_CANADA",
   "ship_to_province": "OUTSIDE_CANADA",

@@ -20,6 +20,7 @@ from .po import po_findings
 from .reference_data import ReferenceData
 from .schema import InvoiceCoding
 from .tax import build_gl_distribution
+from .terms import payment_findings
 from .validation import ValidationReport, validate_coding
 from .vendors import vendor_findings
 
@@ -125,7 +126,8 @@ def finalise_coding(
         review_threshold=settings.engine.review_threshold,
         history=history,
         duplicate_of=duplicates,
-        vendor_findings=vendor_findings(coding, store, exclude_invoice_id) if store is not None else None,
+        vendor_findings=(vendor_findings(coding, store, exclude_invoice_id) if store is not None else [])
+        + payment_findings(coding.to_output(), store.default_terms_days() if store is not None else 30),
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
     )
     output = coding.to_output()

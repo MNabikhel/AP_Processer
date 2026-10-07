@@ -31,9 +31,10 @@ from .paths import default_db_path, private_dir  # noqa: F401  (re-exported)
 from .po import OPEN, po_key
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
+from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -87,7 +88,8 @@ CREATE INDEX IF NOT EXISTS purchase_orders_vendor ON purchase_orders (vendor_key
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
 _HEADER_FIELDS = (
-    "vendor_name", "invoice_number", "invoice_date", "po_number", "currency", "supplier_province",
+    "vendor_name", "invoice_number", "invoice_date", "po_number", "payment_terms", "due_date", "currency",
+    "supplier_province",
     "ship_to_province", "gst_hst_registration_number", "qst_registration_number", "subtotal", "tax_total",
     "grand_total",
 )  # fmt: skip
@@ -107,6 +109,11 @@ def _clean_code(value: Any) -> str:
     if text.lower() in {"nan", "none"}:
         return ""
     return text[:-2] if re.fullmatch(r"\d+\.0", text) else text
+
+
+def _due(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS) -> str | None:
+    due = payment(coding, default_days).due
+    return due.isoformat() if due else None
 
 
 def _norm_number(value: str) -> str:
@@ -147,6 +154,14 @@ class Store:
                 if coding.get("po_number"):
                     conn.execute("UPDATE invoices SET po_key = ? WHERE id = ?", (po_key(coding["po_number"]), r["id"]))
         conn.execute("CREATE INDEX IF NOT EXISTS invoices_po ON invoices (po_key)")
+        if version < 5:  # invoices remember when they are due (printed, from the terms, or the default)
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            if "due_date" not in columns:
+                conn.execute("ALTER TABLE invoices ADD COLUMN due_date TEXT")
+            for r in conn.execute("SELECT id, ai_output, final_output FROM invoices").fetchall():
+                coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
+                if coding:
+                    conn.execute("UPDATE invoices SET due_date = ? WHERE id = ?", (_due(coding), r["id"]))
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -372,8 +387,8 @@ class Store:
             cur = conn.execute(
                 """INSERT INTO invoices (source_path, file_name, file_sha256, status, vendor_name, vendor_key,
                    invoice_number, invoice_date, currency, grand_total, model_confidence, adjusted_confidence,
-                   requires_review, ai_output, validation, extraction_md, meta, error, created_at, po_key)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   requires_review, ai_output, validation, extraction_md, meta, error, created_at, po_key,
+                   due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(source_path.resolve()),  # absolute: the dashboard may run from another folder
                     source_path.name,
@@ -395,6 +410,7 @@ class Store:
                     error,
                     _now(),
                     po_key(out.get("po_number") or ""),
+                    _due(out, self.default_terms_days()) if out else None,
                 ),
             )
             invoice_id = int(cur.lastrowid)
@@ -450,9 +466,16 @@ class Store:
             if _norm_number(r["invoice_number"]) == number and r["id"] != exclude_id and same_sign(r["grand_total"])
         ]
 
+    def default_terms_days(self) -> int:
+        """Days to pay when an invoice prints neither a due date nor terms (Settings → Review)."""
+        try:
+            return int(self.get_setting("default_terms_days") or DEFAULT_TERMS_DAYS)
+        except ValueError:
+            return DEFAULT_TERMS_DAYS
+
     def list_invoices(self, status: str | None = None) -> list[dict[str, Any]]:
         sql = (
-            "SELECT id, file_name, status, vendor_name, invoice_number, invoice_date, currency, grand_total, "
+            "SELECT id, file_name, status, vendor_name, invoice_number, invoice_date, due_date, currency, grand_total, "
             "model_confidence, adjusted_confidence, requires_review, error, created_at, reviewed_at, reviewer "
             "FROM invoices"
         )
@@ -597,7 +620,7 @@ class Store:
             cur = conn.execute(
                 """UPDATE invoices SET status = ?, final_output = ?, edits = ?, reviewer = ?, reviewed_at = ?,
                    vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?,
-                   po_key = ? WHERE id = ? AND status != ?""",
+                   po_key = ?, due_date = ? WHERE id = ? AND status != ?""",
                 (
                     APPROVED,
                     json.dumps(final_output),
@@ -610,6 +633,7 @@ class Store:
                     final_output.get("invoice_date"),
                     final_output.get("grand_total"),
                     po_key(final_output.get("po_number") or ""),
+                    _due(final_output, self.default_terms_days()),
                     invoice_id,
                     APPROVED,
                 ),  # fmt: skip

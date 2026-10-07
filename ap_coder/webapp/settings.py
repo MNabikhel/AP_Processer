@@ -205,6 +205,22 @@ def review_tab() -> None:
         "The confidence threshold applies to invoices processed from now on; invoices already in the queue keep "
         "their flag."
     )
+    store = get_store()
+    with card("payment_settings"), st.form("payment_form", border=False):
+        st.markdown("#### :material/event_available: Payment")
+        days = st.number_input(
+            "Days to pay when an invoice prints no due date and no terms",
+            min_value=0, max_value=180, step=1, value=store.default_terms_days(),
+            help="Used to show when an invoice is due, to sort the queue by due date and in exports.",
+        )  # fmt: skip
+        if st.form_submit_button("Save", type="primary", icon=":material/save:"):
+            if int(days) != store.default_terms_days():
+                store.set_setting("default_terms_days", str(int(days)), actor=reviewer())
+                store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["default_terms_days"]})
+                notify("Saved.", ":material/save:")
+            else:
+                notify("Nothing changed.", ":material/save:")
+            st.rerun()
 
 
 def _size(path: Path) -> str:

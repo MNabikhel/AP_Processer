@@ -3,6 +3,8 @@
   "invoice_number": "PO-77120",
   "invoice_date": "2026-10-05",
   "po_number": "",
+  "payment_terms": "Net 15",
+  "due_date": "",
   "currency": "CAD",
   "supplier_province": "BC",
   "ship_to_province": "BC",

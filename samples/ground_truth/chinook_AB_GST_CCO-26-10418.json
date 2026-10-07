@@ -3,6 +3,8 @@
   "invoice_number": "CCO-26-10418",
   "invoice_date": "2026-09-30",
   "po_number": "",
+  "payment_terms": "",
+  "due_date": "2026-10-30",
   "currency": "CAD",
   "supplier_province": "AB",
   "ship_to_province": "AB",

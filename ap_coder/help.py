@@ -17,10 +17,10 @@ class CheckHelp:
     action: str
 
 
-FRAUD, TOTALS, CODING, TAX, PO, READING = (
-    "Duplicates & fraud", "Totals", "GL coding", "Sales tax", "Purchase orders", "Reading the document",
+FRAUD, TOTALS, CODING, TAX, PO, PAYMENT, READING = (
+    "Duplicates & fraud", "Totals", "GL coding", "Sales tax", "Purchase orders", "Payment", "Reading the document",
 )  # fmt: skip
-AREAS = (FRAUD, PO, TOTALS, CODING, TAX, READING)
+AREAS = (FRAUD, PO, PAYMENT, TOTALS, CODING, TAX, READING)
 
 CHECKS: dict[str, CheckHelp] = {
     # --- Duplicates & fraud ---------------------------------------------------------------------------
@@ -112,6 +112,23 @@ CHECKS: dict[str, CheckHelp] = {
         PO, "Matches the PO",
         "Every line matched the purchase order within price and quantity tolerances.",
         "Nothing to do.",
+    ),
+    # --- Payment ------------------------------------------------------------------------------------------
+    "DISCOUNT_AVAILABLE": CheckHelp(
+        PAYMENT, "Early-payment discount",
+        "The terms offer a discount (e.g. 2/10 Net 30: 2% off if paid within 10 days) and the deadline has not "
+        "passed.",
+        "Approve and export it soon so the payment run can take the discount.",
+    ),
+    "PAYMENT_OVERDUE": CheckHelp(
+        PAYMENT, "Already past due",
+        "The due date has passed. Information only: the invoice still needs the usual checks.",
+        "Prioritise it, and tell whoever runs payments if late fees or a supplier hold are a risk.",
+    ),
+    "DUE_BEFORE_INVOICE": CheckHelp(
+        PAYMENT, "Due before it was issued",
+        "The due date is earlier than the invoice date, so one of the two dates was probably misread.",
+        "Check both dates against the document.",
     ),
     # --- Totals --------------------------------------------------------------------------------------------
     "SUBTOTAL_MISMATCH": CheckHelp(

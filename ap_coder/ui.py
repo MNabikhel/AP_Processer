@@ -161,7 +161,8 @@ def meter(value: float, threshold: float = 0.85) -> str:
     )
 
 
-def queue_card(inv: dict[str, Any], taxes: Sequence[str] = (), province: str = "") -> str:
+def queue_card(inv: dict[str, Any], taxes: Sequence[str] = (), province: str = "", badge: str = "") -> str:
+    """``badge``: extra HTML (e.g. a due-date pill) shown with the invoice details."""
     flagged = bool(inv.get("requires_review"))
     status = pill("Needs attention", "warn", "flag") if flagged else pill("Ready", "ok", "check_circle")
     meta = [f"<span>{icon('receipt_long', '1em')} {esc(inv.get('invoice_number') or '—')}</span>",
@@ -169,6 +170,8 @@ def queue_card(inv: dict[str, Any], taxes: Sequence[str] = (), province: str = "
     if province:
         meta.append(f"<span>{icon('location_on', '1em')} {esc(province)}</span>")
     meta += [tax_chip(t) for t in taxes]
+    if badge:
+        meta.append(badge)
     return (
         f"<div class='apc-qcard {'attn' if flagged else 'ready'} apc-anim'>"
         f"{avatar(inv.get('vendor_name') or inv.get('file_name') or '')}"

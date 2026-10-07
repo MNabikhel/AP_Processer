@@ -140,6 +140,11 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
             "type": "string",
             "description": "Buyer's purchase order number as printed (PO #, Customer PO, Order Ref), empty if none.",
         },
+        "payment_terms": {
+            "type": "string",
+            "description": "Payment terms as printed (e.g. Net 30, 2/10 Net 30, Due on receipt), empty if none.",
+        },
+        "due_date": {"type": "string", "description": "Due date printed on the invoice, YYYY-MM-DD; empty if none."},
         "currency": {"type": "string", "description": "ISO 4217 currency code, e.g. CAD, USD."},
         "supplier_province": {
             "type": "string",
@@ -256,6 +261,8 @@ class InvoiceCoding(BaseModel):
     invoice_number: str
     invoice_date: str
     po_number: str = ""
+    payment_terms: str = ""
+    due_date: str = ""
     currency: str
     supplier_province: str = ""
     ship_to_province: str = ""
@@ -277,6 +284,14 @@ class InvoiceCoding(BaseModel):
             raise ValueError(f"invoice_date must be YYYY-MM-DD, got {value!r}") from exc
         if len(value) != 10:
             raise ValueError(f"invoice_date must be YYYY-MM-DD, got {value!r}")
+        return value
+
+    @field_validator("due_date")
+    @classmethod
+    def _due_date(cls, value: str) -> str:
+        value = (value or "").strip()
+        if value:
+            cls._iso_date(value)
         return value
 
     @field_validator("currency")

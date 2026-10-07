@@ -3,6 +3,8 @@
   "invoice_number": "CN-2026-0047",
   "invoice_date": "2026-09-28",
   "po_number": "PO-88213",
+  "payment_terms": "",
+  "due_date": "",
   "currency": "CAD",
   "supplier_province": "ON",
   "ship_to_province": "ON",
