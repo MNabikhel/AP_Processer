@@ -18,12 +18,12 @@ from .store import REVIEW, Store
 
 def clean_candidates(store: Store) -> list[dict[str, Any]]:
     """Invoices in the queue that were clean when processed (no review flag, no errors or warnings)."""
+    validations = {r["id"]: r["validation"] or {} for r in store.invoice_columns(("id", "validation"), REVIEW)}
     candidates = []
     for inv in store.list_invoices(REVIEW):
         if inv["requires_review"]:
             continue
-        full = store.get_invoice(inv["id"]) or {}
-        issues = (full.get("validation") or {}).get("issues") or []
+        issues = validations.get(inv["id"], {}).get("issues") or []
         if not any(i.get("severity") in ("error", "warning") for i in issues):
             candidates.append(inv)
     return candidates

@@ -66,7 +66,8 @@ def invoice_cost_usd(meta: dict[str, Any], a: Assumptions) -> tuple[float, bool]
 def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     a = a or Assumptions.load(store)
     rows = {r["id"]: r for r in store.list_invoices()}
-    metas = {r["id"]: r["meta"] for r in store.list_invoices_full()}
+    light = store.invoice_columns(("id", "meta", "validation"))
+    metas = {r["id"]: r["meta"] or {} for r in light}
     processed = [r for r in rows.values() if r["status"] != FAILED]
     failed = [r for r in rows.values() if r["status"] == FAILED]
     approvals = store.events(actions=["approved"], limit=100_000)
@@ -93,9 +94,8 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     )
 
     issue_counts: Counter[str] = Counter()
-    for invoice_id in rows:
-        full = store.get_invoice(invoice_id) or {}
-        for issue in (full.get("validation") or {}).get("issues") or []:
+    for r in light:
+        for issue in (r["validation"] or {}).get("issues") or []:
             if issue.get("severity") in ("error", "warning"):
                 issue_counts[issue["code"]] += 1
 

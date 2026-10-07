@@ -52,6 +52,10 @@ from ap_coder.webapp.process import run_pipeline, setup_steps
 # --- Review queue --------------------------------------------------------------------------------------
 
 
+QUEUE_PAGE = 50  # queue cards drawn at once; more on request
+APPROVED_SHOWN = 100
+
+
 def page_review() -> None:
     store = get_store()
     show_toast()
@@ -180,8 +184,19 @@ def page_review() -> None:
                 _bulk_approve_bar(store, reference)
             if not shown:
                 st.caption("No invoices match.")
-            for inv in shown:
-                _queue_card(store, inv)
+            limit = st.session_state.get("queue_limit", QUEUE_PAGE)
+            page_ids = [i["id"] for i in shown[:limit]]
+            ai_outputs = {
+                r["id"]: r["ai_output"] or {} for r in store.invoice_columns(("id", "ai_output"), ids=page_ids)
+            }
+            for inv in shown[:limit]:
+                _queue_card(inv, ai_outputs.get(inv["id"], {}))
+            if len(shown) > limit:
+                more = min(QUEUE_PAGE, len(shown) - limit)
+                if st.button(f"Show {more} more · {len(shown) - limit} not shown", icon=":material/expand_more:",
+                             key="queue_more", width="stretch"):  # fmt: skip
+                    st.session_state["queue_limit"] = limit + QUEUE_PAGE
+                    st.rerun()
 
     with tab_approved:
         if not approved:
@@ -193,6 +208,7 @@ def page_review() -> None:
                 label=f"Export to the ERP · {waiting} ready" if waiting else "Exports",
                 icon=":material/ios_share:",
             )
+            recent = sorted(approved, key=lambda i: i["reviewed_at"] or "", reverse=True)[:APPROVED_SHOWN]
             rows = [
                 [
                     f"<div style='display:flex;gap:.6rem;align-items:center'>{ui.avatar(i['vendor_name'] or '', 'sm')}"
@@ -203,11 +219,16 @@ def page_review() -> None:
                     esc(i["reviewer"]),
                     esc(ui.time_ago(i["reviewed_at"])),
                 ]
-                for i in approved
+                for i in recent
             ]
             with card("approved_list"):
                 st.html(ui.table(["Vendor", "Invoice #", "Date", "Total", "Approved by", "When"], rows, right=[3]))
-            labels = {i["id"]: f"#{i['id']} · {i['vendor_name']} · {i['invoice_number']}" for i in approved}
+                if len(approved) > len(recent):
+                    st.caption(f"The {len(recent)} most recent of {len(approved)}. Pick any invoice below.")
+            labels = {
+                i["id"]: f"#{i['id']} · {i['vendor_name']} · {i['invoice_number']}"
+                for i in sorted(approved, key=lambda i: i["reviewed_at"] or "", reverse=True)
+            }
             chosen = st.selectbox("View approved invoice", list(labels), format_func=labels.get, key="view_approved")
             render_approved(store, reference, chosen)
 
@@ -286,9 +307,7 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
                 st.rerun()
 
 
-def _queue_card(store: Store, inv: dict[str, Any]) -> None:
-    full = store.get_invoice(inv["id"]) or {}
-    ai = full.get("ai_output") or {}
+def _queue_card(inv: dict[str, Any], ai: dict[str, Any]) -> None:
     taxes = list(dict.fromkeys(t.get("tax_type", "") for t in ai.get("tax_lines", [])))
     prov = ai.get("ship_to_province") or ai.get("supplier_province") or ""
     with st.container(key=f"qcard_{inv['id']}"):
@@ -931,7 +950,7 @@ def _tax_check_table(coding: InvoiceCoding, reference: ReferenceData) -> None:
 
 def _distribution_table(output: dict[str, Any], reference: ReferenceData, currency: str) -> None:
     rows = []
-    for e in output["gl_distribution"]:
+    for e in output.get("gl_distribution") or []:
         kind = ui.pill("Tax", "info") if e["kind"] == "tax" else ui.pill(f"Line {e['line_number']}", "gray")
         name = gl_name(reference, e["gl_code"])
         gl = f"<div class='gl'>{esc(e['gl_code'] or '⚠ not mapped')}<small>{esc(name)}</small></div>"
@@ -946,8 +965,8 @@ def _distribution_table(output: dict[str, Any], reference: ReferenceData, curren
                 f"<b>{money(e['amount'])}</b>",
             ]
         )
-    total = round(sum(e["amount"] for e in output["gl_distribution"]), 2)
-    diff = round(total - output["grand_total"], 2)
+    total = round(sum(e["amount"] for e in output.get("gl_distribution") or []), 2)
+    diff = round(total - (output.get("grand_total") or 0), 2)
     balance = (
         ui.pill("Balanced", "ok", "balance") if abs(diff) <= 0.01 else ui.pill(f"Off by {money(diff)}", "err", "error")
     )

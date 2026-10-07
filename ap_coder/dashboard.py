@@ -20,7 +20,6 @@ from __future__ import annotations
 import streamlit as st
 
 from ap_coder import ui
-from ap_coder.demo import is_demo
 from ap_coder.store import REVIEW
 from ap_coder.webapp.accounts import page_accounts
 from ap_coder.webapp.activity import page_activity
@@ -58,7 +57,7 @@ st.logo(str(ASSETS / "logo.svg"), size="large", icon_image=str(ASSETS / "icon.sv
 with st.sidebar:
     _store = get_store()
     st.html(ui.sidebar_profile(reviewer(), approved_today(_store), len(_store.list_invoices(REVIEW))))
-    if any(is_demo(i) for i in _store.list_invoices_full()):
+    if _store.demo_count():
         st.html(ui.pill("Demo invoices loaded", "violet", "science"))
     st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
 

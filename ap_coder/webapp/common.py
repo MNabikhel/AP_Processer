@@ -17,7 +17,7 @@ import streamlit as st
 from ap_coder import ui
 from ap_coder.config import Settings
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
-from ap_coder.store import APPROVED, Store, default_db_path
+from ap_coder.store import Store, default_db_path
 
 DB_PATH = Path(os.environ.get("AP_DB_PATH") or default_db_path())
 INVOICE_DIR = DB_PATH.parent / "invoices"
@@ -214,8 +214,7 @@ def card(name: str) -> Any:
 
 
 def approved_today(store: Store) -> int:
-    today = dt.date.today().isoformat()
-    return sum(1 for i in store.list_invoices(APPROVED) if (i["reviewed_at"] or "").startswith(today))
+    return store.approved_since(dt.date.today().isoformat())
 
 
 def weekly_accuracy(metrics: dict[str, Any]) -> list[float]:
@@ -224,11 +223,11 @@ def weekly_accuracy(metrics: dict[str, Any]) -> list[float]:
 
 def demo_card(store: Store, where: str) -> None:
     """Load or remove the demo invoices (the bundled samples, coded as if by Azure; no Azure needed)."""
-    from ap_coder.demo import demo_available, is_demo, load_demo, remove_demo
+    from ap_coder.demo import demo_available, load_demo, remove_demo
 
     if not demo_available():
         return
-    demo_count = sum(1 for i in store.list_invoices_full() if is_demo(i))
+    demo_count = store.demo_count()
     with card(f"demo_{where}"):
         st.markdown("#### :material/science: Demo invoices")
         if not demo_count:

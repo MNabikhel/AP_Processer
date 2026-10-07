@@ -505,6 +505,45 @@ class Store:
             r["meta"] = json.loads(r["meta"]) if r["meta"] else {}
         return rows
 
+    _JSON_COLUMNS = ("ai_output", "final_output", "validation", "meta", "edits")
+    _LIGHT_COLUMNS = ("id", "status", "requires_review", "created_at", "reviewed_at", *_JSON_COLUMNS)
+
+    def invoice_columns(
+        self, columns: tuple[str, ...], status: str | None = None, ids: list[int] | None = None
+    ) -> list[dict[str, Any]]:
+        """Just these columns of every invoice, or of ``ids`` (JSON ones decoded): cheaper than
+        ``get_invoice`` in a loop."""
+        unknown = set(columns) - set(self._LIGHT_COLUMNS)
+        if unknown:
+            raise ValueError(f"unknown columns {sorted(unknown)}")
+        where, args = [], []
+        if status:
+            where.append("status = ?")
+            args.append(status)
+        if ids is not None:
+            where.append(f"id IN ({','.join('?' * len(ids))})")
+            args.extend(ids)
+        sql = f"SELECT {', '.join(columns)} FROM invoices" + (" WHERE " + " AND ".join(where) if where else "")
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
+        for r in rows:
+            for key in set(columns) & set(self._JSON_COLUMNS):
+                r[key] = json.loads(r[key]) if r[key] else None
+        return rows
+
+    def demo_count(self) -> int:
+        """How many demo invoices are loaded (see ``demo.py``), without reading every invoice."""
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM invoices WHERE meta LIKE '%\"demo\": true%'").fetchone()[0])
+
+    def approved_since(self, since_iso: str) -> int:
+        with self._conn() as conn:
+            return int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM invoices WHERE status = ? AND reviewed_at >= ?", (APPROVED, since_iso)
+                ).fetchone()[0]
+            )
+
     def approve_invoice(
         self, invoice_id: int, final_output: dict[str, Any], reviewer: str, bulk: bool = False
     ) -> dict[str, int]:

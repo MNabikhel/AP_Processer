@@ -25,6 +25,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from .memory import vendor_key
@@ -159,11 +160,13 @@ _STOP = {"the", "and", "for", "of", "a", "an", "to", "in", "with", "on", "per", 
 _PREFIXES = re.compile(r"^\s*(return|credit|returned|refund|retour|crédit|credit note)\s*[-:–]?\s*", re.IGNORECASE)
 
 
-def _tokens(text: str) -> set[str]:
+@lru_cache(maxsize=4096)
+def _tokens(text: str) -> frozenset[str]:
     words = re.findall(r"[a-z0-9]+", _PREFIXES.sub("", text or "").lower())
-    return {w for w in words if w not in _STOP and len(w) > 1}
+    return frozenset(w for w in words if w not in _STOP and len(w) > 1)
 
 
+@lru_cache(maxsize=65536)  # the same descriptions come back on every invoice of a PO
 def similarity(a: str, b: str) -> float:
     """0..1: how likely two line descriptions are the same item (word overlap, then character similarity)."""
     ta, tb = _tokens(a), _tokens(b)
