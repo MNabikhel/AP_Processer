@@ -298,3 +298,18 @@ def test_review_screen_shows_the_rules_applied(db):
     at.session_state["open_invoice"] = invoice_id
     _ok(at.run())
     assert any("by the rule" in h.proto.body for h in at.get("html"))
+
+
+def test_apply_a_rule_added_after_processing(busy_db):
+    from ap_coder.rules import Rule
+
+    store, invoice_id = busy_db
+    store.save_coding_rules([Rule("", "delivery", "6900")])
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = invoice_id
+    _ok(at.run())
+    _ok(at.button(key=f"inv{invoice_id}_apply_rules").click().run())
+    assert f"inv{invoice_id}_apply_rules" not in {b.key for b in at.button}  # nothing left to apply
+    _ok(at.button(key=f"inv{invoice_id}_approve").click().run())
+    lines = store.get_invoice(invoice_id)["final_output"]["line_items"]
+    assert next(li for li in lines if li["line_number"] == 5)["predicted_gl_code"] == "6900"

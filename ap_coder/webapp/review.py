@@ -614,6 +614,26 @@ def _reasons_html(coding: InvoiceCoding, ai: dict[str, Any], report: Any, refere
     return f"<div class='apc-reasons'>{''.join(rows)}</div>"
 
 
+def _apply_rules_button(store: Store, coding: InvoiceCoding, edited_lines: pd.DataFrame, key: str) -> None:
+    """Lines a fixed coding rule would code differently (e.g. a rule added after the invoice was processed)."""
+    _, changes = rules.apply(coding, store.coding_rules())
+    if not changes:
+        return
+    numbers = ", ".join(str(c["line_number"]) for c in changes)
+    if st.button(
+        f"Apply the coding rules to line {numbers}", icon=":material/rule_settings:", key=f"{key}_apply_rules",
+        help="; ".join(rules.describe(c) for c in changes).replace("the AI chose", "now"),
+    ):  # fmt: skip
+        updated = edited_lines.copy()
+        for c in changes:
+            rows_at = updated["line_number"] == c["line_number"]
+            updated.loc[rows_at, "predicted_gl_code"] = c["gl_to"]
+            updated.loc[rows_at, "predicted_cost_center"] = c["cc_to"]
+        replace_editor(f"{key}_lines", updated)
+        notify(f"Coding rules applied to {len(changes)} line(s).", ":material/rule_settings:")
+        st.rerun()
+
+
 def _ask_vendor(coding: InvoiceCoding, report: Any, key: str) -> None:
     """A ready-to-send email asking the vendor for what the invoice is missing (never the fraud checks)."""
     doc = coding.model_dump()
@@ -886,6 +906,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         applied = meta.get("rules_applied") or []
         if applied:
             st.html("".join(ui.check("info", "Coding rule", rules.describe(c)) for c in applied))
+        _apply_rules_button(store, coding, edited_lines, key)
         _ask_vendor(coding, report, key)
     with (
         reasons_box,
