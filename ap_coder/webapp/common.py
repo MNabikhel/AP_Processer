@@ -20,6 +20,8 @@ from ap_coder.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.store import Store, default_db_path
 
 DB_PATH = Path(os.environ.get("AP_DB_PATH") or default_db_path())
+# The public demo on the web (``streamlit_app.py`` sets it): made-up invoices only, no Azure, no folders.
+PUBLIC_DEMO = os.environ.get("AP_PUBLIC_DEMO", "").strip().lower() in {"1", "true", "yes", "on"}
 INVOICE_DIR = DB_PATH.parent / "invoices"
 CACHE_DIR = DB_PATH.parent / ".cache" / "extraction"
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
@@ -168,6 +170,15 @@ def render_pages(path: str, mtime: float) -> list[bytes]:
                 pages.append(buf.getvalue())
         return pages
     return []
+
+
+def not_in_public_demo(what: str) -> None:
+    """The friendly note shown instead of something the public demo can't do (Azure, folders on a computer)."""
+    st.info(
+        f"{what} is not available in the public demo. It runs on made-up invoices only, with no Azure "
+        "connection and no folders of its own; install AP Coder on your computer to use it.",
+        icon=":material/science:",
+    )
 
 
 def notify(message: str, icon: str = ":material/check_circle:") -> None:

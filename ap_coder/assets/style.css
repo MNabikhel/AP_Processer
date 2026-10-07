@@ -306,3 +306,11 @@ section[data-testid="stSidebar"] {width: 256px !important; min-width: 256px !imp
 .apc-timeline .t {font-size: .88rem; color: var(--apc-ink); line-height: 1.35;}
 .apc-timeline .d {font-size: .84rem; color: var(--apc-muted); line-height: 1.4; overflow-wrap: anywhere;}
 .apc-timeline .w {font-size: .74rem; color: var(--apc-faint); margin-top: .1rem;}
+
+/* ---- Public demo banner (streamlit_app.py, webapp/public_demo.py) ---------------------------- */
+.st-key-public_demo_banner {background: var(--apc-violet-bg); border: 1px solid #d8d2f6; border-radius: 12px;
+  padding: .3rem .4rem .3rem .9rem; margin: -1.2rem 0 .4rem;}
+.apc-demo-banner {display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; color: var(--apc-violet); font-size: .88rem;}
+.apc-demo-banner span:last-child {color: #4f4a6b;}
+.st-key-public_demo_banner [data-testid="stPopover"] button {min-height: 2rem; padding-top: .15rem; padding-bottom: .15rem;
+  background: #fff;}

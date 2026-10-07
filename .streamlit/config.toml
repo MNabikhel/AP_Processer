@@ -1,0 +1,48 @@
+# Streamlit settings for the public demo (streamlit_app.py, e.g. on Streamlit Community Cloud).
+# `python -m ap_coder dashboard` passes the same settings on its command line, so this file changes nothing
+# there. The [theme] below is a copy of ap_coder/assets/theme.toml (a test keeps the two the same); the font
+# is served from static/ next to streamlit_app.py.
+
+[server]
+enableStaticServing = true
+showEmailPrompt = false
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+primaryColor = "#2a78d6"
+backgroundColor = "#f3f5f9"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#142033"
+linkColor = "#1f63b5"
+borderColor = "#e4e8ef"
+showWidgetBorder = true
+baseRadius = "12px"
+buttonRadius = "10px"
+font = "Inter, sans-serif"
+headingFont = "Inter, sans-serif"
+headingFontWeights = [700, 700, 650, 600, 600, 600]
+headingFontSizes = ["1.9rem", "1.35rem", "1.1rem", "1rem", "0.95rem", "0.9rem"]
+metricValueFontSize = "1.7rem"
+metricValueFontWeight = 700
+dataframeHeaderBackgroundColor = "#f5f7fb"
+dataframeBorderColor = "#e4e8ef"
+chartCategoricalColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/InterVariable.woff2"
+weight = "100 900"
+
+[theme.sidebar]
+backgroundColor = "#0d1a2d"
+secondaryBackgroundColor = "#172a45"
+textColor = "#d9e2ef"
+borderColor = "#253a5a"
+primaryColor = "#6aa9f2"
+linkColor = "#9cc6f7"
+font = "Inter, sans-serif"

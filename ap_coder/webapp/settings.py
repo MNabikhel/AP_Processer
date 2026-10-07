@@ -18,10 +18,12 @@ from ap_coder.store import Store
 from ap_coder.webapp.common import (
     DB_PATH,
     INVOICE_DIR,
+    PUBLIC_DEMO,
     card,
     esc,
     get_settings,
     get_store,
+    not_in_public_demo,
     notify,
     open_folder,
     reference_or_none,
@@ -60,6 +62,11 @@ def _secret_hint(value: str) -> str:
 
 
 def azure_tab(store: Store) -> None:
+    if PUBLIC_DEMO:
+        with card("azure"):
+            st.markdown("#### :material/cloud: Azure connection")
+            not_in_public_demo("Connecting Azure")
+        return
     env = read_env(env_path())
     effective = get_settings()  # values in use, including built-in defaults not written in the file
     env.setdefault("AZURE_OPENAI_DEPLOYMENT", effective.openai.deployment or "")
@@ -195,7 +202,9 @@ def review_tab() -> None:
             value=settings.engine.constrain_codes,
             help="Off only for very large charts of accounts; codes are still checked after the AI answers.",
         )
-        if st.form_submit_button("Save", type="primary", icon=":material/save:"):
+        if PUBLIC_DEMO:
+            st.caption(":material/science: Fixed in the public demo: these apply to invoices read with Azure.")
+        if st.form_submit_button("Save", type="primary", icon=":material/save:", disabled=PUBLIC_DEMO):
             name = reviewer_name.strip()
             renamed = bool(name) and name != reviewer()
             if renamed:  # logged under the old name, with both names
@@ -273,7 +282,9 @@ def data_tab(store: Store) -> None:
             f"<div class='apc-muted'>Database, invoices, outputs, backups and Azure settings: "
             f"<code>{esc(data)}</code></div>"
         )
-        if button.button("Open folder", icon=":material/folder_open:", key="open_data", width="stretch"):
+        if button.button(
+            "Open folder", icon=":material/folder_open:", key="open_data", width="stretch", disabled=PUBLIC_DEMO
+        ):
             if not open_folder(data):
                 st.info(f"Open this folder yourself: {data}")
         invoices = store.list_invoices()
@@ -300,31 +311,38 @@ def data_tab(store: Store) -> None:
             made = store.backup_now("manual", actor=reviewer())
             notify(f"Backed up to {made.name}.", ":material/backup:")
             st.rerun()
-        with st.form("backup_copy_form", border=False):
-            c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
-            folder = c1.text_input(
-                "Also copy each backup to (optional)", store.get_setting("backup_copy_dir"),
-                placeholder=r"e.g. C:\Users\you\OneDrive - Company\AP Coder backups",
-                help="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose "
-                "the database. Only the backup copies go there; the database itself stays on this computer.",
-            )  # fmt: skip
-            if c2.form_submit_button("Save", icon=":material/save:", width="stretch"):
-                folder = folder.strip().strip('"')
-                if folder == store.get_setting("backup_copy_dir"):
-                    notify("Nothing changed.", ":material/save:")
-                    st.rerun()
-                elif folder and not Path(folder).expanduser().is_dir():
-                    st.error("That folder does not exist (or is not reachable from this computer).")
-                elif folder and Path(folder).expanduser().resolve() == store.backup_dir().resolve():
-                    st.error("That is the local backups folder: choose a folder on OneDrive or a network drive.")
-                else:
-                    store.set_setting("backup_copy_dir", folder, actor=reviewer())
-                    store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["backup_copy_dir"]})
-                    if folder:
-                        store.backup_now()  # a first copy straight away (backup_now copies it)
-                    notify("Backups will be copied there too." if folder else "Backups are kept on this computer only.",
-                           ":material/backup:")  # fmt: skip
-                    st.rerun()
+        if PUBLIC_DEMO:  # a folder on the web server is no place for a backup copy
+            st.caption(":material/science: Copying backups to a OneDrive or network folder: not in the public demo.")
+        else:
+            with st.form("backup_copy_form", border=False):
+                c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+                folder = c1.text_input(
+                    "Also copy each backup to (optional)", store.get_setting("backup_copy_dir"),
+                    placeholder=r"e.g. C:\Users\you\OneDrive - Company\AP Coder backups",
+                    help="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose "
+                    "the database. Only the backup copies go there; the database itself stays on this computer.",
+                )  # fmt: skip
+                if c2.form_submit_button("Save", icon=":material/save:", width="stretch"):
+                    folder = folder.strip().strip('"')
+                    if folder == store.get_setting("backup_copy_dir"):
+                        notify("Nothing changed.", ":material/save:")
+                        st.rerun()
+                    elif folder and not Path(folder).expanduser().is_dir():
+                        st.error("That folder does not exist (or is not reachable from this computer).")
+                    elif folder and Path(folder).expanduser().resolve() == store.backup_dir().resolve():
+                        st.error("That is the local backups folder: choose a folder on OneDrive or a network drive.")
+                    else:
+                        store.set_setting("backup_copy_dir", folder, actor=reviewer())
+                        store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["backup_copy_dir"]})
+                        if folder:
+                            store.backup_now()  # a first copy straight away (backup_now copies it)
+                        notify(
+                            "Backups will be copied there too."
+                            if folder
+                            else "Backups are kept on this computer only.",
+                            ":material/backup:",
+                        )
+                        st.rerun()
         status = store.get_setting("backup_copy_status")
         if store.get_setting("backup_copy_dir") and status:
             state, _, rest = status.partition(" ")

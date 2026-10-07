@@ -12,6 +12,8 @@ dist/
 !.env.example
 .cache/
 output/
+# Streamlit secrets (the public demo needs none)
+.streamlit/secrets.toml
 
 # Enterprise data: invoices, reference exports, outputs, labels. Never commit.
 private/*

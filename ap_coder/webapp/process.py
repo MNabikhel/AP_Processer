@@ -20,11 +20,13 @@ from ap_coder.webapp.common import (
     CACHE_DIR,
     INVOICE_DIR,
     PAGES,
+    PUBLIC_DEMO,
     card,
     demo_card,
     esc,
     get_settings,
     get_store,
+    not_in_public_demo,
     notify,
     open_folder,
     short_path,
@@ -50,6 +52,9 @@ def _email_note(mail: Any) -> None:
 
 
 def run_pipeline(store: Store, paths: list[Path]) -> None:
+    if PUBLIC_DEMO:  # no Azure in the public demo
+        not_in_public_demo("Reading invoices with Azure")
+        return
     reference = store.reference_data()
     settings = get_settings()
     pipeline = InvoicePipeline(settings, reference, cache_dir=CACHE_DIR, store=store)
@@ -128,6 +133,18 @@ def page_process() -> None:
 
     with right:
         demo_card(store, "process")
+
+    if PUBLIC_DEMO:
+        with left, card("public_demo"):
+            st.markdown("#### :material/cloud_off: Processing new invoices")
+            not_in_public_demo("Reading and coding new invoices with Azure")
+            st.caption(
+                "In your own copy, AP Coder reads each PDF or scan with Azure Document Intelligence, codes every "
+                "line with Azure OpenAI and sends it to the review queue. The demo invoices went through the same "
+                "checks, coded ahead of time, so you can review, correct and approve them."
+            )
+            st.page_link(PAGES["review"], label="Go to the review queue", icon=":material/arrow_forward:")
+        return
 
     with left:
         with card("upload"):

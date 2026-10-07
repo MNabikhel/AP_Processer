@@ -13,6 +13,9 @@ Pages
 Each page lives in ``ap_coder/webapp/<page>.py``; this file is the app shell (theme, sidebar,
 navigation). Visual building blocks live in ``ui.py`` and ``assets/style.css``. All data stays in
 the local SQLite database in the data folder (see ``ap_coder/paths.py``).
+
+``streamlit_app.py`` runs this same app as the public web demo (made-up invoices, no Azure, a temporary
+database): see ``webapp/public_demo.py``.
 """
 
 from __future__ import annotations
@@ -23,7 +26,16 @@ from ap_coder import ui
 from ap_coder.store import REVIEW
 from ap_coder.webapp.accounts import page_accounts
 from ap_coder.webapp.activity import page_activity
-from ap_coder.webapp.common import ASSETS, DB_PATH, PAGES, approved_today, get_store, reviewer, short_path
+from ap_coder.webapp.common import (
+    ASSETS,
+    DB_PATH,
+    PAGES,
+    PUBLIC_DEMO,
+    approved_today,
+    get_store,
+    reviewer,
+    short_path,
+)
 from ap_coder.webapp.exports import page_exports
 from ap_coder.webapp.help import page_help
 from ap_coder.webapp.insights import page_insights
@@ -64,12 +76,20 @@ PAGES.update(
 )
 
 st.logo(str(ASSETS / "logo.svg"), size="large", icon_image=str(ASSETS / "icon.svg"))
+_store = get_store()
+if PUBLIC_DEMO:  # the public demo on the web (streamlit_app.py): made-up invoices, see webapp/public_demo.py
+    from ap_coder.webapp import public_demo
+
+    public_demo.bootstrap(_store)
+    public_demo.banner()
 with st.sidebar:
-    _store = get_store()
     st.html(ui.sidebar_profile(reviewer(), approved_today(_store), len(_store.list_invoices(REVIEW))))
     if _store.demo_count():
         st.html(ui.pill("Demo invoices loaded", "violet", "science"))
-    st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
+    if PUBLIC_DEMO:
+        st.caption(":material/science: Public demo · made-up invoices · no Azure")
+    else:
+        st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
 
 NAV_SECTIONS = {
     "Work": ["review", "search", "process", "exports", "statements", "month_end", "sales_tax"],
