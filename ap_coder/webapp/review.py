@@ -17,7 +17,7 @@ from ap_coder.memory import ACCEPTED, pair_lines
 from ap_coder.pipeline import finalise_coding
 from ap_coder.po import match_invoice, po_label
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
-from ap_coder.review import coding_from_inputs
+from ap_coder.review import coding_from_inputs, split_line
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import APPROVED, FAILED, PENDING, REJECTED, REVIEW, Store
 from ap_coder.suggest import suggest_gl
@@ -678,6 +678,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             hide_index=True, key=f"{key}_lines",
         )  # fmt: skip
         reasons_box = st.container()
+        _split_popover(edited_lines, gl_options, gl_labels, reference, key)
     po_box = st.container()  # the purchase order match, once the edits are valid
     suggest_box = st.container()  # GL suggestions for lines without a usable GL account
 
@@ -934,6 +935,62 @@ def _suggestion_card(
                     notify(f"Line {li.line_number} coded to GL {s.gl_code}.", ":material/add_task:")
                     st.rerun()
             st.caption(" · ".join(f"{s.gl_code}: {s.reasons[0]}" for s in suggestions))
+
+
+def _split_popover(
+    lines: pd.DataFrame, gl_options: list[str], gl_labels: dict[str, str], reference: ReferenceData, key: str
+) -> None:  # fmt: skip
+    """Split one line across several GL accounts / cost centers by percentage (shared costs)."""
+    descriptions: dict[int, str] = {}
+    for rec in lines.to_dict("records"):
+        n = pd.to_numeric(rec.get("line_number"), errors="coerce")
+        if pd.notna(n):
+            descriptions.setdefault(int(n), str(rec.get("description") or ""))
+    if not descriptions:
+        return
+    with st.popover("Split a line…", icon=":material/call_split:"):
+        number = st.selectbox(
+            "Line", list(descriptions), format_func=lambda n: f"{n} · {descriptions[n][:50]}", key=f"{key}_split_line"
+        )
+        row = lines[pd.to_numeric(lines["line_number"], errors="coerce") == number].iloc[0]
+        gl, cc = row.get("predicted_gl_code") or UNASSIGNED, row.get("predicted_cost_center") or ""
+        has_cc = reference.cost_centers is not None
+        start = pd.DataFrame([{"gl": gl, "cc": cc, "pct": 50.0}, {"gl": gl, "cc": cc, "pct": 50.0}])
+        config: dict[str, Any] = {
+            "gl": st.column_config.SelectboxColumn(
+                "GL account", options=gl_options, required=True, format_func=lambda c: gl_labels.get(c, c), width=220
+            ),  # fmt: skip
+            "pct": st.column_config.NumberColumn(
+                "%", min_value=0.0, max_value=100.0, step=1.0, format="%.2f", required=True
+            ),  # fmt: skip
+        }
+        if has_cc:
+            config["cc"] = st.column_config.SelectboxColumn(
+                "Cost center", options=[UNASSIGNED, *reference.cost_centers.codes], width=150
+            )
+        parts = st.data_editor(
+            start, column_config=config, column_order=["gl", "cc", "pct"] if has_cc else ["gl", "pct"],
+            num_rows="dynamic", hide_index=True, key=f"{key}_split_parts_{number}",
+        )  # fmt: skip
+        total = float(pd.to_numeric(parts["pct"], errors="coerce").fillna(0).sum())
+        st.caption(f"Total {total:g}% (must be 100%). Each part keeps the description and taxes of the line.")
+        if st.button("Split the line", type="primary", key=f"{key}_split_go", disabled=abs(total - 100) > 0.01):
+            chosen = [
+                (
+                    str(r["gl"] or gl),
+                    (str(r["cc"]) if has_cc and r.get("cc") else (cc if has_cc else "")),
+                    float(r["pct"]),
+                )
+                for r in parts.to_dict("records")
+                if r.get("pct")
+            ]
+            try:
+                replace_editor(f"{key}_lines", split_line(lines, number, chosen))
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                notify(f"Line {number} split in {len(chosen)}.", ":material/call_split:")
+                st.rerun()
 
 
 def _fmt_qty(value: float | None) -> str:
