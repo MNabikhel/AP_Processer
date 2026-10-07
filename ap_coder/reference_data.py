@@ -74,6 +74,15 @@ def _canonical_headers(headers: list[str]) -> dict[str, str]:
     return mapping
 
 
+def short_name(description: str) -> str:
+    """The name part of a GL description: "Professional Fees - Legal - external legal counsel" ->
+    "Professional Fees - Legal" (the second part is kept when it is a short name, not an explanation)."""
+    parts = [p.strip() for p in (description or "").split(" - ")]
+    if len(parts) > 1 and len(parts[1]) <= 25 and not any(c in parts[1] for c in ";,()"):
+        return f"{parts[0]} - {parts[1]}"
+    return parts[0]
+
+
 @dataclass(frozen=True)
 class ReferenceTable:
     """A list of codes plus descriptive columns the LLM can reason over."""

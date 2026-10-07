@@ -167,8 +167,10 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
 def remove_demo(store: Store) -> int:
     """Delete the demo invoices and everything learned from them; real invoices are untouched."""
     ids = [i["id"] for i in store.list_invoices_full() if is_demo(i)]
+    batches = {r["export_batch"] for r in store.invoice_columns(("id", "export_batch"), ids=ids) if r["export_batch"]}
     for invoice_id in ids:
         store.delete_invoice(invoice_id, forget_lessons=True)
+    store.delete_empty_batches(batches)  # export batches that held only demo invoices
     vendor_keys = json.loads(store.get_setting(DEMO_VENDORS_SETTING) or "[]")
     if vendor_keys:
         store.delete_vendors(vendor_keys)

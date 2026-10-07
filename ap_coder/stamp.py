@@ -112,7 +112,8 @@ def _coding_pages(doc: Any, inv: dict[str, Any], gl_names: dict[str, str]) -> No
     text(MARGIN, f"{final.get('vendor_name') or ''} · invoice {final.get('invoice_number') or ''}", 11)
     y += 22
     facts = [
-        ("Invoice date", final.get("invoice_date") or "-"), ("Due date", final.get("due_date") or "-"),
+        ("Invoice date", final.get("invoice_date") or "-"),
+        ("Due date", final.get("due_date") or inv.get("due_date") or "-"),
         ("PO", final.get("po_number") or "-"), ("Terms", final.get("payment_terms") or "-"),
         ("Total", f"{float(final.get('grand_total') or 0):,.2f} {currency}"),
         ("Approved", f"{inv.get('reviewer') or ''} {_when(inv.get('reviewed_at'))}"),

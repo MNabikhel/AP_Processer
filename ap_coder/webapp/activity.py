@@ -10,7 +10,7 @@ import streamlit as st
 from ap_coder import controls, dupaudit, ui
 from ap_coder.audit import ACTIONS, describe
 from ap_coder.safe import csv_cell
-from ap_coder.webapp.common import card, esc, get_store, history_html, show_toast
+from ap_coder.webapp.common import card, esc, get_store, history_html, invoice_label, show_toast
 
 GROUPS = {
     "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "reopened", "parked", "unparked",
@@ -93,7 +93,7 @@ def page_activity() -> None:
                 "When": e["created_at"].replace("T", " ")[:19],
                 "Who": e["actor"] or "",
                 "What": ACTIONS.get(e["action"], ("", "", e["action"]))[2],
-                "Invoice": e["invoice_id"] or "",
+                "Invoice": invoice_label(e),
                 "Details": describe(e),
             }
             for e in shown
@@ -107,7 +107,7 @@ def page_activity() -> None:
     )  # fmt: skip
     timeline, grid = st.tabs([":material/timeline: Timeline", ":material/table: Table"])
     with timeline, card("activity_timeline"):
-        st.html(history_html(shown[:200]))
+        st.html(history_html(shown[:200], with_invoice=True))
         if len(shown) > 200:
             st.caption("Showing the newest 200; use the table or the CSV for everything.")
     with grid:
@@ -206,4 +206,4 @@ def _controls_card(store) -> None:
 def _searchable(event: dict) -> str:
     detail = event["detail"] or {}
     return " ".join([describe(event), str(detail.get("vendor") or ""), str(detail.get("invoice_number") or ""),
-                     str(event["invoice_id"] or ""), event["actor"] or ""]).lower()  # fmt: skip
+                     str(event["invoice_id"] or ""), invoice_label(event), event["actor"] or ""]).lower()  # fmt: skip

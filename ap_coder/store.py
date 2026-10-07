@@ -263,15 +263,19 @@ class Store:
         self, invoice_id: int | None = None, actions: list[str] | None = None, limit: int = 1000
     ) -> list[dict[str, Any]]:
         """Audit events, newest first (optionally for one invoice or some actions)."""
-        sql, args = "SELECT * FROM events WHERE 1 = 1", []
+        sql = (  # with the invoice's vendor and number, so a list of events says which invoice each is about
+            "SELECT e.*, i.vendor_name AS invoice_vendor, i.invoice_number AS invoice_number FROM events e "
+            "LEFT JOIN invoices i ON i.id = e.invoice_id WHERE 1 = 1"
+        )
+        args: list[Any] = []
         if invoice_id is not None:
-            sql += " AND invoice_id = ?"
+            sql += " AND e.invoice_id = ?"
             args.append(invoice_id)
         if actions:
-            sql += f" AND action IN ({', '.join('?' for _ in actions)})"
+            sql += f" AND e.action IN ({', '.join('?' for _ in actions)})"
             args += actions
         with self._conn() as conn:
-            rows = [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit))]
+            rows = [dict(r) for r in conn.execute(sql + " ORDER BY e.id DESC LIMIT ?", (*args, limit))]
         for r in rows:
             r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
         return rows
@@ -1179,6 +1183,15 @@ class Store:
                 )
             self._log(conn, "rules_changed", actor=actor, detail={"rules": len(keep)})
         return len(keep)
+
+    def delete_empty_batches(self, batches: set[int]) -> int:
+        """Delete these export batches if no invoice belongs to them any more (e.g. demo invoices removed)."""
+        removed = 0
+        with self._conn() as conn:
+            for batch in batches:
+                if not conn.execute("SELECT 1 FROM invoices WHERE export_batch = ? LIMIT 1", (batch,)).fetchone():
+                    removed += conn.execute("DELETE FROM export_batches WHERE id = ?", (batch,)).rowcount
+        return removed
 
     def batch_totals(self) -> dict[int, dict[str, float]]:
         """{batch: {currency: total}} of the invoices in each batch (an undone batch has none any more)."""

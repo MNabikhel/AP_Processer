@@ -7,6 +7,7 @@ import datetime as dt
 import streamlit as st
 
 from ap_coder import accruals, ui
+from ap_coder.reference_data import short_name
 from ap_coder.webapp.common import card, esc, get_store, money, reference_or_none, show_toast
 
 ICONS = {accruals.RECEIVED: "inventory", accruals.NOT_IN_ERP: "receipt_long", accruals.RECURRING: "event_repeat"}
@@ -60,7 +61,7 @@ def page_month_end() -> None:
 
     def gl_text(code: str) -> str:
         row = reference.chart_of_accounts.get(code) if reference and code else None
-        name = (row or {}).get("description", "").split(" - ")[0]
+        name = short_name((row or {}).get("description", ""))
         return f"<div class='gl'>{esc(code or '—')}<small>{esc(name)}</small></div>"
 
     with card("me_gl"):

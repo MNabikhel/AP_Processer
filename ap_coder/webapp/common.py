@@ -16,7 +16,7 @@ import streamlit as st
 
 from ap_coder import paths, ui
 from ap_coder.config import Settings
-from ap_coder.reference_data import UNASSIGNED, ReferenceData
+from ap_coder.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.store import Store, default_db_path
 
 DB_PATH = Path(os.environ.get("AP_DB_PATH") or default_db_path())
@@ -130,14 +130,14 @@ def gl_label_map(reference: ReferenceData | None) -> dict[str, str]:
     labels = {UNASSIGNED: f"{UNASSIGNED} · needs a code", "": "(none)"}
     if reference is not None:
         for row in reference.chart_of_accounts.rows:
-            name = row.get("description", "").split(" - ")[0]
-            labels[row["gl_code"]] = f"{row['gl_code']} · {name[:40]}"
+            name = short_name(row.get("description", ""))
+            labels[row["gl_code"]] = f"{row['gl_code']} · {name[:44]}"
     return labels
 
 
 def gl_name(reference: ReferenceData, code: str) -> str:
     row = reference.chart_of_accounts.get(code)
-    return (row or {}).get("description", "").split(" - ")[0] if row else ""
+    return short_name((row or {}).get("description", "")) if row else ""
 
 
 def cc_label_map(reference: ReferenceData | None) -> dict[str, str]:
@@ -278,15 +278,25 @@ def demo_card(store: Store, where: str) -> None:
                 st.rerun()
 
 
-def history_html(events: list[dict[str, Any]]) -> str:
-    """An invoice's (or the app's) audit events as a timeline, newest first."""
+def invoice_label(event: dict[str, Any]) -> str:
+    """ "Northwind IT Solutions Inc. · NW-2026-0912" for an event about an invoice (blank otherwise)."""
+    if not event.get("invoice_id"):
+        return ""
+    parts = [event.get("invoice_vendor") or "", event.get("invoice_number") or ""]
+    return " · ".join(p for p in parts if p) or f"#{event['invoice_id']} (deleted)"
+
+
+def history_html(events: list[dict[str, Any]], with_invoice: bool = False) -> str:
+    """An invoice's (or, ``with_invoice``, the app's) audit events as a timeline, newest first."""
     from ap_coder.audit import ACTIONS, describe
 
     items = []
     for e in events:
         icon_name, tone, label = ACTIONS.get(e["action"], ("circle", "gray", e["action"]))
+        about = invoice_label(e) if with_invoice else ""
+        title = f"{label} · {about}" if about else label
         items.append(
-            {"icon": icon_name, "tone": tone, "title": label, "text": describe(e), "who": e.get("actor") or "",
+            {"icon": icon_name, "tone": tone, "title": title, "text": describe(e), "who": e.get("actor") or "",
              "when": f"{ui.time_ago(e['created_at'])} · {e['created_at'].replace('T', ' ')[:16]}"}
         )  # fmt: skip
     return ui.timeline(items)

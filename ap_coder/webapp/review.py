@@ -791,9 +791,14 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             c1, c2, c3 = st.columns(3)
             header["po_number"] = text(c1, "PO #", "po_number", help="Purchase order the invoice quotes, if any")
             header["payment_terms"] = text(c2, "Payment terms", "payment_terms", placeholder="e.g. Net 30, 2/10 Net 30")
+            computed = payment(
+                {**start, **header}, store.default_terms_days(),
+                store.vendor_terms(vendor_key(header.get("vendor_name") or "")),
+            ).due  # fmt: skip
             header["due_date"] = text(
-                c3, "Due date", "due_date", placeholder="YYYY-MM-DD",
-                help="Only if printed; otherwise it comes from the terms",
+                c3, "Due date", "due_date",
+                placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
+                help="Only if printed; otherwise it comes from the terms (shown greyed)",
             )  # fmt: skip
             c1, c2 = st.columns([1, 2])
             header["original_invoice_number"] = text(
@@ -922,7 +927,11 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         count.html(
             "<div style='text-align:right'>"
             + (ui.pill(f"{len(errors)} to fix", "err") + " " if errors else "")
-            + (ui.pill(f"{len(warnings)} to look at", "warn") if warnings else "")
+            + (
+                ui.pill(f"{len(warnings) + (1 if report.requires_review and not errors else 0)} to look at", "warn")
+                if warnings
+                else ""
+            )
             + (ui.pill("All clear", "ok", "check") if not (errors or warnings) and not report.requires_review else "")
             + (
                 ui.pill("Needs a look", "warn", "visibility")

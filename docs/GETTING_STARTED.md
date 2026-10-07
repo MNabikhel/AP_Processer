@@ -113,8 +113,9 @@ keep the black window open while you use it and close it to stop. If another pro
 port 8501, AP Coder picks the next free one.
 
 **Fastest: the demo (no Azure needed).** On the welcome screen click **Load demo invoices**. Ten
-sample invoices from across Canada arrive in the review queue as if the AI had read them, with a
-few realistic mistakes to correct, plus sample purchase orders. Things to try:
+sample invoices from across Canada arrive as if the AI had read them (eight to review, two already
+approved), with a few realistic mistakes to correct, plus sample purchase orders and a vendor list.
+Things to try:
 
 - **Review queue** → open *Red River*: the **PO match** shows chairs billed but not yet received,
   and *Use the PO's coding* fixes the desk's GL account in one click.
@@ -134,14 +135,15 @@ few realistic mistakes to correct, plus sample purchase orders. Things to try:
   *Ask the vendor for the missing invoices*.
 - **Month-end** shows what to accrue; **Sales tax** totals the GST/HST and QST to claim back (set
   the dates to include the demo invoices, dated mid-2026); **Help** explains every check.
-- *Remove demo invoices* on the **Process invoices** page removes the demo invoices, sample POs and
-  sample vendor list again. The sample GL accounts and tax setup stay (replace them when you import
-  yours: tick *Replace my current list*).
+- *Remove demo invoices* on the **Process invoices** page removes the demo invoices (and any batch
+  exported from them), sample POs and the sample vendor list again. The sample GL accounts and tax
+  setup stay (replace them when you import yours: tick *Replace my current list*).
 
 **With Azure:** first click *Remove demo invoices* if you loaded the demo (the same sample files
 would otherwise be recognised as already processed).
 
-1. **GL accounts & tax** → *Load sample setup*.
+1. **GL accounts & tax** → *Load sample setup* (skip this if you tried the demo: the sample setup is
+   already loaded).
 2. Copy the sample PDFs from `samples\` into your invoices folder (**Process invoices** →
    *Open folder* shows it). `samples\README.md` lists what each one shows: HST, GST+PST,
    TPS/TVQ, GST only, a US invoice and a credit note.

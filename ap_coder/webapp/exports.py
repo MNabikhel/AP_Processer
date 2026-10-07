@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import export_layout, exports, registers, stamp, ui
+from ap_coder.reference_data import short_name
 from ap_coder.store import Store
 from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import (
@@ -27,7 +28,7 @@ def _gl_names(store: Store) -> dict[str, str]:
     reference = reference_or_none(store)
     if reference is None:
         return {}
-    return {row["gl_code"]: (row.get("description") or "").split(" - ")[0] for row in reference.chart_of_accounts.rows}
+    return {row["gl_code"]: short_name(row.get("description") or "") for row in reference.chart_of_accounts.rows}
 
 
 LAYOUT_SETTING = "export_layout"

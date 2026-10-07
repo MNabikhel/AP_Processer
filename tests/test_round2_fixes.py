@@ -125,3 +125,13 @@ def test_approving_one_invoice_again_counts_once_in_the_controls_report(tmp_path
     today = dt.date.today()
     r = controls.build(store, today, today)
     assert r["by_person"] == [("Alice", 1, 0)] and len(r["sent_back"]) == 3
+
+
+def test_removing_the_demo_removes_its_export_batches(tmp_path):
+    from ap_coder.demo import load_demo, remove_demo
+
+    store = Store(tmp_path / "d.db")
+    load_demo(store)
+    store.create_export_batch([i["id"] for i in store.unexported_approved()], "csv")
+    remove_demo(store)
+    assert store.export_batches() == []

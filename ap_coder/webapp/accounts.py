@@ -260,8 +260,9 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
     with card("rules"):
         st.caption(
             "Lines that always go to the same account, whatever the AI thinks: a vendor (e.g. *Purolator*), words "
-            "a line contains (e.g. *freight*), or both. Applied to invoices processed from now on; the review "
-            "screen says which lines a rule changed. The most specific rule wins."
+            "a line contains (e.g. *freight*), or both. Applied to invoices processed from now on (for one already "
+            "in the queue, open it and use *Apply the coding rules*); the review screen says which lines a rule "
+            "changed. The most specific rule wins."
         )
         if not gl:
             st.info("Import your GL accounts first.", icon=":material/account_tree:")
@@ -308,7 +309,8 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
         if st.button("Save rules", type="primary", icon=":material/save:", key="rules_save"):
             saved = store.save_coding_rules(new, actor=reviewer())
             replace_editor("rules_grid", _rules_frame(store.coding_rules()))
-            notify(f"{saved} coding rule(s) saved.", ":material/rule_settings:")
+            left_out = f"; {len(incomplete)} incomplete row(s) left out (no GL account, or no vendor or words)"
+            notify(f"{saved} coding rule(s) saved{left_out if incomplete else ''}.", ":material/rule_settings:")
             st.rerun()
 
     suggestions = [(r, n) for r, n in suggest_rules(store.feedback_rows(), current) if r.gl_code in gl_codes]

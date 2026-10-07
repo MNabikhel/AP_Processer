@@ -111,6 +111,12 @@ def page_sales_tax() -> None:
 def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
     items = taxreturn.self_assessment(store, start, end)
     if not items:
+        with card("tax_self_none"):
+            st.markdown("#### :material/assignment_return: PST / QST possibly to self-assess")
+            st.caption(
+                "None in this period: no approved invoice for a supply in BC, SK, MB or Quebec came without the "
+                "provincial tax."
+            )
         return
     with card("tax_self"):
         head, button = st.columns([3, 1.4], vertical_alignment="center")
