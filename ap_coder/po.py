@@ -379,11 +379,14 @@ def po_findings(coding: InvoiceCoding, store: Store, exclude_invoice_id: int | N
     return result.findings if result else []
 
 
-def billed_by_line(po: dict[str, Any], invoices: list[dict[str, Any]]) -> dict[int, float]:
-    """Quantity billed so far on each PO line by ``invoices`` (``Store.po_invoices`` rows; credits subtract)."""
+def billed_by_line(po: dict[str, Any], invoices: list[dict[str, Any]], positive_only: bool = False) -> dict[int, float]:
+    """Quantity billed so far on each PO line by ``invoices`` (``Store.po_invoices`` rows; credits subtract
+    unless ``positive_only``)."""
     billed: dict[int, float] = {}
     for inv in invoices:
         lines = inv["coding"].get("line_items") or []
+        if positive_only:
+            lines = [li for li in lines if float(li.get("quantity") or 0) > 0]
         quantities = {int(li["line_number"]): float(li.get("quantity") or 0) for li in lines}
         for inv_line, po_line in pair_with_po(lines, po["lines"]).items():
             billed[po_line] = billed.get(po_line, 0.0) + quantities.get(inv_line, 0.0)

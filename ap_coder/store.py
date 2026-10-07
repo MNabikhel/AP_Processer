@@ -844,6 +844,27 @@ class Store:
             if r["id"] != exclude_id
         ]
 
+    def vendor_invoices_without_po(self, key: str) -> list[dict[str, Any]]:
+        """This vendor's active invoices that quote no PO, with their coding (they may still bill a PO line)."""
+        if not key:
+            return []
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, status, invoice_number, invoice_date, ai_output, final_output FROM invoices "
+                "WHERE vendor_key = ? AND po_key = '' AND status IN (?, ?, ?) ORDER BY id",
+                (key, *ACTIVE_STATUSES),
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "invoice_number": r["invoice_number"],
+                "invoice_date": r["invoice_date"],
+                "coding": json.loads(r["final_output"] or r["ai_output"] or "{}"),
+            }  # fmt: skip
+            for r in rows
+        ]
+
     def set_po_status(self, key: str, status: str, actor: str | None = None) -> None:
         with self._conn() as conn:
             conn.execute(
