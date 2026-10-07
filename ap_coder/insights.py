@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, fields
 from typing import Any
 
 from .memory import vendor_key
-from .store import APPROVED, FAILED, PARKED, PENDING, REVIEW, Store
+from .store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
 from .terms import payment
 
 
@@ -66,6 +66,9 @@ def invoice_cost_usd(meta: dict[str, Any], a: Assumptions) -> tuple[float, bool]
     return cost, bool(usage)
 
 
+DUPLICATE_CODES = {"DUPLICATE_INVOICE", "DUPLICATE_IN_ERP", "DUPLICATE_OTHER_VENDOR", "POSSIBLE_DUPLICATE_AMOUNT"}
+
+
 def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     a = a or Assumptions.load(store)
     rows = {r["id"]: r for r in store.list_invoices()}
@@ -101,10 +104,18 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     )
 
     issue_counts: Counter[str] = Counter()
+    stopped: dict[str, float] = defaultdict(float)  # duplicates caught and rejected: {currency: total}
+    stopped_count = 0
     for r in light:
+        codes = set()
         for issue in (r["validation"] or {}).get("issues") or []:
             if issue.get("severity") in ("error", "warning"):
                 issue_counts[issue["code"]] += 1
+                codes.add(issue["code"])
+        inv = rows.get(r["id"])
+        if inv and inv["status"] == REJECTED and codes & DUPLICATE_CODES and (inv["grand_total"] or 0) > 0:
+            stopped_count += 1
+            stopped[inv["currency"] or "CAD"] += inv["grand_total"]
 
     weekly: dict[str, dict[str, int]] = defaultdict(lambda: {"processed": 0, "clean": 0, "changed": 0})
     for r in processed:
@@ -141,6 +152,8 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
         "weekly": [{"week": w, **v} for w, v in sorted(weekly.items())],
         "projection": projection,
         "approved_status": APPROVED,
+        "duplicates_stopped": stopped_count,
+        "duplicates_stopped_total": {c: round(t, 2) for c, t in sorted(stopped.items())},
     }
 
 
@@ -285,6 +298,11 @@ def report_html(s: dict[str, Any], organisation: str = "") -> str:
         row("Approved", f"{s['approved']} ({s['approved_clean']} as coded, {s['approved_changed']} corrected)"),
         row("Sent for a closer look by the checks", _pct(s["needs_attention_rate"])),
         row("Could not be read", str(s["failed"])),
+        row(
+            "Duplicate invoices stopped (flagged, then rejected)",
+            f"{s['duplicates_stopped']}"
+            + "".join(f" · {_money(t)} {c}" for c, t in s["duplicates_stopped_total"].items()),
+        ),
         row("Average processing time", avg),
         "</table><h2>Most common findings</h2><table>",
         issues,

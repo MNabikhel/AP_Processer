@@ -67,3 +67,23 @@ def test_vendors_that_make_work(tmp_path):
     (row,) = vendor_workload(store)
     assert (row["invoices"], row["with_problems"], row["corrected"], row["approved"]) == (3, 1, 1, 2)
     assert row["top_codes"] == ["GST_HST_NUMBER_MISSING"]  # internal checks never count as the vendor's
+
+
+def test_duplicates_stopped_in_the_business_case(tmp_path):
+    import json
+
+    from ap_coder.insights import compute, report_html
+    from ap_coder.store import Store
+
+    from .conftest import SAMPLE_STEM, SAMPLES
+
+    store = Store(tmp_path / "d.db")
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    flagged = {"issues": [{"severity": "error", "code": "DUPLICATE_INVOICE", "message": "x"}]}
+    a = store.add_invoice(tmp_path / "a.pdf", gt, flagged)
+    store.reject_invoice(a, "Jane", "duplicate")
+    b = store.add_invoice(tmp_path / "b.pdf", {**gt, "invoice_number": "Z"}, {"issues": []})
+    store.reject_invoice(b, "Jane", "not ours")  # rejected, but not as a duplicate
+    s = compute(store)
+    assert s["duplicates_stopped"] == 1 and s["duplicates_stopped_total"] == {"CAD": gt["grand_total"]}
+    assert "Duplicate invoices stopped" in report_html(s)

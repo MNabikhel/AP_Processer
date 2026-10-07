@@ -115,7 +115,8 @@ folder.
   approvals made while a fraud or PO signal was showing, second approvals, setup changes, approvals
   per person; one HTML page to download.
 - **Insights:** how much goes straight through, hours saved, Azure cost per invoice from the real
-  token usage, and a monthly projection, with a one-page business case to share (totals only); AP
+  token usage, a monthly projection and the duplicate invoices stopped, with a one-page business case
+  to share (totals only); AP
   operations: queue ageing, days to approve, approvals after the due date, discounts approved in
   time.
 

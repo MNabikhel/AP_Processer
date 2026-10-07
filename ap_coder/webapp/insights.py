@@ -194,6 +194,9 @@ def page_insights() -> None:
                 )
             )
             st.caption(f"Sent for a closer look: {_pct(s['needs_attention_rate'])} of processed invoices.")
+            if s["duplicates_stopped"]:
+                totals = " · ".join(f"{t:,.2f} {c}" for c, t in s["duplicates_stopped_total"].items())
+                st.html(ui.pill(f"{s['duplicates_stopped']} duplicate invoice(s) stopped · {totals}", "ok", "shield"))
         else:
             st.caption("No errors or warnings so far.")
 
