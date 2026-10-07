@@ -59,9 +59,43 @@ def test_twice_in_the_erp(tmp_path):
     store = Store(tmp_path / "d.db")
     rows = [
         {"vendor_name": "Acme Ltd", "invoice_number": "A-1001", "invoice_date": "2026-01-05", "total": 500.0},
-        {"vendor_name": "ACME Limited", "invoice_number": "A-1010", "invoice_date": "2026-03-06", "total": 500.0},
+        {"vendor_name": "ACME Limited", "invoice_number": "A-1010", "invoice_date": "2026-01-09", "total": 500.0},
     ]
     store.import_erp_register(rows)
     (pair,) = dupaudit.find(store)
     assert pair.first.source == pair.second.source == "ERP" and pair.amount == 500.0
     assert pair.reason == dupaudit.NUMBER_TYPO
+
+
+def test_monthly_bills_are_not_typos(tmp_path):
+    store = Store(tmp_path / "d.db")
+    for month in range(1, 13):
+        _approve(store, tmp_path, vendor_name="Maple Leasing", invoice_number=f"{1000 + month}",
+                 invoice_date=f"2026-{month:02d}-01")  # fmt: skip
+    assert dupaudit.find(store) == []
+
+
+def test_an_exported_invoice_is_not_its_own_duplicate_in_the_erp(tmp_path):
+    store = Store(tmp_path / "d.db")
+    a, doc = _approve(store, tmp_path, vendor_name="Bell Mobility Inc.", invoice_number="INV-5531")
+    row = {"vendor_name": "BELL CANADA", "invoice_number": "INV-5531", "invoice_date": "09/30/2026",
+           "total": doc["grand_total"]}  # fmt: skip
+    store.import_erp_register([row])
+    assert [p.reason for p in dupaudit.find(store)] == [dupaudit.OTHER_VENDOR]  # not exported: it could be twice
+    store.create_export_batch([a], "csv")
+    assert dupaudit.find(store) == []  # exported: that ERP row is this invoice
+
+
+def test_erp_dates_in_other_formats(tmp_path):
+    from ap_coder import registers
+
+    rows, _ = registers.rows_from_records(
+        [{"Vendor": "Acme", "Invoice": "A-1", "Date": "25/09/2026", "Amount": "500.00"},
+         {"Vendor": "Acme", "Invoice": "B-77", "Date": "2026-09-27 00:00:00", "Amount": "500.00"}],
+        {"vendor_name": "Vendor", "invoice_number": "Invoice", "invoice_date": "Date", "total": "Amount"},
+    )  # fmt: skip
+    assert [r["invoice_date"] for r in rows] == ["2026-09-25", "2026-09-27"]
+    store = Store(tmp_path / "d.db")
+    store.import_erp_register(rows)
+    (pair,) = dupaudit.find(store)
+    assert pair.reason == dupaudit.SAME_AMOUNT

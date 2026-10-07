@@ -130,7 +130,7 @@ def page_review() -> None:
                     metrics["lines_reviewed"],
                     "psychology",
                     "amber",
-                    f"{metrics['lines_corrected']} corrections taught",
+                    f"{metrics['lines_corrected']} correction{'s' if metrics['lines_corrected'] != 1 else ''} taught",
                 ),
             ]
         )

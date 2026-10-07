@@ -244,6 +244,16 @@ def page_accounts() -> None:
         rules_editor(store, gl, cc)
 
 
+def _rules_frame(rules: list[Rule]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"vendor": r.vendor, "contains": r.contains, "gl_code": r.gl_code, "cost_center": r.cost_center}
+            for r in rules
+        ],
+        columns=["vendor", "contains", "gl_code", "cost_center"],
+    )
+
+
 def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]]) -> None:
     """Fixed coding rules: always this GL account (and cost center) for a vendor and/or words in a line."""
     current = store.coding_rules()
@@ -259,14 +269,7 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
         gl_codes = [a["code"] for a in gl]
         names = {a["code"]: f"{a['code']} · {a['description']}" for a in gl}
         cc_codes = ["", *(a["code"] for a in cc)]
-        df = pd.DataFrame(
-            [
-                {"vendor": r.vendor, "contains": r.contains, "gl_code": r.gl_code, "cost_center": r.cost_center}
-                for r in current
-            ]  # fmt: skip
-            or [],
-            columns=["vendor", "contains", "gl_code", "cost_center"],
-        )
+        df = _rules_frame(current)
         edited = persistent_editor(
             df, "rules_grid",
             column_config={
@@ -296,12 +299,19 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
                 "It is left out when you save.",
                 icon=":material/warning:",
             )
+        unknown = sorted({r.gl_code for r in new if r.gl_code and r.gl_code not in gl_codes})
+        if unknown:
+            st.warning(
+                f"GL account {', '.join(unknown)} is not in your GL list any more: change these rules.",
+                icon=":material/warning:",
+            )
         if st.button("Save rules", type="primary", icon=":material/save:", key="rules_save"):
             saved = store.save_coding_rules(new, actor=reviewer())
+            replace_editor("rules_grid", _rules_frame(store.coding_rules()))
             notify(f"{saved} coding rule(s) saved.", ":material/rule_settings:")
             st.rerun()
 
-    suggestions = suggest_rules(store.feedback_rows(), current)
+    suggestions = [(r, n) for r, n in suggest_rules(store.feedback_rows(), current) if r.gl_code in gl_codes]
     if suggestions:
         with card("rules_suggested"):
             st.markdown("#### :material/lightbulb: Suggested from past coding")
@@ -312,7 +322,7 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
                 text.markdown(f"**{md(rule.vendor)}** → {md(target)}  \n:gray[{lines} line(s), all coded the same]")
                 if button.button("Add rule", key=f"rule_add_{n}", icon=":material/add:", width="stretch"):
                     store.save_coding_rules([*current, rule], actor=reviewer())
-                    replace_editor("rules_grid", pd.DataFrame())
+                    replace_editor("rules_grid", _rules_frame(store.coding_rules()))
                     notify(f"Rule added: {rule.vendor} → {rule.gl_code}.", ":material/rule_settings:")
                     st.rerun()
 

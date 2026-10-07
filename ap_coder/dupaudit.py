@@ -22,6 +22,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations
 
+from .csvio import parse_date
 from .memory import vendor_key
 from .safe import csv_row
 from .store import APPROVED, PENDING, Store
@@ -35,6 +36,7 @@ REASONS = {
     SAME_AMOUNT: "Same amount within a week",
 }
 SAME_AMOUNT_DAYS = 7
+TYPO_DAYS = 14  # a bill entered twice with a typo carries (about) the same date
 MIN_TYPO_LENGTH = 4  # "12" and "13" are not a typo of each other
 
 
@@ -49,6 +51,7 @@ class Bill:
     date: str
     total: float
     currency: str = ""
+    exported: bool = False  # an AP Coder invoice already sent to the ERP
 
     @property
     def label(self) -> str:
@@ -83,16 +86,21 @@ def one_keystroke(a: str, b: str) -> bool:
     return short[i:] == long_[i + 1 :]
 
 
-def _days(a: str, b: str) -> int | None:
+def _date(text: str) -> dt.date | None:
     try:
-        return abs((dt.date.fromisoformat(a[:10]) - dt.date.fromisoformat(b[:10])).days)
-    except ValueError:
+        return parse_date(text[:10])
+    except ValueError:  # empty, or day and month cannot be told apart
         return None
+
+
+def _days(a: str, b: str) -> int | None:
+    first, second = _date(a), _date(b)
+    return abs((first - second).days) if first and second else None
 
 
 def bills(store: Store) -> list[Bill]:
     out = []
-    for r in store.invoice_columns(("id", "status", "final_output")):
+    for r in store.invoice_columns(("id", "status", "export_batch", "final_output")):
         if r["status"] not in (APPROVED, PENDING) or not r["final_output"]:
             continue
         doc = r["final_output"]
@@ -103,7 +111,7 @@ def bills(store: Store) -> list[Bill]:
         number = str(doc.get("invoice_number") or "")
         date, currency = str(doc.get("invoice_date") or ""), str(doc.get("currency") or "")
         out.append(Bill("AP Coder", r["id"], vendor_key(name), name, number, norm_invoice_number(number), date,
-                        round(total, 2), currency))  # fmt: skip
+                        round(total, 2), currency, bool(r["export_batch"])))  # fmt: skip
     for r in store.erp_register():
         if (r["total"] or 0) <= 0:
             continue
@@ -113,8 +121,12 @@ def bills(store: Store) -> list[Bill]:
 
 
 def _same_bill(a: Bill, b: Bill) -> bool:
-    """An AP Coder invoice and its own ERP entry."""
-    return {a.source, b.source} == {"AP Coder", "ERP"} and a.vendor_key == b.vendor_key and a.number_key == b.number_key
+    """An AP Coder invoice and its own ERP entry: the same vendor and number, or an exported invoice whose number
+    and amount are in the ERP under the ERP's own name for the vendor."""
+    if {a.source, b.source} != {"AP Coder", "ERP"} or a.number_key != b.number_key:
+        return False
+    ours = a if a.source == "AP Coder" else b
+    return a.vendor_key == b.vendor_key or (ours.exported and a.total == b.total)
 
 
 def find(store: Store) -> list[Pair]:
@@ -142,7 +154,9 @@ def find(store: Store) -> list[Pair]:
             if a.number_key and a.number_key == b.number_key:
                 add(EXACT, a, b)
             elif one_keystroke(a.number_key, b.number_key):
-                add(NUMBER_TYPO, a, b)
+                days = _days(a.date, b.date)
+                if days is None or days <= TYPO_DAYS:  # monthly bills numbered 1001, 1002... are not typos
+                    add(NUMBER_TYPO, a, b)
     for group in by_number_amount.values():
         for a, b in combinations(group, 2):
             if a.vendor_key != b.vendor_key:

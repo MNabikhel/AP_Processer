@@ -318,7 +318,7 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
             s["codes"].update(codes)
         if r["status"] in (APPROVED, PENDING):
             s["approved"] += 1
-            s["corrected"] += bool(r["edits"])
+            s["corrected"] += bool({"line_coding", "line_count"} & set(r["edits"] or []))  # the GL coding, not a date
     out = []
     for key, s in stats.items():
         if s["invoices"] < min_invoices or not (s["with_problems"] or s["corrected"]):

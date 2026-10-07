@@ -13,6 +13,7 @@ from __future__ import annotations
 import email
 import email.policy
 import re
+import time
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from pathlib import Path
@@ -21,6 +22,10 @@ from .extraction import DOCUMENT_EXTENSIONS
 
 EMAIL_EXTENSIONS = {".eml"}
 MIN_IMAGE_BYTES = 15_000
+MAX_LOGO_BYTES = 150_000  # an inline picture larger than this is a photo of an invoice, not a signature logo
+SETTLE_SECONDS = 5  # an email changed more recently may still be being copied
+_MAGIC = {b"%PDF": ".pdf", b"\xff\xd8\xff": ".jpg", b"\x89PNG": ".png", b"II*\x00": ".tif", b"MM\x00*": ".tif",
+          b"BM": ".bmp"}  # fmt: skip
 _TYPES = {"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png", "image/tiff": ".tif",
           "image/bmp": ".bmp", "image/heic": ".heic", "image/heif": ".heif"}  # fmt: skip
 
@@ -36,7 +41,22 @@ class Unpacked:
 def _safe(name: str) -> str:
     name = re.split(r"[\\/]", name)[-1]  # the file name only, whichever separator the sender's system used
     name = re.sub(r'[:*?"<>|\x00-\x1f]', "_", name).strip(" .")
-    return name[:120] or "attachment"
+    if len(name) > 80:  # short enough for Windows paths; the extension is kept
+        suffix = Path(name).suffix[:10]
+        name = name[: 80 - len(suffix)].rstrip(" .") + suffix
+    return name or "attachment"
+
+
+def _kind(name: str, content_type: str, content: bytes) -> str:
+    """The file type of an attachment: its name's extension when it is a known one, else its declared type,
+    else what its first bytes say ("Invoice No. 12345" sent as application/pdf is still a PDF)."""
+    suffix = Path(name).suffix.lower()
+    if suffix in DOCUMENT_EXTENSIONS:
+        return ".jpg" if suffix == ".jpeg" else suffix
+    if content_type in _TYPES:
+        return _TYPES[content_type]
+    head = content.lstrip()[:8]
+    return next((kind for magic, kind in _MAGIC.items() if head.startswith(magic)), "")
 
 
 def attachments(raw: bytes) -> tuple[str, list[tuple[str, bytes]], list[str]]:
@@ -49,28 +69,30 @@ def attachments(raw: bytes) -> tuple[str, list[tuple[str, bytes]], list[str]]:
 
     def walk(message: EmailMessage) -> None:
         for part in message.walk():  # also goes into emails forwarded as attachments (message/rfc822)
-            if part.is_multipart():
+            if part.is_multipart() or part.get_content_maintype() in ("text", "message", "multipart"):
                 continue
             name = part.get_filename() or ""
-            suffix = Path(name).suffix.lower() or _TYPES.get(part.get_content_type(), "")
-            if suffix not in DOCUMENT_EXTENSIONS:
-                if name:
-                    skipped.append(f"{name} (not a PDF or image)")
-                continue
+            label = name or "an unnamed attachment"
             try:
                 content = part.get_payload(decode=True) or b""
             except Exception:  # a damaged attachment
-                skipped.append(f"{name or 'attachment'} (could not be read)")
+                skipped.append(f"{label} (could not be read)")
+                continue
+            suffix = _kind(name, part.get_content_type(), content)
+            if not suffix:
+                skipped.append(f"{label} (not a PDF or image)")
+                continue
+            if suffix == ".pdf" and not content.lstrip()[:1024].startswith(b"%PDF") and b"%PDF" not in content[:1024]:
+                skipped.append(f"{label} (named as a PDF but is not one)")
                 continue
             if suffix != ".pdf":
                 inline = part.get("Content-ID") and part.get_content_disposition() != "attachment"
-                if inline or len(content) < MIN_IMAGE_BYTES:
-                    if name:
-                        skipped.append(f"{name} (a small or inline picture, e.g. a logo)")
+                if len(content) < MIN_IMAGE_BYTES or (inline and len(content) < MAX_LOGO_BYTES):
+                    skipped.append(f"{label} (a small or inline picture, e.g. a logo)")
                     continue
             safe = _safe(name or f"attachment{suffix}")
             if Path(safe).suffix.lower() != suffix:  # keep a type the invoices folder picks up
-                safe = f"{Path(safe).stem or 'attachment'}{suffix}"
+                safe = f"{safe if Path(safe).suffix.lower() not in DOCUMENT_EXTENSIONS else Path(safe).stem}{suffix}"
             found.append((safe, content))
 
     walk(msg)
@@ -83,7 +105,7 @@ def unpack(path: Path, folder: Path | None = None) -> Unpacked:
     folder = folder or path.parent
     subject, found, skipped = attachments(path.read_bytes())
     result = Unpacked(path.name, subject, skipped=skipped)
-    stem = _safe(path.stem)[:60]
+    stem = _safe(path.stem)[:40].rstrip(" .")
     for name, content in found:
         target = folder / f"{stem} - {name}"
         n = 1
@@ -113,12 +135,15 @@ def emails_in(folder: Path) -> list[Path]:
     return sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EMAIL_EXTENSIONS)
 
 
-def unpack_folder(folder: Path) -> list[Unpacked]:
-    """Unpack every saved email in ``folder``."""
+def unpack_folder(folder: Path, now: float | None = None) -> list[Unpacked]:
+    """Unpack every saved email in ``folder`` that has finished copying (unchanged for ``SETTLE_SECONDS``)."""
+    now = time.time() if now is None else now
     out = []
     for path in emails_in(folder):
         try:
+            if now - path.stat().st_mtime < SETTLE_SECONDS:
+                continue  # still being written: the next check picks it up
             out.append(unpack(path, folder))
         except OSError:
-            continue  # being copied or locked: the next check picks it up
+            continue  # locked or removed meanwhile: the next check picks it up
     return out

@@ -61,7 +61,9 @@ def test_vendors_that_make_work(tmp_path):
     changed = {**gt, "invoice_number": "X-2", "line_items": [{**gt["line_items"][0], "predicted_gl_code": "6900"},
                                                               *gt["line_items"][1:]]}  # fmt: skip
     store.approve_invoice(b, changed, "Jane")
+    c = store.add_invoice(tmp_path / "d.pdf", {**gt, "invoice_number": "X-3"}, {"issues": []})
+    store.approve_invoice(c, {**gt, "invoice_number": "X-3", "invoice_date": "2026-09-30"}, "Jane")  # a date only
     store.add_invoice(tmp_path / "c.pdf", {**gt, "vendor_name": "Solo Vendor"}, bad)  # one invoice: too few
     (row,) = vendor_workload(store)
-    assert (row["invoices"], row["with_problems"], row["corrected"], row["approved"]) == (2, 1, 1, 1)
+    assert (row["invoices"], row["with_problems"], row["corrected"], row["approved"]) == (3, 1, 1, 2)
     assert row["top_codes"] == ["GST_HST_NUMBER_MISSING"]  # internal checks never count as the vendor's

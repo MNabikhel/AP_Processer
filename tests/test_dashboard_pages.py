@@ -5,6 +5,7 @@ These catch the mistakes unit tests can't: a wrong asset path, a missing import,
 
 import datetime as dt
 import json
+import os
 import sys
 
 import pytest
@@ -255,10 +256,11 @@ def test_saved_emails_in_the_invoices_folder_are_unpacked(db):
     folder = db.parent / "invoices"
     folder.mkdir(parents=True)
     (folder / "vendor mail.eml").write_bytes(m.as_bytes())
+    os.utime(folder / "vendor mail.eml", (1, 1))  # copied a while ago
     _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages the setup steps link to
     at = _ok(_page("process", "page_process").run())
     assert (folder / "vendor mail - INV-9.pdf").exists() and (folder / "emails" / "vendor mail.eml").exists()
-    assert any("saved email" in c.value for c in at.caption)
+    assert any("attachment(s) taken out" in c.value for c in at.caption)
 
 
 def test_sales_tax_page_self_assessment_card(db):
@@ -286,6 +288,8 @@ def test_coding_rules_tab_suggests_and_adds_a_rule(db):
     (rule,) = store.coding_rules()
     assert (rule.vendor, rule.gl_code) == (gt["vendor_name"], "6010")
     assert not [b for b in at.button if b.key == "rule_add_0"]  # covered now: no longer suggested
+    _ok(at.button(key="rules_save").click().run())  # saving right after keeps the rule just added
+    assert len(store.coding_rules()) == 1
 
 
 def test_review_screen_shows_the_rules_applied(db):

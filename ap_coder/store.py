@@ -1144,8 +1144,12 @@ class Store:
                    for r in conn.execute("SELECT * FROM coding_rules")}  # fmt: skip
             conn.execute("DELETE FROM coding_rules")
             now = _now()
+            seen = set()
             for r in keep:
                 values = (r.vendor.strip(), r.contains.strip(), _clean_code(r.gl_code), _clean_code(r.cost_center))
+                if values in seen:  # the same rule twice: kept once
+                    continue
+                seen.add(values)
                 conn.execute(
                     "INSERT INTO coding_rules (id, vendor, contains, gl_code, cost_center, created_at, created_by) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",

@@ -61,3 +61,31 @@ def test_batch_zip_names_are_unique(tmp_path):
     assert stamp.file_name({"id": 3, "final_output": {"vendor_name": "A/B: C", "invoice_number": "1"}}) == (
         "A_B_ C 1 - approved.pdf"
     )
+
+
+def test_rotated_pages_and_password_protected_files(tmp_path):
+    rotated = tmp_path / "rotated.pdf"
+    with pymupdf.open(SAMPLES / f"{SAMPLE_STEM}.pdf") as doc:
+        doc[0].set_rotation(90)
+        doc.save(rotated)
+    _, inv = _approved(tmp_path, rotated)
+    with pymupdf.open("pdf", stamp.stamped_pdf(inv)) as out:
+        page = out[0]
+        (hit,) = page.search_for("APPROVED")
+        assert page.rect.contains(hit * page.rotation_matrix)  # on the page as it is seen
+    locked = tmp_path / "locked.pdf"
+    with pymupdf.open(SAMPLES / f"{SAMPLE_STEM}.pdf") as doc:
+        doc.save(locked, encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="secret", owner_pw="owner")
+    inv["source_path"] = str(locked)
+    assert len(_text(stamp.stamped_pdf(inv))) == 1  # cannot be opened: the coding page alone
+
+
+def test_long_and_non_latin_text_fits(tmp_path):
+    _, inv = _approved(tmp_path, tmp_path / "gone.pdf")
+    inv["final_output"]["vendor_name"] = "北京公司 Ωmega — Ltd"
+    inv["final_output"]["gl_distribution"] = [{"kind": "expense", "gl_code": "6010", "cost_center": "CC-" + "X" * 30,
+                                               "description": "W" * 80, "amount": 1.0}]  # fmt: skip
+    pdf = stamp.stamped_pdf(inv)
+    (text,) = _text(pdf)
+    assert "北京公司 Ωmega — Ltd" in text and "W" * 80 not in text and "..." in text
+    assert len(pdf) < 200_000  # the fallback font is embedded as a subset only

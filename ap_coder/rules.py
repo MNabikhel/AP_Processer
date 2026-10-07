@@ -9,11 +9,26 @@ then words, then vendor); among equals, the longer words, then the older rule.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
 from .memory import vendor_key
 from .schema import InvoiceCoding
+
+
+def _plain(text: str) -> str:
+    """Lower case, no accents, single spaces: "Café  Livraison" -> "cafe livraison"."""
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    return " ".join("".join(c for c in decomposed if not unicodedata.combining(c)).lower().split())
+
+
+def _has_words(name: str, wanted: str) -> bool:
+    """``wanted``'s words appear together, as whole words, in ``name``: "bell" is in "bell canada", not in
+    "campbell supplies"."""
+    if not name or not wanted:
+        return False
+    return f" {_plain(wanted)} " in f" {_plain(name)} "
 
 
 @dataclass(frozen=True)
@@ -34,11 +49,9 @@ class Rule:
     def matches(self, vendor: str, description: str) -> bool:
         if not (self.vendor.strip() or self.contains.strip()) or not self.gl_code.strip():
             return False
-        if self.vendor.strip():
-            wanted, actual = vendor_key(self.vendor), vendor_key(vendor)
-            if not wanted or not actual or (wanted != actual and wanted not in actual):
-                return False
-        if self.contains.strip() and self.contains.strip().lower() not in " ".join(description.lower().split()):
+        if self.vendor.strip() and not _has_words(vendor_key(vendor), vendor_key(self.vendor)):
+            return False
+        if self.contains.strip() and _plain(self.contains) not in _plain(description):
             return False
         return True
 
@@ -95,7 +108,7 @@ def describe(change: dict[str, Any]) -> str:
 def suggest(feedback: list[dict[str, Any]], existing: list[Rule], min_lines: int = 5) -> list[tuple[Rule, int]]:
     """Vendors whose lines reviewers (or the ERP history) always coded to one GL account: candidate rules,
     with the number of lines behind each. Vendors already covered by a vendor-only rule are left out."""
-    covered = {vendor_key(r.vendor) for r in existing if r.vendor.strip() and not r.contains.strip()}
+    covered = {_plain(vendor_key(r.vendor)) for r in existing if r.vendor.strip() and not r.contains.strip()}
     by_vendor: dict[str, list[dict[str, Any]]] = {}
     for row in feedback:
         if row.get("vendor_key") and row.get("final_gl"):
@@ -103,7 +116,7 @@ def suggest(feedback: list[dict[str, Any]], existing: list[Rule], min_lines: int
     out = []
     for key, rows in by_vendor.items():
         gls = {r["final_gl"] for r in rows}
-        if key in covered or len(rows) < min_lines or len(gls) != 1:
+        if _plain(key) in covered or len(rows) < min_lines or len(gls) != 1:
             continue
         ccs = {r.get("final_cc") or "" for r in rows}
         cc = ccs.pop() if len(ccs) == 1 else ""

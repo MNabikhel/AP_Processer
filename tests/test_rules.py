@@ -105,3 +105,25 @@ def test_upgrade_from_version_10(tmp_path):
         conn.execute("UPDATE settings SET value = '10' WHERE key = 'schema_version'")
     store = Store(path)
     assert store.coding_rules() == [] and store.get_setting("schema_version") == "12"
+
+
+@pytest.mark.parametrize(
+    "rule, vendor, description, matches",
+    [
+        (Rule("Bell", "", "6420"), "Campbell Supplies", "x", False),  # not inside another word
+        (Rule("Bell", "", "6420"), "Bell Canada", "x", True),
+        (Rule("Shell", "", "6420"), "Mitchell Shellfish Ltd", "x", False),
+        (Rule("", "frais  de livraison", "6800"), "Any", "Frais de livraison - Québec", True),  # spacing
+        (Rule("", "cafe", "6800"), "Any", "Café et collations", True),  # accents
+        (Rule("Agence Créative", "", "6300"), "Agence Creative Mont-Royal inc.", "x", True),
+    ],
+)
+def test_whole_words_spacing_and_accents(rule, vendor, description, matches):
+    assert rule.matches(vendor, description) is matches
+
+
+def test_the_same_rule_twice_is_saved_once(tmp_path):
+    store = Store(tmp_path / "r.db")
+    store.save_coding_rules([Rule("Purolator", "", "5200"), Rule("Purolator", "", "5200")])
+    store.save_coding_rules(store.coding_rules() + [Rule("Purolator", "", "5200")])
+    assert len(store.coding_rules()) == 1

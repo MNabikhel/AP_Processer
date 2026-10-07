@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any
 
 import streamlit as st
 
@@ -38,6 +39,14 @@ def safe_file_name(name: str) -> str:
 
 
 # --- Process invoices --------------------------------------------------------------------------------------
+
+
+def _email_note(mail: Any) -> None:
+    """What was taken out of a saved email, and what was left out and why."""
+    took = f"{len(mail.saved)} attachment(s) taken out" if mail.saved else "no invoice attached"
+    st.caption(f":material/mail: **{md(mail.email)}**: {took}; the email is in the `emails` subfolder.")
+    if mail.skipped:
+        st.caption("Left out: " + md("; ".join(mail.skipped)))
 
 
 def run_pipeline(store: Store, paths: list[Path]) -> None:
@@ -146,8 +155,7 @@ def page_process() -> None:
                     if target.suffix.lower() in EMAIL_EXTENSIONS:  # its invoice attachments, not the email
                         mail = unpack(target, INVOICE_DIR)
                         paths.extend(mail.saved)
-                        if not mail.saved:
-                            notify(f"No PDF or image attached to {mail.email}.", ":material/mail:")
+                        st.session_state.setdefault("unpacked_emails", []).append(mail)
                         continue
                     paths.append(target)
                 already, todo, hashes = [], [], set()
@@ -181,10 +189,9 @@ def page_process() -> None:
                     st.info(f"Open this folder yourself: {INVOICE_DIR}")
             unpacked = unpack_folder(INVOICE_DIR)  # saved emails dropped in the folder: their attachments
             if unpacked:
-                st.caption(
-                    f":material/mail: Took {sum(len(m.saved) for m in unpacked)} attachment(s) out of "
-                    f"{len(unpacked)} saved email(s); the emails are in the `emails` subfolder."
-                )
+                st.session_state["unpacked_emails"] = [*st.session_state.get("unpacked_emails", []), *unpacked][-5:]
+            for mail in st.session_state.get("unpacked_emails") or []:  # the last few, for this session
+                _email_note(mail)
             files = invoice_files(INVOICE_DIR) if INVOICE_DIR.exists() else []
             new_files = [p for p in files if store.find_by_hash(p, include_failed=True) is None]
             if not new_files:
