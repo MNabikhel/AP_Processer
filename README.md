@@ -33,8 +33,8 @@ An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
    a business case from the pilot's own numbers.
 
 > **Just want to look around?** Install, start the dashboard and click *Load demo invoices*: ten
-> sample invoices from across Canada, sample purchase orders and a vendor statement, with a few
-> realistic AI mistakes to correct. No Azure needed.
+> sample invoices from across Canada, sample purchase orders and a sample vendor list, with a few
+> realistic AI mistakes to correct (a sample vendor statement to upload is in `data/`). No Azure needed.
 
 ```
 invoice ─► Document Intelligence ─► Markdown + tables + OCR confidence
@@ -89,7 +89,7 @@ In the dashboard:
 |---|---|---|
 | Work | **Review queue** | Invoice image beside the editable header (incl. PO #, payment terms, due date); live **Checks**, each with what to do; the line grid (GL account and cost center dropdowns of your codes); tax lines with a tax-check table; the **PO match**; **GL suggestions** for lines the AI could not code; *Split a line* across GL accounts / cost centers; a GL posting preview. *Approve & teach*, *Reject*, *Delete*. The queue shows due dates and discount deadlines, can be sorted by due date, and clean invoices can be approved in bulk. A **Second approval** tab holds invoices over the approval limit; *Park* sets aside an invoice waiting for information (**Parked** tab); **Notes** keep the team informed. |
 | Work | **Process invoices** | Upload files, or process new files dropped into the data folder's `invoices/` (or run `watch`). |
-| Work | **Exports** | Approved invoices go to the ERP in batches (Excel, CSV, or a **custom CSV layout** matching your ERP's import); each invoice once; any batch can be downloaded again or undone. |
+| Work | **Exports** | Approved invoices go to the ERP in batches (Excel, CSV, or a **custom CSV layout** matching your ERP's import); each invoice once; any batch can be downloaded again or undone. Import the ERP's invoice register to catch bills already entered there. |
 | Work | **Vendor statements** | Upload a vendor's statement of account: matched, amount differs, not received, not on the statement. |
 | Work | **Month-end** | The accruals schedule: received not invoiced (from POs), invoices not in the ERP yet, expected recurring invoices; by GL; CSV. |
 | Insight | **Insights** | Straight-through rate, hours saved, Azure cost per invoice, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
@@ -98,14 +98,15 @@ In the dashboard:
 | Insight | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit. |
 | Setup | **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete. Optional cost centers. Tax treatments and GLs. Coding policy. |
 | Setup | **Purchase orders** | Import open POs (one row per line, received quantities optional); what has been invoiced against each; close, reopen, delete. |
-| Setup | **Settings** | Azure connection (with a connection test), review threshold, approval limit, default payment days, backups and restore. |
+| Setup | **Settings** | Azure connection (with a connection test), your name (per Windows user), review threshold, page images for the AI (vision), only-my-GL-codes, approval limit, default payment days, backups and restore. |
 | Setup | **Help** | Quick start, every check explained, questions, shortcuts. |
 
 ## Canadian sales tax
 
 Rates live in [`data/canada_tax_rates.csv`](data/canada_tax_rates.csv) with effective dates. For
-example, Nova Scotia HST was 15% until 2025-03-31 and 14% from 2025-04-01. Edit that file when a
-rate changes.
+example, Nova Scotia HST was 15% until 2025-03-31 and 14% from 2025-04-01. When a rate changes,
+put a copy of that file in your data folder (`canada_tax_rates.csv`) and edit the copy: it is used
+instead of the shipped one and survives updates.
 
 | Check | Severity |
 |---|---|

@@ -26,7 +26,7 @@ Each sample has three files with the same name:
 | `prairie_SK_GST_PST_PNS-104882` | SK | GST 5% + PST 6% | Hardware below the capitalisation threshold; 12-month licence paid upfront to 1550 Prepaid |
 | `cascade_US_SalesTax_INV-30981` | Outside Canada (WA, USA) | US sales tax 10.35% (`OTHER`) | USD invoice, no GST/HST number; raises the `TAX_NON_CANADIAN` warning and expenses the tax into the lines; prepaid support to 1550 |
 
-With the sample setup (`data/`), every sample passes the controls with no errors. Only the US
+With the sample GL and tax setup only (`data/`, no purchase orders or vendor list), every sample passes the controls with no errors. Only the US
 invoice raises a warning (`TAX_NON_CANADIAN`).
 
 ## Regenerating the files

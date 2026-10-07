@@ -352,8 +352,9 @@ def about_tab() -> None:
         ]
         st.html(ui.table(["", ""], rows, wrap=[1]))
         st.markdown(
-            "**Updating:** close AP Coder and double-click `install.bat` again. It downloads the new version "
-            "and keeps your data, settings and shortcut.\n\n"
+            "**Updating:** close AP Coder and double-click `install.bat` again. With git it downloads the new "
+            "version (without git, extract the new ZIP over the same folder first); your data, settings and "
+            "shortcut are kept.\n\n"
             "**Help:** see `docs/GETTING_STARTED.md` in the code folder."
         )
 

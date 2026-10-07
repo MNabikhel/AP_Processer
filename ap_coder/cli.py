@@ -42,7 +42,7 @@ _REFERENCE_FILES = {
 
 
 def reference_dir() -> tuple[Path, bool]:
-    """Return (directory, is_sample). AP_REFERENCE_DIR > ./private/reference > bundled sample data."""
+    """Return (directory, is_sample). AP_REFERENCE_DIR > <data folder>/reference > bundled sample data."""
     env_dir = os.getenv("AP_REFERENCE_DIR")
     if env_dir:
         return Path(env_dir), False
@@ -106,7 +106,7 @@ def _add_reference_args(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group(
         "reference data",
         "Defaults to the dashboard database (if GL accounts were imported), else AP_REFERENCE_DIR, "
-        "else ./private/reference, else the bundled sample data in ./data",
+        "else <data folder>/reference, else the bundled sample data in ./data",
     )
     g.add_argument("--coa", help="GL accounts (.csv/.json); overrides the dashboard database")
     g.add_argument("--cost-centers", help="Cost center list (.csv/.json); '' to omit")
@@ -118,7 +118,9 @@ def build_parser() -> argparse.ArgumentParser:
     private = private_dir()
     db_path, out_dir, cache_dir = private / "ap_coder.db", private / "output", private / ".cache" / "extraction"
     parser = argparse.ArgumentParser(prog="ap_coder", description="Enterprise AP Invoice Coder Engine (PoC)")
-    parser.add_argument("--env-file", default=None, help="Path to a .env file (default: ./.env if present)")
+    parser.add_argument(
+        "--env-file", default=None, help="Path to a .env file (default: the data folder's, else ./.env)"
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--db", default=str(db_path), help=f"Dashboard database (default: {db_path})")
     sub = parser.add_subparsers(dest="command", required=True)

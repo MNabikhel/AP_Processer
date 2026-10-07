@@ -6,7 +6,7 @@ the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 has a short tour.
 
 Your existing data is safe. On first start the database upgrades itself (schema version 10), and a
-backup of the database is made automatically each day the dashboard is opened.
+backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
 ## Safety
 
@@ -54,7 +54,8 @@ folder.
   second person (another name and another computer login) before it can be exported, or is sent
   back to the queue with the first approver's corrections kept. For two people to approve, they use
   the same AP Coder, e.g. on a shared AP PC, each signed in to Windows as themselves (the database
-  must stay on a local disk, not a network share; a shared server version is a Phase 2 item).
+  must stay on a local disk, not a network share; a shared server version is a Phase 2 item). See
+  [Two people approving](GETTING_STARTED.md#two-people-approving-second-approval) to set it up.
 
 ## The rest of the AP cycle
 
@@ -86,9 +87,11 @@ folder.
 ## Setup and safety
 
 - **Settings page:** Azure connection with a live test, review behaviour, approval limit, default
-  payment days, backups (make, download, restore).
-- **Demo mode** with sample invoices, purchase orders and a vendor statement; removing it leaves
-  your own data untouched.
+  payment days, backups (make, download, restore). Your name is kept per Windows user.
+- **Your own tax-rate table:** a `canada_tax_rates.csv` in the data folder overrides the shipped
+  rates and survives updates.
+- **Demo mode** with sample invoices, purchase orders and a vendor list (plus a sample vendor
+  statement in `data/` to upload); removing it leaves your own data untouched.
 - **Ten sample invoices** with their correct answers: every Canadian tax regime (HST, GST+PST,
   TPS/TVQ, GST only), a two-page French invoice, a US invoice and a credit note.
 - **CI:** every change is tested on Windows and Linux, including the real installer on Windows.

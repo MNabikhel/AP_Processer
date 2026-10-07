@@ -67,7 +67,9 @@ def page_review() -> None:
     reference = reference_or_none(store)
     invoices = store.list_invoices()
     if reference is None or not invoices:
-        st.html(ui.page_header("Welcome", f"{ui.greeting()}, {first_name()}", "Four quick steps and you're reviewing."))
+        st.html(
+            ui.page_header("Welcome", f"{ui.greeting()}, {first_name()}", "A few quick steps and you're reviewing.")
+        )
         _getting_started(store)
         return
 
@@ -275,7 +277,7 @@ def page_review() -> None:
                 b1, b2 = right.columns(2)
                 if b1.button(
                     "Retry", key=f"retry_{inv['id']}", icon=":material/refresh:", disabled=not azure_ready,
-                    help=None if azure_ready else "Set up Azure in .env first (see Process invoices)",
+                    help=None if azure_ready else "Set up Azure first: Settings → Azure",
                 ):  # fmt: skip
                     full = store.get_invoice(inv["id"])
                     path = Path(full["source_path"])
@@ -494,9 +496,7 @@ def _getting_started(store: Store) -> None:
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
         links = st.container(horizontal=True)
         if steps[0][0] != "ok" or steps[1][0] != "ok":
-            links.caption(
-                ":material/info: Azure settings live in the `.env` file next to the app (see GETTING_STARTED.md)."
-            )
+            links.caption(":material/info: Connect Azure in Settings → Azure (it has a connection test).")
         links.page_link(PAGES["accounts"], label="GL accounts & tax", icon=":material/account_tree:")
         links.page_link(PAGES["process"], label="Process invoices", icon=":material/upload_file:")
     demo_card(store, "welcome")

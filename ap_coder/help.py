@@ -51,7 +51,8 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "VENDOR_ON_HOLD": CheckHelp(
         FRAUD, "Vendor on hold",
-        "AP put this vendor on hold on the Vendors page (the note there says why).",
+        "AP put this vendor on hold on the Vendors page (the note there says why), or the ERP's vendor master "
+        "marks it as blocked or inactive.",
         "Do not approve until the hold is lifted on the Vendors page, or reject the invoice.",
     ),
     "VENDOR_TAX_NUMBER_CHANGED": CheckHelp(
@@ -366,8 +367,9 @@ FAQ: list[tuple[str, str]] = [
     ),
     (
         "What is the difference between errors, warnings and 'good to know'?",
-        "Errors must be fixed (or explicitly overridden) before approving. Warnings deserve a look and send the "
-        "invoice to the top of the queue. 'Good to know' notes are information only and never block anything.",
+        "Errors must be fixed (or explicitly overridden) before approving. Warnings deserve a look: they lower "
+        "the confidence score (which can send the invoice to 'Needs attention') and keep it out of bulk approval. "
+        "'Good to know' notes are information only and never block anything.",
     ),
     (
         "Which invoices can be approved in bulk?",
@@ -411,7 +413,8 @@ FAQ: list[tuple[str, str]] = [
         "I made a mistake. Can I undo it?",
         "Approvals record what was learned; you can forget lessons on the Learning page. Export batches can be "
         "undone on the Exports page. For anything else, Settings → Data & backups restores the database to a "
-        "backup (one is made automatically each day the dashboard is opened, and before any restore).",
+        "backup (one is made automatically once a day when AP Coder starts, the newest 14 are kept, and one before "
+        "any restore).",
     ),
     (
         "Who did what?",

@@ -75,12 +75,12 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         (
             "ok" if settings.document_intelligence.endpoint else "bad",
             "Azure Document Intelligence",
-            "connected" if settings.document_intelligence.endpoint else "set the endpoint in .env",
+            "connected" if settings.document_intelligence.endpoint else "set it up in Settings → Azure",
         ),
         (
             "ok" if settings.openai.endpoint else "bad",
             "Azure OpenAI",
-            f"{settings.openai.deployment}" if settings.openai.endpoint else "set the endpoint in .env",
+            f"{settings.openai.deployment}" if settings.openai.endpoint else "set it up in Settings → Azure",
         ),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),

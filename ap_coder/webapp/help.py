@@ -104,7 +104,7 @@ def page_help() -> None:
                     [
                         ["Database", f"<code>{esc(short_path(DB_PATH))}</code>"],
                         ["Backups", f"<code>{esc(short_path(DB_PATH.parent / 'backups'))}</code>"],
-                        ["Azure keys", "<code>.env</code> in the AP Coder folder"],
+                        ["Azure keys", "Settings → Azure (kept in <code>.env</code> in the data folder)"],
                     ],
                     wrap=[1],
                 )

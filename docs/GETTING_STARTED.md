@@ -58,8 +58,9 @@ When installing Python from python.org, tick **"Add python.exe to PATH"** on the
   ```
 
 - **Without git.** On GitHub, open the `claude/epic-feynman-r6ns86` branch, *Code → Download ZIP*,
-  and extract it to `Downloads\AP_Processer`. For a later version, extract the new ZIP **over the
-  same folder** (replace files) so nothing is duplicated.
+  and extract it in `Downloads`. The ZIP holds one folder (named after the branch): rename it to
+  `AP_Processer`. For a later version, extract the new ZIP and copy its contents **over the same
+  folder** (replace files) so nothing is duplicated.
 
 **Install:** open `Downloads\AP_Processer` and **double-click `install.bat`** (macOS/Linux:
 `./install.sh`). It:
@@ -76,7 +77,8 @@ When installing Python from python.org, tick **"Add python.exe to PATH"** on the
 
 **Running it again is always safe.** It updates the code in place (with git), reinstalls
 packages only when they changed, and keeps your data folder, Azure settings and shortcut. Nothing
-is duplicated. Useful options (e.g. `install.bat --fresh-start`):
+is duplicated. Options are typed after the name in **`terminal.bat`** (double-click it, then type
+e.g. `install.bat --fresh-start`):
 
 | Option | What it does |
 |---|---|
@@ -84,13 +86,16 @@ is duplicated. Useful options (e.g. `install.bat --fresh-start`):
 | `--yes` | no questions; keeps current answers |
 | `--no-update` | don't check GitHub for a newer version |
 | `--data-dir <folder>` | use a different data folder |
+| `--no-shortcut` / `--no-start` | no desktop shortcut / don't offer to start the dashboard at the end |
+| `--skip-tests` / `--reinstall` | skip the self-test / reinstall the packages even if unchanged |
 
 To run AP Coder commands yourself (`doctor`, `share-report`, …), double-click **`terminal.bat`**:
 it opens a command prompt with everything ready, e.g. `python -m ap_coder doctor`.
 
 ## Step 3: Check the setup → paste the doctor report
 
-At the end of the install, answer **y** to *Test the connection to Azure now?*. Or, in
+At the end of the install, answer **y** to *Test the connection to Azure now?*. In the dashboard,
+**Settings → Azure** shows and edits the same settings and has a **Run the test** button. Or, in
 `terminal.bat`:
 
 ```bat
@@ -114,14 +119,18 @@ few realistic mistakes to correct, plus sample purchase orders. Things to try:
 - **Review queue** → open *Red River*: the **PO match** shows chairs billed but not yet received,
   and *Use the PO's coding* fixes the desk's GL account in one click.
 - Open *Harbourview*: line 4 has no GL account; **Suggested GL accounts** offers one.
-- Open *Pacific* and type `2/10 Net 30` in *Payment terms*: the early-payment discount appears.
+- Type `2/10 Net 30` in an invoice's *Payment terms*: the due date and the early-payment discount
+  deadline update (a discount shows while its deadline is still ahead).
 - *Split a line…* under the line grid divides a shared cost across cost centers.
 - Approve a few, then look at **Exports**, **Learning & accuracy**, **Insights** and **Activity**.
 - **Vendor statements** → pick Northwind and upload `data\sample_statement_northwind.csv`.
 - **Month-end** shows what to accrue; **Help** explains every check.
-- *Remove demo invoices* on the **Process invoices** page takes it all out again.
+- *Remove demo invoices* on the **Process invoices** page removes the demo invoices, sample POs and
+  sample vendor list again. The sample GL accounts and tax setup stay (replace them when you import
+  yours: tick *Replace my current list*).
 
-**With Azure:**
+**With Azure:** first click *Remove demo invoices* if you loaded the demo (the same sample files
+would otherwise be recognised as already processed).
 
 1. **GL accounts & tax** → *Load sample setup*.
 2. Copy the sample PDFs from `samples\` into your invoices folder (**Process invoices** →
@@ -133,8 +142,8 @@ few realistic mistakes to correct, plus sample purchase orders. Things to try:
 
 These invoices are synthetic, so screenshots of this step are fine to share.
 
-When you're done, close the AP Coder window and run **`install.bat --fresh-start`** so your real
-setup starts clean: the sample database, memory and invoices move to a backup folder, and your
+When you're done, close the AP Coder window, double-click **`terminal.bat`** and type
+**`install.bat --fresh-start`** so your real setup starts clean: the sample database, memory and invoices move to a backup folder, and your
 Azure settings stay.
 
 ## Step 5: Your setup, in the dashboard
@@ -192,12 +201,12 @@ For each invoice:
 1. Compare the image with the extracted header, lines and tax lines.
 2. Read **Checks**. Red items are errors, for example:
    - tax math wrong
-   - wrong rate for the province
    - QST charged on a GST-inclusive amount
    - totals don't add up
    - possible duplicate invoice
 
-   Yellow items are warnings, for example a missing GST/HST number or PST not charged.
+   Yellow items are warnings, for example a missing GST/HST number, PST not charged or a rate that
+   differs from the official one for the province.
    Each check says what to do; **Help** lists them all.
 3. Fix anything wrong in the grids. GL and cost-center cells are dropdowns of your own codes. Lines
    without a GL account get **suggestions**; an invoice quoting a PO shows the **PO match**.
@@ -250,7 +259,15 @@ Run these in `terminal.bat` as `python -m ap_coder <command>`.
 | `doctor [--online]` | setup check; safe to paste |
 | `share-report [--include-codes]` | redacted summary; safe to paste |
 | `demo [--remove]` | load or remove the demo invoices (no Azure) |
-| `watch [--every 60]` | keep processing new files dropped in the invoices folder; `--once` for Task Scheduler |
+| `watch [--every 60]` | keep processing new files dropped in the invoices folder; with `--once` it checks once (for Windows Task Scheduler: program `<AP Coder folder>\.venv\Scripts\python.exe`, arguments `-m ap_coder watch --once`, start in the AP Coder folder) |
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
 | `schema` | the exact JSON Schema sent to Azure OpenAI |
+
+### Two people approving (second approval)
+
+The second approval needs both people to use the same AP Coder database. The simplest set-up is one
+AP PC that both sign in to with their own Windows accounts: put the code in a folder both can open
+(e.g. `C:\APCoder\app`) and have each person run `install.bat --data-dir C:\APCoder\data` once (in
+`terminal.bat`). Each person sets *Your name* in Settings → Review; it is kept per Windows account.
+Keep the data folder on a local disk: the database must not live on a network share.
