@@ -108,9 +108,10 @@ keep the black window open while you use it and close it to stop. If another pro
 port 8501, AP Coder picks the next free one.
 
 1. **GL accounts & tax** → *Load sample setup*.
-2. Copy the three sample PDFs from `samples\` into your invoices folder (**Process invoices** →
-   *Open folder* shows it): Ontario HST, Quebec TPS/TVQ, BC GST+PST.
-3. **Process invoices** → *Process 3 file(s)*.
+2. Copy the sample PDFs from `samples\` into your invoices folder (**Process invoices** →
+   *Open folder* shows it). `samples\README.md` lists what each one shows: HST, GST+PST,
+   TPS/TVQ, GST only, a US invoice and a credit note.
+3. **Process invoices** → *Process 10 file(s)* (or copy only a few to start).
 4. **Review queue** → open each invoice. Change a GL code in the grid and watch the checks and
    the GL distribution update. Approve, and look at **Learning & accuracy**.
 

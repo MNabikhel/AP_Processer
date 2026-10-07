@@ -224,7 +224,7 @@ ap_coder/
   dashboard.py       Streamlit review app;  review.py: grid edits → InvoiceCoding
   doctor.py · share_report.py · labels.py · evaluation.py · reference_data.py · cli.py
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy
-samples/             synthetic ON (HST), QC (TPS/TVQ) and BC (GST+PST) invoices + ground truth
+samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
 scripts/             sample invoice generator
 docs/                GETTING_STARTED.md: step-by-step guide for running on enterprise data
 private/             git-ignored: default data folder when the installer is not used

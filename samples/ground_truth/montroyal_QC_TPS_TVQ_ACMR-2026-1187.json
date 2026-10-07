@@ -1,0 +1,144 @@
+{
+  "vendor_name": "Agence Créative Mont-Royal inc.",
+  "invoice_number": "ACMR-2026-1187",
+  "invoice_date": "2026-09-22",
+  "currency": "CAD",
+  "supplier_province": "QC",
+  "ship_to_province": "QC",
+  "gst_hst_registration_number": "812345678 RT0001",
+  "qst_registration_number": "1218765432 TQ0001",
+  "subtotal": 18768.0,
+  "tax_lines": [
+    {
+      "tax_type": "GST",
+      "province": "",
+      "rate": 0.05,
+      "taxable_amount": 18768.0,
+      "tax_amount": 938.4
+    },
+    {
+      "tax_type": "QST",
+      "province": "QC",
+      "rate": 0.09975,
+      "taxable_amount": 18768.0,
+      "tax_amount": 1872.11
+    }
+  ],
+  "tax_total": 2810.51,
+  "grand_total": 21578.51,
+  "confidence_score": 1.0,
+  "line_items": [
+    {
+      "line_number": 1,
+      "description": "Conception graphique - brochure produits automne (heures)",
+      "quantity": 24,
+      "unit_price": 95.0,
+      "amount": 2280.0,
+      "predicted_gl_code": "6400",
+      "predicted_cost_center": "CC510",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Brochure design for a marketing campaign."
+    },
+    {
+      "line_number": 2,
+      "description": "Impression de brochures, 2 500 exemplaires",
+      "quantity": 2500,
+      "unit_price": 0.84,
+      "amount": 2100.0,
+      "predicted_gl_code": "6400",
+      "predicted_cost_center": "CC510",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Printing of brochures is marketing."
+    },
+    {
+      "line_number": 3,
+      "description": "Gestion de campagne publicitaire numérique - octobre 2026",
+      "quantity": 1,
+      "unit_price": 3500.0,
+      "amount": 3500.0,
+      "predicted_gl_code": "6400",
+      "predicted_cost_center": "CC510",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Digital advertising campaign."
+    },
+    {
+      "line_number": 4,
+      "description": "Traduction et révision FR/EN - site Web (mots)",
+      "quantity": 6000,
+      "unit_price": 0.22,
+      "amount": 1320.0,
+      "predicted_gl_code": "6400",
+      "predicted_cost_center": "CC510",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Website translation for marketing."
+    },
+    {
+      "line_number": 5,
+      "description": "Kiosque - Salon industriel de Montréal, location et montage",
+      "quantity": 1,
+      "unit_price": 4750.0,
+      "amount": 4750.0,
+      "predicted_gl_code": "6400",
+      "predicted_cost_center": "CC510",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Trade-show booth is an event cost for Marketing."
+    },
+    {
+      "line_number": 6,
+      "description": "Traiteur - cocktail clients au salon (60 personnes)",
+      "quantity": 60,
+      "unit_price": 42.5,
+      "amount": 2550.0,
+      "predicted_gl_code": "6320",
+      "predicted_cost_center": "CC500",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Client entertainment is coded to Sales."
+    },
+    {
+      "line_number": 7,
+      "description": "Atelier de formation - image de marque, équipe des ventes (8 participants)",
+      "quantity": 8,
+      "unit_price": 275.0,
+      "amount": 2200.0,
+      "predicted_gl_code": "6500",
+      "predicted_cost_center": "CC500",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Training is coded to the attendees' department (Sales)."
+    },
+    {
+      "line_number": 8,
+      "description": "Messagerie - livraison du matériel promotionnel",
+      "quantity": 1,
+      "unit_price": 68.0,
+      "amount": 68.0,
+      "predicted_gl_code": "6800",
+      "predicted_cost_center": "CC510",
+      "taxes_applied": [
+        "GST",
+        "QST"
+      ],
+      "reasoning_justification": "Courier for promotional material."
+    }
+  ]
+}
