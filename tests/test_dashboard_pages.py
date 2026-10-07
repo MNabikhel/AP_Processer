@@ -446,3 +446,15 @@ def test_find_brings_back_a_parked_invoice(busy_db):
     _ok(at.run())
     at.button(key=f"search_unpark_{invoice_id}").click().run()
     assert store.get_invoice(invoice_id)["status"] == "review"
+
+
+def test_find_offers_the_approved_pdf(busy_db):
+    store, invoice_id = busy_db
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Jane")
+    at = _page("search", "page_search")
+    _ok(at.run())
+    at.text_input(key="search_query").input("northwind")
+    _ok(at.run())
+    _ok(at.button(key=f"search_pdf_make_{invoice_id}").click().run())
+    name, data = at.session_state[f"search_pdf_{invoice_id}"]
+    assert name.endswith("approved.pdf") and data[:4] == b"%PDF"

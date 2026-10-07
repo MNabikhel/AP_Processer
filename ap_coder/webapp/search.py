@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from ap_coder import search, ui
+from ap_coder import search, stamp, ui
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
 from ap_coder.webapp.common import PAGES, card, esc, get_store, money, reviewer, show_toast
 
@@ -75,6 +75,20 @@ def page_search() -> None:
                 if right.button("Open", icon=":material/open_in_new:", key=f"search_open_{r['id']}", width="stretch"):
                     st.session_state["open_invoice"] = r["id"]
                     st.switch_page(PAGES["review"])
+            elif hit.source == "AP Coder" and r["status"] in (APPROVED, PENDING):
+                ready = st.session_state.get(f"search_pdf_{r['id']}")
+                if ready:
+                    right.download_button(
+                        "Download PDF", ready[1], file_name=ready[0], mime="application/pdf",
+                        icon=":material/download:", key=f"search_pdf_dl_{r['id']}", width="stretch",
+                    )  # fmt: skip
+                elif right.button(
+                    "Approved PDF", icon=":material/approval:", key=f"search_pdf_make_{r['id']}", width="stretch",
+                    help="The invoice with its APPROVED stamp and coding page",
+                ):  # fmt: skip
+                    inv = store.get_invoice(r["id"])
+                    st.session_state[f"search_pdf_{r['id']}"] = (stamp.file_name(inv), stamp.stamped_pdf(inv))
+                    st.rerun()
             elif hit.source == "AP Coder" and r["status"] == PARKED and "review" in PAGES:
                 if right.button("Bring back", icon=":material/play_circle:", key=f"search_unpark_{r['id']}",
                                 width="stretch", help="Back to the review queue, and open it"):  # fmt: skip
