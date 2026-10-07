@@ -30,6 +30,7 @@ from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
 from .paths import default_db_path, private_dir  # noqa: F401  (re-exported)
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
+from .vendors import norm_invoice_number
 
 SCHEMA_VERSION = 2
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
@@ -66,6 +67,10 @@ CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_id INTEGER, action TEXT NOT NULL, actor TEXT, detail TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_invoice ON events (invoice_id);
+CREATE TABLE IF NOT EXISTS vendors (
+    vendor_key TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+    expected_gst TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS invoices_vendor ON invoices (vendor_key);
 """
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
@@ -92,7 +97,7 @@ def _clean_code(value: Any) -> str:
 
 
 def _norm_number(value: str) -> str:
-    return re.sub(r"[^0-9a-z]", "", (value or "").lower())
+    return norm_invoice_number(value)
 
 
 class Store:
@@ -547,6 +552,104 @@ class Store:
                 feedback_rows,
             )
         return counts
+
+    # --- Vendors ----------------------------------------------------------------------------------------
+
+    def get_vendor(self, key: str) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
+        return dict(row) if row else None
+
+    def save_vendor(
+        self, key: str, display_name: str, status: str = "active", expected_gst: str = "", notes: str = "",
+        actor: str | None = None,
+    ) -> None:  # fmt: skip
+        if status not in ("active", "on_hold"):
+            raise ValueError(f"unknown vendor status {status!r}")
+        before = self.get_vendor(key) or {}
+        values = {"status": status, "expected_gst": expected_gst.strip(), "notes": notes.strip()}
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key) DO UPDATE SET display_name = excluded.display_name,
+                   status = excluded.status, expected_gst = excluded.expected_gst, notes = excluded.notes,
+                   updated_at = excluded.updated_at""",
+                (key, display_name, status, values["expected_gst"], values["notes"], _now()),
+            )
+            changed = {k: v for k, v in values.items() if before.get(k, "active" if k == "status" else "") != v}
+            if changed:
+                self._log(conn, "vendor_updated", actor=actor, detail={"vendor": display_name, **changed})
+
+    def vendor_invoices(self, key: str) -> list[dict[str, Any]]:
+        """This vendor's invoices (newest first) with the GST/HST number each one carried."""
+        with self._conn() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT id, status, vendor_name, invoice_number, invoice_date, currency, grand_total,
+                              adjusted_confidence, requires_review, created_at, reviewed_at, ai_output, final_output
+                       FROM invoices WHERE vendor_key = ? ORDER BY id DESC""",
+                    (key,),
+                )
+            ]
+        for r in rows:
+            doc = json.loads(r.pop("final_output") or "null") or json.loads(r.pop("ai_output", None) or "null") or {}
+            r.pop("ai_output", None)
+            r["gst_hst_number"] = doc.get("gst_hst_registration_number") or ""
+        return rows
+
+    def has_other_vendors(self, key: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM invoices WHERE vendor_key != ? AND vendor_key != '' AND status != ? LIMIT 1",
+                (key, FAILED),
+            ).fetchone()
+        return row is not None
+
+    def vendor_summaries(self) -> list[dict[str, Any]]:
+        """One row per vendor seen on an invoice: counts, spend, dates, AI accuracy and AP's settings."""
+        with self._conn() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT vendor_key, MAX(vendor_name) vendor_name, COUNT(*) invoices,
+                              SUM(status = 'approved') approved, SUM(status = 'review') to_review,
+                              SUM(CASE WHEN status = 'approved' AND currency = 'CAD'
+                                       THEN grand_total ELSE 0 END) spend_cad,
+                              MIN(invoice_date) first_invoice, MAX(invoice_date) last_invoice,
+                              MIN(created_at) first_seen
+                       FROM invoices WHERE vendor_key != '' AND status != 'failed' GROUP BY vendor_key"""
+                )
+            ]
+            lessons = {
+                r["vendor_key"]: dict(r)
+                for r in conn.execute(
+                    """SELECT vendor_key, COUNT(*) lines, SUM(outcome = 'accepted') accepted FROM feedback
+                       GROUP BY vendor_key"""
+                )
+            }
+            masters = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors")}
+        for r in rows:
+            fb = lessons.get(r["vendor_key"]) or {}
+            r["lessons"] = fb.get("lines", 0)
+            r["accuracy"] = (fb["accepted"] / fb["lines"]) if fb.get("lines") else None
+            master = masters.get(r["vendor_key"]) or {}
+            r["status"] = master.get("status", "active")
+            r["expected_gst"] = master.get("expected_gst", "")
+            r["notes"] = master.get("notes", "")
+        return sorted(rows, key=lambda r: -(r["spend_cad"] or 0))
+
+    def vendor_gl_usage(self, key: str) -> list[dict[str, Any]]:
+        """GL accounts reviewers used for this vendor's lines, most used first."""
+        with self._conn() as conn:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT final_gl gl_code, COUNT(*) lines, SUM(outcome = 'corrected') corrected FROM feedback
+                       WHERE vendor_key = ? GROUP BY final_gl ORDER BY lines DESC""",
+                    (key,),
+                )
+            ]
 
     # --- Backups -----------------------------------------------------------------------------------------
 

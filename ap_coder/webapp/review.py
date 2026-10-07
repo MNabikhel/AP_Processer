@@ -365,6 +365,8 @@ def _checks_html(report: Any) -> str:
         where = f"Line {issue.line_number}: " if issue.line_number else ""
         if issue.severity == "error":
             items.append(ui.check("error", "Must fix", where + issue.message, issue.code))
+        elif issue.severity == "info":
+            items.append(ui.check("info", "Good to know", where + issue.message, issue.code))
         else:
             items.append(ui.check("warning", "Worth a look", where + issue.message, issue.code))
     errors = [i for i in report.issues if i.severity == "error"]
@@ -382,7 +384,7 @@ def _checks_html(report: Any) -> str:
     if matches:
         lines = ", ".join(str(h["line_number"]) for h in matches)
         items.append(ui.check("info", "Learned", f"Line {lines} matches how reviewers coded this vendor before."))
-    if not report.issues:
+    if not [i for i in report.issues if i.severity != "info"]:
         title = "Numbers check out" if report.requires_review else "All clear"
         items.append(ui.check("ok", title, "Totals reconcile, taxes verified, all codes valid."))
     return "".join(items)
@@ -624,8 +626,12 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             "<div style='text-align:right'>"
             + (ui.pill(f"{len(errors)} to fix", "err") + " " if errors else "")
             + (ui.pill(f"{len(warnings)} to look at", "warn") if warnings else "")
-            + (ui.pill("All clear", "ok", "check") if not report.issues and not report.requires_review else "")
-            + (ui.pill("Needs a look", "warn", "visibility") if not report.issues and report.requires_review else "")
+            + (ui.pill("All clear", "ok", "check") if not (errors or warnings) and not report.requires_review else "")
+            + (
+                ui.pill("Needs a look", "warn", "visibility")
+                if not (errors or warnings) and report.requires_review
+                else ""
+            )
             + "</div>"
         )
         st.html(_checks_html(report))
@@ -757,7 +763,7 @@ def _invoice_summary(
         pills.append(ui.pill(f"{len(errors)} error{'s' if len(errors) > 1 else ''}", "err", "error"))
     if warnings:
         pills.append(ui.pill(f"{len(warnings)} to check", "warn", "warning"))
-    if not report.issues and not report.requires_review:
+    if not (errors or warnings) and not report.requires_review:
         pills.append(ui.pill("All checks passed", "ok", "check_circle"))
     if report.requires_review and not errors:
         pills.append(ui.pill("Needs a look", "warn", "visibility"))

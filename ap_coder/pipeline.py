@@ -20,6 +20,7 @@ from .reference_data import ReferenceData
 from .schema import InvoiceCoding
 from .tax import build_gl_distribution
 from .validation import ValidationReport, validate_coding
+from .vendors import vendor_findings
 
 if TYPE_CHECKING:
     from .store import Store
@@ -123,6 +124,7 @@ def finalise_coding(
         review_threshold=settings.engine.review_threshold,
         history=history,
         duplicate_of=duplicates,
+        vendor_findings=vendor_findings(coding, store, exclude_invoice_id) if store is not None else None,
     )
     output = coding.to_output()
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)

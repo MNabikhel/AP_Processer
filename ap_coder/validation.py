@@ -19,7 +19,7 @@ from .reference_data import UNASSIGNED, ReferenceData
 from .schema import InvoiceCoding
 from .tax import check_taxes
 
-ERROR, WARNING = "error", "warning"
+ERROR, WARNING, INFO = "error", "warning", "info"  # info: worth knowing, no penalty
 _ERROR_PENALTY = 0.6
 _WARNING_PENALTY = 0.9
 _LOW_OCR_CONFIDENCE = 0.90
@@ -78,6 +78,7 @@ def validate_coding(
     review_threshold: float = 0.85,
     history: list[dict[str, Any]] | None = None,
     duplicate_of: list[int] | None = None,
+    vendor_findings: list[tuple[str, str, str]] | None = None,
 ) -> ValidationReport:
     """``history`` is ``memory.compare_with_history`` output; ``duplicate_of`` lists stored invoice ids
     with the same vendor and invoice number."""
@@ -89,6 +90,8 @@ def validate_coding(
     if duplicate_of:
         ids = ", ".join(f"#{i}" for i in duplicate_of)
         add(ERROR, "DUPLICATE_INVOICE", f"same vendor and invoice number as invoice {ids}: possible duplicate payment")
+    for severity, code, message in vendor_findings or []:  # vendor master / fraud signals (vendors.py)
+        add(severity, code, message)
 
     # --- Header -----------------------------------------------------------
     if not coding.vendor_name.strip():
@@ -193,7 +196,8 @@ def validate_coding(
     model_conf = coding.confidence_score
     adjusted = model_conf
     for issue in issues:
-        adjusted *= _ERROR_PENALTY if issue.severity == ERROR else _WARNING_PENALTY
+        if issue.severity != INFO:
+            adjusted *= _ERROR_PENALTY if issue.severity == ERROR else _WARNING_PENALTY
     adjusted = round(adjusted, 4)
     requires_review = adjusted < review_threshold or any(i.severity == ERROR for i in issues)
 

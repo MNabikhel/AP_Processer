@@ -39,6 +39,7 @@ ACTIONS = {
     "settings_changed": ("settings", "info", "Settings changed"),
     "backup_made": ("backup", "info", "Backup made"),
     "backup_restored": ("settings_backup_restore", "warn", "Backup restored"),
+    "vendor_updated": ("storefront", "info", "Vendor updated"),
 }
 
 
@@ -142,6 +143,15 @@ def describe(event: dict[str, Any]) -> str:
         return f"{d.get('count', 0)} lesson(s)"
     if action == "settings_changed":
         return ", ".join(d.get("keys") or [])
+    if action == "vendor_updated":
+        parts = []
+        if "status" in d:
+            parts.append("put on hold" if d["status"] == "on_hold" else "made active")
+        if "expected_gst" in d:
+            parts.append(f"expected GST/HST # {d['expected_gst'] or '(cleared)'}")
+        if "notes" in d:
+            parts.append("notes changed")
+        return f"{d.get('vendor', '')}: {', '.join(parts)}"
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", ""))
     return ""

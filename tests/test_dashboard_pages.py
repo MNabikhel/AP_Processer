@@ -22,6 +22,7 @@ PAGES = [
     ("learning", "page_learning"),
     ("settings", "page_settings"),
     ("activity", "page_activity"),
+    ("vendors", "page_vendors"),
 ]
 TIMEOUT = 90
 
@@ -133,3 +134,14 @@ def test_settings_page_saves_to_the_env_file(db, monkeypatch):
     _ok(review_form_submit.click().run())
     assert read_env(env)["AP_REVIEWER"] == "Jane Doe"
     assert os.environ["AP_REVIEWER"] == "Jane Doe"
+
+
+def test_vendor_detail_and_hold(busy_db):
+    store, invoice_id = busy_db
+    at = _page("vendors", "page_vendors")
+    _ok(at.run())
+    at.selectbox(key="vendor_open").select("northwind it solutions")
+    _ok(at.run())
+    at.radio[0].set_value("on_hold")
+    _ok(next(b for b in at.button if b.label == "Save vendor").click().run())
+    assert store.get_vendor("northwind it solutions")["status"] == "on_hold"

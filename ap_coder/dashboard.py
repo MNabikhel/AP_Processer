@@ -29,6 +29,7 @@ from ap_coder.webapp.learning import page_learning
 from ap_coder.webapp.process import page_process
 from ap_coder.webapp.review import page_review
 from ap_coder.webapp.settings import page_settings
+from ap_coder.webapp.vendors import page_vendors
 
 st.set_page_config(page_title="AP Coder", page_icon=str(ASSETS / "icon.svg"), layout="wide")
 st.html(f"<style>{(ASSETS / 'style.css').read_text(encoding='utf-8')}</style>")
@@ -39,6 +40,7 @@ PAGES.update(
         "process": st.Page(page_process, title="Process invoices", icon=":material/upload_file:"),
         "accounts": st.Page(page_accounts, title="GL accounts & tax", icon=":material/account_tree:"),
         "learning": st.Page(page_learning, title="Learning & accuracy", icon=":material/insights:"),
+        "vendors": st.Page(page_vendors, title="Vendors", icon=":material/storefront:"),
         "activity": st.Page(page_activity, title="Activity", icon=":material/history:"),
         "settings": st.Page(page_settings, title="Settings", icon=":material/settings:"),
     }
@@ -54,7 +56,7 @@ with st.sidebar:
 
 NAV_SECTIONS = {
     "Work": ["review", "process"],
-    "Insight": ["learning", "activity"],
+    "Insight": ["learning", "vendors", "activity"],
     "Setup": ["accounts", "settings"],
 }
 st.navigation({section: [PAGES[k] for k in keys] for section, keys in NAV_SECTIONS.items()}).run()
