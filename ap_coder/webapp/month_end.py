@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import streamlit as st
 
 from ap_coder import accruals, ui
@@ -31,14 +33,19 @@ def page_month_end() -> None:
         )
     items = accruals.build(store, end)
     totals = accruals.summary(items)
-    st.html(
-        ui.tiles(
-            [
-                ui.tile(source, money(total), ICONS[source], TONES[source], f"{n} line(s)")
-                for source, (n, total) in totals.items()
-            ]
+
+    def tile(source: str, n: int, by_currency: dict[str, float]) -> str:
+        main = "CAD" if "CAD" in by_currency or not by_currency else sorted(by_currency)[0]
+        others = " · ".join(f"{money(t)} {c}" for c, t in sorted(by_currency.items()) if c != main)
+        hint = f"{n} line(s)" + (f" · plus {others}" if others else "")
+        return ui.tile(source, f"{money(by_currency.get(main, 0))} {main}", ICONS[source], TONES[source], hint)
+
+    st.html(ui.tiles([tile(source, n, by_currency) for source, (n, by_currency) in totals.items()]))
+    if end < dt.date.today() - dt.timedelta(days=31):
+        st.caption(
+            ":material/info: Received quantities come from the latest purchase-order import (they have no receipt "
+            "date), so *Received, not invoiced* reflects what has been received by today, not by the period end."
         )
-    )
     if not items:
         with card("me_empty"):
             st.html(ui.empty_state("Nothing to accrue", f"Everything incurred by {end} is already in the ERP."))

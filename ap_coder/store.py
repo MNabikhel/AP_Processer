@@ -522,7 +522,8 @@ class Store:
     def list_invoices(self, status: str | None = None) -> list[dict[str, Any]]:
         sql = (
             "SELECT id, file_name, status, vendor_name, invoice_number, invoice_date, due_date, currency, grand_total, "
-            "model_confidence, adjusted_confidence, requires_review, error, created_at, reviewed_at, reviewer "
+            "model_confidence, adjusted_confidence, requires_review, error, created_at, reviewed_at, reviewer, "
+            "second_reviewer "
             "FROM invoices"
         )
         args: tuple[Any, ...] = ()
@@ -659,6 +660,7 @@ class Store:
         reviewer: str,
         bulk: bool = False,
         open_issues: list[dict[str, Any]] | None = None,
+        login: str = "",
     ) -> dict[str, int]:
         """Store the reviewer's final version and record one feedback row per line. ``open_issues``: the
         errors and warnings still showing when the reviewer approved (kept in the audit trail)."""
@@ -739,7 +741,7 @@ class Store:
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
                 **({"bulk": True} if bulk else {}), **({"needs_second": True} if needs_second else {}),
-                **({"open_issues": open_issues} if open_issues else {}),
+                **({"open_issues": open_issues} if open_issues else {}), **({"login": login} if login else {}),
             })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
@@ -758,13 +760,18 @@ class Store:
         except ValueError:
             return 0.0
 
-    def final_approve(self, invoice_id: int, approver: str) -> None:
-        """The second approval: by someone other than the first approver. The invoice can then be exported."""
+    def final_approve(self, invoice_id: int, approver: str, login: str = "") -> None:
+        """The second approval: by someone other than the first approver (another name and, when the
+        dashboard records it, another computer login). The invoice can then be exported."""
         inv = self.get_invoice(invoice_id)
         if inv is None or inv["status"] != PENDING:
             raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
         if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
             raise PermissionError("the second approval must come from someone other than the first approver")
+        first = next((e for e in self.events(invoice_id) if e["action"] == "approved"), None)
+        first_login = ((first or {}).get("detail") or {}).get("login") or ""
+        if login and first_login and login.casefold() == first_login.casefold():
+            raise PermissionError("the second approval must come from another computer login than the first")
         with self._conn() as conn:
             cur = conn.execute(
                 # Same first approval as checked above: it may have been sent back and re-approved meanwhile.
@@ -776,6 +783,7 @@ class Store:
                 raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
             self._log(conn, "final_approved", invoice_id, approver, {
                 "first_approver": inv["reviewer"], "total": (inv["final_output"] or {}).get("grand_total"),
+                **({"login": login} if login else {}),
             })  # fmt: skip
 
     def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:

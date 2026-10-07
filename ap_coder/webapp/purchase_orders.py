@@ -190,6 +190,7 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
     if c1.button("Reopen PO" if closed else "Close PO", icon=":material/lock_open:" if closed else ":material/lock:",
                  key=f"po_toggle_{po['po_key']}", width="stretch"):  # fmt: skip
         store.set_po_status(po["po_key"], po_mod.OPEN if closed else po_mod.CLOSED, actor=reviewer())
+        st.session_state["po_status_filter"] = "All"  # keep this PO in view (not jump to another one)
         notify(
             f"{md(po_mod.po_label(po['po_number']))} {'reopened' if closed else 'closed'}.", ":material/shopping_cart:"
         )

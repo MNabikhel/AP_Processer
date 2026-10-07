@@ -19,8 +19,8 @@ TONES = {
     stm.NOT_ON_STATEMENT: ("info", "help"),
     stm.PAYMENT: ("gray", "payments"),
 }
-FIELD_LABELS = {"number": "Invoice number *", "date": "Date", "amount": "Amount", "balance": "Open balance",
-                "type": "Type (invoice / payment)"}  # fmt: skip
+FIELD_LABELS = {"number": "Invoice number *", "date": "Date", "amount": "Amount (or Debit)",
+                "credit": "Credit (if separate)", "balance": "Open balance per document", "type": "Type"}  # fmt: skip
 
 
 def _ap_status(line: stm.Line, invoices: dict[int, dict[str, Any]]) -> str:
@@ -72,7 +72,7 @@ def page_statements() -> None:
                                  key=f"stm_col_{field}")  # fmt: skip
             if pick != "(none)":
                 chosen[field] = pick
-        if "number" not in chosen or not ({"amount", "balance"} & set(chosen)):
+        if "number" not in chosen or not ({"amount", "credit", "balance"} & set(chosen)):
             st.warning("Pick the invoice number column and an amount or balance column.")
             return
 

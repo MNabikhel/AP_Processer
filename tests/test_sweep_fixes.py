@@ -199,3 +199,56 @@ def test_controls_list_big_invoices_approved_by_one_person(tmp_path):
     r = controls.build(store, today, today)
     assert [i["id"] for i in r["one_person"]] == [invoice_id]
     assert "approved by one person (1)" in controls.report_html(r)
+
+
+# --- From the browser review ------------------------------------------------------------------------------
+
+
+def test_second_approval_needs_another_computer_login(tmp_path):
+    store = Store(tmp_path / "a.db")
+    store.set_setting("approval_limit", "1000")
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
+    store.approve_invoice(invoice_id, _gt(), "Alex", login="amartin")
+    with pytest.raises(PermissionError):
+        store.final_approve(invoice_id, "Jordan Lee", login="AMartin")  # renamed, same Windows account
+    store.final_approve(invoice_id, "Jordan Lee", login="jlee")
+    assert store.get_invoice(invoice_id)["status"] == "approved"
+
+
+def test_statement_with_debit_and_credit_columns():
+    invoices = [{"id": 1, "invoice_number": "CN-1", "grand_total": -2316.5, "invoice_date": "2026-09-28",
+                 "status": "review"},
+                {"id": 2, "invoice_number": "NW-1", "grand_total": 18017.85, "invoice_date": "2026-09-14",
+                 "status": "approved"}]  # fmt: skip
+    rows = [
+        {"Document": "NW-1", "Debit": "18,017.85", "Credit": "", "Balance": "18,017.85"},
+        {"Document": "CN-1", "Debit": "", "Credit": "2,316.50", "Balance": "15,701.35"},
+    ]
+    cols = stm.map_columns(list(rows[0]))
+    assert cols["amount"] == "Debit" and cols["credit"] == "Credit"
+    assert [li.status for li in stm.reconcile(rows, cols, invoices).lines] == [stm.MATCHED, stm.MATCHED]
+
+
+def test_month_end_totals_keep_currencies_apart(tmp_path):
+    store = Store(tmp_path / "a.db")
+    from ap_coder.demo import load_demo
+
+    load_demo(store)
+    by_currency = accruals.summary(accruals.build(store, dt.date(2026, 10, 31)))[accruals.NOT_IN_ERP][1]
+    assert set(by_currency) == {"CAD", "USD"} and by_currency["USD"] == 7570.01
+
+
+def test_export_due_date_is_worked_out_when_not_printed(tmp_path):
+    from ap_coder import exports
+
+    store = Store(tmp_path / "a.db")
+    doc = _gt(payment_terms="Net 30", due_date="")
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    store.approve_invoice(invoice_id, doc, "Jane")
+    rows = exports.invoice_rows([store.get_invoice(invoice_id)])
+    assert rows[0]["due_date"] == "2026-10-14"
+
+
+def test_due_date_message_names_the_due_date():
+    with pytest.raises(ValueError, match="due_date must be YYYY-MM-DD"):
+        InvoiceCoding.model_validate(_gt(due_date="31/12/2026"))

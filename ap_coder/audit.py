@@ -156,7 +156,9 @@ def describe(event: dict[str, Any]) -> str:
     if action == "lessons_forgotten":
         return f"{d.get('count', 0)} lesson(s)"
     if action == "settings_changed":
-        return ", ".join(d.get("keys") or [])
+        rename = d.get("reviewer") or {}
+        renamed = f" (reviewer name {rename.get('from')} → {rename.get('to')})" if rename else ""
+        return ", ".join(d.get("keys") or []) + renamed
     if action == "vendor_updated":
         parts = []
         if "status" in d:

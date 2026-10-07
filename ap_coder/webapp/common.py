@@ -48,6 +48,14 @@ def get_settings() -> Settings:
     return Settings.from_env(os.environ.get("AP_ENV_FILE"))
 
 
+def login() -> str:
+    """The Windows / computer account running the dashboard (recorded with approvals)."""
+    try:
+        return getpass.getuser()
+    except Exception:  # no login name available (unusual service accounts)
+        return ""
+
+
 def reviewer() -> str:
     """The person approving: the name saved in Settings, else the computer login name."""
     for name in (os.environ.get("AP_REVIEWER"), getpass.getuser()):

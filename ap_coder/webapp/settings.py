@@ -45,9 +45,12 @@ def save_settings(updates: dict[str, str]) -> list[str]:
     current = read_env(env_path())
     changed = {k: v for k, v in updates.items() if v != current.get(k, "")}
     if changed:
+        detail: dict[str, object] = {"keys": sorted(changed)}
+        if "AP_REVIEWER" in changed:  # a name change is recorded under the old name, with both names
+            detail["reviewer"] = {"from": reviewer(), "to": changed["AP_REVIEWER"]}
+        get_store().log_event("settings_changed", actor=reviewer(), detail=detail)
         write_env(env_path(), changed)
         os.environ.update(changed)  # the dashboard reads settings from the environment
-        get_store().log_event("settings_changed", actor=reviewer(), detail={"keys": sorted(changed)})
     return sorted(changed)
 
 
@@ -170,7 +173,9 @@ def review_tab() -> None:
     with card("review_settings"), st.form("review_form", border=False):
         st.markdown("#### :material/tune: Review and AI behaviour")
         reviewer_name = st.text_input(
-            "Your name", env.get("AP_REVIEWER", ""), placeholder="shown on the invoices you approve"
+            "Your name",
+            env.get("AP_REVIEWER") or os.environ.get("AP_REVIEWER", ""),
+            placeholder="shown on the invoices you approve",
         )
         threshold = st.slider(
             "Send to *Needs attention* when the AI's confidence is below",

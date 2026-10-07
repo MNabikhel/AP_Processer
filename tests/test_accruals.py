@@ -32,7 +32,7 @@ def test_demo_accruals(tmp_path):
     assert "Invoice NW-2026-0912" in not_in_erp and "Invoice ACMR-2026-1187" in not_in_erp
     assert "Invoice INV-30981" not in not_in_erp  # Cascade is dated October 1, after the period end
     totals = accruals.summary(items)
-    assert totals[accruals.RECEIVED] == (1, 210.0)
+    assert totals[accruals.RECEIVED] == (1, {"CAD": 210.0})
     assert sum(t for _, _, t in accruals.by_gl(items)) == round(sum(a.amount for a in items), 2)
     assert "PO-89904 line 5" in accruals.to_csv(items, END).decode("utf-8-sig")
 

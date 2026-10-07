@@ -291,7 +291,12 @@ class InvoiceCoding(BaseModel):
     def _due_date(cls, value: str) -> str:
         value = (value or "").strip()
         if value:
-            cls._iso_date(value)
+            try:
+                dt.date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(f"due_date must be YYYY-MM-DD (or empty), got {value!r}") from exc
+            if len(value) != 10:
+                raise ValueError(f"due_date must be YYYY-MM-DD (or empty), got {value!r}")
         return value
 
     @field_validator("currency")

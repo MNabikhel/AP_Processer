@@ -41,6 +41,7 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
                "reference", "ref", "facture", "numero"),
     "date": ("date", "invoicedate", "documentdate", "docdate", "datefacture"),
     "amount": ("amount", "total", "invoiceamount", "originalamount", "debit", "montant", "invoicetotal"),
+    "credit": ("credit", "credits", "creditamount", "credit_amount", "crédit", "credit$"),
     "balance": ("balance", "openbalance", "balancedue", "openamount", "amountdue", "outstanding", "due", "solde"),
     "type": ("type", "doctype", "documenttype", "transactiontype", "description"),
 }  # fmt: skip
@@ -126,7 +127,10 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         if raw_number.lower() in ("nan", "none"):
             raw_number = ""
         amount = _number(get(rec, "amount"))
-        if amount is None:
+        if "credit" in columns:  # separate Debit / Credit columns: the amount is debit minus credit
+            debit, credit = amount, _number(get(rec, "credit"))
+            amount = None if debit is None and credit is None else (debit or 0.0) - abs(credit or 0.0)
+        elif amount is None:  # only when there is no amount: an open-balance column, per document
             amount = _number(get(rec, "balance"))
         kind_text = str(get(rec, "type") or "").strip()
         kind = kind_text.lower()

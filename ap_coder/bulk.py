@@ -30,7 +30,7 @@ def clean_candidates(store: Store) -> list[dict[str, Any]]:
 
 
 def bulk_approve(
-    store: Store, reference: ReferenceData, settings: Settings, invoice_ids: list[int], reviewer: str
+    store: Store, reference: ReferenceData, settings: Settings, invoice_ids: list[int], reviewer: str, login: str = ""
 ) -> dict[str, Any]:
     """Approve each invoice exactly as the AI coded it, if it is still clean. Returns approved / skipped."""
     approved: list[int] = []
@@ -54,6 +54,6 @@ def bulk_approve(
         if report.requires_review:
             skipped.append((invoice_id, f"confidence {report.adjusted_confidence:.0%} is below the threshold"))
             continue
-        store.approve_invoice(invoice_id, output, reviewer, bulk=True)
+        store.approve_invoice(invoice_id, output, reviewer, bulk=True, login=login)
         approved.append(invoice_id)
     return {"approved": approved, "skipped": skipped}

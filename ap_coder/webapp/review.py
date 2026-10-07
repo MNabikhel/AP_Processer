@@ -41,6 +41,7 @@ from ap_coder.webapp.common import (
     gl_label_map,
     gl_name,
     history_html,
+    login,
     money,
     notify,
     persistent_editor,
@@ -236,7 +237,7 @@ def page_review() -> None:
                     esc(i["invoice_number"]),
                     esc(i["invoice_date"]),
                     f"{money(i['grand_total'])} <span class='apc-muted'>{esc(i['currency'])}</span>",
-                    esc(i["reviewer"]),
+                    esc(i["reviewer"]) + (f" → {esc(i['second_reviewer'])}" if i.get("second_reviewer") else ""),
                     esc(ui.time_ago(i["reviewed_at"])),
                 ]
                 for i in recent
@@ -337,7 +338,7 @@ def _second_approval_tab(store: Store, reference: ReferenceData, awaiting: list[
         with card("second_empty"):
             st.html(ui.empty_state("Nothing waiting", "Invoices over the approval limit appear here once approved."))
         return
-    me = reviewer()
+    me, my_login = reviewer(), login()
     for inv in awaiting:
         full = store.get_invoice(inv["id"]) or {}
         final = full.get("final_output") or {}
@@ -349,13 +350,20 @@ def _second_approval_tab(store: Store, reference: ReferenceData, awaiting: list[
                 f"{money(inv['grand_total'])} {esc(inv['currency'])} · approved by {esc(inv['reviewer'])} "
                 f"{esc(ui.time_ago(inv['reviewed_at']))}</div></div></div>"
             )
-            same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold()
+            first = next((e for e in store.events(inv["id"]) if e["action"] == "approved"), None)
+            first_login = ((first or {}).get("detail") or {}).get("login") or ""
+            same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold() or (
+                bool(my_login) and my_login.casefold() == first_login.casefold()
+            )
             buttons = right.container(horizontal=True, horizontal_alignment="right")
             if buttons.button(
                 "Final approval", type="primary", icon=":material/how_to_reg:", key=f"second_ok_{inv['id']}",
-                disabled=same, help="You approved it first: someone else gives the second approval" if same else None,
+                disabled=same,
+                help="You approved it first (same name or computer login): someone else gives the second approval"
+                if same
+                else None,
             ):  # fmt: skip
-                store.final_approve(inv["id"], me)
+                store.final_approve(inv["id"], me, login=my_login)
                 notify(f"{md(inv['vendor_name'])} approved. It is ready to export.", ":material/how_to_reg:")
                 st.rerun()
             with buttons.popover("Send back", icon=":material/undo:"):
@@ -399,11 +407,18 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
                 )
             )
             if st.button("Approve them", type="primary", icon=":material/done_all:", key="bulk_approve"):
-                result = bulk_approve(store, reference, get_settings(), [i["id"] for i in candidates], reviewer())
+                result = bulk_approve(
+                    store, reference, get_settings(), [i["id"] for i in candidates], reviewer(), login=login()
+                )
                 st.session_state["bulk_result"] = result
                 if not store.list_invoices(REVIEW):
                     st.session_state["celebrate"] = True
-                notify(f"Approved {len(result['approved'])} invoice(s).", ":material/done_all:")
+                waiting = sum(1 for i in result["approved"] if (store.get_invoice(i) or {}).get("status") == PENDING)
+                notify(
+                    f"Approved {len(result['approved'])} invoice(s)"
+                    + (f"; {waiting} wait for a second approval." if waiting else "."),
+                    ":material/done_all:",
+                )
                 st.rerun()
 
 
@@ -587,6 +602,9 @@ def _ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
 def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pending: list[dict[str, Any]]) -> None:
     inv = store.get_invoice(invoice_id)
     ai = inv["ai_output"] or {}
+    # A sent-back invoice reopens with the version its first approver approved (corrections kept); the
+    # AI's own output stays the reference for what was changed and what is learned.
+    start = inv.get("final_output") or ai
     settings = get_settings()
     key = f"inv{invoice_id}"
     meta = inv.get("meta") or {}
@@ -620,6 +638,13 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         st.rerun()
     st.html(ui.progress(position + 1, len(ids)))
 
+    sent_back = next((e for e in store.events(invoice_id) if e["action"] in ("sent_back", "approved")), None)
+    if sent_back and sent_back["action"] == "sent_back":
+        reason = (sent_back["detail"] or {}).get("reason") or "no reason given"
+        st.html(
+            ui.check("warning", f"Sent back by {sent_back['actor'] or '?'}", f"{reason}. The first approver's "
+                     "corrections are kept below; fix what is needed and approve again.")
+        )  # fmt: skip
     summary = st.container()  # the summary card is drawn here once the edits are valid
 
     left, right = st.columns([5, 7], gap="medium")
@@ -635,14 +660,14 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             keep = {"persist_state": "session"}  # edits survive moving to another invoice and back
 
             def text(col: Any, label: str, field: str, default: str = "", **kw: Any) -> str:
-                return col.text_input(label, ai.get(field, default), key=f"{key}_{field}", **keep, **kw)
+                return col.text_input(label, start.get(field, default), key=f"{key}_{field}", **keep, **kw)
 
             def amount(col: Any, label: str, field: str) -> float:
-                value = float(ai.get(field) or 0)
+                value = float(start.get(field) or 0)
                 return col.number_input(label, value=value, format="%.2f", key=f"{key}_{field}", **keep)
 
             def province(col: Any, label: str, field: str, **kw: Any) -> str:
-                current = ai.get(field) or ""
+                current = start.get(field) or ""
                 return col.selectbox(
                     label, PROVINCE_VALUES, index=PROVINCE_VALUES.index(current if current in PROVINCE_VALUES else ""),
                     format_func=prov_label.get, key=f"{key}_{field}", **keep, **kw,
@@ -687,7 +712,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         gl_labels = gl_label_map(reference)
         tax_gls = reference.tax.tax_gl_codes()
         gl_options = [UNASSIGNED] + [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
-        lines_df = pd.DataFrame(ai.get("line_items", []))
+        lines_df = pd.DataFrame(start.get("line_items", []))
         if lines_df.empty:
             lines_df = pd.DataFrame(columns=["line_number", "description", "quantity", "unit_price", "amount",
                                              "predicted_gl_code", "predicted_cost_center", "taxes_applied",
@@ -736,7 +761,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     with tax_col, card("tax"):
         st.markdown("#### :material/percent: Sales tax")
         tax_df = pd.DataFrame(
-            ai.get("tax_lines", []), columns=["tax_type", "province", "rate", "taxable_amount", "tax_amount"]
+            start.get("tax_lines", []), columns=["tax_type", "province", "rate", "taxable_amount", "tax_amount"]
         )
         tax_df["province"] = tax_df["province"].fillna("").replace("", NO_PROVINCE)
         tax_df.insert(2, "rate_pct", (pd.to_numeric(tax_df.pop("rate"), errors="coerce") * 100).round(4))
@@ -862,7 +887,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 open_issues = [
                     {"code": i.code, "severity": i.severity, "line": i.line_number} for i in errors + warnings
                 ]
-                counts = store.approve_invoice(invoice_id, output, reviewer(), open_issues=open_issues)
+                counts = store.approve_invoice(invoice_id, output, reviewer(), open_issues=open_issues, login=login())
                 if (store.get_invoice(invoice_id) or {}).get("status") == PENDING:
                     notify("Over the approval limit: it now waits for a second approver.", ":material/how_to_reg:")
                 total = sum(counts.values())
@@ -1167,8 +1192,13 @@ def _invoice_summary(
     # Where the money goes: expense GLs (incl. non-recoverable tax) and recoverable tax accounts.
     by_gl: dict[str, float] = {}
     for e in output["gl_distribution"]:
-        name = gl_name(reference, e["gl_code"]) or e["gl_code"] or "Unmapped"
-        label = f"{e['gl_code']} {name}" if e["kind"] == "expense" else f"{name} (tax)"
+        name = gl_name(reference, e["gl_code"])
+        if e["kind"] != "expense":
+            label = f"{name or e['gl_code'] or 'Unmapped'} (tax)"
+        elif e["gl_code"] == UNASSIGNED or not e["gl_code"]:
+            label = "No GL account yet"
+        else:
+            label = f"{e['gl_code']} {name}".strip()
         by_gl[label] = by_gl.get(label, 0.0) + e["amount"]
     st.html(ui.split_bar(sorted(by_gl.items(), key=lambda kv: -kv[1])))
 

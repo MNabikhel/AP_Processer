@@ -65,6 +65,8 @@ def invoice_rows(
                 "batch": batch,
                 "invoice_id": inv["id"],
                 "vendor_id": vendor_ids.get(vendor_key(final.get("vendor_name") or ""), ""),
+                # printed, else worked out from the terms / vendor master / default when it was approved
+                "due_date": final.get("due_date") or inv.get("due_date") or "",
                 "reviewer": inv.get("reviewer"),
                 "reviewed_at": (inv.get("reviewed_at") or "").replace("T", " "),
                 "second_reviewer": inv.get("second_reviewer") or "",

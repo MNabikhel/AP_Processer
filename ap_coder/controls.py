@@ -125,7 +125,7 @@ def report_html(r: dict[str, Any]) -> str:
         _section("Approved despite an error", r["overrides"], "None: no error was overridden."),
         _section("Approved while a fraud or duplicate signal was showing", r["signals"], "None."),
         _section("Second approvals", r["finals"], "None in the period."),
-        _section("Sent back by the second approver", r["sent_back"], "None."),
+        _section("Sent back to the review queue", r["sent_back"], "None."),
     ]
     if r["one_person"]:
         rows = "".join(

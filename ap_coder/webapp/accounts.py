@@ -59,7 +59,12 @@ def _read_upload(upload: Any, table: str) -> pd.DataFrame | None:
                 st.error("Could not read this file. In Excel, use *Save As → CSV UTF-8* and upload it again.")
                 return None
     except Exception as exc:  # empty file, not really a spreadsheet, damaged workbook, ...
-        st.error(f"Could not read this file: {exc}")
+        st.error(
+            "This file could not be read as a spreadsheet: it may be empty, damaged or another format. In Excel, "
+            "save it as *CSV UTF-8* or *Excel Workbook (.xlsx)* and upload it again."
+        )
+        with st.expander("Technical details"):
+            st.code(str(exc), language=None, wrap_lines=True)
         return None
     df.columns = [str(c) for c in df.columns]  # a header like 2024 arrives as a number
     return df.fillna("")

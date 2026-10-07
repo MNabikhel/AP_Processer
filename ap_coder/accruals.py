@@ -17,7 +17,6 @@ import datetime as dt
 import io
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any
 
 from . import recurring
 from .po import CLOSED, billed_by_line, po_label
@@ -174,6 +173,13 @@ def default_period_end(today: dt.date | None = None) -> dt.date:
     return nxt - dt.timedelta(days=1)
 
 
-def summary(accruals: list[Accrual]) -> dict[str, Any]:
-    return {s: (sum(1 for a in accruals if a.source == s), round(sum(a.amount for a in accruals if a.source == s), 2))
-            for s in SOURCES}  # fmt: skip
+def summary(accruals: list[Accrual]) -> dict[str, tuple[int, dict[str, float]]]:
+    """{source: (lines, {currency: total})}: currencies are never added together."""
+    out: dict[str, tuple[int, dict[str, float]]] = {}
+    for s in SOURCES:
+        totals: dict[str, float] = defaultdict(float)
+        for a in accruals:
+            if a.source == s:
+                totals[a.currency or "CAD"] += a.amount
+        out[s] = (sum(1 for a in accruals if a.source == s), {c: round(t, 2) for c, t in totals.items()})
+    return out
