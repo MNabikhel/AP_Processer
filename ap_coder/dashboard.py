@@ -23,6 +23,7 @@ from ap_coder import ui
 from ap_coder.demo import is_demo
 from ap_coder.store import REVIEW
 from ap_coder.webapp.accounts import page_accounts
+from ap_coder.webapp.activity import page_activity
 from ap_coder.webapp.common import ASSETS, DB_PATH, PAGES, approved_today, get_store, reviewer, short_path
 from ap_coder.webapp.learning import page_learning
 from ap_coder.webapp.process import page_process
@@ -38,6 +39,7 @@ PAGES.update(
         "process": st.Page(page_process, title="Process invoices", icon=":material/upload_file:"),
         "accounts": st.Page(page_accounts, title="GL accounts & tax", icon=":material/account_tree:"),
         "learning": st.Page(page_learning, title="Learning & accuracy", icon=":material/insights:"),
+        "activity": st.Page(page_activity, title="Activity", icon=":material/history:"),
         "settings": st.Page(page_settings, title="Settings", icon=":material/settings:"),
     }
 )
@@ -50,4 +52,9 @@ with st.sidebar:
         st.html(ui.pill("Demo invoices loaded", "violet", "science"))
     st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
 
-st.navigation(list(PAGES.values())).run()
+NAV_SECTIONS = {
+    "Work": ["review", "process"],
+    "Insight": ["learning", "activity"],
+    "Setup": ["accounts", "settings"],
+}
+st.navigation({section: [PAGES[k] for k in keys] for section, keys in NAV_SECTIONS.items()}).run()

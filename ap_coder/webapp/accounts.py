@@ -16,6 +16,7 @@ from ap_coder.webapp.common import (
     esc,
     get_store,
     notify,
+    reviewer,
     show_toast,
 )
 from ap_coder.webapp.process import tax_types_mapped
@@ -92,6 +93,7 @@ def account_manager(store: Store, table: str, noun: str) -> None:
                     None if desc_col == "(none)" else desc_col,
                     None if cat_col == "(none)" else cat_col,
                     replace_all=replace,
+                    actor=reviewer(),
                 )
                 notify(
                     f"Imported: {result['added']} added, {result['updated']} updated, "
@@ -133,7 +135,7 @@ def account_manager(store: Store, table: str, noun: str) -> None:
             st.error(f"These codes appear more than once: {', '.join(dupes)}")
         else:
             removed = len(edited) - len(keep)
-            store.save_accounts(table, keep.fillna("").to_dict("records"))
+            store.save_accounts(table, keep.fillna("").to_dict("records"), actor=reviewer())
             notify(f"Saved {len(keep)} {noun}s" + (f", removed {removed}." if removed else "."))
             st.rerun()
     actions.download_button(
@@ -217,7 +219,7 @@ def page_accounts() -> None:
         )
         notes = st.text_area("Coding policy", store.get_setting("policy_notes"), height=260)
         if st.button("Save policy", type="primary", icon=":material/save:"):
-            store.set_setting("policy_notes", notes)
+            store.set_setting("policy_notes", notes, actor=reviewer())
             notify("Coding policy saved.")
             st.rerun()
 
@@ -262,7 +264,7 @@ def tax_setup(store: Store) -> None:
             chosen[tax_type] = (treatment, gl)
         if st.button("Save tax setup", type="primary", icon=":material/save:"):
             for tax_type, (treatment, gl) in chosen.items():
-                store.set_tax_treatment(tax_type, treatment, gl)
+                store.set_tax_treatment(tax_type, treatment, gl, actor=reviewer())
             notify("Tax setup saved.")
             st.rerun()
 

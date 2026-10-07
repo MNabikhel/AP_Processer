@@ -17,6 +17,7 @@ from ap_coder.webapp.common import (
     gl_name,
     notify,
     reference_or_none,
+    reviewer,
     show_toast,
 )
 
@@ -210,6 +211,6 @@ def page_learning() -> None:
         )
         selected = edited.loc[edited["forget"], "id"].tolist()
         if selected and st.button(f"Forget {len(selected)} lesson(s)", icon=":material/delete_sweep:"):
-            store.delete_feedback([int(i) for i in selected])
+            store.delete_feedback([int(i) for i in selected], actor=reviewer())
             notify(f"Forgot {len(selected)} lesson(s).", ":material/delete_sweep:")
             st.rerun()

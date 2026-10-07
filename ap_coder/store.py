@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .audit import diff_coding
 from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
 from .paths import default_db_path, private_dir  # noqa: F401  (re-exported)
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
@@ -61,6 +62,10 @@ CREATE TABLE IF NOT EXISTS feedback (
     outcome TEXT NOT NULL, reviewer TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS feedback_vendor ON feedback (vendor_key);
 CREATE INDEX IF NOT EXISTS invoices_status ON invoices (status);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER, action TEXT NOT NULL, actor TEXT, detail TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS events_invoice ON events (invoice_id);
 """
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
@@ -130,6 +135,42 @@ class Store:
 
     # --- GL accounts / cost centers ----------------------------------------------------------
 
+    # --- Audit trail ---------------------------------------------------------------------------------
+
+    @staticmethod
+    def _log(
+        conn: sqlite3.Connection, action: str, invoice_id: int | None = None, actor: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:  # fmt: skip
+        conn.execute(
+            "INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+            (invoice_id, action, actor, json.dumps(detail or {}, default=str), _now()),
+        )
+
+    def log_event(
+        self, action: str, invoice_id: int | None = None, actor: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:  # fmt: skip
+        with self._conn() as conn:
+            self._log(conn, action, invoice_id, actor, detail)
+
+    def events(
+        self, invoice_id: int | None = None, actions: list[str] | None = None, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """Audit events, newest first (optionally for one invoice or some actions)."""
+        sql, args = "SELECT * FROM events WHERE 1 = 1", []
+        if invoice_id is not None:
+            sql += " AND invoice_id = ?"
+            args.append(invoice_id)
+        if actions:
+            sql += f" AND action IN ({', '.join('?' for _ in actions)})"
+            args += actions
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit))]
+        for r in rows:
+            r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
+        return rows
+
     def import_accounts(
         self,
         table: str,
@@ -138,6 +179,8 @@ class Store:
         description_column: str | None,
         category_column: str | None = None,
         replace_all: bool = False,
+        actor: str | None = None,
+        log: bool = True,
     ) -> dict[str, int]:
         """Import rows using the columns the user picked.
 
@@ -174,6 +217,11 @@ class Store:
                         (code, description, category, _now()),
                     )
                     added += 1
+            if log:
+                self._log(conn, "accounts_imported", actor=actor, detail={
+                    "table": table, "added": added, "updated": updated, "skipped": skipped,
+                    "replace_all": replace_all,
+                })  # fmt: skip
         return {"added": added, "updated": updated, "skipped": skipped}
 
     def list_accounts(self, table: str) -> list[dict[str, str]]:
@@ -182,15 +230,22 @@ class Store:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute(f"SELECT code, description, category FROM {table} ORDER BY code")]
 
-    def save_accounts(self, table: str, rows: list[dict[str, Any]]) -> None:
+    def save_accounts(self, table: str, rows: list[dict[str, Any]], actor: str | None = None) -> None:
         """Replace the table with ``rows`` (used by the dashboard's editable grid)."""
-        self.import_accounts(table, rows, "code", "description", "category", replace_all=True)
+        before = {r["code"]: r for r in self.list_accounts(table)}
+        self.import_accounts(table, rows, "code", "description", "category", replace_all=True, log=False)
+        after = {r["code"]: r for r in self.list_accounts(table)}
+        changed = sorted(c for c in before.keys() | after.keys() if before.get(c) != after.get(c))
+        if changed:
+            self.log_event("accounts_edited", actor=actor, detail={"table": table, "codes": changed})
 
-    def delete_accounts(self, table: str, codes: list[str]) -> int:
+    def delete_accounts(self, table: str, codes: list[str], actor: str | None = None) -> int:
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
         with self._conn() as conn:
             cur = conn.executemany(f"DELETE FROM {table} WHERE code = ?", [(c,) for c in codes])
+            if codes:
+                self._log(conn, "accounts_deleted", actor=actor, detail={"table": table, "codes": list(codes)})
             return cur.rowcount
 
     # --- Tax setup and policy ---------------------------------------------------------------------
@@ -208,10 +263,15 @@ class Store:
             )
         return result
 
-    def set_tax_treatment(self, tax_type: str, treatment: str, gl_code: str = "") -> None:
+    def set_tax_treatment(self, tax_type: str, treatment: str, gl_code: str = "", actor: str | None = None) -> None:
         if tax_type not in TAX_TYPES or treatment not in TREATMENTS:
             raise ValueError("invalid tax type or treatment")
+        current = self.tax_treatments()[tax_type]
         with self._conn() as conn:
+            if (current.treatment, current.gl_code) != (treatment, gl_code.strip()):
+                self._log(conn, "tax_setup_changed", actor=actor, detail={
+                    "tax_type": tax_type, "treatment": treatment, "gl_code": gl_code.strip(),
+                })  # fmt: skip
             conn.execute(
                 "INSERT INTO tax_treatments (tax_type, treatment, gl_code) VALUES (?, ?, ?) "
                 "ON CONFLICT(tax_type) DO UPDATE SET treatment = excluded.treatment, gl_code = excluded.gl_code",
@@ -223,8 +283,10 @@ class Store:
             row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else default
 
-    def set_setting(self, key: str, value: str) -> None:
+    def set_setting(self, key: str, value: str, actor: str | None = None) -> None:
         with self._conn() as conn:
+            if key == "policy_notes" and self.get_setting(key) != value:
+                self._log(conn, "policy_changed", actor=actor, detail={"rules": len(parse_policy_notes(value))})
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
@@ -297,7 +359,18 @@ class Store:
                     _now(),
                 ),
             )
-            return int(cur.lastrowid)
+            invoice_id = int(cur.lastrowid)
+            if error:
+                self._log(conn, "failed", invoice_id, detail={"file": source_path.name, "error": error})
+            else:
+                self._log(conn, "processed", invoice_id, detail={
+                    "file": source_path.name, "vendor": out.get("vendor_name"),
+                    "invoice_number": out.get("invoice_number"),
+                    "total": out.get("grand_total"), "confidence": val.get("adjusted_confidence"),
+                    "requires_review": bool(val.get("requires_review", True)),
+                    "issues": len(val.get("issues") or []), "demo": bool((meta or {}).get("demo")),
+                })  # fmt: skip
+            return invoice_id
 
     def find_by_hash(self, path: str | Path, include_failed: bool = False) -> dict[str, Any] | None:
         """The latest invoice made from this exact file (failed attempts only if ``include_failed``)."""
@@ -369,11 +442,20 @@ class Store:
                 "UPDATE invoices SET status = ?, reviewer = ?, reviewed_at = ?, error = ? WHERE id = ?",
                 (REJECTED, reviewer, _now(), reason or None, invoice_id),
             )
+            self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason})
 
-    def delete_invoice(self, invoice_id: int, forget_lessons: bool = False) -> None:
+    def delete_invoice(self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None) -> None:
         """Delete an invoice; with ``forget_lessons`` also what was learned when it was approved."""
         with self._conn() as conn:
+            row = conn.execute(
+                "SELECT file_name, vendor_name, invoice_number, status FROM invoices WHERE id = ?", (invoice_id,)
+            ).fetchone()
             conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
+            if row is not None:
+                self._log(conn, "deleted", invoice_id, actor, {
+                    "file": row["file_name"], "vendor": row["vendor_name"], "invoice_number": row["invoice_number"],
+                    "status": row["status"], "lessons_forgotten": forget_lessons,
+                })  # fmt: skip
             if forget_lessons:
                 conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
 
@@ -454,6 +536,10 @@ class Store:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is already approved")
+            self._log(conn, "approved", invoice_id, reviewer, {
+                "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
+                "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
+            })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
                    suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at)
@@ -484,7 +570,7 @@ class Store:
         folder = self.backup_dir()
         return sorted(folder.glob("ap_coder-*.db"), reverse=True) if folder.exists() else []
 
-    def backup_now(self, label: str = "") -> Path:
+    def backup_now(self, label: str = "", actor: str | None = None) -> Path:
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         suffix = f"-{label}" if label else ""
         dest = self.backup_dir() / f"ap_coder-{stamp}{suffix}.db"
@@ -492,7 +578,10 @@ class Store:
         while dest.exists():  # never overwrite a backup made in the same second
             dest = self.backup_dir() / f"ap_coder-{stamp}{suffix or '-'}{n}.db"
             n += 1
-        return self.backup_to(dest)
+        made = self.backup_to(dest)
+        if label == "manual":
+            self.log_event("backup_made", actor=actor, detail={"file": made.name})
+        return made
 
     def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
         """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies."""
@@ -520,6 +609,7 @@ class Store:
             source.close()
         with self._conn() as conn:
             self._migrate(conn)  # an older backup may need upgrading
+            self._log(conn, "backup_restored", detail={"file": Path(backup).name, "safety_copy": safety.name})
         return safety
 
     # --- Learning memory ------------------------------------------------------------------------------
@@ -532,9 +622,11 @@ class Store:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit))]
 
-    def delete_feedback(self, ids: list[int]) -> int:
+    def delete_feedback(self, ids: list[int], actor: str | None = None) -> int:
         with self._conn() as conn:
             cur = conn.executemany("DELETE FROM feedback WHERE id = ?", [(i,) for i in ids])
+            if ids:
+                self._log(conn, "lessons_forgotten", actor=actor, detail={"count": len(ids)})
             return cur.rowcount
 
     def metrics(self) -> dict[str, Any]:

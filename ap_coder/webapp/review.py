@@ -33,6 +33,7 @@ from ap_coder.webapp.common import (
     get_store,
     gl_label_map,
     gl_name,
+    history_html,
     money,
     notify,
     persistent_editor,
@@ -234,8 +235,7 @@ def page_review() -> None:
                     path = Path(full["source_path"])
                     if not path.exists():
                         st.error(f"The original file is no longer at {path}.")
-                    else:
-                        store.delete_invoice(inv["id"])
+                    else:  # the new attempt replaces the failed one
                         run_pipeline(store, [path])
                         st.rerun()
                 if b2.button("Delete", key=f"del_{inv['id']}", icon=":material/delete:"):
@@ -335,7 +335,7 @@ def _export_rows(store: Store, approved: list[dict[str, Any]]) -> list[dict[str,
     return rows
 
 
-def _document_panel(inv: dict[str, Any]) -> None:
+def _document_panel(inv: dict[str, Any], store: Store) -> None:
     path = Path(inv["source_path"])
     pages = render_pages(str(path), path.stat().st_mtime) if path.exists() else []
     head, pager = st.columns([3, 2], vertical_alignment="center")
@@ -353,6 +353,10 @@ def _document_panel(inv: dict[str, Any]) -> None:
         st.warning(f"Original file not found at {path}", icon=":material/warning:")
     with st.expander("Extracted text (what the AI read)", expanded=not pages, icon=":material/text_snippet:"):
         st.html(f"<div style='font-size:0.85rem'>{ui.document_text(inv.get('extraction_md') or '')}</div>")
+    events = store.events(inv["id"])
+    if events:
+        with st.expander(f"History · {len(events)}", icon=":material/history:"):
+            st.html(history_html(events))
 
 
 def _checks_html(report: Any) -> str:
@@ -464,7 +468,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
 
     left, right = st.columns([5, 7], gap="medium")
     with left, card("document"):
-        _document_panel(inv)
+        _document_panel(inv, store)
 
     with right:
         checks_box = card("checks")
@@ -712,7 +716,7 @@ def delete_invoice(store: Store, invoice_id: int) -> None:
     """Delete an invoice; if its file is in the invoices folder, move it to ``invoices/deleted`` so the
     folder pick-up doesn't offer it again."""
     inv = store.get_invoice(invoice_id) or {}
-    store.delete_invoice(invoice_id)
+    store.delete_invoice(invoice_id, actor=reviewer())
     path = Path(inv.get("source_path") or "")
     try:
         if path.is_file() and path.resolve().parent == INVOICE_DIR.resolve():
@@ -871,3 +875,7 @@ def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> 
             + "</div></div></div>"
         )
         _distribution_table(final, reference, final.get("currency", ""))
+        events = store.events(invoice_id)
+        if events:
+            with st.expander("History", icon=":material/history:"):
+                st.html(history_html(events))

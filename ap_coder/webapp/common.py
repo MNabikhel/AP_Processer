@@ -14,6 +14,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from ap_coder import ui
 from ap_coder.config import Settings
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.store import APPROVED, Store, default_db_path
@@ -248,3 +249,17 @@ def demo_card(store: Store, where: str) -> None:
                 removed = remove_demo(store)
                 notify(f"Removed {removed} demo invoice(s).", ":material/delete_sweep:")
                 st.rerun()
+
+
+def history_html(events: list[dict[str, Any]]) -> str:
+    """An invoice's (or the app's) audit events as a timeline, newest first."""
+    from ap_coder.audit import ACTIONS, describe
+
+    items = []
+    for e in events:
+        icon_name, tone, label = ACTIONS.get(e["action"], ("circle", "gray", e["action"]))
+        items.append(
+            {"icon": icon_name, "tone": tone, "title": label, "text": describe(e), "who": e.get("actor") or "",
+             "when": f"{ui.time_ago(e['created_at'])} · {e['created_at'].replace('T', ' ')[:16]}"}
+        )  # fmt: skip
+    return ui.timeline(items)

@@ -290,3 +290,17 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 
 /* ---- Narrower sidebar on laptops --------------------------------------------------------------------------- */
 section[data-testid="stSidebar"] {width: 256px !important; min-width: 256px !important;}
+
+/* History timeline (audit trail) */
+.apc-timeline {position: relative; padding-left: .25rem;}
+.apc-timeline .ev {display: grid; grid-template-columns: 1.9rem minmax(0, 1fr); gap: .65rem; position: relative; padding-bottom: .85rem;}
+.apc-timeline .ev:not(:last-child)::before {content: ""; position: absolute; left: .93rem; top: 1.8rem; bottom: 0; width: 2px; background: #e6eaf0;}
+.apc-timeline .dot {width: 1.9rem; height: 1.9rem; border-radius: 50%; display: grid; place-items: center; background: #eef1f6; color: var(--apc-muted);}
+.apc-timeline .dot.ok {background: var(--apc-ok-bg); color: var(--apc-ok);}
+.apc-timeline .dot.warn {background: var(--apc-warn-bg); color: var(--apc-warn);}
+.apc-timeline .dot.err {background: var(--apc-err-bg); color: var(--apc-err);}
+.apc-timeline .dot.info {background: var(--apc-brand-50); color: var(--apc-brand-600);}
+.apc-timeline .dot.violet {background: var(--apc-violet-bg); color: var(--apc-violet);}
+.apc-timeline .t {font-size: .88rem; color: var(--apc-ink); line-height: 1.35;}
+.apc-timeline .d {font-size: .84rem; color: var(--apc-muted); line-height: 1.4; overflow-wrap: anywhere;}
+.apc-timeline .w {font-size: .74rem; color: var(--apc-faint); margin-top: .1rem;}

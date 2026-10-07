@@ -24,6 +24,7 @@ from ap_coder.webapp.common import (
     notify,
     open_folder,
     reference_or_none,
+    reviewer,
     show_toast,
 )
 
@@ -46,6 +47,7 @@ def save_settings(updates: dict[str, str]) -> list[str]:
     if changed:
         write_env(env_path(), changed)
         os.environ.update(changed)  # the dashboard reads settings from the environment
+        get_store().log_event("settings_changed", actor=reviewer(), detail={"keys": sorted(changed)})
     return sorted(changed)
 
 
@@ -243,7 +245,7 @@ def data_tab(store: Store) -> None:
             "kept). Make one yourself before big changes, e.g. importing a new chart of accounts."
         )
         if button.button("Back up now", icon=":material/backup:", key="backup_now", width="stretch"):
-            made = store.backup_now("manual")
+            made = store.backup_now("manual", actor=reviewer())
             notify(f"Backed up to {made.name}.", ":material/backup:")
             st.rerun()
         backups = store.list_backups()

@@ -21,6 +21,7 @@ PAGES = [
     ("accounts", "page_accounts"),
     ("learning", "page_learning"),
     ("settings", "page_settings"),
+    ("activity", "page_activity"),
 ]
 TIMEOUT = 90
 

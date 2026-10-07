@@ -392,3 +392,16 @@ def document_text(md: str) -> str:
         else:
             out.append(esc(line) + "<br>")
     return "\n".join(out)
+
+
+def timeline(items: Sequence[dict[str, str]]) -> str:
+    """A vertical history: each item has icon, tone, title, text (all plain text), who and when."""
+    rows = []
+    for it in items:
+        who = f" · {esc(it['who'])}" if it.get("who") else ""
+        rows.append(
+            f"<div class='ev'><span class='dot {esc(it.get('tone', 'gray'))}'>{icon(it.get('icon', 'circle'), '1em')}"
+            f"</span><div class='body'><div class='t'><b>{esc(it.get('title', ''))}</b>{who}</div>"
+            f"<div class='d'>{esc(it.get('text', ''))}</div><div class='w'>{esc(it.get('when', ''))}</div></div></div>"
+        )
+    return f"<div class='apc-timeline'>{''.join(rows)}</div>" if rows else ""
