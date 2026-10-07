@@ -8,6 +8,17 @@ has a short tour.
 Your existing data is safe. On first start the database upgrades itself (schema version 12), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## Highlights
+
+- **Catch it before it is paid:** purchase-order matching, vendor master checks, duplicate and
+  bank-account-change signals, credit notes matched to their invoice, second approval above a limit.
+- **Less typing:** fixed coding rules, GL suggestions, bulk approval, *Ask the vendor* emails written
+  for you, invoices taken straight out of saved emails.
+- **The rest of the cycle:** exports in your ERP's layout with approved PDFs, vendor statements,
+  month-end accruals, the sales-tax claim (ITCs/ITRs) and PST/QST self-assessment.
+- **Know where you stand:** *Find an invoice*, the *Today* line, spend analysis, the duplicate
+  payment audit, the controls report and the business case.
+
 ## Safety
 
 Text from invoices and uploaded files can no longer run as a formula when a download is opened in
@@ -41,10 +52,11 @@ folder.
 - **Due dates.** The AI now reads payment terms and printed due dates (English and French). Queue
   cards show *Overdue*, *Due in 3d* and early-payment discount deadlines (*2% off until Oct 15*), and
   the queue can be sorted by due date.
-- **Stays fast** with a year of invoices: tested with 3,000. The queue shows 50 at a time.
-
 - **Find an invoice** (for a vendor on the phone): one search box for vendor, invoice or PO number
   (however it is written) and amount; each match says where the invoice is and when it is due.
+- **Today** line above the queue: past due, due soon, parked to follow up, waiting for your second
+  approval, ready to export, regular invoices that are late.
+- **Stays fast** with a year of invoices: tested with 3,000. The queue shows 50 at a time.
 
 ## Catch more before it is paid
 
@@ -62,10 +74,10 @@ folder.
   account is suggested for uncoded lines.
 - **Vendor fraud and duplicate signals:** vendor on hold, changed GST/HST number (a classic fake
   invoice sign), a different bank account to pay into than on the vendor's earlier invoices (the most
-  common payment fraud; only the last 4 digits are ever shown), amount far above the vendor's usual, same amount under a new invoice number, the
-  same bill under another vendor name, a bill already in the ERP (import the ERP's invoice list on the
-  Exports page), first invoice from a vendor. The **Vendors** page holds the
-  controls (hold, expected GST/HST number, notes).
+  common payment fraud; only the last 4 digits are ever shown), amount far above the vendor's usual,
+  same amount under a new invoice number, the same bill under another vendor name, a bill already in
+  the ERP (import the ERP's invoice list on the Exports page), first invoice from a vendor. The
+  **Vendors** page holds the controls (hold, expected GST/HST number, notes).
 - **Second approval.** Above an approval limit (Settings → Review), an approved invoice waits for a
   second person (another name and another computer login) before it can be exported, or is sent
   back to the queue with the first approver's corrections kept. For two people to approve, they use
@@ -105,7 +117,6 @@ folder.
 - **Spend:** where the money goes, by month (coloured by GL category), GL account, vendor and cost
   center, net of recoverable tax. *All invoice data (Excel)* gives every invoice, line and GL posting as
   Excel tables for pivot tables or Power BI.
-
 - **Activity:** an audit trail of everything that changes data, with every change a reviewer made
   to the AI's coding; filterable and downloadable.
 - **Duplicate payment audit** (Activity page): bills that may have been approved or posted twice,
@@ -116,9 +127,8 @@ folder.
   per person; one HTML page to download.
 - **Insights:** how much goes straight through, hours saved, Azure cost per invoice from the real
   token usage, a monthly projection and the duplicate invoices stopped, with a one-page business case
-  to share (totals only); AP
-  operations: queue ageing, days to approve, approvals after the due date, discounts approved in
-  time.
+  to share (totals only); AP operations: queue ageing, days to approve, approvals after the due date,
+  discounts approved in time.
 
 ## Setup and safety
 
