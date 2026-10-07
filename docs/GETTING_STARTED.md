@@ -122,9 +122,17 @@ few realistic mistakes to correct, plus sample purchase orders. Things to try:
 - Type `2/10 Net 30` in an invoice's *Payment terms*: the due date and the early-payment discount
   deadline update (a discount shows while its deadline is still ahead).
 - *Split a line…* under the line grid divides a shared cost across cost centers.
-- Approve a few, then look at **Exports**, **Learning & accuracy**, **Insights** and **Activity**.
-- **Vendor statements** → pick Northwind and upload `data\sample_statement_northwind.csv`.
-- **Month-end** shows what to accrue; **Sales tax** totals the GST/HST and QST to claim back; **Help** explains every check.
+- On an invoice with something to ask (e.g. *Red River*), open **Ask the vendor** under the checks:
+  the email is written for you (English, or French for a Quebec vendor).
+- The **Today** line above the queue lists what is past due, parked for follow-up and ready to export.
+- Approve a few, then look at **Exports** (export a batch, then *Approved PDFs*), **Learning &
+  accuracy**, **Insights**, **Spend** and **Activity** (*Run the audit* for possible duplicate payments).
+- **GL accounts & tax** → **Fixed rules**: add a rule such as *line contains "delivery" → 6800*; open
+  an invoice and *Apply the coding rules*.
+- **Vendor statements** → pick Northwind and upload `data\sample_statement_northwind.csv`, then open
+  *Ask the vendor for the missing invoices*.
+- **Month-end** shows what to accrue; **Sales tax** totals the GST/HST and QST to claim back (set
+  the dates to include the demo invoices, dated mid-2026); **Help** explains every check.
 - *Remove demo invoices* on the **Process invoices** page removes the demo invoices, sample POs and
   sample vendor list again. The sample GL accounts and tax setup stay (replace them when you import
   yours: tick *Replace my current list*).
