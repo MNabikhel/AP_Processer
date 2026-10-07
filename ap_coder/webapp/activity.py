@@ -124,9 +124,13 @@ def _duplicate_audit_card(store) -> None:
         )
         if button.button("Run the audit", icon=":material/search:", width="stretch", key="dupaudit_run"):
             st.session_state["dupaudit"] = dupaudit.find(store)
+            st.session_state["dupaudit_at"] = dt.datetime.now()
         pairs = st.session_state.get("dupaudit")
         if pairs is None:
             return
+        ran = st.session_state.get("dupaudit_at")
+        if ran:
+            st.caption(f"Results of {ran:%H:%M}: run it again after approving or importing more.")
         if not pairs:
             st.html(ui.pill("No likely duplicates found", "ok", "check"))
             return
