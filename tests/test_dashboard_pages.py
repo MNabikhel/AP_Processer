@@ -217,3 +217,14 @@ def test_ask_the_vendor_on_the_review_screen(db):
     _ok(at.run())
     bodies = [c.value for c in at.code if c.value.startswith("Hello")]
     assert bodies and "GST/HST registration number" in bodies[0]
+
+
+def test_today_strip_on_the_queue(db):
+    from ap_coder.demo import load_demo
+
+    load_demo(Store(db))
+    at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
+    today = [
+        h.proto.body for h in at.get("html") if "<b style='color:#142033;margin-right:.2rem'>Today</b>" in h.proto.body
+    ]
+    assert today and "ready to export" in today[0]  # the demo's approved invoices are not exported yet

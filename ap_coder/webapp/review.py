@@ -108,6 +108,7 @@ def page_review() -> None:
         )
     )
 
+    _today_strip(store, invoices)
     accuracy = metrics["line_accuracy"]
     weekly = weekly_accuracy(metrics)
     st.html(
@@ -436,6 +437,31 @@ def _due_pill(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> 
     if left <= DUE_SOON_DAYS:
         return ui.pill("Due today" if left == 0 else f"Due in {left}d", "warn", "schedule")
     return ""
+
+
+def _today_strip(store: Store, invoices: list[dict[str, Any]]) -> None:
+    """What needs doing today, beyond the queue itself: one line of pills (nothing when all is calm)."""
+    today = dt.date.today().isoformat()
+    soon = (dt.date.today() + dt.timedelta(days=DUE_SOON_DAYS)).isoformat()
+    me = reviewer().strip().lower()
+    active = [i for i in invoices if i["status"] in (REVIEW, PARKED, PENDING)]
+    overdue = sum(1 for i in active if i["due_date"] and i["due_date"] < today)
+    due_soon = sum(1 for i in active if i["due_date"] and today <= i["due_date"] <= soon)
+    follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
+    second = sum(1 for i in invoices if i["status"] == PENDING and (i["reviewer"] or "").strip().lower() != me)
+    to_export = len(store.unexported_approved())
+    pills = [
+        ui.pill(f"{overdue} past due, not approved yet", "err", "alarm") if overdue else "",
+        ui.pill(f"{due_soon} due within {DUE_SOON_DAYS} days", "warn", "schedule") if due_soon else "",
+        ui.pill(f"{follow_ups} parked to follow up", "warn", "pause_circle") if follow_ups else "",
+        ui.pill(f"{second} waiting for your second approval", "violet", "how_to_reg") if second else "",
+        ui.pill(f"{to_export} approved, ready to export", "info", "ios_share") if to_export else "",
+    ]
+    if any(pills):
+        st.html(
+            "<div style='display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin:.1rem 0 .7rem'>"
+            f"<b style='color:#142033;margin-right:.2rem'>Today</b>{''.join(p for p in pills if p)}</div>"
+        )
 
 
 def _queue_card(inv: dict[str, Any], ai: dict[str, Any], default_days: int = 30, vendor_terms: str = "") -> None:

@@ -8,10 +8,10 @@ from ap_coder import taxreturn, ui
 from ap_coder.webapp.common import card, esc, get_store, money, show_toast
 
 ISSUE_TONES = {
-    taxreturn.NO_GST_NUMBER: "red",
-    taxreturn.NO_QST_NUMBER: "red",
-    taxreturn.FOREIGN: "amber",
-    taxreturn.NOT_EXPORTED: "blue",
+    taxreturn.NO_GST_NUMBER: "err",
+    taxreturn.NO_QST_NUMBER: "err",
+    taxreturn.FOREIGN: "warn",
+    taxreturn.NOT_EXPORTED: "info",
 }
 
 
