@@ -780,21 +780,22 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             header["ship_to_province"] = province(
                 c3, "Place of supply", "ship_to_province", help="Where goods are delivered / services performed"
             )
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2 = st.columns(2)
             header["gst_hst_registration_number"] = text(c1, "Supplier GST/HST #", "gst_hst_registration_number")
             header["qst_registration_number"] = text(c2, "Supplier QST #", "qst_registration_number")
-            header["po_number"] = text(c3, "PO #", "po_number", help="Purchase order the invoice quotes, if any")
-            header["original_invoice_number"] = text(
-                c4, "Credits invoice #", "original_invoice_number", help="On a credit note: the invoice it credits"
-            )
-            c1, c2, c3 = st.columns([1.3, 1, 1.7])
-            header["payment_terms"] = text(c1, "Payment terms", "payment_terms", placeholder="e.g. Net 30, 2/10 Net 30")
+            c1, c2, c3 = st.columns(3)
+            header["po_number"] = text(c1, "PO #", "po_number", help="Purchase order the invoice quotes, if any")
+            header["payment_terms"] = text(c2, "Payment terms", "payment_terms", placeholder="e.g. Net 30, 2/10 Net 30")
             header["due_date"] = text(
-                c2, "Due date", "due_date", placeholder="YYYY-MM-DD",
+                c3, "Due date", "due_date", placeholder="YYYY-MM-DD",
                 help="Only if printed; otherwise it comes from the terms",
             )  # fmt: skip
+            c1, c2 = st.columns([1, 2])
+            header["original_invoice_number"] = text(
+                c1, "Credits invoice #", "original_invoice_number", help="On a credit note: the invoice it credits"
+            )
             header["remit_bank_account"] = text(
-                c3, "Pay into (bank account)", "remit_bank_account",
+                c2, "Pay into (bank account)", "remit_bank_account",
                 help="The bank details printed for payment, if any: compared with this vendor's earlier invoices",
             )  # fmt: skip
             c1, c2, c3 = st.columns(3)
