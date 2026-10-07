@@ -206,3 +206,39 @@ def approved_today(store: Store) -> int:
 
 def weekly_accuracy(metrics: dict[str, Any]) -> list[float]:
     return [w["accepted"] / (w["accepted"] + w["corrected"]) for w in metrics["weekly"]]
+
+
+def demo_card(store: Store, where: str) -> None:
+    """Load or remove the demo invoices (the bundled samples, coded as if by Azure; no Azure needed)."""
+    from ap_coder.demo import demo_available, is_demo, load_demo, remove_demo
+
+    if not demo_available():
+        return
+    demo_count = sum(1 for i in store.list_invoices_full() if is_demo(i))
+    with card(f"demo_{where}"):
+        st.markdown("#### :material/science: Demo invoices")
+        if not demo_count:
+            st.caption(
+                "Look around before connecting Azure: ten sample invoices from across Canada (plus a US vendor "
+                "and a credit note) are added as if the AI had read and coded them, including a few realistic "
+                "mistakes to correct. Uses the sample GL accounts if you haven't imported yours."
+            )
+            if st.button("Load demo invoices", icon=":material/play_circle:", type="primary", key=f"demo_load_{where}"):
+                result = load_demo(store, get_settings())
+                notify(
+                    f"Demo ready: {result['to_review']} invoices to review, {result['approved']} already approved.",
+                    ":material/science:",
+                )
+                st.rerun()
+        else:
+            st.caption(
+                f"{demo_count} demo invoice(s) are loaded. Removing them also forgets what the AI learned from "
+                "them; your own invoices and settings are untouched."
+            )
+            sure = st.checkbox("Yes, remove the demo invoices", key=f"demo_sure_{where}")
+            if st.button(
+                "Remove demo invoices", icon=":material/delete_sweep:", disabled=not sure, key=f"demo_rm_{where}"
+            ):
+                removed = remove_demo(store)
+                notify(f"Removed {removed} demo invoice(s).", ":material/delete_sweep:")
+                st.rerun()

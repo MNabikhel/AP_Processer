@@ -10,7 +10,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from ap_coder.store import APPROVED, REJECTED, Store, load_sample_setup
+from ap_coder.store import APPROVED, REJECTED, REVIEW, Store, load_sample_setup
 
 from .conftest import ROOT, SAMPLE_STEM, SAMPLES
 
@@ -99,3 +99,12 @@ def test_an_invalid_date_shows_a_message_not_an_error(busy_db):
     keys = {b.key for b in at.button}
     assert f"inv{invoice_id}_approve" not in keys  # no approving until it is fixed
     assert {f"inv{invoice_id}_reject", f"inv{invoice_id}_delete"} <= keys  # but reject / delete stay available
+
+
+def test_demo_button_on_the_welcome_screen(db):
+    at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
+    _ok(at.button(key="demo_load_welcome").click().run())
+    store = Store(db)
+    assert len(store.list_invoices(REVIEW)) == 8
+    at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
+    assert len([b for b in at.button if (b.key or "").startswith("qopen_")]) == 8

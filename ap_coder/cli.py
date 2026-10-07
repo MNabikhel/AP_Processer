@@ -163,6 +163,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-codes", action="store_true", help="Include GL/cost-center confusion pairs")
     p.add_argument("-o", "--out", default=str(private / "share_report.md"))
 
+    p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
+    p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
+
     p = sub.add_parser("schema", help="Print the strict JSON Schema sent to Azure OpenAI")
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
     _add_reference_args(p)
@@ -325,6 +328,22 @@ def cmd_share_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
+    from .demo import load_demo, remove_demo
+
+    store = Store(args.db)
+    if args.remove:
+        print(f"Removed {remove_demo(store)} demo invoice(s) and what was learned from them.", file=sys.stderr)
+        return 0
+    result = load_demo(store, settings)
+    print(
+        f"Demo loaded: {result['to_review']} invoice(s) to review, {result['approved']} already approved. "
+        "Start the dashboard to try it.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def cmd_schema(args: argparse.Namespace) -> int:
     schema = build_json_schema(
         _load_reference(args),
@@ -353,6 +372,7 @@ def main(argv: list[str] | None = None) -> int:
         "labels": lambda: cmd_labels(args),
         "evaluate": lambda: cmd_evaluate(args),
         "share-report": lambda: cmd_share_report(args),
+        "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
     }
     return commands[args.command]()

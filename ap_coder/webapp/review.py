@@ -17,7 +17,7 @@ from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import APPROVED, FAILED, REJECTED, REVIEW, Store
-from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES
+from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.webapp.common import (
     INVOICE_DIR,
     PAGES,
@@ -25,6 +25,7 @@ from ap_coder.webapp.common import (
     approved_today,
     card,
     cc_label_map,
+    demo_card,
     esc,
     first_name,
     forget_drafts,
@@ -249,7 +250,7 @@ def _queue_card(store: Store, inv: dict[str, Any]) -> None:
     taxes = list(dict.fromkeys(t.get("tax_type", "") for t in ai.get("tax_lines", [])))
     prov = ai.get("ship_to_province") or ai.get("supplier_province") or ""
     with st.container(key=f"qcard_{inv['id']}"):
-        st.html(ui.queue_card(inv, taxes, PROVINCE_NAMES.get(prov, "")))
+        st.html(ui.queue_card(inv, taxes, province_label(prov, "")))
         label = f"Review invoice from {inv['vendor_name'] or inv['file_name']}"
         if st.button(label, key=f"qopen_{inv['id']}"):
             st.session_state["open_invoice"] = inv["id"]
@@ -306,6 +307,7 @@ def _getting_started(store: Store) -> None:
             )
         links.page_link(PAGES["accounts"], label="GL accounts & tax", icon=":material/account_tree:")
         links.page_link(PAGES["process"], label="Process invoices", icon=":material/upload_file:")
+    demo_card(store, "welcome")
 
 
 def _export_rows(store: Store, approved: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -743,7 +745,7 @@ def _invoice_summary(
     meta = [
         ("receipt_long", f"Invoice {coding.invoice_number}"),
         ("event", coding.invoice_date),
-        ("location_on", PROVINCE_NAMES.get(supply, "Province unknown")),
+        ("location_on", province_label(supply)),
         ("verified", f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else ""),
     ]
     pills = []

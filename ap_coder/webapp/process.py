@@ -18,6 +18,7 @@ from ap_coder.webapp.common import (
     INVOICE_DIR,
     PAGES,
     card,
+    demo_card,
     esc,
     get_settings,
     get_store,
@@ -106,6 +107,9 @@ def page_process() -> None:
             st.html("".join(ui.recent_row(i) for i in recent))
             if any(i["status"] == REVIEW for i in recent):
                 st.page_link(PAGES["review"], label="Go to the review queue", icon=":material/arrow_forward:")
+
+    with right:
+        demo_card(store, "process")
 
     with left:
         with card("upload"):

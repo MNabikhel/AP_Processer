@@ -23,6 +23,7 @@ import os
 import streamlit as st
 
 from ap_coder import ui
+from ap_coder.demo import is_demo
 from ap_coder.store import REVIEW
 from ap_coder.webapp.accounts import page_accounts
 from ap_coder.webapp.common import ASSETS, DB_PATH, PAGES, approved_today, get_store, reviewer, short_path
@@ -52,6 +53,8 @@ with st.sidebar:
             value=os.environ.get("AP_REVIEWER") or getpass.getuser(),
             key="reviewer",
         )
+    if any(is_demo(i) for i in _store.list_invoices_full()):
+        st.html(ui.pill("Demo invoices loaded", "violet", "science"))
     st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
 
 st.navigation(list(PAGES.values())).run()

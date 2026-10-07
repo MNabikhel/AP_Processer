@@ -370,9 +370,20 @@ class Store:
                 (REJECTED, reviewer, _now(), reason or None, invoice_id),
             )
 
-    def delete_invoice(self, invoice_id: int) -> None:
+    def delete_invoice(self, invoice_id: int, forget_lessons: bool = False) -> None:
+        """Delete an invoice; with ``forget_lessons`` also what was learned when it was approved."""
         with self._conn() as conn:
             conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
+            if forget_lessons:
+                conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+
+    def list_invoices_full(self) -> list[dict[str, Any]]:
+        """Every invoice with its file path, status and metadata (no AI output: kept light)."""
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute("SELECT id, source_path, status, meta FROM invoices ORDER BY id")]
+        for r in rows:
+            r["meta"] = json.loads(r["meta"]) if r["meta"] else {}
+        return rows
 
     def approve_invoice(self, invoice_id: int, final_output: dict[str, Any], reviewer: str) -> dict[str, int]:
         """Store the reviewer's final version and record one feedback row per line."""

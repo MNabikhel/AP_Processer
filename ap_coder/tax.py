@@ -42,6 +42,15 @@ PROVINCE_NAMES = {
     "YT": "Yukon",
 }
 OUTSIDE_CANADA = "OUTSIDE_CANADA"
+
+
+def province_label(code: str, unknown: str = "Province unknown") -> str:
+    """Display name for a province code, including outside-Canada suppliers."""
+    if code == OUTSIDE_CANADA:
+        return "Outside Canada"
+    return PROVINCE_NAMES.get(code, unknown) if code else unknown
+
+
 # OTHER = a non-Canadian tax (US sales tax, VAT...): no Canadian checks, expensed by default.
 TAX_TYPES = ("GST", "HST", "PST", "QST", "OTHER")
 CANADIAN_TAX_TYPES = ("GST", "HST", "PST", "QST")
