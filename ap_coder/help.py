@@ -388,6 +388,23 @@ FAQ: list[tuple[str, str]] = [
         "trend; a wrong lesson can be forgotten there.",
     ),
     (
+        "A vendor is on the phone about an invoice. Where is it?",
+        "Find an invoice: type the vendor, the invoice or PO number (however they write it) or the amount. Each "
+        "match says where it is (in review, parked and why, approved by whom, exported in which batch, "
+        "rejected) and when it is due; the ERP register is searched too when you have imported it.",
+    ),
+    (
+        "Our invoices arrive by email. Do I have to save each PDF?",
+        "No: save the email itself as .eml (Outlook on the web or new Outlook: Download) into the invoices folder, "
+        "or upload it on Process invoices. Its PDF and image attachments are taken out and processed; signature "
+        "logos are left out, and the email is kept in invoices/emails.",
+    ),
+    (
+        "Can I attach the approved invoice to the ERP entry?",
+        "Yes: Exports → Approved PDFs (ZIP) for a batch, or Approved PDF on an approved invoice. Each is the "
+        "invoice with an APPROVED stamp (who, when, batch) and a coding page with the GL lines.",
+    ),
+    (
         "Some lines always go to the same account. Can I make that certain?",
         "Yes: GL accounts & tax → Fixed rules. A rule names a vendor, words a line contains, or both, and the GL "
         "account (and cost center) to use. Rules are applied after the AI when an invoice is processed, and the "
