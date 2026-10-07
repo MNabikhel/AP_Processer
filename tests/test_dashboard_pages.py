@@ -258,3 +258,17 @@ def test_saved_emails_in_the_invoices_folder_are_unpacked(db):
     at = _ok(_page("process", "page_process").run())
     assert (folder / "vendor mail - INV-9.pdf").exists() and (folder / "emails" / "vendor mail.eml").exists()
     assert any("saved email" in c.value for c in at.caption)
+
+
+def test_sales_tax_page_self_assessment_card(db):
+    store = Store(db)
+    load_sample_setup(store)
+    doc = json.loads((SAMPLES / "ground_truth" / "prairie_SK_GST_PST_PNS-104882.json").read_text())
+    doc["tax_lines"] = [t for t in doc["tax_lines"] if t["tax_type"] != "PST"]
+    invoice_id = store.add_invoice(db.parent / "x.pdf", doc, {})
+    store.approve_invoice(invoice_id, doc, "Jane")
+    at = _page("sales_tax", "page_sales_tax")
+    at.session_state["tax_start"] = dt.date(2020, 1, 1)
+    at.session_state["tax_end"] = dt.date(2030, 12, 31)
+    _ok(at.run())
+    assert any("self-assess" in m.value for m in at.markdown)

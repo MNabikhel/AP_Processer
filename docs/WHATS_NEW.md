@@ -76,6 +76,8 @@ folder.
 - **Sales tax:** the GST/HST input tax credits and QST input tax refunds to claim for a period
   (by invoice date, credit notes deducted), by tax and rate, and the claims to check before filing:
   an invoice of $30 or more without a valid registration number, tax in a foreign currency. CSV.
+  Also the **PST / QST possibly to self-assess**: approved invoices for a supply in BC, SK, MB or
+  Quebec where the vendor charged none, with an estimate at the official rate.
 - **Recurring vendors:** the Vendors page lists who bills monthly, quarterly..., their next expected
   invoice, and which are late.
 - **Folder watcher:** `python -m ap_coder watch` processes new files dropped in the invoices folder

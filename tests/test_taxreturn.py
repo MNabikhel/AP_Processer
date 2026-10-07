@@ -95,3 +95,21 @@ def test_demo_and_default_period(tmp_path):
     assert report.totals()[taxreturn.ITC]["CAD"] > 0 and report.not_approved > 0
     assert taxreturn.default_period(dt.date(2026, 10, 7)) == Q3
     assert taxreturn.default_period(dt.date(2026, 1, 15)) == (dt.date(2025, 10, 1), dt.date(2025, 12, 31))
+
+
+def test_pst_and_qst_to_self_assess(tmp_path):
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    doc = json.loads((SAMPLES / "ground_truth" / "prairie_SK_GST_PST_PNS-104882.json").read_text())
+    no_pst = {**doc, "invoice_number": "X-1", "tax_lines": [t for t in doc["tax_lines"] if t["tax_type"] != "PST"]}
+    no_pst["tax_total"] = round(sum(t["tax_amount"] for t in no_pst["tax_lines"]), 2)
+    no_pst["grand_total"] = round(no_pst["subtotal"] + no_pst["tax_total"], 2)
+    for n, d in enumerate((doc, no_pst)):
+        invoice_id = store.add_invoice(tmp_path / f"{n}.pdf", d, {})
+        store.approve_invoice(invoice_id, d, "Jane")
+    _approved(store, tmp_path, "northwind_ON_HST_NW-2026-0912")  # Ontario: HST only, nothing to self-assess
+    (item,) = taxreturn.self_assessment(store, *YEAR)
+    assert (item.invoice_number, item.province, item.tax_type, item.rate) == ("X-1", "SK", "PST", 0.06)
+    assert item.estimate == round(doc["subtotal"] * 0.06, 2)
+    text = taxreturn.self_assessment_csv([item], *YEAR).decode("utf-8-sig")
+    assert "X-1" in text and "6%" in text

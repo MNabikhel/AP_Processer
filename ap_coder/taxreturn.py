@@ -23,7 +23,16 @@ from typing import Any
 
 from .safe import csv_row
 from .store import APPROVED, PARKED, PENDING, REVIEW, Store
-from .tax import DEFAULT_TREATMENTS, RECOVERABLE, TaxTreatment, valid_gst_number, valid_qst_number
+from .tax import (
+    DEFAULT_TREATMENTS,
+    PROVINCES,
+    RECOVERABLE,
+    REGIME,
+    TaxRateTable,
+    TaxTreatment,
+    valid_gst_number,
+    valid_qst_number,
+)
 
 ITC, ITR = "GST/HST input tax credits (ITCs)", "QST input tax refunds (ITRs)"
 GROUPS = {"GST": ITC, "HST": ITC, "QST": ITR}
@@ -145,6 +154,74 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
     claims.sort(key=lambda c: (c.invoice_date, c.invoice_id))
     not_recoverable = [t for t in GROUPS if not recoverable(t)]
     return Report(start, end, claims, not_approved, not_recoverable)
+
+
+@dataclass
+class SelfAssessment:
+    invoice_id: int
+    vendor: str
+    invoice_number: str
+    invoice_date: str
+    province: str
+    tax_type: str
+    base: float
+    rate: float
+    estimate: float
+    currency: str
+
+
+def self_assessment(
+    store: Store, start: dt.date, end: dt.date, rates: TaxRateTable | None = None
+) -> list[SelfAssessment]:
+    """Approved invoices for a supply in a PST or QST province that charge no PST / QST: the buyer may have to
+    self-assess it (an estimate at the official rate on the subtotal; exempt goods and services owe nothing)."""
+    rates = rates or TaxRateTable.load()
+    first, last = start.isoformat(), end.isoformat()
+    out = []
+    for r in store.invoice_columns(("id", "final_output"), APPROVED):
+        doc = r["final_output"] or {}
+        date = str(doc.get("invoice_date") or "")
+        if not (first <= date <= last):
+            continue
+        province = next((p for p in (doc.get("ship_to_province"), doc.get("supplier_province")) if p in PROVINCES), "")
+        charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or []}
+        base = float(doc.get("subtotal") or 0)
+        for tax_type in sorted(REGIME.get(province, frozenset()) & {"PST", "QST"}):
+            if tax_type in charged or abs(base) < 0.005:
+                continue
+            try:
+                rate = rates.rate_for(tax_type, province, dt.date.fromisoformat(date))
+            except ValueError:
+                rate = None
+            if not rate:
+                continue
+            out.append(
+                SelfAssessment(
+                    r["id"],
+                    str(doc.get("vendor_name") or ""),
+                    str(doc.get("invoice_number") or ""),
+                    date,
+                    province,
+                    tax_type,
+                    round(base, 2),
+                    rate,
+                    round(base * rate, 2),
+                    str(doc.get("currency") or "CAD").upper(),
+                )  # fmt: skip
+            )
+    return sorted(out, key=lambda s: (s.province, s.invoice_date, s.invoice_id))
+
+
+def self_assessment_csv(items: list[SelfAssessment], start: dt.date, end: dt.date) -> bytes:
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow([f"PST / QST possibly to self-assess, invoices dated {start.isoformat()} to {end.isoformat()}"])
+    w.writerow(["Province", "Tax", "Rate", "Subtotal", "Estimate", "Currency", "Vendor", "Invoice", "Invoice date",
+                "AP Coder #"])  # fmt: skip
+    for s in items:
+        w.writerow(csv_row([s.province, s.tax_type, f"{s.rate * 100:g}%", f"{s.base:.2f}", f"{s.estimate:.2f}",
+                            s.currency, s.vendor, s.invoice_number, s.invoice_date, s.invoice_id]))  # fmt: skip
+    return ("\ufeff" + out.getvalue()).encode("utf-8")
 
 
 def to_csv(report: Report) -> bytes:

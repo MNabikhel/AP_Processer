@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
+from typing import Any
+
 import streamlit as st
 
 from ap_coder import taxreturn, ui
@@ -87,7 +90,63 @@ def page_sales_tax() -> None:
                     f"No approved invoice dated {start} to {end} has recoverable GST/HST or QST.",
                 )
             )
+    else:
+        _claims(report, start, end)
+    _self_assessment(store, start, end)
+
+
+def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
+    items = taxreturn.self_assessment(store, start, end)
+    if not items:
         return
+    with card("tax_self"):
+        head, button = st.columns([3, 1.4], vertical_alignment="center")
+        head.markdown("#### :material/assignment_return: PST / QST possibly to self-assess")
+        button.download_button(
+            "Download (CSV)", taxreturn.self_assessment_csv(items, start, end),
+            file_name=f"self_assessment_{start}_{end}.csv", mime="text/csv", icon=":material/download:",
+            width="stretch", key="tax_self_download",
+        )  # fmt: skip
+        totals: dict[tuple[str, str, str], float] = {}
+        for s in items:
+            k = (s.province, s.tax_type, s.currency)
+            totals[k] = totals.get(k, 0.0) + s.estimate
+        st.html(
+            ui.tiles(
+                [
+                    ui.tile(
+                        f"{tax} {prov}",
+                        f"{money(total)} {cur}",
+                        "assignment_return",
+                        "amber",
+                        f"{sum(1 for s in items if (s.province, s.tax_type, s.currency) == (prov, tax, cur))} "
+                        "invoice(s), estimate",
+                    )
+                    for (prov, tax, cur), total in sorted(totals.items())
+                ]  # fmt: skip
+            )
+        )
+        rows = [
+            [
+                f"<b>{esc(s.vendor)}</b><div class='apc-muted'>{esc(s.invoice_number)} · #{s.invoice_id}</div>",
+                esc(s.invoice_date),
+                f"{esc(s.tax_type)} {esc(s.province)} {s.rate * 100:g}%",
+                f"{money(s.base)}",
+                f"{money(s.estimate)} <span class='apc-muted'>{esc(s.currency)}</span>",
+            ]
+            for s in items
+        ]
+        st.html(ui.table(["Vendor", "Date", "Tax", "Subtotal", "Estimate"], rows, right=[3, 4], wrap=[0]))
+        st.caption(
+            "These approved invoices are for a supply in a province with PST or QST, and the vendor charged none "
+            "(often an out-of-province vendor). Your company may have to self-assess it on its provincial return. "
+            "The estimate applies the official rate to the whole subtotal: exempt goods and services owe nothing, "
+            "so check each one."
+        )
+
+
+def _claims(report: taxreturn.Report, start: dt.date, end: dt.date) -> None:
+    at_risk = report.at_risk()
 
     with card("tax_rates"):
         st.markdown("#### :material/percent: By tax and rate")
