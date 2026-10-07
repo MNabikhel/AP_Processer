@@ -72,3 +72,41 @@ def test_workbook_text_cannot_run_as_a_formula(tmp_path):
     wb = load_workbook(io.BytesIO(spend.workbook(store, None)))
     cell = next(c for row in wb["Invoices"].iter_rows() for c in row if str(c.value).startswith("=HYPER"))
     assert cell.data_type == "s" and cell.quotePrefix
+
+
+def test_non_recoverable_tax_on_its_own_account_is_spend(tmp_path):
+    import json
+
+    from ap_coder.config import Settings
+    from ap_coder.pipeline import finalise_coding
+    from ap_coder.schema import InvoiceCoding
+    from ap_coder.store import load_sample_setup
+    from ap_coder.tax import EXPENSE_SEPARATE
+
+    from .conftest import SAMPLES
+
+    store = Store(tmp_path / "s.db")
+    load_sample_setup(store)
+    store.set_tax_treatment("PST", EXPENSE_SEPARATE, "5900")
+    doc = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text())
+    output, _ = finalise_coding(InvoiceCoding.model_validate(doc), store.reference_data(), Settings(), store=store)
+    store.approve_invoice(store.add_invoice(tmp_path / "p.pdf", output, {}), output, "Jane")
+    pst = sum(t["tax_amount"] for t in doc["tax_lines"] if t["tax_type"] == "PST")
+    rows = spend.lines(store, *YEAR)
+    assert round(sum(r.amount for r in rows), 2) == round(doc["subtotal"] + pst, 2)
+    assert any(r.gl_code == "5900" for r in rows)
+
+
+def test_control_characters_do_not_break_the_workbooks(tmp_path):
+    from ap_coder import exports
+
+    store = Store(tmp_path / "s.db")
+    load_demo(store)
+    inv = store.list_invoices()[0]
+    doc = store.get_invoice(inv["id"])["ai_output"]
+    doc = {**doc, "vendor_name": "Bad\x0bVendor\x01", "line_items": [{**doc["line_items"][0], "description": "a\x0cb"}]}
+    invoice_id = store.add_invoice(tmp_path / "x.pdf", doc, {})
+    store.approve_invoice(invoice_id, doc, "Jane")
+    wb = load_workbook(io.BytesIO(spend.workbook(store, None)))
+    assert "BadVendor" in [r[2] for r in wb["Invoices"].values]
+    assert exports.build_xlsx([store.get_invoice(invoice_id)])[:2] == b"PK"

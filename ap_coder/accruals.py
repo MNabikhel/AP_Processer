@@ -92,7 +92,7 @@ def _not_in_erp(store: Store, period_end: dt.date) -> list[Accrual]:
             continue
         by_gl: dict[tuple[str, str], float] = defaultdict(float)
         for e in doc.get("gl_distribution") or []:
-            if e.get("kind") == "expense":
+            if e.get("kind") == "expense" or e.get("non_recoverable_tax"):  # a cost; recoverable tax is not
                 by_gl[(e.get("gl_code") or "", e.get("cost_center") or "")] += float(e.get("amount") or 0)
         state = {REVIEW: "in review", PARKED: "parked", PENDING: "waiting for a second approval",
                  APPROVED: "approved, not exported"}  # fmt: skip

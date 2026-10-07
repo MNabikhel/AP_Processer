@@ -40,3 +40,20 @@ def test_every_recorded_action_has_an_activity_filter():
     from ap_coder.webapp.activity import GROUPS
 
     assert set(ACTIONS) <= {a for actions in GROUPS.values() for a in actions}
+
+
+def test_the_reviewers_currency_is_saved(tmp_path):
+    import sqlite3
+
+    store = Store(tmp_path / "c.db")
+    doc = _doc("northwind_ON_HST_NW-2026-0912")
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    store.approve_invoice(invoice_id, {**doc, "currency": "usd"}, "Jane")
+    assert store.list_invoices()[0]["currency"] == "USD"
+    store.create_export_batch([invoice_id], "csv")
+    assert store.batch_totals()[1] == {"USD": doc["grand_total"]}
+    # A database approved by an older version is put right on upgrade.
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET currency = 'CAD'")
+        conn.execute("UPDATE settings SET value = '11' WHERE key = 'schema_version'")
+    assert Store(store.path).list_invoices()[0]["currency"] == "USD"

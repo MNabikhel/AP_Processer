@@ -35,7 +35,7 @@ from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSet
 from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 11  # 10: erp_invoices, 11: coding_rules (both created by _SCHEMA)
+SCHEMA_VERSION = 12  # 10: erp_invoices, 11: coding_rules (both created by _SCHEMA), 12: currency backfill
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -198,6 +198,11 @@ class Store:
             for column in ("parked_reason", "follow_up"):
                 if column not in columns:
                     conn.execute(f"ALTER TABLE invoices ADD COLUMN {column} TEXT")
+        if version < 12:  # approvals before this version kept the AI's currency, not the reviewer's
+            for r in conn.execute("SELECT id, final_output FROM invoices WHERE final_output IS NOT NULL").fetchall():
+                currency = str((json.loads(r["final_output"]) or {}).get("currency") or "").strip().upper()
+                if currency:
+                    conn.execute("UPDATE invoices SET currency = ? WHERE id = ?", (currency, r["id"]))
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -685,7 +690,7 @@ class Store:
     _JSON_COLUMNS = ("ai_output", "final_output", "validation", "meta", "edits")
     _LIGHT_COLUMNS = (
         "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer",
-        "second_reviewed_at", "invoice_date", "export_batch", *_JSON_COLUMNS
+        "second_reviewed_at", "invoice_date", "due_date", "export_batch", *_JSON_COLUMNS
     )  # fmt: skip
 
     def invoice_columns(
@@ -787,7 +792,7 @@ class Store:
             cur = conn.execute(
                 """UPDATE invoices SET status = ?, final_output = ?, edits = ?, reviewer = ?, reviewed_at = ?,
                    vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?,
-                   po_key = ?, due_date = ?, second_reviewer = NULL, second_reviewed_at = NULL
+                   currency = ?, po_key = ?, due_date = ?, second_reviewer = NULL, second_reviewed_at = NULL
                    WHERE id = ? AND status NOT IN (?, ?)""",
                 (
                     PENDING if needs_second else APPROVED,
@@ -800,6 +805,7 @@ class Store:
                     final_output.get("invoice_number"),
                     final_output.get("invoice_date"),
                     final_output.get("grand_total"),
+                    str(final_output.get("currency") or "").strip().upper() or None,
                     po_key(final_output.get("po_number") or ""),
                     _due(final_output, self.default_terms_days(), self.vendor_terms(key)),
                     invoice_id,

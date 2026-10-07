@@ -87,7 +87,7 @@ def page_spend() -> None:
     st.html(
         ui.tiles(
             [
-                ui.tile("Spend", f"{money(total)} {currency}", "payments", "blue", "net of recoverable tax"),
+                ui.tile("Spend", f"{total:,.0f} {currency}", "payments", "blue", "net of recoverable tax"),
                 ui.tile("Invoices", len(invoices), "receipt_long", "violet", f"average {money(total / len(invoices))}"),
                 ui.tile(
                     "Vendors",

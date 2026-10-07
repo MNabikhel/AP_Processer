@@ -24,7 +24,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .memory import vendor_key
-from .safe import csv_row, neutralise_sheet
+from .safe import csv_row, neutralise_sheet, xlsx_row
 
 FORMATS = {
     "xlsx": "Excel workbook: invoices, GL lines and a GL summary",
@@ -106,7 +106,9 @@ def line_rows(
                     "invoice_date": final.get("invoice_date"),
                     "currency": final.get("currency"),
                     "line": e.get("line_number") or "",
-                    "kind": "Expense" if e.get("kind") == "expense" else "Recoverable tax",
+                    "kind": "Expense"
+                    if e.get("kind") == "expense"
+                    else ("Non-recoverable tax" if e.get("non_recoverable_tax") else "Recoverable tax"),
                     "gl_code": e.get("gl_code"),
                     "gl_name": gl_names.get(e.get("gl_code") or "", ""),
                     "cost_center": e.get("cost_center") or "",
@@ -151,7 +153,7 @@ def _sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: list[dict[
     ws.title = title
     ws.append([label for _, label in columns])
     for r in rows:
-        ws.append([r.get(key) for key, _ in columns])
+        ws.append(xlsx_row([r.get(key) for key, _ in columns]))
     header_fill = PatternFill("solid", fgColor="E9EEF6")
     for cell in ws[1]:
         cell.font, cell.fill, cell.alignment = Font(bold=True), header_fill, Alignment(vertical="center")

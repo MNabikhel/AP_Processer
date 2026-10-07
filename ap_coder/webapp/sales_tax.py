@@ -57,9 +57,15 @@ def page_sales_tax() -> None:
         ui.tiles(
             [
                 ui.tile(
-                    "GST/HST to claim (ITCs)", itc, "account_balance", "blue", itc_hint or f"{invoices} invoice(s)"
+                    "GST/HST to claim",
+                    itc,
+                    "account_balance",
+                    "blue",
+                    "ITCs · " + (itc_hint or f"{invoices} invoice(s)"),
                 ),
-                ui.tile("QST to claim (ITRs)", itr, "account_balance", "violet", itr_hint),
+                ui.tile(
+                    "QST to claim", itr, "account_balance", "violet", "ITRs" + (f" · {itr_hint}" if itr_hint else "")
+                ),
                 ui.tile(
                     "Claims to check",
                     risky,
@@ -167,7 +173,8 @@ def _claims(report: taxreturn.Report, start: dt.date, end: dt.date) -> None:
             "Download (CSV)", taxreturn.to_csv(report), file_name=f"sales_tax_{start}_{end}.csv", mime="text/csv",
             icon=":material/download:", width="stretch", key="tax_download",
         )  # fmt: skip
-        only_risky = st.toggle(f"Only the claims to check ({len(at_risk)})", value=bool(at_risk), key="tax_risky")
+        risky = len({c.invoice_id for c in at_risk})
+        only_risky = st.toggle(f"Only the invoices to check ({risky})", value=bool(at_risk), key="tax_risky")
         shown = at_risk if only_risky else report.claims
         rows = [
             [

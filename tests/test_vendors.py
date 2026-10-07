@@ -157,3 +157,36 @@ def test_bank_account_without_approved_history_is_not_flagged(tmp_path, ground_t
     store.add_invoice(tmp_path / "a.pdf", {**ground_truth, "remit_bank_account": "004-12345-1234567"}, {})  # in review
     codes, _ = _codes(store, {**_variant(ground_truth, "C-2"), "remit_bank_account": "010-00999-99887766"}, reference)
     assert "VENDOR_BANK_CHANGED" not in codes
+
+
+@pytest.mark.parametrize(
+    "details, masked",
+    [
+        ("Inst 003 Transit 00012 Acct 1234", "…1234"),  # the account, not the longest number
+        ("004-12345-1234567", "…4567"),
+        ("DE89 3704 0044 0532 0130 00", "…3000"),
+        ("compte 123-4567 transit 00012", "…4567"),
+    ],
+)
+def test_masking_shows_the_account_number(details, masked):
+    from ap_coder.vendors import mask_account
+
+    assert mask_account(details) == masked
+
+
+def test_bank_details_without_leading_zeros_are_the_same_account():
+    from ap_coder.vendors import same_bank_account
+
+    assert same_bank_account("transit 00012, inst 003, account 1234567", "transit 12, institution 3, acct 1234567")
+    assert not same_bank_account("Inst 003 Transit 00012 Account 1234567", "Inst 003 Transit 00099 Account 1234567")
+
+
+def test_same_account_number_at_another_branch_is_explained(tmp_path, ground_truth, reference):
+    store = Store(tmp_path / "ap.db")
+    first = {**_variant(ground_truth, "D-1", date="2026-06-01"),
+             "remit_bank_account": "Institution 003 Transit 00012 Account 1234567"}  # fmt: skip
+    _approved(store, first, tmp_path, "a.pdf")
+    moved = {**_variant(ground_truth, "D-2"), "remit_bank_account": "Institution 003 Transit 00099 Account 1234567"}
+    _, report = _codes(store, moved, reference)
+    message = next(i.message for i in report.issues if i.code == "VENDOR_BANK_CHANGED")
+    assert "different bank or branch" in message

@@ -28,6 +28,15 @@ def csv_row(values: list[Any]) -> list[Any]:
     return [csv_cell(v) for v in values]
 
 
+_XLSX_ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")  # control characters Excel files cannot hold
+
+
+def xlsx_row(values: list[Any]) -> list[Any]:
+    """A row for an openpyxl sheet: control characters (from a damaged PDF's text) are dropped instead of
+    making the whole workbook fail."""
+    return [_XLSX_ILLEGAL.sub("", v) if isinstance(v, str) else v for v in values]
+
+
 def neutralise_sheet(ws: Any) -> None:
     """Store every formula-looking text cell of an openpyxl worksheet as plain text."""
     for row in ws.iter_rows():

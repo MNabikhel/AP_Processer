@@ -35,11 +35,13 @@ _TEXT = {
         "hello": "Hello,",
         "intro": "We are processing your invoice {number} dated {date} for {total} {currency}{po}. Before we can "
         "pay it, could you please help us with the following:",
+        "intro_credit": "We are processing your credit note {number} dated {date} for {total} {currency}{po}. "
+        "Before we can apply it, could you please help us with the following:",
         "po": ", purchase order {po}",
         "thanks": "Thank you,",
         "totals": "The amounts on the invoice do not add up{lines}. Please check them and send a corrected invoice.",
         "lines": " (line {lines})",
-        "tax_wrong": "The sales tax charged ({taxes}) does not look right for a supply in {province}. Please "
+        "tax_wrong": "The sales tax charged ({taxes}) does not look right for a supply {province}. Please "
         "confirm the taxes, or send a corrected invoice.",
         "no_tax": "No sales tax is charged. Please confirm that the supply is exempt or zero-rated, or send a "
         "corrected invoice with the tax.",
@@ -70,12 +72,14 @@ _TEXT = {
         "hello": "Bonjour,",
         "intro": "Nous traitons votre facture {number} du {date} au montant de {total} {currency}{po}. Avant de "
         "pouvoir la payer, pourriez-vous nous aider avec les points suivants :",
+        "intro_credit": "Nous traitons votre note de crédit {number} du {date} au montant de {total} {currency}{po}. "
+        "Avant de pouvoir l'appliquer, pourriez-vous nous aider avec les points suivants :",
         "po": ", bon de commande {po}",
         "thanks": "Merci,",
         "totals": "Les montants de la facture ne concordent pas{lines}. Veuillez les vérifier et nous envoyer une "
         "facture corrigée.",
         "lines": " (ligne {lines})",
-        "tax_wrong": "Les taxes facturées ({taxes}) ne semblent pas correspondre à une fourniture effectuée en "
+        "tax_wrong": "Les taxes facturées ({taxes}) ne semblent pas correspondre à une fourniture effectuée "
         "{province}. Veuillez confirmer les taxes ou nous envoyer une facture corrigée.",
         "no_tax": "Aucune taxe n'est facturée. Veuillez confirmer que la fourniture est exonérée ou détaxée, ou "
         "nous envoyer une facture corrigée avec les taxes.",
@@ -107,6 +111,35 @@ _TEXT = {
         "n'est requise; s'il s'agit d'une nouvelle facture, veuillez nous l'envoyer avec son propre numéro.",
     },
 }
+
+
+# Where a supply is made, as a sentence ends: "for a supply in Ontario", "une fourniture effectuée au Québec".
+_WHERE = {
+    ENGLISH: {
+        "AB": "in Alberta", "BC": "in British Columbia", "MB": "in Manitoba", "NB": "in New Brunswick",
+        "NL": "in Newfoundland and Labrador", "NS": "in Nova Scotia", "NT": "in the Northwest Territories",
+        "NU": "in Nunavut", "ON": "in Ontario", "PE": "in Prince Edward Island", "QC": "in Quebec",
+        "SK": "in Saskatchewan", "YT": "in Yukon", "OUTSIDE_CANADA": "outside Canada",
+    },
+    FRENCH: {
+        "AB": "en Alberta", "BC": "en Colombie-Britannique", "MB": "au Manitoba", "NB": "au Nouveau-Brunswick",
+        "NL": "à Terre-Neuve-et-Labrador", "NS": "en Nouvelle-Écosse", "NT": "aux Territoires du Nord-Ouest",
+        "NU": "au Nunavut", "ON": "en Ontario", "PE": "à l'Île-du-Prince-Édouard", "QC": "au Québec",
+        "SK": "en Saskatchewan", "YT": "au Yukon", "OUTSIDE_CANADA": "hors du Canada",
+    },
+}  # fmt: skip
+_TAX_NAMES = {FRENCH: {"GST": "TPS", "HST": "TVH", "PST": "TVP", "QST": "TVQ", "OTHER": "autre taxe"}}
+
+
+def _amount(value: float | None, language: str) -> str:
+    """1,234.50 in English, 1 234,50 in French."""
+    text = f"{float(value or 0):,.2f}"
+    return text.replace(",", " ").replace(".", ",") if language == FRENCH else text
+
+
+def _rate(rate: float, language: str) -> str:
+    text = f"{rate * 100:g}"
+    return f"{text.replace('.', ',')} %" if language == FRENCH else f"{text}%"
 
 
 @dataclass
@@ -163,11 +196,14 @@ def points(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLIS
     if codes & {"QST_NUMBER_MISSING", "QST_NUMBER_FORMAT"}:
         out.append(t["qst_number"])
     if codes & _TAX_WRONG:
+        names = _TAX_NAMES.get(language, {})
         taxes = ", ".join(
-            f"{tl.get('tax_type')} {float(tl.get('rate') or 0) * 100:g}%" for tl in coding.get("tax_lines") or []
+            f"{names.get(str(tl.get('tax_type')), tl.get('tax_type'))} {_rate(float(tl.get('rate') or 0), language)}"
+            for tl in coding.get("tax_lines") or []
         )
-        province = coding.get("ship_to_province") or coding.get("supplier_province") or "?"
-        out.append(t["tax_wrong"].format(taxes=taxes or "—", province=province))
+        province = coding.get("ship_to_province") or coding.get("supplier_province") or ""
+        where = _WHERE[language].get(province, "")
+        out.append(t["tax_wrong"].format(taxes=taxes or "—", province=where).replace(" .", ".").replace("  ", " "))
     if "NO_TAX_CHARGED" in codes:
         out.append(t["no_tax"])
     simple = {"PO_UNKNOWN": "po_unknown", "PO_CLOSED": "po_closed", "PO_VENDOR_MISMATCH": "po_vendor",
@@ -186,7 +222,7 @@ def points(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLIS
             continue
         seen.add((code, n))
         li = lines_by_number.get(n) or {}
-        price = f"{float(li.get('unit_price') or 0):,.2f}"
+        price = _amount(li.get("unit_price"), language)
         out.append(t[keys[code]].format(line=n or "?", item=_short(li.get("description")), price=price, po=po))
     if "DUE_BEFORE_INVOICE" in codes:
         out.append(t["due_before"].format(due=coding.get("due_date") or "", date=coding.get("invoice_date") or ""))
@@ -198,10 +234,9 @@ def draft(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLISH
     asks = points(coding, issues, language)
     number = coding.get("invoice_number") or "?"
     po = (coding.get("po_number") or "").strip()
-    total = f"{float(coding.get('grand_total') or 0):,.2f}"
-    if language == FRENCH:  # 1 234,56 in French
-        total = total.replace(",", " ").replace(".", ",")
-    intro = t["intro"].format(
+    grand_total = float(coding.get("grand_total") or 0)
+    total = _amount(abs(grand_total), language)
+    intro = t["intro_credit" if grand_total < 0 else "intro"].format(
         number=number, date=coding.get("invoice_date") or "?", total=total, currency=coding.get("currency") or "",
         po=t["po"].format(po=po) if po else "",
     )  # fmt: skip
@@ -232,11 +267,6 @@ _STATEMENT = {
         "dated": " du {date}",
     },
 }
-
-
-def _amount(value: float | None, language: str) -> str:
-    text = f"{float(value or 0):,.2f}"
-    return text.replace(",", " ").replace(".", ",") if language == FRENCH else text
 
 
 def statement_request(lines: Iterable[Any], language: str = ENGLISH, signature: str = "") -> Draft | None:

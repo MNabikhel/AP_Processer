@@ -54,22 +54,29 @@ def norm_tax_number(value: Any) -> str:
     return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
 
 
+_ACCOUNT_LABEL = re.compile(r"(?i)\b(?:account|acct|acc|a/c|compte|cpte)\b\D{0,12}?(\d[\d\s-]*\d|\d)")
+
+
 def bank_digits(value: Any) -> tuple[str, tuple[str, ...]]:
-    """(every digit in order, the sorted groups of 3+ digits): the same account written "004-12345-1234567"
-    or "Transit 12345, Institution 004, Account 1234567" compares equal on one of them."""
+    """(every digit in order, the sorted numbers without leading zeros): the same account written
+    "004-12345-1234567", "Transit 12345, Institution 004, Account 1234567" or "inst 4 transit 12345 ..."
+    compares equal on one of them."""
     runs = re.findall(r"\d+", str(value or ""))
-    return "".join(runs), tuple(sorted(r for r in runs if len(r) >= 3))
+    return "".join(runs), tuple(sorted(r.lstrip("0") or "0" for r in runs))
 
 
 def same_bank_account(a: Any, b: Any) -> bool:
     (digits_a, runs_a), (digits_b, runs_b) = bank_digits(a), bank_digits(b)
-    return bool(digits_a) and (digits_a == digits_b or (bool(runs_a) and runs_a == runs_b))
+    return bool(digits_a) and (digits_a == digits_b or runs_a == runs_b)
 
 
 def mask_account(value: Any) -> str:
-    """ "…4567": the last 4 digits of the longest number (the account), never the whole account."""
-    runs = re.findall(r"\d+", str(value or ""))
-    return f"…{max(runs, key=len)[-4:]}" if runs else "(none)"
+    """ "…4567": the last 4 digits of the account number (the number after "Account", else the end of the
+    details), never the whole account."""
+    text = str(value or "")
+    labelled = _ACCOUNT_LABEL.search(text)
+    digits = re.sub(r"\D", "", labelled.group(1)) if labelled else "".join(re.findall(r"\d+", text))
+    return f"…{digits[-4:]}" if digits else "(none)"
 
 
 def _date(value: Any) -> dt.date | None:
@@ -152,9 +159,12 @@ def vendor_findings(
     ]
     if bank_digits(account)[0] and known_accounts and not any(same_bank_account(account, k) for k in known_accounts):
         usual = sorted({mask_account(k) for k in known_accounts})
+        shown = mask_account(account)
+        if shown in usual:  # the same account number at another bank or branch
+            shown = f"{shown}, at a different bank or branch number"
         findings.append(
             (WARNING, "VENDOR_BANK_CHANGED",
-             f"the bank account to pay into ({mask_account(account)}) differs from the one on this vendor's "
+             f"the bank account to pay into ({shown}) differs from the one on this vendor's "
              f"approved invoices ({', '.join(usual)}): confirm by phone, on a number from your vendor file, not from "
              "the invoice, before paying or changing the vendor's banking")
         )  # fmt: skip

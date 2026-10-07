@@ -38,10 +38,10 @@ ITC, ITR = "GST/HST input tax credits (ITCs)", "QST input tax refunds (ITRs)"
 GROUPS = {"GST": ITC, "HST": ITC, "QST": ITR}
 DOCUMENT_THRESHOLD = 30.0  # below this total, no registration number is required on the invoice
 
-NO_GST_NUMBER = "No valid GST/HST number on the invoice"
-NO_QST_NUMBER = "No valid QST number on the invoice"
-FOREIGN = "Not in Canadian dollars: convert at the invoice date's rate"
-NOT_EXPORTED = "Approved, not exported to the ERP yet"
+NO_GST_NUMBER = "No valid GST/HST number"
+NO_QST_NUMBER = "No valid QST number"
+FOREIGN = "Foreign currency: convert to CAD"
+NOT_EXPORTED = "Not exported yet"
 RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, FOREIGN}
 
 
@@ -101,6 +101,14 @@ def _registration_issue(tax_type: str, doc: dict[str, Any]) -> tuple[str, str]:
     return number, "" if valid_gst_number(number) else NO_GST_NUMBER
 
 
+def province(tax_type: str, tax_line: dict[str, Any], doc: dict[str, Any]) -> str:
+    """The province a tax line belongs to: GST is federal (the same wherever the supply is), HST and QST
+    from the line or else the place of supply."""
+    if tax_type == "GST":
+        return ""
+    return str(tax_line.get("province") or doc.get("ship_to_province") or doc.get("supplier_province") or "")
+
+
 def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxTreatment] | None = None) -> Report:
     """The claimable tax on approved invoices dated from ``start`` to ``end`` (inclusive)."""
     treatments = treatments if treatments is not None else store.tax_treatments()
@@ -144,7 +152,7 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
                     currency,
                     total,
                     tax_type,
-                    str(tl.get("province") or doc.get("ship_to_province") or doc.get("supplier_province") or ""),
+                    province(tax_type, tl, doc),
                     float(tl.get("rate") or 0),
                     amount,
                     number,

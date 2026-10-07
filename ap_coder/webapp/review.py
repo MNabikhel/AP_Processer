@@ -445,7 +445,8 @@ def _today_strip(store: Store, invoices: list[dict[str, Any]]) -> None:
     today = dt.date.today().isoformat()
     soon = (dt.date.today() + dt.timedelta(days=DUE_SOON_DAYS)).isoformat()
     me = reviewer().strip().lower()
-    active = [i for i in invoices if i["status"] in (REVIEW, PARKED, PENDING)]
+    # Credit notes are not paid, so they are never past due (as on the queue cards).
+    active = [i for i in invoices if i["status"] in (REVIEW, PARKED, PENDING) and (i["grand_total"] or 0) > 0]
     overdue = sum(1 for i in active if i["due_date"] and i["due_date"] < today)
     due_soon = sum(1 for i in active if i["due_date"] and today <= i["due_date"] <= soon)
     follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
@@ -531,7 +532,11 @@ def _getting_started(store: Store) -> None:
 
 def _document_panel(inv: dict[str, Any], store: Store) -> None:
     path = Path(inv["source_path"])
-    pages = render_pages(str(path), path.stat().st_mtime) if path.exists() else []
+    try:
+        pages = render_pages(str(path), path.stat().st_mtime) if path.exists() else []
+    except Exception:  # a damaged file: the extracted text below still shows what was read
+        pages = []
+        st.warning("This file could not be shown (it may be damaged).", icon=":material/broken_image:")
     head, pager = st.columns([3, 2], vertical_alignment="center")
     head.markdown("#### :material/description: Document")
     page_no = 1

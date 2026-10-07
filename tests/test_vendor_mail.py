@@ -82,3 +82,23 @@ def test_statement_request():
     french = vendor_mail.statement_request(lines, vendor_mail.FRENCH)
     assert "- 103 du 2026-09-20 : 1 234,50" in french.body
     assert vendor_mail.statement_request(lines[:1]) is None
+
+
+def test_french_wording_numbers_and_taxes():
+    doc = _doc("montroyal_QC_TPS_TVQ_ACMR-2026-1187", po_number="4500012")
+    issues = [Issue("warning", "TAX_RATE_NONSTANDARD", "x"), Issue("warning", "PO_PRICE_OVER", "y", 1)]
+    body = vendor_mail.draft(doc, issues, vendor_mail.FRENCH).body
+    assert "TPS 5 %" in body and "TVQ 9,975 %" in body and "au Québec" in body and "GST" not in body
+    price = f"{doc['line_items'][0]['unit_price']:,.2f}".replace(",", " ").replace(".", ",")
+    assert f"facturée {price} l'unité" in body
+    english = vendor_mail.draft({**doc, "ship_to_province": "OUTSIDE_CANADA", "supplier_province": ""}, issues).body
+    assert "a supply outside Canada" in english and "OUTSIDE_CANADA" not in english
+
+
+def test_credit_note_wording():
+    doc = _doc("northwind_ON_HST_CN-2026-0047")
+    assert doc["grand_total"] < 0
+    body = vendor_mail.draft(doc, [Issue("error", "GST_HST_NUMBER_MISSING", "x")]).body
+    assert (
+        "credit note" in body and "apply it" in body and "pay it" not in body and "-" not in body.split("for ")[1][:3]
+    )

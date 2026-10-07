@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .reference_data import ReferenceData
-from .safe import neutralise_sheet
+from .safe import neutralise_sheet, xlsx_row
 from .store import APPROVED, FAILED, Store
 
 
@@ -39,7 +39,8 @@ def lines(store: Store, start: dt.date, end: dt.date) -> list[SpendLine]:
         if not (first <= date <= last):
             continue
         for e in doc.get("gl_distribution") or []:
-            if e.get("kind") != "expense":
+            # Expense lines, and non-recoverable tax posted to its own GL account (a cost too).
+            if e.get("kind") != "expense" and not e.get("non_recoverable_tax"):
                 continue
             out.append(
                 SpendLine(
@@ -125,7 +126,7 @@ def workbook(store: Store, reference: ReferenceData | None) -> bytes:
         return accounts.get(code, {}).get("category", "")
 
     columns = ("id", "status", "reviewer", "reviewed_at", "second_reviewer", "second_reviewed_at", "export_batch",
-               "created_at", "ai_output", "final_output")  # fmt: skip
+               "created_at", "due_date", "ai_output", "final_output")  # fmt: skip
     rows = [r for r in store.invoice_columns(columns) if r["status"] != FAILED]
     wb = Workbook()
     sheets = {
@@ -144,40 +145,44 @@ def workbook(store: Store, reference: ReferenceData | None) -> bytes:
     for r in rows:
         doc = r["final_output"] or r["ai_output"] or {}
         merged = {**doc, **{k: r[k] for k in r if k not in ("ai_output", "final_output")}}
-        ws_by_name["Invoices"].append([merged.get(k) for k, _ in INVOICE_COLUMNS])
+        ws_by_name["Invoices"].append(xlsx_row([merged.get(k) for k, _ in INVOICE_COLUMNS]))
         head = [r["id"], doc.get("vendor_name"), doc.get("invoice_number"), doc.get("invoice_date")]
         for li in doc.get("line_items") or []:
             gl = li.get("predicted_gl_code") or ""
             ws_by_name["Lines"].append(
-                [
-                    *head,
-                    li.get("line_number"),
-                    li.get("description"),
-                    li.get("quantity"),
-                    li.get("unit_price"),
-                    li.get("amount"),
-                    gl,
-                    gl_name(gl),
-                    category(gl),
-                    li.get("predicted_cost_center"),
-                    doc.get("currency"),
-                ]  # fmt: skip
+                xlsx_row(
+                    [
+                        *head,
+                        li.get("line_number"),
+                        li.get("description"),
+                        li.get("quantity"),
+                        li.get("unit_price"),
+                        li.get("amount"),
+                        gl,
+                        gl_name(gl),
+                        category(gl),
+                        li.get("predicted_cost_center"),
+                        doc.get("currency"),
+                    ]
+                )
             )
         for e in doc.get("gl_distribution") or []:
             gl = e.get("gl_code") or ""
             ws_by_name["Posting"].append(
-                [
-                    *head,
-                    e.get("kind"),
-                    gl,
-                    gl_name(gl),
-                    e.get("cost_center"),
-                    e.get("description"),
-                    e.get("net_amount"),
-                    e.get("non_recoverable_tax"),
-                    e.get("amount"),
-                    doc.get("currency"),
-                ]  # fmt: skip
+                xlsx_row(
+                    [
+                        *head,
+                        e.get("kind"),
+                        gl,
+                        gl_name(gl),
+                        e.get("cost_center"),
+                        e.get("description"),
+                        e.get("net_amount"),
+                        e.get("non_recoverable_tax"),
+                        e.get("amount"),
+                        doc.get("currency"),
+                    ]
+                )
             )
     for name, ws in ws_by_name.items():
         neutralise_sheet(ws)

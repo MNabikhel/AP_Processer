@@ -113,3 +113,12 @@ def test_pst_and_qst_to_self_assess(tmp_path):
     assert item.estimate == round(doc["subtotal"] * 0.06, 2)
     text = taxreturn.self_assessment_csv([item], *YEAR).decode("utf-8-sig")
     assert "X-1" in text and "6%" in text
+
+
+def test_gst_is_one_line_whatever_the_province(tmp_path):
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    _approved(store, tmp_path, "chinook_AB_GST_CCO-26-10418")
+    _approved(store, tmp_path, "montroyal_QC_TPS_TVQ_ACMR-2026-1187")
+    gst = [row for row in taxreturn.build(store, *YEAR).by_type() if row[0] == "GST"]
+    assert len(gst) == 1 and gst[0][1] == ""  # federal: not split by province
