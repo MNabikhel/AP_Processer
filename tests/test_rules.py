@@ -127,3 +127,15 @@ def test_the_same_rule_twice_is_saved_once(tmp_path):
     store.save_coding_rules([Rule("Purolator", "", "5200"), Rule("Purolator", "", "5200")])
     store.save_coding_rules(store.coding_rules() + [Rule("Purolator", "", "5200")])
     assert len(store.coding_rules()) == 1
+
+
+def test_accuracy_is_measured_on_the_ais_own_answer(tmp_path, ground_truth):
+    store = Store(tmp_path / "r.db")
+    coded, changes = rules.apply(InvoiceCoding.model_validate(ground_truth), [Rule("", "delivery", "6900")])
+    output = coded.to_output()
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", output, {}, meta={"rules_applied": changes})
+    store.approve_invoice(invoice_id, output, "Jane")  # the reviewer kept the rule's coding
+    rows = {r["line_number"]: r for r in store.feedback_rows()}
+    assert (rows[5]["suggested_gl"], rows[5]["final_gl"], rows[5]["outcome"]) == ("6800", "6900", "corrected")
+    assert rows[1]["outcome"] == "accepted"
+    assert "line_coding" not in store.get_invoice(invoice_id)["edits"]  # the reviewer changed nothing

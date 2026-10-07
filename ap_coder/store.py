@@ -773,6 +773,9 @@ class Store:
         key = vendor_key(vendor_name)
         now = _now()
         counts = {ACCEPTED: 0, CORRECTED: 0}
+        reviewer_changed = 0
+        # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
+        by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
@@ -780,6 +783,11 @@ class Store:
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
             if f_gl == UNASSIGNED:
                 continue  # not a coding decision: nothing to learn from it
+            if s_gl != f_gl or (s_cc or "") != (f_cc or ""):
+                reviewer_changed += 1
+            rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
+            if rule is not None and rule.get("gl_to") == s_gl:
+                s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
             outcome = ACCEPTED if (s_gl == f_gl and (s_cc or "") == (f_cc or "")) else CORRECTED
             counts[outcome] += 1
             feedback_rows.append(
@@ -802,7 +810,7 @@ class Store:
         edits = [f for f in _HEADER_FIELDS if str(ai.get(f, "")) != str(final_output.get(f, ""))]
         if _tax_signature(ai) != _tax_signature(final_output):
             edits.append("tax_lines")
-        if counts[CORRECTED]:
+        if reviewer_changed:  # what the reviewer changed (a rule's coding kept is not a change)
             edits.append("line_coding")
         if len(ai.get("line_items", [])) != len(final_output.get("line_items", [])):
             edits.append("line_count")

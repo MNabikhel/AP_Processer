@@ -392,7 +392,7 @@ FAQ: list[tuple[str, str]] = [
         "Yes: GL accounts & tax → Fixed rules. A rule names a vendor, words a line contains, or both, and the GL "
         "account (and cost center) to use. Rules are applied after the AI when an invoice is processed, and the "
         "review screen says which lines a rule changed. Vendors your team always coded to one account are "
-        "suggested as rules.",
+        "suggested as rules. The AI's accuracy is still measured on its own answer, not on the rule's.",
     ),
     (
         "What is the difference between errors, warnings and 'good to know'?",
