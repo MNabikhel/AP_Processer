@@ -34,10 +34,12 @@ from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSet
 from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
+PENDING = "pending_approval"  # approved once, over the approval limit: waiting for a second approver
+ACTIVE_STATUSES = (REVIEW, PENDING, APPROVED)  # invoices that count (for POs, recurring vendors...)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
@@ -162,6 +164,11 @@ class Store:
                 coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
                 if coding:
                     conn.execute("UPDATE invoices SET due_date = ? WHERE id = ?", (_due(coding), r["id"]))
+        if version < 6:  # second approval above the approval limit
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            for column in ("second_reviewer", "second_reviewed_at"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE invoices ADD COLUMN {column} TEXT")
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -563,7 +570,8 @@ class Store:
         with self._conn() as conn:
             return int(
                 conn.execute(
-                    "SELECT COUNT(*) FROM invoices WHERE status = ? AND reviewed_at >= ?", (APPROVED, since_iso)
+                    "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?",
+                    (APPROVED, PENDING, since_iso),
                 ).fetchone()[0]
             )
 
@@ -574,9 +582,11 @@ class Store:
         inv = self.get_invoice(invoice_id)
         if inv is None:
             raise KeyError(invoice_id)
-        if inv["status"] == APPROVED:
+        if inv["status"] in (APPROVED, PENDING):
             raise ValueError(f"invoice {invoice_id} is already approved")
         ai = inv["ai_output"] or {"line_items": []}
+        limit = self.approval_limit()
+        needs_second = bool(limit) and abs(float(final_output.get("grand_total") or 0)) > limit
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
@@ -620,9 +630,10 @@ class Store:
             cur = conn.execute(
                 """UPDATE invoices SET status = ?, final_output = ?, edits = ?, reviewer = ?, reviewed_at = ?,
                    vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?,
-                   po_key = ?, due_date = ? WHERE id = ? AND status != ?""",
+                   po_key = ?, due_date = ?, second_reviewer = NULL, second_reviewed_at = NULL
+                   WHERE id = ? AND status NOT IN (?, ?)""",
                 (
-                    APPROVED,
+                    PENDING if needs_second else APPROVED,
                     json.dumps(final_output),
                     json.dumps(edits),
                     reviewer,
@@ -636,6 +647,7 @@ class Store:
                     _due(final_output, self.default_terms_days()),
                     invoice_id,
                     APPROVED,
+                    PENDING,
                 ),  # fmt: skip
             )
             if cur.rowcount == 0:
@@ -643,7 +655,7 @@ class Store:
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
-                **({"bulk": True} if bulk else {}),
+                **({"bulk": True} if bulk else {}), **({"needs_second": True} if needs_second else {}),
             })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
@@ -652,6 +664,47 @@ class Store:
                 feedback_rows,
             )
         return counts
+
+    # --- Second approval -----------------------------------------------------------------------------
+
+    def approval_limit(self) -> float:
+        """Invoices above this amount need a second approver (0: no limit). Settings → Review."""
+        try:
+            return max(float(self.get_setting("approval_limit") or 0), 0.0)
+        except ValueError:
+            return 0.0
+
+    def final_approve(self, invoice_id: int, approver: str) -> None:
+        """The second approval: by someone other than the first approver. The invoice can then be exported."""
+        inv = self.get_invoice(invoice_id)
+        if inv is None or inv["status"] != PENDING:
+            raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+        if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
+            raise PermissionError("the second approval must come from someone other than the first approver")
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE invoices SET status = ?, second_reviewer = ?, second_reviewed_at = ? "
+                "WHERE id = ? AND status = ?",
+                (APPROVED, approver, _now(), invoice_id, PENDING),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+            self._log(conn, "final_approved", invoice_id, approver, {
+                "first_approver": inv["reviewer"], "total": (inv["final_output"] or {}).get("grand_total"),
+            })  # fmt: skip
+
+    def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:
+        """Return an invoice waiting for a second approval to the review queue. What was learned from the
+        first approval is withdrawn: it is learned again when the invoice is approved again."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL WHERE id = ? AND status = ?",
+                (REVIEW, invoice_id, PENDING),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+            self._log(conn, "sent_back", invoice_id, actor, {"reason": reason})
 
     # --- Purchase orders ---------------------------------------------------------------------------
 
@@ -739,8 +792,8 @@ class Store:
             billed: dict[str, dict[str, Any]] = {}
             for r in conn.execute(
                 "SELECT id, po_key, status, ai_output, final_output FROM invoices "
-                "WHERE po_key != '' AND status IN (?, ?)",
-                (REVIEW, APPROVED),
+                "WHERE po_key != '' AND status IN (?, ?, ?)",
+                ACTIVE_STATUSES,
             ):
                 coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
                 entry = billed.setdefault(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0})
@@ -769,8 +822,8 @@ class Store:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT id, status, invoice_number, invoice_date, ai_output, final_output FROM invoices "
-                "WHERE po_key = ? AND status IN (?, ?) ORDER BY id",
-                (key, REVIEW, APPROVED),
+                "WHERE po_key = ? AND status IN (?, ?, ?) ORDER BY id",
+                (key, *ACTIVE_STATUSES),
             ).fetchall()
         return [
             {
@@ -911,8 +964,8 @@ class Store:
                 dict(r)
                 for r in conn.execute(
                     "SELECT vendor_key, vendor_name, invoice_date, grand_total, currency FROM invoices "
-                    "WHERE vendor_key != '' AND status IN (?, ?)",
-                    (REVIEW, APPROVED),
+                    "WHERE vendor_key != '' AND status IN (?, ?, ?)",
+                    ACTIVE_STATUSES,
                 )
             ]
 

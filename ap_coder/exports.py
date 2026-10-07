@@ -34,7 +34,8 @@ INVOICE_COLUMNS = [
     ("payment_terms", "Terms"), ("due_date", "Due date"),
     ("currency", "Currency"), ("subtotal", "Subtotal"), ("tax_total", "Tax"), ("grand_total", "Total"),
     ("supplier_province", "Supplier province"), ("ship_to_province", "Place of supply"),
-    ("reviewer", "Approved by"), ("reviewed_at", "Approved at"), ("file_name", "File"),
+    ("reviewer", "Approved by"), ("reviewed_at", "Approved at"), ("second_reviewer", "Second approver"),
+    ("file_name", "File"),
 ]  # fmt: skip
 LINE_COLUMNS = [
     ("batch", "Batch"), ("invoice_id", "AP Coder #"), ("vendor_name", "Vendor"), ("invoice_number", "Invoice #"),
@@ -58,6 +59,7 @@ def invoice_rows(invoices: list[dict[str, Any]], batch: int | str = "") -> list[
                 "invoice_id": inv["id"],
                 "reviewer": inv.get("reviewer"),
                 "reviewed_at": (inv.get("reviewed_at") or "").replace("T", " "),
+                "second_reviewer": inv.get("second_reviewer") or "",
                 "file_name": inv.get("file_name"),
             }  # fmt: skip
         )

@@ -157,7 +157,11 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
                 f"#{i['id']}",
                 esc(i["invoice_number"] or ""),
                 esc(i["invoice_date"] or ""),
-                ui.pill("Approved", "ok", "check") if i["status"] == "approved" else ui.pill("In review", "warn"),
+                ui.pill("Approved", "ok", "check")
+                if i["status"] == "approved"
+                else ui.pill("Second approval", "violet")
+                if i["status"] == "pending_approval"
+                else ui.pill("In review", "warn"),
                 money(i["coding"].get("subtotal")),
             ]
             for i in invoices

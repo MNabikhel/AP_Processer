@@ -19,7 +19,7 @@ from ap_coder.po import match_invoice, po_label
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
-from ap_coder.store import APPROVED, FAILED, REJECTED, REVIEW, Store
+from ap_coder.store import APPROVED, FAILED, PENDING, REJECTED, REVIEW, Store
 from ap_coder.suggest import suggest_gl
 from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
@@ -134,13 +134,19 @@ def page_review() -> None:
     if st.session_state.pop("celebrate", False):
         st.balloons()
 
-    tab_review, tab_approved, tab_other = st.tabs(
-        [
-            f":material/inbox: To review · {len(pending)}",
-            f":material/task_alt: Approved · {len(approved)}",
-            f":material/report: Failed / rejected · {len(invoices) - len(pending) - len(approved)}",
-        ]
-    )
+    awaiting = [i for i in invoices if i["status"] == PENDING]
+    labels = [f":material/inbox: To review · {len(pending)}"]
+    if awaiting or store.approval_limit():
+        labels.append(f":material/how_to_reg: Second approval · {len(awaiting)}")
+    labels += [
+        f":material/task_alt: Approved · {len(approved)}",
+        f":material/report: Failed / rejected · {len(invoices) - len(pending) - len(approved) - len(awaiting)}",
+    ]
+    tabs = st.tabs(labels)
+    tab_review, tab_approved, tab_other = tabs[0], tabs[-2], tabs[-1]
+    if len(tabs) == 4:
+        with tabs[1]:
+            _second_approval_tab(store, reference, awaiting)
     with tab_review:
         if not pending:
             with card("empty"):
@@ -271,6 +277,48 @@ def page_review() -> None:
                     delete_invoice(store, inv["id"])
                     notify("Deleted. The file moved to invoices/deleted.", ":material/delete:")
                     st.rerun()
+
+
+def _second_approval_tab(store: Store, reference: ReferenceData, awaiting: list[dict[str, Any]]) -> None:
+    limit = store.approval_limit()
+    st.caption(
+        (f"Invoices over {money(limit)} need a second approver before they can be exported. " if limit else "")
+        + "The second approver must be someone other than the first."
+    )
+    if not awaiting:
+        with card("second_empty"):
+            st.html(ui.empty_state("Nothing waiting", "Invoices over the approval limit appear here once approved."))
+        return
+    me = reviewer()
+    for inv in awaiting:
+        full = store.get_invoice(inv["id"]) or {}
+        final = full.get("final_output") or {}
+        with card(f"second_{inv['id']}"):
+            left, right = st.columns([3, 2], vertical_alignment="center")
+            left.html(
+                f"<div style='display:flex;gap:.7rem;align-items:center'>{ui.avatar(inv['vendor_name'] or '')}"
+                f"<div><b>{esc(inv['vendor_name'])}</b> · {esc(inv['invoice_number'])}<div class='apc-muted'>"
+                f"{money(inv['grand_total'])} {esc(inv['currency'])} · approved by {esc(inv['reviewer'])} "
+                f"{esc(ui.time_ago(inv['reviewed_at']))}</div></div></div>"
+            )
+            same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold()
+            buttons = right.container(horizontal=True, horizontal_alignment="right")
+            if buttons.button(
+                "Final approval", type="primary", icon=":material/how_to_reg:", key=f"second_ok_{inv['id']}",
+                disabled=same, help="You approved it first: someone else gives the second approval" if same else None,
+            ):  # fmt: skip
+                store.final_approve(inv["id"], me)
+                notify(f"{inv['vendor_name']} approved. It is ready to export.", ":material/how_to_reg:")
+                st.rerun()
+            with buttons.popover("Send back", icon=":material/undo:"):
+                reason = st.text_input("Why", key=f"second_reason_{inv['id']}", placeholder="e.g. wrong cost center")
+                if st.button("Send back to the queue", key=f"second_back_{inv['id']}"):
+                    store.send_back(inv["id"], me, reason)
+                    notify("Sent back to the review queue.", ":material/undo:")
+                    st.rerun()
+            with st.expander("GL posting and history", icon=":material/account_balance:"):
+                _distribution_table(final, reference, final.get("currency", ""))
+                st.html(history_html(store.events(inv["id"])))
 
 
 def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
@@ -758,6 +806,8 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 key=f"{key}_approve", shortcut="Ctrl+Enter",
             ):  # fmt: skip
                 counts = store.approve_invoice(invoice_id, output, reviewer())
+                if (store.get_invoice(invoice_id) or {}).get("status") == PENDING:
+                    notify("Over the approval limit: it now waits for a second approver.", ":material/how_to_reg:")
                 total = sum(counts.values())
                 forget_drafts(key)
                 _advance(ids, position)

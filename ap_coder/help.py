@@ -350,6 +350,12 @@ FAQ: list[tuple[str, str]] = [
         "the moment you click. Everything else is skipped with the reason and still needs a person.",
     ),
     (
+        "What is the second approval?",
+        "If an approval limit is set (Settings → Review), an invoice above it is not ready to export after the "
+        "first approval: it waits in the Second approval tab until someone else approves it, or sends it back "
+        "to the queue. The two names are recorded in the Activity log.",
+    ),
+    (
         "How do I get approved invoices into the ERP?",
         "On the Exports page, pick the approved invoices and export them as a batch (Excel or CSV). Each "
         "invoice goes out once. If the ERP import fails, undo the batch and export again.",

@@ -207,16 +207,27 @@ def review_tab() -> None:
     )
     store = get_store()
     with card("payment_settings"), st.form("payment_form", border=False):
-        st.markdown("#### :material/event_available: Payment")
+        st.markdown("#### :material/event_available: Approval and payment")
+        limit = st.number_input(
+            "Second approval for invoices over (0 = never)",
+            min_value=0.0, step=1000.0, value=store.approval_limit(), format="%.2f",
+            help="Above this amount, an approved invoice waits for a second, different approver before export.",
+        )  # fmt: skip
         days = st.number_input(
             "Days to pay when an invoice prints no due date and no terms",
             min_value=0, max_value=180, step=1, value=store.default_terms_days(),
             help="Used to show when an invoice is due, to sort the queue by due date and in exports.",
         )  # fmt: skip
         if st.form_submit_button("Save", type="primary", icon=":material/save:"):
+            changed = []
             if int(days) != store.default_terms_days():
                 store.set_setting("default_terms_days", str(int(days)), actor=reviewer())
-                store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["default_terms_days"]})
+                changed.append("default_terms_days")
+            if float(limit) != store.approval_limit():
+                store.set_setting("approval_limit", f"{float(limit):.2f}", actor=reviewer())
+                changed.append("approval_limit")
+            if changed:
+                store.log_event("settings_changed", actor=reviewer(), detail={"keys": changed})
                 notify("Saved.", ":material/save:")
             else:
                 notify("Nothing changed.", ":material/save:")

@@ -12,7 +12,7 @@ from ap_coder.audit import ACTIONS, describe
 from ap_coder.webapp.common import card, get_store, history_html, show_toast
 
 GROUPS = {
-    "Invoices": ["processed", "failed", "approved", "rejected", "deleted", "exported"],
+    "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "rejected", "deleted", "exported"],
     "Setup": ["accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",
               "settings_changed"],
     "Learning": ["lessons_forgotten"],

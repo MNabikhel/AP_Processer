@@ -323,6 +323,7 @@ STATUS_PILLS = {
     "attention": ("Needs attention", "warn", "flag"),
     "review": ("In queue", "info", "inbox"),
     "approved": ("Approved", "ok", "check_circle"),
+    "pending_approval": ("Second approval", "violet", "how_to_reg"),
     "rejected": ("Rejected", "gray", "block"),
     "failed": ("Failed", "err", "error"),
 }
