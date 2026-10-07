@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from ap_coder import ui
+from ap_coder import ui, vendor_mail
 from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.extraction import ExtractionResult
 from ap_coder.help import help_for
@@ -587,6 +587,29 @@ def _reasons_html(coding: InvoiceCoding, ai: dict[str, Any], report: Any, refere
     return f"<div class='apc-reasons'>{''.join(rows)}</div>"
 
 
+def _ask_vendor(coding: InvoiceCoding, report: Any, key: str) -> None:
+    """A ready-to-send email asking the vendor for what the invoice is missing (never the fraud checks)."""
+    doc = coding.model_dump()
+    if not vendor_mail.points(doc, report.issues):
+        return
+    with st.expander("Ask the vendor", icon=":material/forward_to_inbox:"):
+        language = st.segmented_control(
+            "Language", list(vendor_mail.LANGUAGES), format_func=vendor_mail.LANGUAGES.get,
+            default=vendor_mail.suggested_language(doc), key=f"{key}_mail_lang",
+        ) or vendor_mail.ENGLISH  # fmt: skip
+        mail = vendor_mail.draft(doc, report.issues, language, reviewer())
+        st.caption("Subject")
+        st.code(mail.subject, language=None)
+        st.caption("Message (copy it with the icon at the top right, or open it in your email program)")
+        st.code(mail.body, language=None, wrap_lines=True)
+        st.link_button("Open in email", mail.mailto(), icon=":material/mail:")
+        st.caption(
+            "Only what the vendor can fix is asked. Internal checks (bank account or GST/HST number changed, "
+            "vendor on hold, unusual amount) are never mentioned: confirm those by phone, on a number from your "
+            "vendor file."
+        )
+
+
 def _ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
     changed = 0
     for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items)):
@@ -833,6 +856,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             + "</div>"
         )
         st.html(_checks_html(report))
+        _ask_vendor(coding, report, key)
     with (
         reasons_box,
         st.expander(

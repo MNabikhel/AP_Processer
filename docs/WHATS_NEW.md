@@ -23,6 +23,10 @@ folder.
 - **Bulk approval.** *Approve N clean…* approves, in one go, the invoices with no error, no warning
   and enough confidence. Each one is re-checked at that moment; anything no longer clean stays for a
   person.
+- **Ask the vendor.** When an invoice needs something from the vendor (a missing GST/HST number,
+  amounts that don't add up, a price above the PO, proof of delivery), the review screen drafts the
+  email in English or French, ready to copy or open in your email program. Internal fraud checks
+  are never mentioned.
 - **Split a line** across GL accounts or cost centers by percentage (shared costs).
 - **Park and notes.** *More → Park* sets aside an invoice waiting for information, with a follow-up
   date (the **Parked** tab); **Notes** on each invoice keep the team informed.

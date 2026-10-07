@@ -205,3 +205,15 @@ def test_sales_tax_page_with_the_demo(db):
     at.session_state["tax_end"] = dt.date(2026, 12, 31)
     _ok(at.run())
     _ok(at.toggle(key="tax_risky").set_value(False).run())
+
+
+def test_ask_the_vendor_on_the_review_screen(db):
+    store = Store(db)
+    load_sample_setup(store)
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", {**gt, "gst_hst_registration_number": ""}, {})
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = invoice_id
+    _ok(at.run())
+    bodies = [c.value for c in at.code if c.value.startswith("Hello")]
+    assert bodies and "GST/HST registration number" in bodies[0]
