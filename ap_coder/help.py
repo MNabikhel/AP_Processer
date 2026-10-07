@@ -61,6 +61,13 @@ CHECKS: dict[str, CheckHelp] = {
         "Vendors page. Fake invoices often imitate a real supplier with different details.",
         "Call the vendor on a number you already have (not the one on this invoice) to confirm before paying.",
     ),
+    "VENDOR_BANK_CHANGED": CheckHelp(
+        FRAUD, "Bank account changed",
+        "The bank account the invoice asks to be paid into differs from the one on this vendor's earlier approved "
+        "invoices. A message or invoice announcing new banking details is the most common way AP is defrauded.",
+        "Call the vendor on a number from your vendor file (not the one on this invoice or in the email) and "
+        "confirm the change before paying or updating the vendor's banking in the ERP.",
+    ),
     "AMOUNT_UNUSUAL": CheckHelp(
         FRAUD, "Unusually large",
         "The total is far above what this vendor usually bills.",

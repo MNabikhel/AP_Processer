@@ -20,8 +20,8 @@ from .store import APPROVED, PENDING, Store
 
 SIGNALS = {
     "DUPLICATE_INVOICE", "POSSIBLE_DUPLICATE_AMOUNT", "VENDOR_ON_HOLD", "VENDOR_TAX_NUMBER_CHANGED",
-    "AMOUNT_UNUSUAL", "PO_UNKNOWN", "PO_VENDOR_MISMATCH", "PO_PRICE_OVER", "PO_QTY_OVER", "PO_NOT_RECEIVED",
-    "PO_OVER_BILLED", "PO_CLOSED",
+    "VENDOR_BANK_CHANGED", "AMOUNT_UNUSUAL", "PO_UNKNOWN", "PO_VENDOR_MISMATCH", "PO_PRICE_OVER", "PO_QTY_OVER",
+    "PO_NOT_RECEIVED", "PO_OVER_BILLED", "PO_CLOSED",
 }  # fmt: skip
 SETUP_ACTIONS = (
     "accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",

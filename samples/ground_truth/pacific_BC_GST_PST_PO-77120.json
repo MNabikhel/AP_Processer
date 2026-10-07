@@ -10,6 +10,7 @@
   "ship_to_province": "BC",
   "gst_hst_registration_number": "555666777 RT0001",
   "qst_registration_number": "",
+  "remit_bank_account": "",
   "subtotal": 2726.0,
   "tax_lines": [
     {

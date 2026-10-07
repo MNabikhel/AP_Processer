@@ -10,13 +10,15 @@ from __future__ import annotations
 from typing import Any
 
 from .memory import pair_lines
+from .vendors import mask_account
 
 HEADER_LABELS = {
     "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "po_number": "PO #",
     "payment_terms": "terms", "due_date": "due date",
     "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",
-    "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "subtotal": "subtotal",
+    "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #",
+    "remit_bank_account": "bank account", "subtotal": "subtotal",
     "tax_total": "tax total", "grand_total": "total",
 }  # fmt: skip
 LINE_LABELS = {
@@ -81,6 +83,8 @@ def diff_coding(ai: dict[str, Any], final: dict[str, Any]) -> list[dict[str, str
     for field, label in HEADER_LABELS.items():
         before, after = ai.get(field), final.get(field)
         if _fmt(before) != _fmt(after):
+            if field == "remit_bank_account":  # the audit trail is downloadable: never the whole account
+                before, after = (mask_account(v) if v else "" for v in (before, after))
             changes.append({"what": label, "before": _fmt(before), "after": _fmt(after)})
     ai_lines, final_lines = ai.get("line_items") or [], final.get("line_items") or []
     matched = set()

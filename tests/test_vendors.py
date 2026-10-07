@@ -114,3 +114,46 @@ def test_expected_gst_number_from_the_vendor_master_wins(tmp_path, ground_truth,
     store.save_vendor("northwind it solutions", "Northwind IT Solutions Inc.", expected_gst="111111111RT0001")
     codes, _ = _codes(store, _variant(ground_truth, "A-2"), reference)
     assert codes.get("VENDOR_TAX_NUMBER_CHANGED") == "warning"
+
+
+@pytest.mark.parametrize(
+    "a, b, same",
+    [
+        ("004-12345-1234567", "Inst 004 Transit 12345 Account 1234567", True),
+        ("Transit 12345, Institution 004, Account 1234567", "004 12345 1234567", True),
+        ("00412345 1234567", "004-12345-1234567", True),
+        ("004-12345-1234567", "004-12345-7654321", False),
+        ("", "004-12345-1234567", False),
+    ],
+)
+def test_bank_accounts_compare_regardless_of_formatting(a, b, same):
+    from ap_coder.vendors import same_bank_account
+
+    assert same_bank_account(a, b) is same
+
+
+def test_changed_bank_account_is_flagged(tmp_path, ground_truth, reference):
+    from ap_coder.vendors import mask_account
+
+    store = Store(tmp_path / "ap.db")
+    first = {**_variant(ground_truth, "B-1", date="2026-06-01"), "remit_bank_account": "004-12345-1234567"}
+    _approved(store, first, tmp_path, "a.pdf")
+    codes, report = _codes(
+        store, {**_variant(ground_truth, "B-2"), "remit_bank_account": "010 00999 99887766"}, reference
+    )
+    assert codes.get("VENDOR_BANK_CHANGED") == "warning"
+    message = next(i.message for i in report.issues if i.code == "VENDOR_BANK_CHANGED")
+    assert "…7766" in message and "…4567" in message and "99887766" not in message  # never the whole account
+    reformatted = {**_variant(ground_truth, "B-3"), "remit_bank_account": "Inst 004 Transit 12345 Acct 1234567"}
+    same, _ = _codes(store, reformatted, reference)
+    assert "VENDOR_BANK_CHANGED" not in same
+    none, _ = _codes(store, _variant(ground_truth, "B-4"), reference)
+    assert "VENDOR_BANK_CHANGED" not in none  # no bank details printed: nothing to compare
+    assert mask_account("") == "(none)"
+
+
+def test_bank_account_without_approved_history_is_not_flagged(tmp_path, ground_truth, reference):
+    store = Store(tmp_path / "ap.db")
+    store.add_invoice(tmp_path / "a.pdf", {**ground_truth, "remit_bank_account": "004-12345-1234567"}, {})  # in review
+    codes, _ = _codes(store, {**_variant(ground_truth, "C-2"), "remit_bank_account": "010-00999-99887766"}, reference)
+    assert "VENDOR_BANK_CHANGED" not in codes

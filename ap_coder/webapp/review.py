@@ -694,11 +694,15 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             header["gst_hst_registration_number"] = text(c1, "Supplier GST/HST #", "gst_hst_registration_number")
             header["qst_registration_number"] = text(c2, "Supplier QST #", "qst_registration_number")
             header["po_number"] = text(c3, "PO #", "po_number", help="Purchase order the invoice quotes, if any")
-            c1, c2 = st.columns([2, 1])
+            c1, c2, c3 = st.columns([1.3, 1, 1.7])
             header["payment_terms"] = text(c1, "Payment terms", "payment_terms", placeholder="e.g. Net 30, 2/10 Net 30")
             header["due_date"] = text(
                 c2, "Due date", "due_date", placeholder="YYYY-MM-DD",
                 help="Only if printed; otherwise it comes from the terms",
+            )  # fmt: skip
+            header["remit_bank_account"] = text(
+                c3, "Pay into (bank account)", "remit_bank_account",
+                help="The bank details printed for payment, if any: compared with this vendor's earlier invoices",
             )  # fmt: skip
             c1, c2, c3 = st.columns(3)
             header["subtotal"] = amount(c1, "Subtotal", "subtotal")
@@ -1273,7 +1277,8 @@ EDIT_LABELS = {
     "payment_terms": "terms", "due_date": "due date",
     "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",
-    "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "subtotal": "subtotal",
+    "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #",
+    "remit_bank_account": "bank account", "subtotal": "subtotal",
     "tax_total": "tax total", "grand_total": "total",
 }  # fmt: skip
 

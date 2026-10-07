@@ -17,7 +17,7 @@ An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
    - supplier registration numbers are present
    - possible duplicate invoices (also under another vendor name, or already in the ERP's invoice
      register), and vendor fraud signals (vendor
-     not in the ERP's vendor master, on hold, changed GST/HST number, unusual amount, same amount
+     not in the ERP's vendor master, on hold, changed GST/HST number or bank account, unusual amount, same amount
      under another number)
    - purchase order match: price, quantity ordered and received, lines not on the PO, PO total
    - payment terms and due dates, early-payment discounts

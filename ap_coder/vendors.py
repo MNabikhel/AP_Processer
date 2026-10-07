@@ -15,6 +15,8 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * VENDOR_NOT_IN_MASTER (warning): a vendor master was imported from the ERP and this vendor is not in it
   (by name or GST/HST number)
 * VENDOR_MATCHED_BY_TAX_NUMBER (info): not found by name, but the GST/HST number belongs to a master vendor
+* VENDOR_BANK_CHANGED (warning): the bank account to pay into differs from the one on this vendor's approved
+  invoices, the most common payment fraud (a fake "our banking details have changed")
 """
 
 from __future__ import annotations
@@ -50,6 +52,24 @@ def norm_invoice_number(value: Any) -> str:
 
 def norm_tax_number(value: Any) -> str:
     return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
+
+
+def bank_digits(value: Any) -> tuple[str, tuple[str, ...]]:
+    """(every digit in order, the sorted groups of 3+ digits): the same account written "004-12345-1234567"
+    or "Transit 12345, Institution 004, Account 1234567" compares equal on one of them."""
+    runs = re.findall(r"\d+", str(value or ""))
+    return "".join(runs), tuple(sorted(r for r in runs if len(r) >= 3))
+
+
+def same_bank_account(a: Any, b: Any) -> bool:
+    (digits_a, runs_a), (digits_b, runs_b) = bank_digits(a), bank_digits(b)
+    return bool(digits_a) and (digits_a == digits_b or (bool(runs_a) and runs_a == runs_b))
+
+
+def mask_account(value: Any) -> str:
+    """ "…4567": the last 4 digits of the longest number (the account), never the whole account."""
+    runs = re.findall(r"\d+", str(value or ""))
+    return f"…{max(runs, key=len)[-4:]}" if runs else "(none)"
 
 
 def _date(value: Any) -> dt.date | None:
@@ -124,6 +144,20 @@ def vendor_findings(
                 f"({', '.join(sorted(known))}); confirm with the vendor before paying",
             )
         )
+
+    # Bank account to pay into, compared with the ones on this vendor's approved invoices.
+    account = coding.remit_bank_account
+    known_accounts = [
+        h["bank_account"] for h in history if h["status"] == "approved" and bank_digits(h["bank_account"])[0]
+    ]
+    if bank_digits(account)[0] and known_accounts and not any(same_bank_account(account, k) for k in known_accounts):
+        usual = sorted({mask_account(k) for k in known_accounts})
+        findings.append(
+            (WARNING, "VENDOR_BANK_CHANGED",
+             f"the bank account to pay into ({mask_account(account)}) differs from the one on this vendor's "
+             f"approved invoices ({', '.join(usual)}): confirm by phone, on a number from your vendor file, not from "
+             "the invoice, before paying or changing the vendor's banking")
+        )  # fmt: skip
 
     total, currency = coding.grand_total, coding.currency
     same_currency = [h for h in history if (h["currency"] or "") == currency and h["grand_total"] is not None]

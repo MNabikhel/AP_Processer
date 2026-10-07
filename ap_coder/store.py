@@ -98,8 +98,8 @@ CREATE TABLE IF NOT EXISTS erp_invoices (
 _HEADER_FIELDS = (
     "vendor_name", "invoice_number", "invoice_date", "po_number", "payment_terms", "due_date", "currency",
     "supplier_province",
-    "ship_to_province", "gst_hst_registration_number", "qst_registration_number", "subtotal", "tax_total",
-    "grand_total",
+    "ship_to_province", "gst_hst_registration_number", "qst_registration_number", "remit_bank_account",
+    "subtotal", "tax_total", "grand_total",
 )  # fmt: skip
 
 
@@ -1209,7 +1209,7 @@ class Store:
         return row[0] if row else ""
 
     def vendor_invoices(self, key: str) -> list[dict[str, Any]]:
-        """This vendor's invoices (newest first) with the GST/HST number each one carried."""
+        """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried."""
         with self._conn() as conn:
             rows = [
                 dict(r)
@@ -1225,6 +1225,7 @@ class Store:
             doc = json.loads(r.pop("final_output") or "null") or json.loads(r.pop("ai_output", None) or "null") or {}
             r.pop("ai_output", None)
             r["gst_hst_number"] = doc.get("gst_hst_registration_number") or ""
+            r["bank_account"] = doc.get("remit_bank_account") or ""
         return rows
 
     def vendor_invoice_dates(self) -> list[dict[str, Any]]:
