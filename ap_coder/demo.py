@@ -73,7 +73,10 @@ DEMO_INVOICES = [
     ),
     DemoInvoice(
         "harbourview_NS_HST_HPS-2026-0347", 0.9,
-        [Mistake(3, "predicted_cost_center", "CC200", "Professional fees are charged to Finance.")],
+        [
+            Mistake(3, "predicted_cost_center", "CC200", "Professional fees are charged to Finance."),
+            Mistake(4, "predicted_gl_code", "UNASSIGNED", "Disbursements could be several accounts; not sure."),
+        ],
     ),
     DemoInvoice("prairie_SK_GST_PST_PNS-104882", 0.93),
     DemoInvoice("northwind_ON_HST_CN-2026-0047", 0.94),

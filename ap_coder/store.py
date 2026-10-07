@@ -880,6 +880,18 @@ class Store:
             r["gst_hst_number"] = doc.get("gst_hst_registration_number") or ""
         return rows
 
+    def vendor_invoice_dates(self) -> list[dict[str, Any]]:
+        """Vendor, date and total of every invoice in review or approved (for ``recurring.detect``)."""
+        with self._conn() as conn:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT vendor_key, vendor_name, invoice_date, grand_total, currency FROM invoices "
+                    "WHERE vendor_key != '' AND status IN (?, ?)",
+                    (REVIEW, APPROVED),
+                )
+            ]
+
     def has_other_vendors(self, key: str) -> bool:
         with self._conn() as conn:
             row = conn.execute(

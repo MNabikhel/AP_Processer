@@ -20,6 +20,7 @@ from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import APPROVED, FAILED, REJECTED, REVIEW, Store
+from ap_coder.suggest import suggest_gl
 from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.webapp.common import (
     INVOICE_DIR,
@@ -605,6 +606,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         )  # fmt: skip
         reasons_box = st.container()
     po_box = st.container()  # the purchase order match, once the edits are valid
+    suggest_box = st.container()  # GL suggestions for lines without a usable GL account
 
     tax_col, tax_check_col = st.container(), st.container()  # full width: every column readable at 1366px
     with tax_col, card("tax"):
@@ -682,6 +684,14 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         ),
     ):
         st.html(_reasons_html(coding, ai, report, reference))
+    uncoded_lines = [
+        li
+        for li in coding.line_items
+        if li.predicted_gl_code == UNASSIGNED or reference.chart_of_accounts.get(li.predicted_gl_code) is None
+    ]
+    if uncoded_lines:
+        with suggest_box:
+            _suggestion_card(store, reference, coding, uncoded_lines, edited_lines, key)
     if coding.po_number.strip():
         with po_box:
             _po_card(store, coding, invoice_id, edited_lines, key)
@@ -813,6 +823,39 @@ def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines:
             replace_editor(f"{key}_lines", updated)
             notify(f"Applied the PO's coding to {len(differs)} line(s).", ":material/auto_fix_high:")
             st.rerun()
+
+
+def _suggestion_card(
+    store: Store, reference: ReferenceData, coding: InvoiceCoding, lines: list[Any], edited_lines: pd.DataFrame,
+    key: str,
+) -> None:  # fmt: skip
+    """One-click GL accounts for lines the AI could not code, from past decisions and the account list."""
+    feedback = store.feedback_rows()
+    found = [(li, suggest_gl(li.description, coding.vendor_name, feedback, reference)) for li in lines]
+    found = [(li, s) for li, s in found if s]
+    if not found:
+        return
+    with card("suggest"):
+        st.markdown("#### :material/lightbulb: Suggested GL accounts")
+        st.caption("From how similar lines were coded before and from your GL account descriptions.")
+        for li, suggestions in found:
+            st.html(f"<div style='margin:.3rem 0 .1rem'><b>Line {li.line_number}</b> "
+                    f"<span class='apc-muted'>{esc(li.description)}</span></div>")  # fmt: skip
+            row = st.container(horizontal=True, gap="small")
+            for s in suggestions:
+                label = f"{s.gl_code} · {gl_name(reference, s.gl_code) or s.gl_code}"
+                if row.button(label, key=f"{key}_sugg_{li.line_number}_{s.gl_code}", icon=":material/add_task:",
+                              help="; ".join(s.reasons).capitalize()):  # fmt: skip
+                    updated = edited_lines.copy()
+                    at = updated["line_number"] == li.line_number
+                    updated.loc[at, "predicted_gl_code"] = s.gl_code
+                    blank_cc = li.predicted_cost_center in ("", UNASSIGNED)
+                    if s.cost_center and blank_cc and reference.cost_centers is not None:
+                        updated.loc[at, "predicted_cost_center"] = s.cost_center
+                    replace_editor(f"{key}_lines", updated)
+                    notify(f"Line {li.line_number} coded to GL {s.gl_code}.", ":material/add_task:")
+                    st.rerun()
+            st.caption(" · ".join(f"{s.gl_code}: {s.reasons[0]}" for s in suggestions))
 
 
 def _fmt_qty(value: float | None) -> str:

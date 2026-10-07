@@ -8,7 +8,7 @@ from typing import Any
 
 import streamlit as st
 
-from ap_coder import ui
+from ap_coder import recurring, ui
 from ap_coder.store import Store
 from ap_coder.vendors import ACTIVE, ON_HOLD
 from ap_coder.webapp.common import (
@@ -126,6 +126,8 @@ def page_vendors() -> None:
         else:
             st.caption("No vendors match.")
 
+    _recurring_card(store)
+
     names = {v["vendor_key"]: v["vendor_name"] for v in shown or vendors}
     chosen = st.selectbox(
         "Open a vendor", list(names), format_func=lambda k: names[k], key="vendor_open", index=None,
@@ -133,6 +135,42 @@ def page_vendors() -> None:
     )  # fmt: skip
     if chosen:
         vendor_detail(store, next(v for v in vendors if v["vendor_key"] == chosen))
+
+
+def _recurring_card(store: Store) -> None:
+    found = recurring.detect(store.vendor_invoice_dates())
+    with card("recurring"):
+        st.markdown("#### :material/event_repeat: Recurring invoices")
+        if not found:
+            st.caption(
+                "Vendors who bill on a regular rhythm (weekly to quarterly, at least three times) appear here "
+                "with their next expected invoice, so a missing one is noticed before it is paid late."
+            )
+            return
+        late = [r for r in found if r.status == recurring.LATE]
+        if late:
+            st.caption(
+                f"{len(late)} expected invoice(s) not received, usually about "
+                f"{money(sum(r.typical_total for r in late))} in total: chase the vendor, and consider accruing "
+                "them at month-end."
+            )
+        pills = {
+            recurring.LATE: lambda r: ui.pill(f"{r.days_late} days late", "warn", "schedule"),
+            recurring.DUE_SOON: lambda r: ui.pill("Due soon", "info", "event"),
+            recurring.ON_TRACK: lambda r: ui.pill("On track", "ok", "check"),
+        }
+        rows = [
+            [
+                f"<b>{esc(r.vendor_name)}</b>",
+                esc(r.cadence),
+                esc(r.last_date.isoformat()),
+                esc(r.next_date.isoformat()),
+                f"{money(r.typical_total)} <span class='apc-muted'>{esc(r.currency)}</span>",
+                pills[r.status](r),
+            ]
+            for r in found
+        ]
+        st.html(ui.table(["Vendor", "Bills", "Last invoice", "Next expected", "Usual amount", ""], rows, right=[4]))
 
 
 def vendor_detail(store: Store, v: dict[str, Any]) -> None:
