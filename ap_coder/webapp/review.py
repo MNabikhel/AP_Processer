@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from ap_coder import rules, stamp, ui, vendor_mail
+from ap_coder import recurring, rules, stamp, ui, vendor_mail
 from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.extraction import ExtractionResult
 from ap_coder.help import help_for
@@ -452,12 +452,21 @@ def _today_strip(store: Store, invoices: list[dict[str, Any]]) -> None:
     follow_ups = sum(1 for i in store.parked() if i.get("follow_up") and i["follow_up"] <= today)
     second = sum(1 for i in invoices if i["status"] == PENDING and (i["reviewer"] or "").strip().lower() != me)
     to_export = len(store.unexported_approved())
+    late = [r for r in recurring.detect(store.vendor_invoice_dates()) if r.status == recurring.LATE]
     pills = [
         ui.pill(f"{overdue} past due, not approved yet", "err", "alarm") if overdue else "",
         ui.pill(f"{due_soon} due within {DUE_SOON_DAYS} days", "warn", "schedule") if due_soon else "",
         ui.pill(f"{follow_ups} parked to follow up", "warn", "pause_circle") if follow_ups else "",
         ui.pill(f"{second} waiting for your second approval", "violet", "how_to_reg") if second else "",
         ui.pill(f"{to_export} approved, ready to export", "info", "ios_share") if to_export else "",
+        ui.pill(
+            f"{len(late)} regular invoice(s) late: {', '.join(r.vendor_name for r in late[:2])}"
+            + ("…" if len(late) > 2 else ""),
+            "gray",
+            "event_busy",
+        )
+        if late
+        else "",  # fmt: skip
     ]
     if any(pills):
         st.html(
