@@ -220,3 +220,22 @@ def test_credit_note_finds_the_invoice_it_credits(tmp_path, reference):
     assert codes.get("CREDIT_EXCEEDS_INVOICE") == "warning"
     codes, _ = _codes(store, {**invoice, "invoice_number": "NW-X"}, reference)
     assert not {c for c in codes if c.startswith("CREDIT_")}  # an invoice is not a credit note
+
+
+def test_several_credit_notes_together_exceed_the_invoice(tmp_path, reference):
+    import json
+
+    from .conftest import SAMPLES
+
+    store = Store(tmp_path / "ap.db")
+    invoice = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text())
+    _approved(store, invoice, tmp_path, "a.pdf")  # 18,017.85
+    for n in range(7):  # 7 x 2,316.50 = 16,215.50: still under the invoice
+        _approved(store, {**credit, "invoice_number": f"CN-{n}"}, tmp_path, f"c{n}.pdf")
+    codes, _ = _codes(store, {**credit, "invoice_number": "CN-7"}, reference)  # 18,532.00 in all
+    assert codes.get("CREDIT_EXCEEDS_INVOICE") == "warning"
+    first_credit = next(i["id"] for i in store.list_invoices() if i["invoice_number"] == "CN-0")
+    store.reject_invoice(first_credit, "Jane", "duplicate")  # a rejected credit does not count
+    codes, _ = _codes(store, {**credit, "invoice_number": "CN-7"}, reference)
+    assert "CREDIT_EXCEEDS_INVOICE" not in codes

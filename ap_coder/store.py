@@ -1389,6 +1389,7 @@ class Store:
             r.pop("ai_output", None)
             r["gst_hst_number"] = doc.get("gst_hst_registration_number") or ""
             r["bank_account"] = doc.get("remit_bank_account") or ""
+            r["original_invoice_number"] = doc.get("original_invoice_number") or ""
         return rows
 
     def vendor_invoice_dates(self) -> list[dict[str, Any]]:

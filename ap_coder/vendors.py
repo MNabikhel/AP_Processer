@@ -111,9 +111,17 @@ def _credit_note_findings(
     where = f"#{original['id']}, {original['status']}" if original.get("id") else original["status"]
     found = f"credits invoice {original['invoice_number']} ({where}, total {original['grand_total']:,.2f})"
     out = [(INFO, "CREDIT_NOTE_FOR", found)]
-    if abs(coding.grand_total) > (original["grand_total"] or 0) + 0.01:
+    # Earlier credit notes against the same invoice count too (not rejected ones).
+    earlier = sum(
+        abs(h["grand_total"] or 0) for h in history
+        if (h["grand_total"] or 0) < 0 and h["status"] not in ("rejected", "failed")
+        and norm_invoice_number(h.get("original_invoice_number") or "") == wanted
+    )  # fmt: skip
+    credited = abs(coding.grand_total) + earlier
+    if credited > (original["grand_total"] or 0) + 0.01:
+        with_earlier = f" with earlier credit notes ({credited:,.2f} in all)" if earlier else f" ({credited:,.2f})"
         out.append((WARNING, "CREDIT_EXCEEDS_INVOICE",
-                    f"the credit ({abs(coding.grand_total):,.2f}) is more than invoice {original['invoice_number']} "
+                    f"the credit{with_earlier} is more than invoice {original['invoice_number']} "
                     f"({original['grand_total']:,.2f}): check the amounts with the vendor"))  # fmt: skip
     return out
 
