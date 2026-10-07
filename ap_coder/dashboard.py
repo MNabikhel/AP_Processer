@@ -34,6 +34,7 @@ from ap_coder.webapp.purchase_orders import page_purchase_orders
 from ap_coder.webapp.review import page_review
 from ap_coder.webapp.sales_tax import page_sales_tax
 from ap_coder.webapp.settings import page_settings
+from ap_coder.webapp.spend import page_spend
 from ap_coder.webapp.statements import page_statements
 from ap_coder.webapp.vendors import page_vendors
 
@@ -51,6 +52,7 @@ PAGES.update(
         "purchase_orders": st.Page(page_purchase_orders, title="Purchase orders", icon=":material/shopping_cart:"),
         "accounts": st.Page(page_accounts, title="GL accounts & tax", icon=":material/account_tree:"),
         "learning": st.Page(page_learning, title="Learning & accuracy", icon=":material/insights:"),
+        "spend": st.Page(page_spend, title="Spend", icon=":material/donut_small:"),
         "insights": st.Page(page_insights, title="Insights", icon=":material/query_stats:"),
         "vendors": st.Page(page_vendors, title="Vendors", icon=":material/storefront:"),
         "activity": st.Page(page_activity, title="Activity", icon=":material/history:"),
@@ -69,7 +71,7 @@ with st.sidebar:
 
 NAV_SECTIONS = {
     "Work": ["review", "process", "exports", "statements", "month_end", "sales_tax"],
-    "Insight": ["insights", "learning", "vendors", "activity"],
+    "Insight": ["insights", "spend", "learning", "vendors", "activity"],
     "Setup": ["accounts", "purchase_orders", "settings", "help"],
 }
 st.navigation({section: [PAGES[k] for k in keys] for section, keys in NAV_SECTIONS.items()}, expanded=True).run()

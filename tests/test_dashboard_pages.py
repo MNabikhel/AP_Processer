@@ -30,6 +30,7 @@ PAGES = [
     ("statements", "page_statements"),
     ("month_end", "page_month_end"),
     ("sales_tax", "page_sales_tax"),
+    ("spend", "page_spend"),
 ]
 TIMEOUT = 90
 
@@ -228,3 +229,15 @@ def test_today_strip_on_the_queue(db):
         h.proto.body for h in at.get("html") if "<b style='color:#142033;margin-right:.2rem'>Today</b>" in h.proto.body
     ]
     assert today and "ready to export" in today[0]  # the demo's approved invoices are not exported yet
+
+
+def test_spend_page_and_data_download(db):
+    from ap_coder.demo import load_demo
+
+    load_demo(Store(db))
+    at = _page("spend", "page_spend")
+    at.session_state["spend_start"] = dt.date(2020, 1, 1)
+    at.session_state["spend_end"] = dt.date(2030, 12, 31)
+    _ok(at.run())
+    _ok(at.button(key="spend_prepare").click().run())
+    assert at.session_state["spend_xlsx"][0][:2] == b"PK"  # an xlsx (zip) file, ready to download

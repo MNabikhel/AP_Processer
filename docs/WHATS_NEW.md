@@ -83,6 +83,10 @@ folder.
 
 ## Know what happened
 
+- **Spend:** where the money goes, by month (coloured by GL category), GL account, vendor and cost
+  center, net of recoverable tax. *All invoice data (Excel)* gives every invoice, line and GL posting as
+  Excel tables for pivot tables or Power BI.
+
 - **Activity:** an audit trail of everything that changes data, with every change a reviewer made
   to the AI's coding; filterable and downloadable.
 - **Controls report** (on the Activity page) for internal audit: approvals that overrode an error,
