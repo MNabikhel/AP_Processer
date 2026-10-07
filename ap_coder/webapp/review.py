@@ -30,6 +30,7 @@ from ap_coder.webapp.common import (
     PAGES,
     TARGET_ACCURACY,
     approved_today,
+    by_currency,
     card,
     cc_label_map,
     demo_card,
@@ -397,12 +398,12 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
     candidates = clean_candidates(store)
     if len(candidates) < 2:
         return
-    total = sum(i["grand_total"] or 0 for i in candidates)
+    total = by_currency(candidates)  # per currency, never added together
     with card("bulk"):
         text, action = st.columns([3, 1.3], vertical_alignment="center")
         text.html(
             f"<div><b>{len(candidates)} invoices look clean</b> <span class='apc-muted'>· no errors or warnings, "
-            f"confidence above the threshold · {money(total)} in total</span></div>"
+            f"confidence above the threshold · {esc(total)} in total</span></div>"
         )
         with action.popover(f"Approve {len(candidates)} clean…", icon=":material/done_all:", width="stretch"):
             st.markdown(
