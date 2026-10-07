@@ -1215,36 +1215,38 @@ def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], posit
     """Reject / delete, kept in a menu so the main action stays obvious."""
     # Keyed per invoice, so the next invoice opens with the menu closed.
     with parent.popover("More", icon=":material/more_horiz:", key=f"{key}_more"):
-        st.markdown("**Park it** (waiting for information)")
-        why = st.text_input("Waiting for", key=f"{key}_park_reason", placeholder="e.g. buyer to confirm the price")
-        follow = st.date_input("Follow up on", value=None, key=f"{key}_park_date", min_value=dt.date.today())
-        if st.button("Park", key=f"{key}_park", icon=":material/pause_circle:", width="stretch",
-                     disabled=not why.strip()):  # fmt: skip
-            store.park_invoice(invoice_id, reviewer(), why, follow.isoformat() if follow else None)
-            _advance(ids, position)
-            notify(f"Invoice #{invoice_id} parked. It is in the Parked tab.", ":material/pause_circle:")
-            st.rerun()
-        st.divider()
-        st.markdown("**Reject this invoice**")
-        reason = st.text_input("Reason", key=f"{key}_reason", placeholder="e.g. not our invoice")
-        if st.button("Reject", key=f"{key}_reject", icon=":material/block:", width="stretch"):
-            store.reject_invoice(invoice_id, reviewer(), reason)
-            forget_drafts(key)
-            _advance(ids, position)
-            notify(f"Invoice #{invoice_id} rejected.", ":material/block:")
-            st.rerun()
-        st.divider()
-        st.markdown("**Remove from the queue**")
-        st.caption("Nothing is learned from a deleted invoice. Its file moves to `invoices/deleted`.")
-        sure = st.checkbox("Yes, delete this invoice", key=f"{key}_sure")
-        if st.button(
-            "Delete invoice", key=f"{key}_delete", icon=":material/delete:", width="stretch", disabled=not sure
-        ):
-            delete_invoice(store, invoice_id)
-            forget_drafts(key)
-            _advance(ids, position)
-            notify(f"Invoice #{invoice_id} deleted.", ":material/delete:")
-            st.rerun()
+        # One section at a time, so the menu fits on a laptop screen.
+        park_tab, reject_tab, delete_tab = st.tabs(["Park", "Reject", "Delete"])
+        with park_tab:
+            st.caption("Set it aside while waiting for information.")
+            why = st.text_input("Waiting for", key=f"{key}_park_reason", placeholder="e.g. buyer to confirm the price")
+            follow = st.date_input("Follow up on", value=None, key=f"{key}_park_date", min_value=dt.date.today())
+            if st.button("Park", key=f"{key}_park", icon=":material/pause_circle:", width="stretch",
+                         disabled=not why.strip()):  # fmt: skip
+                store.park_invoice(invoice_id, reviewer(), why, follow.isoformat() if follow else None)
+                _advance(ids, position)
+                notify(f"Invoice #{invoice_id} parked. It is in the Parked tab.", ":material/pause_circle:")
+                st.rerun()
+        with reject_tab:
+            st.caption("Not ours, or not to be paid. It can be reopened later.")
+            reason = st.text_input("Reason", key=f"{key}_reason", placeholder="e.g. not our invoice")
+            if st.button("Reject", key=f"{key}_reject", icon=":material/block:", width="stretch"):
+                store.reject_invoice(invoice_id, reviewer(), reason)
+                forget_drafts(key)
+                _advance(ids, position)
+                notify(f"Invoice #{invoice_id} rejected.", ":material/block:")
+                st.rerun()
+        with delete_tab:
+            st.caption("Nothing is learned from a deleted invoice. Its file moves to `invoices/deleted`.")
+            sure = st.checkbox("Yes, delete this invoice", key=f"{key}_sure")
+            if st.button(
+                "Delete invoice", key=f"{key}_delete", icon=":material/delete:", width="stretch", disabled=not sure
+            ):
+                delete_invoice(store, invoice_id)
+                forget_drafts(key)
+                _advance(ids, position)
+                notify(f"Invoice #{invoice_id} deleted.", ":material/delete:")
+                st.rerun()
 
 
 def delete_invoice(store: Store, invoice_id: int) -> None:
