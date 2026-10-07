@@ -114,7 +114,8 @@ folder.
 ## Setup and safety
 
 - **Settings page:** Azure connection with a live test, review behaviour, approval limit, default
-  payment days, backups (make, download, restore). Your name is kept per Windows user.
+  payment days, backups (make, download, restore, and a **second backup folder** such as OneDrive so
+  a lost computer does not lose the database). Your name is kept per Windows user.
 - **Your own tax-rate table:** a `canada_tax_rates.csv` in the data folder overrides the shipped
   rates and survives updates.
 - **Demo mode** with sample invoices, purchase orders and a vendor list (plus a sample vendor

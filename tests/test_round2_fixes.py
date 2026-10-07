@@ -57,3 +57,22 @@ def test_the_reviewers_currency_is_saved(tmp_path):
         conn.execute("UPDATE invoices SET currency = 'CAD'")
         conn.execute("UPDATE settings SET value = '11' WHERE key = 'schema_version'")
     assert Store(store.path).list_invoices()[0]["currency"] == "USD"
+
+
+def test_backups_are_copied_to_a_second_folder(tmp_path):
+    store = Store(tmp_path / "db" / "ap.db")
+    second = tmp_path / "onedrive"
+    assert store.copy_backup(store.backup_now()) is None  # not set up: nothing to do
+    store.set_setting("backup_copy_dir", str(second))
+    store.backup_now("manual")
+    assert store.get_setting("backup_copy_status").startswith("failed")  # the folder is not there (yet)
+    second.mkdir()
+    made = store.backup_now("manual")
+    assert (second / made.name).exists() and store.get_setting("backup_copy_status").startswith("ok")
+    store.backup_now("before-restore")
+    assert len(list(second.glob("*.db"))) == 1  # safety copies stay local
+    for n in range(16):  # daily copies there are pruned to the newest 14
+        (second / f"ap_coder-2020010{n % 10}-0000{n:02d}.db").write_bytes(b"x")
+    store.copy_backup(store.backup_now())
+    daily = [p for p in second.glob("ap_coder-*.db") if p.stem.count("-") == 2]
+    assert len(daily) == 14

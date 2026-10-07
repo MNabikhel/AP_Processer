@@ -13,6 +13,7 @@ import streamlit as st
 from ap_coder import __version__, paths, ui
 from ap_coder.doctor import FAIL, PASS, WARN, run_checks
 from ap_coder.envfile import clean_url, read_env, write_env
+from ap_coder.safe import md
 from ap_coder.store import Store
 from ap_coder.webapp.common import (
     DB_PATH,
@@ -291,6 +292,33 @@ def data_tab(store: Store) -> None:
             made = store.backup_now("manual", actor=reviewer())
             notify(f"Backed up to {made.name}.", ":material/backup:")
             st.rerun()
+        with st.form("backup_copy_form", border=False):
+            c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+            folder = c1.text_input(
+                "Also copy each backup to (optional)", store.get_setting("backup_copy_dir"),
+                placeholder=r"e.g. C:\Users\you\OneDrive - Company\AP Coder backups",
+                help="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose "
+                "the database. Only the backup copies go there; the database itself stays on this computer.",
+            )  # fmt: skip
+            if c2.form_submit_button("Save", icon=":material/save:", width="stretch"):
+                folder = folder.strip().strip('"')
+                if folder and not Path(folder).expanduser().is_dir():
+                    st.error("That folder does not exist (or is not reachable from this computer).")
+                else:
+                    store.set_setting("backup_copy_dir", folder, actor=reviewer())
+                    store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["backup_copy_dir"]})
+                    if folder:
+                        store.backup_now()  # a first copy straight away (backup_now copies it)
+                    notify("Backups will be copied there too." if folder else "Backups are kept on this computer only.",
+                           ":material/backup:")  # fmt: skip
+                    st.rerun()
+        status = store.get_setting("backup_copy_status")
+        if store.get_setting("backup_copy_dir") and status:
+            ok = status.startswith("ok")
+            st.caption(
+                (":material/check_circle: Last copy " if ok else ":material/error: Last copy ")
+                + md(status.split(" ", 1)[1] if " " in status else status)
+            )
         backups = store.list_backups()
         if not backups:
             st.caption("No backups yet.")

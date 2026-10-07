@@ -356,3 +356,14 @@ def test_vendors_page_with_the_demo(db):
     at = _ok(_page("vendors", "page_vendors").run())
     if vendor_workload(Store(db)):
         assert any("make work" in m.value for m in at.markdown)
+
+
+def test_settings_backup_copy_folder(db, tmp_path):
+    second = tmp_path / "onedrive"
+    second.mkdir()
+    at = _ok(_page("settings", "page_settings").run())
+    field = next(t for t in at.text_input if t.label.startswith("Also copy each backup"))
+    field.input(f'"{second}"')  # pasted with quotes, as Windows "Copy as path" gives it
+    submit = next(b for b in at.button if b.proto.is_form_submitter and b.proto.form_id.endswith("backup_copy_form"))
+    _ok(submit.click().run())
+    assert Store(db).get_setting("backup_copy_dir") == str(second) and list(second.glob("ap_coder-*.db"))

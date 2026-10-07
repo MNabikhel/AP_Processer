@@ -19,6 +19,7 @@ import datetime as dt
 import hashlib
 import json
 import re
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -1394,7 +1395,29 @@ class Store:
         made = self.backup_to(dest)
         if label == "manual":
             self.log_event("backup_made", actor=actor, detail={"file": made.name})
+        if label in ("", "manual"):
+            self.copy_backup(made)
         return made
+
+    def copy_backup(self, made: Path, keep: int = 14) -> Path | None:
+        """Copy a backup to the second location set in Settings (e.g. a OneDrive or network folder), keeping
+        its newest ``keep`` daily copies. A copy that fails (folder offline) is recorded, never raised: the
+        local backup is there either way."""
+        folder = self.get_setting("backup_copy_dir").strip()
+        if not folder:
+            return None
+        try:
+            target = Path(folder).expanduser()
+            if not target.is_dir():
+                raise OSError(f"folder not found: {target}")
+            copied = Path(shutil.copy2(made, target / made.name))
+            for old in sorted((p for p in target.glob("ap_coder-*.db") if p.stem.count("-") == 2), reverse=True)[keep:]:
+                old.unlink(missing_ok=True)
+        except OSError as exc:
+            self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {exc}")
+            return None
+        self.set_setting("backup_copy_status", f"ok {_now()[:16]}: {copied.name}")
+        return copied
 
     def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
         """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies."""
