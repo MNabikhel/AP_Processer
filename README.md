@@ -16,21 +16,23 @@ An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
    - QST is charged on the pre-GST amount
    - supplier registration numbers are present
    - possible duplicate invoices (also under another vendor name, or already in the ERP's invoice
-     register), and vendor fraud signals (vendor
-     not in the ERP's vendor master, on hold, changed GST/HST number or bank account, unusual amount, same amount
-     under another number)
+     register), and vendor fraud signals (vendor not in the ERP's vendor master, on hold, changed
+     GST/HST number or bank account, unusual amount, same amount under another number)
+   - credit notes: the invoice they credit is found, and a credit larger than it is flagged
    - purchase order match: price, quantity ordered and received, lines not on the PO, PO total
    - payment terms and due dates, early-payment discounts
-   - agreement with past reviewer decisions
+   - agreement with past reviewer decisions, and fixed coding rules set by AP
 4. **GL distribution:** posting lines that add up to the grand total:
    - recoverable GST/HST and QST go to their own receivable accounts
    - non-recoverable PST is added pro rata to the expense lines it applies to
 5. **Review dashboard and learning:** a local web app where AP reviews and approves each invoice.
    Every approved line is remembered as *confirmed* or *corrected* and shown to the AI on the next
    invoice from that vendor. Accuracy is tracked against the 90% target.
-6. **The rest of the AP cycle, locally:** second approval above a limit, export batches for the ERP,
-   vendor statement reconciliation, month-end accruals, an audit trail with a controls report, and
-   a business case from the pilot's own numbers.
+6. **The rest of the AP cycle, locally:** invoices taken out of saved emails, *Find an invoice* for
+   vendor calls, emails to vendors drafted for you, second approval above a limit, export batches
+   for the ERP with approved (stamped) PDFs, vendor statement reconciliation, month-end accruals, the
+   sales-tax claim and PST/QST self-assessment, spend analysis, a duplicate payment audit, an audit
+   trail with a controls report, and a business case from the pilot's own numbers.
 
 > **Just want to look around?** Install, start the dashboard and click *Load demo invoices*: ten
 > sample invoices from across Canada, sample purchase orders and a sample vendor list, with a few
