@@ -21,3 +21,6 @@ private/*
 /*.pdf
 /*.tif
 /*.tiff
+
+# Claude Code agent worktrees
+.claude/worktrees/
