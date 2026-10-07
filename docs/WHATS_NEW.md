@@ -70,7 +70,8 @@ folder.
 - **Exports:** approved invoices go to the ERP in batches, as an Excel workbook (invoices, GL lines,
   totals by GL), a CSV of GL lines, or a **custom CSV** laid out the way your ERP's import expects
   (columns, headers, fixed text, date format, separators). Each invoice goes out once; a batch can be
-  downloaded again or undone if the import failed.
+  downloaded again or undone if the import failed. **Approved PDFs**: each invoice with an APPROVED
+  stamp (who, when, batch) and a coding page, to attach in the ERP: per invoice, or a ZIP per batch.
 - **Vendor statements:** upload a vendor's statement of account and see what matches, what differs,
   what you never received and what is not on their statement, with the email asking for copies of
   the missing invoices ready to send.

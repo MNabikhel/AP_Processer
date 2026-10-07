@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from ap_coder import rules, ui, vendor_mail
+from ap_coder import rules, stamp, ui, vendor_mail
 from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.extraction import ExtractionResult
 from ap_coder.help import help_for
@@ -1359,6 +1359,11 @@ EDIT_LABELS = {
 }  # fmt: skip
 
 
+def gl_label_names(reference: ReferenceData) -> dict[str, str]:
+    return {row[reference.chart_of_accounts.key_column]: row.get("description", "") for row in
+            reference.chart_of_accounts.rows}  # fmt: skip
+
+
 def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> None:
     inv = store.get_invoice(invoice_id)
     final = inv["final_output"] or {}
@@ -1377,6 +1382,11 @@ def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> 
             + "</div></div></div>"
         )
         _distribution_table(final, reference, final.get("currency", ""))
+        st.download_button(
+            "Approved PDF", stamp.stamped_pdf(inv, gl_label_names(reference)), file_name=stamp.file_name(inv),
+            mime="application/pdf", icon=":material/approval:", key=f"approved_pdf_{invoice_id}",
+            help="The invoice with an APPROVED stamp and its coding page, to attach in the ERP or to file.",
+        )  # fmt: skip
         events = store.events(invoice_id)
         if events:
             with st.expander("History", icon=":material/history:"):

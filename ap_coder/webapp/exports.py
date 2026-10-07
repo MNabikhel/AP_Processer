@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from ap_coder import export_layout, exports, registers, ui
+from ap_coder import export_layout, exports, registers, stamp, ui
 from ap_coder.store import Store
 from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import (
@@ -292,7 +292,25 @@ def page_exports() -> None:
         data, name, mime = _batch_file(store, chosen_batch, fmt)
         c3.download_button("Download again", data, file_name=name, mime=mime, icon=":material/download:",
                            width="stretch", key="export_download_again")  # fmt: skip
-        with st.popover("Undo this batch…", icon=":material/undo:"):
+        pdfs, undo = st.columns([1, 1], vertical_alignment="center")
+        ready_zip = st.session_state.get("export_pdfs")
+        if ready_zip and ready_zip[0] == chosen_batch:
+            pdfs.download_button(
+                f"Download approved PDFs (batch {chosen_batch})", ready_zip[1],
+                file_name=f"ap_coder_batch_{chosen_batch}_approved_pdfs.zip", mime="application/zip",
+                icon=":material/download:", key="export_pdfs_download", type="primary",
+                on_click=lambda: st.session_state.pop("export_pdfs", None),
+            )  # fmt: skip
+        elif pdfs.button(
+            "Approved PDFs (ZIP)", icon=":material/approval:", key="export_pdfs_make",
+            help="Each invoice of the batch with an APPROVED stamp and its coding page: to attach in the ERP.",
+        ):  # fmt: skip
+            invoices = [store.get_invoice(i) for i in store.batch_invoice_ids(chosen_batch)]
+            with st.spinner("Stamping the invoices…"):
+                data = stamp.batch_zip([i for i in invoices if i], _gl_names(store))
+            st.session_state["export_pdfs"] = (chosen_batch, data)
+            st.rerun()
+        with undo.popover("Undo this batch…", icon=":material/undo:"):
             st.markdown(
                 f"Put the invoices of batch {chosen_batch} back in *Ready to export* (e.g. the ERP import failed). "
                 "The batch stays in this list, marked as undone."

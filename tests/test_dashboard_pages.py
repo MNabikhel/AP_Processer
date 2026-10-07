@@ -324,3 +324,25 @@ def test_duplicate_audit_on_the_activity_page(db):
     at = _ok(_page("activity", "page_activity").run())
     _ok(at.button(key="dupaudit_run").click().run())
     assert len(at.session_state["dupaudit"]) == 1
+
+
+def test_approved_pdfs_from_the_exports_page(db):
+    from ap_coder.demo import load_demo
+
+    store = Store(db)
+    load_demo(store)
+    at = _ok(_page("exports", "page_exports").run())
+    _ok(at.button(key="export_create").click().run())
+    _ok(at.button(key="export_pdfs_make").click().run())
+    batch, data = at.session_state["export_pdfs"]
+    assert batch == 1 and data[:2] == b"PK"
+
+
+def test_approved_invoice_view_offers_the_stamped_pdf(busy_db):
+    store, invoice_id = busy_db
+    gt = store.get_invoice(invoice_id)["ai_output"]
+    store.approve_invoice(invoice_id, gt, "Jane")
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    _ok(at.run())
+    keys = [getattr(b, "key", "") or b.proto.id for b in at.get("download_button")]  # in the Approved tab
+    assert any(f"approved_pdf_{invoice_id}" in k for k in keys)
