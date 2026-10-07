@@ -96,6 +96,22 @@ def _ai_output(demo: DemoInvoice, truth: dict[str, Any]) -> dict[str, Any]:
     return ai
 
 
+def _demo_meta(pdf: Path, truth: dict[str, Any]) -> dict[str, Any]:
+    """Processing metadata like a real run (typical token use for an invoice this size), so the Insights
+    page has realistic cost and timing figures in the demo."""
+    pages = 2 if "montroyal" in pdf.stem else 1
+    lines = len(truth.get("line_items", []))
+    return {
+        "demo": True, "source": str(pdf), "status": "ok",
+        "extraction": {"model_id": "demo", "page_count": pages},
+        "inference": {"model": "demo", "attempts": 1, "usage": {
+            "prompt_tokens": 3600 + 500 * pages, "cached_prompt_tokens": 2304,
+            "completion_tokens": 450 + 160 * lines, "total_tokens": 4050 + 500 * pages + 160 * lines,
+        }},
+        "timings_seconds": {"extraction": 3.1 + 1.4 * pages, "inference": 4.0 + 0.6 * lines},
+    }  # fmt: skip
+
+
 def is_demo(invoice: dict[str, Any]) -> bool:
     return bool((invoice.get("meta") or {}).get("demo"))
 
@@ -124,7 +140,7 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
             output,
             report.to_dict(),
             extraction_md=md_path.read_text(encoding="utf-8") if md_path.exists() else "",
-            meta={"demo": True, "source": str(pdf), "status": "ok", "extraction": {"model_id": "demo"}},
+            meta=_demo_meta(pdf, truth),
         )
         added += 1
         if demo.approved:

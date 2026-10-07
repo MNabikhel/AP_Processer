@@ -258,10 +258,8 @@ def table(headers: Sequence[str], rows: Sequence[Sequence[str]], right: Iterable
 
     body = "".join(f"<tr>{cells(r, 'td')}</tr>" for r in rows)
     foot_html = f"<tfoot><tr>{cells(foot, 'td')}</tr></tfoot>" if foot else ""
-    return (
-        f"<table class='apc-table'><thead><tr>{cells([esc(h) for h in headers], 'th')}</tr></thead>"
-        f"<tbody>{body}</tbody>{foot_html}</table>"
-    )
+    head = f"<thead><tr>{cells([esc(h) for h in headers], 'th')}</tr></thead>" if any(headers) else ""
+    return f"<table class='apc-table'>{head}<tbody>{body}</tbody>{foot_html}</table>"
 
 
 EMPTY_INBOX_SVG = """

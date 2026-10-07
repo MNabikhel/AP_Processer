@@ -24,6 +24,7 @@ PAGES = [
     ("activity", "page_activity"),
     ("vendors", "page_vendors"),
     ("exports", "page_exports"),
+    ("insights", "page_insights"),
 ]
 TIMEOUT = 90
 
@@ -156,3 +157,10 @@ def test_exports_page_creates_a_batch(db):
     at = _ok(_page("exports", "page_exports").run())
     _ok(at.button(key="export_create").click().run())
     assert store.unexported_approved() == [] and len(store.export_batches()) == 1
+
+
+def test_insights_with_the_demo(db):
+    from ap_coder.demo import load_demo
+
+    load_demo(Store(db))
+    _ok(_page("insights", "page_insights").run())
