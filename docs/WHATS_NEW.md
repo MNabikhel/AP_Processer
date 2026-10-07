@@ -80,6 +80,9 @@ folder.
   invoice, and which are late.
 - **Folder watcher:** `python -m ap_coder watch` processes new files dropped in the invoices folder
   (from a scanner, a mail rule or Windows Task Scheduler with `--once`).
+- **Invoices by email:** drop a saved email (`.eml`: Outlook on the web or new Outlook → *Download*)
+  in the invoices folder, or upload it: its PDF and image attachments are processed (signature logos
+  left out) and the email is kept in `invoices/emails`.
 
 ## Know what happened
 

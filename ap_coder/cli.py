@@ -16,6 +16,7 @@ from .doctor import exit_code, format_checks, run_checks
 from .evaluation import evaluate
 from .extraction import DocumentExtractor
 from .labels import export_labels
+from .mailbox import unpack_folder
 from .pipeline import (
     InvoicePipeline,
     PipelineResult,
@@ -303,6 +304,9 @@ def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
           file=sys.stderr)  # fmt: skip
     try:
         while True:
+            for mail in unpack_folder(folder):  # invoices attached to saved emails (.eml)
+                print(f"{time.strftime('%H:%M:%S')} {mail.email}: {len(mail.saved)} attachment(s) to process",
+                      file=sys.stderr)  # fmt: skip
             files = new_files(folder, store)
             if files:
                 reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile

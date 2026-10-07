@@ -242,3 +242,19 @@ def test_spend_page_and_data_download(db):
     _ok(at.run())
     _ok(at.button(key="spend_prepare").click().run())
     assert at.session_state["spend_xlsx"][0][:2] == b"PK"  # an xlsx (zip) file, ready to download
+
+
+def test_saved_emails_in_the_invoices_folder_are_unpacked(db):
+    from email.message import EmailMessage
+
+    m = EmailMessage()
+    m["Subject"] = "Invoice"
+    m.set_content("attached")
+    m.add_attachment(b"%PDF-1.4 x", maintype="application", subtype="pdf", filename="INV-9.pdf")
+    folder = db.parent / "invoices"
+    folder.mkdir(parents=True)
+    (folder / "vendor mail.eml").write_bytes(m.as_bytes())
+    _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages the setup steps link to
+    at = _ok(_page("process", "page_process").run())
+    assert (folder / "vendor mail - INV-9.pdf").exists() and (folder / "emails" / "vendor mail.eml").exists()
+    assert any("saved email" in c.value for c in at.caption)

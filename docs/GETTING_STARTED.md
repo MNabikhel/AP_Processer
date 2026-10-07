@@ -183,7 +183,8 @@ names.
 ## Step 6: Process a test set
 
 Put **20–50 real invoices** in your invoices folder (**Process invoices** → *Open folder*), or
-upload them on **Process invoices**.
+upload them on **Process invoices**. Invoices that came by email: save the email as `.eml` (Outlook
+on the web or new Outlook: *Download*) into the folder, or save the PDF attachment itself.
 Aim for a representative mix:
 
 - your top vendors by volume, and the ones AP often recodes

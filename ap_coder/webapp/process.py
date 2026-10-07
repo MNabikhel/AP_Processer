@@ -10,6 +10,7 @@ import streamlit as st
 from ap_coder import ui
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS
+from ap_coder.mailbox import EMAIL_EXTENSIONS, unpack, unpack_folder
 from ap_coder.pipeline import InvoicePipeline, invoice_files
 from ap_coder.safe import md
 from ap_coder.store import REVIEW, Store
@@ -123,8 +124,9 @@ def page_process() -> None:
         with card("upload"):
             st.markdown("#### :material/upload_file: Upload invoices")
             uploaded = st.file_uploader(
-                "Drop PDFs, TIFFs, PNGs or JPGs here. They are saved to your private invoices folder on this computer.",
-                type=sorted(e.lstrip(".") for e in SUPPORTED_EXTENSIONS),
+                "Drop PDFs, TIFFs, PNGs or JPGs here, or saved emails (.eml) with invoices attached. They are saved "
+                "to your private invoices folder on this computer.",
+                type=sorted(e.lstrip(".") for e in SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS),
                 accept_multiple_files=True,
                 key=f"upload_{st.session_state.get('upload_round', 0)}",  # new key = empty uploader after a run
             )
@@ -141,6 +143,12 @@ def page_process() -> None:
                         target = INVOICE_DIR / f"{stem}_{n}{target.suffix}"
                         n += 1
                     target.write_bytes(f.getvalue())
+                    if target.suffix.lower() in EMAIL_EXTENSIONS:  # its invoice attachments, not the email
+                        mail = unpack(target, INVOICE_DIR)
+                        paths.extend(mail.saved)
+                        if not mail.saved:
+                            notify(f"No PDF or image attached to {mail.email}.", ":material/mail:")
+                        continue
                     paths.append(target)
                 already, todo, hashes = [], [], set()
                 for p in paths:  # skip files seen before, and repeats within this upload
@@ -171,6 +179,12 @@ def page_process() -> None:
             if button.button("Open folder", icon=":material/folder_open:", key="open_invoices"):
                 if not open_folder(INVOICE_DIR):
                     st.info(f"Open this folder yourself: {INVOICE_DIR}")
+            unpacked = unpack_folder(INVOICE_DIR)  # saved emails dropped in the folder: their attachments
+            if unpacked:
+                st.caption(
+                    f":material/mail: Took {sum(len(m.saved) for m in unpacked)} attachment(s) out of "
+                    f"{len(unpacked)} saved email(s); the emails are in the `emails` subfolder."
+                )
             files = invoice_files(INVOICE_DIR) if INVOICE_DIR.exists() else []
             new_files = [p for p in files if store.find_by_hash(p, include_failed=True) is None]
             if not new_files:
