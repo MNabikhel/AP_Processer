@@ -671,7 +671,7 @@ class Store:
     _JSON_COLUMNS = ("ai_output", "final_output", "validation", "meta", "edits")
     _LIGHT_COLUMNS = (
         "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer",
-        "second_reviewed_at", *_JSON_COLUMNS
+        "second_reviewed_at", "invoice_date", "export_batch", *_JSON_COLUMNS
     )  # fmt: skip
 
     def invoice_columns(

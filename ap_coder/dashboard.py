@@ -32,6 +32,7 @@ from ap_coder.webapp.month_end import page_month_end
 from ap_coder.webapp.process import page_process
 from ap_coder.webapp.purchase_orders import page_purchase_orders
 from ap_coder.webapp.review import page_review
+from ap_coder.webapp.sales_tax import page_sales_tax
 from ap_coder.webapp.settings import page_settings
 from ap_coder.webapp.statements import page_statements
 from ap_coder.webapp.vendors import page_vendors
@@ -45,6 +46,7 @@ PAGES.update(
         "process": st.Page(page_process, title="Process invoices", icon=":material/upload_file:"),
         "exports": st.Page(page_exports, title="Exports", icon=":material/ios_share:"),
         "month_end": st.Page(page_month_end, title="Month-end", icon=":material/event_available:"),
+        "sales_tax": st.Page(page_sales_tax, title="Sales tax", icon=":material/percent:"),
         "statements": st.Page(page_statements, title="Vendor statements", icon=":material/fact_check:"),
         "purchase_orders": st.Page(page_purchase_orders, title="Purchase orders", icon=":material/shopping_cart:"),
         "accounts": st.Page(page_accounts, title="GL accounts & tax", icon=":material/account_tree:"),
@@ -66,7 +68,7 @@ with st.sidebar:
     st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
 
 NAV_SECTIONS = {
-    "Work": ["review", "process", "exports", "statements", "month_end"],
+    "Work": ["review", "process", "exports", "statements", "month_end", "sales_tax"],
     "Insight": ["insights", "learning", "vendors", "activity"],
     "Setup": ["accounts", "purchase_orders", "settings", "help"],
 }

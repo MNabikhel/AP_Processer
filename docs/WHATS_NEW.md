@@ -67,6 +67,9 @@ folder.
   what you never received and what is not on their statement.
 - **Month-end:** the accruals schedule: goods received but not invoiced (from POs), invoices not in
   the ERP yet, and regular bills that have not arrived; totals by GL; CSV.
+- **Sales tax:** the GST/HST input tax credits and QST input tax refunds to claim for a period
+  (by invoice date, credit notes deducted), by tax and rate, and the claims to check before filing:
+  an invoice of $30 or more without a valid registration number, tax in a foreign currency. CSV.
 - **Recurring vendors:** the Vendors page lists who bills monthly, quarterly..., their next expected
   invoice, and which are late.
 - **Folder watcher:** `python -m ap_coder watch` processes new files dropped in the invoices folder

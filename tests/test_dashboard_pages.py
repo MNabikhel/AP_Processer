@@ -3,6 +3,7 @@
 These catch the mistakes unit tests can't: a wrong asset path, a missing import, a widget-key clash.
 """
 
+import datetime as dt
 import json
 import sys
 
@@ -28,6 +29,7 @@ PAGES = [
     ("help", "page_help"),
     ("statements", "page_statements"),
     ("month_end", "page_month_end"),
+    ("sales_tax", "page_sales_tax"),
 ]
 TIMEOUT = 90
 
@@ -192,3 +194,14 @@ def test_purchase_orders_page_and_po_coding_on_the_review_screen(db):
     _ok(at.button(key=f"{key}_approve").click().run())
     final = store.get_invoice(redriver["id"])["final_output"]
     assert final["line_items"][0]["predicted_gl_code"] == "1510"  # the PO's GL, not the AI's 6900
+
+
+def test_sales_tax_page_with_the_demo(db):
+    from ap_coder.demo import load_demo
+
+    load_demo(Store(db))
+    at = _page("sales_tax", "page_sales_tax")
+    at.session_state["tax_start"] = dt.date(2026, 1, 1)
+    at.session_state["tax_end"] = dt.date(2026, 12, 31)
+    _ok(at.run())
+    _ok(at.toggle(key="tax_risky").set_value(False).run())

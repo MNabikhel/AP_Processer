@@ -124,7 +124,7 @@ few realistic mistakes to correct, plus sample purchase orders. Things to try:
 - *Split a line…* under the line grid divides a shared cost across cost centers.
 - Approve a few, then look at **Exports**, **Learning & accuracy**, **Insights** and **Activity**.
 - **Vendor statements** → pick Northwind and upload `data\sample_statement_northwind.csv`.
-- **Month-end** shows what to accrue; **Help** explains every check.
+- **Month-end** shows what to accrue; **Sales tax** totals the GST/HST and QST to claim back; **Help** explains every check.
 - *Remove demo invoices* on the **Process invoices** page removes the demo invoices, sample POs and
   sample vendor list again. The sample GL accounts and tax setup stay (replace them when you import
   yours: tick *Replace my current list*).
