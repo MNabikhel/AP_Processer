@@ -140,7 +140,7 @@ def test_extraction_dumps_are_not_predictions(tmp_path, ground_truth):
 
 
 def test_text_copy_next_to_a_pdf_is_not_processed_twice(tmp_path):
-    for name in ("a.pdf", "a.md", "b.md", "c.PNG", "c.txt", "notes.docx"):
+    for name in ("a.pdf", "a.md", "b.md", "c.PNG", "c.txt", "notes.docx", "README.md"):
         (tmp_path / name).write_bytes(b"x")
     assert [p.name for p in discover_inputs([tmp_path])] == ["a.pdf", "b.md", "c.PNG"]
 

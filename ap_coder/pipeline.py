@@ -68,8 +68,13 @@ def invoice_files(folder: Path) -> list[Path]:
 
     A .md/.txt file is skipped when a PDF or image with the same name sits next to it
     (it is a text copy of the same invoice, e.g. the bundled samples), so nothing is coded twice.
+    README files are documentation, never invoices.
     """
-    files = sorted(c for c in folder.iterdir() if c.is_file() and c.suffix.lower() in SUPPORTED_EXTENSIONS)
+    files = sorted(
+        c
+        for c in folder.iterdir()
+        if c.is_file() and c.suffix.lower() in SUPPORTED_EXTENSIONS and not c.name.lower().startswith("readme")
+    )
     documents = {c.stem.lower() for c in files if c.suffix.lower() not in TEXT_EXTENSIONS}
     return [c for c in files if c.suffix.lower() not in TEXT_EXTENSIONS or c.stem.lower() not in documents]
 
