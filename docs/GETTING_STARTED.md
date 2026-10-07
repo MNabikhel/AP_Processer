@@ -107,6 +107,22 @@ Start AP Coder from the **AP Coder** desktop shortcut (or `start.bat`). It opens
 keep the black window open while you use it and close it to stop. If another program already uses
 port 8501, AP Coder picks the next free one.
 
+**Fastest: the demo (no Azure needed).** On the welcome screen click **Load demo invoices**. Ten
+sample invoices from across Canada arrive in the review queue as if the AI had read them, with a
+few realistic mistakes to correct, plus sample purchase orders. Things to try:
+
+- **Review queue** → open *Red River*: the **PO match** shows chairs billed but not yet received,
+  and *Use the PO's coding* fixes the desk's GL account in one click.
+- Open *Harbourview*: line 4 has no GL account; **Suggested GL accounts** offers one.
+- Open *Pacific* and type `2/10 Net 30` in *Payment terms*: the early-payment discount appears.
+- *Split a line…* under the line grid divides a shared cost across cost centers.
+- Approve a few, then look at **Exports**, **Learning & accuracy**, **Insights** and **Activity**.
+- **Vendor statements** → pick Northwind and upload `data\sample_statement_northwind.csv`.
+- **Month-end** shows what to accrue; **Help** explains every check.
+- *Remove demo invoices* on the **Process invoices** page takes it all out again.
+
+**With Azure:**
+
 1. **GL accounts & tax** → *Load sample setup*.
 2. Copy the sample PDFs from `samples\` into your invoices folder (**Process invoices** →
    *Open folder* shows it). `samples\README.md` lists what each one shows: HST, GST+PST,
@@ -136,6 +152,15 @@ Open **GL accounts & tax**:
    - PST: *add to each expense line's GL*. Alternatively, choose a separate PST expense account.
 4. **Coding policy:** plain-English rules, one per line, e.g. "Laptops under $2,500 go to 6010".
    This is your fastest tuning lever.
+
+Optional, any time later:
+
+- **Purchase orders:** import your open POs (one row per PO line, from the ERP; the *Template*
+  button shows the columns). Include the quantity received to get three-way matching. Re-import
+  the export regularly; a PO in the file replaces its earlier lines.
+- **Settings → Review:** your name (shown on approvals), the confidence threshold, an **approval
+  limit** above which a second person must approve, and the days to pay when an invoice shows no
+  terms.
 
 Then run `python -m ap_coder doctor` in `terminal.bat` (offline is fine) and **paste the output**. From it I can see
 row counts, whether every tax type is mapped, and the prompt size, but none of your codes or
@@ -168,8 +193,12 @@ For each invoice:
    - possible duplicate invoice
 
    Yellow items are warnings, for example a missing GST/HST number or PST not charged.
-3. Fix anything wrong in the grids. GL and cost-center cells are dropdowns of your own codes.
-4. Click **Approve & teach the AI**.
+   Each check says what to do; **Help** lists them all.
+3. Fix anything wrong in the grids. GL and cost-center cells are dropdowns of your own codes. Lines
+   without a GL account get **suggestions**; an invoice quoting a PO shows the **PO match**.
+4. Click **Approve & teach** (Ctrl+Enter). Invoices nobody needs to look at can be approved together
+   with *Approve N clean…* above the queue.
+5. Approved invoices wait in **Exports**: export them as a batch for the ERP (Excel or CSV).
 
 Every approved line is stored as a lesson: *confirmed* if the AI was right, *corrected* if you
 changed it. The next invoice from that vendor sees those lessons, and **Learning & accuracy**
@@ -215,6 +244,8 @@ Run these in `terminal.bat` as `python -m ap_coder <command>`.
 | `dashboard` | the review app (what the desktop shortcut and `start.bat` run) |
 | `doctor [--online]` | setup check; safe to paste |
 | `share-report [--include-codes]` | redacted summary; safe to paste |
+| `demo [--remove]` | load or remove the demo invoices (no Azure) |
+| `watch [--every 60]` | keep processing new files dropped in the invoices folder; `--once` for Task Scheduler |
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
 | `schema` | the exact JSON Schema sent to Azure OpenAI |

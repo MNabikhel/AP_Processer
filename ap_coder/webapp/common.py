@@ -232,9 +232,10 @@ def demo_card(store: Store, where: str) -> None:
         st.markdown("#### :material/science: Demo invoices")
         if not demo_count:
             st.caption(
-                "Look around before connecting Azure: ten sample invoices from across Canada (plus a US vendor "
+                "Look around before connecting Azure: ten sample invoices from across Canada (including a US vendor "
                 "and a credit note) are added as if the AI had read and coded them, including a few realistic "
-                "mistakes to correct. Uses the sample GL accounts if you haven't imported yours."
+                "mistakes to correct, plus sample purchase orders. Uses the sample GL accounts if you haven't "
+                "imported yours."
             )
             if st.button("Load demo invoices", icon=":material/play_circle:", type="primary", key=f"demo_load_{where}"):
                 result = load_demo(store, get_settings())
@@ -246,7 +247,8 @@ def demo_card(store: Store, where: str) -> None:
         else:
             st.caption(
                 f"{demo_count} demo invoice(s) are loaded. Removing them also forgets what the AI learned from "
-                "them; your own invoices and settings are untouched."
+                "them, and removes the sample purchase orders loaded with them; your own invoices, POs and "
+                "settings are untouched."
             )
             sure = st.checkbox("Yes, remove the demo invoices", key=f"demo_sure_{where}")
             if st.button(

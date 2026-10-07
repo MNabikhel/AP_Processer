@@ -1,0 +1,72 @@
+# What's new
+
+Everything below was added after the first version (pull request #1). The fastest way to see it all is
+the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
+[Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
+has a short tour.
+
+Your existing data is safe. On first start the database upgrades itself (schema version 6), and a
+backup of the database is made automatically each day the dashboard is opened.
+
+## Review faster
+
+- **Every check explains itself.** Each finding on the review screen says what to do about it, and
+  the new **Help** page lists every check, in plain English, with a search.
+- **GL suggestions.** Lines the AI could not code get up to three one-click GL accounts, from how
+  similar lines were coded before (this vendor, then others) and from your account descriptions.
+- **Bulk approval.** *Approve N clean…* approves, in one go, the invoices with no error, no warning
+  and enough confidence. Each one is re-checked at that moment; anything no longer clean stays for a
+  person.
+- **Split a line** across GL accounts or cost centers by percentage (shared costs).
+- **Due dates.** The AI now reads payment terms and printed due dates (English and French). Queue
+  cards show *Overdue*, *Due in 3d* and early-payment discount deadlines (*2% off until Oct 15*), and
+  the queue can be sorted by due date.
+- **Stays fast** with a year of invoices: tested with 3,000. The queue shows 50 at a time.
+
+## Catch more before it is paid
+
+- **Purchase orders (2- and 3-way match).** Import open POs from the ERP (CSV or Excel, columns
+  recognised automatically). An invoice quoting a PO is matched line by line: price above the PO,
+  more billed than ordered or received (counting earlier invoices and credit notes), lines not on
+  the PO, PO total exceeded, closed POs, POs for another vendor. *Use the PO's coding* applies the
+  PO's GL accounts and cost centers in one click.
+- **Vendor fraud and duplicate signals:** vendor on hold, changed GST/HST number (a classic fake
+  invoice sign), amount far above the vendor's usual, same amount under a new invoice number, first
+  invoice from a vendor. The **Vendors** page holds the controls (hold, expected GST/HST number,
+  notes).
+- **Second approval.** Above an approval limit (Settings → Review), an approved invoice waits for a
+  second, different person before it can be exported, or is sent back to the queue.
+
+## The rest of the AP cycle
+
+- **Exports:** approved invoices go to the ERP in batches, as an Excel workbook (invoices, GL lines,
+  totals by GL) or a CSV of GL lines. Each invoice goes out once; a batch can be downloaded again or
+  undone if the import failed.
+- **Vendor statements:** upload a vendor's statement of account and see what matches, what differs,
+  what you never received and what is not on their statement.
+- **Month-end:** the accruals schedule: goods received but not invoiced (from POs), invoices not in
+  the ERP yet, and regular bills that have not arrived; totals by GL; CSV.
+- **Recurring vendors:** the Vendors page lists who bills monthly, quarterly..., their next expected
+  invoice, and which are late.
+- **Folder watcher:** `python -m ap_coder watch` processes new files dropped in the invoices folder
+  (from a scanner, a mail rule or Windows Task Scheduler with `--once`).
+
+## Know what happened
+
+- **Activity:** an audit trail of everything that changes data, with every change a reviewer made
+  to the AI's coding; filterable and downloadable.
+- **Controls report** (on the Activity page) for internal audit: approvals that overrode an error,
+  approvals made while a fraud or PO signal was showing, second approvals, setup changes, approvals
+  per person; one HTML page to download.
+- **Insights:** how much goes straight through, hours saved, Azure cost per invoice from the real
+  token usage, and a monthly projection, with a one-page business case to share (totals only).
+
+## Setup and safety
+
+- **Settings page:** Azure connection with a live test, review behaviour, approval limit, default
+  payment days, backups (make, download, restore).
+- **Demo mode** with sample invoices, purchase orders and a vendor statement; removing it leaves
+  your own data untouched.
+- **Ten sample invoices** with their correct answers: every Canadian tax regime (HST, GST+PST,
+  TPS/TVQ, GST only), a two-page French invoice, a US invoice and a credit note.
+- **CI:** every change is tested on Windows and Linux, including the real installer on Windows.
