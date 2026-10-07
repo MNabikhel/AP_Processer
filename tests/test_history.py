@@ -8,9 +8,9 @@ from ap_coder.store import Store
 
 def _rows():
     records = [
-        {"Supplier": "Acme Ltd.", "Memo": "Monthly cleaning service", "Account": "6230.0", "Dept": "CC700",
+        {"Supplier": "Acme Ltd.", "Memo": "Janitorial cleaning, head office", "Account": "6230.0", "Dept": "CC700",
          "Net Amount": "1,200.00", "Posting Date": "2025-11-30 00:00:00"},
-        {"Supplier": "Acme Ltd.", "Memo": "Monthly cleaning service", "Account": "6230", "Dept": "CC700",
+        {"Supplier": "Acme Ltd.", "Memo": "Janitorial cleaning, head office", "Account": "6230", "Dept": "CC700",
          "Net Amount": "1,200.00", "Posting Date": "2025-12-31"},
         {"Supplier": "", "Memo": "orphan", "Account": "6000", "Dept": "", "Net Amount": "1", "Posting Date": ""},
     ]  # fmt: skip
@@ -31,7 +31,7 @@ def test_history_is_memory_but_not_accuracy(tmp_path, ground_truth):
     assert m["lines_reviewed"] == 0 and m["line_accuracy"] is None  # not reviewer decisions
 
     doc = {**ground_truth, "vendor_name": "ACME Ltd"}
-    doc["line_items"] = [{**ground_truth["line_items"][0], "description": "Monthly cleaning service - October",
+    doc["line_items"] = [{**ground_truth["line_items"][0], "description": "Janitorial cleaning, head office - October",
                           "predicted_gl_code": "6000"}]  # fmt: skip
     found = compare_with_history(InvoiceCoding.model_validate(doc), store.feedback_rows(vendor_name="Acme"))
     assert found and found[0]["status"] == "conflict" and found[0]["history_gl"] == "6230"
