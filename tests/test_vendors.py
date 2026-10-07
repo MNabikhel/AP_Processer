@@ -190,3 +190,33 @@ def test_same_account_number_at_another_branch_is_explained(tmp_path, ground_tru
     _, report = _codes(store, moved, reference)
     message = next(i.message for i in report.issues if i.code == "VENDOR_BANK_CHANGED")
     assert "different bank or branch" in message
+
+
+def test_credit_note_finds_the_invoice_it_credits(tmp_path, reference):
+    import json
+
+    from .conftest import SAMPLES
+
+    store = Store(tmp_path / "ap.db")
+    invoice = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    credit = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_CN-2026-0047.json").read_text())
+    codes, report = _codes(store, credit, reference)
+    assert codes.get("CREDIT_NOTE_ORIGINAL_UNKNOWN") == "info"
+    original = _approved(store, invoice, tmp_path, "a.pdf")
+    codes, report = _codes(store, credit, reference)
+    message = next(i.message for i in report.issues if i.code == "CREDIT_NOTE_FOR")
+    assert f"#{original}" in message and "NW-2026-0912" in message and "CREDIT_EXCEEDS_INVOICE" not in codes
+    big = {**credit, "original_invoice_number": "nw 2026 0912"}
+    for li in big["line_items"]:
+        li["amount"] *= 10
+        li["unit_price"] *= 10
+    big["subtotal"] *= 10
+    big["tax_total"] *= 10
+    big["grand_total"] *= 10
+    for t in big["tax_lines"]:
+        t["taxable_amount"] *= 10
+        t["tax_amount"] *= 10
+    codes, _ = _codes(store, big, reference)
+    assert codes.get("CREDIT_EXCEEDS_INVOICE") == "warning"
+    codes, _ = _codes(store, {**invoice, "invoice_number": "NW-X"}, reference)
+    assert not {c for c in codes if c.startswith("CREDIT_")}  # an invoice is not a credit note

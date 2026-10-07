@@ -15,6 +15,8 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * VENDOR_NOT_IN_MASTER (warning): a vendor master was imported from the ERP and this vendor is not in it
   (by name or GST/HST number)
 * VENDOR_MATCHED_BY_TAX_NUMBER (info): not found by name, but the GST/HST number belongs to a master vendor
+* CREDIT_NOTE_FOR (info) / CREDIT_NOTE_ORIGINAL_UNKNOWN (info) / CREDIT_EXCEEDS_INVOICE (warning): the invoice a
+  credit note credits, found or not, and a credit larger than it
 * VENDOR_BANK_CHANGED (warning): the bank account to pay into differs from the one on this vendor's approved
   invoices, the most common payment fraud (a fake "our banking details have changed")
 """
@@ -86,6 +88,36 @@ def _date(value: Any) -> dt.date | None:
         return None
 
 
+def _credit_note_findings(
+    coding: InvoiceCoding, store: Store, history: list[dict[str, Any]]
+) -> list[tuple[str, str, str]]:
+    """A credit note names the invoice it credits: find it (here or in the ERP register) and check the credit is
+    not more than that invoice."""
+    printed = coding.original_invoice_number.strip()
+    if coding.grand_total >= 0 or not printed:
+        return []
+    wanted = norm_invoice_number(printed)
+    original = next(
+        (h for h in history if norm_invoice_number(h["invoice_number"]) == wanted and (h["grand_total"] or 0) > 0), None
+    )
+    if original is None:
+        posted = [r for r in store.in_erp(coding.vendor_name, printed, None) if r["total"] > 0]
+        if posted:
+            original = {"invoice_number": posted[0]["invoice_number"], "grand_total": posted[0]["total"], "id": None,
+                        "status": "in the ERP"}  # fmt: skip
+    if original is None:
+        unknown = f"credits invoice {printed}, which is not in AP Coder or the ERP register: check it was billed"
+        return [(INFO, "CREDIT_NOTE_ORIGINAL_UNKNOWN", unknown)]
+    where = f"#{original['id']}, {original['status']}" if original.get("id") else original["status"]
+    found = f"credits invoice {original['invoice_number']} ({where}, total {original['grand_total']:,.2f})"
+    out = [(INFO, "CREDIT_NOTE_FOR", found)]
+    if abs(coding.grand_total) > (original["grand_total"] or 0) + 0.01:
+        out.append((WARNING, "CREDIT_EXCEEDS_INVOICE",
+                    f"the credit ({abs(coding.grand_total):,.2f}) is more than invoice {original['invoice_number']} "
+                    f"({original['grand_total']:,.2f}): check the amounts with the vendor"))  # fmt: skip
+    return out
+
+
 def vendor_findings(
     coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None
 ) -> list[tuple[str, str, str]]:
@@ -132,6 +164,7 @@ def vendor_findings(
         findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold in the vendor list{note}"))
 
     history = [h for h in store.vendor_invoices(key) if h["id"] != exclude_invoice_id]
+    findings += _credit_note_findings(coding, store, history)
     if not history:
         if store.has_other_vendors(key) and not in_master:  # the ERP's vendor master already vouches for it
             findings.append((INFO, "VENDOR_NEW", "first invoice from this vendor: confirm it is a known supplier"))

@@ -68,6 +68,21 @@ CHECKS: dict[str, CheckHelp] = {
         "Call the vendor on a number from your vendor file (not the one on this invoice or in the email) and "
         "confirm the change before paying or updating the vendor's banking in the ERP.",
     ),
+    "CREDIT_NOTE_FOR": CheckHelp(
+        FRAUD, "Credit note for an invoice",
+        "The credit note names the invoice it credits, and that invoice was found (in AP Coder or the ERP register).",
+        "Nothing to do; apply the credit against that invoice in the ERP.",
+    ),
+    "CREDIT_NOTE_ORIGINAL_UNKNOWN": CheckHelp(
+        FRAUD, "Credited invoice not found",
+        "The credit note names an invoice that is not in AP Coder or the imported ERP register.",
+        "Check the invoice was billed (perhaps before AP Coder, or under another vendor record).",
+    ),
+    "CREDIT_EXCEEDS_INVOICE": CheckHelp(
+        FRAUD, "Credit larger than the invoice",
+        "The credit note is for more than the total of the invoice it credits.",
+        "Check the amounts with the vendor before applying it.",
+    ),
     "AMOUNT_UNUSUAL": CheckHelp(
         FRAUD, "Unusually large",
         "The total is far above what this vendor usually bills.",

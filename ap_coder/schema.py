@@ -164,6 +164,10 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
             "type": "string",
             "description": "Supplier QST number as printed (e.g. 1234567890 TQ0001), empty if absent.",
         },
+        "original_invoice_number": {
+            "type": "string",
+            "description": "For a credit note: the number of the invoice it credits, as printed; empty otherwise.",
+        },
         "remit_bank_account": {
             "type": "string",
             "description": "Bank account the supplier asks to be paid into, as printed (institution, transit and "
@@ -273,6 +277,7 @@ class InvoiceCoding(BaseModel):
     ship_to_province: str = ""
     gst_hst_registration_number: str = ""
     qst_registration_number: str = ""
+    original_invoice_number: str = ""
     remit_bank_account: str = ""
     subtotal: float
     tax_lines: list[TaxLine] = Field(default_factory=list)

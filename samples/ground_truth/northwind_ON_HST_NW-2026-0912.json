@@ -10,6 +10,7 @@
   "ship_to_province": "ON",
   "gst_hst_registration_number": "123456789 RT0001",
   "qst_registration_number": "",
+  "original_invoice_number": "",
   "remit_bank_account": "",
   "subtotal": 15945.0,
   "tax_lines": [

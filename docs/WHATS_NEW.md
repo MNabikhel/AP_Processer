@@ -48,6 +48,9 @@ folder.
 
 ## Catch more before it is paid
 
+- **Credit notes matched.** The AI reads which invoice a credit note credits; the review screen
+  names that invoice (in AP Coder or the ERP register), or says it was not found, and warns when the
+  credit is larger than the invoice.
 - **Purchase orders (2- and 3-way match).** Import open POs from the ERP (CSV or Excel, columns
   recognised automatically). An invoice quoting a PO is matched line by line: price above the PO,
   more billed than ordered or received (counting earlier invoices and credit notes), lines not on

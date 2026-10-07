@@ -58,6 +58,8 @@ otherwise apply each tax to the lines its taxable amount covers.
 goods are delivered or services performed (use the bill-to address if there is no ship-to).
 - Copy the supplier's GST/HST registration number (9 digits + RT + 4 digits) and QST \
 number (10 digits + TQ + 4 digits) exactly as printed, or an empty string.
+- `original_invoice_number`: on a credit note, the invoice it credits ("Original invoice", "Re:", \
+"Facture originale"), as printed; an empty string on an invoice.
 - `remit_bank_account`: the bank account the supplier asks to be paid into (EFT / wire / \
 direct deposit details: institution, transit and account numbers, or SWIFT/IBAN and account), \
 exactly as printed; an empty string if the invoice shows none.

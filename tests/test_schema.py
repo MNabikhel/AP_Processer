@@ -7,7 +7,7 @@ from ap_coder.schema import InvoiceCoding, build_json_schema, line_gl_codes, res
 TARGET_HEADER = [
     "vendor_name", "invoice_number", "invoice_date", "po_number", "payment_terms", "due_date", "currency",
     "supplier_province", "ship_to_province", "gst_hst_registration_number", "qst_registration_number",
-    "remit_bank_account",
+    "original_invoice_number", "remit_bank_account",
     "subtotal", "tax_lines", "tax_total", "grand_total", "confidence_score", "line_items",
 ]  # fmt: skip
 TARGET_LINE = [

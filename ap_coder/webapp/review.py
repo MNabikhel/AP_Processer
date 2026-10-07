@@ -780,10 +780,13 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             header["ship_to_province"] = province(
                 c3, "Place of supply", "ship_to_province", help="Where goods are delivered / services performed"
             )
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             header["gst_hst_registration_number"] = text(c1, "Supplier GST/HST #", "gst_hst_registration_number")
             header["qst_registration_number"] = text(c2, "Supplier QST #", "qst_registration_number")
             header["po_number"] = text(c3, "PO #", "po_number", help="Purchase order the invoice quotes, if any")
+            header["original_invoice_number"] = text(
+                c4, "Credits invoice #", "original_invoice_number", help="On a credit note: the invoice it credits"
+            )
             c1, c2, c3 = st.columns([1.3, 1, 1.7])
             header["payment_terms"] = text(c1, "Payment terms", "payment_terms", placeholder="e.g. Net 30, 2/10 Net 30")
             header["due_date"] = text(
@@ -1374,7 +1377,7 @@ EDIT_LABELS = {
     "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",
     "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #",
-    "remit_bank_account": "bank account", "subtotal": "subtotal",
+    "original_invoice_number": "invoice credited", "remit_bank_account": "bank account", "subtotal": "subtotal",
     "tax_total": "tax total", "grand_total": "total",
 }  # fmt: skip
 

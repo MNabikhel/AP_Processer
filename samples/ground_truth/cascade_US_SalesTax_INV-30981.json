@@ -10,6 +10,7 @@
   "ship_to_province": "OUTSIDE_CANADA",
   "gst_hst_registration_number": "",
   "qst_registration_number": "",
+  "original_invoice_number": "",
   "remit_bank_account": "",
   "subtotal": 6860.0,
   "tax_lines": [

@@ -18,7 +18,7 @@ HEADER_LABELS = {
     "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",
     "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #",
-    "remit_bank_account": "bank account", "subtotal": "subtotal",
+    "original_invoice_number": "invoice credited", "remit_bank_account": "bank account", "subtotal": "subtotal",
     "tax_total": "tax total", "grand_total": "total",
 }  # fmt: skip
 LINE_LABELS = {

@@ -10,6 +10,7 @@
   "ship_to_province": "QC",
   "gst_hst_registration_number": "812345678 RT0001",
   "qst_registration_number": "1218765432 TQ0001",
+  "original_invoice_number": "",
   "remit_bank_account": "",
   "subtotal": 18768.0,
   "tax_lines": [
