@@ -164,13 +164,22 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
             if low <= age <= high:
                 ageing[label] += 1
     approved = [r for r in rows if r["status"] in (APPROVED, PENDING) and r["reviewed_at"]]
+    detail = {
+        r["id"]: r
+        for status in (APPROVED, PENDING)
+        for r in store.invoice_columns(("id", "second_reviewed_at", "final_output"), status)
+    }
+
+    def done(r: dict[str, Any]) -> str:  # fully approved: after the second approval when one was needed
+        return ((detail.get(r["id"]) or {}).get("second_reviewed_at") or r["reviewed_at"] or "")[:10]
+
     cycle = [
         (_day(r["reviewed_at"]) - _day(r["created_at"])).days
         for r in approved
         if _day(r["reviewed_at"]) and _day(r["created_at"])
     ]
-    late = sum(1 for r in approved if r["due_date"] and (r["reviewed_at"] or "")[:10] > r["due_date"])
-    finals = {r["id"]: r["final_output"] or {} for r in store.invoice_columns(("id", "final_output"), APPROVED)}
+    late = sum(1 for r in approved if r["status"] == APPROVED and r["due_date"] and done(r) > r["due_date"])
+    finals = {i: (r["final_output"] or {}) for i, r in detail.items()}
     taken = missed = 0
     taken_amount = missed_amount = 0.0
     default_days, vendor_terms = store.default_terms_days(), store.all_vendor_terms()
@@ -179,7 +188,9 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
         p = payment(final, default_days, vendor_terms.get(vendor_key(final.get("vendor_name") or ""), ""))
         if p.discount_by is None:
             continue
-        if (r["reviewed_at"] or "")[:10] <= p.discount_by.isoformat():
+        if r["status"] == PENDING and today <= p.discount_by:
+            continue  # still waiting for the second approval, and the discount is still open
+        if r["status"] == APPROVED and done(r) <= p.discount_by.isoformat():
             taken, taken_amount = taken + 1, taken_amount + p.discount_amount
         else:
             missed, missed_amount = missed + 1, missed_amount + p.discount_amount

@@ -670,7 +670,8 @@ class Store:
 
     _JSON_COLUMNS = ("ai_output", "final_output", "validation", "meta", "edits")
     _LIGHT_COLUMNS = (
-        "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer", *_JSON_COLUMNS
+        "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer",
+        "second_reviewed_at", *_JSON_COLUMNS
     )  # fmt: skip
 
     def invoice_columns(
@@ -1111,16 +1112,37 @@ class Store:
             if changed:
                 self._log(conn, "vendor_updated", actor=actor, detail={"vendor": display_name, **changed})
 
-    def import_vendor_master(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
+    def import_vendor_master(
+        self, rows: list[dict[str, Any]], actor: str | None = None, only_new: bool = False
+    ) -> dict[str, Any]:
         """Import the ERP's vendor list (``vendors.master_rows`` output). Each vendor is matched by name;
-        what the file gives (ERP ID, GST/HST #, terms, default GL, status) replaces what was there."""
+        what the file gives (ERP ID, GST/HST #, terms, default GL, status) replaces what was there.
+        Rows whose names normalise to the same vendor are merged (on hold if any of them is) and reported
+        in ``duplicates``: often the same supplier set up twice in the ERP. With ``only_new``, vendors
+        already in the list are left alone (``inserted`` lists the new ones)."""
         added = updated = 0
         now = _now()
+        merged: dict[str, dict[str, Any]] = {}
+        names: dict[str, list[str]] = {}
+        for row in rows:
+            key = vendor_key(row["vendor_name"])
+            if not key:
+                continue
+            names.setdefault(key, []).append(row["vendor_name"])
+            if key in merged:
+                first = merged[key]
+                if row.get("status") == "on_hold":
+                    first["status"], first["status_given"] = "on_hold", True
+                for field in ("erp_id", "gst", "terms", "default_gl"):
+                    first[field] = first.get(field) or row.get(field) or ""
+            else:
+                merged[key] = dict(row)
+        duplicates = [n for n in names.values() if len(n) > 1]
+        inserted: list[str] = []
         with self._conn() as conn:
             existing = {r["vendor_key"] for r in conn.execute("SELECT vendor_key FROM vendors")}
-            for row in rows:
-                key = vendor_key(row["vendor_name"])
-                if not key:
+            for key, row in merged.items():
+                if only_new and key in existing:
                     continue
                 conn.execute(
                     """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, erp_id,
@@ -1138,9 +1160,12 @@ class Store:
                     updated += 1
                 else:
                     added += 1
+                    inserted.append(key)
                     existing.add(key)
-            self._log(conn, "vendors_imported", actor=actor, detail={"added": added, "updated": updated})
-        return {"added": added, "updated": updated}
+            self._log(conn, "vendors_imported", actor=actor, detail={
+                "added": added, "updated": updated, "duplicates": len(duplicates),
+            })  # fmt: skip
+        return {"added": added, "updated": updated, "duplicates": duplicates, "inserted": inserted}
 
     def delete_vendors(self, keys: list[str]) -> int:
         """Remove vendors from the vendor list (e.g. the demo's sample vendor master)."""
@@ -1157,9 +1182,18 @@ class Store:
             return [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 1")]
 
     def vendor_ids(self) -> dict[str, str]:
-        """{vendor_key: ERP vendor ID} from the vendor master."""
+        """{vendor_key: ERP vendor ID} from the vendor master, plus {"gst:<number>": ERP vendor ID} so an
+        invoice whose vendor name differs but whose GST/HST number matches still gets its ID."""
+        from .vendors import norm_tax_number
+
         with self._conn() as conn:
-            return {r[0]: r[1] for r in conn.execute("SELECT vendor_key, erp_id FROM vendors WHERE erp_id != ''")}
+            rows = conn.execute("SELECT vendor_key, erp_id, expected_gst FROM vendors WHERE erp_id != ''").fetchall()
+        ids = {r[0]: r[1] for r in rows}
+        for r in rows:
+            number = norm_tax_number(r[2])
+            if sum(c.isdigit() for c in number) >= 9:
+                ids.setdefault(f"gst:{number}", r[1])
+        return ids
 
     def all_vendor_terms(self) -> dict[str, str]:
         """{vendor_key: payment terms} for every vendor that has terms in the vendor master."""
@@ -1334,15 +1368,19 @@ class Store:
         if vendor_name is not None:
             sql, args = sql + " WHERE vendor_key = ?", (vendor_key(vendor_name),)
         with self._conn() as conn:
-            return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit))]
+            # Reviewer decisions first, then imported history: a big history import never pushes them out.
+            return [
+                dict(r) for r in conn.execute(sql + " ORDER BY outcome = 'history', id DESC LIMIT ?", (*args, limit))
+            ]
 
     def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
         """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.
         Rows already imported (same vendor, description, GL, cost center, amount and date) are skipped."""
         from .history import HISTORY
 
-        added = skipped = 0
+        added = skipped = unknown = 0
         with self._conn() as conn:
+            known_gls = {r[0] for r in conn.execute("SELECT code FROM gl_accounts")}
             seen = {
                 (r[0], r[1], r[2], r[3] or "", r[4], r[5])
                 for r in conn.execute(
@@ -1355,7 +1393,10 @@ class Store:
             for row in rows:
                 key = vendor_key(row["vendor_name"])
                 gl = _clean_code(row["gl_code"])
-                when = row.get("date") or _now()[:10]
+                if known_gls and gl not in known_gls:  # a retired or mistyped account would only mislead
+                    unknown += 1
+                    continue
+                when = row.get("date") or ""  # undated rows: the same key every day, so no re-import doubles
                 ident = (key, row["description"], gl, row.get("cost_center") or "", row.get("amount"), when)
                 if not key or ident in seen:
                     skipped += 1
@@ -1370,8 +1411,10 @@ class Store:
                 batch,
             )
             added = len(batch)
-            self._log(conn, "history_imported", actor=actor, detail={"added": added, "skipped": skipped})
-        return {"added": added, "skipped": skipped}
+            self._log(conn, "history_imported", actor=actor, detail={
+                "added": added, "skipped": skipped, "unknown_gl": unknown,
+            })  # fmt: skip
+        return {"added": added, "skipped": skipped, "unknown_gl": unknown}
 
     def history_count(self) -> int:
         with self._conn() as conn:
@@ -1455,8 +1498,9 @@ def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
     store.set_setting("policy_notes", (data_dir / "coding_policy.md").read_text(encoding="utf-8"))
 
 
-def load_sample_vendor_master(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> list[str]:
-    """Load the bundled sample vendor master (the demo vendors but one). Returns the vendor keys."""
+def load_sample_vendor_master(store: Store, data_dir: Path = SAMPLE_DATA_DIR, only_new: bool = False) -> list[str]:
+    """Load the bundled sample vendor master (the demo vendors but one). Returns the vendor keys (with
+    ``only_new``: only those added, existing vendor records being left as they are)."""
     import csv
 
     from .vendors import master_columns, master_rows
@@ -1464,8 +1508,8 @@ def load_sample_vendor_master(store: Store, data_dir: Path = SAMPLE_DATA_DIR) ->
     with (data_dir / "vendor_master.csv").open(encoding="utf-8-sig", newline="") as fh:
         records = list(csv.DictReader(fh))
     rows = master_rows(records, master_columns(list(records[0]) if records else []))
-    store.import_vendor_master(rows)
-    return sorted({vendor_key(r["vendor_name"]) for r in rows})
+    result = store.import_vendor_master(rows, only_new=only_new)
+    return sorted(result["inserted"]) if only_new else sorted({vendor_key(r["vendor_name"]) for r in rows})
 
 
 def load_sample_purchase_orders(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> list[str]:

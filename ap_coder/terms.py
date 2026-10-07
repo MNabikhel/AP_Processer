@@ -116,8 +116,12 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
     """Due date and discount for an invoice (``coding`` as stored: ai_output / final_output). Terms printed on
     the invoice come first, then ``vendor_terms`` (the vendor master's), then ``default_days``."""
     printed_terms = (coding.get("payment_terms") or "").strip()
-    terms = parse_terms(printed_terms or vendor_terms)
-    from_vendor = not printed_terms and bool(vendor_terms)
+    terms = parse_terms(printed_terms)
+    from_vendor = False
+    if vendor_terms and terms.net_days is None and not terms.on_receipt:  # none printed, or unreadable ("As agreed")
+        vendor = parse_terms(vendor_terms)
+        if vendor.net_days is not None or vendor.on_receipt:
+            terms, from_vendor = vendor, True
     invoice_date = _date(coding.get("invoice_date"))
     printed = _date(coding.get("due_date"))
     if printed:

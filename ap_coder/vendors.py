@@ -70,7 +70,8 @@ def vendor_findings(
     master = store.get_vendor(key)
     if store.has_vendor_master() and not (master and master.get("in_master")):
         number = norm_tax_number(coding.gst_hst_registration_number)
-        by_number = [v for v in store.master_vendors() if number and norm_tax_number(v["expected_gst"]) == number]
+        real = sum(c.isdigit() for c in number) >= 9  # a Business Number, not "N/A" or "pending"
+        by_number = [v for v in store.master_vendors() if real and norm_tax_number(v["expected_gst"]) == number]
         if by_number:
             master = by_number[0]
             findings.append(
@@ -171,7 +172,8 @@ MASTER_ALIASES: dict[str, tuple[str, ...]] = {
     "status": ("status", "active", "blocked", "hold", "statut"),
     "default_gl": ("defaultgl", "glaccount", "gl", "glcode", "expenseaccount", "account", "defaultaccount"),
 }  # fmt: skip
-_HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended", "no", "n", "false", "bloqué", "bloque"}
+_HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended", "closed", "disabled", "i", "h", "b",
+               "bloqué", "bloque", "inactif", "suspendu"}  # fmt: skip
 
 
 def _norm_header(value: Any) -> str:
@@ -203,9 +205,12 @@ def master_rows(records: list[dict[str, Any]], columns: dict[str, str]) -> list[
         if not name:
             continue
         status = get("status").lower()
-        if columns.get("status") and _norm_header(columns["status"]) == "active":  # an "Active" yes/no column
-            on_hold = status in ("no", "n", "false", "0", "inactive")
-        else:
+        header = _norm_header(columns.get("status"))
+        if header in ("active", "enabled"):  # an "Active" yes/no column: "No" means on hold
+            on_hold = status in ("no", "n", "false", "0", "inactive", "disabled")
+        elif header in ("blocked", "hold", "onhold", "inactive", "suspended"):  # "Blocked: Yes / All / Payment"
+            on_hold = status in ("yes", "y", "true", "1", "x", "all", "payment", "payments", "blocked", "oui")
+        else:  # a status column with words or codes
             on_hold = status in _HOLD_WORDS
         rows.append({
             "vendor_name": name, "erp_id": get("erp_id"), "gst": get("gst"), "terms": get("terms"),

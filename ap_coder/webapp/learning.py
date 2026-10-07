@@ -58,8 +58,10 @@ def _history_card(store) -> None:
                 result = store.import_history(rows, actor=reviewer())
                 notify(
                     f"Taught {result['added']:,} past line(s)"
-                    + (f"; {result['skipped'] + skipped:,} skipped (incomplete or already taught)."
-                       if result["skipped"] + skipped else "."),
+                    + (f"; {result['skipped'] + skipped:,} skipped (incomplete or already taught)"
+                       if result["skipped"] + skipped else "")
+                    + (f"; {result['unknown_gl']:,} with a GL account that is not in your list" if result["unknown_gl"]
+                       else "") + ".",
                     ":material/school:",
                 )  # fmt: skip
                 st.rerun()

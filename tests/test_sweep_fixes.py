@@ -252,3 +252,128 @@ def test_export_due_date_is_worked_out_when_not_printed(tmp_path):
 def test_due_date_message_names_the_due_date():
     with pytest.raises(ValueError, match="due_date must be YYYY-MM-DD"):
         InvoiceCoding.model_validate(_gt(due_date="31/12/2026"))
+
+
+# --- From the second review ------------------------------------------------------------------------------
+
+
+def test_demo_leaves_the_users_vendor_records_alone(tmp_path):
+    from ap_coder.demo import load_demo, remove_demo
+
+    store = Store(tmp_path / "a.db")
+    store.save_vendor("northwind it solutions", "Northwind", "on_hold", "999999999 RT0001", "bank details changed")
+    load_demo(store)
+    v = store.get_vendor("northwind it solutions")
+    assert v["status"] == "on_hold" and v["expected_gst"] == "999999999 RT0001"
+    remove_demo(store)
+    assert store.get_vendor("northwind it solutions")["notes"] == "bank details changed"
+
+
+def test_demo_does_not_add_a_vendor_master_next_to_real_invoices(tmp_path):
+    from ap_coder.demo import load_demo
+
+    store = Store(tmp_path / "a.db")
+    store.add_invoice(tmp_path / "real.pdf", _gt(vendor_name="Real Supplier Inc", invoice_number="R-1"), {})
+    load_demo(store)
+    assert not store.has_vendor_master()
+
+
+@pytest.mark.parametrize(
+    "header, value, on_hold",
+    [("Blocked", "No", False), ("Blocked", "Yes", True), ("Blocked", "All", True), ("Hold", "Y", True),
+     ("Active", "No", True), ("Active", "Yes", False), ("Status", "Closed", True), ("Status", "I", True),
+     ("Status", "Active", False)],
+)  # fmt: skip
+def test_vendor_status_columns(header, value, on_hold):
+    from ap_coder.vendors import master_columns, master_rows
+
+    rows = master_rows([{"Vendor Name": "Acme", header: value}], master_columns(["Vendor Name", header]))
+    assert (rows[0]["status"] == "on_hold") is on_hold
+
+
+def test_duplicate_vendor_records_are_reported_and_keep_the_hold(tmp_path):
+    store = Store(tmp_path / "a.db")
+    rows = [
+        {"vendor_name": "Acme Supplies Inc.", "erp_id": "V1", "gst": "111111111RT0001", "terms": "", "default_gl": "",
+         "status": "on_hold", "status_given": True},
+        {"vendor_name": "ACME Supplies Incorporated", "erp_id": "V2", "gst": "", "terms": "", "default_gl": "",
+         "status": "active", "status_given": True},
+    ]  # fmt: skip
+    result = store.import_vendor_master(rows)
+    assert result["duplicates"] == [["Acme Supplies Inc.", "ACME Supplies Incorporated"]]
+    assert store.get_vendor("acme supplies")["status"] == "on_hold"
+
+
+def test_reviewer_lessons_come_before_history(tmp_path):
+    store = Store(tmp_path / "a.db")
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
+    store.approve_invoice(invoice_id, _gt(), "Jane")
+    store.import_history([{"vendor_name": "Northwind IT Solutions Inc.", "description": f"item {i}", "gl_code": "6000",
+                           "cost_center": "", "amount": 1.0, "date": "2025-01-01"} for i in range(30)])  # fmt: skip
+    rows = store.feedback_rows(limit=5)
+    assert all(r["outcome"] != "history" for r in rows)
+
+
+def test_undated_history_is_not_taught_twice_on_another_day(tmp_path, monkeypatch):
+    import ap_coder.store as store_module
+
+    store = Store(tmp_path / "a.db")
+    row = {"vendor_name": "Acme", "description": "Janitorial cleaning", "gl_code": "6230", "cost_center": "",
+           "amount": 10.0, "date": ""}  # fmt: skip
+    store.import_history([row])
+    monkeypatch.setattr(store_module, "_now", lambda: "2099-01-01T00:00:00")
+    assert store.import_history([row])["added"] == 0
+
+
+def test_history_with_unknown_gl_accounts_is_left_out(tmp_path):
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    row = {"vendor_name": "Acme", "description": "Old account", "gl_code": "9999", "cost_center": "", "amount": 1.0,
+           "date": "2025-01-01"}  # fmt: skip
+    assert store.import_history([row]) == {"added": 0, "skipped": 0, "unknown_gl": 1}
+
+
+def test_operations_count_the_second_approval(tmp_path):
+    from ap_coder.insights import operations
+
+    path = tmp_path / "a.db"
+    store = Store(path)
+    store.set_setting("approval_limit", "100")
+    doc = _gt(invoice_date="2026-09-01", payment_terms="2/10 Net 30", due_date="")
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    store.approve_invoice(invoice_id, doc, "Alex")
+    store.final_approve(invoice_id, "Sam")
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE invoices SET reviewed_at = '2026-09-03T10:00:00', second_reviewed_at = "
+                     "'2026-10-07T10:00:00' WHERE id = ?", (invoice_id,))  # fmt: skip
+    ops = operations(store, today=dt.date(2026, 10, 8))
+    assert ops["approved_after_due"] == 1 and ops["discounts_missed"][0] == 1 and ops["discounts_in_time"][0] == 0
+
+
+def test_vendor_id_found_by_gst_number(tmp_path):
+    from ap_coder import exports
+    from ap_coder.store import load_sample_vendor_master
+
+    store = Store(tmp_path / "a.db")
+    load_sample_vendor_master(store)
+    inv = {"id": 1, "final_output": {**_gt(vendor_name="Northwind Information Technology Solutions"),
+                                     "gl_distribution": []}}  # fmt: skip
+    assert exports.invoice_rows([inv], vendor_ids=store.vendor_ids())[0]["vendor_id"] == "V10023"
+
+
+def test_unreadable_printed_terms_fall_back_to_the_vendor_master():
+    p = payment({"invoice_date": "2026-09-01", "payment_terms": "As agreed", "grand_total": 100}, 30, "Net 10")
+    assert p.due == dt.date(2026, 9, 11) and p.source == "vendor"
+
+
+def test_placeholder_tax_numbers_do_not_match(tmp_path):
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    store.import_vendor_master([{"vendor_name": "Trusted US Supplier", "erp_id": "V1", "gst": "N/A", "terms": "",
+                                 "default_gl": "", "status": "active", "status_given": False}])  # fmt: skip
+    _, report = finalise_coding(
+        InvoiceCoding.model_validate(_gt(vendor_name="Totally Unknown LLC", gst_hst_registration_number="N/A")),
+        store.reference_data(), Settings(), store=store,
+    )  # fmt: skip
+    codes = {i.code for i in report.issues}
+    assert "VENDOR_NOT_IN_MASTER" in codes and "VENDOR_MATCHED_BY_TAX_NUMBER" not in codes

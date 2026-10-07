@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -52,6 +53,15 @@ LINE_COLUMNS = [
 MONEY_HEADERS = {"Subtotal", "Tax", "Total", "Net", "Non-recoverable tax", "Amount"}
 
 
+def _vendor_id(final: dict[str, Any], vendor_ids: dict[str, str]) -> str:
+    """The ERP vendor ID: by vendor name, else by GST/HST number (see ``Store.vendor_ids``)."""
+    found = vendor_ids.get(vendor_key(final.get("vendor_name") or ""))
+    if found:
+        return found
+    number = re.sub(r"[^0-9a-z]", "", str(final.get("gst_hst_registration_number") or "").lower())
+    return vendor_ids.get(f"gst:{number}", "") if number else ""
+
+
 def invoice_rows(
     invoices: list[dict[str, Any]], batch: int | str = "", vendor_ids: dict[str, str] | None = None
 ) -> list[dict[str, Any]]:
@@ -65,7 +75,7 @@ def invoice_rows(
                 **{k: final.get(k) for k, _ in INVOICE_COLUMNS if k in final},
                 "batch": batch,
                 "invoice_id": inv["id"],
-                "vendor_id": vendor_ids.get(vendor_key(final.get("vendor_name") or ""), ""),
+                "vendor_id": _vendor_id(final, vendor_ids),
                 # printed, else worked out from the terms / vendor master / default when it was approved
                 "due_date": final.get("due_date") or inv.get("due_date") or "",
                 "reviewer": inv.get("reviewer"),
@@ -90,7 +100,7 @@ def line_rows(
                 {
                     "batch": batch,
                     "invoice_id": inv["id"],
-                    "vendor_id": vendor_ids.get(vendor_key(final.get("vendor_name") or ""), ""),
+                    "vendor_id": _vendor_id(final, vendor_ids),
                     "vendor_name": final.get("vendor_name"),
                     "invoice_number": final.get("invoice_number"),
                     "invoice_date": final.get("invoice_date"),

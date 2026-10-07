@@ -129,8 +129,11 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
     settings = settings or Settings()
     if not store.list_accounts("gl_accounts"):
         load_sample_setup(store)
-    if not store.has_vendor_master():  # a sample vendor master (Cascade is missing from it, on purpose)
-        store.set_setting(DEMO_VENDORS_SETTING, json.dumps(load_sample_vendor_master(store)))
+    real_invoices = len(store.list_invoices()) - store.demo_count()
+    if not store.has_vendor_master() and not real_invoices:
+        # A sample vendor master (Cascade left out on purpose). Only on a database without real invoices (they
+        # would all be "not in the vendor master"), and only adding vendors: the user's own vendor records stay.
+        store.set_setting(DEMO_VENDORS_SETTING, json.dumps(load_sample_vendor_master(store, only_new=True)))
     if not store.has_purchase_orders():  # sample POs, so the PO matching has something to show
         store.set_setting(DEMO_POS_SETTING, json.dumps(load_sample_purchase_orders(store)))
     reference = store.reference_data()
