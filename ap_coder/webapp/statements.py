@@ -7,10 +7,10 @@ from typing import Any
 import streamlit as st
 
 from ap_coder import statements as stm
-from ap_coder import ui
+from ap_coder import ui, vendor_mail
 from ap_coder.safe import md
 from ap_coder.webapp.accounts import _read_upload
-from ap_coder.webapp.common import card, esc, get_store, money, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, reviewer, show_toast
 
 TONES = {
     stm.MATCHED: ("ok", "check"),
@@ -130,3 +130,13 @@ def page_statements() -> None:
             "compare the two documents; a credit note may be missing. Not on statement: the vendor may have "
             "missed it, or it was already paid."
         )
+        if rec.count(stm.NOT_RECEIVED) or rec.count(stm.DIFFERS):
+            with st.expander("Ask the vendor for the missing invoices", icon=":material/forward_to_inbox:"):
+                language = st.segmented_control(
+                    "Language", list(vendor_mail.LANGUAGES), format_func=vendor_mail.LANGUAGES.get,
+                    default=vendor_mail.ENGLISH, key="stm_mail_lang",
+                ) or vendor_mail.ENGLISH  # fmt: skip
+                mail = vendor_mail.statement_request(rec.lines, language, reviewer())
+                st.code(mail.subject, language=None)
+                st.code(mail.body, language=None, wrap_lines=True)
+                st.link_button("Open in email", mail.mailto(), icon=":material/mail:")

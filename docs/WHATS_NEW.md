@@ -69,7 +69,8 @@ folder.
   (columns, headers, fixed text, date format, separators). Each invoice goes out once; a batch can be
   downloaded again or undone if the import failed.
 - **Vendor statements:** upload a vendor's statement of account and see what matches, what differs,
-  what you never received and what is not on their statement.
+  what you never received and what is not on their statement, with the email asking for copies of
+  the missing invoices ready to send.
 - **Month-end:** the accruals schedule: goods received but not invoiced (from POs), invoices not in
   the ERP yet, and regular bills that have not arrived; totals by GL; CSV.
 - **Sales tax:** the GST/HST input tax credits and QST input tax refunds to claim for a period

@@ -208,3 +208,67 @@ def draft(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLISH
     numbered = "\n".join(f"{n}. {text}" for n, text in enumerate(asks, 1))
     body = f"{t['hello']}\n\n{intro}\n\n{numbered}\n\n{t['thanks']}\n{signature}".rstrip() + "\n"
     return Draft(t["subject"].format(number=number), body, asks)
+
+
+_STATEMENT = {
+    ENGLISH: {
+        "subject": "Your statement of account: invoices we need",
+        "intro": "Thank you for your statement of account. Comparing it with our records:",
+        "missing": "We have no record of these invoices. Please send us a copy of each:",
+        "differs": "These amounts differ from the invoices we hold. Please send a copy of the invoice, or the credit "
+        "note that explains the difference:",
+        "missing_line": "- {number}{date}: {amount}",
+        "differs_line": "- {number}{date}: {amount} on the statement, {ours} on our copy",
+        "dated": " dated {date}",
+    },
+    FRENCH: {
+        "subject": "Votre relevé de compte : factures à nous transmettre",
+        "intro": "Merci pour votre relevé de compte. En le comparant avec nos dossiers :",
+        "missing": "Nous n'avons aucune trace de ces factures. Veuillez nous en envoyer une copie :",
+        "differs": "Ces montants diffèrent des factures que nous avons. Veuillez nous envoyer une copie de la facture, "
+        "ou la note de crédit qui explique l'écart :",
+        "missing_line": "- {number}{date} : {amount}",
+        "differs_line": "- {number}{date} : {amount} sur le relevé, {ours} sur notre copie",
+        "dated": " du {date}",
+    },
+}
+
+
+def _amount(value: float | None, language: str) -> str:
+    text = f"{float(value or 0):,.2f}"
+    return text.replace(",", " ").replace(".", ",") if language == FRENCH else text
+
+
+def statement_request(lines: Iterable[Any], language: str = ENGLISH, signature: str = "") -> Draft | None:
+    """An email asking for the invoices missing from AP and explaining the differences, from the
+    ``statements.reconcile`` lines; None when there is nothing to ask."""
+    from .statements import DIFFERS, NOT_RECEIVED
+
+    t, common = _STATEMENT[language], _TEXT[language]
+    lines = list(lines)
+    missing = [li for li in lines if li.status == NOT_RECEIVED]
+    differs = [li for li in lines if li.status == DIFFERS]
+    if not (missing or differs):
+        return None
+
+    def dated(li: Any) -> str:
+        return t["dated"].format(date=li.date) if li.date else ""
+
+    parts, asks = [t["intro"]], []
+    if missing:
+        rows = [t["missing_line"].format(number=li.number or "?", date=dated(li),
+                                         amount=_amount(li.statement_amount, language)) for li in missing]  # fmt: skip
+        parts.append(t["missing"] + "\n" + "\n".join(rows))
+        asks += rows
+    if differs:
+        rows = [
+            t["differs_line"].format(
+                number=li.number or "?", date=dated(li), amount=_amount(li.statement_amount, language),
+                ours=_amount(li.ap_amount, language),
+            )
+            for li in differs
+        ]  # fmt: skip
+        parts.append(t["differs"] + "\n" + "\n".join(rows))
+        asks += rows
+    body = f"{common['hello']}\n\n" + "\n\n".join(parts) + f"\n\n{common['thanks']}\n{signature}".rstrip() + "\n"
+    return Draft(t["subject"], body, asks)

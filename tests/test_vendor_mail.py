@@ -65,3 +65,20 @@ def test_every_askable_code_is_a_real_check():
     from ap_coder.help import CHECKS
 
     assert vendor_mail.ASKABLE <= set(CHECKS)
+
+
+def test_statement_request():
+    from ap_coder import statements as stm
+
+    lines = [
+        stm.Line(stm.MATCHED, "101", "2026-09-01", 1000.0, 1000.0, 1),
+        stm.Line(stm.NOT_RECEIVED, "103", "2026-09-20", 1234.5),
+        stm.Line(stm.DIFFERS, "102", "", 250.0, 245.0, 2),
+    ]
+    mail = vendor_mail.statement_request(lines, signature="Jane")
+    assert "- 103 dated 2026-09-20: 1,234.50" in mail.body
+    assert "- 102: 250.00 on the statement, 245.00 on our copy" in mail.body
+    assert "101" not in mail.body and len(mail.points) == 2
+    french = vendor_mail.statement_request(lines, vendor_mail.FRENCH)
+    assert "- 103 du 2026-09-20 : 1 234,50" in french.body
+    assert vendor_mail.statement_request(lines[:1]) is None
