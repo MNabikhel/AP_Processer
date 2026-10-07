@@ -11,13 +11,14 @@ import streamlit as st
 from ap_coder import ui
 from ap_coder.safe import csv_cell
 from ap_coder.store import Store, load_sample_setup
-from ap_coder.tax import TAX_TYPES, TREATMENTS, TaxRateTable
+from ap_coder.tax import DEFAULT_RATES_PATH, RATES_FILE, TAX_TYPES, TREATMENTS, TaxRateTable, rates_path
 from ap_coder.webapp.common import (
     card,
     esc,
     get_store,
     notify,
     reviewer,
+    short_path,
     show_toast,
 )
 from ap_coder.webapp.process import tax_types_mapped
@@ -276,7 +277,15 @@ def tax_setup(store: Store) -> None:
 
     with card("rates"):
         st.markdown("#### :material/calendar_month: Rates in force today")
-        st.caption("From `data/canada_tax_rates.csv`. Edit that file when a rate changes.")
+        source = (
+            "your copy in the data folder" if rates_path() != DEFAULT_RATES_PATH
+            else "the rate table that comes with AP Coder (updated with it)"
+        )  # fmt: skip
+        st.caption(
+            f"From {source}"
+            f": `{short_path(rates_path())}`. To change a rate before an update brings it, copy "
+            f"`data/{RATES_FILE}` into your data folder and edit the copy."
+        )
         today = dt.date.today()
         rows = [
             [ui.tax_chip(r.tax_type), esc(r.province or "All provinces"), f"<b>{r.rate * 100:.3f}%</b>",

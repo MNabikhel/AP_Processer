@@ -174,8 +174,9 @@ def review_tab() -> None:
         st.markdown("#### :material/tune: Review and AI behaviour")
         reviewer_name = st.text_input(
             "Your name",
-            env.get("AP_REVIEWER") or os.environ.get("AP_REVIEWER", ""),
+            paths.read_user_settings().get("reviewer") or env.get("AP_REVIEWER") or os.environ.get("AP_REVIEWER", ""),
             placeholder="shown on the invoices you approve",
+            help="Saved for your Windows account: two people sharing one AP Coder each keep their own name.",
         )
         threshold = st.slider(
             "Send to *Needs attention* when the AI's confidence is below",
@@ -194,16 +195,24 @@ def review_tab() -> None:
             help="Off only for very large charts of accounts; codes are still checked after the AI answers.",
         )
         if st.form_submit_button("Save", type="primary", icon=":material/save:"):
+            name = reviewer_name.strip()
+            renamed = bool(name) and name != reviewer()
+            if renamed:  # logged under the old name, with both names
+                rename = {"from": reviewer(), "to": name}
+                get_store().log_event(
+                    "settings_changed", actor=reviewer(), detail={"keys": ["reviewer"], "reviewer": rename}
+                )
+                paths.write_user_settings(reviewer=name)
             changed = save_settings(
                 {
-                    "AP_REVIEWER": reviewer_name.strip(),
                     "AP_REVIEW_THRESHOLD": f"{threshold:.2f}",
                     "AP_VISION": "true" if vision else "false",
                     "AP_CONSTRAIN_CODES": "true" if constrain else "false",
                 }
             )
-            if "AP_REVIEWER" in changed:
+            if renamed:
                 st.session_state.pop("reviewer", None)
+                changed.append("reviewer")
             notify(f"Saved {len(changed)} change(s)." if changed else "Nothing changed.", ":material/save:")
             st.rerun()
     st.caption(

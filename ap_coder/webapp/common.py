@@ -14,7 +14,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from ap_coder import ui
+from ap_coder import paths, ui
 from ap_coder.config import Settings
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.store import Store, default_db_path
@@ -57,8 +57,10 @@ def login() -> str:
 
 
 def reviewer() -> str:
-    """The person approving: the name saved in Settings, else the computer login name."""
-    for name in (os.environ.get("AP_REVIEWER"), getpass.getuser()):
+    """The person approving: the name this Windows user saved in Settings (kept per user, so two people
+    sharing one AP Coder keep their own names), else AP_REVIEWER from the .env, else the computer login."""
+    saved = str(paths.read_user_settings().get("reviewer") or "")
+    for name in (saved, os.environ.get("AP_REVIEWER"), getpass.getuser()):
         if name and str(name).strip():
             return str(name).strip()
     return "Reviewer"

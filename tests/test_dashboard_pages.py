@@ -4,7 +4,6 @@ These catch the mistakes unit tests can't: a wrong asset path, a missing import,
 """
 
 import json
-import os
 import sys
 
 import pytest
@@ -138,8 +137,10 @@ def test_settings_page_saves_to_the_env_file(db, monkeypatch):
     reviewer.input("Jane Doe")
     review_form_submit = next(b for b in at.button if b.label == "Save" and b.proto.is_form_submitter)
     _ok(review_form_submit.click().run())
-    assert read_env(env)["AP_REVIEWER"] == "Jane Doe"
-    assert os.environ["AP_REVIEWER"] == "Jane Doe"
+    from ap_coder.paths import read_user_settings
+
+    assert read_user_settings()["reviewer"] == "Jane Doe"  # per Windows user, not in the shared .env
+    assert "AP_REVIEWER" not in read_env(env)
 
 
 def test_vendor_detail_and_hold(busy_db):

@@ -80,6 +80,16 @@ _GST_NUMBER = re.compile(r"^\d{9}RT\d{4}$")
 _QST_NUMBER = re.compile(r"^\d{10}TQ\d{4}$")
 
 DEFAULT_RATES_PATH = Path(__file__).resolve().parent.parent / "data" / "canada_tax_rates.csv"
+RATES_FILE = "canada_tax_rates.csv"
+
+
+def rates_path() -> Path:
+    """Your copy of the rate table in the data folder if there is one (it survives updates), else the
+    bundled one."""
+    from .paths import private_dir
+
+    own = private_dir() / RATES_FILE
+    return own if own.is_file() else DEFAULT_RATES_PATH
 
 
 # --- Rates ------------------------------------------------------------------------
@@ -99,7 +109,8 @@ class TaxRateTable:
     rates: tuple[TaxRate, ...]
 
     @classmethod
-    def load(cls, path: str | Path = DEFAULT_RATES_PATH) -> TaxRateTable:
+    def load(cls, path: str | Path | None = None) -> TaxRateTable:
+        path = rates_path() if path is None else path
         rows = []
         for n, row in enumerate(read_csv_rows(path), start=2):  # row 1 is the header
             where = f"{path} row {n}"
