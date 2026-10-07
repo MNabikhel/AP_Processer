@@ -289,7 +289,8 @@ def fresh_start(c: Console, data: Path) -> None:
     if not movable:
         c.ok("nothing to clear: the data folder is already empty")
         return
-    if not c.yes("Move the database, invoices and outputs to a backup folder and start fresh?", default=False):
+    question = "Move the database, invoices and outputs to a backup folder and start fresh?"
+    if not c.assume_yes and not c.yes(question, default=False):  # --fresh-start --yes: already asked for
         return
     backup = data / f"backup-{dt.datetime.now():%Y%m%d-%H%M%S}"
     backup.mkdir()
