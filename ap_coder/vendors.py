@@ -10,6 +10,7 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * AMOUNT_UNUSUAL (warning): far above what this vendor usually bills
 * POSSIBLE_DUPLICATE_AMOUNT (warning): same vendor, same total, close date, different invoice number
 * VENDOR_NEW (info): first invoice from this vendor (no penalty; just worth knowing)
+* DUPLICATE_IN_ERP (error): the same vendor and invoice number is in the ERP's invoice register
 * DUPLICATE_OTHER_VENDOR (warning): same invoice number and total under another vendor name
 * VENDOR_NOT_IN_MASTER (warning): a vendor master was imported from the ERP and this vendor is not in it
   (by name or GST/HST number)
@@ -83,6 +84,13 @@ def vendor_findings(
                  "this vendor is not in the vendor master imported from the ERP: set it up (and verify it) first")
             )  # fmt: skip
     in_master = bool(master and master.get("in_master"))
+    for posted in store.in_erp(coding.vendor_name, coding.invoice_number, coding.grand_total)[:2]:
+        findings.append(
+            (ERROR, "DUPLICATE_IN_ERP",
+             f"invoice {posted['invoice_number']} from this vendor is already in the ERP"
+             f"{' (dated ' + posted['invoice_date'] + ')' if posted['invoice_date'] else ''}, total "
+             f"{posted['total']:,.2f}: possible duplicate payment")
+        )  # fmt: skip
     for other in store.duplicates_elsewhere(
         coding.vendor_name, coding.invoice_number, coding.grand_total, exclude_invoice_id
     )[:3]:

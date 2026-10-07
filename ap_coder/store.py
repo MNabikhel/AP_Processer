@@ -34,7 +34,7 @@ from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSet
 from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10  # 10: erp_invoices (created by _SCHEMA)
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -88,6 +88,10 @@ CREATE TABLE IF NOT EXISTS po_lines (
     unit_price REAL NOT NULL, amount REAL NOT NULL, received_quantity REAL, gl_code TEXT NOT NULL DEFAULT '',
     cost_center TEXT NOT NULL DEFAULT '', PRIMARY KEY (po_key, line_number));
 CREATE INDEX IF NOT EXISTS purchase_orders_vendor ON purchase_orders (vendor_key);
+CREATE TABLE IF NOT EXISTS erp_invoices (
+    vendor_key TEXT NOT NULL, number_key TEXT NOT NULL, total REAL NOT NULL, vendor_name TEXT NOT NULL,
+    invoice_number TEXT NOT NULL, invoice_date TEXT NOT NULL DEFAULT '', imported_at TEXT NOT NULL,
+    PRIMARY KEY (vendor_key, number_key, total));
 """
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
@@ -502,6 +506,59 @@ class Store:
             return int(self.get_setting("default_terms_days") or DEFAULT_TERMS_DAYS)
         except ValueError:
             return DEFAULT_TERMS_DAYS
+
+    # --- The ERP's invoice register (invoices entered before or outside AP Coder) ---------------------
+
+    def import_erp_register(
+        self, rows: list[dict[str, Any]], replace_all: bool = False, actor: str | None = None
+    ) -> int:
+        """Invoices already in the ERP (``registers.rows_from_records`` output). Returns how many are stored."""
+        now = _now()
+        with self._conn() as conn:
+            if replace_all:
+                conn.execute("DELETE FROM erp_invoices")
+            conn.executemany(
+                """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
+                   imported_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key, number_key, total) DO UPDATE
+                   SET invoice_date = excluded.invoice_date, imported_at = excluded.imported_at""",
+                [
+                    (vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"]), round(float(r["total"]), 2),
+                     r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", now)
+                    for r in rows
+                    if vendor_key(r["vendor_name"]) and _norm_number(r["invoice_number"]) and r.get("total") is not None
+                ],
+            )  # fmt: skip
+            count = int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
+            self._log(conn, "erp_register_imported", actor=actor, detail={"rows": len(rows), "total": count})
+        return count
+
+    def erp_register_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
+
+    def clear_erp_register(self, actor: str | None = None) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM erp_invoices")
+            self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
+
+    def in_erp(self, vendor_name: str, invoice_number: str, grand_total: float | None) -> list[dict[str, Any]]:
+        """This vendor's invoices with the same number already in the ERP (a credit note is not a duplicate
+        of the invoice it reverses)."""
+        key, number = vendor_key(vendor_name), _norm_number(invoice_number)
+        if not key or not number:
+            return []
+        with self._conn() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT invoice_number, invoice_date, total FROM erp_invoices "
+                    "WHERE vendor_key = ? AND number_key = ?",
+                    (key, number),
+                )
+            ]
+        if grand_total is None:
+            return rows
+        return [r for r in rows if (r["total"] < 0) == (grand_total < 0)]
 
     def duplicates_elsewhere(
         self, vendor_name: str, invoice_number: str, grand_total: float, exclude_id: int | None = None

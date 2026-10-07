@@ -30,6 +30,12 @@ CHECKS: dict[str, CheckHelp] = {
         "prefixes such as INV).",
         "Open the other invoice. If it is the same bill, reject this one so it is not paid twice.",
     ),
+    "DUPLICATE_IN_ERP": CheckHelp(
+        FRAUD, "Already in the ERP",
+        "The ERP's invoice register (imported on the Exports page) already has this vendor's invoice with the "
+        "same number: it was entered, and maybe paid, before or outside AP Coder.",
+        "Check the ERP. If it is the same bill, reject this one so it is not paid twice.",
+    ),
     "DUPLICATE_OTHER_VENDOR": CheckHelp(
         FRAUD, "Same bill, other vendor name",
         "Another invoice has the same number and total but a different vendor name: often the same supplier set up "

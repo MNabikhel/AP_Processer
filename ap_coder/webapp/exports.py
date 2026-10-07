@@ -5,8 +5,9 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from ap_coder import export_layout, exports, ui
+from ap_coder import export_layout, exports, registers, ui
 from ap_coder.store import Store
+from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import (
     card,
     esc,
@@ -38,6 +39,46 @@ def _batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
     return exports.build(
         fmt, [i for i in invoices if i], _gl_names(store), batch, store.vendor_ids(), layout=_layout(store)
     )
+
+
+REGISTER_LABELS = {"vendor_name": "Vendor *", "invoice_number": "Invoice number *", "invoice_date": "Date",
+                   "total": "Total *"}  # fmt: skip
+
+
+def _register_importer(store: Store) -> None:
+    count = store.erp_register_count()
+    title = "Invoices already in the ERP" + (f" ({count:,} known)" if count else "")
+    with st.expander(title, icon=":material/receipt_long:"):
+        st.caption(
+            "Import the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months. "
+            "Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP."
+        )
+        upload = st.file_uploader("ERP invoice list", type=["csv", "xlsx"], key="reg_upload")
+        df = _read_upload(upload, "reg") if upload is not None else None
+        if df is not None and not df.empty:
+            columns = list(df.columns)
+            guessed = registers.map_columns(columns)
+            options = ["(none)", *columns]
+            cols = st.columns(4)
+            chosen = {}
+            for col, (field, label) in zip(cols, REGISTER_LABELS.items(), strict=True):
+                pick = col.selectbox(label, options, index=options.index(guessed[field]) if field in guessed else 0,
+                                     key=f"reg_col_{field}")  # fmt: skip
+                if pick != "(none)":
+                    chosen[field] = pick
+            replace = st.checkbox("Replace the invoices already imported", key="reg_replace")
+            missing = [REGISTER_LABELS[f].rstrip(" *") for f in registers.REQUIRED if f not in chosen]
+            if missing:
+                st.warning("Pick the column for: " + ", ".join(missing))
+            elif st.button("Import", type="primary", icon=":material/upload:", key="reg_import"):
+                rows, skipped = registers.rows_from_records(df.to_dict("records"), chosen)
+                total = store.import_erp_register(rows, replace_all=replace, actor=reviewer())
+                notify(f"{total:,} ERP invoice(s) known" + (f"; {skipped} row(s) skipped." if skipped else "."),
+                       ":material/receipt_long:")  # fmt: skip
+                st.rerun()
+        if count and st.button("Clear the list", icon=":material/delete_sweep:", key="reg_clear"):
+            store.clear_erp_register(actor=reviewer())
+            st.rerun()
 
 
 def _layout_editor(store: Store) -> None:
@@ -195,6 +236,7 @@ def page_exports() -> None:
                                icon=":material/download:", key="export_download_now")  # fmt: skip
 
     _layout_editor(store)
+    _register_importer(store)
 
     with card("export_batches"):
         st.markdown("#### :material/inventory_2: Past batches")

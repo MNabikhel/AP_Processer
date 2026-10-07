@@ -15,7 +15,8 @@ An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
    - the right tax regime for the province
    - QST is charged on the pre-GST amount
    - supplier registration numbers are present
-   - possible duplicate invoices (also under another vendor name), and vendor fraud signals (vendor
+   - possible duplicate invoices (also under another vendor name, or already in the ERP's invoice
+     register), and vendor fraud signals (vendor
      not in the ERP's vendor master, on hold, changed GST/HST number, unusual amount, same amount
      under another number)
    - purchase order match: price, quantity ordered and received, lines not on the PO, PO total

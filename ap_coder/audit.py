@@ -48,6 +48,7 @@ ACTIONS = {
     "note": ("sticky_note_2", "violet", "Note"),
     "final_approved": ("how_to_reg", "ok", "Second approval"),
     "sent_back": ("undo", "warn", "Sent back"),
+    "erp_register_imported": ("receipt_long", "info", "ERP invoice register imported"),
     "history_imported": ("history_edu", "info", "History imported"),
     "vendors_imported": ("storefront", "info", "Vendor master imported"),
     "pos_imported": ("shopping_cart", "info", "Purchase orders imported"),
@@ -179,6 +180,10 @@ def describe(event: dict[str, Any]) -> str:
         return f"approved after {d.get('first_approver') or '?'} (over the approval limit)"
     if action == "sent_back":
         return f"back to the review queue · reason: {d.get('reason') or 'none given'}"
+    if action == "erp_register_imported":
+        return (
+            "cleared" if d.get("cleared") else f"{d.get('rows', 0)} row(s) read; {d.get('total', 0)} invoice(s) known"
+        )
     if action == "history_imported":
         return f"{d.get('added', 0)} past line(s) taught" + (f", {d['skipped']} skipped" if d.get("skipped") else "")
     if action == "vendors_imported":

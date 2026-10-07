@@ -47,7 +47,8 @@ folder.
   account is suggested for uncoded lines.
 - **Vendor fraud and duplicate signals:** vendor on hold, changed GST/HST number (a classic fake
   invoice sign), amount far above the vendor's usual, same amount under a new invoice number, the
-  same bill under another vendor name, first invoice from a vendor. The **Vendors** page holds the
+  same bill under another vendor name, a bill already in the ERP (import the ERP's invoice list on the
+  Exports page), first invoice from a vendor. The **Vendors** page holds the
   controls (hold, expected GST/HST number, notes).
 - **Second approval.** Above an approval limit (Settings → Review), an approved invoice waits for a
   second person (another name and another computer login) before it can be exported, or is sent
