@@ -173,9 +173,10 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
     finals = {r["id"]: r["final_output"] or {} for r in store.invoice_columns(("id", "final_output"), APPROVED)}
     taken = missed = 0
     taken_amount = missed_amount = 0.0
+    default_days, vendor_terms = store.default_terms_days(), store.all_vendor_terms()
     for r in approved:
         final = finals.get(r["id"]) or {}
-        p = payment(final, store.default_terms_days(), store.vendor_terms(vendor_key(final.get("vendor_name") or "")))
+        p = payment(final, default_days, vendor_terms.get(vendor_key(final.get("vendor_name") or ""), ""))
         if p.discount_by is None:
             continue
         if (r["reviewed_at"] or "")[:10] <= p.discount_by.isoformat():

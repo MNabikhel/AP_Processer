@@ -1104,6 +1104,11 @@ class Store:
         with self._conn() as conn:
             return {r[0]: r[1] for r in conn.execute("SELECT vendor_key, erp_id FROM vendors WHERE erp_id != ''")}
 
+    def all_vendor_terms(self) -> dict[str, str]:
+        """{vendor_key: payment terms} for every vendor that has terms in the vendor master."""
+        with self._conn() as conn:
+            return {r[0]: r[1] for r in conn.execute("SELECT vendor_key, terms FROM vendors WHERE terms != ''")}
+
     def vendor_terms(self, key: str) -> str:
         """The vendor master's payment terms for this vendor ('' if none)."""
         if not key:

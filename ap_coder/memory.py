@@ -24,6 +24,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 ACCEPTED, CORRECTED = "accepted", "corrected"
@@ -57,6 +58,7 @@ def _normalise(text: str) -> str:
     return " ".join(re.sub(r"[^0-9a-z]+", " ", _fold(text)).split())
 
 
+@lru_cache(maxsize=16384)  # called for every invoice on many pages; the same names come back
 def vendor_key(name: str) -> str:
     """Normalised vendor name for matching: accents, punctuation, "&"/"and" and legal forms ignored."""
     text = _fold(name).replace("&", " and ")
