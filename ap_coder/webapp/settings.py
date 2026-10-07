@@ -310,8 +310,13 @@ def data_tab(store: Store) -> None:
             )  # fmt: skip
             if c2.form_submit_button("Save", icon=":material/save:", width="stretch"):
                 folder = folder.strip().strip('"')
-                if folder and not Path(folder).expanduser().is_dir():
+                if folder == store.get_setting("backup_copy_dir"):
+                    notify("Nothing changed.", ":material/save:")
+                    st.rerun()
+                elif folder and not Path(folder).expanduser().is_dir():
                     st.error("That folder does not exist (or is not reachable from this computer).")
+                elif folder and Path(folder).expanduser().resolve() == store.backup_dir().resolve():
+                    st.error("That is the local backups folder: choose a folder on OneDrive or a network drive.")
                 else:
                     store.set_setting("backup_copy_dir", folder, actor=reviewer())
                     store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["backup_copy_dir"]})
@@ -322,11 +327,13 @@ def data_tab(store: Store) -> None:
                     st.rerun()
         status = store.get_setting("backup_copy_status")
         if store.get_setting("backup_copy_dir") and status:
-            ok = status.startswith("ok")
-            st.caption(
-                (":material/check_circle: Last copy " if ok else ":material/error: Last copy ")
-                + md(status.split(" ", 1)[1] if " " in status else status)
-            )
+            state, _, rest = status.partition(" ")
+            when, _, what = rest.partition(": ")
+            when = when.replace("T", " ")
+            if state == "ok":
+                st.caption(f":material/check_circle: Last copied {md(when)}: {md(what)}")
+            else:
+                st.caption(f":material/error: Copying failed {md(when)}: {md(what)}. The local backups are fine.")
         backups = store.list_backups()
         if not backups:
             st.caption("No backups yet.")

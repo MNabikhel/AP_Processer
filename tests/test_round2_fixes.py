@@ -99,3 +99,29 @@ def test_reopen_an_approved_or_rejected_invoice(tmp_path):
     store.reject_invoice(b, "Sam", "not ours")
     store.reopen(b, "Sam", "rejected by mistake")
     assert store.get_invoice(b)["status"] == "review" and store.get_invoice(b)["error"] is None
+
+
+def test_backup_copy_to_the_backups_folder_itself_is_refused(tmp_path):
+    store = Store(tmp_path / "db" / "ap.db")
+    store.backup_dir().mkdir(parents=True)
+    store.set_setting("backup_copy_dir", str(store.backup_dir()))
+    store.backup_now("manual")
+    assert store.get_setting("backup_copy_status").startswith("failed")
+    assert "local backups folder" in store.get_setting("backup_copy_status")
+
+
+def test_approving_one_invoice_again_counts_once_in_the_controls_report(tmp_path):
+    import datetime as dt
+
+    from ap_coder import controls
+
+    store = Store(tmp_path / "c.db")
+    doc = _doc("chinook_AB_GST_CCO-26-10418")
+    a = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    for _ in range(3):
+        store.approve_invoice(a, doc, "Alice")
+        store.reopen(a, "Alice", "fix")
+    store.approve_invoice(a, doc, "Alice")
+    today = dt.date.today()
+    r = controls.build(store, today, today)
+    assert r["by_person"] == [("Alice", 1, 0)] and len(r["sent_back"]) == 3

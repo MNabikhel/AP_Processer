@@ -198,7 +198,8 @@ def invoice_hero(vendor: str, meta: Iterable[tuple[str, str]], pills: Iterable[s
         f"<div class='pills'>{''.join(pills)}</div></div>"
         f"<div class='side'><div style='text-align:center'>{gauge}<div class='apc-muted' "
         f"style='font-size:.72rem'>AI confidence</div></div>"
-        f"<div class='total'><div class='label'>Total due</div><div class='value'>{money(total)}</div>"
+        f"<div class='total'><div class='label'>{'Credit' if total < 0 else 'Total due'}</div>"
+        f"<div class='value'>{money(total)}</div>"
         f"<div class='cur'>{esc(currency)}</div></div></div></div>"
     )
 

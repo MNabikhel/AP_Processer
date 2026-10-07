@@ -280,7 +280,7 @@ def page_review() -> None:
                 if inv["status"] == REJECTED:
                     if b1.button("Reopen", key=f"reopen_{inv['id']}", icon=":material/undo:",
                                  help="Back to the review queue (e.g. rejected by mistake)"):  # fmt: skip
-                        store.reopen(inv["id"], reviewer(), "rejected by mistake")
+                        store.reopen(inv["id"], reviewer())
                         notify("Back in the review queue.", ":material/undo:")
                         st.rerun()
                 elif b1.button(
@@ -433,6 +433,8 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
 
 
 def _due_pill(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> str:
+    if (ai.get("grand_total") or 0) <= 0:  # a credit note is not paid: no due date, no discount
+        return ""
     p = payment(ai, default_days, vendor_terms)
     if p.discount_open():
         return ui.pill(f"{p.terms.discount_pct:g}% off until {p.discount_by:%b} {p.discount_by.day}", "violet", "sell")
@@ -466,7 +468,7 @@ def _today_strip(store: Store, invoices: list[dict[str, Any]]) -> None:
         ui.pill(f"{second} waiting for your second approval", "violet", "how_to_reg") if second else "",
         ui.pill(f"{to_export} approved, ready to export", "info", "ios_share") if to_export else "",
         ui.pill(
-            f"{len(late)} regular invoice(s) late: {', '.join(r.vendor_name for r in late[:2])}"
+            f"{len(late)} regular invoice(s) late (Vendors page): {', '.join(r.vendor_name for r in late[:2])}"
             + ("…" if len(late) > 2 else ""),
             "gray",
             "event_busy",
@@ -728,12 +730,15 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         st.rerun()
     st.html(ui.progress(position + 1, len(ids)))
 
-    sent_back = next((e for e in store.events(invoice_id) if e["action"] in ("sent_back", "approved")), None)
-    if sent_back and sent_back["action"] == "sent_back":
-        reason = (sent_back["detail"] or {}).get("reason") or "no reason given"
+    back = next(
+        (e for e in store.events(invoice_id) if e["action"] in ("sent_back", "reopened", "approved", "rejected")), None
+    )
+    if back and back["action"] in ("sent_back", "reopened"):
+        reason = (back["detail"] or {}).get("reason") or "no reason given"
+        verb = "Sent back" if back["action"] == "sent_back" else "Reopened"
         st.html(
-            ui.check("warning", f"Sent back by {sent_back['actor'] or '?'}", f"{reason}. The first approver's "
-                     "corrections are kept below; fix what is needed and approve again.")
+            ui.check("warning", f"{verb} by {back['actor'] or '?'}", f"{reason}. The approved coding is kept below; "
+                     "fix what is needed and approve again.")
         )  # fmt: skip
     summary = st.container()  # the summary card is drawn here once the edits are valid
 
@@ -1268,7 +1273,7 @@ def _invoice_summary(
         ("event", coding.invoice_date),
         ("location_on", province_label(supply)),
         ("verified", f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else ""),
-        ("schedule", due_text(coding.to_output(), default_days, vendor_terms)),
+        ("schedule", due_text(coding.to_output(), default_days, vendor_terms) if coding.grand_total > 0 else ""),
     ]
     pills = []
     if errors:

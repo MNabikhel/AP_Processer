@@ -46,3 +46,34 @@ def test_the_erp_register_is_searched_too(tmp_path):
     )
     (hit,) = search.find(store, "acme 12.50")
     assert hit.source == "ERP" and hit.row["invoice_number"] == "A-77"
+
+
+def test_french_amounts_zeros_accents_and_punctuation(tmp_path):
+    store = Store(tmp_path / "s.db")
+    load_demo(store)
+
+    def numbers(query):
+        return [h.row["invoice_number"] for h in search.find(store, query)]
+
+    assert numbers("18 017,85") == ["NW-2026-0912"]  # thousands separated by a space, decimal comma
+    assert numbers("0047") == ["CN-2026-0047"]  # leading zeros kept in a part of a number
+    assert numbers("creative") == ["ACMR-2026-1187"]  # Créative
+    assert len(numbers('"northwind"?')) == 2
+
+
+def test_vendor_name_with_digits(tmp_path):
+    store = Store(tmp_path / "s.db")
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    store.add_invoice(tmp_path / "a.pdf", {**doc, "vendor_name": "Acme 3M Supplies"}, {})
+    assert [h.row["vendor_name"] for h in search.find(store, "acme 3m")] == ["Acme 3M Supplies"]
+
+
+def test_an_exported_invoice_is_not_shown_again_from_the_erp_register(tmp_path):
+    store = Store(tmp_path / "s.db")
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    a = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    store.approve_invoice(a, doc, "Jane")
+    store.create_export_batch([a], "csv")
+    store.import_erp_register([{"vendor_name": "CHINOOK COURIER", "invoice_number": doc["invoice_number"],
+                                "invoice_date": doc["invoice_date"], "total": doc["grand_total"]}])  # fmt: skip
+    assert [h.source for h in search.find(store, doc["invoice_number"])] == ["AP Coder"]

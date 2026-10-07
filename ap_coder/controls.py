@@ -58,8 +58,10 @@ def build(store: Store, start: dt.date, end: dt.date) -> dict[str, Any]:
         else []
     )
     setup = [e for e in events if e["action"] in SETUP_ACTIONS]
-    by_person = Counter(e["actor"] or "?" for e in approvals)
-    bulk = Counter(e["actor"] or "?" for e in approvals if (e["detail"] or {}).get("bulk"))
+    # Invoices each person approved: approving one invoice again (after a reopen or send-back) counts once.
+    by_person = Counter(person for person, _ in {(e["actor"] or "?", e["invoice_id"]) for e in approvals})
+    bulk = Counter(person for person, _ in {(e["actor"] or "?", e["invoice_id"]) for e in approvals
+                                              if (e["detail"] or {}).get("bulk")})  # fmt: skip
     return {
         "start": start, "end": end, "events": len(events), "approvals": len(approvals),
         "overrides": overrides, "signals": signals, "finals": finals, "sent_back": sent_back,
@@ -147,7 +149,7 @@ def report_html(r: dict[str, Any]) -> str:
         )
     parts += [
         _section("Changes to setup, vendors, purchase orders and learning", r["setup"], "None."),
-        "<h2>Approvals by person</h2><table><tr><th>Person</th><th class='n'>Approvals</th>"
+        "<h2>Approvals by person</h2><table><tr><th>Person</th><th class='n'>Invoices approved</th>"
         f"<th class='n'>of which bulk</th></tr>{people}</table></body></html>",
     ]
     return "\n".join(parts)

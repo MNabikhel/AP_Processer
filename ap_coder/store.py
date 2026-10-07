@@ -1471,6 +1471,8 @@ class Store:
             target = Path(folder).expanduser()
             if not target.is_dir():
                 raise OSError(f"folder not found: {target}")
+            if target.resolve() == made.parent.resolve():
+                raise OSError("that is the local backups folder; choose another one")
             copied = Path(shutil.copy2(made, target / made.name))
             for old in sorted((p for p in target.glob("ap_coder-*.db") if p.stem.count("-") == 2), reverse=True)[keep:]:
                 old.unlink(missing_ok=True)

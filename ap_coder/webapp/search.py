@@ -34,7 +34,7 @@ def page_search() -> None:
             label_visibility="collapsed", icon=":material/search:",
         )  # fmt: skip
         st.caption("Words match the vendor name; numbers match the invoice number (however written), the PO or the "
-                   "amount. Use both to narrow it down.")  # fmt: skip
+                   "amount (dates are not searched). Use both to narrow it down.")  # fmt: skip
     if not query.strip():
         return
     hits = search.find(store, query)

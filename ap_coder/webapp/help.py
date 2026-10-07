@@ -105,6 +105,7 @@ def page_help() -> None:
                 ui.table(
                     ["", ""],
                     [[" + ".join(ui.kbd(k) for k in keys), esc(what)] for keys, what in SHORTCUTS],
+                    wrap=[1],
                 )
             )
         with card("help_data"):

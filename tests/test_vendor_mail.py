@@ -110,3 +110,10 @@ def test_credit_note_questions():
     assert "refers to invoice NW-2026-0912, which we cannot find" in body
     french = vendor_mail.draft(doc, [Issue("warning", "CREDIT_EXCEEDS_INVOICE", "x")], vendor_mail.FRENCH).body
     assert "dépasse le montant de la facture NW-2026-0912" in french
+
+
+def test_credit_note_subject():
+    doc = _doc("northwind_ON_HST_CN-2026-0047")
+    issues = [Issue("error", "GST_HST_NUMBER_MISSING", "x")]
+    assert vendor_mail.draft(doc, issues).subject.startswith("Credit note CN-2026-0047")
+    assert vendor_mail.draft(doc, issues, vendor_mail.FRENCH).subject.startswith("Note de crédit")

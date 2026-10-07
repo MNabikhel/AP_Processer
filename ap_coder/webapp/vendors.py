@@ -128,6 +128,7 @@ def page_vendors() -> None:
                     ["Vendor", "Approved / all", "Spend (CAD)", "Last invoice", "AI accuracy", ""],
                     rows,
                     right=[1, 2, 4],
+                    wrap=[0, 5],
                 )  # fmt: skip
             )
         else:

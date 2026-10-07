@@ -33,6 +33,7 @@ ASKABLE = (
 _TEXT = {
     ENGLISH: {
         "subject": "Invoice {number}: information needed before payment",
+        "subject_credit": "Credit note {number}: information needed",
         "hello": "Hello,",
         "intro": "We are processing your invoice {number} dated {date} for {total} {currency}{po}. Before we can "
         "pay it, could you please help us with the following:",
@@ -74,6 +75,7 @@ _TEXT = {
     },
     FRENCH: {
         "subject": "Facture {number} : renseignements requis avant le paiement",
+        "subject_credit": "Note de crédit {number} : renseignements requis",
         "hello": "Bonjour,",
         "intro": "Nous traitons votre facture {number} du {date} au montant de {total} {currency}{po}. Avant de "
         "pouvoir la payer, pourriez-vous nous aider avec les points suivants :",
@@ -256,7 +258,7 @@ def draft(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLISH
     )  # fmt: skip
     numbered = "\n".join(f"{n}. {text}" for n, text in enumerate(asks, 1))
     body = f"{t['hello']}\n\n{intro}\n\n{numbered}\n\n{t['thanks']}\n{signature}".rstrip() + "\n"
-    return Draft(t["subject"].format(number=number), body, asks)
+    return Draft(t["subject_credit" if grand_total < 0 else "subject"].format(number=number), body, asks)
 
 
 _STATEMENT = {

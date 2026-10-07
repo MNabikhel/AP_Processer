@@ -48,7 +48,13 @@ def page_activity() -> None:
         ui.tiles(
             [
                 ui.tile("Events", len(events), "history", "blue", f"{week} in the last 7 days"),
-                ui.tile("Approvals", len(approvals), "task_alt", "green", f"{changed} with reviewer changes"),
+                ui.tile(
+                    "Invoices approved",
+                    len({e["invoice_id"] for e in approvals}),
+                    "task_alt",
+                    "green",
+                    f"{len(approvals)} approval(s), {changed} with reviewer changes",
+                ),  # fmt: skip
                 ui.tile("People", len(people), "group", "violet", ", ".join(people[:3]) or "—"),
                 ui.tile(
                     "Deletions",
@@ -184,7 +190,7 @@ def _controls_card(store) -> None:
                         len(r["finals"]),
                         "how_to_reg",
                         "violet",
-                        f"{len(r['sent_back'])} sent back · {len(r['waiting'])} waiting",
+                        f"{len(r['sent_back'])} sent back or reopened · {len(r['waiting'])} waiting",
                     ),
                     ui.tile("Setup changes", len(r["setup"]), "tune", "blue", "accounts, tax, vendors, POs"),
                 ]

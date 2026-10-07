@@ -397,6 +397,7 @@ def test_reopen_from_the_approved_view(busy_db):
     _ok(at.button(key=f"reopen_{invoice_id}").click().run())
     assert store.get_invoice(invoice_id)["status"] == "review"
     assert at.button(key=f"inv{invoice_id}_approve")  # opened straight away for the correction
+    assert any("Reopened by" in h.proto.body and "wrong cost center" in h.proto.body for h in at.get("html"))
 
 
 def test_spend_all_currencies_in_cad(db):
@@ -417,3 +418,16 @@ def test_spend_all_currencies_in_cad(db):
     at.session_state["tax_start"] = dt.date(2020, 1, 1)
     at.session_state["tax_end"] = dt.date(2030, 12, 31)
     _ok(at.run())
+
+
+def test_a_credit_note_is_not_shown_as_due(db):
+    from ap_coder.demo import load_demo
+
+    store = Store(db)
+    load_demo(store)
+    credit = next(i for i in store.list_invoices() if (i["grand_total"] or 0) < 0)
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = credit["id"]
+    _ok(at.run())
+    hero = next(h.proto.body for h in at.get("html") if "apc-inv" in h.proto.body)
+    assert "<div class='label'>Credit</div>" in hero and "Due in" not in hero and "Overdue" not in hero
