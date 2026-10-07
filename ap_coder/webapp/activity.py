@@ -7,18 +7,18 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
-from ap_coder import controls, ui
+from ap_coder import controls, dupaudit, ui
 from ap_coder.audit import ACTIONS, describe
 from ap_coder.safe import csv_cell
-from ap_coder.webapp.common import card, get_store, history_html, show_toast
+from ap_coder.webapp.common import card, esc, get_store, history_html, show_toast
 
 GROUPS = {
     "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "parked", "unparked", "note",
                  "rejected", "deleted", "exported"],
     "Setup": ["accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",
-              "settings_changed", "vendor_updated", "vendors_imported", "pos_imported", "po_status", "pos_deleted",
-              "export_undone"],
-    "Learning": ["lessons_forgotten"],
+              "settings_changed", "rules_changed", "vendor_updated", "vendors_imported", "pos_imported", "po_status",
+              "pos_deleted", "export_undone", "erp_register_imported"],
+    "Learning": ["lessons_forgotten", "history_imported"],
     "Backups": ["backup_made", "backup_restored"],
 }  # fmt: skip
 
@@ -62,6 +62,7 @@ def page_activity() -> None:
     )
 
     _controls_card(store)
+    _duplicate_audit_card(store)
 
     with card("activity_filters"):
         c1, c2, c3 = st.columns([2.8, 1.2, 1.8])
@@ -105,6 +106,44 @@ def page_activity() -> None:
             st.caption("Showing the newest 200; use the table or the CSV for everything.")
     with grid:
         st.dataframe(table, hide_index=True, width="stretch")
+
+
+def _duplicate_audit_card(store) -> None:
+    with card("dupaudit"):
+        head, button = st.columns([3, 1.3], vertical_alignment="center")
+        head.markdown("#### :material/content_copy: Duplicate payment audit")
+        head.caption(
+            "Bills that may have been approved, or posted in the ERP, twice: number typos, the same bill under two "
+            "vendor names, the same amount days apart. Includes the ERP invoice register when imported (Exports)."
+        )
+        if button.button("Run the audit", icon=":material/search:", width="stretch", key="dupaudit_run"):
+            st.session_state["dupaudit"] = dupaudit.find(store)
+        pairs = st.session_state.get("dupaudit")
+        if pairs is None:
+            return
+        if not pairs:
+            st.html(ui.pill("No likely duplicates found", "ok", "check"))
+            return
+        rows = [
+            [
+                ui.pill(dupaudit.REASONS[p.reason], "err" if p.reason == dupaudit.EXACT else "warn"),
+                f"<b>{esc(p.first.vendor_name)}</b><div class='apc-muted'>{esc(p.first.label)}</div>",
+                f"<b>{esc(p.second.vendor_name)}</b><div class='apc-muted'>{esc(p.second.label)}</div>",
+                f"{p.amount:,.2f} <span class='apc-muted'>{esc(p.first.currency or p.second.currency)}</span>",
+            ]
+            for p in pairs[:100]
+        ]
+        st.html(ui.table(["Why", "Bill", "Possible duplicate", "Amount"], rows, right=[3], wrap=[1, 2]))
+        if len(pairs) > 100:
+            st.caption(f"The first 100 of {len(pairs)}: download the CSV for all.")
+        st.download_button(
+            "Download (CSV)", dupaudit.to_csv(pairs), file_name=f"duplicate_audit_{dt.date.today()}.csv",
+            mime="text/csv", icon=":material/download:", key="dupaudit_download",
+        )  # fmt: skip
+        st.caption(
+            "Check each pair against the documents: a real duplicate that was paid is recovered from the vendor "
+            "as a credit or refund."
+        )
 
 
 def _controls_card(store) -> None:

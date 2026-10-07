@@ -545,6 +545,16 @@ class Store:
             conn.execute("DELETE FROM erp_invoices")
             self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
 
+    def erp_register(self) -> list[dict[str, Any]]:
+        """Every invoice in the imported ERP register."""
+        with self._conn() as conn:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total FROM erp_invoices"
+                )
+            ]
+
     def in_erp(self, vendor_name: str, invoice_number: str, grand_total: float | None) -> list[dict[str, Any]]:
         """This vendor's invoices with the same number already in the ERP (a credit note is not a duplicate
         of the invoice it reverses)."""

@@ -97,6 +97,9 @@ folder.
 
 - **Activity:** an audit trail of everything that changes data, with every change a reviewer made
   to the AI's coding; filterable and downloadable.
+- **Duplicate payment audit** (Activity page): bills that may have been approved or posted twice,
+  across AP Coder and the ERP invoice register: invoice numbers one keystroke apart, the same bill
+  under two vendor names, the same amount days apart. CSV.
 - **Controls report** (on the Activity page) for internal audit: approvals that overrode an error,
   approvals made while a fraud or PO signal was showing, second approvals, setup changes, approvals
   per person; one HTML page to download.

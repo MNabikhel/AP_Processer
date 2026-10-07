@@ -313,3 +313,14 @@ def test_apply_a_rule_added_after_processing(busy_db):
     _ok(at.button(key=f"inv{invoice_id}_approve").click().run())
     lines = store.get_invoice(invoice_id)["final_output"]["line_items"]
     assert next(li for li in lines if li["line_number"] == 5)["predicted_gl_code"] == "6900"
+
+
+def test_duplicate_audit_on_the_activity_page(db):
+    store = Store(db)
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    for number in ("NW-2026-0912", "NW-2026-0921"):
+        doc = {**gt, "invoice_number": number}
+        store.approve_invoice(store.add_invoice(db.parent / f"{number}.pdf", doc, {}), doc, "Jane")
+    at = _ok(_page("activity", "page_activity").run())
+    _ok(at.button(key="dupaudit_run").click().run())
+    assert len(at.session_state["dupaudit"]) == 1
