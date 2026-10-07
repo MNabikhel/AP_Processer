@@ -172,6 +172,8 @@ Open **GL accounts & tax**:
    - PST: *add to each expense line's GL*. Alternatively, choose a separate PST expense account.
 4. **Coding policy:** plain-English rules, one per line, e.g. "Laptops under $2,500 go to 6010".
    This is your fastest tuning lever.
+5. **Fixed rules:** lines that must always go to one account (a vendor, words in the line, or both),
+   whatever the AI says. Vendors your team always coded the same way are suggested.
 
 Optional, any time later:
 
@@ -183,9 +185,12 @@ Optional, any time later:
   button shows the columns). Include the quantity received to get three-way matching. Re-import
   the export regularly; a PO in the file replaces its earlier lines.
 - **Exports → Custom layout for your ERP:** if your ERP's import needs its own columns.
+- **Exports → ERP invoice register:** the ERP's list of AP invoices (last 12 to 18 months), so a bill
+  already entered there is caught, and the duplicate payment audit covers it.
 - **Settings → Review:** your name (shown on approvals), the confidence threshold, an **approval
-  limit** above which a second person must approve, and the days to pay when an invoice shows no
-  terms.
+  limit** above which a second person must approve, the days to pay when an invoice shows no
+  terms, and exchange rates to CAD if you are billed in other currencies.
+- **Settings → Data & backups:** a **second backup folder** (OneDrive or network) for the daily backups.
 
 Then run `python -m ap_coder doctor` in `terminal.bat` (offline is fine) and **paste the output**. From it I can see
 row counts, whether every tax type is mapped, and the prompt size, but none of your codes or
@@ -221,10 +226,12 @@ For each invoice:
    differs from the official one for the province.
    Each check says what to do; **Help** lists them all.
 3. Fix anything wrong in the grids. GL and cost-center cells are dropdowns of your own codes. Lines
-   without a GL account get **suggestions**; an invoice quoting a PO shows the **PO match**.
+   without a GL account get **suggestions**; an invoice quoting a PO shows the **PO match**. When
+   the vendor has to fix something, **Ask the vendor** under the checks writes the email.
 4. Click **Approve & teach** (Ctrl+Enter). Invoices nobody needs to look at can be approved together
    with *Approve N clean…* above the queue.
-5. Approved invoices wait in **Exports**: export them as a batch for the ERP (Excel or CSV).
+5. Approved invoices wait in **Exports**: export them as a batch for the ERP (Excel, CSV or your
+   custom layout), with the **Approved PDFs** to attach if your ERP keeps invoice images.
 
 Every approved line is stored as a lesson: *confirmed* if the AI was right, *corrected* if you
 changed it. The next invoice from that vendor sees those lessons, and **Learning & accuracy**
@@ -283,5 +290,5 @@ AP PC that both sign in to with their own Windows accounts: put the code in a fo
 (e.g. `C:\APCoder\app`) and have each person run `install.bat --data-dir C:\APCoder\data` once (in
 `terminal.bat`). Each person sets *Your name* in Settings → Review; it is kept per Windows account.
 Keep the data folder on a local disk: the database must not live on a network share. To protect it
-against a lost or broken PC, set *Also copy each backup to* in Settings → Backups to a OneDrive or
+against a lost or broken PC, set *Also copy each backup to* in Settings → Data & backups to a OneDrive or
 network folder: the daily backup copies go there (that is safe; only the live database must stay local).
