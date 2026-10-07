@@ -136,6 +136,10 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
         "vendor_name": {"type": "string", "description": "Legal or trading name of the supplier."},
         "invoice_number": {"type": "string", "description": "Supplier's invoice identifier."},
         "invoice_date": {"type": "string", "description": "Invoice issue date formatted YYYY-MM-DD."},
+        "po_number": {
+            "type": "string",
+            "description": "Buyer's purchase order number as printed (PO #, Customer PO, Order Ref), empty if none.",
+        },
         "currency": {"type": "string", "description": "ISO 4217 currency code, e.g. CAD, USD."},
         "supplier_province": {
             "type": "string",
@@ -251,6 +255,7 @@ class InvoiceCoding(BaseModel):
     vendor_name: str
     invoice_number: str
     invoice_date: str
+    po_number: str = ""
     currency: str
     supplier_province: str = ""
     ship_to_province: str = ""

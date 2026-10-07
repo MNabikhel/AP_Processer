@@ -29,6 +29,7 @@ from ap_coder.webapp.exports import page_exports
 from ap_coder.webapp.insights import page_insights
 from ap_coder.webapp.learning import page_learning
 from ap_coder.webapp.process import page_process
+from ap_coder.webapp.purchase_orders import page_purchase_orders
 from ap_coder.webapp.review import page_review
 from ap_coder.webapp.settings import page_settings
 from ap_coder.webapp.vendors import page_vendors
@@ -41,6 +42,7 @@ PAGES.update(
         "review": st.Page(page_review, title="Review queue", icon=":material/inbox:", default=True),
         "process": st.Page(page_process, title="Process invoices", icon=":material/upload_file:"),
         "exports": st.Page(page_exports, title="Exports", icon=":material/ios_share:"),
+        "purchase_orders": st.Page(page_purchase_orders, title="Purchase orders", icon=":material/shopping_cart:"),
         "accounts": st.Page(page_accounts, title="GL accounts & tax", icon=":material/account_tree:"),
         "learning": st.Page(page_learning, title="Learning & accuracy", icon=":material/insights:"),
         "insights": st.Page(page_insights, title="Insights", icon=":material/query_stats:"),
@@ -61,6 +63,6 @@ with st.sidebar:
 NAV_SECTIONS = {
     "Work": ["review", "process", "exports"],
     "Insight": ["insights", "learning", "vendors", "activity"],
-    "Setup": ["accounts", "settings"],
+    "Setup": ["accounts", "purchase_orders", "settings"],
 }
 st.navigation({section: [PAGES[k] for k in keys] for section, keys in NAV_SECTIONS.items()}).run()

@@ -28,11 +28,12 @@ from typing import Any
 from .audit import diff_coding
 from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
 from .paths import default_db_path, private_dir  # noqa: F401  (re-exported)
+from .po import OPEN, po_key
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -74,12 +75,21 @@ CREATE INDEX IF NOT EXISTS invoices_vendor ON invoices (vendor_key);
 CREATE TABLE IF NOT EXISTS export_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, actor TEXT, format TEXT NOT NULL,
     invoices INTEGER NOT NULL, total REAL, undone_at TEXT, undone_by TEXT);
+CREATE TABLE IF NOT EXISTS purchase_orders (
+    po_key TEXT PRIMARY KEY, po_number TEXT NOT NULL, vendor_name TEXT NOT NULL DEFAULT '',
+    vendor_key TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open', updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS po_lines (
+    po_key TEXT NOT NULL, line_number INTEGER NOT NULL, description TEXT NOT NULL, quantity REAL NOT NULL,
+    unit_price REAL NOT NULL, amount REAL NOT NULL, received_quantity REAL, gl_code TEXT NOT NULL DEFAULT '',
+    cost_center TEXT NOT NULL DEFAULT '', PRIMARY KEY (po_key, line_number));
+CREATE INDEX IF NOT EXISTS purchase_orders_vendor ON purchase_orders (vendor_key);
 """
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
 _HEADER_FIELDS = (
-    "vendor_name", "invoice_number", "invoice_date", "currency", "supplier_province", "ship_to_province",
-    "gst_hst_registration_number", "qst_registration_number", "subtotal", "tax_total", "grand_total",
+    "vendor_name", "invoice_number", "invoice_date", "po_number", "currency", "supplier_province",
+    "ship_to_province", "gst_hst_registration_number", "qst_registration_number", "subtotal", "tax_total",
+    "grand_total",
 )  # fmt: skip
 
 
@@ -127,6 +137,16 @@ class Store:
             columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
             if "export_batch" not in columns:
                 conn.execute("ALTER TABLE invoices ADD COLUMN export_batch INTEGER")
+        if version < 4:  # invoices remember the purchase order they quote
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            if "po_key" not in columns:
+                conn.execute("ALTER TABLE invoices ADD COLUMN po_key TEXT NOT NULL DEFAULT ''")
+            rows = conn.execute("SELECT id, ai_output, final_output FROM invoices").fetchall()
+            for r in rows:
+                coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
+                if coding.get("po_number"):
+                    conn.execute("UPDATE invoices SET po_key = ? WHERE id = ?", (po_key(coding["po_number"]), r["id"]))
+        conn.execute("CREATE INDEX IF NOT EXISTS invoices_po ON invoices (po_key)")
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -352,8 +372,8 @@ class Store:
             cur = conn.execute(
                 """INSERT INTO invoices (source_path, file_name, file_sha256, status, vendor_name, vendor_key,
                    invoice_number, invoice_date, currency, grand_total, model_confidence, adjusted_confidence,
-                   requires_review, ai_output, validation, extraction_md, meta, error, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   requires_review, ai_output, validation, extraction_md, meta, error, created_at, po_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(source_path.resolve()),  # absolute: the dashboard may run from another folder
                     source_path.name,
@@ -374,6 +394,7 @@ class Store:
                     json.dumps(meta or {}, default=str),
                     error,
                     _now(),
+                    po_key(out.get("po_number") or ""),
                 ),
             )
             invoice_id = int(cur.lastrowid)
@@ -536,8 +557,8 @@ class Store:
             # the second finds it already approved and records nothing.
             cur = conn.execute(
                 """UPDATE invoices SET status = ?, final_output = ?, edits = ?, reviewer = ?, reviewed_at = ?,
-                   vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?
-                   WHERE id = ? AND status != ?""",
+                   vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?,
+                   po_key = ? WHERE id = ? AND status != ?""",
                 (
                     APPROVED,
                     json.dumps(final_output),
@@ -549,6 +570,7 @@ class Store:
                     final_output.get("invoice_number"),
                     final_output.get("invoice_date"),
                     final_output.get("grand_total"),
+                    po_key(final_output.get("po_number") or ""),
                     invoice_id,
                     APPROVED,
                 ),  # fmt: skip
@@ -567,6 +589,157 @@ class Store:
                 feedback_rows,
             )
         return counts
+
+    # --- Purchase orders ---------------------------------------------------------------------------
+
+    def import_purchase_orders(
+        self, rows: list[dict[str, Any]], replace_all: bool = False, actor: str | None = None
+    ) -> dict[str, int]:
+        """Import PO lines (``po.rows_from_records`` output). A PO in the file replaces that PO's lines,
+        so re-importing an ERP export updates quantities received; other POs are kept unless ``replace_all``."""
+        orders: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            key = po_key(row["po_number"])
+            if not key:
+                continue
+            order = orders.setdefault(key, {"row": row, "lines": []})
+            order["lines"].append(row)
+            if row.get("vendor_name") and not order["row"].get("vendor_name"):
+                order["row"] = row
+        now = _now()
+        with self._conn() as conn:
+            if replace_all:
+                conn.execute("DELETE FROM po_lines")
+                conn.execute("DELETE FROM purchase_orders")
+            existing = {r["po_key"] for r in conn.execute("SELECT po_key FROM purchase_orders")}
+            for key, order in orders.items():
+                head = order["row"]
+                status = "closed" if all(r.get("status") == "closed" for r in order["lines"]) else OPEN
+                conn.execute(
+                    """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(po_key) DO UPDATE SET po_number = excluded.po_number,
+                       vendor_name = excluded.vendor_name, vendor_key = excluded.vendor_key,
+                       status = excluded.status, updated_at = excluded.updated_at""",
+                    (key, head["po_number"], head.get("vendor_name") or "", vendor_key(head.get("vendor_name") or ""),
+                     status, now),
+                )  # fmt: skip
+                conn.execute("DELETE FROM po_lines WHERE po_key = ?", (key,))
+                used: set[int] = set()
+                for row in order["lines"]:
+                    number = row.get("line_number")
+                    if not number or number in used:
+                        number = max(used, default=0) + 1
+                    used.add(number)
+                    conn.execute(
+                        """INSERT INTO po_lines (po_key, line_number, description, quantity, unit_price, amount,
+                           received_quantity, gl_code, cost_center) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (key, number, row["description"], row["quantity"], row["unit_price"], row["amount"],
+                         row.get("received_quantity"), _clean_code(row.get("gl_code")),
+                         _clean_code(row.get("cost_center"))),
+                    )  # fmt: skip
+            counts = {
+                "orders": len(orders),
+                "added": len(set(orders) - existing),
+                "updated": len(set(orders) & existing),
+                "lines": sum(len(o["lines"]) for o in orders.values()),
+            }
+            self._log(conn, "pos_imported", actor=actor, detail={**counts, "replace_all": replace_all})
+        return counts
+
+    def has_purchase_orders(self) -> bool:
+        with self._conn() as conn:
+            return conn.execute("SELECT 1 FROM purchase_orders LIMIT 1").fetchone() is not None
+
+    def purchase_order(self, key: str) -> dict[str, Any] | None:
+        """One PO with its lines and total (``key`` is ``po.po_key``)."""
+        with self._conn() as conn:
+            head = conn.execute("SELECT * FROM purchase_orders WHERE po_key = ?", (key,)).fetchone()
+            if head is None:
+                return None
+            lines = [
+                dict(r) for r in conn.execute("SELECT * FROM po_lines WHERE po_key = ? ORDER BY line_number", (key,))
+            ]
+        return {**dict(head), "lines": lines, "total": round(sum(li["amount"] for li in lines), 2)}
+
+    def purchase_orders(self) -> list[dict[str, Any]]:
+        """Every PO with its total and how much has been invoiced against it (invoices in review included)."""
+        with self._conn() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT p.*, COUNT(l.line_number) lines, COALESCE(SUM(l.amount), 0) total,
+                       SUM(l.received_quantity IS NOT NULL) received_lines
+                       FROM purchase_orders p LEFT JOIN po_lines l ON l.po_key = p.po_key
+                       GROUP BY p.po_key ORDER BY p.po_number"""
+                )
+            ]
+            billed: dict[str, dict[str, Any]] = {}
+            for r in conn.execute(
+                "SELECT id, po_key, status, ai_output, final_output FROM invoices "
+                "WHERE po_key != '' AND status IN (?, ?)",
+                (REVIEW, APPROVED),
+            ):
+                coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
+                entry = billed.setdefault(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0})
+                entry["billed"] += float(coding.get("subtotal") or 0)
+                entry["invoices"] += 1
+                entry["in_review"] += r["status"] == REVIEW
+        for r in rows:
+            r.update(billed.get(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0}))
+            r["remaining"] = r["total"] - r["billed"]
+        return rows
+
+    def open_pos_for_vendor(self, key: str) -> list[str]:
+        if not key:
+            return []
+        with self._conn() as conn:
+            return [
+                r["po_number"]
+                for r in conn.execute(
+                    "SELECT po_number FROM purchase_orders WHERE vendor_key = ? AND status = ? ORDER BY po_number",
+                    (key, OPEN),
+                )
+            ]
+
+    def po_invoices(self, key: str, exclude_id: int | None = None) -> list[dict[str, Any]]:
+        """Invoices quoting this PO (in review or approved), with their current coding."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, status, invoice_number, invoice_date, ai_output, final_output FROM invoices "
+                "WHERE po_key = ? AND status IN (?, ?) ORDER BY id",
+                (key, REVIEW, APPROVED),
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "invoice_number": r["invoice_number"],
+                "invoice_date": r["invoice_date"],
+                "coding": json.loads(r["final_output"] or r["ai_output"] or "{}"),
+            }  # fmt: skip
+            for r in rows
+            if r["id"] != exclude_id
+        ]
+
+    def set_po_status(self, key: str, status: str, actor: str | None = None) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE po_key = ?", (status, _now(), key)
+            )
+            number = conn.execute("SELECT po_number FROM purchase_orders WHERE po_key = ?", (key,)).fetchone()
+            self._log(conn, "po_status", actor=actor, detail={"po": number[0] if number else key, "status": status})
+
+    def delete_purchase_orders(self, keys: list[str], actor: str | None = None) -> int:
+        with self._conn() as conn:
+            marks = ",".join("?" * len(keys))
+            numbers = [
+                r[0] for r in conn.execute(f"SELECT po_number FROM purchase_orders WHERE po_key IN ({marks})", keys)
+            ]
+            conn.execute(f"DELETE FROM po_lines WHERE po_key IN ({marks})", keys)
+            conn.execute(f"DELETE FROM purchase_orders WHERE po_key IN ({marks})", keys)
+            if numbers:
+                self._log(conn, "pos_deleted", actor=actor, detail={"pos": numbers})
+        return len(numbers)
 
     # --- ERP export batches -------------------------------------------------------------------------
 
@@ -861,3 +1034,16 @@ def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
         for row in csv.DictReader(fh):
             store.set_tax_treatment(row["tax_type"], row["treatment"], row.get("gl_code") or "")
     store.set_setting("policy_notes", (data_dir / "coding_policy.md").read_text(encoding="utf-8"))
+
+
+def load_sample_purchase_orders(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> list[str]:
+    """Load the bundled sample purchase orders (they match the sample invoices). Returns the PO keys."""
+    import csv
+
+    from .po import map_columns, rows_from_records
+
+    with (data_dir / "purchase_orders.csv").open(encoding="utf-8-sig", newline="") as fh:
+        records = list(csv.DictReader(fh))
+    rows, _ = rows_from_records(records, map_columns(list(records[0]) if records else []))
+    store.import_purchase_orders(rows)
+    return sorted({po_key(r["po_number"]) for r in rows})

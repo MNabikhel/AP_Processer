@@ -25,6 +25,7 @@ PAGES = [
     ("vendors", "page_vendors"),
     ("exports", "page_exports"),
     ("insights", "page_insights"),
+    ("purchase_orders", "page_purchase_orders"),
 ]
 TIMEOUT = 90
 
@@ -164,3 +165,26 @@ def test_insights_with_the_demo(db):
 
     load_demo(Store(db))
     _ok(_page("insights", "page_insights").run())
+
+
+def test_purchase_orders_page_and_po_coding_on_the_review_screen(db):
+    from ap_coder.demo import load_demo
+
+    store = Store(db)
+    at = _ok(_page("purchase_orders", "page_purchase_orders").run())
+    _ok(at.button(key="po_samples").click().run())
+    assert len(store.purchase_orders()) == 4
+    load_demo(store)
+    _ok(_page("purchase_orders", "page_purchase_orders").run())
+
+    redriver = next(i for i in store.list_invoices() if i["vendor_name"].startswith("Red River"))
+    key = f"inv{redriver['id']}"
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = redriver["id"]
+    _ok(at.run())
+    _ok(at.button(key=f"{key}_po_coding").click().run())
+    _ok(at.run())
+    assert f"{key}_po_coding" not in {b.key for b in at.button}  # nothing left to apply
+    _ok(at.button(key=f"{key}_approve").click().run())
+    final = store.get_invoice(redriver["id"])["final_output"]
+    assert final["line_items"][0]["predicted_gl_code"] == "1510"  # the PO's GL, not the AI's 6900

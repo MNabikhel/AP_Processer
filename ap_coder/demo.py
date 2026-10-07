@@ -8,7 +8,8 @@ correcting and approving, and watch the learning work. Two invoices are already 
 Learning page has history to show.
 
 Everything it adds is marked ``meta.demo`` and can be removed with ``remove_demo`` without touching
-real invoices.
+real invoices. If no purchase orders are loaded, the sample POs that go with the invoices are loaded too
+(and removed with the demo).
 """
 
 from __future__ import annotations
@@ -23,9 +24,10 @@ from .config import Settings
 from .paths import PROJECT_DIR
 from .pipeline import finalise_coding
 from .schema import InvoiceCoding
-from .store import Store, load_sample_setup
+from .store import Store, load_sample_purchase_orders, load_sample_setup
 
 SAMPLES_DIR = PROJECT_DIR / "samples"
+DEMO_POS_SETTING = "demo_purchase_orders"  # PO keys the demo loaded, removed with it
 DEMO_REVIEWER = "Demo reviewer"
 
 
@@ -123,6 +125,8 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
     settings = settings or Settings()
     if not store.list_accounts("gl_accounts"):
         load_sample_setup(store)
+    if not store.has_purchase_orders():  # sample POs, so the PO matching has something to show
+        store.set_setting(DEMO_POS_SETTING, json.dumps(load_sample_purchase_orders(store)))
     reference = store.reference_data()
     existing = {Path(i["source_path"]).name for i in store.list_invoices_full() if is_demo(i)}
     added = approved = 0
@@ -156,4 +160,8 @@ def remove_demo(store: Store) -> int:
     ids = [i["id"] for i in store.list_invoices_full() if is_demo(i)]
     for invoice_id in ids:
         store.delete_invoice(invoice_id, forget_lessons=True)
+    po_keys = json.loads(store.get_setting(DEMO_POS_SETTING) or "[]")
+    if po_keys:
+        store.delete_purchase_orders(po_keys)
+        store.set_setting(DEMO_POS_SETTING, "")
     return len(ids)

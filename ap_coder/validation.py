@@ -79,6 +79,7 @@ def validate_coding(
     history: list[dict[str, Any]] | None = None,
     duplicate_of: list[int] | None = None,
     vendor_findings: list[tuple[str, str, str]] | None = None,
+    po_findings: list[tuple[str, str, str, int | None]] | None = None,
 ) -> ValidationReport:
     """``history`` is ``memory.compare_with_history`` output; ``duplicate_of`` lists stored invoice ids
     with the same vendor and invoice number."""
@@ -92,6 +93,8 @@ def validate_coding(
         add(ERROR, "DUPLICATE_INVOICE", f"same vendor and invoice number as invoice {ids}: possible duplicate payment")
     for severity, code, message in vendor_findings or []:  # vendor master / fraud signals (vendors.py)
         add(severity, code, message)
+    for severity, code, message, line in po_findings or []:  # purchase order match (po.py)
+        add(severity, code, message, line)
 
     # --- Header -----------------------------------------------------------
     if not coding.vendor_name.strip():

@@ -14,6 +14,7 @@ from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.extraction import ExtractionResult
 from ap_coder.memory import ACCEPTED, pair_lines
 from ap_coder.pipeline import finalise_coding
+from ap_coder.po import match_invoice, po_label
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
@@ -40,6 +41,7 @@ from ap_coder.webapp.common import (
     persistent_editor,
     reference_or_none,
     render_pages,
+    replace_editor,
     reviewer,
     show_toast,
     weekly_accuracy,
@@ -523,9 +525,10 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             header["ship_to_province"] = province(
                 c3, "Place of supply", "ship_to_province", help="Where goods are delivered / services performed"
             )
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             header["gst_hst_registration_number"] = text(c1, "Supplier GST/HST #", "gst_hst_registration_number")
             header["qst_registration_number"] = text(c2, "Supplier QST #", "qst_registration_number")
+            header["po_number"] = text(c3, "PO #", "po_number", help="Purchase order the invoice quotes, if any")
             c1, c2, c3 = st.columns(3)
             header["subtotal"] = amount(c1, "Subtotal", "subtotal")
             header["tax_total"] = amount(c2, "Tax total", "tax_total")
@@ -579,6 +582,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             hide_index=True, key=f"{key}_lines",
         )  # fmt: skip
         reasons_box = st.container()
+    po_box = st.container()  # the purchase order match, once the edits are valid
 
     tax_col, tax_check_col = st.container(), st.container()  # full width: every column readable at 1366px
     with tax_col, card("tax"):
@@ -656,6 +660,9 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         ),
     ):
         st.html(_reasons_html(coding, ai, report, reference))
+    if coding.po_number.strip():
+        with po_box:
+            _po_card(store, coding, invoice_id, edited_lines, key)
     with tax_check_col, card("taxchecks"):
         st.markdown("#### :material/calculate: Tax checks")
         _tax_check_table(coding, reference)
@@ -705,6 +712,91 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                     ":material/school:",
                 )
                 st.rerun()
+
+
+def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines: pd.DataFrame, key: str) -> None:
+    """How the invoice lines compare with the purchase order it quotes (2- or 3-way match)."""
+    if not store.has_purchase_orders():
+        return
+    match = match_invoice(coding, store, invoice_id)
+    if match is None:
+        return
+    with card("pomatch"):
+        label = po_label(match.po_number)
+        if not match.found:
+            st.markdown(f"#### :material/shopping_cart: {esc(label)}")
+            st.caption("This PO is not in the purchase orders list. Check the number, or import the PO.")
+            st.page_link(PAGES["purchase_orders"], label="Purchase orders", icon=":material/shopping_cart:")
+            return
+        po = match.po or {}
+        problems = sum(1 for m in match.lines if set(m.problems) - {"coding"})
+        head, badge = st.columns([3, 2], vertical_alignment="center")
+        head.markdown(f"#### :material/shopping_cart: Matched to {esc(label)}")
+        badge.html(
+            "<div style='text-align:right'>"
+            + (
+                ui.pill(f"{problems} line(s) to check", "warn")
+                if problems
+                else ui.pill("Matches the PO", "ok", "check")
+            )
+            + "</div>"
+        )
+        received = any(m.received is not None for m in match.lines)
+        rows = []
+        for m in match.lines:
+            if m.po_line is None:
+                rows.append([str(m.invoice_line), esc(m.description), "<span class='apc-muted'>not on the PO</span>",
+                             "", "", ui.pill("Not on PO", "warn")])  # fmt: skip
+                continue
+            billed = m.billed_before + m.quantity
+            qty = f"{_fmt_qty(billed)} / {_fmt_qty(m.po_quantity)}"
+            if received:
+                qty += f" / {_fmt_qty(m.received)}"
+            price = money(m.unit_price)
+            if "price" in m.problems:
+                price = (
+                    f"<b style='color:{ui.WARN}'>{price}</b> <span class='apc-muted'>PO {money(m.po_unit_price)}</span>"
+                )
+            flags = {"price": "Price", "quantity": "Over ordered", "received": "Not received", "coding": "Coding"}
+            pills = " ".join(
+                ui.pill(flags[p], "info" if p == "coding" else "warn") for p in m.problems if p in flags
+            ) or ui.pill("OK", "ok", "check")
+            rows.append([str(m.invoice_line), esc(m.description), f"{m.po_line} · {esc(m.po_description)}", qty,
+                         price, pills])  # fmt: skip
+        qty_head = "Billed / ordered" + (" / received" if received else "")
+        st.html(ui.table(["#", "Invoice line", "PO line", qty_head, "Unit price", ""], rows, right=[3, 4],
+                         wrap=[1, 2]))  # fmt: skip
+        notes = [f"PO total {money(po.get('total'))}"]
+        if match.other_invoices:
+            notes.append(
+                f"{money(match.billed_before)} already invoiced on "
+                + ", ".join(f"#{o['id']}" for o in match.other_invoices[:5])
+            )
+        notes.append(
+            f"{'closed' if po.get('status') == 'closed' else 'open'}, for {(po.get('vendor_name') or '?').rstrip('.')}"
+        )
+        st.caption(" · ".join(notes) + ". Billed quantities include earlier invoices on this PO.")
+        differs = match.coding_differs
+        if differs and st.button(
+            f"Use the PO's coding on {len(differs)} line(s)", icon=":material/auto_fix_high:", key=f"{key}_po_coding",
+            help="Sets the GL account and cost center of these lines to the ones on the PO",
+        ):  # fmt: skip
+            updated = edited_lines.copy()
+            for m in differs:
+                rows_at = updated["line_number"] == m.invoice_line
+                if m.po_gl:
+                    updated.loc[rows_at, "predicted_gl_code"] = m.po_gl
+                if m.po_cc:
+                    updated.loc[rows_at, "predicted_cost_center"] = m.po_cc
+            replace_editor(f"{key}_lines", updated)
+            notify(f"Applied the PO's coding to {len(differs)} line(s).", ":material/auto_fix_high:")
+            st.rerun()
+
+
+def _fmt_qty(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
 
 
 def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], position: int, key: str) -> None:
@@ -870,7 +962,8 @@ def _distribution_table(output: dict[str, Any], reference: ReferenceData, curren
 
 EDIT_LABELS = {
     "line_coding": "GL coding", "line_count": "lines added or removed", "tax_lines": "sales tax",
-    "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "currency": "currency",
+    "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "po_number": "PO #",
+    "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",
     "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "subtotal": "subtotal",
     "tax_total": "tax total", "grand_total": "total",

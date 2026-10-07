@@ -5,8 +5,8 @@ from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.schema import InvoiceCoding, build_json_schema, line_gl_codes, response_format
 
 TARGET_HEADER = [
-    "vendor_name", "invoice_number", "invoice_date", "currency", "supplier_province", "ship_to_province",
-    "gst_hst_registration_number", "qst_registration_number", "subtotal", "tax_lines", "tax_total",
+    "vendor_name", "invoice_number", "invoice_date", "po_number", "currency", "supplier_province",
+    "ship_to_province", "gst_hst_registration_number", "qst_registration_number", "subtotal", "tax_lines", "tax_total",
     "grand_total", "confidence_score", "line_items",
 ]  # fmt: skip
 TARGET_LINE = [

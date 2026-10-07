@@ -16,6 +16,7 @@ from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor
 from .imaging import render_page_images
 from .inference import CodingResult, InvoiceCoder
 from .memory import compare_with_history, format_examples, select_examples
+from .po import po_findings
 from .reference_data import ReferenceData
 from .schema import InvoiceCoding
 from .tax import build_gl_distribution
@@ -125,6 +126,7 @@ def finalise_coding(
         history=history,
         duplicate_of=duplicates,
         vendor_findings=vendor_findings(coding, store, exclude_invoice_id) if store is not None else None,
+        po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
     )
     output = coding.to_output()
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)

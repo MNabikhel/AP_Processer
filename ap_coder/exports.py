@@ -30,8 +30,8 @@ FORMATS = {
 INVOICE_COLUMNS = [
     ("batch", "Batch"), ("invoice_id", "AP Coder #"), ("vendor_name", "Vendor"),
     ("gst_hst_registration_number", "Vendor GST/HST #"), ("qst_registration_number", "Vendor QST #"),
-    ("invoice_number", "Invoice #"), ("invoice_date", "Invoice date"), ("currency", "Currency"),
-    ("subtotal", "Subtotal"), ("tax_total", "Tax"), ("grand_total", "Total"),
+    ("invoice_number", "Invoice #"), ("invoice_date", "Invoice date"), ("po_number", "PO #"),
+    ("currency", "Currency"), ("subtotal", "Subtotal"), ("tax_total", "Tax"), ("grand_total", "Total"),
     ("supplier_province", "Supplier province"), ("ship_to_province", "Place of supply"),
     ("reviewer", "Approved by"), ("reviewed_at", "Approved at"), ("file_name", "File"),
 ]  # fmt: skip

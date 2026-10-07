@@ -195,6 +195,13 @@ def persistent_editor(data: pd.DataFrame, key: str, **kwargs: Any) -> pd.DataFra
     return edited
 
 
+def replace_editor(key: str, data: pd.DataFrame) -> None:
+    """Make a ``persistent_editor`` start over from ``data`` on the next run (e.g. after a bulk change)."""
+    st.session_state[f"_draft_{key}"] = data
+    st.session_state.pop(f"_base_{key}", None)
+    st.session_state.pop(key, None)
+
+
 def forget_drafts(prefix: str) -> None:
     """Drop the saved drafts of a finished invoice."""
     for k in [k for k in st.session_state if str(k).startswith((f"_base_{prefix}_", f"_draft_{prefix}_"))]:

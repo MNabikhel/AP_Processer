@@ -32,6 +32,9 @@ French-Canadian formats correctly (1 234,56 $ -> 1234.56).
 other dates on the document.
 - `currency` is the ISO 4217 code; a plain "$" on a Canadian invoice is CAD unless USD is stated.
 - `vendor_name` is the supplier issuing the invoice, NOT the bill-to customer.
+- `po_number` is the buyer's purchase order number when printed ("PO #", "Customer PO", \
+"Order Ref", "Bon de commande"), copied exactly; an empty string if there is none. A PO \
+reference inside one line description is not the invoice's PO number.
 - Pre-extracted invoice fields, when supplied, are hints from a second model; when \
 they disagree with the document content, trust the document.
 

@@ -2,6 +2,7 @@
   "vendor_name": "Northwind IT Solutions Inc.",
   "invoice_number": "NW-2026-0912",
   "invoice_date": "2026-09-14",
+  "po_number": "PO-88213",
   "currency": "CAD",
   "supplier_province": "ON",
   "ship_to_province": "ON",

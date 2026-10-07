@@ -12,7 +12,8 @@ from typing import Any
 from .memory import pair_lines
 
 HEADER_LABELS = {
-    "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "currency": "currency",
+    "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "po_number": "PO #",
+    "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",
     "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "subtotal": "subtotal",
     "tax_total": "tax total", "grand_total": "total",
@@ -41,6 +42,9 @@ ACTIONS = {
     "backup_restored": ("settings_backup_restore", "warn", "Backup restored"),
     "vendor_updated": ("storefront", "info", "Vendor updated"),
     "export_undone": ("undo", "warn", "Export undone"),
+    "pos_imported": ("shopping_cart", "info", "Purchase orders imported"),
+    "po_status": ("shopping_cart", "info", "Purchase order updated"),
+    "pos_deleted": ("remove_shopping_cart", "warn", "Purchase orders deleted"),
 }
 
 
@@ -156,6 +160,15 @@ def describe(event: dict[str, Any]) -> str:
         if "notes" in d:
             parts.append("notes changed")
         return f"{d.get('vendor', '')}: {', '.join(parts)}"
+    if action == "pos_imported":
+        return f"{d.get('orders', 0)} PO(s), {d.get('lines', 0)} line(s): {d.get('added', 0)} new, " + (
+            f"{d.get('updated', 0)} updated" + (" (replaced the list)" if d.get("replace_all") else "")
+        )
+    if action == "po_status":
+        return f"{d.get('po', '')} {'closed' if d.get('status') == 'closed' else 'reopened'}"
+    if action == "pos_deleted":
+        pos = d.get("pos") or []
+        return f"{', '.join(pos[:8])}{' …' if len(pos) > 8 else ''}"
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", ""))
     return ""

@@ -2,6 +2,7 @@
   "vendor_name": "Pacific Office Supply Ltd.",
   "invoice_number": "PO-77120",
   "invoice_date": "2026-10-05",
+  "po_number": "",
   "currency": "CAD",
   "supplier_province": "BC",
   "ship_to_province": "BC",
