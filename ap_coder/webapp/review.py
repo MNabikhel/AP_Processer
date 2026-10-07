@@ -13,7 +13,7 @@ from ap_coder import ui
 from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.extraction import ExtractionResult
 from ap_coder.help import help_for
-from ap_coder.memory import ACCEPTED, pair_lines
+from ap_coder.memory import ACCEPTED, pair_lines, vendor_key
 from ap_coder.pipeline import finalise_coding
 from ap_coder.po import match_invoice, po_label
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
@@ -201,7 +201,8 @@ def page_review() -> None:
             }
             default_days = store.default_terms_days()
             for inv in shown[:limit]:
-                _queue_card(inv, ai_outputs.get(inv["id"], {}), default_days)
+                ai = ai_outputs.get(inv["id"], {})
+                _queue_card(inv, ai, default_days, store.vendor_terms(vendor_key(ai.get("vendor_name") or "")))
             if len(shown) > limit:
                 more = min(QUEUE_PAGE, len(shown) - limit)
                 if st.button(f"Show {more} more · {len(shown) - limit} not shown", icon=":material/expand_more:",
@@ -360,8 +361,8 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
                 st.rerun()
 
 
-def _due_pill(ai: dict[str, Any], default_days: int) -> str:
-    p = payment(ai, default_days)
+def _due_pill(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> str:
+    p = payment(ai, default_days, vendor_terms)
     if p.discount_open():
         return ui.pill(f"{p.terms.discount_pct:g}% off until {p.discount_by:%b} {p.discount_by.day}", "violet", "sell")
     left = p.days_left()
@@ -374,11 +375,11 @@ def _due_pill(ai: dict[str, Any], default_days: int) -> str:
     return ""
 
 
-def _queue_card(inv: dict[str, Any], ai: dict[str, Any], default_days: int = 30) -> None:
+def _queue_card(inv: dict[str, Any], ai: dict[str, Any], default_days: int = 30, vendor_terms: str = "") -> None:
     taxes = list(dict.fromkeys(t.get("tax_type", "") for t in ai.get("tax_lines", [])))
     prov = ai.get("ship_to_province") or ai.get("supplier_province") or ""
     with st.container(key=f"qcard_{inv['id']}"):
-        st.html(ui.queue_card(inv, taxes, province_label(prov, ""), _due_pill(ai, default_days)))
+        st.html(ui.queue_card(inv, taxes, province_label(prov, ""), _due_pill(ai, default_days, vendor_terms)))
         label = f"Review invoice from {inv['vendor_name'] or inv['file_name']}"
         if st.button(label, key=f"qopen_{inv['id']}"):
             st.session_state["open_invoice"] = inv["id"]
@@ -735,7 +736,10 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     warnings = [i for i in report.issues if i.severity == "warning"]
 
     with summary, card("summary"):
-        _invoice_summary(coding, report, errors, warnings, output, reference, store.default_terms_days())
+        _invoice_summary(
+            coding, report, errors, warnings, output, reference, store.default_terms_days(),
+            store.vendor_terms(vendor_key(coding.vendor_name)),
+        )  # fmt: skip
     with checks_box:
         head, count = st.columns([3, 2], vertical_alignment="center")
         head.markdown("#### :material/fact_check: Checks")
@@ -913,7 +917,10 @@ def _suggestion_card(
 ) -> None:  # fmt: skip
     """One-click GL accounts for lines the AI could not code, from past decisions and the account list."""
     feedback = store.feedback_rows()
-    found = [(li, suggest_gl(li.description, coding.vendor_name, feedback, reference)) for li in lines]
+    default_gl = (store.get_vendor(vendor_key(coding.vendor_name)) or {}).get("default_gl") or ""
+    found = [
+        (li, suggest_gl(li.description, coding.vendor_name, feedback, reference, default_gl=default_gl)) for li in lines
+    ]
     found = [(li, s) for li, s in found if s]
     if not found:
         return
@@ -1056,9 +1063,9 @@ def _advance(ids: list[int], position: int) -> None:
         st.session_state.pop("open_invoice", None)
 
 
-def due_text(coding: dict[str, Any], default_days: int) -> str:
-    p = payment(coding, default_days)
-    text = terms_describe(p)
+def due_text(coding: dict[str, Any], default_days: int, vendor_terms: str = "") -> str:
+    p = payment(coding, default_days, vendor_terms)
+    text = terms_describe(p) + (" (vendor master terms)" if p.source == "vendor" else "")
     if p.discount_open():
         text += f" · {p.terms.discount_pct:g}% off until {p.discount_by:%b} {p.discount_by.day}"
     return text
@@ -1066,7 +1073,7 @@ def due_text(coding: dict[str, Any], default_days: int) -> str:
 
 def _invoice_summary(
     coding: InvoiceCoding, report: Any, errors: list[Any], warnings: list[Any], output: dict[str, Any],
-    reference: ReferenceData, default_days: int = 30,
+    reference: ReferenceData, default_days: int = 30, vendor_terms: str = "",
 ) -> None:  # fmt: skip
     supply = coding.ship_to_province or coding.supplier_province
     meta = [
@@ -1074,7 +1081,7 @@ def _invoice_summary(
         ("event", coding.invoice_date),
         ("location_on", province_label(supply)),
         ("verified", f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else ""),
-        ("schedule", due_text(coding.to_output(), default_days)),
+        ("schedule", due_text(coding.to_output(), default_days, vendor_terms)),
     ]
     pills = []
     if errors:

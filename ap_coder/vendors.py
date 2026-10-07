@@ -10,6 +10,9 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * AMOUNT_UNUSUAL (warning): far above what this vendor usually bills
 * POSSIBLE_DUPLICATE_AMOUNT (warning): same vendor, same total, close date, different invoice number
 * VENDOR_NEW (info): first invoice from this vendor (no penalty; just worth knowing)
+* VENDOR_NOT_IN_MASTER (warning): a vendor master was imported from the ERP and this vendor is not in it
+  (by name or GST/HST number)
+* VENDOR_MATCHED_BY_TAX_NUMBER (info): not found by name, but the GST/HST number belongs to a master vendor
 """
 
 from __future__ import annotations
@@ -63,13 +66,29 @@ def vendor_findings(
         return []
     findings: list[tuple[str, str, str]] = []
     master = store.get_vendor(key)
+    if store.has_vendor_master() and not (master and master.get("in_master")):
+        number = norm_tax_number(coding.gst_hst_registration_number)
+        by_number = [v for v in store.master_vendors() if number and norm_tax_number(v["expected_gst"]) == number]
+        if by_number:
+            master = by_number[0]
+            findings.append(
+                (INFO, "VENDOR_MATCHED_BY_TAX_NUMBER",
+                 f"not found by name in the vendor master, but GST/HST {coding.gst_hst_registration_number} is "
+                 f"{master['display_name']} ({master['erp_id'] or 'no ID'})")
+            )  # fmt: skip
+        else:
+            findings.append(
+                (WARNING, "VENDOR_NOT_IN_MASTER",
+                 "this vendor is not in the vendor master imported from the ERP: set it up (and verify it) first")
+            )  # fmt: skip
+    in_master = bool(master and master.get("in_master"))
     if master and master.get("status") == ON_HOLD:
         note = f": {master['notes']}" if master.get("notes") else ""
         findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold in the vendor list{note}"))
 
     history = [h for h in store.vendor_invoices(key) if h["id"] != exclude_invoice_id]
     if not history:
-        if store.has_other_vendors(key):
+        if store.has_other_vendors(key) and not in_master:  # the ERP's vendor master already vouches for it
             findings.append((INFO, "VENDOR_NEW", "first invoice from this vendor: confirm it is a known supplier"))
         return findings
 
@@ -121,3 +140,58 @@ def vendor_findings(
             )
             break
     return findings
+
+
+# --- Vendor master import ------------------------------------------------------------------------------
+
+MASTER_ALIASES: dict[str, tuple[str, ...]] = {
+    "vendor_name": ("vendorname", "vendor", "name", "supplier", "suppliername", "fournisseur", "legalname"),
+    "erp_id": ("vendorid", "vendornumber", "vendorno", "vendorcode", "supplierid", "suppliernumber", "id",
+               "number", "code", "accountnumber"),
+    "gst": ("gsthstnumber", "gstnumber", "hstnumber", "gsthst", "gst", "businessnumber", "bn", "taxnumber",
+            "tps", "numerotps"),
+    "terms": ("paymentterms", "terms", "termes", "conditions"),
+    "status": ("status", "active", "blocked", "hold", "statut"),
+    "default_gl": ("defaultgl", "glaccount", "gl", "glcode", "expenseaccount", "account", "defaultaccount"),
+}  # fmt: skip
+_HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended", "no", "n", "false", "bloqué", "bloque"}
+
+
+def _norm_header(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def master_columns(headers: list[str]) -> dict[str, str]:
+    found: dict[str, str] = {}
+    normalised = {_norm_header(h): h for h in headers}
+    for target, aliases in MASTER_ALIASES.items():
+        for alias in (_norm_header(target), *aliases):
+            if alias in normalised and normalised[alias] not in found.values():
+                found[target] = normalised[alias]
+                break
+    return found
+
+
+def master_rows(records: list[dict[str, Any]], columns: dict[str, str]) -> list[dict[str, Any]]:
+    """Vendor master rows from a spreadsheet, using ``master_columns`` output (a vendor name is required)."""
+    rows = []
+    for rec in records:
+
+        def get(target: str, rec: dict[str, Any] = rec) -> str:
+            value = rec.get(columns[target]) if target in columns else None
+            text = "" if value is None else str(value).strip()
+            return "" if text.lower() in ("nan", "none") else text
+
+        name = get("vendor_name")
+        if not name:
+            continue
+        status = get("status").lower()
+        if columns.get("status") and _norm_header(columns["status"]) == "active":  # an "Active" yes/no column
+            on_hold = status in ("no", "n", "false", "0", "inactive")
+        else:
+            on_hold = status in _HOLD_WORDS
+        rows.append({
+            "vendor_name": name, "erp_id": get("erp_id"), "gst": get("gst"), "terms": get("terms"),
+            "default_gl": get("default_gl"), "status": ON_HOLD if on_hold else ACTIVE, "status_given": bool(status),
+        })  # fmt: skip
+    return rows

@@ -11,7 +11,8 @@ import streamlit as st
 from ap_coder import recurring, ui
 from ap_coder.safe import md
 from ap_coder.store import Store
-from ap_coder.vendors import ACTIVE, ON_HOLD
+from ap_coder.vendors import ACTIVE, ON_HOLD, master_columns, master_rows
+from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import (
     card,
     esc,
@@ -60,6 +61,7 @@ def page_vendors() -> None:
             "Everyone who has sent an invoice: spend, how well the AI codes them, and your controls.",
         )
     )
+    _master_importer(store)
     vendors = store.vendor_summaries()
     if not vendors:
         with card("vendors_empty"):
@@ -104,6 +106,7 @@ def page_vendors() -> None:
         if query.strip():
             shown = [v for v in shown if query.strip().lower() in (v["vendor_name"] or "").lower()]
         shown = _sorted(shown, order)
+        has_master = store.has_vendor_master()
         rows = [
             [
                 f"<div style='display:flex;gap:.6rem;align-items:center'>{ui.avatar(v['vendor_name'] or '', 'sm')}"
@@ -112,7 +115,8 @@ def page_vendors() -> None:
                 money(v["spend_cad"]),
                 esc(v["last_invoice"] or "—"),
                 _accuracy_cell(v["accuracy"]),
-                ui.pill("On hold", "warn", "front_hand") if v["status"] == ON_HOLD else ui.pill("Active", "ok"),
+                (ui.pill("On hold", "warn", "front_hand") if v["status"] == ON_HOLD else ui.pill("Active", "ok"))
+                + (" " + ui.pill("Not in master", "warn", "gpp_maybe") if has_master and not v["in_master"] else ""),
             ]
             for v in shown
         ]
@@ -136,6 +140,45 @@ def page_vendors() -> None:
     )  # fmt: skip
     if chosen:
         vendor_detail(store, next(v for v in vendors if v["vendor_key"] == chosen))
+
+
+MASTER_LABELS = {"vendor_name": "Vendor name *", "erp_id": "Vendor ID", "gst": "GST/HST number",
+                 "terms": "Payment terms", "status": "Status", "default_gl": "Default GL account"}  # fmt: skip
+
+
+def _master_importer(store: Store) -> None:
+    has_master = store.has_vendor_master()
+    title = "Vendor master from the ERP" + (" (imported)" if has_master else "")
+    with st.expander(title, icon=":material/upload:"):
+        st.caption(
+            "Import the ERP's vendor list (CSV or Excel). Exports then carry each vendor's ERP ID, invoices from "
+            "a vendor that is not in the list are flagged, the vendor's payment terms set the due date when the "
+            "invoice shows none, and its default GL account is offered for uncoded lines. Import again any time: "
+            "vendors are matched by name."
+        )
+        upload = st.file_uploader("Vendor list", type=["csv", "xlsx"], key="vm_upload")
+        df = _read_upload(upload, "vm") if upload is not None else None
+        if df is None or df.empty:
+            return
+        st.dataframe(df.head(5), hide_index=True)
+        columns = list(df.columns)
+        guessed = master_columns(columns)
+        options = ["(none)", *columns]
+        cols = st.columns(3)
+        chosen: dict[str, str] = {}
+        for i, (field, label) in enumerate(MASTER_LABELS.items()):
+            pick = cols[i % 3].selectbox(label, options, index=options.index(guessed[field]) if field in guessed else 0,
+                                         key=f"vm_col_{field}")  # fmt: skip
+            if pick != "(none)":
+                chosen[field] = pick
+        if "vendor_name" not in chosen:
+            st.warning("Pick the column with the vendor name.")
+            return
+        if st.button("Import vendors", type="primary", icon=":material/upload:", key="vm_import"):
+            rows = master_rows(df.to_dict("records"), chosen)
+            result = store.import_vendor_master(rows, actor=reviewer())
+            notify(f"Vendor master: {result['added']} added, {result['updated']} updated.", ":material/storefront:")
+            st.rerun()
 
 
 def _recurring_card(store: Store) -> None:
@@ -174,6 +217,19 @@ def _recurring_card(store: Store) -> None:
         st.html(ui.table(["Vendor", "Bills", "Last invoice", "Next expected", "Usual amount", ""], rows, right=[4]))
 
 
+def _master_line(store: Store, v: dict[str, Any]) -> str:
+    if v.get("in_master"):
+        parts = [f"ERP ID <b>{esc(v['erp_id'] or '—')}</b>"]
+        if v.get("terms"):
+            parts.append(f"terms {esc(v['terms'])}")
+        if v.get("default_gl"):
+            parts.append(f"default GL {esc(v['default_gl'])}")
+        return f"<div class='apc-muted'>{ui.pill('In the vendor master', 'ok', 'verified')} {' · '.join(parts)}</div>"
+    if store.has_vendor_master():
+        return f"<div style='margin-top:.2rem'>{ui.pill('Not in the vendor master', 'warn', 'gpp_maybe')}</div>"
+    return ""
+
+
 def vendor_detail(store: Store, v: dict[str, Any]) -> None:
     key, name = v["vendor_key"], v["vendor_name"] or ""
     invoices = store.vendor_invoices(key)
@@ -185,7 +241,7 @@ def vendor_detail(store: Store, v: dict[str, Any]) -> None:
             f"<div><div style='font-weight:750;font-size:1.15rem'>{esc(name)} {status}</div>"
             f"<div class='apc-muted'>First invoice {esc(v['first_invoice'] or '—')} · "
             f"last {esc(v['last_invoice'] or '—')}"
-            f" · {v['lessons']} lesson(s) learned</div></div></div>"
+            f" · {v['lessons']} lesson(s) learned</div>{_master_line(store, v)}</div></div>"
         )
         numbers = sorted({i["gst_hst_number"] for i in invoices if i["gst_hst_number"]})
         left, right = st.columns(2, gap="medium")

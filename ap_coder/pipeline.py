@@ -15,7 +15,7 @@ from .config import Settings
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
 from .inference import CodingResult, InvoiceCoder
-from .memory import compare_with_history, format_examples, select_examples
+from .memory import compare_with_history, format_examples, select_examples, vendor_key
 from .po import po_findings
 from .reference_data import ReferenceData
 from .schema import InvoiceCoding
@@ -127,7 +127,11 @@ def finalise_coding(
         history=history,
         duplicate_of=duplicates,
         vendor_findings=(vendor_findings(coding, store, exclude_invoice_id) if store is not None else [])
-        + payment_findings(coding.to_output(), store.default_terms_days() if store is not None else 30),
+        + payment_findings(
+            coding.to_output(),
+            store.default_terms_days() if store is not None else 30,
+            vendor_terms=store.vendor_terms(vendor_key(coding.vendor_name)) if store is not None else "",
+        ),
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
     )
     output = coding.to_output()

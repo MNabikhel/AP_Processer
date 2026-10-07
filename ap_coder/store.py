@@ -34,7 +34,7 @@ from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSet
 from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -113,8 +113,8 @@ def _clean_code(value: Any) -> str:
     return text[:-2] if re.fullmatch(r"\d+\.0", text) else text
 
 
-def _due(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS) -> str | None:
-    due = payment(coding, default_days).due
+def _due(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vendor_terms: str = "") -> str | None:
+    due = payment(coding, default_days, vendor_terms).due
     return due.isoformat() if due else None
 
 
@@ -173,6 +173,16 @@ class Store:
             columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
             if "amount_only" not in columns:
                 conn.execute("ALTER TABLE po_lines ADD COLUMN amount_only INTEGER NOT NULL DEFAULT 0")
+        if version < 8:  # the vendor master imported from the ERP
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(vendors)")}
+            for column, kind in (
+                ("erp_id", "TEXT NOT NULL DEFAULT ''"),
+                ("terms", "TEXT NOT NULL DEFAULT ''"),
+                ("default_gl", "TEXT NOT NULL DEFAULT ''"),
+                ("in_master", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} {kind}")
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -421,7 +431,9 @@ class Store:
                     error,
                     _now(),
                     po_key(out.get("po_number") or ""),
-                    _due(out, self.default_terms_days()) if out else None,
+                    _due(out, self.default_terms_days(), self.vendor_terms(vendor_key(out.get("vendor_name", ""))))
+                    if out
+                    else None,
                 ),
             )
             invoice_id = int(cur.lastrowid)
@@ -656,7 +668,7 @@ class Store:
                     final_output.get("invoice_date"),
                     final_output.get("grand_total"),
                     po_key(final_output.get("po_number") or ""),
-                    _due(final_output, self.default_terms_days()),
+                    _due(final_output, self.default_terms_days(), self.vendor_terms(key)),
                     invoice_id,
                     APPROVED,
                     PENDING,
@@ -975,6 +987,64 @@ class Store:
             if changed:
                 self._log(conn, "vendor_updated", actor=actor, detail={"vendor": display_name, **changed})
 
+    def import_vendor_master(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
+        """Import the ERP's vendor list (``vendors.master_rows`` output). Each vendor is matched by name;
+        what the file gives (ERP ID, GST/HST #, terms, default GL, status) replaces what was there."""
+        added = updated = 0
+        now = _now()
+        with self._conn() as conn:
+            existing = {r["vendor_key"] for r in conn.execute("SELECT vendor_key FROM vendors")}
+            for row in rows:
+                key = vendor_key(row["vendor_name"])
+                if not key:
+                    continue
+                conn.execute(
+                    """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, erp_id,
+                       terms, default_gl, in_master) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 1)
+                       ON CONFLICT(vendor_key) DO UPDATE SET erp_id = excluded.erp_id, terms = excluded.terms,
+                       default_gl = excluded.default_gl, in_master = 1, updated_at = excluded.updated_at,
+                       expected_gst = CASE WHEN excluded.expected_gst != '' THEN excluded.expected_gst
+                                      ELSE vendors.expected_gst END,
+                       status = CASE WHEN ? THEN excluded.status ELSE vendors.status END""",
+                    (key, row["vendor_name"], row.get("status") or "active", row.get("gst") or "", now,
+                     row.get("erp_id") or "", row.get("terms") or "", _clean_code(row.get("default_gl")),
+                     bool(row.get("status_given"))),
+                )  # fmt: skip
+                if key in existing:
+                    updated += 1
+                else:
+                    added += 1
+                    existing.add(key)
+            self._log(conn, "vendors_imported", actor=actor, detail={"added": added, "updated": updated})
+        return {"added": added, "updated": updated}
+
+    def delete_vendors(self, keys: list[str]) -> int:
+        """Remove vendors from the vendor list (e.g. the demo's sample vendor master)."""
+        with self._conn() as conn:
+            marks = ",".join("?" * len(keys))
+            return conn.execute(f"DELETE FROM vendors WHERE vendor_key IN ({marks})", keys).rowcount
+
+    def has_vendor_master(self) -> bool:
+        with self._conn() as conn:
+            return conn.execute("SELECT 1 FROM vendors WHERE in_master = 1 LIMIT 1").fetchone() is not None
+
+    def master_vendors(self) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 1")]
+
+    def vendor_ids(self) -> dict[str, str]:
+        """{vendor_key: ERP vendor ID} from the vendor master."""
+        with self._conn() as conn:
+            return {r[0]: r[1] for r in conn.execute("SELECT vendor_key, erp_id FROM vendors WHERE erp_id != ''")}
+
+    def vendor_terms(self, key: str) -> str:
+        """The vendor master's payment terms for this vendor ('' if none)."""
+        if not key:
+            return ""
+        with self._conn() as conn:
+            row = conn.execute("SELECT terms FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
+        return row[0] if row else ""
+
     def vendor_invoices(self, key: str) -> list[dict[str, Any]]:
         """This vendor's invoices (newest first) with the GST/HST number each one carried."""
         with self._conn() as conn:
@@ -1045,6 +1115,9 @@ class Store:
             r["status"] = master.get("status", "active")
             r["expected_gst"] = master.get("expected_gst", "")
             r["notes"] = master.get("notes", "")
+            for field in ("erp_id", "terms", "default_gl"):
+                r[field] = master.get(field) or ""
+            r["in_master"] = bool(master.get("in_master"))
         return sorted(rows, key=lambda r: -(r["spend_cad"] or 0))
 
     def vendor_gl_usage(self, key: str) -> list[dict[str, Any]]:
@@ -1200,6 +1273,19 @@ def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
         for row in csv.DictReader(fh):
             store.set_tax_treatment(row["tax_type"], row["treatment"], row.get("gl_code") or "")
     store.set_setting("policy_notes", (data_dir / "coding_policy.md").read_text(encoding="utf-8"))
+
+
+def load_sample_vendor_master(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> list[str]:
+    """Load the bundled sample vendor master (the demo vendors but one). Returns the vendor keys."""
+    import csv
+
+    from .vendors import master_columns, master_rows
+
+    with (data_dir / "vendor_master.csv").open(encoding="utf-8-sig", newline="") as fh:
+        records = list(csv.DictReader(fh))
+    rows = master_rows(records, master_columns(list(records[0]) if records else []))
+    store.import_vendor_master(rows)
+    return sorted({vendor_key(r["vendor_name"]) for r in rows})
 
 
 def load_sample_purchase_orders(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> list[str]:

@@ -22,6 +22,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from .memory import vendor_key
 from .safe import csv_row, neutralise_sheet
 
 FORMATS = {
@@ -30,7 +31,7 @@ FORMATS = {
 }
 
 INVOICE_COLUMNS = [
-    ("batch", "Batch"), ("invoice_id", "AP Coder #"), ("vendor_name", "Vendor"),
+    ("batch", "Batch"), ("invoice_id", "AP Coder #"), ("vendor_id", "Vendor ID"), ("vendor_name", "Vendor"),
     ("gst_hst_registration_number", "Vendor GST/HST #"), ("qst_registration_number", "Vendor QST #"),
     ("invoice_number", "Invoice #"), ("invoice_date", "Invoice date"), ("po_number", "PO #"),
     ("payment_terms", "Terms"), ("due_date", "Due date"),
@@ -40,7 +41,8 @@ INVOICE_COLUMNS = [
     ("file_name", "File"),
 ]  # fmt: skip
 LINE_COLUMNS = [
-    ("batch", "Batch"), ("invoice_id", "AP Coder #"), ("vendor_name", "Vendor"), ("invoice_number", "Invoice #"),
+    ("batch", "Batch"), ("invoice_id", "AP Coder #"), ("vendor_id", "Vendor ID"), ("vendor_name", "Vendor"),
+    ("invoice_number", "Invoice #"),
     ("invoice_date", "Invoice date"), ("currency", "Currency"), ("line", "Line"), ("kind", "Type"),
     ("gl_code", "GL account"), ("gl_name", "GL name"), ("cost_center", "Cost center"),
     ("description", "Description"), ("net_amount", "Net"), ("non_recoverable_tax", "Non-recoverable tax"),
@@ -49,8 +51,11 @@ LINE_COLUMNS = [
 MONEY_HEADERS = {"Subtotal", "Tax", "Total", "Net", "Non-recoverable tax", "Amount"}
 
 
-def invoice_rows(invoices: list[dict[str, Any]], batch: int | str = "") -> list[dict[str, Any]]:
-    """``invoices``: store.get_invoice() dicts of approved invoices."""
+def invoice_rows(
+    invoices: list[dict[str, Any]], batch: int | str = "", vendor_ids: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
+    """``invoices``: store.get_invoice() dicts of approved invoices; ``vendor_ids``: ``Store.vendor_ids()``."""
+    vendor_ids = vendor_ids or {}
     rows = []
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -59,6 +64,7 @@ def invoice_rows(invoices: list[dict[str, Any]], batch: int | str = "") -> list[
                 **{k: final.get(k) for k, _ in INVOICE_COLUMNS if k in final},
                 "batch": batch,
                 "invoice_id": inv["id"],
+                "vendor_id": vendor_ids.get(vendor_key(final.get("vendor_name") or ""), ""),
                 "reviewer": inv.get("reviewer"),
                 "reviewed_at": (inv.get("reviewed_at") or "").replace("T", " "),
                 "second_reviewer": inv.get("second_reviewer") or "",
@@ -69,9 +75,10 @@ def invoice_rows(invoices: list[dict[str, Any]], batch: int | str = "") -> list[
 
 
 def line_rows(
-    invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = ""
-) -> list[dict[str, Any]]:
-    gl_names = gl_names or {}
+    invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
+    vendor_ids: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:  # fmt: skip
+    gl_names, vendor_ids = gl_names or {}, vendor_ids or {}
     rows = []
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -80,6 +87,7 @@ def line_rows(
                 {
                     "batch": batch,
                     "invoice_id": inv["id"],
+                    "vendor_id": vendor_ids.get(vendor_key(final.get("vendor_name") or ""), ""),
                     "vendor_name": final.get("vendor_name"),
                     "invoice_number": final.get("invoice_number"),
                     "invoice_date": final.get("invoice_date"),
@@ -108,10 +116,13 @@ def gl_summary(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def build_xlsx(invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "") -> bytes:
-    lines = line_rows(invoices, gl_names, batch)
+def build_xlsx(
+    invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
+    vendor_ids: dict[str, str] | None = None,
+) -> bytes:  # fmt: skip
+    lines = line_rows(invoices, gl_names, batch, vendor_ids)
     wb = Workbook()
-    _sheet(wb.active, "Invoices", INVOICE_COLUMNS, invoice_rows(invoices, batch))
+    _sheet(wb.active, "Invoices", INVOICE_COLUMNS, invoice_rows(invoices, batch, vendor_ids))
     _sheet(wb.create_sheet(), "GL lines", LINE_COLUMNS, lines)
     _sheet(
         wb.create_sheet(), "By GL account",
@@ -142,20 +153,25 @@ def _sheet(ws: Any, title: str, columns: list[tuple[str, str]], rows: list[dict[
     neutralise_sheet(ws)  # vendor names and descriptions come from documents: never formulas
 
 
-def build_csv(invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "") -> bytes:
+def build_csv(
+    invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
+    vendor_ids: dict[str, str] | None = None,
+) -> bytes:  # fmt: skip
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([label for _, label in LINE_COLUMNS])
-    for r in line_rows(invoices, gl_names, batch):
+    for r in line_rows(invoices, gl_names, batch, vendor_ids):
         writer.writerow(csv_row([r.get(key) if r.get(key) is not None else "" for key, _ in LINE_COLUMNS]))
     return buf.getvalue().encode("utf-8-sig")  # BOM: Excel shows accents correctly
 
 
-def build(fmt: str, invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None,
-          batch: int | str = "") -> tuple[bytes, str, str]:  # fmt: skip
+def build(
+    fmt: str, invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None, batch: int | str = "",
+    vendor_ids: dict[str, str] | None = None,
+) -> tuple[bytes, str, str]:  # fmt: skip
     """(file bytes, file name, mime type)."""
     name = f"ap_coder_export_{batch}" if batch != "" else "ap_coder_export"
     if fmt == "csv":
-        return build_csv(invoices, gl_names, batch), f"{name}.csv", "text/csv"
+        return build_csv(invoices, gl_names, batch, vendor_ids), f"{name}.csv", "text/csv"
     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    return build_xlsx(invoices, gl_names, batch), f"{name}.xlsx", mime
+    return build_xlsx(invoices, gl_names, batch, vendor_ids), f"{name}.xlsx", mime

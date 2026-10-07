@@ -52,6 +52,18 @@ CHECKS: dict[str, CheckHelp] = {
         "The total is far above what this vendor usually bills.",
         "Confirm the purchase with whoever ordered it.",
     ),
+    "VENDOR_NOT_IN_MASTER": CheckHelp(
+        FRAUD, "Not in the vendor master",
+        "A vendor master was imported from the ERP and this vendor is in it neither by name nor by GST/HST "
+        "number. Invoices from vendors nobody set up are a classic fraud route.",
+        "Have the vendor set up (and verified) in the ERP first, then import the vendor master again.",
+    ),
+    "VENDOR_MATCHED_BY_TAX_NUMBER": CheckHelp(
+        FRAUD, "Known vendor under another name",
+        "The name differs from the vendor master, but the GST/HST number belongs to a vendor in it. "
+        "Information only.",
+        "Check it is the same company (a trade name or a new legal name).",
+    ),
     "VENDOR_NEW": CheckHelp(
         FRAUD, "First invoice from this vendor",
         "No earlier invoice from this vendor is in AP Coder. Information only.",

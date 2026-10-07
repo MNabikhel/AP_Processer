@@ -25,8 +25,8 @@ SIGNALS = {
 }  # fmt: skip
 SETUP_ACTIONS = (
     "accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",
-    "settings_changed", "vendor_updated", "pos_imported", "po_status", "pos_deleted", "lessons_forgotten",
-    "export_undone", "backup_restored",
+    "settings_changed", "vendor_updated", "vendors_imported", "pos_imported", "po_status", "pos_deleted",
+    "lessons_forgotten", "export_undone", "backup_restored",
 )  # fmt: skip
 
 

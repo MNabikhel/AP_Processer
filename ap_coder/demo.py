@@ -24,10 +24,11 @@ from .config import Settings
 from .paths import PROJECT_DIR
 from .pipeline import finalise_coding
 from .schema import InvoiceCoding
-from .store import Store, load_sample_purchase_orders, load_sample_setup
+from .store import Store, load_sample_purchase_orders, load_sample_setup, load_sample_vendor_master
 
 SAMPLES_DIR = PROJECT_DIR / "samples"
 DEMO_POS_SETTING = "demo_purchase_orders"  # PO keys the demo loaded, removed with it
+DEMO_VENDORS_SETTING = "demo_vendor_master"  # vendor keys of the sample vendor master the demo loaded
 DEMO_REVIEWER = "Demo reviewer"
 
 
@@ -128,6 +129,8 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
     settings = settings or Settings()
     if not store.list_accounts("gl_accounts"):
         load_sample_setup(store)
+    if not store.has_vendor_master():  # a sample vendor master (Cascade is missing from it, on purpose)
+        store.set_setting(DEMO_VENDORS_SETTING, json.dumps(load_sample_vendor_master(store)))
     if not store.has_purchase_orders():  # sample POs, so the PO matching has something to show
         store.set_setting(DEMO_POS_SETTING, json.dumps(load_sample_purchase_orders(store)))
     reference = store.reference_data()
@@ -163,6 +166,10 @@ def remove_demo(store: Store) -> int:
     ids = [i["id"] for i in store.list_invoices_full() if is_demo(i)]
     for invoice_id in ids:
         store.delete_invoice(invoice_id, forget_lessons=True)
+    vendor_keys = json.loads(store.get_setting(DEMO_VENDORS_SETTING) or "[]")
+    if vendor_keys:
+        store.delete_vendors(vendor_keys)
+        store.set_setting(DEMO_VENDORS_SETTING, "")
     po_keys = json.loads(store.get_setting(DEMO_POS_SETTING) or "[]")
     if po_keys:
         store.delete_purchase_orders(po_keys)

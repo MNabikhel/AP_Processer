@@ -112,15 +112,21 @@ def _start(invoice_date: dt.date, terms: Terms) -> dt.date:
     return (invoice_date.replace(day=1) + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
 
 
-def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS) -> Payment:
-    """Due date and discount for an invoice (``coding`` as stored: ai_output / final_output)."""
-    terms = parse_terms(coding.get("payment_terms"))
+def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vendor_terms: str = "") -> Payment:
+    """Due date and discount for an invoice (``coding`` as stored: ai_output / final_output). Terms printed on
+    the invoice come first, then ``vendor_terms`` (the vendor master's), then ``default_days``."""
+    printed_terms = (coding.get("payment_terms") or "").strip()
+    terms = parse_terms(printed_terms or vendor_terms)
+    from_vendor = not printed_terms and bool(vendor_terms)
     invoice_date = _date(coding.get("invoice_date"))
     printed = _date(coding.get("due_date"))
     if printed:
         due, source = printed, "printed"
     elif invoice_date and terms.net_days is not None:
-        due, source = _start(invoice_date, terms) + dt.timedelta(days=terms.net_days), "terms"
+        due, source = (
+            _start(invoice_date, terms) + dt.timedelta(days=terms.net_days),
+            "vendor" if from_vendor else "terms",
+        )
     elif invoice_date:
         due, source = invoice_date + dt.timedelta(days=default_days), "default"
     else:
@@ -147,11 +153,12 @@ def describe(p: Payment, today: dt.date | None = None) -> str:
 
 
 def payment_findings(
-    coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, today: dt.date | None = None
-) -> list[tuple[str, str, str]]:
+    coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, today: dt.date | None = None,
+    vendor_terms: str = "",
+) -> list[tuple[str, str, str]]:  # fmt: skip
     """(severity, code, message) for ``validate_coding``: discounts on offer, due dates passed or odd."""
     today = today or dt.date.today()
-    p = payment(coding, default_days)
+    p = payment(coding, default_days, vendor_terms)
     findings: list[tuple[str, str, str]] = []
     invoice_date = _date(coding.get("invoice_date"))
     if p.source == "printed" and invoice_date and p.due and p.due < invoice_date:

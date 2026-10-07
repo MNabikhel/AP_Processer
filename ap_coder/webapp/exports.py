@@ -28,7 +28,7 @@ def _gl_names(store: Store) -> dict[str, str]:
 
 def _batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
     invoices = [store.get_invoice(i) for i in store.batch_invoice_ids(batch)]
-    return exports.build(fmt, [i for i in invoices if i], _gl_names(store), batch)
+    return exports.build(fmt, [i for i in invoices if i], _gl_names(store), batch, store.vendor_ids())
 
 
 def page_exports() -> None:

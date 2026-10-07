@@ -49,10 +49,12 @@ def suggest_gl(
     feedback: list[dict[str, Any]],
     reference: ReferenceData,
     limit: int = 3,
+    default_gl: str = "",
 ) -> list[Suggestion]:
-    """Up to ``limit`` GL accounts for one line, best first. ``feedback`` is ``Store.feedback_rows()``."""
+    """Up to ``limit`` GL accounts for one line, best first. ``feedback`` is ``Store.feedback_rows()``;
+    ``default_gl`` is the vendor master's default account for this vendor, if any."""
     line = tokens(description)
-    if not line:
+    if not line and not default_gl:
         return []
     tax_gls = reference.tax.tax_gl_codes()
     valid = {c for c in reference.chart_of_accounts.codes if c not in tax_gls}
@@ -69,6 +71,8 @@ def suggest_gl(
         if reason not in s.reasons:
             s.reasons.append(reason)
 
+    if default_gl:
+        add(default_gl, 0.5, "the vendor's default GL account in the vendor master")
     key = vendor_key(vendor_name)
     mine: dict[str, list[Any]] = {}
     others: dict[str, list[Any]] = {}
