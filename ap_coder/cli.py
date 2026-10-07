@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from .config import Settings
@@ -15,7 +16,14 @@ from .doctor import exit_code, format_checks, run_checks
 from .evaluation import evaluate
 from .extraction import DocumentExtractor
 from .labels import export_labels
-from .pipeline import InvoicePipeline, PipelineResult, discover_inputs, output_stems, write_outputs
+from .pipeline import (
+    InvoicePipeline,
+    PipelineResult,
+    discover_inputs,
+    invoice_files,
+    output_stems,
+    write_outputs,
+)
 from .reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from .schema import build_json_schema
 from .share_report import build_share_report
@@ -138,6 +146,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stdout", action="store_true", help="Also print each coded JSON to stdout")
     _add_reference_args(p)
 
+    p = sub.add_parser("watch", help="Keep processing new files dropped in the invoices folder (Ctrl+C stops)")
+    p.add_argument("folder", nargs="?", default=str(private / "invoices"), help="Default: the dashboard's folder")
+    p.add_argument("--every", type=int, default=60, help="Seconds between checks (default 60)")
+    p.add_argument("--once", action="store_true", help="Check once and stop (e.g. from Windows Task Scheduler)")
+    p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
+    _add_reference_args(p)
+
     p = sub.add_parser("extract", help="Run Document Intelligence only and save Markdown + raw JSON")
     p.add_argument("inputs", nargs="+")
     p.add_argument("-o", "--out", default=str(out_dir))
@@ -257,6 +272,51 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
     return 0 if all(r.ok for r in results) else 1
 
 
+SETTLE_SECONDS = 5  # a file changed more recently than this may still be copying in
+
+
+def new_files(folder: Path, store: Store, now: float | None = None) -> list[Path]:
+    """Invoice files in ``folder`` that AP Coder has not seen (failed attempts count as seen: no retry loop)."""
+    now = time.time() if now is None else now
+    if not folder.is_dir():
+        return []
+    return [
+        p for p in invoice_files(folder)
+        if now - p.stat().st_mtime >= SETTLE_SECONDS and store.find_by_hash(p, include_failed=True) is None
+    ]  # fmt: skip
+
+
+def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
+    if not (settings.document_intelligence.endpoint and settings.openai.endpoint):
+        print("Azure is not set up yet: fill in .env (see GETTING_STARTED.md), then run this again.", file=sys.stderr)
+        return 2
+    store = Store(args.db)
+    folder = Path(args.folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    print(f"Watching {folder} every {args.every}s. New invoices go to the review queue. Ctrl+C to stop.",
+          file=sys.stderr)  # fmt: skip
+    try:
+        while True:
+            files = new_files(folder, store)
+            if files:
+                reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
+                pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
+                for path in files:
+                    result = pipeline.process(path)
+                    stamp = time.strftime("%H:%M:%S")
+                    if result.ok:
+                        flag = "needs attention" if result.report and result.report.requires_review else "ready"
+                        print(f"{stamp} {path.name}: {result.output.get('vendor_name', '?')} ({flag})", file=sys.stderr)
+                    else:
+                        print(f"{stamp} {path.name}: FAILED {result.error}", file=sys.stderr)
+            if args.once:
+                return 0
+            time.sleep(max(args.every, 5))
+    except KeyboardInterrupt:
+        print("Stopped.", file=sys.stderr)
+        return 0
+
+
 def _print_summary(rows: list[dict]) -> None:
     print(
         f"\n{'file':<40} {'status':<7} {'lines':>5} {'total':>12} {'conf':>5} {'adj':>5} {'review':<6} err/warn",
@@ -368,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
         "dashboard": lambda: cmd_dashboard(args),
         "doctor": lambda: cmd_doctor(args, settings),
         "process": lambda: cmd_process(args, settings),
+        "watch": lambda: cmd_watch(args, settings),
         "extract": lambda: cmd_extract(args, settings),
         "labels": lambda: cmd_labels(args),
         "evaluate": lambda: cmd_evaluate(args),

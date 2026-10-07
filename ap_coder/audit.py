@@ -126,13 +126,11 @@ def describe(event: dict[str, Any]) -> str:
     if action == "failed":
         return f"{d.get('file', '')}: {str(d.get('error', ''))[:160]}"
     if action == "approved":
-        changes = d.get("changes") or []
-        if not changes:
-            bulk = " (bulk approval)" if d.get("bulk") else ""
-            return f"{d.get('lines', 0)} line(s), all as the AI suggested{bulk}"
-        shown = "; ".join(f"{c['what']}: {c['before']} → {c['after']}" for c in changes[:4])
-        more = f" (+{len(changes) - 4} more)" if len(changes) > 4 else ""
-        return f"{len(changes)} change(s): {shown}{more}"
+        overridden = [i["code"] for i in d.get("open_issues") or [] if i.get("severity") == "error"]
+        prefix = f"approved despite {', '.join(overridden)}; " if overridden else ""
+        if d.get("needs_second"):
+            prefix += "over the approval limit (second approval needed); "
+        return prefix + _approved_text(d)
     if action == "rejected":
         return f"reason: {d.get('reason') or 'none given'}"
     if action == "deleted":
@@ -179,3 +177,13 @@ def describe(event: dict[str, Any]) -> str:
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", ""))
     return ""
+
+
+def _approved_text(d: dict[str, Any]) -> str:
+    changes = d.get("changes") or []
+    if not changes:
+        bulk = " (bulk approval)" if d.get("bulk") else ""
+        return f"{d.get('lines', 0)} line(s), all as the AI suggested{bulk}"
+    shown = "; ".join(f"{c['what']}: {c['before']} → {c['after']}" for c in changes[:4])
+    more = f" (+{len(changes) - 4} more)" if len(changes) > 4 else ""
+    return f"{len(changes)} change(s): {shown}{more}"

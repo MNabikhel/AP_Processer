@@ -576,9 +576,15 @@ class Store:
             )
 
     def approve_invoice(
-        self, invoice_id: int, final_output: dict[str, Any], reviewer: str, bulk: bool = False
+        self,
+        invoice_id: int,
+        final_output: dict[str, Any],
+        reviewer: str,
+        bulk: bool = False,
+        open_issues: list[dict[str, Any]] | None = None,
     ) -> dict[str, int]:
-        """Store the reviewer's final version and record one feedback row per line."""
+        """Store the reviewer's final version and record one feedback row per line. ``open_issues``: the
+        errors and warnings still showing when the reviewer approved (kept in the audit trail)."""
         inv = self.get_invoice(invoice_id)
         if inv is None:
             raise KeyError(invoice_id)
@@ -656,6 +662,7 @@ class Store:
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
                 **({"bulk": True} if bulk else {}), **({"needs_second": True} if needs_second else {}),
+                **({"open_issues": open_issues} if open_issues else {}),
             })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,

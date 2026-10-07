@@ -155,7 +155,11 @@ def page_process() -> None:
         with card("folder"):
             st.markdown("#### :material/folder_open: Invoices folder")
             hint, button = st.columns([3, 1], vertical_alignment="center")
-            hint.caption(f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here.")
+            hint.caption(
+                f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here. To process them automatically "
+                "(e.g. overnight, or from a scanner or mail rule saving into this folder), run "
+                "`python -m ap_coder watch` in the AP Coder terminal."
+            )
             if button.button("Open folder", icon=":material/folder_open:", key="open_invoices"):
                 if not open_folder(INVOICE_DIR):
                     st.info(f"Open this folder yourself: {INVOICE_DIR}")

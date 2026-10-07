@@ -7,14 +7,14 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
-from ap_coder import ui
+from ap_coder import controls, ui
 from ap_coder.audit import ACTIONS, describe
 from ap_coder.webapp.common import card, get_store, history_html, show_toast
 
 GROUPS = {
     "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "rejected", "deleted", "exported"],
     "Setup": ["accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",
-              "settings_changed"],
+              "settings_changed", "vendor_updated", "pos_imported", "po_status", "pos_deleted", "export_undone"],
     "Learning": ["lessons_forgotten"],
     "Backups": ["backup_made", "backup_restored"],
 }  # fmt: skip
@@ -58,6 +58,8 @@ def page_activity() -> None:
         )
     )
 
+    _controls_card(store)
+
     with card("activity_filters"):
         c1, c2, c3 = st.columns([2.8, 1.2, 1.8])
         group = c1.segmented_control(
@@ -100,6 +102,57 @@ def page_activity() -> None:
             st.caption("Showing the newest 200; use the table or the CSV for everything.")
     with grid:
         st.dataframe(table, hide_index=True, width="stretch")
+
+
+def _controls_card(store) -> None:
+    with card("controls"):
+        head, pick = st.columns([3, 2], vertical_alignment="center")
+        head.markdown("#### :material/verified_user: Controls report")
+        head.caption(
+            "Exceptions for internal audit: overridden errors, risky approvals, second approvals, setup changes."
+        )
+        today = dt.date.today()
+        period = pick.date_input(
+            "Period", (today.replace(day=1), today), max_value=today, key="controls_period",
+            label_visibility="collapsed",
+        )  # fmt: skip
+        if not isinstance(period, tuple) or len(period) != 2:
+            st.caption("Pick the first and last day.")
+            return
+        r = controls.build(store, period[0], period[1])
+        st.html(
+            ui.tiles(
+                [
+                    ui.tile(
+                        "Errors overridden",
+                        len(r["overrides"]),
+                        "gpp_maybe",
+                        "amber" if r["overrides"] else "green",
+                        "approved despite an error",
+                    ),
+                    ui.tile(
+                        "Risk signals approved",
+                        len(r["signals"]),
+                        "report",
+                        "amber" if r["signals"] else "green",
+                        "duplicates, vendor, PO",
+                    ),
+                    ui.tile(
+                        "Second approvals",
+                        len(r["finals"]),
+                        "how_to_reg",
+                        "violet",
+                        f"{len(r['sent_back'])} sent back · {len(r['waiting'])} waiting",
+                    ),
+                    ui.tile("Setup changes", len(r["setup"]), "tune", "blue", "accounts, tax, vendors, POs"),
+                ]
+            )  # fmt: skip
+        )
+        st.download_button(
+            "Download the controls report", controls.report_html(r).encode("utf-8"),
+            file_name=f"ap_coder_controls_{period[0]}_{period[1]}.html", mime="text/html",
+            icon=":material/download:", key="controls_download",
+        )  # fmt: skip
 
 
 def _searchable(event: dict) -> str:

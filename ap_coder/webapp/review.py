@@ -805,7 +805,10 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 "Approve & teach", type="primary", icon=":material/check:", disabled=not allow,
                 key=f"{key}_approve", shortcut="Ctrl+Enter",
             ):  # fmt: skip
-                counts = store.approve_invoice(invoice_id, output, reviewer())
+                open_issues = [
+                    {"code": i.code, "severity": i.severity, "line": i.line_number} for i in errors + warnings
+                ]
+                counts = store.approve_invoice(invoice_id, output, reviewer(), open_issues=open_issues)
                 if (store.get_invoice(invoice_id) or {}).get("status") == PENDING:
                     notify("Over the approval limit: it now waits for a second approver.", ":material/how_to_reg:")
                 total = sum(counts.values())
