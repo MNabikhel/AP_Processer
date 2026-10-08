@@ -1,0 +1,9 @@
+vendor_id,vendor_name,gst_hst_number,payment_terms,status,default_gl
+V10023,Northwind IT Solutions Inc.,123456789 RT0001,Net 30,active,6010
+V10041,Chinook Courier & Office Services Ltd.,823145967 RT0001,Net 30,active,6800
+V10057,Pacific Office Supply Ltd,555666777 RT0001,Net 15,active,6000
+V10062,Services Informatiques Laurentides,987654321 RT0001,Net 30,active,6110
+V10078,Red River Office Interiors,741852963 RT0001,Net 30,active,1510
+V10085,Agence Creative Mont-Royal,812345678 RT0001,Net 30,active,6400
+V10093,Harbourview Professional Services LLP,356201847 RT0001,Due on receipt,active,6120
+V10104,Prairie Network Supply,609274185 RT0001,Net 30,active,6010

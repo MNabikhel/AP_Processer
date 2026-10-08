@@ -1,5 +1,25 @@
 # AP Invoice Coder (prototype)
 
+## Try the live demo
+
+[![Open the live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ap-coder-demo.streamlit.app)
+
+**[ap-coder-demo.streamlit.app](https://ap-coder-demo.streamlit.app)** opens the review dashboard in
+your browser with ten made-up invoices: no company data, no Azure, nothing to install. Review, correct
+and approve invoices, then look at Insights, Sales tax and Activity. *Reset demo* starts it over.
+
+![Review queue with today's numbers](docs/screenshots/review-queue.png)
+
+| | |
+|---|---|
+| ![An invoice in review: checks, GL split and the approve bar](docs/screenshots/invoice-review.png) | ![Insights: the business case at 500 invoices a month](docs/screenshots/insights.png) |
+| ![Sales tax: GST/HST and QST to claim back](docs/screenshots/sales-tax.png) | ![Activity: the duplicate payment audit and the audit trail](docs/screenshots/activity.png) |
+
+To run the same demo on your computer: `pip install -r requirements.txt`, then
+`streamlit run streamlit_app.py`. How the hosted demo is set up: [docs/DEMO.md](docs/DEMO.md).
+
+## What it does
+
 An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
 
 1. **Extraction:** Azure AI Document Intelligence (`prebuilt-layout` or `prebuilt-invoice`) turns
@@ -15,14 +35,28 @@ An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
    - the right tax regime for the province
    - QST is charged on the pre-GST amount
    - supplier registration numbers are present
-   - possible duplicate invoices
-   - agreement with past reviewer decisions
+   - possible duplicate invoices (also under another vendor name, or already in the ERP's invoice
+     register), and vendor fraud signals (vendor not in the ERP's vendor master, on hold, changed
+     GST/HST number or bank account, unusual amount, same amount under another number)
+   - credit notes: the invoice they credit is found, and a credit larger than it is flagged
+   - purchase order match: price, quantity ordered and received, lines not on the PO, PO total
+   - payment terms and due dates, early-payment discounts
+   - agreement with past reviewer decisions, and fixed coding rules set by AP
 4. **GL distribution:** posting lines that add up to the grand total:
    - recoverable GST/HST and QST go to their own receivable accounts
    - non-recoverable PST is added pro rata to the expense lines it applies to
 5. **Review dashboard and learning:** a local web app where AP reviews and approves each invoice.
    Every approved line is remembered as *confirmed* or *corrected* and shown to the AI on the next
    invoice from that vendor. Accuracy is tracked against the 90% target.
+6. **The rest of the AP cycle, locally:** invoices taken out of saved emails, *Find an invoice* for
+   vendor calls, emails to vendors drafted for you, second approval above a limit, export batches
+   for the ERP with approved (stamped) PDFs, vendor statement reconciliation, month-end accruals, the
+   sales-tax claim and PST/QST self-assessment, spend analysis, a duplicate payment audit, an audit
+   trail with a controls report, and a business case from the pilot's own numbers.
+
+> **Just want to look around?** Install, start the dashboard and click *Load demo invoices*: ten
+> sample invoices from across Canada, sample purchase orders and a sample vendor list, with a few
+> realistic AI mistakes to correct (a sample vendor statement to upload is in `data/`). No Azure needed.
 
 ```
 invoice ─► Document Intelligence ─► Markdown + tables + OCR confidence
@@ -43,7 +77,8 @@ GL accounts, cost centers, tax rates, policy ─┤   past approvals for this ve
                                                      learning memory + accuracy tracking
 ```
 
-> **Running this on real data?** Follow [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Everything
+> **Running this on real data?** Follow [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), then the
+> four-week [pilot plan](docs/PILOT_PLAN.md). Everything
 > stays in a local data folder outside the code (default `~/APCoder`), and the dashboard only listens on
 > `localhost`. Only redacted reports (`doctor`, `share-report`) are meant to leave your machine.
 
@@ -66,24 +101,38 @@ python -m ap_coder dashboard         # review app on http://localhost:8501 (or t
 ```
 
 In the dashboard:
-1. **GL accounts & tax** → *Load sample setup*, or import your own accounts.
+1. **GL accounts & tax** → *Load sample setup*, or import your own accounts (or click *Load demo
+   invoices* to skip ahead).
 2. **Process invoices** → upload the PDFs in `samples/`.
-3. **Review queue** → review and approve.
+3. **Review queue** → review and approve. **Help** explains every check.
 
 ## Dashboard
 
-| Page | What it does |
-|---|---|
-| **Review queue** | Invoice image beside the editable header; live **Checks**; a full-width line grid (GL account and cost center are dropdowns of your codes, with descriptions; taxes per line); tax lines with a tax-check table (rate vs official rate, base × rate, where it posts); and a **GL distribution** preview. *Approve & teach the AI*, *Reject* or *Delete*; approved distributions can be exported to CSV. |
-| **Process invoices** | Upload files, or process new files dropped into the data folder's `invoices/` (*Open folder* button). |
-| **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete and download them. Optional cost centers. Map each tax type to its treatment and GL. Edit plain-English coding policy. |
-| **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). |
+| Section | Page | What it does |
+|---|---|---|
+| Work | **Review queue** | Invoice image beside the editable header (incl. PO #, payment terms, due date, bank account to pay into); live **Checks**, each with what to do; the line grid (GL account and cost center dropdowns of your codes); tax lines with a tax-check table; the **PO match**; **GL suggestions** for lines the AI could not code; *Split a line* across GL accounts / cost centers; a GL posting preview; **Ask the vendor** drafts the email for what the invoice is missing (English or French). *Approve & teach*, *Reject*, *Delete*. The queue shows due dates and discount deadlines, can be sorted by due date, and clean invoices can be approved in bulk. A **Second approval** tab holds invoices over the approval limit; *Park* sets aside an invoice waiting for information (**Parked** tab); **Notes** keep the team informed. |
+| Work | **Find an invoice** | For a vendor on the phone: search by vendor, invoice or PO number, or amount; see where each invoice is (in review, parked and why, approved by whom, exported in which batch, rejected) and when it is due; the ERP register too. |
+| Work | **Process invoices** | Upload files or saved emails (`.eml`, attachments taken out), or process new files dropped into the data folder's `invoices/` (or run `watch`). |
+| Work | **Exports** | Approved invoices go to the ERP in batches (Excel, CSV, or a **custom CSV layout** matching your ERP's import); each invoice once; any batch can be downloaded again or undone; **approved PDFs** (stamp and coding page) per batch. Import the ERP's invoice register to catch bills already entered there. |
+| Work | **Vendor statements** | Upload a vendor's statement of account: matched, amount differs, not received, not on the statement; the email asking for the missing invoices. |
+| Work | **Month-end** | The accruals schedule: received not invoiced (from POs), invoices not in the ERP yet, expected recurring invoices; by GL; CSV. |
+| Work | **Sales tax** | GST/HST (ITCs) and QST (ITRs) to claim back for a period, by tax and rate, with the claims to check before filing (no valid registration number on the invoice, foreign currency); PST / QST possibly to self-assess; CSV. |
+| Insight | **Insights** | Straight-through rate, hours saved, Azure cost per invoice, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
+| Insight | **Spend** | Spend by month (by GL category), top GL accounts, vendors and cost centers, net of recoverable tax; **all invoice data as Excel** (invoices, lines, GL posting) for pivot tables or Power BI. |
+| Insight | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). *Teach from past coding* imports last year's AP lines from the ERP. |
+| Insight | **Vendors** | Import the **vendor master** from the ERP (vendor IDs in exports, unknown vendors flagged, vendor terms, default GL); spend, AI accuracy and controls per vendor (hold, expected GST/HST number, notes); recurring vendors and late invoices. |
+| Insight | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit; the **duplicate payment audit** (number typos, same bill under two vendor names, same amount days apart, also against the ERP register). |
+| Setup | **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete. Optional cost centers. Tax treatments and GLs. Coding policy. **Fixed rules** (vendor and/or words → GL account and cost center), with rules suggested from past coding. |
+| Setup | **Purchase orders** | Import open POs (one row per line, received quantities optional); what has been invoiced against each; close, reopen, delete. |
+| Setup | **Settings** | Azure connection (with a connection test), your name (per Windows user), review threshold, page images for the AI (vision), only-my-GL-codes, approval limit, default payment days, backups and restore (with an optional second backup folder, e.g. OneDrive). |
+| Setup | **Help** | Quick start, every check explained, questions, shortcuts. |
 
 ## Canadian sales tax
 
 Rates live in [`data/canada_tax_rates.csv`](data/canada_tax_rates.csv) with effective dates. For
-example, Nova Scotia HST was 15% until 2025-03-31 and 14% from 2025-04-01. Edit that file when a
-rate changes.
+example, Nova Scotia HST was 15% until 2025-03-31 and 14% from 2025-04-01. When a rate changes,
+put a copy of that file in your data folder (`canada_tax_rates.csv`) and edit the copy: it is used
+instead of the shipped one and survives updates.
 
 | Check | Severity |
 |---|---|
@@ -122,6 +171,8 @@ This is a memory of your team's decisions. No model is retrained.
 | Command | Purpose |
 |---|---|
 | `dashboard [--port]` | The review app (localhost only). |
+| `demo [--remove]` | Load (or remove) the demo invoices and sample POs; no Azure needed. |
+| `watch [folder] [--every 60] [--once]` | Keep processing new files dropped in the invoices folder (scanner, mail rule, Task Scheduler). |
 | `doctor [--online]` | Setup, reference-data, tax-mapping and connectivity check. No secrets or URLs in the output. |
 | `process <files/dirs…>` | Batch pipeline. Results go to `<data folder>/output` **and** the dashboard queue (`--no-db` to skip). Uses the learning memory. Skips files already processed (`--force` to redo). |
 | `share-report [--include-codes]` | Redacted summary of the dashboard database (or an output folder): no vendor names, amounts, descriptions or file names. |
@@ -218,15 +269,23 @@ ap_coder/
   schema.py          strict JSON Schema + Pydantic mirror
   tax.py             Canadian rates, tax checks, GL distribution
   memory.py          learning memory: example selection, history comparison
-  store.py           local SQLite: GL accounts, tax setup, invoices, feedback, metrics
+  store.py           local SQLite: accounts, tax setup, invoices, feedback, POs, vendors, exports, audit trail
   validation.py      deterministic controls, adjusted confidence, review flag
+  vendors.py         vendor master, fraud and duplicate signals
+  po.py              purchase orders: import, 2- and 3-way matching
+  terms.py           payment terms, due dates, early-payment discounts
+  suggest.py         GL suggestions for uncoded lines;  recurring.py: recurring vendors
+  statements.py      vendor statement reconciliation;  accruals.py: month-end accruals
+  exports.py · bulk.py · insights.py · controls.py · audit.py · help.py · demo.py
   pipeline.py        extract → code → validate → store
-  dashboard.py       Streamlit review app;  review.py: grid edits → InvoiceCoding
+  dashboard.py       Streamlit app shell;  webapp/: one module per page;  review.py: grid edits → InvoiceCoding
   doctor.py · share_report.py · labels.py · evaluation.py · reference_data.py · cli.py
-data/                sample GL accounts, cost centers, tax rates and mapping, coding policy
-samples/             synthetic ON (HST), QC (TPS/TVQ) and BC (GST+PST) invoices + ground truth
+data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement
+samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
 scripts/             sample invoice generator
-docs/                GETTING_STARTED.md: step-by-step guide for running on enterprise data
+docs/                GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md,
+                     DEMO.md (the public web demo), screenshots/
+streamlit_app.py     the public web demo: the dashboard with made-up invoices (.streamlit/ and static/ go with it)
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients mocked)
 ```
@@ -236,7 +295,7 @@ Run the tests with `pytest`; lint with `ruff check . && ruff format --check .`.
 ## Phase 2 hooks
 
 - **Ingestion:** Logic Apps / Power Automate → Blob Storage → a Service Bus message → a worker
-  calling `InvoicePipeline.process()`.
+  calling `InvoicePipeline.process()`. Locally, `watch` already processes a shared folder.
 - **Throughput:** Service Bus absorbs month-end spikes. Set worker concurrency to the Azure OpenAI
   tokens-per-minute quota.
 - **Human-in-the-loop at scale:** the store's invoice, feedback and metrics tables map directly to

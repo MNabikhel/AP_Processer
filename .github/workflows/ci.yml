@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: |
+          ruff check ap_coder tests scripts streamlit_app.py
+          ruff format --check ap_coder tests scripts streamlit_app.py
+      - name: Tests
+        run: python -m pytest -q
+
+  windows-installer:
+    # The real double-click experience: install.bat on a clean Windows machine, then a second run.
+    name: Installer on Windows
+    runs-on: windows-latest
+    env:
+      AP_NO_PAUSE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: First install (non-interactive)
+        shell: cmd
+        run: install.bat --yes --no-update --skip-tests --no-start
+      - name: Check what the installer set up
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $settings = Join-Path $env:USERPROFILE '.ap_coder\settings.json'
+          if (-not (Test-Path $settings)) { throw "missing $settings" }
+          $data = (Get-Content $settings | ConvertFrom-Json).data_dir
+          Write-Host "data folder: $data"
+          foreach ($p in @("$data\.env", "$data\invoices", ".venv\Scripts\python.exe", ".venv\ap_coder_install.json")) {
+            if (-not (Test-Path $p)) { throw "missing $p" }
+          }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AP Coder.lnk'
+          if (-not (Test-Path $lnk)) { throw "missing desktop shortcut $lnk" }
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+          Write-Host "shortcut -> $target"
+          if (-not $target.EndsWith('start.bat')) { throw "shortcut points to $target" }
+      - name: Second install reuses everything
+        shell: pwsh
+        run: |
+          $out = cmd /c "install.bat --yes --no-update --skip-tests --no-start" 2>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch 'reusing \.venv') { throw 'venv was not reused' }
+          if ($out -notmatch 'already up to date') { throw 'packages were reinstalled' }
+          $count = (Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk').Count
+          if ($count -ne 1) { throw "expected 1 desktop shortcut, found $count" }
+      - name: Self-test inside the installed environment
+        shell: cmd
+        run: .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
+      - name: Dashboard starts and serves the app
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath '.venv\Scripts\python.exe' -ArgumentList '-m','ap_coder','dashboard','--port','8599' -PassThru -RedirectStandardOutput dash.out -RedirectStandardError dash.err
+          $ok = $false
+          foreach ($i in 1..40) {
+            Start-Sleep -Seconds 2
+            try {
+              $r = Invoke-WebRequest -Uri 'http://localhost:8599/' -UseBasicParsing -TimeoutSec 5
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+          }
+          Get-Content dash.err -ErrorAction SilentlyContinue | Select-Object -Last 20
+          $font = Invoke-WebRequest -Uri 'http://localhost:8599/app/static/InterVariable.woff2' -UseBasicParsing -TimeoutSec 10
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*streamlit*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          if (-not $ok) { throw 'dashboard did not start' }
+          if ($font.StatusCode -ne 200) { throw 'static font not served' }
+      - name: Fresh start keeps settings
+        shell: pwsh
+        run: |
+          $data = (Get-Content (Join-Path $env:USERPROFILE '.ap_coder\settings.json') | ConvertFrom-Json).data_dir
+          New-Item -ItemType File -Path "$data\ap_coder.db" -Force | Out-Null
+          cmd /c "install.bat --yes --no-update --skip-tests --no-start --fresh-start" | Out-Null
+          if (-not (Test-Path "$data\.env")) { throw '.env was not kept' }
+          if (Test-Path "$data\ap_coder.db") { throw 'database was not moved to the backup' }
+          if (-not (Get-ChildItem $data -Directory -Filter 'backup-*')) { throw 'no backup folder' }

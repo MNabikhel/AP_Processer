@@ -1,0 +1,56 @@
+{
+  "vendor_name": "Northwind IT Solutions Inc.",
+  "invoice_number": "CN-2026-0047",
+  "invoice_date": "2026-09-28",
+  "po_number": "PO-88213",
+  "payment_terms": "",
+  "due_date": "",
+  "currency": "CAD",
+  "supplier_province": "ON",
+  "ship_to_province": "ON",
+  "gst_hst_registration_number": "123456789 RT0001",
+  "qst_registration_number": "",
+  "original_invoice_number": "NW-2026-0912",
+  "remit_bank_account": "",
+  "subtotal": -2050.0,
+  "tax_lines": [
+    {
+      "tax_type": "HST",
+      "province": "ON",
+      "rate": 0.13,
+      "taxable_amount": -2050.0,
+      "tax_amount": -266.5
+    }
+  ],
+  "tax_total": -266.5,
+  "grand_total": -2316.5,
+  "confidence_score": 1.0,
+  "line_items": [
+    {
+      "line_number": 1,
+      "description": "Return - Dell Latitude 7450 laptop, 32GB RAM (RMA 55120)",
+      "quantity": -1,
+      "unit_price": 1450.0,
+      "amount": -1450.0,
+      "predicted_gl_code": "6010",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Reverses a laptop expensed on NW-2026-0912 (below threshold)."
+    },
+    {
+      "line_number": 2,
+      "description": "Credit - implementation consulting hours not delivered",
+      "quantity": -4,
+      "unit_price": 150.0,
+      "amount": -600.0,
+      "predicted_gl_code": "6110",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Reverses consulting hours billed on NW-2026-0912."
+    }
+  ]
+}

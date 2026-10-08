@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .reference_data import UNASSIGNED, ReferenceData
+from .safe import neutralise_sheet
 
 SHEET = "Labels"
 HEADER_FIELDS = (
@@ -150,6 +151,7 @@ def _write_xlsx(dest: Path, rows: list[dict[str, str]], reference: ReferenceData
     for col in ws.iter_cols(min_row=2, max_row=max(ws.max_row, 2)):
         for cell in col:
             cell.number_format = "@"  # text: keeps leading zeros and ISO dates intact
+    neutralise_sheet(ws)
     widths = {"description": 50, "model_justification": 60, "vendor_name": 28, "notes": 30, "document": 30}
     for idx, name in enumerate(COLUMNS, start=1):
         ws.column_dimensions[ws.cell(1, idx).column_letter].width = widths.get(name, 14)

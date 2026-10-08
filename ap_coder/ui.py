@@ -161,7 +161,8 @@ def meter(value: float, threshold: float = 0.85) -> str:
     )
 
 
-def queue_card(inv: dict[str, Any], taxes: Sequence[str] = (), province: str = "") -> str:
+def queue_card(inv: dict[str, Any], taxes: Sequence[str] = (), province: str = "", badge: str = "") -> str:
+    """``badge``: extra HTML (e.g. a due-date pill) shown with the invoice details."""
     flagged = bool(inv.get("requires_review"))
     status = pill("Needs attention", "warn", "flag") if flagged else pill("Ready", "ok", "check_circle")
     meta = [f"<span>{icon('receipt_long', '1em')} {esc(inv.get('invoice_number') or '—')}</span>",
@@ -169,6 +170,8 @@ def queue_card(inv: dict[str, Any], taxes: Sequence[str] = (), province: str = "
     if province:
         meta.append(f"<span>{icon('location_on', '1em')} {esc(province)}</span>")
     meta += [tax_chip(t) for t in taxes]
+    if badge:
+        meta.append(badge)
     return (
         f"<div class='apc-qcard {'attn' if flagged else 'ready'} apc-anim'>"
         f"{avatar(inv.get('vendor_name') or inv.get('file_name') or '')}"
@@ -195,7 +198,8 @@ def invoice_hero(vendor: str, meta: Iterable[tuple[str, str]], pills: Iterable[s
         f"<div class='pills'>{''.join(pills)}</div></div>"
         f"<div class='side'><div style='text-align:center'>{gauge}<div class='apc-muted' "
         f"style='font-size:.72rem'>AI confidence</div></div>"
-        f"<div class='total'><div class='label'>Total due</div><div class='value'>{money(total)}</div>"
+        f"<div class='total'><div class='label'>{'Credit' if total < 0 else 'Total due'}</div>"
+        f"<div class='value'>{money(total)}</div>"
         f"<div class='cur'>{esc(currency)}</div></div></div></div>"
     )
 
@@ -233,12 +237,14 @@ def reason_row(number: int, description: str, gl_code: str, gl_label: str, reaso
 _CHECK_ICONS = {"error": "!", "warning": "!", "ok": "✓", "info": "★"}
 
 
-def check(kind: str, title: str, message: str, code: str = "") -> str:
+def check(kind: str, title: str, message: str, code: str = "", hint: str = "") -> str:
+    """``hint``: what to do about it (plain text), shown under the message."""
     code_html = f"<span class='code'>{esc(code)}</span>" if code else ""
     mark = _CHECK_ICONS.get(kind, "•")
+    hint_html = f"<div class='todo'>{esc(hint)}</div>" if hint else ""
     return (
         f"<div class='apc-check {kind} apc-anim'><span class='ico' aria-hidden='true'>{mark}</span>"
-        f"<div><div class='ttl'>{esc(title)}{code_html}</div><div>{esc(message)}</div></div></div>"
+        f"<div><div class='ttl'>{esc(title)}{code_html}</div><div>{esc(message)}</div>{hint_html}</div></div>"
     )
 
 
@@ -258,10 +264,8 @@ def table(headers: Sequence[str], rows: Sequence[Sequence[str]], right: Iterable
 
     body = "".join(f"<tr>{cells(r, 'td')}</tr>" for r in rows)
     foot_html = f"<tfoot><tr>{cells(foot, 'td')}</tr></tfoot>" if foot else ""
-    return (
-        f"<table class='apc-table'><thead><tr>{cells([esc(h) for h in headers], 'th')}</tr></thead>"
-        f"<tbody>{body}</tbody>{foot_html}</table>"
-    )
+    head = f"<thead><tr>{cells([esc(h) for h in headers], 'th')}</tr></thead>" if any(headers) else ""
+    return f"<table class='apc-table'>{head}<tbody>{body}</tbody>{foot_html}</table>"
 
 
 EMPTY_INBOX_SVG = """
@@ -320,6 +324,8 @@ STATUS_PILLS = {
     "attention": ("Needs attention", "warn", "flag"),
     "review": ("In queue", "info", "inbox"),
     "approved": ("Approved", "ok", "check_circle"),
+    "pending_approval": ("Second approval", "violet", "how_to_reg"),
+    "parked": ("Parked", "warn", "pause_circle"),
     "rejected": ("Rejected", "gray", "block"),
     "failed": ("Failed", "err", "error"),
 }
@@ -392,3 +398,16 @@ def document_text(md: str) -> str:
         else:
             out.append(esc(line) + "<br>")
     return "\n".join(out)
+
+
+def timeline(items: Sequence[dict[str, str]]) -> str:
+    """A vertical history: each item has icon, tone, title, text (all plain text), who and when."""
+    rows = []
+    for it in items:
+        who = f" · {esc(it['who'])}" if it.get("who") else ""
+        rows.append(
+            f"<div class='ev'><span class='dot {esc(it.get('tone', 'gray'))}'>{icon(it.get('icon', 'circle'), '1em')}"
+            f"</span><div class='body'><div class='t'><b>{esc(it.get('title', ''))}</b>{who}</div>"
+            f"<div class='d'>{esc(it.get('text', ''))}</div><div class='w'>{esc(it.get('when', ''))}</div></div></div>"
+        )
+    return f"<div class='apc-timeline'>{''.join(rows)}</div>" if rows else ""

@@ -32,6 +32,12 @@ French-Canadian formats correctly (1 234,56 $ -> 1234.56).
 other dates on the document.
 - `currency` is the ISO 4217 code; a plain "$" on a Canadian invoice is CAD unless USD is stated.
 - `vendor_name` is the supplier issuing the invoice, NOT the bill-to customer.
+- `po_number` is the buyer's purchase order number when printed ("PO #", "Customer PO", \
+"Order Ref", "Bon de commande"), copied exactly; an empty string if there is none. A PO \
+reference inside one line description is not the invoice's PO number.
+- `payment_terms` copies the terms as printed ("Net 30", "2/10 Net 30", "Due on receipt", \
+"Payable dans les 30 jours"), or an empty string. `due_date` is the due date only when one \
+is printed (YYYY-MM-DD); never calculate it from the terms.
 - Pre-extracted invoice fields, when supplied, are hints from a second model; when \
 they disagree with the document content, trust the document.
 
@@ -52,6 +58,11 @@ otherwise apply each tax to the lines its taxable amount covers.
 goods are delivered or services performed (use the bill-to address if there is no ship-to).
 - Copy the supplier's GST/HST registration number (9 digits + RT + 4 digits) and QST \
 number (10 digits + TQ + 4 digits) exactly as printed, or an empty string.
+- `original_invoice_number`: on a credit note, the invoice it credits ("Original invoice", "Re:", \
+"Facture originale"), as printed; an empty string on an invoice.
+- `remit_bank_account`: the bank account the supplier asks to be paid into (EFT / wire / \
+direct deposit details: institution, transit and account numbers, or SWIFT/IBAN and account), \
+exactly as printed; an empty string if the invoice shows none.
 - Sales tax is never coded to an expense line: do not create line items for taxes.
 
 ## GL coding rules

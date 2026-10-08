@@ -1,0 +1,93 @@
+{
+  "vendor_name": "Prairie Network Supply Ltd.",
+  "invoice_number": "PNS-104882",
+  "invoice_date": "2026-06-12",
+  "po_number": "PO-89904",
+  "payment_terms": "Net 30",
+  "due_date": "",
+  "currency": "CAD",
+  "supplier_province": "SK",
+  "ship_to_province": "SK",
+  "gst_hst_registration_number": "609274185 RT0001",
+  "qst_registration_number": "",
+  "original_invoice_number": "",
+  "remit_bank_account": "",
+  "subtotal": 10095.0,
+  "tax_lines": [
+    {
+      "tax_type": "GST",
+      "province": "",
+      "rate": 0.05,
+      "taxable_amount": 10095.0,
+      "tax_amount": 504.75
+    },
+    {
+      "tax_type": "PST",
+      "province": "SK",
+      "rate": 0.06,
+      "taxable_amount": 10095.0,
+      "tax_amount": 605.7
+    }
+  ],
+  "tax_total": 1110.45,
+  "grand_total": 11205.45,
+  "confidence_score": 1.0,
+  "line_items": [
+    {
+      "line_number": 1,
+      "description": "Cisco Meraki MR46 wireless access point",
+      "quantity": 6,
+      "unit_price": 1180.0,
+      "amount": 7080.0,
+      "predicted_gl_code": "6010",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "Access points below the 2,500 per-unit capitalisation threshold."
+    },
+    {
+      "line_number": 2,
+      "description": "Cat6 patch cables and mounting hardware (lot)",
+      "quantity": 1,
+      "unit_price": 425.0,
+      "amount": 425.0,
+      "predicted_gl_code": "6010",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "Network cables and accessories."
+    },
+    {
+      "line_number": 3,
+      "description": "On-site network installation labour (hours)",
+      "quantity": 14,
+      "unit_price": 95.0,
+      "amount": 1330.0,
+      "predicted_gl_code": "6110",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "Technical implementation service."
+    },
+    {
+      "line_number": 4,
+      "description": "Meraki Enterprise licence, 1 year, prepaid (per access point)",
+      "quantity": 6,
+      "unit_price": 210.0,
+      "amount": 1260.0,
+      "predicted_gl_code": "1550",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "12-month licence paid upfront is a prepaid expense."
+    }
+  ]
+}

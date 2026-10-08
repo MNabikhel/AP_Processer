@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from .config import Settings
@@ -15,7 +16,15 @@ from .doctor import exit_code, format_checks, run_checks
 from .evaluation import evaluate
 from .extraction import DocumentExtractor
 from .labels import export_labels
-from .pipeline import InvoicePipeline, PipelineResult, discover_inputs, output_stems, write_outputs
+from .mailbox import unpack_folder
+from .pipeline import (
+    InvoicePipeline,
+    PipelineResult,
+    discover_inputs,
+    invoice_files,
+    output_stems,
+    write_outputs,
+)
 from .reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from .schema import build_json_schema
 from .share_report import build_share_report
@@ -34,7 +43,7 @@ _REFERENCE_FILES = {
 
 
 def reference_dir() -> tuple[Path, bool]:
-    """Return (directory, is_sample). AP_REFERENCE_DIR > ./private/reference > bundled sample data."""
+    """Return (directory, is_sample). AP_REFERENCE_DIR > <data folder>/reference > bundled sample data."""
     env_dir = os.getenv("AP_REFERENCE_DIR")
     if env_dir:
         return Path(env_dir), False
@@ -98,7 +107,7 @@ def _add_reference_args(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group(
         "reference data",
         "Defaults to the dashboard database (if GL accounts were imported), else AP_REFERENCE_DIR, "
-        "else ./private/reference, else the bundled sample data in ./data",
+        "else <data folder>/reference, else the bundled sample data in ./data",
     )
     g.add_argument("--coa", help="GL accounts (.csv/.json); overrides the dashboard database")
     g.add_argument("--cost-centers", help="Cost center list (.csv/.json); '' to omit")
@@ -110,7 +119,9 @@ def build_parser() -> argparse.ArgumentParser:
     private = private_dir()
     db_path, out_dir, cache_dir = private / "ap_coder.db", private / "output", private / ".cache" / "extraction"
     parser = argparse.ArgumentParser(prog="ap_coder", description="Enterprise AP Invoice Coder Engine (PoC)")
-    parser.add_argument("--env-file", default=None, help="Path to a .env file (default: ./.env if present)")
+    parser.add_argument(
+        "--env-file", default=None, help="Path to a .env file (default: the data folder's, else ./.env)"
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--db", default=str(db_path), help=f"Dashboard database (default: {db_path})")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -138,6 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stdout", action="store_true", help="Also print each coded JSON to stdout")
     _add_reference_args(p)
 
+    p = sub.add_parser("watch", help="Keep processing new files dropped in the invoices folder (Ctrl+C stops)")
+    p.add_argument("folder", nargs="?", default=str(private / "invoices"), help="Default: the dashboard's folder")
+    p.add_argument("--every", type=int, default=60, help="Seconds between checks (default 60)")
+    p.add_argument("--once", action="store_true", help="Check once and stop (e.g. from Windows Task Scheduler)")
+    p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
+    _add_reference_args(p)
+
     p = sub.add_parser("extract", help="Run Document Intelligence only and save Markdown + raw JSON")
     p.add_argument("inputs", nargs="+")
     p.add_argument("-o", "--out", default=str(out_dir))
@@ -162,6 +180,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ground-truth", help="Labels workbook/CSV or JSON folder to include accuracy figures")
     p.add_argument("--include-codes", action="store_true", help="Include GL/cost-center confusion pairs")
     p.add_argument("-o", "--out", default=str(private / "share_report.md"))
+
+    p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
+    p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
 
     p = sub.add_parser("schema", help="Print the strict JSON Schema sent to Azure OpenAI")
     p.add_argument("--no-constrain-codes", action="store_true", help="Do not embed valid codes as enums")
@@ -254,6 +275,62 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
     return 0 if all(r.ok for r in results) else 1
 
 
+SETTLE_SECONDS = 5  # a file changed more recently than this may still be copying in
+
+
+def new_files(folder: Path, store: Store, now: float | None = None) -> list[Path]:
+    """Invoice files in ``folder`` that AP Coder has not seen (failed attempts count as seen: no retry loop)."""
+    now = time.time() if now is None else now
+    if not folder.is_dir():
+        return []
+    found = []
+    for p in invoice_files(folder):
+        try:  # a file being copied, locked by a scanner or removed meanwhile waits for the next check
+            if now - p.stat().st_mtime >= SETTLE_SECONDS and store.find_by_hash(p, include_failed=True) is None:
+                found.append(p)
+        except OSError:
+            continue
+    return found
+
+
+def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
+    if not (settings.document_intelligence.endpoint and settings.openai.endpoint):
+        print("Azure is not set up yet: fill in .env (see GETTING_STARTED.md), then run this again.", file=sys.stderr)
+        return 2
+    store = Store(args.db)
+    folder = Path(args.folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    print(f"Watching {folder} every {args.every}s. New invoices go to the review queue. Ctrl+C to stop.",
+          file=sys.stderr)  # fmt: skip
+    try:
+        while True:
+            for mail in unpack_folder(folder):  # invoices attached to saved emails (.eml)
+                print(f"{time.strftime('%H:%M:%S')} {mail.email}: {len(mail.saved)} attachment(s) to process",
+                      file=sys.stderr)  # fmt: skip
+            files = new_files(folder, store)
+            if files:
+                reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
+                pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
+                for path in files:
+                    try:
+                        result = pipeline.process(path)
+                    except OSError as exc:  # unreadable now: try again at the next check
+                        print(f"{time.strftime('%H:%M:%S')} {path.name}: skipped for now ({exc})", file=sys.stderr)
+                        continue
+                    stamp = time.strftime("%H:%M:%S")
+                    if result.ok:
+                        flag = "needs attention" if result.report and result.report.requires_review else "ready"
+                        print(f"{stamp} {path.name}: {result.output.get('vendor_name', '?')} ({flag})", file=sys.stderr)
+                    else:
+                        print(f"{stamp} {path.name}: FAILED {result.error}", file=sys.stderr)
+            if args.once:
+                return 0
+            time.sleep(max(args.every, 5))
+    except KeyboardInterrupt:
+        print("Stopped.", file=sys.stderr)
+        return 0
+
+
 def _print_summary(rows: list[dict]) -> None:
     print(
         f"\n{'file':<40} {'status':<7} {'lines':>5} {'total':>12} {'conf':>5} {'adj':>5} {'review':<6} err/warn",
@@ -325,6 +402,22 @@ def cmd_share_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
+    from .demo import load_demo, remove_demo
+
+    store = Store(args.db)
+    if args.remove:
+        print(f"Removed {remove_demo(store)} demo invoice(s) and what was learned from them.", file=sys.stderr)
+        return 0
+    result = load_demo(store, settings)
+    print(
+        f"Demo loaded: {result['to_review']} invoice(s) to review, {result['approved']} already approved. "
+        "Start the dashboard to try it.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def cmd_schema(args: argparse.Namespace) -> int:
     schema = build_json_schema(
         _load_reference(args),
@@ -349,10 +442,12 @@ def main(argv: list[str] | None = None) -> int:
         "dashboard": lambda: cmd_dashboard(args),
         "doctor": lambda: cmd_doctor(args, settings),
         "process": lambda: cmd_process(args, settings),
+        "watch": lambda: cmd_watch(args, settings),
         "extract": lambda: cmd_extract(args, settings),
         "labels": lambda: cmd_labels(args),
         "evaluate": lambda: cmd_evaluate(args),
         "share-report": lambda: cmd_share_report(args),
+        "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
     }
     return commands[args.command]()

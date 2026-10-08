@@ -1,0 +1,82 @@
+{
+  "vendor_name": "Harbourview Professional Services LLP",
+  "invoice_number": "HPS-2026-0347",
+  "invoice_date": "2026-07-31",
+  "po_number": "",
+  "payment_terms": "Payable on receipt",
+  "due_date": "",
+  "currency": "CAD",
+  "supplier_province": "NS",
+  "ship_to_province": "NS",
+  "gst_hst_registration_number": "356201847 RT0001",
+  "qst_registration_number": "",
+  "original_invoice_number": "",
+  "remit_bank_account": "",
+  "subtotal": 9614.5,
+  "tax_lines": [
+    {
+      "tax_type": "HST",
+      "province": "NS",
+      "rate": 0.14,
+      "taxable_amount": 9614.5,
+      "tax_amount": 1346.03
+    }
+  ],
+  "tax_total": 1346.03,
+  "grand_total": 10960.53,
+  "confidence_score": 1.0,
+  "line_items": [
+    {
+      "line_number": 1,
+      "description": "Year-end audit preparation and corporate tax advisory",
+      "quantity": 22,
+      "unit_price": 210.0,
+      "amount": 4620.0,
+      "predicted_gl_code": "6120",
+      "predicted_cost_center": "CC200",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Audit and tax advisory for Finance."
+    },
+    {
+      "line_number": 2,
+      "description": "Process consulting - accounts payable workflow review",
+      "quantity": 16,
+      "unit_price": 185.0,
+      "amount": 2960.0,
+      "predicted_gl_code": "6110",
+      "predicted_cost_center": "CC200",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Management consulting for the Finance AP process."
+    },
+    {
+      "line_number": 3,
+      "description": "Legal review of supplier contracts (requested by Finance)",
+      "quantity": 6,
+      "unit_price": 325.0,
+      "amount": 1950.0,
+      "predicted_gl_code": "6100",
+      "predicted_cost_center": "CC800",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Legal fees always go to CC800 regardless of the requesting department."
+    },
+    {
+      "line_number": 4,
+      "description": "Disbursements - courier and document delivery",
+      "quantity": 1,
+      "unit_price": 84.5,
+      "amount": 84.5,
+      "predicted_gl_code": "6800",
+      "predicted_cost_center": "CC200",
+      "taxes_applied": [
+        "HST"
+      ],
+      "reasoning_justification": "Courier disbursement re-billed by the firm."
+    }
+  ]
+}

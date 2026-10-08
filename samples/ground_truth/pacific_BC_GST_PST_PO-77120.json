@@ -2,11 +2,16 @@
   "vendor_name": "Pacific Office Supply Ltd.",
   "invoice_number": "PO-77120",
   "invoice_date": "2026-10-05",
+  "po_number": "",
+  "payment_terms": "Net 15",
+  "due_date": "",
   "currency": "CAD",
   "supplier_province": "BC",
   "ship_to_province": "BC",
   "gst_hst_registration_number": "555666777 RT0001",
   "qst_registration_number": "",
+  "original_invoice_number": "",
+  "remit_bank_account": "",
   "subtotal": 2726.0,
   "tax_lines": [
     {

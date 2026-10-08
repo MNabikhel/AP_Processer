@@ -1,0 +1,179 @@
+"""Payment terms: when an invoice is due and whether an early-payment discount is on offer.
+
+Terms are read as printed ("Net 30", "2/10 Net 30", "1% 15 days, net 45", "Due on receipt",
+"Payable dans les 30 jours"...). The due date is the one printed on the invoice when there is one,
+otherwise the invoice date plus the net days of the terms, otherwise the organisation's default
+(Settings, 30 days unless changed).
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import re
+from dataclasses import dataclass
+from typing import Any
+
+DEFAULT_TERMS_DAYS = 30
+WARNING, INFO = "warning", "info"
+DUE_SOON_DAYS = 7
+
+_RECEIPT = re.compile(
+    r"(on|upon|due on|payable on|at)\s+receipt|sur\s+r[ée]ception|[àa]\s+r[ée]ception|comptant|cash on delivery|"
+    r"\bcod\b|immediate(ly)?|due now",
+    re.IGNORECASE,
+)
+_EOM = re.compile(r"\b(eom|end of (the )?month|fin de mois)\b", re.I)
+# A discount: 2/10 net 30, 2/10 EOM net 30, 1.5/15 n60 (the net part is required, and the rate must look
+# like a discount, so "Due 10/15 net 45" stays a date), 2% 10 net 30, 2% discount if paid within 10 days.
+_SLASH = re.compile(
+    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom)?\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I
+)
+_DISCOUNT = [
+    _SLASH,
+    re.compile(r"(\d+(?:[.,]\d+)?)\s*%\s*(\d+)\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I),
+    re.compile(
+        r"(\d+(?:[.,]\d+)?)\s*%\s*(?:discount|escompte)?\s*(?:if paid|si pay[ée]e?)?\s*(?:within|in|dans les|sous)?"
+        r"\s*(\d+)\s*(?:days?|jours?)",
+        re.I,
+    ),
+]
+_NET = [
+    re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,3})\b", re.I),
+    re.compile(r"(\d{1,3})\s*(?:days?|jours?)\b", re.I),
+]
+
+
+def _net_days(text: str) -> int | None:
+    for pattern in _NET:
+        m = pattern.search(text)
+        if m and 0 <= int(m.group(1)) <= 180:
+            return int(m.group(1))
+    return None
+
+
+@dataclass(frozen=True)
+class Terms:
+    net_days: int | None = None
+    discount_pct: float | None = None  # 2.0 for 2%
+    discount_days: int | None = None
+    on_receipt: bool = False
+    eom: bool = False  # counted from the end of the invoice's month ("Net 30 EOM")
+
+
+@dataclass(frozen=True)
+class Payment:
+    due: dt.date | None
+    source: str  # "printed", "terms", "default" or ""
+    terms: Terms
+    discount_by: dt.date | None = None
+    discount_amount: float = 0.0
+
+    def days_left(self, today: dt.date | None = None) -> int | None:
+        return None if self.due is None else (self.due - (today or dt.date.today())).days
+
+    def discount_open(self, today: dt.date | None = None) -> bool:
+        return self.discount_by is not None and self.discount_by >= (today or dt.date.today())
+
+
+def parse_terms(text: str | None) -> Terms:
+    text = (text or "").strip()
+    if not text:
+        return Terms()
+    eom = bool(_EOM.search(text))
+    for pattern in _DISCOUNT:
+        m = pattern.search(text)
+        if m:
+            pct = float(m.group(1).replace(",", "."))
+            days = int(m.group(2))
+            net = int(m.group(3)) if m.lastindex and m.lastindex >= 3 and m.group(3) else None
+            if net is None:  # "Net 45, 1% 15 days" or "2% 10 days, net 30": the net days are elsewhere
+                net = _net_days(text[: m.start()] + " " + text[m.end() :])
+            if 0 < pct < 20 and 0 < days <= 60:
+                return Terms(net_days=net, discount_pct=pct, discount_days=days, eom=eom)
+    net = _net_days(text)  # before "on receipt": "Net 30 days upon receipt of invoice" is net 30
+    if net is not None:
+        return Terms(net_days=net, eom=eom)
+    if _RECEIPT.search(text):
+        return Terms(net_days=0, on_receipt=True)
+    return Terms(eom=eom)
+
+
+def _date(value: Any) -> dt.date | None:
+    try:
+        return dt.date.fromisoformat(str(value or "")[:10]) if value else None
+    except ValueError:
+        return None
+
+
+def _start(invoice_date: dt.date, terms: Terms) -> dt.date:
+    """Where the terms count from: the invoice date, or the end of its month for EOM terms."""
+    if not terms.eom:
+        return invoice_date
+    return (invoice_date.replace(day=1) + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
+
+
+def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vendor_terms: str = "") -> Payment:
+    """Due date and discount for an invoice (``coding`` as stored: ai_output / final_output). Terms printed on
+    the invoice come first, then ``vendor_terms`` (the vendor master's), then ``default_days``."""
+    printed_terms = (coding.get("payment_terms") or "").strip()
+    terms = parse_terms(printed_terms)
+    from_vendor = False
+    if vendor_terms and terms.net_days is None and not terms.on_receipt:  # none printed, or unreadable ("As agreed")
+        vendor = parse_terms(vendor_terms)
+        if vendor.net_days is not None or vendor.on_receipt:
+            terms, from_vendor = vendor, True
+    invoice_date = _date(coding.get("invoice_date"))
+    printed = _date(coding.get("due_date"))
+    if printed:
+        due, source = printed, "printed"
+    elif invoice_date and terms.net_days is not None:
+        due, source = (
+            _start(invoice_date, terms) + dt.timedelta(days=terms.net_days),
+            "vendor" if from_vendor else "terms",
+        )
+    elif invoice_date:
+        due, source = invoice_date + dt.timedelta(days=default_days), "default"
+    else:
+        due, source = None, ""
+    discount_by, amount = None, 0.0
+    total = float(coding.get("grand_total") or 0)
+    if terms.discount_pct and terms.discount_days is not None and invoice_date and total > 0:
+        discount_by = _start(invoice_date, terms) + dt.timedelta(days=terms.discount_days)
+        amount = round(float(coding.get("subtotal") or total) * terms.discount_pct / 100, 2)
+    return Payment(due, source, terms, discount_by, amount)
+
+
+def describe(p: Payment, today: dt.date | None = None) -> str:
+    """'Due in 5 days (Oct 14)', 'Overdue by 3 days', 'Due today'..."""
+    left = p.days_left(today)
+    if left is None:
+        return "No due date"
+    when = f"{p.due:%b} {p.due.day}"
+    if left < 0:
+        return f"Overdue by {-left} day{'s' if left != -1 else ''} ({when})"
+    if left == 0:
+        return f"Due today ({when})"
+    return f"Due in {left} day{'s' if left != 1 else ''} ({when})"
+
+
+def payment_findings(
+    coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, today: dt.date | None = None,
+    vendor_terms: str = "",
+) -> list[tuple[str, str, str]]:  # fmt: skip
+    """(severity, code, message) for ``validate_coding``: discounts on offer, due dates passed or odd."""
+    today = today or dt.date.today()
+    p = payment(coding, default_days, vendor_terms)
+    findings: list[tuple[str, str, str]] = []
+    invoice_date = _date(coding.get("invoice_date"))
+    if p.source == "printed" and invoice_date and p.due and p.due < invoice_date:
+        findings.append((WARNING, "DUE_BEFORE_INVOICE", f"due date {p.due} is before the invoice date {invoice_date}"))
+    if p.discount_open(today) and p.discount_by is not None:
+        findings.append(
+            (INFO, "DISCOUNT_AVAILABLE",
+             f"{p.terms.discount_pct:g}% early-payment discount (about {p.discount_amount:,.2f}) if paid by "
+             f"{p.discount_by:%b} {p.discount_by.day}")
+        )  # fmt: skip
+    left = p.days_left(today)
+    if left is not None and left < 0 and float(coding.get("grand_total") or 0) > 0:
+        findings.append((INFO, "PAYMENT_OVERDUE", f"due {p.due} ({-left} days ago): late fees may apply"))
+    return findings

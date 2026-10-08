@@ -1,0 +1,82 @@
+{
+  "vendor_name": "Cascade Cloudworks, Inc.",
+  "invoice_number": "INV-30981",
+  "invoice_date": "2026-10-01",
+  "po_number": "",
+  "payment_terms": "",
+  "due_date": "2026-10-31",
+  "currency": "USD",
+  "supplier_province": "OUTSIDE_CANADA",
+  "ship_to_province": "OUTSIDE_CANADA",
+  "gst_hst_registration_number": "",
+  "qst_registration_number": "",
+  "original_invoice_number": "",
+  "remit_bank_account": "",
+  "subtotal": 6860.0,
+  "tax_lines": [
+    {
+      "tax_type": "OTHER",
+      "province": "",
+      "rate": 0.1035,
+      "taxable_amount": 6860.0,
+      "tax_amount": 710.01
+    }
+  ],
+  "tax_total": 710.01,
+  "grand_total": 7570.01,
+  "confidence_score": 1.0,
+  "line_items": [
+    {
+      "line_number": 1,
+      "description": "Observability Platform - Team plan, per seat, October 2026",
+      "quantity": 15,
+      "unit_price": 49.0,
+      "amount": 735.0,
+      "predicted_gl_code": "6020",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "OTHER"
+      ],
+      "reasoning_justification": "Monthly SaaS subscription; US sales tax expensed."
+    },
+    {
+      "line_number": 2,
+      "description": "Premium Support - annual, Oct 2026 to Sep 2027 (prepaid)",
+      "quantity": 1,
+      "unit_price": 3600.0,
+      "amount": 3600.0,
+      "predicted_gl_code": "1550",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "OTHER"
+      ],
+      "reasoning_justification": "12-month support paid upfront is a prepaid expense."
+    },
+    {
+      "line_number": 3,
+      "description": "Edge gateway appliance CG-200",
+      "quantity": 2,
+      "unit_price": 1240.0,
+      "amount": 2480.0,
+      "predicted_gl_code": "6010",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "OTHER"
+      ],
+      "reasoning_justification": "Hardware below the 2,500 per-unit capitalisation threshold."
+    },
+    {
+      "line_number": 4,
+      "description": "Shipping - UPS Ground",
+      "quantity": 1,
+      "unit_price": 45.0,
+      "amount": 45.0,
+      "predicted_gl_code": "6800",
+      "predicted_cost_center": "CC400",
+      "taxes_applied": [
+        "OTHER"
+      ],
+      "reasoning_justification": "Delivery on a non-inventory purchase."
+    }
+  ]
+}

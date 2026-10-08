@@ -136,6 +136,15 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
         "vendor_name": {"type": "string", "description": "Legal or trading name of the supplier."},
         "invoice_number": {"type": "string", "description": "Supplier's invoice identifier."},
         "invoice_date": {"type": "string", "description": "Invoice issue date formatted YYYY-MM-DD."},
+        "po_number": {
+            "type": "string",
+            "description": "Buyer's purchase order number as printed (PO #, Customer PO, Order Ref), empty if none.",
+        },
+        "payment_terms": {
+            "type": "string",
+            "description": "Payment terms as printed (e.g. Net 30, 2/10 Net 30, Due on receipt), empty if none.",
+        },
+        "due_date": {"type": "string", "description": "Due date printed on the invoice, YYYY-MM-DD; empty if none."},
         "currency": {"type": "string", "description": "ISO 4217 currency code, e.g. CAD, USD."},
         "supplier_province": {
             "type": "string",
@@ -154,6 +163,15 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
         "qst_registration_number": {
             "type": "string",
             "description": "Supplier QST number as printed (e.g. 1234567890 TQ0001), empty if absent.",
+        },
+        "original_invoice_number": {
+            "type": "string",
+            "description": "For a credit note: the number of the invoice it credits, as printed; empty otherwise.",
+        },
+        "remit_bank_account": {
+            "type": "string",
+            "description": "Bank account the supplier asks to be paid into, as printed (institution, transit and "
+            "account numbers, or SWIFT/IBAN and account), empty if none.",
         },
         "subtotal": {"type": "number", "description": "Total before tax."},
         "tax_lines": {
@@ -251,11 +269,16 @@ class InvoiceCoding(BaseModel):
     vendor_name: str
     invoice_number: str
     invoice_date: str
+    po_number: str = ""
+    payment_terms: str = ""
+    due_date: str = ""
     currency: str
     supplier_province: str = ""
     ship_to_province: str = ""
     gst_hst_registration_number: str = ""
     qst_registration_number: str = ""
+    original_invoice_number: str = ""
+    remit_bank_account: str = ""
     subtotal: float
     tax_lines: list[TaxLine] = Field(default_factory=list)
     tax_total: float
@@ -272,6 +295,19 @@ class InvoiceCoding(BaseModel):
             raise ValueError(f"invoice_date must be YYYY-MM-DD, got {value!r}") from exc
         if len(value) != 10:
             raise ValueError(f"invoice_date must be YYYY-MM-DD, got {value!r}")
+        return value
+
+    @field_validator("due_date")
+    @classmethod
+    def _due_date(cls, value: str) -> str:
+        value = (value or "").strip()
+        if value:
+            try:
+                dt.date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(f"due_date must be YYYY-MM-DD (or empty), got {value!r}") from exc
+            if len(value) != 10:
+                raise ValueError(f"due_date must be YYYY-MM-DD (or empty), got {value!r}")
         return value
 
     @field_validator("currency")

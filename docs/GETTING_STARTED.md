@@ -58,8 +58,9 @@ When installing Python from python.org, tick **"Add python.exe to PATH"** on the
   ```
 
 - **Without git.** On GitHub, open the `claude/epic-feynman-r6ns86` branch, *Code → Download ZIP*,
-  and extract it to `Downloads\AP_Processer`. For a later version, extract the new ZIP **over the
-  same folder** (replace files) so nothing is duplicated.
+  and extract it in `Downloads`. The ZIP holds one folder (named after the branch): rename it to
+  `AP_Processer`. For a later version, extract the new ZIP and copy its contents **over the same
+  folder** (replace files) so nothing is duplicated.
 
 **Install:** open `Downloads\AP_Processer` and **double-click `install.bat`** (macOS/Linux:
 `./install.sh`). It:
@@ -76,7 +77,8 @@ When installing Python from python.org, tick **"Add python.exe to PATH"** on the
 
 **Running it again is always safe.** It updates the code in place (with git), reinstalls
 packages only when they changed, and keeps your data folder, Azure settings and shortcut. Nothing
-is duplicated. Useful options (e.g. `install.bat --fresh-start`):
+is duplicated. Options are typed after the name in **`terminal.bat`** (double-click it, then type
+e.g. `install.bat --fresh-start`):
 
 | Option | What it does |
 |---|---|
@@ -84,13 +86,16 @@ is duplicated. Useful options (e.g. `install.bat --fresh-start`):
 | `--yes` | no questions; keeps current answers |
 | `--no-update` | don't check GitHub for a newer version |
 | `--data-dir <folder>` | use a different data folder |
+| `--no-shortcut` / `--no-start` | no desktop shortcut / don't offer to start the dashboard at the end |
+| `--skip-tests` / `--reinstall` | skip the self-test / reinstall the packages even if unchanged |
 
 To run AP Coder commands yourself (`doctor`, `share-report`, …), double-click **`terminal.bat`**:
 it opens a command prompt with everything ready, e.g. `python -m ap_coder doctor`.
 
 ## Step 3: Check the setup → paste the doctor report
 
-At the end of the install, answer **y** to *Test the connection to Azure now?*. Or, in
+At the end of the install, answer **y** to *Test the connection to Azure now?*. In the dashboard,
+**Settings → Azure** shows and edits the same settings and has a **Run the test** button. Or, in
 `terminal.bat`:
 
 ```bat
@@ -107,17 +112,49 @@ Start AP Coder from the **AP Coder** desktop shortcut (or `start.bat`). It opens
 keep the black window open while you use it and close it to stop. If another program already uses
 port 8501, AP Coder picks the next free one.
 
-1. **GL accounts & tax** → *Load sample setup*.
-2. Copy the three sample PDFs from `samples\` into your invoices folder (**Process invoices** →
-   *Open folder* shows it): Ontario HST, Quebec TPS/TVQ, BC GST+PST.
-3. **Process invoices** → *Process 3 file(s)*.
+**Fastest: the demo (no Azure needed).** On the welcome screen click **Load demo invoices**. Ten
+sample invoices from across Canada arrive as if the AI had read them (eight to review, two already
+approved), with a few realistic mistakes to correct, plus sample purchase orders and a vendor list.
+Things to try:
+
+- **Review queue** → open *Red River*: the **PO match** shows chairs billed but not yet received,
+  and *Use the PO's coding* fixes the desk's GL account in one click.
+- Open *Harbourview*: line 4 has no GL account; **Suggested GL accounts** offers one.
+- Type `2/10 Net 30` in an invoice's *Payment terms*: the due date and the early-payment discount
+  deadline update (a discount shows while its deadline is still ahead).
+- *Split a line…* under the line grid divides a shared cost across cost centers.
+- On an invoice with something to ask (e.g. *Red River*), open **Ask the vendor** under the checks:
+  the email is written for you (English, or French for a Quebec vendor).
+- **Find an invoice**: type `northwind 0912` or an amount such as `18,017.85`.
+- The **Today** line above the queue lists what is past due, parked for follow-up and ready to export.
+- Approve a few, then look at **Exports** (export a batch, then *Approved PDFs*), **Learning &
+  accuracy**, **Insights**, **Spend** and **Activity** (*Run the audit* for possible duplicate payments).
+- **GL accounts & tax** → **Fixed rules**: add a rule such as *line contains "delivery" → 6800*; open
+  an invoice and *Apply the coding rules*.
+- **Vendor statements** → pick Northwind and upload `data\sample_statement_northwind.csv`, then open
+  *Ask the vendor for the missing invoices*.
+- **Month-end** shows what to accrue; **Sales tax** totals the GST/HST and QST to claim back (set
+  the dates to include the demo invoices, dated mid-2026); **Help** explains every check.
+- *Remove demo invoices* on the **Process invoices** page removes the demo invoices (and any batch
+  exported from them), sample POs and the sample vendor list again. The sample GL accounts and tax
+  setup stay (replace them when you import yours: tick *Replace my current list*).
+
+**With Azure:** first click *Remove demo invoices* if you loaded the demo (the same sample files
+would otherwise be recognised as already processed).
+
+1. **GL accounts & tax** → *Load sample setup* (skip this if you tried the demo: the sample setup is
+   already loaded).
+2. Copy the sample PDFs from `samples\` into your invoices folder (**Process invoices** →
+   *Open folder* shows it). `samples\README.md` lists what each one shows: HST, GST+PST,
+   TPS/TVQ, GST only, a US invoice and a credit note.
+3. **Process invoices** → *Process 10 file(s)* (or copy only a few to start).
 4. **Review queue** → open each invoice. Change a GL code in the grid and watch the checks and
    the GL distribution update. Approve, and look at **Learning & accuracy**.
 
 These invoices are synthetic, so screenshots of this step are fine to share.
 
-When you're done, close the AP Coder window and run **`install.bat --fresh-start`** so your real
-setup starts clean: the sample database, memory and invoices move to a backup folder, and your
+When you're done, close the AP Coder window, double-click **`terminal.bat`** and type
+**`install.bat --fresh-start`** so your real setup starts clean: the sample database, memory and invoices move to a backup folder, and your
 Azure settings stay.
 
 ## Step 5: Your setup, in the dashboard
@@ -135,6 +172,25 @@ Open **GL accounts & tax**:
    - PST: *add to each expense line's GL*. Alternatively, choose a separate PST expense account.
 4. **Coding policy:** plain-English rules, one per line, e.g. "Laptops under $2,500 go to 6010".
    This is your fastest tuning lever.
+5. **Fixed rules:** lines that must always go to one account (a vendor, words in the line, or both),
+   whatever the AI says. Vendors your team always coded the same way are suggested.
+
+Optional, any time later:
+
+- **Vendor master:** on **Vendors**, import the ERP's vendor list. Exports then carry vendor IDs, and
+  an invoice from a vendor that is not in the list is flagged.
+- **Past coding:** on **Learning & accuracy**, *Teach from past coding* with last year's posted AP
+  lines (vendor, description, GL, cost center) so the AI starts with your history.
+- **Purchase orders:** import your open POs (one row per PO line, from the ERP; the *Template*
+  button shows the columns). Include the quantity received to get three-way matching. Re-import
+  the export regularly; a PO in the file replaces its earlier lines.
+- **Exports → Custom layout for your ERP:** if your ERP's import needs its own columns.
+- **Exports → ERP invoice register:** the ERP's list of AP invoices (last 12 to 18 months), so a bill
+  already entered there is caught, and the duplicate payment audit covers it.
+- **Settings → Review:** your name (shown on approvals), the confidence threshold, an **approval
+  limit** above which a second person must approve, the days to pay when an invoice shows no
+  terms, and exchange rates to CAD if you are billed in other currencies.
+- **Settings → Data & backups:** a **second backup folder** (OneDrive or network) for the daily backups.
 
 Then run `python -m ap_coder doctor` in `terminal.bat` (offline is fine) and **paste the output**. From it I can see
 row counts, whether every tax type is mapped, and the prompt size, but none of your codes or
@@ -143,7 +199,8 @@ names.
 ## Step 6: Process a test set
 
 Put **20–50 real invoices** in your invoices folder (**Process invoices** → *Open folder*), or
-upload them on **Process invoices**.
+upload them on **Process invoices**. Invoices that came by email: save the email as `.eml` (Outlook
+on the web or new Outlook: *Download*) into the folder, or save the PDF attachment itself.
 Aim for a representative mix:
 
 - your top vendors by volume, and the ones AP often recodes
@@ -161,14 +218,20 @@ For each invoice:
 1. Compare the image with the extracted header, lines and tax lines.
 2. Read **Checks**. Red items are errors, for example:
    - tax math wrong
-   - wrong rate for the province
    - QST charged on a GST-inclusive amount
    - totals don't add up
    - possible duplicate invoice
 
-   Yellow items are warnings, for example a missing GST/HST number or PST not charged.
-3. Fix anything wrong in the grids. GL and cost-center cells are dropdowns of your own codes.
-4. Click **Approve & teach the AI**.
+   Yellow items are warnings, for example a missing GST/HST number, PST not charged or a rate that
+   differs from the official one for the province.
+   Each check says what to do; **Help** lists them all.
+3. Fix anything wrong in the grids. GL and cost-center cells are dropdowns of your own codes. Lines
+   without a GL account get **suggestions**; an invoice quoting a PO shows the **PO match**. When
+   the vendor has to fix something, **Ask the vendor** under the checks writes the email.
+4. Click **Approve & teach** (Ctrl+Enter). Invoices nobody needs to look at can be approved together
+   with *Approve N clean…* above the queue.
+5. Approved invoices wait in **Exports**: export them as a batch for the ERP (Excel, CSV or your
+   custom layout), with the **Approved PDFs** to attach if your ERP keeps invoice images.
 
 Every approved line is stored as a lesson: *confirmed* if the AI was right, *corrected* if you
 changed it. The next invoice from that vendor sees those lessons, and **Learning & accuracy**
@@ -214,6 +277,18 @@ Run these in `terminal.bat` as `python -m ap_coder <command>`.
 | `dashboard` | the review app (what the desktop shortcut and `start.bat` run) |
 | `doctor [--online]` | setup check; safe to paste |
 | `share-report [--include-codes]` | redacted summary; safe to paste |
+| `demo [--remove]` | load or remove the demo invoices (no Azure) |
+| `watch [--every 60]` | keep processing new files dropped in the invoices folder; with `--once` it checks once (for Windows Task Scheduler: program `<AP Coder folder>\.venv\Scripts\python.exe`, arguments `-m ap_coder watch --once`, start in the AP Coder folder) |
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
 | `schema` | the exact JSON Schema sent to Azure OpenAI |
+
+### Two people approving (second approval)
+
+The second approval needs both people to use the same AP Coder database. The simplest set-up is one
+AP PC that both sign in to with their own Windows accounts: put the code in a folder both can open
+(e.g. `C:\APCoder\app`) and have each person run `install.bat --data-dir C:\APCoder\data` once (in
+`terminal.bat`). Each person sets *Your name* in Settings → Review; it is kept per Windows account.
+Keep the data folder on a local disk: the database must not live on a network share. To protect it
+against a lost or broken PC, set *Also copy each backup to* in Settings → Data & backups to a OneDrive or
+network folder: the daily backup copies go there (that is safe; only the live database must stay local).

@@ -25,5 +25,6 @@ if not defined PY (
 %PY% "%~dp0scripts\install.py" %*
 set "RC=%ERRORLEVEL%"
 echo.
-pause
+rem AP_NO_PAUSE=1 skips the final pause (automated runs).
+if not defined AP_NO_PAUSE pause
 exit /b %RC%

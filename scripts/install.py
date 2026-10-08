@@ -23,20 +23,22 @@ import getpass
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))  # ap_coder/envfile.py is standard-library only, usable before installing
+
+from ap_coder.envfile import clean_url, read_env, write_env  # noqa: E402
+
 WINDOWS = os.name == "nt"
 VENV = ROOT / ".venv"
 VENV_PY = VENV / ("Scripts/python.exe" if WINDOWS else "bin/python")
 STAMP = VENV / "ap_coder_install.json"
 USER_SETTINGS = Path(os.environ.get("AP_USER_SETTINGS") or Path.home() / ".ap_coder" / "settings.json")
 DEFAULT_DATA_DIR = Path.home() / "APCoder"
-PLACEHOLDER = "<your-resource>"
 STEPS = 8
 
 # (variable, question, kind) — kind: url | secret | text
@@ -284,12 +286,13 @@ def has_data_besides_env(folder: Path) -> bool:
 
 def fresh_start(c: Console, data: Path) -> None:
     """Move the database, invoices and outputs into a dated backup folder (settings and cache are kept)."""
-    keep = {".env", ".cache"}  # settings, and the scanned-text cache (re-reading invoices would cost again)
+    keep = {".env", ".cache", "backups"}  # settings, the scanned-text cache (re-reading costs) and backups
     movable = [p for p in data.iterdir() if p.name not in keep and not p.name.startswith("backup-")]
     if not movable:
         c.ok("nothing to clear: the data folder is already empty")
         return
-    if not c.yes("Move the database, invoices and outputs to a backup folder and start fresh?", default=False):
+    question = "Move the database, invoices and outputs to a backup folder and start fresh?"
+    if not c.assume_yes and not c.yes(question, default=False):  # --fresh-start --yes: already asked for
         return
     backup = data / f"backup-{dt.datetime.now():%Y%m%d-%H%M%S}"
     backup.mkdir()
@@ -300,36 +303,6 @@ def fresh_start(c: Console, data: Path) -> None:
 
 
 # --- .env ----------------------------------------------------------------------------------------------------------
-
-
-def read_env(path: Path) -> dict[str, str]:
-    values = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            value = value.strip().strip('"').strip("'")
-            if PLACEHOLDER not in value:
-                values[key.strip()] = value
-    return values
-
-
-def write_env(path: Path, updates: dict[str, str]) -> None:
-    """Set values in place (uncommenting ``# KEY=`` lines), keeping every other line as it is."""
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    for key, value in updates.items():
-        if re.search(r"[\s#'\"]", value):
-            value = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-        pattern = re.compile(rf"^\s*#?\s*{re.escape(key)}\s*=")
-        for i, line in enumerate(lines):
-            if pattern.match(line):
-                lines[i] = f"{key}={value}"
-                break
-        else:
-            lines.append(f"{key}={value}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def display_name() -> str:
@@ -349,13 +322,6 @@ def display_name() -> str:
     except Exception:  # noqa: BLE001 - any failure just means "use the login name"
         pass
     return getpass.getuser()
-
-
-def clean_url(value: str) -> str:
-    value = value.strip()
-    if value and not value.lower().startswith(("http://", "https://")):
-        value = "https://" + value
-    return value.rstrip("/") + "/" if value else value
 
 
 def configure_azure(c: Console, data: Path) -> Path:

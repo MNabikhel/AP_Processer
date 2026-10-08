@@ -8,8 +8,11 @@ from ap_coder.reference_data import UNASSIGNED
 from ap_coder.review import coding_from_inputs
 
 HEADER_FIELDS = (
-    "vendor_name", "invoice_number", "invoice_date", "currency", "supplier_province", "ship_to_province",
-    "gst_hst_registration_number", "qst_registration_number", "subtotal", "tax_total", "grand_total",
+    "vendor_name", "invoice_number", "invoice_date", "po_number", "payment_terms", "due_date", "currency",
+    "supplier_province",
+    "ship_to_province", "gst_hst_registration_number", "qst_registration_number", "original_invoice_number",
+    "remit_bank_account",
+    "subtotal", "tax_total", "grand_total",
 )  # fmt: skip
 
 

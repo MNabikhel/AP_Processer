@@ -1,0 +1,16 @@
+po_number,vendor_name,line_number,description,quantity,unit_price,amount,received_quantity,gl_code,cost_center,status
+PO-88213,Northwind IT Solutions Inc.,1,"Dell Latitude 7450 laptop, 32GB RAM",3,1450.00,4350.00,3,6010,CC400,open
+PO-88213,Northwind IT Solutions Inc.,2,Dell PowerEdge R760 rack server,1,8900.00,8900.00,1,1500,CC400,open
+PO-88213,Northwind IT Solutions Inc.,3,Microsoft 365 E3 licences (monthly),25,32.00,800.00,25,6020,CC400,open
+PO-88213,Northwind IT Solutions Inc.,4,Implementation consulting - endpoint rollout (hours),12,150.00,1800.00,8,6110,CC400,open
+PO-88213,Northwind IT Solutions Inc.,5,Delivery & handling,1,95.00,95.00,1,6800,CC400,open
+PO-89904,Prairie Network Supply Ltd.,1,Cisco Meraki MR46 wireless access point,6,1150.00,6900.00,6,6010,CC400,open
+PO-89904,Prairie Network Supply Ltd.,2,Cat6 patch cables and mounting hardware,1,425.00,425.00,1,6010,CC400,open
+PO-89904,Prairie Network Supply Ltd.,3,On-site network installation labour (hours),14,95.00,1330.00,14,6110,CC400,open
+PO-89904,Prairie Network Supply Ltd.,4,"Meraki Enterprise licence, 1 year (per access point)",6,210.00,1260.00,6,1550,CC400,open
+PO-89904,Prairie Network Supply Ltd.,5,Ceiling mount kit for access points,6,35.00,210.00,6,6010,CC400,open
+PO-90377,Red River Office Interiors Ltd.,1,"Height-adjustable sit-stand desk, 60 x 30 in",8,1150.00,9200.00,8,1510,CC700,open
+PO-90377,Red River Office Interiors Ltd.,2,"Ergonomic task chair, mesh back",8,495.00,3960.00,6,1510,CC700,open
+PO-90377,Red River Office Interiors Ltd.,3,Space planning & design consultation (hours),10,120.00,1200.00,10,6110,CC700,open
+PO-90377,Red River Office Interiors Ltd.,4,Delivery charge,1,285.00,285.00,1,6800,CC700,open
+PO-90155,Chinook Courier & Office Services Ltd.,1,"Inbound LTL freight, raw materials Edmonton to Calgary",1,385.00,385.00,1,5100,CC600,open

@@ -19,21 +19,31 @@ import datetime as dt
 import hashlib
 import json
 import re
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .audit import diff_coding
 from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
 from .paths import default_db_path, private_dir  # noqa: F401  (re-exported)
+from .po import OPEN, po_key
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
+from .rules import Rule
 from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSetup, TaxTreatment
+from .terms import DEFAULT_TERMS_DAYS, payment
+from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 13  # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
+PENDING = "pending_approval"  # approved once, over the approval limit: waiting for a second approver
+PARKED = "parked"  # out of the queue while waiting for information (a buyer, a credit note...)
+ACTIVE_STATUSES = (REVIEW, PARKED, PENDING, APPROVED)  # invoices that count (for POs, recurring vendors...)
+_ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
@@ -52,7 +62,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     vendor_name TEXT, vendor_key TEXT, invoice_number TEXT, invoice_date TEXT, currency TEXT, grand_total REAL,
     model_confidence REAL, adjusted_confidence REAL, requires_review INTEGER,
     ai_output TEXT, final_output TEXT, validation TEXT, extraction_md TEXT, meta TEXT, edits TEXT, error TEXT,
-    created_at TEXT NOT NULL, reviewed_at TEXT, reviewer TEXT);
+    created_at TEXT NOT NULL, reviewed_at TEXT, reviewer TEXT, export_batch INTEGER);
 CREATE TABLE IF NOT EXISTS feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_id INTEGER, line_number INTEGER,
@@ -61,17 +71,56 @@ CREATE TABLE IF NOT EXISTS feedback (
     outcome TEXT NOT NULL, reviewer TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS feedback_vendor ON feedback (vendor_key);
 CREATE INDEX IF NOT EXISTS invoices_status ON invoices (status);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER, action TEXT NOT NULL, actor TEXT, detail TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS events_invoice ON events (invoice_id);
+CREATE TABLE IF NOT EXISTS vendors (
+    vendor_key TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+    expected_gst TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS invoices_vendor ON invoices (vendor_key);
+CREATE TABLE IF NOT EXISTS export_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, actor TEXT, format TEXT NOT NULL,
+    invoices INTEGER NOT NULL, total REAL, undone_at TEXT, undone_by TEXT);
+CREATE TABLE IF NOT EXISTS purchase_orders (
+    po_key TEXT PRIMARY KEY, po_number TEXT NOT NULL, vendor_name TEXT NOT NULL DEFAULT '',
+    vendor_key TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open', updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS po_lines (
+    po_key TEXT NOT NULL, line_number INTEGER NOT NULL, description TEXT NOT NULL, quantity REAL NOT NULL,
+    unit_price REAL NOT NULL, amount REAL NOT NULL, received_quantity REAL, gl_code TEXT NOT NULL DEFAULT '',
+    cost_center TEXT NOT NULL DEFAULT '', PRIMARY KEY (po_key, line_number));
+CREATE INDEX IF NOT EXISTS purchase_orders_vendor ON purchase_orders (vendor_key);
+CREATE TABLE IF NOT EXISTS erp_invoices (
+    vendor_key TEXT NOT NULL, number_key TEXT NOT NULL, total REAL NOT NULL, vendor_name TEXT NOT NULL,
+    invoice_number TEXT NOT NULL, invoice_date TEXT NOT NULL DEFAULT '', imported_at TEXT NOT NULL,
+    PRIMARY KEY (vendor_key, number_key, total));
+CREATE TABLE IF NOT EXISTS coding_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, vendor TEXT NOT NULL DEFAULT '', contains TEXT NOT NULL DEFAULT '',
+    gl_code TEXT NOT NULL, cost_center TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT);
 """
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
 _HEADER_FIELDS = (
-    "vendor_name", "invoice_number", "invoice_date", "currency", "supplier_province", "ship_to_province",
-    "gst_hst_registration_number", "qst_registration_number", "subtotal", "tax_total", "grand_total",
+    "vendor_name", "invoice_number", "invoice_date", "po_number", "payment_terms", "due_date", "currency",
+    "supplier_province",
+    "ship_to_province", "gst_hst_registration_number", "qst_registration_number", "original_invoice_number",
+    "remit_bank_account",
+    "subtotal", "tax_total", "grand_total",
 )  # fmt: skip
 
 
 def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
+
+
+def parse_fx_rates(text: str) -> dict[str, float]:
+    """ "USD=1.37, EUR 1,50; GBP: 1.85" -> {"USD": 1.37, "EUR": 1.5, "GBP": 1.85} (CAD is always 1)."""
+    rates = {"CAD": 1.0}
+    for code, value in re.findall(r"([A-Za-z]{3})\s*[=:]?\s*([0-9]+(?:[.,][0-9]+)?)", text or ""):
+        rate = float(value.replace(",", "."))
+        if rate > 0:
+            rates[code.upper()] = rate
+    return rates
 
 
 def _clean_code(value: Any) -> str:
@@ -86,8 +135,15 @@ def _clean_code(value: Any) -> str:
     return text[:-2] if re.fullmatch(r"\d+\.0", text) else text
 
 
+def _due(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vendor_terms: str = "") -> str | None:
+    if float(coding.get("grand_total") or 0) <= 0:
+        return None  # a credit note is not paid: it has no due date
+    due = payment(coding, default_days, vendor_terms).due
+    return due.isoformat() if due else None
+
+
 def _norm_number(value: str) -> str:
-    return re.sub(r"[^0-9a-z]", "", (value or "").lower())
+    return norm_invoice_number(value)
 
 
 class Store:
@@ -110,6 +166,59 @@ class Store:
                     f"UPDATE {table} SET vendor_key = ? WHERE id = ?",
                     [(vendor_key(r["vendor_name"] or ""), r["id"]) for r in rows],
                 )
+        if version < 3:  # invoices remember the ERP export batch they went out in
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            if "export_batch" not in columns:
+                conn.execute("ALTER TABLE invoices ADD COLUMN export_batch INTEGER")
+        if version < 4:  # invoices remember the purchase order they quote
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            if "po_key" not in columns:
+                conn.execute("ALTER TABLE invoices ADD COLUMN po_key TEXT NOT NULL DEFAULT ''")
+            rows = conn.execute("SELECT id, ai_output, final_output FROM invoices").fetchall()
+            for r in rows:
+                coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
+                if coding.get("po_number"):
+                    conn.execute("UPDATE invoices SET po_key = ? WHERE id = ?", (po_key(coding["po_number"]), r["id"]))
+        conn.execute("CREATE INDEX IF NOT EXISTS invoices_po ON invoices (po_key)")
+        if version < 5:  # invoices remember when they are due (printed, from the terms, or the default)
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            if "due_date" not in columns:
+                conn.execute("ALTER TABLE invoices ADD COLUMN due_date TEXT")
+            for r in conn.execute("SELECT id, ai_output, final_output FROM invoices").fetchall():
+                coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
+                if coding:
+                    conn.execute("UPDATE invoices SET due_date = ? WHERE id = ?", (_due(coding), r["id"]))
+        if version < 6:  # second approval above the approval limit
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            for column in ("second_reviewer", "second_reviewed_at"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE invoices ADD COLUMN {column} TEXT")
+        if version < 7:  # PO lines with an amount but no quantity (services, lump sums)
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(po_lines)")}
+            if "amount_only" not in columns:
+                conn.execute("ALTER TABLE po_lines ADD COLUMN amount_only INTEGER NOT NULL DEFAULT 0")
+        if version < 8:  # the vendor master imported from the ERP
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(vendors)")}
+            for column, kind in (
+                ("erp_id", "TEXT NOT NULL DEFAULT ''"),
+                ("terms", "TEXT NOT NULL DEFAULT ''"),
+                ("default_gl", "TEXT NOT NULL DEFAULT ''"),
+                ("in_master", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} {kind}")
+        if version < 9:  # parked invoices: why, and when to follow up
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+            for column in ("parked_reason", "follow_up"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE invoices ADD COLUMN {column} TEXT")
+        if version < 12:  # approvals before this version kept the AI's currency, not the reviewer's
+            for r in conn.execute("SELECT id, final_output FROM invoices WHERE final_output IS NOT NULL").fetchall():
+                currency = str((json.loads(r["final_output"]) or {}).get("currency") or "").strip().upper()
+                if currency:
+                    conn.execute("UPDATE invoices SET currency = ? WHERE id = ?", (currency, r["id"]))
+        if version < 13:  # credit notes were given a due date like invoices
+            conn.execute("UPDATE invoices SET due_date = NULL WHERE grand_total <= 0")
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -119,9 +228,14 @@ class Store:
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
+        fresh = not self.path.exists()  # e.g. the file was deleted while the dashboard was running
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        if fresh:
+            conn.executescript(_SCHEMA)
+            self._migrate(conn)
         try:
             yield conn
             conn.commit()
@@ -129,6 +243,46 @@ class Store:
             conn.close()
 
     # --- GL accounts / cost centers ----------------------------------------------------------
+
+    # --- Audit trail ---------------------------------------------------------------------------------
+
+    @staticmethod
+    def _log(
+        conn: sqlite3.Connection, action: str, invoice_id: int | None = None, actor: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:  # fmt: skip
+        conn.execute(
+            "INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+            (invoice_id, action, actor, json.dumps(detail or {}, default=str), _now()),
+        )
+
+    def log_event(
+        self, action: str, invoice_id: int | None = None, actor: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:  # fmt: skip
+        with self._conn() as conn:
+            self._log(conn, action, invoice_id, actor, detail)
+
+    def events(
+        self, invoice_id: int | None = None, actions: list[str] | None = None, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """Audit events, newest first (optionally for one invoice or some actions)."""
+        sql = (  # with the invoice's vendor and number, so a list of events says which invoice each is about
+            "SELECT e.*, i.vendor_name AS invoice_vendor, i.invoice_number AS invoice_number FROM events e "
+            "LEFT JOIN invoices i ON i.id = e.invoice_id WHERE 1 = 1"
+        )
+        args: list[Any] = []
+        if invoice_id is not None:
+            sql += " AND e.invoice_id = ?"
+            args.append(invoice_id)
+        if actions:
+            sql += f" AND e.action IN ({', '.join('?' for _ in actions)})"
+            args += actions
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(sql + " ORDER BY e.id DESC LIMIT ?", (*args, limit))]
+        for r in rows:
+            r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
+        return rows
 
     def import_accounts(
         self,
@@ -138,6 +292,8 @@ class Store:
         description_column: str | None,
         category_column: str | None = None,
         replace_all: bool = False,
+        actor: str | None = None,
+        log: bool = True,
     ) -> dict[str, int]:
         """Import rows using the columns the user picked.
 
@@ -174,6 +330,11 @@ class Store:
                         (code, description, category, _now()),
                     )
                     added += 1
+            if log:
+                self._log(conn, "accounts_imported", actor=actor, detail={
+                    "table": table, "added": added, "updated": updated, "skipped": skipped,
+                    "replace_all": replace_all,
+                })  # fmt: skip
         return {"added": added, "updated": updated, "skipped": skipped}
 
     def list_accounts(self, table: str) -> list[dict[str, str]]:
@@ -182,15 +343,22 @@ class Store:
         with self._conn() as conn:
             return [dict(r) for r in conn.execute(f"SELECT code, description, category FROM {table} ORDER BY code")]
 
-    def save_accounts(self, table: str, rows: list[dict[str, Any]]) -> None:
+    def save_accounts(self, table: str, rows: list[dict[str, Any]], actor: str | None = None) -> None:
         """Replace the table with ``rows`` (used by the dashboard's editable grid)."""
-        self.import_accounts(table, rows, "code", "description", "category", replace_all=True)
+        before = {r["code"]: r for r in self.list_accounts(table)}
+        self.import_accounts(table, rows, "code", "description", "category", replace_all=True, log=False)
+        after = {r["code"]: r for r in self.list_accounts(table)}
+        changed = sorted(c for c in before.keys() | after.keys() if before.get(c) != after.get(c))
+        if changed:
+            self.log_event("accounts_edited", actor=actor, detail={"table": table, "codes": changed})
 
-    def delete_accounts(self, table: str, codes: list[str]) -> int:
+    def delete_accounts(self, table: str, codes: list[str], actor: str | None = None) -> int:
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
         with self._conn() as conn:
             cur = conn.executemany(f"DELETE FROM {table} WHERE code = ?", [(c,) for c in codes])
+            if codes:
+                self._log(conn, "accounts_deleted", actor=actor, detail={"table": table, "codes": list(codes)})
             return cur.rowcount
 
     # --- Tax setup and policy ---------------------------------------------------------------------
@@ -208,10 +376,15 @@ class Store:
             )
         return result
 
-    def set_tax_treatment(self, tax_type: str, treatment: str, gl_code: str = "") -> None:
+    def set_tax_treatment(self, tax_type: str, treatment: str, gl_code: str = "", actor: str | None = None) -> None:
         if tax_type not in TAX_TYPES or treatment not in TREATMENTS:
             raise ValueError("invalid tax type or treatment")
+        current = self.tax_treatments()[tax_type]
         with self._conn() as conn:
+            if (current.treatment, current.gl_code) != (treatment, gl_code.strip()):
+                self._log(conn, "tax_setup_changed", actor=actor, detail={
+                    "tax_type": tax_type, "treatment": treatment, "gl_code": gl_code.strip(),
+                })  # fmt: skip
             conn.execute(
                 "INSERT INTO tax_treatments (tax_type, treatment, gl_code) VALUES (?, ?, ?) "
                 "ON CONFLICT(tax_type) DO UPDATE SET treatment = excluded.treatment, gl_code = excluded.gl_code",
@@ -223,8 +396,10 @@ class Store:
             row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else default
 
-    def set_setting(self, key: str, value: str) -> None:
+    def set_setting(self, key: str, value: str, actor: str | None = None) -> None:
         with self._conn() as conn:
+            if key == "policy_notes" and self.get_setting(key) != value:
+                self._log(conn, "policy_changed", actor=actor, detail={"rules": len(parse_policy_notes(value))})
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
@@ -273,8 +448,8 @@ class Store:
             cur = conn.execute(
                 """INSERT INTO invoices (source_path, file_name, file_sha256, status, vendor_name, vendor_key,
                    invoice_number, invoice_date, currency, grand_total, model_confidence, adjusted_confidence,
-                   requires_review, ai_output, validation, extraction_md, meta, error, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   requires_review, ai_output, validation, extraction_md, meta, error, created_at, po_key,
+                   due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(source_path.resolve()),  # absolute: the dashboard may run from another folder
                     source_path.name,
@@ -295,9 +470,24 @@ class Store:
                     json.dumps(meta or {}, default=str),
                     error,
                     _now(),
+                    po_key(out.get("po_number") or ""),
+                    _due(out, self.default_terms_days(), self.vendor_terms(vendor_key(out.get("vendor_name", ""))))
+                    if out
+                    else None,
                 ),
             )
-            return int(cur.lastrowid)
+            invoice_id = int(cur.lastrowid)
+            if error:
+                self._log(conn, "failed", invoice_id, detail={"file": source_path.name, "error": error})
+            else:
+                self._log(conn, "processed", invoice_id, detail={
+                    "file": source_path.name, "vendor": out.get("vendor_name"),
+                    "invoice_number": out.get("invoice_number"),
+                    "total": out.get("grand_total"), "confidence": val.get("adjusted_confidence"),
+                    "requires_review": bool(val.get("requires_review", True)),
+                    "issues": len(val.get("issues") or []), "demo": bool((meta or {}).get("demo")),
+                })  # fmt: skip
+            return invoice_id
 
     def find_by_hash(self, path: str | Path, include_failed: bool = False) -> dict[str, Any] | None:
         """The latest invoice made from this exact file (failed attempts only if ``include_failed``)."""
@@ -339,10 +529,115 @@ class Store:
             if _norm_number(r["invoice_number"]) == number and r["id"] != exclude_id and same_sign(r["grand_total"])
         ]
 
+    def default_terms_days(self) -> int:
+        """Days to pay when an invoice prints neither a due date nor terms (Settings → Review)."""
+        try:
+            return int(self.get_setting("default_terms_days") or DEFAULT_TERMS_DAYS)
+        except ValueError:
+            return DEFAULT_TERMS_DAYS
+
+    # --- The ERP's invoice register (invoices entered before or outside AP Coder) ---------------------
+
+    def import_erp_register(
+        self, rows: list[dict[str, Any]], replace_all: bool = False, actor: str | None = None
+    ) -> int:
+        """Invoices already in the ERP (``registers.rows_from_records`` output). Returns how many are stored."""
+        now = _now()
+        with self._conn() as conn:
+            if replace_all:
+                conn.execute("DELETE FROM erp_invoices")
+            conn.executemany(
+                """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
+                   imported_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key, number_key, total) DO UPDATE
+                   SET invoice_date = excluded.invoice_date, imported_at = excluded.imported_at""",
+                [
+                    (vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"]), round(float(r["total"]), 2),
+                     r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", now)
+                    for r in rows
+                    if vendor_key(r["vendor_name"]) and _norm_number(r["invoice_number"]) and r.get("total") is not None
+                ],
+            )  # fmt: skip
+            count = int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
+            self._log(conn, "erp_register_imported", actor=actor, detail={"rows": len(rows), "total": count})
+        return count
+
+    def erp_register_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
+
+    def clear_erp_register(self, actor: str | None = None) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM erp_invoices")
+            self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
+
+    def search_rows(self) -> list[dict[str, Any]]:
+        """Every invoice's identifying fields and where it stands (for *Find an invoice*), with the date of
+        its export batch."""
+        with self._conn() as conn:
+            batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT id, status, file_name, vendor_name, invoice_number, invoice_date, due_date, currency,
+                              grand_total, po_key, created_at, reviewed_at, reviewer, second_reviewer,
+                              second_reviewed_at, export_batch, parked_reason, follow_up, error
+                       FROM invoices ORDER BY id DESC"""
+                )
+            ]
+        for r in rows:
+            r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
+        return rows
+
+    def erp_register(self) -> list[dict[str, Any]]:
+        """Every invoice in the imported ERP register."""
+        with self._conn() as conn:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total FROM erp_invoices"
+                )
+            ]
+
+    def in_erp(self, vendor_name: str, invoice_number: str, grand_total: float | None) -> list[dict[str, Any]]:
+        """This vendor's invoices with the same number already in the ERP (a credit note is not a duplicate
+        of the invoice it reverses)."""
+        key, number = vendor_key(vendor_name), _norm_number(invoice_number)
+        if not key or not number:
+            return []
+        with self._conn() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT invoice_number, invoice_date, total FROM erp_invoices "
+                    "WHERE vendor_key = ? AND number_key = ?",
+                    (key, number),
+                )
+            ]
+        if grand_total is None:
+            return rows
+        return [r for r in rows if (r["total"] < 0) == (grand_total < 0)]
+
+    def duplicates_elsewhere(
+        self, vendor_name: str, invoice_number: str, grand_total: float, exclude_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Invoices from ANOTHER vendor with the same invoice number and total: the same bill entered under a
+        second vendor record (a common cause of duplicate payments)."""
+        key, number = vendor_key(vendor_name), _norm_number(invoice_number)
+        if not number or not grand_total:
+            return []
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, vendor_name, vendor_key, invoice_number FROM invoices "
+                "WHERE ABS(grand_total - ?) <= 0.01 AND status NOT IN (?, ?) AND vendor_key != ?",
+                (grand_total, FAILED, REJECTED, key),
+            ).fetchall()
+        return [dict(r) for r in rows if r["id"] != exclude_id and _norm_number(r["invoice_number"]) == number]
+
     def list_invoices(self, status: str | None = None) -> list[dict[str, Any]]:
         sql = (
-            "SELECT id, file_name, status, vendor_name, invoice_number, invoice_date, currency, grand_total, "
-            "model_confidence, adjusted_confidence, requires_review, error, created_at, reviewed_at, reviewer "
+            "SELECT id, file_name, status, vendor_name, invoice_number, invoice_date, due_date, currency, grand_total, "
+            "model_confidence, adjusted_confidence, requires_review, error, created_at, reviewed_at, reviewer, "
+            "second_reviewer "
             "FROM invoices"
         )
         args: tuple[Any, ...] = ()
@@ -363,29 +658,142 @@ class Store:
             inv[key] = json.loads(inv[key]) if inv[key] else None
         return inv
 
+    def park_invoice(self, invoice_id: int, actor: str, reason: str, follow_up: str | None = None) -> None:
+        """Take an invoice out of the queue while waiting for information; ``follow_up``: YYYY-MM-DD."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE invoices SET status = ?, parked_reason = ?, follow_up = ? WHERE id = ? AND status = ?",
+                (PARKED, reason.strip(), follow_up or None, invoice_id, REVIEW),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} is not in the review queue")
+            self._log(conn, "parked", invoice_id, actor, {"reason": reason.strip(), "follow_up": follow_up or ""})
+
+    def unpark_invoice(self, invoice_id: int, actor: str) -> None:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE invoices SET status = ?, parked_reason = NULL, follow_up = NULL WHERE id = ? AND status = ?",
+                (REVIEW, invoice_id, PARKED),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} is not parked")
+            self._log(conn, "unparked", invoice_id, actor)
+
+    def parked(self) -> list[dict[str, Any]]:
+        """Parked invoices, the ones to follow up first."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, parked_reason, "
+                "follow_up FROM invoices WHERE status = ? ORDER BY follow_up IS NULL, follow_up, id",
+                (PARKED,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def add_note(self, invoice_id: int, actor: str, text: str) -> None:
+        """A note on an invoice for the team (kept in its history)."""
+        if text.strip():
+            self.log_event("note", invoice_id=invoice_id, actor=actor, detail={"text": text.strip()[:2000]})
+
     def reject_invoice(self, invoice_id: int, reviewer: str, reason: str = "") -> None:
         with self._conn() as conn:
             conn.execute(
                 "UPDATE invoices SET status = ?, reviewer = ?, reviewed_at = ?, error = ? WHERE id = ?",
                 (REJECTED, reviewer, _now(), reason or None, invoice_id),
             )
+            self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason})
 
-    def delete_invoice(self, invoice_id: int) -> None:
+    def delete_invoice(self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None) -> None:
+        """Delete an invoice; with ``forget_lessons`` also what was learned when it was approved."""
         with self._conn() as conn:
+            row = conn.execute(
+                "SELECT file_name, vendor_name, invoice_number, status FROM invoices WHERE id = ?", (invoice_id,)
+            ).fetchone()
             conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
+            if row is not None:
+                self._log(conn, "deleted", invoice_id, actor, {
+                    "file": row["file_name"], "vendor": row["vendor_name"], "invoice_number": row["invoice_number"],
+                    "status": row["status"], "lessons_forgotten": forget_lessons,
+                })  # fmt: skip
+            if forget_lessons:
+                conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
 
-    def approve_invoice(self, invoice_id: int, final_output: dict[str, Any], reviewer: str) -> dict[str, int]:
-        """Store the reviewer's final version and record one feedback row per line."""
+    def list_invoices_full(self) -> list[dict[str, Any]]:
+        """Every invoice with its file path, status and metadata (no AI output: kept light)."""
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute("SELECT id, source_path, status, meta FROM invoices ORDER BY id")]
+        for r in rows:
+            r["meta"] = json.loads(r["meta"]) if r["meta"] else {}
+        return rows
+
+    _JSON_COLUMNS = ("ai_output", "final_output", "validation", "meta", "edits")
+    _LIGHT_COLUMNS = (
+        "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer",
+        "second_reviewed_at", "invoice_date", "due_date", "export_batch", *_JSON_COLUMNS
+    )  # fmt: skip
+
+    def invoice_columns(
+        self, columns: tuple[str, ...], status: str | None = None, ids: list[int] | None = None
+    ) -> list[dict[str, Any]]:
+        """Just these columns of every invoice, or of ``ids`` (JSON ones decoded): cheaper than
+        ``get_invoice`` in a loop."""
+        unknown = set(columns) - set(self._LIGHT_COLUMNS)
+        if unknown:
+            raise ValueError(f"unknown columns {sorted(unknown)}")
+        where, args = [], []
+        if status:
+            where.append("status = ?")
+            args.append(status)
+        if ids is not None:
+            where.append(f"id IN ({','.join('?' * len(ids))})")
+            args.extend(ids)
+        sql = f"SELECT {', '.join(columns)} FROM invoices" + (" WHERE " + " AND ".join(where) if where else "")
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
+        for r in rows:
+            for key in set(columns) & set(self._JSON_COLUMNS):
+                r[key] = json.loads(r[key]) if r[key] else None
+        return rows
+
+    def demo_count(self) -> int:
+        """How many demo invoices are loaded (see ``demo.py``), without reading every invoice."""
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM invoices WHERE meta LIKE '%\"demo\": true%'").fetchone()[0])
+
+    def approved_since(self, since_iso: str) -> int:
+        with self._conn() as conn:
+            return int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?",
+                    (APPROVED, PENDING, since_iso),
+                ).fetchone()[0]
+            )
+
+    def approve_invoice(
+        self,
+        invoice_id: int,
+        final_output: dict[str, Any],
+        reviewer: str,
+        bulk: bool = False,
+        open_issues: list[dict[str, Any]] | None = None,
+        login: str = "",
+    ) -> dict[str, int]:
+        """Store the reviewer's final version and record one feedback row per line. ``open_issues``: the
+        errors and warnings still showing when the reviewer approved (kept in the audit trail)."""
         inv = self.get_invoice(invoice_id)
         if inv is None:
             raise KeyError(invoice_id)
-        if inv["status"] == APPROVED:
+        if inv["status"] in (APPROVED, PENDING):
             raise ValueError(f"invoice {invoice_id} is already approved")
         ai = inv["ai_output"] or {"line_items": []}
+        limit = self.approval_limit()
+        needs_second = bool(limit) and abs(float(final_output.get("grand_total") or 0)) > limit
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
         counts = {ACCEPTED: 0, CORRECTED: 0}
+        reviewer_changed = 0
+        # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
+        by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
@@ -393,6 +801,12 @@ class Store:
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
             if f_gl == UNASSIGNED:
                 continue  # not a coding decision: nothing to learn from it
+            rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
+            kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
+            if not kept_rule and (s_gl != f_gl or (s_cc or "") != (f_cc or "")):
+                reviewer_changed += 1
+            if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
+                s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
             outcome = ACCEPTED if (s_gl == f_gl and (s_cc or "") == (f_cc or "")) else CORRECTED
             counts[outcome] += 1
             feedback_rows.append(
@@ -415,7 +829,7 @@ class Store:
         edits = [f for f in _HEADER_FIELDS if str(ai.get(f, "")) != str(final_output.get(f, ""))]
         if _tax_signature(ai) != _tax_signature(final_output):
             edits.append("tax_lines")
-        if counts[CORRECTED]:
+        if reviewer_changed:  # what the reviewer changed (a rule's coding kept is not a change)
             edits.append("line_coding")
         if len(ai.get("line_items", [])) != len(final_output.get("line_items", [])):
             edits.append("line_count")
@@ -424,10 +838,11 @@ class Store:
             # the second finds it already approved and records nothing.
             cur = conn.execute(
                 """UPDATE invoices SET status = ?, final_output = ?, edits = ?, reviewer = ?, reviewed_at = ?,
-                   vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?
-                   WHERE id = ? AND status != ?""",
+                   vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?,
+                   currency = ?, po_key = ?, due_date = ?, second_reviewer = NULL, second_reviewed_at = NULL
+                   WHERE id = ? AND status NOT IN (?, ?)""",
                 (
-                    APPROVED,
+                    PENDING if needs_second else APPROVED,
                     json.dumps(final_output),
                     json.dumps(edits),
                     reviewer,
@@ -437,12 +852,22 @@ class Store:
                     final_output.get("invoice_number"),
                     final_output.get("invoice_date"),
                     final_output.get("grand_total"),
+                    str(final_output.get("currency") or "").strip().upper() or None,
+                    po_key(final_output.get("po_number") or ""),
+                    _due(final_output, self.default_terms_days(), self.vendor_terms(key)),
                     invoice_id,
                     APPROVED,
+                    PENDING,
                 ),  # fmt: skip
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is already approved")
+            self._log(conn, "approved", invoice_id, reviewer, {
+                "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
+                "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
+                **({"bulk": True} if bulk else {}), **({"needs_second": True} if needs_second else {}),
+                **({"open_issues": open_issues} if open_issues else {}), **({"login": login} if login else {}),
+            })  # fmt: skip
             conn.executemany(
                 """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
                    suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at)
@@ -450,6 +875,679 @@ class Store:
                 feedback_rows,
             )
         return counts
+
+    # --- Second approval -----------------------------------------------------------------------------
+
+    def fx_rates(self) -> dict[str, float]:
+        """{currency: CAD per unit}, as AP set them in Settings (e.g. "USD=1.37, EUR 1.50")."""
+        return parse_fx_rates(self.get_setting("fx_rates"))
+
+    def approval_limit(self) -> float:
+        """Invoices above this amount need a second approver (0: no limit). Settings → Review."""
+        try:
+            return max(float(self.get_setting("approval_limit") or 0), 0.0)
+        except ValueError:
+            return 0.0
+
+    def final_approve(self, invoice_id: int, approver: str, login: str = "") -> None:
+        """The second approval: by someone other than the first approver (another name and, when the
+        dashboard records it, another computer login). The invoice can then be exported."""
+        inv = self.get_invoice(invoice_id)
+        if inv is None or inv["status"] != PENDING:
+            raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+        if (approver or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold():
+            raise PermissionError("the second approval must come from someone other than the first approver")
+        first = next((e for e in self.events(invoice_id) if e["action"] == "approved"), None)
+        first_login = ((first or {}).get("detail") or {}).get("login") or ""
+        if login and first_login and login.casefold() == first_login.casefold():
+            raise PermissionError("the second approval must come from another computer login than the first")
+        with self._conn() as conn:
+            cur = conn.execute(
+                # Same first approval as checked above: it may have been sent back and re-approved meanwhile.
+                "UPDATE invoices SET status = ?, second_reviewer = ?, second_reviewed_at = ? "
+                "WHERE id = ? AND status = ? AND reviewer IS ? AND reviewed_at IS ?",
+                (APPROVED, approver, _now(), invoice_id, PENDING, inv["reviewer"], inv["reviewed_at"]),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+            self._log(conn, "final_approved", invoice_id, approver, {
+                "first_approver": inv["reviewer"], "total": (inv["final_output"] or {}).get("grand_total"),
+                **({"login": login} if login else {}),
+            })  # fmt: skip
+
+    def send_back(self, invoice_id: int, actor: str, reason: str = "") -> None:
+        """Return an invoice waiting for a second approval to the review queue. What was learned from the
+        first approval is withdrawn: it is learned again when the invoice is approved again."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL WHERE id = ? AND status = ?",
+                (REVIEW, invoice_id, PENDING),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
+            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+            self._log(conn, "sent_back", invoice_id, actor, {"reason": reason})
+
+    def reopen(self, invoice_id: int, actor: str, reason: str = "") -> None:
+        """Put an approved invoice that is not exported yet, or a rejected one, back in the review queue to be
+        corrected. What its approval taught is withdrawn (learned again at the next approval); the reviewer's
+        coding is kept as the starting point. An exported invoice is reopened by undoing its batch first."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                """UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL, second_reviewer = NULL,
+                   second_reviewed_at = NULL, error = NULL
+                   WHERE id = ? AND (status IN (?, ?) AND export_batch IS NULL OR status = ?)""",
+                (REVIEW, invoice_id, APPROVED, PENDING, REJECTED),
+            )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
+            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+            self._log(conn, "reopened", invoice_id, actor, {"reason": reason})
+
+    # --- Purchase orders ---------------------------------------------------------------------------
+
+    def import_purchase_orders(
+        self, rows: list[dict[str, Any]], replace_all: bool = False, actor: str | None = None
+    ) -> dict[str, int]:
+        """Import PO lines (``po.rows_from_records`` output). A PO in the file replaces that PO's lines,
+        so re-importing an ERP export updates quantities received; other POs are kept unless ``replace_all``."""
+        orders: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            key = po_key(row["po_number"])
+            if not key:
+                continue
+            order = orders.setdefault(key, {"row": row, "lines": []})
+            order["lines"].append(row)
+            if row.get("vendor_name") and not order["row"].get("vendor_name"):
+                order["row"] = row
+        now = _now()
+        with self._conn() as conn:
+            if replace_all:
+                conn.execute("DELETE FROM po_lines")
+                conn.execute("DELETE FROM purchase_orders")
+            existing = {r["po_key"] for r in conn.execute("SELECT po_key FROM purchase_orders")}
+            for key, order in orders.items():
+                head = order["row"]
+                status = "closed" if all(r.get("status") == "closed" for r in order["lines"]) else OPEN
+                conn.execute(
+                    """INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, status, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(po_key) DO UPDATE SET po_number = excluded.po_number,
+                       vendor_name = excluded.vendor_name, vendor_key = excluded.vendor_key,
+                       status = excluded.status, updated_at = excluded.updated_at""",
+                    (key, head["po_number"], head.get("vendor_name") or "", vendor_key(head.get("vendor_name") or ""),
+                     status, now),
+                )  # fmt: skip
+                conn.execute("DELETE FROM po_lines WHERE po_key = ?", (key,))
+                used: set[int] = set()
+                for row in order["lines"]:
+                    number = row.get("line_number")
+                    if not number or number in used:
+                        number = max(used, default=0) + 1
+                    used.add(number)
+                    conn.execute(
+                        """INSERT INTO po_lines (po_key, line_number, description, quantity, unit_price, amount,
+                           received_quantity, gl_code, cost_center, amount_only)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (key, number, row["description"], row["quantity"], row["unit_price"], row["amount"],
+                         row.get("received_quantity"), _clean_code(row.get("gl_code")),
+                         _clean_code(row.get("cost_center")), int(bool(row.get("amount_only")))),
+                    )  # fmt: skip
+            counts = {
+                "orders": len(orders),
+                "added": len(set(orders) - existing),
+                "updated": len(set(orders) & existing),
+                "lines": sum(len(o["lines"]) for o in orders.values()),
+            }
+            self._log(conn, "pos_imported", actor=actor, detail={**counts, "replace_all": replace_all})
+        return counts
+
+    def has_purchase_orders(self) -> bool:
+        with self._conn() as conn:
+            return conn.execute("SELECT 1 FROM purchase_orders LIMIT 1").fetchone() is not None
+
+    def purchase_order(self, key: str) -> dict[str, Any] | None:
+        """One PO with its lines and total (``key`` is ``po.po_key``)."""
+        with self._conn() as conn:
+            head = conn.execute("SELECT * FROM purchase_orders WHERE po_key = ?", (key,)).fetchone()
+            if head is None:
+                return None
+            lines = [
+                dict(r) for r in conn.execute("SELECT * FROM po_lines WHERE po_key = ? ORDER BY line_number", (key,))
+            ]
+        return {**dict(head), "lines": lines, "total": round(sum(li["amount"] for li in lines), 2)}
+
+    def purchase_orders(self) -> list[dict[str, Any]]:
+        """Every PO with its total and how much has been invoiced against it (invoices in review included)."""
+        with self._conn() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT p.*, COUNT(l.line_number) lines, COALESCE(SUM(l.amount), 0) total,
+                       SUM(l.received_quantity IS NOT NULL) received_lines
+                       FROM purchase_orders p LEFT JOIN po_lines l ON l.po_key = p.po_key
+                       GROUP BY p.po_key ORDER BY p.po_number"""
+                )
+            ]
+            billed: dict[str, dict[str, Any]] = {}
+            for r in conn.execute(
+                "SELECT id, po_key, status, ai_output, final_output FROM invoices "
+                "WHERE po_key != '' AND status IN " + _ACTIVE_IN,
+                ACTIVE_STATUSES,
+            ):
+                coding = json.loads(r["final_output"] or r["ai_output"] or "{}")
+                entry = billed.setdefault(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0})
+                entry["billed"] += float(coding.get("subtotal") or 0)
+                entry["invoices"] += 1
+                entry["in_review"] += r["status"] == REVIEW
+        for r in rows:
+            r.update(billed.get(r["po_key"], {"billed": 0.0, "invoices": 0, "in_review": 0}))
+            r["remaining"] = r["total"] - r["billed"]
+        return rows
+
+    def open_pos_for_vendor(self, key: str) -> list[str]:
+        if not key:
+            return []
+        with self._conn() as conn:
+            return [
+                r["po_number"]
+                for r in conn.execute(
+                    "SELECT po_number FROM purchase_orders WHERE vendor_key = ? AND status = ? ORDER BY po_number",
+                    (key, OPEN),
+                )
+            ]
+
+    def po_invoices(self, key: str, exclude_id: int | None = None) -> list[dict[str, Any]]:
+        """Invoices quoting this PO (in review or approved), with their current coding."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, status, invoice_number, invoice_date, ai_output, final_output FROM invoices "
+                "WHERE po_key = ? AND status IN " + _ACTIVE_IN + " ORDER BY id",
+                (key, *ACTIVE_STATUSES),
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "invoice_number": r["invoice_number"],
+                "invoice_date": r["invoice_date"],
+                "coding": json.loads(r["final_output"] or r["ai_output"] or "{}"),
+            }  # fmt: skip
+            for r in rows
+            if r["id"] != exclude_id
+        ]
+
+    def vendor_invoices_without_po(self, key: str) -> list[dict[str, Any]]:
+        """This vendor's active invoices that quote no PO, with their coding (they may still bill a PO line)."""
+        if not key:
+            return []
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, status, invoice_number, invoice_date, ai_output, final_output FROM invoices "
+                "WHERE vendor_key = ? AND po_key = '' AND status IN " + _ACTIVE_IN + " ORDER BY id",
+                (key, *ACTIVE_STATUSES),
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "invoice_number": r["invoice_number"],
+                "invoice_date": r["invoice_date"],
+                "coding": json.loads(r["final_output"] or r["ai_output"] or "{}"),
+            }  # fmt: skip
+            for r in rows
+        ]
+
+    def set_po_status(self, key: str, status: str, actor: str | None = None) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE po_key = ?", (status, _now(), key)
+            )
+            number = conn.execute("SELECT po_number FROM purchase_orders WHERE po_key = ?", (key,)).fetchone()
+            self._log(conn, "po_status", actor=actor, detail={"po": number[0] if number else key, "status": status})
+
+    def delete_purchase_orders(self, keys: list[str], actor: str | None = None) -> int:
+        with self._conn() as conn:
+            marks = ",".join("?" * len(keys))
+            numbers = [
+                r[0] for r in conn.execute(f"SELECT po_number FROM purchase_orders WHERE po_key IN ({marks})", keys)
+            ]
+            conn.execute(f"DELETE FROM po_lines WHERE po_key IN ({marks})", keys)
+            conn.execute(f"DELETE FROM purchase_orders WHERE po_key IN ({marks})", keys)
+            if numbers:
+                self._log(conn, "pos_deleted", actor=actor, detail={"pos": numbers})
+        return len(numbers)
+
+    # --- ERP export batches -------------------------------------------------------------------------
+
+    def unexported_approved(self) -> list[dict[str, Any]]:
+        """Approved invoices that have not been in an export batch yet (oldest approval first)."""
+        with self._conn() as conn:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT id, vendor_name, invoice_number, invoice_date, currency, grand_total, reviewer,
+                              reviewed_at FROM invoices WHERE status = ? AND export_batch IS NULL
+                       ORDER BY reviewed_at, id""",
+                    (APPROVED,),
+                )
+            ]
+
+    def create_export_batch(self, invoice_ids: list[int], fmt: str, actor: str | None = None) -> int:
+        """Mark approved, not yet exported invoices as one batch. Returns the batch number."""
+        with self._conn() as conn:
+            marks = ", ".join("?" for _ in invoice_ids)
+            eligible = conn.execute(
+                f"SELECT id, grand_total FROM invoices WHERE id IN ({marks}) AND status = ? AND export_batch IS NULL",
+                (*invoice_ids, APPROVED),
+            ).fetchall()
+            if not eligible:
+                raise ValueError("none of these invoices can be exported (not approved, or already exported)")
+            total = round(sum(r["grand_total"] or 0 for r in eligible), 2)
+            cur = conn.execute(
+                "INSERT INTO export_batches (created_at, actor, format, invoices, total) VALUES (?, ?, ?, ?, ?)",
+                (_now(), actor, fmt, len(eligible), total),
+            )
+            batch = int(cur.lastrowid)
+            conn.executemany("UPDATE invoices SET export_batch = ? WHERE id = ?", [(batch, r["id"]) for r in eligible])
+            for r in eligible:
+                self._log(conn, "exported", r["id"], actor, {"batch": batch, "format": fmt})
+        return batch
+
+    def export_batches(self) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM export_batches ORDER BY id DESC")]
+
+    # --- Fixed coding rules ---------------------------------------------------------------------------
+
+    def coding_rules(self) -> list[Rule]:
+        with self._conn() as conn:
+            return [
+                Rule(r["vendor"], r["contains"], r["gl_code"], r["cost_center"], r["id"])
+                for r in conn.execute("SELECT * FROM coding_rules ORDER BY id")
+            ]
+
+    def save_coding_rules(self, rules: list[Rule], actor: str | None = None) -> int:
+        """Replace the rules (rules without a GL account, or without a vendor and words, are left out).
+        Unchanged rules keep their id, so their age (the tie-breaker) is kept."""
+        keep = [r for r in rules if r.gl_code.strip() and (r.vendor.strip() or r.contains.strip())]
+        with self._conn() as conn:
+            old = {(r["vendor"], r["contains"], r["gl_code"], r["cost_center"]): r["id"]
+                   for r in conn.execute("SELECT * FROM coding_rules")}  # fmt: skip
+            conn.execute("DELETE FROM coding_rules")
+            now = _now()
+            seen = set()
+            for r in keep:
+                values = (r.vendor.strip(), r.contains.strip(), _clean_code(r.gl_code), _clean_code(r.cost_center))
+                if values in seen:  # the same rule twice: kept once
+                    continue
+                seen.add(values)
+                conn.execute(
+                    "INSERT INTO coding_rules (id, vendor, contains, gl_code, cost_center, created_at, created_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (old.get(values), *values, now, actor),
+                )
+            self._log(conn, "rules_changed", actor=actor, detail={"rules": len(keep)})
+        return len(keep)
+
+    def add_rules_applied(self, invoice_id: int, changes: list[dict[str, Any]]) -> None:
+        """Remember lines a fixed coding rule set on the review screen (as rules applied at processing are), so
+        the AI's accuracy is measured on its own answer for them."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+            if row is None:
+                return
+            meta = json.loads(row["meta"] or "{}") or {}
+            known = {c["line_number"]: c for c in meta.get("rules_applied") or []}
+            for c in changes:
+                first = known.get(c["line_number"])
+                # The AI's own answer stays the one recorded first.
+                known[c["line_number"]] = (
+                    {**c, "gl_from": first["gl_from"], "cc_from": first["cc_from"]} if first else c
+                )
+            meta["rules_applied"] = sorted(known.values(), key=lambda c: c["line_number"])
+            conn.execute("UPDATE invoices SET meta = ? WHERE id = ?", (json.dumps(meta), invoice_id))
+
+    def delete_empty_batches(self, batches: set[int]) -> int:
+        """Delete these export batches if no invoice belongs to them any more (e.g. demo invoices removed)."""
+        removed = 0
+        with self._conn() as conn:
+            for batch in batches:
+                if not conn.execute("SELECT 1 FROM invoices WHERE export_batch = ? LIMIT 1", (batch,)).fetchone():
+                    removed += conn.execute("DELETE FROM export_batches WHERE id = ?", (batch,)).rowcount
+        return removed
+
+    def batch_totals(self) -> dict[int, dict[str, float]]:
+        """{batch: {currency: total}} of the invoices in each batch (an undone batch has none any more)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT export_batch, COALESCE(NULLIF(currency, ''), 'CAD') AS cur, SUM(grand_total) AS total "
+                "FROM invoices WHERE export_batch IS NOT NULL GROUP BY export_batch, cur"
+            ).fetchall()
+        out: dict[int, dict[str, float]] = {}
+        for r in rows:
+            out.setdefault(r["export_batch"], {})[r["cur"]] = round(r["total"] or 0, 2)
+        return out
+
+    def batch_invoice_ids(self, batch: int) -> list[int]:
+        with self._conn() as conn:
+            return [
+                r["id"] for r in conn.execute("SELECT id FROM invoices WHERE export_batch = ? ORDER BY id", (batch,))
+            ]
+
+    def undo_export_batch(self, batch: int, actor: str | None = None) -> int:
+        """The ERP import failed: put the batch's invoices back in the ready-to-export list."""
+        with self._conn() as conn:
+            ids = [r["id"] for r in conn.execute("SELECT id FROM invoices WHERE export_batch = ?", (batch,))]
+            conn.execute("UPDATE invoices SET export_batch = NULL WHERE export_batch = ?", (batch,))
+            conn.execute("UPDATE export_batches SET undone_at = ?, undone_by = ? WHERE id = ?", (_now(), actor, batch))
+            self._log(conn, "export_undone", actor=actor, detail={"batch": batch, "invoices": len(ids)})
+        return len(ids)
+
+    # --- Vendors ----------------------------------------------------------------------------------------
+
+    def get_vendor(self, key: str) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
+        return dict(row) if row else None
+
+    def save_vendor(
+        self, key: str, display_name: str, status: str = "active", expected_gst: str = "", notes: str = "",
+        actor: str | None = None,
+    ) -> None:  # fmt: skip
+        if status not in ("active", "on_hold"):
+            raise ValueError(f"unknown vendor status {status!r}")
+        before = self.get_vendor(key) or {}
+        values = {"status": status, "expected_gst": expected_gst.strip(), "notes": notes.strip()}
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key) DO UPDATE SET display_name = excluded.display_name,
+                   status = excluded.status, expected_gst = excluded.expected_gst, notes = excluded.notes,
+                   updated_at = excluded.updated_at""",
+                (key, display_name, status, values["expected_gst"], values["notes"], _now()),
+            )
+            changed = {k: v for k, v in values.items() if before.get(k, "active" if k == "status" else "") != v}
+            if changed:
+                self._log(conn, "vendor_updated", actor=actor, detail={"vendor": display_name, **changed})
+
+    def import_vendor_master(
+        self, rows: list[dict[str, Any]], actor: str | None = None, only_new: bool = False
+    ) -> dict[str, Any]:
+        """Import the ERP's vendor list (``vendors.master_rows`` output). Each vendor is matched by name;
+        what the file gives (ERP ID, GST/HST #, terms, default GL, status) replaces what was there; what
+        it has no column for is kept.
+        Rows whose names normalise to the same vendor are merged (on hold if any of them is) and reported
+        in ``duplicates``: often the same supplier set up twice in the ERP. With ``only_new``, vendors
+        already in the list are left alone (``inserted`` lists the new ones)."""
+        added = updated = 0
+        now = _now()
+        merged: dict[str, dict[str, Any]] = {}
+        names: dict[str, list[str]] = {}
+        for row in rows:
+            key = vendor_key(row["vendor_name"])
+            if not key:
+                continue
+            names.setdefault(key, []).append(row["vendor_name"])
+            if key in merged:
+                first = merged[key]
+                if row.get("status") == "on_hold":
+                    first["status"], first["status_given"] = "on_hold", True
+                for field in ("erp_id", "gst", "terms", "default_gl"):
+                    first[field] = first.get(field) or row.get(field) or first.get(field)
+            else:
+                merged[key] = dict(row)
+        duplicates = [n for n in names.values() if len(n) > 1]
+        inserted: list[str] = []
+        with self._conn() as conn:
+            existing = {r["vendor_key"] for r in conn.execute("SELECT vendor_key FROM vendors")}
+            for key, row in merged.items():
+                if only_new and key in existing:
+                    continue
+                conn.execute(
+                    """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, erp_id,
+                       terms, default_gl, in_master) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 1)
+                       ON CONFLICT(vendor_key) DO UPDATE SET
+                       erp_id = CASE WHEN ? THEN excluded.erp_id ELSE vendors.erp_id END,
+                       terms = CASE WHEN ? THEN excluded.terms ELSE vendors.terms END,
+                       default_gl = CASE WHEN ? THEN excluded.default_gl ELSE vendors.default_gl END,
+                       in_master = 1, updated_at = excluded.updated_at,
+                       expected_gst = CASE WHEN excluded.expected_gst != '' THEN excluded.expected_gst
+                                      ELSE vendors.expected_gst END,
+                       status = CASE WHEN ? THEN excluded.status ELSE vendors.status END""",
+                    (key, row["vendor_name"], row.get("status") or "active", row.get("gst") or "", now,
+                     row.get("erp_id") or "", row.get("terms") or "", _clean_code(row.get("default_gl")),
+                     *(row.get(f) is not None for f in ("erp_id", "terms", "default_gl")),
+                     bool(row.get("status_given"))),
+                )  # fmt: skip
+                if key in existing:
+                    updated += 1
+                else:
+                    added += 1
+                    inserted.append(key)
+                    existing.add(key)
+            self._log(conn, "vendors_imported", actor=actor, detail={
+                "added": added, "updated": updated, "duplicates": len(duplicates),
+            })  # fmt: skip
+        return {"added": added, "updated": updated, "duplicates": duplicates, "inserted": inserted}
+
+    def delete_vendors(self, keys: list[str]) -> int:
+        """Remove vendors from the vendor list (e.g. the demo's sample vendor master)."""
+        with self._conn() as conn:
+            marks = ",".join("?" * len(keys))
+            return conn.execute(f"DELETE FROM vendors WHERE vendor_key IN ({marks})", keys).rowcount
+
+    def has_vendor_master(self) -> bool:
+        with self._conn() as conn:
+            return conn.execute("SELECT 1 FROM vendors WHERE in_master = 1 LIMIT 1").fetchone() is not None
+
+    def master_vendors(self) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master = 1")]
+
+    def vendor_ids(self) -> dict[str, str]:
+        """{vendor_key: ERP vendor ID} from the vendor master, plus {"gst:<number>": ERP vendor ID} so an
+        invoice whose vendor name differs but whose GST/HST number matches still gets its ID."""
+        from .vendors import norm_tax_number
+
+        with self._conn() as conn:
+            rows = conn.execute("SELECT vendor_key, erp_id, expected_gst FROM vendors WHERE erp_id != ''").fetchall()
+        ids = {r[0]: r[1] for r in rows}
+        for r in rows:
+            number = norm_tax_number(r[2])
+            if sum(c.isdigit() for c in number) >= 9:
+                ids.setdefault(f"gst:{number}", r[1])
+        return ids
+
+    def all_vendor_terms(self) -> dict[str, str]:
+        """{vendor_key: payment terms} for every vendor that has terms in the vendor master."""
+        with self._conn() as conn:
+            return {r[0]: r[1] for r in conn.execute("SELECT vendor_key, terms FROM vendors WHERE terms != ''")}
+
+    def vendor_terms(self, key: str) -> str:
+        """The vendor master's payment terms for this vendor ('' if none)."""
+        if not key:
+            return ""
+        with self._conn() as conn:
+            row = conn.execute("SELECT terms FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
+        return row[0] if row else ""
+
+    def vendor_invoices(self, key: str) -> list[dict[str, Any]]:
+        """This vendor's invoices (newest first) with the GST/HST number and bank account each one carried."""
+        with self._conn() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT id, status, export_batch, vendor_name, invoice_number, invoice_date, currency,
+                              grand_total, adjusted_confidence, requires_review, created_at, reviewed_at,
+                              ai_output, final_output
+                       FROM invoices WHERE vendor_key = ? ORDER BY id DESC""",
+                    (key,),
+                )
+            ]
+        for r in rows:
+            doc = json.loads(r.pop("final_output") or "null") or json.loads(r.pop("ai_output", None) or "null") or {}
+            r.pop("ai_output", None)
+            r["gst_hst_number"] = doc.get("gst_hst_registration_number") or ""
+            r["bank_account"] = doc.get("remit_bank_account") or ""
+            r["original_invoice_number"] = doc.get("original_invoice_number") or ""
+        return rows
+
+    def vendor_invoice_dates(self) -> list[dict[str, Any]]:
+        """Vendor, date and total of every invoice in review or approved (for ``recurring.detect``)."""
+        with self._conn() as conn:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT vendor_key, vendor_name, invoice_date, grand_total, currency FROM invoices "
+                    "WHERE vendor_key != '' AND status IN " + _ACTIVE_IN,
+                    ACTIVE_STATUSES,
+                )
+            ]
+
+    def has_other_vendors(self, key: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM invoices WHERE vendor_key != ? AND vendor_key != '' AND status != ? LIMIT 1",
+                (key, FAILED),
+            ).fetchone()
+        return row is not None
+
+    def vendor_summaries(self) -> list[dict[str, Any]]:
+        """One row per vendor seen on an invoice: counts, spend, dates, AI accuracy and AP's settings."""
+        with self._conn() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT vendor_key, MAX(vendor_name) vendor_name, COUNT(*) invoices,
+                              SUM(status = 'approved') approved, SUM(status = 'review') to_review,
+                              SUM(CASE WHEN status = 'approved' AND currency = 'CAD'
+                                       THEN grand_total ELSE 0 END) spend_cad,
+                              MIN(invoice_date) first_invoice, MAX(invoice_date) last_invoice,
+                              MIN(created_at) first_seen
+                       FROM invoices WHERE vendor_key != '' AND status != 'failed' GROUP BY vendor_key"""
+                )
+            ]
+            lessons = {
+                r["vendor_key"]: dict(r)
+                for r in conn.execute(
+                    """SELECT vendor_key, COUNT(*) lessons, SUM(outcome != 'history') lines,
+                              SUM(outcome = 'accepted') accepted FROM feedback GROUP BY vendor_key"""
+                )
+            }
+            masters = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors")}
+        for r in rows:
+            fb = lessons.get(r["vendor_key"]) or {}
+            r["lessons"] = fb.get("lessons", 0)
+            r["accuracy"] = (fb["accepted"] / fb["lines"]) if fb.get("lines") else None
+            master = masters.get(r["vendor_key"]) or {}
+            r["status"] = master.get("status", "active")
+            r["expected_gst"] = master.get("expected_gst", "")
+            r["notes"] = master.get("notes", "")
+            for field in ("erp_id", "terms", "default_gl"):
+                r[field] = master.get(field) or ""
+            r["in_master"] = bool(master.get("in_master"))
+        return sorted(rows, key=lambda r: -(r["spend_cad"] or 0))
+
+    def vendor_gl_usage(self, key: str) -> list[dict[str, Any]]:
+        """GL accounts reviewers used for this vendor's lines, most used first."""
+        with self._conn() as conn:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    """SELECT final_gl gl_code, COUNT(*) lines, SUM(outcome = 'corrected') corrected FROM feedback
+                       WHERE vendor_key = ? GROUP BY final_gl ORDER BY lines DESC""",
+                    (key,),
+                )
+            ]
+
+    # --- Backups -----------------------------------------------------------------------------------------
+
+    def backup_to(self, dest: str | Path) -> Path:
+        """A consistent copy of the database (safe while the dashboard is running)."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        source = sqlite3.connect(self.path)
+        target = sqlite3.connect(dest)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        return dest
+
+    def backup_dir(self) -> Path:
+        return self.path.parent / "backups"
+
+    def list_backups(self) -> list[Path]:
+        folder = self.backup_dir()
+        return sorted(folder.glob("ap_coder-*.db"), reverse=True) if folder.exists() else []
+
+    def backup_now(self, label: str = "", actor: str | None = None) -> Path:
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        suffix = f"-{label}" if label else ""
+        dest = self.backup_dir() / f"ap_coder-{stamp}{suffix}.db"
+        n = 2
+        while dest.exists():  # never overwrite a backup made in the same second
+            dest = self.backup_dir() / f"ap_coder-{stamp}{suffix or '-'}{n}.db"
+            n += 1
+        made = self.backup_to(dest)
+        if label == "manual":
+            self.log_event("backup_made", actor=actor, detail={"file": made.name})
+        if label in ("", "manual"):
+            self.copy_backup(made)
+        return made
+
+    def copy_backup(self, made: Path, keep: int = 14) -> Path | None:
+        """Copy a backup to the second location set in Settings (e.g. a OneDrive or network folder), keeping
+        its newest ``keep`` daily copies. A copy that fails (folder offline) is recorded, never raised: the
+        local backup is there either way."""
+        folder = self.get_setting("backup_copy_dir").strip()
+        if not folder:
+            return None
+        try:
+            target = Path(folder).expanduser()
+            if not target.is_dir():
+                raise OSError(f"folder not found: {target}")
+            if target.resolve() == made.parent.resolve():
+                raise OSError("that is the local backups folder; choose another one")
+            copied = Path(shutil.copy2(made, target / made.name))
+            for old in sorted((p for p in target.glob("ap_coder-*.db") if p.stem.count("-") == 2), reverse=True)[keep:]:
+                old.unlink(missing_ok=True)
+        except OSError as exc:
+            self.set_setting("backup_copy_status", f"failed {_now()[:16]}: {exc}")
+            return None
+        self.set_setting("backup_copy_status", f"ok {_now()[:16]}: {copied.name}")
+        return copied
+
+    def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
+        """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies."""
+        daily = [p for p in self.list_backups() if p.stem.count("-") == 2]  # ap_coder-YYYYMMDD-HHMMSS
+        if daily:
+            age = dt.datetime.now() - dt.datetime.fromtimestamp(daily[0].stat().st_mtime)
+            if age < dt.timedelta(hours=min_hours):
+                return None
+        if not self.path.exists():
+            return None
+        made = self.backup_now()
+        for old in [p for p in self.list_backups() if p.stem.count("-") == 2][keep:]:
+            old.unlink(missing_ok=True)
+        return made
+
+    def restore_from(self, backup: str | Path) -> Path:
+        """Replace the database with a backup. The current one is backed up first (returned)."""
+        safety = self.backup_now("before-restore")
+        source = sqlite3.connect(Path(backup))
+        target = sqlite3.connect(self.path)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        with self._conn() as conn:
+            conn.executescript(_SCHEMA)  # an older backup may lack newer tables...
+            self._migrate(conn)  # ...and columns
+            self._log(conn, "backup_restored", detail={"file": Path(backup).name, "safety_copy": safety.name})
+        return safety
 
     # --- Learning memory ------------------------------------------------------------------------------
 
@@ -459,25 +1557,87 @@ class Store:
         if vendor_name is not None:
             sql, args = sql + " WHERE vendor_key = ?", (vendor_key(vendor_name),)
         with self._conn() as conn:
-            return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit))]
+            # Reviewer decisions first, then imported history: a big history import never pushes them out.
+            return [
+                dict(r) for r in conn.execute(sql + " ORDER BY outcome = 'history', id DESC LIMIT ?", (*args, limit))
+            ]
 
-    def delete_feedback(self, ids: list[int]) -> int:
+    def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
+        """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.
+        Rows already imported (same vendor, description, GL, cost center, amount and date) are skipped."""
+        from .history import HISTORY
+
+        added = skipped = unknown = 0
+        with self._conn() as conn:
+            known_gls = {r[0] for r in conn.execute("SELECT code FROM gl_accounts")}
+            seen = {
+                (r[0], r[1], r[2], r[3] or "", r[4], r[5])
+                for r in conn.execute(
+                    "SELECT vendor_key, description, final_gl, final_cc, amount, created_at FROM feedback "
+                    "WHERE outcome = ?",
+                    (HISTORY,),
+                )
+            }
+            batch = []
+            for row in rows:
+                key = vendor_key(row["vendor_name"])
+                gl = _clean_code(row["gl_code"])
+                if known_gls and gl not in known_gls:  # a retired or mistyped account would only mislead
+                    unknown += 1
+                    continue
+                when = row.get("date") or ""  # undated rows: the same key every day, so no re-import doubles
+                ident = (key, row["description"], gl, row.get("cost_center") or "", row.get("amount"), when)
+                if not key or ident in seen:
+                    skipped += 1
+                    continue
+                seen.add(ident)
+                batch.append((key, row["vendor_name"], row["description"], row.get("amount"), gl,
+                              row.get("cost_center") or "", HISTORY, "ERP history", when))  # fmt: skip
+            conn.executemany(
+                """INSERT INTO feedback (invoice_id, line_number, vendor_key, vendor_name, description, amount,
+                   suggested_gl, final_gl, suggested_cc, final_cc, outcome, reviewer, created_at)
+                   VALUES (NULL, NULL, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?)""",
+                batch,
+            )
+            added = len(batch)
+            self._log(conn, "history_imported", actor=actor, detail={
+                "added": added, "skipped": skipped, "unknown_gl": unknown,
+            })  # fmt: skip
+        return {"added": added, "skipped": skipped, "unknown_gl": unknown}
+
+    def history_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM feedback WHERE outcome = 'history'").fetchone()[0])
+
+    def forget_history(self, actor: str | None = None) -> int:
+        with self._conn() as conn:
+            count = conn.execute("DELETE FROM feedback WHERE outcome = 'history'").rowcount
+            if count:
+                self._log(conn, "lessons_forgotten", actor=actor, detail={"count": count, "history": True})
+            return count
+
+    def delete_feedback(self, ids: list[int], actor: str | None = None) -> int:
         with self._conn() as conn:
             cur = conn.executemany("DELETE FROM feedback WHERE id = ?", [(i,) for i in ids])
+            if ids:
+                self._log(conn, "lessons_forgotten", actor=actor, detail={"count": len(ids)})
             return cur.rowcount
 
     def metrics(self) -> dict[str, Any]:
         with self._conn() as conn:
-            lines = conn.execute("SELECT outcome, COUNT(*) n FROM feedback GROUP BY outcome").fetchall()
+            # Imported ERP history is memory, not a reviewer decision: it never counts towards accuracy.
+            lines = conn.execute(
+                "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome != 'history' GROUP BY outcome"
+            ).fetchall()
             weekly = conn.execute(
                 """SELECT strftime('%Y-W%W', created_at) week,
                           SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
-                   FROM feedback GROUP BY week ORDER BY week"""
+                   FROM feedback WHERE outcome != 'history' GROUP BY week ORDER BY week"""
             ).fetchall()
             by_vendor = conn.execute(
                 """SELECT vendor_name, COUNT(*) lines, SUM(outcome = 'accepted') accepted,
                           SUM(outcome = 'corrected') corrected, MAX(created_at) last_seen
-                   FROM feedback GROUP BY vendor_key ORDER BY lines DESC"""
+                   FROM feedback WHERE outcome != 'history' GROUP BY vendor_key ORDER BY lines DESC"""
             ).fetchall()
             corrections = conn.execute(
                 """SELECT COALESCE(suggested_gl, '(new line)') suggested_gl, final_gl, COUNT(*) n
@@ -525,3 +1685,30 @@ def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
         for row in csv.DictReader(fh):
             store.set_tax_treatment(row["tax_type"], row["treatment"], row.get("gl_code") or "")
     store.set_setting("policy_notes", (data_dir / "coding_policy.md").read_text(encoding="utf-8"))
+
+
+def load_sample_vendor_master(store: Store, data_dir: Path = SAMPLE_DATA_DIR, only_new: bool = False) -> list[str]:
+    """Load the bundled sample vendor master (the demo vendors but one). Returns the vendor keys (with
+    ``only_new``: only those added, existing vendor records being left as they are)."""
+    import csv
+
+    from .vendors import master_columns, master_rows
+
+    with (data_dir / "vendor_master.csv").open(encoding="utf-8-sig", newline="") as fh:
+        records = list(csv.DictReader(fh))
+    rows = master_rows(records, master_columns(list(records[0]) if records else []))
+    result = store.import_vendor_master(rows, only_new=only_new)
+    return sorted(result["inserted"]) if only_new else sorted({vendor_key(r["vendor_name"]) for r in rows})
+
+
+def load_sample_purchase_orders(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> list[str]:
+    """Load the bundled sample purchase orders (they match the sample invoices). Returns the PO keys."""
+    import csv
+
+    from .po import map_columns, rows_from_records
+
+    with (data_dir / "purchase_orders.csv").open(encoding="utf-8-sig", newline="") as fh:
+        records = list(csv.DictReader(fh))
+    rows, _ = rows_from_records(records, map_columns(list(records[0]) if records else []))
+    store.import_purchase_orders(rows)
+    return sorted({po_key(r["po_number"]) for r in rows})

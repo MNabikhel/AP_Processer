@@ -15,11 +15,15 @@ from .config import Settings
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
 from .inference import CodingResult, InvoiceCoder
-from .memory import compare_with_history, format_examples, select_examples
+from .memory import compare_with_history, format_examples, select_examples, vendor_key
+from .po import po_findings
 from .reference_data import ReferenceData
+from .rules import apply as apply_rules
 from .schema import InvoiceCoding
 from .tax import build_gl_distribution
+from .terms import payment_findings
 from .validation import ValidationReport, validate_coding
+from .vendors import vendor_findings
 
 if TYPE_CHECKING:
     from .store import Store
@@ -38,6 +42,7 @@ class PipelineResult:
     timings: dict[str, float] = field(default_factory=dict)
     history_examples: int = 0
     invoice_id: int | None = None  # row id when saved to the dashboard store
+    rules_applied: list[dict[str, Any]] = field(default_factory=list)  # lines a fixed coding rule changed
 
     @property
     def ok(self) -> bool:
@@ -68,8 +73,13 @@ def invoice_files(folder: Path) -> list[Path]:
 
     A .md/.txt file is skipped when a PDF or image with the same name sits next to it
     (it is a text copy of the same invoice, e.g. the bundled samples), so nothing is coded twice.
+    README files are documentation, never invoices.
     """
-    files = sorted(c for c in folder.iterdir() if c.is_file() and c.suffix.lower() in SUPPORTED_EXTENSIONS)
+    files = sorted(
+        c
+        for c in folder.iterdir()
+        if c.is_file() and c.suffix.lower() in SUPPORTED_EXTENSIONS and not c.name.lower().startswith("readme")
+    )
     documents = {c.stem.lower() for c in files if c.suffix.lower() not in TEXT_EXTENSIONS}
     return [c for c in files if c.suffix.lower() not in TEXT_EXTENSIONS or c.stem.lower() not in documents]
 
@@ -118,6 +128,13 @@ def finalise_coding(
         review_threshold=settings.engine.review_threshold,
         history=history,
         duplicate_of=duplicates,
+        vendor_findings=(vendor_findings(coding, store, exclude_invoice_id) if store is not None else [])
+        + payment_findings(
+            coding.to_output(),
+            store.default_terms_days() if store is not None else 30,
+            vendor_terms=store.vendor_terms(vendor_key(coding.vendor_name)) if store is not None else "",
+        ),
+        po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
     )
     output = coding.to_output()
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
@@ -165,6 +182,9 @@ class InvoicePipeline:
             t1 = time.perf_counter()
             result.coding = self.coder.code(result.extraction, images, history_text)
             result.timings["inference"] = time.perf_counter() - t1
+            if self.store is not None:  # fixed coding rules set by AP win over the AI
+                coded, result.rules_applied = apply_rules(result.coding.coding, self.store.coding_rules())
+                result.coding.coding = coded
 
             result.output, result.report = finalise_coding(
                 result.coding.coding,
@@ -271,6 +291,8 @@ def _meta(result: PipelineResult) -> dict[str, Any]:
         "error": result.error,
         "timings_seconds": {k: round(v, 3) for k, v in result.timings.items()},
     }
+    if result.rules_applied:
+        meta["rules_applied"] = result.rules_applied
     if result.extraction:
         meta["extraction"] = {
             "model_id": result.extraction.model_id,

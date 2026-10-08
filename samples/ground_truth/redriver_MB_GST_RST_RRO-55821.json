@@ -1,0 +1,92 @@
+{
+  "vendor_name": "Red River Office Interiors Ltd.",
+  "invoice_number": "RRO-55821",
+  "invoice_date": "2026-08-21",
+  "po_number": "PO-90377",
+  "payment_terms": "Net 30",
+  "due_date": "",
+  "currency": "CAD",
+  "supplier_province": "MB",
+  "ship_to_province": "MB",
+  "gst_hst_registration_number": "741852963 RT0001",
+  "qst_registration_number": "",
+  "original_invoice_number": "",
+  "remit_bank_account": "",
+  "subtotal": 14645.0,
+  "tax_lines": [
+    {
+      "tax_type": "GST",
+      "province": "",
+      "rate": 0.05,
+      "taxable_amount": 14645.0,
+      "tax_amount": 732.25
+    },
+    {
+      "tax_type": "PST",
+      "province": "MB",
+      "rate": 0.07,
+      "taxable_amount": 13445.0,
+      "tax_amount": 941.15
+    }
+  ],
+  "tax_total": 1673.4,
+  "grand_total": 16318.4,
+  "confidence_score": 1.0,
+  "line_items": [
+    {
+      "line_number": 1,
+      "description": "Height-adjustable sit-stand desk, 60 x 30 in",
+      "quantity": 8,
+      "unit_price": 1150.0,
+      "amount": 9200.0,
+      "predicted_gl_code": "1510",
+      "predicted_cost_center": "CC700",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "Office furniture for the branch fit-out is capitalised; GST and RST charged."
+    },
+    {
+      "line_number": 2,
+      "description": "Ergonomic task chair, mesh back",
+      "quantity": 8,
+      "unit_price": 495.0,
+      "amount": 3960.0,
+      "predicted_gl_code": "1510",
+      "predicted_cost_center": "CC700",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "Office furniture for the branch fit-out is capitalised; GST and RST charged."
+    },
+    {
+      "line_number": 3,
+      "description": "Space planning & design consultation (hours)",
+      "quantity": 10,
+      "unit_price": 120.0,
+      "amount": 1200.0,
+      "predicted_gl_code": "6110",
+      "predicted_cost_center": "CC700",
+      "taxes_applied": [
+        "GST"
+      ],
+      "reasoning_justification": "Design consulting; GST only, the service is not subject to RST."
+    },
+    {
+      "line_number": 4,
+      "description": "Delivery charge",
+      "quantity": 1,
+      "unit_price": 285.0,
+      "amount": 285.0,
+      "predicted_gl_code": "6800",
+      "predicted_cost_center": "CC700",
+      "taxes_applied": [
+        "GST",
+        "PST"
+      ],
+      "reasoning_justification": "Delivery on a non-inventory purchase; GST and RST charged."
+    }
+  ]
+}
