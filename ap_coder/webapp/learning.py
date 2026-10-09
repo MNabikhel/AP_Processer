@@ -32,7 +32,7 @@ HISTORY_LABELS = {"vendor_name": "Vendor *", "description": "Line description *"
 
 def _history_card(store) -> None:
     count = store.history_count()
-    title = "Teach from past coding" + (f" ({count:,} past line(s) taught)" if count else "")
+    title = "Teach from past coding" + (f" ({ui.plural(count, 'past line')} taught)" if count else "")
     with st.expander(title, icon=":material/history_edu:", expanded=False):
         st.caption(
             "Export last year's posted AP invoice lines from the ERP (vendor, line description, GL account, cost "
@@ -57,7 +57,9 @@ def _history_card(store) -> None:
             missing = [HISTORY_LABELS[f].rstrip(" *") for f in history.REQUIRED if f not in chosen]
             if missing:
                 st.warning("Pick the column for: " + ", ".join(missing))
-            elif st.button(f"Teach {len(df):,} line(s)", type="primary", icon=":material/school:", key="hist_go"):
+            elif st.button(
+                f"Teach {ui.plural(len(df), 'line')}", type="primary", icon=":material/school:", key="hist_go"
+            ):
                 rows, skipped = history.rows_from_records(df.to_dict("records"), chosen)
                 result = store.import_history(rows, actor=reviewer())
                 notify(
@@ -71,7 +73,7 @@ def _history_card(store) -> None:
                 st.rerun()
         if count and st.button("Forget all past coding", icon=":material/delete_sweep:", key="hist_forget"):
             n = store.forget_history(actor=reviewer())
-            notify(f"Forgot {n:,} past line(s).", ":material/delete_sweep:")
+            notify(f"Forgot {ui.plural(n, 'past line')}.", ":material/delete_sweep:")
             st.rerun()
 
 
@@ -157,7 +159,7 @@ def _supplier_learning(store) -> None:
                              ui.pill(f"{fs.accuracy:.0%}", tone)]
                         )  # fmt: skip
                     st.html(ui.table(["Field", "Checked", "Corrected", "Accuracy"], table, right=[1, 2, 3]))
-                    st.caption(f"Over the last {stats.window_invoices} reviewed invoice(s).")
+                    st.caption(f"Over the last {ui.plural(stats.window_invoices, 'reviewed invoice')}.")
             can_turn_on = state == READY or (state == SUSPENDED and meets_policy(stats, policy))
             if can_turn_on:
                 with actions.popover(
@@ -370,7 +372,7 @@ def _coding_accuracy(store) -> None:
             key=f"memory_editor_{memory_version}_{len(rows)}",
         )
         selected = edited.loc[edited["forget"], "id"].tolist()
-        if selected and st.button(f"Forget {len(selected)} lesson(s)", icon=":material/delete_sweep:"):
+        if selected and st.button(f"Forget {ui.plural(len(selected), 'lesson')}", icon=":material/delete_sweep:"):
             store.delete_feedback([int(i) for i in selected], actor=reviewer())
-            notify(f"Forgot {len(selected)} lesson(s).", ":material/delete_sweep:")
+            notify(f"Forgot {ui.plural(len(selected), 'lesson')}.", ":material/delete_sweep:")
             st.rerun()

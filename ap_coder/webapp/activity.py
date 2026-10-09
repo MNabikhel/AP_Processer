@@ -47,9 +47,9 @@ def page_activity() -> None:
                     len({e["invoice_id"] for e in approvals}),
                     "task_alt",
                     "green",
-                    f"{len(approvals)} approval(s), {changed} with reviewer changes",
+                    f"{ui.plural(len(approvals), 'approval')}, {changed} with reviewer changes",
                 ),  # fmt: skip
-                ui.tile("People", len(people), "group", "violet", ", ".join(people[:3]) or "—"),
+                ui.tile("People", len(people), "group", "violet", ", ".join(people[:3]) or "none recorded yet"),
                 ui.tile(
                     "Deletions",
                     sum(1 for e in events if e["action"] in ("deleted", "accounts_deleted", "lessons_forgotten")),
@@ -94,7 +94,7 @@ def page_activity() -> None:
         ]
     )
     head, download = st.columns([3, 1], vertical_alignment="center")
-    head.caption(f"{len(shown)} of {len(events)} event(s)")
+    head.caption(f"{len(shown):,} of {ui.plural(len(events), 'event')}")
     download.download_button(
         "Download CSV", table.map(csv_cell).to_csv(index=False).encode("utf-8-sig"),
         file_name=f"ap_coder_activity_{today}.csv", mime="text/csv", icon=":material/download:", width="stretch",
@@ -159,7 +159,7 @@ def _controls_card(store) -> None:
         )
         today = dt.date.today()
         period = pick.date_input(
-            "Period", (today.replace(day=1), today), max_value=today, key="controls_period",
+            "Period", (today.replace(day=1), today), max_value=today, format="YYYY-MM-DD", key="controls_period",
             label_visibility="collapsed",
         )  # fmt: skip
         if not isinstance(period, tuple) or len(period) != 2:

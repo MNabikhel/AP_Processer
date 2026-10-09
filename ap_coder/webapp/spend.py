@@ -63,8 +63,8 @@ def page_spend() -> None:
         c1, c2, c3, c4 = st.columns([1, 1, 1, 1.6], vertical_alignment="bottom")
         with c4:
             _data_download(store, reference)
-        start = c1.date_input("From (invoice date)", default_start, key="spend_start")
-        end = c2.date_input("To", default_end, key="spend_end")
+        start = c1.date_input("From (invoice date)", default_start, format="YYYY-MM-DD", key="spend_start")
+        end = c2.date_input("To", default_end, format="YYYY-MM-DD", key="spend_end")
         rows = spend.lines(store, start, end) if start <= end else []
         currencies = spend.currencies(rows) or ["CAD"]
         rates = store.fx_rates()
@@ -110,7 +110,7 @@ def page_spend() -> None:
                     money(total / len(months)),
                     "calendar_month",
                     "amber",
-                    f"over {len(months)} month(s) with invoices",
+                    f"over {ui.plural(len(months), 'month')} with invoices",
                 ),
             ]  # fmt: skip
         )

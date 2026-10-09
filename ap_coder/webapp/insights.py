@@ -32,6 +32,14 @@ def _pct(v: float | None) -> str:
     return "—" if v is None else f"{v:.0%}"
 
 
+def _check_title(code: str) -> str:
+    """A check's plain-English name ("No cost center"), as the Help page lists it; the code as a fallback."""
+    from ap_coder.help import CHECKS
+
+    found = CHECKS.get(code)
+    return found.title if found else code.replace("_", " ").capitalize()
+
+
 def _age_color(label: str) -> str:
     return WARN_AMBER if label.startswith(("8", "15")) else OK_GREEN
 
@@ -51,7 +59,7 @@ def _operations_card(store) -> None:
                         ops["waiting"],
                         "hourglass_top",
                         "blue",
-                        f"oldest {ops['oldest_days']} day(s)" if ops["waiting"] else "queue is clear",
+                        f"oldest {ui.plural(ops['oldest_days'], 'day')}" if ops["waiting"] else "queue is clear",
                     ),
                     ui.tile(
                         "Days to approve",
@@ -142,7 +150,7 @@ def page_insights() -> None:
                     "—" if cost is None else f"${cost:,.3f}",
                     "payments",
                     "amber",
-                    f"measured on {s['cost_measured_invoices']} invoice(s)"
+                    f"measured on {ui.plural(s['cost_measured_invoices'], 'invoice')}"
                     if cost is not None
                     else "no token usage recorded yet",
                 ),  # fmt: skip
@@ -185,7 +193,7 @@ def page_insights() -> None:
             st.html(
                 "".join(
                     f"<div style='margin:.35rem 0'><div style='display:flex;justify-content:space-between;"
-                    f"font-size:.85rem'><span><code>{esc(code)}</code></span><b>{n}</b></div>"
+                    f"font-size:.85rem'><span title='{esc(code)}'>{esc(_check_title(code))}</span><b>{n}</b></div>"
                     f"<div style='height:6px;background:#eef1f6;border-radius:4px'><div style='height:6px;"
                     f"width:{n / biggest:.0%};background:{WARN_AMBER};border-radius:4px'></div></div></div>"
                     for code, n in s["top_issues"]
@@ -194,11 +202,12 @@ def page_insights() -> None:
             st.caption(f"Sent for a closer look: {_pct(s['needs_attention_rate'])} of processed invoices.")
             if s["duplicates_stopped"]:
                 totals = " · ".join(f"{t:,.2f} {c}" for c, t in s["duplicates_stopped_total"].items())
-                st.html(ui.pill(f"{s['duplicates_stopped']} duplicate invoice(s) stopped · {totals}", "ok", "shield"))
+                stopped = ui.plural(s["duplicates_stopped"], "duplicate invoice")
+                st.html(ui.pill(f"{stopped} stopped · {totals}", "ok", "shield"))
         else:
             st.caption("No errors or warnings so far.")
 
-    if s["weekly"]:
+    if s["weekly"] and s["approved"]:  # no approvals yet: no empty axis
         with card("weekly"):
             st.markdown("#### :material/bar_chart: Approvals by week")
             data = pd.DataFrame(s["weekly"]).melt(

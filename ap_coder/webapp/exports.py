@@ -34,6 +34,13 @@ def _gl_names(store: Store) -> dict[str, str]:
 
 
 LAYOUT_SETTING = "export_layout"
+# The export choices as short labels (the full description of each is the radio's help)
+SHORT_FORMATS = {
+    "xlsx": "Excel workbook",
+    "csv": "CSV, one row per GL line",
+    "custom": "Custom CSV layout",
+    jde.FORMAT: "JD Edwards E1 (Z-tables)",
+}
 
 
 def _layout(store: Store) -> export_layout.Layout:
@@ -70,8 +77,9 @@ def _show_jde_problems(store: Store, problems: dict[int, list[str]], blocking: l
     if not problems:
         return
     st.warning(
-        f"{len(problems)} invoice(s) cannot go to JD Edwards yet and are left out of the batch: fix them (the "
-        "mapping in Settings → JD Edwards E1, the vendor master's ERP ID, or the invoice) and export them later.",
+        f"{ui.plural(len(problems), 'invoice')} cannot go to JD Edwards yet and are left out of the batch: fix "
+        "them (the mapping in Settings → JD Edwards E1, the vendor master's ERP ID, or the invoice) and export them "
+        "later.",
         icon=":material/rule:",
     )
     rows = []
@@ -123,8 +131,10 @@ def _register_importer(store: Store) -> None:
             elif st.button("Import", type="primary", icon=":material/upload:", key="reg_import"):
                 rows, skipped = registers.rows_from_records(df.to_dict("records"), chosen)
                 total = store.import_erp_register(rows, replace_all=replace, actor=reviewer())
-                notify(f"{total:,} ERP invoice(s) known" + (f"; {skipped} row(s) skipped." if skipped else "."),
-                       ":material/receipt_long:")  # fmt: skip
+                notify(
+                    f"{total:,} ERP invoices known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else "."),
+                    ":material/receipt_long:",
+                )
                 st.rerun()
         if count and st.button("Clear the list", icon=":material/delete_sweep:", key="reg_clear"):
             store.clear_erp_register(actor=reviewer())
@@ -221,7 +231,7 @@ def page_exports() -> None:
                     len(live),
                     "inventory_2",
                     "violet",
-                    f"{sum(b['invoices'] for b in live)} invoices exported",
+                    f"{ui.plural(sum(b['invoices'] for b in live), 'invoice')} exported",
                 ),  # fmt: skip
                 ui.tile(
                     "Last export",
@@ -237,7 +247,11 @@ def page_exports() -> None:
     with card("export_ready"):
         st.markdown("#### :material/outbox: Ready to export")
         if not ready:
-            st.html(ui.empty_state("Nothing waiting", "Approved invoices appear here until they are exported."))
+            st.html(
+                ui.empty_state(
+                    "Nothing waiting", "Approved invoices appear here until they are exported.", ui.EMPTY_INBOX_SVG
+                )
+            )
         else:
             df = pd.DataFrame(ready)
             df.insert(0, "include", True)
@@ -256,34 +270,47 @@ def page_exports() -> None:
                 ],  # fmt: skip
                 column_config={
                     "include": st.column_config.CheckboxColumn("Export", width="small"),
-                    "id": st.column_config.NumberColumn("#", width="small"),
                     "vendor_name": st.column_config.TextColumn("Vendor", width="medium"),
                     "invoice_number": "Invoice #",
                     "invoice_date": "Date",
                     "currency": "Cur.",
-                    "grand_total": st.column_config.NumberColumn("Total", format="%.2f"),
+                    "grand_total": st.column_config.NumberColumn("Total", format="accounting"),
                     "reviewer": "Approved by",
                 },
+                # the id stays in the data (it picks the invoices) but is not shown: clerks know invoices by number
+                column_order=[
+                    "include",
+                    "vendor_name",
+                    "invoice_number",
+                    "invoice_date",
+                    "currency",
+                    "grand_total",
+                    "reviewer",
+                ],  # fmt: skip
                 disabled=["id", "vendor_name", "invoice_number", "invoice_date", "currency", "grand_total", "reviewer"],
                 hide_index=True,
                 key="export_selection",
             )
             chosen = [int(i) for i in edited.loc[edited["include"], "id"].tolist()]
             c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-            fmt = c1.radio("ERP format", list(exports.FORMATS), format_func=exports.FORMATS.get, horizontal=True,
-                           key="export_format")  # fmt: skip
+            fmt = c1.radio(
+                "ERP format", list(exports.FORMATS), format_func=lambda f: SHORT_FORMATS.get(f, f), horizontal=True,
+                key="export_format",
+                help="  \n".join(f"**{SHORT_FORMATS[f]}**: {d}" for f, d in exports.FORMATS.items()),
+            )  # fmt: skip
             problems: dict[int, list[str]] = {}
             blocking: list[str] = []
             if fmt == jde.FORMAT:
                 chosen, problems, blocking = jde_check(store, chosen)
             if c2.button(
-                f"Export {len(chosen)} invoice(s)", type="primary", icon=":material/ios_share:", disabled=not chosen,
-                width="stretch", key="export_create",
+                f"Export {ui.plural(len(chosen), 'invoice')}", type="primary", icon=":material/ios_share:",
+                disabled=not chosen, width="stretch", key="export_create",
             ):  # fmt: skip
                 batch = store.create_export_batch(chosen, fmt, actor=reviewer())
                 st.session_state["just_exported"] = (batch, fmt)
                 notify(
-                    f"Batch {batch} created with {len(chosen)} invoice(s). Download it below.", ":material/ios_share:"
+                    f"Batch {batch} created with {ui.plural(len(chosen), 'invoice')}. Download it below.",
+                    ":material/ios_share:",
                 )
                 st.rerun()
             if fmt == jde.FORMAT:
@@ -338,7 +365,9 @@ def page_exports() -> None:
         st.html(ui.table(["Batch", "When", "By", "Invoices", "Total", "Format", ""], rows, right=[3, 4]))
         if not live:
             return
-        labels = {b["id"]: f"Batch {b['id']} · {b['created_at'][:10]} · {b['invoices']} invoice(s)" for b in live}
+        labels = {
+            b["id"]: f"Batch {b['id']} · {b['created_at'][:10]} · {ui.plural(b['invoices'], 'invoice')}" for b in live
+        }
         c1, c2, c3 = st.columns([2, 1.2, 1.2], vertical_alignment="bottom")
         chosen_batch = c1.selectbox("Batch", list(labels), format_func=labels.get, key="export_batch_choice")
         fmt = c2.selectbox(
@@ -376,5 +405,8 @@ def page_exports() -> None:
             if st.button("Undo batch", key="export_undo", type="primary"):
                 count = store.undo_export_batch(chosen_batch, actor=reviewer())
                 st.session_state.pop("just_exported", None)
-                notify(f"Batch {chosen_batch} undone: {count} invoice(s) are ready to export again.", ":material/undo:")
+                notify(
+                    f"Batch {chosen_batch} undone: {ui.plural(count, 'invoice')} ready to export again.",
+                    ":material/undo:",
+                )
                 st.rerun()

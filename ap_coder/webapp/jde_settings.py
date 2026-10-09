@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from ap_coder import jde
+from ap_coder import jde, ui
 from ap_coder.memory import vendor_key
 from ap_coder.store import Store
 from ap_coder.tax import OUTSIDE_CANADA, PROVINCES, province_label
@@ -165,7 +165,10 @@ def _gl_map(store: Store, js: jde.JdeSettings) -> None:
             new = jde.JdeSettings.from_json(js.to_json())
             new.gl_map = [r for r in rows if r.gl_code]
             changed = jde.save(store, new, actor=reviewer())
-            notify(f"{len(new.gl_map)} mapping row(s) saved." if changed else "Nothing changed.", ":material/save:")
+            notify(
+                f"{ui.plural(len(new.gl_map), 'mapping row')} saved." if changed else "Nothing changed.",
+                ":material/save:",
+            )
             st.rerun()
         upload = st.file_uploader(
             "Import a mapping (CSV or Excel: GL code, Cost center, BU, Object, Subsidiary)", type=["csv", "xlsx"],
@@ -174,7 +177,7 @@ def _gl_map(store: Store, js: jde.JdeSettings) -> None:
         df_up = _read_upload(upload, "jde_gl") if upload is not None else None
         if df_up is not None and not df_up.empty:
             rows = jde.gl_map_from_records(df_up.to_dict("records"))
-            st.caption(f"{len(rows)} row(s) with a GL code found.")
+            st.caption(f"{ui.plural(len(rows), 'row')} with a GL code found.")
             replace = st.checkbox("Replace the current mapping", key="jde_gl_replace")
             if rows and st.button("Import", icon=":material/upload:", key="jde_gl_import"):
                 new = jde.JdeSettings.from_json(js.to_json())
@@ -183,7 +186,7 @@ def _gl_map(store: Store, js: jde.JdeSettings) -> None:
                 new.gl_map = [m for m in kept if (m.gl_code.upper(), m.cost_center.upper()) not in keys] + rows
                 jde.save(store, new, actor=reviewer())
                 st.session_state.pop("jde_gl_editor", None)
-                notify(f"{len(rows)} mapping row(s) imported.", ":material/upload:")
+                notify(f"{ui.plural(len(rows), 'mapping row')} imported.", ":material/upload:")
                 st.rerun()
 
 

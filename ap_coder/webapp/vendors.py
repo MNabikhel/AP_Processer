@@ -85,7 +85,13 @@ def page_vendors() -> None:
                     "amber" if on_hold else "violet",
                     "invoices from them can't be approved without an override",
                 ),  # fmt: skip
-                ui.tile("Top spend", money(top["spend_cad"]), "payments", "violet", top["vendor_name"] or ""),
+                ui.tile(
+                    "Top spend",
+                    money(top["spend_cad"]) if top["spend_cad"] else "—",
+                    "payments",
+                    "violet",
+                    (top["vendor_name"] or "") if top["spend_cad"] else "no approved spend yet",
+                ),
             ]
         )
     )
@@ -185,8 +191,8 @@ def _master_importer(store: Store) -> None:
         dupes = st.session_state.get("vm_duplicates")
         if dupes:
             st.warning(
-                f"{len(dupes)} vendor(s) appear more than once in the file under similar names (merged here; one "
-                "on hold keeps the vendor on hold). Often the same supplier set up twice in the ERP: "
+                f"{ui.plural(len(dupes), 'vendor')} appear more than once in the file under similar names (merged "
+                "here; one on hold keeps the vendor on hold). Often the same supplier set up twice in the ERP: "
                 + "; ".join(" / ".join(n) for n in dupes[:8])
             )
 
@@ -237,7 +243,7 @@ def _recurring_card(store: Store) -> None:
         late = [r for r in found if r.status == recurring.LATE]
         if late:
             st.caption(
-                f"{len(late)} expected invoice(s) not received, usually about "
+                f"{ui.plural(len(late), 'expected invoice')} not received, usually about "
                 f"{money(sum(r.typical_total for r in late))} in total: chase the vendor, and consider accruing "
                 "them at month-end."
             )

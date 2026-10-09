@@ -86,10 +86,10 @@ if PUBLIC_DEMO:  # the public demo on the web (streamlit_app.py): made-up invoic
 _waiting = len(_store.list_invoices(REVIEW))
 with st.sidebar:
     if PUBLIC_DEMO:
-        _env, _tone, _where = "Public demo", "violet", "made-up invoices · no Azure"
-    else:
-        _env, _tone, _where = "Offline · Local", "ok", short_path(DB_PATH)
-    st.html(ui.sidebar_profile(reviewer(), approved_today(_store), _waiting, _env, _tone, _where))
+        _env, _tone, _where, _tip = "Public demo", "violet", "made-up invoices · no Azure", ""
+    else:  # the folder itself is a tooltip: a clerk needs to know data stays here, not the path
+        _env, _tone, _where, _tip = "Offline · Local", "ok", "Data stays on this computer", short_path(DB_PATH.parent)
+    st.html(ui.sidebar_profile(reviewer(), approved_today(_store), _waiting, _env, _tone, _where, _tip))
     if _store.demo_count():
         st.html(ui.pill("Demo invoices loaded", "violet", "science"))
 # Count badges on the navigation (see style.css): invoices waiting for review, approved ones not exported yet.

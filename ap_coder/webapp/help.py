@@ -58,7 +58,7 @@ def page_help() -> None:
             st.markdown(re.sub(r"\[([^\]]+)\]\([^)]*\.md[^)]*\)", r"\1", text))  # links to other docs: plain text
 
     with card("help_start"):
-        st.markdown("#### :material/rocket_launch: Getting started")
+        st.markdown("#### :material/flag: Getting started")
         for i, ((title, text), page) in enumerate(zip(QUICK_START, STEP_PAGES, strict=True), start=1):
             c1, c2 = st.columns([4, 1.3], vertical_alignment="center")
             c1.html(

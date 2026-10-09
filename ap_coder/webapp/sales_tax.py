@@ -41,8 +41,8 @@ def page_sales_tax() -> None:
     with card("tax_period"):
         default_start, default_end = taxreturn.default_period()
         c1, c2, c3 = st.columns([1, 1, 2.4], vertical_alignment="bottom")
-        start = c1.date_input("From (invoice date)", default_start, key="tax_start")
-        end = c2.date_input("To", default_end, key="tax_end")
+        start = c1.date_input("From (invoice date)", default_start, format="YYYY-MM-DD", key="tax_start")
+        end = c2.date_input("To", default_end, format="YYYY-MM-DD", key="tax_end")
         c3.caption(
             "Claimed by invoice date. Only taxes set up as *recoverable* (GL accounts & tax page) count; credit "
             "notes reduce the claim."
@@ -66,7 +66,7 @@ def page_sales_tax() -> None:
                     itc,
                     "account_balance",
                     "blue",
-                    "ITCs · " + (itc_hint or f"{invoices} invoice(s)"),
+                    "ITCs · " + (itc_hint or ui.plural(invoices, "invoice")),
                 ),
                 ui.tile(
                     "QST to claim", itr, "account_balance", "violet", "ITRs" + (f" · {itr_hint}" if itr_hint else "")
@@ -76,7 +76,9 @@ def page_sales_tax() -> None:
                     risky,
                     "rule",
                     "amber" if risky else "green",
-                    "invoice(s) with something to check" if risky else "nothing to check",
+                    ("invoice" if risky == 1 else "invoices") + " with something to check"
+                    if risky
+                    else "nothing to check",
                 ),
                 ui.tile(
                     "Not approved yet",
@@ -136,8 +138,10 @@ def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
                         f"{money(total)} {cur}",
                         "assignment_return",
                         "amber",
-                        f"{sum(1 for s in items if (s.province, s.tax_type, s.currency) == (prov, tax, cur))} "
-                        "invoice(s), estimate",
+                        ui.plural(
+                            sum(1 for s in items if (s.province, s.tax_type, s.currency) == (prov, tax, cur)), "invoice"
+                        )
+                        + ", estimate",  # fmt: skip
                     )
                     for (prov, tax, cur), total in sorted(totals.items())
                 ]  # fmt: skip

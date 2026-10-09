@@ -178,7 +178,7 @@ def page_accounts() -> None:
                     "blue",
                     f"{len({a['category'] for a in gl if a['category']})} categories",
                 ),  # fmt: skip
-                ui.tile("Cost centers", len(cc) or "—", "apartment", "violet", "" if cc else "optional"),
+                ui.tile("Cost centers", len(cc) or "—", "apartment", "violet", "in use" if cc else "optional"),
                 ui.tile(
                     "Sales taxes mapped",
                     f"{mapped}/{len(TAX_TYPES)}",
@@ -191,7 +191,7 @@ def page_accounts() -> None:
                     len(policy),
                     "rule",
                     "amber",
-                    f"plain-English lines · {len(store.coding_rules())} fixed rule(s)",
+                    f"plain-English lines · {ui.plural(len(store.coding_rules()), 'fixed rule')}",
                 ),  # fmt: skip
             ]
         )
@@ -306,8 +306,12 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
         if st.button("Save rules", type="primary", icon=":material/save:", key="rules_save"):
             saved = store.save_coding_rules(new, actor=reviewer())
             replace_editor("rules_grid", _rules_frame(store.coding_rules()))
-            left_out = f"; {len(incomplete)} incomplete row(s) left out (no GL account, or no vendor or words)"
-            notify(f"{saved} coding rule(s) saved{left_out if incomplete else ''}.", ":material/rule_settings:")
+            left_out = (
+                f"; {ui.plural(len(incomplete), 'incomplete row')} left out (no GL account, or no vendor or words)"
+            )
+            notify(
+                f"{ui.plural(saved, 'coding rule')} saved{left_out if incomplete else ''}.", ":material/rule_settings:"
+            )
             st.rerun()
 
     suggestions = [(r, n) for r, n in suggest_rules(store.feedback_rows(), current) if r.gl_code in gl_codes]
@@ -318,7 +322,9 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
             for n, (rule, lines) in enumerate(suggestions[:8]):
                 text, button = st.columns([4, 1], vertical_alignment="center")
                 target = names.get(rule.gl_code, rule.gl_code) + (f" · {rule.cost_center}" if rule.cost_center else "")
-                text.markdown(f"**{md(rule.vendor)}** → {md(target)}  \n:gray[{lines} line(s), all coded the same]")
+                text.markdown(
+                    f"**{md(rule.vendor)}** → {md(target)}  \n:gray[{ui.plural(lines, 'line')}, all coded the same]"
+                )
                 if button.button("Add rule", key=f"rule_add_{n}", icon=":material/add:", width="stretch"):
                     store.save_coding_rules([*current, rule], actor=reviewer())
                     replace_editor("rules_grid", _rules_frame(store.coding_rules()))

@@ -160,16 +160,17 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-status.info {--dot: var(--apc-brand);} .apc-status.violet {--dot: #8b7cf0;}
 
 /* ---- Hero banner ------------------------------------------------------------------------------------ */
-.apc-hero {position: relative; overflow: hidden; border-radius: 18px; padding: 1.6rem 1.8rem; color: #fff;
+.apc-hero {position: relative; overflow: hidden; border-radius: var(--apc-r-lg); padding: 1.15rem 1.6rem; color: #fff;
   background: radial-gradient(1200px 300px at 110% -40%, rgba(106, 169, 242, .55), transparent 60%),
               linear-gradient(120deg, #0d1a2d 0%, #15335c 55%, #1f5fae 100%);
   box-shadow: var(--apc-shadow-lg); display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;}
 .apc-hero::after {content: ""; position: absolute; right: -60px; bottom: -80px; width: 260px; height: 260px;
   border-radius: 50%; background: rgba(255, 255, 255, .05);}
-.apc-hero h1 {color: #fff; font-size: 1.75rem; font-weight: 750; margin: .15rem 0 .35rem; letter-spacing: -.02em; padding: 0;}
-.apc-hero .lead {color: #c9d8ee; font-size: 1rem; margin: 0;}
+.apc-hero h1 {color: #fff; font-size: 1.5rem; font-weight: 700; margin: .1rem 0 .25rem; letter-spacing: -.02em; padding: 0;}
+.apc-hero .lead {color: #c9d8ee; font-size: .95rem; margin: 0;}
 .apc-hero .eyebrow {color: #9cc6f7; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 700;}
 .apc-hero .chips {display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1rem;}
+.apc-hero .chips:empty {display: none;}
 .apc-hero .chip {background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .16); color: #eaf2fc;
   padding: .3rem .7rem; border-radius: 999px; font-size: .82rem; font-weight: 550;}
 .apc-hero .ring-wrap {position: relative; z-index: 1; text-align: center; flex: none;}
@@ -178,7 +179,7 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 /* ---- KPI tiles -------------------------------------------------------------------------------------- */
 .apc-tiles {display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin: .75rem 0 .4rem;}
 @media (max-width: 900px) {.apc-tiles {grid-template-columns: repeat(2, minmax(0, 1fr));}}
-.apc-tile {background: var(--apc-card); border: 1px solid var(--apc-line); border-radius: var(--apc-r); padding: .9rem 1rem;
+.apc-tile {background: var(--apc-card); border: 1px solid var(--apc-line); border-radius: var(--apc-r); padding: .75rem 1rem;
   box-shadow: var(--apc-shadow); display: flex; flex-direction: column; gap: .3rem; transition: border-color .15s ease;}
 .apc-tile:hover {border-color: #cfd7e3;}
 .apc-tile .top {display: flex; align-items: center; justify-content: space-between; gap: .5rem;}
@@ -186,7 +187,7 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-tile .icon {flex: none; width: 1.75rem; height: 1.75rem; border-radius: 8px; display: grid; place-items: center; font-size: .95rem;}
 .apc-tile .value {font-size: 1.6rem; font-weight: 700; color: var(--apc-ink); letter-spacing: -.02em; font-variant-numeric: tabular-nums;
   line-height: 1.2;}
-.apc-tile .foot {display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 1.4rem;}
+.apc-tile .foot {display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 1.2rem;}
 .apc-tile .hint {font-size: .78rem; color: var(--apc-muted);}
 .apc-tile .hint.up {color: var(--apc-ok); font-weight: 600;} .apc-tile .hint.down {color: var(--apc-err); font-weight: 600;}
 .tone-blue .icon {background: var(--apc-brand-50); color: var(--apc-brand-600);}
@@ -312,6 +313,7 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-table tr:hover td {background: #fafbfd;}
 .apc-table .r {text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;}
 .apc-table .gl {font-weight: 650;} .apc-table .gl small {display: block; font-weight: 450; color: var(--apc-muted); font-size: .78rem;}
+.apc-table .gl.todo {color: var(--apc-warn);}
 .apc-table tfoot td {font-weight: 750; border-bottom: none; border-top: 2px solid var(--apc-line); background: #fbfcfe;}
 .apc-table .ok {color: var(--apc-ok); font-weight: 700;} .apc-table .bad {color: var(--apc-err); font-weight: 700;}
 

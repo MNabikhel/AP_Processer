@@ -26,7 +26,7 @@ from ap_coder.safe import md
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
 from ap_coder.suggest import suggest_gl
-from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, province_label
+from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
 from ap_coder.terms import describe as terms_describe
 from ap_coder.webapp.capture_panel import VIEWABLE, capture_panel, document_head, taught_boxes
@@ -38,6 +38,7 @@ from ap_coder.webapp.common import (
     approved_today,
     by_currency,
     card,
+    cc_display,
     cc_label_map,
     demo_card,
     esc,
@@ -45,6 +46,7 @@ from ap_coder.webapp.common import (
     forget_drafts,
     get_settings,
     get_store,
+    gl_display,
     gl_label_map,
     gl_name,
     history_html,
@@ -96,13 +98,9 @@ def page_review() -> None:
         f"{len(pending)} invoice{'s' if len(pending) != 1 else ''} waiting · about {minutes} minute"
         f"{'s' if minutes != 1 else ''} of review"
         if pending
-        else "Your queue is clear. Nice work!"
+        else "Your queue is clear."
     )
-    chips = [
-        f"{ui.icon('flag')} {len(flagged)} need attention",
-        f"{ui.icon('bolt')} {len(pending) - len(flagged)} ready to approve",
-        f"{ui.icon('task_alt')} {done_today} approved today",
-    ]
+    chips: list[str] = []  # the counts are on the tiles and the filter just below: not repeated here
     st.html(
         ui.hero(
             f"{dt.date.today():%A, %B} {dt.date.today().day}",
@@ -128,7 +126,9 @@ def page_review() -> None:
                     "—" if accuracy is None else f"{accuracy:.0%}",
                     "auto_awesome",
                     "violet",
-                    "" if accuracy is None else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target",
+                    "after the first approvals"
+                    if accuracy is None
+                    else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target",
                     "" if accuracy is None else ("up" if accuracy >= TARGET_ACCURACY else "down"),
                     weekly if len(weekly) > 1 else None,
                 ),
@@ -143,8 +143,7 @@ def page_review() -> None:
         )
     )
 
-    if st.session_state.pop("celebrate", False):
-        st.balloons()
+    st.session_state.pop("celebrate", False)  # the approval toast says it; no confetti in an ERP
 
     awaiting = [i for i in invoices if i["status"] == PENDING]
     parked = [i for i in invoices if i["status"] == PARKED]
@@ -170,7 +169,7 @@ def page_review() -> None:
     with tab_review:
         if not pending:
             with card("empty"):
-                st.html(ui.empty_state("Inbox zero", "Every invoice has been reviewed. Time for a coffee."))
+                st.html(ui.empty_state("All caught up", "Every invoice has been reviewed.", ui.EMPTY_INBOX_SVG))
                 st.page_link(PAGES["process"], label="Process new invoices", icon=":material/arrow_forward:")
         else:
             bar_filter, bar_search, bar_sort = st.columns([3.2, 2.4, 1.8], vertical_alignment="center")
@@ -258,7 +257,7 @@ def page_review() -> None:
                 if len(approved) > len(recent):
                     st.caption(f"The {len(recent)} most recent of {len(approved)}. Pick any invoice below.")
             labels = {
-                i["id"]: f"#{i['id']} · {i['vendor_name']} · {i['invoice_number']}"
+                i["id"]: f"{i['vendor_name']} · {i['invoice_number']} · {money(i['grand_total'])} {i['currency']}"
                 for i in sorted(approved, key=lambda i: i["reviewed_at"] or "", reverse=True)
             }
             chosen = st.selectbox("View approved invoice", list(labels), format_func=labels.get, key="view_approved")
@@ -348,7 +347,11 @@ def _second_approval_tab(store: Store, reference: ReferenceData, awaiting: list[
     )
     if not awaiting:
         with card("second_empty"):
-            st.html(ui.empty_state("Nothing waiting", "Invoices over the approval limit appear here once approved."))
+            st.html(
+                ui.empty_state(
+                    "Nothing waiting", "Invoices over the approval limit appear here once approved.", ui.EMPTY_INBOX_SVG
+                )
+            )
         return
     me, my_login = reviewer(), login()
     for inv in awaiting:
@@ -470,7 +473,8 @@ def _today_strip(store: Store, invoices: list[dict[str, Any]]) -> None:
         ui.pill(f"{second} waiting for your second approval", "violet", "how_to_reg") if second else "",
         ui.pill(f"{to_export} approved, ready to export", "info", "ios_share") if to_export else "",
         ui.pill(
-            f"{len(late)} regular invoice(s) late (Vendors page): {', '.join(r.vendor_name for r in late[:2])}"
+            f"{ui.plural(len(late), 'regular invoice')} late (Vendors page): "
+            + ", ".join(r.vendor_name for r in late[:2])
             + ("…" if len(late) > 2 else ""),
             "gray",
             "event_busy",
@@ -552,7 +556,7 @@ def _getting_started(store: Store) -> None:
                 st.rerun()
     with card("onboarding"):
         head, gauge = st.columns([5, 1], vertical_alignment="center")
-        head.markdown("#### :material/rocket_launch: Getting started")
+        head.markdown("#### :material/flag: Getting started")
         head.caption("Finish these steps and invoices will start arriving in your review queue.")
         ring = ui.ring(done / len(steps), size=60, stroke=6, label=f"{done}/{len(steps)}")
         gauge.html(f"<div style='text-align:right'>{ring}</div>")
@@ -702,7 +706,7 @@ def _checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> str:
         title = f"{len(_grouped(errors))} must be fixed" + (f" · {look} to look at" if look else "")
         return _status_block("err", "error", title, items)
     if look:
-        return _status_block("warn", "visibility", f"{look} {'needs' if look == 1 else 'need'} a look", items)
+        return _status_block("warn", "visibility", f"{look} {'needs' if look == 1 else 'need'} attention", items)
     return _status_block(
         "ok", "check_circle", "All checks passed", [], "Totals reconcile, taxes verified, all codes valid."
     )
@@ -801,7 +805,7 @@ def _apply_rules_button(
             if c["line_number"] in ai_lines
         ])  # fmt: skip
         changes = done
-        notify(f"Coding rules applied to {len(changes)} line(s).", ":material/rule_settings:")
+        notify(f"Coding rules applied to {ui.plural(len(changes), 'line')}.", ":material/rule_settings:")
         st.rerun()
 
 
@@ -923,7 +927,8 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 )  # fmt: skip
 
             prov_label = {
-                p: f"{p} · {PROVINCE_NAMES.get(p, 'Outside Canada' if p else 'Unknown')}" for p in PROVINCE_VALUES
+                p: f"{p} · {PROVINCE_NAMES[p]}" if p in PROVINCE_NAMES else province_label(p, "Unknown")
+                for p in PROVINCE_VALUES
             }
             st.html(_group_head("Supplier"))
             header: dict[str, Any] = {"vendor_name": text(st, "Vendor", "vendor_name")}
@@ -1004,9 +1009,9 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             # pixel widths: the coding columns stay on screen on a 1366px laptop
             "line_number": st.column_config.NumberColumn("#", width=48, step=1),
             "description": st.column_config.TextColumn("Description", width=250 if has_cc else 380),
-            "quantity": st.column_config.NumberColumn("Qty", format="%.2f"),
-            "unit_price": st.column_config.NumberColumn("Unit price", format="%.2f"),
-            "amount": st.column_config.NumberColumn("Amount", format="%.2f", width=95),
+            "quantity": st.column_config.NumberColumn("Qty", format="localized"),
+            "unit_price": st.column_config.NumberColumn("Unit price", format="accounting"),
+            "amount": st.column_config.NumberColumn("Amount", format="accounting", width=95),
             "predicted_gl_code": st.column_config.SelectboxColumn(
                 "GL account",
                 options=gl_options,
@@ -1048,11 +1053,13 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             column_config={
                 "tax_type": st.column_config.SelectboxColumn("Tax", options=list(TAX_TYPES), required=True),
                 "province": st.column_config.SelectboxColumn(
-                    "Province", options=[p or NO_PROVINCE for p in PROVINCE_VALUES]
+                    "Province",
+                    options=[p or NO_PROVINCE for p in PROVINCE_VALUES],
+                    format_func=lambda p: province_label(p) if p == OUTSIDE_CANADA else p,
                 ),
                 "rate_pct": st.column_config.NumberColumn("Rate", format="%.3f%%", help="Percent: 13% HST = 13"),
-                "taxable_amount": st.column_config.NumberColumn("Taxable", format="%.2f"),
-                "tax_amount": st.column_config.NumberColumn("Amount", format="%.2f"),
+                "taxable_amount": st.column_config.NumberColumn("Taxable", format="accounting"),
+                "tax_amount": st.column_config.NumberColumn("Amount", format="accounting"),
             },
             num_rows="dynamic",
             hide_index=True,
@@ -1135,7 +1142,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             st.html(
                 f"<div class='rvw-post'><div class='rvw-post-amount'>Post <b>{money(coding.grand_total)}</b> "
                 f"{esc(coding.currency)}</div><div class='rvw-post-sub' title='Approving teaches AP Coder from "
-                f"{lines_n} line(s): {esc(learn)}.'>{ui.icon('school', '1em')} Teaches from {lines_n} "
+                f"{ui.plural(lines_n, 'line')}: {esc(learn)}.'>{ui.icon('school', '1em')} Teaches from {lines_n} "
                 f"line{'s' if lines_n != 1 else ''} · {learn}</div></div>"
             )
             allow = True
@@ -1144,7 +1151,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 allow = False  # never post to UNASSIGNED
                 st.html(ui.pill(f"Pick a GL account for line {', '.join(uncoded)} to approve", "warn", "edit_note"))
             elif errors:
-                allow = st.checkbox(f"Approve anyway, despite {len(errors)} error(s)", key=f"{key}_override")
+                allow = st.checkbox(f"Approve anyway, despite {ui.plural(len(errors), 'error')}", key=f"{key}_override")
         with right:
             buttons = st.container(
                 horizontal=True, horizontal_alignment="right", vertical_alignment="center", wrap=False
@@ -1167,7 +1174,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 if not store.list_invoices(REVIEW):  # the whole queue is done, not just the current view
                     st.session_state["celebrate"] = True
                 notify(
-                    f"Approved {md(coding.vendor_name.rstrip('.'))}. Learned from {total} line(s): "
+                    f"Approved {md(coding.vendor_name.rstrip('.'))}. Learned from {ui.plural(total, 'line')}: "
                     f"{counts[ACCEPTED]} confirmed, {total - counts[ACCEPTED]} corrected.",
                     ":material/school:",
                 )
@@ -1195,7 +1202,7 @@ def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines:
         badge.html(
             "<div style='text-align:right'>"
             + (
-                ui.pill(f"{problems} line(s) to check", "warn")
+                ui.pill(f"{ui.plural(problems, 'line')} to check", "warn")
                 if problems
                 else ui.pill("Matches the PO", "ok", "check")
             )
@@ -1240,7 +1247,8 @@ def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines:
         st.caption(md(" · ".join(notes)) + ". Billed quantities include earlier invoices on this PO.")
         differs = match.coding_differs
         if differs and st.button(
-            f"Use the PO's coding on {len(differs)} line(s)", icon=":material/auto_fix_high:", key=f"{key}_po_coding",
+            f"Use the PO's coding on {ui.plural(len(differs), 'line')}", icon=":material/auto_fix_high:",
+            key=f"{key}_po_coding",
             help="Sets the GL account and cost center of these lines to the ones on the PO",
         ):  # fmt: skip
             updated = edited_lines.copy()
@@ -1251,7 +1259,7 @@ def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines:
                 if m.po_cc:
                     updated.loc[rows_at, "predicted_cost_center"] = m.po_cc
             replace_editor(f"{key}_lines", updated)
-            notify(f"Applied the PO's coding to {len(differs)} line(s).", ":material/auto_fix_high:")
+            notify(f"Applied the PO's coding to {ui.plural(len(differs), 'line')}.", ":material/auto_fix_high:")
             st.rerun()
 
 
@@ -1360,7 +1368,9 @@ def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], posit
                         help="Set it aside while waiting for information"):  # fmt: skip
         st.caption("Set it aside while waiting for information.")
         why = st.text_input("Waiting for", key=f"{key}_park_reason", placeholder="e.g. buyer to confirm the price")
-        follow = st.date_input("Follow up on", value=None, key=f"{key}_park_date", min_value=dt.date.today())
+        follow = st.date_input(
+            "Follow up on", value=None, format="YYYY-MM-DD", key=f"{key}_park_date", min_value=dt.date.today()
+        )
         if st.button("Park", key=f"{key}_park", icon=":material/pause_circle:", width="stretch",
                      disabled=not why.strip()):  # fmt: skip
             store.park_invoice(invoice_id, reviewer(), why, follow.isoformat() if follow else None)
@@ -1446,7 +1456,7 @@ def _invoice_summary(
     if errors:
         status = ui.pill(f"{len(errors)} to fix", "err", "error")
     elif look:
-        status = ui.pill("Needs a look", "warn", "visibility")
+        status = ui.pill("Needs attention", "warn", "flag")
     else:
         status = ui.pill("Ready to approve", "ok", "check_circle")
     confidence = report.adjusted_confidence
@@ -1522,12 +1532,14 @@ def _distribution_table(output: dict[str, Any], reference: ReferenceData, curren
     for e in output.get("gl_distribution") or []:
         kind = ui.pill("Tax", "info") if e["kind"] == "tax" else ui.pill(f"Line {e['line_number']}", "gray")
         name = gl_name(reference, e["gl_code"])
-        gl = f"<div class='gl'>{esc(e['gl_code'] or '⚠ not mapped')}<small>{esc(name)}</small></div>"
+        code = gl_display(e["gl_code"]) if e["gl_code"] else "⚠ not mapped"
+        todo = " todo" if e["gl_code"] in (UNASSIGNED, "") else ""  # still to pick: in the warning colour
+        gl = f"<div class='gl{todo}'>{esc(code)}<small>{esc(name)}</small></div>"
         rows.append(
             [
                 kind,
                 gl,
-                esc(e["cost_center"]),
+                esc(cc_display(e["cost_center"])),
                 esc(e["description"]),
                 money(e["net_amount"]) if e["kind"] == "expense" else "",
                 money(e["non_recoverable_tax"]) if e["non_recoverable_tax"] else "",

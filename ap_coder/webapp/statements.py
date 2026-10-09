@@ -50,7 +50,7 @@ def page_statements() -> None:
 
     with card("stm_input"):
         names = {v["vendor_key"]: v["vendor_name"] for v in sorted(vendors, key=lambda v: v["vendor_name"] or "")}
-        c1, c2 = st.columns([2, 3], vertical_alignment="bottom")
+        c1, c2 = st.columns([2, 3], vertical_alignment="top")
         vendor = c1.selectbox("Vendor", list(names), format_func=names.get, key="stm_vendor")
         upload = c2.file_uploader("Statement (CSV or Excel)", type=["csv", "xlsx"], key="stm_upload")
         st.caption("One row per invoice, credit or payment, as the vendor sent it. Nothing is stored.")

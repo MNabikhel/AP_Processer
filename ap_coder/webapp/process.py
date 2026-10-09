@@ -48,7 +48,7 @@ def safe_file_name(name: str) -> str:
 
 def _email_note(mail: Any) -> None:
     """What was taken out of a saved email, and what was left out and why."""
-    took = f"{len(mail.saved)} attachment(s) taken out" if mail.saved else "no invoice attached"
+    took = f"{ui.plural(len(mail.saved), 'attachment')} taken out" if mail.saved else "no invoice attached"
     st.caption(f":material/mail: **{md(mail.email)}**: {took}; the email is in the `emails` subfolder.")
     if mail.skipped:
         st.caption("Left out: " + md("; ".join(mail.skipped)))
@@ -62,7 +62,7 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
     settings = get_settings()
     pipeline = InvoicePipeline(settings, reference, cache_dir=CACHE_DIR, store=store)
     ok = 0
-    with st.status(f"Processing {len(paths)} invoice(s)…", expanded=True) as status:
+    with st.status(f"Processing {ui.plural(len(paths), 'invoice')}…", expanded=True) as status:
         for n, path in enumerate(paths, start=1):
             st.write(f":material/document_scanner: Reading and coding **{path.name}** ({n}/{len(paths)})")
             result = pipeline.process(path)
@@ -75,9 +75,12 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
         status.update(label=f"Processed {ok} of {len(paths)}", state="complete" if ok == len(paths) else "error")
     failed = len(paths) - ok
     if ok:
-        notify(f"{ok} invoice(s) read and coded. They're waiting in the review queue.", ":material/inbox:")
+        notify(f"{ui.plural(ok, 'invoice')} read and coded. They're waiting in the review queue.", ":material/inbox:")
     if failed:
-        notify(f"{failed} file(s) could not be processed. See Review queue → Failed / rejected.", ":material/error:")
+        notify(
+            f"{ui.plural(failed, 'file')} could not be processed. See Review queue → Failed / rejected.",
+            ":material/error:",
+        )
 
 
 def tax_types_mapped(store: Store) -> int:
@@ -166,7 +169,7 @@ def page_process() -> None:
                 key=f"upload_{st.session_state.get('upload_round', 0)}",  # new key = empty uploader after a run
             )
             if uploaded and st.button(
-                f"Process {len(uploaded)} uploaded invoice(s)", type="primary", icon=":material/play_arrow:",
+                f"Process {ui.plural(len(uploaded), 'uploaded invoice')}", type="primary", icon=":material/play_arrow:",
                 disabled=not ready,
             ):  # fmt: skip
                 INVOICE_DIR.mkdir(parents=True, exist_ok=True)
@@ -196,7 +199,8 @@ def page_process() -> None:
                     run_pipeline(store, todo)
                 if already:
                     notify(
-                        f"Skipped {len(already)} file(s) already in AP Coder: {', '.join(p.name for p in already)}",
+                        f"Skipped {ui.plural(len(already), 'file')} already in AP Coder: "
+                        + ", ".join(p.name for p in already),
                         ":material/content_copy:",
                     )
                 st.session_state["upload_round"] = st.session_state.get("upload_round", 0) + 1
@@ -206,11 +210,14 @@ def page_process() -> None:
             st.markdown("#### :material/folder_open: Invoices folder")
             hint, button = st.columns([2.6, 1.4], vertical_alignment="center")
             hint.caption(
-                f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here. To process them automatically "
-                "(e.g. overnight, or from a scanner or mail rule saving into this folder), run "
-                "`python -m ap_coder watch` in the AP Coder terminal."
+                "Copy invoices into this folder, or have a scanner or mail rule save them there, and they appear "
+                f"below.  \n`{short_path(INVOICE_DIR)}`"
             )
-            if button.button("Open folder", icon=":material/folder_open:", key="open_invoices"):
+            if button.button(
+                "Open folder", icon=":material/folder_open:", key="open_invoices",
+                help="To process new files automatically (e.g. overnight), whoever runs AP Coder can start the "
+                "folder watcher: `python -m ap_coder watch`.",
+            ):  # fmt: skip
                 if not open_folder(INVOICE_DIR):
                     st.info(f"Open this folder yourself: {INVOICE_DIR}")
             unpacked = unpack_folder(INVOICE_DIR)  # saved emails dropped in the folder: their attachments
@@ -230,7 +237,7 @@ def page_process() -> None:
                 ]  # fmt: skip
                 st.html(ui.table(["File", "Size"], rows, right=[1]))
                 if st.button(
-                    f"Process {len(new_files)} file(s)", type="primary", icon=":material/play_arrow:",
+                    f"Process {ui.plural(len(new_files), 'file')}", type="primary", icon=":material/play_arrow:",
                     disabled=not ready,
                 ):  # fmt: skip
                     run_pipeline(store, new_files)

@@ -137,7 +137,7 @@ def azure_tab(store: Store) -> None:
                 if aoai_key.strip():
                     updates["AZURE_OPENAI_API_KEY"] = aoai_key.strip()
             changed = save_settings(updates)
-            notify(f"Saved {len(changed)} change(s)." if changed else "Nothing changed.", ":material/save:")
+            notify(f"Saved {ui.plural(len(changed), 'change')}." if changed else "Nothing changed.", ":material/save:")
             st.rerun()
 
     with card("azure_test"):
@@ -157,7 +157,7 @@ def azure_tab(store: Store) -> None:
             fails = sum(c.status == FAIL for c in checks)
             warns = sum(c.status == WARN for c in checks)
             summary = (
-                ui.pill(f"{fails} problem(s)", "err", "error")
+                ui.pill(f"{ui.plural(fails, 'problem')}", "err", "error")
                 if fails
                 else ui.pill("Everything works", "ok", "check_circle")
             )
@@ -271,7 +271,7 @@ def ai_model_tab() -> None:
                 updates["AP_LLM_VISION"] = vision
             changed = save_settings(updates)
             forget_status()
-            notify(f"Saved {len(changed)} change(s)." if changed else "Nothing changed.", ":material/save:")
+            notify(f"Saved {ui.plural(len(changed), 'change')}." if changed else "Nothing changed.", ":material/save:")
             st.rerun()
 
 
@@ -332,7 +332,7 @@ def review_tab() -> None:
             if renamed:
                 st.session_state.pop("reviewer", None)
                 changed.append("reviewer")
-            notify(f"Saved {len(changed)} change(s)." if changed else "Nothing changed.", ":material/save:")
+            notify(f"Saved {ui.plural(len(changed), 'change')}." if changed else "Nothing changed.", ":material/save:")
             st.rerun()
     st.caption(
         "The confidence threshold applies to invoices processed from now on; invoices already in the queue keep "
@@ -400,7 +400,9 @@ def data_tab(store: Store) -> None:
             ui.tiles(
                 [
                     ui.tile("Database", _size(DB_PATH), "database", "blue", "ap_coder.db"),
-                    ui.tile("Invoices", len(invoices), "receipt_long", "green", f"{files} file(s) in invoices/"),
+                    ui.tile(
+                        "Invoices", len(invoices), "receipt_long", "green", f"{ui.plural(files, 'file')} in invoices/"
+                    ),
                     ui.tile("Lessons", len(store.feedback_rows()), "psychology", "violet", "reviewer decisions"),
                     ui.tile("Backups", len(store.list_backups()), "backup", "amber", "kept in backups/"),
                 ]

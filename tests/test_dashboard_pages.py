@@ -260,7 +260,7 @@ def test_saved_emails_in_the_invoices_folder_are_unpacked(db):
     _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages the setup steps link to
     at = _ok(_page("process", "page_process").run())
     assert (folder / "vendor mail - INV-9.pdf").exists() and (folder / "emails" / "vendor mail.eml").exists()
-    assert any("attachment(s) taken out" in c.value for c in at.caption)
+    assert any("attachment taken out" in c.value for c in at.caption)
 
 
 def test_sales_tax_page_self_assessment_card(db):

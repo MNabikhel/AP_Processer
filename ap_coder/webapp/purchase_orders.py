@@ -98,8 +98,8 @@ def _importer(store: Store, has_pos: bool) -> None:
                 result = store.import_purchase_orders(rows, replace_all=replace, actor=reviewer())
                 notify(
                     f"Imported {result['orders']} PO(s) with {result['lines']} line(s): {result['added']} new, "
-                    f"{result['updated']} updated" + (f", {skipped} row(s) skipped (no PO number or description)."
-                                                       if skipped else "."),
+                    f"{result['updated']} updated"
+                    + (f", {ui.plural(skipped, 'row')} skipped (no PO number or description)." if skipped else "."),
                     ":material/shopping_cart:",
                 )  # fmt: skip
                 st.rerun()

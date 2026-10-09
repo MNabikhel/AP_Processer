@@ -386,7 +386,7 @@ def test_exports_page_jde_flow(db):
     settings.an8_overrides = {vendor_key(store.get_invoice(northwind)["vendor_name"]): "10023"}
     jde.save(store, settings)
     _ok(at.run())
-    assert at.button(key="export_create").label == "Export 1 invoice(s)"
+    assert at.button(key="export_create").label == "Export 1 invoice"
     _ok(at.button(key="export_create").click().run())
     (batch,) = store.export_batches()
     assert batch["format"] == jde.FORMAT and store.batch_invoice_ids(batch["id"]) == [northwind]

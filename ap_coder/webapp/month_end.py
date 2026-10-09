@@ -8,10 +8,27 @@ import streamlit as st
 
 from ap_coder import accruals, ui
 from ap_coder.reference_data import short_name
-from ap_coder.webapp.common import card, esc, get_store, money, page_head, reference_or_none, show_toast
+from ap_coder.webapp.common import (
+    NEEDS_GL,
+    card,
+    cc_display,
+    esc,
+    get_store,
+    gl_display,
+    money,
+    page_head,
+    reference_or_none,
+    show_toast,
+)
 
 ICONS = {accruals.RECEIVED: "inventory", accruals.NOT_IN_ERP: "receipt_long", accruals.RECURRING: "event_repeat"}
 TONES = {accruals.RECEIVED: "violet", accruals.NOT_IN_ERP: "blue", accruals.RECURRING: "amber"}
+# Headings for each source (the source names themselves go into the CSV unchanged)
+TITLES = {
+    accruals.RECEIVED: "Received, not invoiced",
+    accruals.NOT_IN_ERP: "Invoices not in the ERP yet",
+    accruals.RECURRING: "Expected recurring invoices",
+}
 
 
 def page_month_end() -> None:
@@ -24,7 +41,7 @@ def page_month_end() -> None:
     )
     with card("me_period"):
         c1, c2 = st.columns([1, 3], vertical_alignment="bottom")
-        end = c1.date_input("Period end", accruals.default_period_end(), key="me_end")
+        end = c1.date_input("Period end", accruals.default_period_end(), format="YYYY-MM-DD", key="me_end")
         c2.caption(
             "Amounts are net of recoverable sales tax, in each invoice's currency. Expected recurring invoices are "
             "estimates at the usual amount."
@@ -40,8 +57,8 @@ def page_month_end() -> None:
         others = " · ".join(f"{money(t)} {c}" for c, t in rest.items())
         if rest and main == "CAD" and all(c in rates for c in rest):
             others += f" (≈ {money(sum(t * rates[c] for c, t in rest.items()))} CAD)"
-        hint = f"{n} line(s)" + (f" · plus {others}" if others else "")
-        return ui.tile(source, f"{money(by_currency.get(main, 0))} {main}", ICONS[source], TONES[source], hint)
+        hint = ui.plural(n, "line") + (f" · plus {others}" if others else "")
+        return ui.tile(TITLES[source], f"{money(by_currency.get(main, 0))} {main}", ICONS[source], TONES[source], hint)
 
     st.html(ui.tiles([tile(source, n, by_currency) for source, (n, by_currency) in totals.items()]))
     if end < dt.date.today() - dt.timedelta(days=31):
@@ -51,7 +68,11 @@ def page_month_end() -> None:
         )
     if not items:
         with card("me_empty"):
-            st.html(ui.empty_state("Nothing to accrue", f"Everything incurred by {end} is already in the ERP."))
+            st.html(
+                ui.empty_state(
+                    "Nothing to accrue", f"Everything incurred by {end} is already in the ERP.", ui.EMPTY_INBOX_SVG
+                )
+            )
         return
 
     reference = reference_or_none(store)
@@ -59,7 +80,8 @@ def page_month_end() -> None:
     def gl_text(code: str) -> str:
         row = reference.chart_of_accounts.get(code) if reference and code else None
         name = short_name((row or {}).get("description", ""))
-        return f"<div class='gl'>{esc(code or '—')}<small>{esc(name)}</small></div>"
+        todo = " todo" if gl_display(code) == NEEDS_GL else ""  # still to code: in the warning colour
+        return f"<div class='gl{todo}'>{esc(gl_display(code))}<small>{esc(name)}</small></div>"
 
     with card("me_gl"):
         st.markdown("#### :material/account_balance: By GL account")
@@ -86,12 +108,12 @@ def page_month_end() -> None:
                     f"<b>{esc(a.vendor)}</b><div class='apc-muted'>{esc(a.reference)}</div>",
                     esc(a.description),
                     gl_text(a.gl_code)
-                    + (f"<small class='apc-muted'>{esc(a.cost_center)}</small>" if a.cost_center else ""),
+                    + (f"<small class='apc-muted'>{esc(cc_display(a.cost_center))}</small>" if a.cost_center else ""),
                     f"{money(a.amount)} <span class='apc-muted'>{esc(a.currency)}</span>",
                 ]
                 for a in items
                 if a.source == source
             ]
             if rows:
-                st.markdown(f"**{source}**")
+                st.markdown(f"**{TITLES[source]}**")
                 st.html(ui.table(["Vendor", "What", "GL account", "Amount"], rows, right=[3], wrap=[0, 1, 2]))

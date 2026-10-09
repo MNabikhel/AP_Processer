@@ -61,8 +61,17 @@ def pill(text: str, tone: str = "gray", icon_name: str = "") -> str:
     return f"<span class='apc-pill {tone}'>{ico}{esc(text)}</span>"
 
 
+def plural(n: int, word: str, many: str = "") -> str:
+    """ "1 invoice", "5 invoices", "1,204 lines" (``many`` for irregular plurals)."""
+    return f"{n:,} {word if n == 1 else (many or word + 's')}"
+
+
+# Display names for tax types whose code is not what a clerk calls them (the stored value is unchanged).
+TAX_LABELS = {"OTHER": "Other tax"}
+
+
 def tax_chip(tax_type: str) -> str:
-    return f"<span class='apc-tax {esc(tax_type)}'>{esc(tax_type)}</span>"
+    return f"<span class='apc-tax {esc(tax_type)}'>{esc(TAX_LABELS.get(tax_type, tax_type))}</span>"
 
 
 def kbd(key: str) -> str:
@@ -175,7 +184,7 @@ def greeting(now: dt.datetime | None = None) -> str:
 def hero(eyebrow: str, title: str, lead: str, chips: Iterable[str], ring_value: float, ring_label: str,
          ring_caption: str) -> str:  # fmt: skip
     chips_html = "".join(f"<span class='chip'>{c}</span>" for c in chips)
-    gauge = ring(ring_value, size=104, stroke=10, color="#6aa9f2", track="rgba(255,255,255,.14)",
+    gauge = ring(ring_value, size=80, stroke=8, color="#6aa9f2", track="rgba(255,255,255,.14)",
                  text_color="#ffffff", label=ring_label)  # fmt: skip
     return (
         f"<div class='apc-hero apc-anim'><div style='position:relative;z-index:1'>"
@@ -324,7 +333,19 @@ LEARNING_SVG = """
 </svg>"""
 
 
-def empty_state(title: str, text: str, art: str = EMPTY_INBOX_SVG) -> str:
+# A neutral empty tray: "nothing here yet" (the tick above is for "all done").
+EMPTY_TRAY_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="110" viewBox="0 0 150 110">
+  <ellipse cx="75" cy="100" rx="52" ry="6" fill="#e3e9f2"/>
+  <rect x="44" y="18" width="62" height="40" rx="8" fill="#f4f7fb" stroke="#cfdcee" stroke-width="2"/>
+  <path d="M56 32h38M56 42h26" stroke="#cfdcee" stroke-width="3" stroke-linecap="round"/>
+  <rect x="28" y="38" width="94" height="56" rx="12" fill="#ffffff" stroke="#cfdcee" stroke-width="2"/>
+  <path d="M28 66h26l6 10h30l6-10h26" fill="none" stroke="#cfdcee" stroke-width="2"/>
+</svg>"""
+
+
+def empty_state(title: str, text: str, art: str = EMPTY_TRAY_SVG) -> str:
+    """A whole-card empty state. The default art is neutral; pass ``EMPTY_INBOX_SVG`` when empty means done."""
     return f"<div class='apc-empty apc-anim'>{svg_img(art, 150, 110)}<h3>{esc(title)}</h3><p>{esc(text)}</p></div>"
 
 
@@ -425,12 +446,13 @@ def step(state: str, label: str, detail: str) -> str:
 
 
 def sidebar_profile(name: str, approved_today: int, waiting: int, env: str = "", env_tone: str = "ok",
-                    where: str = "") -> str:  # fmt: skip
+                    where: str = "", where_title: str = "") -> str:  # fmt: skip
     """The sidebar footer: who is reviewing, today's counts and (``env``) where the app runs, e.g.
-    "Offline · Local" with the data folder (``where``) as a tooltip and a trimmed line."""
+    "Offline · Local", with a short line under it (``where``) and its detail, e.g. the data folder, as a tooltip."""
     env_html = ""
     if env:
-        where_html = f"<span class='where' title='{esc(where)}'>{esc(where)}</span>" if where else ""
+        tip = where_title or where
+        where_html = f"<span class='where' title='{esc(tip)}'>{esc(where)}</span>" if where else ""
         env_html = f"<div class='apc-env'>{status(env, env_tone)}{where_html}</div>"
     return (
         f"<div class='apc-me'>{avatar(name)}<div><div class='name'>{esc(name)}</div>"

@@ -155,8 +155,22 @@ def reference_or_none(store: Store) -> ReferenceData | None:
         return None
 
 
+# What a clerk sees instead of the stored UNASSIGNED code (the stored value never changes).
+NEEDS_GL = "Needs an account"
+NEEDS_CC = "Needs a cost center"
+
+
+def gl_display(code: str | None) -> str:
+    """A GL code for display: UNASSIGNED reads as "Needs an account", a blank as an em dash."""
+    return NEEDS_GL if code == UNASSIGNED else (code or "—")
+
+
+def cc_display(code: str | None) -> str:
+    return NEEDS_CC if code == UNASSIGNED else (code or "")
+
+
 def gl_label_map(reference: ReferenceData | None) -> dict[str, str]:
-    labels = {UNASSIGNED: f"{UNASSIGNED} · needs a code", "": "(none)"}
+    labels = {UNASSIGNED: NEEDS_GL, "": "(none)"}
     if reference is not None:
         for row in reference.chart_of_accounts.rows:
             name = short_name(row.get("description", ""))
@@ -170,7 +184,7 @@ def gl_name(reference: ReferenceData, code: str) -> str:
 
 
 def cc_label_map(reference: ReferenceData | None) -> dict[str, str]:
-    labels = {UNASSIGNED: f"{UNASSIGNED} · needs a cost center", "": "(none)"}
+    labels = {UNASSIGNED: NEEDS_CC, "": "(none)"}
     if reference is not None and reference.cost_centers is not None:
         for row in reference.cost_centers.rows:
             labels[row["cost_center"]] = f"{row['cost_center']} · {row.get('description', '')[:30]}"
@@ -303,8 +317,8 @@ def demo_card(store: Store, where: str) -> None:
                 st.rerun()
         else:
             st.caption(
-                f"{demo_count} demo invoice(s) are loaded. Removing them also forgets what the AI learned from "
-                "them, and removes the sample purchase orders and vendor list loaded with them; your own "
+                f"{ui.plural(demo_count, 'demo invoice')} loaded. Removing them also forgets what the AI "
+                "learned from them, and removes the sample purchase orders and vendor list loaded with them; your own "
                 "invoices, POs, vendors and settings are untouched."
             )
             sure = st.checkbox("Yes, remove the demo invoices", key=f"demo_sure_{where}")
@@ -312,7 +326,7 @@ def demo_card(store: Store, where: str) -> None:
                 "Remove demo invoices", icon=":material/delete_sweep:", disabled=not sure, key=f"demo_rm_{where}"
             ):
                 removed = remove_demo(store)
-                notify(f"Removed {removed} demo invoice(s).", ":material/delete_sweep:")
+                notify(f"Removed {ui.plural(removed, 'demo invoice')}.", ":material/delete_sweep:")
                 st.rerun()
 
 
