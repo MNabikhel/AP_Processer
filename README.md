@@ -259,6 +259,29 @@ Each invoice produces the original target fields plus the Canadian tax fields, a
 - **Enterprise auth.** Without keys, both services use Entra ID (`DefaultAzureCredential`). The
   SDK retries 429 and 5xx responses with backoff.
 
+## Invoice capture and supplier autonomy
+
+Next to the AI coder, AP Coder reads every invoice itself and shows *where* each value is printed
+(design and benchmark: [docs/CAPTURE_DESIGN.md](docs/CAPTURE_DESIGN.md)):
+
+- **Several readers per field:** the PDF's text layer or OCR (RapidOCR, local), a rule reader
+  (labels in English and French, header grids, totals blocks), the supplier's learned template, and
+  the AI's and Document Intelligence's answers located back on the page.
+- **Checks a misread cannot pass:** subtotal + charges + taxes = total, official tax rates, GST/HST
+  check digit, vendor master, due date = invoice date + terms.
+- **A confidence per field, measured on a benchmark** of thousands of random invoices with known
+  answers (`python -m ap_coder.bench run`), shown as *verified*, *likely*, *check* or *missing*.
+- **The review screen** shows the invoice page with every field boxed in its status colour. Click
+  a field to find it on the page; *Teach a field* lets AP click the words that hold a value, and
+  the supplier's template learns it on approval.
+- **Autonomy per supplier:** once a supplier's own confirmed invoices show at least 99% field
+  accuracy (lower confidence bound, at least 20 invoices, the last 10 clean), a manager can switch it
+  to touchless. Its invoices are then approved without a person only when every printed field is
+  *verified* and every check passes; 5% are still audited, and one correction suspends it
+  (*Learning & accuracy → Supplier learning*).
+- **JD Edwards EnterpriseOne:** approved invoices export as F0411Z1/F0911Z1 Z-file batches for
+  R04110ZA ([docs/JDE_E1.md](docs/JDE_E1.md)).
+
 ## Project layout
 
 ```
@@ -277,7 +300,11 @@ ap_coder/
   suggest.py         GL suggestions for uncoded lines;  recurring.py: recurring vendors
   statements.py      vendor statement reconciliation;  accruals.py: month-end accruals
   exports.py · bulk.py · insights.py · controls.py · audit.py · help.py · demo.py
-  pipeline.py        extract → code → validate → store
+  capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
+                     templates and autonomy, calibration.json (measured confidence)
+  bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation
+  jde.py             JD Edwards E1 F0411Z1/F0911Z1 export
+  pipeline.py        extract → code → validate → capture → store
   dashboard.py       Streamlit app shell;  webapp/: one module per page;  review.py: grid edits → InvoiceCoding
   doctor.py · share_report.py · labels.py · evaluation.py · reference_data.py · cli.py
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement

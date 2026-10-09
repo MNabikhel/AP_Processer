@@ -5,10 +5,16 @@ the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
 has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a decision.
 
-Your existing data is safe. On first start the database upgrades itself (schema version 13), and a
+Your existing data is safe. On first start the database upgrades itself (schema version 14), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
 ## Highlights
+
+- **New: invoice capture with the highlighted page.** Every field boxed on the invoice in its
+  confidence colour, teach-by-click, a measured confidence per field, and **supplier autonomy**:
+  suppliers whose invoices AP has confirmed at 99%+ can go touchless, with an audit sample. See
+  [CAPTURE_DESIGN.md](CAPTURE_DESIGN.md) for how it works and the benchmark results.
+- **New: JD Edwards E1 export** (F0411Z1/F0911Z1 Z-files), see [JDE_E1.md](JDE_E1.md).
 
 - **Catch it before it is paid:** purchase-order matching, vendor master checks, duplicate and
   bank-account-change signals, credit notes matched to their invoice, second approval above a limit.
