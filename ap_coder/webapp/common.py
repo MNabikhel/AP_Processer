@@ -32,6 +32,33 @@ TARGET_GRAY = "#8a8985"
 # Filled in by dashboard.py at start-up: pages link to each other with ``st.page_link(PAGES["process"])``.
 PAGES: dict[str, Any] = {}
 
+# The sidebar's sections (PAGES keys, in order). Page headers show the section as a breadcrumb.
+NAV_SECTIONS: dict[str, list[str]] = {
+    "Work": ["review", "process", "search"],
+    "Close & compliance": ["exports", "month_end", "sales_tax", "statements"],
+    "Master data": ["vendors", "purchase_orders", "accounts"],
+    "Analytics": ["learning", "spend", "insights", "activity"],
+    "System": ["settings", "help"],
+}
+SECTION_OF = {key: section for section, keys in NAV_SECTIONS.items() for key in keys}
+
+
+def page_head(page: str, title: str, subtitle: str = "", aside: str = "", action: bool = False) -> Any:
+    """The standard page header: breadcrumb (AP Coder / section), title, one-line description.
+
+    ``aside``: HTML on the right (pills, a status). ``action=True`` returns a right-aligned container for
+    the page's primary action (a button or page link), e.g. ``with page_head(...): st.page_link(...)``.
+    """
+    crumbs = ("AP Coder", SECTION_OF.get(page, ""))
+    html_head = ui.page_header("", title, subtitle, aside, crumbs=[c for c in crumbs if c])
+    if not action:
+        st.html(html_head)
+        return None
+    with st.container(key=f"pagehead_{page}"):
+        left, right = st.columns([3, 1], vertical_alignment="bottom")
+        left.html(html_head)
+    return right
+
 
 # --- Shared helpers -----------------------------------------------------------------------------
 

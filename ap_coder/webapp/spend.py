@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import spend, ui
-from ap_coder.webapp.common import card, esc, get_store, money, reference_or_none, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, page_head, reference_or_none, show_toast
 
 TOP = 10
 ALL_IN_CAD = "All, in CAD"
@@ -54,12 +54,8 @@ def page_spend() -> None:
 
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Analyse",
-            "Spend",
-            "Where the money goes, by month, GL account, cost center and vendor, from approved invoices.",
-        )
+    page_head(
+        "spend", "Spend", "Where the money goes, by month, GL account, cost center and vendor, from approved invoices."
     )
     reference = reference_or_none(store)
     with card("spend_period"):

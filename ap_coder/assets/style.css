@@ -1,63 +1,124 @@
-/* AP Coder dashboard styles: layered on top of assets/theme.toml. */
+/* AP Coder dashboard styles: layered on top of assets/theme.toml (keep the colours below in step with it).
+
+   Design tokens
+   -------------
+   Colour   --apc-ink / -muted / -faint (text), --apc-line / -line-soft (borders), --apc-bg / -card / -subtle
+            (surfaces), --apc-brand (primary) with -600 (hover, links) and -50 (tint), and the semantic pairs
+            --apc-ok, --apc-warn, --apc-err, --apc-info, --apc-violet with a -bg tint (and -line border).
+            --apc-primary / --apc-success / --apc-warning / --apc-danger are aliases for new code.
+   Space    --apc-s-1 .. --apc-s-8: 4, 8, 12, 16, 20, 24, 32, 40 px.
+   Radius   --apc-r-sm 6px (chips, inputs inside cards), --apc-r 10px (cards, buttons), --apc-r-lg 14px (hero).
+   Type     --apc-fs-xs .72rem (labels, table heads), -sm .8rem (meta), -base .9rem (body in cards),
+            -md 1rem (card titles), -lg 1.25rem, -xl 1.6rem (page title), -2xl 1.9rem (big numbers).
+   Elevation --apc-shadow (cards), --apc-shadow-lg (popovers, hover), --apc-focus (focus ring).
+*/
 :root {
-  --apc-ink: #142033;
-  --apc-muted: #5b6578;
+  --apc-ink: #111c2e;
+  --apc-muted: #566176;
   --apc-faint: #8a93a5;
-  --apc-line: #e4e8ef;
-  --apc-bg: #f3f5f9;
+  --apc-line: #e2e6ed;
+  --apc-line-soft: #eef1f5;
+  --apc-bg: #f4f6f9;
   --apc-card: #ffffff;
-  --apc-brand: #2a78d6;
-  --apc-brand-600: #1f63b5;
-  --apc-brand-50: #eaf2fc;
-  --apc-navy: #0d1a2d;
+  --apc-subtle: #f8f9fb;
+  --apc-brand: #1f6fd1;
+  --apc-brand-600: #1a5fb4;
+  --apc-brand-50: #ebf3fd;
+  --apc-brand-line: #bcd5f3;
+  --apc-navy: #0f1b2e;
   --apc-ok: #1a7f4b;
   --apc-ok-bg: #e8f6ee;
+  --apc-ok-line: #c9e8d6;
   --apc-warn: #8a5300;
   --apc-warn-dot: #e59a00;
   --apc-warn-bg: #fff4dc;
+  --apc-warn-line: #f2e0b3;
   --apc-err: #c53030;
   --apc-err-bg: #fdecec;
+  --apc-err-line: #f4cfcf;
+  --apc-info: var(--apc-brand-600);
+  --apc-info-bg: var(--apc-brand-50);
   --apc-violet: #4a3aa7;
   --apc-violet-bg: #efedfc;
-  --apc-shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
-  --apc-shadow-lg: 0 10px 24px -8px rgba(16, 24, 40, .18), 0 2px 6px rgba(16, 24, 40, .06);
+  --apc-primary: var(--apc-brand);
+  --apc-success: var(--apc-ok);
+  --apc-warning: var(--apc-warn);
+  --apc-danger: var(--apc-err);
+  --apc-s-1: 4px; --apc-s-2: 8px; --apc-s-3: 12px; --apc-s-4: 16px; --apc-s-5: 20px; --apc-s-6: 24px;
+  --apc-s-7: 32px; --apc-s-8: 40px;
+  --apc-r-sm: 6px; --apc-r: 10px; --apc-r-lg: 14px;
+  --apc-fs-xs: .72rem; --apc-fs-sm: .8rem; --apc-fs-base: .9rem; --apc-fs-md: 1rem; --apc-fs-lg: 1.25rem;
+  --apc-fs-xl: 1.6rem; --apc-fs-2xl: 1.9rem;
+  --apc-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .05);
+  --apc-shadow-lg: 0 10px 24px -8px rgba(16, 24, 40, .16), 0 2px 6px rgba(16, 24, 40, .05);
+  --apc-focus: 0 0 0 3px rgba(31, 111, 209, .28);
 }
 
 /* ---- Layout ------------------------------------------------------------------------------- */
-.block-container {padding-top: 2rem; padding-bottom: 6rem; max-width: 1480px;}
+.block-container {padding-top: 1.75rem; padding-bottom: 6rem; max-width: 1440px;}
 [data-testid="stHeaderActionElements"] {display: none;}
 [data-testid="stHeader"] {background: transparent;}
+[data-testid="stMain"] {-webkit-font-smoothing: antialiased;}
 
 /* White cards (st.container(key="card_*")) and tiles */
-[class*="st-key-card_"] {background: var(--apc-card); box-shadow: var(--apc-shadow); border-color: var(--apc-line) !important;}
-[class*="st-key-card_"] h4 {font-size: 1rem; letter-spacing: -.005em;}
+[class*="st-key-card_"] {background: var(--apc-card); box-shadow: var(--apc-shadow); border-color: var(--apc-line) !important;
+  border-radius: var(--apc-r) !important;}
+[class*="st-key-card_"] h4 {font-size: var(--apc-fs-md); font-weight: 650; letter-spacing: -.005em;}
+[class*="st-key-card_"] h4 [data-testid="stIconMaterial"], [class*="st-key-card_"] h4 span[aria-hidden] {color: var(--apc-muted);}
 
-/* Tabs as a segmented pill bar (Streamlit 1.62+ tab markup) */
-.stTabs [role="tablist"] {gap: .25rem; background: #e9edf4; padding: .3rem; border-radius: 12px; width: fit-content;
+/* Expanders read as quiet secondary cards */
+[data-testid="stExpander"] details {background: var(--apc-card); border-color: var(--apc-line); border-radius: var(--apc-r);}
+[data-testid="stExpander"] summary {font-weight: 550;}
+[data-testid="stExpander"] summary:hover {color: var(--apc-brand-600);}
+
+/* Tabs as a segmented control (Streamlit 1.62+ tab markup) */
+.stTabs [role="tablist"] {gap: 2px; background: #e8ecf2; padding: 3px; border-radius: var(--apc-r); width: fit-content;
   max-width: 100%; overflow-x: auto; border: none !important; box-shadow: none !important;}
-.stTabs [data-testid="stTab"] {min-height: 2.1rem; padding: 0 .9rem; border-radius: 9px; color: var(--apc-muted);
+.stTabs [data-testid="stTab"] {min-height: 2rem; padding: 0 .85rem; border-radius: 8px; color: var(--apc-muted);
   font-weight: 550; border: none !important; background: transparent; display: flex; align-items: center;}
-.stTabs [data-testid="stTab"] p {font-size: .9rem; white-space: nowrap;}
+.stTabs [data-testid="stTab"] p {font-size: .875rem; white-space: nowrap;}
 .stTabs [data-testid="stTab"]:hover {color: var(--apc-ink);}
 .stTabs [data-testid="stTab"][aria-selected="true"] {background: #fff; color: var(--apc-ink); box-shadow: var(--apc-shadow);}
 .stTabs .react-aria-SelectionIndicator {display: none;}
 
-/* Buttons */
-.stButton button, .stDownloadButton button, [data-testid="stPopover"] button {
-  font-weight: 600; transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+/* Buttons: calm hover (colour, not motion), visible keyboard focus */
+.stButton button, .stDownloadButton button, [data-testid="stPopover"] button, .stFormSubmitButton button {
+  font-weight: 600; transition: box-shadow .12s ease, background .12s ease, border-color .12s ease;
 }
-.stButton button:hover, .stDownloadButton button:hover {transform: translateY(-1px); box-shadow: var(--apc-shadow);}
-.stButton button[kind="primary"] {box-shadow: 0 6px 14px -6px rgba(42, 120, 214, .6);}
+.stButton button:hover, .stDownloadButton button:hover {box-shadow: var(--apc-shadow);}
+.stButton button[kind="primary"], .stFormSubmitButton button[kind="primaryFormSubmit"] {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .08), inset 0 -1px 0 rgba(0, 0, 0, .08);}
+.stButton button:focus-visible, .stDownloadButton button:focus-visible, [data-testid="stPageLink"] a:focus-visible {
+  box-shadow: var(--apc-focus) !important; outline: none;}
+
+/* Form fields: one focus ring everywhere */
+[data-baseweb="input"]:focus-within, [data-baseweb="select"] > div:focus-within, [data-baseweb="textarea"]:focus-within {
+  box-shadow: var(--apc-focus);}
+[data-testid="stWidgetLabel"] p {color: var(--apc-ink);}
+
+/* Captions and alerts */
+[data-testid="stCaptionContainer"] {color: var(--apc-muted);}
+[data-testid="stAlert"] > div {border-radius: var(--apc-r);}
+
+/* Data tables (st.dataframe / st.data_editor) */
+[data-testid="stDataFrame"], [data-testid="stDataFrameResizable"] {border-radius: var(--apc-r);}
+
+/* Page links used as actions (header actions, "go to ...") */
+[data-testid="stPageLink"] a {border-radius: 8px;}
+[data-testid="stPageLink"] a:hover {background: var(--apc-brand-50);}
 
 /* File drop zone */
-[data-testid="stFileUploaderDropzone"] {background: var(--apc-brand-50); border: 1.5px dashed #9cc0ec; border-radius: 14px;
+[data-testid="stFileUploaderDropzone"] {background: var(--apc-brand-50); border: 1.5px dashed #9cc0ec; border-radius: var(--apc-r);
   padding: 1.4rem;}
 
 /* ---- Typography helpers ---------------------------------------------------------------------- */
-.apc-eyebrow {font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--apc-brand); font-weight: 700;}
-.apc-title {font-size: 1.9rem; font-weight: 750; color: var(--apc-ink); letter-spacing: -.02em; line-height: 1.15; margin: .1rem 0 0;}
-.apc-sub {color: var(--apc-muted); font-size: .95rem; margin-top: .3rem;}
+.apc-eyebrow {font-size: var(--apc-fs-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--apc-brand-600); font-weight: 650;}
+.apc-title {font-size: var(--apc-fs-xl); font-weight: 700; color: var(--apc-ink); letter-spacing: -.018em; line-height: 1.2; margin: .15rem 0 0;}
+.apc-sub {color: var(--apc-muted); font-size: .92rem; margin-top: .25rem; max-width: 96ch; line-height: 1.45;}
 .apc-muted {color: var(--apc-muted); font-size: .88rem;}
+/* Inline code (paths, commands) in neutral ink rather than Streamlit's green */
+[data-testid="stMain"] :not(pre) > code {color: var(--apc-ink) !important; background: #eef1f6 !important;
+  border: 1px solid var(--apc-line-soft); border-radius: 5px; padding: .05em .35em; font-size: .82em; overflow-wrap: anywhere;}
 .apc-num {font-variant-numeric: tabular-nums;}
 .apc-mono {font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .82em;}
 kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: var(--apc-muted); background: #fff;
@@ -71,7 +132,32 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 }
 
 /* ---- Page header ---------------------------------------------------------------------------------- */
-.apc-head {display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; margin-bottom: .3rem;}
+.apc-head {display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; margin-bottom: .5rem;}
+.apc-head .aside {display: flex; gap: .4rem; flex-wrap: wrap; justify-content: flex-end; align-items: center; padding-bottom: .2rem;}
+/* Breadcrumb above the title: "AP Coder / Section" */
+.apc-crumbs {display: flex; align-items: center; gap: .35rem; font-size: var(--apc-fs-sm); color: var(--apc-faint); font-weight: 500;}
+.apc-crumbs b {color: var(--apc-muted); font-weight: 600;}
+.apc-crumbs .sep {color: #c3cad6;}
+/* Header row with a Streamlit action on the right (common.page_head): align the action with the title's baseline */
+[class*="st-key-pagehead_"] [data-testid="stColumn"]:last-child {display: flex; justify-content: flex-end; align-items: flex-end;}
+[class*="st-key-pagehead_"] [data-testid="stColumn"]:last-child > div {width: auto !important;}
+[class*="st-key-pagehead_"] {margin-bottom: .25rem;}
+[class*="st-key-pagehead_"] [data-testid="stPageLink"] a {border: 1px solid var(--apc-line); background: var(--apc-card);
+  padding: .3rem .85rem; box-shadow: var(--apc-shadow); font-weight: 600;}
+[class*="st-key-pagehead_"] [data-testid="stPageLink"] a:hover {border-color: var(--apc-brand-line); background: var(--apc-brand-50);}
+/* Section title inside a page (between cards) */
+.apc-section {display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin: 1.1rem 0 .35rem;}
+.apc-section h5 {font-size: var(--apc-fs-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--apc-muted);
+  font-weight: 650; margin: 0; padding: 0;}
+.apc-section span {font-size: var(--apc-fs-sm); color: var(--apc-faint);}
+/* Key / value list (details panels) */
+.apc-kv {display: grid; grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr); gap: .35rem 1.25rem; font-size: var(--apc-fs-base);}
+.apc-kv dt {color: var(--apc-muted);} .apc-kv dd {margin: 0; color: var(--apc-ink); font-weight: 550;}
+/* Status dot + text ("Offline · Local", "Connected") */
+.apc-status {display: inline-flex; align-items: center; gap: .4rem; font-size: var(--apc-fs-sm); font-weight: 600; color: var(--apc-muted);}
+.apc-status::before {content: ""; width: .5rem; height: .5rem; border-radius: 50%; background: var(--dot, var(--apc-faint));}
+.apc-status.ok {--dot: #22a06b;} .apc-status.warn {--dot: var(--apc-warn-dot);} .apc-status.err {--dot: var(--apc-err);}
+.apc-status.info {--dot: var(--apc-brand);} .apc-status.violet {--dot: #8b7cf0;}
 
 /* ---- Hero banner ------------------------------------------------------------------------------------ */
 .apc-hero {position: relative; overflow: hidden; border-radius: 18px; padding: 1.6rem 1.8rem; color: #fff;
@@ -90,15 +176,16 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-hero .ring-label {color: #c9d8ee; font-size: .78rem; margin-top: .35rem;}
 
 /* ---- KPI tiles -------------------------------------------------------------------------------------- */
-.apc-tiles {display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin: 1rem 0 .4rem;}
+.apc-tiles {display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin: .75rem 0 .4rem;}
 @media (max-width: 900px) {.apc-tiles {grid-template-columns: repeat(2, minmax(0, 1fr));}}
-.apc-tile {background: var(--apc-card); border: 1px solid var(--apc-line); border-radius: 14px; padding: 1rem 1.1rem;
-  box-shadow: var(--apc-shadow); display: flex; flex-direction: column; gap: .35rem; transition: transform .15s ease, box-shadow .15s ease;}
-.apc-tile:hover {transform: translateY(-2px); box-shadow: var(--apc-shadow-lg);}
-.apc-tile .top {display: flex; align-items: center; justify-content: space-between;}
-.apc-tile .label {color: var(--apc-muted); font-size: .84rem; font-weight: 550;}
-.apc-tile .icon {width: 2rem; height: 2rem; border-radius: 10px; display: grid; place-items: center; font-size: 1rem;}
-.apc-tile .value {font-size: 1.75rem; font-weight: 750; color: var(--apc-ink); letter-spacing: -.02em; font-variant-numeric: tabular-nums;}
+.apc-tile {background: var(--apc-card); border: 1px solid var(--apc-line); border-radius: var(--apc-r); padding: .9rem 1rem;
+  box-shadow: var(--apc-shadow); display: flex; flex-direction: column; gap: .3rem; transition: border-color .15s ease;}
+.apc-tile:hover {border-color: #cfd7e3;}
+.apc-tile .top {display: flex; align-items: center; justify-content: space-between; gap: .5rem;}
+.apc-tile .label {color: var(--apc-muted); font-size: .82rem; font-weight: 550;}
+.apc-tile .icon {flex: none; width: 1.75rem; height: 1.75rem; border-radius: 8px; display: grid; place-items: center; font-size: .95rem;}
+.apc-tile .value {font-size: 1.6rem; font-weight: 700; color: var(--apc-ink); letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+  line-height: 1.2;}
 .apc-tile .foot {display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 1.4rem;}
 .apc-tile .hint {font-size: .78rem; color: var(--apc-muted);}
 .apc-tile .hint.up {color: var(--apc-ok); font-weight: 600;} .apc-tile .hint.down {color: var(--apc-err); font-weight: 600;}
@@ -106,6 +193,8 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .tone-amber .icon {background: var(--apc-warn-bg); color: var(--apc-warn);}
 .tone-green .icon {background: var(--apc-ok-bg); color: var(--apc-ok);}
 .tone-violet .icon {background: var(--apc-violet-bg); color: var(--apc-violet);}
+.tone-red .icon {background: var(--apc-err-bg); color: var(--apc-err);}
+.tone-gray .icon {background: #eef1f6; color: var(--apc-muted);}
 
 /* ---- Pills / chips ------------------------------------------------------------------------------------ */
 .apc-pill {display: inline-flex; align-items: center; gap: .3rem; padding: .18rem .6rem; border-radius: 999px;
@@ -233,9 +322,16 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
   box-shadow: 0 12px 30px -10px rgba(16, 24, 40, .35) !important;}
 
 /* ---- Empty state ------------------------------------------------------------------------------------------- */
-.apc-empty {text-align: center; padding: 2.2rem 1rem 1.4rem;}
-.apc-empty h3 {margin: .8rem 0 .3rem; font-size: 1.2rem; color: var(--apc-ink);}
-.apc-empty p {color: var(--apc-muted); margin: 0;}
+.apc-empty {text-align: center; padding: 2rem 1rem 1.25rem;}
+.apc-empty h3 {margin: .7rem 0 .25rem; font-size: 1.05rem; font-weight: 650; color: var(--apc-ink); padding: 0;}
+.apc-empty p {color: var(--apc-muted); margin: 0 auto; max-width: 52ch; font-size: var(--apc-fs-base); line-height: 1.5;}
+.apc-empty img {opacity: .95;}
+/* Compact empty note inside a card ("Nothing here yet" with an icon) */
+.apc-empty-sm {display: flex; align-items: center; gap: .75rem; padding: .85rem 1rem; border: 1px dashed var(--apc-line);
+  border-radius: var(--apc-r); background: var(--apc-subtle); color: var(--apc-muted); font-size: var(--apc-fs-base);}
+.apc-empty-sm .ico {flex: none; width: 2rem; height: 2rem; border-radius: 8px; display: grid; place-items: center;
+  background: #eef1f6; color: var(--apc-muted);}
+.apc-empty-sm b {color: var(--apc-ink); font-weight: 600; display: block;}
 
 /* ---- Feed (recent lessons) ----------------------------------------------------------------------------------- */
 .apc-feed {display: flex; flex-direction: column;}
@@ -270,14 +366,49 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-step .state {margin-left: auto; color: var(--apc-muted); font-size: .84rem;}
 
 /* ---- Sidebar ---------------------------------------------------------------------------------------------------- */
-.apc-me {display: flex; gap: .7rem; align-items: center; padding: .75rem; border-radius: 14px; background: rgba(255, 255, 255, .05);
-  border: 1px solid rgba(255, 255, 255, .08);}
-.apc-me .name {font-weight: 650; color: #fff; font-size: .92rem;}
-.apc-me .role {color: #93a4bd; font-size: .76rem;}
-.apc-today {display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .6rem;}
-.apc-today div {background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .08); border-radius: 12px; padding: .55rem .7rem;}
-.apc-today b {display: block; color: #fff; font-size: 1.15rem; font-variant-numeric: tabular-nums;}
-.apc-today span {color: #93a4bd; font-size: .72rem;}
+.apc-me {display: flex; gap: .65rem; align-items: center; padding: .6rem .65rem; border-radius: var(--apc-r);
+  background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .07);}
+.apc-me .apc-avatar {width: 2.1rem; height: 2.1rem; font-size: .78rem; border-radius: 50%;}
+.apc-me .name {font-weight: 600; color: #fff; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.apc-me > div:last-child {min-width: 0;}
+.apc-me .role {color: #8fa0b8; font-size: .74rem;}
+.apc-today {display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; margin-top: .4rem;}
+.apc-today div {background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .07); border-radius: 8px;
+  padding: .4rem .6rem; display: flex; align-items: baseline; gap: .4rem;}
+.apc-today b {color: #fff; font-size: 1rem; font-weight: 650; font-variant-numeric: tabular-nums;}
+.apc-today span {color: #8fa0b8; font-size: .72rem; white-space: nowrap;}
+
+/* Sidebar shell: brand header, grouped navigation, footer pinned to the bottom */
+[data-testid="stSidebarContent"] {display: flex; flex-direction: column;}
+[data-testid="stSidebarUserContent"] {margin-top: auto; padding-top: .75rem; padding-bottom: 1rem;}
+[data-testid="stSidebarHeader"] {padding-bottom: .25rem; margin-bottom: 0;}
+[data-testid="stSidebarNav"] {padding-top: 0;}
+[data-testid="stNavSectionHeader"] {margin-top: .6rem; margin-bottom: .05rem;}
+[data-testid="stSidebarNavItems"] li {margin: 0;}
+[data-testid="stNavSectionHeader"] p {font-size: .68rem !important; letter-spacing: .09em; text-transform: uppercase; font-weight: 650;
+  color: #7f91ab;}
+[data-testid="stSidebarNavLink"] {min-height: 1.75rem; height: 1.75rem; line-height: 1.75rem; margin: 1px 0; border-radius: 7px;
+  position: relative;}
+[data-testid="stSidebarNavLink"] p {font-size: .87rem;}
+[data-testid="stSidebarNavLink"]:hover {background: rgba(255, 255, 255, .05);}
+[data-testid="stSidebarNavLink"][aria-current="page"] {background: rgba(127, 179, 245, .14);}
+[data-testid="stSidebarNavLink"][aria-current="page"] p {color: #fff; font-weight: 600;}
+[data-testid="stSidebarNavLink"][aria-current="page"]::before {content: ""; position: absolute; left: -.6rem; top: .35rem;
+  bottom: .35rem; width: 3px; border-radius: 0 3px 3px 0; background: #7fb3f5;}
+/* Count badges on nav items: dashboard.py writes the `content` per run (e.g. the review queue size); without it
+   no badge is drawn. .apc-nav-count is the same badge as an element. */
+[data-testid="stSidebarNavLink"]::after, .apc-nav-count {margin-left: auto; align-self: center; min-width: 1.35rem; padding: 0 .4rem;
+  height: 1.15rem; border-radius: 999px; background: rgba(255, 255, 255, .1); color: #dbe5f2; font-size: .7rem;
+  font-weight: 650; display: inline-grid; place-items: center; font-variant-numeric: tabular-nums; line-height: 1;
+  transform: translateY(-1px);}
+/* Environment badge and data-folder line under the profile */
+.apc-env {display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; margin-top: .55rem; padding: 0 .15rem;}
+.apc-env .apc-status {color: #b5c3d6; font-size: .74rem; white-space: nowrap;}
+.apc-env .where {color: #6f819b; font-size: .7rem; max-width: 100%; padding-left: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  box-sizing: border-box;}
+[data-testid="stSidebarUserContent"] .apc-pill.violet {background: rgba(139, 124, 240, .16); color: #c9c1fb;}
+[data-testid="stSidebarUserContent"] [data-testid="stCaptionContainer"] {color: #7f91ab;}
+[data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] {gap: .5rem;}
 
 /* ---- "Why the AI chose these codes" ------------------------------------------------------------------------ */
 .apc-reasons {display: flex; flex-direction: column;}
@@ -291,7 +422,7 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-reason .badges:empty {display: none;}
 
 /* ---- Narrower sidebar on laptops --------------------------------------------------------------------------- */
-section[data-testid="stSidebar"] {width: 256px !important; min-width: 256px !important;}
+section[data-testid="stSidebar"] {width: 248px !important; min-width: 248px !important;}
 
 /* History timeline (audit trail) */
 .apc-timeline {position: relative; padding-left: .25rem;}

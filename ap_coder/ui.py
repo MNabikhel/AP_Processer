@@ -18,7 +18,8 @@ from typing import Any
 AVATAR_COLORS = ("#1f63b5", "#b54a1f", "#127a56", "#8a5a00", "#b23a6b", "#2f6b2f", "#4a3aa7", "#9b2c2c")
 # Categorical palette (dataviz reference palette, fixed order).
 SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")
-OK, WARN, ERR, BRAND = "#1a7f4b", "#e59a00", "#c53030", "#2a78d6"
+OK, WARN, ERR, BRAND = "#1a7f4b", "#e59a00", "#c53030", "#1f6fd1"  # BRAND = theme.toml primaryColor
+INK = "#111c2e"
 
 
 def esc(value: Any) -> str:
@@ -73,7 +74,7 @@ def confidence_color(value: float, threshold: float = 0.85) -> str:
 
 
 def ring(value: float, size: int = 64, stroke: int = 7, color: str = BRAND, track: str = "#e8edf4",
-         text_color: str = "#142033", label: str | None = None) -> str:  # fmt: skip
+         text_color: str = INK, label: str | None = None) -> str:  # fmt: skip
     """Donut gauge for a single 0..1 value (pure CSS: inline SVG is stripped by Streamlit's sanitiser)."""
     value = max(0.0, min(1.0, value or 0.0))
     text = label if label is not None else f"{value:.0%}"
@@ -126,12 +127,44 @@ def tiles(items: Iterable[str]) -> str:
     return f"<div class='apc-tiles'>{''.join(items)}</div>"
 
 
-def page_header(eyebrow: str, title: str, subtitle: str = "") -> str:
+def breadcrumbs(parts: Sequence[str]) -> str:
+    """ "AP Coder / Close & compliance": where a page sits; the last part is emphasised."""
+    sep = "<span class='sep' aria-hidden='true'>/</span>"
+    items = [esc(p) if i < len(parts) - 1 else f"<b>{esc(p)}</b>" for i, p in enumerate(parts)]
+    return f"<nav class='apc-crumbs' aria-label='Breadcrumb'>{sep.join(items)}</nav>"
+
+
+def page_header(eyebrow: str, title: str, subtitle: str = "", aside: str = "",
+                crumbs: Sequence[str] = ()) -> str:  # fmt: skip
+    """Title block of a page. ``crumbs`` (e.g. ``("AP Coder", "Close & compliance")``) replaces the eyebrow
+    with a breadcrumb; ``aside`` is HTML (pills, a status) shown on the right, built with these helpers."""
     sub = f"<div class='apc-sub'>{esc(subtitle)}</div>" if subtitle else ""
-    return (
-        f"<div class='apc-head apc-anim'><div><div class='apc-eyebrow'>{esc(eyebrow)}</div>"
-        f"<div class='apc-title'>{esc(title)}</div>{sub}</div></div>"
-    )
+    top = breadcrumbs(crumbs) if crumbs else f"<div class='apc-eyebrow'>{esc(eyebrow)}</div>"
+    side = f"<div class='aside'>{aside}</div>" if aside else ""
+    return f"<div class='apc-head apc-anim'><div>{top}<div class='apc-title'>{esc(title)}</div>{sub}</div>{side}</div>"
+
+
+def section_title(title: str, note: str = "") -> str:
+    """A small uppercase heading between cards, with an optional note on the right."""
+    note_html = f"<span>{esc(note)}</span>" if note else ""
+    return f"<div class='apc-section'><h5>{esc(title)}</h5>{note_html}</div>"
+
+
+def status(text: str, tone: str = "ok") -> str:
+    """A coloured dot and a short state: "Offline · Local", "Connected" (tone: ok, warn, err, info, violet)."""
+    return f"<span class='apc-status {esc(tone)}'>{esc(text)}</span>"
+
+
+def empty_note(title: str, text: str = "", icon_name: str = "inbox") -> str:
+    """A compact empty state for inside a card (the big ``empty_state`` is for a whole page or tab)."""
+    body = f"<b>{esc(title)}</b>{esc(text)}" if text else f"<b>{esc(title)}</b>"
+    return f"<div class='apc-empty-sm'><span class='ico'>{icon(icon_name)}</span><div>{body}</div></div>"
+
+
+def kv(pairs: Iterable[tuple[str, str]]) -> str:
+    """A two-column label / value list (plain text, escaped)."""
+    rows = "".join(f"<dt>{esc(k)}</dt><dd>{esc(v)}</dd>" for k, v in pairs)
+    return f"<dl class='apc-kv'>{rows}</dl>"
 
 
 def greeting(now: dt.datetime | None = None) -> str:
@@ -391,12 +424,19 @@ def step(state: str, label: str, detail: str) -> str:
     )
 
 
-def sidebar_profile(name: str, approved_today: int, waiting: int) -> str:
+def sidebar_profile(name: str, approved_today: int, waiting: int, env: str = "", env_tone: str = "ok",
+                    where: str = "") -> str:  # fmt: skip
+    """The sidebar footer: who is reviewing, today's counts and (``env``) where the app runs, e.g.
+    "Offline · Local" with the data folder (``where``) as a tooltip and a trimmed line."""
+    env_html = ""
+    if env:
+        where_html = f"<span class='where' title='{esc(where)}'>{esc(where)}</span>" if where else ""
+        env_html = f"<div class='apc-env'>{status(env, env_tone)}{where_html}</div>"
     return (
         f"<div class='apc-me'>{avatar(name)}<div><div class='name'>{esc(name)}</div>"
         f"<div class='role'>AP reviewer</div></div></div>"
         f"<div class='apc-today'><div><b>{approved_today}</b><span>done today</span></div>"
-        f"<div><b>{waiting}</b><span>waiting</span></div></div>"
+        f"<div><b>{waiting}</b><span>waiting</span></div></div>{env_html}"
     )
 
 

@@ -10,7 +10,7 @@ from ap_coder import statements as stm
 from ap_coder import ui, vendor_mail
 from ap_coder.safe import md
 from ap_coder.webapp.accounts import _read_upload
-from ap_coder.webapp.common import card, esc, get_store, money, reviewer, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, page_head, reviewer, show_toast
 
 TONES = {
     stm.MATCHED: ("ok", "check"),
@@ -37,13 +37,10 @@ def _ap_status(line: stm.Line, invoices: dict[int, dict[str, Any]]) -> str:
 def page_statements() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Reconcile",
-            "Vendor statements",
-            "Compare a vendor's statement of account with the invoices you hold: find missing invoices and "
-            "amount differences before month-end.",
-        )
+    page_head(
+        "statements",
+        "Vendor statements",
+        "Compare a vendor's statement with the invoices you hold: find missing invoices and amount differences.",
     )
     vendors = store.vendor_summaries()
     if not vendors:

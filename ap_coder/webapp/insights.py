@@ -10,7 +10,7 @@ import streamlit as st
 
 from ap_coder import ui
 from ap_coder.insights import Assumptions, compute, operations, report_html
-from ap_coder.webapp.common import card, esc, get_store, notify, reviewer, show_toast
+from ap_coder.webapp.common import card, esc, get_store, notify, page_head, reviewer, show_toast
 
 OK_GREEN, WARN_AMBER = "#1baf7a", "#eda100"
 
@@ -100,12 +100,10 @@ def page_insights() -> None:
 
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Business case",
-            "Insights",
-            "What the pilot shows: how much goes straight through, the time it saves and what Azure costs.",
-        )
+    page_head(
+        "insights",
+        "Insights",
+        "The business case: how much goes straight through, the time it saves and what Azure costs.",
     )
     s = compute(store)
     a: Assumptions = s["assumptions"]

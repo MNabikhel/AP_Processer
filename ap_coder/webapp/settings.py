@@ -29,6 +29,7 @@ from ap_coder.webapp.common import (
     not_in_public_demo,
     notify,
     open_folder,
+    page_head,
     reference_or_none,
     reviewer,
     show_toast,
@@ -531,7 +532,7 @@ def about_tab() -> None:
 def page_settings() -> None:
     store = get_store()
     show_toast()
-    st.html(ui.page_header("Setup", "Settings", "AI model, Azure connection, review behaviour, your data and backups."))
+    page_head("settings", "Settings", "AI model, review behaviour, JD Edwards E1, your data and backups.")
     ai_model, azure, review, erp, data, about = st.tabs(
         [
             ":material/smart_toy: AI model",

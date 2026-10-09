@@ -12,7 +12,7 @@ from ap_coder import ui
 from ap_coder.safe import md
 from ap_coder.store import Store, load_sample_purchase_orders
 from ap_coder.webapp.accounts import _read_upload
-from ap_coder.webapp.common import card, esc, get_store, money, notify, reviewer, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, notify, page_head, reviewer, show_toast
 
 FIELD_LABELS = {
     "po_number": "PO number",
@@ -207,12 +207,10 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
 def page_purchase_orders() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Matching",
-            "Purchase orders",
-            "Invoices that quote a PO are checked against it: price, quantity ordered and received, and coding.",
-        )
+    page_head(
+        "purchase_orders",
+        "Purchase orders",
+        "Invoices that quote a PO are checked against it: price, quantity ordered and received, and coding.",
     )
     pos = store.purchase_orders()
     _importer(store, bool(pos))

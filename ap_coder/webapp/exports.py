@@ -19,6 +19,7 @@ from ap_coder.webapp.common import (
     get_store,
     money,
     notify,
+    page_head,
     reference_or_none,
     reviewer,
     show_toast,
@@ -197,13 +198,10 @@ def _layout_editor(store: Store) -> None:
 def page_exports() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "ERP",
-            "Exports",
-            "Hand approved invoices to the ERP in batches. Each invoice goes out once; any batch can be "
-            "downloaded again.",
-        )
+    page_head(
+        "exports",
+        "Exports",
+        "Hand approved invoices to the ERP in batches. Each invoice goes out once; any batch can be downloaded again.",
     )
     ready = store.unexported_approved()
     batches = store.export_batches()

@@ -31,6 +31,7 @@ from ap_coder.webapp.common import (
     not_in_public_demo,
     notify,
     open_folder,
+    page_head,
     short_path,
     show_toast,
 )
@@ -110,10 +111,15 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
 def page_process() -> None:
     store = get_store()
     show_toast()
-    st.html(ui.page_header("Inbox", "Process invoices", "Read new invoices and send them to the review queue."))
     settings = get_settings()
     steps = setup_steps(store, settings)
     ready = steps[0][0] != "bad" and steps[2][0] == "ok"  # a reader and GL accounts; the AI model is optional
+    page_head(
+        "process",
+        "Process invoices",
+        "Read new invoices and send them to the review queue.",
+        aside=ui.status("Ready to read invoices", "ok") if ready else ui.status("Setup not finished", "warn"),
+    )
 
     left, right = st.columns([3, 2], gap="medium")
     with right, card("setup_steps"):

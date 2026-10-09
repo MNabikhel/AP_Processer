@@ -20,6 +20,7 @@ from ap_coder.webapp.common import (
     get_store,
     gl_name,
     notify,
+    page_head,
     reference_or_none,
     reviewer,
     show_toast,
@@ -80,9 +81,7 @@ def _history_card(store) -> None:
 def page_learning() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header("Insights", "Learning & accuracy", "How often the AI gets it right, and what it has learned.")
-    )
+    page_head("learning", "Learning & accuracy", "How often the AI gets it right, and what it has learned.")
     coding_tab, supplier_tab = st.tabs(
         [":material/auto_awesome: Coding accuracy", ":material/storefront: Supplier learning"]
     )
