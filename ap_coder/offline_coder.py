@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
 from .capture import analyze, build_layout
 from .capture.bridge import vendor_record
-from .capture.types import CaptureResult, DocLayout
+from .capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout
 from .capture.workflow import supplier_for
 from .extraction import ExtractionResult
 from .inference import CodingResult
@@ -76,8 +77,20 @@ def _tax_lines(values: dict[str, Any], subtotal: float) -> list[TaxLine]:
     return out
 
 
+def _unlisted_charge(text: str, amount: float) -> str:
+    """The label printed beside an amount outside the line table ("Delivery & handling: $95.00")."""
+    figure = f"{abs(amount):,.2f}"
+    for line in text.splitlines():
+        if figure in line:
+            label = line.split(figure)[0].strip(" :$-–\t")
+            if 2 < len(label) < 60 and not re.search(r"(?i)sub\s*-?total|total|tax|gst|hst|pst|qst|tps|tvq", label):
+                return label
+    return "Charges not in the line table"
+
+
 def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback: list[dict[str, Any]],
-                      store: Any = None) -> CodingResult:  # fmt: skip
+                      store: Any = None, text: str = "") -> CodingResult:  # fmt: skip
+    """``text``: the page text (labels a charge printed outside the line table)."""
     values = _values(capture)
     vendor = str(values.get("vendor_name") or "")
     subtotal = _amount(values, "subtotal")
@@ -99,6 +112,12 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
              li.unit_price if li.unit_price is not None else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)
         ]  # fmt: skip
+    # Lines that fall short of the subtotal (plus freight read beside it): a charge printed outside the table.
+    charges = capture.fields.get("other_charges")
+    freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
+    short = round(subtotal + freight - sum(r[3] for r in readings_data), 2)
+    if readings and abs(short) >= 0.01:
+        readings_data.append((_unlisted_charge(text, short), 1.0, short, short))
     lines = []
     for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
         best = next(iter(suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl)), None)

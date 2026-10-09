@@ -419,3 +419,20 @@ def test_vendor_line_filters_for_ocr_reads():
     assert _ocr_name_fix("HarbourfrontFleetServicesLP") == "Harbourfront Fleet Services LP"
     assert _ocr_name_fix("Eastgate Equipment Rentals Ltd..") == "Eastgate Equipment Rentals Ltd."
     assert plain("Billed·To:") == "billed to:"
+
+
+def test_sample_line_tables_read_whole():
+    from ap_coder.capture import analyze
+
+    samples = Path(__file__).resolve().parent.parent / "samples"
+    # "Fees" is an amount column; descriptions with a number in them ("Meraki MR46") stay whole; a "#" column
+    # does not end up in the description.
+    fees = analyze(samples / "harbourview_NS_HST_HPS-2026-0347.pdf")
+    assert [li.amount for li in fees.line_items] == [4620.0, 2960.0, 1950.0, 84.5]
+    assert fees.line_items[0].description.startswith("Year-end audit")
+    prairie = analyze(samples / "prairie_SK_GST_PST_PNS-104882.pdf")
+    assert prairie.line_items[0].description.startswith("Cisco Meraki MR46")
+    assert prairie.fields["po_number"].value == "PO-89904"  # "Order Ref: PO-89904"
+    # A line's quantity ("Shipping - UPS Ground   1") is not a freight charge.
+    us = analyze(samples / "cascade_US_SalesTax_INV-30981.pdf")
+    assert us.fields["other_charges"].value is None

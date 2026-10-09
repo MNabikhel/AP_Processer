@@ -58,7 +58,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"p\.?\s?o\.?(?![-\d])\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
         (r"(?:your|customer|cust\.?|client)\s*(?:order|p\.?\s?o\.?)(?:\s*" + _NO + ")?", 0.95),
         (r"(?:votre\s*)?bon\s*de\s*commande(?:\s*" + _NO + ")?", 1.0), (r"(?:no|n\s?°|nº|n)\.?\s*(?:de\s*)?(?:bon\s*de\s*)?commande", 0.95),
-        (r"commande\s*(?:client|no|n\s?°)", 0.8), (r"votre\s*(?:commande|bon)", 0.95), (r"b\.\s?c\.(?!\s*(?:pst|v\d))\s*(?:#|no\b\.?|n\s?°)?", 0.8),
+        (r"commande\s*(?:client|no|n\s?°)", 0.8), (r"order\s*ref(?:erence)?\b\.?", 0.7), (r"votre\s*(?:commande|bon)", 0.95), (r"b\.\s?c\.(?!\s*(?:pst|v\d))\s*(?:#|no\b\.?|n\s?°)?", 0.8),
     ],
     "invoice_date": [
         (r"invoice\s*date", 1.0), (r"date\s*(?:of\s*)?(?:issue|invoice)", 1.0), (r"issue\s*date", 0.95),
@@ -381,6 +381,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         money = [a for a in amounts if looks_like_money(cleaned[a[1] : a[2]])]
         if not money and field in _TAX_FIELDS and all(abs(v) < 200 and float(v).is_integer() for v, _, _ in amounts):
             return None  # "HST 138": the rate (13% read with the % as an 8), the amount is further right
+        if not money and field == "other_charges":
+            return None  # "Shipping - UPS Ground   1": a line's quantity, not a charge (charges are money: 45.00)
         money = money or amounts
         value, a, b = money[-1]  # the rightmost amount on a totals row is the amount column
         words = _span_words(line, start + a, start + b)
@@ -709,21 +711,26 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
     totals = top["grand_total"] or [None]
     tax_options = {f: [*top[f], None] for f in _TAX_FIELDS}
     charge_options = [*top["other_charges"][:2], None]
+    # A sales tax that is no GST/HST/PST/QST ("WA Sales Tax 10.35%"): only its total is printed.
+    total_tax_options = [*top["tax_total"][:2], None]
     best = None
-    for sub, total, charge in product(subs, totals, charge_options):
+    for sub, total, charge, total_tax in product(subs, totals, charge_options, total_tax_options):
         extra = charge.value if charge else 0.0
         for taxes in product(*tax_options.values()):
             present = [t for t in taxes if t is not None]
             if len({_where(t) for t in present}) < len(present):
                 continue  # one printed amount ("GST/HST") is one tax
+            if present and total_tax is not None:
+                continue  # the total tax stands in only when no component tax is read
             score = (sub.score if sub else 0) + (total.score if total else 0) + sum(t.score for t in present)
-            score += charge.score if charge else 0.0
+            score += (charge.score if charge else 0.0) + (total_tax.score if total_tax else 0.0)
             bonus = 0.0
             if sub and total:
-                tax_sum = sum(t.value for t in present)
+                tax_sum = sum(t.value for t in present) + (total_tax.value if total_tax else 0.0)
                 if abs(sub.value + extra + tax_sum - total.value) <= 0.011:
                     # Subtotal = total with no tax is weaker evidence: one number printed twice.
-                    bonus += 3.0 + 0.5 * len(present) if present else 2.5
+                    taxed = len(present) + (total_tax is not None)
+                    bonus += 3.0 + 0.5 * taxed if taxed else 2.5
                 elif present and abs(sub.value - total.value) <= 0.011:
                     bonus -= 1.0  # a total equal to the subtotal while taxes are printed: wrong total
             if sub and line_sum is not None and abs(sub.value - line_sum) <= 0.011:
@@ -766,10 +773,11 @@ _HEAD = {
     "description": re.compile(r"^(description|desc\.?|item|article|details|designation|produit|service|libelle|particulars)"),
     "quantity": re.compile(r"^(qty|quantity|qte|quantite|qte\.|units?|hrs|hours|heures)\b"),
     "unit_price": re.compile(r"^(unit\s*price|price|rate|unit\s*cost|prix(\s*unitaire)?|taux|p\.?u\.?|cost)\b"),
-    "amount": re.compile(r"^(amount|total|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|value|valeur|prix\s*total)\b"),
+    "amount": re.compile(r"^(amount|total|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|value|valeur|prix\s*total|fees|honoraires|frais)\b"),
 }  # fmt: skip
 
 
+_NUMBER_CELL = re.compile(r"^[\s$€£¢()+\-–.,'%x×@#]*\d[\d\s$€£¢()+\-–.,'%x×@]*(?:[a-z]{1,3}\.?)?\s*$", re.I)
 _CARRIED = re.compile(r"^(a\s*reporter|report\b|reporte|carried\s*forward|brought\s*forward|balance\s*forward|"
                       r"continued|suite|sub\s*-?\s*total|sous\s*-?\s*total|page\s*total)")  # fmt: skip
 
@@ -817,7 +825,9 @@ def read_line_items(layout: DocLayout) -> list[LineReading]:
                     amount, amt_seg = found[-1][0], s
             if amount is None:
                 continue
-            desc = " ".join(s.text for s in segs if s is not amt_seg and not _amounts_in(s.text) or
+            # A number cell (qty, price, amount, row number) is not part of the description; a description
+            # with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is.
+            desc = " ".join(s.text for s in segs if s is not amt_seg and not _NUMBER_CELL.match(s.text) or
                             ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05))  # fmt: skip
             qty = price = None
             if "quantity" in cols:
@@ -832,6 +842,12 @@ def read_line_items(layout: DocLayout) -> list[LineReading]:
             row_box = union_all([s.box for s in segs])
             score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
             items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score))
+    # A "#" column read into the description: "1 Observability…", "2 Premium…". Only when every row starts
+    # with its own number, so "6 Dell monitors" on its own is left alone.
+    numbered = [re.match(rf"^{i}\s+(?=\S)", li.description) for i, li in enumerate(items, 1)]
+    if len(items) >= 2 and all(numbered):
+        for li, m in zip(items, numbered, strict=True):
+            li.description = li.description[m.end() :]
     return items
 
 

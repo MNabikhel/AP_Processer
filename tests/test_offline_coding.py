@@ -30,8 +30,10 @@ def test_a_pdf_is_read_and_coded_with_no_azure_and_no_model(tmp_path, reference)
     assert coding.invoice_number == truth["invoice_number"]
     assert abs(coding.grand_total - truth["grand_total"]) < 0.01
     assert result.capture is not None and result.invoice_id
-    # Nothing learned yet: no account is guessed, so review asks for it.
-    assert all(li.predicted_gl_code == UNASSIGNED for li in coding.line_items)
+    assert len(coding.line_items) == len(truth["line_items"])
+    # Nothing approved yet: an account comes only from the chart's own names, with its reason, else none.
+    codes = set(reference.chart_of_accounts.codes)
+    assert all(li.predicted_gl_code in codes | {UNASSIGNED} and li.reasoning_justification for li in coding.line_items)
     assert result.report.requires_review
 
 

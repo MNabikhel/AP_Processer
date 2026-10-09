@@ -210,7 +210,9 @@ class InvoicePipeline:
                 from .offline_coder import code_from_capture, read_invoice
 
                 captured = read_invoice(path, self.store, layout=layout)
-                result.coding = code_from_capture(captured[0], self.reference, feedback, self.store)
+                result.coding = code_from_capture(
+                    captured[0], self.reference, feedback, self.store, text=result.extraction.content
+                )
             else:
                 result.coding = self.coder.code(result.extraction, images, history_text)
             result.timings["inference"] = time.perf_counter() - t1

@@ -103,19 +103,20 @@ def run_checks(
 
     # --- Configuration ----------------------------------------------------------
     di, oai, eng = settings.document_intelligence, settings.openai, settings.engine
-    add(
-        "DI endpoint",
-        PASS if di.endpoint else FAIL,
-        "set" if di.endpoint else "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT missing",
-    )
-    add("DI auth", PASS, "API key" if di.api_key else "Entra ID (DefaultAzureCredential)")
-    add("DI model", PASS, di.model_id)
+    if di.endpoint:
+        add("DI endpoint", PASS, "set")
+        add("DI auth", PASS, "API key" if di.api_key else "Entra ID (DefaultAzureCredential)")
+        add("DI model", PASS, di.model_id)
+    else:  # optional: without it every invoice is read on this computer
+        add("DI endpoint", SKIP, "not set: invoices are read on this computer (PDF text, local OCR for scans)")
     provider = resolve_provider(settings)
     add("AI model", PASS if provider != "off" else WARN, _provider_detail(settings, provider))
     if provider == "local" or settings.llm.provider == "off":
         add("AOAI endpoint", SKIP, "not used (coding with the local model)" if provider == "local" else "not used")
+    elif not oai.endpoint:
+        add("AOAI endpoint", SKIP, "not set (optional: Azure OpenAI)")
     else:
-        add("AOAI endpoint", PASS if oai.endpoint else FAIL, "set" if oai.endpoint else "AZURE_OPENAI_ENDPOINT missing")
+        add("AOAI endpoint", PASS, "set")
         add("AOAI auth", PASS, "API key" if oai.api_key else "Entra ID (DefaultAzureCredential)")
         api_ok = oai.api_version >= "2024-08-01"
         add("AOAI api version", PASS if api_ok else FAIL, f"{oai.api_version} (Structured Outputs needs >= 2024-08-01)")
