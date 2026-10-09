@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import functools
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,7 @@ import streamlit as st
 
 from ap_coder import recurring, rules, stamp, ui, vendor_mail
 from ap_coder.bulk import bulk_approve, clean_candidates
+from ap_coder.capture.types import MISSING, CaptureResult
 from ap_coder.capture.workflow import learn_from_approval, on_reopen
 from ap_coder.extraction import ExtractionResult
 from ap_coder.help import help_for
@@ -26,8 +29,9 @@ from ap_coder.suggest import suggest_gl
 from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
 from ap_coder.terms import describe as terms_describe
-from ap_coder.webapp.capture_panel import VIEWABLE, capture_panel, taught_boxes
+from ap_coder.webapp.capture_panel import VIEWABLE, capture_panel, document_head, taught_boxes
 from ap_coder.webapp.common import (
+    ASSETS,
     INVOICE_DIR,
     PAGES,
     TARGET_ACCURACY,
@@ -328,8 +332,8 @@ def _parked_tab(store: Store) -> None:
 
 def _notes_card(store: Store, invoice_id: int, key: str) -> None:
     notes = [e for e in store.events(invoice_id) if e["action"] in ("note", "parked", "sent_back")]
-    with card("notes"):
-        st.markdown("#### :material/sticky_note_2: Notes")
+    label = f"Notes · {len(notes)}" if notes else "Notes"
+    with card("notes"), st.expander(label, icon=":material/sticky_note_2:", expanded=bool(notes)):
         if notes:
             st.html(history_html(notes))
         with st.form(f"{key}_note_form", clear_on_submit=True, border=False):
@@ -550,11 +554,6 @@ def _getting_started(store: Store) -> None:
     demo_card(store, "welcome")
 
 
-def _has_viewer(inv: dict[str, Any], store: Store) -> bool:
-    path = Path(inv["source_path"])
-    return path.suffix.lower() in VIEWABLE and path.exists() and store.get_capture(inv["id"]) is not None
-
-
 def _document_panel(inv: dict[str, Any], store: Store, key: str = "") -> None:
     path = Path(inv["source_path"])
     capture = store.get_capture(inv["id"])
@@ -572,14 +571,13 @@ def _document_panel(inv: dict[str, Any], store: Store, key: str = "") -> None:
         pages = []
         st.warning("This file could not be shown (it may be damaged).", icon=":material/broken_image:")
     head, pager = st.columns([3, 2], vertical_alignment="center")
-    head.markdown("#### :material/description: Document")
+    head.html(document_head(inv["file_name"]))
     page_no = 1
     if len(pages) > 1:
         page_no = pager.segmented_control(
             "Page", list(range(1, len(pages) + 1)), default=1, key=f"page_{inv['id']}",
             format_func=lambda n: f"Page {n}", label_visibility="collapsed",
         ) or 1  # fmt: skip
-    st.html(f"<div class='apc-muted'>{ui.icon('attach_file', '1em')} {esc(inv['file_name'])}</div>")
     if pages:
         st.image(pages[page_no - 1], width="stretch")
     elif not path.exists():
@@ -594,6 +592,94 @@ def _history(inv: dict[str, Any], store: Store) -> None:
     if events:
         with st.expander(f"History · {len(events)}", icon=":material/history:"):
             st.html(history_html(events))
+
+
+@functools.lru_cache(maxsize=1)
+def _review_css() -> str:
+    """Styles of the review workspace (assets/review.css), on top of the app's style.css."""
+    return (ASSETS / "review.css").read_text(encoding="utf-8")
+
+
+def _section_head(icon_name: str, title: str, hint: str = "") -> str:
+    """A card's title; ``hint`` (plain text) is a tooltip on an info mark rather than a line of text."""
+    tip = (
+        f"<span class='rvw-hint' title='{esc(hint)}' role='note' aria-label='{esc(hint)}'>{ui.icon('info', '1em')}"
+        "</span>"
+        if hint
+        else ""
+    )
+    return f"<div class='rvw-sec-head'>{ui.icon(icon_name, '1.15em')}<span>{esc(title)}</span>{tip}</div>"
+
+
+def _group_head(title: str) -> str:
+    return f"<div class='rvw-group'>{esc(title)}</div>"
+
+
+# How sure the capture is of a field, beside its label in the form: a colour, an icon and words.
+_CAPTURE_BADGES = {"verified": ("green", "verified"), "likely": ("blue", "check"), "check": ("orange", "error"),
+                   "failed": ("red", "close")}  # fmt: skip
+
+
+def _capture_confidence(store: Store, invoice_id: int) -> dict[str, tuple[str, float]]:
+    """{field: (status, confidence)} of what the capture read from the page (status "failed" when a check failed)."""
+    raw = store.get_capture(invoice_id)
+    if not raw:
+        return {}
+    try:
+        capture = CaptureResult.from_dict(raw)
+    except (KeyError, TypeError, ValueError):
+        return {}
+    out = {}
+    for name, fr in capture.fields.items():
+        failed = any(r.startswith("check failed") for r in fr.reasons)
+        out[name] = ("failed" if failed and fr.status != MISSING else fr.status, fr.confidence)
+    return out
+
+
+def _with_confidence(label: str, field: str, confidence: dict[str, tuple[str, float]]) -> str:
+    status, value = confidence.get(field, ("", 0.0))
+    if status not in _CAPTURE_BADGES:
+        return label
+    color, icon_name = _CAPTURE_BADGES[status]
+    words = "check" if status == "failed" else f"{math.floor(value * 100 + 1e-9)}%"  # never rounds up to certainty
+    return f"{label} :{color}-badge[:material/{icon_name}: {words}]"
+
+
+def _status_block(tone: str, icon_name: str, title: str, items: list[str], sub: str = "") -> str:
+    body = f"<ul>{''.join(items)}</ul>" if items else (f"<div class='rvw-status-sub'>{esc(sub)}</div>" if sub else "")
+    return (
+        f"<div class='rvw-status {tone}' role='status'><div class='rvw-status-title'>{ui.icon(icon_name, '1.2em')}"
+        f"<span>{esc(title)}</span></div>{body}</div>"
+    )
+
+
+def _checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> str:
+    """All the checks as one status: passed, or what needs attention (one line each; details in the expander)."""
+    low = report.requires_review and not errors
+    look = len(warnings) + (1 if low else 0)
+    items = []
+    for issue in errors + warnings:
+        bad = issue.severity == "error"
+        text = (f"Line {issue.line_number}: " if issue.line_number else "") + issue.message
+        items.append(
+            f"<li class='{'err' if bad else 'warn'}' title='{esc(text)}'><span class='m' aria-hidden='true'>"
+            f"{'✕' if bad else '!'}</span><span class='rvw-sr'>{'Must fix' if bad else 'Worth a look'}: </span>"
+            f"<span class='t'>{esc(text)}</span></li>"
+        )
+    if low:
+        items.append(
+            f"<li class='warn'><span class='m' aria-hidden='true'>!</span><span class='rvw-sr'>Worth a look: </span>"
+            f"<span class='t'>AI confidence {report.adjusted_confidence:.0%} is below the "
+            f"{report.review_threshold:.0%} threshold.</span></li>"
+        )
+    if errors:
+        title = f"{len(errors)} must be fixed" + (f" · {look} to look at" if look else "")
+        return _status_block("err", "error", title, items)
+    if look:
+        return _status_block("warn", "visibility", f"{look} {'needs' if look == 1 else 'need'} a look", items)
+    return _status_block(
+        "ok", "check_circle", "All checks passed", [], "Totals reconcile, taxes verified, all codes valid."
+    )
 
 
 def _checks_html(report: Any) -> str:
@@ -739,6 +825,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     meta = inv.get("meta") or {}
     ids = [i["id"] for i in pending]
     position = ids.index(invoice_id)
+    st.html(f"<style>{_review_css()}</style>")
 
     # --- Navigation (with keyboard shortcuts) -------------------------------------------------------
     nav = st.container(horizontal=True, vertical_alignment="center")
@@ -754,6 +841,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             f"<tr><td>{ui.kbd('Alt')} + {ui.kbd('→')}</td><td>Next invoice</td></tr>"
             f"<tr><td>{ui.kbd('Alt')} + {ui.kbd('←')}</td><td>Previous invoice</td></tr>"
             f"<tr><td>{ui.kbd('Alt')} + {ui.kbd('↑')}</td><td>Back to the queue</td></tr>"
+            f"<tr><td>{ui.kbd('N')}</td><td>Next field to check (on the page)</td></tr>"
             "</tbody></table>"
         )
     # Always enabled (wrapping around), so Alt+Left/Right never fall through to the browser's Back/Forward.
@@ -777,35 +865,28 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             ui.check("warning", f"{verb} by {back['actor'] or '?'}", f"{reason}. The approved coding is kept below; "
                      "fix what is needed and approve again.")
         )  # fmt: skip
-    summary = st.container()  # the summary card is drawn here once the edits are valid
+    summary = st.container()  # the invoice header is drawn here once the edits are valid
 
-    # With a highlighted page the document gets the full width (page and field list side by side);
-    # otherwise the plain page sits left of the form.
-    wide = _has_viewer(inv, store)
-    if wide:
-        with card("document"):
-            _document_panel(inv, store, key)
-    left, right = st.columns([5, 7], gap="medium")
-    with left:
-        if wide:
-            checks_box = card("checks")
-        else:
-            with card("document"):
-                _document_panel(inv, store, key)
-        _notes_card(store, invoice_id, key)
+    # The page on the left (it stays in view while scrolling), what was read and the checks on the right.
+    with st.container(key="rvw_split"):
+        left, right = st.columns([1.5, 1], gap="medium")
+    with left, card("document"):
+        _document_panel(inv, store, key)
 
     with right:
-        if not wide:
-            checks_box = card("checks")
+        checks_box = card("checks")
         with card("details"):
-            st.markdown("#### :material/badge: Invoice details")
+            st.html(_section_head("badge", "Invoice details"))
             keep = {"persist_state": "session"}  # edits survive moving to another invoice and back
+            sure = _capture_confidence(store, invoice_id)  # how sure the capture is of each field, for the labels
 
             def text(col: Any, label: str, field: str, default: str = "", **kw: Any) -> str:
+                label = _with_confidence(label, field, sure)
                 return col.text_input(label, start.get(field, default), key=f"{key}_{field}", **keep, **kw)
 
             def amount(col: Any, label: str, field: str) -> float:
                 value = float(start.get(field) or 0)
+                label = _with_confidence(label, field, sure)
                 return col.number_input(label, value=value, format="%.2f", key=f"{key}_{field}", **keep)
 
             def province(col: Any, label: str, field: str, **kw: Any) -> str:
@@ -818,24 +899,29 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             prov_label = {
                 p: f"{p} · {PROVINCE_NAMES.get(p, 'Outside Canada' if p else 'Unknown')}" for p in PROVINCE_VALUES
             }
-            c1, c2, c3 = st.columns([2, 1.2, 1.2])
-            header: dict[str, Any] = {
-                "vendor_name": text(c1, "Vendor", "vendor_name"),
-                "invoice_number": text(c2, "Invoice #", "invoice_number"),
-                "invoice_date": text(
-                    c3, "Invoice date", "invoice_date", placeholder="YYYY-MM-DD", help="Format YYYY-MM-DD"
-                ),
-            }
-            c1, c2, c3 = st.columns([1, 2, 2])
-            header["currency"] = text(c1, "Currency", "currency", "CAD")
-            header["supplier_province"] = province(c2, "Supplier province", "supplier_province")
-            header["ship_to_province"] = province(
-                c3, "Place of supply", "ship_to_province", help="Where goods are delivered / services performed"
+            st.html(_group_head("Supplier"))
+            header: dict[str, Any] = {"vendor_name": text(st, "Vendor", "vendor_name")}
+            c1, c2 = st.columns(2, vertical_alignment="bottom")
+            header["gst_hst_registration_number"] = text(
+                c1, "GST/HST #", "gst_hst_registration_number", help="The supplier's GST/HST registration number"
             )
-            c1, c2 = st.columns(2)
-            header["gst_hst_registration_number"] = text(c1, "Supplier GST/HST #", "gst_hst_registration_number")
-            header["qst_registration_number"] = text(c2, "Supplier QST #", "qst_registration_number")
-            c1, c2, c3 = st.columns(3)
+            header["qst_registration_number"] = text(
+                c2, "QST #", "qst_registration_number", help="The supplier's QST registration number (Québec)"
+            )
+            c1, c2 = st.columns(2, vertical_alignment="bottom")
+            header["supplier_province"] = province(c1, "Supplier province", "supplier_province")
+            header["remit_bank_account"] = text(
+                c2, "Pay into (bank account)", "remit_bank_account",
+                help="The bank details printed for payment, if any: compared with this vendor's earlier invoices",
+            )  # fmt: skip
+
+            st.html(_group_head("Invoice"))
+            c1, c2 = st.columns(2, vertical_alignment="bottom")
+            header["invoice_number"] = text(c1, "Invoice #", "invoice_number")
+            header["invoice_date"] = text(
+                c2, "Invoice date", "invoice_date", placeholder="YYYY-MM-DD", help="Format YYYY-MM-DD"
+            )
+            c1, c2 = st.columns(2, vertical_alignment="bottom")
             header["po_number"] = text(c1, "PO #", "po_number", help="Purchase order the invoice quotes, if any")
             header["payment_terms"] = text(c2, "Payment terms", "payment_terms", placeholder="e.g. Net 30, 2/10 Net 30")
             computed = (
@@ -846,28 +932,36 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 if float(start.get("grand_total") or 0) > 0  # a credit note has no due date
                 else None
             )  # fmt: skip
+            c1, c2 = st.columns(2, vertical_alignment="bottom")
             header["due_date"] = text(
-                c3, "Due date", "due_date",
+                c1, "Due date", "due_date",
                 placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
                 help="Only if printed; otherwise it comes from the terms (shown greyed)",
             )  # fmt: skip
-            c1, c2 = st.columns([1, 2])
-            header["original_invoice_number"] = text(
-                c1, "Credits invoice #", "original_invoice_number", help="On a credit note: the invoice it credits"
+            header["currency"] = text(c2, "Currency", "currency", "CAD")
+            c1, c2 = st.columns(2, vertical_alignment="bottom")
+            header["ship_to_province"] = province(
+                c1, "Place of supply", "ship_to_province", help="Where goods are delivered / services performed"
             )
-            header["remit_bank_account"] = text(
-                c2, "Pay into (bank account)", "remit_bank_account",
-                help="The bank details printed for payment, if any: compared with this vendor's earlier invoices",
-            )  # fmt: skip
-            c1, c2, c3 = st.columns(3)
+            header["original_invoice_number"] = text(
+                c2, "Credits invoice #", "original_invoice_number", help="On a credit note: the invoice it credits"
+            )
+
+            st.html(_group_head("Amounts"))
+            c1, c2, c3 = st.columns(3, vertical_alignment="bottom")
             header["subtotal"] = amount(c1, "Subtotal", "subtotal")
             header["tax_total"] = amount(c2, "Tax total", "tax_total")
-            header["grand_total"] = amount(c3, "Grand total", "grand_total")
+            header["grand_total"] = amount(c3, "Total", "grand_total")
+        _notes_card(store, invoice_id, key)
 
     # --- Line items ---------------------------------------------------------------------------------------
     with card("lines"):
-        st.markdown("#### :material/list_alt: Line items")
-        st.caption("Click a GL account or cost center cell to change it. Add or delete rows at the bottom.")
+        st.html(
+            _section_head(
+                "list_alt", "Line items", "Click a GL account or cost center cell to change it; add or delete rows "
+                "at the bottom."
+            )
+        )  # fmt: skip
         gl_labels = gl_label_map(reference)
         tax_gls = reference.tax.tax_gl_codes()
         gl_options = [UNASSIGNED] + [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
@@ -916,9 +1010,8 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     po_box = st.container()  # the purchase order match, once the edits are valid
     suggest_box = st.container()  # GL suggestions for lines without a usable GL account
 
-    tax_col, tax_check_col = st.container(), st.container()  # full width: every column readable at 1366px
-    with tax_col, card("tax"):
-        st.markdown("#### :material/percent: Sales tax")
+    with card("tax"):  # full width: every column readable at 1366px
+        st.html(_section_head("percent", "Sales tax"))
         tax_df = pd.DataFrame(
             start.get("tax_lines", []), columns=["tax_type", "province", "rate", "taxable_amount", "tax_amount"]
         )
@@ -939,19 +1032,20 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             hide_index=True,
             key=f"{key}_taxlines",
         )
+        tax_check_col = st.container()  # the rate and amount checks, once the edits are valid
 
     coding, problems = coding_from_inputs(
         header, edited_lines, edited_tax, ai, UNASSIGNED if reference.cost_centers is not None else ""
     )
     if coding is None:
         with checks_box:
-            st.markdown("#### :material/fact_check: Checks")
+            st.html(_status_block("err", "error", "Fix this field to see the checks", []))
             st.html("".join(ui.check("error", "Fix this field", p) for p in problems))
         with card("actionbar"):
-            left, right = st.columns([3, 1], vertical_alignment="center")
+            left, right = st.columns([1, 1.5], vertical_alignment="center")
             left.html("<div class='apc-muted'>Fix the highlighted field to see checks and approve.</div>")
-            _more_menu(right.container(horizontal=True, horizontal_alignment="right"), store, invoice_id, ids,
-                       position, key)  # fmt: skip
+            _more_menu(right.container(horizontal=True, horizontal_alignment="right", vertical_alignment="center"),
+                       store, invoice_id, ids, position, key)  # fmt: skip
         return
 
     extraction = ExtractionResult(
@@ -973,35 +1067,17 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             store.vendor_terms(vendor_key(coding.vendor_name)),
         )  # fmt: skip
     with checks_box:
-        head, count = st.columns([3, 2], vertical_alignment="center")
-        head.markdown("#### :material/fact_check: Checks")
-        count.html(
-            "<div style='text-align:right'>"
-            + (ui.pill(f"{len(errors)} to fix", "err") + " " if errors else "")
-            + (
-                ui.pill(f"{len(warnings) + (1 if report.requires_review and not errors else 0)} to look at", "warn")
-                if warnings
-                else ""
-            )
-            + (ui.pill("All clear", "ok", "check") if not (errors or warnings) and not report.requires_review else "")
-            + (
-                ui.pill("Needs a look", "warn", "visibility")
-                if not (errors or warnings) and report.requires_review
-                else ""
-            )
-            + "</div>"
-        )
-        st.html(_checks_html(report))
+        st.html(_checks_summary(report, errors, warnings))
         applied = meta.get("rules_applied") or []
-        if applied:
-            st.html("".join(ui.check("info", "Coding rule", rules.describe(c)) for c in applied))
+        with st.expander("Details and what to do", icon=":material/checklist:"):
+            st.html(_checks_html(report))
+            if applied:
+                st.html("".join(ui.check("info", "Coding rule", rules.describe(c)) for c in applied))
         _apply_rules_button(store, coding, edited_lines, key, invoice_id, ai)
         _ask_vendor(coding, report, key)
     with (
         reasons_box,
-        st.expander(
-            "Why the AI chose these codes", icon=":material/psychology_alt:", expanded=len(coding.line_items) <= 6
-        ),
+        st.expander("Why the AI chose these codes", icon=":material/psychology_alt:"),
     ):
         st.html(_reasons_html(coding, ai, report, reference))
     uncoded_lines = [
@@ -1015,26 +1091,26 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     if coding.po_number.strip():
         with po_box:
             _po_card(store, coding, invoice_id, edited_lines, key)
-    with tax_check_col, card("taxchecks"):
-        st.markdown("#### :material/calculate: Tax checks")
+    with tax_check_col:
         _tax_check_table(coding, reference)
 
     with card("posting"):
-        st.markdown("#### :material/account_balance: GL posting preview")
+        st.html(_section_head("account_balance", "GL posting preview", "The journal lines approval sends to the ERP."))
+        st.html(_spend_split(output, reference))
         _distribution_table(output, reference, coding.currency)
 
     # --- Sticky action bar --------------------------------------------------------------------------------
     changed = _ai_changes(coding, ai)
     with card("actionbar"):
-        left, right = st.columns([1, 1], vertical_alignment="center")
+        left, right = st.columns([1, 1.5], vertical_alignment="center")
         with left:
-            learn = f"you changed <b>{changed}</b> of its suggestions" if changed else "all as the AI suggested"
+            learn = f"you changed {changed} of its codes" if changed else "all as the AI suggested"
+            lines_n = len(coding.line_items)
             st.html(
-                f"<div style='display:flex;gap:.8rem;align-items:center'>{ui.avatar(reviewer(), 'sm')}"
-                f"<div><div style='font-weight:700;color:#142033'>"
-                f"Post {money(coding.grand_total)} {esc(coding.currency)}"
-                f"</div><div class='apc-muted'>Approving teaches the AI from {len(coding.line_items)} line(s): "
-                f"{learn}.</div></div></div>"
+                f"<div class='rvw-post'><div class='rvw-post-amount'>Post <b>{money(coding.grand_total)}</b> "
+                f"{esc(coding.currency)}</div><div class='rvw-post-sub' title='Approving teaches the AI from "
+                f"{lines_n} line(s): {esc(learn)}.'>{ui.icon('school', '1em')} Teaches from {lines_n} "
+                f"line{'s' if lines_n != 1 else ''} · {learn}</div></div>"
             )
             allow = True
             uncoded = [str(li.line_number) for li in coding.line_items if li.predicted_gl_code == UNASSIGNED]
@@ -1252,41 +1328,40 @@ def _fmt_qty(value: float | None) -> str:
 
 
 def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], position: int, key: str) -> None:
-    """Reject / delete, kept in a menu so the main action stays obvious."""
-    # Keyed per invoice, so the next invoice opens with the menu closed.
-    with parent.popover("More", icon=":material/more_horiz:", key=f"{key}_more"):
-        # One section at a time, so the menu fits on a laptop screen.
-        park_tab, reject_tab, delete_tab = st.tabs(["Park", "Reject", "Delete"])
-        with park_tab:
-            st.caption("Set it aside while waiting for information.")
-            why = st.text_input("Waiting for", key=f"{key}_park_reason", placeholder="e.g. buyer to confirm the price")
-            follow = st.date_input("Follow up on", value=None, key=f"{key}_park_date", min_value=dt.date.today())
-            if st.button("Park", key=f"{key}_park", icon=":material/pause_circle:", width="stretch",
-                         disabled=not why.strip()):  # fmt: skip
-                store.park_invoice(invoice_id, reviewer(), why, follow.isoformat() if follow else None)
-                _advance(ids, position)
-                notify(f"Invoice #{invoice_id} parked. It is in the Parked tab.", ":material/pause_circle:")
-                st.rerun()
-        with reject_tab:
-            st.caption("Not ours, or not to be paid. It can be reopened later.")
-            reason = st.text_input("Reason", key=f"{key}_reason", placeholder="e.g. not our invoice")
-            if st.button("Reject", key=f"{key}_reject", icon=":material/block:", width="stretch"):
-                store.reject_invoice(invoice_id, reviewer(), reason)
-                forget_drafts(key)
-                _advance(ids, position)
-                notify(f"Invoice #{invoice_id} rejected.", ":material/block:")
-                st.rerun()
-        with delete_tab:
-            st.caption("Nothing is learned from a deleted invoice. Its file moves to `invoices/deleted`.")
-            sure = st.checkbox("Yes, delete this invoice", key=f"{key}_sure")
-            if st.button(
-                "Delete invoice", key=f"{key}_delete", icon=":material/delete:", width="stretch", disabled=not sure
-            ):
-                delete_invoice(store, invoice_id)
-                forget_drafts(key)
-                _advance(ids, position)
-                notify(f"Invoice #{invoice_id} deleted.", ":material/delete:")
-                st.rerun()
+    """Park and Reject beside Approve, Delete in a menu, so the main action stays obvious."""
+    # Keyed per invoice, so the next invoice opens with the menus closed.
+    with parent.popover("Park", icon=":material/pause_circle:", key=f"{key}_park_menu",
+                        help="Set it aside while waiting for information"):  # fmt: skip
+        st.caption("Set it aside while waiting for information.")
+        why = st.text_input("Waiting for", key=f"{key}_park_reason", placeholder="e.g. buyer to confirm the price")
+        follow = st.date_input("Follow up on", value=None, key=f"{key}_park_date", min_value=dt.date.today())
+        if st.button("Park", key=f"{key}_park", icon=":material/pause_circle:", width="stretch",
+                     disabled=not why.strip()):  # fmt: skip
+            store.park_invoice(invoice_id, reviewer(), why, follow.isoformat() if follow else None)
+            _advance(ids, position)
+            notify(f"Invoice #{invoice_id} parked. It is in the Parked tab.", ":material/pause_circle:")
+            st.rerun()
+    with parent.popover("Reject", icon=":material/block:", key=f"{key}_reject_menu",
+                        help="Not ours, or not to be paid"):  # fmt: skip
+        st.caption("Not ours, or not to be paid. It can be reopened later.")
+        reason = st.text_input("Reason", key=f"{key}_reason", placeholder="e.g. not our invoice")
+        if st.button("Reject", key=f"{key}_reject", icon=":material/block:", width="stretch"):
+            store.reject_invoice(invoice_id, reviewer(), reason)
+            forget_drafts(key)
+            _advance(ids, position)
+            notify(f"Invoice #{invoice_id} rejected.", ":material/block:")
+            st.rerun()
+    with parent.popover("", icon=":material/more_horiz:", key=f"{key}_more", help="More: delete the invoice"):
+        st.caption("Nothing is learned from a deleted invoice. Its file moves to `invoices/deleted`.")
+        sure = st.checkbox("Yes, delete this invoice", key=f"{key}_sure")
+        if st.button(
+            "Delete invoice", key=f"{key}_delete", icon=":material/delete:", width="stretch", disabled=not sure
+        ):
+            delete_invoice(store, invoice_id)
+            forget_drafts(key)
+            _advance(ids, position)
+            notify(f"Invoice #{invoice_id} deleted.", ":material/delete:")
+            st.rerun()
 
 
 def delete_invoice(store: Store, invoice_id: int) -> None:
@@ -1330,38 +1405,46 @@ def _invoice_summary(
     coding: InvoiceCoding, report: Any, errors: list[Any], warnings: list[Any], output: dict[str, Any],
     reference: ReferenceData, default_days: int = 30, vendor_terms: str = "",
 ) -> None:  # fmt: skip
+    """The invoice at a glance: supplier, number, dates, status, confidence and the amount, on one band."""
     supply = coding.ship_to_province or coding.supplier_province
     meta = [
-        ("receipt_long", f"Invoice {coding.invoice_number}"),
-        ("event", coding.invoice_date),
-        ("location_on", province_label(supply)),
-        ("verified", f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else ""),
-        ("schedule", due_text(coding.to_output(), default_days, vendor_terms) if coding.grand_total > 0 else ""),
-    ]
-    pills = []
+        ("receipt_long", f"Invoice {coding.invoice_number}", "Invoice number"),
+        ("event", coding.invoice_date, "Invoice date"),
+        ("schedule", due_text(coding.to_output(), default_days, vendor_terms) if coding.grand_total > 0 else "",
+         "Payment due"),
+        ("location_on", province_label(supply), "Place of supply"),
+        ("verified", f"GST/HST {coding.gst_hst_registration_number}" if coding.gst_hst_registration_number else "",
+         "Supplier's GST/HST number"),
+    ]  # fmt: skip
+    look = len(warnings) + (1 if report.requires_review and not errors else 0)
     if errors:
-        pills.append(ui.pill(f"{len(errors)} error{'s' if len(errors) > 1 else ''}", "err", "error"))
-    if warnings:
-        pills.append(ui.pill(f"{len(warnings)} to check", "warn", "warning"))
-    if not (errors or warnings) and not report.requires_review:
-        pills.append(ui.pill("All checks passed", "ok", "check_circle"))
-    if report.requires_review and not errors:
-        pills.append(ui.pill("Needs a look", "warn", "visibility"))
-    if any(h["status"] == "match" for h in report.checks.get("history") or []):
-        pills.append(ui.pill("Learned pattern", "violet", "psychology"))
-    pills += [ui.tax_chip(t) for t in dict.fromkeys(t.tax_type for t in coding.tax_lines)]
-    st.html(
-        ui.invoice_hero(
-            coding.vendor_name,
-            meta,
-            pills,
-            report.adjusted_confidence,
-            coding.grand_total,
-            coding.currency,
-            report.review_threshold,
-        )  # fmt: skip
+        status = ui.pill(f"{len(errors)} to fix", "err", "error")
+    elif look:
+        status = ui.pill("Needs a look", "warn", "visibility")
+    else:
+        status = ui.pill("Ready to approve", "ok", "check_circle")
+    confidence = report.adjusted_confidence
+    sure = confidence >= report.review_threshold
+    gauge = (
+        f"<span title='AI confidence; {report.review_threshold:.0%} or more needs no second look'>"
+        + ui.pill(f"{confidence:.0%} confidence", "ok" if sure else "warn", "verified" if sure else "help")
+        + "</span>"
     )
-    # Where the money goes: expense GLs (incl. non-recoverable tax) and recoverable tax accounts.
+    extras = [ui.tax_chip(t) for t in dict.fromkeys(t.tax_type for t in coding.tax_lines)]
+    if any(h["status"] == "match" for h in report.checks.get("history") or []):
+        extras.append(ui.pill("Learned pattern", "violet", "psychology"))
+    meta_html = "".join(f"<span title='{esc(about)}'>{ui.icon(i, '1em')} {esc(t)}</span>" for i, t, about in meta if t)
+    st.html(
+        f"<div class='rvw-head apc-anim'>{ui.avatar(coding.vendor_name, 'sm')}<div class='rvw-head-main'>"
+        f"<div class='rvw-head-title'><span class='rvw-vendor'>{esc(coding.vendor_name or 'Unknown vendor')}</span>"
+        f"{status}{gauge}</div><div class='rvw-head-meta'>{meta_html}{''.join(extras)}</div></div>"
+        f"<div class='rvw-head-total'><span>{'Credit' if coding.grand_total < 0 else 'Total due'}</span>"
+        f"<b>{money(coding.grand_total)}</b><small>{esc(coding.currency)}</small></div></div>"
+    )
+
+
+def _spend_split(output: dict[str, Any], reference: ReferenceData) -> str:
+    """Where the money goes: expense GLs (incl. non-recoverable tax) and recoverable tax accounts."""
     by_gl: dict[str, float] = {}
     for e in output["gl_distribution"]:
         name = gl_name(reference, e["gl_code"])
@@ -1372,7 +1455,7 @@ def _invoice_summary(
         else:
             label = f"{e['gl_code']} {name}".strip()
         by_gl[label] = by_gl.get(label, 0.0) + e["amount"]
-    st.html(ui.split_bar(sorted(by_gl.items(), key=lambda kv: -kv[1])))
+    return f"<div class='rvw-split'>{ui.split_bar(sorted(by_gl.items(), key=lambda kv: -kv[1]))}</div>"
 
 
 def _tax_check_table(coding: InvoiceCoding, reference: ReferenceData) -> None:
@@ -1402,7 +1485,10 @@ def _tax_check_table(coding: InvoiceCoding, reference: ReferenceData) -> None:
                 esc(gl or "⚠ not mapped"),
             ]
         )
-    st.html(ui.table(["Tax", "Rate", "Official", "Charged", "Posts to"], rows, right=[3], wrap=[4]))
+    st.html(
+        "<div class='rvw-subhead'>Rate and amount check</div>"
+        + ui.table(["Tax", "Rate", "Official", "Charged", "Posts to"], rows, right=[1, 2, 3], wrap=[4])
+    )
 
 
 def _distribution_table(output: dict[str, Any], reference: ReferenceData, currency: str) -> None:
