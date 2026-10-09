@@ -55,7 +55,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"p\.?\s?o\.?(?![-\d])\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
         (r"(?:your|customer|cust\.?|client)\s*(?:order|p\.?\s?o\.?)(?:\s*" + _NO + ")?", 0.95),
         (r"(?:votre\s*)?bon\s*de\s*commande(?:\s*" + _NO + ")?", 1.0), (r"(?:no|n\s?°|nº)\s*(?:de\s*)?(?:bon\s*de\s*)?commande", 0.95),
-        (r"commande\s*(?:client|no|n\s?°)", 0.8),
+        (r"commande\s*(?:client|no|n\s?°)", 0.8), (r"votre\s*(?:commande|bon)", 0.95), (r"b\.\s?c\.(?!\s*(?:pst|v\d))\s*(?:#|no\b\.?|n\s?°)?", 0.8),
     ],
     "invoice_date": [
         (r"invoice\s*date", 1.0), (r"date\s*(?:of\s*)?(?:issue|invoice)", 1.0), (r"issue\s*date", 0.95),
@@ -79,7 +79,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
     ],
     "hst_amount": [(rf"(?:[a-z]{{2}}\s+)?(?:{_A('gst')}\s*/\s*)?{_A('hst')}", 1.0), (rf"(?:{_A('tps')}\s*/\s*)?{_A('tvh')}", 1.0), (r"harmoni[sz]ed\s*sales\s*tax", 1.0)],
     "gst_amount": [(rf"(?:federal\s+)?{_A('gst')}(?!\s*/\s*{_A('hst')})", 1.0), (rf"{_A('tps')}(?!\s*/\s*{_A('tvh')})", 1.0), (r"goods\s*and\s*services\s*tax", 1.0)],
-    "pst_amount": [(rf"(?:[a-z]{{2}}\s+)?{_A('pst')}", 1.0), (rf"{_A('rst')}", 1.0), (rf"{_A('tvp')}", 1.0), (r"provincial\s*sales\s*tax", 1.0),
+    "pst_amount": [(rf"(?:[a-z]{{2}}\s+)?{_A('pst')}", 1.0), (rf"(?:[a-z]{{2}}\s+)?{_A('rst')}", 1.0), (rf"{_A('tvp')}", 1.0), (r"provincial\s*sales\s*tax", 1.0),
                    (r"retail\s*sales\s*tax", 1.0)],
     "qst_amount": [(rf"(?:qc\s+)?{_A('qst')}", 1.0), (rf"{_A('tvq')}", 1.0), (r"quebec\s*sales\s*tax", 1.0)],
     "tax_total": [
@@ -91,7 +91,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"total\s*a\s*payer", 1.0), (r"montant\s*(?:total|du|a\s*payer)", 1.0), (r"grand\s*total", 1.0),
         (r"invoice\s*total", 1.0), (r"total\s*de\s*la\s*facture", 1.0), (r"total\s*(?:cad|usd|\$)", 0.95),
         (r"net\s*payable", 0.9), (r"please\s*pay", 0.85), (r"total\s*(?:amount|invoice)", 0.95),
-        (r"credit\s*total", 0.9), (r"total\s*(?:du\s*)?credit", 0.9), (r"total\b", 0.75),
+        (r"credit\s*total", 0.9), (r"amount\s*credited", 1.0), (r"total\s*credited", 1.0), (r"montant\s*credite", 1.0), (r"total\s*(?:du\s*)?credit", 0.9), (r"total\b", 0.75),
     ],
     "payment_terms": [
         (r"payment\s*terms", 1.0), (r"terms(?:\s*of\s*payment)?\b", 0.9), (r"conditions\s*(?:de\s*)?(?:paiement|reglement)", 1.0),
@@ -170,8 +170,11 @@ def _label_hits(line: Line) -> list[_LabelHit]:
                 label_text = text[st:end]
                 if _distracted(field, text[st:]):
                     continue
-                hit_field = _combined_tax_field(text) if field == "hst_amount" and "/" in label_text else field
-                hits.append(_LabelHit(hit_field, line, strength, end, label_text))
+                if field == "hst_amount" and "/" in label_text:
+                    for hit_field in _combined_tax_fields(text):
+                        hits.append(_LabelHit(hit_field, line, strength, end, label_text))
+                else:
+                    hits.append(_LabelHit(field, line, strength, end, label_text))
                 break
             else:
                 continue
@@ -179,14 +182,14 @@ def _label_hits(line: Line) -> list[_LabelHit]:
     return hits
 
 
-def _combined_tax_field(text: str) -> str:
-    """A "GST/HST" label holds GST at 5% and HST at 13-15%; the printed rate tells which."""
+def _combined_tax_fields(text: str) -> tuple[str, ...]:
+    """A "GST/HST" label holds GST at 5% and HST at 13-15%. The printed rate tells which; without one
+    both are proposed and the totals solver picks the one whose rate fits the subtotal."""
     m = _PERCENT.search(text)
     if m:
         rate = float(m.group(0).rstrip("% ").replace(",", "."))
-        if abs(rate - 5.0) < 0.01:
-            return "gst_amount"
-    return "hst_amount"
+        return ("gst_amount",) if abs(rate - 5.0) < 0.01 else ("hst_amount",)
+    return ("hst_amount", "gst_amount")
 
 
 def _distracted(field: str, text_from_label: str) -> bool:
@@ -424,7 +427,9 @@ def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
             near = lower[max(0, a - 40) : a]
             if re.search(r"gst|hst|tps|tvh|bn\b|business|entreprise|reg", near):
                 score = min(1.0, score + 0.03)
-            if re.search(r"client|customer|your|votre|acheteur|buyer", near) or bill_to:
+            if re.search(r"client|customer|your|votre|acheteur|buyer", near):
+                continue  # the customer's own number, printed for them
+            if bill_to:
                 score *= 0.35
             if line.box.page == 1 and line.box.cy < 0.3:
                 score = min(1.0, score + 0.02)
@@ -439,7 +444,8 @@ def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
     return {"gst_hst_registration_number": gst, "qst_registration_number": qst}
 
 
-_BILL_TO = re.compile(r"^(bill(?:ed)?\s*to|sold\s*to|ship\s*to|customer|client|factur[ée]\s*a|vendu\s*a|livr[ée]?\s*a|"
+_BILL_TO = re.compile(r"^(bill(?:ed)?\s*to|sold\s*to|ship\s*to|invoice\s*to|deliver\s*to|for\s*:|to\s*:|service\s*address|"
+                      r"account\s*(?:holder|name)|customer|client|factur[ée]\s*a|vendu\s*a|livr[ée]?\s*a|"
                       r"expedier\s*a|adresse\s*de\s*livraison|attention|attn)\b")  # fmt: skip
 
 
@@ -468,7 +474,7 @@ def _in_bill_to(layout: DocLayout, line: Line, _cache: dict[int, list[Box]] = {}
 _COMPANY = re.compile(r"\b(inc|ltd|ltee|limited|limitee|llc|llp|corp|corporation|co\.|company|cie|enr|s\.?e\.?n\.?c|"
                       r"group|groupe|services|solutions|supply|supplies|industries|technologies|consulting|"
                       r"distribution|holdings|partners|associates|enterprises|entreprises)\b\.?", re.I)  # fmt: skip
-_NOT_NAME = re.compile(r"^(invoice|facture|tax\s*invoice|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
+_NOT_NAME = re.compile(r"^(invoice|facture|(?:sales|tax|commercial|proforma|pro\s*forma)\s*invoice|please\s*pay|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
                        r"ship|sold|remit|total|amount|description|qty|www\.|http|tel|phone|fax|email|courriel|"
                        r"gst|hst|tps|tvq|qst|po\b|p\.o|account|terms|due|original|copy|duplicata|paid|"
                        r"customer|client|attention|attn|from|de\s*:|to\s*:|a\s*:|bon\s*de)", re.I)  # fmt: skip
@@ -503,6 +509,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
     out: list[Reading] = []
     heights = sorted((ln.box.height for ln in page.lines), reverse=True)
     tall = heights[min(2, len(heights) - 1)] if heights else 0.0
+    customer_names = {plain(ln.text.strip()) for ln in layout.lines() if _in_bill_to(layout, ln)}
     for line in page.lines:
         text = line.text.strip()
         p = plain(text)
@@ -528,6 +535,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
         score += 0.12 * (1 - min(line.box.cy / 0.33, 1))
         if text.isupper() and len(text.split()) == 1:
             score -= 0.1
+        if plain(text) in customer_names:
+            score *= 0.3
         words = _without_logo_initials(line.words)
         if len(words) != len(line.words):
             text = " ".join(w.text for w in words)
@@ -540,6 +549,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
 # ---------------------------------------------------------------- totals solver
 
 _TAX_FIELDS = ("gst_amount", "hst_amount", "pst_amount", "qst_amount")
+_RATES = {"gst_amount": (0.05,), "hst_amount": (0.13, 0.14, 0.15), "pst_amount": (0.06, 0.07, 0.08), "qst_amount": (0.09975,)}
 
 
 def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> dict[str, list[Reading]]:
@@ -562,6 +572,10 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
                     bonus -= 1.0  # a total equal to the subtotal while taxes are printed: wrong total
             if sub and line_sum is not None and abs(sub.value - line_sum) <= 0.011:
                 bonus += 1.0
+            if sub and sub.value:
+                for f, t in zip(tax_options, taxes, strict=True):
+                    if t is not None and any(abs(t.value - r * sub.value) <= max(0.02, 0.01 * abs(t.value)) for r in _RATES[f]):
+                        bonus += 0.3
             if best is None or score + bonus > best[0]:
                 best = (score + bonus, sub, total, dict(zip(tax_options, taxes, strict=True)), bonus)
     if best is None:
@@ -571,6 +585,8 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
     out = dict(cands)
     for f, r in chosen.items():
         if r is None:
+            if bonus >= 3.0 and f in _TAX_FIELDS:
+                out[f] = []  # the totals add up without this tax: what was read for it is not a tax
             continue
         if bonus >= 3.0:
             r.score = min(1.0, r.score + 0.15)
@@ -658,11 +674,24 @@ def read_line_items(layout: DocLayout) -> list[LineReading]:
 # ---------------------------------------------------------------- entry point
 
 
+_US_ADDRESS = re.compile(r",?\s(?:A[LKZR]|C[AOT]|DE|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\s+\d{5}(?:-\d{4})?\b")
+
+
+def _us_vendor(layout: DocLayout) -> bool:
+    """The supplier's address (top of the first page, outside the customer's block) is in the US."""
+    if not layout.pages:
+        return False
+    for line in layout.pages[0].lines:
+        if line.box.cy < 0.3 and not _in_bill_to(layout, line) and _US_ADDRESS.search(line.text):
+            return True
+    return False
+
+
 def read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     """Candidate readings for every header field, best first."""
     text = layout.text()
     order = infer_day_first(text)
-    if order is None and find_currency(text) == "USD":
+    if order is None and (find_currency(text) == "USD" or _us_vendor(layout)):
         order = False  # US invoices print month first
     token = _DAY_FIRST.set(order)
     try:
