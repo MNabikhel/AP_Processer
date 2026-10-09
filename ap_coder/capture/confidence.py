@@ -42,7 +42,9 @@ VERIFIED_AT = 0.985
 SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
 # Checks whose failure has innocent explanations (exempt lines, shipping not taxed, line items the
 # reader could not separate): they lower confidence but do not force a field to "check".
-SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE"}
+SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE", "DUE_MATCHES_TERMS"}
+# Checks that only show a value is reasonable, not that it is the printed one: passing them confirms nothing.
+WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE"}
 LIKELY_AT = 0.85
 SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
 
@@ -166,6 +168,11 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
         ok = inv <= due <= inv + dt.timedelta(days=400)
         checks.append({"code": "DUE_AFTER_INVOICE", "ok": ok, "fields": ["due_date", "invoice_date"],
                        "detail": f"due {due} vs invoice {inv}"})  # fmt: skip
+        net = re.search(r"net\s*(\d{1,3})", str(values.get("payment_terms") or ""), re.I)
+        if net:
+            ok = (due - inv).days == int(net.group(1))
+            checks.append({"code": "DUE_MATCHES_TERMS", "ok": ok, "fields": ["due_date", "invoice_date", "payment_terms"],
+                           "detail": f"invoice date + {net.group(1)} days {'=' if ok else '≠'} due date"})  # fmt: skip
     inv_no, po = values.get("invoice_number"), values.get("po_number")
     if inv_no and po and normalize_value("invoice_number", inv_no) == normalize_value("po_number", po):
         checks.append({"code": "INVOICE_NOT_PO", "ok": False, "fields": ["invoice_number", "po_number"],
@@ -278,7 +285,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         for f in c["fields"]:
             if not c["ok"] and c["code"] in SOFT_CHECKS:
                 soft.setdefault(f, []).append(c["detail"])
-            elif c["ok"]:
+            elif c["ok"] and c["code"] not in WEAK_CHECKS:
                 confirmed[f] = confirmed.get(f, 0) + (2 if c["code"] in ("TOTALS_ADD_UP", "VENDOR_GST_MATCH") else 1)
             else:
                 failed.setdefault(f, []).append(c["detail"])
@@ -304,7 +311,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if n_conf and field not in failed:
             raw = 1.0 - (1.0 - raw) * (0.15 ** min(n_conf, 3))
             reasons.append("confirmed by " + ", ".join(c["code"].lower().replace("_", " ") for c in checks
-                                                      if c["ok"] and field in c["fields"]))  # fmt: skip
+                                                      if c["ok"] and c["code"] not in WEAK_CHECKS and field in c["fields"]))  # fmt: skip
         if field in failed:
             raw *= 0.3
             reasons += [f"check failed: {d}" for d in failed[field]]

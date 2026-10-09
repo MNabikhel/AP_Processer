@@ -39,23 +39,23 @@ def plain(text: str) -> str:
 # (regex on plain lowercase text, strength). Regexes match at the label's start.
 def _A(letters: str) -> str:
     """An abbreviation printed with or without dots: "gst" matches GST, G.S.T., G. S. T."""
-    return r"\.?\s?".join(letters) + r"\b\.?"
+    return r"\.?\s?".join(letters) + r"(?![a-z])\.?"  # may touch a number: OCR prints "GST5%"
 
 
 _NO = r"(?:no\b\.?|nos?\.|n\s?°|nº|n o\b|#|number|num\b\.?|numero)"
 LABELS: dict[str, list[tuple[str, float]]] = {
     "invoice_number": [
         (rf"invoice\s*{_NO}", 1.0), (r"invoice\s*id\b", 0.95), (rf"inv\.?\s*{_NO}", 0.95),
-        (rf"facture\s*{_NO}", 1.0), (r"(?:no|n\s?°|nº|numero)\.?\s*(?:de\s*)?(?:la\s*)?facture", 1.0),
+        (rf"facture\s*{_NO}", 1.0), (r"(?:no|n\s?°|nº|numero|n)\.?\s*(?:de\s*)?(?:la\s*)?facture", 1.0),
         (rf"bill\s*{_NO}", 0.9), (rf"document\s*{_NO}", 0.85), (r"invoice\s*ref(?:erence)?\b", 0.85),
-(rf"credit\s*(?:note|memo)?\s*{_NO}", 0.95), (r"(?:sales|tax|commercial)\s*invoice\b", 0.6), (r"inv\b\.?(?!\s*(?:date|total|amount))", 0.55), (rf"note\s*de\s*credit\s*{_NO}", 0.95),
+(rf"credit\s*(?:note|memo)?\s*{_NO}", 0.95), (r"(?:sales|tax|commercial)\s*invoice\b", 0.6), (r"inv(?![a-z])\.?(?![-\d])(?!\s*(?:date|total|amount))", 0.55), (rf"note\s*de\s*credit\s*{_NO}", 0.95),
         (rf"statement\s*{_NO}", 0.6), (r"invoice\s*:", 0.7), (r"facture\s*:", 0.7), (r"invoice\b(?!\s*(?:date|total|amount|to\b|period))", 0.45),
         (r"facture\b(?!\s*(?:a|date|de\s*la|totale))", 0.4), (rf"ref(?:erence)?\.?\s*{_NO}?", 0.3), (r"(?:no\b\.?|n\s?°|nº|#)(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35),
     ],
     "po_number": [
         (r"p\.?\s?o\.?(?![-\d])\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
         (r"(?:your|customer|cust\.?|client)\s*(?:order|p\.?\s?o\.?)(?:\s*" + _NO + ")?", 0.95),
-        (r"(?:votre\s*)?bon\s*de\s*commande(?:\s*" + _NO + ")?", 1.0), (r"(?:no|n\s?°|nº)\s*(?:de\s*)?(?:bon\s*de\s*)?commande", 0.95),
+        (r"(?:votre\s*)?bon\s*de\s*commande(?:\s*" + _NO + ")?", 1.0), (r"(?:no|n\s?°|nº|n)\.?\s*(?:de\s*)?(?:bon\s*de\s*)?commande", 0.95),
         (r"commande\s*(?:client|no|n\s?°)", 0.8), (r"votre\s*(?:commande|bon)", 0.95), (r"b\.\s?c\.(?!\s*(?:pst|v\d))\s*(?:#|no\b\.?|n\s?°)?", 0.8),
     ],
     "invoice_date": [
@@ -78,9 +78,9 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"total\s*partiel", 0.9), (r"merchandise\s*total", 0.8), (r"total\s*services", 0.5),
         (r"total\s*(?:of\s*)?(?:fees|charges|services|goods|merchandise|labou?r|materials)\b", 0.65),
     ],
-    "hst_amount": [(rf"(?:[a-z]{{2}}\s+)?(?:{_A('gst')}\s*/\s*)?{_A('hst')}", 1.0), (rf"(?:{_A('tps')}\s*/\s*)?{_A('tvh')}", 1.0), (r"harmoni[sz]ed\s*sales\s*tax", 1.0)],
+    "hst_amount": [(rf"(?:[a-z]{{2}}\s*)?(?:{_A('gst')}\s*/\s*)?{_A('hst')}", 1.0), (rf"(?:{_A('tps')}\s*/\s*)?{_A('tvh')}", 1.0), (r"harmoni[sz]ed\s*sales\s*tax", 1.0)],
     "gst_amount": [(rf"(?:federal\s+)?{_A('gst')}(?!\s*/\s*{_A('hst')})", 1.0), (rf"{_A('tps')}(?!\s*/\s*{_A('tvh')})", 1.0), (r"goods\s*and\s*services\s*tax", 1.0)],
-    "pst_amount": [(rf"(?:[a-z]{{2}}\s+)?{_A('pst')}", 1.0), (rf"(?:[a-z]{{2}}\s+)?{_A('rst')}", 1.0), (rf"{_A('tvp')}", 1.0), (r"provincial\s*sales\s*tax", 1.0),
+    "pst_amount": [(rf"(?:[a-z]{{2}}\s*)?{_A('pst')}", 1.0), (rf"(?:[a-z]{{2}}\s*)?{_A('rst')}", 1.0), (rf"{_A('tvp')}", 1.0), (r"provincial\s*sales\s*tax", 1.0),
                    (r"retail\s*sales\s*tax", 1.0)],
     "qst_amount": [(rf"(?:qc\s+)?{_A('qst')}", 1.0), (rf"{_A('tvq')}", 1.0), (r"quebec\s*sales\s*tax", 1.0)],
     "tax_total": [
@@ -156,7 +156,8 @@ def _label_hits(line: Line) -> list[_LabelHit]:
                 if not m or m.end() == st:
                     continue
                 # A label must end on a word boundary (avoids "Totalement", "Dated").
-                if m.end() < len(text) and text[m.end() - 1].isalnum() and text[m.end()].isalnum():
+                # (A label glued to a number is fine: OCR drops spaces, "GST5%", "Net30".)
+                if m.end() < len(text) and text[m.end() - 1].isalpha() and text[m.end()].isalpha():
                     continue
                 end = m.end()
                 # "Invoice No. / No facture: 123": the value follows the second (translated) label.
@@ -347,10 +348,10 @@ def _amounts_in(text: str) -> list[tuple[float, int, int]]:
 
 
 _TERMS = [
-    (re.compile(r"(\d{1,2})\s*%\s*(\d{1,2})\s*,?\s*net\s*(\d{1,3})", re.I), "{0}% {1} Net {2}"),
-    (re.compile(r"\bnet\s*(\d{1,3})\b", re.I), "Net {0}"),
+    (re.compile(r"(\d{1,2})\s*%\s*(\d{1,2})\s*,?\s*net\s*(\d{1,3})(?!\d)", re.I), "{0}% {1} Net {2}"),
+    (re.compile(r"\bnet\s*(\d{1,3})(?!\d)", re.I), "Net {0}"),
     (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
-    (re.compile(r"\b(\d{1,3})\s*(?:days|jours|j)\b", re.I), "Net {0}"),
+    (re.compile(r"(?<!\d)(\d{1,3})\s*(?:days|jours|j)\b", re.I), "Net {0}"),
     (re.compile(r"\bdue\s*(?:up)?on\s*receipt\b|payable\s*(?:a|à)\s*(?:la\s*)?r[ée]ception|on\s*receipt", re.I), "Due on receipt"),
 ]  # fmt: skip
 

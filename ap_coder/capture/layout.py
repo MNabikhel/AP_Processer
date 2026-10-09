@@ -14,6 +14,7 @@ the same row are two lines, which is what label/value matching needs.
 from __future__ import annotations
 
 import logging
+import os
 import statistics
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,30 @@ def _engine() -> Any:
     return _OCR_ENGINE
 
 
+def _ocr_cached(png_bytes: bytes, run: Any) -> Any:
+    """The OCR engine's raw result, kept on disk by image hash when ``AP_OCR_CACHE`` names a folder
+    (for benchmark iterations: the reader changes, the scans do not)."""
+    folder = os.environ.get("AP_OCR_CACHE")
+    if not folder:
+        return run()
+    import hashlib
+    import json
+
+    path = Path(folder) / f"{hashlib.sha256(png_bytes).hexdigest()}.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    result = run()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([[[list(map(float, p)) for p in q], t, float(c)] for q, t, c in result or []]),
+                        encoding="utf-8")  # fmt: skip
+    except OSError:
+        pass
+    return result
+
+
 def ocr_image(png_bytes: bytes, number: int) -> PageLayout:
     """OCR one page image. Each OCR line becomes words (split on spaces, boxes shared by length)."""
     import io
@@ -130,7 +155,7 @@ def ocr_image(png_bytes: bytes, number: int) -> PageLayout:
 
     img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
     width, height = img.size
-    result, _ = _engine()(np.asarray(img))
+    result = _ocr_cached(png_bytes, lambda: _engine()(np.asarray(img))[0])
     words: list[Word] = []
     for quad, text, score in result or []:
         xs = [p[0] for p in quad]

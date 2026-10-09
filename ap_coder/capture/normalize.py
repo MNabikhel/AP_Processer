@@ -106,8 +106,9 @@ def _plain(text: str) -> str:
 
 _ISO = re.compile(r"\b(20\d{2}|19\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b")
 _NUMERIC = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b")
-_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b")
-_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?\s+([a-z]{3,9})\.?,?\s+(\d{4})\b")
+# Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
+_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?\s*(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})\b")
+_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?\s*([a-z]{3,9})\.?,?\s*(\d{4})\b")
 _WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,9})[-\s](\d{2,4})\b")
 
 
@@ -296,7 +297,7 @@ CURRENCIES = ("CAD", "USD", "EUR", "GBP")
 def find_currency(text: str) -> str | None:
     s = text.upper()
     for code in CURRENCIES:
-        if re.search(rf"\b{code}\b", s):
+        if re.search(rf"(?<![A-Z]){code}(?![A-Z])", s):  # also glued by OCR: "TOTALCAD"
             return code
     if re.search(r"\bUS\$|\bUS\s?DOLLARS?\b|\$\s?US\b", s):
         return "USD"
