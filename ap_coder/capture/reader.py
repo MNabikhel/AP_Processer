@@ -30,7 +30,7 @@ from .types import AMOUNT_FIELDS, Box, DocLayout, Line, LineReading, Reading, Wo
 
 
 def plain(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text)
+    decomposed = unicodedata.normalize("NFKD", text).replace("·", " ")  # OCR reads a space as "·"
     return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
 
 
@@ -131,6 +131,7 @@ DISTRACTORS: dict[str, list[str]] = {
 }  # fmt: skip
 
 _REG_WORDS = re.compile(r"\b(reg|registration|regist|no|number|num|#|n\s?°|nº|inscription|bn|business)\b|#", re.I)
+_SPLIT_BN = re.compile(r"\d{3,}[\d\s.-]*\s*R\s*[TP]\b", re.I)
 _PERCENT = re.compile(
     r"\d+(?:[.,]\d+)?\s*%|@\s*\d{1,2}(?:[.,]\d{1,3})?\s*[%8]?(?![\d.,])|\(\s*\d{1,2}(?:\s*%|8|[.,]\d{1,3}\s*%)\s*\)"
 )  # 13%, @ 13%, (13%), and OCR's "@138" / "(138)"
@@ -299,6 +300,8 @@ _OCR_NAME_WORDS = {"itee": "ltée", "ltee": "ltée", "itée": "ltée", "lnc": "I
 def _ocr_name_fix(name: str) -> str:
     """Common OCR slips in company names: "Itee" for "ltée", "lronwood" for "Ironwood"."""
     out = []
+    name = re.sub(r"(?<=[a-z])(?=(?:LP|LLP|LLC|Inc|Ltd|Corp)\b)", " ", name)
+    name = re.sub(r"\.{2,}$", ".", name)  # a speck after the suffix: "Ltd.."  # "ServicesLP" -> "Services LP"
     name = re.sub(r"(?<!\bMc)(?<!\bMac)(?<=[a-z])(?=[A-Z][a-z])", " ", name)  # "TrueNorth" -> "True North"
     for word in name.split():
         fixed = _OCR_NAME_WORDS.get(word.lower())
@@ -369,6 +372,7 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
                 (_REG_WORDS.search(plain(rest[:12])) and not looks_like_money(rest))
                 or find_gst_numbers(rest)
                 or find_qst_numbers(rest)
+                or _SPLIT_BN.search(rest)  # OCR broke the number: "HST # 18337 5716 RT 00.01"
             ):
                 return None
         amounts = _amounts_in(cleaned)
@@ -560,7 +564,7 @@ def _in_bill_to(layout: DocLayout, line: Line) -> bool:
     return False
 
 
-_COMPANY = re.compile(r"\b(inc|ltd|ltee|limited|limitee|llc|llp|corp|corporation|co\.|company|cie|enr|s\.?e\.?n\.?c|"
+_COMPANY = re.compile(r"\b(inc|lnc|ltd|ltee|itee|limited|limitee|llc|llp|corp|corporation|co\.|company|cie|enr|s\.?e\.?n\.?c|"
                       r"group|groupe|services|solutions|supply|supplies|industries|technologies|consulting|"
                       r"distribution|holdings|partners|associates|enterprises|entreprises)\b\.?", re.I)  # fmt: skip
 _NOT_NAME = re.compile(r"^(invoice|facture|credit\s*memo|debit\s*(?:note|memo)|avis\s*de\s*credit|(?:sales|tax|commercial|proforma|pro\s*forma)\s*invoice|please\s*pay|your\b|votre\b|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
@@ -587,7 +591,7 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
 
     out = list(words)
     for i in (0, -1):
-        if len(out) < 3:
+        if len(out) < 2:
             break
         tok = out[i].text.strip(".")
         if 2 <= len(tok) <= 3 and tok.isalpha() and tok.isupper():
@@ -601,8 +605,13 @@ _CONTACT = re.compile(
     r"@|www|https?:|\.(?:com|ca|net|org|qc\.ca)\b|^(?:bureau|suite|unit|local|apt|room|piece)\s*\d|"
     r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph|p\.?\s?o\.?\s*date|podate|payment|echeance|"
     r"modalites|reference|ref|c/o|attn|attention)\b|"
-    r":\s*$|^\d+\s*,?\s+(?:[a-z]+\.?\s+)*(?:rue|boul|blvd|ave|av|st|rd|road|street|chemin|ch|route|hwy|dr|way|cres|pkwy)\b|"
+    r":\s*$|^\d+(?:\s*,\s*|\s+)(?:[a-z]+\.?\s+)*(?:rue|boul|blvd|ave|av|st|rd|road|street|chemin|ch|route|hwy|dr|way|cres|pkwy)\b|"
     r"\s-\s(?:jan|feb|fev|mar|apr|avr|may|mai|jun|juin|jul|juil|aug|aou|sep|oct|nov|dec)"  # "Consulting services - September": a line item
+)
+# A field's label: "Order No.", "Quotation No.", "Delivery Date", "Numero de compte"; a table header.
+_LABEL_SHAPE = re.compile(
+    r"^(?:[a-z.'/]+\s*){1,3}(?:no\.?|n°|#|date|id|number)\s*:?$|^(?:numero|no|n°)\s+d[e']|"
+    r"\b(?:description|designation|qty|quantite|quantity)\b"
 )
 _COLUMN_WORD = re.compile(r"^(?:net\s*\d+|code|item\s*code|part\s*(?:#|no\.?)|sku|uom|unit|ref\.?|#)$")
 _POSTAL_CODE = re.compile(r"[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d|,\s*(?:ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)(?![a-z])")
@@ -647,7 +656,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             and not _COMPANY.search(p)
             and (any(rx.match(p.strip()) for rx in _HEAD.values()) or _COLUMN_WORD.match(p.strip()))
         )
-        if heading or (_label_hits(line) and not _COMPANY.search(p)):
+        if heading or ((_label_hits(line) or _LABEL_SHAPE.search(p)) and not _COMPANY.search(p)):
             continue  # a field's label ("Cust. P.O.#") or a column heading ("Code") is not a name
         letters = sum(c.isalpha() for c in text)
         if letters < 3:

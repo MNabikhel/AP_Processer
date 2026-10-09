@@ -399,3 +399,17 @@ def test_labels_and_headings_are_not_the_supplier(tmp_path):
         _pdf(tmp_path, [(60, 40, "Code"), (60, 60, "Cust. P.O.#"), (300, 60, "Services techniques Saint-Laurent ltée")])
     )
     assert got["vendor_name"] == "Services techniques Saint-Laurent ltée"
+
+
+def test_vendor_line_filters_for_ocr_reads():
+    from ap_coder.capture.reader import _CONTACT, _LABEL_SHAPE, _ocr_name_fix, plain
+
+    for label in ("Order No.", "Quotation No.", "Delivery Date", "Numero de compte",
+                  "Code/ Article Item Description/Designation"):  # fmt: skip
+        assert _LABEL_SHAPE.search(plain(label)), label
+    assert not _LABEL_SHAPE.search(plain("Red River Mechanical Co"))
+    assert _CONTACT.search(plain("860,ch.dela Cote-de-Liesse"))
+    assert not _CONTACT.search(plain("3 Northway Corp"))
+    assert _ocr_name_fix("HarbourfrontFleetServicesLP") == "Harbourfront Fleet Services LP"
+    assert _ocr_name_fix("Eastgate Equipment Rentals Ltd..") == "Eastgate Equipment Rentals Ltd."
+    assert plain("Billed·To:") == "billed to:"

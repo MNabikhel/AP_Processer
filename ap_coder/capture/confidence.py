@@ -19,6 +19,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from dataclasses import field as _field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -82,6 +83,7 @@ class _Group:
     key: Any
     value: Any
     readings: list[tuple[str, Reading]]
+    top: set[str] = _field(default_factory=set)  # sources for which this is their first choice
 
     def strength(self) -> float:
         p_wrong = 1.0
@@ -90,8 +92,11 @@ class _Group:
             best = max(r.score for s, r in self.readings if s == source)
             p_wrong *= 1.0 - RELIABILITY.get(source, 0.7) * max(0.0, min(best, 1.0))
         # Readers that are wrong rarely produce the *same* wrong value: each extra agreeing reader
-        # divides the chance of a shared misread further.
-        return 1.0 - p_wrong * SAME_MISREAD ** (len(sources) - 1)
+        # divides the chance of a shared misread further. A reader that only listed the value as a
+        # runner-up agrees by half: two readers' second choices (a label, the terms) often coincide.
+        top = len(self.top & sources)
+        extra = max(top - 1, 0) + 0.5 * (len(sources) - top) - (0.5 if top == 0 else 0.0)
+        return 1.0 - p_wrong * SAME_MISREAD ** max(extra, 0.0)
 
     def best(self) -> Reading:
         return max((r for _, r in self.readings), key=lambda r: (bool(r.boxes), r.score))
@@ -111,6 +116,8 @@ def _groups(field: str, by_source: dict[str, list[Reading]]) -> list[_Group]:
                 g.value = r.value  # names that agree once legal suffixes are ignored: the fuller one as printed
             # Lower-ranked candidates of one reader count less: the reader itself preferred another.
             weight = 1.0 if rank == 0 else 0.35
+            if rank == 0:
+                g.top.add(source)
             g.readings.append((source, Reading(r.field, r.value, r.raw, r.boxes, r.score * weight, r.method)))
     return sorted(groups.values(), key=lambda g: -g.strength())
 
