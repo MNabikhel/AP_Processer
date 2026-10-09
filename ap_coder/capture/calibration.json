@@ -6,7 +6,7 @@
    "seed": 2,
    "scanned": 0.0,
    "reader": "capture",
-   "workers": 4,
+   "workers": 2,
    "generator_version": 1
   },
   {
@@ -14,7 +14,7 @@
    "seed": 12,
    "scanned": 1.0,
    "reader": "capture",
-   "workers": 4,
+   "workers": 2,
    "generator_version": 1
   },
   {
@@ -22,7 +22,7 @@
    "seed": 11,
    "scanned": 1.0,
    "reader": "capture",
-   "workers": 4,
+   "workers": 2,
    "generator_version": 1
   },
   {
@@ -164,8 +164,8 @@
    406
   ],
   "due_date|rules+template|template|text|confirmed": [
-   903,
-   903
+   902,
+   902
   ],
   "due_date|rules+template|template|text|confirmed,contested": [
    92,
@@ -200,8 +200,8 @@
    6
   ],
   "due_date|rules|label-below|text|confirmed": [
-   478,
-   478
+   479,
+   479
   ],
   "due_date|rules|label-below|text|contested": [
    5,
@@ -303,45 +303,33 @@
    8,
    8
   ],
-  "grand_total|rules+template|label-inline|text|adds-up": [
-   2,
-   2
-  ],
   "grand_total|rules+template|label-inline|text|adds-up,confirmed": [
-   495,
-   495
+   497,
+   497
   ],
   "grand_total|rules+template|label-inline|text|adds-up,confirmed,contested": [
-   3,
-   3
-  ],
-  "grand_total|rules+template|label-inline|text|adds-up,contested": [
-   1,
-   1
+   4,
+   4
   ],
   "grand_total|rules+template|label-inline|text|confirmed": [
    39,
    39
   ],
   "grand_total|rules+template|label-right|text|adds-up,confirmed": [
-   872,
-   872
+   911,
+   911
   ],
   "grand_total|rules+template|label-right|text|adds-up,confirmed,contested": [
-   41,
-   41
-  ],
-  "grand_total|rules+template|label-right|text|adds-up,contested": [
-   1,
-   1
+   42,
+   42
   ],
   "grand_total|rules+template|template|text|": [
-   9,
-   9
+   4,
+   4
   ],
   "grand_total|rules+template|template|text|confirmed": [
-   1586,
-   1586
+   1591,
+   1591
   ],
   "grand_total|rules+template|template|text|confirmed,contested": [
    12,
@@ -384,8 +372,8 @@
    678
   ],
   "grand_total|rules|label-inline|text|adds-up,confirmed,contested": [
-   3,
-   3
+   5,
+   5
   ],
   "grand_total|rules|label-inline|text|confirmed": [
    32,
@@ -432,28 +420,20 @@
    4
   ],
   "grand_total|template|template|text|confirmed,contested": [
-   39,
-   0
-  ],
-  "grand_total|template|template|text|contested": [
-   3,
+   1,
    0
   ],
   "gst_amount|rules+template|label-right|text|adds-up": [
-   4,
-   4
+   2,
+   2
   ],
   "gst_amount|rules+template|label-right|text|adds-up,confirmed": [
-   1429,
-   1429
+   1435,
+   1435
   ],
   "gst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
    110,
    110
-  ],
-  "gst_amount|rules+template|label-right|text|adds-up,soft": [
-   4,
-   4
   ],
   "gst_amount|rules+template|template|text|confirmed": [
    347,
@@ -516,30 +496,26 @@
    986
   ],
   "gst_hst_registration_number|rules|pattern|scan|confirmed": [
-   661,
-   661
+   663,
+   660
   ],
   "gst_hst_registration_number|rules|pattern|scan|confirmed,contested": [
-   1,
-   0
+   2,
+   2
   ],
   "gst_hst_registration_number|rules|pattern|text|confirmed": [
    3681,
    3681
   ],
   "hst_amount|rules+template|label-right|text|adds-up,confirmed": [
-   737,
-   737
+   769,
+   769
   ],
   "hst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
-   12,
-   12
+   20,
+   20
   ],
   "hst_amount|rules+template|label-right|text|adds-up,confirmed,soft": [
-   1,
-   1
-  ],
-  "hst_amount|rules+template|label-right|text|adds-up,soft": [
    1,
    1
   ],
@@ -572,16 +548,8 @@
    1
   ],
   "hst_amount|rules|label-right|text|adds-up,contested": [
-   1,
-   1
-  ],
-  "hst_amount|template|template|text|confirmed,contested": [
-   38,
-   0
-  ],
-  "hst_amount|template|template|text|contested,soft": [
    2,
-   0
+   2
   ],
   "invoice_date|rules+template|label-below|text|": [
    3,
@@ -1004,12 +972,8 @@
    472
   ],
   "qst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
-   9,
-   9
-  ],
-  "qst_amount|rules+template|label-right|text|adds-up,contested": [
-   1,
-   1
+   10,
+   10
   ],
   "qst_amount|rules+template|template|text|confirmed": [
    93,
@@ -1044,12 +1008,8 @@
    750
   ],
   "qst_amount|rules|label-right|text|adds-up,confirmed,contested": [
-   1,
-   1
-  ],
-  "qst_amount|template|template|text|contested,soft": [
-   5,
-   0
+   6,
+   6
   ],
   "qst_registration_number|rules+template|pattern|text|confirmed": [
    46,
@@ -1067,13 +1027,9 @@
    698,
    698
   ],
-  "subtotal|rules+template|label-right|text|adds-up": [
-   1,
-   1
-  ],
   "subtotal|rules+template|label-right|text|adds-up,confirmed": [
-   1163,
-   1163
+   1166,
+   1166
   ],
   "subtotal|rules+template|label-right|text|adds-up,confirmed,contested": [
    21,
@@ -1086,10 +1042,6 @@
   "subtotal|rules+template|label-right|text|adds-up,confirmed,soft": [
    575,
    575
-  ],
-  "subtotal|rules+template|label-right|text|adds-up,soft": [
-   1,
-   1
   ],
   "subtotal|rules+template|label-right|text|confirmed": [
    1,
@@ -1104,8 +1056,8 @@
    4
   ],
   "subtotal|rules+template|template|text|confirmed": [
-   998,
-   998
+   1038,
+   1038
   ],
   "subtotal|rules+template|template|text|confirmed,contested,soft": [
    2,
@@ -1116,8 +1068,8 @@
    244
   ],
   "subtotal|rules+template|template|text|soft": [
-   10,
-   10
+   8,
+   8
   ],
   "subtotal|rules|label-inline|scan|adds-up,confirmed": [
    12,
@@ -1160,8 +1112,12 @@
    3098
   ],
   "subtotal|rules|label-right|text|adds-up,confirmed,contested": [
-   4,
-   4
+   10,
+   10
+  ],
+  "subtotal|rules|label-right|text|adds-up,confirmed,contested,soft": [
+   1,
+   1
   ],
   "subtotal|rules|label-right|text|adds-up,confirmed,soft": [
    811,
@@ -1180,11 +1136,7 @@
    16
   ],
   "subtotal|template|template|text|confirmed,contested,soft": [
-   39,
-   0
-  ],
-  "subtotal|template|template|text|contested,soft": [
-   8,
+   1,
    0
   ],
   "tax_total|rules+template|label-right|text|confirmed": [
@@ -1192,12 +1144,12 @@
    5
   ],
   "tax_total|rules+template|template|text|": [
-   14,
-   14
+   12,
+   12
   ],
   "tax_total|rules+template|template|text|confirmed": [
-   664,
-   664
+   666,
+   666
   ],
   "tax_total|rules+template|template|text|confirmed,contested": [
    13,
@@ -1219,16 +1171,12 @@
    987,
    987
   ],
-  "tax_total|template|template|text|confirmed": [
-   32,
-   0
-  ],
-  "tax_total|template|template|text|confirmed,contested": [
-   8,
+  "tax_total|template|template|text|": [
+   2,
    0
   ],
   "tax_total|template|template|text|contested": [
-   4,
+   3,
    0
   ],
   "vendor_name|rules+template|template|text|confirmed": [

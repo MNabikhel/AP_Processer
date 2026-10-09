@@ -357,7 +357,24 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             reasons=reasons, evidence=evidence,
         )  # fmt: skip
     _derive_tax_total(results)
+    _vendor_master_name(results, checks, vendor)
     return results, checks
+
+
+def _vendor_master_name(
+    results: dict[str, FieldResult], checks: list[dict[str, Any]], vendor: dict[str, Any] | None
+) -> None:
+    """Once the vendor master confirms the supplier by both its GST/HST number and its name, the
+    supplier is the master record: show its name as the master spells it (what the ERP posts to),
+    not the page's text with OCR's glued words or a logo's initials."""
+    fr = results.get("vendor_name")
+    if fr is None or not vendor or not vendor.get("name") or fr.status == MISSING:
+        return
+    passed = {c["code"] for c in checks if c["ok"]}
+    if {"VENDOR_NAME_MATCH", "VENDOR_GST_MATCH"} <= passed and fr.value != vendor["name"]:
+        fr.sources = {"vendor master": vendor["name"], **fr.sources}
+        fr.reasons.append(f"name as in the vendor master (printed: {fr.value})")
+        fr.value = vendor["name"]
 
 
 _TOTAL_PARTS = ("subtotal", "other_charges", *TAX_FIELDS)

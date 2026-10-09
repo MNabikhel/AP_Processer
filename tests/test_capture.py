@@ -335,3 +335,19 @@ def test_fusion_takes_the_runner_up_amounts_that_add_up():
     results, checks = fuse(by_source, [], fields=("subtotal", "gst_amount", "grand_total"), today=TODAY)
     assert results["subtotal"].value == 100.0
     assert any(c["code"] == "TOTALS_ADD_UP" and c["ok"] for c in checks)
+
+
+def test_confirmed_supplier_takes_the_vendor_master_name():
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import Reading
+
+    box = [Box(1, 0.1, 0.05, 0.4, 0.08)]
+    by_source = {"rules": {
+        "vendor_name": [Reading("vendor_name", "Harbourfront Water&Wastewater", "x", box, 0.9, "top-of-page")],
+        "gst_hst_registration_number": [Reading("gst_hst_registration_number", "123456782RT0001", "x", box, 0.95, "pattern")],
+    }}  # fmt: skip
+    vendor = {"name": "Harbourfront Water & Wastewater", "gst_number": "123456782RT0001"}
+    fields = ("vendor_name", "gst_hst_registration_number")
+    results, _ = fuse(by_source, [], vendor=vendor, fields=fields, today=TODAY)
+    assert results["vendor_name"].value == "Harbourfront Water & Wastewater"
+    assert any("vendor master" in r for r in results["vendor_name"].reasons)
