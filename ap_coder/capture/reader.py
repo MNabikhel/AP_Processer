@@ -272,7 +272,7 @@ def _id_from(text: str, offset: int) -> tuple[str, int, int] | None:
 # A label OCR glued to the number after it: "No.066", "Inv321", "N°factureFA2627633", "INVOICEA-2026-1".
 # An all-capitals "INV2026..." is left alone: suppliers print that as part of the number.
 _GLUED_LABEL = re.compile(
-    r"^(?:(?:(?i:tax|sales)\s*)?(?i:invoice|facture)|(?i:n°\s*facture)|(?i:no)\.+|(?i:n°|nº)|Inv\.?|#)\s*(?=[A-Za-z]{0,4}-?\d)"
+    r"^(?:(?:(?i:tax|sales)\s*)?(?i:invoice|facture)(?:\s*(?i:number|no)\.?)?|(?i:n°\s*facture)|(?i:no)\.+|(?i:n°|nº)|Inv\.?|#)\s*(?=[A-Za-z]{0,4}-?\d)"
 )
 
 
@@ -332,6 +332,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         value, a, b = got
         if _looks_like_phone_or_postal(value) or parse_dates(value) or _MONTH_DAY.match(plain(value)):
             return None
+        if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
+            base *= 0.5  # "PO-636.19": a dot OCR put inside the number, or a price; not to be trusted alone
         if field == "po_number" and (
             re.fullmatch(r"\$?\d{1,3}(?:[.,]\d{2})?", value) or re.fullmatch(r"\d{1,2}", value)
         ):
@@ -398,7 +400,7 @@ def _amounts_in(text: str) -> list[tuple[float, int, int]]:
 
 
 _TERMS = [
-    (re.compile(r"(\d{1,2})\s*%\s*(\d{1,2})\s*,?\s*net\s*(\d{1,3})(?!\d)", re.I), "{0}% {1} Net {2}"),
+    (re.compile(r"(\d{1,2})\s*%?[\s.]*(\d{1,2})\s*[,.;]?\s*net[\s.:]*(\d{1,3})(?!\d)", re.I), "{0}% {1} Net {2}"),
     (re.compile(r"\bnet[\s.:]*(\d{1,3})(?!\d)", re.I), "Net {0}"),
     (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
     (re.compile(r"(?<!\d)(\d{1,3})\s*(?:days|jours|j)\b", re.I), "Net {0}"),
