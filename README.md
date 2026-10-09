@@ -84,10 +84,15 @@ GL accounts, cost centers, tax rates, policy ─┤   past approvals for this ve
 
 ## Quick start
 
-**Windows:** double-click `install.bat`, then `start.bat` (or the *AP Coder* desktop shortcut).
-**macOS / Linux:** `./install.sh`, then `./start.sh`. The installer is safe to run again: it updates
-the code and packages and keeps your data folder, Azure settings and shortcut (see
-[GETTING_STARTED](docs/GETTING_STARTED.md#step-2-install-10-min-one-double-click)).
+**Windows:** unzip, double-click **`APProcessor.bat`**. **Mac:** double-click `APProcessor.command`
+(Linux: `./APProcessor.command`). The first run sets itself up (a few minutes, Python 3.11+ needed), then
+the dashboard opens in your browser; later runs start straight away. It works offline, and with a
+`wheelhouse/` folder (the offline bundle) it even installs offline: see the pilot guide,
+[docs/PILOT.md](docs/PILOT.md).
+
+The full installer is still there: `install.bat` / `./install.sh` also updates a git checkout, asks for
+Azure settings and adds a desktop shortcut; `start.bat` / `./start.sh` do the same as `APProcessor`. It is
+safe to run again (see [GETTING_STARTED](docs/GETTING_STARTED.md#step-2-install-10-min-one-double-click)).
 
 By hand:
 
@@ -97,7 +102,7 @@ pip install -e ".[dev]"
 cp .env.example .env              # endpoints/keys, or leave keys empty to use Entra ID (az login)
 
 python -m ap_coder doctor --online   # check configuration and Azure connectivity
-python -m ap_coder dashboard         # review app on http://localhost:8501 (or the next free port)
+python -m ap_coder dashboard         # review app on http://127.0.0.1:8501 (or the next free port)
 ```
 
 In the dashboard:
