@@ -343,9 +343,10 @@ def review_tab() -> None:
         st.markdown("#### Approval and payment")
         c1, c2 = st.columns(2)
         limit = c1.number_input(
-            "Second approval for invoices over (0 = never)",
+            "Second approval for invoices over, in CAD (0 = never)",
             min_value=0.0, step=1000.0, value=store.approval_limit(), format="%.2f",
-            help="Above this amount, an approved invoice waits for a second, different approver before export.",
+            help="Above this amount, an approved invoice waits for a second, different approver before export. "
+            "A foreign-currency invoice is converted to CAD at the exchange rates below (as it is, without a rate).",
         )  # fmt: skip
         days = c2.number_input(
             "Days to pay when an invoice prints no due date and no terms",
