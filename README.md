@@ -1,5 +1,20 @@
 # AP Invoice Coder (prototype)
 
+## Run the offline pilot
+
+Everything runs on one laptop: no Azure, no cloud, nothing sent out.
+
+1. **Install Python 3.11+** from [python.org](https://www.python.org/downloads/) (tick *Add python.exe to PATH*).
+2. **Unzip AP Coder** to a folder that OneDrive does not sync, and double-click **`APProcessor.bat`**
+   (Mac: `APProcessor.command`). The first run sets itself up in a few minutes, including the OCR models
+   for scans, then opens the dashboard. An air-gapped laptop installs from the offline bundle instead.
+3. **Optional local AI:** in [LM Studio](https://lmstudio.ai/), load a 3B–8B instruct model and start the
+   server (Developer tab → **Start server**). AP Coder finds it on its own (**Settings → AI model**).
+
+Without a model, every invoice is still read on the laptop (PDF text, or OCR for scans), checked, and each
+line is coded from what AP approved before for that vendor. With a model, it also proposes accounts for
+vendors it hasn't seen. The full pilot guide is [docs/PILOT.md](docs/PILOT.md).
+
 ## Try the live demo
 
 [![Open the live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ap-coder-demo.streamlit.app)
