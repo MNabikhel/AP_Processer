@@ -41,11 +41,13 @@ _NOT_CHAT = ("embed", "rerank", "whisper", "tts", "bge-", "e5-")
 _VISION_HINTS = (
     "-vl", "vl-", "_vl", "vision", "llava", "pixtral", "gemma-3", "gemma3", "minicpm-v", "moondream", "internvl",
     "smolvlm", "granite-vision", "qwen2.5-omni", "mistral-small-3.1", "mistral-small-3.2", "llama4",
+    "qwen3.5", "qwen3_5",  # every Qwen 3.5 size has a vision encoder
 )  # fmt: skip
 
 LM_STUDIO_STEPS = (
     "Install LM Studio from lmstudio.ai.",
-    "Download and load a small instruct model, e.g. Qwen 2.5 7B Instruct or Qwen 3 8B (any 3B–8B instruct model).",
+    "Download and load a small instruct model, e.g. Qwen 3.5 9B or Qwen 2.5 7B Instruct (any 3B–9B instruct "
+    "model), with Context Length 8192. LM Studio 0.4.8 or newer, so a thinking model can be told not to think.",
     "Developer tab → Start server.",
 )
 
@@ -299,6 +301,96 @@ def rejects_format(exc: Exception) -> bool:
     return status == 500 and ("response_format" in text or "json_schema" in text or "grammar" in text)
 
 
+def refuses_extra_fields(exc: Exception) -> bool:
+    """A strict server refusing a field it doesn't know (the thinking switch), not ``response_format``."""
+    if getattr(exc, "status_code", None) not in {400, 422} or context_overflow(exc):
+        return False
+    text = str(exc).lower()
+    return not any(word in text for word in ("response_format", "json_schema", "json_object", "grammar"))
+
+
+# --- Thinking models --------------------------------------------------------------------------------------------
+# Hybrid thinking models (Qwen 3, Qwen 3.5) think before they answer unless told not to, and on a laptop CPU the
+# thinking alone can take minutes. The fields below are what servers document for "don't": reasoning_effort
+# "none" (LM Studio 0.4.8+ turns a Qwen 3.5's thinking off with it) and the chat template's switch (vLLM, SGLang,
+# llama.cpp's server, hosted Qwen; LM Studio ignores it, its bug tracker #1990; Qwen 3.5 has no /no_think prompt
+# switch). Servers that don't know them ignore them; one that refuses them gets the request again with fewer.
+# Thinking may still happen (an older LM Studio), so the JSON is also looked for in the reasoning, and a reply
+# that thought until it ran out of tokens says so.
+THINKING_OFF: tuple[dict[str, Any], ...] = (
+    {"chat_template_kwargs": {"enable_thinking": False}, "reasoning_effort": "none"},
+    {"chat_template_kwargs": {"enable_thinking": False}},  # vLLM takes no "none" effort, but takes this
+    {},
+)
+_thinking_off_by_model: dict[str, int] = {}
+
+THINKING_MESSAGE = (
+    "The model spent its answer thinking and never wrote the JSON{limit}. Raise AP_LLM_MAX_TOKENS, or turn "
+    "thinking off for this model in LM Studio (its Thinking setting), or load a model that doesn't think."
+)
+CUT_OFF_MESSAGE = "The model's reply was cut off before the JSON was complete{limit}; raise AP_LLM_MAX_TOKENS."
+
+
+def thinking_off(base_url: str, model: str) -> dict[str, Any]:
+    """``extra_body`` for the OpenAI SDK: ask a thinking model not to think (less, or nothing, for a server that
+    refused the fields)."""
+    fields = THINKING_OFF[_thinking_off_by_model.get(f"{base_url}|{model}", 0)]
+    return {"extra_body": dict(fields)} if fields else {}
+
+
+def refuse_thinking_off(base_url: str, model: str) -> bool:
+    """The server refused the thinking fields: send fewer from now on. False when none are left to drop."""
+    key = f"{base_url}|{model}"
+    level = _thinking_off_by_model.get(key, 0)
+    if level + 1 >= len(THINKING_OFF):
+        return False
+    _thinking_off_by_model[key] = level + 1
+    return True
+
+
+def _field(obj: Any, name: str) -> Any:
+    value = getattr(obj, name, None)
+    if value is None:
+        extra = getattr(obj, "model_extra", None)  # an SDK message keeps fields it doesn't know here
+        value = extra.get(name) if isinstance(extra, dict) else None
+    return value
+
+
+@dataclass
+class Reply:
+    data: dict[str, Any] | None  # the JSON object, None when there is none
+    raw: str  # what the model wrote (its answer, else its reasoning)
+    problem: str = ""  # why there is no JSON, in words a reviewer can act on
+    cut_off: bool = False  # thought or wrote until the token limit: asking again would end the same way
+
+
+def read_reply(choice: Any, max_tokens: int | None = None) -> Reply:
+    """The JSON in a local model's reply: in its answer, else in a reply that is all <think>, else in the reasoning
+    the server split off (LM Studio's ``reasoning_content``, Ollama's ``reasoning``). A model that thought until the
+    token limit gets a message saying so, not a parse error."""
+    message = getattr(choice, "message", None)
+    content = str(_field(message, "content") or "")
+    reasoning = str(_field(message, "reasoning_content") or _field(message, "reasoning") or "")
+    data = parse_json_reply(content)
+    if data is None:
+        data = last_json_object(content) or last_json_object(reasoning)
+    raw = content if content.strip() else reasoning
+    if data is not None:
+        return Reply(data, raw)
+    answer = strip_thinking(content)
+    # Thinking: split off by the server, in <think> tags, or (a template that opens the tag itself, cut off before
+    # closing it) a bare "Thinking Process:" in the answer.
+    thought = bool(reasoning.strip()) or answer != content.strip() or content.lstrip().startswith("Thinking")
+    limit = f" (it stopped at the {max_tokens:,}-token limit)" if max_tokens else ""
+    if getattr(choice, "finish_reason", None) == "length":
+        started_json = answer.lstrip().startswith(("{", "```"))
+        problem = (CUT_OFF_MESSAGE if started_json or not thought else THINKING_MESSAGE).format(limit=limit)
+        return Reply(None, raw, problem, cut_off=True)
+    if thought and not answer:
+        return Reply(None, raw, THINKING_MESSAGE.format(limit=""), cut_off=True)
+    return Reply(None, raw, "the reply held no JSON object")
+
+
 def context_overflow(exc: Exception) -> bool:
     text = str(exc).lower()
     return "context" in text and any(word in text for word in ("length", "overflow", "tokens", "exceed", "window"))
@@ -366,6 +458,22 @@ def parse_json_reply(content: str | None) -> dict[str, Any] | None:
                     return data
         start = text.find("{", start + 1)
     return None
+
+
+def last_json_object(text: str | None) -> dict[str, Any] | None:
+    """The last complete JSON object in reasoning (the model's final draft, not the first idea), or None."""
+    text = _FENCE_RE.sub("", text or "")
+    found: dict[str, Any] | None = None
+    start = text.find("{")
+    while start != -1:
+        chunk = _balanced(text, start)
+        data = parse_json_reply(chunk) if chunk else None
+        if data is not None:
+            found = data
+            start = text.find("{", start + len(chunk or ""))  # past this object: its inner ones are not answers
+        else:
+            start = text.find("{", start + 1)
+    return found
 
 
 def clip_document(text: str, limit: int) -> tuple[str, bool]:

@@ -131,9 +131,10 @@ In the dashboard:
 The coding step can use a model on your own computer instead of Azure OpenAI. Nothing is sent out.
 
 1. Install [LM Studio](https://lmstudio.ai/).
-2. Download and load a small *instruct* model: Qwen 2.5 7B Instruct, Qwen 3 8B, Llama 3.1 8B, or any
-   3B–8B instruct model. One that can see (an eye icon in LM Studio, e.g. Qwen 2.5 VL 7B) is also shown
-   the page images.
+2. Download and load a small *instruct* model: Qwen 3.5 9B, Qwen 2.5 7B Instruct, Llama 3.1 8B, or any
+   3B–9B instruct model, with a Context Length of 8192. One that can see (an eye icon in LM Studio, e.g.
+   Qwen 3.5 or Qwen 2.5 VL 7B) is also shown the page images. A thinking model (Qwen 3, Qwen 3.5) is
+   asked not to think; LM Studio 0.4.8 or newer honours that (see [docs/PILOT.md](docs/PILOT.md)).
 3. **Developer** tab → **Start server**.
 
 AP Coder finds it on its own: `AP_LLM_PROVIDER=auto` (the default) uses Azure OpenAI when its endpoint
@@ -153,7 +154,8 @@ codes one made-up invoice with it.
 
 The model is asked for the same strict JSON schema as Azure (LM Studio supports it). A server that
 refuses it gets plain JSON mode, then the schema in the prompt; replies wrapped in code fences or
-`<think>` blocks are still read, and an invalid answer gets one repair turn. Every check after coding is
+`<think>` blocks, or left in the model's reasoning, are still read, and an invalid answer gets one repair
+turn. A model that thinks until `AP_LLM_MAX_TOKENS` runs out gets a plain error saying so. Every check after coding is
 the same as with Azure. With no model at all, the rest of AP Coder still works; invoices just aren't
 coded by AI. Reading the invoice itself (Document Intelligence, or reading text files) is a separate step.
 
