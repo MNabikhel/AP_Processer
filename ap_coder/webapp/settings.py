@@ -426,10 +426,11 @@ def page_settings() -> None:
     store = get_store()
     show_toast()
     st.html(ui.page_header("Setup", "Settings", "Azure connection, review behaviour, your data and backups."))
-    azure, review, data, about = st.tabs(
+    azure, review, erp, data, about = st.tabs(
         [
             ":material/cloud: Azure",
             ":material/tune: Review",
+            ":material/account_tree: JD Edwards E1",
             ":material/database: Data & backups",
             ":material/info: About",
         ]
@@ -438,6 +439,10 @@ def page_settings() -> None:
         azure_tab(store)
     with review:
         review_tab()
+    with erp:
+        from ap_coder.webapp.jde_settings import jde_tab
+
+        jde_tab(store)
     with data:
         data_tab(store)
     with about:
