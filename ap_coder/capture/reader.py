@@ -155,9 +155,13 @@ _LABELS = _compile()
 _DISTRACT = {f: [re.compile(rx) for rx in pats] for f, pats in DISTRACTORS.items()}
 
 
+_OCR_LABEL_GAP = re.compile(r"(?<=[a-z]{2})[.·_-](?=[a-z]{2})")
+
+
 def _label_hits(line: Line) -> list[_LabelHit]:
     """Labels that start a line or follow a separator inside it ("... | Date: ...")."""
-    text = plain(line.text)
+    # OCR puts dots, dashes or middots between label words ("Total.before tax", "Bon·de commande").
+    text = _OCR_LABEL_GAP.sub(" ", plain(line.text))
     hits: list[_LabelHit] = []
     starts = [0] + [m.end() for m in re.finditer(r"(?:\s{2,}|\s\|\s|[,;]\s)", text)]
     for field, pats in _LABELS.items():

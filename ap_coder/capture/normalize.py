@@ -254,9 +254,9 @@ def luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
-_BN = re.compile(r"(?<![\d-])(\d(?:[ -]?\d){8})\s*(?:-|\s)?\s*(RT|R\s?T)\s*(?:-|\s)?\s*(\d{4})(?!\d)", re.I)
+_BN = re.compile(r"(?<![\d-])(\d(?:[ -]?\d){8})[\s.:-]*(RT|R\s?T)[\s.:-]*(\d{4})(?!\d)", re.I)
 _BN9 = re.compile(r"(?<!\d)(\d{3}\s?\d{3}\s?\d{3})(?!\d)")
-_QST = re.compile(r"(?<!\d)(\d{10})\s*(?:-|\s)?\s*(TQ|T\s?Q)\s*(?:-|\s)?\s*(\d{4})(?!\d)", re.I)
+_QST = re.compile(r"(?<!\d)(\d{10})[\s.:-]*(TQ|T\s?Q)[\s.:-]*(\d{4})(?!\d)", re.I)
 
 
 def find_gst_numbers(text: str) -> list[tuple[str, int, int, bool]]:
