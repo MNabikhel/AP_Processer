@@ -47,6 +47,7 @@ TOP = "APProcessor"
 EXCLUDE_DIRS = {".git", ".venv", "venv", "wheelhouse", "models", "dist", "build", "__pycache__", ".pytest_cache",
                 ".ruff_cache", ".cache", "output", "bench_out", ".claude", ".github"}  # fmt: skip
 EXECUTABLE = (".command", ".sh")
+DATA_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".xlsx", ".xlsm", ".xls")
 
 
 def project() -> dict:
@@ -70,6 +71,13 @@ def excluded(rel: Path) -> bool:
     name = parts[-1]
     if name == ".env" or (name.startswith(".env.") and name != ".env.example"):
         return True  # settings with keys
+    if rel.as_posix() == ".streamlit/secrets.toml":
+        return True
+    lower = name.lower()
+    if lower.endswith(DATA_SUFFIXES) or ".db-" in lower or ".sqlite" in lower:
+        return True  # a database or a workbook left in the code folder (as .gitignore, also without git)
+    if len(parts) == 1 and lower.endswith((".pdf", ".tif", ".tiff")):
+        return True  # an invoice dropped next to the code (the samples are in samples/)
     return name.endswith((".pyc", ".pyo")) or name == ".DS_Store"
 
 
