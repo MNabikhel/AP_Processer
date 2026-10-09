@@ -360,7 +360,13 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if ambiguous:
             conf = min(conf, 0.6)
             reasons.append("the date reads both day/month and month/day")
-        if field in failed:
+        # The AI's coding is what an approval posts: a page value it does not share is not verified for it,
+        # however well the page's own values add up.
+        ai_top = (by_source.get("ai") or {}).get(field, [])[:1]
+        coding_differs = bool(ai_top) and normalize_value(field, ai_top[0].value) is not None and "ai" not in g.top
+        if coding_differs:
+            reasons.append(f"the coding has {ai_top[0].value}, the page reads {g.value}")
+        if field in failed or coding_differs:
             status = CHECK
         elif conf >= VERIFIED_AT and best.boxes:
             status = VERIFIED
