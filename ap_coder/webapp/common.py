@@ -7,6 +7,7 @@ import getpass
 import html
 import io
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -275,9 +276,21 @@ def replace_editor(key: str, data: pd.DataFrame) -> None:
 
 
 def forget_drafts(prefix: str) -> None:
-    """Drop the saved drafts of a finished invoice."""
-    for k in [k for k in st.session_state if str(k).startswith((f"_base_{prefix}_", f"_draft_{prefix}_"))]:
+    """Drop the saved drafts of a finished invoice: its grids and the header fields kept for the session."""
+    for k in [
+        k for k in st.session_state if str(k).startswith((f"_base_{prefix}_", f"_draft_{prefix}_", f"{prefix}_"))
+    ]:
         del st.session_state[k]
+
+
+_INVOICE_STATE = re.compile(r"^(?:_base_|_draft_)?inv\d+_")
+
+
+def forget_all_drafts() -> None:
+    """Drop every invoice's drafts (after a restore, invoice numbers are given out again to new invoices)."""
+    for k in [k for k in st.session_state if _INVOICE_STATE.match(str(k))]:
+        del st.session_state[k]
+    st.session_state.pop("unsaved_edits", None)
 
 
 def card(name: str) -> Any:

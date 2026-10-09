@@ -190,7 +190,7 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
     if c1.button("Reopen PO" if closed else "Close PO", icon=":material/lock_open:" if closed else ":material/lock:",
                  key=f"po_toggle_{po['po_key']}", width="stretch"):  # fmt: skip
         store.set_po_status(po["po_key"], po_mod.OPEN if closed else po_mod.CLOSED, actor=reviewer())
-        st.session_state["po_status_filter"] = "All"  # keep this PO in view (not jump to another one)
+        st.session_state["po_show_all"] = True  # keep this PO in view (not jump to another one), on the next run
         notify(
             f"{md(po_mod.po_label(po['po_number']))} {'reopened' if closed else 'closed'}.", ":material/shopping_cart:"
         )
@@ -256,6 +256,8 @@ def page_purchase_orders() -> None:
         c1, c2 = st.columns([3, 1.2], vertical_alignment="bottom")
         query = c1.text_input("Search", placeholder="PO number or vendor", key="po_search",
                               label_visibility="collapsed")  # fmt: skip
+        if st.session_state.pop("po_show_all", False):  # set before the widget: it can't change after
+            st.session_state["po_status_filter"] = "All"
         status = c2.segmented_control("Status", STATUS_FILTERS, default="Open", key="po_status_filter",
                                       label_visibility="collapsed")  # fmt: skip
         shown = [

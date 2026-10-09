@@ -22,7 +22,7 @@ from ap_coder.memory import ACCEPTED, pair_lines, vendor_key
 from ap_coder.pipeline import finalise_coding
 from ap_coder.po import match_invoice, po_label
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
-from ap_coder.review import coding_from_inputs, split_line
+from ap_coder.review import coding_from_inputs, is_blank, split_line
 from ap_coder.safe import md
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
@@ -234,7 +234,10 @@ def _other_row(store: Store, inv: dict[str, Any]) -> None:
         if inv["status"] == REJECTED:
             if buttons.button("Reopen", key=f"reopen_{inv['id']}", icon=":material/undo:",
                               help="Back to the review queue (e.g. rejected by mistake)"):  # fmt: skip
-                store.reopen(inv["id"], reviewer())
+                try:
+                    store.reopen(inv["id"], reviewer())
+                except ValueError as exc:
+                    changed_meanwhile(exc)
                 notify("Back in the review queue.", ":material/undo:")
                 st.rerun()
         elif buttons.button("Retry", key=f"retry_{inv['id']}", icon=":material/refresh:"):
@@ -381,7 +384,10 @@ def _parked_tab(store: Store) -> None:
                 )
                 if right.button("Back to the queue", key=f"unpark_{inv['id']}", icon=":material/play_circle:",
                                 width="stretch"):  # fmt: skip
-                    store.unpark_invoice(inv["id"], reviewer())
+                    try:
+                        store.unpark_invoice(inv["id"], reviewer())
+                    except ValueError as exc:
+                        changed_meanwhile(exc)
                     notify(f"Invoice #{inv['id']} is back in the review queue.", ":material/play_circle:")
                     st.rerun()
 
@@ -404,7 +410,7 @@ def _notes_card(store: Store, invoice_id: int, key: str) -> None:
 def _second_approval_tab(store: Store, reference: ReferenceData, awaiting: list[dict[str, Any]]) -> None:
     limit = store.approval_limit()
     st.caption(
-        (f"Invoices over {money(limit)} need a second approver before they can be exported. " if limit else "")
+        (f"Invoices over {money(limit)} CAD need a second approver before they can be exported. " if limit else "")
         + "The second approver must be someone other than the first."
     )
     if not awaiting:
@@ -446,13 +452,19 @@ def _second_row(store: Store, reference: ReferenceData, inv: dict[str, Any], me:
             if same
             else None,
         ):  # fmt: skip
-            store.final_approve(inv["id"], me, login=my_login)
+            try:
+                store.final_approve(inv["id"], me, login=my_login)
+            except (ValueError, PermissionError) as exc:
+                changed_meanwhile(exc)
             notify(f"{md(inv['vendor_name'])} approved. It is ready to export.", ":material/how_to_reg:")
             st.rerun()
         with buttons.popover("Send back", icon=":material/undo:"):
             reason = st.text_input("Why", key=f"second_reason_{inv['id']}", placeholder="e.g. wrong cost center")
             if st.button("Send back to the queue", key=f"second_back_{inv['id']}"):
-                store.send_back(inv["id"], me, reason)
+                try:
+                    store.send_back(inv["id"], me, reason)
+                except ValueError as exc:
+                    changed_meanwhile(exc)
                 notify("Sent back to the review queue.", ":material/undo:")
                 st.rerun()
         with st.expander("GL posting and history", icon=":material/account_balance:"):
@@ -474,7 +486,9 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
                 name = " · ".join(x for x in (inv.get("vendor_name"), inv.get("invoice_number")) if x) or f"#{i}"
                 rows.append([esc(name), esc(why)])
             st.html(ui.table(["Invoice", "Why"], rows, wrap=[1]))
-    candidates = clean_candidates(store)
+    # Not an invoice with edits on its review screen: bulk approval would approve it without them.
+    unsaved = st.session_state.get("unsaved_edits") or set()
+    candidates = [i for i in clean_candidates(store) if i["id"] not in unsaved]
     if len(candidates) < 2:
         return
     total = by_currency(candidates)  # per currency, never added together
@@ -1214,6 +1228,12 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     warnings = [i for i in report.issues if i.severity == "warning"]
     # The queue card shows what this screen shows (edits and today's checks included).
     store.refresh_confidence(invoice_id, report.adjusted_confidence, report.requires_review)
+    # Edits not approved yet stay on this screen: bulk approval (which takes the stored coding) leaves it alone.
+    edited = st.session_state.setdefault("unsaved_edits", set())
+    if _differs_from_stored(coding, start):
+        edited.add(invoice_id)
+    else:
+        edited.discard(invoice_id)
 
     with summary, card("summary"):
         _invoice_summary(
@@ -1287,7 +1307,12 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 open_issues = [
                     {"code": i.code, "severity": i.severity, "line": i.line_number} for i in errors + warnings
                 ]
-                counts = store.approve_invoice(invoice_id, output, reviewer(), open_issues=open_issues, login=login())
+                try:
+                    counts = store.approve_invoice(
+                        invoice_id, output, reviewer(), open_issues=open_issues, login=login()
+                    )
+                except ValueError as exc:
+                    changed_meanwhile(exc)
                 learn_from_approval(store, invoice_id, output, actor=reviewer(), taught=taught_boxes(key))
                 if (store.get_invoice(invoice_id) or {}).get("status") == PENDING:
                     notify("Over the approval limit: it now waits for a second approver.", ":material/how_to_reg:")
@@ -1302,6 +1327,33 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                     ":material/school:",
                 )
                 st.rerun()
+
+
+def _differs_from_stored(coding: InvoiceCoding, stored: dict[str, Any]) -> bool:
+    """Whether the coding on screen is not the one stored for the invoice (the reviewer changed something)."""
+    try:
+        before = InvoiceCoding.model_validate({k: v for k, v in stored.items() if k != "gl_distribution"})
+    except ValueError:
+        return True
+    ignore = {"confidence_score"}
+    return {k: v for k, v in coding.to_output().items() if k not in ignore} != {
+        k: v for k, v in before.to_output().items() if k not in ignore
+    }
+
+
+def numbered_lines(lines: pd.DataFrame) -> pd.DataFrame:
+    """A copy of the line grid with the lines just added numbered as the checks number them (after the last
+    line, in order), so an action on "line 6" finds the row the reviewer added."""
+    out = lines.copy()
+    numbers = pd.to_numeric(out["line_number"], errors="coerce")
+    next_no = int(numbers.max()) + 1 if numbers.notna().any() else 1
+    for index, row in out.iterrows():
+        if pd.notna(numbers[index]) or all(is_blank(row.get(k)) for k in ("description", "amount")):
+            continue
+        out.at[index, "line_number"] = next_no
+        next_no += 1
+    out["line_number"] = pd.to_numeric(out["line_number"], errors="coerce")
+    return out
 
 
 def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines: pd.DataFrame, key: str) -> None:
@@ -1363,7 +1415,7 @@ def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines:
             key=f"{key}_po_coding",
             help="Sets the GL account and cost center of these lines to the ones on the PO",
         ):  # fmt: skip
-            updated = edited_lines.copy()
+            updated = numbered_lines(edited_lines)
             for m in differs:
                 rows_at = updated["line_number"] == m.invoice_line
                 if m.po_gl:
@@ -1399,7 +1451,7 @@ def _suggestion_card(
                 label = f"{s.gl_code} · {gl_name(reference, s.gl_code) or s.gl_code}"
                 if row.button(label, key=f"{key}_sugg_{li.line_number}_{s.gl_code}", icon=":material/add_task:",
                               help="; ".join(s.reasons).capitalize()):  # fmt: skip
-                    updated = edited_lines.copy()
+                    updated = numbered_lines(edited_lines)
                     at = updated["line_number"] == li.line_number
                     updated.loc[at, "predicted_gl_code"] = s.gl_code
                     blank_cc = li.predicted_cost_center in ("", UNASSIGNED)
@@ -1485,7 +1537,10 @@ def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], posit
         )
         if st.button("Park", key=f"{key}_park", icon=":material/pause_circle:", width="stretch",
                      disabled=not why.strip()):  # fmt: skip
-            store.park_invoice(invoice_id, reviewer(), why, follow.isoformat() if follow else None)
+            try:
+                store.park_invoice(invoice_id, reviewer(), why, follow.isoformat() if follow else None)
+            except ValueError as exc:
+                changed_meanwhile(exc)
             _advance(ids, position)
             notify(f"Invoice #{invoice_id} parked. It is in the Parked tab.", ":material/pause_circle:")
             st.rerun()
@@ -1494,7 +1549,10 @@ def _more_menu(parent: Any, store: Store, invoice_id: int, ids: list[int], posit
         st.caption("Not ours, or not to be paid. It can be reopened later.")
         reason = st.text_input("Reason", key=f"{key}_reason", placeholder="e.g. not our invoice")
         if st.button("Reject", key=f"{key}_reject", icon=":material/block:", width="stretch"):
-            store.reject_invoice(invoice_id, reviewer(), reason)
+            try:
+                store.reject_invoice(invoice_id, reviewer(), reason)
+            except ValueError as exc:
+                changed_meanwhile(exc)
             forget_drafts(key)
             _advance(ids, position)
             notify(f"Invoice #{invoice_id} rejected.", ":material/block:")
@@ -1539,6 +1597,12 @@ def _advance(ids: list[int], position: int) -> None:
         st.session_state["open_invoice"] = remaining[min(position, len(remaining) - 1)]
     else:
         st.session_state.pop("open_invoice", None)
+
+
+def changed_meanwhile(exc: Exception) -> None:
+    """Someone else acted on the invoice after this screen was drawn: say so and show where it stands now."""
+    notify(f"Not done: someone else changed this invoice meanwhile ({md(exc)}).", ":material/sync_problem:")
+    st.rerun()
 
 
 def due_text(coding: dict[str, Any], default_days: int, vendor_terms: str = "") -> str:
@@ -1737,7 +1801,10 @@ def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> 
                 why = st.text_input("What needs correcting", key=f"reopen_reason_{invoice_id}")
                 if st.button("Reopen", key=f"reopen_{invoice_id}", type="primary", disabled=not why.strip()):
                     on_reopen(store, invoice_id, reviewer(), why)
-                    store.reopen(invoice_id, reviewer(), why)
+                    try:
+                        store.reopen(invoice_id, reviewer(), why)
+                    except ValueError as exc:
+                        changed_meanwhile(exc)
                     st.session_state["open_invoice"] = invoice_id
                     notify("Reopened: correct it and approve it again.", ":material/undo:")
                     st.rerun()

@@ -24,6 +24,7 @@ from ap_coder.webapp.common import (
     PUBLIC_DEMO,
     card,
     esc,
+    forget_all_drafts,
     get_settings,
     get_store,
     not_in_public_demo,
@@ -342,9 +343,10 @@ def review_tab() -> None:
         st.markdown("#### Approval and payment")
         c1, c2 = st.columns(2)
         limit = c1.number_input(
-            "Second approval for invoices over (0 = never)",
+            "Second approval for invoices over, in CAD (0 = never)",
             min_value=0.0, step=1000.0, value=store.approval_limit(), format="%.2f",
-            help="Above this amount, an approved invoice waits for a second, different approver before export.",
+            help="Above this amount, an approved invoice waits for a second, different approver before export. "
+            "A foreign-currency invoice is converted to CAD at the exchange rates below (as it is, without a rate).",
         )  # fmt: skip
         days = c2.number_input(
             "Days to pay when an invoice prints no due date and no terms",
@@ -497,6 +499,7 @@ def data_tab(store: Store) -> None:
             if st.button("Restore", type="primary", disabled=confirm.strip().upper() != "RESTORE", key="restore"):
                 safety = store.restore_from(path)
                 st.session_state.pop("open_invoice", None)
+                forget_all_drafts()  # the invoices they belong to may be gone, their numbers given out again
                 notify(f"Restored {chosen}. The previous database was saved as {safety.name}.", ":material/restore:")
                 st.rerun()
 
