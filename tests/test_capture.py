@@ -344,7 +344,8 @@ def test_confirmed_supplier_takes_the_vendor_master_name():
     box = [Box(1, 0.1, 0.05, 0.4, 0.08)]
     by_source = {"rules": {
         "vendor_name": [Reading("vendor_name", "Harbourfront Water&Wastewater", "x", box, 0.9, "top-of-page")],
-        "gst_hst_registration_number": [Reading("gst_hst_registration_number", "123456782RT0001", "x", box, 0.95, "pattern")],
+        "gst_hst_registration_number": [Reading("gst_hst_registration_number", "123456782RT0001", "x", box, 0.95,
+                                                "pattern")],
     }}  # fmt: skip
     vendor = {"name": "Harbourfront Water & Wastewater", "gst_number": "123456782RT0001"}
     fields = ("vendor_name", "gst_hst_registration_number")
