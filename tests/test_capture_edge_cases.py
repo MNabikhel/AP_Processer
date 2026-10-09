@@ -75,3 +75,43 @@ def test_credit_marks_and_separator_dashes_around_amounts(tmp_path):
     capture = analyze(pdf, ocr=False, today=TODAY)
     assert capture.fields["grand_total"].value == 1050.0
     assert all(c["ok"] for c in capture.checks if c["code"] == "TOTALS_ADD_UP")
+
+
+def _fake_ocr(monkeypatch) -> list:
+    """OCR that records the page images it is given (and reads nothing): no model needed."""
+    from ap_coder.capture import layout as layout_mod
+
+    seen: list = []
+    monkeypatch.delenv("AP_OCR_CACHE", raising=False)
+    monkeypatch.setattr(layout_mod, "ocr_available", lambda: True)
+    monkeypatch.setattr(layout_mod, "_engine", lambda name=None: lambda img: seen.append(img) or [])
+    return seen
+
+
+def test_a_multi_page_tiff_scan_is_read_page_by_page_at_its_own_resolution(tmp_path, monkeypatch):
+    """A faxed or scanned invoice saved as one TIFF with a page per frame, at 200 dpi: every page is read
+    (the totals are often on the last), and at the resolution it was scanned at, not shrunk to 72 dpi."""
+    from PIL import Image
+
+    seen = _fake_ocr(monkeypatch)
+    pages = [Image.new("RGB", (1700, 2200), "white") for _ in range(2)]
+    path = tmp_path / "scan.tif"
+    pages[0].save(path, save_all=True, append_images=pages[1:], dpi=(200, 200))
+    layout = build_layout(path)
+    assert [p.number for p in layout.pages] == [1, 2]
+    assert [img.shape[:2] for img in seen] == [(2200, 1700), (2200, 1700)]
+
+
+def test_a_transparent_png_is_read_on_white_paper(tmp_path, monkeypatch):
+    """A PNG with a transparent background (an export, a screenshot): its transparent pixels are paper, not
+    black, or the black text disappears into a black page."""
+    from PIL import Image, ImageDraw
+
+    seen = _fake_ocr(monkeypatch)
+    img = Image.new("RGBA", (400, 300), (0, 0, 0, 0))
+    ImageDraw.Draw(img).text((20, 20), "Total 1,050.00", fill=(0, 0, 0, 255))
+    path = tmp_path / "invoice.png"
+    img.save(path)
+    build_layout(path)
+    assert tuple(seen[0][150, 200]) == (255, 255, 255)  # the background
+    assert seen[0].min() < 50  # the text is still dark
