@@ -152,8 +152,8 @@
    59
   ],
   "due_date|ocr+rules|label-below|scan|confirmed": [
-   87,
-   87
+   90,
+   90
   ],
   "due_date|ocr+rules|label-below|scan|received": [
    1,
@@ -168,20 +168,20 @@
    25
   ],
   "due_date|ocr+rules|label-inline|scan|soft": [
-   8,
-   8
+   9,
+   9
   ],
   "due_date|ocr+rules|label-inline|scan|soft,received": [
    1,
    1
   ],
   "due_date|ocr+rules|label-right|scan|": [
-   52,
-   52
+   53,
+   53
   ],
   "due_date|ocr+rules|label-right|scan|confirmed": [
-   70,
-   70
+   71,
+   71
   ],
   "due_date|ocr+rules|label-right|scan|received": [
    2,
@@ -196,10 +196,6 @@
    0
   ],
   "due_date|ocr|label-inline|scan|": [
-   1,
-   1
-  ],
-  "due_date|ocr|label-inline|scan|contested": [
    1,
    1
   ],
@@ -246,10 +242,6 @@
   "due_date|rules+template|template|text|soft": [
    2,
    2
-  ],
-  "due_date|rules|label-below|scan|": [
-   1,
-   1
   ],
   "due_date|rules|label-below|text|": [
    361,
@@ -300,10 +292,6 @@
    41
   ],
   "due_date|rules|label-right|scan|": [
-   1,
-   1
-  ],
-  "due_date|rules|label-right|scan|confirmed": [
    1,
    1
   ],
@@ -652,12 +640,12 @@
    2
   ],
   "invoice_date|ocr+rules|label-below|scan|": [
-   213,
-   212
+   214,
+   214
   ],
   "invoice_date|ocr+rules|label-below|scan|confirmed": [
-   87,
-   87
+   90,
+   90
   ],
   "invoice_date|ocr+rules|label-below|scan|contested": [
    1,
@@ -672,8 +660,8 @@
    1
   ],
   "invoice_date|ocr+rules|label-inline|scan|": [
-   105,
-   105
+   111,
+   111
   ],
   "invoice_date|ocr+rules|label-inline|scan|confirmed": [
    20,
@@ -696,28 +684,28 @@
    1
   ],
   "invoice_date|ocr+rules|label-right|scan|": [
-   191,
-   191
+   197,
+   197
   ],
   "invoice_date|ocr+rules|label-right|scan|confirmed": [
-   69,
-   69
+   70,
+   70
   ],
   "invoice_date|ocr+rules|label-right|scan|received": [
    8,
    8
   ],
   "invoice_date|ocr+rules|label-right|scan|soft": [
-   6,
-   6
+   7,
+   7
   ],
-  "invoice_date|ocr|label-below|scan|confirmed": [
+  "invoice_date|ocr|label-below|scan|": [
    1,
    1
   ],
   "invoice_date|ocr|label-inline|scan|": [
-   2,
-   2
+   1,
+   1
   ],
   "invoice_date|ocr|label-inline|scan|confirmed,contested": [
    1,
@@ -827,10 +815,6 @@
    4,
    4
   ],
-  "invoice_date|rules|label-right|scan|": [
-   2,
-   2
-  ],
   "invoice_date|rules|label-right|scan|confirmed": [
    2,
    2
@@ -872,12 +856,12 @@
    23
   ],
   "invoice_number|ocr+rules|label-inline|scan|": [
-   168,
-   168
+   169,
+   169
   ],
   "invoice_number|ocr+rules|label-inline|scan|contested": [
-   7,
-   7
+   6,
+   6
   ],
   "invoice_number|ocr+rules|label-right|scan|": [
    247,
@@ -909,7 +893,7 @@
   ],
   "invoice_number|rules|label-below|scan|": [
    4,
-   2
+   3
   ],
   "invoice_number|rules|label-below|scan|contested": [
    1,
@@ -944,40 +928,40 @@
    3
   ],
   "payment_terms|ocr+rules|label-below|scan|": [
-   57,
-   57
-  ],
-  "payment_terms|ocr+rules|label-below|scan|confirmed": [
    55,
    55
+  ],
+  "payment_terms|ocr+rules|label-below|scan|confirmed": [
+   57,
+   57
   ],
   "payment_terms|ocr+rules|label-below|scan|soft": [
    1,
    1
   ],
   "payment_terms|ocr+rules|label-inline|scan|": [
-   136,
-   131
+   137,
+   137
   ],
   "payment_terms|ocr+rules|label-inline|scan|confirmed": [
    93,
-   92
+   93
   ],
   "payment_terms|ocr+rules|label-inline|scan|soft": [
    5,
    5
   ],
   "payment_terms|ocr+rules|label-right|scan|": [
-   41,
-   41
+   39,
+   39
   ],
   "payment_terms|ocr+rules|label-right|scan|confirmed": [
-   33,
-   33
+   34,
+   34
   ],
   "payment_terms|ocr+rules|label-right|scan|soft": [
-   6,
-   6
+   7,
+   7
   ],
   "payment_terms|ocr|label-below|scan|": [
    1,
@@ -1053,11 +1037,11 @@
   ],
   "payment_terms|rules|label-inline|scan|confirmed,contested": [
    1,
-   0
+   1
   ],
   "payment_terms|rules|label-inline|scan|contested": [
-   2,
-   2
+   1,
+   1
   ],
   "payment_terms|rules|label-inline|text|": [
    564,
@@ -1468,12 +1452,16 @@
    0
   ],
   "vendor_name|ocr+rules|top-of-page|scan|": [
-   158,
-   158
+   274,
+   274
   ],
   "vendor_name|ocr+rules|top-of-page|scan|contested": [
-   600,
-   587
+   482,
+   470
+  ],
+  "vendor_name|ocr|top-of-page|scan|contested": [
+   1,
+   1
   ],
   "vendor_name|rules+template|template|text|confirmed": [
    1798,
@@ -1488,24 +1476,24 @@
    1296
   ],
   "vendor_name|rules|top-of-page|scan|contested": [
-   2,
-   2
+   3,
+   3
   ],
   "vendor_name|rules|top-of-page|text|": [
-   3563,
-   3563
+   3718,
+   3717
   ],
   "vendor_name|rules|top-of-page|text|confirmed": [
-   73,
-   73
+   76,
+   76
   ],
   "vendor_name|rules|top-of-page|text|confirmed,contested": [
-   11,
-   11
+   8,
+   8
   ],
   "vendor_name|rules|top-of-page|text|contested": [
-   437,
-   433
+   281,
+   278
   ]
  }
 }
