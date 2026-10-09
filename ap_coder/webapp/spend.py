@@ -120,7 +120,7 @@ def page_spend() -> None:
     names = {code: row.get("description", "") for code, row in accounts.items()}
     category = {code: row.get("category", "") for code, row in accounts.items()}
     with card("spend_months"):
-        st.markdown("#### :material/bar_chart: By month")
+        st.markdown("#### By month")
         data = pd.DataFrame(spend.by_month_and_category(rows, currency, category))
         chart = (
             alt.Chart(data)
@@ -139,15 +139,15 @@ def page_spend() -> None:
 
     left, right = st.columns(2, gap="medium")
     with left, card("spend_gl"):
-        st.markdown("#### :material/account_tree: Top GL accounts")
+        st.markdown("#### Top GL accounts")
         st.html(_table(spend.total_by(rows, "gl_code", currency), "GL account", names, total))
     with right, card("spend_vendors"):
-        st.markdown("#### :material/storefront: Top vendors")
+        st.markdown("#### Top vendors")
         st.html(_table(vendors, "Vendor", {}, total))
     centers = spend.total_by(rows, "cost_center", currency)
     if any(key for key, _, _ in centers):
         with card("spend_cc"):
-            st.markdown("#### :material/domain: By cost center")
+            st.markdown("#### By cost center")
             cc_names = {
                 code: row.get("description", "") for code, row in spend.accounts_by_code(reference, True).items()
             }

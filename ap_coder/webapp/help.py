@@ -58,14 +58,14 @@ def page_help() -> None:
             st.markdown(re.sub(r"\[([^\]]+)\]\([^)]*\.md[^)]*\)", r"\1", text))  # links to other docs: plain text
 
     with card("help_start"):
-        st.markdown("#### :material/flag: Getting started")
+        st.markdown("#### Getting started")
         for i, ((title, text), page) in enumerate(zip(QUICK_START, STEP_PAGES, strict=True), start=1):
             c1, c2 = st.columns([5, 1], vertical_alignment="center")
             c1.html(
-                f"<div style='display:flex;gap:.7rem;align-items:flex-start'><span class='apc-step-no' "
-                f"style='flex:none;width:1.6rem;height:1.6rem;border-radius:50%;background:var(--apc-brand-50);color:var(--apc-brand);"
-                f"display:grid;place-items:center;font-weight:700;font-size:.85rem'>{i}</span><div><b>{esc(title)}"
-                f"</b><div class='apc-muted'>{esc(text)}</div></div></div>"
+                f"<div style='display:flex;gap:12px;align-items:flex-start;font-size:14px'><span class='apc-step-no' "
+                f"style='flex:none;width:22px;height:22px;border-radius:50%;background:var(--lg-neutral);color:var(--lg-muted);"
+                f"display:grid;place-items:center;font-weight:600;font-size:12px'>{i}</span>"
+                f"<div><b style='font-weight:600'>{esc(title)}</b><div class='apc-muted'>{esc(text)}</div></div></div>"
             )
             if page in PAGES:
                 c2.page_link(
@@ -73,7 +73,7 @@ def page_help() -> None:
                 )
 
     with card("help_routine"):
-        st.markdown("#### :material/checklist: Your AP routine")
+        st.markdown("#### Your AP routine")
         columns = st.columns(len(ROUTINE))
         for col, (when, tasks) in zip(columns, ROUTINE, strict=True):
             col.markdown(f"**{when}**")
@@ -84,7 +84,7 @@ def page_help() -> None:
                     col.markdown(f"- {task}")
 
     with card("help_checks"):
-        st.markdown("#### :material/fact_check: What the checks mean")
+        st.markdown("#### What the checks mean")
         st.caption(
             "Every invoice is checked before you see it. Errors must be fixed (or overridden), warnings deserve "
             "a look, and 'good to know' notes never block anything."
@@ -100,13 +100,13 @@ def page_help() -> None:
 
     left, right = st.columns([3, 2], gap="medium")
     with left, card("help_faq"):
-        st.markdown("#### :material/help: Questions")
+        st.markdown("#### Questions")
         for question, answer in FAQ:
             with st.expander(question):
                 st.markdown(answer)
     with right:
         with card("help_keys"):
-            st.markdown("#### :material/keyboard: Shortcuts")
+            st.markdown("#### Shortcuts")
             st.html(
                 ui.table(
                     ["", ""],
@@ -115,7 +115,7 @@ def page_help() -> None:
                 )
             )
         with card("help_data"):
-            st.markdown("#### :material/lock: Where your data is")
+            st.markdown("#### Where your data is")
             st.html(
                 ui.table(
                     ["", ""],

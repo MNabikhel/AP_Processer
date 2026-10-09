@@ -246,7 +246,7 @@ def page_exports() -> None:
     )
 
     with card("export_ready"):
-        st.markdown("#### :material/outbox: Ready to export")
+        st.markdown("#### Ready to export")
         if not ready:
             st.html(
                 ui.empty_state(
@@ -324,7 +324,7 @@ def page_exports() -> None:
         batch, fmt = just
         data, name, mime = _batch_file(store, batch, fmt)
         with card("export_download"):
-            st.markdown(f"#### :material/download: Batch {batch} is ready")
+            st.markdown(f"#### Batch {batch} is ready")
             if fmt == jde.FORMAT:
                 st.caption(
                     "Load F0411Z1.csv and F0911Z1.csv into the Z-tables, then run R04110ZA in proof mode first, then "
@@ -341,7 +341,7 @@ def page_exports() -> None:
     _register_importer(store)
 
     with card("export_batches"):
-        st.markdown("#### :material/inventory_2: Past batches")
+        st.markdown("#### Past batches")
         if not batches:
             st.html(ui.empty_note("No exports yet", "Each export appears here and can be downloaded again.", "history"))
             return

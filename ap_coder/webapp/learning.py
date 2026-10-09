@@ -84,9 +84,7 @@ def page_learning() -> None:
     store = get_store()
     show_toast()
     page_head("learning", "Learning & accuracy", "How often the coding is right, and what AP Coder has learned.")
-    coding_tab, supplier_tab = st.tabs(
-        [":material/auto_awesome: Coding accuracy", ":material/storefront: Supplier learning"]
-    )
+    coding_tab, supplier_tab = st.tabs(["Coding accuracy", "Supplier learning"])
     with coding_tab:
         _history_card(store)
         _coding_accuracy(store)
@@ -243,7 +241,7 @@ def _coding_accuracy(store) -> None:
 
     chart_col, feed_col = st.columns([3, 2], gap="medium")
     with chart_col, card("trend"):
-        st.markdown("#### :material/show_chart: Accuracy by week")
+        st.markdown("#### Accuracy by week")
         base = alt.Chart(weekly).encode(x=alt.X("week:N", title=None, axis=alt.Axis(labelAngle=0)))
         area = base.mark_area(color=SERIES_BLUE, opacity=0.08).encode(y=alt.Y("accuracy:Q"))
         line = base.mark_line(
@@ -279,7 +277,7 @@ def _coding_accuracy(store) -> None:
     rows = store.feedback_rows(limit=2000)
     reviewed = [r for r in rows if r["outcome"] != "history"]
     with feed_col, card("feed"):
-        st.markdown("#### :material/history_edu: Recent lessons")
+        st.markdown("#### Recent lessons")
         items = []
 
         def short(text: str, n: int = 42) -> str:
@@ -307,7 +305,7 @@ def _coding_accuracy(store) -> None:
 
     left, right = st.columns(2, gap="medium")
     with left, card("vendors"):
-        st.markdown("#### :material/storefront: Accuracy by vendor")
+        st.markdown("#### Accuracy by vendor")
         st.html(
             "".join(
                 ui.vendor_row(v["vendor_name"], v["lines"], v["accepted"] / v["lines"], v["corrected"])
@@ -315,7 +313,7 @@ def _coding_accuracy(store) -> None:
             )
         )
     with right, card("corrections"):
-        st.markdown("#### :material/swap_horiz: Most common corrections")
+        st.markdown("#### Most common corrections")
         if not m["top_corrections"]:
             st.caption("No corrections yet: the AI has matched every reviewer decision.")
         else:

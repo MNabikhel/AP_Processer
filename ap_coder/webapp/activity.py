@@ -99,7 +99,7 @@ def page_activity() -> None:
         "Download CSV", table.map(csv_cell).to_csv(index=False).encode("utf-8-sig"),
         file_name=f"ap_coder_activity_{today}.csv", mime="text/csv", icon=":material/download:", width="stretch",
     )  # fmt: skip
-    timeline, grid = st.tabs([":material/timeline: Timeline", ":material/table: Table"])
+    timeline, grid = st.tabs(["Timeline", "Table"])
     with timeline, card("activity_timeline"):
         st.html(history_html(shown[:200], with_invoice=True))
         if len(shown) > 200:
@@ -111,7 +111,7 @@ def page_activity() -> None:
 def _duplicate_audit_card(store) -> None:
     with card("dupaudit"):
         head, button = st.columns([3, 1.3], vertical_alignment="center")
-        head.markdown("#### :material/content_copy: Duplicate payment audit")
+        head.markdown("#### Duplicate payment audit")
         head.caption(
             "Bills that may have been approved, or posted in the ERP, twice: number typos, the same bill under two "
             "vendor names, the same amount days apart. Includes the ERP invoice register when imported (Exports)."
@@ -153,7 +153,7 @@ def _duplicate_audit_card(store) -> None:
 def _controls_card(store) -> None:
     with card("controls"):
         head, pick = st.columns([3, 2], vertical_alignment="center")
-        head.markdown("#### :material/verified_user: Controls report")
+        head.markdown("#### Controls report")
         head.caption(
             "Exceptions for internal audit: overridden errors, risky approvals, second approvals, setup changes."
         )

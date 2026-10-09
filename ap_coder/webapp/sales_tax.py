@@ -112,7 +112,7 @@ def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
     items = taxreturn.self_assessment(store, start, end)
     if not items:
         with card("tax_self_none"):
-            st.markdown("#### :material/assignment_return: PST / QST possibly to self-assess")
+            st.markdown("#### PST / QST possibly to self-assess")
             st.caption(
                 "None in this period: no approved invoice for a supply in BC, SK, MB or Quebec came without the "
                 "provincial tax."
@@ -120,7 +120,7 @@ def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
         return
     with card("tax_self"):
         head, button = st.columns([3, 1.4], vertical_alignment="center")
-        head.markdown("#### :material/assignment_return: PST / QST possibly to self-assess")
+        head.markdown("#### PST / QST possibly to self-assess")
         button.download_button(
             "Download (CSV)", taxreturn.self_assessment_csv(items, start, end),
             file_name=f"self_assessment_{start}_{end}.csv", mime="text/csv", icon=":material/download:",
@@ -170,7 +170,7 @@ def _claims(report: taxreturn.Report, start: dt.date, end: dt.date) -> None:
     at_risk = report.at_risk()
 
     with card("tax_rates"):
-        st.markdown("#### :material/percent: By tax and rate")
+        st.markdown("#### By tax and rate")
         rows = [
             [
                 ui.tax_chip(t),
@@ -188,7 +188,7 @@ def _claims(report: taxreturn.Report, start: dt.date, end: dt.date) -> None:
 
     with card("tax_lines"):
         head, button = st.columns([3, 1.4], vertical_alignment="center")
-        head.markdown("#### :material/list_alt: Invoices")
+        head.markdown("#### Invoices")
         button.download_button(
             "Download (CSV)", taxreturn.to_csv(report), file_name=f"sales_tax_{start}_{end}.csv", mime="text/csv",
             icon=":material/download:", width="stretch", key="tax_download",

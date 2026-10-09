@@ -204,7 +204,7 @@ def _workload_card(store: Store) -> None:
     if not rows:
         return
     with card("workload"):
-        st.markdown("#### :material/construction: Vendors that make work")
+        st.markdown("#### Vendors that make work")
         st.caption(
             "How often a vendor's invoice arrived with something only the vendor can fix, and how often AP "
             "corrected the coding. Ask the worst ones for better invoices (*Ask the vendor* on an invoice drafts "
@@ -235,7 +235,7 @@ def _workload_card(store: Store) -> None:
 def _recurring_card(store: Store) -> None:
     found = recurring.detect(store.vendor_invoice_dates())
     with card("recurring"):
-        st.markdown("#### :material/event_repeat: Recurring invoices")
+        st.markdown("#### Recurring invoices")
         if not found:
             st.html(
                 ui.empty_note(

@@ -1,22 +1,22 @@
 # AP Coder dashboard theme (passed to Streamlit by `python -m ap_coder dashboard`).
 [theme]
-primaryColor = "#1f6fd1"
-backgroundColor = "#f4f6f9"
+primaryColor = "#2563eb"
+backgroundColor = "#f7f8fa"
 secondaryBackgroundColor = "#ffffff"
-textColor = "#111c2e"
-linkColor = "#1a5fb4"
-borderColor = "#e2e6ed"
+textColor = "#0f172a"
+linkColor = "#1d4ed8"
+borderColor = "#e5e7eb"
 showWidgetBorder = true
-baseRadius = "10px"
+baseRadius = "8px"
 buttonRadius = "8px"
 font = "Inter, sans-serif"
 headingFont = "Inter, sans-serif"
-headingFontWeights = [700, 650, 600, 600, 600, 600]
-headingFontSizes = ["1.6rem", "1.25rem", "1.05rem", "0.95rem", "0.9rem", "0.85rem"]
-metricValueFontSize = "1.6rem"
-metricValueFontWeight = 700
-dataframeHeaderBackgroundColor = "#f6f8fb"
-dataframeBorderColor = "#e2e6ed"
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+headingFontSizes = ["1.5rem", "1.25rem", "1.0625rem", "0.875rem", "0.875rem", "0.8125rem"]
+metricValueFontSize = "1.375rem"
+metricValueFontWeight = 600
+dataframeHeaderBackgroundColor = "#fafbfc"
+dataframeBorderColor = "#eef0f3"
 chartCategoricalColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 
 [[theme.fontFaces]]
@@ -25,10 +25,10 @@ url = "app/static/InterVariable.woff2"
 weight = "100 900"
 
 [theme.sidebar]
-backgroundColor = "#0f1b2e"
-secondaryBackgroundColor = "#1a2a44"
-textColor = "#c9d4e3"
-borderColor = "#22344f"
-primaryColor = "#7fb3f5"
-linkColor = "#a8cbf7"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f3f4f6"
+textColor = "#0f172a"
+borderColor = "#e5e7eb"
+primaryColor = "#2563eb"
+linkColor = "#1d4ed8"
 font = "Inter, sans-serif"

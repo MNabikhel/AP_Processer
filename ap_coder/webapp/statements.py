@@ -102,7 +102,7 @@ def page_statements() -> None:
     )
     with card("stm_result"):
         head, button = st.columns([3, 1], vertical_alignment="center")
-        head.markdown(f"#### :material/fact_check: {md(names[vendor])}")
+        head.markdown(f"#### {md(names[vendor])}")
         button.download_button("Download (CSV)", stm.to_csv(rec), file_name="statement_reconciliation.csv",
                                mime="text/csv", icon=":material/download:", width="stretch")  # fmt: skip
         rows = []

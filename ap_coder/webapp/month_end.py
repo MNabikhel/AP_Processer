@@ -86,7 +86,7 @@ def page_month_end() -> None:
         return f"<div class='gl{todo}'>{esc(gl_display(code))}<small>{esc(name)}</small></div>"
 
     with card("me_gl"):
-        st.markdown("#### :material/account_balance: By GL account")
+        st.markdown("#### By GL account")
         totals = accruals.by_gl(items)
         half = (len(totals) + 1) // 2
         cols = st.columns(2) if len(totals) > 4 else [st.container()]
@@ -99,7 +99,7 @@ def page_month_end() -> None:
 
     with card("me_lines"):
         head, button = st.columns([3, 1.4], vertical_alignment="center")
-        head.markdown("#### :material/list_alt: Accruals schedule")
+        head.markdown("#### Accruals schedule")
         button.download_button(
             "Download (CSV)", accruals.to_csv(items, end), file_name=f"accruals_{end}.csv", mime="text/csv",
             icon=":material/download:", width="stretch", key="me_download",
