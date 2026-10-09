@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import re
 from dataclasses import dataclass, field, replace
@@ -12,6 +13,7 @@ from dotenv import load_dotenv
 
 from . import paths
 
+log = logging.getLogger(__name__)
 DEFAULT_AOAI_API_VERSION = "2024-10-21"  # first GA version with strict Structured Outputs
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:1234/v1"  # LM Studio's local server (Ollama: http://127.0.0.1:11434/v1)
 LLM_PROVIDERS = ("auto", "local", "azure", "off")
@@ -33,13 +35,27 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _env_float(name: str, default: float | None) -> float | None:
+    """A number from the .env; "0,85" (a decimal comma) reads as 0.85, and a typo keeps the default
+    instead of stopping every command, doctor included."""
     value = _env(name)
-    return float(value) if value is not None else default
+    if value is None:
+        return default
+    try:
+        return float(value.replace(",", "."))
+    except ValueError:
+        log.warning("%s=%r is not a number; using %s", name, value, default)
+        return default
 
 
 def _env_int(name: str, default: int | None) -> int | None:
     value = _env(name)
-    return int(value) if value is not None else default
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        log.warning("%s=%r is not a whole number; using %s", name, value, default)
+        return default
 
 
 def _on_this_network(host: str) -> bool:
@@ -142,7 +158,7 @@ class Settings:
         if env_file is None:
             # The data folder's .env (written by the installer), else ./.env, else the project's.
             env_file = paths.env_file()
-        load_dotenv(env_file, override=False)
+        load_dotenv(env_file, override=False, encoding="utf-8-sig")  # -sig: Notepad's byte-order mark
 
         di = DocumentIntelligenceSettings(
             endpoint=_env("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"),
@@ -152,7 +168,7 @@ class Settings:
             pages=_env("AZURE_DOCUMENT_INTELLIGENCE_PAGES"),
         )
 
-        temperature = _env("AZURE_OPENAI_TEMPERATURE", "0")
+        temperature = _env("AZURE_OPENAI_TEMPERATURE", "0") or "0"
         vision_override = _env("AZURE_OPENAI_SUPPORTS_VISION")
         oai = OpenAISettings(
             endpoint=_env("AZURE_OPENAI_ENDPOINT"),
@@ -160,7 +176,7 @@ class Settings:
             api_version=_env("AZURE_OPENAI_API_VERSION", DEFAULT_AOAI_API_VERSION),
             deployment=_env("AZURE_OPENAI_DEPLOYMENT", "gpt-4o"),
             model_name=_env("AZURE_OPENAI_MODEL_NAME"),
-            temperature=None if temperature.lower() == "none" else float(temperature),
+            temperature=None if temperature.lower() == "none" else _env_float("AZURE_OPENAI_TEMPERATURE", 0.0),
             max_output_tokens=_env_int("AZURE_OPENAI_MAX_OUTPUT_TOKENS", 8000),
             seed=_env_int("AZURE_OPENAI_SEED", 42),
             reasoning_effort=_env("AZURE_OPENAI_REASONING_EFFORT"),

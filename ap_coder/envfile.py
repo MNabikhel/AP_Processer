@@ -15,7 +15,7 @@ def read_env(path: Path) -> dict[str, str]:
     """``KEY=value`` pairs that are set (commented lines and example placeholders are skipped)."""
     values = {}
     if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in path.read_text(encoding="utf-8-sig").splitlines():  # -sig: Notepad's byte-order mark
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -30,15 +30,15 @@ def read_env(path: Path) -> dict[str, str]:
 
 def write_env(path: Path, updates: dict[str, str]) -> None:
     """Set values in place (uncommenting ``# KEY=`` lines), keeping every other line as it is."""
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else []
     for key, value in updates.items():
         if re.search(r"[\s#'\"]", value):
             value = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-        pattern = re.compile(rf"^\s*#?\s*{re.escape(key)}\s*=")
-        for i, line in enumerate(lines):
-            if pattern.match(line):
-                lines[i] = f"{key}={value}"
-                break
+        # The line in effect if there is one (the last, as it is read), else the commented example.
+        live = [i for i, line in enumerate(lines) if re.match(rf"^\s*{re.escape(key)}\s*=", line)]
+        examples = [i for i, line in enumerate(lines) if re.match(rf"^\s*#\s*{re.escape(key)}\s*=", line)]
+        if live or examples:
+            lines[live[-1] if live else examples[0]] = f"{key}={value}"
         else:
             lines.append(f"{key}={value}")
     path.parent.mkdir(parents=True, exist_ok=True)
