@@ -276,6 +276,11 @@ def test_a_value_printed_in_several_words_is_one_reading():
     readings = apply_template(template, page(["NET", "45"], ["1", "868,10"]))
     assert [r.raw for r in readings["payment_terms"]] == ["NET 45"]  # not "NET" and "45" as rival values
     assert [r.value for r in readings["grand_total"]] == [1868.1]  # "1 868,10", not "1"
+    # Once "868,10" (one word) has also been confirmed, the tail of "2 074,06" fits as well: still the whole.
+    small = DocLayout([_page([("TOTAL:", 0.6, 0.8), ("868,10", 0.762, 0.8)])], "text")
+    template = learn(template, small, {"grand_total": (868.1, None)})
+    readings = apply_template(template, page(["NET", "45"], ["2", "074,06"]))
+    assert [r.value for r in readings["grand_total"]] == [2074.06]
 
 
 def test_payment_terms_compare_by_meaning_and_are_learned_as_printed():

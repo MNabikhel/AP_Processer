@@ -835,7 +835,7 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         return []
     rows = _rows(page.words)
     experience = 1.0 if variant.count >= 2 else 0.9
-    found: list[tuple[Reading, set[int], tuple[float, float, float]]] = []
+    found: list[tuple[Reading, set[int], tuple[float, float, int, float]]] = []
 
     def add(words: list[Word], raw: str, shape: float, geometry: float, base: float) -> None:
         value = normalize_value(name, raw, variant.date_order)
@@ -844,7 +844,9 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         conf = min((w.conf for w in words), default=1.0)
         score = (base * (0.6 + 0.4 * geometry) + SHAPE_WEIGHT * shape) * experience * conf - 0.005 * (len(words) - 1)
         reading = Reading(name, value, raw, [w.box for w in words], round(min(score, 0.99), 4), "template")
-        found.append((reading, {id(w) for w in words}, (variant.shape.fit(raw), shape, reading.score)))
+        # Of nested spans that fit alike, the longer is the value: "2 074,06", not its tail "074,06".
+        rank = (variant.shape.fit(raw), shape, len(words), reading.score)
+        found.append((reading, {id(w) for w in words}, rank))
 
     hits = _anchor_hits(rows, variant.anchor) if variant.anchor else []
     if hits:
@@ -875,7 +877,7 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
     def nested(a: set[int], b: set[int]) -> bool:
         return a != b and (a <= b or b <= a)
 
-    def beaten(ids: set[int], rank: tuple[float, float, float]) -> bool:
+    def beaten(ids: set[int], rank: tuple[float, float, int, float]) -> bool:
         return any(nested(ids, o_ids) and o_rank > rank for _, o_ids, o_rank in found)
 
     return [r for r, ids, rank in found if not beaten(ids, rank)]
