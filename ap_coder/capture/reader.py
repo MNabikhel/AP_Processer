@@ -896,13 +896,23 @@ def _us_vendor(layout: DocLayout) -> bool:
     return False
 
 
+def _canadian_vendor(layout: DocLayout) -> bool:
+    """The supplier's address (top of the first page, outside the customer's block) has a Canadian postal code."""
+    if not layout.pages:
+        return False
+    return any(
+        ln.box.cy < 0.3 and not _in_bill_to(layout, ln) and re.search(r"\b[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d\b", ln.text)
+        for ln in layout.pages[0].lines
+    )
+
+
 def read_fields(layout: DocLayout, received: dt.date | None = None) -> dict[str, list[Reading]]:
     """Candidate readings for every header field, best first. ``received``: the day the invoice came
     in (it settles a 03/04/2026 the page itself does not: invoices arrive days after their date)."""
     text = layout.text()
     order = infer_day_first(text)
-    if order is None and (find_currency(text) == "USD" or _us_vendor(layout)):
-        order = False  # US invoices print month first
+    if order is None and (_us_vendor(layout) or (find_currency(text) == "USD" and not _canadian_vendor(layout))):
+        order = False  # US invoices print month first (a Canadian supplier billing in USD need not)
     if order is not None:
         return _read_with_order(layout, order)
     cands = _read_with_order(layout, None)

@@ -203,3 +203,17 @@ def test_a_learned_template_reads_a_positive_credit_memo_as_a_credit(tmp_path):
     layout = build_layout(_pdf(tmp_path, _credit_memo("CREDIT MEMO", "Total Credit", _POSITIVE)), ocr=False)
     read = apply_template(learn(None, layout, confirmed_values(truth)), layout)
     assert read["grand_total"][0].value == -1050.0 and read["subtotal"][0].value == -1000.0
+
+
+def test_a_canadian_supplier_billing_in_usd_keeps_03_04_ambiguous(tmp_path):
+    """A Toronto supplier billing in US dollars may well print 03/04/2026 day first: the currency alone does
+    not make it March 4 (that is for a supplier with a US address), so it is settled like any other 03/04."""
+    lines = [(60, 60, "Maple Tech Ltd."), (60, 75, "12 Main St, Toronto, ON M5V 1A1"),
+             (380, 100, "Invoice No: MT-1001"), (380, 115, "Invoice Date: 03/04/2026"), (380, 500, "Subtotal"),
+             (500, 500, "1,000.00"), (380, 530, "Total USD"), (500, 530, "1,000.00")]  # fmt: skip
+    capture = analyze(_pdf(tmp_path, lines), ocr=False, today=dt.date(2026, 4, 9))
+    fr = capture.fields["invoice_date"]
+    assert fr.value == "2026-04-03" and fr.status != VERIFIED  # received on April 9: April 3, not March 4
+    us = [(x, y, t.replace("12 Main St, Toronto, ON M5V 1A1", "500 Pine St, Seattle, WA 98101")) for x, y, t in lines]
+    assert analyze(_pdf(tmp_path, us, "us.pdf"), ocr=False, today=dt.date(2026, 4, 9)).fields["invoice_date"].value \
+        == "2026-03-04"  # fmt: skip
