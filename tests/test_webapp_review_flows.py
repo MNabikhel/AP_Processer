@@ -113,3 +113,55 @@ def test_a_suggested_gl_codes_a_line_just_added(db):
     _ok(button.click().run())
     assert not [b for b in at.button if (b.key or "").startswith(f"{key}_sugg_{number}_")]  # coded: no suggestion
     assert gl in set(at.session_state[f"_draft_{key}_lines"]["predicted_gl_code"])
+
+
+def _meanwhile(monkeypatch, method, before):
+    """Someone else acts on the invoice between this screen being drawn and the button's action."""
+    original = getattr(Store, method)
+
+    def patched(self, invoice_id, *args, **kwargs):
+        monkeypatch.setattr(Store, method, original)
+        before(self, invoice_id)
+        return original(self, invoice_id, *args, **kwargs)
+
+    monkeypatch.setattr(Store, method, patched)
+
+
+def _approved_by_sam(store, invoice_id):
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Sam")
+
+
+def _exported_by_sam(store, invoice_id):
+    _approved_by_sam(store, invoice_id)
+    store.create_export_batch([invoice_id], "csv", actor="Sam")
+
+
+def test_actions_on_an_invoice_someone_else_just_changed_show_a_message_not_an_error(db, monkeypatch):
+    store = Store(db)
+    load_sample_setup(store)
+    for method, before, button, fill in [
+        ("approve_invoice", _approved_by_sam, "approve", None),
+        ("reject_invoice", _exported_by_sam, "reject", "reason"),
+        ("park_invoice", _approved_by_sam, "park", "park_reason"),
+    ]:
+        invoice_id = _clean(store, invoice_number=f"N-{method}")
+        key = f"inv{invoice_id}"
+        at = _open(invoice_id)
+        if fill:
+            at.text_input(key=f"{key}_{fill}").input("x")
+            _ok(at.run())
+        _meanwhile(monkeypatch, method, before)
+        _ok(at.button(key=f"{key}_{button}").click().run())
+        assert any("someone else" in str(t.proto.body) for t in at.get("toast")), method
+
+
+def test_second_approval_on_an_invoice_someone_else_just_handled(db, monkeypatch):
+    store = Store(db)
+    load_sample_setup(store)
+    store.set_setting("approval_limit", "100")
+    invoice_id = _clean(store)
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], "Sam")
+    at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
+    _meanwhile(monkeypatch, "final_approve", lambda s, i: s.final_approve(i, "Lee"))
+    _ok(at.button(key=f"second_ok_{invoice_id}").click().run())
+    assert any("someone else" in str(t.proto.body) for t in at.get("toast"))
