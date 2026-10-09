@@ -24,6 +24,7 @@ from ap_coder.webapp.common import (
     PUBLIC_DEMO,
     card,
     esc,
+    forget_all_drafts,
     get_settings,
     get_store,
     not_in_public_demo,
@@ -497,6 +498,7 @@ def data_tab(store: Store) -> None:
             if st.button("Restore", type="primary", disabled=confirm.strip().upper() != "RESTORE", key="restore"):
                 safety = store.restore_from(path)
                 st.session_state.pop("open_invoice", None)
+                forget_all_drafts()  # the invoices they belong to may be gone, their numbers given out again
                 notify(f"Restored {chosen}. The previous database was saved as {safety.name}.", ":material/restore:")
                 st.rerun()
 
