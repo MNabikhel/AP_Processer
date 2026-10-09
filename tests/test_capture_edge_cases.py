@@ -146,3 +146,14 @@ def test_accents_stored_decomposed_in_the_text_layer(tmp_path):
         assert "é" in doc[0].get_text()  # the text layer really is decomposed
     capture = analyze(pdf, ocr=False, today=TODAY)
     assert capture.fields["invoice_number"].value == "12345"
+
+
+def test_an_amount_after_ellipsis_leaders_keeps_its_place(tmp_path):
+    """Word turns "..." into "…": "Total………… 1,050.00". The amount's span must stay on the printed text
+    (compatibility forms such as "…" -> "..." change the length), or the total is lost."""
+    from ap_coder.capture.normalize import find_amounts
+
+    text = "Total………………… 1,050.00"
+    assert [(v, text[a:b].strip()) for v, a, b in find_amounts(text)] == [(1050.0, "1,050.00")]
+    pdf = _unicode_pdf(tmp_path, [(60, 60, "Acme Supply Ltd."), (300, 530, text)], "leaders.pdf")
+    assert analyze(pdf, ocr=False, today=TODAY).fields["grand_total"].value == 1050.0

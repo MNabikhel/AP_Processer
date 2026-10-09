@@ -74,7 +74,9 @@ def amounts_equal(a: float | None, b: float | None, tol: float = 0.005) -> bool:
 def find_amounts(text: str) -> list[tuple[float, int, int]]:
     """Every amount in ``text`` with its character span (a sign or parentheses included)."""
     out = []
-    s = _ocr_amount_text(unicodedata.normalize("NFKC", text))
+    # Character by character, so the spans index ``text`` itself: "…" becomes "..." under NFKC, which
+    # would move every span after it.
+    s = _ocr_amount_text("".join(n if len(n := unicodedata.normalize("NFKC", c)) == 1 else c for c in text))
     for m in _AMOUNT.finditer(s):
         num = m.group("num")
         if not num or not any(c.isdigit() for c in num):
