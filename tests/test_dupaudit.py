@@ -99,3 +99,24 @@ def test_erp_dates_in_other_formats(tmp_path):
     store.import_erp_register(rows)
     (pair,) = dupaudit.find(store)
     assert pair.reason == dupaudit.SAME_AMOUNT
+
+
+def test_erp_dates_with_a_time_and_single_digit_day_or_month(tmp_path):
+    # Excel / JDE exports write "1/5/2026 0:00": the date must not be cut in the middle of the time.
+    from ap_coder import registers
+
+    rows, _ = registers.rows_from_records(
+        [{"Vendor": "Acme", "Invoice": "A-1", "Date": "2026/1/5 0:00", "Amount": "500.00"},
+         {"Vendor": "Acme", "Invoice": "B-77", "Date": "1/8/2026 0:00", "Amount": "500.00"},
+         {"Vendor": "Acme", "Invoice": "C-9", "Date": "1/20/2026 0:00", "Amount": "75.00"}],  # month first
+        {"vendor_name": "Vendor", "invoice_number": "Invoice", "invoice_date": "Date", "total": "Amount"},
+    )  # fmt: skip
+    assert [r["invoice_date"] for r in rows] == ["2026-01-05", "2026-01-08", "2026-01-20"]
+    store = Store(tmp_path / "d.db")
+    store.import_erp_register(rows)
+    (pair,) = dupaudit.find(store)
+    assert pair.reason == dupaudit.SAME_AMOUNT
+
+
+def test_dates_already_stored_with_a_time_are_still_compared():
+    assert dupaudit._days("2026/1/5 0:00", "2026-01-08") == 3

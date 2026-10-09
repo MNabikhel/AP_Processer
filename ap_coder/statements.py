@@ -67,29 +67,35 @@ def _number(value: Any) -> float | None:
     return parse_amount(value)
 
 
-def _date(value: Any, day_first: bool | None = None) -> str:
-    """YYYY-MM-DD when the date can be read ("2026-09-15", "15/09/2026", "09/15/2026"), else the text as it is.
-    ``day_first``: how this statement writes its dates, for one that could be read either way ("09/10/2026")."""
-    text = str(value or "").strip()[:10]
+def date_part(value: Any) -> str:
+    """The date of a date and time as exports write it: "1/5/2026 0:00", "2026-01-05T00:00:00" -> the part
+    before the time (never cut at 10 characters, which splits "1/5/2026 0:00" in the middle of the time)."""
+    return re.split(r"[\sT]", str(value or "").strip(), maxsplit=1)[0]
+
+
+def read_date(value: Any, day_first: bool | None = None) -> str:
+    """YYYY-MM-DD when the date can be read ("2026-09-15", "15/09/2026", "09/15/2026 0:00"), else the text as
+    it is. ``day_first``: how the file writes its dates (``day_first_order``), for one that could be read either
+    way ("09/10/2026")."""
+    text = date_part(value)
     try:
         return parse_date(text).isoformat()
     except ValueError:
         pass
     if day_first is not None:
         try:
-            return (
-                dt.datetime.strptime(text.replace("-", "/"), "%d/%m/%Y" if day_first else "%m/%d/%Y").date().isoformat()
-            )
+            fmt = "%d/%m/%Y" if day_first else "%m/%d/%Y"
+            return dt.datetime.strptime(text.replace("-", "/"), fmt).date().isoformat()
         except ValueError:
             pass
     return text
 
 
-def _day_first(texts: list[str]) -> bool | None:
-    """True when the statement writes day/month/year, False for month/day/year, None when nothing tells."""
+def day_first_order(texts: list[str]) -> bool | None:
+    """True when a file writes day/month/year, False for month/day/year, None when nothing tells."""
     orders = set()
     for text in texts:
-        m = re.fullmatch(r"(\d{1,2})[/-](\d{1,2})[/-]\d{4}", text.strip()[:10])
+        m = re.fullmatch(r"(\d{1,2})[/-](\d{1,2})[/-]\d{4}", date_part(text))
         if m and int(m.group(1)) > 12 >= int(m.group(2)):
             orders.add(True)
         elif m and int(m.group(2)) > 12 >= int(m.group(1)):
@@ -145,7 +151,7 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
     result = Reconciliation()
     seen: set[int] = set()
     dates = []
-    day_first = _day_first([str(get(rec, "date") or "") for rec in records])
+    day_first = day_first_order([str(get(rec, "date") or "") for rec in records])
     for rec in records:
         raw_number = str(get(rec, "number") or "").strip()
         if raw_number.lower() in ("nan", "none"):
@@ -158,7 +164,7 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
             amount = _number(get(rec, "balance"))
         kind_text = str(get(rec, "type") or "").strip()
         kind = kind_text.lower()
-        date = _date(get(rec, "date"), day_first)
+        date = read_date(get(rec, "date"), day_first)
         if not raw_number and amount is None:
             continue  # blank or subtotal row
         if date:
