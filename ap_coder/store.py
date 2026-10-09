@@ -1678,7 +1678,7 @@ class Store:
                 for r in conn.execute(
                     """SELECT vendor_key, MAX(vendor_name) vendor_name, COUNT(*) invoices,
                               SUM(status = 'approved') approved, SUM(status = 'review') to_review,
-                              SUM(CASE WHEN status = 'approved' AND currency = 'CAD'
+                              SUM(CASE WHEN status = 'approved' AND COALESCE(NULLIF(currency, ''), 'CAD') = 'CAD'
                                        THEN grand_total ELSE 0 END) spend_cad,
                               MIN(invoice_date) first_invoice, MAX(invoice_date) last_invoice,
                               MIN(created_at) first_seen

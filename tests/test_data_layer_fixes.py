@@ -4,6 +4,9 @@ import json
 
 import pytest
 
+from ap_coder.config import Settings
+from ap_coder.pipeline import finalise_coding
+from ap_coder.schema import InvoiceCoding
 from ap_coder.store import APPROVED, REJECTED, Store
 
 from .conftest import SAMPLE_STEM, SAMPLES
@@ -47,3 +50,22 @@ def test_rejecting_an_approved_invoice_withdraws_what_it_taught(tmp_path):
     store.reject_invoice(invoice_id, "Sam", "not ours after all")
     assert store.get_invoice(invoice_id)["status"] == REJECTED
     assert store.feedback_rows() == []  # a rejected bill must not keep teaching the AI its coding
+
+
+def test_vendor_spend_counts_invoices_that_print_no_currency_as_cad(tmp_path):
+    store = Store(tmp_path / "a.db")
+    doc = {**_gt(), "currency": ""}  # most Canadian invoices print no currency code
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    store.approve_invoice(invoice_id, doc, "Jane")
+    (row,) = store.vendor_summaries()
+    assert row["spend_cad"] == pytest.approx(doc["grand_total"])
+
+
+def test_same_amount_check_treats_an_invoice_without_currency_as_cad(tmp_path, reference):
+    store = Store(tmp_path / "a.db")
+    first = {**_gt(), "invoice_number": "A-1", "currency": ""}  # the first invoice printed no currency
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", first, {})
+    store.approve_invoice(invoice_id, first, "Jane")
+    again = {**_gt(), "invoice_number": "A-2", "currency": "CAD"}  # same bill, new number, CAD printed this time
+    _, report = finalise_coding(InvoiceCoding.model_validate(again), reference, Settings(), store=store)
+    assert "POSSIBLE_DUPLICATE_AMOUNT" in {i.code for i in report.issues}

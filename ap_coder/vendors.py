@@ -210,8 +210,10 @@ def vendor_findings(
              "the invoice, before paying or changing the vendor's banking")
         )  # fmt: skip
 
-    total, currency = coding.grand_total, coding.currency
-    same_currency = [h for h in history if (h["currency"] or "") == currency and h["grand_total"] is not None]
+    total, currency = coding.grand_total, (coding.currency or "CAD").upper()  # no currency printed: CAD
+    same_currency = [
+        h for h in history if (h["currency"] or "CAD").upper() == currency and h["grand_total"] is not None
+    ]
     approved_totals = [h["grand_total"] for h in same_currency if h["status"] == "approved" and h["grand_total"] > 0]
     if total > 0 and len(approved_totals) >= UNUSUAL_MIN_HISTORY:
         median = statistics.median(approved_totals)
