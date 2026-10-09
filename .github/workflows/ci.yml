@@ -106,3 +106,128 @@ jobs:
           if (-not (Test-Path "$data\.env")) { throw '.env was not kept' }
           if (Test-Path "$data\ap_coder.db") { throw 'database was not moved to the backup' }
           if (-not (Get-ChildItem $data -Directory -Filter 'backup-*')) { throw 'no backup folder' }
+
+  windows-pilot-launcher:
+    # The pilot's double-click: APProcessor.bat on a clean Windows machine sets itself up, serves the
+    # dashboard, and the sample invoices read right with no AI model and no Azure.
+    name: Pilot launcher on Windows (APProcessor.bat)
+    runs-on: windows-latest
+    env:
+      AP_NO_PAUSE: "1"
+      BROWSER: none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: First double-click sets up and starts the dashboard
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','APProcessor.bat','--port','8597' -PassThru `
+            -RedirectStandardOutput launch.out -RedirectStandardError launch.err
+          $ok = $false
+          foreach ($i in 1..180) {
+            Start-Sleep -Seconds 5
+            try {
+              $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8597/' -UseBasicParsing -TimeoutSec 5
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+            if ($p.HasExited) { break }
+          }
+          Get-Content launch.out -Tail 40 -ErrorAction SilentlyContinue
+          Get-Content launch.err -Tail 40 -ErrorAction SilentlyContinue
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          if (-not $ok) { throw 'APProcessor.bat did not bring the dashboard up' }
+          if (-not (Test-Path '.venv\Scripts\python.exe')) { throw 'no .venv after the first run' }
+      - name: OCR models are on disk (scans read offline)
+        shell: cmd
+        run: .venv\Scripts\python.exe scripts\fetch_models.py --check
+      - name: Doctor passes with no Azure and no model
+        shell: cmd
+        run: .venv\Scripts\python.exe -m ap_coder doctor
+      - name: Sample invoices read right with no AI model and no Azure
+        shell: cmd
+        run: .venv\Scripts\python.exe scripts\pilot_check.py
+      - name: Second double-click starts straight away
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','APProcessor.bat','--port','8597' -PassThru `
+            -RedirectStandardOutput launch2.out -RedirectStandardError launch2.err
+          $ok = $false
+          foreach ($i in 1..30) {
+            Start-Sleep -Seconds 2
+            try {
+              $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8597/' -UseBasicParsing -TimeoutSec 5
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+          }
+          $out = Get-Content launch2.out -Raw -ErrorAction SilentlyContinue
+          Write-Host $out
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          if (-not $ok) { throw 'second start did not serve the dashboard within a minute' }
+          if ($out -match 'First run') { throw 'the second start set everything up again' }
+
+  windows-offline-bundle:
+    # The air-gapped pilot: build the offline bundle, unzip it on Windows and install it with the internet
+    # cut off (every proxy points at a closed port), then read the sample invoices.
+    name: Offline bundle on Windows (no internet)
+    runs-on: windows-latest
+    env:
+      AP_NO_PAUSE: "1"
+      BROWSER: none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the bundle (online)
+        run: python scripts/build_offline_bundle.py --python 3.12
+      - name: Unzip it to a fresh folder
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist -Filter 'APProcessor-offline-*.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'no bundle built' }
+          Write-Host "$($zip.Name): $([math]::Round($zip.Length / 1MB)) MB"
+          Expand-Archive -Path $zip.FullName -DestinationPath 'C:\pilot'
+          if (-not (Test-Path 'C:\pilot\APProcessor\wheelhouse')) { throw 'no wheelhouse in the bundle' }
+      - name: Double-click with the internet cut off
+        shell: pwsh
+        working-directory: C:\pilot\APProcessor
+        env:
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          ALL_PROXY: http://127.0.0.1:9
+          PIP_INDEX_URL: http://127.0.0.1:9/simple
+          NO_PROXY: 127.0.0.1,localhost
+        run: |
+          $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','APProcessor.bat','--port','8596' -PassThru `
+            -RedirectStandardOutput launch.out -RedirectStandardError launch.err
+          $ok = $false
+          foreach ($i in 1..180) {
+            Start-Sleep -Seconds 5
+            try {
+              $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8596/' -UseBasicParsing -TimeoutSec 5 -NoProxy
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+            if ($p.HasExited) { break }
+          }
+          $out = Get-Content launch.out -Raw -ErrorAction SilentlyContinue
+          Write-Host $out
+          Get-Content launch.err -Tail 40 -ErrorAction SilentlyContinue
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          if ($out -notmatch 'wheelhouse') { throw 'did not install from the wheelhouse' }
+          if (-not $ok) { throw 'the offline install did not bring the dashboard up' }
+      - name: OCR models copied from the bundle, samples read right, still offline
+        shell: cmd
+        working-directory: C:\pilot\APProcessor
+        env:
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          ALL_PROXY: http://127.0.0.1:9
+          NO_PROXY: 127.0.0.1,localhost
+        run: |
+          .venv\Scripts\python.exe scripts\fetch_models.py --check || exit /b 1
+          .venv\Scripts\python.exe scripts\pilot_check.py

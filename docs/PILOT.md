@@ -42,6 +42,12 @@ downloading. Copy the ZIP to the laptop (USB stick), unzip it, double-click `APP
 
 The laptop's Python must match one the bundle was built for (3.11 or 3.12 by default).
 
+**Check the install** (a minute, nothing is saved): in the AP Coder folder run
+`.venv\Scripts\python.exe scripts\pilot_check.py`. It reads the ten sample invoices on the laptop, with
+no AI model and no Azure, plus one as a scan through local OCR, and prints `OK` for each one that matches
+its answer. The same check runs on a clean Windows machine in CI for every change, both from the
+double-click launcher and from the offline bundle with the internet cut off.
+
 ## Daily use
 
 1. Double-click **`APProcessor.bat`**. A black window opens and the dashboard opens in your browser
