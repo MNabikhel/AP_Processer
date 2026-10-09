@@ -352,3 +352,10 @@ def test_confirmed_supplier_takes_the_vendor_master_name():
     results, _ = fuse(by_source, [], vendor=vendor, fields=fields, today=TODAY)
     assert results["vendor_name"].value == "Harbourfront Water & Wastewater"
     assert any("vendor master" in r for r in results["vendor_name"].reasons)
+
+
+def test_customer_number_glued_by_ocr_is_ignored():
+    from ap_coder.capture.reader import _CUSTOMER_WORD, plain
+
+    assert _CUSTOMER_WORD.search(plain("YourGSTNo.:"))
+    assert _CUSTOMER_WORD.search(plain("C1ientBN:"))

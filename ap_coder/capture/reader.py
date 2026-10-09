@@ -468,7 +468,7 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
 
 
 # The customer's own numbers, also as OCR prints the words ("C1ient", "Cust0mer").
-_CUSTOMER_WORD = re.compile(r"c[l1i|]ient|cust[o0]mer|y[o0]ur\b|v[o0]tre|acheteur|buyer")
+_CUSTOMER_WORD = re.compile(r"c[l1i|]ient|cust[o0]mer|y[o0]ur|v[o0]tre|acheteur|buyer")
 
 
 def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
