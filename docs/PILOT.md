@@ -22,9 +22,12 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   which got every header and line right; the model is asked only for the accounts. A 7B instruct model
   (e.g. Qwen 2.5 7B Instruct, Q4_K_M) picked the right account for 26 of 41 lines on its own; used the way
   AP Coder uses it, after the account-name match, 27 of 41 were right before any approval. A 1.5B model did
-  worse than the name match (11 of 41), so load a 7B–8B model if the laptop can. On a 4-core laptop CPU
-  without a graphics card the 7B model took 25 s to 2 min per invoice; a graphics card is several times
-  faster. Each approval teaches AP Coder that vendor's accounts, which then take precedence over the model.
+  worse than the name match (11 of 41), so load a 7B–8B model if the laptop can. Checked in LM Studio
+  itself (Qwen 2.5 7B Instruct Q4_K_M, 8k context): on a 4-core laptop CPU without a graphics card an invoice
+  that needed the model took 1 to 6 minutes (the first call of the day is the slowest); invoices whose lines
+  were all coded without it took no model time at all. A graphics card is many times faster. If the model is
+  slower than 10 minutes (`AP_LLM_TIMEOUT_SECONDS`), the invoice is still read and checked; its uncoded lines
+  wait for AP. Each approval teaches AP Coder that vendor's accounts, which then come before the model.
 - **No Azure needed.** Azure Document Intelligence and Azure OpenAI stay optional; leave Settings → Azure
   empty for the pilot.
 
