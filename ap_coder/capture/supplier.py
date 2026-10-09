@@ -837,6 +837,25 @@ def apply_template(template: Template | dict[str, Any] | None, layout: DocLayout
     return out
 
 
+_CREDIT_MARK = re.compile(r"^(cr|cr\.|dr|-)$", re.I)
+
+
+def _credit_mark(rows: list[list[Word]], words: list[Word]) -> Word | None:
+    """The "CR" (credit) printed right after an amount on its row, if any."""
+    if not words or _CREDIT_MARK.match(words[-1].text):
+        return None
+    last = words[-1]
+    for row in rows:
+        if last in row:
+            i = row.index(last)
+            if i + 1 < len(row):
+                nxt = row[i + 1]
+                if _CREDIT_MARK.match(nxt.text) and nxt.box.x0 - last.box.x1 < 3 * max(last.box.height, 0.005):
+                    return nxt
+            return None
+    return None
+
+
 def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Reading]:
     page = _page(layout, variant.page)
     if page is None:
@@ -846,6 +865,12 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
     found: list[tuple[Reading, set[int], tuple[float, float, int, float]]] = []
 
     def add(words: list[Word], raw: str, shape: float, geometry: float, base: float) -> None:
+        if name == "payment_terms" and not _has_letters(raw):
+            return  # terms are words ("Net 30", "30 days"), never a bare number
+        if name in AMOUNT_FIELDS:
+            mark = _credit_mark(rows, words)
+            if mark is not None:  # "$1,370.34 CR": the sign is printed beside the amount
+                words, raw = [*words, mark], f"{raw} {mark.text}"
         value = normalize_value(name, raw, variant.date_order)
         if value is None or value == "":
             return

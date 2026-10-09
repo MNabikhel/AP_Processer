@@ -661,3 +661,24 @@ def test_template_learns_the_whole_name_with_its_legal_suffix(tmp_path):
     template = learn(None, build_layout(paths[0], ocr=False), {"vendor_name": "Fournitures Laval S.E.N.C."})
     got = apply_template(template, build_layout(paths[1], ocr=False))["vendor_name"][0]
     assert got.value == "Fournitures Laval S.E.N.C."
+
+
+def test_template_keeps_the_credit_mark_of_an_amount(tmp_path):
+    import pymupdf
+
+    from ap_coder.capture import build_layout
+    from ap_coder.capture.supplier import apply_template, learn
+
+    paths = []
+    for n, amount in enumerate(("256.28", "1,370.34")):
+        doc = pymupdf.open()
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((40, 50), "Acme Supply Ltd.", fontsize=14)
+        page.insert_text((380, 400), "Credit Total", fontsize=10)
+        page.insert_text((480, 400), f"${amount}", fontsize=10)
+        page.insert_text((540, 400), "CR", fontsize=10)
+        paths.append(tmp_path / f"c{n}.pdf")
+        doc.save(paths[-1])
+    template = learn(None, build_layout(paths[0], ocr=False), {"grand_total": -256.28})
+    got = apply_template(template, build_layout(paths[1], ocr=False))["grand_total"][0]
+    assert got.value == -1370.34

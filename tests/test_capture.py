@@ -318,3 +318,20 @@ def test_ocr_thousands_separator():
     assert parse_amount("1;864.71") == 1864.71
     assert parse_amount("$1:664.92") == 1664.92
     assert [a[0] for a in find_amounts("Total 1;864.71")] == [1864.71]
+
+
+def test_fusion_takes_the_runner_up_amounts_that_add_up():
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import Reading
+
+    def r(field, value, score, method="label-right"):
+        return Reading(field, value, f"{value:.2f}", [Box(1, 0.7, 0.5, 0.8, 0.52)], score, method)
+
+    by_source = {
+        "rules": {"subtotal": [r("subtotal", 100.0, 0.8)], "gst_amount": [r("gst_amount", 5.0, 0.9)],
+                  "grand_total": [r("grand_total", 105.0, 0.9)]},
+        "template": {"subtotal": [r("subtotal", 150.0, 0.99, "template")]},
+    }  # fmt: skip
+    results, checks = fuse(by_source, [], fields=("subtotal", "gst_amount", "grand_total"), today=TODAY)
+    assert results["subtotal"].value == 100.0
+    assert any(c["code"] == "TOTALS_ADD_UP" and c["ok"] for c in checks)

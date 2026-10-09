@@ -282,6 +282,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if len(groups) > 1:
             contest[field] = groups[1].strength() / max(groups[0].strength(), 1e-9)
 
+    _totals_that_add_up(chosen, all_groups, contest)
     values = {f: (normalize_value(f, g.value) if f in AMOUNT_FIELDS else g.value) for f, g in chosen.items() if g}
     checks = run_checks(values, line_items, vendor, today)
     confirmed: dict[str, int] = {}
@@ -357,6 +358,47 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         )  # fmt: skip
     _derive_tax_total(results)
     return results, checks
+
+
+_TOTAL_PARTS = ("subtotal", "other_charges", *TAX_FIELDS)
+
+
+def _totals_that_add_up(chosen: dict[str, Any], all_groups: dict[str, list[Any]], contest: dict[str, float]) -> None:
+    """When the readers' favourite amounts do not add up but a runner-up does (one reader read the
+    row above, a template after the totals block moved), take the combination that adds up: a sum
+    that balances is far stronger evidence than one reader's preference. Changes ``chosen`` in place."""
+    from itertools import product
+
+    def amount(g: Any) -> float:
+        v = normalize_value("subtotal", g.value) if g is not None else None
+        return float(v) if v is not None else 0.0
+
+    total_groups = all_groups.get("grand_total") or []
+    if not total_groups or not all_groups.get("subtotal"):
+        return
+    current = [chosen.get(f) for f in _TOTAL_PARTS]
+    if abs(sum(amount(g) for g in current) - amount(chosen.get("grand_total"))) <= 0.011:
+        return
+    options = [(all_groups.get(f) or [])[:2] + ([None] if f != "subtotal" else []) for f in _TOTAL_PARTS]
+    best, best_strength = None, -1.0
+    for total in total_groups[:2]:
+        for parts in product(*options):
+            if abs(sum(amount(g) for g in parts) - amount(total)) > 0.011:
+                continue
+            if any(g is None and chosen.get(f) is not None and f in TAX_FIELDS for f, g in zip(_TOTAL_PARTS, parts)):
+                continue  # dropping a tax the readers agreed on is not "adding up"
+            strength = total.strength() + sum(g.strength() for g in parts if g is not None)
+            if strength > best_strength:
+                best, best_strength = (total, parts), strength
+    if best is None:
+        return
+    total, parts = best
+    for f, g in (("grand_total", total), *zip(_TOTAL_PARTS, parts)):
+        if g is not None and g is not chosen.get(f):
+            others = [o for o in all_groups[f] if o is not g]
+            all_groups[f] = [g, *others]
+            chosen[f] = g
+            contest[f] = max(contest.get(f, 0.0), others[0].strength() / max(g.strength(), 1e-9) if others else 0.0)
 
 
 def _derive_tax_total(results: dict[str, FieldResult]) -> None:
