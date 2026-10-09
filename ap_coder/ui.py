@@ -27,10 +27,12 @@ def esc(value: Any) -> str:
 
 
 def money(value: Any) -> str:
+    """1,234.50; a credit as (1,234.50), the accounting style the editable grids use too."""
     try:
-        return f"{float(value):,.2f}"
+        amount = float(value)
     except (TypeError, ValueError):
         return "—"
+    return f"({-amount:,.2f})" if amount < -0.004 else f"{abs(amount) if amount > -0.005 else 0.0:,.2f}"
 
 
 def icon(name: str, size: str = "1.1em", color: str = "") -> str:

@@ -101,9 +101,10 @@ def first_name() -> str:
 
 def money(value: Any, currency: str = "") -> str:
     try:
-        return f"{float(value):,.2f}{' ' + currency if currency else ''}"
+        float(value)
     except (TypeError, ValueError):
         return "-"
+    return ui.money(value) + (f" {currency}" if currency else "")
 
 
 def esc(value: Any) -> str:

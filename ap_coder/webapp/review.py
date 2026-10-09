@@ -1093,6 +1093,8 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     )
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
+    # The queue card shows what this screen shows (edits and today's checks included).
+    store.refresh_confidence(invoice_id, report.adjusted_confidence, report.requires_review)
 
     with summary, card("summary"):
         _invoice_summary(

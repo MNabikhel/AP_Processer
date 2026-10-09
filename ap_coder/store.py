@@ -948,6 +948,18 @@ class Store:
             conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
             self._log(conn, "sent_back", invoice_id, actor, {"reason": reason})
 
+    def refresh_confidence(self, invoice_id: int, adjusted: float, requires_review: bool) -> bool:
+        """The confidence the review screen just worked out (with the reviewer's edits and today's checks), so
+        the queue card shows the same number. Only for an invoice still in review; True when it changed."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                """UPDATE invoices SET adjusted_confidence = ?, requires_review = ?
+                   WHERE id = ? AND status = ? AND (adjusted_confidence IS NULL OR ABS(adjusted_confidence - ?) > 0.0005
+                   OR requires_review != ?)""",
+                (adjusted, int(requires_review), invoice_id, REVIEW, adjusted, int(requires_review)),
+            )
+            return cur.rowcount > 0
+
     def reopen(self, invoice_id: int, actor: str, reason: str = "") -> None:
         """Put an approved invoice that is not exported yet, or a rejected one, back in the review queue to be
         corrected. What its approval taught is withdrawn (learned again at the next approval); the reviewer's

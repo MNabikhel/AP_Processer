@@ -73,3 +73,14 @@ def test_every_sample_reads_right_offline(tmp_path, reference):
         taxes = [(t["tax_type"], t["province"], t["rate"]) for t in got["tax_lines"]]
         assert taxes == [(t["tax_type"], t["province"], t["rate"]) for t in truth["tax_lines"]], pdf.name
         assert not [i for i in result.report.issues if i.severity == "error"], pdf.name
+
+
+def test_queue_card_confidence_follows_the_review_screen(tmp_path, reference):
+    from ap_coder.store import REVIEW
+
+    store = Store(tmp_path / "ap.db")
+    result = InvoicePipeline(_offline_settings(), reference, store=store).process(SAMPLES / f"{STEM}.pdf")
+    assert store.get_invoice(result.invoice_id)["status"] == REVIEW
+    assert store.refresh_confidence(result.invoice_id, 0.42, True)
+    assert store.get_invoice(result.invoice_id)["adjusted_confidence"] == 0.42
+    assert not store.refresh_confidence(result.invoice_id, 0.42, True)  # unchanged: nothing written
