@@ -115,3 +115,34 @@ def test_a_transparent_png_is_read_on_white_paper(tmp_path, monkeypatch):
     build_layout(path)
     assert tuple(seen[0][150, 200]) == (255, 255, 255)  # the background
     assert seen[0].min() < 50  # the text is still dark
+
+
+def _unicode_pdf(tmp_path: Path, lines: list[tuple[float, float, str]], name: str) -> Path:
+    """A PDF whose text layer holds exactly these characters (a Unicode font, so accents and leaders survive)."""
+    import pymupdf
+
+    font = pymupdf.Font("cjk")
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    for x, y, text in lines:
+        writer = pymupdf.TextWriter(page.rect)
+        writer.append((x, y), text, font=font, fontsize=10)
+        writer.write_text(page)
+    path = tmp_path / name
+    doc.save(path)
+    return path
+
+
+def test_accents_stored_decomposed_in_the_text_layer(tmp_path):
+    """Some PDF producers store "é" as "e" + a combining accent: the labels must still point at their values."""
+    import unicodedata
+
+    lines = [(60, 60, "Acme Supply Ltd."), (300, 120, "Numéro de facture: 12345"),
+             (300, 135, "Date de facturation: 2026-09-14")]  # fmt: skip
+    pdf = _unicode_pdf(tmp_path, [(x, y, unicodedata.normalize("NFD", t)) for x, y, t in lines], "nfd.pdf")
+    import pymupdf
+
+    with pymupdf.open(pdf) as doc:
+        assert "é" in doc[0].get_text()  # the text layer really is decomposed
+    capture = analyze(pdf, ocr=False, today=TODAY)
+    assert capture.fields["invoice_number"].value == "12345"

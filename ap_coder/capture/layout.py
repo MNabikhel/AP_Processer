@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import statistics
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +88,9 @@ def _text_layer_page(page: Any, number: int) -> PageLayout:
     matrix = page.rotation_matrix
     words: list[Word] = []
     for x0, y0, x1, y1, text, *_ in page.get_text("words", sort=True):
-        text = text.strip()
+        # Composed accents: some producers store "é" as "e" + a combining mark, which the readers' character
+        # offsets (labels to values) would count twice.
+        text = unicodedata.normalize("NFC", text).strip()
         if not text:
             continue
         r = _rotated(page, matrix, x0, y0, x1, y1)
