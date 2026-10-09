@@ -13,7 +13,6 @@ from typing import Any
 
 import streamlit as st
 
-from ap_coder import ui
 from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.normalize import parse_amount, parse_date
 from ap_coder.capture.types import Box, CaptureResult
@@ -66,7 +65,7 @@ def _viewer_fields(capture: CaptureResult) -> list[dict[str, Any]]:
 def document_head(file_name: str) -> str:
     """The document card's title line: what it is and the file it came from."""
     return (
-        f"<div class='rvw-doc-head'>{ui.icon('description', '1.15em')}<b>Document</b>"
+        f"<div class='rvw-doc-head'><b>Document</b>"
         f"<span class='file' title='{esc(file_name)}'>{esc(file_name)}</span></div>"
     )
 

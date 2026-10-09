@@ -228,9 +228,7 @@ def test_today_strip_on_the_queue(db):
 
     load_demo(Store(db))
     at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
-    today = [
-        h.proto.body for h in at.get("html") if "<b style='color:#142033;margin-right:.2rem'>Today</b>" in h.proto.body
-    ]
+    today = [h.proto.body for h in at.get("html") if "<div class='rq-today'><b>Today</b>" in h.proto.body]
     assert today and "ready to export" in today[0]  # the demo's approved invoices are not exported yet
 
 
