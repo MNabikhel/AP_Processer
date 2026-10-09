@@ -212,3 +212,88 @@ def test_rotated_page_boxes_line_up(tmp_path):
     # Displayed landscape: the text runs down the right side of the shown page.
     assert word.box.x0 > 0.5
     assert 0 <= word.box.y0 < word.box.y1 <= 1
+
+
+# ---------------------------------------------------------------- reader rules found by the benchmark
+
+
+def _pdf(tmp_path, lines: list[tuple[float, float, str]], name: str = "inv.pdf") -> Path:
+    """A one-page PDF with text at (x, y) points."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    for x, y, text in lines:
+        page.insert_text((x, y), text, fontsize=10)
+    path = tmp_path / name
+    doc.save(path)
+    return path
+
+
+def _read(path: Path) -> dict:
+    return {f: (c[0].value if c else None) for f, c in read_fields(build_layout(path, ocr=False)).items()}
+
+
+def test_dotted_and_combined_tax_labels(tmp_path):
+    lines = [(60, 60, "Acme Supply Ltd."), (380, 500, "Subtotal"), (500, 500, "1,000.00"), (380, 515, "G.S.T. 5%"),
+             (500, 515, "50.00"), (380, 530, "Total Due"), (500, 530, "1,050.00")]  # fmt: skip
+    got = _read(_pdf(tmp_path, lines))
+    assert got["gst_amount"] == 50.0 and got["grand_total"] == 1050.0
+    assert not got.get("hst_amount")
+    # "GST/HST" with no rate printed: the amount's rate on the subtotal says it is GST (5%), not HST.
+    lines = [(60, 60, "Acme Supply Ltd."), (380, 500, "Subtotal"), (500, 500, "200.00"), (380, 515, "GST/HST"),
+             (500, 515, "10.00"), (380, 530, "Total"), (500, 530, "210.00")]  # fmt: skip
+    got = _read(_pdf(tmp_path, lines, "b.pdf"))
+    assert got["gst_amount"] == 10.0
+    assert not got.get("hst_amount")
+
+
+def test_registration_line_is_not_a_tax_amount_and_customer_numbers_are_ignored(tmp_path):
+    got = _read(_pdf(tmp_path, [(60, 60, "Acme Supply Ltd."), (60, 80, "GST/HST Registration 12345 6782 RT 0001"),
+                                (60, 160, "Customer GST #: 862371887 RT0001")]))  # fmt: skip
+    assert got["gst_hst_registration_number"] == "123456782RT0001"
+    assert not got.get("hst_amount") and not got.get("gst_amount")
+    assert find_gst_numbers("BN 12345 6782 RT 0001")[0][0] == "123456782RT0001"
+
+
+def test_document_date_order():
+    from ap_coder.capture.normalize import infer_day_first
+
+    assert infer_day_first("Date: 25/03/2026  Due: 04/04/2026") is True
+    assert infer_day_first("Date: 03/25/2026  Due: 04/04/2026") is False
+    assert infer_day_first("Date: 03/04/2026") is None
+
+
+def test_ambiguous_dates_are_resolved_by_the_terms(tmp_path):
+    got = _read(_pdf(tmp_path, [(60, 60, "Acme Supply Ltd."), (60, 120, "Invoice Date: 11/07/2025"),
+                                (60, 135, "Due Date: 12/07/2025"), (60, 150, "Terms: Net 30")]))  # fmt: skip
+    assert got["invoice_date"] == "2025-11-07" and got["due_date"] == "2025-12-07"
+
+
+def test_logo_initials_and_customer_block_do_not_make_the_vendor(tmp_path):
+    got = _read(_pdf(tmp_path, [(60, 60, "BT Bluewater Telecom"), (60, 75, "12 Main St, Toronto, ON M5V 1A1"),
+                                (60, 120, "To:"), (100, 120, "Hartwell Manufacturing Inc.")]))  # fmt: skip
+    assert got["vendor_name"] == "Bluewater Telecom"
+
+
+def test_po_keeps_its_prefix_and_ignores_po_dates(tmp_path):
+    got = _read(_pdf(tmp_path, [(60, 60, "Acme Supply Ltd."), (300, 120, "Cust. P.O.:"), (400, 120, "PO-45059"),
+                                (300, 140, "PO Date:"), (400, 140, "Aug 27, 2025")]))  # fmt: skip
+    assert got["po_number"] == "PO-45059"
+
+
+def test_measured_calibration_uses_the_lower_bound():
+    from ap_coder.capture import confidence
+
+    key = confidence.evidence_key("invoice_number", ["rules"], "label-right", layout_source="text")
+    assert key == "invoice_number|rules|label-right|text|"
+    confidence.calibration_table.cache_clear()
+    old = confidence.calibration_table
+    try:
+        confidence.calibration_table = lambda: {key: (500, 500)}
+        assert 0.99 < confidence.calibrate(0.5, key) < 1.0
+        confidence.calibration_table = lambda: {key: (10, 10)}  # too few cases: the formula stands
+        assert confidence.calibrate(0.5, key) == 0.5
+    finally:
+        confidence.calibration_table = old
+    assert confidence.wilson_lower(0, 0) == 0.0

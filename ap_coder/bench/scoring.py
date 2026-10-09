@@ -109,6 +109,7 @@ def score_case(truth: dict[str, Any], result: CaptureResult | None) -> list[dict
             "confidence": conf,
             "reported": reported,
             "reasons": list(fr.reasons) if fr else [],
+            "evidence": fr.evidence if fr else "",
         }
         if f in fields:
             entry = fields[f]

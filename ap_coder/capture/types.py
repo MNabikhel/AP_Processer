@@ -142,6 +142,7 @@ class FieldResult:
     boxes: list[Box] = field(default_factory=list)
     sources: dict[str, Any] = field(default_factory=dict)
     reasons: list[str] = field(default_factory=list)
+    evidence: str = ""  # the pattern of readers and checks behind the value (calibration key)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -155,6 +156,7 @@ class FieldResult:
             field=d["field"], value=d.get("value"), confidence=float(d.get("confidence") or 0),
             status=d.get("status") or MISSING, boxes=[Box.from_list(b) for b in d.get("boxes") or []],
             sources=dict(d.get("sources") or {}), reasons=list(d.get("reasons") or []),
+            evidence=d.get("evidence") or "",
         )  # fmt: skip
 
 

@@ -172,6 +172,7 @@ def evaluate(cases: list[Case], outputs: list[dict[str, Any]]) -> dict[str, Any]
     """Score every case; returns the report (without timing) plus failure rows."""
     per_case: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     failures: list[dict[str, Any]] = []
+    evidence_rows: list[dict[str, Any]] = []
     errors = []
     li_want = li_match = li_got = 0
     for case, out in zip(cases, outputs, strict=True):
@@ -180,6 +181,17 @@ def evaluate(cases: list[Case], outputs: list[dict[str, Any]]) -> dict[str, Any]
             errors.append({"case": case.id, "error": out["error"]})
         recs = score_case(case.truth, result)
         per_case.append((case.truth, recs))
+        evidence_rows.extend(
+            {
+                "case": case.id,
+                "scanned": case.scanned,
+                "field": r["field"],
+                "evidence": r["evidence"],
+                "correct": r["correct"],
+            }
+            for r in recs
+            if r["scored"] and r["reported"] and r["evidence"]
+        )
         w, m, g = line_item_metrics(case.truth, result)
         li_want, li_match, li_got = li_want + w, li_match + m, li_got + g
         for r in recs:
@@ -238,7 +250,7 @@ def evaluate(cases: list[Case], outputs: list[dict[str, Any]]) -> dict[str, Any]
         "cases": len(cases),
         "scanned_cases": len(scanned),
     }
-    return {"report": report, "failures": failures}
+    return {"report": report, "failures": failures, "evidence": evidence_rows}
 
 
 def run(
@@ -280,7 +292,39 @@ def run(
     with (out / "failures.jsonl").open("w", encoding="utf-8") as fh:
         for row in scored["failures"]:
             fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    with (out / "evidence.jsonl").open("w", encoding="utf-8") as fh:
+        for row in scored["evidence"]:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     return report
+
+
+def fit_calibration(runs: list[str | Path], dest: str | Path | None = None) -> dict[str, Any]:
+    """Count, per evidence pattern, how often the value was right across benchmark runs, and write
+    the table capture uses for its confidence (``ap_coder/capture/calibration.json``)."""
+    from ap_coder.capture.confidence import CALIBRATION_FILE
+
+    counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    configs = []
+    for run_dir in runs:
+        run_dir = Path(run_dir)
+        for line in (run_dir / "evidence.jsonl").read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            c = counts[row["evidence"]]
+            c[0] += 1
+            c[1] += bool(row["correct"])
+        try:
+            configs.append(json.loads((run_dir / "report.json").read_text(encoding="utf-8"))["config"])
+        except (OSError, ValueError, KeyError):
+            pass
+    table = {
+        "about": "Per evidence pattern: [values reported, values right] on the benchmark runs below. "
+        "Written by `python -m ap_coder.bench calibrate`; read by ap_coder.capture.confidence.",
+        "runs": configs,
+        "evidence": {k: counts[k] for k in sorted(counts)},
+    }
+    path = Path(dest) if dest else CALIBRATION_FILE
+    path.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
+    return table
 
 
 # --- markdown ---------------------------------------------------------------------------------

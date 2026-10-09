@@ -119,6 +119,6 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         if second:
             sources["ocr"] = second
     items = read_line_items(layout)
-    fields, checks = fuse(sources, items, vendor=vendor, today=today)
+    fields, checks = fuse(sources, items, vendor=vendor, today=today, layout_source=layout.source)
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
                          page_count=len(layout.pages))  # fmt: skip

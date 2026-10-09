@@ -15,7 +15,12 @@ The raw confidence is mapped through a calibration table measured on the benchma
 from __future__ import annotations
 
 import datetime as dt
+import json
+import math
+import re
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from .normalize import amounts_equal, gst_valid, norm_name, normalize_value, qst_valid
@@ -39,6 +44,7 @@ SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
 # reader could not separate): they lower confidence but do not force a field to "check".
 SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE"}
 LIKELY_AT = 0.85
+SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
 
 TAX_FIELDS = ("gst_amount", "hst_amount", "pst_amount", "qst_amount")
 KNOWN_RATES = {
@@ -191,15 +197,58 @@ def _date(v: Any) -> dt.date | None:
 
 # Raw confidence -> observed accuracy, measured on the benchmark (piecewise-linear; see ap_coder.bench).
 # Kept conservative: never claims more than the benchmark showed.
-CALIBRATION: list[tuple[float, float]] = [(0.0, 0.0), (0.5, 0.5), (0.85, 0.85), (0.985, 0.985), (1.0, 0.999)]
+CALIBRATION_FILE = Path(__file__).with_name("calibration.json")
+MIN_EVIDENCE = 40  # cases of one evidence pattern before its measured accuracy replaces the formula
 
 
-def calibrate(raw: float) -> float:
-    pts = CALIBRATION
-    for (x0, y0), (x1, y1) in zip(pts, pts[1:], strict=False):
-        if raw <= x1:
-            return y0 + (y1 - y0) * (raw - x0) / (x1 - x0) if x1 > x0 else y1
-    return pts[-1][1]
+def evidence_key(
+    field: str,
+    sources: list[str],
+    method: str,
+    *,
+    layout_source: str = "text",
+    contested: bool = False,
+    confirmed: bool = False,
+    soft: bool = False,
+) -> str:
+    """field|readers|how it was read|flags: the unit the calibration measures. Coarse on purpose, so
+    each pattern is seen often enough on the benchmark to measure."""
+    family = re.sub(r"[-+](ambiguous|adds-up|terms|dates)", "", method).split("+")[0]
+    flags = [f for f, on in (("adds-up", "adds-up" in method), ("confirmed", confirmed), ("contested", contested),
+                             ("soft", soft), ("ambiguous", "ambiguous" in method)) if on]  # fmt: skip
+    page = "scan" if layout_source in ("ocr", "di", "mixed") else "text"
+    return "|".join([field, "+".join(sorted(sources)), family, page, ",".join(flags)])
+
+
+@lru_cache(maxsize=1)
+def calibration_table() -> dict[str, tuple[int, int]]:
+    """{evidence: (cases, correct)} measured by ``python -m ap_coder.bench calibrate``."""
+    try:
+        data = json.loads(CALIBRATION_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {k: (int(v[0]), int(v[1])) for k, v in (data.get("evidence") or {}).items()}
+
+
+def wilson_lower(correct: int, n: int, z: float = 1.96) -> float:
+    if n <= 0:
+        return 0.0
+    p = correct / n
+    den = 1 + z * z / n
+    centre = p + z * z / (2 * n)
+    margin = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return max(0.0, (centre - margin) / den)
+
+
+def calibrate(raw: float, evidence: str = "") -> float:
+    """The confidence a value deserves. When the benchmark has measured this evidence pattern often
+    enough, it is the lower 95% bound of that pattern's accuracy (so "verified" at 98.5% means the
+    pattern was right at least 98.5% of the time, with room for chance); otherwise the readers' own
+    combined score."""
+    seen = calibration_table().get(evidence) if evidence else None
+    if seen and seen[0] >= MIN_EVIDENCE:
+        return round(wilson_lower(seen[1], seen[0]), 4)
+    return raw
 
 
 # ---------------------------------------------------------------- fusion
@@ -207,7 +256,7 @@ def calibrate(raw: float) -> float:
 
 def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineReading],
          vendor: dict[str, Any] | None = None, fields: tuple[str, ...] = FIELDS,
-         today: dt.date | None = None) -> tuple[dict[str, FieldResult], list[dict[str, Any]]]:  # fmt: skip
+         today: dt.date | None = None, layout_source: str = "text") -> tuple[dict[str, FieldResult], list[dict[str, Any]]]:  # fmt: skip
     """``by_source``: reader name -> field -> readings (best first). Returns field results and checks."""
     chosen: dict[str, _Group | None] = {}
     contest: dict[str, float] = {}
@@ -262,8 +311,15 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if field in soft:
             raw = min(raw, 0.97)
             reasons += [f"note: {d}" for d in soft[field]]
-        conf = calibrate(max(0.0, min(raw, 1.0)))
         best = g.best()
+        evidence = evidence_key(field, sources, best.method, layout_source=layout_source,
+                                contested=contest.get(field, 0.0) > 0.25, confirmed=bool(n_conf) and field not in failed,
+                                soft=field in soft)  # fmt: skip
+        conf = calibrate(max(0.0, min(raw, 1.0)), evidence)
+        # A lone reader is never verified on its own measured record (the benchmark is synthetic):
+        # verified also needs a second reader or a check to agree.
+        if len(sources) < 2 and not (n_conf and field not in failed):
+            conf = min(conf, SINGLE_READER_CAP)
         ambiguous = all("ambiguous" in r.method for _, r in g.readings)
         if ambiguous:
             conf = min(conf, 0.6)
@@ -281,7 +337,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             field=field, value=value, confidence=conf, status=status, boxes=list(best.boxes),
             sources={s: str(max((r for src, r in g.readings if src == s), key=lambda r: r.score).raw) for s in sources}
             | {f"other:{grp.value}": ", ".join(sorted({s for s, _ in grp.readings})) for grp in all_groups[field][1:3]},
-            reasons=reasons,
+            reasons=reasons, evidence=evidence,
         )  # fmt: skip
     _derive_tax_total(results)
     return results, checks

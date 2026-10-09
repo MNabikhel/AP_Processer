@@ -1,4 +1,5 @@
-"""python -m ap_coder.bench run --n 300 --seed 1 --scanned 0.3 [--out bench_out] [--workers 4]"""
+"""python -m ap_coder.bench run --n 300 --seed 1 --scanned 0.3 [--out bench_out] [--workers 4]
+python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]"""
 
 from __future__ import annotations
 
@@ -31,7 +32,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     g = sub.add_parser("generate", help="only write the invoices and their truth")
     common(g)
+    c = sub.add_parser("calibrate", help="fit capture's confidence table from finished runs (their evidence.jsonl)")
+    c.add_argument("runs", nargs="+", help="output folders of earlier `run` commands")
+    c.add_argument("--dest", default=None, help="where to write the table (default: ap_coder/capture/calibration.json)")
     a = p.parse_args(argv)
+
+    if a.cmd == "calibrate":
+        from ap_coder.bench.harness import fit_calibration
+
+        table = fit_calibration(a.runs, a.dest)
+        ev = table["evidence"]
+        print(f"{len(ev)} evidence patterns from {sum(v[0] for v in ev.values())} values")
+        return 0
 
     if a.cmd == "generate":
         cases = prepare_cases(Path(a.out) / "cases", a.n, a.seed, a.scanned, a.workers, a.regen)

@@ -550,6 +550,11 @@ def _getting_started(store: Store) -> None:
     demo_card(store, "welcome")
 
 
+def _has_viewer(inv: dict[str, Any], store: Store) -> bool:
+    path = Path(inv["source_path"])
+    return path.suffix.lower() in VIEWABLE and path.exists() and store.get_capture(inv["id"]) is not None
+
+
 def _document_panel(inv: dict[str, Any], store: Store, key: str = "") -> None:
     path = Path(inv["source_path"])
     capture = store.get_capture(inv["id"])
@@ -774,14 +779,24 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         )  # fmt: skip
     summary = st.container()  # the summary card is drawn here once the edits are valid
 
-    left, right = st.columns([5, 7], gap="medium")
-    with left:
+    # With a highlighted page the document gets the full width (page and field list side by side);
+    # otherwise the plain page sits left of the form.
+    wide = _has_viewer(inv, store)
+    if wide:
         with card("document"):
             _document_panel(inv, store, key)
+    left, right = st.columns([5, 7], gap="medium")
+    with left:
+        if wide:
+            checks_box = card("checks")
+        else:
+            with card("document"):
+                _document_panel(inv, store, key)
         _notes_card(store, invoice_id, key)
 
     with right:
-        checks_box = card("checks")
+        if not wide:
+            checks_box = card("checks")
         with card("details"):
             st.markdown("#### :material/badge: Invoice details")
             keep = {"persist_state": "session"}  # edits survive moving to another invoice and back

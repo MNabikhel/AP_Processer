@@ -11,8 +11,8 @@ amounts). Totals are chosen together: the subtotal, taxes and total that add up 
 from __future__ import annotations
 
 import re
-from contextvars import ContextVar
 import unicodedata
+from contextvars import ContextVar
 from dataclasses import dataclass
 from itertools import product
 
@@ -34,6 +34,7 @@ def plain(text: str) -> str:
 
 
 # ---------------------------------------------------------------- labels
+
 
 # (regex on plain lowercase text, strength). Regexes match at the label's start.
 def _A(letters: str) -> str:
@@ -163,7 +164,14 @@ def _label_hits(line: Line) -> list[_LabelHit]:
                     sep = re.match(r"\s*/\s*", text[end:])
                     if not sep:
                         break
-                    nxt = next((m2 for rx2, _s in pats if (m2 := rx2.match(text, end + sep.end())) and m2.end() > end + sep.end()), None)
+                    nxt = next(
+                        (
+                            m2
+                            for rx2, _s in pats
+                            if (m2 := rx2.match(text, end + sep.end())) and m2.end() > end + sep.end()
+                        ),
+                        None,
+                    )
                     if nxt is None:
                         break
                     end = nxt.end()
@@ -256,7 +264,9 @@ def _looks_like_phone_or_postal(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d", value))
 
 
-_MONTH_DAY = re.compile(r"^(?:jan|feb|fev|mar|apr|avr|may|mai|jun|juin|jul|juil|aug|aou|sep|oct|nov|dec)[a-z]*\.?\s*\d{1,2}\b")
+_MONTH_DAY = re.compile(
+    r"^(?:jan|feb|fev|mar|apr|avr|may|mai|jun|juin|jul|juil|aug|aou|sep|oct|nov|dec)[a-z]*\.?\s*\d{1,2}\b"
+)
 
 # The document's numeric date order while it is read (None: 03/04/2026 stays ambiguous).
 _DAY_FIRST: ContextVar[bool | None] = ContextVar("day_first", default=None)
@@ -273,7 +283,9 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         value, a, b = got
         if _looks_like_phone_or_postal(value) or parse_dates(value) or _MONTH_DAY.match(plain(value)):
             return None
-        if field == "po_number" and (re.fullmatch(r"\$?\d{1,3}(?:[.,]\d{2})?", value) or re.fullmatch(r"\d{1,2}", value)):
+        if field == "po_number" and (
+            re.fullmatch(r"\$?\d{1,3}(?:[.,]\d{2})?", value) or re.fullmatch(r"\d{1,2}", value)
+        ):
             return None  # a quantity, a price or a day of the month, not a purchase order
         if len(norm_id(value)) < 2 or len(value) > 30:
             return None
@@ -294,7 +306,11 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         cleaned = _PERCENT.sub(lambda m: " " * len(m.group(0)), rest)
         if field.endswith("_amount") or field == "tax_total":
             # "GST/HST Reg. No. 123456789RT0001" is a registration number, not an amount.
-            if (_REG_WORDS.search(plain(rest[:12])) and not looks_like_money(rest)) or find_gst_numbers(rest) or find_qst_numbers(rest):
+            if (
+                (_REG_WORDS.search(plain(rest[:12])) and not looks_like_money(rest))
+                or find_gst_numbers(rest)
+                or find_qst_numbers(rest)
+            ):
                 return None
         amounts = _amounts_in(cleaned)
         if not amounts:
@@ -556,7 +572,12 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
 # ---------------------------------------------------------------- totals solver
 
 _TAX_FIELDS = ("gst_amount", "hst_amount", "pst_amount", "qst_amount")
-_RATES = {"gst_amount": (0.05,), "hst_amount": (0.13, 0.14, 0.15), "pst_amount": (0.06, 0.07, 0.08), "qst_amount": (0.09975,)}
+_RATES = {
+    "gst_amount": (0.05,),
+    "hst_amount": (0.13, 0.14, 0.15),
+    "pst_amount": (0.06, 0.07, 0.08),
+    "qst_amount": (0.09975,),
+}
 
 
 def _where(r: Reading) -> tuple:
@@ -588,7 +609,9 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
                 bonus += 1.0
             if sub and sub.value:
                 for f, t in zip(tax_options, taxes, strict=True):
-                    if t is not None and any(abs(t.value - r * sub.value) <= max(0.02, 0.01 * abs(t.value)) for r in _RATES[f]):
+                    if t is not None and any(
+                        abs(t.value - r * sub.value) <= max(0.02, 0.01 * abs(t.value)) for r in _RATES[f]
+                    ):
                         bonus += 0.3
             if best is None or score + bonus > best[0]:
                 best = (score + bonus, sub, total, dict(zip(tax_options, taxes, strict=True)), bonus)
@@ -691,7 +714,9 @@ def read_line_items(layout: DocLayout) -> list[LineReading]:
 # ---------------------------------------------------------------- entry point
 
 
-_US_ADDRESS = re.compile(r",?\s(?:A[LKZR]|C[AOT]|DE|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\s+\d{5}(?:-\d{4})?\b")
+_US_ADDRESS = re.compile(
+    r",?\s(?:A[LKZR]|C[AOT]|DE|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\s+\d{5}(?:-\d{4})?\b"
+)
 
 
 def _us_vendor(layout: DocLayout) -> bool:
@@ -740,7 +765,9 @@ def _date_fit(cands: dict[str, list[Reading]]) -> int:
     """How well the invoice date, due date and terms agree (higher is better)."""
     import datetime as dt
 
-    inv, due, terms = (cands.get(f, [None])[0] if cands.get(f) else None for f in ("invoice_date", "due_date", "payment_terms"))
+    inv, due, terms = (
+        cands.get(f, [None])[0] if cands.get(f) else None for f in ("invoice_date", "due_date", "payment_terms")
+    )
     if inv is None or due is None:
         return 0
     days = (dt.date.fromisoformat(due.value) - dt.date.fromisoformat(inv.value)).days
