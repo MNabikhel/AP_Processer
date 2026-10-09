@@ -279,7 +279,7 @@ def weekly_accuracy(metrics: dict[str, Any]) -> list[float]:
 
 
 def demo_card(store: Store, where: str) -> None:
-    """Load or remove the demo invoices (the bundled samples, coded as if by Azure; no Azure needed)."""
+    """Load or remove the demo invoices (the bundled samples, already read and coded; nothing to connect)."""
     from ap_coder.demo import demo_available, load_demo, remove_demo
 
     if not demo_available():
@@ -289,8 +289,8 @@ def demo_card(store: Store, where: str) -> None:
         st.markdown("#### :material/science: Demo invoices")
         if not demo_count:
             st.caption(
-                "Look around before connecting Azure: ten sample invoices from across Canada (including a US vendor "
-                "and a credit note) are added as if the AI had read and coded them, including a few realistic "
+                "Look around first: ten sample invoices from across Canada (including a US vendor "
+                "and a credit note) are added already read and coded, including a few realistic "
                 "mistakes to correct, plus sample purchase orders and a sample vendor list. Uses the sample GL "
                 "accounts if you haven't imported yours."
             )

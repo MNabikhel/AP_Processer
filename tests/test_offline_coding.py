@@ -54,3 +54,22 @@ def test_approved_coding_is_reused_for_the_next_invoice_from_that_vendor(tmp_pat
     assert [li.predicted_gl_code for li in again.coding.coding.line_items] == [
         li["predicted_gl_code"] for li in final["line_items"]
     ]
+
+
+def test_every_sample_reads_right_offline(tmp_path, reference):
+    """All ten samples, no Azure and no model: header, lines, provinces and tax lines as the ground truth;
+    nothing is wrong, only accounts left to pick."""
+    pipe = InvoicePipeline(_offline_settings(), reference, store=Store(tmp_path / "ap.db"))
+    for pdf in sorted(SAMPLES.glob("*.pdf")):
+        truth = json.loads((SAMPLES / "ground_truth" / f"{pdf.stem}.json").read_text())
+        result = pipe.process(pdf)
+        assert result.ok, (pdf.name, result.error)
+        got = result.output
+        for field in ("vendor_name", "invoice_number", "invoice_date", "supplier_province", "ship_to_province"):
+            assert got[field] == truth[field], (pdf.name, field)
+        for field in ("subtotal", "tax_total", "grand_total"):
+            assert abs(got[field] - truth[field]) < 0.011, (pdf.name, field)
+        assert [round(li["amount"], 2) for li in got["line_items"]] == [li["amount"] for li in truth["line_items"]]
+        taxes = [(t["tax_type"], t["province"], t["rate"]) for t in got["tax_lines"]]
+        assert taxes == [(t["tax_type"], t["province"], t["rate"]) for t in truth["tax_lines"]], pdf.name
+        assert not [i for i in result.report.issues if i.severity == "error"], pdf.name

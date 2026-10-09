@@ -10,6 +10,7 @@ no history is left UNASSIGNED and a field the reader could not find stays empty,
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import logging
 import re
 from pathlib import Path
@@ -17,22 +18,31 @@ from typing import Any
 
 from .capture import analyze, build_layout
 from .capture.bridge import vendor_record
+from .capture.reader import _US_ADDRESS
 from .capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout
 from .capture.workflow import supplier_for
 from .extraction import ExtractionResult
 from .inference import CodingResult
 from .memory import vendor_key
 from .reference_data import UNASSIGNED, ReferenceData
-from .schema import InvoiceCoding, LineItem, TaxLine
+from .schema import PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
 from .suggest import suggest_gl
+from .tax import OUTSIDE_CANADA, TaxRateTable
 
 log = logging.getLogger(__name__)
 
 MODEL_NAME = "local reader (no AI model)"
 NO_HISTORY = "No earlier approval to learn from: pick the account."
 _TAXES = (("gst_amount", "GST"), ("hst_amount", "HST"), ("pst_amount", "PST"), ("qst_amount", "QST"))
-# The HST rate names the province when only one has it (13% Ontario, 14% Nova Scotia from April 2025).
-_HST_PROVINCE = {0.13: "ON", 0.14: "NS"}
+# The rates a Canadian invoice charges (a rate worked out from rounded amounts snaps to the nearest one), and
+# the province a rate names when only one has it (HST 13% Ontario, 14% Nova Scotia from April 2025; PST 6% SK).
+_OFFICIAL = {"GST": (0.05,), "HST": (0.13, 0.14, 0.15), "QST": (0.09975,), "PST": (0.06, 0.07, 0.08)}
+_RATE_PROVINCE = {("HST", 0.13): "ON", ("HST", 0.14): "NS", ("QST", 0.09975): "QC", ("PST", 0.06): "SK"}
+_PROVINCE_AT = re.compile(r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)(?:\)|\b)\s*,?\s*[A-Z]\d[A-Z]\s?\d[A-Z]\d")
+_CUSTOMER_LABEL = re.compile(
+    r"(?i)\b(?:bill|ship|sold|invoice|deliver)(?:ed)?\s*to\b|client|customer|factur|livr|vendu"
+)
+_SHIP_LABEL = re.compile(r"(?i)\b(?:ship|deliver)(?:ped|ed)?\s*to\b|livr")
 
 
 def read_invoice(path: str | Path, store: Any = None,
@@ -64,16 +74,67 @@ def _amount(values: dict[str, Any], field: str) -> float:
         return 0.0
 
 
-def _tax_lines(values: dict[str, Any], subtotal: float) -> list[TaxLine]:
+@functools.lru_cache(maxsize=1)
+def _rate_table() -> Any:
+    try:
+        return TaxRateTable.load()
+    except Exception:  # no rate table: rates are worked out from the amounts
+        return None
+
+
+def provinces(text: str) -> tuple[str, str]:
+    """(supplier province, ship-to province) from the addresses on the page: the first address is the
+    supplier's (its letterhead), the first after a "Bill to" / "Client" label the customer's. A US address
+    is OUTSIDE_CANADA."""
+    supplier = bill_to = ship_to = ""
+    after_label = after_ship = False
+    for line in text.splitlines():
+        if _SHIP_LABEL.search(line):
+            after_ship = after_label = True
+        elif _CUSTOMER_LABEL.search(line):
+            after_label = True
+        m = _PROVINCE_AT.search(line)
+        where = m.group(1) if m else (OUTSIDE_CANADA if _US_ADDRESS.search(line) else "")
+        if not where:
+            continue
+        if not supplier and not after_label:
+            supplier = where
+        elif after_ship and not ship_to:
+            ship_to = where  # the place of supply: where the goods or services go
+        elif after_label and not bill_to:
+            bill_to = where
+    return supplier, ship_to or bill_to or supplier
+
+
+def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.date | None = None) -> list[TaxLine]:
     out = []
+    table = _rate_table()
     for field, tax_type in _TAXES:
         amount = _amount(values, field)
         if not amount:
             continue
-        rate = round(amount / subtotal, 4) if subtotal else 0.0
-        rate = min(max(rate, 0.0), 1.0)
-        province = "QC" if tax_type == "QST" else _HST_PROVINCE.get(round(rate, 2), "") if tax_type == "HST" else ""
-        out.append(TaxLine(tax_type=tax_type, province=province, rate=rate, taxable_amount=subtotal, tax_amount=amount))
+        official = table.rate_for(tax_type, province, on) if table and province in PROVINCE_VALUES else None
+        if official and tax_type != "GST" and abs(abs(amount / subtotal if subtotal else 0) - official) > 0.002:
+            # Charged on part of the subtotal (delivery exempt from Manitoba RST): the province's rate on its base.
+            base = round(amount / official, 2)
+            out.append(
+                TaxLine(tax_type=tax_type, province=province, rate=official, taxable_amount=base, tax_amount=amount)
+            )
+            continue
+        rate = abs(amount / subtotal) if subtotal else 0.0
+        rate = (
+            min(_OFFICIAL[tax_type], key=lambda r: abs(r - rate))
+            if any(abs(r - rate) <= 0.002 for r in _OFFICIAL[tax_type])
+            else round(min(rate, 1.0), 5)
+        )
+        where = "" if tax_type == "GST" else (_RATE_PROVINCE.get((tax_type, rate)) or province)
+        if where not in PROVINCE_VALUES or where == OUTSIDE_CANADA:
+            where = ""
+        out.append(TaxLine(tax_type=tax_type, province=where, rate=rate, taxable_amount=subtotal, tax_amount=amount))
+    total_tax = _amount(values, "tax_total")
+    if not out and total_tax and subtotal:  # a sales tax that is none of these (a US state's): its total only
+        rate = round(min(abs(total_tax / subtotal), 1.0), 5)
+        out.append(TaxLine(tax_type="OTHER", province="", rate=rate, taxable_amount=subtotal, tax_amount=total_tax))
     return out
 
 
@@ -94,7 +155,11 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     values = _values(capture)
     vendor = str(values.get("vendor_name") or "")
     subtotal = _amount(values, "subtotal")
-    tax_lines = _tax_lines(values, subtotal)
+    supplier_province, ship_to_province = provinces(text)
+    invoice_on = _iso_or_empty(values.get("invoice_date"))
+    tax_lines = _tax_lines(
+        values, subtotal, ship_to_province, dt.date.fromisoformat(invoice_on) if invoice_on else None
+    )
     taxes = [t.tax_type for t in tax_lines]
     default_gl = ""
     if store is not None and vendor:
@@ -129,7 +194,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
                 unit_price=round(unit_price, 4),
                 amount=round(amount, 2),
                 predicted_gl_code=best.gl_code if best else UNASSIGNED,
-                predicted_cost_center=(best.cost_center if best else "") or "",
+                predicted_cost_center=(best.cost_center if best else "")
+                or (UNASSIGNED if reference.cost_centers is not None else ""),
                 taxes_applied=taxes,
                 reasoning_justification="; ".join(best.reasons) if best else NO_HISTORY,
             )
@@ -151,6 +217,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         payment_terms=str(values.get("payment_terms") or ""),
         due_date=_iso_or_empty(values.get("due_date")),
         currency=str(values.get("currency") or "CAD"),
+        supplier_province=supplier_province,
+        ship_to_province=ship_to_province,
         gst_hst_registration_number=str(values.get("gst_hst_registration_number") or ""),
         qst_registration_number=str(values.get("qst_registration_number") or ""),
         subtotal=subtotal,

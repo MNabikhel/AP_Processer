@@ -93,15 +93,15 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
     if settings.document_intelligence.endpoint:
         reader = ("ok", "Reading invoices", "Azure Document Intelligence")
     elif ocr_available():
-        reader = ("ok", "Reading invoices", "on this computer: PDF text and local OCR for scans")
+        reader = ("ok", "Reading invoices", "on this computer (text + OCR)")
     else:
-        reader = ("todo", "Reading invoices", "PDFs with text only: scans need the OCR add-on (run the launcher again)")
+        reader = ("todo", "Reading invoices", "text PDFs only: scans need OCR (run the launcher again)")
     return [
         reader,
         (
             "ok" if ai.ready else "todo",
             "AI model" if ai.provider != "azure" else "Azure OpenAI",
-            ai.label if ai.ready else "optional: without one, lines are coded from your approvals",
+            ai.label if ai.ready else "optional",
         ),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),

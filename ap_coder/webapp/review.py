@@ -24,7 +24,7 @@ from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs, split_line
 from ap_coder.safe import md
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
-from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
 from ap_coder.suggest import suggest_gl
 from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
@@ -531,9 +531,25 @@ def sort_queue(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
 def _getting_started(store: Store) -> None:
     settings = get_settings()
     steps = setup_steps(store, settings)
-    has_invoices = bool(store.list_invoices())
+    invoices = store.list_invoices()
+    has_invoices = bool(invoices)
     steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
     done = sum(1 for s, _, _ in steps if s == "ok")
+    waiting = sum(1 for i in invoices if i["status"] == REVIEW)
+    if waiting and reference_or_none(store) is None:
+        # Read and waiting: only the chart of accounts stands between AP and the queue.
+        with card("waiting_for_gl"):
+            st.markdown(f"#### :material/inbox: {waiting} invoice{'s' if waiting != 1 else ''} read and waiting")
+            st.caption(
+                "Import your GL accounts (the chart of accounts from JD Edwards) to open them, or start with the "
+                "sample accounts and switch to yours later."
+            )
+            row = st.container(horizontal=True)
+            row.page_link(PAGES["accounts"], label="Import GL accounts", icon=":material/account_tree:")
+            if row.button("Use the sample GL accounts for now", icon=":material/science:", key="use_sample_gl"):
+                load_sample_setup(store)
+                notify("Sample GL accounts loaded. Replace them with yours in GL accounts & tax.")
+                st.rerun()
     with card("onboarding"):
         head, gauge = st.columns([5, 1], vertical_alignment="center")
         head.markdown("#### :material/rocket_launch: Getting started")
@@ -542,8 +558,8 @@ def _getting_started(store: Store) -> None:
         gauge.html(f"<div style='text-align:right'>{ring}</div>")
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
         links = st.container(horizontal=True)
-        if steps[0][0] != "ok" or steps[1][0] != "ok":
-            links.caption(":material/info: Connect Azure in Settings → Azure (it has a connection test).")
+        if steps[1][0] != "ok":
+            links.caption(":material/info: Optional: start LM Studio's server, then check Settings → AI model.")
         links.page_link(PAGES["accounts"], label="GL accounts & tax", icon=":material/account_tree:")
         links.page_link(PAGES["process"], label="Process invoices", icon=":material/upload_file:")
     demo_card(store, "welcome")
@@ -648,14 +664,29 @@ def _status_block(tone: str, icon_name: str, title: str, items: list[str], sub: 
     )
 
 
+def _grouped(issues: list[Any]) -> list[tuple[bool, str]]:
+    """(is error, text) per distinct message: the same finding on several lines is one item ("Lines 1, 3, 4: …")."""
+    order: dict[tuple[str, str, str], list[int]] = {}
+    for issue in issues:
+        order.setdefault((issue.severity, issue.code, issue.message), []).append(issue.line_number or 0)
+    out = []
+    for (severity, _, message), lines in order.items():
+        numbers = sorted({n for n in lines if n})
+        where = (
+            (f"Line {numbers[0]}: " if len(numbers) == 1 else f"Lines {', '.join(map(str, numbers))}: ")
+            if numbers
+            else ""
+        )
+        out.append((severity == "error", where + message))
+    return out
+
+
 def _checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> str:
     """All the checks as one status: passed, or what needs attention (one line each; details in the expander)."""
     low = report.requires_review and not errors
-    look = len(warnings) + (1 if low else 0)
+    look = sum(1 for bad, _ in _grouped(warnings) if not bad) + (1 if low else 0)
     items = []
-    for issue in errors + warnings:
-        bad = issue.severity == "error"
-        text = (f"Line {issue.line_number}: " if issue.line_number else "") + issue.message
+    for bad, text in _grouped(errors + warnings):
         items.append(
             f"<li class='{'err' if bad else 'warn'}' title='{esc(text)}'><span class='m' aria-hidden='true'>"
             f"{'✕' if bad else '!'}</span><span class='rvw-sr'>{'Must fix' if bad else 'Worth a look'}: </span>"
@@ -668,7 +699,7 @@ def _checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> str:
             f"{report.review_threshold:.0%} threshold.</span></li>"
         )
     if errors:
-        title = f"{len(errors)} must be fixed" + (f" · {look} to look at" if look else "")
+        title = f"{len(_grouped(errors))} must be fixed" + (f" · {look} to look at" if look else "")
         return _status_block("err", "error", title, items)
     if look:
         return _status_block("warn", "visibility", f"{look} {'needs' if look == 1 else 'need'} a look", items)
