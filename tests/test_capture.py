@@ -276,6 +276,11 @@ def test_logo_initials_and_customer_block_do_not_make_the_vendor(tmp_path):
     assert got["vendor_name"] == "Bluewater Telecom"
 
 
+def test_legal_form_matching_the_initials_is_kept(tmp_path):
+    got = _read(_pdf(tmp_path, [(60, 60, "Lakeshore Plumbing & Heating LP"), (60, 75, "12 Main St, Toronto, ON M5V 1A1")]))
+    assert got["vendor_name"] == "Lakeshore Plumbing & Heating LP"
+
+
 def test_po_keeps_its_prefix_and_ignores_po_dates(tmp_path):
     got = _read(_pdf(tmp_path, [(60, 60, "Acme Supply Ltd."), (300, 120, "Cust. P.O.:"), (400, 120, "PO-45059"),
                                 (300, 140, "PO Date:"), (400, 140, "Aug 27, 2025")]))  # fmt: skip

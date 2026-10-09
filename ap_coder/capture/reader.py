@@ -576,6 +576,9 @@ _REMIT = re.compile(r"(?:make\s*(?:all\s*)?cheques?\s*payable\s*to|payable\s*(?:
                     re.I)  # fmt: skip
 
 
+_LEGAL_FORMS = {"LP", "LLP", "LLC", "INC", "LTD", "CO", "PLC", "SA", "SAS", "ULC", "SRL"}
+
+
 def _without_logo_initials(words: list[Word]) -> list[Word]:
     """Drop a logo's initials printed on the name's line: "BT Bluewater Telecom" -> "Bluewater Telecom"."""
 
@@ -594,7 +597,8 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
         if len(out) < 2:
             break
         tok = out[i].text.strip(".")
-        if 2 <= len(tok) <= 3 and tok.isalpha() and tok.isupper():
+        # "LP" after "Lakeshore Plumbing" is the legal form, not the logo
+        if 2 <= len(tok) <= 3 and tok.isalpha() and tok.isupper() and not (i == -1 and tok in _LEGAL_FORMS):
             rest = out[1:] if i == 0 else out[:-1]
             if initials_of(rest, len(tok)) == tok:
                 out = rest
