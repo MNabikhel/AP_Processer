@@ -52,6 +52,20 @@ def test_rejecting_an_approved_invoice_withdraws_what_it_taught(tmp_path):
     assert store.feedback_rows() == []  # a rejected bill must not keep teaching the AI its coding
 
 
+def test_a_rejected_invoice_cannot_be_approved_from_a_stale_screen(tmp_path):
+    # One person rejects the bill ("not ours"); another, with the invoice still open, clicks Approve.
+    store = Store(tmp_path / "a.db")
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
+    store.reject_invoice(invoice_id, "Jane", "not ours")
+    with pytest.raises(ValueError):
+        store.approve_invoice(invoice_id, _gt(), "Sam")
+    assert store.get_invoice(invoice_id)["status"] == REJECTED
+    assert store.unexported_approved() == [] and store.feedback_rows() == []
+    store.reopen(invoice_id, "Sam", "it is ours after all")  # the way back: reopen, then approve
+    store.approve_invoice(invoice_id, _gt(), "Sam")
+    assert store.get_invoice(invoice_id)["status"] == APPROVED
+
+
 def test_vendor_spend_counts_invoices_that_print_no_currency_as_cad(tmp_path):
     store = Store(tmp_path / "a.db")
     doc = {**_gt(), "currency": ""}  # most Canadian invoices print no currency code
