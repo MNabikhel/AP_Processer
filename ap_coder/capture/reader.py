@@ -137,7 +137,9 @@ class _LabelHit:
 
 
 def _compile() -> dict[str, list[tuple[re.Pattern[str], float]]]:
-    return {f: [(re.compile(rx), s) for rx, s in pats] for f, pats in LABELS.items()}
+    # A label ends where letters end, even when OCR glued it to its value ("Dated25/05/2025", "No.033"):
+    # every word boundary in the table means "no letter follows".
+    return {f: [(re.compile(rx.replace(r"\b", r"(?![a-z])")), s) for rx, s in pats] for f, pats in LABELS.items()}
 
 
 _LABELS = _compile()
@@ -256,6 +258,29 @@ def _id_from(text: str, offset: int) -> tuple[str, int, int] | None:
     return value, offset + pos + a, offset + pos + a + len(value)
 
 
+def _ocr_id_fix(value: str) -> str:
+    """OCR reads the letter O in a prefix as a zero: "P0-40059" -> "PO-40059"."""
+    return re.sub(r"^([A-Za-z]+)0([A-Za-z]*)(?=-)", lambda m: m.group(1) + "O" + m.group(2), value)
+
+
+_OCR_NAME_WORDS = {"itee": "ltée", "ltee": "ltée", "itée": "ltée", "lnc": "Inc", "lnc.": "Inc.", "ltd": "Ltd",
+                   "ltd.": "Ltd.", "limitee": "limitée"}  # fmt: skip
+
+
+def _ocr_name_fix(name: str) -> str:
+    """Common OCR slips in company names: "Itee" for "ltée", "lronwood" for "Ironwood"."""
+    out = []
+    name = re.sub(r"(?<!\bMc)(?<!\bMac)(?<=[a-z])(?=[A-Z][a-z])", " ", name)  # "TrueNorth" -> "True North"
+    for word in name.split():
+        fixed = _OCR_NAME_WORDS.get(word.lower())
+        if fixed and word.lower() not in ("ltd", "ltd."):
+            word = fixed
+        elif re.match(r"^l[bcdfghjkmnpqrstvwxz]", word):  # English words do not start "lr", "ln", ...
+            word = "I" + word[1:]
+        out.append(word)
+    return " ".join(out)
+
+
 def _looks_like_phone_or_postal(value: str) -> bool:
     digits = re.sub(r"\D", "", value)
     if re.fullmatch(r"\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]\d{4}", value) or (
@@ -291,6 +316,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         if len(norm_id(value)) < 2 or len(value) > 30:
             return None
         words = _span_words(line, a, b)
+        if any(w.source != "text" for w in words):
+            value = _ocr_id_fix(value)
         return Reading(field, value, value, _boxes(words), base * _min_conf(words), method)
     if field in ("invoice_date", "due_date"):
         found = parse_dates(rest, prefer_day_first=_DAY_FIRST.get())
@@ -511,8 +538,14 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
     """Drop a logo's initials printed on the name's line: "BT Bluewater Telecom" -> "Bluewater Telecom"."""
 
     def initials_of(ws: list[Word], n: int) -> str:
-        caps = [w.text[0] for w in ws if w.text[:1].isalpha()][:n]
-        return "".join(caps).upper()
+        # Word starts, and capitals inside words OCR glued together ("BirchmountHydraulics").
+        caps = [
+            c
+            for w in ws
+            for i, c in enumerate(w.text)
+            if c.isalpha() and (i == 0 or (c.isupper() and w.text[i - 1].islower()))
+        ]
+        return "".join(caps[:n]).upper()
 
     out = list(words)
     for i in (0, -1):
@@ -564,6 +597,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
         words = _without_logo_initials(line.words)
         if len(words) != len(line.words):
             text = " ".join(w.text for w in words)
+        if any(w.source != "text" for w in words):
+            text = _ocr_name_fix(text)
         out.append(Reading("vendor_name", text, text, [union_all([w.box for w in words])] if words else [line.box],
                            min(score, 0.95) * _min_conf(line.words), "top-of-page"))  # fmt: skip
     out.sort(key=lambda r: -r.score)
