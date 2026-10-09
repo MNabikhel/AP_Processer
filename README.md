@@ -106,6 +106,37 @@ In the dashboard:
 2. **Process invoices** → upload the PDFs in `samples/`.
 3. **Review queue** → review and approve. **Help** explains every check.
 
+### Run offline with LM Studio
+
+The coding step can use a model on your own computer instead of Azure OpenAI. Nothing is sent out.
+
+1. Install [LM Studio](https://lmstudio.ai/).
+2. Download and load a small *instruct* model: Qwen 2.5 7B Instruct, Qwen 3 8B, Llama 3.1 8B, or any
+   3B–8B instruct model. One that can see (an eye icon in LM Studio, e.g. Qwen 2.5 VL 7B) is also shown
+   the page images.
+3. **Developer** tab → **Start server**.
+
+AP Coder finds it on its own: `AP_LLM_PROVIDER=auto` (the default) uses Azure OpenAI when its endpoint
+is set, else the model loaded in LM Studio when the server answers, else no AI. **Settings → AI model**
+shows what it found (*Connected to LM Studio · qwen2.5-7b-instruct · can see pages: no*), has a
+**Test connection** button, and picks the server address and model. `python -m ap_coder doctor --online`
+codes one made-up invoice with it.
+
+| Setting | Default | |
+| --- | --- | --- |
+| `AP_LLM_PROVIDER` | `auto` | `local`, `azure` or `off` to choose |
+| `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1` |
+| `AP_LLM_MODEL` | empty | empty = the chat model loaded in LM Studio (never an embedding model) |
+| `AP_LLM_VISION` | `auto` | `on` / `off`: show the model page images |
+| `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
+| `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `300`, `4096` | a laptop without a graphics card is slow |
+
+The model is asked for the same strict JSON schema as Azure (LM Studio supports it). A server that
+refuses it gets plain JSON mode, then the schema in the prompt; replies wrapped in code fences or
+`<think>` blocks are still read, and an invalid answer gets one repair turn. Every check after coding is
+the same as with Azure. With no model at all, the rest of AP Coder still works; invoices just aren't
+coded by AI. Reading the invoice itself (Document Intelligence, or reading text files) is a separate step.
+
 ## Dashboard
 
 | Section | Page | What it does |
@@ -288,6 +319,7 @@ Next to the AI coder, AP Coder reads every invoice itself and shows *where* each
 ap_coder/
   extraction.py      Document Intelligence → ExtractionResult (+ cache)
   inference.py       Azure OpenAI Structured Outputs, model profiles, repair loop
+  local_llm.py       LM Studio / Ollama: finding the server and model, reading a small model's JSON
   prompts.py         system prompt (extraction, Canadian tax, GL coding, learning rules)
   schema.py          strict JSON Schema + Pydantic mirror
   tax.py             Canadian rates, tax checks, GL distribution

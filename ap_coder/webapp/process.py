@@ -11,6 +11,7 @@ import streamlit as st
 from ap_coder import ui
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS
+from ap_coder.local_llm import provider_status
 from ap_coder.mailbox import EMAIL_EXTENSIONS, unpack, unpack_folder
 from ap_coder.pipeline import InvoicePipeline, invoice_files
 from ap_coder.safe import md
@@ -86,6 +87,7 @@ def tax_types_mapped(store: Store) -> int:
 def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
     mapped = tax_types_mapped(store)
     gl_count = len(store.list_accounts("gl_accounts"))
+    ai = provider_status(settings)  # Azure OpenAI, or LM Studio on this computer
     return [
         (
             "ok" if settings.document_intelligence.endpoint else "bad",
@@ -93,9 +95,9 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
             "connected" if settings.document_intelligence.endpoint else "set it up in Settings → Azure",
         ),
         (
-            "ok" if settings.openai.endpoint else "bad",
-            "Azure OpenAI",
-            f"{settings.openai.deployment}" if settings.openai.endpoint else "set it up in Settings → Azure",
+            "ok" if ai.ready else "bad",
+            "AI model" if ai.provider != "azure" else "Azure OpenAI",
+            ai.label if ai.ready else "set it up in Settings → AI model",
         ),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),

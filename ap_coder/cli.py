@@ -16,6 +16,7 @@ from .doctor import exit_code, format_checks, run_checks
 from .evaluation import evaluate
 from .extraction import DocumentExtractor
 from .labels import export_labels
+from .local_llm import resolve_provider
 from .mailbox import unpack_folder
 from .pipeline import (
     InvoicePipeline,
@@ -294,8 +295,12 @@ def new_files(folder: Path, store: Store, now: float | None = None) -> list[Path
 
 
 def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
-    if not (settings.document_intelligence.endpoint and settings.openai.endpoint):
-        print("Azure is not set up yet: fill in .env (see GETTING_STARTED.md), then run this again.", file=sys.stderr)
+    if not settings.document_intelligence.endpoint or resolve_provider(settings) == "off":
+        print(
+            "Not set up yet: fill in .env (see GETTING_STARTED.md) or start LM Studio's server with a model loaded, "
+            "then run this again.",
+            file=sys.stderr,
+        )
         return 2
     store = Store(args.db)
     folder = Path(args.folder)
