@@ -12,20 +12,40 @@ It then exports approved invoices to JD Edwards E1. It runs fully offline. A loc
 1. **Unzip AP Coder** to a folder that OneDrive does not sync (e.g. `C:\APCoder\app`).
 2. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`; the first time, right-click → *Open*).
 
-That's it. The launcher checks what is already on the laptop and adds only what is missing:
+That's it, the first time and every day after. The launcher looks at what is already on the computer and adds
+only what is missing:
 
-- **Python:** it uses an installed Python 3.11–3.13. Only if none is found does it offer to install one.
-- **Packages:** it creates its own `.venv` once and installs only the packages that are missing or out of date.
-  It never touches your system Python or other projects.
-- **OCR models:** it downloads the scan-reading models only if they are not there yet.
-- **Shortcut and data folder:** it creates one desktop shortcut and your data folder (`~/APCoder`) once.
-- **Health check:** it reads the sample invoices, then prints a short readiness summary (Python, packages,
-  OCR, data folder, LM Studio) and opens the dashboard in your browser.
+- **Python:** it uses the Python 3.11–3.13 already installed. Only if there is none does it offer, once, to
+  install Python 3.12 for you.
+- **Packages:** it sets up its own environment (`.venv`) once and installs only missing packages. Your
+  system Python and other programs are not touched.
+- **OCR models, data folder, desktop shortcut:** each is made once, only if it is not there yet.
+- **Self-check:** it reads the ten sample invoices and one scan, then shows what is ready and opens the
+  dashboard:
 
-Later double-clicks start in seconds. If AP Coder is already running, the launcher just opens it again.
-For an air-gapped laptop, build the offline bundle (`python scripts/build_offline_bundle.py`). The same
-double-click then installs from its `wheelhouse/` folder without going online. The full pilot guide is
-[docs/PILOT.md](docs/PILOT.md); the step-by-step for real data is [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
+```
+AP Coder readiness:
+  [OK] Python 3.12.10 (.venv)
+  [OK] Packages: all 13 in place
+  [OK] OCR for scanned invoices
+  [OK] Data folder: C:\Users\you\APCoder
+  [OK] LM Studio: model qwen3.5-9b loaded
+  [OK] Desktop shortcut 'AP Coder' made (once)
+  [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR
+```
+
+The first time takes a few minutes. Later starts take seconds and install nothing. Double-clicking while AP
+Coder is running opens the running copy. After an update, only new packages are installed. A damaged
+`.venv` is rebuilt on its own. Keep the window open while you work, and close it to stop AP Coder. Your data
+lives in `~/APCoder`, outside the code, so updates never touch it. On a clean Windows machine, CI checks
+every change: it confirms the existing Python is used, a second start installs nothing, only one copy runs,
+and only one shortcut is made.
+
+No internet on the laptop? Build the offline bundle (`python scripts/build_offline_bundle.py`). The same
+double-click then installs from its `wheelhouse/` folder. `install.bat` / `install.sh` and `start.bat` /
+`start.sh` still work for older shortcuts; they run the same setup. The full pilot guide is
+[docs/PILOT.md](docs/PILOT.md). The step-by-step for real data is
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
 **Optional: local AI with LM Studio.** Install LM Studio (0.4.8 or newer) and download **Qwen 3.5 9B**
 (Q4_K_M). Load it with *Context Length 8192*, then go to **Developer → Start server**. AP Coder finds it
