@@ -39,3 +39,14 @@ def test_a_setting_written_below_its_commented_example_is_the_one_changed(tmp_pa
     write_env(env, {"AP_LLM_MODEL": "new-model"})
     assert read_env(env)["AP_LLM_MODEL"] == "new-model"
     assert env.read_text(encoding="utf-8").count("AP_LLM_MODEL=new-model") == 1
+
+
+def test_a_data_folder_set_with_quotes_on_windows_is_the_folder(tmp_path, monkeypatch):
+    # cmd's  set AP_PRIVATE_DIR="C:\Users\me\OneDrive - Acme\AP"  keeps the quotes in the value.
+    from ap_coder import paths
+
+    folder = tmp_path / "OneDrive - Acme" / "AP"
+    monkeypatch.setenv("AP_PRIVATE_DIR", f' "{folder}" ')
+    assert paths.private_dir() == folder
+    monkeypatch.setenv("AP_ENV_FILE", f'"{folder / ".env"}"')
+    assert paths.env_file() == folder / ".env"
