@@ -3,6 +3,7 @@
 import pytest
 
 from ap_coder import statements as stm
+from ap_coder.labels import _number
 from ap_coder.po import match_invoice
 from ap_coder.rules import Rule
 from ap_coder.schema import InvoiceCoding
@@ -65,3 +66,13 @@ def test_statement_dates_written_day_first_or_month_first_still_find_missing_inv
         (stm.MATCHED, "101"), (stm.MATCHED, "103"), (stm.NOT_ON_STATEMENT, "102"),
     }  # fmt: skip
     assert {li.date for li in rec.lines} == {"2026-09-01", "2026-09-15", "2026-09-30"}
+
+
+@pytest.mark.parametrize("text, value", [("(250.00)", -250.0), ("150,00", 150.0), ("1,234.50", 1234.5)])
+def test_label_amounts_read_credits_and_decimal_commas(text, value):
+    assert _number(text, "row 2 amount") == value
+
+
+def test_label_amount_that_is_not_a_number_is_an_error():
+    with pytest.raises(ValueError):
+        _number("n/a", "row 2 amount")
