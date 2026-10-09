@@ -201,7 +201,7 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
 .iv-row-text { display: flex; flex-direction: column; min-width: 0; }
 .iv-row-label { font-size: 11.5px; color: var(--muted); font-weight: 500; line-height: 1.3; }
 .iv-row-value {
-  font-size: 13.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums;
+  font-size: 13.5px; font-weight: 600; color: var(--ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35;
 }
 .iv-row-value.none { color: var(--faint); font-weight: 500; font-style: italic; }
@@ -396,8 +396,11 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
   .iv:not(.fields-open) .iv-panel-head { padding-bottom: 10px; }
   .iv-fold { display: inline-flex; }
   .iv-count, .iv-legend { display: none; }
-  .iv-list { max-height: 168px; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 8px; gap: 2px; scrollbar-width: thin; }
-  .iv-group-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1px 4px; }
+  .iv-list { max-height: 176px; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 8px; gap: 2px; scrollbar-width: thin;
+    /* the list scrolls: fade its last line so a half-cut row reads as "more below" */
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
+  .iv-group-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 1px 4px; }
   .iv-group-head { padding: 4px 10px 2px; }
   .iv-row { padding: 5px 8px; gap: 8px; }
   .iv-toolbar { padding: 8px 10px; gap: 8px 10px; }

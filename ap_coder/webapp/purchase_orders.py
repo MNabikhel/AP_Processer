@@ -62,7 +62,7 @@ def _importer(store: Store, has_pos: bool) -> None:
             "export also updates the quantities received. Columns are recognised automatically; check them below."
         )
         c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-        upload = c1.file_uploader("PO lines file", type=["csv", "xlsx"], key="po_upload")
+        upload = c1.file_uploader("PO lines (CSV or Excel)", type=["csv", "xlsx"], key="po_upload")
         c2.download_button(
             "Template", po_mod.template_csv(), file_name="purchase_orders_template.csv", mime="text/csv",
             icon=":material/download:", width="stretch",
@@ -97,7 +97,8 @@ def _importer(store: Store, has_pos: bool) -> None:
                 rows, skipped = po_mod.rows_from_records(df.to_dict("records"), chosen)
                 result = store.import_purchase_orders(rows, replace_all=replace, actor=reviewer())
                 notify(
-                    f"Imported {result['orders']} PO(s) with {result['lines']} line(s): {result['added']} new, "
+                    f"Imported {ui.plural(result['orders'], 'PO')} with {ui.plural(result['lines'], 'line')}: "
+                    f"{result['added']} new, "
                     f"{result['updated']} updated"
                     + (f", {ui.plural(skipped, 'row')} skipped (no PO number or description)." if skipped else "."),
                     ":material/shopping_cart:",
@@ -166,22 +167,21 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
         )  # fmt: skip
     )
     if invoices:
-        st.markdown("**Invoices on this PO**")
+        st.html(ui.subhead("Invoices on this PO", ui.plural(len(invoices), "invoice")))
         inv_rows = [
             [
-                f"#{i['id']}",
                 esc(i["invoice_number"] or ""),
                 esc(i["invoice_date"] or ""),
                 ui.pill("Approved", "ok", "check")
                 if i["status"] == "approved"
                 else ui.pill("Second approval", "violet")
                 if i["status"] == "pending_approval"
-                else ui.pill("In review", "warn"),
+                else ui.pill("In queue", "info", "inbox"),
                 money(i["coding"].get("subtotal")),
             ]
             for i in invoices
         ]
-        st.html(ui.table(["", "Invoice #", "Date", "", "Subtotal"], inv_rows, right=[4]))
+        st.html(ui.table(["Invoice #", "Date", "Status", "Subtotal"], inv_rows, right=[3]))
     else:
         st.caption("No invoices have quoted this PO yet.")
 
@@ -232,14 +232,14 @@ def page_purchase_orders() -> None:
             [
                 ui.tile("Open POs", len(open_pos), "shopping_cart", "blue", f"{len(pos)} in total"),
                 ui.tile(
-                    "Still to be invoiced", f"${committed:,.0f}", "pending_actions", "violet", "on open POs"
+                    "Still to be invoiced", money(committed), "pending_actions", "violet", "on open POs"
                 ),  # fmt: skip
                 ui.tile(
                     "Invoiced against POs",
-                    f"${sum(p['billed'] for p in pos):,.0f}",
+                    money(sum(p["billed"] for p in pos)),
                     "receipt_long",
                     "green",
-                    f"{sum(p['invoices'] for p in pos)} invoice(s)",
+                    ui.plural(sum(p["invoices"] for p in pos), "invoice"),
                 ),
                 ui.tile(
                     "Over-billed",

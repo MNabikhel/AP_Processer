@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import ui
+from ap_coder.reference_data import short_name
 from ap_coder.rules import Rule
 from ap_coder.rules import suggest as suggest_rules
 from ap_coder.safe import csv_cell, md
@@ -79,7 +80,9 @@ def _read_upload(upload: Any, table: str) -> pd.DataFrame | None:
 def account_manager(store: Store, table: str, noun: str) -> None:
     rows = store.list_accounts(table)
     with st.expander(f"Import {noun}s from CSV or Excel", expanded=not rows, icon=":material/upload:"):
-        upload = st.file_uploader("Choose a file exported from your ERP", type=["csv", "xlsx"], key=f"{table}_upload")
+        upload = st.file_uploader(
+            "A CSV or Excel file exported from your ERP", type=["csv", "xlsx"], key=f"{table}_upload"
+        )
         df = _read_upload(upload, table) if upload is not None else None
         if df is not None and df.empty:
             st.warning("This file has no rows under its header line.")
@@ -114,25 +117,28 @@ def account_manager(store: Store, table: str, noun: str) -> None:
                 st.rerun()
 
     if not rows:
-        st.caption(f"No {noun}s yet.")
+        st.html(ui.empty_note(f"No {noun}s yet", "Import them from a CSV or Excel file above.", "upload_file"))
         return
 
     counts = pd.Series([r["category"] or "Uncategorised" for r in rows]).value_counts()
     st.html(
-        " ".join(ui.pill(f"{cat} · {n}", "info" if i == 0 else "gray") for i, (cat, n) in enumerate(counts.items()))
+        "<div style='display:flex;flex-wrap:wrap;gap:.35rem'>"
+        + "".join(ui.pill(f"{cat} · {n}", "gray") for cat, n in counts.items())
+        + "</div>"
     )
     df = pd.DataFrame(rows)
     df.insert(0, "delete", False)
     edited = st.data_editor(
         df,
         column_config={
-            "delete": st.column_config.CheckboxColumn("Delete?", width="small"),
-            "code": st.column_config.TextColumn("Code", required=True),
+            "delete": st.column_config.CheckboxColumn("Delete", width="small", help="Tick, then Save changes"),
+            "code": st.column_config.TextColumn("Code", required=True, width="small"),
             "description": st.column_config.TextColumn("Description", width="large"),
             "category": st.column_config.TextColumn(
-                "Category", help="Group codes however you like, e.g. Opex, Capex, Sales Tax"
+                "Category", help="Group codes however you like, e.g. Opex, Capex, Sales Tax", width="medium"
             ),
         },
+        column_order=["code", "description", "category", "delete"],
         num_rows="dynamic",
         hide_index=True,
         key=f"{table}_editor_{abs(hash(tuple((r['code'], r['description'], r['category']) for r in rows)))}",
@@ -217,22 +223,27 @@ def page_accounts() -> None:
         ]
     )
     with tab_gl, card("gl"):
+        st.markdown("#### :material/account_tree: GL accounts")
         st.caption(
             "The AI may only use the codes listed here. Descriptions matter: the AI matches invoice lines "
             "against them. Use the category column to group codes your own way."
         )
         account_manager(store, "gl_accounts", "GL account")
     with tab_cc, card("cc"):
+        st.markdown("#### :material/apartment: Cost centers")
         st.caption("Optional. Leave empty if you do not code invoices to cost centers.")
         account_manager(store, "cost_centers", "cost center")
     with tab_tax:
         tax_setup(store)
     with tab_policy, card("policy"):
+        st.markdown("#### :material/rule: Coding policy")
         st.caption(
             "Plain-English rules the AI follows, one per line (e.g. 'Laptops under $2,500 go to 6010'). "
             "Lines starting with # are ignored."
         )
-        notes = st.text_area("Coding policy", store.get_setting("policy_notes"), height=260)
+        notes = st.text_area(
+            "Coding policy", store.get_setting("policy_notes"), height=260, label_visibility="collapsed"
+        )
         if st.button("Save policy", type="primary", icon=":material/save:"):
             store.set_setting("policy_notes", notes, actor=reviewer())
             notify("Coding policy saved.")
@@ -255,6 +266,7 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
     """Fixed coding rules: always this GL account (and cost center) for a vendor and/or words in a line."""
     current = store.coding_rules()
     with card("rules"):
+        st.markdown("#### :material/rule_settings: Fixed rules")
         st.caption(
             "Lines that always go to the same account, whatever the AI thinks: a vendor (e.g. *Purolator*), words "
             "a line contains (e.g. *freight*), or both. Applied to invoices processed from now on (for one already "
@@ -333,12 +345,12 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
 
 
 def tax_setup(store: Store) -> None:
-    st.caption(
-        "Choose how each sales tax is posted. Recoverable taxes (input tax credits / refunds) go to their own "
-        "GL account. Non-recoverable PST is normally added to the cost of the expense lines it applies to."
-    )
     accounts = store.list_accounts("gl_accounts")
-    labels = {"": "(choose an account)"} | {a["code"]: f"{a['code']} · {a['description'][:50]}" for a in accounts}
+    labels = {"": "(choose an account)"} | {
+        a["code"]: f"{a['code']} · {short_name(a['description'])}" for a in accounts
+    }
+    # The treatment names without the bracketed detail (the caption above says what recoverable means)
+    treatment_label = {k: v.split(" (")[0] for k, v in TREATMENTS.items()}
     options = ["", *(a["code"] for a in accounts)]
     treatments = store.tax_treatments()
     # Widget keys follow the stored data, so the form refreshes after an import or a save.
@@ -346,19 +358,29 @@ def tax_setup(store: Store) -> None:
         hash((tuple(options), tuple(sorted((t.tax_type, t.treatment, t.gl_code) for t in treatments.values()))))
     )
     where = {"GST": "Federal · all provinces", "HST": "ON · NB · NL · NS · PE", "PST": "BC · SK · MB (RST)",
-             "QST": "Quebec (TVQ)", "OTHER": "Outside Canada (US sales tax, VAT)"}  # fmt: skip
+             "QST": "Quebec (TVQ)", "OTHER": "Outside Canada (US tax, VAT)"}  # fmt: skip
     chosen = {}
     with card("taxsetup"):
+        st.markdown("#### :material/percent: How each sales tax posts")
+        st.caption(
+            "Recoverable taxes (input tax credits / refunds) go to their own GL account. Non-recoverable PST is "
+            "normally added to the cost of the expense lines it applies to."
+        )
+        h1, h2, h3 = st.columns([2.4, 3.8, 3.8])
+        h1.html(ui.colheads("Tax"))
+        h2.html(ui.colheads("Treatment"))
+        h3.html(ui.colheads("GL account"))
         for tax_type in TAX_TYPES:
             current = treatments[tax_type]
-            c1, c2, c3 = st.columns([2, 4, 4], vertical_alignment="center")
+            c1, c2, c3 = st.columns([2.4, 3.8, 3.8], vertical_alignment="center")
             c1.html(
-                f"<div>{ui.tax_chip(tax_type)}</div><div class='apc-muted' style='margin-top:.3rem'>"
-                f"{esc(where[tax_type])}</div>"
+                f"<div style='display:flex;align-items:center;gap:.5rem;min-width:0'>{ui.tax_chip(tax_type)}"
+                f"<span class='apc-muted' style='white-space:nowrap;overflow:hidden;text-overflow:ellipsis' "
+                f"title='{esc(where[tax_type])}'>{esc(where[tax_type])}</span></div>"
             )
             treatment = c2.selectbox(
                 "Treatment", list(TREATMENTS), index=list(TREATMENTS).index(current.treatment),
-                format_func=TREATMENTS.get, key=f"treat_{tax_type}_{version}", label_visibility="collapsed",
+                format_func=treatment_label.get, key=f"treat_{tax_type}_{version}", label_visibility="collapsed",
             )  # fmt: skip
             gl = ""
             if treatment == "expense_to_line":
@@ -383,9 +405,9 @@ def tax_setup(store: Store) -> None:
             else "the rate table that comes with AP Coder (updated with it)"
         )  # fmt: skip
         st.caption(
-            f"From {source}"
-            f": `{short_path(rates_path())}`. To change a rate before an update brings it, copy "
-            f"`data/{RATES_FILE}` into your data folder and edit the copy."
+            f"From {source}.",
+            help=f"Rate table: {short_path(rates_path())}. To change a rate before an update brings it, copy "
+            f"data/{RATES_FILE} into your data folder and edit the copy.",
         )
         today = dt.date.today()
         rows = [

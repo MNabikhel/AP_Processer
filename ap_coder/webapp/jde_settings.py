@@ -16,7 +16,7 @@ from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import card, notify, reviewer
 
 CHECKLIST = """\
-**Confirm with your JDE team before the first live load**
+Confirm with your JDE team before the first live load:
 
 - **Company numbers** (VLCO / VNCO / VLPKCO) and the business units the vouchers and lines go to.
 - **Document type** (PV, or a custom one for imported vouchers) and the **P0400047 version** R04110ZA uses
@@ -45,6 +45,7 @@ def _general(store: Store, js: jde.JdeSettings) -> None:
             "Exports → *JD Edwards E1* writes F0411Z1 (pay items) and F0911Z1 (G/L lines) files for the Voucher Batch "
             "Processor R04110ZA. See `docs/JDE_E1.md`."
         )
+        st.html(ui.subhead("Voucher header", first=True))
         c1, c2, c3 = st.columns(3)
         company = c1.text_input("Company (VLCO)", js.company, max_chars=5, help="Up to 5 digits; zero-padded.")
         user = c2.text_input("User ID (VLEDUS)", js.user, max_chars=10, help="The user R04110ZA is run for.")
@@ -56,19 +57,21 @@ def _general(store: Store, js: jde.JdeSettings) -> None:
         currencies = c3.text_input(
             "Currencies set up in E1", ", ".join(js.currencies), help="Invoices in other currencies are not exported."
         )
-        amount_mode = st.radio(
+        st.html(ui.subhead("Formats"))
+        r1, r2 = st.columns(2)
+        amount_mode = r1.radio(
             "Amounts", list(jde.AMOUNT_MODES), format_func=jde.AMOUNT_MODES.get,
             index=list(jde.AMOUNT_MODES).index(js.amount_mode), help="Never both: E1 rejects a voucher with both.",
         )  # fmt: skip
-        decimals = st.radio(
-            "Amount format", list(jde.DECIMAL_MODES), format_func=jde.DECIMAL_MODES.get, horizontal=True,
+        decimals = r2.radio(
+            "Amount format", list(jde.DECIMAL_MODES), format_func=jde.DECIMAL_MODES.get,
             index=list(jde.DECIMAL_MODES).index(js.decimals),
         )  # fmt: skip
-        account_mode = st.radio(
+        account_mode = r1.radio(
             "Account", list(jde.ACCOUNT_MODES), format_func=jde.ACCOUNT_MODES.get,
             index=list(jde.ACCOUNT_MODES).index(js.account_mode),
         )  # fmt: skip
-        numbering = st.radio(
+        numbering = r2.radio(
             "Line numbering (VNEDLN) · unconfirmed", list(jde.LINE_NUMBERING), format_func=jde.LINE_NUMBERING.get,
             index=list(jde.LINE_NUMBERING).index(js.line_numbering),
             help="Oracle's notes say VNEDLN must match VLEDLN; most loads number the lines 1, 2, 3 under pay item 1.",
@@ -77,8 +80,8 @@ def _general(store: Store, js: jde.JdeSettings) -> None:
             "PO-matched vouchers: invoices with a PO number get no G/L lines, to be matched to receipts in E1",
             value=js.po_matched,
         )
-        st.markdown("**Default account rule** (when the GL code is not in the mapping below)")
-        d1, d2, d3 = st.columns(3)
+        st.html(ui.subhead("Default account rule", "when the GL code is not in the mapping below"))
+        d1, d2, d3 = st.columns(3, vertical_alignment="bottom")
         use_default = d1.toggle("Use the default rule", value=js.use_default_rule,
                                 help="Object = the GL code, Subsidiary blank.")  # fmt: skip
         bu_from_cc = d2.toggle("BU = the line's cost center", value=js.bu_from_cost_center)
@@ -245,7 +248,7 @@ def _an8(store: Store, js: jde.JdeSettings) -> None:
             hide_index=True,
             key="jde_an8_editor",
         )
-        if st.button("Save the address numbers", icon=":material/save:", key="jde_an8_save"):
+        if st.button("Save the address numbers", type="primary", icon=":material/save:", key="jde_an8_save"):
             new = jde.JdeSettings.from_json(js.to_json())
             new.an8_overrides = {
                 vendor_key(_cell(r.get("vendor"))): _cell(r.get("an8"))
@@ -264,4 +267,5 @@ def jde_tab(store: Store) -> None:
     _tax_map(store, js)
     _an8(store, js)
     with card("jde_checklist"):
+        st.markdown("#### :material/fact_check: Before the first live load")
         st.markdown(CHECKLIST)

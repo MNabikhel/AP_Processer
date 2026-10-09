@@ -396,9 +396,16 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
     """One click for the invoices nobody needs to look at: clean when processed and still clean now."""
     result = st.session_state.pop("bulk_result", None)
     if result and result["skipped"]:
-        with st.expander(f"{len(result['skipped'])} invoice(s) were not approved: they need a look", expanded=True,
+        skipped = len(result["skipped"])
+        with st.expander(f"{ui.plural(skipped, 'invoice')} {'was' if skipped == 1 else 'were'} not approved: "
+                         f"{'it needs' if skipped == 1 else 'they need'} a look", expanded=True,
                          icon=":material/info:"):  # fmt: skip
-            st.html(ui.table(["#", "Why"], [[str(i), esc(why)] for i, why in result["skipped"]], wrap=[1]))
+            rows = []
+            for i, why in result["skipped"]:
+                inv = store.get_invoice(i) or {}
+                name = " · ".join(x for x in (inv.get("vendor_name"), inv.get("invoice_number")) if x) or f"#{i}"
+                rows.append([esc(name), esc(why)])
+            st.html(ui.table(["Invoice", "Why"], rows, wrap=[1]))
     candidates = clean_candidates(store)
     if len(candidates) < 2:
         return
@@ -430,7 +437,7 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
                     st.session_state["celebrate"] = True
                 waiting = sum(1 for i in result["approved"] if (store.get_invoice(i) or {}).get("status") == PENDING)
                 notify(
-                    f"Approved {len(result['approved'])} invoice(s)"
+                    f"Approved {ui.plural(len(result['approved']), 'invoice')}"
                     + (f"; {waiting} wait for a second approval." if waiting else "."),
                     ":material/done_all:",
                 )
@@ -983,6 +990,14 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             header["subtotal"] = amount(c1, "Subtotal", "subtotal")
             header["tax_total"] = amount(c2, "Tax total", "tax_total")
             header["grand_total"] = amount(c3, "Total", "grand_total")
+            # The fields can't show thousands separators: the same amounts, readable, with whether they add up
+            adds_up = abs(header["subtotal"] + header["tax_total"] - header["grand_total"]) < 0.015
+            st.html(
+                f"<div class='rvw-amounts'>{ui.money(header['subtotal'])} + {ui.money(header['tax_total'])} tax = "
+                f"<b>{ui.money(header['grand_total'])}</b> {esc(header.get('currency') or '')}"
+                + (f" {ui.icon('check', '1em', ui.OK)}" if adds_up else f" · {ui.pill('does not add up', 'warn')}")
+                + "</div>"
+            )
         _notes_card(store, invoice_id, key)
 
     # --- Line items ---------------------------------------------------------------------------------------
@@ -1131,7 +1146,9 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
 
     with card("posting"):
         st.html(_section_head("account_balance", "GL posting preview", "The journal lines approval sends to the ERP."))
-        st.html(_spend_split(output, reference))
+        split = _spend_split(output, reference)
+        if split:
+            st.html(split)
         _distribution_table(output, reference, coding.currency)
 
     # --- Sticky action bar --------------------------------------------------------------------------------
@@ -1493,6 +1510,8 @@ def _spend_split(output: dict[str, Any], reference: ReferenceData) -> str:
         else:
             label = f"{e['gl_code']} {name}".strip()
         by_gl[label] = by_gl.get(label, 0.0) + e["amount"]
+    if not any(amount > 0 for amount in by_gl.values()):  # a credit note: nothing to draw
+        return ""
     return f"<div class='rvw-split'>{ui.split_bar(sorted(by_gl.items(), key=lambda kv: -kv[1]))}</div>"
 
 

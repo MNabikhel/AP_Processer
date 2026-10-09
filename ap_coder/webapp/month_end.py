@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 import streamlit as st
 
@@ -29,6 +30,7 @@ TITLES = {
     accruals.NOT_IN_ERP: "Invoices not in the ERP yet",
     accruals.RECURRING: "Expected recurring invoices",
 }
+_ROW_ID = re.compile(r"\s*\(#\d+\)$")  # "Invoice SIL-4471 (#4)": the row id stays in the CSV, not on screen
 
 
 def page_month_end() -> None:
@@ -102,10 +104,11 @@ def page_month_end() -> None:
             "Download (CSV)", accruals.to_csv(items, end), file_name=f"accruals_{end}.csv", mime="text/csv",
             icon=":material/download:", width="stretch", key="me_download",
         )  # fmt: skip
+        shown = 0
         for source in accruals.SOURCES:
             rows = [
                 [
-                    f"<b>{esc(a.vendor)}</b><div class='apc-muted'>{esc(a.reference)}</div>",
+                    f"<b>{esc(a.vendor)}</b><div class='apc-muted'>{esc(_ROW_ID.sub('', a.reference))}</div>",
                     esc(a.description),
                     gl_text(a.gl_code)
                     + (f"<small class='apc-muted'>{esc(cc_display(a.cost_center))}</small>" if a.cost_center else ""),
@@ -115,5 +118,6 @@ def page_month_end() -> None:
                 if a.source == source
             ]
             if rows:
-                st.markdown(f"**{TITLES[source]}**")
+                st.html(ui.subhead(TITLES[source], ui.plural(len(rows), "line"), first=not shown))
+                shown += 1
                 st.html(ui.table(["Vendor", "What", "GL account", "Amount"], rows, right=[3], wrap=[0, 1, 2]))

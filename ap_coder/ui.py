@@ -122,20 +122,36 @@ def sparkline(values: Sequence[float], width: int = 96, height: int = 28, color:
     return svg_img(svg, width, height)
 
 
+_UNIT = re.compile(r"^(.*\d)\s+([A-Z]{3})$")  # "55,019.35 CAD": a figure and its currency
+
+
+def tile_value(value: Any) -> str:
+    """The value of a tile as HTML: a trailing currency code is set small beside the figure."""
+    text = "" if value is None else str(value)
+    m = _UNIT.match(text)
+    if m:
+        return f"{esc(m.group(1))}<span class='unit'>{esc(m.group(2))}</span>"
+    return esc(text)
+
+
 def tile(label: str, value: Any, icon_name: str, tone: str = "blue", hint: str = "", trend: str = "",
-         spark: Sequence[float] | None = None) -> str:  # fmt: skip
-    """``trend`` is 'up', 'down' or ''."""
+         spark: Sequence[float] | None = None, text: bool = False) -> str:  # fmt: skip
+    """``trend`` is 'up', 'down' or ''. ``text=True`` for a value that is a date or words, not a figure."""
     spark_svg = sparkline(spark or [], color={"green": OK, "amber": WARN}.get(tone, BRAND)) if spark else ""
     hint_html = f"<span class='hint {trend}'>{esc(hint)}</span>" if hint else "<span></span>"
     return (
-        f"<div class='apc-tile tone-{tone} apc-anim'><div class='top'><span class='label'>{esc(label)}</span>"
-        f"<span class='icon'>{icon(icon_name)}</span></div><div class='value'>{esc(value)}</div>"
+        f"<div class='apc-tile tone-{tone} apc-anim'><div class='top'><span class='label' title='{esc(label)}'>"
+        f"{esc(label)}</span><span class='icon'>{icon(icon_name)}</span></div>"
+        f"<div class='value{' text' if text else ''}'>{tile_value(value)}</div>"
         f"<div class='foot'>{hint_html}{spark_svg}</div></div>"
     )
 
 
 def tiles(items: Iterable[str]) -> str:
-    return f"<div class='apc-tiles'>{''.join(items)}</div>"
+    """A row of KPI tiles: four to a row, or as many as there are when fewer (no empty slot at the end)."""
+    items = list(items)
+    size = f" n{len(items)}" if len(items) in (2, 3) else ""
+    return f"<div class='apc-tiles{size}'>{''.join(items)}</div>"
 
 
 def breadcrumbs(parts: Sequence[str]) -> str:
@@ -159,6 +175,17 @@ def section_title(title: str, note: str = "") -> str:
     """A small uppercase heading between cards, with an optional note on the right."""
     note_html = f"<span>{esc(note)}</span>" if note else ""
     return f"<div class='apc-section'><h5>{esc(title)}</h5>{note_html}</div>"
+
+
+def subhead(title: str, note: str = "", first: bool = False) -> str:
+    """A small uppercase heading that groups fields inside a card (``first``: no rule above it)."""
+    note_html = f"<span>{esc(note)}</span>" if note else ""
+    return f"<div class='apc-subhead{' first' if first else ''}'><b>{esc(title)}</b>{note_html}</div>"
+
+
+def colheads(*titles: str) -> str:
+    """One column head (use one per st.columns cell above a hand-built grid of widgets)."""
+    return "".join(f"<div class='apc-colhead'>{esc(t)}</div>" for t in titles)
 
 
 def status(text: str, tone: str = "ok") -> str:

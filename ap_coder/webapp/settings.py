@@ -79,8 +79,8 @@ def azure_tab(store: Store) -> None:
     with card("azure"):
         st.markdown("#### :material/cloud: Azure connection")
         st.caption(
-            f"Saved in `{env_path()}`. Keys are only shown as their last 4 characters; leave a key field empty to "
-            "keep the current key."
+            "Saved on this computer. Keys show only their last 4 characters: leave a key field empty to keep it.",
+            help=f"Settings file: {env_path()}",
         )
         with st.form("azure_form", border=False):
             c1, c2 = st.columns(2)
@@ -231,7 +231,8 @@ def ai_model_tab() -> None:
         status = check_server(llm)
         if resolve_provider(settings) != "azure" and llm.provider != "off" and not status.active:
             steps = "\n".join(f"{n}. {step}" for n, step in enumerate(LM_STUDIO_STEPS, start=1))
-            st.markdown(f"**To use a model on this computer:**\n\n{steps}\n\nThen press **Test connection**.")
+            with st.container(key="note_lmstudio"):
+                st.markdown(f"**To use a model on this computer**\n\n{steps}\n\nThen press **Test connection**.")
 
     with card("ai_model_settings"), st.form("ai_model_form", border=False):
         st.markdown("#### :material/tune: Which model")
@@ -297,7 +298,8 @@ def review_tab() -> None:
             "Send to *Needs attention* when the AI's confidence is below",
             min_value=50, max_value=99, step=1, value=round(float(settings.engine.review_threshold) * 100),
             format="%d%%",
-            help="Invoices with any error always need attention. Higher = more invoices get a closer look.",
+            help="Invoices with any error always need attention. Higher = more invoices get a closer look. Applies "
+            "to invoices processed from now on; invoices already in the queue keep their flag.",
         ) / 100  # fmt: skip
         vision = st.toggle(
             "Also send page images to the AI (vision models only, e.g. gpt-4o)",
@@ -311,7 +313,7 @@ def review_tab() -> None:
         )
         if PUBLIC_DEMO:
             st.caption(":material/science: Fixed in the public demo: these apply to invoices read with Azure.")
-        if st.form_submit_button("Save", type="primary", icon=":material/save:", disabled=PUBLIC_DEMO):
+        if st.form_submit_button("Save review settings", type="primary", icon=":material/save:", disabled=PUBLIC_DEMO):
             name = reviewer_name.strip()
             renamed = bool(name) and name != reviewer()
             if renamed:  # logged under the old name, with both names
@@ -334,10 +336,6 @@ def review_tab() -> None:
                 changed.append("reviewer")
             notify(f"Saved {ui.plural(len(changed), 'change')}." if changed else "Nothing changed.", ":material/save:")
             st.rerun()
-    st.caption(
-        "The confidence threshold applies to invoices processed from now on; invoices already in the queue keep "
-        "their flag."
-    )
     store = get_store()
     with card("payment_settings"), st.form("payment_form", border=False):
         st.markdown("#### :material/event_available: Approval and payment")
@@ -356,7 +354,7 @@ def review_tab() -> None:
             help="CAD per unit of each foreign currency you are billed in. Used for estimates in CAD (Spend, Sales "
             "tax); invoices and exports keep their own currency.",
         )  # fmt: skip
-        if st.form_submit_button("Save", type="primary", icon=":material/save:"):
+        if st.form_submit_button("Save approval settings", type="primary", icon=":material/save:"):
             changed = []
             if fx.strip() != store.get_setting("fx_rates"):
                 store.set_setting("fx_rates", fx.strip(), actor=reviewer())
@@ -385,12 +383,17 @@ def data_tab(store: Store) -> None:
     with card("data_folder"):
         head, button = st.columns([3, 1], vertical_alignment="center")
         head.markdown("#### :material/folder_managed: Data folder")
-        head.html(
-            f"<div class='apc-muted'>Database, invoices, outputs, backups and Azure settings: "
-            f"<code>{esc(data)}</code></div>"
+        head.caption(
+            "Everything AP Coder keeps (database, invoices, exports, backups and settings) is in one folder on "
+            "this computer."
         )
         if button.button(
-            "Open folder", icon=":material/folder_open:", key="open_data", width="stretch", disabled=PUBLIC_DEMO
+            "Open folder",
+            icon=":material/folder_open:",
+            key="open_data",
+            width="stretch",
+            disabled=PUBLIC_DEMO,
+            help=str(data),
         ):
             if not open_folder(data):
                 st.info(f"Open this folder yourself: {data}")
@@ -474,7 +477,7 @@ def data_tab(store: Store) -> None:
             for b in backups[:10]
         ]
         st.html(ui.table(["Backup", "Made", "Size"], rows, right=[2]))
-        chosen = st.selectbox("Backup", [b.name for b in backups], key="backup_choice")
+        chosen = st.selectbox("Download or restore a backup", [b.name for b in backups], key="backup_choice")
         path = store.backup_dir() / chosen
         c1, c2 = st.columns(2)
         c1.download_button(
@@ -523,12 +526,13 @@ def about_tab() -> None:
             ["Computer", esc(f"{platform.system()} {platform.release()}")],
         ]
         st.html(ui.table(["", ""], rows, wrap=[1]))
-        st.markdown(
-            "**Updating:** close AP Coder and double-click `install.bat` again. With git it downloads the new "
-            "version (without git, extract the new ZIP over the same folder first); your data, settings and "
-            "shortcut are kept.\n\n"
-            "**Help:** see `docs/GETTING_STARTED.md` in the code folder."
-        )
+        with st.container(key="note_update"):
+            st.markdown(
+                "**Updating:** close AP Coder and double-click `install.bat` again. With git it downloads the new "
+                "version (without git, extract the new ZIP over the same folder first); your data, settings and "
+                "shortcut are kept.\n\n"
+                "**Help:** see `docs/GETTING_STARTED.md` in the code folder."
+            )
 
 
 def page_settings() -> None:

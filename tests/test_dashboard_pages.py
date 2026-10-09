@@ -140,7 +140,7 @@ def test_settings_page_saves_to_the_env_file(db, monkeypatch):
     assert list((db.parent / "backups").glob("ap_coder-*-manual.db"))
     reviewer = next(t for t in at.text_input if t.label == "Your name")
     reviewer.input("Jane Doe")
-    review_form_submit = next(b for b in at.button if b.label == "Save" and b.proto.is_form_submitter)
+    review_form_submit = next(b for b in at.button if b.label == "Save review settings" and b.proto.is_form_submitter)
     _ok(review_form_submit.click().run())
     from ap_coder.paths import read_user_settings
 

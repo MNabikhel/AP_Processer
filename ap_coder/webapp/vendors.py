@@ -137,16 +137,18 @@ def page_vendors() -> None:
         else:
             st.caption("No vendors match.")
 
-    _recurring_card(store)
-    _workload_card(store)
-
+    # Open one vendor right under the list; the recurring and workload overviews follow.
     names = {v["vendor_key"]: v["vendor_name"] for v in shown or vendors}
-    chosen = st.selectbox(
-        "Open a vendor", list(names), format_func=lambda k: names[k], key="vendor_open", index=None,
-        placeholder="Choose a vendor to see its invoices, GL accounts and controls",
-    )  # fmt: skip
+    with card("vendor_pick"):
+        chosen = st.selectbox(
+            "Open a vendor", list(names), format_func=lambda k: names[k], key="vendor_open", index=None,
+            placeholder="Choose a vendor to see its invoices, GL accounts and controls",
+        )  # fmt: skip
     if chosen:
         vendor_detail(store, next(v for v in vendors if v["vendor_key"] == chosen))
+
+    _recurring_card(store)
+    _workload_card(store)
 
 
 MASTER_LABELS = {"vendor_name": "Vendor name *", "erp_id": "Vendor ID", "gst": "GST/HST number",
@@ -163,7 +165,7 @@ def _master_importer(store: Store) -> None:
             "invoice shows none, and its default GL account is offered for uncoded lines. Import again any time: "
             "vendors are matched by name."
         )
-        upload = st.file_uploader("Vendor list", type=["csv", "xlsx"], key="vm_upload")
+        upload = st.file_uploader("Vendor list (CSV or Excel)", type=["csv", "xlsx"], key="vm_upload")
         df = _read_upload(upload, "vm") if upload is not None else None
         if df is None or df.empty:
             return
@@ -235,9 +237,13 @@ def _recurring_card(store: Store) -> None:
     with card("recurring"):
         st.markdown("#### :material/event_repeat: Recurring invoices")
         if not found:
-            st.caption(
-                "Vendors who bill on a regular rhythm (weekly to quarterly, at least three times) appear here "
-                "with their next expected invoice, so a missing one is noticed before it is paid late."
+            st.html(
+                ui.empty_note(
+                    "No regular billers yet",
+                    "Vendors who bill on a regular rhythm (weekly to quarterly, at least three times) appear here "
+                    "with their next expected invoice, so a missing one is noticed before it is paid late.",
+                    "event_repeat",
+                )
             )
             return
         late = [r for r in found if r.status == recurring.LATE]
@@ -290,7 +296,7 @@ def vendor_detail(store: Store, v: dict[str, Any]) -> None:
             f"<div><div style='font-weight:750;font-size:1.15rem'>{esc(name)} {status}</div>"
             f"<div class='apc-muted'>First invoice {esc(v['first_invoice'] or '—')} · "
             f"last {esc(v['last_invoice'] or '—')}"
-            f" · {v['lessons']} lesson(s) learned</div>{_master_line(store, v)}</div></div>"
+            f" · {ui.plural(v['lessons'], 'lesson')} learned</div>{_master_line(store, v)}</div></div>"
         )
         numbers = sorted({i["gst_hst_number"] for i in invoices if i["gst_hst_number"]})
         left, right = st.columns(2, gap="medium")

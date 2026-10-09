@@ -111,7 +111,7 @@ def _register_importer(store: Store) -> None:
             "Import the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months. "
             "Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP."
         )
-        upload = st.file_uploader("ERP invoice list", type=["csv", "xlsx"], key="reg_upload")
+        upload = st.file_uploader("ERP invoice list (CSV or Excel)", type=["csv", "xlsx"], key="reg_upload")
         df = _read_upload(upload, "reg") if upload is not None else None
         if df is not None and not df.empty:
             columns = list(df.columns)
@@ -239,6 +239,7 @@ def page_exports() -> None:
                     "event",
                     "green",
                     (f"batch {live[0]['id']} by {live[0]['actor'] or '?'}" if live else "nothing yet"),
+                    text=True,
                 ),  # fmt: skip
             ]
         )
@@ -270,7 +271,7 @@ def page_exports() -> None:
                 ],  # fmt: skip
                 column_config={
                     "include": st.column_config.CheckboxColumn("Export", width="small"),
-                    "vendor_name": st.column_config.TextColumn("Vendor", width="medium"),
+                    "vendor_name": st.column_config.TextColumn("Vendor", width="large"),
                     "invoice_number": "Invoice #",
                     "invoice_date": "Date",
                     "currency": "Cur.",
@@ -340,7 +341,7 @@ def page_exports() -> None:
     with card("export_batches"):
         st.markdown("#### :material/inventory_2: Past batches")
         if not batches:
-            st.caption("No exports yet.")
+            st.html(ui.empty_note("No exports yet", "Each export appears here and can be downloaded again.", "history"))
             return
         totals = store.batch_totals()
 
@@ -379,7 +380,7 @@ def page_exports() -> None:
         data, name, mime = _batch_file(store, chosen_batch, fmt)
         c3.download_button("Download again", data, file_name=name, mime=mime, icon=":material/download:",
                            width="stretch", key="export_download_again")  # fmt: skip
-        pdfs, undo = st.columns([1, 1], vertical_alignment="center")
+        pdfs = undo = st.container(horizontal=True, vertical_alignment="center")
         ready_zip = st.session_state.get("export_pdfs")
         if ready_zip and ready_zip[0] == chosen_batch:
             pdfs.download_button(

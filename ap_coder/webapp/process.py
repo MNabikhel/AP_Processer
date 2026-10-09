@@ -129,7 +129,7 @@ def page_process() -> None:
         done = sum(1 for s, _, _ in steps if s == "ok")
         head, gauge = st.columns([3, 1], vertical_alignment="center")
         head.markdown("#### :material/checklist: Setup")
-        head.caption("Everything the engine needs before it can read invoices.")
+        head.caption("What AP Coder needs before it reads invoices.")
         gauge.html(ui.ring(done / len(steps), size=56, stroke=6, label=f"{done}/{len(steps)}"))
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
         if any(s != "ok" for s, _, _ in steps[2:]):
@@ -161,9 +161,9 @@ def page_process() -> None:
     with left:
         with card("upload"):
             st.markdown("#### :material/upload_file: Upload invoices")
+            st.caption("Each file is saved to the invoices folder on this computer, then read, coded and checked.")
             uploaded = st.file_uploader(
-                "Drop PDFs, TIFFs, PNGs or JPGs here, or saved emails (.eml) with invoices attached. They are saved "
-                "to your private invoices folder on this computer.",
+                "PDFs, scans or photos (TIFF, PNG, JPG), or saved emails (.eml) with invoices attached",
                 type=sorted(e.lstrip(".") for e in SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS),
                 accept_multiple_files=True,
                 key=f"upload_{st.session_state.get('upload_round', 0)}",  # new key = empty uploader after a run
@@ -208,15 +208,15 @@ def page_process() -> None:
 
         with card("folder"):
             st.markdown("#### :material/folder_open: Invoices folder")
-            hint, button = st.columns([2.6, 1.4], vertical_alignment="center")
+            hint, button = st.columns([3, 1], vertical_alignment="center")
             hint.caption(
-                "Copy invoices into this folder, or have a scanner or mail rule save them there, and they appear "
-                f"below.  \n`{short_path(INVOICE_DIR)}`"
+                "Copy invoices into this folder, or have a scanner or mail rule save them there. New files are "
+                "listed here, ready to process."
             )
             if button.button(
-                "Open folder", icon=":material/folder_open:", key="open_invoices",
-                help="To process new files automatically (e.g. overnight), whoever runs AP Coder can start the "
-                "folder watcher: `python -m ap_coder watch`.",
+                "Open folder", icon=":material/folder_open:", key="open_invoices", width="stretch",
+                help=f"{short_path(INVOICE_DIR)}  \n\nTo process new files automatically (e.g. overnight), whoever "
+                "runs AP Coder can start the folder watcher: `python -m ap_coder watch`.",
             ):  # fmt: skip
                 if not open_folder(INVOICE_DIR):
                     st.info(f"Open this folder yourself: {INVOICE_DIR}")
@@ -228,7 +228,7 @@ def page_process() -> None:
             files = invoice_files(INVOICE_DIR) if INVOICE_DIR.exists() else []
             new_files = [p for p in files if store.find_by_hash(p, include_failed=True) is None]
             if not new_files:
-                st.html(ui.pill("No new files", "gray", "done_all"))
+                st.html(ui.empty_note("No new files", "Everything in the folder has been processed.", "done_all"))
             else:
                 rows = [
                     [f"{ui.icon('picture_as_pdf' if p.suffix.lower() == '.pdf' else 'image', '1.1em', '#c53030')} "

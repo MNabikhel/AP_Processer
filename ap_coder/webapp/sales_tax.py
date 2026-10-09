@@ -149,7 +149,7 @@ def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
         )
         rows = [
             [
-                f"<b>{esc(s.vendor)}</b><div class='apc-muted'>{esc(s.invoice_number)} · #{s.invoice_id}</div>",
+                f"<b>{esc(s.vendor)}</b><div class='apc-muted'>{esc(s.invoice_number)}</div>",
                 esc(s.invoice_date),
                 f"{esc(s.tax_type)} {esc(s.province)} {s.rate * 100:g}%",
                 f"{money(s.base)}",
@@ -172,7 +172,12 @@ def _claims(report: taxreturn.Report, start: dt.date, end: dt.date) -> None:
     with card("tax_rates"):
         st.markdown("#### :material/percent: By tax and rate")
         rows = [
-            [esc(t), esc(p or "—"), f"{r * 100:g}%", f"{money(total)} <span class='apc-muted'>{esc(cur)}</span>"]
+            [
+                ui.tax_chip(t),
+                esc(p or "—"),
+                f"{r * 100:g}%",
+                f"{money(total)} <span class='apc-muted'>{esc(cur)}</span>",
+            ]
             for t, p, r, cur, total in report.by_type()
         ]
         st.html(ui.table(["Tax", "Province", "Rate", "To claim"], rows, right=[2, 3]))
@@ -193,9 +198,9 @@ def _claims(report: taxreturn.Report, start: dt.date, end: dt.date) -> None:
         shown = at_risk if only_risky else report.claims
         rows = [
             [
-                f"<b>{esc(c.vendor)}</b><div class='apc-muted'>{esc(c.invoice_number)} · #{c.invoice_id}</div>",
+                f"<b>{esc(c.vendor)}</b><div class='apc-muted'>{esc(c.invoice_number)}</div>",
                 esc(c.invoice_date),
-                f"{esc(c.tax_type)} {esc(c.province)} {c.rate * 100:g}%"
+                f"{ui.tax_chip(c.tax_type)} {esc(c.province)} {c.rate * 100:g}%"
                 + f"<div class='apc-muted'>{esc(c.registration or 'no number')}</div>",
                 f"{money(c.amount)} <span class='apc-muted'>{esc(c.currency)}</span>",
                 " ".join(ui.pill(i, ISSUE_TONES.get(i, "gray")) for i in c.issues),

@@ -63,7 +63,7 @@ def _history_card(store) -> None:
                 rows, skipped = history.rows_from_records(df.to_dict("records"), chosen)
                 result = store.import_history(rows, actor=reviewer())
                 notify(
-                    f"Taught {result['added']:,} past line(s)"
+                    f"Taught {ui.plural(result['added'], 'past line')}"
                     + (f"; {result['skipped'] + skipped:,} skipped (incomplete or already taught)"
                        if result["skipped"] + skipped else "")
                     + (f"; {result['unknown_gl']:,} with a GL account that is not in your list" if result["unknown_gl"]

@@ -50,10 +50,13 @@
 /* ---- Invoice details: compact form ------------------------------------------------------------------- */
 .st-key-card_details [data-testid="stNumberInputStepDown"],
 .st-key-card_details [data-testid="stNumberInputStepUp"] {display: none;}
-.st-key-card_details input {font-variant-numeric: tabular-nums;}
+/* Aligned figures in the amount fields only: Inter's tabular figures also widen hyphens ("Mont - Royal") */
+.st-key-card_details [data-testid="stNumberInput"] input {font-variant-numeric: tabular-nums;}
 .st-key-card_details [data-testid="stNumberInput"] input {text-align: right;}
 .st-key-card_details [data-testid="stWidgetLabel"] p {font-size: .8rem; color: var(--apc-muted); font-weight: 550;}
 .st-key-card_details [data-testid="stHorizontalBlock"] {gap: .6rem;}
+.rvw-amounts {font-size: .8rem; color: var(--apc-muted); text-align: right; font-variant-numeric: tabular-nums; margin-top: -.2rem;}
+.rvw-amounts b {color: var(--apc-ink); font-weight: 650;}
 
 /* ---- Checks: one status block ------------------------------------------------------------------------ */
 .rvw-status {border-radius: 10px; border: 1px solid; padding: .6rem .75rem; font-size: .87rem; color: var(--apc-ink);}

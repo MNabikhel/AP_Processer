@@ -10,7 +10,7 @@ import streamlit as st
 
 from ap_coder import ui
 from ap_coder.insights import Assumptions, compute, operations, report_html
-from ap_coder.webapp.common import card, esc, get_store, notify, page_head, reviewer, show_toast
+from ap_coder.webapp.common import SERIES_BLUE, card, esc, get_store, notify, page_head, reviewer, show_toast
 
 OK_GREEN, WARN_AMBER = "#1baf7a", "#eda100"
 
@@ -195,7 +195,7 @@ def page_insights() -> None:
                     f"<div style='margin:.35rem 0'><div style='display:flex;justify-content:space-between;"
                     f"font-size:.85rem'><span title='{esc(code)}'>{esc(_check_title(code))}</span><b>{n}</b></div>"
                     f"<div style='height:6px;background:#eef1f6;border-radius:4px'><div style='height:6px;"
-                    f"width:{n / biggest:.0%};background:{WARN_AMBER};border-radius:4px'></div></div></div>"
+                    f"width:{n / biggest:.0%};background:{SERIES_BLUE};border-radius:4px'></div></div></div>"
                     for code, n in s["top_issues"]
                 )
             )
