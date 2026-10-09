@@ -335,8 +335,11 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                                 soft=field in soft)  # fmt: skip
         conf = calibrate(max(0.0, min(raw, 1.0)), evidence)
         # A lone reader is never verified on its own measured record (the benchmark is synthetic):
-        # verified also needs a second reader or a check to agree.
-        if len(sources) < 2 and not (n_conf and field not in failed):
+        # verified also needs a second reader or a check to agree. The second OCR read of a scan
+        # shares the first one's blind spots (a word OCR never saw), so with the rule reader it
+        # counts as one reader.
+        independent = {"rules" if s == "ocr" else s for s in sources}
+        if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
         ambiguous = all("ambiguous" in r.method for _, r in g.readings)
         if ambiguous:

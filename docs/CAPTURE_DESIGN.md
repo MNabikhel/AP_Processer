@@ -169,28 +169,30 @@ Measured on invoices the reader was never tuned on (fresh random seeds), with **
 reader and the checks**: no AI, no Document Intelligence, no supplier template. In production those
 add independent readers, which is what lifts identifiers and names to *verified*.
 
-**One invoice at a time, no history** (`bench run`):
+**One invoice at a time, no history** (`bench run`; each invoice is given a received date 1-25 days
+after its invoice date, as the pipeline knows the day it processes an invoice):
 
-| test set (fresh seed) | invoices | field accuracy | invoices fully right | *verified*: share of fields | *verified*: right | calibration error |
-|---|---:|---:|---:|---:|---:|---:|
-| digital PDFs | 1,000 | 99.4% | 93.9% | 53.6% | 100% | 0.017 |
-| scans (rotated, noisy, JPEG; local OCR) | 150 | 96.7% | 72.7% | 34.1% | 100% | 0.036 |
+| test set (fresh seed) | invoices | field accuracy | invoices fully right | no silent error | *verified*: share of fields | *verified*: right | calibration error |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| digital PDFs | 1,000 | 99.9% | **99.3%** | 99.9% | 54.4% | 100% | 0.018 |
+| scans (150-200 dpi, tilted, noisy, JPEG; local OCR, two reads) | 200 | 99.3% | 93.5% | 97.5% | 33.5% | 100% | 0.033 |
 
-On the digital set, 94.9% of fields come out *verified* or *likely*, and those were right 99.8% of
-the time; the rest are marked *check*.
+*No silent error*: every value on the invoice is right, or the one that is not is marked *check* or
+*missing* for a person; nothing wrong is shown as *verified* or *likely*. On the digital set 99.4%
+of fields come out *verified* or *likely*, right 99.99% of the time.
 
 **Learning each supplier** (`bench learn`: every supplier sends invoices that look alike; AP
 approves each one, the template learns, the autonomy policy is applied):
 
-| suppliers × invoices | 1st invoice | invoices 6-40 | without the template | reached autonomy | touchless after | touchless with a wrong field |
-|---|---:|---:|---:|---:|---:|---:|
-| 40 × 40 digital (fresh seed) | 99.5% | 100.0% | 99.5% | 23 of 40 (median: invoice 34) | 77 of 145 (53%) | **0** |
-| 10 × 30 scanned | 98.0% | 99.2-99.8% | 97.5-98.2% | 0 of 10 | - | - |
+| suppliers × invoices (fresh seed) | 1st invoice | later invoices | reached autonomy | touchless after | touchless with a wrong field |
+|---|---:|---:|---:|---:|---:|
+| 40 × 40 digital | 100.0% | 100.0% | 21 of 40 (median: invoice 37) | 52 of 109 (48%) | **0** |
+| 8 × 25 scanned | 96.2% | 99.0-100% | 0 of 8 | - | - |
 
-Across those 1,900 simulated invoices, none of the ones that met the touchless bar (every printed
-field *verified*, every check passed) had a wrong field. No scanned-only supplier reached the 99%
-bound within 30 invoices: the policy is doing its job, and those suppliers stay supervised until a
-second reader (Document Intelligence or the AI) closes the OCR gap.
+No simulated invoice that met the touchless bar (every printed field *verified*, every check passed)
+has had a wrong field, in any run. No scanned-only supplier reaches the 99% bound within 25
+invoices: the policy is doing its job, and those suppliers stay supervised until more confirmed
+invoices, or a second independent reader (Document Intelligence or the AI), close the OCR gap.
 
 Every wrong *verified* value the runs turned up while this was built became a fix and a test (a
 thousands comma read as ";" by OCR, a table's "Total" column taken for the invoice total, a
@@ -198,21 +200,26 @@ customer's GST number glued to "Your GST No.", a template dropping a credit's "C
 without its legal suffix).
 
 What this means for "99%":
-- On digital PDFs the reader is already at 99%+ per field, and no field it marked *verified* was
-  wrong. On scans OCR misreads characters (l/I, O/0, accents) and drops spaces; most of the gap is
-  there, and Document Intelligence's OCR or the AI's reading of the same page closes it.
-- 99% of fields right is not 99% of invoices right: an invoice has ~10 printed fields. That is why
-  the route is per field (*verified* fields need no look) and why autonomy is earned **per
-  supplier** on its own confirmed invoices, not granted on benchmark numbers.
+- **Digital PDFs** (most supplier invoices today): 99.3% of whole invoices fully right with no AI and
+  no history, 99.9% with nothing wrong left unflagged, 100% once the supplier's template has learned.
+- **Scans** are the gap: local OCR misreads characters (l/I, O/0, accents), drops spaces and
+  sometimes misses a word at the edge of the page. 93.5% of scanned invoices are fully right on their
+  own and 97.5% have nothing wrong left unflagged. Document Intelligence's OCR or the AI's reading of
+  the same page is the independent second reader that closes it; until then scanned suppliers stay
+  supervised.
+- 99% of fields is not 99% of invoices (an invoice has about ten fields), which is why the numbers
+  above are per invoice, why routing is per field, and why autonomy is earned per supplier.
 - The benchmark is a tool, not a guarantee: its layouts are varied but invented. The pilot measures
   the same numbers on real invoices (every approval records which fields AP corrected), and a
-  supplier only goes touchless once *its* corrections over its recent invoices show ≥ 99% with
+  supplier only goes touchless once *its* corrections over its recent invoices show >= 99% with
   confidence (lower bound, not a streak).
 
 ### Scale
 
-Text-layer capture takes about 20 ms per invoice on one CPU core; OCR of a scanned page about
-2-4 s. A million invoices a month is ~23 per minute in a working month: one core for digital
+Text-layer capture takes about 20 ms per invoice on one CPU core. A scanned page takes two local
+OCR reads, several seconds per page per core (about 30 s per scanned invoice per worker on the
+4-core test machine with all cores busy); at volume, scans should go to Document Intelligence or a
+GPU OCR service. A million invoices a month is ~23 per minute in a working month: one core for digital
 PDFs, a handful of OCR workers (or Document Intelligence) for scans. Capture is stateless per
 invoice, so it runs in parallel workers behind a queue; supplier templates and statistics are small
 rows keyed by supplier.
