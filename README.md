@@ -141,7 +141,7 @@ AP Coder finds it on its own: `AP_LLM_PROVIDER=auto` (the default) uses Azure Op
 is set, else the model loaded in LM Studio when the server answers, else no AI. **Settings → AI model**
 shows what it found (*Connected to LM Studio · qwen2.5-7b-instruct · can see pages: no*), has a
 **Test connection** button, and picks the server address and model. `python -m ap_coder doctor --online`
-codes one made-up invoice with it.
+asks it for the accounts of two made-up lines, as the pipeline does for lines nothing else could code.
 
 | Setting | Default | |
 | --- | --- | --- |
