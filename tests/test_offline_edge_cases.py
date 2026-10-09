@@ -124,3 +124,14 @@ def test_a_file_that_cannot_be_read_does_not_stop_the_batch(tmp_path, reference,
     assert [r.source.name for r in results] == ["locked.pdf", good.name]
     assert not results[0].ok and results[0].error
     assert results[1].ok and results[1].invoice_id
+
+
+def test_output_names_never_collide():
+    from pathlib import Path
+
+    from ap_coder.pipeline import output_stems
+
+    paths = [Path("a/Invoice.pdf"), Path("b/Invoice.pdf"), Path("c/Invoice_2.pdf"), Path("d/INVOICE.pdf")]
+    stems = output_stems(paths)
+    assert len({s.lower() for s in stems}) == len(paths), stems
+    assert stems == ["Invoice", "Invoice_3", "Invoice_2", "INVOICE_4"]  # c keeps its own name

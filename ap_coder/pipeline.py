@@ -340,12 +340,20 @@ class InvoicePipeline:
 def output_stems(paths: list[Path]) -> list[str]:
     """One output name per input. Same-named files from different folders (e.g. two vendors'
     ``Invoice.pdf``) get ``_2``, ``_3``... so their results don't overwrite each other."""
-    seen: dict[str, int] = {}
+    taken = {p.stem.lower() for p in paths}  # a file's own name stays its own (c/Invoice_2.pdf keeps Invoice_2)
+    first: set[str] = set()
     stems = []
     for p in paths:
         key = p.stem.lower()
-        seen[key] = seen.get(key, 0) + 1
-        stems.append(p.stem if seen[key] == 1 else f"{p.stem}_{seen[key]}")
+        if key not in first:
+            first.add(key)
+            stems.append(p.stem)
+            continue
+        n = 2
+        while f"{key}_{n}" in taken:
+            n += 1
+        taken.add(f"{key}_{n}")
+        stems.append(f"{p.stem}_{n}")
     return stems
 
 
