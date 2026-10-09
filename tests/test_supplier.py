@@ -231,6 +231,99 @@ def test_the_supplier_date_order_is_learned():
     assert _top(apply_template(template, ambiguous), "invoice_date").value == "2026-11-03"
 
 
+def test_learning_continues_from_the_template_as_the_store_keeps_it():
+    stored = json.loads(json.dumps(_learned(1).to_dict()))  # a dict, as get_supplier_profile returns it
+    template = learn(stored, _invoice(dy=0.002), CONFIRMED)
+    assert isinstance(template, Template) and template.invoices == 2
+    assert template.fields["invoice_number"][0].count == 2
+
+
+def _totals(lines: int, gst: str, total: str) -> DocLayout:
+    """Totals that move down the page with the number of lines, the tax rate printed by its label and a
+    "Line Total" column heading over the amounts."""
+    items = [("Description", 0.06, 0.25), ("Line", 0.8, 0.25), ("Total", 0.836, 0.25)]
+    items += [(t, x, 0.28 + 0.03 * i) for i in range(lines) for t, x in ((f"Item{i}", 0.06), (f"{11 + i}.00", 0.8))]
+    y = 0.3 + 0.03 * lines
+    items += [("Sub", 0.6, y), ("Total:", 0.627, y), ("1,150.00", 0.8, y),
+              ("GST", 0.6, y + 0.02), ("5%", 0.63, y + 0.02), (gst, 0.8, y + 0.02),
+              ("Total:", 0.6, y + 0.04), (total, 0.8, y + 0.04)]  # fmt: skip
+    return DocLayout([_page(items)], "text")
+
+
+def test_totals_are_read_by_their_own_label_when_the_lines_push_them_down():
+    template = None
+    for _ in range(2):
+        template = learn(template, _totals(2, "57.50", "1,207.50"), {"gst_amount": (57.5, None),
+                                                                     "grand_total": (1207.5, None)})  # fmt: skip
+    gst = template.fields["gst_amount"][0]
+    assert gst.anchor.text == "GST" and gst.anchor.where == "left"  # past the rate, not the column heading above
+    readings = apply_template(template, _totals(6, "60.00", "1,260.00"))
+    assert [r.value for r in readings["gst_amount"]] == [60.0]
+    # "Total:" is the whole label of the total, not the end of "Sub Total:" nor the "Line Total" heading.
+    assert [r.value for r in readings["grand_total"]] == [1260.0]
+
+
+def test_a_value_printed_in_several_words_is_one_reading():
+    def page(terms: list[str], total: list[str]) -> DocLayout:
+        items = [("Terms:", 0.1, 0.5), *[(w, 0.2 + 0.05 * i, 0.5) for i, w in enumerate(terms)]]
+        items += [("TOTAL:", 0.6, 0.8), (total[0], 0.75, 0.8), (total[1], 0.762, 0.8)]
+        return DocLayout([_page(items)], "text")
+
+    template = None
+    for _ in range(2):
+        template = learn(template, page(["NET", "60"], ["2", "292,84"]), {"payment_terms": ("NET 60", None),
+                                                                         "grand_total": (2292.84, None)})  # fmt: skip
+    readings = apply_template(template, page(["NET", "45"], ["1", "868,10"]))
+    assert [r.raw for r in readings["payment_terms"]] == ["NET 45"]  # not "NET" and "45" as rival values
+    assert [r.value for r in readings["grand_total"]] == [1868.1]  # "1 868,10", not "1"
+
+
+def test_payment_terms_compare_by_meaning_and_are_learned_as_printed():
+    from ap_coder.capture.normalize import normalize_value
+    from ap_coder.capture.supplier import compare_key
+
+    assert compare_key("payment_terms", "30 days") == compare_key("payment_terms", "Net 30")
+    assert compare_key("payment_terms", "2% 10, Net 30") != compare_key("payment_terms", "Net 30")
+    assert normalize_value("payment_terms", "60 jours net") == normalize_value("payment_terms", "Net 60")
+    assert normalize_value("payment_terms", "Payable à réception") == normalize_value("payment_terms", "Due on receipt")
+    assert outcome_rows({"payment_terms": "Net 30"}, {"payment_terms": "30 days"})[0]["correct"]
+    layout = DocLayout([_page([("Terms:", 0.1, 0.5), ("30", 0.2, 0.5), ("days", 0.225, 0.5)])], "text")
+    template = learn(None, layout, {"payment_terms": ("Net 30", None)})  # the reader's wording, as AP approved it
+    variant = template.fields["payment_terms"][0]
+    assert variant.anchor.text == "Terms:" and variant.shape.patterns == {"99 AAAA": 1}  # "30 days" as printed
+
+
+def test_the_label_on_the_value_row_beats_another_label_above():
+    layout = DocLayout(
+        [_page([("PO", 0.1, 0.2), ("Votre", 0.44, 0.2), ("commande:", 0.49, 0.2), ("BC-1", 0.6, 0.2),
+                ("Terms:", 0.1, 0.215), ("Net", 0.5, 0.215), ("30", 0.53, 0.215)])],
+        "text",
+    )  # fmt: skip
+    template = learn(None, layout, {"payment_terms": ("Net 30", None)})
+    assert template.fields["payment_terms"][0].anchor.text == "Terms:"
+
+
+def test_an_optional_field_whose_label_is_missing_is_not_read_by_position():
+    def page(po_label: bool) -> DocLayout:
+        items = [("Invoice", 0.1, 0.1), ("No:", 0.156, 0.1), ("A-1", 0.25, 0.1)]
+        items += (
+            [("PO:", 0.1, 0.12), ("PO-12345", 0.25, 0.12)]
+            if po_label
+            else [("SO:", 0.1, 0.12), ("SO-55555", 0.25, 0.12)]
+        )
+        return DocLayout([_page(items)], "text")
+
+    template = learn(None, page(True), {"po_number": ("PO-12345", None), "invoice_number": ("A-1", None)})
+    readings = apply_template(template, page(False))  # no PO on this one: a sales order sits in its place
+    assert "po_number" not in readings and _top(readings, "invoice_number").value == "A-1"
+
+
+def test_each_confirmation_at_the_same_label_adds_trust():
+    new = _invoice("NW-2026-0999", dy=0.03)
+    scores = [_top(apply_template(_learned(n), new), "invoice_number").score for n in (1, 2, 6)]
+    assert scores[0] < scores[1] < scores[2] <= 0.99
+
+
 def test_confirmed_values_and_outcome_rows_from_codings():
     final = {"vendor_name": "Northwind Supplies", "invoice_number": "NW-1", "grand_total": 113.0,
              "tax_lines": [{"tax_type": "HST", "tax_amount": 13.0}]}  # fmt: skip
