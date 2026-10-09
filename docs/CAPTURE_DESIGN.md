@@ -174,8 +174,8 @@ after its invoice date, as the pipeline knows the day it processes an invoice):
 
 | test set (fresh seed) | invoices | field accuracy | invoices fully right | no silent error | *verified*: share of fields | *verified*: right | calibration error |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| digital PDFs | 1,000 | 99.9% | **99.3%** | 99.9% | 54.4% | 100% | 0.018 |
-| scans (150-200 dpi, tilted, noisy, JPEG; local OCR, two reads) | 200 | 99.3% | 93.5% | 97.5% | 33.5% | 100% | 0.033 |
+| digital PDFs | 1,000 | 100.0% | **99.2%** | 99.8% | 54.9% | 100% | 0.019 |
+| scans (150-200 dpi, tilted, noisy, JPEG; two local OCR engines) | 200 | 99.6% | 95.5% | 98.0% | 44.2% | 100% | 0.037 |
 
 *No silent error*: every value on the invoice is right, or the one that is not is marked *check* or
 *missing* for a person; nothing wrong is shown as *verified* or *likely*. On the digital set 99.4%
