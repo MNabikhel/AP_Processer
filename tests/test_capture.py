@@ -310,3 +310,11 @@ def test_passing_weak_checks_neither_confirm_nor_fail():
     fr = results["invoice_date"]
     assert not any(r.startswith("check failed") for r in fr.reasons)
     assert not any("confirmed" in r for r in fr.reasons)
+
+
+def test_ocr_thousands_separator():
+    from ap_coder.capture.normalize import find_amounts
+
+    assert parse_amount("1;864.71") == 1864.71
+    assert parse_amount("$1:664.92") == 1664.92
+    assert [a[0] for a in find_amounts("Total 1;864.71")] == [1864.71]

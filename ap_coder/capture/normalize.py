@@ -21,11 +21,19 @@ _AMOUNT = re.compile(
 )
 
 
+_OCR_THOUSANDS = re.compile(r"(?<=\d)[;:](?=\d{3}(?!\d))")
+
+
+def _ocr_amount_text(s: str) -> str:
+    """OCR prints the thousands comma as ";" or ":" ("1;864.71"). Same length, so spans stay valid."""
+    return _OCR_THOUSANDS.sub(",", s)
+
+
 def parse_amount(text: str | None) -> float | None:
     """'1,234.56' / '1 234,56 $' / '$(12.00)' / '12.00 CR' / '-1.234,56' -> float. None if no amount."""
     if text is None:
         return None
-    s = unicodedata.normalize("NFKC", str(text)).strip()
+    s = _ocr_amount_text(unicodedata.normalize("NFKC", str(text)).strip())
     s = _CURRENCY_WORDS.sub(" ", s)
     m = _AMOUNT.search(s)
     if not m:
@@ -60,7 +68,7 @@ def amounts_equal(a: float | None, b: float | None, tol: float = 0.005) -> bool:
 def find_amounts(text: str) -> list[tuple[float, int, int]]:
     """Every amount in ``text`` with its character span (a sign or parentheses included)."""
     out = []
-    s = unicodedata.normalize("NFKC", text)
+    s = _ocr_amount_text(unicodedata.normalize("NFKC", text))
     for m in _AMOUNT.finditer(s):
         num = m.group("num")
         if not num or not any(c.isdigit() for c in num):
