@@ -2,6 +2,7 @@
 
 import pytest
 
+from ap_coder import statements as stm
 from ap_coder.po import match_invoice
 from ap_coder.rules import Rule
 from ap_coder.schema import InvoiceCoding
@@ -47,3 +48,20 @@ def test_po_matching_with_repeated_line_numbers_pairs_each_line(tmp_path):
     result = match_invoice(coding, store)
     assert [m.po_line for m in result.lines] == [1, 2]
     assert {f[1] for f in result.findings} == {"PO_MATCHED"}
+
+
+def test_statement_dates_written_day_first_or_month_first_still_find_missing_invoices():
+    statement = [
+        {"No": "101", "Date": "09/01/2026", "Amt": "100.00"},  # not ISO: as most accounting packages print it
+        {"No": "103", "Date": "09/30/2026", "Amt": "75.00"},
+    ]
+    invoices = [
+        {"id": 1, "invoice_number": "101", "grand_total": 100.0, "invoice_date": "2026-09-01", "status": "approved"},
+        {"id": 2, "invoice_number": "102", "grand_total": 60.0, "invoice_date": "2026-09-15", "status": "approved"},
+        {"id": 3, "invoice_number": "103", "grand_total": 75.0, "invoice_date": "2026-09-30", "status": "approved"},
+    ]
+    rec = stm.reconcile(statement, {"number": "No", "date": "Date", "amount": "Amt"}, invoices)
+    assert {(li.status, li.number) for li in rec.lines} == {
+        (stm.MATCHED, "101"), (stm.MATCHED, "103"), (stm.NOT_ON_STATEMENT, "102"),
+    }  # fmt: skip
+    assert {li.date for li in rec.lines} == {"2026-09-01", "2026-09-15", "2026-09-30"}
