@@ -1,0 +1,662 @@
+# ruff: noqa: E501  (label and pattern tables read best one per line)
+"""Rule reader: finds invoice header fields from labels, patterns and positions on the page.
+
+For every field it returns candidate readings, best first, each with the box of the words it read.
+It knows English and French labels, glued OCR text ("InvoiceNo:"), label-then-value on one line,
+value to the right of the label, value below it (also header grids), and it avoids the usual traps
+(order and ship dates, PO Box, customer numbers, previous balances, registration numbers next to tax
+amounts). Totals are chosen together: the subtotal, taxes and total that add up win.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from dataclasses import dataclass
+from itertools import product
+
+from .normalize import (
+    find_currency,
+    find_gst_numbers,
+    find_qst_numbers,
+    looks_like_money,
+    norm_id,
+    parse_dates,
+)
+from .types import AMOUNT_FIELDS, Box, DocLayout, Line, LineReading, Reading, Word, union_all
+
+
+def plain(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
+
+
+# ---------------------------------------------------------------- labels
+
+# (regex on plain lowercase text, strength). Regexes match at the label's start.
+_NO = r"(?:no\b\.?|nos?\.|n\s?°|nº|n o\b|#|number|num\b\.?|numero)"
+LABELS: dict[str, list[tuple[str, float]]] = {
+    "invoice_number": [
+        (rf"invoice\s*{_NO}", 1.0), (r"invoice\s*id\b", 0.95), (rf"inv\.?\s*{_NO}", 0.95),
+        (rf"facture\s*{_NO}", 1.0), (r"(?:no|n\s?°|nº|numero)\.?\s*(?:de\s*)?(?:la\s*)?facture", 1.0),
+        (rf"bill\s*{_NO}", 0.9), (rf"document\s*{_NO}", 0.85), (r"invoice\s*ref(?:erence)?\b", 0.85),
+        (rf"credit\s*(?:note|memo)\s*{_NO}", 0.95), (rf"note\s*de\s*credit\s*{_NO}", 0.95),
+        (rf"statement\s*{_NO}", 0.6), (r"invoice\s*:", 0.7), (r"facture\s*:", 0.7), (r"invoice\b(?!\s*(?:date|total|amount|to\b|period))", 0.45),
+        (r"facture\b(?!\s*(?:a|date|de\s*la|totale))", 0.4), (rf"ref(?:erence)?\.?\s*{_NO}?", 0.3),
+    ],
+    "po_number": [
+        (r"p\.?\s?o\.?\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
+        (r"(?:your|customer|client)\s*(?:order|p\.?\s?o\.?)(?:\s*" + _NO + ")?", 0.95),
+        (r"(?:votre\s*)?bon\s*de\s*commande(?:\s*" + _NO + ")?", 1.0), (r"(?:no|n\s?°|nº)\s*(?:de\s*)?(?:bon\s*de\s*)?commande", 0.95),
+        (r"commande\s*(?:client|no|n\s?°)", 0.8), (r"order\s*(?:no\b\.?|#|number|ref)", 0.5),
+    ],
+    "invoice_date": [
+        (r"invoice\s*date", 1.0), (r"date\s*(?:of\s*)?(?:issue|invoice)", 1.0), (r"issue\s*date", 0.95),
+        (r"billing\s*date", 0.95), (r"bill\s*date", 0.9), (r"date\s*de\s*(?:la\s*)?factur(?:e|ation)", 1.0),
+        (r"date\s*d'?\s*emission", 0.95), (r"statement\s*date", 0.8), (r"date\s*de\s*la\s*note", 0.8),
+        (r"credit\s*(?:note|memo)\s*date", 0.95), (r"credit\s*date", 0.95), (r"date\s*du\s*credit", 0.9), (r"dated?\b(?!\s*(?:due|d'?echeance|de\s*commande|d'?expedition|de\s*livraison|du\s*service))", 0.55),
+    ],
+    "due_date": [
+        (r"due\s*date", 1.0), (r"date\s*due", 0.95), (r"payment\s*due(?:\s*date)?", 0.9), (r"pay(?:able)?\s*by", 0.8),
+        (r"(?:date\s*d'?\s*)?echeance", 1.0), (r"date\s*limite(?:\s*de\s*paiement)?", 0.9), (r"due\s*on\b", 0.8),
+        (r"a\s*payer\s*avant\s*le", 0.85), (r"payer\s*avant", 0.8),
+    ],
+    "subtotal": [
+        (r"sub\s*-?\s*total", 1.0), (r"sous\s*-?\s*total", 1.0), (r"net\s*amount", 0.9), (r"montant\s*net", 0.9),
+        (r"total\s*(?:before|excl\.?|excluding|hors)\s*(?:tax(?:es)?|taxes)", 0.95), (r"amount\s*before\s*tax", 0.95),
+        (r"net\s*total", 0.85), (r"total\s*ht\b", 0.9), (r"total\s*(?:avant|sans)\s*taxes?", 0.95),
+        (r"total\s*partiel", 0.9), (r"merchandise\s*total", 0.8), (r"total\s*services", 0.5),
+        (r"total\s*(?:of\s*)?(?:fees|charges|services|goods|merchandise|labou?r|materials)\b", 0.65),
+    ],
+    "hst_amount": [(r"(?:[a-z]{2}\s+)?(?:gst\s*/\s*)?hst\b", 1.0), (r"(?:tps\s*/\s*)?tvh\b", 1.0), (r"harmoni[sz]ed\s*sales\s*tax", 1.0)],
+    "gst_amount": [(r"(?:federal\s+)?gst\b(?!\s*/\s*hst)", 1.0), (r"tps\b(?!\s*/\s*tvh)", 1.0), (r"goods\s*and\s*services\s*tax", 1.0)],
+    "pst_amount": [(r"(?:[a-z]{2}\s+)?pst\b", 1.0), (r"rst\b", 1.0), (r"tvp\b", 1.0), (r"provincial\s*sales\s*tax", 1.0),
+                   (r"(?:bc|sk|mb)\s*(?:pst|rst)", 1.0), (r"retail\s*sales\s*tax", 1.0)],
+    "qst_amount": [(r"(?:qc\s+)?qst\b", 1.0), (r"tvq\b", 1.0), (r"quebec\s*sales\s*tax", 1.0)],
+    "tax_total": [
+        (r"total\s*(?:sales\s*)?tax(?:es)?\b", 1.0), (r"tax(?:es)?\s*total", 0.95), (r"total\s*des\s*taxes", 1.0),
+        (r"taxes\b(?!\s*incl)", 0.6), (r"(?:[a-z]{2,3}\s+)?(?:state\s+|county\s+|city\s+|local\s+)?sales\s*tax\b", 0.85), (r"tax\s*(?:amount)?\s*$", 0.55), (r"tax\s*:", 0.6),
+    ],
+    "grand_total": [
+        (r"(?:invoice\s*)?total\s*(?:amount\s*)?(?:due|payable)", 1.0), (r"amount\s*due", 0.95), (r"balance\s*due", 0.85),
+        (r"total\s*a\s*payer", 1.0), (r"montant\s*(?:total|du|a\s*payer)", 1.0), (r"grand\s*total", 1.0),
+        (r"invoice\s*total", 1.0), (r"total\s*de\s*la\s*facture", 1.0), (r"total\s*(?:cad|usd|\$)", 0.95),
+        (r"net\s*payable", 0.9), (r"please\s*pay", 0.85), (r"total\s*(?:amount|invoice)", 0.95),
+        (r"credit\s*total", 0.9), (r"total\s*(?:du\s*)?credit", 0.9), (r"total\b", 0.75),
+    ],
+    "payment_terms": [
+        (r"payment\s*terms", 1.0), (r"terms(?:\s*of\s*payment)?\b", 0.9), (r"conditions\s*(?:de\s*)?(?:paiement|reglement)", 1.0),
+        (r"modalites\s*(?:de\s*)?paiement", 1.0), (r"conditions\b", 0.6), (r"termes\b", 0.8),
+    ],
+}  # fmt: skip
+
+# Labels whose value is NOT the field: a reading next to one of these loses the field's label match.
+DISTRACTORS: dict[str, list[str]] = {
+    "invoice_date": [r"order\s*date", r"ship(?:ping|ment)?\s*date", r"due\s*date", r"date\s*due", r"delivery\s*date",
+                     r"date\s*de\s*commande", r"date\s*d'?\s*expedition", r"date\s*de\s*livraison", r"echeance",
+                     r"service\s*(?:date|period)", r"period", r"periode", r"date\s*limite", r"payment\s*due",
+                     r"date\s*de\s*la\s*commande", r"quote\s*date", r"date\s*de\s*soumission", r"printed", r"imprime"],
+    "invoice_number": [r"invoice\s*date", r"invoice\s*total", r"invoice\s*amount", r"customer\s*(?:no|#|number|id)",
+                       r"account\s*(?:no|#|number)", r"no\s*de\s*client", r"no\s*de\s*compte", r"client\s*(?:no|#)",
+                       r"quote", r"soumission", r"order", r"commande", r"p\.?o\.?\b", r"phone", r"tel", r"fax",
+                       r"date"],
+    "po_number": [r"p\.?\s?o\.?\s*box", r"c\.?\s?p\.?\s*\d", r"case\s*postale", r"sales\s*order", r"order\s*date",
+                  r"date\s*de\s*commande"],
+    "grand_total": [r"sub\s*-?\s*total", r"sous\s*-?\s*total", r"total\s*(?:tax|taxes|des\s*taxes)", r"previous",
+                    r"solde\s*(?:precedent|anterieur)", r"payments?\s*(?:received|recu)", r"paiements?\s*recus?",
+                    r"total\s*(?:qty|quantity|quantite|items|articles|hours|heures|weight|poids)", r"discount",
+                    r"escompte", r"remise", r"credit\s*applied", r"total\s*ht\b", r"total\s*(?:before|avant|hors|excl)",
+                    r"net\s*total", r"total\s*partiel", r"total\s*(?:of\s*)?(?:fees|charges|services|goods|merchandise|labou?r|materials)\b"],
+    "subtotal": [],
+    "tax_total": [r"tax\s*(?:id|reg|registration|no|number|#)", r"taxable", r"taxe?s?\s*incl", r"before\s*tax",
+                  r"avant\s*taxes", r"hors\s*taxes", r"excl", r"exempt"],
+}  # fmt: skip
+
+_REG_WORDS = re.compile(r"\b(reg|registration|regist|no|number|num|#|n\s?°|nº|inscription|bn|business)\b|#", re.I)
+_PERCENT = re.compile(r"\d+(?:[.,]\d+)?\s*%")
+
+
+@dataclass
+class _LabelHit:
+    field: str
+    line: Line
+    strength: float
+    end: int  # character offset in the line text where the value may start
+    label_text: str
+
+
+def _compile() -> dict[str, list[tuple[re.Pattern[str], float]]]:
+    return {f: [(re.compile(rx), s) for rx, s in pats] for f, pats in LABELS.items()}
+
+
+_LABELS = _compile()
+_DISTRACT = {f: [re.compile(rx) for rx in pats] for f, pats in DISTRACTORS.items()}
+
+
+def _label_hits(line: Line) -> list[_LabelHit]:
+    """Labels that start a line or follow a separator inside it ("... | Date: ...")."""
+    text = plain(line.text)
+    hits: list[_LabelHit] = []
+    starts = [0] + [m.end() for m in re.finditer(r"(?:\s{2,}|\s\|\s|[,;]\s)", text)]
+    for field, pats in _LABELS.items():
+        for rx, strength in pats:
+            for st in starts:
+                m = rx.match(text, st)
+                if not m or m.end() == st:
+                    continue
+                # A label must end on a word boundary (avoids "Totalement", "Dated").
+                if m.end() < len(text) and text[m.end() - 1].isalnum() and text[m.end()].isalnum():
+                    continue
+                label_text = text[st : m.end()]
+                if _distracted(field, text[st:]):
+                    continue
+                hits.append(_LabelHit(field, line, strength, m.end(), label_text))
+                break
+            else:
+                continue
+            break
+    return hits
+
+
+def _distracted(field: str, text_from_label: str) -> bool:
+    for rx in _DISTRACT.get(field, []):
+        if rx.match(text_from_label):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------- value extraction
+
+
+def _span_words(line: Line, start: int, end: int) -> list[Word]:
+    """Words of ``line`` covering characters [start, end) of ``line.text``."""
+    out, pos = [], 0
+    for w in line.words:
+        a, b = pos, pos + len(w.text)
+        if b > start and a < end:
+            out.append(w)
+        pos = b + 1
+    return out
+
+
+def _boxes(words: list[Word]) -> list[Box]:
+    b = union_all([w.box for w in words])
+    return [b] if b else []
+
+
+def _min_conf(words: list[Word]) -> float:
+    return min((w.conf for w in words), default=1.0)
+
+
+_SEP = re.compile(r"^[\s:#.\-–—=|]*(?:(?:no|n°|nº|#|number)\b\.?\s*[:#]?\s*)?")
+_ID_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_/.]*[A-Za-z0-9]|[A-Za-z0-9]")
+
+
+def _id_from(text: str, offset: int) -> tuple[str, int, int] | None:
+    """An identifier at the start of ``text`` (after separators): letters/digits/dashes, with a digit."""
+    m = _SEP.match(text)
+    pos = m.end() if m else 0
+    rest = text[pos:]
+    tokens = list(_ID_TOKEN.finditer(rest))
+    if not tokens:
+        return None
+    first = tokens[0]
+    value, a, b = first.group(0), first.start(), first.end()
+    if not any(c.isdigit() for c in value) and len(tokens) > 1:
+        nxt = tokens[1]
+        gap = rest[b : nxt.start()]
+        if len(gap) <= 1 and any(c.isdigit() for c in nxt.group(0)) and len(value) <= 4:
+            value, b = rest[a : nxt.end()], nxt.end()
+    if not any(c.isdigit() for c in value):
+        return None
+    value = value.strip(".-/")
+    return value, offset + pos + a, offset + pos + a + len(value)
+
+
+def _looks_like_phone_or_postal(value: str) -> bool:
+    digits = re.sub(r"\D", "", value)
+    if re.fullmatch(r"\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]\d{4}", value) or (
+        len(digits) == 10 and "-" in value and value.count("-") == 2 and len(value.split("-")[0]) == 3
+    ):
+        return True
+    return bool(re.fullmatch(r"[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d", value))
+
+
+def _value_reading(field: str, line: Line, start: int, base: float, method: str) -> Reading | None:
+    """Read ``field`` from ``line.text[start:]``."""
+    text = line.text
+    rest = text[start:]
+    if field in ("invoice_number", "po_number"):
+        got = _id_from(rest, start)
+        if not got:
+            return None
+        value, a, b = got
+        if _looks_like_phone_or_postal(value) or parse_dates(value):
+            return None
+        if len(norm_id(value)) < 2 or len(value) > 30:
+            return None
+        words = _span_words(line, a, b)
+        return Reading(field, value, value, _boxes(words), base * _min_conf(words), method)
+    if field in ("invoice_date", "due_date"):
+        found = parse_dates(rest)
+        if not found:
+            return None
+        d, a, b, ambiguous = found[0]
+        if a > 30:  # the date must be close to its label
+            return None
+        words = _span_words(line, start + a, start + b)
+        raw = rest[a:b]
+        return Reading(field, d.isoformat(), raw, _boxes(words), base * (0.6 if ambiguous else 1.0) * _min_conf(words),
+                       method + ("-ambiguous" if ambiguous else ""))  # fmt: skip
+    if field in AMOUNT_FIELDS:
+        cleaned = _PERCENT.sub(lambda m: " " * len(m.group(0)), rest)
+        if field.endswith("_amount") or field == "tax_total":
+            # "GST/HST Reg. No. 123456789RT0001" is a registration number, not an amount.
+            if _REG_WORDS.search(plain(rest[:12])) and not looks_like_money(rest):
+                return None
+        amounts = _amounts_in(cleaned)
+        if not amounts:
+            return None
+        money = [a for a in amounts if looks_like_money(cleaned[a[1] : a[2]])] or amounts
+        value, a, b = money[-1]  # the rightmost amount on a totals row is the amount column
+        words = _span_words(line, start + a, start + b)
+        moneyish = looks_like_money(cleaned[a:b])
+        return Reading(field, round(value, 2), rest[a:b].strip(), _boxes(words),
+                       base * (1.0 if moneyish else 0.7) * _min_conf(words), method)  # fmt: skip
+    if field == "payment_terms":
+        value = _terms(rest)
+        if not value:
+            return None
+        a = plain(rest).find(plain(value)[:6]) if value else 0
+        words = _span_words(line, start + max(a, 0), start + max(a, 0) + len(value))
+        return Reading(field, value, value, _boxes(words), base * _min_conf(words), method)
+    return None
+
+
+def _amounts_in(text: str) -> list[tuple[float, int, int]]:
+    from .normalize import find_amounts
+
+    out = []
+    for value, a, b in find_amounts(text):
+        token = text[a:b].strip()
+        digits = re.sub(r"\D", "", token)
+        if not digits:
+            continue
+        if len(digits) >= 9 and not looks_like_money(token):  # registration and account numbers
+            continue
+        out.append((value, a, b))
+    return out
+
+
+_TERMS = [
+    (re.compile(r"\bnet\s*(\d{1,3})\b", re.I), "Net {0}"),
+    (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
+    (re.compile(r"(\d{1,2})\s*%\s*(\d{1,2})\s*,?\s*net\s*(\d{1,3})", re.I), "{0}% {1} Net {2}"),
+    (re.compile(r"\b(\d{1,3})\s*(?:days|jours|j)\b", re.I), "Net {0}"),
+    (re.compile(r"\bdue\s*(?:up)?on\s*receipt\b|payable\s*(?:a|à)\s*(?:la\s*)?r[ée]ception|on\s*receipt", re.I), "Due on receipt"),
+]  # fmt: skip
+
+
+def _terms(text: str) -> str | None:
+    for rx, fmt in _TERMS:
+        m = rx.search(text)
+        if m:
+            return fmt.format(*m.groups())
+    return None
+
+
+# ---------------------------------------------------------------- spatial search
+
+MAX_RIGHT = 0.5  # fraction of page width
+BELOW_LINES = 3.2
+
+
+def _right_of(lines: list[Line], line: Line) -> list[Line]:
+    out = []
+    for other in lines:
+        if other is line or other.box.page != line.box.page or other.box.x0 < line.box.x1 - 0.002:
+            continue
+        overlap = min(line.box.y1, other.box.y1) - max(line.box.y0, other.box.y0)
+        if overlap > 0.5 * min(line.box.height, other.box.height) and other.box.x0 - line.box.x1 < MAX_RIGHT:
+            out.append(other)
+    return sorted(out, key=lambda ln: ln.box.x0)
+
+
+def _below(lines: list[Line], line: Line, label_box: Box) -> list[Line]:
+    out = []
+    h = max(line.box.height, 0.008)
+    for other in lines:
+        if other is line or other.box.page != line.box.page or other.box.y0 < line.box.y1 - 0.2 * h:
+            continue
+        if other.box.y0 - line.box.y1 > BELOW_LINES * h:
+            continue
+        overlap = min(label_box.x1, other.box.x1) - max(label_box.x0, other.box.x0)
+        aligned = abs(other.box.x0 - label_box.x0) < 0.03 or abs(other.box.cx - label_box.cx) < 0.04
+        if overlap > 0 or aligned:
+            out.append(other)
+    return sorted(out, key=lambda ln: ln.box.y0)
+
+
+def _label_box(hit: _LabelHit) -> Box:
+    words = _span_words(hit.line, 0, hit.end)
+    return union_all([w.box for w in words]) or hit.line.box
+
+
+def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
+    out: list[Reading] = []
+    for hit in field_hits:
+        field, line = hit.field, hit.line
+        inline = _value_reading(field, line, hit.end, 0.95 * hit.strength, "label-inline")
+        if inline:
+            out.append(inline)
+            continue
+        rest = line.text[hit.end :].strip(" :#.-")
+        if rest and field not in ("payment_terms",) and len(rest) > 3:
+            # Another label follows on the same segment ("Date  Invoice #") or junk: try the right / below anyway.
+            pass
+        for other in _right_of(lines, line)[:2]:
+            if _label_hits(other) and not _value_reading(field, other, 0, 1.0, "x"):
+                break  # the next thing to the right is another label
+            got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
+            if got:
+                distance = other.box.x0 - line.box.x1
+                got.score *= 1.0 - min(distance, 0.4) * 0.5
+                out.append(got)
+                break
+        else:
+            lb = _label_box(hit)
+            for other in _below(lines, line, lb)[:2]:
+                got = _value_reading(field, other, 0, 0.82 * hit.strength, "label-below")
+                if got:
+                    out.append(got)
+                    break
+                if _label_hits(other):
+                    continue
+    return out
+
+
+# ---------------------------------------------------------------- pattern-only fields
+
+
+def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
+    gst: list[Reading] = []
+    qst: list[Reading] = []
+    for line in layout.lines():
+        text = line.text
+        lower = plain(text)
+        bill_to = _in_bill_to(layout, line)
+        for value, a, b, valid in find_gst_numbers(text):
+            words = _span_words(line, a, b)
+            score = (0.95 if valid else 0.55) * _min_conf(words)
+            near = lower[max(0, a - 40) : a]
+            if re.search(r"gst|hst|tps|tvh|bn\b|business|entreprise|reg", near):
+                score = min(1.0, score + 0.03)
+            if re.search(r"client|customer|your|votre|acheteur|buyer", near) or bill_to:
+                score *= 0.35
+            if line.box.page == 1 and line.box.cy < 0.3:
+                score = min(1.0, score + 0.02)
+            gst.append(Reading("gst_hst_registration_number", value, text[a:b], _boxes(words), score, "pattern"))
+        for value, a, b in find_qst_numbers(text):
+            words = _span_words(line, a, b)
+            score = 0.95 * _min_conf(words)
+            near = lower[max(0, a - 40) : a]
+            if re.search(r"client|customer|your|votre", near) or bill_to:
+                score *= 0.35
+            qst.append(Reading("qst_registration_number", value, text[a:b], _boxes(words), score, "pattern"))
+    return {"gst_hst_registration_number": gst, "qst_registration_number": qst}
+
+
+_BILL_TO = re.compile(r"^(bill(?:ed)?\s*to|sold\s*to|ship\s*to|customer|client|factur[ée]\s*a|vendu\s*a|livr[ée]?\s*a|"
+                      r"expedier\s*a|adresse\s*de\s*livraison|attention|attn)\b")  # fmt: skip
+
+
+def _bill_to_regions(layout: DocLayout) -> list[Box]:
+    """Rough areas holding the customer's address (below a 'Bill to'-style label)."""
+    regions = []
+    for line in layout.lines():
+        if _BILL_TO.match(plain(line.text)):
+            b = line.box
+            regions.append(Box(b.page, b.x0 - 0.01, b.y0 - 0.002, min(1.0, b.x0 + 0.42), b.y1 + 0.12))
+    return regions
+
+
+def _in_bill_to(layout: DocLayout, line: Line, _cache: dict[int, list[Box]] = {}) -> bool:  # noqa: B006
+    key = id(layout)
+    if key not in _cache:
+        _cache.clear()
+        _cache[key] = _bill_to_regions(layout)
+    for r in _cache[key]:
+        b = line.box
+        if b.page == r.page and r.x0 <= b.cx <= r.x1 and r.y0 <= b.cy <= r.y1:
+            return True
+    return False
+
+
+_COMPANY = re.compile(r"\b(inc|ltd|ltee|limited|limitee|llc|llp|corp|corporation|co\.|company|cie|enr|s\.?e\.?n\.?c|"
+                      r"group|groupe|services|solutions|supply|supplies|industries|technologies|consulting|"
+                      r"distribution|holdings|partners|associates|enterprises|entreprises)\b\.?", re.I)  # fmt: skip
+_NOT_NAME = re.compile(r"^(invoice|facture|tax\s*invoice|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
+                       r"ship|sold|remit|total|amount|description|qty|www\.|http|tel|phone|fax|email|courriel|"
+                       r"gst|hst|tps|tvq|qst|po\b|p\.o|account|terms|due|original|copy|duplicata|paid|"
+                       r"customer|client|attention|attn|from|de\s*:|to\s*:|a\s*:|bon\s*de)", re.I)  # fmt: skip
+_REMIT = re.compile(r"(?:make\s*(?:all\s*)?cheques?\s*payable\s*to|payable\s*(?:to|a\s*l'ordre\s*de)|"
+                    r"remit\s*(?:payment\s*)?to|pay\s*to\s*the\s*order\s*of|libeller\s*(?:le|les)?\s*cheques?\s*a)\s*:?\s*",
+                    re.I)  # fmt: skip
+
+
+def _vendor_names(layout: DocLayout) -> list[Reading]:
+    if not layout.pages:
+        return []
+    page = layout.pages[0]
+    out: list[Reading] = []
+    heights = sorted((ln.box.height for ln in page.lines), reverse=True)
+    tall = heights[min(2, len(heights) - 1)] if heights else 0.0
+    for line in page.lines:
+        text = line.text.strip()
+        p = plain(text)
+        m = _REMIT.search(p)
+        if m:
+            name = text[m.end() :].strip(" :.,")
+            if 2 < len(name) < 70 and not _NOT_NAME.match(plain(name)):
+                words = _span_words(line, m.end(), len(text))
+                out.append(Reading("vendor_name", name, name, _boxes(words), 0.9 * _min_conf(words), "remit-to"))
+            continue
+        if line.box.cy > 0.33 or _in_bill_to(layout, line):
+            continue
+        if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
+            continue
+        letters = sum(c.isalpha() for c in text)
+        if letters < 3:
+            continue
+        score = 0.35
+        if _COMPANY.search(p):
+            score += 0.35
+        if line.box.height >= tall * 0.95:
+            score += 0.15
+        score += 0.12 * (1 - min(line.box.cy / 0.33, 1))
+        if text.isupper() and len(text.split()) == 1:
+            score -= 0.1
+        out.append(
+            Reading("vendor_name", text, text, [line.box], min(score, 0.95) * _min_conf(line.words), "top-of-page")
+        )
+    out.sort(key=lambda r: -r.score)
+    return out
+
+
+# ---------------------------------------------------------------- totals solver
+
+_TAX_FIELDS = ("gst_amount", "hst_amount", "pst_amount", "qst_amount")
+
+
+def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> dict[str, list[Reading]]:
+    """Re-rank amount candidates so that the subtotal, taxes and total that add up come first."""
+    top = {f: sorted(cands.get(f, []), key=lambda r: -r.score)[:4] for f in AMOUNT_FIELDS}
+    subs = top["subtotal"] or [None]
+    totals = top["grand_total"] or [None]
+    tax_options = {f: (top[f] or [None]) for f in _TAX_FIELDS}
+    best = None
+    for sub, total in product(subs, totals):
+        for taxes in product(*tax_options.values()):
+            present = [t for t in taxes if t is not None]
+            score = (sub.score if sub else 0) + (total.score if total else 0) + sum(t.score for t in present)
+            bonus = 0.0
+            if sub and total:
+                tax_sum = sum(t.value for t in present)
+                if abs(sub.value + tax_sum - total.value) <= 0.011:
+                    bonus += 3.0 + 0.5 * len(present)
+                elif present and abs(sub.value - total.value) <= 0.011:
+                    bonus -= 1.0  # a total equal to the subtotal while taxes are printed: wrong total
+            if sub and line_sum is not None and abs(sub.value - line_sum) <= 0.011:
+                bonus += 1.0
+            if best is None or score + bonus > best[0]:
+                best = (score + bonus, sub, total, dict(zip(tax_options, taxes, strict=True)), bonus)
+    if best is None:
+        return cands
+    _, sub, total, taxes, bonus = best
+    chosen = {"subtotal": sub, "grand_total": total, **taxes}
+    out = dict(cands)
+    for f, r in chosen.items():
+        if r is None:
+            continue
+        if bonus >= 3.0:
+            r.score = min(1.0, r.score + 0.15)
+            r.method += "+adds-up"
+        rest = [x for x in cands.get(f, []) if x is not r]
+        out[f] = [r, *sorted(rest, key=lambda x: -x.score)]
+    return out
+
+
+# ---------------------------------------------------------------- line items
+
+_HEAD = {
+    "description": re.compile(r"^(description|desc\.?|item|article|details|designation|produit|service|libelle|particulars)"),
+    "quantity": re.compile(r"^(qty|quantity|qte|quantite|qte\.|units?|hrs|hours|heures)\b"),
+    "unit_price": re.compile(r"^(unit\s*price|price|rate|unit\s*cost|prix(\s*unitaire)?|taux|p\.?u\.?|cost)\b"),
+    "amount": re.compile(r"^(amount|total|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|value|valeur|prix\s*total)\b"),
+}  # fmt: skip
+
+
+_CARRIED = re.compile(r"^(a\s*reporter|report\b|reporte|carried\s*forward|brought\s*forward|balance\s*forward|"
+                      r"continued|suite|sub\s*-?\s*total|sous\s*-?\s*total|page\s*total)")  # fmt: skip
+
+
+def read_line_items(layout: DocLayout) -> list[LineReading]:
+    items: list[LineReading] = []
+    for page in layout.pages:
+        header = None
+        for line in page.lines:
+            cols = {}
+            for other in page.lines:
+                if abs(other.box.cy - line.box.cy) < 0.006:
+                    p = plain(other.text).strip()
+                    for name, rx in _HEAD.items():
+                        if name not in cols and rx.match(p):
+                            cols[name] = other.box
+            if "amount" in cols and len(cols) >= 2 and ("description" in cols or "quantity" in cols):
+                header = (line.box.y1, cols)
+                break
+        if header is None:
+            continue
+        y_top, cols = header
+        rows: dict[float, list[Line]] = {}
+        stop_y = 1.0
+        for line in page.lines:
+            if line.box.y0 <= y_top:
+                continue
+            p = plain(line.text)
+            if any(rx.match(p) for f in ("subtotal", "grand_total", "tax_total") for rx, _ in _LABELS[f]):
+                stop_y = min(stop_y, line.box.y0)
+        for line in page.lines:
+            if not (y_top < line.box.y0 < stop_y):
+                continue
+            key = next((k for k in rows if abs(k - line.box.cy) < 0.006), line.box.cy)
+            rows.setdefault(key, []).append(line)
+        amount_x = cols["amount"].cx
+        for _, segs in sorted(rows.items()):
+            if any(_CARRIED.match(plain(s.text).strip()) for s in segs):
+                continue
+            nums = [(s, _amounts_in(s.text)) for s in segs]
+            amount = None
+            amt_seg = None
+            for s, found in nums:
+                if found and abs(s.box.x1 - cols["amount"].x1) < 0.08 or (found and abs(s.box.cx - amount_x) < 0.08):
+                    amount, amt_seg = found[-1][0], s
+            if amount is None:
+                continue
+            desc = " ".join(s.text for s in segs if s is not amt_seg and not _amounts_in(s.text) or
+                            ("description" in cols and abs(s.box.x0 - cols["description"].x0) < 0.05))  # fmt: skip
+            qty = price = None
+            if "quantity" in cols:
+                q = next((f for s, f in nums if f and abs(s.box.cx - cols["quantity"].cx) < 0.05), None)
+                qty = q[0][0] if q else None
+            if "unit_price" in cols:
+                u = next(
+                    (f for s, f in nums if f and s is not amt_seg and abs(s.box.cx - cols["unit_price"].cx) < 0.07),
+                    None,
+                )
+                price = u[-1][0] if u else None
+            row_box = union_all([s.box for s in segs])
+            score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
+            items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score))
+    return items
+
+
+# ---------------------------------------------------------------- entry point
+
+
+def read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
+    """Candidate readings for every header field, best first."""
+    lines = list(layout.lines())
+    by_page: dict[int, list[Line]] = {}
+    for ln in lines:
+        by_page.setdefault(ln.box.page, []).append(ln)
+    hits: dict[str, list[_LabelHit]] = {}
+    for ln in lines:
+        for hit in _label_hits(ln):
+            hits.setdefault(hit.field, []).append(hit)
+    cands: dict[str, list[Reading]] = {}
+    for field, fhits in hits.items():
+        page_lines = by_page
+        readings: list[Reading] = []
+        for hit in fhits:
+            readings += _labelled([hit], page_lines.get(hit.line.box.page, []))
+        cands[field] = readings
+    # Totals: the lowest "total" on the last page with one is usually the invoice total.
+    if cands.get("grand_total"):
+        last_page = max(r.boxes[0].page for r in cands["grand_total"] if r.boxes)
+        for r in cands["grand_total"]:
+            if r.boxes and r.boxes[0].page == last_page:
+                r.score = min(1.0, r.score + 0.02 * r.boxes[0].cy)
+    # Reading order breaks ties: earlier pages and higher on the page first for header fields.
+    for field in ("invoice_number", "invoice_date", "po_number", "due_date"):
+        for r in cands.get(field, []):
+            if r.boxes:
+                r.score -= 0.03 * (r.boxes[0].page - 1) + 0.01 * r.boxes[0].cy
+    cands.update(_registration_numbers(layout))
+    cands["vendor_name"] = _vendor_names(layout)
+    currency = find_currency(layout.text())
+    if currency:
+        cands["currency"] = [Reading("currency", currency, currency, [], 0.8, "pattern")]
+    items = read_line_items(layout)
+    line_sum = round(sum(i.amount for i in items if i.amount is not None), 2) if items else None
+    cands = _solve_totals(cands, line_sum)
+    for field, readings in cands.items():
+        readings.sort(key=lambda r: -r.score) if field not in AMOUNT_FIELDS else None
+        cands[field] = _dedupe(readings)
+    return cands
+
+
+def _dedupe(readings: list[Reading]) -> list[Reading]:
+    """One reading per distinct value (the best one), keeping order."""
+    from .normalize import normalize_value
+
+    seen: dict[object, Reading] = {}
+    out = []
+    for r in readings:
+        key = normalize_value(r.field, r.value)
+        if key in seen:
+            seen[key].score = min(1.0, max(seen[key].score, r.score) + 0.02)  # printed twice, read twice
+            continue
+        seen[key] = r
+        out.append(r)
+    return out
