@@ -813,8 +813,7 @@ class Store:
         if inv["status"] == REJECTED:  # e.g. rejected by someone else meanwhile: reopen it first
             raise ValueError(f"invoice {invoice_id} was rejected: reopen it before approving it")
         ai = inv["ai_output"] or {"line_items": []}
-        limit = self.approval_limit()
-        needs_second = bool(limit) and abs(float(final_output.get("grand_total") or 0)) > limit
+        needs_second = self.over_approval_limit(final_output)
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
@@ -917,6 +916,16 @@ class Store:
             return max(float(self.get_setting("approval_limit") or 0), 0.0)
         except ValueError:
             return 0.0
+
+    def over_approval_limit(self, coding: dict[str, Any], limit: float | None = None) -> bool:
+        """Is this invoice's total over the approval limit? The limit is in CAD: a foreign-currency total is
+        converted at the rate set in Settings (compared as it is when no rate is set)."""
+        limit = self.approval_limit() if limit is None else limit
+        if not limit:
+            return False
+        currency = str(coding.get("currency") or "CAD").strip().upper()
+        rate = self.fx_rates().get(currency, 1.0)
+        return abs(float(coding.get("grand_total") or 0)) * rate > limit
 
     def final_approve(self, invoice_id: int, approver: str, login: str = "") -> None:
         """The second approval: by someone other than the first approver (another name and, when the

@@ -66,6 +66,33 @@ def test_a_rejected_invoice_cannot_be_approved_from_a_stale_screen(tmp_path):
     assert store.get_invoice(invoice_id)["status"] == APPROVED
 
 
+def test_the_approval_limit_applies_in_cad_to_a_foreign_currency_invoice(tmp_path):
+    from ap_coder import controls
+    from ap_coder.store import PENDING
+
+    store = Store(tmp_path / "a.db")
+    store.set_setting("approval_limit", "10000")
+    store.set_setting("fx_rates", "USD=1.37")
+    usd = {**_gt(), "currency": "USD", "grand_total": 9000.0}  # about 12,330 CAD: over the limit
+    invoice_id = store.add_invoice(tmp_path / "a.pdf", usd, {})
+    store.approve_invoice(invoice_id, usd, "Jane")
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+    # Without a rate for the currency, the amount is compared as it is.
+    eur = {**_gt(), "invoice_number": "E-1", "currency": "EUR", "grand_total": 9000.0}
+    other = store.add_invoice(tmp_path / "b.pdf", eur, {})
+    store.approve_invoice(other, eur, "Jane")
+    assert store.get_invoice(other)["status"] == APPROVED
+    # The controls report sees the USD invoice over the limit too (had it been approved by one person).
+    store.final_approve(invoice_id, "Sam")
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET second_reviewer = NULL WHERE id = ?", (invoice_id,))
+    import datetime as dt
+
+    today = dt.date.today()
+    report = controls.build(store, today - dt.timedelta(days=1), today + dt.timedelta(days=1))
+    assert [i["id"] for i in report["one_person"]] == [invoice_id]
+
+
 def test_vendor_spend_counts_invoices_that_print_no_currency_as_cad(tmp_path):
     store = Store(tmp_path / "a.db")
     doc = {**_gt(), "currency": ""}  # most Canadian invoices print no currency code
