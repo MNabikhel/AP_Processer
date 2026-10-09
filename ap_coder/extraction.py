@@ -150,7 +150,11 @@ def result_from_raw(source: str | Path, raw: dict[str, Any]) -> ExtractionResult
 def result_from_text(path: str | Path) -> ExtractionResult:
     """Treat a .md/.txt file as already-extracted content (skips Document Intelligence)."""
     path = Path(path)
-    content = path.read_text(encoding="utf-8")
+    data = path.read_bytes()
+    try:
+        content = data.decode("utf-8-sig")  # -sig: a byte-order mark is not part of the text
+    except UnicodeDecodeError:  # saved as "ANSI" by a Windows program
+        content = data.decode("cp1252", errors="replace")
     return ExtractionResult(
         source=str(path),
         model_id="pre-extracted",

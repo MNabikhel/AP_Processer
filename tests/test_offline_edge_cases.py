@@ -135,3 +135,14 @@ def test_output_names_never_collide():
     stems = output_stems(paths)
     assert len({s.lower() for s in stems}) == len(paths), stems
     assert stems == ["Invoice", "Invoice_3", "Invoice_2", "INVOICE_4"]  # c keeps its own name
+
+
+def test_a_text_invoice_saved_by_windows_in_ansi_or_with_a_bom_is_read(tmp_path):
+    from ap_coder.extraction import result_from_text
+
+    ansi = tmp_path / "ansi.txt"
+    ansi.write_bytes("Fournitures Laval\nFacture no 12\nTotal 114,98 $ (TPS incluse, été)\n".encode("cp1252"))
+    assert "été" in result_from_text(ansi).content
+    bom = tmp_path / "bom.md"
+    bom.write_bytes("Acme Ltd\nInvoice 7\n".encode("utf-8-sig"))
+    assert result_from_text(bom).content.startswith("Acme Ltd")
