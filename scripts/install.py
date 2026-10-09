@@ -199,6 +199,12 @@ def requirements_fingerprint() -> str:
     return digest.hexdigest()
 
 
+def pip_source() -> list[str]:
+    """pip options that install from the offline bundle's wheelhouse/ folder, when there is one."""
+    wheelhouse = ROOT / "wheelhouse"
+    return ["--no-index", "--find-links", str(wheelhouse)] if wheelhouse.is_dir() else []
+
+
 def install_packages(c: Console, args: argparse.Namespace) -> None:
     c.step("Packages")
     fingerprint = requirements_fingerprint()
@@ -211,8 +217,11 @@ def install_packages(c: Console, args: argparse.Namespace) -> None:
         c.ok("already up to date")
         return
     c.info("Installing (first time: a few minutes)...")
-    quiet([str(VENV_PY), "-m", "pip", "install", "--quiet", "--upgrade", "pip"])
-    result = run([str(VENV_PY), "-m", "pip", "install", "--disable-pip-version-check", "-e", ".[dev]"])
+    offline = pip_source()
+    if offline:
+        c.info("from the wheelhouse folder (offline bundle): no internet needed")
+    quiet([str(VENV_PY), "-m", "pip", "install", "--quiet", *offline, "--upgrade", "pip"])
+    result = run([str(VENV_PY), "-m", "pip", "install", "--disable-pip-version-check", *offline, "-e", ".[dev]"])
     if result.returncode != 0:
         c.warn("Installing packages failed (see the messages above). Common causes:")
         c.info("- the AP Coder dashboard is still running: close its window and run the installer again")
