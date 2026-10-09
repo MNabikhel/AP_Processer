@@ -39,10 +39,16 @@ _TAXES = (("gst_amount", "GST"), ("hst_amount", "HST"), ("pst_amount", "PST"), (
 _OFFICIAL = {"GST": (0.05,), "HST": (0.13, 0.14, 0.15), "QST": (0.09975,), "PST": (0.06, 0.07, 0.08)}
 _RATE_PROVINCE = {("HST", 0.13): "ON", ("HST", 0.14): "NS", ("QST", 0.09975): "QC", ("PST", 0.06): "SK"}
 _PROVINCE_AT = re.compile(r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)(?:\)|\b)\s*,?\s*[A-Z]\d[A-Z]\s?\d[A-Z]\d")
-_CUSTOMER_LABEL = re.compile(
-    r"(?i)\b(?:bill|ship|sold|invoice|deliver)(?:ed)?\s*to\b|client|customer|factur|livr|vendu"
+# Labels, not any line with the word: "FACTURE" (a French invoice's title), "Customer service" or
+# "Date de livraison" in the letterhead are not the customer's address.
+_SHIP_LABEL = re.compile(
+    r"(?i)\b(?:ship|deliver)(?:ped|ed)?\s*to\b|\b(?:livr|exp[ée]di)(?:é|e|er|ée)\s*(?:à|a)\b"
+    r"|\b(?:adresse|lieu)\s+de\s+livraison\b"
 )
-_SHIP_LABEL = re.compile(r"(?i)\b(?:ship|deliver)(?:ped|ed)?\s*to\b|livr")
+_CUSTOMER_LABEL = re.compile(
+    r"(?i)\b(?:bill|ship|sold|invoice|deliver)(?:ed)?\s*to\b|^\W*(?:client|customer)\s*(?::|$)"
+    r"|\b(?:factur(?:é|e|er|ée)|vendue?)\s*(?:à|a)\b|\badresse\s+de\s+facturation\b"
+)
 
 
 def read_invoice(path: str | Path, store: Any = None,
