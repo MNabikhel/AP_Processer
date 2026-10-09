@@ -24,16 +24,160 @@
    "reader": "capture",
    "workers": 4,
    "generator_version": 1
+  },
+  {
+   "suppliers": 80,
+   "invoices": 40,
+   "seed": 6,
+   "scanned": 0.0,
+   "workers": 2,
+   "generator_version": 1,
+   "policy": {
+    "min_invoices": 20,
+    "min_lower_bound": 0.99,
+    "window": 200,
+    "clean_streak": 10,
+    "audit_rate": 0.05,
+    "z": 1.96
+   },
+   "vendor_master": true,
+   "ignore_checks": [],
+   "layouts": {
+    "s6-v000": "credit_note",
+    "s6-v001": "classic_left",
+    "s6-v002": "us_vendor",
+    "s6-v003": "table_footer",
+    "s6-v004": "remittance_stub",
+    "s6-v005": "quebec_fr",
+    "s6-v006": "header_grid",
+    "s6-v007": "boxed_fields",
+    "s6-v008": "utility_bill",
+    "s6-v009": "minimal_courier",
+    "s6-v010": "bilingual",
+    "s6-v011": "vendor_right",
+    "s6-v012": "totals_left",
+    "s6-v013": "multipage",
+    "s6-v014": "centered_logo",
+    "s6-v015": "credit_note",
+    "s6-v016": "classic_left",
+    "s6-v017": "us_vendor",
+    "s6-v018": "table_footer",
+    "s6-v019": "remittance_stub",
+    "s6-v020": "quebec_fr",
+    "s6-v021": "header_grid",
+    "s6-v022": "boxed_fields",
+    "s6-v023": "utility_bill",
+    "s6-v024": "minimal_courier",
+    "s6-v025": "bilingual",
+    "s6-v026": "vendor_right",
+    "s6-v027": "totals_left",
+    "s6-v028": "multipage",
+    "s6-v029": "centered_logo",
+    "s6-v030": "credit_note",
+    "s6-v031": "classic_left",
+    "s6-v032": "us_vendor",
+    "s6-v033": "table_footer",
+    "s6-v034": "remittance_stub",
+    "s6-v035": "quebec_fr",
+    "s6-v036": "header_grid",
+    "s6-v037": "boxed_fields",
+    "s6-v038": "utility_bill",
+    "s6-v039": "minimal_courier",
+    "s6-v040": "bilingual",
+    "s6-v041": "vendor_right",
+    "s6-v042": "totals_left",
+    "s6-v043": "multipage",
+    "s6-v044": "centered_logo",
+    "s6-v045": "credit_note",
+    "s6-v046": "classic_left",
+    "s6-v047": "us_vendor",
+    "s6-v048": "table_footer",
+    "s6-v049": "remittance_stub",
+    "s6-v050": "quebec_fr",
+    "s6-v051": "header_grid",
+    "s6-v052": "boxed_fields",
+    "s6-v053": "utility_bill",
+    "s6-v054": "minimal_courier",
+    "s6-v055": "bilingual",
+    "s6-v056": "vendor_right",
+    "s6-v057": "totals_left",
+    "s6-v058": "multipage",
+    "s6-v059": "centered_logo",
+    "s6-v060": "credit_note",
+    "s6-v061": "classic_left",
+    "s6-v062": "us_vendor",
+    "s6-v063": "table_footer",
+    "s6-v064": "remittance_stub",
+    "s6-v065": "quebec_fr",
+    "s6-v066": "header_grid",
+    "s6-v067": "boxed_fields",
+    "s6-v068": "utility_bill",
+    "s6-v069": "minimal_courier",
+    "s6-v070": "bilingual",
+    "s6-v071": "vendor_right",
+    "s6-v072": "totals_left",
+    "s6-v073": "multipage",
+    "s6-v074": "centered_logo",
+    "s6-v075": "credit_note",
+    "s6-v076": "classic_left",
+    "s6-v077": "us_vendor",
+    "s6-v078": "table_footer",
+    "s6-v079": "remittance_stub"
+   }
   }
  ],
  "evidence": {
+  "currency|rules+template|template|text|": [
+   1278,
+   1278
+  ],
   "currency|rules|pattern|scan|": [
    320,
    320
   ],
   "currency|rules|pattern|text|": [
-   1635,
-   1635
+   1677,
+   1677
+  ],
+  "due_date|rules+template|label-below|text|confirmed": [
+   2,
+   2
+  ],
+  "due_date|rules+template|label-below|text|confirmed,contested": [
+   5,
+   5
+  ],
+  "due_date|rules+template|label-below|text|contested": [
+   8,
+   8
+  ],
+  "due_date|rules+template|label-inline|text|": [
+   5,
+   5
+  ],
+  "due_date|rules+template|label-right|text|confirmed": [
+   3,
+   3
+  ],
+  "due_date|rules+template|template|text|": [
+   406,
+   406
+  ],
+  "due_date|rules+template|template|text|confirmed": [
+   903,
+   903
+  ],
+  "due_date|rules+template|template|text|confirmed,contested": [
+   92,
+   92
+  ],
+  "due_date|rules+template|template|text|contested": [
+   9,
+   9
+  ],
+  "due_date|rules+template|template|text|soft": [
+   2,
+   2
   ],
   "due_date|rules|label-below|scan|": [
    62,
@@ -48,16 +192,16 @@
    87
   ],
   "due_date|rules|label-below|text|": [
-   361,
-   361
+   363,
+   363
   ],
   "due_date|rules|label-below|text|ambiguous": [
    9,
    6
   ],
   "due_date|rules|label-below|text|confirmed": [
-   461,
-   461
+   478,
+   478
   ],
   "due_date|rules|label-below|text|contested": [
    5,
@@ -88,8 +232,8 @@
    1
   ],
   "due_date|rules|label-inline|text|": [
-   296,
-   296
+   301,
+   301
   ],
   "due_date|rules|label-inline|text|ambiguous": [
    3,
@@ -124,16 +268,16 @@
    1
   ],
   "due_date|rules|label-right|text|": [
-   329,
-   329
+   333,
+   333
   ],
   "due_date|rules|label-right|text|ambiguous": [
    4,
    3
   ],
   "due_date|rules|label-right|text|confirmed": [
-   394,
-   394
+   407,
+   407
   ],
   "due_date|rules|label-right|text|contested": [
    3,
@@ -146,6 +290,62 @@
   "due_date|rules|label-right|text|soft": [
    5,
    2
+  ],
+  "due_date|template|template|text|contested": [
+   1,
+   0
+  ],
+  "due_date|template|template|text|contested,soft": [
+   3,
+   0
+  ],
+  "grand_total|rules+template|label-inline|text|": [
+   8,
+   8
+  ],
+  "grand_total|rules+template|label-inline|text|adds-up": [
+   2,
+   2
+  ],
+  "grand_total|rules+template|label-inline|text|adds-up,confirmed": [
+   495,
+   495
+  ],
+  "grand_total|rules+template|label-inline|text|adds-up,confirmed,contested": [
+   3,
+   3
+  ],
+  "grand_total|rules+template|label-inline|text|adds-up,contested": [
+   1,
+   1
+  ],
+  "grand_total|rules+template|label-inline|text|confirmed": [
+   39,
+   39
+  ],
+  "grand_total|rules+template|label-right|text|adds-up,confirmed": [
+   872,
+   872
+  ],
+  "grand_total|rules+template|label-right|text|adds-up,confirmed,contested": [
+   41,
+   41
+  ],
+  "grand_total|rules+template|label-right|text|adds-up,contested": [
+   1,
+   1
+  ],
+  "grand_total|rules+template|template|text|": [
+   9,
+   9
+  ],
+  "grand_total|rules+template|template|text|confirmed": [
+   1586,
+   1586
+  ],
+  "grand_total|rules+template|template|text|confirmed,contested": [
+   12,
+   12
   ],
   "grand_total|rules|label-below|scan|": [
    1,
@@ -180,16 +380,16 @@
    22
   ],
   "grand_total|rules|label-inline|text|adds-up,confirmed": [
-   660,
-   660
+   678,
+   678
   ],
   "grand_total|rules|label-inline|text|adds-up,confirmed,contested": [
-   2,
-   2
+   3,
+   3
   ],
   "grand_total|rules|label-inline|text|confirmed": [
-   29,
-   29
+   32,
+   32
   ],
   "grand_total|rules|label-right|scan|": [
    36,
@@ -216,20 +416,48 @@
    50
   ],
   "grand_total|rules|label-right|text|adds-up,confirmed": [
-   3150,
-   3150
+   3211,
+   3211
   ],
   "grand_total|rules|label-right|text|adds-up,confirmed,contested": [
-   14,
-   14
+   18,
+   18
   ],
   "grand_total|rules|label-right|text|confirmed": [
-   68,
-   68
+   69,
+   69
   ],
   "grand_total|rules|label-right|text|confirmed,contested": [
+   4,
+   4
+  ],
+  "grand_total|template|template|text|confirmed,contested": [
+   39,
+   0
+  ],
+  "grand_total|template|template|text|contested": [
    3,
-   3
+   0
+  ],
+  "gst_amount|rules+template|label-right|text|adds-up": [
+   4,
+   4
+  ],
+  "gst_amount|rules+template|label-right|text|adds-up,confirmed": [
+   1429,
+   1429
+  ],
+  "gst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
+   110,
+   110
+  ],
+  "gst_amount|rules+template|label-right|text|adds-up,soft": [
+   4,
+   4
+  ],
+  "gst_amount|rules+template|template|text|confirmed": [
+   347,
+   347
   ],
   "gst_amount|rules|label-inline|scan|": [
    1,
@@ -268,12 +496,24 @@
    3
   ],
   "gst_amount|rules|label-right|text|adds-up,confirmed": [
-   2118,
-   2118
+   2170,
+   2170
   ],
   "gst_amount|rules|label-right|text|adds-up,confirmed,contested": [
-   2,
-   2
+   15,
+   15
+  ],
+  "gst_amount|rules|label-right|text|adds-up,contested": [
+   1,
+   1
+  ],
+  "gst_hst_registration_number|rules+template|pattern|text|confirmed": [
+   1794,
+   1794
+  ],
+  "gst_hst_registration_number|rules+template|template|text|confirmed": [
+   986,
+   986
   ],
   "gst_hst_registration_number|rules|pattern|scan|confirmed": [
    661,
@@ -284,8 +524,28 @@
    0
   ],
   "gst_hst_registration_number|rules|pattern|text|confirmed": [
-   3581,
-   3581
+   3681,
+   3681
+  ],
+  "hst_amount|rules+template|label-right|text|adds-up,confirmed": [
+   737,
+   737
+  ],
+  "hst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
+   12,
+   12
+  ],
+  "hst_amount|rules+template|label-right|text|adds-up,confirmed,soft": [
+   1,
+   1
+  ],
+  "hst_amount|rules+template|label-right|text|adds-up,soft": [
+   1,
+   1
+  ],
+  "hst_amount|rules+template|template|text|confirmed": [
+   182,
+   182
   ],
   "hst_amount|rules|label-inline|scan|soft": [
    7,
@@ -304,12 +564,68 @@
    4
   ],
   "hst_amount|rules|label-right|text|adds-up,confirmed": [
-   1612,
-   1612
+   1638,
+   1638
   ],
   "hst_amount|rules|label-right|text|adds-up,confirmed,contested": [
    1,
    1
+  ],
+  "hst_amount|rules|label-right|text|adds-up,contested": [
+   1,
+   1
+  ],
+  "hst_amount|template|template|text|confirmed,contested": [
+   38,
+   0
+  ],
+  "hst_amount|template|template|text|contested,soft": [
+   2,
+   0
+  ],
+  "invoice_date|rules+template|label-below|text|": [
+   3,
+   3
+  ],
+  "invoice_date|rules+template|label-below|text|confirmed": [
+   1,
+   1
+  ],
+  "invoice_date|rules+template|label-inline|text|": [
+   12,
+   12
+  ],
+  "invoice_date|rules+template|label-inline|text|confirmed": [
+   1,
+   1
+  ],
+  "invoice_date|rules+template|label-right|text|": [
+   4,
+   4
+  ],
+  "invoice_date|rules+template|label-right|text|confirmed": [
+   2,
+   2
+  ],
+  "invoice_date|rules+template|template|text|": [
+   2021,
+   2019
+  ],
+  "invoice_date|rules+template|template|text|confirmed": [
+   925,
+   925
+  ],
+  "invoice_date|rules+template|template|text|confirmed,contested": [
+   80,
+   80
+  ],
+  "invoice_date|rules+template|template|text|contested": [
+   1,
+   1
+  ],
+  "invoice_date|rules+template|template|text|soft": [
+   3,
+   3
   ],
   "invoice_date|rules|label-below|scan|": [
    216,
@@ -328,16 +644,16 @@
    0
   ],
   "invoice_date|rules|label-below|text|": [
-   1185,
-   1185
+   1211,
+   1211
   ],
   "invoice_date|rules|label-below|text|ambiguous": [
    57,
    29
   ],
   "invoice_date|rules|label-below|text|confirmed": [
-   474,
-   474
+   487,
+   487
   ],
   "invoice_date|rules|label-below|text|soft": [
    4,
@@ -364,16 +680,16 @@
    1
   ],
   "invoice_date|rules|label-inline|text|": [
-   522,
-   522
+   533,
+   533
   ],
   "invoice_date|rules|label-inline|text|ambiguous": [
    20,
    10
   ],
   "invoice_date|rules|label-inline|text|confirmed": [
-   101,
-   101
+   102,
+   102
   ],
   "invoice_date|rules|label-inline|text|soft": [
    9,
@@ -396,20 +712,44 @@
    5
   ],
   "invoice_date|rules|label-right|text|": [
-   1144,
-   1144
+   1169,
+   1169
   ],
   "invoice_date|rules|label-right|text|ambiguous": [
-   63,
-   35
+   65,
+   36
   ],
   "invoice_date|rules|label-right|text|confirmed": [
-   376,
-   376
+   388,
+   388
   ],
   "invoice_date|rules|label-right|text|soft": [
    39,
    39
+  ],
+  "invoice_date|template|template|text|contested": [
+   55,
+   55
+  ],
+  "invoice_date|template|template|text|contested,soft": [
+   2,
+   0
+  ],
+  "invoice_number|rules+template|label-below|text|": [
+   2,
+   2
+  ],
+  "invoice_number|rules+template|label-inline|text|": [
+   18,
+   18
+  ],
+  "invoice_number|rules+template|label-right|text|": [
+   21,
+   21
+  ],
+  "invoice_number|rules+template|template|text|": [
+   3068,
+   3068
   ],
   "invoice_number|rules|label-below|scan|": [
    278,
@@ -420,8 +760,8 @@
    0
   ],
   "invoice_number|rules|label-below|text|": [
-   1495,
-   1491
+   1521,
+   1517
   ],
   "invoice_number|rules|label-below|text|contested": [
    8,
@@ -436,12 +776,12 @@
    5
   ],
   "invoice_number|rules|label-inline|text|": [
-   988,
-   988
+   1014,
+   1014
   ],
   "invoice_number|rules|label-inline|text|contested": [
-   49,
-   49
+   50,
+   50
   ],
   "invoice_number|rules|label-right|scan|": [
    261,
@@ -452,12 +792,60 @@
    1
   ],
   "invoice_number|rules|label-right|text|": [
-   1434,
-   1429
+   1472,
+   1467
   ],
   "invoice_number|rules|label-right|text|contested": [
    5,
    4
+  ],
+  "payment_terms|rules+template|label-below|text|confirmed": [
+   3,
+   3
+  ],
+  "payment_terms|rules+template|label-below|text|contested": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|label-inline|text|": [
+   25,
+   25
+  ],
+  "payment_terms|rules+template|label-inline|text|confirmed": [
+   8,
+   8
+  ],
+  "payment_terms|rules+template|label-inline|text|soft": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|label-right|text|confirmed": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|label-right|text|confirmed,contested": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|template|text|": [
+   738,
+   738
+  ],
+  "payment_terms|rules+template|template|text|confirmed": [
+   990,
+   990
+  ],
+  "payment_terms|rules+template|template|text|confirmed,contested": [
+   4,
+   4
+  ],
+  "payment_terms|rules+template|template|text|contested": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|template|text|soft": [
+   3,
+   3
   ],
   "payment_terms|rules|label-below|scan|": [
    57,
@@ -468,12 +856,12 @@
    55
   ],
   "payment_terms|rules|label-below|text|": [
-   364,
-   364
+   365,
+   365
   ],
   "payment_terms|rules|label-below|text|confirmed": [
-   325,
-   325
+   336,
+   336
   ],
   "payment_terms|rules|label-inline|scan|": [
    134,
@@ -488,12 +876,12 @@
    5
   ],
   "payment_terms|rules|label-inline|text|": [
-   674,
-   674
+   701,
+   701
   ],
   "payment_terms|rules|label-inline|text|confirmed": [
-   440,
-   440
+   449,
+   449
   ],
   "payment_terms|rules|label-inline|text|soft": [
    24,
@@ -512,16 +900,32 @@
    7
   ],
   "payment_terms|rules|label-right|text|": [
-   229,
-   229
+   235,
+   235
   ],
   "payment_terms|rules|label-right|text|confirmed": [
-   186,
-   186
+   194,
+   194
   ],
   "payment_terms|rules|label-right|text|soft": [
    19,
    19
+  ],
+  "payment_terms|template|template|text|contested": [
+   2,
+   0
+  ],
+  "po_number|rules+template|label-inline|text|": [
+   12,
+   12
+  ],
+  "po_number|rules+template|label-right|text|": [
+   2,
+   2
+  ],
+  "po_number|rules+template|template|text|": [
+   1723,
+   1723
   ],
   "po_number|rules|label-below|scan|": [
    188,
@@ -532,16 +936,16 @@
    1
   ],
   "po_number|rules|label-below|text|": [
-   1089,
-   1089
+   1122,
+   1122
   ],
   "po_number|rules|label-inline|scan|": [
    88,
    87
   ],
   "po_number|rules|label-inline|text|": [
-   385,
-   385
+   399,
+   399
   ],
   "po_number|rules|label-inline|text|contested": [
    1,
@@ -552,12 +956,24 @@
    142
   ],
   "po_number|rules|label-right|text|": [
-   828,
-   828
+   884,
+   884
   ],
   "po_number|rules|label-right|text|contested": [
    1,
    1
+  ],
+  "pst_amount|rules+template|label-right|text|adds-up,confirmed": [
+   821,
+   821
+  ],
+  "pst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
+   41,
+   41
+  ],
+  "pst_amount|rules+template|template|text|confirmed": [
+   150,
+   150
   ],
   "pst_amount|rules|label-inline|scan|soft": [
    2,
@@ -576,8 +992,28 @@
    2
   ],
   "pst_amount|rules|label-right|text|adds-up,confirmed": [
-   1030,
-   1030
+   1058,
+   1058
+  ],
+  "qst_amount|rules+template|label-right|text|adds-up": [
+   2,
+   2
+  ],
+  "qst_amount|rules+template|label-right|text|adds-up,confirmed": [
+   472,
+   472
+  ],
+  "qst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
+   9,
+   9
+  ],
+  "qst_amount|rules+template|label-right|text|adds-up,contested": [
+   1,
+   1
+  ],
+  "qst_amount|rules+template|template|text|confirmed": [
+   93,
+   93
   ],
   "qst_amount|rules|label-inline|scan|soft": [
    1,
@@ -604,16 +1040,84 @@
    1
   ],
   "qst_amount|rules|label-right|text|adds-up,confirmed": [
-   733,
-   733
+   750,
+   750
+  ],
+  "qst_amount|rules|label-right|text|adds-up,confirmed,contested": [
+   1,
+   1
+  ],
+  "qst_amount|template|template|text|contested,soft": [
+   5,
+   0
+  ],
+  "qst_registration_number|rules+template|pattern|text|confirmed": [
+   46,
+   46
+  ],
+  "qst_registration_number|rules+template|template|text|confirmed": [
+   539,
+   539
   ],
   "qst_registration_number|rules|pattern|scan|confirmed": [
    128,
    128
   ],
   "qst_registration_number|rules|pattern|text|confirmed": [
-   683,
-   683
+   698,
+   698
+  ],
+  "subtotal|rules+template|label-right|text|adds-up": [
+   1,
+   1
+  ],
+  "subtotal|rules+template|label-right|text|adds-up,confirmed": [
+   1163,
+   1163
+  ],
+  "subtotal|rules+template|label-right|text|adds-up,confirmed,contested": [
+   21,
+   21
+  ],
+  "subtotal|rules+template|label-right|text|adds-up,confirmed,contested,soft": [
+   40,
+   40
+  ],
+  "subtotal|rules+template|label-right|text|adds-up,confirmed,soft": [
+   575,
+   575
+  ],
+  "subtotal|rules+template|label-right|text|adds-up,soft": [
+   1,
+   1
+  ],
+  "subtotal|rules+template|label-right|text|confirmed": [
+   1,
+   1
+  ],
+  "subtotal|rules+template|label-right|text|confirmed,soft": [
+   3,
+   3
+  ],
+  "subtotal|rules+template|template|text|": [
+   4,
+   4
+  ],
+  "subtotal|rules+template|template|text|confirmed": [
+   998,
+   998
+  ],
+  "subtotal|rules+template|template|text|confirmed,contested,soft": [
+   2,
+   2
+  ],
+  "subtotal|rules+template|template|text|confirmed,soft": [
+   244,
+   244
+  ],
+  "subtotal|rules+template|template|text|soft": [
+   10,
+   10
   ],
   "subtotal|rules|label-inline|scan|adds-up,confirmed": [
    12,
@@ -652,24 +1156,52 @@
    56
   ],
   "subtotal|rules|label-right|text|adds-up,confirmed": [
-   3039,
-   3039
+   3098,
+   3098
+  ],
+  "subtotal|rules|label-right|text|adds-up,confirmed,contested": [
+   4,
+   4
   ],
   "subtotal|rules|label-right|text|adds-up,confirmed,soft": [
-   789,
-   789
+   811,
+   811
   ],
   "subtotal|rules|label-right|text|confirmed": [
-   64,
-   64
+   66,
+   66
   ],
   "subtotal|rules|label-right|text|confirmed,soft": [
-   36,
-   36
+   39,
+   39
   ],
   "subtotal|rules|label-right|text|soft": [
    16,
    16
+  ],
+  "subtotal|template|template|text|confirmed,contested,soft": [
+   39,
+   0
+  ],
+  "subtotal|template|template|text|contested,soft": [
+   8,
+   0
+  ],
+  "tax_total|rules+template|label-right|text|confirmed": [
+   5,
+   5
+  ],
+  "tax_total|rules+template|template|text|": [
+   14,
+   14
+  ],
+  "tax_total|rules+template|template|text|confirmed": [
+   664,
+   664
+  ],
+  "tax_total|rules+template|template|text|confirmed,contested": [
+   13,
+   13
   ],
   "tax_total|rules|label-right|scan|": [
    7,
@@ -684,8 +1216,36 @@
    32
   ],
   "tax_total|rules|label-right|text|confirmed": [
-   966,
-   966
+   987,
+   987
+  ],
+  "tax_total|template|template|text|confirmed": [
+   32,
+   0
+  ],
+  "tax_total|template|template|text|confirmed,contested": [
+   8,
+   0
+  ],
+  "tax_total|template|template|text|contested": [
+   4,
+   0
+  ],
+  "vendor_name|rules+template|template|text|confirmed": [
+   1788,
+   1788
+  ],
+  "vendor_name|rules+template|template|text|confirmed,contested": [
+   30,
+   30
+  ],
+  "vendor_name|rules+template|top-of-page|text|confirmed": [
+   1297,
+   1297
+  ],
+  "vendor_name|rules+template|top-of-page|text|confirmed,contested": [
+   1,
+   1
   ],
   "vendor_name|rules|top-of-page|scan|": [
    626,
@@ -698,6 +1258,14 @@
   "vendor_name|rules|top-of-page|text|": [
    3351,
    3350
+  ],
+  "vendor_name|rules|top-of-page|text|confirmed": [
+   67,
+   67
+  ],
+  "vendor_name|rules|top-of-page|text|confirmed,contested": [
+   17,
+   17
   ],
   "vendor_name|rules|top-of-page|text|contested": [
    649,
