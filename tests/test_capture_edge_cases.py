@@ -157,3 +157,49 @@ def test_an_amount_after_ellipsis_leaders_keeps_its_place(tmp_path):
     assert [(v, text[a:b].strip()) for v, a, b in find_amounts(text)] == [(1050.0, "1,050.00")]
     pdf = _unicode_pdf(tmp_path, [(60, 60, "Acme Supply Ltd."), (300, 530, text)], "leaders.pdf")
     assert analyze(pdf, ocr=False, today=TODAY).fields["grand_total"].value == 1050.0
+
+
+def _credit_memo(title: str, total_label: str, amounts: tuple[str, str, str, str]) -> list[tuple[float, float, str]]:
+    line, sub, gst, total = amounts
+    return [
+        (60, 60, "Acme Supply Ltd."), (60, 75, "12 Main St, Calgary, AB T2P 1A1"), (400, 60, title),
+        (380, 100, "Credit Memo No: CM-2045"), (380, 115, "Date: 2026-09-20"), (380, 130, "Original Invoice: AC-0998"),
+        (60, 200, "Description"), (300, 200, "Qty"), (500, 200, "Amount"),
+        (60, 215, "Returned toner cartridges"), (300, 215, "2"), (500, 215, line),
+        (380, 500, "Subtotal"), (500, 500, sub), (380, 515, "GST 5%"), (500, 515, gst),
+        (380, 530, total_label), (500, 530, total),
+    ]  # fmt: skip
+
+
+_POSITIVE = ("1,000.00", "1,000.00", "50.00", "1,050.00")
+
+
+def test_a_credit_memo_printed_with_positive_amounts_is_a_credit(tmp_path):
+    """Many suppliers print a credit memo's amounts without a sign, under a "CREDIT MEMO" title. AP Coder
+    posts credits as negative amounts: read as printed, the credit would be posted as an invoice to pay."""
+    for i, (title, label) in enumerate([("CREDIT MEMO", "Total Credit"), ("NOTE DE CRÉDIT", "Montant crédité")]):
+        pdf = _unicode_pdf(tmp_path, _credit_memo(title, label, _POSITIVE), f"cm{i}.pdf")
+        capture = analyze(pdf, ocr=False, today=TODAY)
+        got = {f: capture.fields[f].value for f in ("subtotal", "gst_amount", "grand_total")}
+        assert got == {"subtotal": -1000.0, "gst_amount": -50.0, "grand_total": -1050.0}, title
+        assert [li.amount for li in capture.line_items] == [-1000.0]
+        assert all(c["ok"] for c in capture.checks if c["code"] in ("TOTALS_ADD_UP", "LINES_ADD_UP"))
+    # Printed with its signs, a credit memo is read as printed; an invoice stays positive.
+    signed = ("-1,000.00", "-1,000.00", "-50.00", "-1,050.00")
+    capture = analyze(_pdf(tmp_path, _credit_memo("CREDIT MEMO", "Total Credit", signed), "signed.pdf"), ocr=False,
+                      today=TODAY)  # fmt: skip
+    assert capture.fields["grand_total"].value == -1050.0 and capture.line_items[0].amount == -1000.0
+    invoice = [(x, y, "INVOICE" if t == "CREDIT MEMO" else t) for x, y, t in _credit_memo("CREDIT MEMO", "Total Due",
+               _POSITIVE) if not t.startswith(("Credit Memo No", "Original"))]  # fmt: skip
+    capture = analyze(_pdf(tmp_path, invoice, "invoice.pdf"), ocr=False, today=TODAY)
+    assert capture.fields["grand_total"].value == 1050.0
+
+
+def test_a_learned_template_reads_a_positive_credit_memo_as_a_credit(tmp_path):
+    from ap_coder.capture.supplier import apply_template
+
+    truth = {"vendor_name": "Acme Supply Ltd.", "subtotal": -1000.0, "grand_total": -1050.0,
+             "tax_lines": [{"tax_type": "GST", "tax_amount": -50.0}]}  # fmt: skip
+    layout = build_layout(_pdf(tmp_path, _credit_memo("CREDIT MEMO", "Total Credit", _POSITIVE)), ocr=False)
+    read = apply_template(learn(None, layout, confirmed_values(truth)), layout)
+    assert read["grand_total"][0].value == -1050.0 and read["subtotal"][0].value == -1000.0

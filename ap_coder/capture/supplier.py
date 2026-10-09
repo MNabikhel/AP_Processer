@@ -822,10 +822,15 @@ def apply_template(template: Template | dict[str, Any] | None, layout: DocLayout
     out: dict[str, list[Reading]] = {}
     if template is None or not layout.pages:
         return out
+    from .reader import credit_printed_positive
+
+    credit = credit_printed_positive(layout)  # a credit memo printed without signs: its amounts are credits
     for name, variants in template.fields.items():
         best: dict[Any, Reading] = {}
         for variant in variants:
             for reading in _apply_variant(name, variant, layout):
+                if credit and name in AMOUNT_FIELDS and isinstance(reading.value, float) and reading.value > 0:
+                    reading.value = -reading.value
                 key = compare_key(name, reading.value)
                 if key not in best or reading.score > best[key].score:
                     best[key] = reading

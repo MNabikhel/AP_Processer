@@ -782,7 +782,34 @@ _CARRIED = re.compile(r"^(a\s*reporter|report\b|reporte|carried\s*forward|brough
                       r"continued|suite|sub\s*-?\s*total|sous\s*-?\s*total|page\s*total)")  # fmt: skip
 
 
+_CREDIT_TITLE = re.compile(r"^(?:credit\s*(?:memo|note)|note\s*de\s*credit|avis\s*de\s*credit)(?![a-z])")
+
+
+def credit_printed_positive(layout: DocLayout) -> bool:
+    """A credit memo (titled so at the top of its first page) that prints no amount with a sign: its amounts
+    are credits however they are printed, and AP posts credits as negative amounts."""
+    if not layout.pages:
+        return False
+    if not any(ln.box.cy < 0.35 and _CREDIT_TITLE.match(plain(ln.text).strip()) for ln in layout.pages[0].lines):
+        return False
+    from .normalize import find_amounts
+
+    for line in layout.lines():
+        if any(v < 0 and looks_like_money(line.text[a:b]) for v, a, b in find_amounts(line.text)):
+            return False  # the signs are printed: read them as they are
+    return True
+
+
 def read_line_items(layout: DocLayout) -> list[LineReading]:
+    items = _read_line_items(layout)
+    if items and credit_printed_positive(layout):
+        for li in items:
+            li.amount = -li.amount if li.amount else li.amount
+            li.unit_price = -li.unit_price if li.unit_price else li.unit_price
+    return items
+
+
+def _read_line_items(layout: DocLayout) -> list[LineReading]:
     items: list[LineReading] = []
     for page in layout.pages:
         header = None
@@ -1001,6 +1028,10 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
             readings += got
         cands[field] = readings
+    if credit_printed_positive(layout):
+        for field in AMOUNT_FIELDS:
+            for r in cands.get(field, []):
+                r.value = -r.value if r.value else r.value
     # Totals: the lowest "total" on the last page with one is usually the invoice total.
     if cands.get("grand_total"):
         last_page = max(r.boxes[0].page for r in cands["grand_total"] if r.boxes)
