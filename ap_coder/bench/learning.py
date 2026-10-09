@@ -124,6 +124,7 @@ def _simulate(job: Job) -> dict[str, Any]:
     sid = supplier_id(seed, supplier)
     cases_dir = Path(out_dir) / "cases" / sid
     rows: list[dict[str, Any]] = []
+    evidence: list[dict[str, Any]] = []  # for `bench calibrate`: what a template adds to the evidence
     t0 = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="ap-learn-") as tmp:
         store = Store(Path(tmp) / "learn.db")
@@ -155,6 +156,12 @@ def _simulate(job: Job) -> dict[str, Any]:
             capture = analyze(case.path, template=template, vendor=vendor, layout=layout, today=today)
             plain = analyze(case.path, vendor=vendor, layout=layout, today=today) if template else capture
             recs = score_case(truth, capture)
+            evidence.extend(
+                {"case": case.id, "scanned": case.scanned, "field": r["field"], "evidence": r["evidence"],
+                 "correct": r["correct"]}
+                for r in recs
+                if r["scored"] and r["reported"] and r["evidence"]
+            )  # fmt: skip
             got = _field_counts(recs)
             base = _field_counts(score_case(truth, plain))
 
@@ -203,7 +210,7 @@ def _simulate(job: Job) -> dict[str, Any]:
                     "reason": reason,
                 }
             )
-    return {"supplier": sid, "rows": rows, "seconds": round(time.perf_counter() - t0, 2)}
+    return {"supplier": sid, "rows": rows, "evidence": evidence, "seconds": round(time.perf_counter() - t0, 2)}
 
 
 # --- the report -------------------------------------------------------------------------------
@@ -484,4 +491,8 @@ def run_learning(
     with (out / "invoices.jsonl").open("w", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
+    with (out / "evidence.jsonl").open("w", encoding="utf-8") as fh:
+        for res in results:
+            for r in res.get("evidence") or []:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
     return report

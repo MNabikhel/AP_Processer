@@ -578,6 +578,14 @@ def _find_spans(layout: DocLayout, name: str, value: Any) -> list[tuple[int, lis
                     if order is not None:
                         found.append((page.number, row[i : j + 1], order))
 
+    # A name or id printed exactly as confirmed wins over looser matches ("Fournitures Laval S.E.N.C.",
+    # not "Fournitures Laval", which also matches once legal suffixes are ignored).
+    if name not in AMOUNT_FIELDS and name not in DATE_FIELDS:
+        want = " ".join(str(value).split()).casefold()
+        exact = [f for f in found if _join(f[1]).casefold() == want]
+        if exact:
+            return exact
+
     # Drop spans that contain a smaller match ("$ 1,234.56" when "1,234.56" matches alone).
     def inside(a: list[Word], b: list[Word]) -> bool:
         return len(a) < len(b) and {id(w) for w in a} <= {id(w) for w in b}

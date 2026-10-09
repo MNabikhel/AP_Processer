@@ -641,3 +641,23 @@ def test_learning_page_turns_autonomy_on_and_off(db, tmp_path, ground_truth, mon
     _ok(at.button(key=off).click().run())
     assert store.get_supplier_profile("id:V1")["state"] == SUPERVISED
     assert store.events(actions=["autonomy_off"])[0]["actor"] == "Manager Mia"
+
+
+def test_template_learns_the_whole_name_with_its_legal_suffix(tmp_path):
+    import pymupdf
+
+    from ap_coder.capture import build_layout
+    from ap_coder.capture.supplier import apply_template, learn
+
+    paths = []
+    for n in range(2):
+        doc = pymupdf.open()
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((40, 50), "Facture", fontsize=14)
+        page.insert_text((330, 50), "Fournitures Laval S.E.N.C.", fontsize=12)
+        page.insert_text((40, 90), f"N° facture {1000 + n}", fontsize=10)
+        paths.append(tmp_path / f"f{n}.pdf")
+        doc.save(paths[-1])
+    template = learn(None, build_layout(paths[0], ocr=False), {"vendor_name": "Fournitures Laval S.E.N.C."})
+    got = apply_template(template, build_layout(paths[1], ocr=False))["vendor_name"][0]
+    assert got.value == "Fournitures Laval S.E.N.C."
