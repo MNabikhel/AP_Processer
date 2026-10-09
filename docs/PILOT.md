@@ -16,6 +16,15 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   before for that vendor, the vendor master's default account and your fixed coding rules. A line with
   nothing to learn from is left for you to code. With a model running, it also proposes accounts for
   vendors and lines it has not seen yet.
+
+  **Which model, and what to expect** (measured on the ten samples with nothing approved yet, through the
+  same OpenAI-compatible server API LM Studio uses): the invoice is always read by AP Coder's own reader,
+  which got every header and line right; the model is asked only for the accounts. A 7B instruct model
+  (e.g. Qwen 2.5 7B Instruct, Q4_K_M) picked the right account for 26 of 41 lines on its own; used the way
+  AP Coder uses it, after the account-name match, 27 of 41 were right before any approval. A 1.5B model did
+  worse than the name match (11 of 41), so load a 7B–8B model if the laptop can. On a 4-core laptop CPU
+  without a graphics card the 7B model took 25 s to 2 min per invoice; a graphics card is several times
+  faster. Each approval teaches AP Coder that vendor's accounts, which then take precedence over the model.
 - **No Azure needed.** Azure Document Intelligence and Azure OpenAI stay optional; leave Settings → Azure
   empty for the pilot.
 
