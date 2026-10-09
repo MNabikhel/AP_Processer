@@ -22,11 +22,17 @@ _AMOUNT = re.compile(
 
 
 _OCR_THOUSANDS = re.compile(r"(?<=\d)[;:](?=\d{3}(?!\d))")
+_OCR_DECIMAL = re.compile(r"(?<=\d)[;:](?=\d{2}(?!\d))")
+_OCR_ONE = re.compile(r"(?<![A-Za-z\d])[Il](?=[,.]?\d{3}[.,]\d{2}(?!\d))")
 
 
 def _ocr_amount_text(s: str) -> str:
-    """OCR prints the thousands comma as ";" or ":" ("1;864.71"). Same length, so spans stay valid."""
-    return _OCR_THOUSANDS.sub(",", s)
+    """OCR slips in amounts, fixed in place (same length, so spans stay valid): the thousands comma or
+    decimal point printed as ";" or ":" ("1;864.71", "2447:70"), and the digit 1 as "I" or "l"
+    ("I,396.35")."""
+    s = _OCR_THOUSANDS.sub(",", s)
+    s = _OCR_DECIMAL.sub(".", s)
+    return _OCR_ONE.sub("1", s)
 
 
 def parse_amount(text: str | None) -> float | None:
@@ -115,7 +121,7 @@ def _plain(text: str) -> str:
 _ISO = re.compile(r"\b(20\d{2}|19\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b")
 _NUMERIC = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b")
 # Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
-_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?\s*(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})\b")
+_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})\b")
 _WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?\s*([a-z]{3,9})\.?,?\s*(\d{4})\b")
 _WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,9})[-\s](\d{2,4})\b")
 

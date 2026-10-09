@@ -359,3 +359,12 @@ def test_customer_number_glued_by_ocr_is_ignored():
 
     assert _CUSTOMER_WORD.search(plain("YourGSTNo.:"))
     assert _CUSTOMER_WORD.search(plain("C1ientBN:"))
+
+
+def test_ocr_slips_in_amounts_rates_and_dates():
+    from ap_coder.capture.reader import _PERCENT
+
+    assert parse_amount("2447:70") == 2447.70 and parse_amount("I,396.35") == 1396.35
+    assert parse_date("Jun-22,2025") == "2025-06-22"
+    assert "138" not in _PERCENT.sub(" ", "HST@138 $209.64")  # "13%" read as "138"
+    assert "12.00" in _PERCENT.sub(" ", "Credit (12.00)")  # a negative amount is not a rate

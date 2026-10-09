@@ -131,7 +131,9 @@ DISTRACTORS: dict[str, list[str]] = {
 }  # fmt: skip
 
 _REG_WORDS = re.compile(r"\b(reg|registration|regist|no|number|num|#|n\s?°|nº|inscription|bn|business)\b|#", re.I)
-_PERCENT = re.compile(r"\d+(?:[.,]\d+)?\s*%")
+_PERCENT = re.compile(
+    r"\d+(?:[.,]\d+)?\s*%|@\s*\d{1,2}(?:[.,]\d{1,3})?\s*[%8]?(?![\d.,])|\(\s*\d{1,2}(?:\s*%|8|[.,]\d{1,3}\s*%)\s*\)"
+)  # 13%, @ 13%, (13%), and OCR's "@138" / "(138)"
 
 
 @dataclass
@@ -205,7 +207,9 @@ def _combined_tax_fields(text: str) -> tuple[str, ...]:
     both are proposed and the totals solver picks the one whose rate fits the subtotal."""
     m = _PERCENT.search(text)
     if m:
-        rate = float(m.group(0).rstrip("% ").replace(",", "."))
+        rate = float(re.search(r"\d+(?:[.,]\d+)?", m.group(0)).group(0).replace(",", "."))
+        if rate >= 100 and str(rate).startswith(("58", "138", "148", "158")):
+            rate = rate // 10  # OCR's "58" / "138" for 5% / 13%
         return ("gst_amount",) if abs(rate - 5.0) < 0.01 else ("hst_amount",)
     return ("hst_amount", "gst_amount")
 
@@ -263,6 +267,18 @@ def _id_from(text: str, offset: int) -> tuple[str, int, int] | None:
         return None
     value = value.strip(".-/")
     return value, offset + pos + a, offset + pos + a + len(value)
+
+
+# A label OCR glued to the number after it: "No.066", "Inv321", "N°factureFA2627633", "INVOICEA-2026-1".
+# An all-capitals "INV2026..." is left alone: suppliers print that as part of the number.
+_GLUED_LABEL = re.compile(
+    r"^(?:(?:(?i:tax|sales)\s*)?(?i:invoice|facture)|(?i:n°\s*facture)|(?i:no)\.+|(?i:n°|nº)|Inv\.?|#)\s*(?=[A-Za-z]{0,4}-?\d)"
+)
+
+
+def _unglue_label(value: str) -> str:
+    rest = _GLUED_LABEL.sub("", value, count=1)
+    return rest if rest != value and len(rest) >= 1 and any(c.isdigit() for c in rest) else value
 
 
 def _ocr_id_fix(value: str) -> str:
@@ -324,7 +340,7 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None
         words = _span_words(line, a, b)
         if any(w.source != "text" for w in words):
-            value = _ocr_id_fix(value)
+            value = _ocr_id_fix(_unglue_label(value))
         return Reading(field, value, value, _boxes(words), base * _min_conf(words), method)
     if field in ("invoice_date", "due_date"):
         found = parse_dates(rest, prefer_day_first=_DAY_FIRST.get())
@@ -383,7 +399,7 @@ def _amounts_in(text: str) -> list[tuple[float, int, int]]:
 
 _TERMS = [
     (re.compile(r"(\d{1,2})\s*%\s*(\d{1,2})\s*,?\s*net\s*(\d{1,3})(?!\d)", re.I), "{0}% {1} Net {2}"),
-    (re.compile(r"\bnet\s*(\d{1,3})(?!\d)", re.I), "Net {0}"),
+    (re.compile(r"\bnet[\s.:]*(\d{1,3})(?!\d)", re.I), "Net {0}"),
     (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
     (re.compile(r"(?<!\d)(\d{1,3})\s*(?:days|jours|j)\b", re.I), "Net {0}"),
     (re.compile(r"\bdue\s*(?:up)?on\s*receipt\b|payable\s*(?:a|à|sur|des|dès)\s*(?:la\s*)?r[ée]ception|on\s*receipt", re.I), "Due on receipt"),
@@ -875,6 +891,24 @@ def _date_fit(cands: dict[str, list[Reading]]) -> int:
 _DISCOUNT = re.compile(r".*(discount|escompte|rabais|remise)")
 
 
+_GLUED_TITLE = re.compile(
+    r"^(?:(?i:tax|sales)\s*)?(?i:invoice|facture)\s*(?:(?i:n°|no)\.?\s*|#\s*)?([A-Z]{0,4}-?\d[\w/-]*)$"
+)
+
+
+def _glued_title_numbers(layout: DocLayout) -> list[Reading]:
+    """OCR glued the title to the number beside it: "INVOICEA-2026-29266", "TAXINVOICEA-90595"."""
+    out = []
+    for line in layout.lines():
+        if not any(w.source != "text" for w in line.words):
+            continue
+        m = _GLUED_TITLE.match(line.text.replace(" ", ""))
+        if m and len(m.group(1)) >= 3:
+            out.append(Reading("invoice_number", m.group(1), m.group(1), [line.box], 0.75 * _min_conf(line.words),
+                               "glued-title"))  # fmt: skip
+    return out
+
+
 def _table_header_line(line: Line, page_lines: list[Line]) -> bool:
     """The line is a column heading of a line-item table (two or more other headings beside it)."""
     others = 0
@@ -923,6 +957,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         for r in cands.get(field, []):
             if r.boxes:
                 r.score -= 0.03 * (r.boxes[0].page - 1) + 0.01 * r.boxes[0].cy
+    cands.setdefault("invoice_number", []).extend(_glued_title_numbers(layout))
     cands.update(_registration_numbers(layout))
     cands["vendor_name"] = _vendor_names(layout)
     currency = find_currency(layout.text())
