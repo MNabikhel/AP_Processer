@@ -176,10 +176,12 @@ def _same_price(a: float, b: float) -> bool:
     return abs(abs(a) - abs(b)) <= max(PRICE_TOLERANCE_ABS, abs(b) * PRICE_TOLERANCE)
 
 
-def pair_with_po(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]]) -> dict[int, int]:
-    """{invoice line_number: PO line_number}. Each invoice line takes the PO line it most resembles
-    (a matching unit price counts in favour); several invoice lines may bill the same PO line."""
-    pairs: dict[int, int] = {}
+def po_lines_billed(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]]) -> list[int | None]:
+    """The PO line_number each invoice line bills, by position (None: matches nothing). Each invoice line takes
+    the PO line it most resembles (a matching unit price counts in favour); several invoice lines may bill the
+    same PO line. By position, so an invoice that repeats a line number (page 2 starting again at 1) still pairs
+    every line."""
+    out: list[int | None] = []
     for li in invoice_lines:
         best, best_score = None, 0.0
         for pl in po_lines:
@@ -188,9 +190,17 @@ def pair_with_po(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, A
                 score += 0.2
             if score > best_score:
                 best, best_score = pl, score
-        if best is not None and best_score >= MATCH_THRESHOLD:
-            pairs[int(li["line_number"])] = int(best["line_number"])
-    return pairs
+        out.append(int(best["line_number"]) if best is not None and best_score >= MATCH_THRESHOLD else None)
+    return out
+
+
+def pair_with_po(invoice_lines: list[dict[str, Any]], po_lines: list[dict[str, Any]]) -> dict[int, int]:
+    """{invoice line_number: PO line_number} (see ``po_lines_billed``)."""
+    return {
+        int(li["line_number"]): po_line
+        for li, po_line in zip(invoice_lines, po_lines_billed(invoice_lines, po_lines), strict=True)
+        if po_line is not None
+    }
 
 
 @dataclass
@@ -265,14 +275,13 @@ def match_invoice(coding: InvoiceCoding, store: Store, exclude_invoice_id: int |
     billed_before_amount = billed_by_line(po, others, amounts=True)
 
     items = [li.model_dump() for li in coding.line_items]
-    pairs = pair_with_po(items, po_lines)
     billed_now: dict[int, float] = {}
     billed_now_amount: dict[int, float] = {}
-    for li in items:
+    for li, po_line in zip(items, po_lines_billed(items, po_lines), strict=True):
         m = LineMatch(li["line_number"], li["description"], billed_quantity(li), float(li["unit_price"]))
         m.amount = float(li["amount"] or 0)
         result.lines.append(m)
-        pl = by_line.get(pairs.get(m.invoice_line, -1))
+        pl = by_line.get(po_line) if po_line is not None else None
         if pl is None:
             m.problems.append("not_on_po")
             result.findings.append(
@@ -424,11 +433,10 @@ def billed_by_line(
         lines = inv["coding"].get("line_items") or []
         if positive_only:
             lines = [li for li in lines if billed_quantity(li) > 0]
-        value = {
-            int(li["line_number"]): float(li.get("amount") or 0) if amounts else billed_quantity(li) for li in lines
-        }
-        for inv_line, po_line in pair_with_po(lines, po["lines"]).items():
-            billed[po_line] = billed.get(po_line, 0.0) + value.get(inv_line, 0.0)
+        for li, po_line in zip(lines, po_lines_billed(lines, po["lines"]), strict=True):
+            if po_line is not None:
+                value = float(li.get("amount") or 0) if amounts else billed_quantity(li)
+                billed[po_line] = billed.get(po_line, 0.0) + value
     return billed
 
 
