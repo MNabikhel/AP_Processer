@@ -160,17 +160,29 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
             final_coding = InvoiceCoding.model_validate(truth)
             final, _ = finalise_coding(final_coding, reference, settings, store=store, exclude_invoice_id=invoice_id)
             store.approve_invoice(invoice_id, final, DEMO_REVIEWER)
+            _record_supplier_outcomes(store, invoice_id, output, final)
             approved += 1
     return {"added": added, "approved": approved, "to_review": added - approved}
+
+
+def _record_supplier_outcomes(store: Store, invoice_id: int, proposed: dict[str, Any], final: dict[str, Any]) -> None:
+    """The header fields of a pre-approved demo invoice count towards its supplier's accuracy (Learning page)."""
+    from .capture.supplier import outcome_rows
+
+    name = final.get("vendor_name") or ""
+    key = store.supplier_key_for(name, final.get("gst_hst_registration_number"))
+    store.record_outcomes(key, invoice_id, outcome_rows(proposed, final), display_name=name)
 
 
 def remove_demo(store: Store) -> int:
     """Delete the demo invoices and everything learned from them; real invoices are untouched."""
     ids = [i["id"] for i in store.list_invoices_full() if is_demo(i)]
     batches = {r["export_batch"] for r in store.invoice_columns(("id", "export_batch"), ids=ids) if r["export_batch"]}
+    suppliers = store.supplier_keys_for_invoices(ids)
     for invoice_id in ids:
         store.delete_invoice(invoice_id, forget_lessons=True)
     store.delete_empty_batches(batches)  # export batches that held only demo invoices
+    store.prune_supplier_profiles(suppliers)  # supplier profiles that only the demo invoices made
     vendor_keys = json.loads(store.get_setting(DEMO_VENDORS_SETTING) or "[]")
     if vendor_keys:
         store.delete_vendors(vendor_keys)

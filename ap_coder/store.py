@@ -36,7 +36,9 @@ from .tax import DEFAULT_TREATMENTS, TAX_TYPES, TREATMENTS, TaxRateTable, TaxSet
 from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
-SCHEMA_VERSION = 13  # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due
+# 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
+# 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA)
+SCHEMA_VERSION = 14
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -97,6 +99,19 @@ CREATE TABLE IF NOT EXISTS erp_invoices (
 CREATE TABLE IF NOT EXISTS coding_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT, vendor TEXT NOT NULL DEFAULT '', contains TEXT NOT NULL DEFAULT '',
     gl_code TEXT NOT NULL, cost_center TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT);
+CREATE TABLE IF NOT EXISTS invoice_capture (
+    invoice_id INTEGER PRIMARY KEY REFERENCES invoices (id) ON DELETE CASCADE, capture_json TEXT NOT NULL,
+    layout_source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS supplier_profiles (
+    key TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '', vendor_id TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'supervised', autonomous_since TEXT, audit_rate REAL, template_json TEXT,
+    updated_at TEXT NOT NULL, updated_by TEXT);
+CREATE TABLE IF NOT EXISTS supplier_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_key TEXT NOT NULL, invoice_id INTEGER, field TEXT NOT NULL,
+    ai_value TEXT, final_value TEXT, correct INTEGER NOT NULL, source TEXT NOT NULL DEFAULT 'review',
+    at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS supplier_outcomes_key_at ON supplier_outcomes (supplier_key, at);
+CREATE INDEX IF NOT EXISTS supplier_outcomes_invoice ON supplier_outcomes (invoice_id);
 """
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
@@ -709,6 +724,10 @@ class Store:
                 "SELECT file_name, vendor_name, invoice_number, status FROM invoices WHERE id = ?", (invoice_id,)
             ).fetchone()
             conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
+            # What capture read, and the supplier accuracy measured on it, go with the invoice: a deleted
+            # invoice (a duplicate upload, a demo) must not count towards a supplier's autonomy.
+            conn.execute("DELETE FROM invoice_capture WHERE invoice_id = ?", (invoice_id,))
+            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ?", (invoice_id,))
             if row is not None:
                 self._log(conn, "deleted", invoice_id, actor, {
                     "file": row["file_name"], "vendor": row["vendor_name"], "invoice_number": row["invoice_number"],
@@ -926,6 +945,7 @@ class Store:
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
             conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
             self._log(conn, "sent_back", invoice_id, actor, {"reason": reason})
 
     def reopen(self, invoice_id: int, actor: str, reason: str = "") -> None:
@@ -942,6 +962,7 @@ class Store:
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
             conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
             self._log(conn, "reopened", invoice_id, actor, {"reason": reason})
 
     # --- Purchase orders ---------------------------------------------------------------------------
@@ -1242,6 +1263,224 @@ class Store:
             conn.execute("UPDATE export_batches SET undone_at = ?, undone_by = ? WHERE id = ?", (_now(), actor, batch))
             self._log(conn, "export_undone", actor=actor, detail={"batch": batch, "invoices": len(ids)})
         return len(ids)
+
+    # --- Capture and supplier learning (see capture/supplier.py) --------------------------------------
+
+    def save_capture(self, invoice_id: int, capture: dict[str, Any]) -> None:
+        """What the capture readers found on an invoice (``CaptureResult.to_dict()``), kept with it."""
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO invoice_capture (invoice_id, capture_json, layout_source, created_at)
+                   VALUES (?, ?, ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET capture_json = excluded.capture_json,
+                   layout_source = excluded.layout_source, created_at = excluded.created_at""",
+                (invoice_id, json.dumps(capture, default=str), str(capture.get("layout_source") or ""), _now()),
+            )
+
+    def get_capture(self, invoice_id: int) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT capture_json FROM invoice_capture WHERE invoice_id = ?", (invoice_id,)
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def supplier_key_for(self, vendor_name: str, gst_number: str | None = None) -> str:
+        """The supplier key for an invoice, with the vendor master's ERP id when the master knows it."""
+        from .capture.supplier import supplier_key
+        from .vendors import norm_tax_number
+
+        ids = self.vendor_ids()
+        vendor_id = ids.get(vendor_key(vendor_name or ""))
+        if not vendor_id and gst_number:
+            vendor_id = ids.get(f"gst:{norm_tax_number(gst_number)}")
+        return supplier_key(vendor_name, gst_number, vendor_id)
+
+    @staticmethod
+    def _profile(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        profile = dict(row)
+        profile["template"] = json.loads(profile.pop("template_json")) if profile.get("template_json") else None
+        return profile
+
+    def get_supplier_profile(self, key: str) -> dict[str, Any] | None:
+        """{key, display_name, vendor_id, state, autonomous_since, audit_rate, template (dict), updated_*}."""
+        with self._conn() as conn:
+            return self._profile(conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (key,)).fetchone())
+
+    def list_supplier_profiles(self) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM supplier_profiles ORDER BY display_name COLLATE NOCASE, key").fetchall()
+        return [p for p in (self._profile(r) for r in rows) if p is not None]
+
+    def save_supplier_profile(
+        self, key: str, display_name: str | None = None, vendor_id: str | None = None, template: Any = None,
+        actor: str | None = None,
+    ) -> None:  # fmt: skip
+        """Create or update a supplier's profile; only what is given changes (``template``: a ``Template``
+        or its dict). The autonomy state is changed with ``set_supplier_state`` only."""
+        if not key:
+            raise ValueError("a supplier profile needs a key")
+        if template is not None and hasattr(template, "to_dict"):
+            template = template.to_dict()
+        with self._conn() as conn:
+            self._save_profile(conn, key, display_name, vendor_id, template, actor)
+
+    @staticmethod
+    def _save_profile(
+        conn: sqlite3.Connection, key: str, display_name: str | None, vendor_id: str | None,
+        template: dict[str, Any] | None, actor: str | None,
+    ) -> None:  # fmt: skip
+        conn.execute(
+            """INSERT INTO supplier_profiles (key, display_name, vendor_id, template_json, updated_at, updated_by)
+               VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET
+               display_name = COALESCE(NULLIF(?, ''), display_name), vendor_id = COALESCE(NULLIF(?, ''), vendor_id),
+               template_json = COALESCE(?, template_json), updated_at = excluded.updated_at,
+               updated_by = COALESCE(excluded.updated_by, updated_by)""",
+            (
+                key, display_name or "", vendor_id or "", json.dumps(template) if template is not None else None,
+                _now(), actor, display_name or "", vendor_id or "",
+                json.dumps(template) if template is not None else None,
+            ),
+        )  # fmt: skip
+
+    def autonomy_policy(self) -> Any:
+        """The autonomy policy (``AutonomyPolicy``): the defaults, or the JSON in the ``autonomy_policy`` setting."""
+        from .capture.supplier import AutonomyPolicy
+
+        try:
+            return AutonomyPolicy.from_dict(json.loads(self.get_setting("autonomy_policy") or "{}"))
+        except (ValueError, TypeError):
+            return AutonomyPolicy()
+
+    def set_supplier_state(
+        self, key: str, state: str, by: str | None, reason: str = "", audit_rate: float | None = None
+    ) -> None:
+        """Switch a supplier's autonomy: ``autonomous`` (only when it meets the policy, by a manager),
+        ``supervised`` (turned off) or ``suspended`` (an audit or a failed check found an error)."""
+        from .capture.supplier import AUTONOMOUS, STORED_STATES, SUSPENDED, meets_policy
+
+        if state not in STORED_STATES:
+            raise ValueError(f"unknown supplier state {state!r}")
+        profile = self.get_supplier_profile(key)
+        if profile is None:
+            raise KeyError(key)
+        policy = self.autonomy_policy()
+        if state == AUTONOMOUS and profile["state"] != AUTONOMOUS:
+            if not meets_policy(self.supplier_stats(key, policy.window), policy):
+                raise ValueError(f"{profile['display_name'] or key} does not meet the autonomy policy yet")
+        if state == profile["state"] or (state == SUSPENDED and profile["state"] != AUTONOMOUS):
+            return  # nothing to suspend: the supplier is not touchless
+        action = {AUTONOMOUS: "autonomy_on", SUSPENDED: "autonomy_suspended"}.get(state, "autonomy_off")
+        rate = audit_rate if audit_rate is not None else profile["audit_rate"]
+        if state == AUTONOMOUS and rate is None:
+            rate = policy.audit_rate
+        # Since when it is touchless (kept while suspended, to show; cleared when turned off).
+        since = _now() if state == AUTONOMOUS else profile["autonomous_since"] if state == SUSPENDED else None
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, audit_rate = ?, updated_at = ?, "
+                "updated_by = ? WHERE key = ?",
+                (state, since, rate, _now(), by, key),
+            )
+            self._log(conn, action, actor=by, detail={
+                "supplier": profile["display_name"] or key, "key": key, "from": profile["state"], "to": state,
+                **({"reason": reason} if reason else {}),
+                **({"audit_rate": rate, "policy": policy.to_dict()} if state == AUTONOMOUS else {}),
+            })  # fmt: skip
+
+    def record_outcomes(
+        self, supplier_key: str, invoice_id: int | None, rows: list[dict[str, Any]], source: str = "review",
+        display_name: str = "", vendor_id: str = "", at: str | None = None,
+    ) -> dict[str, Any]:  # fmt: skip
+        """Record, per header field, what AP Coder proposed and what AP approved (``outcome_rows``).
+
+        Recording the same invoice and source again replaces its rows (an invoice approved again after
+        a reopen). A correction on an autonomous supplier suspends it at once."""
+        from .capture.supplier import AUTONOMOUS, SUSPENDED
+
+        if source not in ("review", "audit"):
+            raise ValueError(f"unknown outcome source {source!r}")
+        if not supplier_key:
+            return {"fields": 0, "corrections": 0, "suspended": False}
+        at = at or _now()
+        corrections = [r["field"] for r in rows if not r.get("correct")]
+        with self._conn() as conn:
+            self._save_profile(conn, supplier_key, display_name, vendor_id, None, None)
+            if invoice_id is not None:
+                conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = ?", (invoice_id, source))
+            conn.executemany(
+                """INSERT INTO supplier_outcomes (supplier_key, invoice_id, field, ai_value, final_value, correct,
+                   source, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (supplier_key, invoice_id, r["field"], json.dumps(r.get("ai_value"), default=str),
+                     json.dumps(r.get("final_value"), default=str), 1 if r.get("correct") else 0, source, at)
+                    for r in rows
+                ],
+            )  # fmt: skip
+            state = conn.execute("SELECT state, display_name FROM supplier_profiles WHERE key = ?", (supplier_key,))
+            profile = state.fetchone()
+            suspended = bool(corrections) and profile["state"] == AUTONOMOUS
+            if suspended:
+                conn.execute(
+                    "UPDATE supplier_profiles SET state = ?, updated_at = ?, updated_by = ? WHERE key = ?",
+                    (SUSPENDED, _now(), "AP Coder", supplier_key),
+                )
+                self._log(conn, "autonomy_suspended", invoice_id, "AP Coder", {
+                    "supplier": profile["display_name"] or supplier_key, "key": supplier_key, "from": AUTONOMOUS,
+                    "to": SUSPENDED, "reason": f"{source} found a correction: {', '.join(corrections)}",
+                })  # fmt: skip
+        return {"fields": len(rows), "corrections": len(corrections), "suspended": suspended}
+
+    def supplier_outcomes(self, key: str, limit: int = 5000) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT * FROM supplier_outcomes WHERE supplier_key = ? ORDER BY at DESC, id DESC LIMIT ?", (key, limit)
+            )]  # fmt: skip
+        for r in rows:
+            for column in ("ai_value", "final_value"):
+                r[column] = json.loads(r[column]) if r[column] else None
+            r["correct"] = bool(r["correct"])
+        return rows
+
+    def supplier_stats(self, key: str, window: int = 200) -> Any:
+        """``SupplierStats`` for a supplier: field accuracy over its last ``window`` reviewed invoices."""
+        from .capture.supplier import SupplierStats
+
+        with self._conn() as conn:
+            total = conn.execute(
+                "SELECT COUNT(DISTINCT invoice_id) FROM supplier_outcomes WHERE supplier_key = ?", (key,)
+            ).fetchone()[0]
+            rows = conn.execute(
+                """SELECT invoice_id, field, correct, source, at FROM supplier_outcomes WHERE supplier_key = ?
+                   AND invoice_id IN (SELECT invoice_id FROM supplier_outcomes WHERE supplier_key = ?
+                   GROUP BY invoice_id ORDER BY MAX(at) DESC, invoice_id DESC LIMIT ?)""",
+                (key, key, window),
+            ).fetchall()
+        return SupplierStats.from_rows(
+            [dict(r) | {"correct": bool(r["correct"])} for r in rows], key=key, window=window, total_invoices=total
+        )
+
+    def supplier_keys_for_invoices(self, ids: list[int]) -> list[str]:
+        if not ids:
+            return []
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT DISTINCT supplier_key FROM supplier_outcomes WHERE invoice_id IN ({','.join('?' * len(ids))})",
+                ids,
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def prune_supplier_profiles(self, keys: list[str]) -> int:
+        """Delete these supplier profiles when nothing is recorded for them any more (e.g. after the demo)."""
+        if not keys:
+            return 0
+        marks = ",".join("?" * len(keys))
+        with self._conn() as conn:
+            return conn.execute(
+                f"DELETE FROM supplier_profiles WHERE key IN ({marks}) AND state != 'autonomous' AND key NOT IN "
+                "(SELECT DISTINCT supplier_key FROM supplier_outcomes)",
+                keys,
+            ).rowcount
 
     # --- Vendors ----------------------------------------------------------------------------------------
 
