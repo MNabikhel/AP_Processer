@@ -181,9 +181,9 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-tile {background: var(--apc-card); border: 1px solid var(--apc-line); border-radius: var(--apc-r); padding: .9rem 1rem;
   box-shadow: var(--apc-shadow); display: flex; flex-direction: column; gap: .3rem; transition: border-color .15s ease;}
 .apc-tile:hover {border-color: #cfd7e3;}
-.apc-tile .top {display: flex; align-items: center; justify-content: space-between;}
+.apc-tile .top {display: flex; align-items: center; justify-content: space-between; gap: .5rem;}
 .apc-tile .label {color: var(--apc-muted); font-size: .82rem; font-weight: 550;}
-.apc-tile .icon {width: 1.75rem; height: 1.75rem; border-radius: 8px; display: grid; place-items: center; font-size: .95rem;}
+.apc-tile .icon {flex: none; width: 1.75rem; height: 1.75rem; border-radius: 8px; display: grid; place-items: center; font-size: .95rem;}
 .apc-tile .value {font-size: 1.6rem; font-weight: 700; color: var(--apc-ink); letter-spacing: -.02em; font-variant-numeric: tabular-nums;
   line-height: 1.2;}
 .apc-tile .foot {display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 1.4rem;}
