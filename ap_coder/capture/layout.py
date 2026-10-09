@@ -110,20 +110,54 @@ def _rotated(page: Any, matrix: Any, x0: float, y0: float, x1: float, y1: float)
 _OCR_ENGINE: Any = None
 
 
-def ocr_available() -> bool:
+def _engine_name() -> str:
+    """The OCR engine: "ppocrv5" (RapidOCR 3 with PP-OCRv5 models, which keeps the spaces between
+    words) when installed, else "rapidocr" (rapidocr-onnxruntime, PP-OCRv4). ``AP_OCR_ENGINE`` forces one."""
+    forced = os.environ.get("AP_OCR_ENGINE")
+    if forced:
+        return forced
     try:
-        import rapidocr_onnxruntime  # noqa: F401
+        import rapidocr  # noqa: F401
+
+        return "ppocrv5"
     except Exception:
-        return False
-    return True
+        return "rapidocr"
+
+
+def ocr_available() -> bool:
+    for module in ("rapidocr", "rapidocr_onnxruntime"):
+        try:
+            __import__(module)
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def _engine() -> Any:
+    """A callable: RGB image array -> [(quad, text, score), ...]."""
     global _OCR_ENGINE
     if _OCR_ENGINE is None:
-        from rapidocr_onnxruntime import RapidOCR
+        if _engine_name() == "ppocrv5":
+            from rapidocr import ModelType, OCRVersion, RapidOCR
 
-        _OCR_ENGINE = RapidOCR()
+            params = {"Det.ocr_version": OCRVersion.PPOCRV5, "Rec.ocr_version": OCRVersion.PPOCRV5,
+                      "Det.model_type": ModelType.MOBILE, "Rec.model_type": ModelType.MOBILE,
+                      "Global.log_level": "error"}  # fmt: skip
+            eng = RapidOCR(params=params)
+
+            def run(img: Any) -> list:
+                res = eng(img)
+                if res.boxes is None:
+                    return []
+                return [(b.tolist(), t, float(c)) for b, t, c in zip(res.boxes, res.txts, res.scores, strict=False)]
+
+            _OCR_ENGINE = run
+        else:
+            from rapidocr_onnxruntime import RapidOCR
+
+            eng4 = RapidOCR()
+            _OCR_ENGINE = lambda img: eng4(img)[0]  # noqa: E731
     return _OCR_ENGINE
 
 
@@ -136,7 +170,8 @@ def _ocr_cached(png_bytes: bytes, run: Any) -> Any:
     import hashlib
     import json
 
-    path = Path(folder) / f"{hashlib.sha256(png_bytes).hexdigest()}.json"
+    tag = "" if _engine_name() == "rapidocr" else f"-{_engine_name()}"
+    path = Path(folder) / f"{hashlib.sha256(png_bytes).hexdigest()}{tag}.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -160,7 +195,7 @@ def ocr_image(png_bytes: bytes, number: int) -> PageLayout:
 
     img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
     width, height = img.size
-    result = _ocr_cached(png_bytes, lambda: _engine()(np.asarray(img))[0])
+    result = _ocr_cached(png_bytes, lambda: _engine()(np.asarray(img)))
     words: list[Word] = []
     for quad, text, score in result or []:
         xs = [p[0] for p in quad]
