@@ -35,6 +35,7 @@ demotes the supplier.
 Coordinates are **fractions of the page** (0–1, origin top-left), so they survive rendering at any
 DPI. Pages are numbered from 1.
 
+<!-- fmt: off -->
 ```python
 # types.py
 @dataclass(frozen=True)
@@ -107,6 +108,7 @@ class CaptureResult:
     @classmethod
     def from_dict(cls, d: dict) -> "CaptureResult": ...
 ```
+<!-- fmt: on -->
 
 Header fields (`FIELDS`): `vendor_name`, `invoice_number`, `invoice_date`, `due_date`, `po_number`,
 `currency`, `gst_hst_registration_number`, `qst_registration_number`, `subtotal`, `gst_amount`,
