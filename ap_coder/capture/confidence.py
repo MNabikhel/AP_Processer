@@ -385,7 +385,10 @@ def _totals_that_add_up(chosen: dict[str, Any], all_groups: dict[str, list[Any]]
         for parts in product(*options):
             if abs(sum(amount(g) for g in parts) - amount(total)) > 0.011:
                 continue
-            if any(g is None and chosen.get(f) is not None and f in TAX_FIELDS for f, g in zip(_TOTAL_PARTS, parts, strict=True)):
+            if any(
+                g is None and chosen.get(f) is not None and f in TAX_FIELDS
+                for f, g in zip(_TOTAL_PARTS, parts, strict=True)
+            ):
                 continue  # dropping a tax the readers agreed on is not "adding up"
             strength = total.strength() + sum(g.strength() for g in parts if g is not None)
             if strength > best_strength:
