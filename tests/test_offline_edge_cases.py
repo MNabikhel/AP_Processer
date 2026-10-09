@@ -80,3 +80,35 @@ def test_freight_with_no_line_table_is_its_own_line(reference):
     coding = code_from_capture(capture, reference, [], text="Acme\nCalgary AB T2P 1A1\nFreight 50.00\n").coding
     assert [li.amount for li in coding.line_items] == [1000.0, 50.0]
     assert _errors(coding, reference) == []
+
+
+def test_a_file_that_cannot_be_read_does_not_stop_the_batch(tmp_path, reference, monkeypatch):
+    # A file locked by another program (a scanner still writing it, a OneDrive file not downloaded):
+    # that invoice fails, the rest of the batch is still read and saved.
+    from dataclasses import replace
+    from pathlib import Path
+
+    from ap_coder.config import Settings
+    from ap_coder.pipeline import InvoicePipeline
+    from ap_coder.store import Store
+
+    from .conftest import SAMPLES
+
+    locked = tmp_path / "locked.pdf"
+    locked.write_bytes(b"%PDF-1.4 still being written")
+    real_read_bytes = Path.read_bytes
+
+    def read_bytes(self):
+        if self.name == "locked.pdf":
+            raise PermissionError(13, "The process cannot access the file", str(self))
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    settings = Settings()
+    settings = replace(settings, llm=replace(settings.llm, provider="off"))
+    store = Store(tmp_path / "ap.db")
+    good = SAMPLES / "harbourview_NS_HST_HPS-2026-0347.pdf"
+    results = InvoicePipeline(settings, reference, store=store).process_many([locked, good])
+    assert [r.source.name for r in results] == ["locked.pdf", good.name]
+    assert not results[0].ok and results[0].error
+    assert results[1].ok and results[1].invoice_id

@@ -285,18 +285,22 @@ class InvoicePipeline:
                 result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path)
 
         if self.store is not None:
-            result.invoice_id = self.store.add_invoice(
-                path,
-                result.output,
-                result.report.to_dict() if result.report else None,
-                extraction_md=result.extraction.content if result.extraction else "",
-                meta=_meta(result),
-                error=result.error,
-            )
-            if result.capture is not None:
-                self.store.save_capture(result.invoice_id, result.capture.to_dict())
-            if result.autonomy.get("auto") and result.output is not None:
-                self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+            try:
+                result.invoice_id = self.store.add_invoice(
+                    path,
+                    result.output,
+                    result.report.to_dict() if result.report else None,
+                    extraction_md=result.extraction.content if result.extraction else "",
+                    meta=_meta(result),
+                    error=result.error,
+                )
+                if result.capture is not None:
+                    self.store.save_capture(result.invoice_id, result.capture.to_dict())
+                if result.autonomy.get("auto") and result.output is not None:
+                    self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+            except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
+                log.exception("Could not save %s", path)
+                result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"
         return result
 
     def process_many(
