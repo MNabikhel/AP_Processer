@@ -92,7 +92,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
     ],
     "tax_total": [
         (r"total\s*(?:sales\s*)?tax(?:es)?\b", 1.0), (r"tax(?:es)?\s*total", 0.95), (r"total\s*des\s*taxes", 1.0),
-        (r"taxes\b(?!\s*incl)", 0.6), (r"(?:[a-z]{2,3}\s+)?(?:state\s+|county\s+|city\s+|local\s+)?sales\s*tax\b", 0.85), (r"tax\s*(?:amount)?\s*$", 0.55), (r"tax\s*:", 0.6), (r"tax\s*[(@]?\s*\d{1,2}(?:[.,]\d{1,3})?\s*%", 0.85),
+        (r"taxes\b(?!\s*incl)", 0.6), (r"(?:[a-z]{2,3}\s+)?(?:state\s*|county\s*|city\s*|local\s*)?sales\s*tax\b", 0.85), (r"tax\s*(?:amount)?\s*$", 0.55), (r"tax\s*:", 0.6), (r"tax\s*[(@]?\s*\d{1,2}(?:[.,]\d{1,3})?\s*%", 0.85),
     ],
     "grand_total": [
         (r"(?:invoice\s*)?total\s*(?:amount\s*)?(?:due|payable)", 1.0), (r"amount\s*due", 0.95), (r"balance\s*due", 0.85),
@@ -286,7 +286,9 @@ def _unglue_label(value: str) -> str:
 
 
 def _ocr_id_fix(value: str) -> str:
-    """OCR reads the letter O in a prefix as a zero: "P0-40059" -> "PO-40059"."""
+    """OCR reads the letter O in a prefix as a zero ("P0-40059" -> "PO-40059"), and a zero among
+    digits as the letter o ("Fo8005" -> "F08005")."""
+    value = re.sub(r"(?<=[A-Z])o(?=\d)|(?<=\d)o(?=\d)", "0", value)
     return re.sub(r"^([A-Za-z]+)0([A-Za-z]*)(?=-)", lambda m: m.group(1) + "O" + m.group(2), value)
 
 
@@ -372,7 +374,10 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         amounts = _amounts_in(cleaned)
         if not amounts:
             return None
-        money = [a for a in amounts if looks_like_money(cleaned[a[1] : a[2]])] or amounts
+        money = [a for a in amounts if looks_like_money(cleaned[a[1] : a[2]])]
+        if not money and field in _TAX_FIELDS and all(abs(v) < 200 and float(v).is_integer() for v, _, _ in amounts):
+            return None  # "HST 138": the rate (13% read with the % as an 8), the amount is further right
+        money = money or amounts
         value, a, b = money[-1]  # the rightmost amount on a totals row is the amount column
         words = _span_words(line, start + a, start + b)
         moneyish = looks_like_money(cleaned[a:b])
@@ -407,7 +412,7 @@ _TERMS = [
     (re.compile(r"(\d{1,2})\s*%?[\s.]*(\d{1,2})\s*[,.;]?\s*net[\s.:]*(\d{1,3})(?!\d)", re.I), "{0}% {1} Net {2}"),
     (re.compile(r"\bnet[\s.:]*(\d{1,3})(?!\d)", re.I), "Net {0}"),
     (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
-    (re.compile(r"(?<!\d)(\d{1,3})\s*(?:days|jours|j)\b", re.I), "Net {0}"),
+    (re.compile(r"(?<!\d)(\d{1,3})\s*(?:days|jours|j\b)", re.I), "Net {0}"),
     (re.compile(r"\bdue\s*(?:up)?on\s*receipt\b|payable\s*(?:a|à|sur|des|dès)\s*(?:la\s*)?r[ée]ception|on\s*receipt", re.I), "Due on receipt"),
 ]  # fmt: skip
 
@@ -594,9 +599,9 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
 
 _CONTACT = re.compile(
     r"@|www|https?:|\.(?:com|ca|net|org|qc\.ca)\b|^(?:bureau|suite|unit|local|apt|room|piece)\s*\d|"
-    r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph)\b"
+    r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph|p\.?\s?o\.?\s*date|podate)\b"
 )
-_POSTAL_CODE = re.compile(r"\b[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d\b")
+_POSTAL_CODE = re.compile(r"[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d|,\s*(?:ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)(?![a-z])")
 _TITLE_PREFIX = re.compile(
     r"^(?:sales\s*|tax\s*|commercial\s*)?(?:invoice|facture)\s*(?:#|no\.?|n°)?\s*[a-z]{0,3}[\d/-]*\d\S*\s+"
 )
