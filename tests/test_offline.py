@@ -346,6 +346,21 @@ def test_bundle_ships_the_code_but_never_data_or_keys():
         assert bundle.excluded(Path(path)) is out, path
 
 
+def test_bundle_never_ships_databases_spreadsheets_or_invoices_left_in_the_code_folder(tmp_path, monkeypatch):
+    """A copy of the code without git (e.g. an unzipped download) lists every file: a database, a labels workbook,
+    an invoice PDF or the Streamlit secrets left in it are data, never code. A database is not git-ignored, so
+    even a git checkout would list it as a new file."""
+    bundle = _script("build_offline_bundle")
+    code = ("ap_coder/cli.py", "samples/a.pdf", "data/chart_of_accounts.csv", ".streamlit/config.toml")
+    data = ("ap_coder.db", "old/ap_coder.db-wal", "labels.xlsx", "Invoice 1.pdf", "scan.TIF", ".streamlit/secrets.toml")
+    for rel in code + data:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("x")
+    monkeypatch.setattr(bundle, "ROOT", tmp_path)  # no .git here
+    files = {p.as_posix() for p in bundle.source_files()}
+    assert files == set(code)
+
+
 def test_bundle_zip_keeps_the_mac_launcher_executable(tmp_path):
     bundle = _script("build_offline_bundle")
     stage = tmp_path / "stage"

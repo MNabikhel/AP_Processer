@@ -25,6 +25,7 @@ from itertools import combinations
 from .csvio import parse_date
 from .memory import vendor_key
 from .safe import csv_row
+from .statements import date_part
 from .store import APPROVED, PENDING, Store
 from .vendors import norm_invoice_number
 
@@ -88,7 +89,7 @@ def one_keystroke(a: str, b: str) -> bool:
 
 def _date(text: str) -> dt.date | None:
     try:
-        return parse_date(text[:10])
+        return parse_date(date_part(text))
     except ValueError:  # empty, or day and month cannot be told apart
         return None
 

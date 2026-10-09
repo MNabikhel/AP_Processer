@@ -9,6 +9,7 @@ then words, then vendor); among equals, the longer words, then the older rule.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +32,12 @@ def _has_words(name: str, wanted: str) -> bool:
     return f" {_plain(wanted)} " in f" {_plain(name)} "
 
 
+def _starts_word(text: str, wanted: str) -> bool:
+    """``wanted`` appears in ``text`` from the start of a word: "rent" is in "office rent" and "rental", not in
+    "current"; "monitor" is in "monitors"."""
+    return re.search(r"(?<![0-9a-z])" + re.escape(_plain(wanted)), _plain(text)) is not None
+
+
 @dataclass(frozen=True)
 class Rule:
     vendor: str = ""
@@ -51,7 +58,7 @@ class Rule:
             return False
         if self.vendor.strip() and not _has_words(vendor_key(vendor), vendor_key(self.vendor)):
             return False
-        if self.contains.strip() and _plain(self.contains) not in _plain(description):
+        if self.contains.strip() and not _starts_word(description, self.contains):
             return False
         return True
 

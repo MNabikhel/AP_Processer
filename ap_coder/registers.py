@@ -10,8 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .csvio import parse_date
 from .safe import parse_amount
+from .statements import day_first_order, read_date
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "vendor_name": ("vendorname", "vendor", "supplier", "suppliername", "name", "fournisseur"),
@@ -38,17 +38,16 @@ def map_columns(headers: list[str]) -> dict[str, str]:
     return found
 
 
-def iso_date(text: str) -> str:
-    """YYYY-MM-DD when the date can be read without doubt ("2026-09-11", "2026-09-11 00:00:00", "25/09/2026"),
-    else the text as it is."""
-    try:
-        return parse_date(text[:10]).isoformat()
-    except ValueError:
-        return text[:10]
+def iso_date(text: str, day_first: bool | None = None) -> str:
+    """YYYY-MM-DD when the date can be read ("2026-09-11", "2026-09-11 00:00:00", "25/09/2026", "1/5/2026 0:00"),
+    else the text as it is. ``day_first``: the order the file's other dates show, for an ambiguous one."""
+    return read_date(text, day_first)
 
 
 def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) -> tuple[list[dict[str, Any]], int]:
     rows, skipped = [], 0
+    column = columns.get("invoice_date")
+    order = day_first_order([str(rec.get(column) or "") for rec in records]) if column else None
     for rec in records:
 
         def get(target: str, rec: dict[str, Any] = rec) -> str:
@@ -57,7 +56,7 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
             return "" if text.lower() in ("nan", "none") else text
 
         row = {"vendor_name": get("vendor_name"), "invoice_number": get("invoice_number"),
-               "invoice_date": iso_date(get("invoice_date")), "total": parse_amount(get("total"))}  # fmt: skip
+               "invoice_date": iso_date(get("invoice_date"), order), "total": parse_amount(get("total"))}  # fmt: skip
         if not row["vendor_name"] or not row["invoice_number"] or row["total"] is None:
             skipped += 1
             continue

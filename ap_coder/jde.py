@@ -539,7 +539,7 @@ def voucher_rows(
         "VLAN8": str(vendor_an8 or "").strip(), "VLVINV": str(final.get("invoice_number") or "").strip()[:25],
         "VLDIVJ": julian(invoice_date), "VLDGJ": julian(gl_date), "VLDSVJ": julian(invoice_date),
         "VLTXA1": v.tax_area, "VLEXR1": v.tax_code, "VLCRRM": "F" if v.foreign else "D", "VLCRCD": v.currency,
-        "VLCRR": f"{rate:g}" if rate else "", "VLPTC": settings.payment_terms_code.strip(),
+        "VLCRR": _plain(rate, 7) if rate else "", "VLPTC": settings.payment_terms_code.strip(),
         "VLDDJ": julian(due) if settings.send_due_date else "", "VLPST": settings.pay_status.strip(),
         "VLPO": po[:8] if po and (settings.send_po_reference or v.po_matched) else "",
         "VLPDCT": settings.po_document_type.strip() if po and (settings.send_po_reference or v.po_matched) else "",
@@ -597,12 +597,14 @@ def voucher_rows(
         return row
 
     if settings.line_numbering == MATCH_HEADER and len(v.entries) > 1:
-        # One pay item per distribution line: each gets its share of the recoverable tax (by net amount).
-        # Tax and taxable amounts are split the same way, so under code V a pay item's tax is exactly its share.
+        # One pay item per distribution line: each gets its share of the recoverable tax (by net amount). Its tax
+        # is that share plus the non-recoverable tax already in its line (e.g. PST charged on some lines only).
         weights = [_cents(e.get("net_amount")) if e.get("kind") == "expense" else 0 for e in v.entries]
         if not any(weights):
             weights = [e["cents"] for e in v.entries]
-        shares, stams, atxas = _split(v.recoverable, weights), _split(v.stam, weights), _split(v.atxa, weights)
+        shares, atxas = _split(v.recoverable, weights), _split(v.atxa, weights)
+        stams = [s + _cents(e.get("non_recoverable_tax")) for e, s in zip(v.entries, shares, strict=True)]
+        stams[max(range(len(weights)), key=lambda i: abs(weights[i]))] += v.stam - sum(stams)
         grosses = [e["cents"] + s for e, s in zip(v.entries, shares, strict=True)]
         headers = [
             {**common, "VLEDLN": n, **amounts(g, s, a), **extras}

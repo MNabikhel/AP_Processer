@@ -211,6 +211,29 @@ def test_match_header_numbering_gives_one_pay_item_per_line():
     assert sum(int(h["VLAG"]) for h in gross_mode) == 1801785
 
 
+def test_match_header_pay_items_carry_their_own_pst():
+    """Manitoba RST is charged on the furniture and delivery, not on the consulting line (line 3). Each pay item's
+    tax is its share of the GST plus the PST on that line, never a negative non-taxable amount."""
+    inv = _invoice("redriver_MB_GST_RST_RRO-55821")
+    settings = jde.JdeSettings(line_numbering=jde.MATCH_HEADER, amount_mode=jde.AMOUNT_TAX)
+    assert jde.validate([inv], settings, AN8) == {}
+    files = _files([inv], settings)
+    heads, lines = files[jde.HEADER_FILE], files[jde.DIST_FILE]
+    taxes = [(int(h["VLATXA"]), int(h["VLATXN"]), int(h["VLSTAM"])) for h in heads]
+    # GST 5% on each line; RST 7% on lines 1, 2 and 4 (the PST in the expense line under code C)
+    assert taxes == [(920000, 0, 46000 + 64400), (396000, 0, 19800 + 27720), (120000, 0, 6000), (28500, 0, 1425 + 1995)]
+    assert sum(sum(t) for t in taxes) == 1631840 and sum(t[2] for t in taxes) == 167340  # gross and GST + RST
+    for (atxa, atxn, stam), line in zip(taxes, lines, strict=True):  # pay item = its G/L line + its GST
+        assert atxa + atxn + stam == int(line["VNAA"]) + atxa // 20
+
+
+def test_exchange_rate_keeps_every_decimal():
+    """VLCRR carries 7 decimals in E1: the rate typed in Settings must not be cut to 6 significant digits."""
+    for rate, text in ((1.3654321, "1.3654321"), (0.0000977, "0.0000977"), (1234567.0, "1234567"), (1.37, "1.37")):
+        (head,) = _files([_invoice(USD)], fx_rates={"USD": rate})[jde.HEADER_FILE]
+        assert head["VLCRR"] == text
+
+
 def test_account_columns_mode_and_mapping():
     settings = jde.JdeSettings(
         account_mode=jde.ACCOUNT_COLUMNS,

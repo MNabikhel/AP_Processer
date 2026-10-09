@@ -13,12 +13,11 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 from .reference_data import UNASSIGNED, ReferenceData
-from .safe import neutralise_sheet
+from .safe import neutralise_sheet, parse_amount
 
 SHEET = "Labels"
 HEADER_FIELDS = (
@@ -229,10 +228,10 @@ def _text(value: Any) -> str:
 
 
 def _number(value: Any, where: str) -> float:
-    text = re.sub(r"[^\d.\-]", "", _text(value).replace(",", ""))
-    if text in {"", "-", "."}:
+    number = parse_amount(value)  # "(250.00)" is a credit, "150,00" a decimal comma
+    if number is None:
         raise ValueError(f"{where}: expected a number, got {value!r}")
-    return float(text)
+    return number
 
 
 def load_labels(path: str | Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
