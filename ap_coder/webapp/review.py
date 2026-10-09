@@ -11,6 +11,7 @@ import streamlit as st
 
 from ap_coder import recurring, rules, stamp, ui, vendor_mail
 from ap_coder.bulk import bulk_approve, clean_candidates
+from ap_coder.capture.workflow import learn_from_approval, on_reopen
 from ap_coder.extraction import ExtractionResult
 from ap_coder.help import help_for
 from ap_coder.memory import ACCEPTED, pair_lines, vendor_key
@@ -25,6 +26,7 @@ from ap_coder.suggest import suggest_gl
 from ap_coder.tax import PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
 from ap_coder.terms import describe as terms_describe
+from ap_coder.webapp.capture_panel import VIEWABLE, capture_panel, taught_boxes
 from ap_coder.webapp.common import (
     INVOICE_DIR,
     PAGES,
@@ -548,8 +550,17 @@ def _getting_started(store: Store) -> None:
     demo_card(store, "welcome")
 
 
-def _document_panel(inv: dict[str, Any], store: Store) -> None:
+def _document_panel(inv: dict[str, Any], store: Store, key: str = "") -> None:
     path = Path(inv["source_path"])
+    capture = store.get_capture(inv["id"])
+    if capture and path.exists() and path.suffix.lower() in VIEWABLE:
+        try:
+            capture_panel(inv, capture, key or f"inv{inv['id']}")
+        except Exception:  # the plain page below still shows the invoice
+            st.caption("The highlighted view could not be shown; the plain page is below.")
+        else:
+            _history(inv, store)
+            return
     try:
         pages = render_pages(str(path), path.stat().st_mtime) if path.exists() else []
     except Exception:  # a damaged file: the extracted text below still shows what was read
@@ -570,6 +581,10 @@ def _document_panel(inv: dict[str, Any], store: Store) -> None:
         st.warning(f"Original file not found at {path}", icon=":material/warning:")
     with st.expander("Extracted text (what the AI read)", expanded=not pages, icon=":material/text_snippet:"):
         st.html(f"<div style='font-size:0.85rem'>{ui.document_text(inv.get('extraction_md') or '')}</div>")
+    _history(inv, store)
+
+
+def _history(inv: dict[str, Any], store: Store) -> None:
     events = store.events(inv["id"])
     if events:
         with st.expander(f"History · {len(events)}", icon=":material/history:"):
@@ -762,7 +777,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     left, right = st.columns([5, 7], gap="medium")
     with left:
         with card("document"):
-            _document_panel(inv, store)
+            _document_panel(inv, store, key)
         _notes_card(store, invoice_id, key)
 
     with right:
@@ -1026,6 +1041,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                     {"code": i.code, "severity": i.severity, "line": i.line_number} for i in errors + warnings
                 ]
                 counts = store.approve_invoice(invoice_id, output, reviewer(), open_issues=open_issues, login=login())
+                learn_from_approval(store, invoice_id, output, actor=reviewer(), taught=taught_boxes(key))
                 if (store.get_invoice(invoice_id) or {}).get("status") == PENDING:
                     notify("Over the approval limit: it now waits for a second approver.", ":material/how_to_reg:")
                 total = sum(counts.values())
@@ -1457,6 +1473,7 @@ def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> 
             with fix.popover("Reopen for correction…", icon=":material/undo:"):
                 why = st.text_input("What needs correcting", key=f"reopen_reason_{invoice_id}")
                 if st.button("Reopen", key=f"reopen_{invoice_id}", type="primary", disabled=not why.strip()):
+                    on_reopen(store, invoice_id, reviewer(), why)
                     store.reopen(invoice_id, reviewer(), why)
                     st.session_state["open_invoice"] = invoice_id
                     notify("Reopened: correct it and approve it again.", ":material/undo:")

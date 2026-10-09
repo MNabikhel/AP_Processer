@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .capture.workflow import capture_invoice
 from .config import Settings
 from .paths import PROJECT_DIR
 from .pipeline import finalise_coding
@@ -155,6 +156,9 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
             extraction_md=md_path.read_text(encoding="utf-8") if md_path.exists() else "",
             meta=_demo_meta(pdf, truth),
         )
+        capture, _, _ = capture_invoice(pdf, output, store=store)
+        if capture is not None:
+            store.save_capture(invoice_id, capture.to_dict())
         added += 1
         if demo.approved:
             final_coding = InvoiceCoding.model_validate(truth)
