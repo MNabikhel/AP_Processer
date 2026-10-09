@@ -539,7 +539,7 @@ def voucher_rows(
         "VLAN8": str(vendor_an8 or "").strip(), "VLVINV": str(final.get("invoice_number") or "").strip()[:25],
         "VLDIVJ": julian(invoice_date), "VLDGJ": julian(gl_date), "VLDSVJ": julian(invoice_date),
         "VLTXA1": v.tax_area, "VLEXR1": v.tax_code, "VLCRRM": "F" if v.foreign else "D", "VLCRCD": v.currency,
-        "VLCRR": f"{rate:g}" if rate else "", "VLPTC": settings.payment_terms_code.strip(),
+        "VLCRR": _plain(rate, 7) if rate else "", "VLPTC": settings.payment_terms_code.strip(),
         "VLDDJ": julian(due) if settings.send_due_date else "", "VLPST": settings.pay_status.strip(),
         "VLPO": po[:8] if po and (settings.send_po_reference or v.po_matched) else "",
         "VLPDCT": settings.po_document_type.strip() if po and (settings.send_po_reference or v.po_matched) else "",

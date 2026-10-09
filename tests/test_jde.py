@@ -227,6 +227,13 @@ def test_match_header_pay_items_carry_their_own_pst():
         assert atxa + atxn + stam == int(line["VNAA"]) + atxa // 20
 
 
+def test_exchange_rate_keeps_every_decimal():
+    """VLCRR carries 7 decimals in E1: the rate typed in Settings must not be cut to 6 significant digits."""
+    for rate, text in ((1.3654321, "1.3654321"), (0.0000977, "0.0000977"), (1234567.0, "1234567"), (1.37, "1.37")):
+        (head,) = _files([_invoice(USD)], fx_rates={"USD": rate})[jde.HEADER_FILE]
+        assert head["VLCRR"] == text
+
+
 def test_account_columns_mode_and_mapping():
     settings = jde.JdeSettings(
         account_mode=jde.ACCOUNT_COLUMNS,
