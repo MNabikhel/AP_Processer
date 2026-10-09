@@ -382,27 +382,35 @@ def test_bundle_zip_keeps_the_mac_launcher_executable(tmp_path):
 
 
 def test_windows_launcher():
-    raw = (ROOT / "APProcessor.bat").read_bytes()
-    assert b"\r\n" in raw and b"\n" not in raw.replace(b"\r\n", b"")  # CRLF throughout (cmd.exe needs it)
-    text = raw.decode("ascii")
-    assert "--no-index --find-links wheelhouse" in text and 'if exist "wheelhouse\\"' in text
-    assert "scripts\\check_deps.py" in text and "scripts\\first_run.py" in text
-    assert '-e ".[ocr]" ||' in text  # OCR add-on, falling back to the app without it
-    assert "Python 3.11 or newer is needed" in text and "-m ap_coder dashboard" in text
-    assert "pause" in text
-    for old in ("start.bat",):
-        assert "APProcessor.bat" in (ROOT / old).read_text()
+    """APProcessor.bat only finds (or, with consent, installs) a Python and hands over to scripts/launch.py;
+    install.bat and start.bat run APProcessor.bat, so there is one setup, not three."""
+    for name in ("APProcessor.bat", "install.bat", "start.bat"):
+        raw = (ROOT / name).read_bytes()
+        assert b"\r\n" in raw and b"\n" not in raw.replace(b"\r\n", b""), name  # CRLF throughout (cmd.exe needs it)
+    text = (ROOT / "APProcessor.bat").read_text(encoding="ascii")
+    assert "%PY% scripts\\launch.py %*" in text
+    assert '".venv\\Scripts\\python.exe" -c "import encodings, pip"' in text  # set up before: straight in
+    assert "for %%V in (3.12 3.13 3.11)" in text and "(3, 11) <= sys.version_info[:2] <= (3, 13)" in text
+    assert "winget install -e --id Python.Python.3.12 --scope user" in text  # only when no Python is found
+    assert text.index("call :findpython") < text.index("call :installpython")
+    assert "if not defined AP_YES set /p" in text  # asked once; automated runs (AP_NO_PAUSE, --yes) are not
+    assert "https://www.python.org/downloads/" in text and "if not defined AP_NO_PAUSE pause" in text
+    assert 'call "%~dp0APProcessor.bat" --installer %*' in (ROOT / "install.bat").read_text()
+    assert 'call "%~dp0APProcessor.bat" %*' in (ROOT / "start.bat").read_text()
+    assert "APProcessor.bat first" in (ROOT / "terminal.bat").read_text()
 
 
 def test_mac_launcher():
     raw = (ROOT / "APProcessor.command").read_bytes()
     assert b"\r" not in raw and raw.startswith(b"#!/bin/bash")
     text = raw.decode()
-    assert "--no-index --find-links wheelhouse" in text and "scripts/check_deps.py" in text
-    assert "Python 3.11 or newer is needed" in text and "exec .venv/bin/python -m ap_coder dashboard" in text
+    assert '"$PY" scripts/launch.py "$@"' in text and "PY=.venv/bin/python" in text
+    assert "(3, 11) <= sys.version_info[:2] <= (3, 13)" in text
+    assert "/usr/bin/python3" in text  # skipped on a Mac: it only offers Apple's developer tools
+    assert "--installer" in (ROOT / "install.sh").read_text()
     if os.name == "posix":
         assert os.access(ROOT / "APProcessor.command", os.X_OK)
-        assert "APProcessor.command" in (ROOT / "start.sh").read_text()
+        assert 'APProcessor.command" "$@"' in (ROOT / "start.sh").read_text()
 
 
 def test_check_deps():
@@ -412,6 +420,29 @@ def test_check_deps():
     assert check_deps.problem("pip>=1") == ""
     assert check_deps.problem("pip>=9999; sys_platform == 'no-such-os'") == ""
     assert "streamlit>=1.62" in check_deps.requirements()
+    assert "rapidocr>=3.4,<3.5" not in check_deps.requirements()
+    assert {"rapidocr>=3.4,<3.5", "pytest>=8"} <= set(check_deps.requirements(extras=("ocr", "dev")))
+    assert check_deps.requirement_name("Rapidocr_ONNXRuntime>=1.3; sys_platform == 'win32'") == "rapidocr-onnxruntime"
+
+
+def test_check_deps_knows_where_ap_coder_is_installed_from(tmp_path, monkeypatch):
+    """Only pip's record counts: the project folder's own ap_coder.egg-info (on sys.path while the launcher
+    runs) does not, and an install from another copy of the folder is not this one."""
+    check_deps = _script("check_deps")
+    code = tmp_path / "AP Coder"  # a space, as in a real folder name
+    code.mkdir()
+    site = tmp_path / "site"
+    dist = site / "ap_coder-0.1.0.dist-info"
+    dist.mkdir(parents=True)
+    (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: ap-coder\nVersion: 0.1.0\n")
+    (dist / "direct_url.json").write_text(json.dumps({"url": code.as_uri(), "dir_info": {"editable": True}}))
+    egg = code / "ap_coder.egg-info"
+    egg.mkdir()
+    (egg / "PKG-INFO").write_text("Metadata-Version: 2.1\nName: ap-coder\nVersion: 0.1.0\n")
+    monkeypatch.syspath_prepend(str(site))
+    monkeypatch.syspath_prepend(str(code))
+    assert check_deps.self_problem(code) == ""
+    assert check_deps.self_problem(tmp_path / "elsewhere") != ""
 
 
 def test_first_run_records_a_data_folder_once(tmp_path, monkeypatch):

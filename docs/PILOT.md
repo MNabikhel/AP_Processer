@@ -6,9 +6,11 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
 ## What you need
 
 - **Windows 10 or 11** (64-bit), or a Mac with macOS 12 or newer.
-- **Python 3.11 or newer** (3.12 recommended) from [python.org](https://www.python.org/downloads/). On the
-  first screen of the Windows installer tick **Add python.exe to PATH**. Or, in a terminal:
-  `winget install Python.Python.3.12`.
+- **Python 3.11, 3.12 or 3.13.** Nothing to do if the laptop has one: AP Coder uses it as it is and never
+  installs a second Python. If it has none, the first double-click offers to install Python 3.12 for you
+  (Windows, with `winget`: answer **Y**). Without `winget` or internet, install it from
+  [python.org](https://www.python.org/downloads/) and tick **Add python.exe to PATH** on the first screen.
+  Mac: install Python 3.12 from python.org (or `brew install python@3.12`).
 - About **2 GB** free disk space.
 - **Optional: LM Studio** with a local model, for the AI coding step on this laptop (see the LM Studio
   section of the [README](../README.md)). AP Coder starts and works without it: every invoice is still
@@ -54,14 +56,40 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
 - **No Azure needed.** Azure Document Intelligence and Azure OpenAI stay optional; leave Settings → Azure
   empty for the pilot.
 
-## Install
+## Install: one button
 
-There are two ways; both end with the same folder and the same double-click.
+**`APProcessor.bat`** (Mac: **`APProcessor.command`**) is the only file to click, the first time and
+every time after. `install.bat` and `start.bat` are kept for older shortcuts and do the same thing.
 
 **A. Online once (simplest).** Download the AP Coder ZIP, unzip it to a folder that is **not** synced by
 OneDrive (e.g. `C:\APCoder\app`), and double-click **`APProcessor.bat`** (Mac: `APProcessor.command`;
-the first time, right-click → *Open*). The first run takes a few minutes: it creates `.venv`, installs
-the packages, picks the data folder and downloads the OCR models. After that the laptop can stay offline.
+the first time, right-click → *Open*). The first run takes a few minutes and sets up only what is
+missing:
+
+- **Python**: uses the Python 3.11–3.13 already installed; only if there is none, offers to install
+  Python 3.12 (see *What you need*).
+- **`.venv`**: AP Coder's own environment, made once and reused (made again only if it is broken).
+- **Packages**: installs only the ones that are missing or too old (all of them the first time).
+- **Data folder** (`C:\Users\<you>\APCoder`) and the **OCR models**: once.
+- **Desktop shortcut** *AP Coder*: once, never a second copy (deleted? it is not put back).
+
+Then it checks itself and prints a short summary before the browser opens:
+
+```
+AP Coder readiness:
+  [OK] Python 3.12.4 (.venv)
+  [OK] Packages: all 13 in place
+  [OK] OCR for scanned invoices
+  [OK] Data folder: C:\Users\you\APCoder
+  [--] LM Studio: not running (optional: invoices are still read and coded without it)
+  [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR (9 s)
+```
+
+The self-check (the ten sample invoices, read on the laptop with no AI model and no Azure) runs on the
+first start and after an update; later starts show its last result and take a few seconds. If it fails,
+the summary says so plainly and AP Coder still starts. LM Studio is never installed by AP Coder: the
+summary only says whether it is running and which model is loaded (*LM Studio: model qwen3.5-9b loaded*).
+After the first run the laptop can stay offline.
 
 **B. Fully offline (air-gapped laptop).** On any computer with internet, build the bundle:
 
@@ -77,16 +105,18 @@ downloading. Copy the ZIP to the laptop (USB stick), unzip it, double-click `APP
 
 The laptop's Python must match one the bundle was built for (3.11 or 3.12 by default).
 
-**Check the install** (a minute, nothing is saved): in the AP Coder folder run
-`.venv\Scripts\python.exe scripts\pilot_check.py`. It reads the ten sample invoices on the laptop, with
-no AI model and no Azure, plus one as a scan through local OCR, and prints `OK` for each one that matches
-its answer. The same check runs on a clean Windows machine in CI for every change, both from the
-double-click launcher and from the offline bundle with the internet cut off.
+**Check the install again** (a few seconds, nothing is saved): `APProcessor.bat --check` runs the
+self-check before starting; for every sample's line, run `.venv\Scripts\python.exe scripts\pilot_check.py`
+in the AP Coder folder. The same check runs on a clean Windows machine in CI for every change, from the
+double-click (first start, a second double-click while it runs, a later start) and from the offline
+bundle with the internet cut off.
 
 ## Daily use
 
-1. Double-click **`APProcessor.bat`**. A black window opens and the dashboard opens in your browser
-   (at `http://127.0.0.1:8501`). Keep the window open while you work; close it to stop AP Coder.
+1. Double-click **`APProcessor.bat`** (or the *AP Coder* desktop shortcut). A black window opens with
+   the readiness summary, and the dashboard opens in your browser (at `http://127.0.0.1:8501`). Keep
+   the window open while you work; close it to stop AP Coder. Double-clicking again while it runs just
+   brings the running dashboard back up in the browser; it never starts a second copy.
 2. **Bring in invoices:** drop PDFs, scans or photos in the **invoices folder** (Process invoices →
    *Open folder*), or upload them on the *Process invoices* page.
 3. **Review:** open each invoice in the *Review queue*, check the fields the capture marked *check*,
@@ -121,12 +151,14 @@ there is one). Your data folder is not touched, so nothing is lost or duplicated
 
 | What you see | What to do |
 |---|---|
-| *Python 3.11 or newer is needed* | Install Python 3.12 (above), tick *Add python.exe to PATH*, double-click again. |
-| *AP Coder stopped. The message above says why.* | Read the lines above it; most often a package could not install. Online: check the proxy (`set HTTPS_PROXY=http://proxy:8080` in a terminal, then run `APProcessor.bat` from it). Offline: the bundle was built for another Python version. |
+| *AP Coder needs Python 3.11, 3.12 or 3.13, and it is not installed* | Install Python 3.12 from python.org, tick *Add python.exe to PATH*, double-click again. |
+| *AP Coder stopped. The message above says what to do.* | The `What to do:` line above it says it; most often a package could not install. Online: check the proxy (`set HTTPS_PROXY=http://proxy:8080` in a terminal, then run `APProcessor.bat` from it). Offline: the bundle was built for another Python version. |
+| *Self-check FAILED* in the summary | AP Coder still runs. Run `.venv\Scripts\python.exe scripts\pilot_check.py` in `terminal.bat` and send the output. |
+| *AP Coder is already running* | It is: the browser opens on it. Use that window, or close it to stop AP Coder. |
 | The browser does not open | Open `http://127.0.0.1:8501` yourself (the window shows the exact address; it uses the next free port if 8501 is taken). |
 | Scans are read, but with a note about one OCR engine | The PP-OCRv5 models are missing. When online, run `.venv\Scripts\python.exe scripts\fetch_models.py` (Mac: `.venv/bin/python scripts/fetch_models.py`). |
 | Something else | In `terminal.bat`, run `python -m ap_coder doctor` and send the report: it lists checks only, never keys, file names or invoice data. |
-| Start over | Delete the `.venv` folder and double-click `APProcessor.bat` (your data is kept). |
+| Start over | Delete the `.venv` folder and double-click `APProcessor.bat` (your data is kept; it is set up again, once). |
 
 ## What is sent over the network
 

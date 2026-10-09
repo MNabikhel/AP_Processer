@@ -59,21 +59,21 @@ jobs:
           if (-not (Test-Path $settings)) { throw "missing $settings" }
           $data = (Get-Content $settings | ConvertFrom-Json).data_dir
           Write-Host "data folder: $data"
-          foreach ($p in @("$data\.env", "$data\invoices", ".venv\Scripts\python.exe", ".venv\ap_coder_install.json")) {
+          foreach ($p in @("$data\.env", "$data\invoices", ".venv\Scripts\python.exe", ".venv\ap_coder_launcher.json")) {
             if (-not (Test-Path $p)) { throw "missing $p" }
           }
           $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AP Coder.lnk'
           if (-not (Test-Path $lnk)) { throw "missing desktop shortcut $lnk" }
           $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
           Write-Host "shortcut -> $target"
-          if (-not $target.EndsWith('start.bat')) { throw "shortcut points to $target" }
+          if (-not $target.EndsWith('APProcessor.bat')) { throw "shortcut points to $target" }
       - name: Second install reuses everything
         shell: pwsh
         run: |
           $out = cmd /c "install.bat --yes --no-update --skip-tests --no-start" 2>&1 | Out-String
           Write-Host $out
           if ($out -notmatch 'reusing \.venv') { throw 'venv was not reused' }
-          if ($out -notmatch 'already up to date') { throw 'packages were reinstalled' }
+          if ($out -notmatch 'all \d+ in place' -or $out -match 'Collecting|Installing collected') { throw 'packages were reinstalled' }
           $count = (Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk').Count
           if ($count -ne 1) { throw "expected 1 desktop shortcut, found $count" }
       - name: Self-test inside the installed environment
@@ -108,8 +108,10 @@ jobs:
           if (-not (Get-ChildItem $data -Directory -Filter 'backup-*')) { throw 'no backup folder' }
 
   windows-pilot-launcher:
-    # The pilot's double-click: APProcessor.bat on a clean Windows machine sets itself up, serves the
-    # dashboard, and the sample invoices read right with no AI model and no Azure.
+    # The pilot's one button: APProcessor.bat on a clean Windows machine (Python already installed, as
+    # setup-python leaves it). The first double-click reuses that Python (no second one), makes .venv once,
+    # prints the readiness summary with the self-check and serves the dashboard; a double-click while it runs
+    # only opens the running one; a later double-click reuses everything and starts within a minute.
     name: Pilot launcher on Windows (APProcessor.bat)
     runs-on: windows-latest
     env:
@@ -120,11 +122,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: First double-click sets up and starts the dashboard
+      - name: First double-click sets up, checks itself and serves the dashboard; a second one opens it
         shell: pwsh
         run: |
+          $userPython = Join-Path $env:LOCALAPPDATA 'Programs\Python'
+          $hadUserPython = Test-Path $userPython
           $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','APProcessor.bat','--port','8597' -PassThru `
-            -RedirectStandardOutput launch.out -RedirectStandardError launch.err
+            -RedirectStandardOutput launch1.out -RedirectStandardError launch1.err
           $ok = $false
           foreach ($i in 1..180) {
             Start-Sleep -Seconds 5
@@ -134,12 +138,44 @@ jobs:
             } catch { }
             if ($p.HasExited) { break }
           }
-          Get-Content launch.out -Tail 40 -ErrorAction SilentlyContinue
-          Get-Content launch.err -Tail 40 -ErrorAction SilentlyContinue
-          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-          if (-not $ok) { throw 'APProcessor.bat did not bring the dashboard up' }
-          if (-not (Test-Path '.venv\Scripts\python.exe')) { throw 'no .venv after the first run' }
+          $out = Get-Content launch1.out -Raw -ErrorAction SilentlyContinue
+          Write-Host $out
+          Get-Content launch1.err -Tail 40 -ErrorAction SilentlyContinue
+          try {
+            if (-not $ok) { throw 'APProcessor.bat did not bring the dashboard up' }
+            # The Python already on the machine was used: no winget, no second Python, .venv made from it.
+            if ($out -match 'winget|Installing Python') { throw 'it tried to install Python although one is installed' }
+            if (-not $hadUserPython -and (Test-Path $userPython)) { throw "a second Python appeared in $userPython" }
+            $venvHome = ((Get-Content '.venv\pyvenv.cfg' | Select-String '^home\s*=').Line -split '=', 2)[1].Trim()
+            Write-Host ".venv made from: $venvHome (setup-python: $env:pythonLocation)"
+            if (-not (Test-Path (Join-Path $venvHome 'python.exe'))) { throw ".venv home $venvHome has no python.exe" }
+            foreach ($m in @('First run', 'AP Coder readiness:', 'Python 3\.12', 'Packages: installed what was missing',
+                             'OCR for scanned invoices', 'Data folder', 'LM Studio: not running', 'Self-check OK: \d+ of \d+')) {
+              if ($out -notmatch $m) { throw "the first start did not print: $m" }
+            }
+            # Double-click again while it runs: the running dashboard is opened, nothing new is started.
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            $out2 = cmd /c "APProcessor.bat --port 8597" 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            Write-Host $out2
+            Write-Host "second launch while running: exit $code after $([int]$sw.Elapsed.TotalSeconds) s"
+            if ($code -ne 0) { throw "second launch exited with $code" }
+            if ($out2 -notmatch 'already running') { throw 'the second launch did not find the running dashboard' }
+            if ($out2 -match 'Starting AP Coder|Collecting') { throw 'the second launch set up or started a second copy' }
+            $servers = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*streamlit*run*' })
+            if ($servers.Count -ne 1) { throw "expected 1 dashboard server, found $($servers.Count)" }
+          } finally {
+            Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' -or $_.CommandLine -like '*launch.py*' } |
+              ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          }
+      - name: One desktop shortcut, to APProcessor.bat
+        shell: pwsh
+        run: |
+          $links = @(Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk')
+          if ($links.Count -ne 1) { throw "expected 1 desktop shortcut, found $($links.Count)" }
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($links[0].FullName).TargetPath
+          Write-Host "shortcut -> $target"
+          if (-not $target.EndsWith('APProcessor.bat')) { throw "shortcut points to $target" }
       - name: OCR models are on disk (scans read offline)
         shell: cmd
         run: .venv\Scripts\python.exe scripts\fetch_models.py --check
@@ -149,25 +185,35 @@ jobs:
       - name: Sample invoices read right with no AI model and no Azure
         shell: cmd
         run: .venv\Scripts\python.exe scripts\pilot_check.py
-      - name: Second double-click starts straight away
+      - name: Later double-click reuses everything and starts within a minute
         shell: pwsh
         run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
           $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','APProcessor.bat','--port','8597' -PassThru `
-            -RedirectStandardOutput launch2.out -RedirectStandardError launch2.err
+            -RedirectStandardOutput launch3.out -RedirectStandardError launch3.err
           $ok = $false
-          foreach ($i in 1..30) {
-            Start-Sleep -Seconds 2
+          while ($sw.Elapsed.TotalSeconds -lt 60) {
+            Start-Sleep -Seconds 1
             try {
               $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8597/' -UseBasicParsing -TimeoutSec 5
               if ($r.StatusCode -eq 200) { $ok = $true; break }
             } catch { }
+            if ($p.HasExited) { break }
           }
-          $out = Get-Content launch2.out -Raw -ErrorAction SilentlyContinue
+          $seconds = [int]$sw.Elapsed.TotalSeconds
+          $out = Get-Content launch3.out -Raw -ErrorAction SilentlyContinue
           Write-Host $out
-          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' } |
+          Get-Content launch3.err -Tail 20 -ErrorAction SilentlyContinue
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' -or $_.CommandLine -like '*launch.py*' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-          if (-not $ok) { throw 'second start did not serve the dashboard within a minute' }
-          if ($out -match 'First run') { throw 'the second start set everything up again' }
+          Write-Host "dashboard served after $seconds s"
+          if (-not $ok) { throw 'the later start did not serve the dashboard within a minute' }
+          if ($out -match 'First run|Collecting|Installing|Running the self-check|Fetching the OCR models') { throw 'the later start set something up again' }
+          foreach ($m in @('reusing \.venv', 'AP Coder readiness:', 'Packages: all \d+ in place', 'Self-check OK at setup')) {
+            if ($out -notmatch $m) { throw "the later start did not print: $m" }
+          }
+          $links = @(Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk')
+          if ($links.Count -ne 1) { throw "expected 1 desktop shortcut, found $($links.Count)" }
 
   windows-offline-bundle:
     # The air-gapped pilot: build the offline bundle, unzip it on Windows and install it with the internet
@@ -220,6 +266,7 @@ jobs:
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
           if ($out -notmatch 'wheelhouse') { throw 'did not install from the wheelhouse' }
           if (-not $ok) { throw 'the offline install did not bring the dashboard up' }
+          if ($out -notmatch 'Self-check OK') { throw 'the readiness summary did not show the self-check OK' }
       - name: OCR models copied from the bundle, samples read right, still offline
         shell: cmd
         working-directory: C:\pilot\APProcessor
