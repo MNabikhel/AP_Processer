@@ -169,7 +169,33 @@ Measured on invoices the reader was never tuned on (fresh random seeds), with **
 reader and the checks**: no AI, no Document Intelligence, no supplier template. In production those
 add independent readers, which is what lifts identifiers and names to *verified*.
 
-BENCH_TABLE
+**One invoice at a time, no history** (`bench run`):
+
+| test set (fresh seed) | invoices | field accuracy | invoices fully right | *verified*: share of fields | *verified*: right | calibration error |
+|---|---:|---:|---:|---:|---:|---:|
+| digital PDFs | 1,000 | 99.4% | 93.9% | 53.6% | 100% | 0.017 |
+| scans (rotated, noisy, JPEG; local OCR) | 150 | 96.7% | 72.7% | 34.1% | 100% | 0.036 |
+
+On the digital set, 94.9% of fields come out *verified* or *likely*, and those were right 99.8% of
+the time; the rest are marked *check*.
+
+**Learning each supplier** (`bench learn`: every supplier sends invoices that look alike; AP
+approves each one, the template learns, the autonomy policy is applied):
+
+| suppliers × invoices | 1st invoice | invoices 6-40 | without the template | reached autonomy | touchless after | touchless with a wrong field |
+|---|---:|---:|---:|---:|---:|---:|
+| 40 × 40 digital (fresh seed) | 99.5% | 100.0% | 99.5% | 23 of 40 (median: invoice 34) | 77 of 145 (53%) | **0** |
+| 10 × 30 scanned | 98.0% | 99.2-99.8% | 97.5-98.2% | 0 of 10 | - | - |
+
+Across those 1,900 simulated invoices, none of the ones that met the touchless bar (every printed
+field *verified*, every check passed) had a wrong field. No scanned-only supplier reached the 99%
+bound within 30 invoices: the policy is doing its job, and those suppliers stay supervised until a
+second reader (Document Intelligence or the AI) closes the OCR gap.
+
+Every wrong *verified* value the runs turned up while this was built became a fix and a test (a
+thousands comma read as ";" by OCR, a table's "Total" column taken for the invoice total, a
+customer's GST number glued to "Your GST No.", a template dropping a credit's "CR", a name read
+without its legal suffix).
 
 What this means for "99%":
 - On digital PDFs the reader is already at 99%+ per field, and no field it marked *verified* was
