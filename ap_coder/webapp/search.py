@@ -6,7 +6,17 @@ import streamlit as st
 
 from ap_coder import search, stamp, ui
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
-from ap_coder.webapp.common import PAGES, card, esc, get_store, money, reference_or_none, reviewer, show_toast
+from ap_coder.webapp.common import (
+    PAGES,
+    card,
+    esc,
+    get_store,
+    money,
+    page_head,
+    reference_or_none,
+    reviewer,
+    show_toast,
+)
 
 STATUS = {
     REVIEW: ("To review", "info", "inbox"),
@@ -21,12 +31,10 @@ STATUS = {
 def page_search() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Vendor on the phone?",
-            "Find an invoice",
-            "Search by vendor, invoice number, PO number or amount: see where the invoice is and when it is due.",
-        )
+    page_head(
+        "search",
+        "Find an invoice",
+        "Vendor on the phone? Search by vendor, invoice number, PO or amount: see where it is and when it is due.",
     )
     with card("search_box"):
         query = st.text_input(

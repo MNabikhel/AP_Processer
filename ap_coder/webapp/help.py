@@ -9,7 +9,7 @@ import streamlit as st
 from ap_coder import ui
 from ap_coder.help import AREAS, CHECKS, FAQ, QUICK_START, ROUTINE
 from ap_coder.paths import PROJECT_DIR
-from ap_coder.webapp.common import DB_PATH, PAGES, card, esc, short_path, show_toast
+from ap_coder.webapp.common import DB_PATH, PAGES, card, esc, page_head, short_path, show_toast
 
 STEP_PAGES = ["accounts", "purchase_orders", "process", "review", "exports"]
 SHORTCUTS = [
@@ -44,7 +44,11 @@ def checks_table(query: str = "", area: str | None = None) -> tuple[str, int]:
 
 def page_help() -> None:
     show_toast()
-    st.html(ui.page_header("Guide", "Help", "How AP Coder works, what each check means and what to do about it."))
+    action = page_head(
+        "help", "Help", "How AP Coder works, what each check means and what to do about it.", action=True
+    )
+    if "review" in PAGES:
+        action.page_link(PAGES["review"], label="Go to the review queue", icon=":material/inbox:")
 
     news = PROJECT_DIR / "docs" / "WHATS_NEW.md"
     if news.exists():
@@ -59,7 +63,7 @@ def page_help() -> None:
             c1, c2 = st.columns([4, 1.3], vertical_alignment="center")
             c1.html(
                 f"<div style='display:flex;gap:.7rem;align-items:flex-start'><span class='apc-step-no' "
-                f"style='flex:none;width:1.6rem;height:1.6rem;border-radius:50%;background:#eaf2fc;color:#2a78d6;"
+                f"style='flex:none;width:1.6rem;height:1.6rem;border-radius:50%;background:var(--apc-brand-50);color:var(--apc-brand);"
                 f"display:grid;place-items:center;font-weight:700;font-size:.85rem'>{i}</span><div><b>{esc(title)}"
                 f"</b><div class='apc-muted'>{esc(text)}</div></div></div>"
             )

@@ -19,6 +19,7 @@ from ap_coder.webapp.common import (
     esc,
     get_store,
     notify,
+    page_head,
     persistent_editor,
     replace_editor,
     reviewer,
@@ -162,11 +163,7 @@ def account_manager(store: Store, table: str, noun: str) -> None:
 def page_accounts() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Setup", "GL accounts & tax", "The codes the AI may use, how each sales tax posts, and your rules."
-        )
-    )
+    page_head("accounts", "GL accounts & tax", "The codes the AI may use, how each sales tax posts, and your rules.")
     gl = store.list_accounts("gl_accounts")
     cc = store.list_accounts("cost_centers")
     mapped = tax_types_mapped(store)

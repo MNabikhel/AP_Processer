@@ -17,6 +17,7 @@ from ap_coder.webapp.common import (
     get_store,
     gl_name,
     notify,
+    page_head,
     reference_or_none,
     reviewer,
     show_toast,
@@ -79,9 +80,7 @@ def page_learning() -> None:
 
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header("Insights", "Learning & accuracy", "How often the AI gets it right, and what it has learned.")
-    )
+    page_head("learning", "Learning & accuracy", "How often the AI gets it right, and what it has learned.")
     _history_card(store)
     m = store.metrics()
     if not m["lines_reviewed"]:

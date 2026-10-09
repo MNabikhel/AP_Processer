@@ -8,7 +8,7 @@ import streamlit as st
 
 from ap_coder import accruals, ui
 from ap_coder.reference_data import short_name
-from ap_coder.webapp.common import card, esc, get_store, money, reference_or_none, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, page_head, reference_or_none, show_toast
 
 ICONS = {accruals.RECEIVED: "inventory", accruals.NOT_IN_ERP: "receipt_long", accruals.RECURRING: "event_repeat"}
 TONES = {accruals.RECEIVED: "violet", accruals.NOT_IN_ERP: "blue", accruals.RECURRING: "amber"}
@@ -17,13 +17,10 @@ TONES = {accruals.RECEIVED: "violet", accruals.NOT_IN_ERP: "blue", accruals.RECU
 def page_month_end() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Close",
-            "Month-end",
-            "What to accrue: goods received but not invoiced, invoices not in the ERP yet, and regular bills "
-            "that have not arrived.",
-        )
+    page_head(
+        "month_end",
+        "Month-end",
+        "What to accrue: goods received but not invoiced, invoices not in the ERP yet, and regular bills not arrived.",
     )
     with card("me_period"):
         c1, c2 = st.columns([1, 3], vertical_alignment="bottom")

@@ -10,7 +10,7 @@ import streamlit as st
 from ap_coder import controls, dupaudit, ui
 from ap_coder.audit import ACTIONS, describe
 from ap_coder.safe import csv_cell
-from ap_coder.webapp.common import card, esc, get_store, history_html, invoice_label, show_toast
+from ap_coder.webapp.common import card, esc, get_store, history_html, invoice_label, page_head, show_toast
 
 GROUPS = {
     "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "reopened", "parked", "unparked",
@@ -26,13 +26,7 @@ GROUPS = {
 def page_activity() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Controls",
-            "Activity",
-            "Who processed, changed, approved, rejected, deleted or exported what, and when.",
-        )
-    )
+    page_head("activity", "Activity", "Who processed, changed, approved, rejected, deleted or exported what, and when.")
     events = store.events(limit=5000)
     if not events:
         with card("activity_empty"):

@@ -22,6 +22,7 @@ from ap_coder.webapp.common import (
     gl_name,
     money,
     notify,
+    page_head,
     reference_or_none,
     reviewer,
     show_toast,
@@ -56,12 +57,8 @@ def _sorted(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
 def page_vendors() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Suppliers",
-            "Vendors",
-            "Everyone who has sent an invoice: spend, how well the AI codes them, and your controls.",
-        )
+    page_head(
+        "vendors", "Vendors", "Everyone who has sent an invoice: spend, how well the AI codes them, and your controls."
     )
     _master_importer(store)
     vendors = store.vendor_summaries()

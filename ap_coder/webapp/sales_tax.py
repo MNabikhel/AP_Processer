@@ -8,7 +8,7 @@ from typing import Any
 import streamlit as st
 
 from ap_coder import taxreturn, ui
-from ap_coder.webapp.common import card, esc, get_store, money, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, page_head, show_toast
 
 ISSUE_TONES = {
     taxreturn.NO_GST_NUMBER: "err",
@@ -33,12 +33,10 @@ def _amounts(by_currency: dict[str, float], rates: dict[str, float]) -> tuple[st
 def page_sales_tax() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Close",
-            "Sales tax",
-            "The GST/HST and QST you paid to vendors and can claim back on your return, from approved invoices.",
-        )
+    page_head(
+        "sales_tax",
+        "Sales tax",
+        "The GST/HST and QST you paid to vendors and can claim back on your return, from approved invoices.",
     )
     with card("tax_period"):
         default_start, default_end = taxreturn.default_period()
