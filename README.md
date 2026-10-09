@@ -264,7 +264,7 @@ Each invoice produces the original target fields plus the Canadian tax fields, a
 Next to the AI coder, AP Coder reads every invoice itself and shows *where* each value is printed
 (design and benchmark: [docs/CAPTURE_DESIGN.md](docs/CAPTURE_DESIGN.md)):
 
-- **Several readers per field:** the PDF's text layer or OCR (RapidOCR, local), a rule reader
+- **Several readers per field:** the PDF's text layer or OCR (RapidOCR, local: `pip install -e .[ocr]`), a rule reader
   (labels in English and French, header grids, totals blocks), the supplier's learned template, and
   the AI's and Document Intelligence's answers located back on the page.
 - **Checks a misread cannot pass:** subtotal + charges + taxes = total, official tax rates, GST/HST

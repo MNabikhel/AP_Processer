@@ -23,6 +23,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+# Local OCR for scanned invoices and images (capture reads text PDFs without it).
+ocr = ["rapidocr-onnxruntime>=1.3"]
 
 [project.scripts]
 ap-coder = "ap_coder.cli:main"
