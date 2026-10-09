@@ -26,3 +26,6 @@ private/*
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Capture benchmark output (python -m ap_coder.bench run)
+bench_out/
