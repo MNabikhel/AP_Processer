@@ -28,6 +28,29 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   were all coded without it took no model time at all. A graphics card is many times faster. If the model is
   slower than 10 minutes (`AP_LLM_TIMEOUT_SECONDS`), the invoice is still read and checked; its uncoded lines
   wait for AP. Each approval teaches AP Coder that vendor's accounts, which then come before the model.
+
+  **Qwen 3.5 9B in LM Studio.** In LM Studio search for *Qwen3.5 9B* and download the Q4_K_M file (5.6 GB,
+  plus its 0.9 GB vision file, `mmproj`, in the same lmstudio-community repo). Load it with **Context Length 8192**: the accounts
+  call is short (about 1,300 tokens of chart and lines with the sample chart, and about 60 tokens of answer
+  per line), and Qwen's own advice to keep 128K applies to thinking, which AP Coder turns off.
+  - *Thinking.* Qwen 3.5 thinks before it answers unless told not to (LM Studio lists its reasoning
+    setting as on/off, default on). On a laptop CPU the thinking alone takes minutes. AP Coder sends
+    `reasoning_effort: "none"` with every request, which LM Studio 0.4.8 and newer applies: checked in
+    LM Studio with Qwen 3.5 2B, the reply came back with 0 reasoning tokens. The other switch Qwen
+    documents, `chat_template_kwargs: {"enable_thinking": false}`, is also sent for servers that read it,
+    but LM Studio ignores it (its bug tracker #1990; checked with the 2B: all 100 of 100 tokens went to
+    thinking and the answer was empty). Qwen 3.5 has no `/no_think` prompt switch. So **use LM Studio 0.4.8 or newer**; on an
+    older one, turn the model's thinking off in LM Studio. If thinking still runs, the doctor's *local dry
+    run* and the log say *"The model spent its answer thinking and never wrote the JSON"* instead of coding
+    nothing silently.
+  - *Max tokens.* Leave `AP_LLM_MAX_TOKENS` at 4096: with thinking off a two-line answer was 123 tokens.
+    Raising it does not cure thinking on a CPU (with thinking on, a 4096-token call ran past 10 minutes and
+    `AP_LLM_TIMEOUT_SECONDS`); turning thinking off does.
+  - *Speed measured.* `python -m ap_coder doctor --online` with Qwen 3.5 2B on a busy 4-core CPU, no
+    graphics card: 100 s for the two-line dry run (69 s reading the prompt, 30 s writing the answer). The 9B
+    is several times larger, so expect it to be slower on the same laptop; a graphics card is much faster.
+  - The doctor shows *can see pages: yes* for it (every Qwen 3.5 size has a vision encoder). Invoices are
+    read by AP Coder's own reader either way.
 - **No Azure needed.** Azure Document Intelligence and Azure OpenAI stay optional; leave Settings → Azure
   empty for the pilot.
 
