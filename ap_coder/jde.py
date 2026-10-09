@@ -597,12 +597,14 @@ def voucher_rows(
         return row
 
     if settings.line_numbering == MATCH_HEADER and len(v.entries) > 1:
-        # One pay item per distribution line: each gets its share of the recoverable tax (by net amount).
-        # Tax and taxable amounts are split the same way, so under code V a pay item's tax is exactly its share.
+        # One pay item per distribution line: each gets its share of the recoverable tax (by net amount). Its tax
+        # is that share plus the non-recoverable tax already in its line (e.g. PST charged on some lines only).
         weights = [_cents(e.get("net_amount")) if e.get("kind") == "expense" else 0 for e in v.entries]
         if not any(weights):
             weights = [e["cents"] for e in v.entries]
-        shares, stams, atxas = _split(v.recoverable, weights), _split(v.stam, weights), _split(v.atxa, weights)
+        shares, atxas = _split(v.recoverable, weights), _split(v.atxa, weights)
+        stams = [s + _cents(e.get("non_recoverable_tax")) for e, s in zip(v.entries, shares, strict=True)]
+        stams[max(range(len(weights)), key=lambda i: abs(weights[i]))] += v.stam - sum(stams)
         grosses = [e["cents"] + s for e, s in zip(v.entries, shares, strict=True)]
         headers = [
             {**common, "VLEDLN": n, **amounts(g, s, a), **extras}
