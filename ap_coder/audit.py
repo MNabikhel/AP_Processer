@@ -58,6 +58,9 @@ ACTIONS = {
     "pos_imported": ("shopping_cart", "info", "Purchase orders imported"),
     "po_status": ("shopping_cart", "info", "Purchase order updated"),
     "pos_deleted": ("remove_shopping_cart", "warn", "Purchase orders deleted"),
+    "autonomy_on": ("bolt", "ok", "Autonomy turned on"),
+    "autonomy_off": ("pan_tool", "gray", "Autonomy turned off"),
+    "autonomy_suspended": ("gpp_maybe", "err", "Autonomy suspended"),
 }
 
 
@@ -203,6 +206,11 @@ def describe(event: dict[str, Any]) -> str:
     if action == "pos_deleted":
         pos = d.get("pos") or []
         return f"{', '.join(pos[:8])}{' …' if len(pos) > 8 else ''}"
+    if action in ("autonomy_on", "autonomy_off", "autonomy_suspended"):
+        text = str(d.get("supplier") or d.get("key") or "")
+        if action == "autonomy_on" and d.get("audit_rate") is not None:
+            text += f": touchless, {float(d['audit_rate']):.0%} audited"
+        return text + (f" · {d['reason']}" if d.get("reason") else "")
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", ""))
     return ""

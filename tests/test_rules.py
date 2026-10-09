@@ -9,7 +9,7 @@ from ap_coder.inference import InvoiceCoder
 from ap_coder.pipeline import InvoicePipeline
 from ap_coder.rules import Rule
 from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store
+from ap_coder.store import SCHEMA_VERSION, Store
 
 from .conftest import FakeOpenAI, make_completion
 
@@ -104,7 +104,7 @@ def test_upgrade_from_version_10(tmp_path):
         conn.execute("DROP TABLE coding_rules")
         conn.execute("UPDATE settings SET value = '10' WHERE key = 'schema_version'")
     store = Store(path)
-    assert store.coding_rules() == [] and store.get_setting("schema_version") == "13"
+    assert store.coding_rules() == [] and store.get_setting("schema_version") == str(SCHEMA_VERSION)
 
 
 @pytest.mark.parametrize(
