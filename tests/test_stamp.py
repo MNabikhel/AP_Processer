@@ -63,6 +63,18 @@ def test_batch_zip_names_are_unique(tmp_path):
     )
 
 
+def test_batch_zip_names_differ_on_windows_too(tmp_path):
+    """Windows file names ignore case: "ACME ... INV-1" and "Acme ... inv-1" would unzip over each other."""
+    _, inv = _approved(tmp_path, tmp_path / "gone.pdf")
+    final = inv["final_output"]
+    first = {**inv, "final_output": {**final, "vendor_name": "ACME Ltd", "invoice_number": "INV-1"}}
+    twin = {**final, "vendor_name": "Acme Ltd", "invoice_number": "inv-1"}
+    second = {**inv, "id": inv["id"] + 1, "final_output": twin}
+    with zipfile.ZipFile(io.BytesIO(stamp.batch_zip([first, second]))) as z:
+        names = z.namelist()
+    assert len({n.casefold() for n in names}) == 2
+
+
 def test_rotated_pages_and_password_protected_files(tmp_path):
     rotated = tmp_path / "rotated.pdf"
     with pymupdf.open(SAMPLES / f"{SAMPLE_STEM}.pdf") as doc:

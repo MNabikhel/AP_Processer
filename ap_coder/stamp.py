@@ -190,8 +190,8 @@ def batch_zip(invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = 
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for inv in invoices:
             name = file_name(inv)
-            if name in names:
+            if name.casefold() in names:  # Windows: "ACME" and "Acme" are the same file
                 name = name.replace(" - approved.pdf", f" (#{inv['id']}) - approved.pdf")
-            names.add(name)
+            names.add(name.casefold())
             z.writestr(name, stamped_pdf(inv, gl_names))
     return out.getvalue()
