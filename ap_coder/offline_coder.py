@@ -192,7 +192,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     else:
         readings_data = [
             (li.description or f"Line {i}", li.quantity if li.quantity is not None else 1.0,
-             li.unit_price if li.unit_price is not None else float(li.amount), float(li.amount))
+             li.unit_price if li.unit_price is not None
+             else float(li.amount) / li.quantity if li.quantity else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)
         ]  # fmt: skip
     # Lines that fall short of the subtotal (plus freight read beside it): a charge printed outside the table.

@@ -146,3 +146,10 @@ def test_a_text_invoice_saved_by_windows_in_ansi_or_with_a_bom_is_read(tmp_path)
     bom = tmp_path / "bom.md"
     bom.write_bytes("Acme Ltd\nInvoice 7\n".encode("utf-8-sig"))
     assert result_from_text(bom).content.startswith("Acme Ltd")
+
+
+def test_a_line_with_a_quantity_but_no_unit_price_gets_its_unit_price(reference):
+    capture = _capture([("Paper, cases", 5, None, 100.0)], subtotal=100.0, grand_total=100.0)
+    coding = code_from_capture(capture, reference, [], text="").coding
+    assert coding.line_items[0].unit_price == 20.0
+    assert not [i for i in validate_coding(coding, reference).issues if i.code == "LINE_MATH"]
