@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from ap_coder import export_layout, exports, registers, stamp, ui
+from ap_coder import export_layout, exports, jde, registers, stamp, ui
 from ap_coder.reference_data import short_name
 from ap_coder.store import Store
 from ap_coder.webapp.accounts import _read_upload
@@ -38,7 +39,51 @@ def _layout(store: Store) -> export_layout.Layout:
     return export_layout.Layout.from_json(store.get_setting(LAYOUT_SETTING))
 
 
+def _jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
+    """The batch's JD Edwards ZIP, rebuilt from the approved data and the current JD Edwards settings (an
+    invoice that no longer passes the checks is left out and listed in the README)."""
+    ids = store.batch_invoice_ids(batch)
+    invoices = [i for i in (store.get_invoice(x) for x in ids) if i]
+    settings, lookup = jde.load(store), store.vendor_ids()
+    left_out = jde.validate(invoices, settings, lookup, jde.prior_records(store, exclude_ids=ids))
+    created = next((b["created_at"] for b in store.export_batches() if b["id"] == batch), "")
+    return jde.build_zip(
+        [i for i in invoices if i["id"] not in left_out], settings, lookup, batch=batch, fx_rates=store.fx_rates(),
+        on=dt.date.fromisoformat(created[:10]) if created else None, left_out=left_out,
+    )  # fmt: skip
+
+
+def jde_check(store: Store, invoice_ids: list[int]) -> tuple[list[int], dict[int, list[str]], list[str]]:
+    """(invoices that can go out, {invoice: why not}, settings problems that stop everything)."""
+    settings = jde.load(store)
+    blocking = jde.settings_problems(settings)
+    invoices = [i for i in (store.get_invoice(x) for x in invoice_ids) if i]
+    problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store))
+    ok = [] if blocking else [i["id"] for i in invoices if i["id"] not in problems]
+    return ok, problems, blocking
+
+
+def _show_jde_problems(store: Store, problems: dict[int, list[str]], blocking: list[str]) -> None:
+    for p in blocking:
+        st.error(f"{p} Set it in Settings → JD Edwards E1.", icon=":material/settings:")
+    if not problems:
+        return
+    st.warning(
+        f"{len(problems)} invoice(s) cannot go to JD Edwards yet and are left out of the batch: fix them (the "
+        "mapping in Settings → JD Edwards E1, the vendor master's ERP ID, or the invoice) and export them later.",
+        icon=":material/rule:",
+    )
+    rows = []
+    for inv_id, reasons in problems.items():
+        inv = store.get_invoice(inv_id) or {}
+        rows.append([f"<b>{inv_id}</b>", esc(inv.get("vendor_name") or ""), esc(inv.get("invoice_number") or ""),
+                     "<br>".join(esc(r) for r in reasons)])  # fmt: skip
+    st.html(ui.table(["#", "Vendor", "Invoice #", "Why not"], rows, wrap=[3]))
+
+
 def _batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
+    if fmt == jde.FORMAT:
+        return _jde_file(store, batch)
     invoices = [store.get_invoice(i) for i in store.batch_invoice_ids(batch)]
     return exports.build(
         fmt, [i for i in invoices if i], _gl_names(store), batch, store.vendor_ids(), layout=_layout(store)
@@ -227,8 +272,12 @@ def page_exports() -> None:
             )
             chosen = [int(i) for i in edited.loc[edited["include"], "id"].tolist()]
             c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-            fmt = c1.radio("Format", list(exports.FORMATS), format_func=exports.FORMATS.get, horizontal=True,
+            fmt = c1.radio("ERP format", list(exports.FORMATS), format_func=exports.FORMATS.get, horizontal=True,
                            key="export_format")  # fmt: skip
+            problems: dict[int, list[str]] = {}
+            blocking: list[str] = []
+            if fmt == jde.FORMAT:
+                chosen, problems, blocking = jde_check(store, chosen)
             if c2.button(
                 f"Export {len(chosen)} invoice(s)", type="primary", icon=":material/ios_share:", disabled=not chosen,
                 width="stretch", key="export_create",
@@ -239,6 +288,8 @@ def page_exports() -> None:
                     f"Batch {batch} created with {len(chosen)} invoice(s). Download it below.", ":material/ios_share:"
                 )
                 st.rerun()
+            if fmt == jde.FORMAT:
+                _show_jde_problems(store, problems, blocking)
 
     just = st.session_state.get("just_exported")
     if just and any(b["id"] == just[0] for b in live):
@@ -246,7 +297,15 @@ def page_exports() -> None:
         data, name, mime = _batch_file(store, batch, fmt)
         with card("export_download"):
             st.markdown(f"#### :material/download: Batch {batch} is ready")
-            st.caption("Import this file into your ERP. If the import fails, undo the batch below and export again.")
+            if fmt == jde.FORMAT:
+                st.caption(
+                    "Load F0411Z1.csv and F0911Z1.csv into the Z-tables, then run R04110ZA in proof mode first, then "
+                    "final (see README.txt in the ZIP). If the load fails, undo the batch below and export again."
+                )
+            else:
+                st.caption(
+                    "Import this file into your ERP. If the import fails, undo the batch below and export again."
+                )
             st.download_button(f"Download {name}", data, file_name=name, mime=mime, type="primary",
                                icon=":material/download:", key="export_download_now")  # fmt: skip
 
@@ -287,7 +346,7 @@ def page_exports() -> None:
         fmt = c2.selectbox(
             "Format",
             list(exports.FORMATS),
-            format_func=lambda f: "Custom CSV" if f == "custom" else f.upper(),
+            format_func=lambda f: {"custom": "Custom CSV", jde.FORMAT: "JD Edwards E1 (ZIP)"}.get(f, f.upper()),
             key="export_again_fmt",
         )
         data, name, mime = _batch_file(store, chosen_batch, fmt)
