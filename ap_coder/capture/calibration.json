@@ -127,77 +127,89 @@
   }
  ],
  "evidence": {
-  "currency|ocr+rules|pattern|scan|": [
-   317,
-   317
+  "currency|ocr2+rules|pattern|scan|": [
+   318,
+   318
   ],
-  "currency|ocr|pattern|scan|": [
-   1,
-   1
+  "currency|ocr2|pattern|scan|": [
+   3,
+   3
   ],
   "currency|rules+template|template|text|": [
    1278,
    1278
   ],
   "currency|rules|pattern|scan|": [
-   3,
-   3
+   2,
+   2
   ],
   "currency|rules|pattern|text|": [
    1677,
    1677
   ],
-  "due_date|ocr+rules|label-below|scan|": [
-   59,
-   59
+  "due_date|ocr2+rules|label-below|scan|": [
+   58,
+   58
   ],
-  "due_date|ocr+rules|label-below|scan|confirmed": [
-   90,
-   90
+  "due_date|ocr2+rules|label-below|scan|confirmed": [
+   87,
+   87
   ],
-  "due_date|ocr+rules|label-below|scan|received": [
+  "due_date|ocr2+rules|label-below|scan|received": [
    1,
    1
   ],
-  "due_date|ocr+rules|label-inline|scan|": [
-   66,
-   66
+  "due_date|ocr2+rules|label-inline|scan|": [
+   65,
+   65
   ],
-  "due_date|ocr+rules|label-inline|scan|confirmed": [
-   25,
-   25
+  "due_date|ocr2+rules|label-inline|scan|confirmed": [
+   26,
+   26
   ],
-  "due_date|ocr+rules|label-inline|scan|soft": [
+  "due_date|ocr2+rules|label-inline|scan|soft": [
    9,
    9
   ],
-  "due_date|ocr+rules|label-inline|scan|soft,received": [
+  "due_date|ocr2+rules|label-inline|scan|soft,received": [
    1,
    1
   ],
-  "due_date|ocr+rules|label-right|scan|": [
-   52,
-   52
+  "due_date|ocr2+rules|label-right|scan|": [
+   51,
+   51
   ],
-  "due_date|ocr+rules|label-right|scan|confirmed": [
+  "due_date|ocr2+rules|label-right|scan|confirmed": [
    74,
    74
   ],
-  "due_date|ocr+rules|label-right|scan|received": [
+  "due_date|ocr2+rules|label-right|scan|received": [
    2,
    2
   ],
-  "due_date|ocr+rules|label-right|scan|soft": [
+  "due_date|ocr2+rules|label-right|scan|soft": [
    1,
    1
   ],
-  "due_date|ocr|label-below|scan|soft": [
-   2,
+  "due_date|ocr2|label-below|scan|confirmed": [
+   1,
+   1
+  ],
+  "due_date|ocr2|label-below|scan|soft": [
+   1,
    0
   ],
-  "due_date|ocr|label-inline|scan|": [
+  "due_date|ocr2|label-inline|scan|": [
    1,
    1
+  ],
+  "due_date|ocr2|label-inline|scan|confirmed": [
+   1,
+   1
+  ],
+  "due_date|ocr2|label-right|scan|soft": [
+   1,
+   0
   ],
   "due_date|rules+template|label-below|text|confirmed": [
    2,
@@ -239,6 +251,14 @@
    2,
    2
   ],
+  "due_date|rules|label-below|scan|": [
+   1,
+   1
+  ],
+  "due_date|rules|label-below|scan|confirmed": [
+   2,
+   2
+  ],
   "due_date|rules|label-below|text|": [
    361,
    361
@@ -263,10 +283,6 @@
    5,
    0
   ],
-  "due_date|rules|label-inline|scan|soft": [
-   1,
-   1
-  ],
   "due_date|rules|label-inline|text|": [
    224,
    224
@@ -286,6 +302,14 @@
   "due_date|rules|label-inline|text|soft": [
    41,
    41
+  ],
+  "due_date|rules|label-right|scan|": [
+   2,
+   2
+  ],
+  "due_date|rules|label-right|scan|confirmed": [
+   1,
+   1
   ],
   "due_date|rules|label-right|text|": [
    408,
@@ -319,57 +343,53 @@
    3,
    0
   ],
-  "grand_total|ocr+rules|label-below|scan|adds-up,confirmed": [
+  "grand_total|ocr2+rules|label-below|scan|adds-up,confirmed": [
    1,
    1
   ],
-  "grand_total|ocr+rules|label-inline|scan|": [
-   1,
-   1
+  "grand_total|ocr2+rules|label-inline|scan|": [
+   4,
+   4
   ],
-  "grand_total|ocr+rules|label-inline|scan|adds-up": [
-   1,
-   1
-  ],
-  "grand_total|ocr+rules|label-inline|scan|adds-up,confirmed": [
-   224,
-   224
-  ],
-  "grand_total|ocr+rules|label-inline|scan|adds-up,confirmed,contested": [
-   13,
-   13
-  ],
-  "grand_total|ocr+rules|label-inline|scan|confirmed": [
-   10,
-   10
-  ],
-  "grand_total|ocr+rules|label-inline|scan|confirmed,contested": [
+  "grand_total|ocr2+rules|label-inline|scan|adds-up": [
    2,
    2
   ],
-  "grand_total|ocr+rules|label-right|scan|": [
-   8,
-   8
+  "grand_total|ocr2+rules|label-inline|scan|adds-up,confirmed": [
+   270,
+   270
   ],
-  "grand_total|ocr+rules|label-right|scan|adds-up": [
+  "grand_total|ocr2+rules|label-inline|scan|adds-up,confirmed,contested": [
+   13,
+   13
+  ],
+  "grand_total|ocr2+rules|label-inline|scan|confirmed": [
+   12,
+   12
+  ],
+  "grand_total|ocr2+rules|label-inline|scan|confirmed,contested": [
+   2,
+   2
+  ],
+  "grand_total|ocr2+rules|label-right|scan|": [
+   7,
+   6
+  ],
+  "grand_total|ocr2+rules|label-right|scan|adds-up": [
    5,
    5
   ],
-  "grand_total|ocr+rules|label-right|scan|adds-up,confirmed": [
-   449,
-   449
+  "grand_total|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   398,
+   398
   ],
-  "grand_total|ocr+rules|label-right|scan|adds-up,confirmed,contested": [
-   29,
-   29
+  "grand_total|ocr2+rules|label-right|scan|adds-up,confirmed,contested": [
+   23,
+   23
   ],
-  "grand_total|ocr+rules|label-right|scan|confirmed": [
-   14,
-   14
-  ],
-  "grand_total|ocr|label-right|scan|adds-up,contested": [
-   1,
-   1
+  "grand_total|ocr2+rules|label-right|scan|confirmed": [
+   15,
+   15
   ],
   "grand_total|rules+template|label-inline|text|": [
    1,
@@ -411,9 +431,9 @@
    2,
    2
   ],
-  "grand_total|rules|label-inline|scan|adds-up": [
-   1,
-   1
+  "grand_total|rules|label-inline|scan|adds-up,confirmed": [
+   2,
+   2
   ],
   "grand_total|rules|label-inline|text|": [
    3,
@@ -428,6 +448,14 @@
    18
   ],
   "grand_total|rules|label-right|scan|adds-up,confirmed": [
+   1,
+   1
+  ],
+  "grand_total|rules|label-right|scan|adds-up,confirmed,contested": [
+   4,
+   4
+  ],
+  "grand_total|rules|label-right|scan|adds-up,contested": [
    1,
    1
   ],
@@ -455,21 +483,29 @@
    1,
    0
   ],
-  "gst_amount|ocr+rules|label-right|scan|adds-up": [
-   4,
-   4
+  "gst_amount|ocr2+rules|label-right|scan|": [
+   2,
+   2
   ],
-  "gst_amount|ocr+rules|label-right|scan|adds-up,confirmed": [
-   402,
-   402
+  "gst_amount|ocr2+rules|label-right|scan|adds-up": [
+   3,
+   3
   ],
-  "gst_amount|ocr+rules|label-right|scan|adds-up,confirmed,contested": [
-   6,
-   6
+  "gst_amount|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   388,
+   388
   ],
-  "gst_amount|ocr|label-right|scan|adds-up": [
+  "gst_amount|ocr2+rules|label-right|scan|adds-up,confirmed,contested": [
+   12,
+   12
+  ],
+  "gst_amount|ocr2|label-right|scan|adds-up": [
    1,
    1
+  ],
+  "gst_amount|ocr2|label-right|scan|adds-up,confirmed,soft": [
+   1,
+   0
   ],
   "gst_amount|rules+template|label-right|text|adds-up": [
    2,
@@ -487,6 +523,14 @@
    347,
    347
   ],
+  "gst_amount|rules|label-right|scan|adds-up,confirmed": [
+   4,
+   4
+  ],
+  "gst_amount|rules|label-right|scan|adds-up,confirmed,contested": [
+   3,
+   3
+  ],
   "gst_amount|rules|label-right|text|adds-up,confirmed": [
    2170,
    2170
@@ -499,11 +543,11 @@
    1,
    1
   ],
-  "gst_hst_registration_number|ocr+rules|pattern|scan|confirmed": [
-   666,
-   666
+  "gst_hst_registration_number|ocr2+rules|pattern|scan|confirmed": [
+   655,
+   655
   ],
-  "gst_hst_registration_number|ocr|pattern|scan|confirmed": [
+  "gst_hst_registration_number|ocr2|pattern|scan|confirmed": [
    3,
    3
   ],
@@ -516,30 +560,38 @@
    986
   ],
   "gst_hst_registration_number|rules|pattern|scan|confirmed": [
-   3,
-   3
+   14,
+   14
   ],
   "gst_hst_registration_number|rules|pattern|text|confirmed": [
    3681,
    3681
   ],
-  "hst_amount|ocr+rules|label-right|scan|adds-up": [
-   1,
-   1
+  "hst_amount|ocr2+rules|label-right|scan|adds-up": [
+   5,
+   5
   ],
-  "hst_amount|ocr+rules|label-right|scan|adds-up,confirmed": [
-   289,
-   289
+  "hst_amount|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   277,
+   277
   ],
-  "hst_amount|ocr+rules|label-right|scan|adds-up,confirmed,contested": [
-   1,
-   1
+  "hst_amount|ocr2+rules|label-right|scan|adds-up,confirmed,contested": [
+   5,
+   5
   ],
-  "hst_amount|ocr+rules|label-right|scan|soft": [
+  "hst_amount|ocr2+rules|label-right|scan|soft": [
    2,
    2
   ],
-  "hst_amount|ocr|label-right|scan|adds-up": [
+  "hst_amount|ocr2|label-below|scan|soft": [
+   1,
+   0
+  ],
+  "hst_amount|ocr2|label-inline|scan|adds-up,confirmed,contested,soft": [
+   1,
+   0
+  ],
+  "hst_amount|ocr2|label-right|scan|adds-up": [
    1,
    1
   ],
@@ -559,17 +611,13 @@
    182,
    182
   ],
-  "hst_amount|rules|label-right|scan|adds-up": [
-   1,
-   1
-  ],
   "hst_amount|rules|label-right|scan|adds-up,confirmed": [
-   1,
-   1
+   3,
+   3
   ],
   "hst_amount|rules|label-right|scan|adds-up,confirmed,contested": [
-   1,
-   1
+   3,
+   3
   ],
   "hst_amount|rules|label-right|scan|adds-up,soft": [
    1,
@@ -591,75 +639,71 @@
    2,
    2
   ],
-  "invoice_date|ocr+rules|label-below|scan|": [
-   216,
-   216
+  "invoice_date|ocr2+rules|label-below|scan|": [
+   207,
+   207
   ],
-  "invoice_date|ocr+rules|label-below|scan|confirmed": [
+  "invoice_date|ocr2+rules|label-below|scan|confirmed": [
    91,
    91
   ],
-  "invoice_date|ocr+rules|label-below|scan|received": [
+  "invoice_date|ocr2+rules|label-below|scan|received": [
    8,
    8
   ],
-  "invoice_date|ocr+rules|label-below|scan|soft": [
+  "invoice_date|ocr2+rules|label-below|scan|soft": [
    1,
    1
   ],
-  "invoice_date|ocr+rules|label-inline|scan|": [
-   112,
-   112
+  "invoice_date|ocr2+rules|label-inline|scan|": [
+   108,
+   108
   ],
-  "invoice_date|ocr+rules|label-inline|scan|confirmed": [
-   21,
-   21
+  "invoice_date|ocr2+rules|label-inline|scan|confirmed": [
+   22,
+   22
   ],
-  "invoice_date|ocr+rules|label-inline|scan|confirmed,contested": [
-   1,
-   1
+  "invoice_date|ocr2+rules|label-inline|scan|received": [
+   8,
+   8
   ],
-  "invoice_date|ocr+rules|label-inline|scan|received": [
-   9,
-   9
-  ],
-  "invoice_date|ocr+rules|label-inline|scan|soft": [
+  "invoice_date|ocr2+rules|label-inline|scan|soft": [
    4,
    4
   ],
-  "invoice_date|ocr+rules|label-inline|scan|soft,received": [
+  "invoice_date|ocr2+rules|label-inline|scan|soft,received": [
    1,
    1
   ],
-  "invoice_date|ocr+rules|label-right|scan|": [
+  "invoice_date|ocr2+rules|label-right|scan|": [
    195,
    195
   ],
-  "invoice_date|ocr+rules|label-right|scan|confirmed": [
-   72,
-   72
+  "invoice_date|ocr2+rules|label-right|scan|confirmed": [
+   71,
+   71
   ],
-  "invoice_date|ocr+rules|label-right|scan|received": [
+  "invoice_date|ocr2+rules|label-right|scan|received": [
    8,
    8
   ],
-  "invoice_date|ocr+rules|label-right|scan|soft": [
-   7,
-   7
+  "invoice_date|ocr2+rules|label-right|scan|soft": [
+   6,
+   6
   ],
-  "invoice_date|ocr|label-below|scan|": [
+  "invoice_date|ocr2|label-below|scan|": [
    1,
    1
   ],
-  "invoice_date|ocr|label-inline|scan|": [
+  "invoice_date|ocr2|label-inline|scan|": [
    1,
    1
   ],
-  "invoice_date|ocr|label-inline|scan|confirmed,contested": [
-   1,
-   1
+  "invoice_date|ocr2|label-inline|scan|confirmed,contested": [
+   2,
+   2
   ],
-  "invoice_date|ocr|label-inline|scan|contested": [
+  "invoice_date|ocr2|label-inline|scan|contested": [
    1,
    1
   ],
@@ -707,13 +751,13 @@
    3,
    3
   ],
-  "invoice_date|rules|label-below|scan|confirmed": [
-   1,
-   1
+  "invoice_date|rules|label-below|scan|": [
+   8,
+   8
   ],
-  "invoice_date|rules|label-below|scan|soft": [
-   1,
-   0
+  "invoice_date|rules|label-below|scan|confirmed": [
+   2,
+   2
   ],
   "invoice_date|rules|label-below|text|": [
    1209,
@@ -732,8 +776,12 @@
    4
   ],
   "invoice_date|rules|label-inline|scan|": [
-   3,
-   3
+   5,
+   5
+  ],
+  "invoice_date|rules|label-inline|scan|confirmed,contested": [
+   1,
+   1
   ],
   "invoice_date|rules|label-inline|scan|contested": [
    1,
@@ -755,9 +803,17 @@
    4,
    4
   ],
-  "invoice_date|rules|label-right|scan|confirmed": [
+  "invoice_date|rules|label-right|scan|": [
    2,
    2
+  ],
+  "invoice_date|rules|label-right|scan|confirmed": [
+   3,
+   3
+  ],
+  "invoice_date|rules|label-right|scan|soft": [
+   1,
+   1
   ],
   "invoice_date|rules|label-right|text|": [
    1407,
@@ -783,37 +839,41 @@
    2,
    0
   ],
-  "invoice_number|ocr+rules|glued-title|scan|": [
-   33,
-   33
+  "invoice_number|ocr2+rules|glued-title|scan|": [
+   32,
+   32
   ],
-  "invoice_number|ocr+rules|label-below|scan|": [
-   259,
-   259
+  "invoice_number|ocr2+rules|label-below|scan|": [
+   262,
+   262
   ],
-  "invoice_number|ocr+rules|label-below|scan|contested": [
-   22,
-   22
+  "invoice_number|ocr2+rules|label-below|scan|contested": [
+   9,
+   9
   ],
-  "invoice_number|ocr+rules|label-inline|scan|": [
-   172,
-   172
+  "invoice_number|ocr2+rules|label-inline|scan|": [
+   183,
+   183
   ],
-  "invoice_number|ocr+rules|label-inline|scan|contested": [
-   5,
-   5
+  "invoice_number|ocr2+rules|label-inline|scan|contested": [
+   1,
+   1
   ],
-  "invoice_number|ocr+rules|label-right|scan|": [
-   247,
-   247
+  "invoice_number|ocr2+rules|label-right|scan|": [
+   248,
+   248
   ],
-  "invoice_number|ocr+rules|label-right|scan|contested": [
-   13,
-   13
+  "invoice_number|ocr2+rules|label-right|scan|contested": [
+   6,
+   6
   ],
-  "invoice_number|ocr|label-below|scan|": [
-   2,
+  "invoice_number|ocr2|label-below|scan|": [
+   3,
    2
+  ],
+  "invoice_number|ocr2|label-inline|scan|": [
+   1,
+   1
   ],
   "invoice_number|rules+template|label-below|text|": [
    2,
@@ -832,12 +892,12 @@
    3071
   ],
   "invoice_number|rules|label-below|scan|": [
-   3,
-   3
+   6,
+   6
   ],
   "invoice_number|rules|label-below|scan|contested": [
-   1,
-   1
+   3,
+   3
   ],
   "invoice_number|rules|label-below|text|": [
    1524,
@@ -847,7 +907,7 @@
    8,
    0
   ],
-  "invoice_number|rules|label-inline|scan|contested": [
+  "invoice_number|rules|label-inline|scan|": [
    1,
    1
   ],
@@ -859,6 +919,14 @@
    50,
    50
   ],
+  "invoice_number|rules|label-right|scan|": [
+   2,
+   2
+  ],
+  "invoice_number|rules|label-right|scan|contested": [
+   3,
+   3
+  ],
   "invoice_number|rules|label-right|text|": [
    1698,
    1698
@@ -867,47 +935,47 @@
    4,
    3
   ],
-  "payment_terms|ocr+rules|label-below|scan|": [
-   55,
-   55
+  "payment_terms|ocr2+rules|label-below|scan|": [
+   51,
+   51
   ],
-  "payment_terms|ocr+rules|label-below|scan|confirmed": [
-   57,
-   57
+  "payment_terms|ocr2+rules|label-below|scan|confirmed": [
+   58,
+   58
   ],
-  "payment_terms|ocr+rules|label-below|scan|soft": [
-   1,
-   1
+  "payment_terms|ocr2+rules|label-inline|scan|": [
+   135,
+   135
   ],
-  "payment_terms|ocr+rules|label-inline|scan|": [
-   138,
-   138
+  "payment_terms|ocr2+rules|label-inline|scan|confirmed": [
+   97,
+   97
   ],
-  "payment_terms|ocr+rules|label-inline|scan|confirmed": [
-   96,
-   96
+  "payment_terms|ocr2+rules|label-inline|scan|soft": [
+   4,
+   4
   ],
-  "payment_terms|ocr+rules|label-inline|scan|soft": [
-   5,
-   5
+  "payment_terms|ocr2+rules|label-right|scan|": [
+   41,
+   41
   ],
-  "payment_terms|ocr+rules|label-right|scan|": [
-   40,
-   40
+  "payment_terms|ocr2+rules|label-right|scan|confirmed": [
+   33,
+   33
   ],
-  "payment_terms|ocr+rules|label-right|scan|confirmed": [
-   34,
-   34
-  ],
-  "payment_terms|ocr+rules|label-right|scan|soft": [
+  "payment_terms|ocr2+rules|label-right|scan|soft": [
    7,
    7
   ],
-  "payment_terms|ocr|label-below|scan|": [
-   1,
-   1
+  "payment_terms|ocr2|label-below|scan|": [
+   2,
+   2
   ],
-  "payment_terms|ocr|label-right|scan|": [
+  "payment_terms|ocr2|label-right|scan|": [
+   2,
+   2
+  ],
+  "payment_terms|ocr2|label-right|scan|confirmed,contested": [
    1,
    1
   ],
@@ -963,6 +1031,10 @@
    3,
    3
   ],
+  "payment_terms|rules|label-below|scan|": [
+   4,
+   4
+  ],
   "payment_terms|rules|label-below|text|": [
    369,
    369
@@ -971,9 +1043,13 @@
    342,
    342
   ],
-  "payment_terms|rules|label-inline|scan|confirmed,contested": [
+  "payment_terms|rules|label-inline|scan|": [
    1,
    1
+  ],
+  "payment_terms|rules|label-inline|scan|confirmed": [
+   2,
+   2
   ],
   "payment_terms|rules|label-inline|scan|contested": [
    1,
@@ -995,9 +1071,9 @@
    1,
    1
   ],
-  "payment_terms|rules|label-right|scan|confirmed,contested": [
+  "payment_terms|rules|label-right|scan|confirmed": [
    1,
-   0
+   1
   ],
   "payment_terms|rules|label-right|text|": [
    385,
@@ -1015,21 +1091,25 @@
    2,
    0
   ],
-  "po_number|ocr+rules|label-below|scan|": [
-   188,
-   188
+  "po_number|ocr2+rules|label-below|scan|": [
+   167,
+   167
   ],
-  "po_number|ocr+rules|label-below|scan|contested": [
+  "po_number|ocr2+rules|label-below|scan|contested": [
    1,
    1
   ],
-  "po_number|ocr+rules|label-inline|scan|": [
-   91,
-   90
+  "po_number|ocr2+rules|label-inline|scan|": [
+   81,
+   80
   ],
-  "po_number|ocr+rules|label-right|scan|": [
-   140,
-   140
+  "po_number|ocr2+rules|label-right|scan|": [
+   134,
+   134
+  ],
+  "po_number|ocr2|label-below|scan|": [
+   1,
+   1
   ],
   "po_number|rules+template|label-inline|text|": [
    7,
@@ -1044,8 +1124,8 @@
    1726
   ],
   "po_number|rules|label-below|scan|": [
-   1,
-   0
+   22,
+   21
   ],
   "po_number|rules|label-below|scan|contested": [
    1,
@@ -1056,16 +1136,20 @@
    1128
   ],
   "po_number|rules|label-inline|scan|": [
-   1,
-   1
+   7,
+   7
+  ],
+  "po_number|rules|label-inline|scan|contested": [
+   2,
+   2
   ],
   "po_number|rules|label-inline|text|": [
    193,
    193
   ],
   "po_number|rules|label-right|scan|": [
-   1,
-   1
+   9,
+   9
   ],
   "po_number|rules|label-right|scan|contested": [
    1,
@@ -1079,9 +1163,9 @@
    2,
    2
   ],
-  "pst_amount|ocr+rules|label-right|scan|adds-up,confirmed": [
-   198,
-   198
+  "pst_amount|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   197,
+   197
   ],
   "pst_amount|rules+template|label-right|text|adds-up,confirmed": [
    821,
@@ -1099,21 +1183,25 @@
    1,
    1
   ],
+  "pst_amount|rules|label-right|scan|adds-up,confirmed,contested": [
+   1,
+   1
+  ],
   "pst_amount|rules|label-right|text|adds-up,confirmed": [
    1058,
    1058
   ],
-  "qst_amount|ocr+rules|label-right|scan|adds-up,confirmed": [
-   131,
-   131
-  ],
-  "qst_amount|ocr+rules|label-right|scan|adds-up,confirmed,contested": [
-   3,
-   3
-  ],
-  "qst_amount|ocr|label-right|scan|adds-up": [
+  "qst_amount|ocr2+rules|label-right|scan|adds-up": [
    1,
    1
+  ],
+  "qst_amount|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   125,
+   125
+  ],
+  "qst_amount|ocr2+rules|label-right|scan|adds-up,confirmed,contested": [
+   6,
+   6
   ],
   "qst_amount|rules+template|label-right|text|adds-up": [
    2,
@@ -1131,11 +1219,11 @@
    93,
    93
   ],
-  "qst_amount|rules|label-right|scan|adds-up,confirmed,contested": [
-   1,
-   1
+  "qst_amount|rules|label-right|scan|adds-up,confirmed": [
+   3,
+   3
   ],
-  "qst_amount|rules|label-right|scan|adds-up,contested": [
+  "qst_amount|rules|label-right|scan|adds-up,confirmed,contested": [
    1,
    1
   ],
@@ -1147,9 +1235,9 @@
    6,
    6
   ],
-  "qst_registration_number|ocr+rules|pattern|scan|confirmed": [
-   129,
-   129
+  "qst_registration_number|ocr2+rules|pattern|scan|confirmed": [
+   126,
+   126
   ],
   "qst_registration_number|rules+template|pattern|text|confirmed": [
    46,
@@ -1159,51 +1247,55 @@
    539,
    539
   ],
+  "qst_registration_number|rules|pattern|scan|confirmed": [
+   3,
+   3
+  ],
   "qst_registration_number|rules|pattern|text|confirmed": [
    698,
    698
   ],
-  "subtotal|ocr+rules|label-inline|scan|adds-up,confirmed": [
-   9,
-   9
+  "subtotal|ocr2+rules|label-inline|scan|adds-up,confirmed": [
+   16,
+   16
   ],
-  "subtotal|ocr+rules|label-inline|scan|adds-up,confirmed,soft": [
+  "subtotal|ocr2+rules|label-inline|scan|adds-up,confirmed,soft": [
+   6,
+   6
+  ],
+  "subtotal|ocr2+rules|label-right|scan|": [
+   8,
+   8
+  ],
+  "subtotal|ocr2+rules|label-right|scan|adds-up": [
    1,
    1
   ],
-  "subtotal|ocr+rules|label-right|scan|": [
-   6,
-   6
+  "subtotal|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   465,
+   465
   ],
-  "subtotal|ocr+rules|label-right|scan|adds-up": [
-   6,
-   6
+  "subtotal|ocr2+rules|label-right|scan|adds-up,confirmed,soft": [
+   215,
+   215
   ],
-  "subtotal|ocr+rules|label-right|scan|adds-up,confirmed": [
-   479,
-   479
-  ],
-  "subtotal|ocr+rules|label-right|scan|adds-up,confirmed,soft": [
-   223,
-   223
-  ],
-  "subtotal|ocr+rules|label-right|scan|adds-up,soft": [
+  "subtotal|ocr2+rules|label-right|scan|adds-up,soft": [
    2,
    2
   ],
-  "subtotal|ocr+rules|label-right|scan|confirmed": [
+  "subtotal|ocr2+rules|label-right|scan|confirmed": [
    15,
    15
   ],
-  "subtotal|ocr+rules|label-right|scan|confirmed,soft": [
+  "subtotal|ocr2+rules|label-right|scan|confirmed,soft": [
    11,
    11
   ],
-  "subtotal|ocr+rules|label-right|scan|soft": [
+  "subtotal|ocr2+rules|label-right|scan|soft": [
    3,
    1
   ],
-  "subtotal|ocr|label-right|scan|adds-up,confirmed,soft": [
+  "subtotal|ocr2|label-right|scan|adds-up,confirmed,soft": [
    2,
    2
   ],
@@ -1251,11 +1343,35 @@
    8,
    8
   ],
-  "subtotal|rules|label-right|scan|adds-up,confirmed": [
+  "subtotal|rules|label-right|scan|adds-up": [
    2,
    2
   ],
+  "subtotal|rules|label-right|scan|adds-up,confirmed": [
+   3,
+   3
+  ],
+  "subtotal|rules|label-right|scan|adds-up,confirmed,contested": [
+   4,
+   4
+  ],
+  "subtotal|rules|label-right|scan|adds-up,confirmed,contested,soft": [
+   1,
+   1
+  ],
   "subtotal|rules|label-right|scan|adds-up,confirmed,soft": [
+   2,
+   2
+  ],
+  "subtotal|rules|label-right|scan|adds-up,contested": [
+   1,
+   1
+  ],
+  "subtotal|rules|label-right|scan|adds-up,soft": [
+   2,
+   2
+  ],
+  "subtotal|rules|label-right|scan|confirmed,soft": [
    1,
    1
   ],
@@ -1295,23 +1411,27 @@
    1,
    0
   ],
-  "tax_total|ocr+rules|label-below|scan|": [
+  "tax_total|ocr2+rules|label-inline|scan|confirmed": [
    1,
-   0
+   1
   ],
-  "tax_total|ocr+rules|label-right|scan|": [
+  "tax_total|ocr2+rules|label-right|scan|": [
    6,
    6
   ],
-  "tax_total|ocr+rules|label-right|scan|confirmed": [
-   152,
-   152
+  "tax_total|ocr2+rules|label-right|scan|confirmed": [
+   151,
+   151
   ],
-  "tax_total|ocr|label-right|scan|confirmed": [
-   8,
-   8
+  "tax_total|ocr2|label-below|scan|": [
+   1,
+   0
   ],
-  "tax_total|ocr|label-right|scan|confirmed,contested": [
+  "tax_total|ocr2|label-right|scan|confirmed": [
+   26,
+   26
+  ],
+  "tax_total|ocr2|label-right|scan|confirmed,contested": [
    1,
    1
   ],
@@ -1330,6 +1450,10 @@
   "tax_total|rules+template|template|text|confirmed,contested": [
    13,
    13
+  ],
+  "tax_total|rules|label-below|scan|": [
+   1,
+   0
   ],
   "tax_total|rules|label-below|text|": [
    1,
@@ -1359,15 +1483,15 @@
    3,
    0
   ],
-  "vendor_name|ocr+rules|top-of-page|scan|": [
-   334,
-   334
+  "vendor_name|ocr2+rules|top-of-page|scan|": [
+   471,
+   471
   ],
-  "vendor_name|ocr+rules|top-of-page|scan|contested": [
-   418,
-   410
+  "vendor_name|ocr2+rules|top-of-page|scan|contested": [
+   273,
+   261
   ],
-  "vendor_name|ocr|top-of-page|scan|contested": [
+  "vendor_name|ocr2|top-of-page|scan|contested": [
    2,
    2
   ],
@@ -1384,16 +1508,16 @@
    1296
   ],
   "vendor_name|rules|top-of-page|scan|": [
-   1,
+   2,
    1
   ],
   "vendor_name|rules|top-of-page|scan|contested": [
-   5,
-   4
+   12,
+   10
   ],
   "vendor_name|rules|top-of-page|text|": [
-   3719,
-   3718
+   3807,
+   3806
   ],
   "vendor_name|rules|top-of-page|text|confirmed": [
    76,
@@ -1404,8 +1528,8 @@
    8
   ],
   "vendor_name|rules|top-of-page|text|contested": [
-   280,
-   277
+   192,
+   190
   ]
  }
 }
