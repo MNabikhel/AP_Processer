@@ -23,6 +23,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+# Local OCR for scanned invoices and images (capture reads text PDFs without it). RapidOCR 3 downloads
+# its PP-OCRv5 models once on first use; rapidocr-onnxruntime (bundled models) is the fallback.
+ocr = ["rapidocr>=3.4", "onnxruntime>=1.17", "rapidocr-onnxruntime>=1.3"]
 
 [project.scripts]
 ap-coder = "ap_coder.cli:main"
@@ -31,7 +34,7 @@ ap-coder = "ap_coder.cli:main"
 include = ["ap_coder*"]
 
 [tool.setuptools.package-data]
-ap_coder = ["assets/*", "static/*"]
+ap_coder = ["assets/*", "static/*", "webapp/components/invoice_viewer/*", "capture/calibration.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -42,3 +45,6 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+exclude = ["*.md"]  # code in the docs is laid out for reading (several fields on a line), not formatted

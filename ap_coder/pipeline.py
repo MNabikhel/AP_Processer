@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .capture.bridge import review_issues
+from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
 from .config import Settings
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
@@ -22,7 +24,7 @@ from .rules import apply as apply_rules
 from .schema import InvoiceCoding
 from .tax import build_gl_distribution
 from .terms import payment_findings
-from .validation import ValidationReport, validate_coding
+from .validation import Issue, ValidationReport, validate_coding
 from .vendors import vendor_findings
 
 if TYPE_CHECKING:
@@ -43,6 +45,8 @@ class PipelineResult:
     history_examples: int = 0
     invoice_id: int | None = None  # row id when saved to the dashboard store
     rules_applied: list[dict[str, Any]] = field(default_factory=list)  # lines a fixed coding rule changed
+    capture: Any = None  # capture.CaptureResult: every header field located, with its confidence
+    autonomy: dict[str, Any] = field(default_factory=dict)  # supplier state and whether it went touchless
 
     @property
     def ok(self) -> bool:
@@ -198,6 +202,18 @@ class InvoicePipeline:
             log.exception("Failed to process %s", path)
             result.error = f"{type(exc).__name__}: {exc}"
 
+        key, profile = "", None
+        if result.output is not None:
+            t2 = time.perf_counter()
+            result.capture, key, profile = capture_invoice(
+                path, result.output, store=self.store, di_raw=result.extraction.raw if result.extraction else None
+            )
+            result.timings["capture"] = time.perf_counter() - t2
+            if result.capture is not None and result.report is not None:
+                for severity, code, message in review_issues(result.capture):
+                    result.report.issues.append(Issue(severity, code, message))
+                result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path)
+
         if self.store is not None:
             result.invoice_id = self.store.add_invoice(
                 path,
@@ -207,6 +223,10 @@ class InvoicePipeline:
                 meta=_meta(result),
                 error=result.error,
             )
+            if result.capture is not None:
+                self.store.save_capture(result.invoice_id, result.capture.to_dict())
+            if result.autonomy.get("auto") and result.output is not None:
+                self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
         return result
 
     def process_many(
@@ -310,4 +330,10 @@ def _meta(result: PipelineResult) -> dict[str, Any]:
             "usage": result.coding.usage,
         }
     meta["history_examples"] = result.history_examples
+    if result.capture is not None:
+        meta["capture"] = {
+            "status_counts": result.capture.status_counts(),
+            "layout": result.capture.layout_source,
+            **{k: v for k, v in result.autonomy.items() if v not in ("", None)},
+        }
     return meta

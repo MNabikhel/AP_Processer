@@ -391,6 +391,31 @@ def vendor_row(name: str, lines: int, accuracy: float, corrections: int) -> str:
     )
 
 
+SUPPLIER_STATE_PILLS = {
+    "learning": ("Learning", "gray", "school"),
+    "supervised": ("Supervised", "info", "visibility"),
+    "ready": ("Ready", "violet", "verified"),
+    "autonomous": ("Autonomous", "ok", "bolt"),
+    "suspended": ("Suspended", "err", "gpp_maybe"),
+}
+
+
+def supplier_row(name: str, sub: str, state: str, progress: float, explanation: str) -> str:
+    """A supplier on the Supplier learning tab: what it scored, its autonomy state and how far it is."""
+    label, tone, icon_name = SUPPLIER_STATE_PILLS.get(state, (state.title(), "gray", ""))
+    progress = max(0.0, min(1.0, progress or 0.0))
+    color = {"autonomous": OK, "suspended": ERR, "ready": "#4a3aa7"}.get(state, BRAND)
+    return (
+        f"<div class='apc-rrow' style='border-bottom:none'>{avatar(name, 'sm')}<div style='min-width:0'>"
+        f"<div class='name'>{esc(name)}</div><div class='sub'>{esc(sub)}</div>"
+        f"<div class='apc-meter' style='margin-top:.35rem'><div class='bar' role='progressbar' "
+        f"aria-valuenow='{progress * 100:.0f}' aria-valuemin='0' aria-valuemax='100'><div class='fill' "
+        f"style='width:{progress * 100:.0f}%;background:{color}'></div></div></div>"
+        f"<div class='apc-muted' style='margin-top:.3rem'>{esc(explanation)}</div></div>"
+        f"{pill(label, tone, icon_name)}</div>"
+    )
+
+
 def step(state: str, label: str, detail: str) -> str:
     mark = {"ok": "✓", "todo": "!", "bad": "✕"}.get(state, "•")
     return (

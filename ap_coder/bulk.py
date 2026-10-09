@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .capture.workflow import learn_from_approval
 from .config import Settings
 from .pipeline import finalise_coding
 from .reference_data import ReferenceData
@@ -55,5 +56,6 @@ def bulk_approve(
             skipped.append((invoice_id, f"confidence {report.adjusted_confidence:.0%} is below the threshold"))
             continue
         store.approve_invoice(invoice_id, output, reviewer, bulk=True, login=login)
+        learn_from_approval(store, invoice_id, output, actor=reviewer)
         approved.append(invoice_id)
     return {"approved": approved, "skipped": skipped}
