@@ -264,6 +264,10 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             reasons += [f"note: {d}" for d in soft[field]]
         conf = calibrate(max(0.0, min(raw, 1.0)))
         best = g.best()
+        ambiguous = all("ambiguous" in r.method for _, r in g.readings)
+        if ambiguous:
+            conf = min(conf, 0.6)
+            reasons.append("the date reads both day/month and month/day")
         if field in failed:
             status = CHECK
         elif conf >= VERIFIED_AT and best.boxes:
