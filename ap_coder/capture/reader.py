@@ -588,6 +588,8 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
     return out
 
 
+_CONTACT = re.compile(r"@|www|https?:|\.(?:com|ca|net|org|qc\.ca)\b|^(?:bureau|suite|unit|local|apt|room|piece)\s*\d|"
+                      r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph)\b")
 _POSTAL_CODE = re.compile(r"\b[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d\b")
 _TITLE_PREFIX = re.compile(
     r"^(?:sales\s*|tax\s*|commercial\s*)?(?:invoice|facture)\s*(?:#|no\.?|n°)?\s*[a-z]{0,3}[\d/-]*\d\S*\s+"
@@ -623,8 +625,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             continue
         if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
             continue
-        if _POSTAL_CODE.search(text) or _US_ADDRESS.search(text):
-            continue  # an address line
+        if _POSTAL_CODE.search(text) or _US_ADDRESS.search(text) or _CONTACT.search(p):
+            continue  # an address, e-mail or web line
         letters = sum(c.isalpha() for c in text)
         if letters < 3:
             continue
