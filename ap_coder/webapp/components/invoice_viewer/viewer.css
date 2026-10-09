@@ -147,10 +147,30 @@ button { font: inherit; color: inherit; }
 .iv-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); }
 .iv-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 14px 16px 8px; }
 .iv-panel-head h2 { margin: 0; font-size: 13px; font-weight: 650; letter-spacing: .02em; color: var(--ink); }
-.iv-summary { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.iv-summary { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; margin-left: auto; }
+.iv-fold {
+  display: none; align-items: center; height: 24px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--card); font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer;
+}
+.iv-fold:hover { color: var(--ink); background: var(--hover); }
+.iv-fold:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 .iv-meter { display: flex; gap: 2px; height: 4px; margin: 0 16px 8px; border-radius: 999px; overflow: hidden; background: var(--well); }
 .iv-meter i { display: block; min-width: 4px; background: var(--tone); }
-.iv-list { display: flex; flex-direction: column; gap: 2px; padding: 2px 8px 10px; min-height: 0; }
+.iv-list { display: flex; flex-direction: column; gap: 6px; padding: 2px 8px 10px; min-height: 0; }
+.iv-group { display: flex; flex-direction: column; gap: 1px; }
+.iv-group-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 3px 12px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--faint);
+}
+.iv-group-n { font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: 0; }
+.iv-group-rows { display: flex; flex-direction: column; gap: 1px; }
+details.iv-group > summary { cursor: pointer; list-style: none; border-radius: 8px; }
+details.iv-group > summary::-webkit-details-marker { display: none; }
+details.iv-group > summary::after { content: "\25B8"; margin-left: auto; font-size: 11px; transition: transform .12s ease; }
+details.iv-group[open] > summary::after { transform: rotate(90deg); }
+details.iv-group > summary .iv-group-n { margin-left: auto; }
+details.iv-group > summary:hover { color: var(--ink); background: var(--hover); }
+details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 .iv.fixed .iv-list { overflow-y: auto; overscroll-behavior: contain; }
 .iv-none { color: var(--muted); font-size: 13px; padding: 8px; margin: 0; }
 
@@ -169,8 +189,15 @@ button { font: inherit; color: inherit; }
 }
 .iv-row:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 .iv-row.teaching { border-color: var(--brand); border-style: dashed; }
-.iv-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 3px var(--tone-bg); }
-.iv-row.t-missing .iv-dot { background: transparent; border: 1.5px solid var(--tone); box-shadow: none; }
+/* Status mark: a shape and a colour (filled tick, outlined tick, "!", cross, dashed ring) */
+.iv-dot {
+  display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+  font-size: 10px; font-weight: 800; line-height: 1; background: var(--tone); color: #fff;
+}
+.iv-row.t-likely .iv-dot { background: var(--tone-bg); color: var(--tone-ink); box-shadow: inset 0 0 0 1.5px var(--tone); }
+.iv-row.t-check .iv-dot { color: #2b1d00; }
+.iv-row.t-missing .iv-dot { background: transparent; border: 1.5px dashed var(--tone); }
+.iv-dot.line { border-radius: 4px; background: transparent; border: 1.5px dashed var(--p-line); }
 .iv-row-text { display: flex; flex-direction: column; min-width: 0; }
 .iv-row-label { font-size: 11.5px; color: var(--muted); font-weight: 500; line-height: 1.3; }
 .iv-row-value {
@@ -178,6 +205,8 @@ button { font: inherit; color: inherit; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35;
 }
 .iv-row-value.none { color: var(--faint); font-weight: 500; font-style: italic; }
+.iv-row-value.thin { font-weight: 500; font-size: 12.5px; }
+.iv-lrow { grid-template-columns: auto minmax(0, 1fr); }
 .iv-badge {
   min-width: 42px; padding: 1px 7px; border-radius: 999px; text-align: center;
   font-size: 11.5px; font-weight: 650; font-variant-numeric: tabular-nums;
@@ -300,6 +329,7 @@ button { font: inherit; color: inherit; }
   vector-effect: non-scaling-stroke; pointer-events: all;
 }
 .iv-line:hover { stroke-opacity: .9; fill: var(--p-line); fill-opacity: .04; }
+.iv-lg.on .iv-line { stroke: var(--p-pick); stroke-opacity: 1; stroke-width: 2; stroke-dasharray: none; fill: var(--p-pick); fill-opacity: .08; }
 
 /* Label tags beside the boxes (HTML, so the text is never stretched with the page) */
 .iv-tags { position: absolute; inset: 0; pointer-events: none; }
@@ -355,22 +385,29 @@ button { font: inherit; color: inherit; }
 .iv-agree.no { color: var(--failed-ink); }
 .iv-tip-foot { margin: 6px 0 0; color: var(--faint); font-size: 11.5px; }
 
-/* ---- Narrow: the fields become a strip above the page ---- */
-@media (max-width: 720px) {
+/* ---- Narrower (the viewer in a column beside the form): the fields go above the page, in a short grid ---- */
+@media (max-width: 859px) {
   .iv { grid-template-columns: minmax(0, 1fr); }
   .iv.fixed { grid-template-rows: auto minmax(0, 1fr); }
   .iv-panel { border-right: 0; border-bottom: 1px solid var(--line); }
-  .iv-panel-head { padding: 12px 14px 6px; }
-  .iv-meter { margin: 0 14px 8px; }
-  .iv-list { flex-direction: row; gap: 6px; overflow-x: auto; padding: 0 14px 12px; scroll-snap-type: x proximity; scroll-padding-inline: 14px; scrollbar-width: thin; }
-  .iv.fixed .iv-list { overflow-y: hidden; }
-  .iv-row { flex: 0 0 auto; width: 200px; border-color: var(--line); background: var(--card); scroll-snap-align: start; padding: 7px 9px 7px 11px; gap: 8px; }
+  .iv-panel-head { padding: 10px 14px 6px; }
+  .iv-meter { margin: 0 14px 6px; }
+  .iv:not(.fields-open) .iv-list, .iv:not(.fields-open) .iv-meter { display: none; }
+  .iv:not(.fields-open) .iv-panel-head { padding-bottom: 10px; }
+  .iv-fold { display: inline-flex; }
+  .iv-count, .iv-legend { display: none; }
+  .iv-list { max-height: 168px; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 8px; gap: 2px; scrollbar-width: thin; }
+  .iv-group-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1px 4px; }
+  .iv-group-head { padding: 4px 10px 2px; }
+  .iv-row { padding: 5px 8px; gap: 8px; }
   .iv-toolbar { padding: 8px 10px; gap: 8px 10px; }
   .iv-check { margin-left: 0; }
   .iv-step kbd { display: none; }
   .iv-legend { padding: 6px 10px; gap: 4px 10px; }
   .iv-stage { padding: 10px; }
   .iv-teach { padding: 10px; }
+}
+@media (max-width: 520px) {
   .iv-teach-actions { margin-left: 0; width: 100%; justify-content: flex-end; }
 }
 

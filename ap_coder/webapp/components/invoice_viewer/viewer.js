@@ -18,6 +18,18 @@
   const ECHO_MS = 20000; // a `selected` from Python equal to a field clicked here this recently is its echo
   const SMALL_SHEET = 560; // px: a page drawn narrower than this shows a label tag only on hover or selection
   const ZOOM_KEY = "apc-invoice-viewer-zoom";
+  const FIELDS_KEY = "apc-invoice-viewer-fields"; // the field list shown or folded, when it sits above the page
+  const FOLD_BELOW = 640; // px: a viewer shorter than this starts with the field list folded (above the page only)
+  const VIEWPORT_MARGIN = 230; // px of the browser window kept for the card around the viewer and the action bar
+  const MIN_FIT_HEIGHT = 360;
+  // The field list, grouped as an AP clerk reads an invoice; fields not found go last, folded away.
+  const GROUPS = [
+    ["Supplier", ["vendor_name", "gst_hst_registration_number", "qst_registration_number"]],
+    ["Invoice", ["invoice_number", "invoice_date", "due_date", "po_number", "payment_terms", "currency"]],
+    ["Amounts & tax", ["subtotal", "other_charges", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total", "grand_total"]],
+  ];
+  // A shape for each status as well as a colour, so the status never depends on colour alone.
+  const GLYPH = { verified: "\u2713", likely: "\u2713", check: "!", failed: "\u2715", missing: "" };
   const STATUS_TEXT = { verified: "Verified", likely: "Likely", check: "Check", missing: "Not found", failed: "Failed check" };
   const STATUS_HELP = {
     verified: "Readers agree and the checks pass",
@@ -155,6 +167,7 @@
       this.lineItems = [];
       this.page = 1;
       this.zoom = this.savedZoom();
+      this.fieldsOpen = this.savedFields(); // null until chosen: then it follows the viewer's height
       this.onlyCheck = false;
       this.selected = null;
       this.hovered = null;
@@ -177,12 +190,14 @@
 
     build() {
       this.summary = h("span", { class: "iv-summary" });
+      // Only shown when the list sits above the page (a narrow viewer): it folds away to give the page the room.
+      this.foldBtn = h("button", { type: "button", class: "iv-fold", "aria-expanded": "true", onclick: () => this.setFieldsOpen(!this.root.classList.contains("fields-open"), true) }, "Hide");
       this.meter = h("div", { class: "iv-meter", "aria-hidden": "true" });
-      this.list = h("div", { class: "iv-list", role: "list", "aria-label": "Fields read from the invoice" });
+      this.list = h("div", { class: "iv-list", "aria-label": "Fields read from the invoice" });
       this.panel = h(
         "aside",
         { class: "iv-panel", "aria-label": "Fields" },
-        h("div", { class: "iv-panel-head" }, h("h2", null, "Fields"), this.summary),
+        h("div", { class: "iv-panel-head" }, h("h2", null, "Fields"), this.summary, this.foldBtn),
         this.meter,
         this.list
       );
@@ -203,7 +218,7 @@
       );
       this.count = h("span", { class: "iv-count", "aria-live": "polite" });
       this.onlyInput = h("input", { type: "checkbox", role: "switch", onchange: () => this.setOnlyCheck(this.onlyInput.checked) });
-      const only = h("label", { class: "iv-switch" }, this.onlyInput, h("span", { class: "iv-track", "aria-hidden": "true" }), h("span", null, "Only show what needs checking"));
+      const only = h("label", { class: "iv-switch" }, this.onlyInput, h("span", { class: "iv-track", "aria-hidden": "true" }), h("span", null, "Only what needs checking"));
       this.toolbar = h(
         "div",
         { class: "iv-toolbar", role: "toolbar", "aria-label": "Page tools" },
@@ -286,6 +301,14 @@
         this.reportHeight();
       }).observe(this.root);
       new ResizeObserver(() => this.layoutTags()).observe(this.sheet);
+      try {
+        window.parent.addEventListener("resize", () => {
+          this.applyHeight();
+          this.reportHeight();
+        });
+      } catch (_e) {
+        /* the height then follows only the arguments */
+      }
     }
 
     /* ----- New arguments from Python ----- */
@@ -305,7 +328,9 @@
 
       const fixed = Number.isFinite(args.height) && args.height > 0;
       this.root.classList.toggle("fixed", fixed);
-      this.root.style.height = fixed ? `${args.height}px` : "";
+      this.maxHeight = fixed ? args.height : null;
+      this.applyHeight();
+      if (this.fieldsShown === undefined) this.setFieldsOpen(this.fieldsOpen !== null ? this.fieldsOpen : !fixed || this.root.offsetHeight >= FOLD_BELOW, false);
 
       const samePages = prevPages.length === this.pages.length && prevPages.every((p, i) => p.src === this.pages[i].src);
       if (!samePages) this.page = 1;
@@ -344,6 +369,47 @@
       this.reportHeight();
     }
 
+    /** A fixed height never taller than the browser window, so the whole viewer fits on screen beside the form. */
+    applyHeight() {
+      if (!this.maxHeight) {
+        this.root.style.height = "";
+        return;
+      }
+      let height = this.maxHeight;
+      try {
+        const vh = window.parent.innerHeight || window.innerHeight;
+        if (vh) height = Math.min(height, Math.max(MIN_FIT_HEIGHT, vh - VIEWPORT_MARGIN));
+      } catch (_e) {
+        /* a frame that cannot see its page keeps the height asked for */
+      }
+      this.root.style.height = `${height}px`;
+    }
+
+    setFieldsOpen(open, remember) {
+      this.fieldsShown = open;
+      this.root.classList.toggle("fields-open", open);
+      this.foldBtn.setAttribute("aria-expanded", String(open));
+      replace(this.foldBtn, open ? "Hide" : "Show");
+      this.foldBtn.title = open ? "Fold the field list away, to see more of the page" : "Show the field list";
+      if (remember) {
+        try {
+          window.localStorage.setItem(FIELDS_KEY, open ? "open" : "closed");
+        } catch (_e) {
+          /* then it is remembered until the page is left */
+        }
+      }
+      this.reportHeight();
+    }
+
+    savedFields() {
+      try {
+        const v = window.localStorage.getItem(FIELDS_KEY);
+        return v === "open" ? true : v === "closed" ? false : null;
+      } catch (_e) {
+        return null;
+      }
+    }
+
     /* ----- Field panel ----- */
 
     renderPanel() {
@@ -363,52 +429,102 @@
           .map((t) => h("i", { class: `t-${t}`, style: `flex-grow:${counts[t] / total}`, title: `${STATUS_TEXT[t]}: ${counts[t]}` }))
       );
       this.rows = new Map();
+      const rowFor = (f) => {
+        const tone = toneOf(f);
+        const missing = f.status === "missing";
+        const value = missing || !f.display ? h("span", { class: "iv-row-value none" }, missing ? "Not found" : "—") : h("span", { class: "iv-row-value" }, f.display);
+        const row = h(
+          "button",
+          {
+            type: "button",
+            role: "listitem",
+            class: `iv-row t-${tone}`,
+            dataset: { field: f.field },
+            "aria-describedby": "iv-tip",
+            "aria-label": `${f.label}: ${missing ? "not found" : f.display || "blank"}. ${STATUS_TEXT[tone]}${missing ? "" : `, ${pct(f.confidence)} confidence`}.`,
+            onclick: () => {
+              // The card would cover the box just brought into view: it stays shut until the pointer leaves.
+              this.tipMuted = row;
+              this.hideTip();
+              this.select(f.field, { from: "panel" });
+            },
+          },
+          h("span", { class: "iv-dot", "aria-hidden": "true" }, GLYPH[tone]),
+          h("span", { class: "iv-row-text" }, h("span", { class: "iv-row-label" }, f.label), value),
+          h("span", { class: "iv-badge", "aria-hidden": "true", title: STATUS_TEXT[tone] }, missing ? "—" : pct(f.confidence))
+        );
+        row.addEventListener("pointerenter", () => {
+          this.setHover(f.field, null);
+          if (this.tipMuted !== row) this.showTip(row, this.tipContent(f), 260, "side");
+        });
+        row.addEventListener("pointerleave", () => {
+          if (this.tipMuted === row) this.tipMuted = null;
+          this.setHover(null);
+        });
+        row.addEventListener("focus", () => {
+          if (row.matches(":focus-visible") && this.tipMuted !== row) this.showTip(row, this.tipContent(f), 0, "side");
+        });
+        row.addEventListener("blur", () => {
+          if (this.tipMuted === row) this.tipMuted = null;
+          this.hideTip();
+        });
+        this.rows.set(f.field, row);
+        return row;
+      };
+      const found = this.fields.filter((f) => f.status !== "missing");
+      const missing = this.fields.filter((f) => f.status === "missing");
+      const grouped = new Set(GROUPS.flatMap(([, names]) => names));
+      const groups = GROUPS.map(([title, names]) => [title, found.filter((f) => names.includes(f.field))]);
+      groups.push(["Other", found.filter((f) => !grouped.has(f.field))]);
+      const section = (title, rows, extra) =>
+        h(
+          "div",
+          { class: `iv-group${extra ? ` ${extra}` : ""}`, role: "group", "aria-label": title },
+          h("div", { class: "iv-group-head" }, h("span", null, title), h("span", { class: "iv-group-n" }, rows.length)),
+          h("div", { class: "iv-group-rows", role: "list" }, rows)
+        );
+      const lineRows = this.lineItems.map((item, i) =>
+        h(
+          "button",
+          { type: "button", role: "listitem", class: "iv-row iv-lrow", dataset: { line: i }, title: "Show this line on the page", onclick: () => this.revealLine(i) },
+          h("span", { class: "iv-dot line", "aria-hidden": "true" }),
+          h("span", { class: "iv-row-text" }, h("span", { class: "iv-row-label" }, `Line ${i + 1}`), h("span", { class: "iv-row-value thin" }, item.label))
+        )
+      );
       replace(
         this.list,
         this.fields.length ? null : h("p", { class: "iv-none" }, "No fields to show."),
-        this.fields.map((f) => {
-          const tone = toneOf(f);
-          const missing = f.status === "missing";
-          const value = missing || !f.display ? h("span", { class: "iv-row-value none" }, missing ? "Not found" : "—") : h("span", { class: "iv-row-value" }, f.display);
-          const row = h(
-            "button",
-            {
-              type: "button",
-              role: "listitem",
-              class: `iv-row t-${tone}`,
-              dataset: { field: f.field },
-              "aria-describedby": "iv-tip",
-              "aria-label": `${f.label}: ${missing ? "not found" : f.display || "blank"}. ${STATUS_TEXT[tone]}${missing ? "" : `, ${pct(f.confidence)} confidence`}.`,
-              onclick: () => {
-                // The card would cover the box just brought into view: it stays shut until the pointer leaves.
-                this.tipMuted = row;
-                this.hideTip();
-                this.select(f.field, { from: "panel" });
-              },
-            },
-            h("span", { class: "iv-dot", "aria-hidden": "true" }),
-            h("span", { class: "iv-row-text" }, h("span", { class: "iv-row-label" }, f.label), value),
-            h("span", { class: "iv-badge", "aria-hidden": "true" }, missing ? "—" : pct(f.confidence))
-          );
-          row.addEventListener("pointerenter", () => {
-            this.setHover(f.field, null);
-            if (this.tipMuted !== row) this.showTip(row, this.tipContent(f), 260, "side");
-          });
-          row.addEventListener("pointerleave", () => {
-            if (this.tipMuted === row) this.tipMuted = null;
-            this.setHover(null);
-          });
-          row.addEventListener("focus", () => {
-            if (row.matches(":focus-visible") && this.tipMuted !== row) this.showTip(row, this.tipContent(f), 0, "side");
-          });
-          row.addEventListener("blur", () => {
-            if (this.tipMuted === row) this.tipMuted = null;
-            this.hideTip();
-          });
-          this.rows.set(f.field, row);
-          return row;
-        })
+        groups.filter(([, fs]) => fs.length).map(([title, fs]) => section(title, fs.map(rowFor))),
+        lineRows.length ? section("Lines", lineRows, "iv-group-lines") : null,
+        missing.length
+          ? h(
+              "details",
+              { class: "iv-group iv-group-missing" },
+              h("summary", { class: "iv-group-head" }, h("span", null, "Not found on the invoice"), h("span", { class: "iv-group-n" }, missing.length)),
+              h("div", { class: "iv-group-rows", role: "list" }, missing.map(rowFor))
+            )
+          : null
       );
+    }
+
+    /** Bring a line item into view on the page and mark it for a moment. */
+    revealLine(i) {
+      const item = this.lineItems[i];
+      const b = item && (item.boxes || [])[0];
+      if (!b) return;
+      if (b[0] !== this.page) {
+        this.page = b[0];
+        this.stage.scrollTop = 0;
+        this.renderPage(true);
+        this.reportHeight();
+      }
+      const g = this.gLines.querySelector(`.iv-lg[data-idx="${i}"]`);
+      if (!g) return;
+      this.scrollToBox(b, g);
+      for (const other of this.gLines.querySelectorAll(".iv-lg.on")) other.classList.remove("on");
+      g.classList.add("on");
+      clearTimeout(this.lineTimer);
+      this.lineTimer = setTimeout(() => g.classList.remove("on"), 2200);
     }
 
     tipContent(f) {
@@ -503,9 +619,13 @@
         s("rect", Object.assign({ x: b[1] - padX, y: b[2] - padY, width: b[3] - b[1] + 2 * padX, height: b[4] - b[2] + 2 * padY, rx, ry }, attrs));
 
       this.gLines.replaceChildren();
-      for (const item of this.lineItems) {
-        for (const b of item.boxes) if (b[0] === this.page) this.gLines.append(rect(b, { class: "iv-line", dataset: { label: item.label } }));
-      }
+      this.lineItems.forEach((item, i) => {
+        const here = item.boxes.filter((b) => b[0] === this.page);
+        if (!here.length) return;
+        const g = s("g", { class: "iv-lg", dataset: { idx: i } });
+        for (const b of here) g.append(rect(b, { class: "iv-line", dataset: { label: item.label } }));
+        this.gLines.append(g);
+      });
 
       this.gFields.replaceChildren();
       this.tags.replaceChildren();
@@ -693,6 +813,8 @@
       const f = this.byName.get(name);
       if (!f) return;
       const row = this.rows && this.rows.get(name);
+      const folded = row && row.closest("details");
+      if (folded && !folded.open) folded.open = true;
       if (row && scrollPanel) this.scrollWithin(this.list, row);
       const boxes = (f.boxes || []).filter(Boolean);
       if (f.status === "missing" || !boxes.length) return;
@@ -726,7 +848,7 @@
       }
       if (!this.root.classList.contains("fixed")) {
         // The viewer grows to fit the page, so the Streamlit page is what scrolls: only as far as needed.
-        const box = g.querySelector(".iv-box");
+        const box = g.querySelector(".iv-box") || g.querySelector("rect");
         if (box && box.scrollIntoView) {
           try {
             box.scrollIntoView({ block: "nearest", inline: "nearest", behavior });
@@ -964,7 +1086,7 @@
       }
       const row = e.target.closest && e.target.closest(".iv-row");
       if (row && ["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
-        const rows = [...this.rows.values()];
+        const rows = [...this.list.querySelectorAll(".iv-row")].filter((r) => r.getClientRects().length);
         const i = rows.indexOf(row);
         const j = e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : e.key === "ArrowDown" || e.key === "ArrowRight" ? Math.min(rows.length - 1, i + 1) : Math.max(0, i - 1);
         if (j !== i) {

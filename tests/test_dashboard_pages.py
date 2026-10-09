@@ -432,8 +432,8 @@ def test_a_credit_note_is_not_shown_as_due(db):
     at = AppTest.from_file(APP, default_timeout=TIMEOUT)
     at.session_state["open_invoice"] = credit["id"]
     _ok(at.run())
-    hero = next(h.proto.body for h in at.get("html") if "apc-inv" in h.proto.body)
-    assert "<div class='label'>Credit</div>" in hero and "Due in" not in hero and "Overdue" not in hero
+    hero = next(h.proto.body for h in at.get("html") if "rvw-head" in h.proto.body)
+    assert "<span>Credit</span>" in hero and "Due in" not in hero and "Overdue" not in hero
 
 
 def test_find_brings_back_a_parked_invoice(busy_db):
