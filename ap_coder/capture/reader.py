@@ -782,7 +782,34 @@ _CARRIED = re.compile(r"^(a\s*reporter|report\b|reporte|carried\s*forward|brough
                       r"continued|suite|sub\s*-?\s*total|sous\s*-?\s*total|page\s*total)")  # fmt: skip
 
 
+_CREDIT_TITLE = re.compile(r"^(?:credit\s*(?:memo|note)|note\s*de\s*credit|avis\s*de\s*credit)(?![a-z])")
+
+
+def credit_printed_positive(layout: DocLayout) -> bool:
+    """A credit memo (titled so at the top of its first page) that prints no amount with a sign: its amounts
+    are credits however they are printed, and AP posts credits as negative amounts."""
+    if not layout.pages:
+        return False
+    if not any(ln.box.cy < 0.35 and _CREDIT_TITLE.match(plain(ln.text).strip()) for ln in layout.pages[0].lines):
+        return False
+    from .normalize import find_amounts
+
+    for line in layout.lines():
+        if any(v < 0 and looks_like_money(line.text[a:b]) for v, a, b in find_amounts(line.text)):
+            return False  # the signs are printed: read them as they are
+    return True
+
+
 def read_line_items(layout: DocLayout) -> list[LineReading]:
+    items = _read_line_items(layout)
+    if items and credit_printed_positive(layout):
+        for li in items:
+            li.amount = -li.amount if li.amount else li.amount
+            li.unit_price = -li.unit_price if li.unit_price else li.unit_price
+    return items
+
+
+def _read_line_items(layout: DocLayout) -> list[LineReading]:
     items: list[LineReading] = []
     for page in layout.pages:
         header = None
@@ -869,13 +896,23 @@ def _us_vendor(layout: DocLayout) -> bool:
     return False
 
 
+def _canadian_vendor(layout: DocLayout) -> bool:
+    """The supplier's address (top of the first page, outside the customer's block) has a Canadian postal code."""
+    if not layout.pages:
+        return False
+    return any(
+        ln.box.cy < 0.3 and not _in_bill_to(layout, ln) and re.search(r"\b[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d\b", ln.text)
+        for ln in layout.pages[0].lines
+    )
+
+
 def read_fields(layout: DocLayout, received: dt.date | None = None) -> dict[str, list[Reading]]:
     """Candidate readings for every header field, best first. ``received``: the day the invoice came
     in (it settles a 03/04/2026 the page itself does not: invoices arrive days after their date)."""
     text = layout.text()
     order = infer_day_first(text)
-    if order is None and (find_currency(text) == "USD" or _us_vendor(layout)):
-        order = False  # US invoices print month first
+    if order is None and (_us_vendor(layout) or (find_currency(text) == "USD" and not _canadian_vendor(layout))):
+        order = False  # US invoices print month first (a Canadian supplier billing in USD need not)
     if order is not None:
         return _read_with_order(layout, order)
     cands = _read_with_order(layout, None)
@@ -1001,6 +1038,10 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
             readings += got
         cands[field] = readings
+    if credit_printed_positive(layout):
+        for field in AMOUNT_FIELDS:
+            for r in cands.get(field, []):
+                r.value = -r.value if r.value else r.value
     # Totals: the lowest "total" on the last page with one is usually the invoice total.
     if cands.get("grand_total"):
         last_page = max(r.boxes[0].page for r in cands["grand_total"] if r.boxes)

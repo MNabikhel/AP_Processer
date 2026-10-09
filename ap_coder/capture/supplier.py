@@ -822,10 +822,15 @@ def apply_template(template: Template | dict[str, Any] | None, layout: DocLayout
     out: dict[str, list[Reading]] = {}
     if template is None or not layout.pages:
         return out
+    from .reader import credit_printed_positive
+
+    credit = credit_printed_positive(layout)  # a credit memo printed without signs: its amounts are credits
     for name, variants in template.fields.items():
         best: dict[Any, Reading] = {}
         for variant in variants:
             for reading in _apply_variant(name, variant, layout):
+                if credit and name in AMOUNT_FIELDS and isinstance(reading.value, float) and reading.value > 0:
+                    reading.value = -reading.value
                 key = compare_key(name, reading.value)
                 if key not in best or reading.score > best[key].score:
                     best[key] = reading
@@ -868,6 +873,10 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         if name == "payment_terms" and not _has_letters(raw):
             return  # terms are words ("Net 30", "30 days"), never a bare number
         if name in AMOUNT_FIELDS:
+            from .normalize import looks_like_money
+
+            if sum(c.isdigit() for c in raw) >= 9 and not looks_like_money(raw):
+                return  # a registration or account number ("GST Reg. No. 123456782"), not an amount
             mark = _credit_mark(rows, words)
             if mark is not None:  # "$1,370.34 CR": the sign is printed beside the amount
                 words, raw = [*words, mark], f"{raw} {mark.text}"

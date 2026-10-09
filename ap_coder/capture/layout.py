@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import statistics
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +88,9 @@ def _text_layer_page(page: Any, number: int) -> PageLayout:
     matrix = page.rotation_matrix
     words: list[Word] = []
     for x0, y0, x1, y1, text, *_ in page.get_text("words", sort=True):
-        text = text.strip()
+        # Composed accents: some producers store "é" as "e" + a combining mark, which the readers' character
+        # offsets (labels to values) would count twice.
+        text = unicodedata.normalize("NFC", text).strip()
         if not text:
             continue
         r = _rotated(page, matrix, x0, y0, x1, y1)
@@ -208,7 +211,7 @@ def ocr_image(png_bytes: bytes, number: int, engine: str | None = None) -> PageL
     import numpy as np
     from PIL import Image
 
-    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    img = _on_paper(Image.open(io.BytesIO(png_bytes)))
     width, height = img.size
     result = _ocr_cached(png_bytes, lambda: _engine(engine)(np.asarray(img)), engine)
     words: list[Word] = []
@@ -233,6 +236,42 @@ def _split_ocr_line(text: str, x0: float, y0: float, x1: float, y1: float, score
         b = x0 + (x1 - x0) * (pos + len(p)) / total
         out.append(Word(p, Box(number, a / width, y0 / height, b / width, y1 / height), score, "ocr"))
         pos += len(p) + 1
+    return out
+
+
+def _on_paper(img: Any) -> Any:
+    """The image in RGB, its transparent parts white paper (a plain conversion turns them black)."""
+    if img.mode in ("RGBA", "LA", "PA", "P"):
+        from PIL import Image
+
+        img = img.convert("RGBA")
+        paper = Image.new("RGB", img.size, "white")
+        paper.paste(img, mask=img.getchannel("A"))
+        return paper
+    return img.convert("RGB")
+
+
+def _image_pngs(path: Path, max_pages: int) -> list[bytes]:
+    """Each page of an image file as PNG: a PNG as it is, every frame of a multi-page TIFF, at the
+    resolution it was scanned at (at most ``OCR_MAX_SIDE``), turned upright as its EXIF says."""
+    if path.suffix.lower() == ".png":
+        return [path.read_bytes()]
+    import io
+
+    from PIL import Image, ImageOps, ImageSequence
+
+    out = []
+    with Image.open(path) as img:
+        for i, frame in enumerate(ImageSequence.Iterator(img)):
+            if i >= max_pages:
+                break
+            pic = _on_paper(ImageOps.exif_transpose(frame.copy()))
+            scale = OCR_MAX_SIDE / max(pic.width, pic.height, 1)
+            if scale < 1:
+                pic = pic.resize((max(1, round(pic.width * scale)), max(1, round(pic.height * scale))), Image.LANCZOS)
+            buf = io.BytesIO()
+            pic.save(buf, "PNG")
+            out.append(buf.getvalue())
     return out
 
 
@@ -286,11 +325,7 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 return di
         if not use_ocr:
             return DocLayout([], "none")
-        import pymupdf
-
-        with pymupdf.open(path) as img_doc:
-            png = img_doc[0].get_pixmap().tobytes("png") if suffix not in (".png",) else path.read_bytes()
-        return DocLayout([ocr_image(png, 1)], "ocr")
+        return DocLayout([ocr_image(png, i) for i, png in enumerate(_image_pngs(path, max_pages), 1)], "ocr")
 
     import pymupdf
 
@@ -381,9 +416,8 @@ def second_read_layout(path: str | Path, max_pages: int = 20) -> DocLayout | Non
 
     pages: list[PageLayout] = []
     if path.suffix.lower() in IMAGE_EXTENSIONS:
-        with pymupdf.open(path) as img_doc:
-            png = path.read_bytes() if path.suffix.lower() == ".png" else img_doc[0].get_pixmap().tobytes("png")
-        pages.append(ocr_image(_second_image(png), 1, second_engine_name()))
+        for i, png in enumerate(_image_pngs(path, max_pages), 1):
+            pages.append(ocr_image(_second_image(png), i, second_engine_name()))
     else:
         with pymupdf.open(path) as doc:
             for i, page in enumerate(doc):
