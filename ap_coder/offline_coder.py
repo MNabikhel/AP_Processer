@@ -160,12 +160,20 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     """``text``: the page text (labels a charge printed outside the line table)."""
     values = _values(capture)
     vendor = str(values.get("vendor_name") or "")
-    subtotal = _amount(values, "subtotal")
+    readings = [li for li in capture.line_items if li.amount is not None]
+    # No subtotal found: the lines read are the subtotal (not a charge that cancels them all).
+    subtotal = _amount(values, "subtotal") if "subtotal" in values or not readings else (
+        round(sum(float(li.amount) for li in readings), 2)
+    )  # fmt: skip
+    # Freight read beside the subtotal is part of the coded subtotal (lines + charges, before tax) and taxed.
+    charges = capture.fields.get("other_charges")
+    freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
     supplier_province, ship_to_province = provinces(text)
     invoice_on = _iso_or_empty(values.get("invoice_date"))
     tax_lines = _tax_lines(
-        values, subtotal, ship_to_province, dt.date.fromisoformat(invoice_on) if invoice_on else None
-    )
+        values, round(subtotal + freight, 2), ship_to_province,
+        dt.date.fromisoformat(invoice_on) if invoice_on else None,
+    )  # fmt: skip
     taxes = [t.tax_type for t in tax_lines]
     default_gl = ""
     if store is not None and vendor:
@@ -174,7 +182,6 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         except Exception:  # an older store without the vendor table
             default_gl = ""
 
-    readings = [li for li in capture.line_items if li.amount is not None]
     if not readings:  # no table the reader could split: one line for the whole subtotal
         readings_data = [("Invoice " + str(values.get("invoice_number") or ""), 1.0, subtotal, subtotal)]
     else:
@@ -184,10 +191,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
             for i, li in enumerate(readings, 1)
         ]  # fmt: skip
     # Lines that fall short of the subtotal (plus freight read beside it): a charge printed outside the table.
-    charges = capture.fields.get("other_charges")
-    freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
     short = round(subtotal + freight - sum(r[3] for r in readings_data), 2)
-    if readings and abs(short) >= 0.01:
+    if (readings or freight) and abs(short) >= 0.01:
         readings_data.append((_unlisted_charge(text, short), 1.0, short, short))
     lines = []
     for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
@@ -227,7 +232,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         ship_to_province=ship_to_province,
         gst_hst_registration_number=str(values.get("gst_hst_registration_number") or ""),
         qst_registration_number=str(values.get("qst_registration_number") or ""),
-        subtotal=subtotal,
+        subtotal=round(subtotal + freight, 2),
         tax_lines=tax_lines,
         tax_total=_amount(values, "tax_total") or round(sum(t.tax_amount for t in tax_lines), 2),
         grand_total=_amount(values, "grand_total"),

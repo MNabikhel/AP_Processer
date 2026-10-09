@@ -1,6 +1,21 @@
 """The offline path on unusual but real invoices: French labels, freight, a missing subtotal."""
 
-from ap_coder.offline_coder import provinces
+from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
+from ap_coder.offline_coder import code_from_capture, provinces
+from ap_coder.validation import validate_coding
+
+HEADER = {"vendor_name": "Acme", "invoice_number": "A1", "invoice_date": "2026-01-05", "currency": "CAD"}
+
+
+def _capture(lines=(), **values):
+    return CaptureResult(
+        fields={k: FieldResult(k, v, 0.95, VERIFIED) for k, v in {**HEADER, **values}.items()},
+        line_items=[LineReading(d, q, u, a) for d, q, u, a in lines],
+    )
+
+
+def _errors(coding, reference):
+    return [i.code for i in validate_coding(coding, reference).issues if i.severity == "error"]
 
 
 def test_a_french_invoice_title_above_the_letterhead_is_not_the_customer_label():
@@ -27,3 +42,41 @@ def test_expedie_a_is_the_french_ship_to():
         "Acme, Halifax NS B3H 1A1\n"
     )
     assert provinces(text) == ("QC", "NS")
+
+
+def test_freight_beside_the_subtotal_is_in_the_coded_subtotal_and_the_tax_base(reference):
+    # Subtotal 1,000 + freight 50 (printed between the subtotal and the taxes), GST 5% on 1,050.
+    capture = _capture([("Widgets", 10, 100.0, 1000.0)], subtotal=1000.0, other_charges=50.0, gst_amount=52.5,
+                       tax_total=52.5, grand_total=1102.5)  # fmt: skip
+    text = "Acme\nToronto ON M5V 1A1\nBill to:\nCalgary AB T2P 1A1\nWidgets 1,000.00\nFreight 50.00\n"
+    coding = code_from_capture(capture, reference, [], text=text).coding
+    assert [li.amount for li in coding.line_items] == [1000.0, 50.0]
+    assert coding.subtotal == 1050.0
+    assert [(t.tax_type, t.rate, t.taxable_amount) for t in coding.tax_lines] == [("GST", 0.05, 1050.0)]
+    assert _errors(coding, reference) == []
+
+
+def test_gst_and_qst_on_an_invoice_with_freight(reference):
+    capture = _capture([("Service", 1, 1000.0, 1000.0)], subtotal=1000.0, other_charges=25.0, gst_amount=51.25,
+                       qst_amount=102.24, tax_total=153.49, grand_total=1178.49)  # fmt: skip
+    text = "Fournisseur\nMontréal (QC) H2W 2R2\nFacturer à :\nLaval QC H7N 1A1\nLivraison 25.00\n"
+    coding = code_from_capture(capture, reference, [], text=text).coding
+    assert coding.subtotal == 1025.0
+    assert [(t.tax_type, t.province, t.rate) for t in coding.tax_lines] == [("GST", "", 0.05), ("QST", "QC", 0.09975)]
+    assert _errors(coding, reference) == []
+
+
+def test_a_subtotal_the_reader_could_not_find_does_not_cancel_the_lines(reference):
+    capture = _capture([("Widgets", 10, 100.0, 1000.0)], gst_amount=50.0, grand_total=1050.0)
+    coding = code_from_capture(capture, reference, [], text="Acme\nCalgary AB T2P 1A1\n").coding
+    assert [li.amount for li in coding.line_items] == [1000.0]
+    assert coding.subtotal == 1000.0
+    assert [(t.tax_type, t.rate) for t in coding.tax_lines] == [("GST", 0.05)]
+    assert _errors(coding, reference) == []
+
+
+def test_freight_with_no_line_table_is_its_own_line(reference):
+    capture = _capture(subtotal=1000.0, other_charges=50.0, gst_amount=52.5, tax_total=52.5, grand_total=1102.5)
+    coding = code_from_capture(capture, reference, [], text="Acme\nCalgary AB T2P 1A1\nFreight 50.00\n").coding
+    assert [li.amount for li in coding.line_items] == [1000.0, 50.0]
+    assert _errors(coding, reference) == []
