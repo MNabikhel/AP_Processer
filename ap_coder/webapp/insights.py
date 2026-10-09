@@ -46,48 +46,49 @@ def _age_color(label: str) -> str:
 
 def _operations_card(store) -> None:
     ops = operations(store)
-    with card("operations"):
-        st.markdown("#### :material/speed: AP operations")
-        median = ops["median_days_to_approve"]
-        taken, taken_amount = ops["discounts_in_time"]
-        missed, missed_amount = ops["discounts_missed"]
-        st.html(
-            ui.tiles(
-                [
-                    ui.tile(
-                        "Waiting",
-                        ops["waiting"],
-                        "hourglass_top",
-                        "blue",
-                        f"oldest {ui.plural(ops['oldest_days'], 'day')}" if ops["waiting"] else "queue is clear",
-                    ),
-                    ui.tile(
-                        "Days to approve",
-                        "—" if median is None else f"{median:g}",
-                        "timer",
-                        "violet",
-                        "median, from received to approved",
-                    ),
-                    ui.tile(
-                        "Approved after due",
-                        ops["approved_after_due"],
-                        "event_busy",
-                        "amber" if ops["approved_after_due"] else "green",
-                        f"of {ops['approved']} approved",
-                    ),
-                    ui.tile(
-                        "Discounts in time",
-                        f"{taken} / {taken + missed}",
-                        "sell",
-                        "green" if not missed else "amber",
-                        f"${taken_amount:,.0f} taken · ${missed_amount:,.0f} missed"
-                        if taken + missed
-                        else "no discount terms yet",
-                    ),
-                ]
-            )  # fmt: skip
-        )
-        if ops["waiting"]:
+    st.html(ui.section_title("AP operations"))
+    median = ops["median_days_to_approve"]
+    taken, taken_amount = ops["discounts_in_time"]
+    missed, missed_amount = ops["discounts_missed"]
+    st.html(
+        ui.tiles(
+            [
+                ui.tile(
+                    "Waiting",
+                    ops["waiting"],
+                    "hourglass_top",
+                    "blue",
+                    f"oldest {ui.plural(ops['oldest_days'], 'day')}" if ops["waiting"] else "queue is clear",
+                ),
+                ui.tile(
+                    "Days to approve",
+                    "—" if median is None else f"{median:g}",
+                    "timer",
+                    "violet",
+                    "median, from received to approved",
+                ),
+                ui.tile(
+                    "Approved after due",
+                    ops["approved_after_due"],
+                    "event_busy",
+                    "amber" if ops["approved_after_due"] else "green",
+                    f"of {ops['approved']} approved",
+                ),
+                ui.tile(
+                    "Discounts in time",
+                    f"{taken} / {taken + missed}",
+                    "sell",
+                    "green" if not missed else "amber",
+                    f"${taken_amount:,.0f} taken · ${missed_amount:,.0f} missed"
+                    if taken + missed
+                    else "no discount terms yet",
+                ),
+            ]
+        )  # fmt: skip
+    )
+    if ops["waiting"]:
+        with card("operations"):
+            st.markdown("#### :material/hourglass_top: Waiting by age")
             biggest = max(ops["ageing"].values()) or 1
             st.html(
                 "<div style='display:flex;gap:1rem;flex-wrap:wrap'>"
@@ -111,7 +112,7 @@ def page_insights() -> None:
     page_head(
         "insights",
         "Insights",
-        "The business case: how much goes straight through, the time it saves and what Azure costs.",
+        "The business case: how much goes straight through, the time it saves and what it costs.",
     )
     s = compute(store)
     a: Assumptions = s["assumptions"]
@@ -146,13 +147,13 @@ def page_insights() -> None:
                     f"≈ ${s['value_saved']:,.0f} of AP time",
                 ),  # fmt: skip
                 ui.tile(
-                    "Azure cost / invoice",
-                    "—" if cost is None else f"${cost:,.3f}",
+                    "Cloud cost / invoice",
+                    "$0" if cost is None else f"${cost:,.3f}",
                     "payments",
                     "amber",
-                    f"measured on {ui.plural(s['cost_measured_invoices'], 'invoice')}"
+                    f"Azure, measured on {ui.plural(s['cost_measured_invoices'], 'invoice')}"
                     if cost is not None
-                    else "no token usage recorded yet",
+                    else "read and coded on this computer",
                 ),  # fmt: skip
             ]
         )
@@ -169,7 +170,7 @@ def page_insights() -> None:
             rows = [
                 ["AP time saved", f"<b>{p['hours_saved']:,.0f} h</b> / month"],
                 [f"Value of that time (${a.hourly_cost:,.0f}/h)", f"<b>${p['value_saved']:,.0f}</b> / month"],
-                ["Azure cost", f"${p['azure_cost']:,.0f} / month"],
+                ["Cloud cost", f"${p['azure_cost']:,.0f} / month"],
             ]
             st.html(ui.table(["", ""], rows, right=[1], foot=["Net benefit", f"${net:,.0f} / month"]))
             st.caption(

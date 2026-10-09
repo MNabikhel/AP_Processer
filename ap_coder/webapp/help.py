@@ -60,7 +60,7 @@ def page_help() -> None:
     with card("help_start"):
         st.markdown("#### :material/flag: Getting started")
         for i, ((title, text), page) in enumerate(zip(QUICK_START, STEP_PAGES, strict=True), start=1):
-            c1, c2 = st.columns([4, 1.3], vertical_alignment="center")
+            c1, c2 = st.columns([5, 1], vertical_alignment="center")
             c1.html(
                 f"<div style='display:flex;gap:.7rem;align-items:flex-start'><span class='apc-step-no' "
                 f"style='flex:none;width:1.6rem;height:1.6rem;border-radius:50%;background:var(--apc-brand-50);color:var(--apc-brand);"
@@ -68,7 +68,9 @@ def page_help() -> None:
                 f"</b><div class='apc-muted'>{esc(text)}</div></div></div>"
             )
             if page in PAGES:
-                c2.page_link(PAGES[page], label="Open", icon=":material/arrow_forward:")
+                c2.page_link(
+                    PAGES[page], label="Open", icon=":material/arrow_forward:", help=f"Go to {PAGES[page].title}"
+                )
 
     with card("help_routine"):
         st.markdown("#### :material/checklist: Your AP routine")

@@ -83,7 +83,7 @@ def _history_card(store) -> None:
 def page_learning() -> None:
     store = get_store()
     show_toast()
-    page_head("learning", "Learning & accuracy", "How often the AI gets it right, and what it has learned.")
+    page_head("learning", "Learning & accuracy", "How often the coding is right, and what AP Coder has learned.")
     coding_tab, supplier_tab = st.tabs(
         [":material/auto_awesome: Coding accuracy", ":material/storefront: Supplier learning"]
     )
@@ -285,7 +285,7 @@ def _coding_accuracy(store) -> None:
         def short(text: str, n: int = 42) -> str:
             return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
-        for r in reviewed[:6]:
+        for r in reviewed[:4]:  # as tall as the chart beside it; every lesson is in the memory below
             if r["outcome"] == "corrected":
                 was = (
                     f"<span class='apc-strike apc-mono'>{esc(r['suggested_gl'])}</span>"
@@ -337,7 +337,7 @@ def _coding_accuracy(store) -> None:
 
     with (
         card("memory"),
-        st.expander("The AI's memory: every lesson, with the option to forget", icon=":material/psychology:"),
+        st.expander("Memory: every lesson, with the option to forget", icon=":material/psychology:"),
     ):
         st.caption(
             "Lessons from the same vendor are shown to the AI on the next invoice; corrections count most. "
