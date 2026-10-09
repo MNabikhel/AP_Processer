@@ -29,3 +29,7 @@ private/*
 
 # Capture benchmark output (python -m ap_coder.bench run)
 bench_out/
+
+# Offline bundle (python scripts/build_offline_bundle.py): downloaded packages and OCR models
+/wheelhouse/
+/models/

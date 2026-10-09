@@ -116,6 +116,14 @@ def _installed(module: str) -> bool:
         return False
 
 
+def _ppocrv5_ready() -> bool:
+    """RapidOCR 3 with its PP-OCRv5 models on disk. Without them it would download them on first use,
+    which an offline computer cannot: the other engine reads alone (scripts/fetch_models.py fetches them)."""
+    from ..offline import ppocrv5_ready
+
+    return ppocrv5_ready()
+
+
 def _engine_name() -> str:
     """The first-read OCR engine: "rapidocr" (rapidocr-onnxruntime, PP-OCRv4; the reader is tuned on
     it) when installed, else "ppocrv5" (RapidOCR 3, PP-OCRv5). ``AP_OCR_ENGINE`` forces one."""
@@ -130,17 +138,11 @@ def second_engine_name() -> str:
     independent mistakes), else the same one on a straightened, enlarged page."""
     first = _engine_name()
     other = "ppocrv5" if first == "rapidocr" else "rapidocr"
-    return other if _installed("rapidocr" if other == "ppocrv5" else "rapidocr_onnxruntime") else first
+    return other if (_ppocrv5_ready() if other == "ppocrv5" else _installed("rapidocr_onnxruntime")) else first
 
 
 def ocr_available() -> bool:
-    for module in ("rapidocr", "rapidocr_onnxruntime"):
-        try:
-            __import__(module)
-            return True
-        except Exception:
-            continue
-    return False
+    return _installed("rapidocr_onnxruntime") or (_installed("rapidocr") and _ppocrv5_ready())
 
 
 _ENGINES: dict[str, Any] = {}
