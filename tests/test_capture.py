@@ -304,9 +304,8 @@ def test_passing_weak_checks_neither_confirm_nor_fail():
     from ap_coder.capture.types import Reading
 
     box = [Box(1, 0.1, 0.1, 0.2, 0.12)]
-    by_source = {
-        "rules": {"invoice_date": [Reading("invoice_date", "2026-09-01", "Sep 1, 2026", box, 1.0, "label-right")]}
-    }
+    reading = Reading("invoice_date", "2026-09-01", "Sep 1, 2026", box, 1.0, "label-right")
+    by_source = {"rules": {"invoice_date": [reading]}}
     results, _ = fuse(by_source, [], fields=("invoice_date",), today=TODAY)
     fr = results["invoice_date"]
     assert not any(r.startswith("check failed") for r in fr.reasons)
