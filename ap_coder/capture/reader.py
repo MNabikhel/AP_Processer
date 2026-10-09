@@ -588,8 +588,10 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
     return out
 
 
-_CONTACT = re.compile(r"@|www|https?:|\.(?:com|ca|net|org|qc\.ca)\b|^(?:bureau|suite|unit|local|apt|room|piece)\s*\d|"
-                      r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph)\b")
+_CONTACT = re.compile(
+    r"@|www|https?:|\.(?:com|ca|net|org|qc\.ca)\b|^(?:bureau|suite|unit|local|apt|room|piece)\s*\d|"
+    r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph)\b"
+)
 _POSTAL_CODE = re.compile(r"\b[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d\b")
 _TITLE_PREFIX = re.compile(
     r"^(?:sales\s*|tax\s*|commercial\s*)?(?:invoice|facture)\s*(?:#|no\.?|n°)?\s*[a-z]{0,3}[\d/-]*\d\S*\s+"

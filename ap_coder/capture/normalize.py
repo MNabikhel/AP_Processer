@@ -121,8 +121,20 @@ def _plain(text: str) -> str:
 _ISO = re.compile(r"\b(20\d{2}|19\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b")
 _NUMERIC = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b")
 # Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
-_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})\b")
-_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?\s*([a-z]{3,9})\.?,?\s*(\d{4})\b")
+_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?[,.]?\s*(\d{4})\b")
+_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*([a-z]{3,9})\.?,?\s*(\d{4})\b")
+# OCR reads letters of a month as digits ("0ct", "Ju1", "N0v"); fixed in place, same length.
+_OCR_MONTHS = [(re.compile(r"0ct"), "oct"), (re.compile(r"ju1"), "jul"), (re.compile(r"n0v"), "nov"),
+               (re.compile(r"(?<=\d|\W)0ctobre"), "octobre"), (re.compile(r"ju1y"), "july"), (re.compile(r"ju1n"), "juin"),
+               (re.compile(r"(?<![a-z])1an"), "jan"), (re.compile(r"ap1"), "apr"), (re.compile(r"ju1l"), "juil")]  # fmt: skip
+
+
+def _ocr_date_text(s: str) -> str:
+    for rx, fixed in _OCR_MONTHS:
+        s = rx.sub(fixed, s)
+    return s
+
+
 _WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,9})[-\s](\d{2,4})\b")
 
 
@@ -138,7 +150,7 @@ def _make(y: int, m: int, d: int) -> dt.date | None:
 def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tuple[dt.date, int, int, bool]]:
     """Every date in ``text``: (date, start, end, ambiguous). ``ambiguous`` is True for 03/04/2026
     when both day-first and month-first are valid and no preference resolves it."""
-    s = _plain(unicodedata.normalize("NFKC", text))
+    s = _ocr_date_text(_plain(unicodedata.normalize("NFKC", text)))
     found: list[tuple[dt.date, int, int, bool]] = []
     taken: list[tuple[int, int]] = []
 

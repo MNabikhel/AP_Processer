@@ -382,3 +382,12 @@ def test_deskew_finds_the_page_tilt():
     tilted = img.rotate(1.2, resample=Image.BICUBIC, fillcolor=255)
     assert abs(_deskew_angle(tilted) + 1.2) <= 0.25
     assert abs(_deskew_angle(img)) <= 0.2
+
+
+@pytest.mark.parametrize(
+    ("text", "iso"),
+    [("June2.2025", "2025-06-02"), ("29-Ju1-2026", "2026-07-29"), ("09-0ct-2025", "2025-10-09"),
+     ("20ct2025", "2025-10-02"), ("18.juillet2025", "2025-07-18")],
+)  # fmt: skip
+def test_ocr_slips_in_dates(text, iso):
+    assert parse_date(text) == iso
