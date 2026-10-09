@@ -710,11 +710,18 @@ class Store:
             self.log_event("note", invoice_id=invoice_id, actor=actor, detail={"text": text.strip()[:2000]})
 
     def reject_invoice(self, invoice_id: int, reviewer: str, reason: str = "") -> None:
+        """Reject an invoice. One exported to the ERP cannot be (undo its batch first): rejected, it could then be
+        reopened and exported again. What an approval taught is withdrawn, as when it is reopened."""
         with self._conn() as conn:
-            conn.execute(
-                "UPDATE invoices SET status = ?, reviewer = ?, reviewed_at = ?, error = ? WHERE id = ?",
+            cur = conn.execute(
+                "UPDATE invoices SET status = ?, reviewer = ?, reviewed_at = ?, second_reviewer = NULL, "
+                "second_reviewed_at = NULL, error = ? WHERE id = ? AND export_batch IS NULL",
                 (REJECTED, reviewer, _now(), reason or None, invoice_id),
             )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} cannot be rejected (exported to the ERP, or deleted)")
+            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
             self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason})
 
     def delete_invoice(self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None) -> None:
