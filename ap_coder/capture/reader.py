@@ -638,7 +638,8 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
             if sub and total:
                 tax_sum = sum(t.value for t in present)
                 if abs(sub.value + tax_sum - total.value) <= 0.011:
-                    bonus += 3.0 + 0.5 * len(present)
+                    # Subtotal = total with no tax is weaker evidence: one number printed twice.
+                    bonus += 3.0 + 0.5 * len(present) if present else 2.5
                 elif present and abs(sub.value - total.value) <= 0.011:
                     bonus -= 1.0  # a total equal to the subtotal while taxes are printed: wrong total
             if sub and line_sum is not None and abs(sub.value - line_sum) <= 0.011:
@@ -819,6 +820,17 @@ def _date_fit(cands: dict[str, list[Reading]]) -> int:
     return 2 if days in (0, 7, 10, 14, 15, 20, 21, 30, 45, 60, 90) else 1
 
 
+def _table_header_line(line: Line, page_lines: list[Line]) -> bool:
+    """The line is a column heading of a line-item table (two or more other headings beside it)."""
+    others = 0
+    for other in page_lines:
+        if other is not line and abs(other.box.cy - line.box.cy) < 0.006:
+            p = plain(other.text).strip()
+            if any(rx.match(p) for rx in _HEAD.values()):
+                others += 1
+    return others >= 2
+
+
 def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     lines = list(layout.lines())
     by_page: dict[int, list[Line]] = {}
@@ -826,7 +838,13 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         by_page.setdefault(ln.box.page, []).append(ln)
     hits: dict[str, list[_LabelHit]] = {}
     for ln in lines:
+        in_table_head = None
         for hit in _label_hits(ln):
+            if hit.field in AMOUNT_FIELDS:
+                if in_table_head is None:
+                    in_table_head = _table_header_line(ln, by_page.get(ln.box.page, []))
+                if in_table_head:
+                    continue  # "Total" over the line-items' amount column is not the invoice total
             hits.setdefault(hit.field, []).append(hit)
     cands: dict[str, list[Reading]] = {}
     for field, fhits in hits.items():

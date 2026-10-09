@@ -1,0 +1,671 @@
+{
+ "about": "Per evidence pattern: [values reported, values right] on the benchmark runs below. Written by `python -m ap_coder.bench calibrate`; read by ap_coder.capture.confidence.",
+ "runs": [
+  {
+   "n": 4000,
+   "seed": 2,
+   "scanned": 0.0,
+   "reader": "capture",
+   "workers": 3,
+   "generator_version": 1
+  },
+  {
+   "n": 160,
+   "seed": 11,
+   "scanned": 1.0,
+   "reader": "capture",
+   "workers": 3,
+   "generator_version": 1
+  }
+ ],
+ "evidence": {
+  "currency|rules|pattern|scan|": [
+   59,
+   59
+  ],
+  "currency|rules|pattern|text|": [
+   1635,
+   1635
+  ],
+  "due_date|rules|label-below|scan|": [
+   15,
+   15
+  ],
+  "due_date|rules|label-below|scan|ambiguous": [
+   1,
+   1
+  ],
+  "due_date|rules|label-below|scan|confirmed": [
+   23,
+   23
+  ],
+  "due_date|rules|label-below|text|": [
+   361,
+   361
+  ],
+  "due_date|rules|label-below|text|ambiguous": [
+   9,
+   6
+  ],
+  "due_date|rules|label-below|text|confirmed": [
+   461,
+   461
+  ],
+  "due_date|rules|label-below|text|contested": [
+   5,
+   5
+  ],
+  "due_date|rules|label-below|text|contested,soft": [
+   2,
+   0
+  ],
+  "due_date|rules|label-below|text|soft": [
+   4,
+   0
+  ],
+  "due_date|rules|label-inline|scan|": [
+   15,
+   15
+  ],
+  "due_date|rules|label-inline|scan|confirmed": [
+   7,
+   7
+  ],
+  "due_date|rules|label-inline|scan|soft": [
+   2,
+   2
+  ],
+  "due_date|rules|label-inline|text|": [
+   296,
+   296
+  ],
+  "due_date|rules|label-inline|text|ambiguous": [
+   3,
+   2
+  ],
+  "due_date|rules|label-inline|text|confirmed": [
+   96,
+   96
+  ],
+  "due_date|rules|label-inline|text|contested": [
+   2,
+   2
+  ],
+  "due_date|rules|label-inline|text|soft": [
+   41,
+   41
+  ],
+  "due_date|rules|label-right|scan|": [
+   7,
+   7
+  ],
+  "due_date|rules|label-right|scan|ambiguous": [
+   1,
+   0
+  ],
+  "due_date|rules|label-right|scan|confirmed": [
+   16,
+   16
+  ],
+  "due_date|rules|label-right|text|": [
+   329,
+   329
+  ],
+  "due_date|rules|label-right|text|ambiguous": [
+   4,
+   3
+  ],
+  "due_date|rules|label-right|text|confirmed": [
+   394,
+   394
+  ],
+  "due_date|rules|label-right|text|contested": [
+   3,
+   3
+  ],
+  "due_date|rules|label-right|text|contested,soft": [
+   1,
+   0
+  ],
+  "due_date|rules|label-right|text|soft": [
+   5,
+   2
+  ],
+  "grand_total|rules|label-below|text|adds-up,confirmed": [
+   2,
+   2
+  ],
+  "grand_total|rules|label-inline|scan|": [
+   10,
+   10
+  ],
+  "grand_total|rules|label-inline|scan|adds-up,confirmed": [
+   46,
+   46
+  ],
+  "grand_total|rules|label-inline|scan|confirmed": [
+   3,
+   3
+  ],
+  "grand_total|rules|label-inline|text|": [
+   87,
+   87
+  ],
+  "grand_total|rules|label-inline|text|adds-up,confirmed": [
+   587,
+   587
+  ],
+  "grand_total|rules|label-inline|text|adds-up,confirmed,contested": [
+   2,
+   2
+  ],
+  "grand_total|rules|label-inline|text|confirmed": [
+   37,
+   37
+  ],
+  "grand_total|rules|label-right|scan|": [
+   12,
+   12
+  ],
+  "grand_total|rules|label-right|scan|adds-up,confirmed": [
+   86,
+   86
+  ],
+  "grand_total|rules|label-right|scan|confirmed": [
+   2,
+   2
+  ],
+  "grand_total|rules|label-right|scan|contested": [
+   1,
+   1
+  ],
+  "grand_total|rules|label-right|text|": [
+   417,
+   417
+  ],
+  "grand_total|rules|label-right|text|adds-up,confirmed": [
+   2755,
+   2755
+  ],
+  "grand_total|rules|label-right|text|adds-up,confirmed,contested": [
+   14,
+   14
+  ],
+  "grand_total|rules|label-right|text|confirmed": [
+   86,
+   86
+  ],
+  "grand_total|rules|label-right|text|confirmed,contested": [
+   2,
+   2
+  ],
+  "grand_total|rules|label-right|text|contested": [
+   11,
+   11
+  ],
+  "gst_amount|rules|label-below|text|soft": [
+   8,
+   0
+  ],
+  "gst_amount|rules|label-inline|scan|soft": [
+   1,
+   0
+  ],
+  "gst_amount|rules|label-right|scan|": [
+   1,
+   1
+  ],
+  "gst_amount|rules|label-right|scan|adds-up,confirmed": [
+   75,
+   75
+  ],
+  "gst_amount|rules|label-right|scan|soft": [
+   10,
+   10
+  ],
+  "gst_amount|rules|label-right|text|": [
+   17,
+   17
+  ],
+  "gst_amount|rules|label-right|text|adds-up,confirmed": [
+   1856,
+   1856
+  ],
+  "gst_amount|rules|label-right|text|adds-up,confirmed,contested": [
+   1,
+   1
+  ],
+  "gst_amount|rules|label-right|text|contested,soft": [
+   2,
+   2
+  ],
+  "gst_amount|rules|label-right|text|soft": [
+   256,
+   244
+  ],
+  "gst_hst_registration_number|rules|pattern|scan|confirmed": [
+   138,
+   138
+  ],
+  "gst_hst_registration_number|rules|pattern|text|confirmed": [
+   3581,
+   3581
+  ],
+  "hst_amount|rules|label-below|text|contested,soft": [
+   1,
+   0
+  ],
+  "hst_amount|rules|label-below|text|soft": [
+   4,
+   0
+  ],
+  "hst_amount|rules|label-right|scan|": [
+   1,
+   1
+  ],
+  "hst_amount|rules|label-right|scan|adds-up,confirmed": [
+   55,
+   55
+  ],
+  "hst_amount|rules|label-right|scan|soft": [
+   7,
+   7
+  ],
+  "hst_amount|rules|label-right|text|": [
+   8,
+   8
+  ],
+  "hst_amount|rules|label-right|text|adds-up,confirmed": [
+   1422,
+   1422
+  ],
+  "hst_amount|rules|label-right|text|adds-up,confirmed,contested": [
+   1,
+   1
+  ],
+  "hst_amount|rules|label-right|text|contested,soft": [
+   1,
+   1
+  ],
+  "hst_amount|rules|label-right|text|soft": [
+   171,
+   169
+  ],
+  "invoice_date|rules|label-below|scan|": [
+   43,
+   43
+  ],
+  "invoice_date|rules|label-below|scan|ambiguous": [
+   1,
+   1
+  ],
+  "invoice_date|rules|label-below|scan|confirmed": [
+   23,
+   23
+  ],
+  "invoice_date|rules|label-below|scan|soft": [
+   1,
+   0
+  ],
+  "invoice_date|rules|label-below|text|": [
+   1184,
+   1184
+  ],
+  "invoice_date|rules|label-below|text|ambiguous": [
+   57,
+   29
+  ],
+  "invoice_date|rules|label-below|text|confirmed": [
+   474,
+   474
+  ],
+  "invoice_date|rules|label-below|text|soft": [
+   5,
+   5
+  ],
+  "invoice_date|rules|label-inline|scan|": [
+   24,
+   24
+  ],
+  "invoice_date|rules|label-inline|scan|ambiguous": [
+   1,
+   1
+  ],
+  "invoice_date|rules|label-inline|scan|confirmed": [
+   4,
+   4
+  ],
+  "invoice_date|rules|label-inline|text|": [
+   522,
+   522
+  ],
+  "invoice_date|rules|label-inline|text|ambiguous": [
+   20,
+   10
+  ],
+  "invoice_date|rules|label-inline|text|confirmed": [
+   101,
+   101
+  ],
+  "invoice_date|rules|label-inline|text|soft": [
+   9,
+   9
+  ],
+  "invoice_date|rules|label-right|scan|": [
+   39,
+   39
+  ],
+  "invoice_date|rules|label-right|scan|ambiguous": [
+   3,
+   0
+  ],
+  "invoice_date|rules|label-right|scan|confirmed": [
+   19,
+   19
+  ],
+  "invoice_date|rules|label-right|scan|soft": [
+   1,
+   1
+  ],
+  "invoice_date|rules|label-right|text|": [
+   1144,
+   1144
+  ],
+  "invoice_date|rules|label-right|text|ambiguous": [
+   63,
+   35
+  ],
+  "invoice_date|rules|label-right|text|confirmed": [
+   376,
+   376
+  ],
+  "invoice_date|rules|label-right|text|soft": [
+   39,
+   39
+  ],
+  "invoice_number|rules|label-below|scan|": [
+   61,
+   60
+  ],
+  "invoice_number|rules|label-below|scan|contested": [
+   1,
+   0
+  ],
+  "invoice_number|rules|label-below|text|": [
+   1495,
+   1491
+  ],
+  "invoice_number|rules|label-below|text|contested": [
+   8,
+   0
+  ],
+  "invoice_number|rules|label-inline|scan|": [
+   43,
+   42
+  ],
+  "invoice_number|rules|label-inline|text|": [
+   988,
+   988
+  ],
+  "invoice_number|rules|label-inline|text|contested": [
+   49,
+   49
+  ],
+  "invoice_number|rules|label-right|scan|": [
+   52,
+   51
+  ],
+  "invoice_number|rules|label-right|scan|contested": [
+   1,
+   0
+  ],
+  "invoice_number|rules|label-right|text|": [
+   1434,
+   1429
+  ],
+  "invoice_number|rules|label-right|text|contested": [
+   5,
+   4
+  ],
+  "payment_terms|rules|label-below|scan|": [
+   12,
+   12
+  ],
+  "payment_terms|rules|label-below|scan|confirmed": [
+   17,
+   17
+  ],
+  "payment_terms|rules|label-below|text|": [
+   364,
+   364
+  ],
+  "payment_terms|rules|label-below|text|confirmed": [
+   325,
+   325
+  ],
+  "payment_terms|rules|label-inline|scan|": [
+   22,
+   22
+  ],
+  "payment_terms|rules|label-inline|scan|confirmed": [
+   22,
+   21
+  ],
+  "payment_terms|rules|label-inline|scan|soft": [
+   1,
+   1
+  ],
+  "payment_terms|rules|label-inline|text|": [
+   674,
+   674
+  ],
+  "payment_terms|rules|label-inline|text|confirmed": [
+   440,
+   440
+  ],
+  "payment_terms|rules|label-inline|text|soft": [
+   24,
+   24
+  ],
+  "payment_terms|rules|label-right|scan|": [
+   9,
+   9
+  ],
+  "payment_terms|rules|label-right|scan|confirmed": [
+   7,
+   7
+  ],
+  "payment_terms|rules|label-right|scan|soft": [
+   1,
+   1
+  ],
+  "payment_terms|rules|label-right|text|": [
+   229,
+   229
+  ],
+  "payment_terms|rules|label-right|text|confirmed": [
+   186,
+   186
+  ],
+  "payment_terms|rules|label-right|text|soft": [
+   19,
+   19
+  ],
+  "po_number|rules|label-below|scan|": [
+   38,
+   38
+  ],
+  "po_number|rules|label-below|text|": [
+   1089,
+   1089
+  ],
+  "po_number|rules|label-inline|scan|": [
+   25,
+   24
+  ],
+  "po_number|rules|label-inline|text|": [
+   385,
+   385
+  ],
+  "po_number|rules|label-inline|text|contested": [
+   1,
+   1
+  ],
+  "po_number|rules|label-right|scan|": [
+   31,
+   31
+  ],
+  "po_number|rules|label-right|text|": [
+   828,
+   828
+  ],
+  "po_number|rules|label-right|text|contested": [
+   1,
+   1
+  ],
+  "pst_amount|rules|label-inline|scan|soft": [
+   1,
+   0
+  ],
+  "pst_amount|rules|label-right|scan|": [
+   1,
+   1
+  ],
+  "pst_amount|rules|label-right|scan|adds-up,confirmed": [
+   33,
+   33
+  ],
+  "pst_amount|rules|label-right|scan|soft": [
+   3,
+   3
+  ],
+  "pst_amount|rules|label-right|text|": [
+   6,
+   6
+  ],
+  "pst_amount|rules|label-right|text|adds-up,confirmed": [
+   909,
+   909
+  ],
+  "pst_amount|rules|label-right|text|soft": [
+   115,
+   115
+  ],
+  "qst_amount|rules|label-right|scan|adds-up,confirmed": [
+   27,
+   27
+  ],
+  "qst_amount|rules|label-right|scan|soft": [
+   3,
+   3
+  ],
+  "qst_amount|rules|label-right|text|adds-up,confirmed": [
+   633,
+   633
+  ],
+  "qst_amount|rules|label-right|text|contested,soft": [
+   1,
+   1
+  ],
+  "qst_amount|rules|label-right|text|soft": [
+   99,
+   99
+  ],
+  "qst_registration_number|rules|pattern|scan|confirmed": [
+   28,
+   28
+  ],
+  "qst_registration_number|rules|pattern|text|confirmed": [
+   683,
+   683
+  ],
+  "subtotal|rules|label-inline|scan|adds-up,confirmed": [
+   2,
+   2
+  ],
+  "subtotal|rules|label-inline|scan|adds-up,confirmed,soft": [
+   1,
+   1
+  ],
+  "subtotal|rules|label-inline|scan|soft": [
+   1,
+   1
+  ],
+  "subtotal|rules|label-right|scan|": [
+   2,
+   2
+  ],
+  "subtotal|rules|label-right|scan|adds-up,confirmed": [
+   84,
+   84
+  ],
+  "subtotal|rules|label-right|scan|adds-up,confirmed,soft": [
+   45,
+   45
+  ],
+  "subtotal|rules|label-right|scan|confirmed": [
+   3,
+   3
+  ],
+  "subtotal|rules|label-right|scan|confirmed,soft": [
+   2,
+   2
+  ],
+  "subtotal|rules|label-right|scan|soft": [
+   18,
+   17
+  ],
+  "subtotal|rules|label-right|text|": [
+   67,
+   67
+  ],
+  "subtotal|rules|label-right|text|adds-up,confirmed": [
+   2661,
+   2661
+  ],
+  "subtotal|rules|label-right|text|adds-up,confirmed,soft": [
+   699,
+   699
+  ],
+  "subtotal|rules|label-right|text|confirmed": [
+   80,
+   80
+  ],
+  "subtotal|rules|label-right|text|confirmed,soft": [
+   45,
+   45
+  ],
+  "subtotal|rules|label-right|text|soft": [
+   448,
+   448
+  ],
+  "tax_total|rules|label-right|scan|confirmed": [
+   35,
+   35
+  ],
+  "tax_total|rules|label-right|text|": [
+   18,
+   18
+  ],
+  "tax_total|rules|label-right|text|confirmed": [
+   980,
+   980
+  ],
+  "vendor_name|rules|top-of-page|scan|": [
+   135,
+   132
+  ],
+  "vendor_name|rules|top-of-page|scan|contested": [
+   25,
+   23
+  ],
+  "vendor_name|rules|top-of-page|text|": [
+   3351,
+   3350
+  ],
+  "vendor_name|rules|top-of-page|text|contested": [
+   649,
+   638
+  ]
+ }
+}

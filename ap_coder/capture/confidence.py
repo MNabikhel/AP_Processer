@@ -285,8 +285,11 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         for f in c["fields"]:
             if not c["ok"] and c["code"] in SOFT_CHECKS:
                 soft.setdefault(f, []).append(c["detail"])
-            elif c["ok"] and c["code"] not in WEAK_CHECKS:
-                confirmed[f] = confirmed.get(f, 0) + (2 if c["code"] in ("TOTALS_ADD_UP", "VENDOR_GST_MATCH") else 1)
+            elif c["ok"]:
+                if c["code"] not in WEAK_CHECKS:
+                    confirmed[f] = confirmed.get(f, 0) + (
+                        2 if c["code"] in ("TOTALS_ADD_UP", "VENDOR_GST_MATCH") else 1
+                    )
             else:
                 failed.setdefault(f, []).append(c["detail"])
 

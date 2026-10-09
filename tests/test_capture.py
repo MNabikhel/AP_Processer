@@ -297,3 +297,17 @@ def test_measured_calibration_uses_the_lower_bound():
     finally:
         confidence.calibration_table = old
     assert confidence.wilson_lower(0, 0) == 0.0
+
+
+def test_passing_weak_checks_neither_confirm_nor_fail():
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import Reading
+
+    box = [Box(1, 0.1, 0.1, 0.2, 0.12)]
+    by_source = {
+        "rules": {"invoice_date": [Reading("invoice_date", "2026-09-01", "Sep 1, 2026", box, 1.0, "label-right")]}
+    }
+    results, _ = fuse(by_source, [], fields=("invoice_date",), today=TODAY)
+    fr = results["invoice_date"]
+    assert not any(r.startswith("check failed") for r in fr.reasons)
+    assert not any("confirmed" in r for r in fr.reasons)
