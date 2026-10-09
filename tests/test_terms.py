@@ -113,3 +113,10 @@ def test_queue_sorts_by_due_date_with_unknown_last():
 
     rows = [{"id": 1, "due_date": "2026-11-01"}, {"id": 2, "due_date": None}, {"id": 3, "due_date": "2026-10-01"}]
     assert [r["id"] for r in sort_queue(rows, "Due date: soonest")] == [3, 1, 2]
+
+
+def test_a_printed_discount_is_kept_when_the_net_days_come_from_the_vendor_master():
+    coding = {"payment_terms": "2% 10 days", "invoice_date": "2026-09-01", "grand_total": 113.0, "subtotal": 100.0}
+    p = payment(coding, vendor_terms="Net 45")
+    assert p.due == dt.date(2026, 10, 16) and p.source == "vendor"
+    assert p.discount_by == dt.date(2026, 9, 11) and p.discount_amount == 2.0
