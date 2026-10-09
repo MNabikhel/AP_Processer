@@ -1,6 +1,6 @@
 """python -m ap_coder.bench run --n 300 --seed 1 --scanned 0.3 [--out bench_out] [--workers 4]
-   python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
-   python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]"""
+python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
+python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]"""
 
 from __future__ import annotations
 
