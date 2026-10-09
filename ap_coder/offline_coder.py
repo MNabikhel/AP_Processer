@@ -91,24 +91,29 @@ def _rate_table() -> Any:
 def provinces(text: str) -> tuple[str, str]:
     """(supplier province, ship-to province) from the addresses on the page: the first address is the
     supplier's (its letterhead), the first after a "Bill to" / "Client" label the customer's. A US address
-    is OUTSIDE_CANADA."""
+    is OUTSIDE_CANADA. Each labelled address goes to the labels in the order they were read, so "Bill to" and
+    "Ship to" side by side (labels on one row, then each column's address) are told apart."""
     supplier = bill_to = ship_to = ""
-    after_label = after_ship = False
+    after_label = False
+    pending: list[str] = []  # labels read whose address has not come yet
     for line in text.splitlines():
         if _SHIP_LABEL.search(line):
-            after_ship = after_label = True
+            after_label = True
+            pending.append("ship")
         elif _CUSTOMER_LABEL.search(line):
             after_label = True
+            pending.append("bill")
         m = _PROVINCE_AT.search(line)
         where = m.group(1) if m else (OUTSIDE_CANADA if _US_ADDRESS.search(line) else "")
         if not where:
             continue
         if not supplier and not after_label:
             supplier = where
-        elif after_ship and not ship_to:
-            ship_to = where  # the place of supply: where the goods or services go
-        elif after_label and not bill_to:
-            bill_to = where
+        elif pending:
+            if pending.pop(0) == "ship":
+                ship_to = ship_to or where  # the place of supply: where the goods or services go
+            else:
+                bill_to = bill_to or where
     return supplier, ship_to or bill_to or supplier
 
 

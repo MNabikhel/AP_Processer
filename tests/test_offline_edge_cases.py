@@ -44,6 +44,18 @@ def test_expedie_a_is_the_french_ship_to():
     assert provinces(text) == ("QC", "NS")
 
 
+def test_bill_to_and_ship_to_side_by_side():
+    # Two columns on one row are read as separate segments, left before right: the labels come first,
+    # then each column's address in the same order.
+    rows = ["Acme", "Toronto ON M5V 1A1", "Bill to:", "Ship to:", "Fabrikam Ltd", "Fabrikam Ltd"]
+    text = "\n".join([*rows, "Calgary AB T2P 1A1", "Halifax NS B3H 1A1"])
+    assert provinces(text) == ("ON", "NS")
+    text = "\n".join([*rows, "Calgary AB T2P 1A1", "Halifax NS B3H 1A1"]).replace(
+        "Bill to:\nShip to:", "Ship to:\nBill to:"
+    )
+    assert provinces(text) == ("ON", "AB")
+
+
 def test_freight_beside_the_subtotal_is_in_the_coded_subtotal_and_the_tax_base(reference):
     # Subtotal 1,000 + freight 50 (printed between the subtotal and the taxes), GST 5% on 1,050.
     capture = _capture([("Widgets", 10, 100.0, 1000.0)], subtotal=1000.0, other_charges=50.0, gst_amount=52.5,
