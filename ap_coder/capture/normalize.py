@@ -136,7 +136,16 @@ _OCR_MONTHS = [
 def _ocr_date_text(s: str) -> str:
     for rx, fixed in _OCR_MONTHS:
         s = rx.sub(fixed, s)
-    return s
+    # a speck read as a point inside the day: "0.1/08/2026" (same length, so offsets hold)
+    s = _SPECK_IN_DAY.sub(r" \1\2", s)
+    # ... or beside a separator: "2025/12/.07" -> "2025/12/07 "
+    return _SPECK_BY_SEP.sub(lambda m: re.sub(r"[.,]", "", m.group()) + " " * len(re.findall(r"[.,]", m.group())), s)
+
+
+_SPECK_IN_DAY = re.compile(r"(?<![\d.,])(\d)[.,](\d)(?=[/-]\d{1,2}[/-]\d{2,4}\b)")
+_SPECK_BY_SEP = re.compile(
+    r"(?<![\d.,])\d{1,4}(?=[.,]?[/-][.,]?\d)(?:[.,][/-]|[/-][.,]|[/-])\d{1,2}(?:[.,][/-]|[/-][.,]|[/-])\d{2,4}\b"
+)
 
 
 _WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,9})[-\s](\d{2,4})\b")

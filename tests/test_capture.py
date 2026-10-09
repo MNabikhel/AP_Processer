@@ -387,7 +387,8 @@ def test_deskew_finds_the_page_tilt():
 @pytest.mark.parametrize(
     ("text", "iso"),
     [("June2.2025", "2025-06-02"), ("29-Ju1-2026", "2026-07-29"), ("09-0ct-2025", "2025-10-09"),
-     ("20ct2025", "2025-10-02"), ("18.juillet2025", "2025-07-18")],
+     ("20ct2025", "2025-10-02"), ("18.juillet2025", "2025-07-18"), ("1.5/07/2026", "2026-07-15"),
+     ("2025/12/.07", "2025-12-07")],
 )  # fmt: skip
 def test_ocr_slips_in_dates(text, iso):
     assert parse_date(text) == iso
