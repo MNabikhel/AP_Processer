@@ -246,7 +246,7 @@ kbd.apc-kbd {font-family: inherit; font-size: .72rem; font-weight: 600; color: v
 .apc-pill.info {background: var(--apc-brand-50); color: var(--apc-brand-600);}
 .apc-pill.violet {background: var(--apc-violet-bg); color: var(--apc-violet);}
 .apc-pill.gray {background: #eef1f6; color: var(--apc-muted);}
-.apc-tax {display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .03em; padding: .1rem .45rem;
+.apc-tax {display: inline-block; white-space: nowrap; flex: none; font-size: .7rem; font-weight: 700; letter-spacing: .03em; padding: .1rem .45rem;
   border-radius: 6px; border: 1px solid;}
 .apc-tax.GST {color: #1f63b5; border-color: #bcd5f3; background: #f2f7fd;}
 .apc-tax.HST {color: #4a3aa7; border-color: #d3cdf5; background: #f6f5fe;}

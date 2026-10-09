@@ -208,7 +208,7 @@ def page_process() -> None:
 
         with card("folder"):
             st.markdown("#### :material/folder_open: Invoices folder")
-            hint, button = st.columns([3, 1], vertical_alignment="center")
+            hint, button = st.columns([2.3, 1], vertical_alignment="center")
             hint.caption(
                 "Copy invoices into this folder, or have a scanner or mail rule save them there. New files are "
                 "listed here, ready to process."

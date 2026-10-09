@@ -250,7 +250,9 @@ def page_exports() -> None:
         if not ready:
             st.html(
                 ui.empty_state(
-                    "Nothing waiting", "Approved invoices appear here until they are exported.", ui.EMPTY_INBOX_SVG
+                    "Nothing waiting",
+                    "Approved invoices appear here until they are exported.",
+                    ui.EMPTY_INBOX_SVG if live else ui.EMPTY_TRAY_SVG,
                 )
             )
         else:

@@ -205,10 +205,13 @@ def page_accounts() -> None:
 
     if not gl:
         with card("sample"):
-            st.html(
-                ui.empty_state("Just exploring?", "Load sample GL accounts, cost centers and tax setup to try the app.")
+            note, button = st.columns([4, 1.2], vertical_alignment="center")
+            note.html(
+                ui.empty_note(
+                    "Just exploring?", "Load sample GL accounts, cost centers and tax setup to try the app.", "science"
+                )
             )
-            if st.button("Load sample setup", icon=":material/download:", type="primary"):
+            if button.button("Load sample setup", icon=":material/download:", width="stretch"):
                 load_sample_setup(store)
                 notify("Sample setup loaded.")
                 st.rerun()
@@ -358,7 +361,7 @@ def tax_setup(store: Store) -> None:
         hash((tuple(options), tuple(sorted((t.tax_type, t.treatment, t.gl_code) for t in treatments.values()))))
     )
     where = {"GST": "Federal · all provinces", "HST": "ON · NB · NL · NS · PE", "PST": "BC · SK · MB (RST)",
-             "QST": "Quebec (TVQ)", "OTHER": "Outside Canada (US tax, VAT)"}  # fmt: skip
+             "QST": "Quebec (TVQ)", "OTHER": "Outside Canada"}  # fmt: skip
     chosen = {}
     with card("taxsetup"):
         st.markdown("#### :material/percent: How each sales tax posts")

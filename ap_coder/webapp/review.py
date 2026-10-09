@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import functools
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -491,7 +492,7 @@ def _today_strip(store: Store, invoices: list[dict[str, Any]]) -> None:
     ]
     if any(pills):
         st.html(
-            "<div style='display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin:.1rem 0 .7rem'>"
+            "<div style='display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin:.1rem 0 -.4rem'>"
             f"<b style='color:#142033;margin-right:.2rem'>Today</b>{''.join(p for p in pills if p)}</div>"
         )
 
@@ -688,8 +689,17 @@ def _grouped(issues: list[Any]) -> list[tuple[bool, str]]:
             if numbers
             else ""
         )
-        out.append((severity == "error", where + message))
+        out.append((severity == "error", where + readable(message, cap=not where)))
     return out
+
+
+_PLAIN_AMOUNT = re.compile(r"(?<![\d.,])(-?\d{4,})\.(\d{2})(?![\d%])")
+
+
+def readable(message: str, cap: bool = True) -> str:
+    """A check message as a clerk reads it: a capital first letter, amounts with thousands separators."""
+    message = _PLAIN_AMOUNT.sub(lambda m: f"{int(m.group(1)):,}.{m.group(2)}", message)
+    return message[:1].upper() + message[1:] if cap else message
 
 
 def _checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> str:

@@ -288,7 +288,8 @@ def review_tab() -> None:
     settings = get_settings()
     with card("review_settings"), st.form("review_form", border=False):
         st.markdown("#### :material/tune: Review and AI behaviour")
-        reviewer_name = st.text_input(
+        name_col, _ = st.columns(2)
+        reviewer_name = name_col.text_input(
             "Your name",
             paths.read_user_settings().get("reviewer") or env.get("AP_REVIEWER") or os.environ.get("AP_REVIEWER", ""),
             placeholder="shown on the invoices you approve",
@@ -339,17 +340,19 @@ def review_tab() -> None:
     store = get_store()
     with card("payment_settings"), st.form("payment_form", border=False):
         st.markdown("#### :material/event_available: Approval and payment")
-        limit = st.number_input(
+        c1, c2 = st.columns(2)
+        limit = c1.number_input(
             "Second approval for invoices over (0 = never)",
             min_value=0.0, step=1000.0, value=store.approval_limit(), format="%.2f",
             help="Above this amount, an approved invoice waits for a second, different approver before export.",
         )  # fmt: skip
-        days = st.number_input(
+        days = c2.number_input(
             "Days to pay when an invoice prints no due date and no terms",
             min_value=0, max_value=180, step=1, value=store.default_terms_days(),
             help="Used to show when an invoice is due, to sort the queue by due date and in exports.",
         )  # fmt: skip
-        fx = st.text_input(
+        fx_col, _ = st.columns(2)
+        fx = fx_col.text_input(
             "Exchange rates to CAD (optional)", store.get_setting("fx_rates"), placeholder="e.g. USD=1.37, EUR=1.50",
             help="CAD per unit of each foreign currency you are billed in. Used for estimates in CAD (Spend, Sales "
             "tax); invoices and exports keep their own currency.",
