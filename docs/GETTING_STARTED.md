@@ -38,15 +38,16 @@ before real invoices are sent.
 
 ## Step 2: Install (~10 min, one double-click)
 
-You need **Python 3.10 or newer** (3.12 recommended) and, ideally, **git**. If either is missing,
-install it once from a terminal (or from python.org / git-scm.com):
+You need **Python 3.11, 3.12 or 3.13** and, ideally, **git**. A Python you already have is used as it
+is (AP Coder never installs a second one); if there is none, the first double-click below offers to
+install Python 3.12 for you with `winget` (answer **Y**). Git, if you want one-click updates:
 
 ```bat
-winget install Python.Python.3.12
 winget install Git.Git
 ```
 
-When installing Python from python.org, tick **"Add python.exe to PATH"** on the first screen.
+(Without `winget`: install Python from python.org and tick **"Add python.exe to PATH"** on the first
+screen.)
 
 **Get the code** into your Downloads folder, either way:
 
@@ -62,23 +63,35 @@ When installing Python from python.org, tick **"Add python.exe to PATH"** on the
   `AP_Processer`. For a later version, extract the new ZIP and copy its contents **over the same
   folder** (replace files) so nothing is duplicated.
 
-**Install:** open `Downloads\AP_Processer` and **double-click `install.bat`** (macOS/Linux:
-`./install.sh`). It:
+**Install and start: one button.** Open `Downloads\AP_Processer` and **double-click
+`APProcessor.bat`** (macOS: `APProcessor.command`; the first time right-click → *Open*). That is the
+only file you need, now and every day after. The first time (a few minutes) it:
 
-1. finds a suitable Python and creates a private environment (`.venv`) for AP Coder
-2. installs the packages (a few minutes the first time)
-3. asks where to keep your data. The default is `C:\Users\<you>\APCoder`, outside the code
-   folder and outside OneDrive. The database, invoices, outputs and your Azure keys live there, so
-   **every future version uses the same data**
-4. asks for your Azure details (endpoints, keys, deployment name, your name). Press Enter to
-   keep a value shown in brackets. Leave the keys empty if you use `az login`
-5. offers a desktop shortcut **AP Coder**
-6. runs a self-test and the setup check, and offers to start the dashboard
+1. finds your Python 3.11–3.13 (or offers to install 3.12) and makes AP Coder's own environment
+   (`.venv`), once
+2. installs the packages, then on later starts only ones that are missing or too old
+3. records the data folder, `C:\Users\<you>\APCoder`: outside the code folder and outside OneDrive.
+   The database, invoices, outputs and your Azure keys live there, so **every future version uses the
+   same data**
+4. fetches the OCR models for scanned invoices, and puts one **AP Coder** shortcut on the desktop
+5. runs the self-check (the ten sample invoices, about 10 seconds) and prints a readiness summary:
+   Python, packages, OCR, data folder, LM Studio (optional) and the self-check's OK/FAILED
+6. opens the dashboard in your browser
 
-**Running it again is always safe.** It updates the code in place (with git), reinstalls
-packages only when they changed, and keeps your data folder, Azure settings and shortcut. Nothing
-is duplicated. Options are typed after the name in **`terminal.bat`** (double-click it, then type
-e.g. `install.bat --fresh-start`):
+Later double-clicks reuse all of it and start in seconds; double-clicking while AP Coder already runs
+just opens it in the browser again.
+
+**Azure settings and the other installer options.** The dashboard's **Settings → Azure** page holds
+your Azure details. If you prefer to answer them in the window, or need an option below, use
+**`install.bat`** (macOS/Linux: `./install.sh`): the same setup as `APProcessor.bat` (it runs it) plus
+questions for the data folder, your Azure details (endpoints, keys, deployment name, your name; press
+Enter to keep a value in brackets, leave the keys empty if you use `az login`) and the desktop
+shortcut, then a self-test and the setup check.
+
+**Running either again is always safe.** The installer updates the code in place (with git); both
+install packages only when something is missing, and keep your data folder, Azure settings and
+shortcut. Nothing is duplicated. Options are typed after the name in **`terminal.bat`** (double-click
+it, then type e.g. `install.bat --fresh-start`):
 
 | Option | What it does |
 |---|---|
@@ -87,14 +100,15 @@ e.g. `install.bat --fresh-start`):
 | `--no-update` | don't check GitHub for a newer version |
 | `--data-dir <folder>` | use a different data folder |
 | `--no-shortcut` / `--no-start` | no desktop shortcut / don't offer to start the dashboard at the end |
-| `--skip-tests` / `--reinstall` | skip the self-test / reinstall the packages even if unchanged |
+| `--skip-tests` / `--reinstall` | skip the self-test / reinstall AP Coder itself even if unchanged |
+| `APProcessor.bat --check` | run the sample-invoice self-check again before starting |
 
 To run AP Coder commands yourself (`doctor`, `share-report`, …), double-click **`terminal.bat`**:
 it opens a command prompt with everything ready, e.g. `python -m ap_coder doctor`.
 
 ## Step 3: Check the setup → paste the doctor report
 
-At the end of the install, answer **y** to *Test the connection to Azure now?*. In the dashboard,
+At the end of `install.bat`, answer **y** to *Test the connection to Azure now?*. In the dashboard,
 **Settings → Azure** shows and edits the same settings and has a **Run the test** button. Or, in
 `terminal.bat`:
 
@@ -108,7 +122,7 @@ invoice). **Paste the whole output into the chat.** Any FAIL line says why. To f
 
 ## Step 4: Try the dashboard with the sample data (no enterprise data)
 
-Start AP Coder from the **AP Coder** desktop shortcut (or `start.bat`). It opens in your browser;
+Start AP Coder from the **AP Coder** desktop shortcut (or `APProcessor.bat`). It opens in your browser;
 keep the black window open while you use it and close it to stop. If another program already uses
 port 8501, AP Coder picks the next free one.
 
@@ -253,8 +267,8 @@ through.
 ## Step 9: Iterate
 
 When I push improvements, close AP Coder and **double-click `install.bat` again** (without git:
-extract the new ZIP over the same folder first). It pulls the new version, updates packages if
-needed and keeps everything else. Your database, memory, GL accounts and Azure settings are
+extract the new ZIP over the same folder, then double-click `APProcessor.bat`). It pulls the new
+version, installs only the packages that changed and keeps everything else. Your database, memory, GL accounts and Azure settings are
 untouched by updates. We repeat until the AI's coding
 accuracy on the **Learning & accuracy** page holds at or above **90%**. That is the gate for
 Phase 2.
@@ -274,7 +288,7 @@ Run these in `terminal.bat` as `python -m ap_coder <command>`.
 
 | Command | What it does |
 |---|---|
-| `dashboard` | the review app (what the desktop shortcut and `start.bat` run) |
+| `dashboard` | the review app (what the desktop shortcut and `APProcessor.bat` start) |
 | `doctor [--online]` | setup check; safe to paste |
 | `share-report [--include-codes]` | redacted summary; safe to paste |
 | `demo [--remove]` | load or remove the demo invoices (no Azure) |

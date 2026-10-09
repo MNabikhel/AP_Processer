@@ -1,3 +1,3 @@
 @echo off
-rem Starts the AP Coder dashboard (sets it up first if needed). Same as double-clicking APProcessor.bat.
+rem Kept for older shortcuts: the same as double-clicking APProcessor.bat (sets up what is missing, then starts).
 call "%~dp0APProcessor.bat" %*

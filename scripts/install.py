@@ -1,18 +1,21 @@
-"""AP Coder installer and updater.
+"""AP Coder installer and updater: the setup of APProcessor.bat plus a few questions.
 
-Run it through ``install.bat`` (Windows) or ``install.sh`` (macOS / Linux). It is safe to run
-again at any time: each run updates what changed and keeps everything else.
+Most people just double-click ``APProcessor.bat`` (Windows) or ``APProcessor.command`` (Mac): that sets
+up whatever is missing and starts AP Coder. This installer is the same setup (``scripts/launch.py``: one
+``.venv``, only missing packages installed, OCR models fetched once, one desktop shortcut) with the
+questions on top. ``install.bat`` / ``install.sh`` run it (through APProcessor, so Python is found the
+same way). It is safe to run again at any time: each run updates what changed and keeps everything else.
 
 * the code is updated in place (git checkout) — never a second copy
-* one virtual environment (``.venv``), packages reinstalled only when requirements change
+* one virtual environment (``.venv``), packages installed only when missing or too old
 * one data folder outside the code (default ``~/APCoder``) for the database, invoices,
   outputs and the ``.env`` with your Azure settings, so updates never lose or duplicate them
 * the desktop shortcut is overwritten, not added again
 
 Options: ``--yes`` (no questions, keep current answers), ``--no-update``, ``--skip-tests``,
-``--data-dir PATH``, ``--reinstall``, ``--no-shortcut``, ``--fresh-start``.
+``--data-dir PATH``, ``--reinstall``, ``--no-shortcut``, ``--fresh-start``, ``--no-start``.
 
-Standard library only: it runs before anything is installed.
+Standard library only at import (it is loaded before the packages are installed).
 """
 
 from __future__ import annotations
@@ -20,7 +23,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import getpass
-import hashlib
 import json
 import os
 import shutil
@@ -30,16 +32,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # ap_coder/envfile.py is standard-library only, usable before installing
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import launch  # noqa: E402  (the one setup: .venv, packages, models, shortcut, readiness)
 
 from ap_coder.envfile import clean_url, read_env, write_env  # noqa: E402
 
 WINDOWS = os.name == "nt"
-VENV = ROOT / ".venv"
-VENV_PY = VENV / ("Scripts/python.exe" if WINDOWS else "bin/python")
-STAMP = VENV / "ap_coder_install.json"
 USER_SETTINGS = Path(os.environ.get("AP_USER_SETTINGS") or Path.home() / ".ap_coder" / "settings.json")
 DEFAULT_DATA_DIR = Path.home() / "APCoder"
 STEPS = 8
+EXTRAS = ("ocr", "dev")  # the installer also installs the self-test's tools (pytest, ruff)
 
 # (variable, question, kind) — kind: url | secret | text
 AZURE_FIELDS = [
@@ -116,10 +119,6 @@ def quiet(cmd: list[str]) -> subprocess.CompletedProcess:
 
 def check_python(c: Console) -> None:
     c.step("Python")
-    if sys.version_info < (3, 10):  # noqa: UP036 (the installer may be started with an old Python)
-        c.warn(f"Python {sys.version.split()[0]} is too old: AP Coder needs 3.10 or newer.")
-        c.info("Install it from https://www.python.org/downloads/ and run the installer again.")
-        sys.exit(1)
     c.ok(f"Python {sys.version.split()[0]} ({sys.executable})")
     if "onedrive" in str(ROOT).lower():
         c.warn("This folder is inside OneDrive. That's fine for the code, but keep the data folder outside it.")
@@ -163,74 +162,25 @@ def update_code(c: Console, args: argparse.Namespace) -> int | None:
     return None
 
 
-def venv_python_version() -> tuple[int, int] | None:
-    if not VENV_PY.exists():
-        return None
-    out = quiet([str(VENV_PY), "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"])
+def ensure_venv_and_packages(c: Console, args: argparse.Namespace, venv: str | None) -> None:
+    c.step("Virtual environment and packages")
+    if venv in ("created", "recreated"):
+        c.ok(f"{venv} .venv (Python {sys.version.split()[0]})")
+    else:
+        c.ok(f"reusing .venv (Python {sys.version.split()[0]})")
+    state = launch.load_state()
+    if args.reinstall:
+        c.info("Reinstalling AP Coder itself (--reinstall)...")
+        if not launch.pip_install(["--force-reinstall", "--no-deps", *launch.editable(())]):
+            c.warn("Reinstalling failed (see the messages above).")
     try:
-        major, minor = (int(x) for x in out.stdout.split())
-        return major, minor
-    except ValueError:
-        return None
-
-
-def ensure_venv(c: Console) -> None:
-    c.step("Virtual environment")
-    version = venv_python_version()
-    if version and version >= (3, 10):
-        c.ok(f"reusing .venv (Python {version[0]}.{version[1]})")
-        return
-    if VENV.exists():
-        c.warn(".venv is broken or too old: recreating it")
-        shutil.rmtree(VENV, ignore_errors=True)
-    if run([sys.executable, "-m", "venv", str(VENV)]).returncode != 0:
-        c.warn("Could not create the virtual environment.")
+        level, summary, _ = launch.ensure_packages(state, extras=EXTRAS)
+    except launch.SetupError as exc:
+        c.warn(str(exc))
+        c.info(exc.hint)
         sys.exit(1)
-    c.ok("created .venv")
-
-
-def requirements_fingerprint() -> str:
-    digest = hashlib.sha256()
-    for name in ("pyproject.toml", "requirements.txt"):
-        path = ROOT / name
-        if path.exists():
-            digest.update(path.read_bytes())
-    digest.update(str(venv_python_version()).encode())
-    return digest.hexdigest()
-
-
-def pip_source() -> list[str]:
-    """pip options that install from the offline bundle's wheelhouse/ folder, when there is one."""
-    wheelhouse = ROOT / "wheelhouse"
-    return ["--no-index", "--find-links", str(wheelhouse)] if wheelhouse.is_dir() else []
-
-
-def install_packages(c: Console, args: argparse.Namespace) -> None:
-    c.step("Packages")
-    fingerprint = requirements_fingerprint()
-    try:
-        stamp = json.loads(STAMP.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        stamp = {}
-    importable = quiet([str(VENV_PY), "-c", "import ap_coder, streamlit, openai, pytest"]).returncode == 0
-    if stamp.get("fingerprint") == fingerprint and importable and not args.reinstall:
-        c.ok("already up to date")
-        return
-    c.info("Installing (first time: a few minutes)...")
-    offline = pip_source()
-    if offline:
-        c.info("from the wheelhouse folder (offline bundle): no internet needed")
-    quiet([str(VENV_PY), "-m", "pip", "install", "--quiet", *offline, "--upgrade", "pip"])
-    result = run([str(VENV_PY), "-m", "pip", "install", "--disable-pip-version-check", *offline, "-e", ".[dev]"])
-    if result.returncode != 0:
-        c.warn("Installing packages failed (see the messages above). Common causes:")
-        c.info("- the AP Coder dashboard is still running: close its window and run the installer again")
-        c.info("- no internet access, or a company proxy: ask IT for the proxy address, then run")
-        c.info("  set HTTPS_PROXY=http://proxy.company.com:8080   (in this window) and the installer again")
-        sys.exit(1)
-    STAMP.write_text(json.dumps({"fingerprint": fingerprint, "installed": dt.datetime.now().isoformat()}),
-                     encoding="utf-8")  # fmt: skip
-    c.ok("installed")
+    launch.save_state(state)
+    (c.ok if level == "ok" else c.warn)(summary.removeprefix("Packages: "))
 
 
 def read_user_settings() -> dict:
@@ -381,32 +331,28 @@ def configure_azure(c: Console, data: Path) -> Path:
 def create_shortcut(c: Console, args: argparse.Namespace) -> None:
     c.step("Shortcut")
     if not WINDOWS:
-        os.chmod(ROOT / "start.sh", 0o755)
-        c.ok(f"start AP Coder with: {ROOT / 'start.sh'}")
+        c.ok(f"start AP Coder with: {ROOT / 'APProcessor.command'}")
         return
-    settings = read_user_settings()
-    wanted = settings.get("desktop_shortcut")
+    wanted = read_user_settings().get("desktop_shortcut")
     if args.no_shortcut:
         wanted = False
     elif wanted is None:
         wanted = c.yes("Put an 'AP Coder' shortcut on your desktop?")
     write_user_settings(desktop_shortcut=bool(wanted))
     if not wanted:
-        c.ok(f"no desktop shortcut; start AP Coder with {ROOT / 'start.bat'}")
+        c.ok(f"no desktop shortcut; start AP Coder with {ROOT / 'APProcessor.bat'}")
         return
-    target = str(ROOT / "start.bat").replace("'", "''")
-    workdir = str(ROOT).replace("'", "''")
-    script = (
-        "$d=[Environment]::GetFolderPath('Desktop');"
-        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $d 'AP Coder.lnk'));"
-        f"$s.TargetPath='{target}';$s.WorkingDirectory='{workdir}';"
-        "$s.Description='AP Coder: invoice review dashboard';$s.Save()"
-    )
-    result = quiet(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
-    if result.returncode == 0:
+    folder = launch.desktop()
+    if folder is not None and launch.write_shortcut(folder):
         c.ok("desktop shortcut 'AP Coder' (updated in place, never duplicated)")
     else:
-        c.warn(f"Could not create the desktop shortcut; start AP Coder with {ROOT / 'start.bat'}")
+        c.warn(f"Could not create the desktop shortcut; start AP Coder with {ROOT / 'APProcessor.bat'}")
+
+
+def fetch_models(c: Console) -> None:
+    c.step("OCR models (for scanned invoices)")
+    launch.ensure_models(first=True)
+    c.ok("in place (fetched only when missing)")
 
 
 def run_checks(c: Console, args: argparse.Namespace, env: Path) -> None:
@@ -414,7 +360,7 @@ def run_checks(c: Console, args: argparse.Namespace, env: Path) -> None:
     if args.skip_tests:
         c.ok("tests skipped (--skip-tests)")
     else:
-        result = quiet([str(VENV_PY), "-m", "pytest", "-q", "-p", "no:cacheprovider"])
+        result = quiet([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"])
         summary = (result.stdout.strip().splitlines() or ["(no output)"])[-1]
         if result.returncode == 0:
             c.ok(f"self-test: {summary}")
@@ -422,16 +368,17 @@ def run_checks(c: Console, args: argparse.Namespace, env: Path) -> None:
             c.warn(f"self-test: {summary}")
             c.info("Please paste the full output of 'python -m pytest -q' (in terminal.bat) into the chat.")
     print()
-    run([str(VENV_PY), "-m", "ap_coder", "doctor"])
+    run([sys.executable, "-m", "ap_coder", "doctor"])
     values = read_env(env)
     if all(values.get(k) for k in REQUIRED) and c.yes(
         "Test the connection to Azure now? (one tiny request to each service, a fraction of a cent)", default=False
     ):
         print()
-        run([str(VENV_PY), "-m", "ap_coder", "doctor", "--online"])
+        run([sys.executable, "-m", "ap_coder", "doctor", "--online"])
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, venv: str | None = None) -> int:
+    """The installer's steps, inside ``.venv`` (``launch.py --installer`` makes it first; ``venv`` says how)."""
     parser = argparse.ArgumentParser(description="Install or update AP Coder (safe to run again).")
     parser.add_argument("--yes", action="store_true", help="no questions: keep current answers / defaults")
     parser.add_argument("--no-update", action="store_true", help="don't check GitHub for a newer version")
@@ -454,19 +401,24 @@ def main(argv: list[str] | None = None) -> int:
         handed_over = update_code(c, args)
         if handed_over is not None:
             return handed_over
-        ensure_venv(c)
-        install_packages(c, args)
+        ensure_venv_and_packages(c, args, venv)
         data = choose_data_dir(c, args)
         env = configure_azure(c, data)
         create_shortcut(c, args)
+        fetch_models(c)
         run_checks(c, args, env)
     except KeyboardInterrupt:
         print("\nStopped. Run the installer again any time; it picks up where it left off.")
         return 130
 
     start = "the 'AP Coder' desktop shortcut" if WINDOWS and read_user_settings().get("desktop_shortcut") else (
-        "start.bat in this folder" if WINDOWS else "./start.sh"
+        "APProcessor.bat in this folder" if WINDOWS else "APProcessor.command in this folder"
     )  # fmt: skip
+    state = launch.load_state()
+    packages = launch.ensure_packages(state, extras=EXTRAS)[:2]  # all in place by now: nothing installed
+    state.update(setup_done=True, fingerprint=launch.fingerprint())
+    launch.save_state(state)
+    launch.print_summary(launch.readiness(packages))
     print("\nAll set.")
     print(f"  Start AP Coder:   {start}")
     print(f"  Your data:        {data}")
@@ -474,13 +426,9 @@ def main(argv: list[str] | None = None) -> int:
     print("  Update later:     run the installer again (nothing is duplicated)")
     interactive = sys.stdin.isatty()  # never start a server when no one is there to stop it
     if not args.no_start and not args.yes and interactive and c.yes("Start AP Coder now?"):
-        print("Starting... keep this window open while you use AP Coder; close it (or press Ctrl+C) to stop.")
-        try:
-            return run([str(VENV_PY), "-m", "ap_coder", "dashboard"]).returncode
-        except KeyboardInterrupt:
-            return 0
+        return launch.start_dashboard([], state)
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == "__main__":  # the same as install.bat / install.sh: .venv first, then the steps above
+    sys.exit(launch.main(["--installer", *sys.argv[1:]]))
