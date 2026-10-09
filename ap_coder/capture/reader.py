@@ -11,6 +11,7 @@ amounts). Totals are chosen together: the subtotal, taxes and total that add up 
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 import unicodedata
 from dataclasses import dataclass
 from itertools import product
@@ -19,6 +20,7 @@ from .normalize import (
     find_currency,
     find_gst_numbers,
     find_qst_numbers,
+    infer_day_first,
     looks_like_money,
     norm_id,
     parse_dates,
@@ -34,32 +36,39 @@ def plain(text: str) -> str:
 # ---------------------------------------------------------------- labels
 
 # (regex on plain lowercase text, strength). Regexes match at the label's start.
+def _A(letters: str) -> str:
+    """An abbreviation printed with or without dots: "gst" matches GST, G.S.T., G. S. T."""
+    return r"\.?\s?".join(letters) + r"\b\.?"
+
+
 _NO = r"(?:no\b\.?|nos?\.|n\s?°|nº|n o\b|#|number|num\b\.?|numero)"
 LABELS: dict[str, list[tuple[str, float]]] = {
     "invoice_number": [
         (rf"invoice\s*{_NO}", 1.0), (r"invoice\s*id\b", 0.95), (rf"inv\.?\s*{_NO}", 0.95),
         (rf"facture\s*{_NO}", 1.0), (r"(?:no|n\s?°|nº|numero)\.?\s*(?:de\s*)?(?:la\s*)?facture", 1.0),
         (rf"bill\s*{_NO}", 0.9), (rf"document\s*{_NO}", 0.85), (r"invoice\s*ref(?:erence)?\b", 0.85),
-        (rf"credit\s*(?:note|memo)\s*{_NO}", 0.95), (rf"note\s*de\s*credit\s*{_NO}", 0.95),
+(rf"credit\s*(?:note|memo)?\s*{_NO}", 0.95), (r"tax\s*invoice\b", 0.6), (r"inv\b\.?(?!\s*(?:date|total|amount))", 0.55), (rf"note\s*de\s*credit\s*{_NO}", 0.95),
         (rf"statement\s*{_NO}", 0.6), (r"invoice\s*:", 0.7), (r"facture\s*:", 0.7), (r"invoice\b(?!\s*(?:date|total|amount|to\b|period))", 0.45),
-        (r"facture\b(?!\s*(?:a|date|de\s*la|totale))", 0.4), (rf"ref(?:erence)?\.?\s*{_NO}?", 0.3),
+        (r"facture\b(?!\s*(?:a|date|de\s*la|totale))", 0.4), (rf"ref(?:erence)?\.?\s*{_NO}?", 0.3), (r"(?:no\b\.?|n\s?°|nº|#)(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35),
     ],
     "po_number": [
-        (r"p\.?\s?o\.?\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
-        (r"(?:your|customer|client)\s*(?:order|p\.?\s?o\.?)(?:\s*" + _NO + ")?", 0.95),
+        (r"p\.?\s?o\.?(?![-\d])\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
+        (r"(?:your|customer|cust\.?|client)\s*(?:order|p\.?\s?o\.?)(?:\s*" + _NO + ")?", 0.95),
         (r"(?:votre\s*)?bon\s*de\s*commande(?:\s*" + _NO + ")?", 1.0), (r"(?:no|n\s?°|nº)\s*(?:de\s*)?(?:bon\s*de\s*)?commande", 0.95),
-        (r"commande\s*(?:client|no|n\s?°)", 0.8), (r"order\s*(?:no\b\.?|#|number|ref)", 0.5),
+        (r"commande\s*(?:client|no|n\s?°)", 0.8),
     ],
     "invoice_date": [
         (r"invoice\s*date", 1.0), (r"date\s*(?:of\s*)?(?:issue|invoice)", 1.0), (r"issue\s*date", 0.95),
         (r"billing\s*date", 0.95), (r"bill\s*date", 0.9), (r"date\s*de\s*(?:la\s*)?factur(?:e|ation)", 1.0),
         (r"date\s*d'?\s*emission", 0.95), (r"statement\s*date", 0.8), (r"date\s*de\s*la\s*note", 0.8),
+        (r"inv\.?\s*date", 0.95), (r"date\s*(?:issued|of\s*issue)", 0.95), (r"issued(?:\s*on)?\b", 0.85), (r"issue\s*date", 0.95),
         (r"credit\s*(?:note|memo)\s*date", 0.95), (r"credit\s*date", 0.95), (r"date\s*du\s*credit", 0.9), (r"dated?\b(?!\s*(?:due|d'?echeance|de\s*commande|d'?expedition|de\s*livraison|du\s*service))", 0.55),
     ],
     "due_date": [
         (r"due\s*date", 1.0), (r"date\s*due", 0.95), (r"payment\s*due(?:\s*date)?", 0.9), (r"pay(?:able)?\s*by", 0.8),
         (r"(?:date\s*d'?\s*)?echeance", 1.0), (r"date\s*limite(?:\s*de\s*paiement)?", 0.9), (r"due\s*on\b", 0.8),
-        (r"a\s*payer\s*avant\s*le", 0.85), (r"payer\s*avant", 0.8),
+        (r"a\s*payer\s*avant\s*le", 0.85), (r"payer\s*avant", 0.8), (r"please\s*pay\s*by", 0.95),
+        (r"payable\s*avant(?:\s*le)?", 0.9), (r"due\b(?!\s*(?:to|from|upon|on\s*receipt))", 0.7),
     ],
     "subtotal": [
         (r"sub\s*-?\s*total", 1.0), (r"sous\s*-?\s*total", 1.0), (r"net\s*amount", 0.9), (r"montant\s*net", 0.9),
@@ -68,11 +77,11 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (r"total\s*partiel", 0.9), (r"merchandise\s*total", 0.8), (r"total\s*services", 0.5),
         (r"total\s*(?:of\s*)?(?:fees|charges|services|goods|merchandise|labou?r|materials)\b", 0.65),
     ],
-    "hst_amount": [(r"(?:[a-z]{2}\s+)?(?:gst\s*/\s*)?hst\b", 1.0), (r"(?:tps\s*/\s*)?tvh\b", 1.0), (r"harmoni[sz]ed\s*sales\s*tax", 1.0)],
-    "gst_amount": [(r"(?:federal\s+)?gst\b(?!\s*/\s*hst)", 1.0), (r"tps\b(?!\s*/\s*tvh)", 1.0), (r"goods\s*and\s*services\s*tax", 1.0)],
-    "pst_amount": [(r"(?:[a-z]{2}\s+)?pst\b", 1.0), (r"rst\b", 1.0), (r"tvp\b", 1.0), (r"provincial\s*sales\s*tax", 1.0),
-                   (r"(?:bc|sk|mb)\s*(?:pst|rst)", 1.0), (r"retail\s*sales\s*tax", 1.0)],
-    "qst_amount": [(r"(?:qc\s+)?qst\b", 1.0), (r"tvq\b", 1.0), (r"quebec\s*sales\s*tax", 1.0)],
+    "hst_amount": [(rf"(?:[a-z]{{2}}\s+)?(?:{_A('gst')}\s*/\s*)?{_A('hst')}", 1.0), (rf"(?:{_A('tps')}\s*/\s*)?{_A('tvh')}", 1.0), (r"harmoni[sz]ed\s*sales\s*tax", 1.0)],
+    "gst_amount": [(rf"(?:federal\s+)?{_A('gst')}(?!\s*/\s*{_A('hst')})", 1.0), (rf"{_A('tps')}(?!\s*/\s*{_A('tvh')})", 1.0), (r"goods\s*and\s*services\s*tax", 1.0)],
+    "pst_amount": [(rf"(?:[a-z]{{2}}\s+)?{_A('pst')}", 1.0), (rf"{_A('rst')}", 1.0), (rf"{_A('tvp')}", 1.0), (r"provincial\s*sales\s*tax", 1.0),
+                   (r"retail\s*sales\s*tax", 1.0)],
+    "qst_amount": [(rf"(?:qc\s+)?{_A('qst')}", 1.0), (rf"{_A('tvq')}", 1.0), (r"quebec\s*sales\s*tax", 1.0)],
     "tax_total": [
         (r"total\s*(?:sales\s*)?tax(?:es)?\b", 1.0), (r"tax(?:es)?\s*total", 0.95), (r"total\s*des\s*taxes", 1.0),
         (r"taxes\b(?!\s*incl)", 0.6), (r"(?:[a-z]{2,3}\s+)?(?:state\s+|county\s+|city\s+|local\s+)?sales\s*tax\b", 0.85), (r"tax\s*(?:amount)?\s*$", 0.55), (r"tax\s*:", 0.6),
@@ -101,7 +110,7 @@ DISTRACTORS: dict[str, list[str]] = {
                        r"account\s*(?:no|#|number)", r"no\s*de\s*client", r"no\s*de\s*compte", r"client\s*(?:no|#)",
                        r"quote", r"soumission", r"order", r"commande", r"p\.?o\.?\b", r"phone", r"tel", r"fax",
                        r"date"],
-    "po_number": [r"p\.?\s?o\.?\s*box", r"c\.?\s?p\.?\s*\d", r"case\s*postale", r"sales\s*order", r"order\s*date",
+    "po_number": [r"p\.?\s?o\.?\s*box", r"our\s*(?:order|ref)", r"notre\s*(?:commande|reference)", r"packing\s*slip", r"bon\s*de\s*livraison", r"c\.?\s?p\.?\s*\d", r"case\s*postale", r"sales\s*order", r"order\s*date",
                   r"date\s*de\s*commande"],
     "grand_total": [r"sub\s*-?\s*total", r"sous\s*-?\s*total", r"total\s*(?:tax|taxes|des\s*taxes)", r"previous",
                     r"solde\s*(?:precedent|anterieur)", r"payments?\s*(?:received|recu)", r"paiements?\s*recus?",
@@ -148,15 +157,36 @@ def _label_hits(line: Line) -> list[_LabelHit]:
                 # A label must end on a word boundary (avoids "Totalement", "Dated").
                 if m.end() < len(text) and text[m.end() - 1].isalnum() and text[m.end()].isalnum():
                     continue
-                label_text = text[st : m.end()]
+                end = m.end()
+                # "Invoice No. / No facture: 123": the value follows the second (translated) label.
+                for _ in range(2):
+                    sep = re.match(r"\s*/\s*", text[end:])
+                    if not sep:
+                        break
+                    nxt = next((m2 for rx2, _s in pats if (m2 := rx2.match(text, end + sep.end())) and m2.end() > end + sep.end()), None)
+                    if nxt is None:
+                        break
+                    end = nxt.end()
+                label_text = text[st:end]
                 if _distracted(field, text[st:]):
                     continue
-                hits.append(_LabelHit(field, line, strength, m.end(), label_text))
+                hit_field = _combined_tax_field(text) if field == "hst_amount" and "/" in label_text else field
+                hits.append(_LabelHit(hit_field, line, strength, end, label_text))
                 break
             else:
                 continue
             break
     return hits
+
+
+def _combined_tax_field(text: str) -> str:
+    """A "GST/HST" label holds GST at 5% and HST at 13-15%; the printed rate tells which."""
+    m = _PERCENT.search(text)
+    if m:
+        rate = float(m.group(0).rstrip("% ").replace(",", "."))
+        if abs(rate - 5.0) < 0.01:
+            return "gst_amount"
+    return "hst_amount"
 
 
 def _distracted(field: str, text_from_label: str) -> bool:
@@ -223,6 +253,10 @@ def _looks_like_phone_or_postal(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d", value))
 
 
+# The document's numeric date order while it is read (None: 03/04/2026 stays ambiguous).
+_DAY_FIRST: ContextVar[bool | None] = ContextVar("day_first", default=None)
+
+
 def _value_reading(field: str, line: Line, start: int, base: float, method: str) -> Reading | None:
     """Read ``field`` from ``line.text[start:]``."""
     text = line.text
@@ -239,7 +273,7 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         words = _span_words(line, a, b)
         return Reading(field, value, value, _boxes(words), base * _min_conf(words), method)
     if field in ("invoice_date", "due_date"):
-        found = parse_dates(rest)
+        found = parse_dates(rest, prefer_day_first=_DAY_FIRST.get())
         if not found:
             return None
         d, a, b, ambiguous = found[0]
@@ -253,7 +287,7 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         cleaned = _PERCENT.sub(lambda m: " " * len(m.group(0)), rest)
         if field.endswith("_amount") or field == "tax_total":
             # "GST/HST Reg. No. 123456789RT0001" is a registration number, not an amount.
-            if _REG_WORDS.search(plain(rest[:12])) and not looks_like_money(rest):
+            if (_REG_WORDS.search(plain(rest[:12])) and not looks_like_money(rest)) or find_gst_numbers(rest) or find_qst_numbers(rest):
                 return None
         amounts = _amounts_in(cleaned)
         if not amounts:
@@ -290,9 +324,9 @@ def _amounts_in(text: str) -> list[tuple[float, int, int]]:
 
 
 _TERMS = [
+    (re.compile(r"(\d{1,2})\s*%\s*(\d{1,2})\s*,?\s*net\s*(\d{1,3})", re.I), "{0}% {1} Net {2}"),
     (re.compile(r"\bnet\s*(\d{1,3})\b", re.I), "Net {0}"),
     (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
-    (re.compile(r"(\d{1,2})\s*%\s*(\d{1,2})\s*,?\s*net\s*(\d{1,3})", re.I), "{0}% {1} Net {2}"),
     (re.compile(r"\b(\d{1,3})\s*(?:days|jours|j)\b", re.I), "Net {0}"),
     (re.compile(r"\bdue\s*(?:up)?on\s*receipt\b|payable\s*(?:a|à)\s*(?:la\s*)?r[ée]ception|on\s*receipt", re.I), "Due on receipt"),
 ]  # fmt: skip
@@ -443,6 +477,25 @@ _REMIT = re.compile(r"(?:make\s*(?:all\s*)?cheques?\s*payable\s*to|payable\s*(?:
                     re.I)  # fmt: skip
 
 
+def _without_logo_initials(words: list[Word]) -> list[Word]:
+    """Drop a logo's initials printed on the name's line: "BT Bluewater Telecom" -> "Bluewater Telecom"."""
+
+    def initials_of(ws: list[Word], n: int) -> str:
+        caps = [w.text[0] for w in ws if w.text[:1].isalpha()][:n]
+        return "".join(caps).upper()
+
+    out = list(words)
+    for i in (0, -1):
+        if len(out) < 3:
+            break
+        tok = out[i].text.strip(".")
+        if 2 <= len(tok) <= 3 and tok.isalpha() and tok.isupper():
+            rest = out[1:] if i == 0 else out[:-1]
+            if initials_of(rest, len(tok)) == tok:
+                out = rest
+    return out
+
+
 def _vendor_names(layout: DocLayout) -> list[Reading]:
     if not layout.pages:
         return []
@@ -475,9 +528,11 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
         score += 0.12 * (1 - min(line.box.cy / 0.33, 1))
         if text.isupper() and len(text.split()) == 1:
             score -= 0.1
-        out.append(
-            Reading("vendor_name", text, text, [line.box], min(score, 0.95) * _min_conf(line.words), "top-of-page")
-        )
+        words = _without_logo_initials(line.words)
+        if len(words) != len(line.words):
+            text = " ".join(w.text for w in words)
+        out.append(Reading("vendor_name", text, text, [union_all([w.box for w in words])] if words else [line.box],
+                           min(score, 0.95) * _min_conf(line.words), "top-of-page"))  # fmt: skip
     out.sort(key=lambda r: -r.score)
     return out
 
@@ -492,7 +547,7 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
     top = {f: sorted(cands.get(f, []), key=lambda r: -r.score)[:4] for f in AMOUNT_FIELDS}
     subs = top["subtotal"] or [None]
     totals = top["grand_total"] or [None]
-    tax_options = {f: (top[f] or [None]) for f in _TAX_FIELDS}
+    tax_options = {f: [*top[f], None] for f in _TAX_FIELDS}
     best = None
     for sub, total in product(subs, totals):
         for taxes in product(*tax_options.values()):
@@ -605,6 +660,18 @@ def read_line_items(layout: DocLayout) -> list[LineReading]:
 
 def read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     """Candidate readings for every header field, best first."""
+    text = layout.text()
+    order = infer_day_first(text)
+    if order is None and find_currency(text) == "USD":
+        order = False  # US invoices print month first
+    token = _DAY_FIRST.set(order)
+    try:
+        return _read_fields(layout)
+    finally:
+        _DAY_FIRST.reset(token)
+
+
+def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     lines = list(layout.lines())
     by_page: dict[int, list[Line]] = {}
     for ln in lines:

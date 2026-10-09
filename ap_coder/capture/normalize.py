@@ -167,6 +167,24 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
     return sorted(found, key=lambda x: x[1])
 
 
+def infer_day_first(text: str) -> bool | None:
+    """The document's numeric date order, from its unambiguous dates: 25/03/2026 means day first,
+    03/25/2026 month first. None when nothing tells (or the document mixes both)."""
+    s = _plain(unicodedata.normalize("NFKC", text))
+    day = month = 0
+    for m in _NUMERIC.finditer(s):
+        a, b = int(m.group(1)), int(m.group(2))
+        if a > 12 and 1 <= b <= 12:
+            day += 1
+        elif b > 12 and 1 <= a <= 12:
+            month += 1
+    if day and not month:
+        return True
+    if month and not day:
+        return False
+    return None
+
+
 def parse_date(text: str, *, prefer_day_first: bool | None = None) -> str | None:
     """The first date in ``text`` as YYYY-MM-DD (None if none, or only an unresolved ambiguous one)."""
     for d, _, _, ambiguous in parse_dates(text, prefer_day_first=prefer_day_first):
@@ -205,7 +223,7 @@ def luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
-_BN = re.compile(r"(?<!\d)(\d{3}\s?\d{3}\s?\d{3})\s*(?:-|\s)?\s*(RT|R\s?T)\s*(?:-|\s)?\s*(\d{4})(?!\d)", re.I)
+_BN = re.compile(r"(?<![\d-])(\d(?:[ -]?\d){8})\s*(?:-|\s)?\s*(RT|R\s?T)\s*(?:-|\s)?\s*(\d{4})(?!\d)", re.I)
 _BN9 = re.compile(r"(?<!\d)(\d{3}\s?\d{3}\s?\d{3})(?!\d)")
 _QST = re.compile(r"(?<!\d)(\d{10})\s*(?:-|\s)?\s*(TQ|T\s?Q)\s*(?:-|\s)?\s*(\d{4})(?!\d)", re.I)
 
@@ -215,7 +233,7 @@ def find_gst_numbers(text: str) -> list[tuple[str, int, int, bool]]:
     s = unicodedata.normalize("NFKC", text)
     out = []
     for m in _BN.finditer(s):
-        digits = re.sub(r"\s", "", m.group(1))
+        digits = re.sub(r"[\s-]", "", m.group(1))
         out.append((f"{digits}RT{m.group(3)}", m.start(), m.end(), luhn_ok(digits)))
     return out
 
