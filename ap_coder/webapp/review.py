@@ -22,7 +22,7 @@ from ap_coder.memory import ACCEPTED, pair_lines, vendor_key
 from ap_coder.pipeline import finalise_coding
 from ap_coder.po import match_invoice, po_label
 from ap_coder.reference_data import UNASSIGNED, ReferenceData
-from ap_coder.review import coding_from_inputs, split_line
+from ap_coder.review import coding_from_inputs, is_blank, split_line
 from ap_coder.safe import md
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
@@ -1324,6 +1324,21 @@ def _differs_from_stored(coding: InvoiceCoding, stored: dict[str, Any]) -> bool:
     }
 
 
+def numbered_lines(lines: pd.DataFrame) -> pd.DataFrame:
+    """A copy of the line grid with the lines just added numbered as the checks number them (after the last
+    line, in order), so an action on "line 6" finds the row the reviewer added."""
+    out = lines.copy()
+    numbers = pd.to_numeric(out["line_number"], errors="coerce")
+    next_no = int(numbers.max()) + 1 if numbers.notna().any() else 1
+    for index, row in out.iterrows():
+        if pd.notna(numbers[index]) or all(is_blank(row.get(k)) for k in ("description", "amount")):
+            continue
+        out.at[index, "line_number"] = next_no
+        next_no += 1
+    out["line_number"] = pd.to_numeric(out["line_number"], errors="coerce")
+    return out
+
+
 def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines: pd.DataFrame, key: str) -> None:
     """How the invoice lines compare with the purchase order it quotes (2- or 3-way match)."""
     if not store.has_purchase_orders():
@@ -1383,7 +1398,7 @@ def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines:
             key=f"{key}_po_coding",
             help="Sets the GL account and cost center of these lines to the ones on the PO",
         ):  # fmt: skip
-            updated = edited_lines.copy()
+            updated = numbered_lines(edited_lines)
             for m in differs:
                 rows_at = updated["line_number"] == m.invoice_line
                 if m.po_gl:
@@ -1419,7 +1434,7 @@ def _suggestion_card(
                 label = f"{s.gl_code} · {gl_name(reference, s.gl_code) or s.gl_code}"
                 if row.button(label, key=f"{key}_sugg_{li.line_number}_{s.gl_code}", icon=":material/add_task:",
                               help="; ".join(s.reasons).capitalize()):  # fmt: skip
-                    updated = edited_lines.copy()
+                    updated = numbered_lines(edited_lines)
                     at = updated["line_number"] == li.line_number
                     updated.loc[at, "predicted_gl_code"] = s.gl_code
                     blank_cc = li.predicted_cost_center in ("", UNASSIGNED)

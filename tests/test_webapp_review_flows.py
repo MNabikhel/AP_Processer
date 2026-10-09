@@ -2,6 +2,7 @@
 
 import json
 
+import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from ap_coder.store import APPROVED, REVIEW, Store, load_sample_setup
@@ -45,3 +46,23 @@ def test_bulk_approve_does_not_discard_a_correction_made_on_screen(db):
     # Approved "exactly as coded" would silently drop the correction still on its review screen: left for the
     # reviewer instead (or approved with it), never approved without it.
     assert inv["status"] == REVIEW or inv["final_output"]["invoice_number"] == "NW-2026-0912-A"
+
+
+def test_a_suggested_gl_codes_a_line_just_added(db):
+    """A line the reviewer adds has no number in the grid yet: the suggestion's button must still code it."""
+    store = Store(db)
+    load_sample_setup(store)
+    invoice_id = _clean(store)
+    lines = pd.DataFrame(_gt()["line_items"])
+    added = {c: None for c in lines.columns} | {"description": "Printer toner and copy paper", "amount": 0.0}
+    key = f"inv{invoice_id}"
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = invoice_id
+    at.session_state[f"_draft_{key}_lines"] = pd.concat([lines, pd.DataFrame([added])], ignore_index=True)
+    _ok(at.run())
+    number = len(lines) + 1  # the number the new line gets
+    button = next(b for b in at.button if (b.key or "").startswith(f"{key}_sugg_{number}_"))
+    gl = button.key.rsplit("_", 1)[1]
+    _ok(button.click().run())
+    assert not [b for b in at.button if (b.key or "").startswith(f"{key}_sugg_{number}_")]  # coded: no suggestion
+    assert gl in set(at.session_state[f"_draft_{key}_lines"]["predicted_gl_code"])
