@@ -91,6 +91,12 @@ def run_checks(
         status = PASS if v else (FAIL if settings.engine.vision else WARN)
         add(f"package {pkg}", status, v or "not installed (needed only for --vision)")
 
+    # --- Offline readiness (OCR models, data folder, local-only dashboard) ----------------------------
+    from .offline import offline_checks
+
+    for area, status, detail in offline_checks():
+        add(area, status, detail)
+
     # --- Configuration ----------------------------------------------------------
     di, oai, eng = settings.document_intelligence, settings.openai, settings.engine
     add(

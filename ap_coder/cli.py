@@ -128,6 +128,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("dashboard", help="Open the review dashboard in your browser (runs locally)")
     p.add_argument("--port", type=int, default=None, help="Default: 8501, or the next free port")
+    p.add_argument(
+        "--address", default=None,
+        help="Address to listen on. Default 127.0.0.1 (this computer only), or AP_DASHBOARD_ADDRESS; "
+        "0.0.0.0 lets others on the network open it",
+    )  # fmt: skip
 
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) Azure connectivity")
     p.add_argument("--online", action="store_true", help="Call both Azure services (costs about one invoice)")
@@ -204,15 +209,19 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     env = {**os.environ, "AP_DB_PATH": str(Path(args.db).resolve())}
     if args.env_file:
         env["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
+    from .offline import dashboard_address, is_loopback, streamlit_flags
+
     port = args.port or free_port(8501)
+    address = args.address or dashboard_address()
+    # Local only by default (127.0.0.1), no usage statistics, fonts and icons served from the package.
     cmd = [
-        sys.executable, "-m", "streamlit", "run", str(app),
-        "--server.port", str(port), "--server.address", "localhost",
-        "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
+        sys.executable, "-m", "streamlit", "run", str(app), *streamlit_flags(port, address),
         "--theme.base", str(Path(__file__).resolve().parent / "assets" / "theme.toml"),
-        "--server.enableStaticServing", "true", "--server.showEmailPrompt", "false",
     ]  # fmt: skip
-    print(f"Dashboard: http://localhost:{port}  (it opens in your browser; Ctrl+C here to stop)", file=sys.stderr)
+    host = address if address not in ("0.0.0.0", "::") else "localhost"
+    print(f"Dashboard: http://{host}:{port}  (it opens in your browser; Ctrl+C here to stop)", file=sys.stderr)
+    if not is_loopback(address):
+        print(f"Listening on {address}: other computers on the network can open the dashboard.", file=sys.stderr)
     try:
         return subprocess.call(cmd, env=env)
     except KeyboardInterrupt:
