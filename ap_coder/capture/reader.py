@@ -599,7 +599,10 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
 
 _CONTACT = re.compile(
     r"@|www|https?:|\.(?:com|ca|net|org|qc\.ca)\b|^(?:bureau|suite|unit|local|apt|room|piece)\s*\d|"
-    r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph|p\.?\s?o\.?\s*date|podate)\b"
+    r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph|p\.?\s?o\.?\s*date|podate|payment|echeance|"
+    r"modalites|reference|ref|c/o|attn|attention)\b|"
+    r":\s*$|^\d+\s*,?\s+(?:[a-z]+\.?\s+)*(?:rue|boul|blvd|ave|av|st|rd|road|street|chemin|ch|route|hwy|dr|way|cres|pkwy)\b|"
+    r"\s-\s(?:jan|feb|fev|mar|apr|avr|may|mai|jun|juin|jul|juil|aug|aou|sep|oct|nov|dec)"  # "Consulting services - September": a line item
 )
 _POSTAL_CODE = re.compile(r"[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d|,\s*(?:ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)(?![a-z])")
 _TITLE_PREFIX = re.compile(
