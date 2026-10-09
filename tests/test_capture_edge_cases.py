@@ -56,3 +56,22 @@ def test_an_amount_the_coding_has_differently_is_not_verified(tmp_path):
     capture = analyze(pdf, ocr=False, ai_values=ai_values(coding), template=template, today=TODAY)
     assert capture.fields["subtotal"].status != VERIFIED
     assert not should_auto_approve(AUTONOMOUS, capture, True)[0]
+
+
+def test_credit_marks_and_separator_dashes_around_amounts(tmp_path):
+    """A "Cr" after an amount is a credit however it is cased; a dash between the amount and more words on
+    the line ("$1,050.00 - Payable on receipt") is a separator, not a trailing minus."""
+    from ap_coder.capture.normalize import find_amounts, parse_amount
+
+    assert parse_amount("1,050.00 Cr") == -1050.0
+    assert parse_amount("1,050.00 CR") == -1050.0
+    assert parse_amount("1,050.00-") == -1050.0
+    assert parse_amount("$1,050.00 - Payable on receipt") == 1050.0
+    assert [v for v, _, _ in find_amounts("Period 2026-10 total 45.00")][-1] == 45.0
+    assert -2026.0 not in [v for v, _, _ in find_amounts("Period 2026-10 total 45.00")]
+    pdf = _pdf(tmp_path, [(60, 60, "Acme Supply Ltd."), (380, 500, "Subtotal"), (500, 500, "1,000.00"),
+                          (380, 515, "GST 5%"), (500, 515, "50.00"),
+                          (380, 530, "Total Due: $1,050.00 - Payable on receipt")])  # fmt: skip
+    capture = analyze(pdf, ocr=False, today=TODAY)
+    assert capture.fields["grand_total"].value == 1050.0
+    assert all(c["ok"] for c in capture.checks if c["code"] == "TOTALS_ADD_UP")
