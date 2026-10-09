@@ -34,6 +34,7 @@ from .types import (
 # How far each reader is trusted on its own (before its per-reading score).
 RELIABILITY = {"rules": 0.85, "template": 0.92, "di": 0.85, "ai": 0.8, "ocr": 0.8}
 VERIFIED_AT = 0.985
+SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
 # Checks whose failure has innocent explanations (exempt lines, shipping not taxed, line items the
 # reader could not separate): they lower confidence but do not force a field to "check".
 SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE"}
@@ -75,10 +76,13 @@ class _Group:
 
     def strength(self) -> float:
         p_wrong = 1.0
-        for source in {s for s, _ in self.readings}:
+        sources = {s for s, _ in self.readings}
+        for source in sources:
             best = max(r.score for s, r in self.readings if s == source)
             p_wrong *= 1.0 - RELIABILITY.get(source, 0.7) * max(0.0, min(best, 1.0))
-        return 1.0 - p_wrong
+        # Readers that are wrong rarely produce the *same* wrong value: each extra agreeing reader
+        # divides the chance of a shared misread further.
+        return 1.0 - p_wrong * SAME_MISREAD ** (len(sources) - 1)
 
     def best(self) -> Reading:
         return max((r for _, r in self.readings), key=lambda r: (bool(r.boxes), r.score))
