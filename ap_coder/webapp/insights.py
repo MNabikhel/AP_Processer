@@ -88,15 +88,15 @@ def _operations_card(store) -> None:
     )
     if ops["waiting"]:
         with card("operations"):
-            st.markdown("#### :material/hourglass_top: Waiting by age")
+            st.markdown("#### Waiting by age")
             biggest = max(ops["ageing"].values()) or 1
             st.html(
                 "<div style='display:flex;gap:1rem;flex-wrap:wrap'>"
                 + "".join(
                     f"<div style='flex:1;min-width:120px'><div class='apc-muted' style='font-size:.8rem'>{esc(label)}"
-                    f"</div><div style='height:8px;background:#eef1f6;border-radius:4px;margin:.25rem 0'><div "
-                    f"style='height:8px;width:{n / biggest:.0%};background:{_age_color(label)};"
-                    f"border-radius:4px'></div></div><b>{n}</b></div>"
+                    f"</div><div style='height:4px;background:#eef0f3;border-radius:2px;margin:.3rem 0'><div "
+                    f"style='height:4px;width:{n / biggest:.0%};background:{_age_color(label)};"
+                    f"border-radius:2px'></div></div><b>{n}</b></div>"
                     for label, n in ops["ageing"].items()
                 )
                 + "</div>"
@@ -164,7 +164,7 @@ def page_insights() -> None:
     p = s["projection"]
     left, right = st.columns([3, 2], gap="medium")
     with left, card("projection"):
-        st.markdown(f"#### :material/trending_up: At {a.monthly_volume:,} invoices a month")
+        st.markdown(f"#### At {a.monthly_volume:,} invoices a month")
         if p:
             net = p["value_saved"] - p["azure_cost"]
             rows = [
@@ -188,15 +188,16 @@ def page_insights() -> None:
             help="Totals only: no vendor names, amounts of individual invoices or file names.",
         )
     with right, card("top_issues"):
-        st.markdown("#### :material/report: What the checks catch")
+        st.markdown("#### What the checks catch")
         if s["top_issues"]:
             biggest = s["top_issues"][0][1]
             st.html(
                 "".join(
                     f"<div style='margin:.35rem 0'><div style='display:flex;justify-content:space-between;"
                     f"font-size:.85rem'><span title='{esc(code)}'>{esc(_check_title(code))}</span><b>{n}</b></div>"
-                    f"<div style='height:6px;background:#eef1f6;border-radius:4px'><div style='height:6px;"
-                    f"width:{n / biggest:.0%};background:{SERIES_BLUE};border-radius:4px'></div></div></div>"
+                    f"<div style='height:4px;background:#eef0f3;border-radius:2px;margin-top:2px'>"
+                    f"<div style='height:4px;"
+                    f"width:{n / biggest:.0%};background:{SERIES_BLUE};border-radius:2px'></div></div></div>"
                     for code, n in s["top_issues"]
                 )
             )
@@ -210,7 +211,7 @@ def page_insights() -> None:
 
     if s["weekly"] and s["approved"]:  # no approvals yet: no empty axis
         with card("weekly"):
-            st.markdown("#### :material/bar_chart: Approvals by week")
+            st.markdown("#### Approvals by week")
             data = pd.DataFrame(s["weekly"]).melt(
                 id_vars="week", value_vars=["clean", "changed"], var_name="kind", value_name="invoices"
             )

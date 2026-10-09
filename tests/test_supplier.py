@@ -611,8 +611,7 @@ def _html(at):
 
 def test_learning_page_supplier_tab_empty(db):
     at = _ok(_learning_page().run())
-    assert [t.label for t in at.tabs] == [":material/auto_awesome: Coding accuracy",
-                                          ":material/storefront: Supplier learning"]  # fmt: skip
+    assert [t.label for t in at.tabs] == ["Coding accuracy", "Supplier learning"]
     assert "No supplier learned yet" in _html(at)
 
 

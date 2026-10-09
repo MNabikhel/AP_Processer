@@ -34,8 +34,8 @@ def _bar(fraction: float) -> str:
     width = max(0.0, min(fraction, 1.0))
     color = ui.ERR if fraction > 1.02 else (ui.OK if fraction >= 0.98 else ui.BRAND)
     return (
-        "<div style='min-width:56px;height:6px;background:#eef1f6;border-radius:4px'>"
-        f"<div style='height:6px;width:{width:.0%};background:{color};border-radius:4px'></div></div>"
+        "<div style='min-width:56px;height:4px;background:#eef0f3;border-radius:2px'>"
+        f"<div style='height:4px;width:{width:.0%};background:{color};border-radius:2px'></div></div>"
     )
 
 

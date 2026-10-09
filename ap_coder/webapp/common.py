@@ -301,7 +301,7 @@ def demo_card(store: Store, where: str) -> None:
         return
     demo_count = store.demo_count()
     with card(f"demo_{where}"):
-        st.markdown("#### :material/science: Demo invoices")
+        st.markdown("#### Demo invoices")
         if not demo_count:
             st.caption(
                 "Look around first: ten sample invoices from across Canada (including a US vendor "

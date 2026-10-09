@@ -40,7 +40,7 @@ def _cell(value: Any) -> str:
 
 def _general(store: Store, js: jde.JdeSettings) -> None:
     with card("jde_general"), st.form("jde_form", border=False):
-        st.markdown("#### :material/account_tree: JD Edwards E1 vouchers")
+        st.markdown("#### JD Edwards E1 vouchers")
         st.caption(
             "Exports → *JD Edwards E1* writes F0411Z1 (pay items) and F0911Z1 (G/L lines) files for the Voucher Batch "
             "Processor R04110ZA. See `docs/JDE_E1.md`."
@@ -141,7 +141,7 @@ def _general(store: Store, js: jde.JdeSettings) -> None:
 
 def _gl_map(store: Store, js: jde.JdeSettings) -> None:
     with card("jde_gl_map"):
-        st.markdown("#### :material/schema: GL accounts → BU.Object.Subsidiary")
+        st.markdown("#### GL accounts → BU.Object.Subsidiary")
         st.caption(
             "One row per AP Coder GL code (and cost center, blank = any). A blank BU or object is filled by the "
             "default rule above. Lines without a mapping (and no default rule) are left out of the export."
@@ -195,7 +195,7 @@ def _gl_map(store: Store, js: jde.JdeSettings) -> None:
 
 def _tax_map(store: Store, js: jde.JdeSettings) -> None:
     with card("jde_tax_map"):
-        st.markdown("#### :material/percent: Province → tax area and explanation code")
+        st.markdown("#### Province → tax area and explanation code")
         st.caption(
             "The tax area names are placeholders: use your E1 tax areas (F4008). Codes: V = GST/HST/QST recoverable, "
             "C = GST + seller-charged PST (PST in the distribution), B = self-assessed PST, E = exempt. Invoices with "
@@ -229,7 +229,7 @@ def _tax_map(store: Store, js: jde.JdeSettings) -> None:
 
 def _an8(store: Store, js: jde.JdeSettings) -> None:
     with card("jde_an8"):
-        st.markdown("#### :material/badge: Supplier address numbers (AN8)")
+        st.markdown("#### Supplier address numbers (AN8)")
         st.caption(
             "Taken from the vendor master's ERP ID (Vendors page). Add a vendor here only when its ERP ID is not its "
             "JDE address number."
@@ -267,5 +267,5 @@ def jde_tab(store: Store) -> None:
     _tax_map(store, js)
     _an8(store, js)
     with card("jde_checklist"):
-        st.markdown("#### :material/fact_check: Before the first live load")
+        st.markdown("#### Before the first live load")
         st.markdown(CHECKLIST)

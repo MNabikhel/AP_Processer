@@ -68,7 +68,7 @@ def _secret_hint(value: str) -> str:
 def azure_tab(store: Store) -> None:
     if PUBLIC_DEMO:
         with card("azure"):
-            st.markdown("#### :material/cloud: Azure connection")
+            st.markdown("#### Azure connection")
             not_in_public_demo("Connecting Azure")
         return
     env = read_env(env_path())
@@ -77,7 +77,7 @@ def azure_tab(store: Store) -> None:
     env.setdefault("AZURE_OPENAI_API_VERSION", effective.openai.api_version or "")
     env.setdefault("AZURE_DOCUMENT_INTELLIGENCE_MODEL", effective.document_intelligence.model_id or "")
     with card("azure"):
-        st.markdown("#### :material/cloud: Azure connection")
+        st.markdown("#### Azure connection")
         st.caption(
             "Saved on this computer. Keys show only their last 4 characters: leave a key field empty to keep it.",
             help=f"Settings file: {env_path()}",
@@ -142,7 +142,7 @@ def azure_tab(store: Store) -> None:
 
     with card("azure_test"):
         head, button = st.columns([3, 1], vertical_alignment="center")
-        head.markdown("#### :material/network_check: Test the connection")
+        head.markdown("#### Test the connection")
         head.caption(
             "Sends one tiny made-up invoice to each service (a fraction of a cent) and checks everything else "
             "AP Coder needs. Nothing from your invoices is sent."
@@ -208,14 +208,14 @@ def _model_status_html(settings) -> str:
 def ai_model_tab() -> None:
     if PUBLIC_DEMO:
         with card("ai_model"):
-            st.markdown("#### :material/smart_toy: AI model")
+            st.markdown("#### AI model")
             not_in_public_demo("Connecting an AI model")
         return
     settings = get_settings()
     llm = settings.llm
     with card("ai_model"):
         head, button = st.columns([3, 1], vertical_alignment="center")
-        head.markdown("#### :material/smart_toy: AI model")
+        head.markdown("#### AI model")
         head.caption(
             "The model that codes each invoice. A model in LM Studio runs on this computer: nothing is sent out."
         )
@@ -235,7 +235,7 @@ def ai_model_tab() -> None:
                 st.markdown(f"**To use a model on this computer**\n\n{steps}\n\nThen press **Test connection**.")
 
     with card("ai_model_settings"), st.form("ai_model_form", border=False):
-        st.markdown("#### :material/tune: Which model")
+        st.markdown("#### Which model")
         providers = list(PROVIDERS)
         provider = st.selectbox(
             "Use", providers, index=providers.index(llm.provider), format_func=PROVIDERS.get, key="llm_provider"
@@ -287,7 +287,7 @@ def review_tab() -> None:
     env = read_env(env_path())
     settings = get_settings()
     with card("review_settings"), st.form("review_form", border=False):
-        st.markdown("#### :material/tune: Review and AI behaviour")
+        st.markdown("#### Review and AI behaviour")
         name_col, _ = st.columns(2)
         reviewer_name = name_col.text_input(
             "Your name",
@@ -339,7 +339,7 @@ def review_tab() -> None:
             st.rerun()
     store = get_store()
     with card("payment_settings"), st.form("payment_form", border=False):
-        st.markdown("#### :material/event_available: Approval and payment")
+        st.markdown("#### Approval and payment")
         c1, c2 = st.columns(2)
         limit = c1.number_input(
             "Second approval for invoices over (0 = never)",
@@ -385,7 +385,7 @@ def data_tab(store: Store) -> None:
     data = DB_PATH.parent
     with card("data_folder"):
         head, button = st.columns([3, 1], vertical_alignment="center")
-        head.markdown("#### :material/folder_managed: Data folder")
+        head.markdown("#### Data folder")
         head.caption(
             "Everything AP Coder keeps (database, invoices, exports, backups and settings) is in one folder on "
             "this computer."
@@ -417,7 +417,7 @@ def data_tab(store: Store) -> None:
 
     with card("backups"):
         head, button = st.columns([3, 1], vertical_alignment="center")
-        head.markdown("#### :material/backup: Backups")
+        head.markdown("#### Backups")
         head.caption(
             "A copy of the database is made automatically once a day when AP Coder starts (the newest 14 are "
             "kept). Make one yourself before big changes, e.g. importing a new chart of accounts."
@@ -518,7 +518,7 @@ def about_tab() -> None:
     import streamlit as streamlit_module
 
     with card("about"):
-        st.markdown("#### :material/info: About this installation")
+        st.markdown("#### About this installation")
         rows = [
             ["Version", esc(__version__ + (f" · {_git_version()}" if _git_version() else ""))],
             ["Code folder", f"<code>{esc(paths.PROJECT_DIR)}</code>"],
@@ -544,12 +544,12 @@ def page_settings() -> None:
     page_head("settings", "Settings", "AI model, review behaviour, JD Edwards E1, your data and backups.")
     ai_model, azure, review, erp, data, about = st.tabs(
         [
-            ":material/smart_toy: AI model",
-            ":material/cloud: Azure",
-            ":material/tune: Review",
-            ":material/account_tree: JD Edwards E1",
-            ":material/database: Data & backups",
-            ":material/info: About",
+            "AI model",
+            "Azure",
+            "Review",
+            "JD Edwards E1",
+            "Data & backups",
+            "About",
         ]
     )
     with ai_model:

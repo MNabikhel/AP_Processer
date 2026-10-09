@@ -218,28 +218,28 @@ def page_accounts() -> None:
 
     tab_gl, tab_cc, tab_tax, tab_policy, tab_rules = st.tabs(
         [
-            ":material/account_tree: GL accounts",
-            ":material/apartment: Cost centers",
-            ":material/percent: Sales tax",
-            ":material/rule: Coding policy",
-            ":material/rule_settings: Fixed rules",
+            "GL accounts",
+            "Cost centers",
+            "Sales tax",
+            "Coding policy",
+            "Fixed rules",
         ]
     )
     with tab_gl, card("gl"):
-        st.markdown("#### :material/account_tree: GL accounts")
+        st.markdown("#### GL accounts")
         st.caption(
             "The AI may only use the codes listed here. Descriptions matter: the AI matches invoice lines "
             "against them. Use the category column to group codes your own way."
         )
         account_manager(store, "gl_accounts", "GL account")
     with tab_cc, card("cc"):
-        st.markdown("#### :material/apartment: Cost centers")
+        st.markdown("#### Cost centers")
         st.caption("Optional. Leave empty if you do not code invoices to cost centers.")
         account_manager(store, "cost_centers", "cost center")
     with tab_tax:
         tax_setup(store)
     with tab_policy, card("policy"):
-        st.markdown("#### :material/rule: Coding policy")
+        st.markdown("#### Coding policy")
         st.caption(
             "Plain-English rules the AI follows, one per line (e.g. 'Laptops under $2,500 go to 6010'). "
             "Lines starting with # are ignored."
@@ -269,7 +269,7 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
     """Fixed coding rules: always this GL account (and cost center) for a vendor and/or words in a line."""
     current = store.coding_rules()
     with card("rules"):
-        st.markdown("#### :material/rule_settings: Fixed rules")
+        st.markdown("#### Fixed rules")
         st.caption(
             "Lines that always go to the same account, whatever the AI thinks: a vendor (e.g. *Purolator*), words "
             "a line contains (e.g. *freight*), or both. Applied to invoices processed from now on (for one already "
@@ -332,7 +332,7 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
     suggestions = [(r, n) for r, n in suggest_rules(store.feedback_rows(), current) if r.gl_code in gl_codes]
     if suggestions:
         with card("rules_suggested"):
-            st.markdown("#### :material/lightbulb: Suggested from past coding")
+            st.markdown("#### Suggested from past coding")
             st.caption("These vendors were always coded to one GL account. Add a rule to make it certain.")
             for n, (rule, lines) in enumerate(suggestions[:8]):
                 text, button = st.columns([4, 1], vertical_alignment="center")
@@ -364,7 +364,7 @@ def tax_setup(store: Store) -> None:
              "QST": "Quebec (TVQ)", "OTHER": "Outside Canada"}  # fmt: skip
     chosen = {}
     with card("taxsetup"):
-        st.markdown("#### :material/percent: How each sales tax posts")
+        st.markdown("#### How each sales tax posts")
         st.caption(
             "Recoverable taxes (input tax credits / refunds) go to their own GL account. Non-recoverable PST is "
             "normally added to the cost of the expense lines it applies to."
@@ -402,7 +402,7 @@ def tax_setup(store: Store) -> None:
             st.rerun()
 
     with card("rates"):
-        st.markdown("#### :material/calendar_month: Rates in force today")
+        st.markdown("#### Rates in force today")
         source = (
             "your copy in the data folder" if rates_path() != DEFAULT_RATES_PATH
             else "the rate table that comes with AP Coder (updated with it)"

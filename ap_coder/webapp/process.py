@@ -127,10 +127,11 @@ def page_process() -> None:
     left, right = st.columns([3, 2], gap="medium")
     with right, card("setup_steps"):
         done = sum(1 for s, _, _ in steps if s == "ok")
-        head, gauge = st.columns([3, 1], vertical_alignment="center")
-        head.markdown("#### :material/checklist: Setup")
+        head, gauge = st.columns([3, 1], vertical_alignment="top")
+        head.markdown("#### Setup")
         head.caption("What AP Coder needs before it reads invoices.")
-        gauge.html(ui.ring(done / len(steps), size=56, stroke=6, label=f"{done}/{len(steps)}"))
+        progress = ui.pill(f"{done} of {len(steps)} done", "ok" if done == len(steps) else "gray")
+        gauge.html(f"<div style='text-align:right'>{progress}</div>")
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
         if any(s != "ok" for s, _, _ in steps[2:]):
             st.page_link(PAGES["accounts"], label="Finish setup", icon=":material/arrow_forward:")
@@ -138,7 +139,7 @@ def page_process() -> None:
     recent = sorted(store.list_invoices(), key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
     if recent:
         with right, card("recent"):
-            st.markdown("#### :material/history: Recently processed")
+            st.markdown("#### Recently processed")
             st.html("".join(ui.recent_row(i) for i in recent))
             if any(i["status"] == REVIEW for i in recent):
                 st.page_link(PAGES["review"], label="Go to the review queue", icon=":material/arrow_forward:")
@@ -148,7 +149,7 @@ def page_process() -> None:
 
     if PUBLIC_DEMO:
         with left, card("public_demo"):
-            st.markdown("#### :material/cloud_off: Processing new invoices")
+            st.markdown("#### Processing new invoices")
             not_in_public_demo("Reading and coding new invoices with Azure")
             st.caption(
                 "In your own copy, AP Coder reads each PDF or scan with Azure Document Intelligence, codes every "
@@ -160,7 +161,7 @@ def page_process() -> None:
 
     with left:
         with card("upload"):
-            st.markdown("#### :material/upload_file: Upload invoices")
+            st.markdown("#### Upload invoices")
             st.caption("Each file is saved to the invoices folder on this computer, then read, coded and checked.")
             uploaded = st.file_uploader(
                 "PDFs, scans or photos (TIFF, PNG, JPG), or saved emails (.eml) with invoices attached",
@@ -207,7 +208,7 @@ def page_process() -> None:
                 st.rerun()
 
         with card("folder"):
-            st.markdown("#### :material/folder_open: Invoices folder")
+            st.markdown("#### Invoices folder")
             hint, button = st.columns([2.3, 1], vertical_alignment="center")
             hint.caption(
                 "Copy invoices into this folder, or have a scanner or mail rule save them there. New files are "
