@@ -92,7 +92,8 @@ LABELS: dict[str, list[tuple[str, float]]] = {
 
 # Labels whose value is NOT the field: a reading next to one of these loses the field's label match.
 DISTRACTORS: dict[str, list[str]] = {
-    "invoice_date": [r"order\s*date", r"ship(?:ping|ment)?\s*date", r"due\s*date", r"date\s*due", r"delivery\s*date",
+    "invoice_date": [r"order\s*date", r"p\.?\s?o\.?\s*date", r"purchase\s*order\s*date", r"date\s*(?:shipped|ordered|delivered|received|paid|printed)",
+                     r"date\s*of\s*(?:order|shipment|delivery|service|supply)", r"invoice\s*period", r"billing\s*period", r"ship(?:ping|ment)?\s*date", r"due\s*date", r"date\s*due", r"delivery\s*date",
                      r"date\s*de\s*commande", r"date\s*d'?\s*expedition", r"date\s*de\s*livraison", r"echeance",
                      r"service\s*(?:date|period)", r"period", r"periode", r"date\s*limite", r"payment\s*due",
                      r"date\s*de\s*la\s*commande", r"quote\s*date", r"date\s*de\s*soumission", r"printed", r"imprime"],
@@ -343,6 +344,8 @@ def _label_box(hit: _LabelHit) -> Box:
 
 
 def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
+    """For each label: the value after it on the same line, else just right of it, else just below it
+    (header grids print a row of labels over a row of values)."""
     out: list[Reading] = []
     for hit in field_hits:
         field, line = hit.field, hit.line
@@ -350,28 +353,24 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
         if inline:
             out.append(inline)
             continue
-        rest = line.text[hit.end :].strip(" :#.-")
-        if rest and field not in ("payment_terms",) and len(rest) > 3:
-            # Another label follows on the same segment ("Date  Invoice #") or junk: try the right / below anyway.
-            pass
+        got = None
         for other in _right_of(lines, line)[:2]:
             if _label_hits(other) and not _value_reading(field, other, 0, 1.0, "x"):
-                break  # the next thing to the right is another label
+                break  # the next thing to the right is another label: look below instead
             got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
             if got:
-                distance = other.box.x0 - line.box.x1
-                got.score *= 1.0 - min(distance, 0.4) * 0.5
-                out.append(got)
+                got.score *= 1.0 - min(other.box.x0 - line.box.x1, 0.4) * 0.5
                 break
-        else:
+        if got is None:
             lb = _label_box(hit)
-            for other in _below(lines, line, lb)[:2]:
-                got = _value_reading(field, other, 0, 0.82 * hit.strength, "label-below")
+            for other in _below(lines, line, lb)[:3]:
+                got = _value_reading(field, other, 0, 0.85 * hit.strength, "label-below")
                 if got:
-                    out.append(got)
                     break
                 if _label_hits(other):
-                    continue
+                    break  # the next row down is another label row: this label has no value under it
+        if got is not None:
+            out.append(got)
     return out
 
 
