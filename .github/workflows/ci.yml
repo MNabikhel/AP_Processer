@@ -162,8 +162,10 @@ jobs:
             if ($code -ne 0) { throw "second launch exited with $code" }
             if ($out2 -notmatch 'already running') { throw 'the second launch did not find the running dashboard' }
             if ($out2 -match 'Starting AP Coder|Collecting') { throw 'the second launch set up or started a second copy' }
-            $servers = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*streamlit*run*' })
-            if ($servers.Count -ne 1) { throw "expected 1 dashboard server, found $($servers.Count)" }
+            # (Counted by listening sockets: .venv's python.exe is a redirector, so one server is two processes.)
+            $servers = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -ge 8501 -and $_.LocalPort -le 8610 })
+            $servers | Format-Table LocalAddress, LocalPort, OwningProcess | Out-String | Write-Host
+            if (@($servers | Select-Object -ExpandProperty LocalPort -Unique).Count -ne 1) { throw "expected 1 dashboard server, found ports: $($servers.LocalPort -join ', ')" }
           } finally {
             Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' -or $_.CommandLine -like '*launch.py*' } |
               ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
