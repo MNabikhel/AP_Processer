@@ -140,6 +140,15 @@ is made as a digital PDF and as a "scan": rasterized, slightly rotated, noisy an
 - the precision of fields marked *verified* (target ≥ 99.5%) and how many are verified (coverage);
 - calibration: stated confidence against observed accuracy.
 
+`python -m ap_coder.bench learn --suppliers 30 --invoices 40 --seed 1 [--scanned 0.0]` simulates
+supplier learning: each supplier sends a stream of invoices that look alike (same vendor, layout,
+wording and formats; new number, dates, PO, lines and amounts). They are read in order with the
+supplier's template, AP approves the true values (outcomes recorded, template learned, as on
+approval), and the autonomy policy is applied, switched on as soon as a supplier is ready. The
+report gives accuracy by invoice position (against the same invoices read without a template), when
+each supplier would reach the policy, and after that the touchless share and its errors.
+`--ignore-check CODE` is a what-if: a failed check with that code does not hold an invoice back.
+
 ## Review screen
 
 The invoice page with a box over every field, coloured by status (green verified, blue likely, amber
