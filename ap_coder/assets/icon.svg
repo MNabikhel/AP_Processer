@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" role="img" aria-label="AP Coder">
-  <rect x="0" y="0" width="36" height="36" rx="9" fill="#2a78d6"/>
+  <rect x="0" y="0" width="36" height="36" rx="9" fill="#0f172a"/>
   <path d="M11 8h14v20l-2.33-1.6L20.33 28 18 26.4 15.67 28l-2.34-1.6L11 28z" fill="#ffffff"/>
-  <rect x="14" y="13" width="8" height="1.8" rx="0.9" fill="#2a78d6"/>
-  <rect x="14" y="17.5" width="8" height="1.8" rx="0.9" fill="#2a78d6"/>
+  <rect x="14" y="13" width="8" height="1.8" rx="0.9" fill="#0f172a"/>
+  <rect x="14" y="17.5" width="8" height="1.8" rx="0.9" fill="#0f172a"/>
 </svg>

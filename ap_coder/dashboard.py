@@ -88,14 +88,17 @@ with st.sidebar:
     if PUBLIC_DEMO:
         _env, _tone, _where, _tip = "Public demo", "violet", "made-up invoices · no Azure", ""
     else:  # the folder itself is a tooltip: a clerk needs to know data stays here, not the path
-        _env, _tone, _where, _tip = "Offline · Local", "ok", "Data stays on this computer", short_path(DB_PATH.parent)
-    st.html(ui.sidebar_profile(reviewer(), approved_today(_store), _waiting, _env, _tone, _where, _tip))
+        _env, _tone, _where, _tip = "Offline", "ok", "Data stays on this computer", short_path(DB_PATH.parent)
     if _store.demo_count():
-        st.html(ui.pill("Demo invoices loaded", "violet", "science"))
-# Count badges on the navigation (see style.css): invoices waiting for review, approved ones not exported yet.
+        st.html(ui.pill("Demo invoices loaded", "gray", "science"))
+    st.html(ui.sidebar_profile(reviewer(), approved_today(_store), _waiting, _env, _tone, _where, _tip))
+# Count badges on the navigation (see style.css): invoices waiting for review (accent, the one queue to work
+# through), approved ones not exported yet (neutral).
 _badges = {"": _waiting, "page_exports": len(_store.unexported_approved())}
 _rules = "".join(
-    f'[data-testid="stSidebarNavLink"][href$="/{path}"]::after {{content: "{count}";}}'
+    f'[data-testid="stSidebarNavLink"][href$="/{path}"]::after {{content: "{count}";'
+    + ("background: var(--lg-accent-weak); color: var(--lg-accent);" if not path else "")
+    + "}"
     for path, count in _badges.items()
     if count
 )
