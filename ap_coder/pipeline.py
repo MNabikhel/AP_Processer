@@ -285,18 +285,22 @@ class InvoicePipeline:
                 result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path)
 
         if self.store is not None:
-            result.invoice_id = self.store.add_invoice(
-                path,
-                result.output,
-                result.report.to_dict() if result.report else None,
-                extraction_md=result.extraction.content if result.extraction else "",
-                meta=_meta(result),
-                error=result.error,
-            )
-            if result.capture is not None:
-                self.store.save_capture(result.invoice_id, result.capture.to_dict())
-            if result.autonomy.get("auto") and result.output is not None:
-                self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+            try:
+                result.invoice_id = self.store.add_invoice(
+                    path,
+                    result.output,
+                    result.report.to_dict() if result.report else None,
+                    extraction_md=result.extraction.content if result.extraction else "",
+                    meta=_meta(result),
+                    error=result.error,
+                )
+                if result.capture is not None:
+                    self.store.save_capture(result.invoice_id, result.capture.to_dict())
+                if result.autonomy.get("auto") and result.output is not None:
+                    self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+            except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
+                log.exception("Could not save %s", path)
+                result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"
         return result
 
     def process_many(
@@ -336,12 +340,20 @@ class InvoicePipeline:
 def output_stems(paths: list[Path]) -> list[str]:
     """One output name per input. Same-named files from different folders (e.g. two vendors'
     ``Invoice.pdf``) get ``_2``, ``_3``... so their results don't overwrite each other."""
-    seen: dict[str, int] = {}
+    taken = {p.stem.lower() for p in paths}  # a file's own name stays its own (c/Invoice_2.pdf keeps Invoice_2)
+    first: set[str] = set()
     stems = []
     for p in paths:
         key = p.stem.lower()
-        seen[key] = seen.get(key, 0) + 1
-        stems.append(p.stem if seen[key] == 1 else f"{p.stem}_{seen[key]}")
+        if key not in first:
+            first.add(key)
+            stems.append(p.stem)
+            continue
+        n = 2
+        while f"{key}_{n}" in taken:
+            n += 1
+        taken.add(f"{key}_{n}")
+        stems.append(f"{p.stem}_{n}")
     return stems
 
 

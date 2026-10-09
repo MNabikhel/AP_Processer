@@ -39,10 +39,16 @@ _TAXES = (("gst_amount", "GST"), ("hst_amount", "HST"), ("pst_amount", "PST"), (
 _OFFICIAL = {"GST": (0.05,), "HST": (0.13, 0.14, 0.15), "QST": (0.09975,), "PST": (0.06, 0.07, 0.08)}
 _RATE_PROVINCE = {("HST", 0.13): "ON", ("HST", 0.14): "NS", ("QST", 0.09975): "QC", ("PST", 0.06): "SK"}
 _PROVINCE_AT = re.compile(r"(?:\(|\b)(ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)(?:\)|\b)\s*,?\s*[A-Z]\d[A-Z]\s?\d[A-Z]\d")
-_CUSTOMER_LABEL = re.compile(
-    r"(?i)\b(?:bill|ship|sold|invoice|deliver)(?:ed)?\s*to\b|client|customer|factur|livr|vendu"
+# Labels, not any line with the word: "FACTURE" (a French invoice's title), "Customer service" or
+# "Date de livraison" in the letterhead are not the customer's address.
+_SHIP_LABEL = re.compile(
+    r"(?i)\b(?:ship|deliver)(?:ped|ed)?\s*to\b|\b(?:livr|exp[ée]di)(?:é|e|er|ée)\s*(?:à|a)\b"
+    r"|\b(?:adresse|lieu)\s+de\s+livraison\b"
 )
-_SHIP_LABEL = re.compile(r"(?i)\b(?:ship|deliver)(?:ped|ed)?\s*to\b|livr")
+_CUSTOMER_LABEL = re.compile(
+    r"(?i)\b(?:bill|ship|sold|invoice|deliver)(?:ed)?\s*to\b|^\W*(?:client|customer)\s*(?::|$)"
+    r"|\b(?:factur(?:é|e|er|ée)|vendue?)\s*(?:à|a)\b|\badresse\s+de\s+facturation\b"
+)
 
 
 def read_invoice(path: str | Path, store: Any = None,
@@ -85,24 +91,29 @@ def _rate_table() -> Any:
 def provinces(text: str) -> tuple[str, str]:
     """(supplier province, ship-to province) from the addresses on the page: the first address is the
     supplier's (its letterhead), the first after a "Bill to" / "Client" label the customer's. A US address
-    is OUTSIDE_CANADA."""
+    is OUTSIDE_CANADA. Each labelled address goes to the labels in the order they were read, so "Bill to" and
+    "Ship to" side by side (labels on one row, then each column's address) are told apart."""
     supplier = bill_to = ship_to = ""
-    after_label = after_ship = False
+    after_label = False
+    pending: list[str] = []  # labels read whose address has not come yet
     for line in text.splitlines():
         if _SHIP_LABEL.search(line):
-            after_ship = after_label = True
+            after_label = True
+            pending.append("ship")
         elif _CUSTOMER_LABEL.search(line):
             after_label = True
+            pending.append("bill")
         m = _PROVINCE_AT.search(line)
         where = m.group(1) if m else (OUTSIDE_CANADA if _US_ADDRESS.search(line) else "")
         if not where:
             continue
         if not supplier and not after_label:
             supplier = where
-        elif after_ship and not ship_to:
-            ship_to = where  # the place of supply: where the goods or services go
-        elif after_label and not bill_to:
-            bill_to = where
+        elif pending:
+            if pending.pop(0) == "ship":
+                ship_to = ship_to or where  # the place of supply: where the goods or services go
+            else:
+                bill_to = bill_to or where
     return supplier, ship_to or bill_to or supplier
 
 
@@ -154,12 +165,20 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     """``text``: the page text (labels a charge printed outside the line table)."""
     values = _values(capture)
     vendor = str(values.get("vendor_name") or "")
-    subtotal = _amount(values, "subtotal")
+    readings = [li for li in capture.line_items if li.amount is not None]
+    # No subtotal found: the lines read are the subtotal (not a charge that cancels them all).
+    subtotal = _amount(values, "subtotal") if "subtotal" in values or not readings else (
+        round(sum(float(li.amount) for li in readings), 2)
+    )  # fmt: skip
+    # Freight read beside the subtotal is part of the coded subtotal (lines + charges, before tax) and taxed.
+    charges = capture.fields.get("other_charges")
+    freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
     supplier_province, ship_to_province = provinces(text)
     invoice_on = _iso_or_empty(values.get("invoice_date"))
     tax_lines = _tax_lines(
-        values, subtotal, ship_to_province, dt.date.fromisoformat(invoice_on) if invoice_on else None
-    )
+        values, round(subtotal + freight, 2), ship_to_province,
+        dt.date.fromisoformat(invoice_on) if invoice_on else None,
+    )  # fmt: skip
     taxes = [t.tax_type for t in tax_lines]
     default_gl = ""
     if store is not None and vendor:
@@ -168,20 +187,18 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         except Exception:  # an older store without the vendor table
             default_gl = ""
 
-    readings = [li for li in capture.line_items if li.amount is not None]
     if not readings:  # no table the reader could split: one line for the whole subtotal
         readings_data = [("Invoice " + str(values.get("invoice_number") or ""), 1.0, subtotal, subtotal)]
     else:
         readings_data = [
             (li.description or f"Line {i}", li.quantity if li.quantity is not None else 1.0,
-             li.unit_price if li.unit_price is not None else float(li.amount), float(li.amount))
+             li.unit_price if li.unit_price is not None
+             else float(li.amount) / li.quantity if li.quantity else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)
         ]  # fmt: skip
     # Lines that fall short of the subtotal (plus freight read beside it): a charge printed outside the table.
-    charges = capture.fields.get("other_charges")
-    freight = _amount(values, "other_charges") if charges is not None and charges.status in (VERIFIED, LIKELY) else 0.0
     short = round(subtotal + freight - sum(r[3] for r in readings_data), 2)
-    if readings and abs(short) >= 0.01:
+    if (readings or freight) and abs(short) >= 0.01:
         readings_data.append((_unlisted_charge(text, short), 1.0, short, short))
     lines = []
     for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
@@ -221,7 +238,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         ship_to_province=ship_to_province,
         gst_hst_registration_number=str(values.get("gst_hst_registration_number") or ""),
         qst_registration_number=str(values.get("qst_registration_number") or ""),
-        subtotal=subtotal,
+        subtotal=round(subtotal + freight, 2),
         tax_lines=tax_lines,
         tax_total=_amount(values, "tax_total") or round(sum(t.tax_amount for t in tax_lines), 2),
         grand_total=_amount(values, "grand_total"),
