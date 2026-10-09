@@ -23,7 +23,7 @@ def test_a_pdf_is_read_and_coded_with_no_azure_and_no_model(tmp_path, reference)
     result = InvoicePipeline(_offline_settings(), reference, store=store).process(SAMPLES / f"{STEM}.pdf")
 
     assert result.ok, result.error
-    truth = json.loads((SAMPLES / "ground_truth" / f"{STEM}.json").read_text())
+    truth = json.loads((SAMPLES / "ground_truth" / f"{STEM}.json").read_text(encoding="utf-8"))
     coding = result.coding.coding
     assert result.coding.model.startswith("local reader")
     assert result.extraction.model_id.startswith("local-")
@@ -41,7 +41,7 @@ def test_approved_coding_is_reused_for_the_next_invoice_from_that_vendor(tmp_pat
     store = Store(tmp_path / "ap.db")
     pipe = InvoicePipeline(_offline_settings(), reference, store=store)
     first = pipe.process(SAMPLES / f"{STEM}.pdf")
-    truth = json.loads((SAMPLES / "ground_truth" / f"{STEM}.json").read_text())
+    truth = json.loads((SAMPLES / "ground_truth" / f"{STEM}.json").read_text(encoding="utf-8"))
     final = dict(first.output)
     final["line_items"] = [
         {**li, "predicted_gl_code": t["predicted_gl_code"]}
@@ -61,7 +61,7 @@ def test_every_sample_reads_right_offline(tmp_path, reference):
     nothing is wrong, only accounts left to pick."""
     pipe = InvoicePipeline(_offline_settings(), reference, store=Store(tmp_path / "ap.db"))
     for pdf in sorted(SAMPLES.glob("*.pdf")):
-        truth = json.loads((SAMPLES / "ground_truth" / f"{pdf.stem}.json").read_text())
+        truth = json.loads((SAMPLES / "ground_truth" / f"{pdf.stem}.json").read_text(encoding="utf-8"))
         result = pipe.process(pdf)
         assert result.ok, (pdf.name, result.error)
         got = result.output

@@ -11,11 +11,18 @@ import shutil
 from pathlib import Path
 
 import pytest
-import tomllib
 from PIL import Image
 
 from ap_coder.capture.types import FIELDS, Box, FieldResult, LineReading, Word
 from ap_coder.webapp import viewer
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10: the same parser as tomli, or pip's own copy of it
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        from pip._vendor import tomli as tomllib
 from ap_coder.webapp.viewer import (
     COMPONENT_DIR,
     FIELD_LABELS,

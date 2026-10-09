@@ -335,7 +335,8 @@ def test_long_document_is_clipped_for_a_small_context(reference, ground_truth, t
 
 def test_server_down_while_coding(real_fetch, reference, sample_markdown_path):
     settings = local_settings("http://127.0.0.1:9/v1", model="qwen2.5-7b-instruct", timeout_seconds=2)
-    with pytest.raises(CodingError, match="isn't answering"):
+    # A closed port is refused at once on Linux and Mac; Windows retries the connection until the timeout.
+    with pytest.raises(CodingError, match="isn't answering|took longer than"):
         InvoiceCoder(settings, reference, max_repair_attempts=0).code(result_from_text(sample_markdown_path))
 
 
