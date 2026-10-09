@@ -11,7 +11,13 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   `winget install Python.Python.3.12`.
 - About **2 GB** free disk space.
 - **Optional: LM Studio** with a local model, for the AI coding step on this laptop (see the LM Studio
-  section of the [README](../README.md)). AP Coder starts and works without it.
+  section of the [README](../README.md)). AP Coder starts and works without it: every invoice is still
+  read on the laptop (PDF text, or local OCR for scans) and each line is coded from what AP approved
+  before for that vendor, the vendor master's default account and your fixed coding rules. A line with
+  nothing to learn from is left for you to code. With a model running, it also proposes accounts for
+  vendors and lines it has not seen yet.
+- **No Azure needed.** Azure Document Intelligence and Azure OpenAI stay optional; leave Settings → Azure
+  empty for the pilot.
 
 ## Install
 

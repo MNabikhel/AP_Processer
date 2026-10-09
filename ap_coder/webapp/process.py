@@ -9,6 +9,7 @@ from typing import Any
 import streamlit as st
 
 from ap_coder import ui
+from ap_coder.capture.layout import ocr_available
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS
 from ap_coder.local_llm import provider_status
@@ -88,16 +89,18 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
     mapped = tax_types_mapped(store)
     gl_count = len(store.list_accounts("gl_accounts"))
     ai = provider_status(settings)  # Azure OpenAI, or LM Studio on this computer
+    if settings.document_intelligence.endpoint:
+        reader = ("ok", "Reading invoices", "Azure Document Intelligence")
+    elif ocr_available():
+        reader = ("ok", "Reading invoices", "on this computer: PDF text and local OCR for scans")
+    else:
+        reader = ("todo", "Reading invoices", "PDFs with text only: scans need the OCR add-on (run the launcher again)")
     return [
+        reader,
         (
-            "ok" if settings.document_intelligence.endpoint else "bad",
-            "Azure Document Intelligence",
-            "connected" if settings.document_intelligence.endpoint else "set it up in Settings → Azure",
-        ),
-        (
-            "ok" if ai.ready else "bad",
+            "ok" if ai.ready else "todo",
             "AI model" if ai.provider != "azure" else "Azure OpenAI",
-            ai.label if ai.ready else "set it up in Settings → AI model",
+            ai.label if ai.ready else "optional: without one, lines are coded from your approvals",
         ),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
@@ -107,12 +110,10 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
 def page_process() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header("Inbox", "Process invoices", "Read new invoices with Azure and send them to the review queue.")
-    )
+    st.html(ui.page_header("Inbox", "Process invoices", "Read new invoices and send them to the review queue."))
     settings = get_settings()
     steps = setup_steps(store, settings)
-    ready = all(s == "ok" for s, _, _ in steps[:3])
+    ready = steps[0][0] != "bad" and steps[2][0] == "ok"  # a reader and GL accounts; the AI model is optional
 
     left, right = st.columns([3, 2], gap="medium")
     with right, card("setup_steps"):

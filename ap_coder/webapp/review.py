@@ -268,8 +268,6 @@ def page_review() -> None:
         others = [i for i in invoices if i["status"] in (FAILED, REJECTED)]
         if not others:
             st.caption("Nothing here.")
-        settings = get_settings()
-        azure_ready = bool(settings.document_intelligence.endpoint and settings.openai.endpoint)
         for inv in others:
             with card(f"failed_{inv['id']}"):
                 left, right = st.columns([5, 2], vertical_alignment="center")
@@ -290,10 +288,7 @@ def page_review() -> None:
                         store.reopen(inv["id"], reviewer())
                         notify("Back in the review queue.", ":material/undo:")
                         st.rerun()
-                elif b1.button(
-                    "Retry", key=f"retry_{inv['id']}", icon=":material/refresh:", disabled=not azure_ready,
-                    help=None if azure_ready else "Set up Azure first: Settings → Azure",
-                ):  # fmt: skip
+                elif b1.button("Retry", key=f"retry_{inv['id']}", icon=":material/refresh:"):
                     full = store.get_invoice(inv["id"])
                     path = Path(full["source_path"])
                     if not path.exists():

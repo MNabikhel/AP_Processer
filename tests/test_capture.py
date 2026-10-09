@@ -277,7 +277,8 @@ def test_logo_initials_and_customer_block_do_not_make_the_vendor(tmp_path):
 
 
 def test_legal_form_matching_the_initials_is_kept(tmp_path):
-    got = _read(_pdf(tmp_path, [(60, 60, "Lakeshore Plumbing & Heating LP"), (60, 75, "12 Main St, Toronto, ON M5V 1A1")]))
+    got = _read(_pdf(tmp_path, [(60, 60, "Lakeshore Plumbing & Heating LP"),
+                                (60, 75, "12 Main St, Toronto, ON M5V 1A1")]))  # fmt: skip
     assert got["vendor_name"] == "Lakeshore Plumbing & Heating LP"
 
 

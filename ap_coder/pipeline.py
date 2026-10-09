@@ -161,12 +161,31 @@ class InvoicePipeline:
         self.coder = coder or InvoiceCoder(settings, reference)
         self.store = store
 
+    def _reads_locally(self, path: Path) -> bool:
+        """No Document Intelligence endpoint (and no client handed in): read the file on this computer."""
+        ex = self.extractor
+        return (
+            path.suffix.lower() not in TEXT_EXTENSIONS
+            and isinstance(ex, DocumentExtractor)
+            and ex._client is None
+            and not ex.settings.endpoint
+        )
+
     def process(self, path: str | Path) -> PipelineResult:
         path = Path(path)
         result = PipelineResult(source=path)
+        captured: tuple[Any, str, Any] | None = None  # (capture, supplier key, profile) when read without AI
         try:
             t0 = time.perf_counter()
-            result.extraction = self.extractor.extract(path)
+            layout = None
+            if self._reads_locally(path):  # offline: the page's text layer, or local OCR for a scan
+                from .capture import build_layout
+                from .offline_coder import local_extraction
+
+                layout = build_layout(path)
+                result.extraction = local_extraction(path, layout)
+            else:
+                result.extraction = self.extractor.extract(path)
             result.timings["extraction"] = time.perf_counter() - t0
 
             images = None
@@ -186,7 +205,14 @@ class InvoicePipeline:
             history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
 
             t1 = time.perf_counter()
-            result.coding = self.coder.code(result.extraction, images, history_text)
+            if getattr(self.coder, "provider", "") == "off" and path.suffix.lower() not in TEXT_EXTENSIONS:
+                # No AI model: the local reader's header and lines, each line coded from what AP approved before.
+                from .offline_coder import code_from_capture, read_invoice
+
+                captured = read_invoice(path, self.store, layout=layout)
+                result.coding = code_from_capture(captured[0], self.reference, feedback, self.store)
+            else:
+                result.coding = self.coder.code(result.extraction, images, history_text)
             result.timings["inference"] = time.perf_counter() - t1
             if self.store is not None:  # fixed coding rules set by AP win over the AI
                 coded, result.rules_applied = apply_rules(result.coding.coding, self.store.coding_rules())
@@ -207,9 +233,12 @@ class InvoicePipeline:
         key, profile = "", None
         if result.output is not None:
             t2 = time.perf_counter()
-            result.capture, key, profile = capture_invoice(
-                path, result.output, store=self.store, di_raw=result.extraction.raw if result.extraction else None
-            )
+            if captured is not None:  # already read (no AI model): the capture is the proposal itself
+                result.capture, key, profile = captured
+            else:
+                result.capture, key, profile = capture_invoice(
+                    path, result.output, store=self.store, di_raw=result.extraction.raw if result.extraction else None
+                )
             result.timings["capture"] = time.perf_counter() - t2
             if result.capture is not None and result.report is not None:
                 for severity, code, message in review_issues(result.capture):
