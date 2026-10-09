@@ -474,7 +474,9 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
                 name = " · ".join(x for x in (inv.get("vendor_name"), inv.get("invoice_number")) if x) or f"#{i}"
                 rows.append([esc(name), esc(why)])
             st.html(ui.table(["Invoice", "Why"], rows, wrap=[1]))
-    candidates = clean_candidates(store)
+    # Not an invoice with edits on its review screen: bulk approval would approve it without them.
+    unsaved = st.session_state.get("unsaved_edits") or set()
+    candidates = [i for i in clean_candidates(store) if i["id"] not in unsaved]
     if len(candidates) < 2:
         return
     total = by_currency(candidates)  # per currency, never added together
@@ -1214,6 +1216,12 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     warnings = [i for i in report.issues if i.severity == "warning"]
     # The queue card shows what this screen shows (edits and today's checks included).
     store.refresh_confidence(invoice_id, report.adjusted_confidence, report.requires_review)
+    # Edits not approved yet stay on this screen: bulk approval (which takes the stored coding) leaves it alone.
+    edited = st.session_state.setdefault("unsaved_edits", set())
+    if _differs_from_stored(coding, start):
+        edited.add(invoice_id)
+    else:
+        edited.discard(invoice_id)
 
     with summary, card("summary"):
         _invoice_summary(
@@ -1302,6 +1310,18 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                     ":material/school:",
                 )
                 st.rerun()
+
+
+def _differs_from_stored(coding: InvoiceCoding, stored: dict[str, Any]) -> bool:
+    """Whether the coding on screen is not the one stored for the invoice (the reviewer changed something)."""
+    try:
+        before = InvoiceCoding.model_validate({k: v for k, v in stored.items() if k != "gl_distribution"})
+    except ValueError:
+        return True
+    ignore = {"confidence_score"}
+    return {k: v for k, v in coding.to_output().items() if k not in ignore} != {
+        k: v for k, v in before.to_output().items() if k not in ignore
+    }
 
 
 def _po_card(store: Store, coding: InvoiceCoding, invoice_id: int, edited_lines: pd.DataFrame, key: str) -> None:
