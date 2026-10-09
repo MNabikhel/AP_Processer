@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# Starts the AP Coder dashboard (sets it up first if needed). Same as ./APProcessor.command.
+# Kept for older instructions: the same as opening APProcessor.command (sets up what is missing, then starts).
 exec "$(dirname "$0")/APProcessor.command" "$@"

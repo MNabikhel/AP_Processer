@@ -1,4 +1,5 @@
-"""First-run setup after the packages are installed (APProcessor.bat / APProcessor.command call it).
+"""First-run setup after the packages are installed. The launcher (scripts/launch.py, behind APProcessor.bat /
+APProcessor.command) uses its ``choose_data_dir``; run on its own, it does both steps below.
 
 * records the data folder (database, invoices, outputs) outside the code, default ``~/APCoder``, so
   unzipping a newer version never loses or duplicates your data; an existing choice is kept
