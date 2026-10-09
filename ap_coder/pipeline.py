@@ -161,6 +161,39 @@ class InvoicePipeline:
         self.coder = coder or InvoiceCoder(settings, reference)
         self.store = store
 
+    def _local_accounts(self, result: CodingResult, history: str) -> None:
+        """The local model's account for each line the approval memory has not taught. Never fatal: a model
+        that is slow or wrong leaves the line as it was for AP to code."""
+        from .inference import suggest_accounts
+        from .reference_data import UNASSIGNED
+
+        coding = result.coding
+        # Lines nothing could code. A match on the account's name stays: on the samples a small model
+        # (1.5B) picked the right account less often (11 of 41) than the name match did (21 of 41).
+        todo = [
+            (li.line_number, li.description, li.amount)
+            for li in coding.line_items
+            if li.predicted_gl_code == UNASSIGNED
+        ]
+        if not todo:
+            return
+        try:
+            picks = suggest_accounts(self.coder, coding.vendor_name, todo, history)
+        except Exception as exc:  # the model is an extra here: the invoice is already read and checked
+            log.warning("local model could not suggest accounts (%s); left for AP", exc)
+            return
+        for li in coding.line_items:
+            if li.line_number in picks:
+                gl, cc, reason = picks[li.line_number]
+                li.predicted_gl_code = gl
+                if cc:
+                    li.predicted_cost_center = cc
+                li.reasoning_justification = (
+                    f"Suggested by the local model: {reason}" if reason else "Suggested by the local model"
+                )
+        model = getattr(self.coder, "_local_model", "") or "local model"
+        result.model = f"local reader + {model}"
+
     def _reads_locally(self, path: Path) -> bool:
         """No Document Intelligence endpoint (and no client handed in): read the file on this computer."""
         ex = self.extractor
@@ -205,14 +238,18 @@ class InvoicePipeline:
             history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
 
             t1 = time.perf_counter()
-            if getattr(self.coder, "provider", "") == "off" and path.suffix.lower() not in TEXT_EXTENSIONS:
-                # No AI model: the local reader's header and lines, each line coded from what AP approved before.
+            provider = getattr(self.coder, "provider", "")
+            if provider in ("off", "local") and path.suffix.lower() not in TEXT_EXTENSIONS:
+                # No cloud AI: the local reader's header, lines and taxes (it reads invoices better than a small
+                # model), each line coded from what AP approved before; a local model codes the lines left over.
                 from .offline_coder import code_from_capture, read_invoice
 
                 captured = read_invoice(path, self.store, layout=layout)
                 result.coding = code_from_capture(
                     captured[0], self.reference, feedback, self.store, text=result.extraction.content
                 )
+                if provider == "local":
+                    self._local_accounts(result.coding, history_text)
             else:
                 result.coding = self.coder.code(result.extraction, images, history_text)
             result.timings["inference"] = time.perf_counter() - t1

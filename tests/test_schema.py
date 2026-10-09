@@ -80,7 +80,7 @@ def test_invalid_dates_rejected(ground_truth, bad_date):
 
 @pytest.mark.parametrize(
     ("path", "value"),
-    [(("supplier_province",), "Ontario"), (("tax_lines", 0, "tax_type"), "VAT"), (("tax_lines", 0, "rate"), 13)],
+    [(("supplier_province",), "Narnia"), (("tax_lines", 0, "tax_type"), "VAT"), (("tax_lines", 0, "rate"), 13)],
 )
 def test_invalid_tax_values_rejected(ground_truth, path, value):
     node = ground_truth

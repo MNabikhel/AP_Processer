@@ -4,10 +4,12 @@ A tiny OpenAI-compatible server runs in a thread on 127.0.0.1 (no real network, 
 """
 
 import json
+import tempfile
 import threading
 import time
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -409,3 +411,45 @@ def test_settings_page_lists_models_and_saves(db, lm_studio, monkeypatch):  # no
     saved = read_env(env)
     assert saved["AP_LLM_MODEL"] == "llama-3.2-3b-instruct" and saved["AP_LLM_PROVIDER"] == "local"
     assert "AP_LLM_VISION" not in saved and "AP_LLM_BASE_URL" not in saved  # unchanged values are not written
+
+
+def test_with_a_local_model_the_reader_reads_and_the_model_codes_the_leftover_lines(lm_studio, reference):
+    """A small model misreads totals and provinces; the local reader does not. So the invoice is read by the
+    reader, and the model is only asked for the accounts the approval memory could not give."""
+    from ap_coder.pipeline import InvoicePipeline
+    from ap_coder.store import Store
+
+    from .conftest import SAMPLES
+
+    def reply(body):
+        user = body["messages"][-1]["content"]
+        numbers = [int(line.split(".")[0]) for line in user.splitlines() if line[:1].isdigit()]
+        picks = [{"line_number": n, "gl_code": "6400", "cost_center": "", "reason": "marketing"} for n in numbers]
+        picks.append({"line_number": 99, "gl_code": "6400", "cost_center": "", "reason": "not a line"})
+        picks.append({"line_number": numbers[0], "gl_code": "NOT-A-CODE", "cost_center": "", "reason": "x"})
+        return chat_reply(json.dumps({"lines": picks}))
+
+    server = lm_studio(["qwen2.5-7b-instruct"], V0_LOADED, reply=reply)
+    with tempfile.TemporaryDirectory() as tmp:
+        pipe = InvoicePipeline(local_settings(server.base_url), reference, store=Store(Path(tmp) / "ap.db"))
+        result = pipe.process(SAMPLES / "montroyal_QC_TPS_TVQ_ACMR-2026-1187.pdf")
+    assert result.ok, result.error
+    coding = result.coding.coding
+    assert coding.ship_to_province == "QC" and abs(coding.grand_total - 21578.51) < 0.01  # the reader's reading
+    assert result.coding.model == "local reader + qwen2.5-7b-instruct"
+    by_model = [li for li in coding.line_items if li.reasoning_justification.startswith("Suggested by the local model")]
+    assert by_model and {li.predicted_gl_code for li in by_model} == {"6400"}
+    # Lines the chart's names already matched keep that account: the model only fills what nothing coded.
+    assert all(li.predicted_gl_code != "UNASSIGNED" for li in coding.line_items)
+    sent = server.chats[-1]
+    assert "Lines (number. description | amount)" in sent["messages"][-1]["content"]
+    assert len(json.dumps(sent)) < 20000  # a short call: lines and the chart, not the whole invoice
+
+
+def test_a_province_as_a_model_writes_it():
+    from ap_coder.schema import province_code
+
+    assert province_code("Vancouver, BC") == "BC" and province_code("British Columbia") == "BC"
+    assert province_code("Québec") == "QC" and province_code("Seattle, USA") == "OUTSIDE_CANADA"
+    with pytest.raises(ValueError):
+        province_code("Narnia")

@@ -392,6 +392,82 @@ class InvoiceCoder:
             )
 
 
+def _account_schema(reference: ReferenceData) -> dict[str, Any]:
+    tax_gls = reference.tax.tax_gl_codes()
+    gl = [c for c in reference.chart_of_accounts.codes if c not in tax_gls]
+    line: dict[str, Any] = {
+        "line_number": {"type": "integer"},
+        "gl_code": {"type": "string", "enum": gl},
+        "reason": {"type": "string"},
+    }
+    if reference.cost_centers is not None:
+        line["cost_center"] = {"type": "string", "enum": [*reference.cost_centers.codes, ""]}
+    item = {"type": "object", "properties": line, "required": list(line), "additionalProperties": False}
+    return {
+        "type": "object",
+        "properties": {"lines": {"type": "array", "items": item}},
+        "required": ["lines"],
+        "additionalProperties": False,
+    }
+
+
+def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, str, float]],
+                     history: str = "") -> dict[int, tuple[str, str, str]]:  # fmt: skip
+    """A local model's GL account (and cost center) for each line the approval memory could not code:
+    line number -> (gl_code, cost_center, reason). The invoice itself is read by the local reader, which a
+    small model is worse at than at choosing an account; this call is short, so it is quick on a laptop.
+    Only codes from the chart come back (the schema lists them); anything else is dropped."""
+    if not lines:
+        return {}
+    model = coder._prepare_local()
+    schema = _account_schema(coder.reference)
+    system = (
+        "You code accounts-payable invoice lines to the company's GL accounts. Pick, for each line, the one expense "
+        "account (and cost center, when the list has them) that fits it best, following the coding policy. Answer "
+        "with JSON only.\n\n" + coder.reference.to_prompt_context()
+    )
+    listing = "\n".join(f"{n}. {desc} | {amount:,.2f}" for n, desc, amount in lines)
+    user = f"Vendor: {vendor or 'unknown'}\nLines (number. description | amount):\n{listing}"
+    if history:
+        user += f"\n\nHow AP coded similar lines before:\n{history}"
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    base = coder.settings.llm.base_url
+    mode = local_llm.start_mode(base, model)
+    while True:
+        kind = local_llm.RESPONSE_MODES[mode]
+        kwargs = coder._local_kwargs(model, kind)
+        if kind == "json_schema":
+            kwargs["response_format"] = response_format(schema)
+        sent = messages if kind == "json_schema" else [
+            {**messages[0], "content": messages[0]["content"] + local_llm.json_instructions(schema)}, messages[1]
+        ]  # fmt: skip
+        try:
+            response = coder.client.chat.completions.create(messages=sent, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - the lines stay for AP to code
+            if local_llm.rejects_format(exc) and mode + 1 < len(local_llm.RESPONSE_MODES):
+                mode += 1
+                local_llm.remember_mode(base, model, mode)
+                continue
+            raise coder._local_error(exc) from exc
+        break
+    message = response.choices[0].message
+    data = local_llm.parse_json_reply(message.content or getattr(message, "reasoning_content", None) or "") or {}
+    valid_gl = set(schema["properties"]["lines"]["items"]["properties"]["gl_code"]["enum"])
+    valid_cc = set(coder.reference.cost_centers.codes) if coder.reference.cost_centers is not None else set()
+    wanted = {n for n, _, _ in lines}
+    out: dict[int, tuple[str, str, str]] = {}
+    for row in data.get("lines") or []:
+        try:
+            n = int(row.get("line_number"))
+        except (TypeError, ValueError):
+            continue
+        gl = str(row.get("gl_code") or "").strip()
+        if n in wanted and gl in valid_gl:
+            cc = str(row.get("cost_center") or "").strip()
+            out[n] = (gl, cc if cc in valid_cc else "", str(row.get("reason") or "").strip()[:300])
+    return out
+
+
 def _accumulate_usage(total: dict[str, int], usage: Any) -> None:
     if usage is None:
         return
