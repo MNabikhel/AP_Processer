@@ -19,6 +19,13 @@ def test_all_text_is_escaped():
         ui.split_bar([(evil, 5.0)]),
         ui.vendor_row(evil, 3, 0.5, 1),
         ui.sidebar_profile(evil, 1, 2),
+        ui.sidebar_profile(evil, 1, 2, evil, "ok", evil),
+        ui.page_header(evil, evil, evil, crumbs=[evil, evil]),
+        ui.breadcrumbs([evil]),
+        ui.section_title(evil, evil),
+        ui.status(evil, evil),
+        ui.empty_note(evil, evil),
+        ui.kv([(evil, evil)]),
         ui.step("ok", evil, evil),
         ui.empty_state(evil, evil),
         ui.recent_row({**inv, "status": evil}),
@@ -96,3 +103,10 @@ def test_document_text_keeps_tables_but_escapes_everything_else():
     assert "<hr>" in out and '<th colspan="2">' in out and "<td>" in out
     assert "<style>" not in out and "<b>" not in out and "<td onclick" not in out
     assert "&lt;style&gt;" in out and "Chair" in out
+
+
+def test_credits_show_in_the_accounting_style_everywhere():
+    from ap_coder.webapp.common import money
+
+    assert ui.money(-2316.5) == "(2,316.50)" and ui.money(1234.5) == "1,234.50" and ui.money(-0.001) == "0.00"
+    assert money(-12, "CAD") == "(12.00) CAD" and money(None) == "-"

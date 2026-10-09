@@ -11,10 +11,13 @@ import importlib.metadata
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlparse
 
-from .config import Settings
+from .config import Settings, _on_this_network
 from .extraction import ExtractionResult, build_credential
 from .inference import CodingError, InvoiceCoder, ModelProfile
+from .local_llm import check_server, resolve_provider
 from .reference_data import ReferenceData
 from .schema import line_gl_codes, plan_code_enums
 from .tax import TAX_TYPES
@@ -57,6 +60,8 @@ def _secrets(settings: Settings) -> list[str]:
             if host:
                 values += [host, host.split(".")[0]]
     values += [k for k in (settings.openai.api_key, settings.document_intelligence.api_key) if k]
+    if settings.llm.api_key and settings.llm.api_key != "lm-studio":
+        values.append(settings.llm.api_key)
     # Longest first so a hostname is removed before its own resource-name prefix.
     return sorted({v for v in values if len(v) >= 4}, key=len, reverse=True)
 
@@ -91,28 +96,41 @@ def run_checks(
         status = PASS if v else (FAIL if settings.engine.vision else WARN)
         add(f"package {pkg}", status, v or "not installed (needed only for --vision)")
 
+    # --- Offline readiness (OCR models, data folder, local-only dashboard) ----------------------------
+    from .offline import offline_checks
+
+    for area, status, detail in offline_checks():
+        add(area, status, detail)
+
     # --- Configuration ----------------------------------------------------------
     di, oai, eng = settings.document_intelligence, settings.openai, settings.engine
-    add(
-        "DI endpoint",
-        PASS if di.endpoint else FAIL,
-        "set" if di.endpoint else "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT missing",
-    )
-    add("DI auth", PASS, "API key" if di.api_key else "Entra ID (DefaultAzureCredential)")
-    add("DI model", PASS, di.model_id)
-    add("AOAI endpoint", PASS if oai.endpoint else FAIL, "set" if oai.endpoint else "AZURE_OPENAI_ENDPOINT missing")
-    add("AOAI auth", PASS, "API key" if oai.api_key else "Entra ID (DefaultAzureCredential)")
-    api_ok = oai.api_version >= "2024-08-01"
-    add("AOAI api version", PASS if api_ok else FAIL, f"{oai.api_version} (Structured Outputs needs >= 2024-08-01)")
-    profile = ModelProfile.resolve(oai.model_name or oai.deployment, oai.supports_vision)
-    add(
-        "AOAI model",
-        PASS if oai.model_name else WARN,
-        f"deployment={oai.deployment}, model={oai.model_name or '(not set; inferred from deployment name)'}, "
-        f"vision={profile.supports_vision}, reasoning={profile.reasoning}",
-    )
-    if eng.vision and not profile.supports_vision:
-        add("vision mode", WARN, "AP_VISION=true but the model is not vision-capable; images will be dropped")
+    if di.endpoint:
+        add("DI endpoint", PASS, "set")
+        add("DI auth", PASS, "API key" if di.api_key else "Entra ID (DefaultAzureCredential)")
+        add("DI model", PASS, di.model_id)
+    else:  # optional: without it every invoice is read on this computer
+        add("DI endpoint", SKIP, "not set: invoices are read on this computer (PDF text, local OCR for scans)")
+    provider = resolve_provider(settings)
+    add("AI model", PASS if provider != "off" else WARN, _provider_detail(settings, provider))
+    if provider == "local" or settings.llm.provider == "off":
+        add("AOAI endpoint", SKIP, "not used (coding with the local model)" if provider == "local" else "not used")
+    elif not oai.endpoint:
+        add("AOAI endpoint", SKIP, "not set (optional: Azure OpenAI)")
+    else:
+        add("AOAI endpoint", PASS, "set")
+        add("AOAI auth", PASS, "API key" if oai.api_key else "Entra ID (DefaultAzureCredential)")
+        api_ok = oai.api_version >= "2024-08-01"
+        add("AOAI api version", PASS if api_ok else FAIL, f"{oai.api_version} (Structured Outputs needs >= 2024-08-01)")
+        profile = ModelProfile.resolve(oai.model_name or oai.deployment, oai.supports_vision)
+        add(
+            "AOAI model",
+            PASS if oai.model_name else WARN,
+            f"deployment={oai.deployment}, model={oai.model_name or '(not set; inferred from deployment name)'}, "
+            f"vision={profile.supports_vision}, reasoning={profile.reasoning}",
+        )
+        if eng.vision and not profile.supports_vision and provider == "azure":
+            add("vision mode", WARN, "AP_VISION=true but the model is not vision-capable; images will be dropped")
+    add(*_local_check(settings, provider))
     add(
         "engine",
         PASS,
@@ -179,6 +197,8 @@ def run_checks(
     if not online:
         add("DI connectivity", SKIP, "run with --online to test")
         add("AOAI connectivity", SKIP, "run with --online to test")
+        if provider == "local":
+            add("local dry run", SKIP, "run with --online to ask the local model for two lines' accounts")
         return checks
 
     if di.endpoint:
@@ -194,30 +214,73 @@ def run_checks(
     else:
         add("DI connectivity", SKIP, "endpoint not set")
 
-    if oai.endpoint and reference is not None:
+    if provider == "local":
+        if reference is not None and check_server(settings.llm).active:
+            add(*_local_dry_run(settings, reference))
+        else:
+            add("local dry run", SKIP, "no model loaded or reference data missing")
+    elif oai.endpoint and reference is not None:
         add(*_aoai_dry_run(settings, reference))
     else:
         add("AOAI connectivity", SKIP, "endpoint or reference data missing")
     return checks
 
 
-def _aoai_dry_run(settings: Settings, reference: ReferenceData) -> tuple[str, str, str]:
-    """Send one synthetic invoice with the real prompt and schema (costs about one invoice)."""
+def _provider_detail(settings: Settings, provider: str) -> str:
+    chosen = settings.llm.provider
+    if provider == "azure":
+        return f"Azure OpenAI (AP_LLM_PROVIDER={chosen})"
+    if provider == "local":
+        return f"local model (AP_LLM_PROVIDER={chosen})"
+    if chosen == "off":
+        return "turned off (AP_LLM_PROVIDER=off): invoices are not coded by AI"
+    return "none: no Azure OpenAI endpoint and no local model answering (start LM Studio's server)"
+
+
+def _local_check(settings: Settings, provider: str) -> tuple[str, str, str]:
+    """The local server's state. Its address is shown only when it is on this computer or network (keys never are)."""
+    if provider == "azure":
+        return "local model", SKIP, "not used (coding with Azure OpenAI)"
+    status = check_server(settings.llm, use_cache=False)
+    where = status.base_url if _on_this_network(urlparse(status.base_url).netloc) else "AP_LLM_BASE_URL"
+    if status.active:
+        sees = "yes" if status.vision else "no"
+        override = {"on": " (forced on)", "off": " (turned off)"}.get(settings.llm.vision, "")
+        return (
+            "local model",
+            PASS,
+            f"{status.server} at {where}: {status.model}; can see pages: {sees}{override}; "
+            f"{len(status.chat_models)} chat model(s) listed",
+        )
+    if status.reachable:
+        return (
+            "local model",
+            FAIL if provider == "local" else WARN,
+            f"{status.server_title} is running but no model is loaded",
+        )
+    detail = f"not running at {where} (LM Studio: load a model, then Developer tab -> Start server)"
+    return "local model", FAIL if provider == "local" else WARN, detail
+
+
+def _aoai_dry_run(settings: Settings, reference: ReferenceData, provider: str | None = None) -> tuple[str, str, str]:
+    """Send one synthetic invoice with the real prompt and schema (about one invoice's cost on Azure; free locally)."""
+    area = "local dry run" if provider == "local" else "AOAI dry run"
     try:
-        coder = InvoiceCoder(settings, reference)
+        coder = InvoiceCoder(settings, reference, provider=provider)
         result = coder.code(
             ExtractionResult(source="doctor-dry-run.md", model_id="synthetic", content=_DRY_RUN_INVOICE)
         )
     except CodingError as exc:
-        return "AOAI dry run", WARN, f"reached the model but: {_scrub(str(exc), settings)}"
+        return area, WARN, f"reached the model but: {_scrub(str(exc), settings)}"
     except Exception as exc:
         hint = _aoai_hint(exc)
-        return "AOAI dry run", FAIL, f"{type(exc).__name__}: {_scrub(str(exc), settings)}{hint}"
+        return area, FAIL, f"{type(exc).__name__}: {_scrub(str(exc), settings)}{hint}"
     usage = result.usage
+    accepted = "strict schema accepted" if provider != "local" else f"valid coding in {result.attempts} call(s)"
     return (
-        "AOAI dry run",
+        area,
         PASS,
-        f"strict schema accepted by {result.model}; prompt {usage.get('prompt_tokens', '?')} tokens, "
+        f"{accepted} by {result.model}; prompt {usage.get('prompt_tokens', '?')} tokens, "
         f"completion {usage.get('completion_tokens', '?')} tokens",
     )
 
@@ -247,3 +310,23 @@ def format_checks(checks: list[Check]) -> str:
 
 def exit_code(checks: list[Check]) -> int:
     return 1 if any(c.status == FAIL for c in checks) else 0
+
+
+def _local_dry_run(settings: Settings, reference: Any) -> tuple[str, str, str]:
+    """What the pipeline asks a local model for: the accounts of lines nothing else could code (the invoice
+    itself is read by the local reader). Two made-up lines, so it answers in seconds even on a laptop CPU."""
+    import time
+
+    from .inference import suggest_accounts
+
+    lines = [(1, "Printer paper, letter size, 10 cases", 420.0), (2, "Courier delivery, same day", 35.0)]
+    started = time.perf_counter()
+    try:
+        picks = suggest_accounts(InvoiceCoder(settings, reference), "Sample Office Supply Ltd.", lines)
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        return "local dry run", WARN, f"reached the model but: {_scrub(str(exc), settings)}"
+    took = time.perf_counter() - started
+    if not picks:
+        return "local dry run", WARN, f"the model answered in {took:.0f}s but gave no account from the chart"
+    chosen = ", ".join(f"line {n} -> {gl}" for n, (gl, _, _) in sorted(picks.items()))
+    return "local dry run", PASS, f"accounts from the chart in {took:.0f}s: {chosen}"

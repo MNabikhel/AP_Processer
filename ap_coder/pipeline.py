@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .capture.bridge import review_issues
+from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
 from .config import Settings
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
@@ -22,7 +24,7 @@ from .rules import apply as apply_rules
 from .schema import InvoiceCoding
 from .tax import build_gl_distribution
 from .terms import payment_findings
-from .validation import ValidationReport, validate_coding
+from .validation import Issue, ValidationReport, validate_coding
 from .vendors import vendor_findings
 
 if TYPE_CHECKING:
@@ -43,6 +45,8 @@ class PipelineResult:
     history_examples: int = 0
     invoice_id: int | None = None  # row id when saved to the dashboard store
     rules_applied: list[dict[str, Any]] = field(default_factory=list)  # lines a fixed coding rule changed
+    capture: Any = None  # capture.CaptureResult: every header field located, with its confidence
+    autonomy: dict[str, Any] = field(default_factory=dict)  # supplier state and whether it went touchless
 
     @property
     def ok(self) -> bool:
@@ -157,16 +161,70 @@ class InvoicePipeline:
         self.coder = coder or InvoiceCoder(settings, reference)
         self.store = store
 
+    def _local_accounts(self, result: CodingResult, history: str) -> None:
+        """The local model's account for each line the approval memory has not taught. Never fatal: a model
+        that is slow or wrong leaves the line as it was for AP to code."""
+        from .inference import suggest_accounts
+        from .reference_data import UNASSIGNED
+
+        coding = result.coding
+        # Lines nothing could code. A match on the account's name stays: on the samples a small model
+        # (1.5B) picked the right account less often (11 of 41) than the name match did (21 of 41).
+        todo = [
+            (li.line_number, li.description, li.amount)
+            for li in coding.line_items
+            if li.predicted_gl_code == UNASSIGNED
+        ]
+        if not todo:
+            return
+        try:
+            picks = suggest_accounts(self.coder, coding.vendor_name, todo, history)
+        except Exception as exc:  # the model is an extra here: the invoice is already read and checked
+            log.warning("local model could not suggest accounts (%s); left for AP", exc)
+            return
+        for li in coding.line_items:
+            if li.line_number in picks:
+                gl, cc, reason = picks[li.line_number]
+                li.predicted_gl_code = gl
+                if cc:
+                    li.predicted_cost_center = cc
+                li.reasoning_justification = (
+                    f"Suggested by the local model: {reason}" if reason else "Suggested by the local model"
+                )
+        model = getattr(self.coder, "_local_model", "") or "local model"
+        result.model = f"local reader + {model}"
+
+    def _reads_locally(self, path: Path) -> bool:
+        """No Document Intelligence endpoint (and no client handed in): read the file on this computer."""
+        ex = self.extractor
+        return (
+            path.suffix.lower() not in TEXT_EXTENSIONS
+            and isinstance(ex, DocumentExtractor)
+            and ex._client is None
+            and not ex.settings.endpoint
+        )
+
     def process(self, path: str | Path) -> PipelineResult:
         path = Path(path)
         result = PipelineResult(source=path)
+        captured: tuple[Any, str, Any] | None = None  # (capture, supplier key, profile) when read without AI
         try:
             t0 = time.perf_counter()
-            result.extraction = self.extractor.extract(path)
+            layout = None
+            if self._reads_locally(path):  # offline: the page's text layer, or local OCR for a scan
+                from .capture import build_layout
+                from .offline_coder import local_extraction
+
+                layout = build_layout(path)
+                result.extraction = local_extraction(path, layout)
+            else:
+                result.extraction = self.extractor.extract(path)
             result.timings["extraction"] = time.perf_counter() - t0
 
             images = None
-            if self.settings.engine.vision and path.suffix.lower() not in TEXT_EXTENSIONS:
+            # Azure: AP_VISION. A local model: when it can see pages (AP_LLM_VISION).
+            wants_images = getattr(self.coder, "wants_images", lambda: self.settings.engine.vision)
+            if path.suffix.lower() not in TEXT_EXTENSIONS and wants_images():
                 try:
                     images = render_page_images(path, self.settings.engine.vision_max_pages)
                 except Exception as exc:  # vision is an extra; the text extraction is enough to code
@@ -180,7 +238,20 @@ class InvoicePipeline:
             history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
 
             t1 = time.perf_counter()
-            result.coding = self.coder.code(result.extraction, images, history_text)
+            provider = getattr(self.coder, "provider", "")
+            if provider in ("off", "local") and path.suffix.lower() not in TEXT_EXTENSIONS:
+                # No cloud AI: the local reader's header, lines and taxes (it reads invoices better than a small
+                # model), each line coded from what AP approved before; a local model codes the lines left over.
+                from .offline_coder import code_from_capture, read_invoice
+
+                captured = read_invoice(path, self.store, layout=layout)
+                result.coding = code_from_capture(
+                    captured[0], self.reference, feedback, self.store, text=result.extraction.content
+                )
+                if provider == "local":
+                    self._local_accounts(result.coding, history_text)
+            else:
+                result.coding = self.coder.code(result.extraction, images, history_text)
             result.timings["inference"] = time.perf_counter() - t1
             if self.store is not None:  # fixed coding rules set by AP win over the AI
                 coded, result.rules_applied = apply_rules(result.coding.coding, self.store.coding_rules())
@@ -198,15 +269,38 @@ class InvoicePipeline:
             log.exception("Failed to process %s", path)
             result.error = f"{type(exc).__name__}: {exc}"
 
+        key, profile = "", None
+        if result.output is not None:
+            t2 = time.perf_counter()
+            if captured is not None:  # already read (no AI model): the capture is the proposal itself
+                result.capture, key, profile = captured
+            else:
+                result.capture, key, profile = capture_invoice(
+                    path, result.output, store=self.store, di_raw=result.extraction.raw if result.extraction else None
+                )
+            result.timings["capture"] = time.perf_counter() - t2
+            if result.capture is not None and result.report is not None:
+                for severity, code, message in review_issues(result.capture):
+                    result.report.issues.append(Issue(severity, code, message))
+                result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path)
+
         if self.store is not None:
-            result.invoice_id = self.store.add_invoice(
-                path,
-                result.output,
-                result.report.to_dict() if result.report else None,
-                extraction_md=result.extraction.content if result.extraction else "",
-                meta=_meta(result),
-                error=result.error,
-            )
+            try:
+                result.invoice_id = self.store.add_invoice(
+                    path,
+                    result.output,
+                    result.report.to_dict() if result.report else None,
+                    extraction_md=result.extraction.content if result.extraction else "",
+                    meta=_meta(result),
+                    error=result.error,
+                )
+                if result.capture is not None:
+                    self.store.save_capture(result.invoice_id, result.capture.to_dict())
+                if result.autonomy.get("auto") and result.output is not None:
+                    self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+            except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
+                log.exception("Could not save %s", path)
+                result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"
         return result
 
     def process_many(
@@ -246,12 +340,20 @@ class InvoicePipeline:
 def output_stems(paths: list[Path]) -> list[str]:
     """One output name per input. Same-named files from different folders (e.g. two vendors'
     ``Invoice.pdf``) get ``_2``, ``_3``... so their results don't overwrite each other."""
-    seen: dict[str, int] = {}
+    taken = {p.stem.lower() for p in paths}  # a file's own name stays its own (c/Invoice_2.pdf keeps Invoice_2)
+    first: set[str] = set()
     stems = []
     for p in paths:
         key = p.stem.lower()
-        seen[key] = seen.get(key, 0) + 1
-        stems.append(p.stem if seen[key] == 1 else f"{p.stem}_{seen[key]}")
+        if key not in first:
+            first.add(key)
+            stems.append(p.stem)
+            continue
+        n = 2
+        while f"{key}_{n}" in taken:
+            n += 1
+        taken.add(f"{key}_{n}")
+        stems.append(f"{p.stem}_{n}")
     return stems
 
 
@@ -310,4 +412,10 @@ def _meta(result: PipelineResult) -> dict[str, Any]:
             "usage": result.coding.usage,
         }
     meta["history_examples"] = result.history_examples
+    if result.capture is not None:
+        meta["capture"] = {
+            "status_counts": result.capture.status_counts(),
+            "layout": result.capture.layout_source,
+            **{k: v for k, v in result.autonomy.items() if v not in ("", None)},
+        }
     return meta

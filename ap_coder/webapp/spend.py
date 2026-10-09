@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import spend, ui
-from ap_coder.webapp.common import card, esc, get_store, money, reference_or_none, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, page_head, reference_or_none, show_toast
 
 TOP = 10
 ALL_IN_CAD = "All, in CAD"
@@ -54,12 +54,8 @@ def page_spend() -> None:
 
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Analyse",
-            "Spend",
-            "Where the money goes, by month, GL account, cost center and vendor, from approved invoices.",
-        )
+    page_head(
+        "spend", "Spend", "Where the money goes, by month, GL account, cost center and vendor, from approved invoices."
     )
     reference = reference_or_none(store)
     with card("spend_period"):
@@ -67,8 +63,8 @@ def page_spend() -> None:
         c1, c2, c3, c4 = st.columns([1, 1, 1, 1.6], vertical_alignment="bottom")
         with c4:
             _data_download(store, reference)
-        start = c1.date_input("From (invoice date)", default_start, key="spend_start")
-        end = c2.date_input("To", default_end, key="spend_end")
+        start = c1.date_input("From (invoice date)", default_start, format="YYYY-MM-DD", key="spend_start")
+        end = c2.date_input("To", default_end, format="YYYY-MM-DD", key="spend_end")
         rows = spend.lines(store, start, end) if start <= end else []
         currencies = spend.currencies(rows) or ["CAD"]
         rates = store.fx_rates()
@@ -114,7 +110,7 @@ def page_spend() -> None:
                     money(total / len(months)),
                     "calendar_month",
                     "amber",
-                    f"over {len(months)} month(s) with invoices",
+                    f"over {ui.plural(len(months), 'month')} with invoices",
                 ),
             ]  # fmt: skip
         )
@@ -124,7 +120,7 @@ def page_spend() -> None:
     names = {code: row.get("description", "") for code, row in accounts.items()}
     category = {code: row.get("category", "") for code, row in accounts.items()}
     with card("spend_months"):
-        st.markdown("#### :material/bar_chart: By month")
+        st.markdown("#### By month")
         data = pd.DataFrame(spend.by_month_and_category(rows, currency, category))
         chart = (
             alt.Chart(data)
@@ -143,15 +139,15 @@ def page_spend() -> None:
 
     left, right = st.columns(2, gap="medium")
     with left, card("spend_gl"):
-        st.markdown("#### :material/account_tree: Top GL accounts")
+        st.markdown("#### Top GL accounts")
         st.html(_table(spend.total_by(rows, "gl_code", currency), "GL account", names, total))
     with right, card("spend_vendors"):
-        st.markdown("#### :material/storefront: Top vendors")
+        st.markdown("#### Top vendors")
         st.html(_table(vendors, "Vendor", {}, total))
     centers = spend.total_by(rows, "cost_center", currency)
     if any(key for key, _, _ in centers):
         with card("spend_cc"):
-            st.markdown("#### :material/domain: By cost center")
+            st.markdown("#### By cost center")
             cc_names = {
                 code: row.get("description", "") for code, row in spend.accounts_by_code(reference, True).items()
             }

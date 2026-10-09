@@ -1,0 +1,1535 @@
+{
+ "about": "Per evidence pattern: [values reported, values right] on the benchmark runs below. Written by `python -m ap_coder.bench calibrate`; read by ap_coder.capture.confidence.",
+ "runs": [
+  {
+   "n": 4000,
+   "seed": 2,
+   "scanned": 0.0,
+   "reader": "capture",
+   "workers": 4,
+   "generator_version": 1
+  },
+  {
+   "n": 600,
+   "seed": 12,
+   "scanned": 1.0,
+   "reader": "capture",
+   "workers": 4,
+   "generator_version": 1
+  },
+  {
+   "n": 160,
+   "seed": 11,
+   "scanned": 1.0,
+   "reader": "capture",
+   "workers": 4,
+   "generator_version": 1
+  },
+  {
+   "suppliers": 80,
+   "invoices": 40,
+   "seed": 6,
+   "scanned": 0.0,
+   "workers": 4,
+   "generator_version": 1,
+   "policy": {
+    "min_invoices": 20,
+    "min_lower_bound": 0.99,
+    "window": 200,
+    "clean_streak": 10,
+    "audit_rate": 0.05,
+    "z": 1.96
+   },
+   "vendor_master": true,
+   "ignore_checks": [],
+   "layouts": {
+    "s6-v000": "credit_note",
+    "s6-v001": "classic_left",
+    "s6-v002": "us_vendor",
+    "s6-v003": "table_footer",
+    "s6-v004": "remittance_stub",
+    "s6-v005": "quebec_fr",
+    "s6-v006": "header_grid",
+    "s6-v007": "boxed_fields",
+    "s6-v008": "utility_bill",
+    "s6-v009": "minimal_courier",
+    "s6-v010": "bilingual",
+    "s6-v011": "vendor_right",
+    "s6-v012": "totals_left",
+    "s6-v013": "multipage",
+    "s6-v014": "centered_logo",
+    "s6-v015": "credit_note",
+    "s6-v016": "classic_left",
+    "s6-v017": "us_vendor",
+    "s6-v018": "table_footer",
+    "s6-v019": "remittance_stub",
+    "s6-v020": "quebec_fr",
+    "s6-v021": "header_grid",
+    "s6-v022": "boxed_fields",
+    "s6-v023": "utility_bill",
+    "s6-v024": "minimal_courier",
+    "s6-v025": "bilingual",
+    "s6-v026": "vendor_right",
+    "s6-v027": "totals_left",
+    "s6-v028": "multipage",
+    "s6-v029": "centered_logo",
+    "s6-v030": "credit_note",
+    "s6-v031": "classic_left",
+    "s6-v032": "us_vendor",
+    "s6-v033": "table_footer",
+    "s6-v034": "remittance_stub",
+    "s6-v035": "quebec_fr",
+    "s6-v036": "header_grid",
+    "s6-v037": "boxed_fields",
+    "s6-v038": "utility_bill",
+    "s6-v039": "minimal_courier",
+    "s6-v040": "bilingual",
+    "s6-v041": "vendor_right",
+    "s6-v042": "totals_left",
+    "s6-v043": "multipage",
+    "s6-v044": "centered_logo",
+    "s6-v045": "credit_note",
+    "s6-v046": "classic_left",
+    "s6-v047": "us_vendor",
+    "s6-v048": "table_footer",
+    "s6-v049": "remittance_stub",
+    "s6-v050": "quebec_fr",
+    "s6-v051": "header_grid",
+    "s6-v052": "boxed_fields",
+    "s6-v053": "utility_bill",
+    "s6-v054": "minimal_courier",
+    "s6-v055": "bilingual",
+    "s6-v056": "vendor_right",
+    "s6-v057": "totals_left",
+    "s6-v058": "multipage",
+    "s6-v059": "centered_logo",
+    "s6-v060": "credit_note",
+    "s6-v061": "classic_left",
+    "s6-v062": "us_vendor",
+    "s6-v063": "table_footer",
+    "s6-v064": "remittance_stub",
+    "s6-v065": "quebec_fr",
+    "s6-v066": "header_grid",
+    "s6-v067": "boxed_fields",
+    "s6-v068": "utility_bill",
+    "s6-v069": "minimal_courier",
+    "s6-v070": "bilingual",
+    "s6-v071": "vendor_right",
+    "s6-v072": "totals_left",
+    "s6-v073": "multipage",
+    "s6-v074": "centered_logo",
+    "s6-v075": "credit_note",
+    "s6-v076": "classic_left",
+    "s6-v077": "us_vendor",
+    "s6-v078": "table_footer",
+    "s6-v079": "remittance_stub"
+   }
+  }
+ ],
+ "evidence": {
+  "currency|ocr2+rules|pattern|scan|": [
+   318,
+   318
+  ],
+  "currency|ocr2|pattern|scan|": [
+   3,
+   3
+  ],
+  "currency|rules+template|template|text|": [
+   1278,
+   1278
+  ],
+  "currency|rules|pattern|scan|": [
+   2,
+   2
+  ],
+  "currency|rules|pattern|text|": [
+   1677,
+   1677
+  ],
+  "due_date|ocr2+rules|label-below|scan|": [
+   58,
+   58
+  ],
+  "due_date|ocr2+rules|label-below|scan|confirmed": [
+   87,
+   87
+  ],
+  "due_date|ocr2+rules|label-below|scan|received": [
+   1,
+   1
+  ],
+  "due_date|ocr2+rules|label-inline|scan|": [
+   65,
+   65
+  ],
+  "due_date|ocr2+rules|label-inline|scan|confirmed": [
+   26,
+   26
+  ],
+  "due_date|ocr2+rules|label-inline|scan|soft": [
+   9,
+   9
+  ],
+  "due_date|ocr2+rules|label-inline|scan|soft,received": [
+   1,
+   1
+  ],
+  "due_date|ocr2+rules|label-right|scan|": [
+   51,
+   51
+  ],
+  "due_date|ocr2+rules|label-right|scan|confirmed": [
+   74,
+   74
+  ],
+  "due_date|ocr2+rules|label-right|scan|received": [
+   2,
+   2
+  ],
+  "due_date|ocr2+rules|label-right|scan|soft": [
+   1,
+   1
+  ],
+  "due_date|ocr2|label-below|scan|confirmed": [
+   1,
+   1
+  ],
+  "due_date|ocr2|label-below|scan|soft": [
+   1,
+   0
+  ],
+  "due_date|ocr2|label-inline|scan|": [
+   1,
+   1
+  ],
+  "due_date|ocr2|label-inline|scan|confirmed": [
+   1,
+   1
+  ],
+  "due_date|ocr2|label-right|scan|soft": [
+   1,
+   0
+  ],
+  "due_date|rules+template|label-below|text|confirmed": [
+   2,
+   2
+  ],
+  "due_date|rules+template|label-below|text|confirmed,contested": [
+   5,
+   5
+  ],
+  "due_date|rules+template|label-below|text|contested": [
+   8,
+   8
+  ],
+  "due_date|rules+template|label-inline|text|": [
+   5,
+   5
+  ],
+  "due_date|rules+template|label-right|text|confirmed": [
+   3,
+   3
+  ],
+  "due_date|rules+template|template|text|": [
+   406,
+   406
+  ],
+  "due_date|rules+template|template|text|confirmed": [
+   902,
+   902
+  ],
+  "due_date|rules+template|template|text|confirmed,contested": [
+   92,
+   92
+  ],
+  "due_date|rules+template|template|text|contested": [
+   9,
+   9
+  ],
+  "due_date|rules+template|template|text|soft": [
+   2,
+   2
+  ],
+  "due_date|rules|label-below|scan|": [
+   1,
+   1
+  ],
+  "due_date|rules|label-below|scan|confirmed": [
+   2,
+   2
+  ],
+  "due_date|rules|label-below|text|": [
+   361,
+   361
+  ],
+  "due_date|rules|label-below|text|confirmed": [
+   486,
+   486
+  ],
+  "due_date|rules|label-below|text|contested": [
+   5,
+   5
+  ],
+  "due_date|rules|label-below|text|contested,soft": [
+   2,
+   0
+  ],
+  "due_date|rules|label-below|text|received": [
+   8,
+   8
+  ],
+  "due_date|rules|label-below|text|soft": [
+   5,
+   0
+  ],
+  "due_date|rules|label-inline|text|": [
+   224,
+   224
+  ],
+  "due_date|rules|label-inline|text|confirmed": [
+   32,
+   32
+  ],
+  "due_date|rules|label-inline|text|contested": [
+   2,
+   2
+  ],
+  "due_date|rules|label-inline|text|received": [
+   1,
+   1
+  ],
+  "due_date|rules|label-inline|text|soft": [
+   41,
+   41
+  ],
+  "due_date|rules|label-right|scan|": [
+   2,
+   2
+  ],
+  "due_date|rules|label-right|scan|confirmed": [
+   1,
+   1
+  ],
+  "due_date|rules|label-right|text|": [
+   408,
+   408
+  ],
+  "due_date|rules|label-right|text|confirmed": [
+   471,
+   471
+  ],
+  "due_date|rules|label-right|text|contested": [
+   5,
+   5
+  ],
+  "due_date|rules|label-right|text|contested,soft": [
+   1,
+   0
+  ],
+  "due_date|rules|label-right|text|received": [
+   6,
+   6
+  ],
+  "due_date|rules|label-right|text|soft": [
+   5,
+   2
+  ],
+  "due_date|template|template|text|contested": [
+   1,
+   0
+  ],
+  "due_date|template|template|text|contested,soft": [
+   3,
+   0
+  ],
+  "grand_total|ocr2+rules|label-below|scan|adds-up,confirmed": [
+   1,
+   1
+  ],
+  "grand_total|ocr2+rules|label-inline|scan|": [
+   4,
+   4
+  ],
+  "grand_total|ocr2+rules|label-inline|scan|adds-up": [
+   2,
+   2
+  ],
+  "grand_total|ocr2+rules|label-inline|scan|adds-up,confirmed": [
+   270,
+   270
+  ],
+  "grand_total|ocr2+rules|label-inline|scan|adds-up,confirmed,contested": [
+   13,
+   13
+  ],
+  "grand_total|ocr2+rules|label-inline|scan|confirmed": [
+   12,
+   12
+  ],
+  "grand_total|ocr2+rules|label-inline|scan|confirmed,contested": [
+   2,
+   2
+  ],
+  "grand_total|ocr2+rules|label-right|scan|": [
+   7,
+   6
+  ],
+  "grand_total|ocr2+rules|label-right|scan|adds-up": [
+   5,
+   5
+  ],
+  "grand_total|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   398,
+   398
+  ],
+  "grand_total|ocr2+rules|label-right|scan|adds-up,confirmed,contested": [
+   23,
+   23
+  ],
+  "grand_total|ocr2+rules|label-right|scan|confirmed": [
+   15,
+   15
+  ],
+  "grand_total|rules+template|label-inline|text|": [
+   1,
+   1
+  ],
+  "grand_total|rules+template|label-inline|text|adds-up,confirmed": [
+   252,
+   252
+  ],
+  "grand_total|rules+template|label-inline|text|confirmed": [
+   8,
+   8
+  ],
+  "grand_total|rules+template|label-right|text|adds-up,confirmed": [
+   1127,
+   1127
+  ],
+  "grand_total|rules+template|label-right|text|adds-up,confirmed,contested": [
+   46,
+   46
+  ],
+  "grand_total|rules+template|label-right|text|confirmed": [
+   1,
+   1
+  ],
+  "grand_total|rules+template|template|text|": [
+   11,
+   11
+  ],
+  "grand_total|rules+template|template|text|confirmed": [
+   1650,
+   1650
+  ],
+  "grand_total|rules+template|template|text|confirmed,contested": [
+   12,
+   12
+  ],
+  "grand_total|rules|label-below|text|adds-up,confirmed": [
+   2,
+   2
+  ],
+  "grand_total|rules|label-inline|scan|adds-up,confirmed": [
+   2,
+   2
+  ],
+  "grand_total|rules|label-inline|text|": [
+   3,
+   3
+  ],
+  "grand_total|rules|label-inline|text|adds-up,confirmed": [
+   392,
+   392
+  ],
+  "grand_total|rules|label-inline|text|confirmed": [
+   18,
+   18
+  ],
+  "grand_total|rules|label-right|scan|adds-up,confirmed": [
+   1,
+   1
+  ],
+  "grand_total|rules|label-right|scan|adds-up,confirmed,contested": [
+   4,
+   4
+  ],
+  "grand_total|rules|label-right|scan|adds-up,contested": [
+   1,
+   1
+  ],
+  "grand_total|rules|label-right|text|": [
+   43,
+   43
+  ],
+  "grand_total|rules|label-right|text|adds-up,confirmed": [
+   3499,
+   3499
+  ],
+  "grand_total|rules|label-right|text|adds-up,confirmed,contested": [
+   21,
+   21
+  ],
+  "grand_total|rules|label-right|text|confirmed": [
+   109,
+   109
+  ],
+  "grand_total|rules|label-right|text|confirmed,contested": [
+   4,
+   4
+  ],
+  "grand_total|template|template|text|confirmed,contested": [
+   1,
+   0
+  ],
+  "gst_amount|ocr2+rules|label-right|scan|": [
+   2,
+   2
+  ],
+  "gst_amount|ocr2+rules|label-right|scan|adds-up": [
+   3,
+   3
+  ],
+  "gst_amount|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   388,
+   388
+  ],
+  "gst_amount|ocr2+rules|label-right|scan|adds-up,confirmed,contested": [
+   12,
+   12
+  ],
+  "gst_amount|ocr2|label-right|scan|adds-up": [
+   1,
+   1
+  ],
+  "gst_amount|ocr2|label-right|scan|adds-up,confirmed,soft": [
+   1,
+   0
+  ],
+  "gst_amount|rules+template|label-right|text|adds-up": [
+   2,
+   2
+  ],
+  "gst_amount|rules+template|label-right|text|adds-up,confirmed": [
+   1435,
+   1435
+  ],
+  "gst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
+   110,
+   110
+  ],
+  "gst_amount|rules+template|template|text|confirmed": [
+   347,
+   347
+  ],
+  "gst_amount|rules|label-right|scan|adds-up,confirmed": [
+   4,
+   4
+  ],
+  "gst_amount|rules|label-right|scan|adds-up,confirmed,contested": [
+   3,
+   3
+  ],
+  "gst_amount|rules|label-right|text|adds-up,confirmed": [
+   2170,
+   2170
+  ],
+  "gst_amount|rules|label-right|text|adds-up,confirmed,contested": [
+   15,
+   15
+  ],
+  "gst_amount|rules|label-right|text|adds-up,contested": [
+   1,
+   1
+  ],
+  "gst_hst_registration_number|ocr2+rules|pattern|scan|confirmed": [
+   655,
+   655
+  ],
+  "gst_hst_registration_number|ocr2|pattern|scan|confirmed": [
+   3,
+   3
+  ],
+  "gst_hst_registration_number|rules+template|pattern|text|confirmed": [
+   1794,
+   1794
+  ],
+  "gst_hst_registration_number|rules+template|template|text|confirmed": [
+   986,
+   986
+  ],
+  "gst_hst_registration_number|rules|pattern|scan|confirmed": [
+   14,
+   14
+  ],
+  "gst_hst_registration_number|rules|pattern|text|confirmed": [
+   3681,
+   3681
+  ],
+  "hst_amount|ocr2+rules|label-right|scan|adds-up": [
+   5,
+   5
+  ],
+  "hst_amount|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   277,
+   277
+  ],
+  "hst_amount|ocr2+rules|label-right|scan|adds-up,confirmed,contested": [
+   5,
+   5
+  ],
+  "hst_amount|ocr2+rules|label-right|scan|soft": [
+   2,
+   2
+  ],
+  "hst_amount|ocr2|label-below|scan|soft": [
+   1,
+   0
+  ],
+  "hst_amount|ocr2|label-inline|scan|adds-up,confirmed,contested,soft": [
+   1,
+   0
+  ],
+  "hst_amount|ocr2|label-right|scan|adds-up": [
+   1,
+   1
+  ],
+  "hst_amount|rules+template|label-right|text|adds-up,confirmed": [
+   769,
+   769
+  ],
+  "hst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
+   20,
+   20
+  ],
+  "hst_amount|rules+template|label-right|text|adds-up,confirmed,soft": [
+   1,
+   1
+  ],
+  "hst_amount|rules+template|template|text|confirmed": [
+   182,
+   182
+  ],
+  "hst_amount|rules|label-right|scan|adds-up,confirmed": [
+   3,
+   3
+  ],
+  "hst_amount|rules|label-right|scan|adds-up,confirmed,contested": [
+   3,
+   3
+  ],
+  "hst_amount|rules|label-right|scan|adds-up,soft": [
+   1,
+   0
+  ],
+  "hst_amount|rules|label-right|text|adds-up": [
+   2,
+   2
+  ],
+  "hst_amount|rules|label-right|text|adds-up,confirmed": [
+   1636,
+   1636
+  ],
+  "hst_amount|rules|label-right|text|adds-up,confirmed,contested": [
+   1,
+   1
+  ],
+  "hst_amount|rules|label-right|text|adds-up,contested": [
+   2,
+   2
+  ],
+  "invoice_date|ocr2+rules|label-below|scan|": [
+   207,
+   207
+  ],
+  "invoice_date|ocr2+rules|label-below|scan|confirmed": [
+   91,
+   91
+  ],
+  "invoice_date|ocr2+rules|label-below|scan|received": [
+   8,
+   8
+  ],
+  "invoice_date|ocr2+rules|label-below|scan|soft": [
+   1,
+   1
+  ],
+  "invoice_date|ocr2+rules|label-inline|scan|": [
+   108,
+   108
+  ],
+  "invoice_date|ocr2+rules|label-inline|scan|confirmed": [
+   22,
+   22
+  ],
+  "invoice_date|ocr2+rules|label-inline|scan|received": [
+   8,
+   8
+  ],
+  "invoice_date|ocr2+rules|label-inline|scan|soft": [
+   4,
+   4
+  ],
+  "invoice_date|ocr2+rules|label-inline|scan|soft,received": [
+   1,
+   1
+  ],
+  "invoice_date|ocr2+rules|label-right|scan|": [
+   195,
+   195
+  ],
+  "invoice_date|ocr2+rules|label-right|scan|confirmed": [
+   71,
+   71
+  ],
+  "invoice_date|ocr2+rules|label-right|scan|received": [
+   8,
+   8
+  ],
+  "invoice_date|ocr2+rules|label-right|scan|soft": [
+   6,
+   6
+  ],
+  "invoice_date|ocr2|label-below|scan|": [
+   1,
+   1
+  ],
+  "invoice_date|ocr2|label-inline|scan|": [
+   1,
+   1
+  ],
+  "invoice_date|ocr2|label-inline|scan|confirmed,contested": [
+   2,
+   2
+  ],
+  "invoice_date|ocr2|label-inline|scan|contested": [
+   1,
+   1
+  ],
+  "invoice_date|rules+template|label-below|text|": [
+   3,
+   3
+  ],
+  "invoice_date|rules+template|label-below|text|confirmed": [
+   1,
+   1
+  ],
+  "invoice_date|rules+template|label-inline|text|": [
+   1,
+   1
+  ],
+  "invoice_date|rules+template|label-inline|text|received": [
+   1,
+   1
+  ],
+  "invoice_date|rules+template|label-right|text|": [
+   7,
+   7
+  ],
+  "invoice_date|rules+template|label-right|text|confirmed": [
+   3,
+   3
+  ],
+  "invoice_date|rules+template|template|text|": [
+   2081,
+   2081
+  ],
+  "invoice_date|rules+template|template|text|confirmed": [
+   925,
+   925
+  ],
+  "invoice_date|rules+template|template|text|confirmed,contested": [
+   80,
+   80
+  ],
+  "invoice_date|rules+template|template|text|contested": [
+   1,
+   1
+  ],
+  "invoice_date|rules+template|template|text|soft": [
+   3,
+   3
+  ],
+  "invoice_date|rules|label-below|scan|": [
+   8,
+   8
+  ],
+  "invoice_date|rules|label-below|scan|confirmed": [
+   2,
+   2
+  ],
+  "invoice_date|rules|label-below|text|": [
+   1209,
+   1209
+  ],
+  "invoice_date|rules|label-below|text|confirmed": [
+   494,
+   494
+  ],
+  "invoice_date|rules|label-below|text|received": [
+   57,
+   57
+  ],
+  "invoice_date|rules|label-below|text|soft": [
+   4,
+   4
+  ],
+  "invoice_date|rules|label-inline|scan|": [
+   5,
+   5
+  ],
+  "invoice_date|rules|label-inline|scan|confirmed,contested": [
+   1,
+   1
+  ],
+  "invoice_date|rules|label-inline|scan|contested": [
+   1,
+   1
+  ],
+  "invoice_date|rules|label-inline|text|": [
+   293,
+   293
+  ],
+  "invoice_date|rules|label-inline|text|confirmed": [
+   28,
+   28
+  ],
+  "invoice_date|rules|label-inline|text|received": [
+   13,
+   13
+  ],
+  "invoice_date|rules|label-inline|text|soft": [
+   4,
+   4
+  ],
+  "invoice_date|rules|label-right|scan|": [
+   2,
+   2
+  ],
+  "invoice_date|rules|label-right|scan|confirmed": [
+   3,
+   3
+  ],
+  "invoice_date|rules|label-right|scan|soft": [
+   1,
+   1
+  ],
+  "invoice_date|rules|label-right|text|": [
+   1407,
+   1407
+  ],
+  "invoice_date|rules|label-right|text|confirmed": [
+   462,
+   462
+  ],
+  "invoice_date|rules|label-right|text|received": [
+   72,
+   72
+  ],
+  "invoice_date|rules|label-right|text|soft": [
+   46,
+   46
+  ],
+  "invoice_date|template|template|text|contested": [
+   2,
+   0
+  ],
+  "invoice_date|template|template|text|contested,soft": [
+   2,
+   0
+  ],
+  "invoice_number|ocr2+rules|glued-title|scan|": [
+   32,
+   32
+  ],
+  "invoice_number|ocr2+rules|label-below|scan|": [
+   262,
+   262
+  ],
+  "invoice_number|ocr2+rules|label-below|scan|contested": [
+   9,
+   9
+  ],
+  "invoice_number|ocr2+rules|label-inline|scan|": [
+   183,
+   183
+  ],
+  "invoice_number|ocr2+rules|label-inline|scan|contested": [
+   1,
+   1
+  ],
+  "invoice_number|ocr2+rules|label-right|scan|": [
+   248,
+   248
+  ],
+  "invoice_number|ocr2+rules|label-right|scan|contested": [
+   6,
+   6
+  ],
+  "invoice_number|ocr2|label-below|scan|": [
+   3,
+   2
+  ],
+  "invoice_number|ocr2|label-inline|scan|": [
+   1,
+   1
+  ],
+  "invoice_number|rules+template|label-below|text|": [
+   2,
+   2
+  ],
+  "invoice_number|rules+template|label-inline|text|": [
+   12,
+   12
+  ],
+  "invoice_number|rules+template|label-right|text|": [
+   24,
+   24
+  ],
+  "invoice_number|rules+template|template|text|": [
+   3071,
+   3071
+  ],
+  "invoice_number|rules|label-below|scan|": [
+   6,
+   6
+  ],
+  "invoice_number|rules|label-below|scan|contested": [
+   3,
+   3
+  ],
+  "invoice_number|rules|label-below|text|": [
+   1524,
+   1524
+  ],
+  "invoice_number|rules|label-below|text|contested": [
+   8,
+   0
+  ],
+  "invoice_number|rules|label-inline|scan|": [
+   1,
+   1
+  ],
+  "invoice_number|rules|label-inline|text|": [
+   805,
+   805
+  ],
+  "invoice_number|rules|label-inline|text|contested": [
+   50,
+   50
+  ],
+  "invoice_number|rules|label-right|scan|": [
+   2,
+   2
+  ],
+  "invoice_number|rules|label-right|scan|contested": [
+   3,
+   3
+  ],
+  "invoice_number|rules|label-right|text|": [
+   1698,
+   1698
+  ],
+  "invoice_number|rules|label-right|text|contested": [
+   4,
+   3
+  ],
+  "payment_terms|ocr2+rules|label-below|scan|": [
+   51,
+   51
+  ],
+  "payment_terms|ocr2+rules|label-below|scan|confirmed": [
+   58,
+   58
+  ],
+  "payment_terms|ocr2+rules|label-inline|scan|": [
+   135,
+   135
+  ],
+  "payment_terms|ocr2+rules|label-inline|scan|confirmed": [
+   97,
+   97
+  ],
+  "payment_terms|ocr2+rules|label-inline|scan|soft": [
+   4,
+   4
+  ],
+  "payment_terms|ocr2+rules|label-right|scan|": [
+   41,
+   41
+  ],
+  "payment_terms|ocr2+rules|label-right|scan|confirmed": [
+   33,
+   33
+  ],
+  "payment_terms|ocr2+rules|label-right|scan|soft": [
+   7,
+   7
+  ],
+  "payment_terms|ocr2|label-below|scan|": [
+   2,
+   2
+  ],
+  "payment_terms|ocr2|label-right|scan|": [
+   2,
+   2
+  ],
+  "payment_terms|ocr2|label-right|scan|confirmed,contested": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|label-below|text|confirmed": [
+   3,
+   3
+  ],
+  "payment_terms|rules+template|label-below|text|contested": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|label-inline|text|": [
+   13,
+   13
+  ],
+  "payment_terms|rules+template|label-inline|text|confirmed": [
+   6,
+   6
+  ],
+  "payment_terms|rules+template|label-inline|text|soft": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|label-right|text|": [
+   8,
+   8
+  ],
+  "payment_terms|rules+template|label-right|text|confirmed": [
+   3,
+   3
+  ],
+  "payment_terms|rules+template|label-right|text|confirmed,contested": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|template|text|": [
+   742,
+   742
+  ],
+  "payment_terms|rules+template|template|text|confirmed": [
+   990,
+   990
+  ],
+  "payment_terms|rules+template|template|text|confirmed,contested": [
+   4,
+   4
+  ],
+  "payment_terms|rules+template|template|text|contested": [
+   1,
+   1
+  ],
+  "payment_terms|rules+template|template|text|soft": [
+   3,
+   3
+  ],
+  "payment_terms|rules|label-below|scan|": [
+   4,
+   4
+  ],
+  "payment_terms|rules|label-below|text|": [
+   369,
+   369
+  ],
+  "payment_terms|rules|label-below|text|confirmed": [
+   342,
+   342
+  ],
+  "payment_terms|rules|label-inline|scan|": [
+   1,
+   1
+  ],
+  "payment_terms|rules|label-inline|scan|confirmed": [
+   2,
+   2
+  ],
+  "payment_terms|rules|label-inline|scan|contested": [
+   1,
+   1
+  ],
+  "payment_terms|rules|label-inline|text|": [
+   564,
+   564
+  ],
+  "payment_terms|rules|label-inline|text|confirmed": [
+   349,
+   349
+  ],
+  "payment_terms|rules|label-inline|text|soft": [
+   15,
+   15
+  ],
+  "payment_terms|rules|label-right|scan|": [
+   1,
+   1
+  ],
+  "payment_terms|rules|label-right|scan|confirmed": [
+   1,
+   1
+  ],
+  "payment_terms|rules|label-right|text|": [
+   385,
+   385
+  ],
+  "payment_terms|rules|label-right|text|confirmed": [
+   295,
+   295
+  ],
+  "payment_terms|rules|label-right|text|soft": [
+   28,
+   28
+  ],
+  "payment_terms|template|template|text|contested": [
+   2,
+   0
+  ],
+  "po_number|ocr2+rules|label-below|scan|": [
+   167,
+   167
+  ],
+  "po_number|ocr2+rules|label-below|scan|contested": [
+   1,
+   1
+  ],
+  "po_number|ocr2+rules|label-inline|scan|": [
+   81,
+   80
+  ],
+  "po_number|ocr2+rules|label-right|scan|": [
+   134,
+   134
+  ],
+  "po_number|ocr2|label-below|scan|": [
+   1,
+   1
+  ],
+  "po_number|rules+template|label-inline|text|": [
+   7,
+   7
+  ],
+  "po_number|rules+template|label-right|text|": [
+   4,
+   4
+  ],
+  "po_number|rules+template|template|text|": [
+   1726,
+   1726
+  ],
+  "po_number|rules|label-below|scan|": [
+   22,
+   21
+  ],
+  "po_number|rules|label-below|scan|contested": [
+   1,
+   1
+  ],
+  "po_number|rules|label-below|text|": [
+   1128,
+   1128
+  ],
+  "po_number|rules|label-inline|scan|": [
+   7,
+   7
+  ],
+  "po_number|rules|label-inline|scan|contested": [
+   2,
+   2
+  ],
+  "po_number|rules|label-inline|text|": [
+   193,
+   193
+  ],
+  "po_number|rules|label-right|scan|": [
+   9,
+   9
+  ],
+  "po_number|rules|label-right|scan|contested": [
+   1,
+   0
+  ],
+  "po_number|rules|label-right|text|": [
+   1090,
+   1090
+  ],
+  "po_number|rules|label-right|text|contested": [
+   2,
+   2
+  ],
+  "pst_amount|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   197,
+   197
+  ],
+  "pst_amount|rules+template|label-right|text|adds-up,confirmed": [
+   821,
+   821
+  ],
+  "pst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
+   41,
+   41
+  ],
+  "pst_amount|rules+template|template|text|confirmed": [
+   150,
+   150
+  ],
+  "pst_amount|rules|label-right|scan|adds-up,confirmed": [
+   1,
+   1
+  ],
+  "pst_amount|rules|label-right|scan|adds-up,confirmed,contested": [
+   1,
+   1
+  ],
+  "pst_amount|rules|label-right|text|adds-up,confirmed": [
+   1058,
+   1058
+  ],
+  "qst_amount|ocr2+rules|label-right|scan|adds-up": [
+   1,
+   1
+  ],
+  "qst_amount|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   125,
+   125
+  ],
+  "qst_amount|ocr2+rules|label-right|scan|adds-up,confirmed,contested": [
+   6,
+   6
+  ],
+  "qst_amount|rules+template|label-right|text|adds-up": [
+   2,
+   2
+  ],
+  "qst_amount|rules+template|label-right|text|adds-up,confirmed": [
+   472,
+   472
+  ],
+  "qst_amount|rules+template|label-right|text|adds-up,confirmed,contested": [
+   10,
+   10
+  ],
+  "qst_amount|rules+template|template|text|confirmed": [
+   93,
+   93
+  ],
+  "qst_amount|rules|label-right|scan|adds-up,confirmed": [
+   3,
+   3
+  ],
+  "qst_amount|rules|label-right|scan|adds-up,confirmed,contested": [
+   1,
+   1
+  ],
+  "qst_amount|rules|label-right|text|adds-up,confirmed": [
+   750,
+   750
+  ],
+  "qst_amount|rules|label-right|text|adds-up,confirmed,contested": [
+   6,
+   6
+  ],
+  "qst_registration_number|ocr2+rules|pattern|scan|confirmed": [
+   126,
+   126
+  ],
+  "qst_registration_number|rules+template|pattern|text|confirmed": [
+   46,
+   46
+  ],
+  "qst_registration_number|rules+template|template|text|confirmed": [
+   539,
+   539
+  ],
+  "qst_registration_number|rules|pattern|scan|confirmed": [
+   3,
+   3
+  ],
+  "qst_registration_number|rules|pattern|text|confirmed": [
+   698,
+   698
+  ],
+  "subtotal|ocr2+rules|label-inline|scan|adds-up,confirmed": [
+   16,
+   16
+  ],
+  "subtotal|ocr2+rules|label-inline|scan|adds-up,confirmed,soft": [
+   6,
+   6
+  ],
+  "subtotal|ocr2+rules|label-right|scan|": [
+   8,
+   8
+  ],
+  "subtotal|ocr2+rules|label-right|scan|adds-up": [
+   1,
+   1
+  ],
+  "subtotal|ocr2+rules|label-right|scan|adds-up,confirmed": [
+   465,
+   465
+  ],
+  "subtotal|ocr2+rules|label-right|scan|adds-up,confirmed,soft": [
+   215,
+   215
+  ],
+  "subtotal|ocr2+rules|label-right|scan|adds-up,soft": [
+   2,
+   2
+  ],
+  "subtotal|ocr2+rules|label-right|scan|confirmed": [
+   15,
+   15
+  ],
+  "subtotal|ocr2+rules|label-right|scan|confirmed,soft": [
+   11,
+   11
+  ],
+  "subtotal|ocr2+rules|label-right|scan|soft": [
+   3,
+   1
+  ],
+  "subtotal|ocr2|label-right|scan|adds-up,confirmed,soft": [
+   2,
+   2
+  ],
+  "subtotal|rules+template|label-right|text|adds-up,confirmed": [
+   1166,
+   1166
+  ],
+  "subtotal|rules+template|label-right|text|adds-up,confirmed,contested": [
+   21,
+   21
+  ],
+  "subtotal|rules+template|label-right|text|adds-up,confirmed,contested,soft": [
+   40,
+   40
+  ],
+  "subtotal|rules+template|label-right|text|adds-up,confirmed,soft": [
+   575,
+   575
+  ],
+  "subtotal|rules+template|label-right|text|confirmed": [
+   1,
+   1
+  ],
+  "subtotal|rules+template|label-right|text|confirmed,soft": [
+   3,
+   3
+  ],
+  "subtotal|rules+template|template|text|": [
+   4,
+   4
+  ],
+  "subtotal|rules+template|template|text|confirmed": [
+   1038,
+   1038
+  ],
+  "subtotal|rules+template|template|text|confirmed,contested,soft": [
+   2,
+   2
+  ],
+  "subtotal|rules+template|template|text|confirmed,soft": [
+   244,
+   244
+  ],
+  "subtotal|rules+template|template|text|soft": [
+   8,
+   8
+  ],
+  "subtotal|rules|label-right|scan|adds-up": [
+   2,
+   2
+  ],
+  "subtotal|rules|label-right|scan|adds-up,confirmed": [
+   3,
+   3
+  ],
+  "subtotal|rules|label-right|scan|adds-up,confirmed,contested": [
+   4,
+   4
+  ],
+  "subtotal|rules|label-right|scan|adds-up,confirmed,contested,soft": [
+   1,
+   1
+  ],
+  "subtotal|rules|label-right|scan|adds-up,confirmed,soft": [
+   2,
+   2
+  ],
+  "subtotal|rules|label-right|scan|adds-up,contested": [
+   1,
+   1
+  ],
+  "subtotal|rules|label-right|scan|adds-up,soft": [
+   2,
+   2
+  ],
+  "subtotal|rules|label-right|scan|confirmed,soft": [
+   1,
+   1
+  ],
+  "subtotal|rules|label-right|text|": [
+   32,
+   32
+  ],
+  "subtotal|rules|label-right|text|adds-up,confirmed": [
+   3075,
+   3075
+  ],
+  "subtotal|rules|label-right|text|adds-up,confirmed,contested": [
+   10,
+   10
+  ],
+  "subtotal|rules|label-right|text|adds-up,confirmed,contested,soft": [
+   1,
+   1
+  ],
+  "subtotal|rules|label-right|text|adds-up,confirmed,soft": [
+   834,
+   834
+  ],
+  "subtotal|rules|label-right|text|confirmed": [
+   90,
+   90
+  ],
+  "subtotal|rules|label-right|text|confirmed,soft": [
+   41,
+   41
+  ],
+  "subtotal|rules|label-right|text|soft": [
+   14,
+   14
+  ],
+  "subtotal|template|template|text|confirmed,contested,soft": [
+   1,
+   0
+  ],
+  "tax_total|ocr2+rules|label-inline|scan|confirmed": [
+   1,
+   1
+  ],
+  "tax_total|ocr2+rules|label-right|scan|": [
+   6,
+   6
+  ],
+  "tax_total|ocr2+rules|label-right|scan|confirmed": [
+   151,
+   151
+  ],
+  "tax_total|ocr2|label-below|scan|": [
+   1,
+   0
+  ],
+  "tax_total|ocr2|label-right|scan|confirmed": [
+   26,
+   26
+  ],
+  "tax_total|ocr2|label-right|scan|confirmed,contested": [
+   1,
+   1
+  ],
+  "tax_total|rules+template|label-right|text|confirmed": [
+   5,
+   5
+  ],
+  "tax_total|rules+template|template|text|": [
+   12,
+   12
+  ],
+  "tax_total|rules+template|template|text|confirmed": [
+   666,
+   666
+  ],
+  "tax_total|rules+template|template|text|confirmed,contested": [
+   13,
+   13
+  ],
+  "tax_total|rules|label-below|scan|": [
+   1,
+   0
+  ],
+  "tax_total|rules|label-below|text|": [
+   1,
+   0
+  ],
+  "tax_total|rules|label-below|text|contested": [
+   1,
+   0
+  ],
+  "tax_total|rules|label-right|scan|confirmed": [
+   1,
+   1
+  ],
+  "tax_total|rules|label-right|text|": [
+   40,
+   40
+  ],
+  "tax_total|rules|label-right|text|confirmed": [
+   1012,
+   1012
+  ],
+  "tax_total|template|template|text|": [
+   2,
+   0
+  ],
+  "tax_total|template|template|text|contested": [
+   3,
+   0
+  ],
+  "vendor_name|ocr2+rules|top-of-page|scan|": [
+   471,
+   471
+  ],
+  "vendor_name|ocr2+rules|top-of-page|scan|contested": [
+   273,
+   261
+  ],
+  "vendor_name|ocr2|top-of-page|scan|contested": [
+   2,
+   2
+  ],
+  "vendor_name|rules+template|template|text|confirmed": [
+   1798,
+   1798
+  ],
+  "vendor_name|rules+template|template|text|confirmed,contested": [
+   22,
+   22
+  ],
+  "vendor_name|rules+template|top-of-page|text|confirmed": [
+   1296,
+   1296
+  ],
+  "vendor_name|rules|top-of-page|scan|": [
+   2,
+   1
+  ],
+  "vendor_name|rules|top-of-page|scan|contested": [
+   12,
+   10
+  ],
+  "vendor_name|rules|top-of-page|text|": [
+   3807,
+   3806
+  ],
+  "vendor_name|rules|top-of-page|text|confirmed": [
+   76,
+   76
+  ],
+  "vendor_name|rules|top-of-page|text|confirmed,contested": [
+   8,
+   8
+  ],
+  "vendor_name|rules|top-of-page|text|contested": [
+   192,
+   190
+  ]
+ }
+}

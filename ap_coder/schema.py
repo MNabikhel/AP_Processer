@@ -15,12 +15,14 @@ type charged) and ``taxes_applied`` on each line item.
 from __future__ import annotations
 
 import datetime as dt
+import re
+import unicodedata
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .reference_data import UNASSIGNED, ReferenceData
-from .tax import OUTSIDE_CANADA, PROVINCES, TAX_TYPES
+from .tax import OUTSIDE_CANADA, PROVINCE_NAMES, PROVINCES, TAX_TYPES
 
 SCHEMA_NAME = "ap_invoice_coding"
 
@@ -211,6 +213,24 @@ def response_format(schema: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def province_code(value: str) -> str:
+    """A province code from what a model wrote: "BC", "Vancouver, BC", "British Columbia", "Québec"."""
+    text = (value or "").strip()
+    upper = text.upper()
+    if upper in PROVINCE_VALUES:
+        return upper
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)).lower()
+    for code, name in PROVINCE_NAMES.items():
+        if name.lower() in plain:
+            return code
+    codes = [t for t in re.findall(r"\b[A-Z]{2}\b", upper) if t in PROVINCES]
+    if len(set(codes)) == 1:
+        return codes[0]
+    if re.search(r"\b(?:usa|u\.s\.|united states|outside canada)\b", plain):
+        return OUTSIDE_CANADA
+    raise ValueError(f"province must be a Canadian province code, got {text!r}")
+
+
 class TaxLine(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -231,10 +251,7 @@ class TaxLine(BaseModel):
     @field_validator("province")
     @classmethod
     def _province(cls, value: str) -> str:
-        value = (value or "").strip().upper()
-        if value not in PROVINCE_VALUES:
-            raise ValueError(f"province must be a Canadian province code, got {value!r}")
-        return value
+        return province_code(value)
 
 
 class LineItem(BaseModel):
@@ -318,10 +335,7 @@ class InvoiceCoding(BaseModel):
     @field_validator("supplier_province", "ship_to_province")
     @classmethod
     def _provinces(cls, value: str) -> str:
-        value = (value or "").strip().upper()
-        if value not in PROVINCE_VALUES:
-            raise ValueError(f"province must be a Canadian province code, got {value!r}")
-        return value
+        return province_code(value)
 
     def to_output(self) -> dict[str, Any]:
         return self.model_dump()

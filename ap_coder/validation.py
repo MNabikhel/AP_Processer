@@ -124,7 +124,7 @@ def validate_coding(
             )
 
         if li.predicted_gl_code == UNASSIGNED:
-            add(WARNING, "GL_UNASSIGNED", "model could not determine a GL account", li.line_number)
+            add(WARNING, "GL_UNASSIGNED", "no GL account yet: pick one", li.line_number)
         elif reference.chart_of_accounts.get(li.predicted_gl_code) is None:
             add(ERROR, "GL_UNKNOWN", f"GL code {li.predicted_gl_code!r} is not in the GL accounts", li.line_number)
         elif li.predicted_gl_code in tax_gls:
@@ -133,7 +133,7 @@ def validate_coding(
         if reference.cost_centers is None:
             pass  # cost centers not configured
         elif li.predicted_cost_center == UNASSIGNED:
-            add(WARNING, "CC_UNASSIGNED", "model could not determine a cost center", li.line_number)
+            add(WARNING, "CC_UNASSIGNED", "no cost center yet: pick one", li.line_number)
         elif reference.cost_centers.get(li.predicted_cost_center) is None:
             add(
                 ERROR,
@@ -198,9 +198,9 @@ def validate_coding(
 
     model_conf = coding.confidence_score
     adjusted = model_conf
-    for issue in issues:
-        if issue.severity != INFO:
-            adjusted *= _ERROR_PENALTY if issue.severity == ERROR else _WARNING_PENALTY
+    # Each kind of finding counts once: eight lines without an account are one thing to do, not eight.
+    for severity, _ in {(i.severity, i.code) for i in issues if i.severity != INFO}:
+        adjusted *= _ERROR_PENALTY if severity == ERROR else _WARNING_PENALTY
     adjusted = round(adjusted, 4)
     requires_review = adjusted < review_threshold or any(i.severity == ERROR for i in issues)
 

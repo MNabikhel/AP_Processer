@@ -22,6 +22,7 @@ from ap_coder.webapp.common import (
     gl_name,
     money,
     notify,
+    page_head,
     reference_or_none,
     reviewer,
     show_toast,
@@ -56,12 +57,8 @@ def _sorted(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
 def page_vendors() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Suppliers",
-            "Vendors",
-            "Everyone who has sent an invoice: spend, how well the AI codes them, and your controls.",
-        )
+    page_head(
+        "vendors", "Vendors", "Everyone who has sent an invoice: spend, how well the AI codes them, and your controls."
     )
     _master_importer(store)
     vendors = store.vendor_summaries()
@@ -88,7 +85,13 @@ def page_vendors() -> None:
                     "amber" if on_hold else "violet",
                     "invoices from them can't be approved without an override",
                 ),  # fmt: skip
-                ui.tile("Top spend", money(top["spend_cad"]), "payments", "violet", top["vendor_name"] or ""),
+                ui.tile(
+                    "Top spend",
+                    money(top["spend_cad"]) if top["spend_cad"] else "—",
+                    "payments",
+                    "violet",
+                    (top["vendor_name"] or "") if top["spend_cad"] else "no approved spend yet",
+                ),
             ]
         )
     )
@@ -134,16 +137,18 @@ def page_vendors() -> None:
         else:
             st.caption("No vendors match.")
 
-    _recurring_card(store)
-    _workload_card(store)
-
+    # Open one vendor right under the list; the recurring and workload overviews follow.
     names = {v["vendor_key"]: v["vendor_name"] for v in shown or vendors}
-    chosen = st.selectbox(
-        "Open a vendor", list(names), format_func=lambda k: names[k], key="vendor_open", index=None,
-        placeholder="Choose a vendor to see its invoices, GL accounts and controls",
-    )  # fmt: skip
+    with card("vendor_pick"):
+        chosen = st.selectbox(
+            "Open a vendor", list(names), format_func=lambda k: names[k], key="vendor_open", index=None,
+            placeholder="Choose a vendor to see its invoices, GL accounts and controls",
+        )  # fmt: skip
     if chosen:
         vendor_detail(store, next(v for v in vendors if v["vendor_key"] == chosen))
+
+    _recurring_card(store)
+    _workload_card(store)
 
 
 MASTER_LABELS = {"vendor_name": "Vendor name *", "erp_id": "Vendor ID", "gst": "GST/HST number",
@@ -160,7 +165,7 @@ def _master_importer(store: Store) -> None:
             "invoice shows none, and its default GL account is offered for uncoded lines. Import again any time: "
             "vendors are matched by name."
         )
-        upload = st.file_uploader("Vendor list", type=["csv", "xlsx"], key="vm_upload")
+        upload = st.file_uploader("Vendor list (CSV or Excel)", type=["csv", "xlsx"], key="vm_upload")
         df = _read_upload(upload, "vm") if upload is not None else None
         if df is None or df.empty:
             return
@@ -188,8 +193,8 @@ def _master_importer(store: Store) -> None:
         dupes = st.session_state.get("vm_duplicates")
         if dupes:
             st.warning(
-                f"{len(dupes)} vendor(s) appear more than once in the file under similar names (merged here; one "
-                "on hold keeps the vendor on hold). Often the same supplier set up twice in the ERP: "
+                f"{ui.plural(len(dupes), 'vendor')} appear more than once in the file under similar names (merged "
+                "here; one on hold keeps the vendor on hold). Often the same supplier set up twice in the ERP: "
                 + "; ".join(" / ".join(n) for n in dupes[:8])
             )
 
@@ -199,7 +204,7 @@ def _workload_card(store: Store) -> None:
     if not rows:
         return
     with card("workload"):
-        st.markdown("#### :material/construction: Vendors that make work")
+        st.markdown("#### Vendors that make work")
         st.caption(
             "How often a vendor's invoice arrived with something only the vendor can fix, and how often AP "
             "corrected the coding. Ask the worst ones for better invoices (*Ask the vendor* on an invoice drafts "
@@ -230,17 +235,21 @@ def _workload_card(store: Store) -> None:
 def _recurring_card(store: Store) -> None:
     found = recurring.detect(store.vendor_invoice_dates())
     with card("recurring"):
-        st.markdown("#### :material/event_repeat: Recurring invoices")
+        st.markdown("#### Recurring invoices")
         if not found:
-            st.caption(
-                "Vendors who bill on a regular rhythm (weekly to quarterly, at least three times) appear here "
-                "with their next expected invoice, so a missing one is noticed before it is paid late."
+            st.html(
+                ui.empty_note(
+                    "No regular billers yet",
+                    "Vendors who bill on a regular rhythm (weekly to quarterly, at least three times) appear here "
+                    "with their next expected invoice, so a missing one is noticed before it is paid late.",
+                    "event_repeat",
+                )
             )
             return
         late = [r for r in found if r.status == recurring.LATE]
         if late:
             st.caption(
-                f"{len(late)} expected invoice(s) not received, usually about "
+                f"{ui.plural(len(late), 'expected invoice')} not received, usually about "
                 f"{money(sum(r.typical_total for r in late))} in total: chase the vendor, and consider accruing "
                 "them at month-end."
             )
@@ -287,7 +296,7 @@ def vendor_detail(store: Store, v: dict[str, Any]) -> None:
             f"<div><div style='font-weight:750;font-size:1.15rem'>{esc(name)} {status}</div>"
             f"<div class='apc-muted'>First invoice {esc(v['first_invoice'] or '—')} · "
             f"last {esc(v['last_invoice'] or '—')}"
-            f" · {v['lessons']} lesson(s) learned</div>{_master_line(store, v)}</div></div>"
+            f" · {ui.plural(v['lessons'], 'lesson')} learned</div>{_master_line(store, v)}</div></div>"
         )
         numbers = sorted({i["gst_hst_number"] for i in invoices if i["gst_hst_number"]})
         left, right = st.columns(2, gap="medium")

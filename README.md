@@ -1,5 +1,20 @@
 # AP Invoice Coder (prototype)
 
+## Run the offline pilot
+
+Everything runs on one laptop: no Azure, no cloud, nothing sent out.
+
+1. **Install Python 3.11+** from [python.org](https://www.python.org/downloads/) (tick *Add python.exe to PATH*).
+2. **Unzip AP Coder** to a folder that OneDrive does not sync, and double-click **`APProcessor.bat`**
+   (Mac: `APProcessor.command`). The first run sets itself up in a few minutes, including the OCR models
+   for scans, then opens the dashboard. An air-gapped laptop installs from the offline bundle instead.
+3. **Optional local AI:** in [LM Studio](https://lmstudio.ai/), load a 3B–8B instruct model and start the
+   server (Developer tab → **Start server**). AP Coder finds it on its own (**Settings → AI model**).
+
+Without a model, every invoice is still read on the laptop (PDF text, or OCR for scans), checked, and each
+line is coded from what AP approved before for that vendor. With a model, it also proposes accounts for
+vendors it hasn't seen. The full pilot guide is [docs/PILOT.md](docs/PILOT.md).
+
 ## Try the live demo
 
 [![Open the live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ap-coder-demo.streamlit.app)
@@ -84,10 +99,15 @@ GL accounts, cost centers, tax rates, policy ─┤   past approvals for this ve
 
 ## Quick start
 
-**Windows:** double-click `install.bat`, then `start.bat` (or the *AP Coder* desktop shortcut).
-**macOS / Linux:** `./install.sh`, then `./start.sh`. The installer is safe to run again: it updates
-the code and packages and keeps your data folder, Azure settings and shortcut (see
-[GETTING_STARTED](docs/GETTING_STARTED.md#step-2-install-10-min-one-double-click)).
+**Windows:** unzip, double-click **`APProcessor.bat`**. **Mac:** double-click `APProcessor.command`
+(Linux: `./APProcessor.command`). The first run sets itself up (a few minutes, Python 3.11+ needed), then
+the dashboard opens in your browser; later runs start straight away. It works offline, and with a
+`wheelhouse/` folder (the offline bundle) it even installs offline: see the pilot guide,
+[docs/PILOT.md](docs/PILOT.md).
+
+The full installer is still there: `install.bat` / `./install.sh` also updates a git checkout, asks for
+Azure settings and adds a desktop shortcut; `start.bat` / `./start.sh` do the same as `APProcessor`. It is
+safe to run again (see [GETTING_STARTED](docs/GETTING_STARTED.md#step-2-install-10-min-one-double-click)).
 
 By hand:
 
@@ -97,7 +117,7 @@ pip install -e ".[dev]"
 cp .env.example .env              # endpoints/keys, or leave keys empty to use Entra ID (az login)
 
 python -m ap_coder doctor --online   # check configuration and Azure connectivity
-python -m ap_coder dashboard         # review app on http://localhost:8501 (or the next free port)
+python -m ap_coder dashboard         # review app on http://127.0.0.1:8501 (or the next free port)
 ```
 
 In the dashboard:
@@ -105,6 +125,39 @@ In the dashboard:
    invoices* to skip ahead).
 2. **Process invoices** → upload the PDFs in `samples/`.
 3. **Review queue** → review and approve. **Help** explains every check.
+
+### Run offline with LM Studio
+
+The coding step can use a model on your own computer instead of Azure OpenAI. Nothing is sent out.
+
+1. Install [LM Studio](https://lmstudio.ai/).
+2. Download and load a small *instruct* model: Qwen 3.5 9B, Qwen 2.5 7B Instruct, Llama 3.1 8B, or any
+   3B–9B instruct model, with a Context Length of 8192. One that can see (an eye icon in LM Studio, e.g.
+   Qwen 3.5 or Qwen 2.5 VL 7B) is also shown the page images. A thinking model (Qwen 3, Qwen 3.5) is
+   asked not to think; LM Studio 0.4.8 or newer honours that (see [docs/PILOT.md](docs/PILOT.md)).
+3. **Developer** tab → **Start server**.
+
+AP Coder finds it on its own: `AP_LLM_PROVIDER=auto` (the default) uses Azure OpenAI when its endpoint
+is set, else the model loaded in LM Studio when the server answers, else no AI. **Settings → AI model**
+shows what it found (*Connected to LM Studio · qwen2.5-7b-instruct · can see pages: no*), has a
+**Test connection** button, and picks the server address and model. `python -m ap_coder doctor --online`
+asks it for the accounts of two made-up lines, as the pipeline does for lines nothing else could code.
+
+| Setting | Default | |
+| --- | --- | --- |
+| `AP_LLM_PROVIDER` | `auto` | `local`, `azure` or `off` to choose |
+| `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1` |
+| `AP_LLM_MODEL` | empty | empty = the chat model loaded in LM Studio (never an embedding model) |
+| `AP_LLM_VISION` | `auto` | `on` / `off`: show the model page images |
+| `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
+| `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
+
+The model is asked for the same strict JSON schema as Azure (LM Studio supports it). A server that
+refuses it gets plain JSON mode, then the schema in the prompt; replies wrapped in code fences or
+`<think>` blocks, or left in the model's reasoning, are still read, and an invalid answer gets one repair
+turn. A model that thinks until `AP_LLM_MAX_TOKENS` runs out gets a plain error saying so. Every check after coding is
+the same as with Azure. With no model at all, the rest of AP Coder still works; invoices just aren't
+coded by AI. Reading the invoice itself (Document Intelligence, or reading text files) is a separate step.
 
 ## Dashboard
 
@@ -259,12 +312,36 @@ Each invoice produces the original target fields plus the Canadian tax fields, a
 - **Enterprise auth.** Without keys, both services use Entra ID (`DefaultAzureCredential`). The
   SDK retries 429 and 5xx responses with backoff.
 
+## Invoice capture and supplier autonomy
+
+Next to the AI coder, AP Coder reads every invoice itself and shows *where* each value is printed
+(design and benchmark: [docs/CAPTURE_DESIGN.md](docs/CAPTURE_DESIGN.md)):
+
+- **Several readers per field:** the PDF's text layer or OCR (RapidOCR, local: `pip install -e .[ocr]`), a rule reader
+  (labels in English and French, header grids, totals blocks), the supplier's learned template, and
+  the AI's and Document Intelligence's answers located back on the page.
+- **Checks a misread cannot pass:** subtotal + charges + taxes = total, official tax rates, GST/HST
+  check digit, vendor master, due date = invoice date + terms.
+- **A confidence per field, measured on a benchmark** of thousands of random invoices with known
+  answers (`python -m ap_coder.bench run`), shown as *verified*, *likely*, *check* or *missing*.
+- **The review screen** shows the invoice page with every field boxed in its status colour. Click
+  a field to find it on the page; *Teach a field* lets AP click the words that hold a value, and
+  the supplier's template learns it on approval.
+- **Autonomy per supplier:** once a supplier's own confirmed invoices show at least 99% field
+  accuracy (lower confidence bound, at least 20 invoices, the last 10 clean), a manager can switch it
+  to touchless. Its invoices are then approved without a person only when every printed field is
+  *verified* and every check passes; 5% are still audited, and one correction suspends it
+  (*Learning & accuracy → Supplier learning*).
+- **JD Edwards EnterpriseOne:** approved invoices export as F0411Z1/F0911Z1 Z-file batches for
+  R04110ZA ([docs/JDE_E1.md](docs/JDE_E1.md)).
+
 ## Project layout
 
 ```
 ap_coder/
   extraction.py      Document Intelligence → ExtractionResult (+ cache)
   inference.py       Azure OpenAI Structured Outputs, model profiles, repair loop
+  local_llm.py       LM Studio / Ollama: finding the server and model, reading a small model's JSON
   prompts.py         system prompt (extraction, Canadian tax, GL coding, learning rules)
   schema.py          strict JSON Schema + Pydantic mirror
   tax.py             Canadian rates, tax checks, GL distribution
@@ -277,7 +354,11 @@ ap_coder/
   suggest.py         GL suggestions for uncoded lines;  recurring.py: recurring vendors
   statements.py      vendor statement reconciliation;  accruals.py: month-end accruals
   exports.py · bulk.py · insights.py · controls.py · audit.py · help.py · demo.py
-  pipeline.py        extract → code → validate → store
+  capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
+                     templates and autonomy, calibration.json (measured confidence)
+  bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation
+  jde.py             JD Edwards E1 F0411Z1/F0911Z1 export
+  pipeline.py        extract → code → validate → capture → store
   dashboard.py       Streamlit app shell;  webapp/: one module per page;  review.py: grid edits → InvoiceCoding
   doctor.py · share_report.py · labels.py · evaluation.py · reference_data.py · cli.py
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement

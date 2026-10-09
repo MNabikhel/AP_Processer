@@ -6,7 +6,17 @@ import streamlit as st
 
 from ap_coder import search, stamp, ui
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW
-from ap_coder.webapp.common import PAGES, card, esc, get_store, money, reference_or_none, reviewer, show_toast
+from ap_coder.webapp.common import (
+    PAGES,
+    card,
+    esc,
+    get_store,
+    money,
+    page_head,
+    reference_or_none,
+    reviewer,
+    show_toast,
+)
 
 STATUS = {
     REVIEW: ("To review", "info", "inbox"),
@@ -21,12 +31,10 @@ STATUS = {
 def page_search() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Vendor on the phone?",
-            "Find an invoice",
-            "Search by vendor, invoice number, PO number or amount: see where the invoice is and when it is due.",
-        )
+    page_head(
+        "search",
+        "Find an invoice",
+        "Vendor on the phone? Search by vendor, invoice number, PO or amount: see where it is and when it is due.",
     )
     with card("search_box"):
         query = st.text_input(
@@ -98,7 +106,10 @@ def page_search() -> None:
             elif hit.source == "AP Coder" and r["status"] == PARKED and "review" in PAGES:
                 if right.button("Bring back", icon=":material/play_circle:", key=f"search_unpark_{r['id']}",
                                 width="stretch", help="Back to the review queue, and open it"):  # fmt: skip
-                    store.unpark_invoice(r["id"], reviewer())
+                    try:
+                        store.unpark_invoice(r["id"], reviewer())
+                    except ValueError:
+                        pass  # someone else brought it back meanwhile: it is opened all the same
                     st.session_state["open_invoice"] = r["id"]
                     st.switch_page(PAGES["review"])
     if len(hits) == search.LIMIT:

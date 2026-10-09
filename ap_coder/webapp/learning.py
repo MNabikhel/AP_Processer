@@ -1,6 +1,9 @@
-"""Learning & accuracy: accuracy vs target, trend, vendors, corrections and the memory."""
+"""Learning & accuracy: coding accuracy vs target, trend, vendors, corrections and the memory; and supplier
+learning (header-field accuracy per supplier and its path to touchless processing)."""
 
 from __future__ import annotations
+
+import hashlib
 
 import pandas as pd
 import streamlit as st
@@ -17,6 +20,7 @@ from ap_coder.webapp.common import (
     get_store,
     gl_name,
     notify,
+    page_head,
     reference_or_none,
     reviewer,
     show_toast,
@@ -28,7 +32,7 @@ HISTORY_LABELS = {"vendor_name": "Vendor *", "description": "Line description *"
 
 def _history_card(store) -> None:
     count = store.history_count()
-    title = "Teach from past coding" + (f" ({count:,} past line(s) taught)" if count else "")
+    title = "Teach from past coding" + (f" ({ui.plural(count, 'past line')} taught)" if count else "")
     with st.expander(title, icon=":material/history_edu:", expanded=False):
         st.caption(
             "Export last year's posted AP invoice lines from the ERP (vendor, line description, GL account, cost "
@@ -53,11 +57,13 @@ def _history_card(store) -> None:
             missing = [HISTORY_LABELS[f].rstrip(" *") for f in history.REQUIRED if f not in chosen]
             if missing:
                 st.warning("Pick the column for: " + ", ".join(missing))
-            elif st.button(f"Teach {len(df):,} line(s)", type="primary", icon=":material/school:", key="hist_go"):
+            elif st.button(
+                f"Teach {ui.plural(len(df), 'line')}", type="primary", icon=":material/school:", key="hist_go"
+            ):
                 rows, skipped = history.rows_from_records(df.to_dict("records"), chosen)
                 result = store.import_history(rows, actor=reviewer())
                 notify(
-                    f"Taught {result['added']:,} past line(s)"
+                    f"Taught {ui.plural(result['added'], 'past line')}"
                     + (f"; {result['skipped'] + skipped:,} skipped (incomplete or already taught)"
                        if result["skipped"] + skipped else "")
                     + (f"; {result['unknown_gl']:,} with a GL account that is not in your list" if result["unknown_gl"]
@@ -67,7 +73,7 @@ def _history_card(store) -> None:
                 st.rerun()
         if count and st.button("Forget all past coding", icon=":material/delete_sweep:", key="hist_forget"):
             n = store.forget_history(actor=reviewer())
-            notify(f"Forgot {n:,} past line(s).", ":material/delete_sweep:")
+            notify(f"Forgot {ui.plural(n, 'past line')}.", ":material/delete_sweep:")
             st.rerun()
 
 
@@ -75,14 +81,114 @@ def _history_card(store) -> None:
 
 
 def page_learning() -> None:
-    import altair as alt
-
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header("Insights", "Learning & accuracy", "How often the AI gets it right, and what it has learned.")
-    )
-    _history_card(store)
+    page_head("learning", "Learning & accuracy", "How often the coding is right, and what AP Coder has learned.")
+    coding_tab, supplier_tab = st.tabs(["Coding accuracy", "Supplier learning"])
+    with coding_tab:
+        _history_card(store)
+        _coding_accuracy(store)
+    with supplier_tab:
+        _supplier_learning(store)
+
+
+# --- Supplier learning ---------------------------------------------------------------------------------------
+
+FIELD_LABELS = {
+    "vendor_name": "Vendor", "invoice_number": "Invoice #", "invoice_date": "Invoice date", "due_date": "Due date",
+    "po_number": "PO #", "currency": "Currency", "gst_hst_registration_number": "GST/HST #",
+    "qst_registration_number": "QST #", "subtotal": "Subtotal", "gst_amount": "GST", "hst_amount": "HST",
+    "pst_amount": "PST", "qst_amount": "QST", "tax_total": "Tax total", "grand_total": "Total",
+    "payment_terms": "Terms",
+}  # fmt: skip
+_STATE_ORDER = {"ready": 0, "suspended": 1, "autonomous": 2, "supervised": 3, "learning": 4}
+
+
+def _supplier_learning(store) -> None:
+    from ap_coder.capture.supplier import AUTONOMOUS, READY, SUPERVISED, SUSPENDED, autonomy_status, meets_policy
+
+    profiles = store.list_supplier_profiles()
+    policy = store.autonomy_policy()
+    if not profiles:
+        with card("nosuppliers"):
+            st.html(
+                ui.empty_state(
+                    "No supplier learned yet",
+                    "Each approved invoice teaches AP Coder where that supplier prints its invoice number, dates "
+                    "and totals, and records how many it read right. Once a supplier has enough clean invoices in a "
+                    "row, a manager can turn on touchless processing, and every invoice still goes through all the "
+                    "checks.",
+                    ui.LEARNING_SVG,
+                )
+            )
+        return
+    rows = []
+    for p in profiles:
+        stats = store.supplier_stats(p["key"], policy.window)
+        state, progress, why = autonomy_status(stats, policy, p["state"], p["autonomous_since"])
+        rows.append((p, stats, state, progress, why))
+    rows.sort(key=lambda r: (_STATE_ORDER.get(r[2], 9), -r[1].invoices, (r[0]["display_name"] or "").lower()))
+    st.caption(f"Bar for touchless processing: {policy.describe()}.")
+    for p, stats, state, progress, why in rows:
+        name = p["display_name"] or p["key"]
+        slug = hashlib.sha1(p["key"].encode()).hexdigest()[:10]
+        accuracy = stats.accuracy
+        sub = " · ".join(
+            [
+                f"{stats.invoices} invoice{'s' if stats.invoices != 1 else ''} reviewed",
+                f"field accuracy {accuracy:.1%} (at least {stats.lower_bound(policy.z):.1%})"
+                if accuracy is not None
+                else "no fields checked yet",
+                f"clean streak {stats.clean_streak}",
+            ]
+        )
+        with card(f"supplier_{slug}"):
+            st.html(ui.supplier_row(name, sub, state, progress, why))
+            info, actions = st.columns([3, 2], vertical_alignment="center")
+            with info.expander("Per-field accuracy", icon=":material/table_rows:"):
+                if not stats.fields:
+                    st.caption("No fields checked yet.")
+                else:
+                    table = []
+                    for field, fs in sorted(stats.fields.items(), key=lambda kv: (kv[1].accuracy or 0, kv[0])):
+                        tone = "ok" if fs.correct == fs.n else "warn"
+                        table.append(
+                            [esc(FIELD_LABELS.get(field, field)), f"{fs.n:,}", f"{fs.n - fs.correct:,}",
+                             ui.pill(f"{fs.accuracy:.0%}", tone)]
+                        )  # fmt: skip
+                    st.html(ui.table(["Field", "Checked", "Corrected", "Accuracy"], table, right=[1, 2, 3]))
+                    st.caption(f"Over the last {ui.plural(stats.window_invoices, 'reviewed invoice')}.")
+            can_turn_on = state == READY or (state == SUSPENDED and meets_policy(stats, policy))
+            if can_turn_on:
+                with actions.popover(
+                    "Turn on autonomy…", icon=":material/bolt:", width="stretch", key=f"sup_menu_{slug}"
+                ):
+                    st.markdown(
+                        f"Process **{name}** invoices without a person when every header field is verified and "
+                        f"every check passes. The policy: {policy.describe()}."
+                    )
+                    if st.button("Yes, turn on autonomy", type="primary", key=f"sup_on_{slug}"):
+                        try:
+                            store.set_supplier_state(p["key"], AUTONOMOUS, reviewer())
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        else:
+                            notify(f"Autonomy is on for {name}.", ":material/bolt:")
+                            st.rerun()
+            if p["state"] in (AUTONOMOUS, SUSPENDED) and actions.button(
+                "Turn off", icon=":material/pan_tool:", key=f"sup_off_{slug}", width="stretch"
+            ):
+                store.set_supplier_state(p["key"], SUPERVISED, reviewer(), reason="turned off on the Learning page")
+                notify(f"{name} is back to supervised: every invoice is reviewed.", ":material/pan_tool:")
+                st.rerun()
+
+
+# --- Coding accuracy -----------------------------------------------------------------------------------------
+
+
+def _coding_accuracy(store) -> None:
+    import altair as alt
+
     m = store.metrics()
     if not m["lines_reviewed"]:
         with card("nolearning"):
@@ -104,7 +210,7 @@ def page_learning() -> None:
         ui.tiles(
             [
                 ui.tile(
-                    "AI coding accuracy",
+                    "Coding accuracy",
                     f"{accuracy:.1%}",
                     "auto_awesome",
                     "green" if accuracy >= TARGET_ACCURACY else "violet",
@@ -135,7 +241,7 @@ def page_learning() -> None:
 
     chart_col, feed_col = st.columns([3, 2], gap="medium")
     with chart_col, card("trend"):
-        st.markdown("#### :material/show_chart: Accuracy by week")
+        st.markdown("#### Accuracy by week")
         base = alt.Chart(weekly).encode(x=alt.X("week:N", title=None, axis=alt.Axis(labelAngle=0)))
         area = base.mark_area(color=SERIES_BLUE, opacity=0.08).encode(y=alt.Y("accuracy:Q"))
         line = base.mark_line(
@@ -171,13 +277,13 @@ def page_learning() -> None:
     rows = store.feedback_rows(limit=2000)
     reviewed = [r for r in rows if r["outcome"] != "history"]
     with feed_col, card("feed"):
-        st.markdown("#### :material/history_edu: Recent lessons")
+        st.markdown("#### Recent lessons")
         items = []
 
         def short(text: str, n: int = 42) -> str:
             return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
-        for r in reviewed[:6]:
+        for r in reviewed[:4]:  # as tall as the chart beside it; every lesson is in the memory below
             if r["outcome"] == "corrected":
                 was = (
                     f"<span class='apc-strike apc-mono'>{esc(r['suggested_gl'])}</span>"
@@ -199,7 +305,7 @@ def page_learning() -> None:
 
     left, right = st.columns(2, gap="medium")
     with left, card("vendors"):
-        st.markdown("#### :material/storefront: Accuracy by vendor")
+        st.markdown("#### Accuracy by vendor")
         st.html(
             "".join(
                 ui.vendor_row(v["vendor_name"], v["lines"], v["accepted"] / v["lines"], v["corrected"])
@@ -207,7 +313,7 @@ def page_learning() -> None:
             )
         )
     with right, card("corrections"):
-        st.markdown("#### :material/swap_horiz: Most common corrections")
+        st.markdown("#### Most common corrections")
         if not m["top_corrections"]:
             st.caption("No corrections yet: the AI has matched every reviewer decision.")
         else:
@@ -229,7 +335,7 @@ def page_learning() -> None:
 
     with (
         card("memory"),
-        st.expander("The AI's memory: every lesson, with the option to forget", icon=":material/psychology:"),
+        st.expander("Memory: every lesson, with the option to forget", icon=":material/psychology:"),
     ):
         st.caption(
             "Lessons from the same vendor are shown to the AI on the next invoice; corrections count most. "
@@ -264,7 +370,7 @@ def page_learning() -> None:
             key=f"memory_editor_{memory_version}_{len(rows)}",
         )
         selected = edited.loc[edited["forget"], "id"].tolist()
-        if selected and st.button(f"Forget {len(selected)} lesson(s)", icon=":material/delete_sweep:"):
+        if selected and st.button(f"Forget {ui.plural(len(selected), 'lesson')}", icon=":material/delete_sweep:"):
             store.delete_feedback([int(i) for i in selected], actor=reviewer())
-            notify(f"Forgot {len(selected)} lesson(s).", ":material/delete_sweep:")
+            notify(f"Forgot {ui.plural(len(selected), 'lesson')}.", ":material/delete_sweep:")
             st.rerun()

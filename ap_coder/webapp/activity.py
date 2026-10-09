@@ -10,7 +10,7 @@ import streamlit as st
 from ap_coder import controls, dupaudit, ui
 from ap_coder.audit import ACTIONS, describe
 from ap_coder.safe import csv_cell
-from ap_coder.webapp.common import card, esc, get_store, history_html, invoice_label, show_toast
+from ap_coder.webapp.common import card, esc, get_store, history_html, invoice_label, page_head, show_toast
 
 GROUPS = {
     "Invoices": ["processed", "failed", "approved", "final_approved", "sent_back", "reopened", "parked", "unparked",
@@ -18,7 +18,7 @@ GROUPS = {
     "Setup": ["accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",
               "settings_changed", "rules_changed", "vendor_updated", "vendors_imported", "pos_imported", "po_status",
               "pos_deleted", "export_undone", "erp_register_imported"],
-    "Learning": ["lessons_forgotten", "history_imported"],
+    "Learning": ["lessons_forgotten", "history_imported", "autonomy_on", "autonomy_off", "autonomy_suspended"],
     "Backups": ["backup_made", "backup_restored"],
 }  # fmt: skip
 
@@ -26,13 +26,7 @@ GROUPS = {
 def page_activity() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Controls",
-            "Activity",
-            "Who processed, changed, approved, rejected, deleted or exported what, and when.",
-        )
-    )
+    page_head("activity", "Activity", "Who processed, changed, approved, rejected, deleted or exported what, and when.")
     events = store.events(limit=5000)
     if not events:
         with card("activity_empty"):
@@ -53,9 +47,9 @@ def page_activity() -> None:
                     len({e["invoice_id"] for e in approvals}),
                     "task_alt",
                     "green",
-                    f"{len(approvals)} approval(s), {changed} with reviewer changes",
+                    f"{ui.plural(len(approvals), 'approval')}, {changed} with reviewer changes",
                 ),  # fmt: skip
-                ui.tile("People", len(people), "group", "violet", ", ".join(people[:3]) or "—"),
+                ui.tile("People", len(people), "group", "violet", ", ".join(people[:3]) or "none recorded yet"),
                 ui.tile(
                     "Deletions",
                     sum(1 for e in events if e["action"] in ("deleted", "accounts_deleted", "lessons_forgotten")),
@@ -100,12 +94,12 @@ def page_activity() -> None:
         ]
     )
     head, download = st.columns([3, 1], vertical_alignment="center")
-    head.caption(f"{len(shown)} of {len(events)} event(s)")
+    head.caption(f"{len(shown):,} of {ui.plural(len(events), 'event')}")
     download.download_button(
         "Download CSV", table.map(csv_cell).to_csv(index=False).encode("utf-8-sig"),
         file_name=f"ap_coder_activity_{today}.csv", mime="text/csv", icon=":material/download:", width="stretch",
     )  # fmt: skip
-    timeline, grid = st.tabs([":material/timeline: Timeline", ":material/table: Table"])
+    timeline, grid = st.tabs(["Timeline", "Table"])
     with timeline, card("activity_timeline"):
         st.html(history_html(shown[:200], with_invoice=True))
         if len(shown) > 200:
@@ -117,7 +111,7 @@ def page_activity() -> None:
 def _duplicate_audit_card(store) -> None:
     with card("dupaudit"):
         head, button = st.columns([3, 1.3], vertical_alignment="center")
-        head.markdown("#### :material/content_copy: Duplicate payment audit")
+        head.markdown("#### Duplicate payment audit")
         head.caption(
             "Bills that may have been approved, or posted in the ERP, twice: number typos, the same bill under two "
             "vendor names, the same amount days apart. Includes the ERP invoice register when imported (Exports)."
@@ -159,13 +153,13 @@ def _duplicate_audit_card(store) -> None:
 def _controls_card(store) -> None:
     with card("controls"):
         head, pick = st.columns([3, 2], vertical_alignment="center")
-        head.markdown("#### :material/verified_user: Controls report")
+        head.markdown("#### Controls report")
         head.caption(
             "Exceptions for internal audit: overridden errors, risky approvals, second approvals, setup changes."
         )
         today = dt.date.today()
         period = pick.date_input(
-            "Period", (today.replace(day=1), today), max_value=today, key="controls_period",
+            "Period", (today.replace(day=1), today), max_value=today, format="YYYY-MM-DD", key="controls_period",
             label_visibility="collapsed",
         )  # fmt: skip
         if not isinstance(period, tuple) or len(period) != 2:

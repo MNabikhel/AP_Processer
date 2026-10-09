@@ -10,7 +10,7 @@ from ap_coder import statements as stm
 from ap_coder import ui, vendor_mail
 from ap_coder.safe import md
 from ap_coder.webapp.accounts import _read_upload
-from ap_coder.webapp.common import card, esc, get_store, money, reviewer, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, page_head, reviewer, show_toast
 
 TONES = {
     stm.MATCHED: ("ok", "check"),
@@ -37,13 +37,10 @@ def _ap_status(line: stm.Line, invoices: dict[int, dict[str, Any]]) -> str:
 def page_statements() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Reconcile",
-            "Vendor statements",
-            "Compare a vendor's statement of account with the invoices you hold: find missing invoices and "
-            "amount differences before month-end.",
-        )
+    page_head(
+        "statements",
+        "Vendor statements",
+        "Compare a vendor's statement with the invoices you hold: find missing invoices and amount differences.",
     )
     vendors = store.vendor_summaries()
     if not vendors:
@@ -53,7 +50,7 @@ def page_statements() -> None:
 
     with card("stm_input"):
         names = {v["vendor_key"]: v["vendor_name"] for v in sorted(vendors, key=lambda v: v["vendor_name"] or "")}
-        c1, c2 = st.columns([2, 3], vertical_alignment="bottom")
+        c1, c2 = st.columns([2, 3], vertical_alignment="top")
         vendor = c1.selectbox("Vendor", list(names), format_func=names.get, key="stm_vendor")
         upload = c2.file_uploader("Statement (CSV or Excel)", type=["csv", "xlsx"], key="stm_upload")
         st.caption("One row per invoice, credit or payment, as the vendor sent it. Nothing is stored.")
@@ -105,7 +102,7 @@ def page_statements() -> None:
     )
     with card("stm_result"):
         head, button = st.columns([3, 1], vertical_alignment="center")
-        head.markdown(f"#### :material/fact_check: {md(names[vendor])}")
+        head.markdown(f"#### {md(names[vendor])}")
         button.download_button("Download (CSV)", stm.to_csv(rec), file_name="statement_reconciliation.csv",
                                mime="text/csv", icon=":material/download:", width="stretch")  # fmt: skip
         rows = []

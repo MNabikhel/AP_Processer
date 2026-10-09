@@ -26,7 +26,8 @@ SIGNALS = {
 SETUP_ACTIONS = (
     "accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",
     "settings_changed", "rules_changed", "vendor_updated", "vendors_imported", "pos_imported", "po_status",
-    "pos_deleted", "lessons_forgotten", "export_undone", "backup_restored",
+    "pos_deleted", "lessons_forgotten", "export_undone", "backup_restored", "autonomy_on", "autonomy_off",
+    "autonomy_suspended",
 )  # fmt: skip
 
 
@@ -51,7 +52,7 @@ def build(store: Store, start: dt.date, end: dt.date) -> dict[str, Any]:
             i
             for i in store.invoice_columns(("id", "reviewed_at", "second_reviewer", "final_output"), APPROVED)
             if not i["second_reviewer"]
-            and abs(float((i["final_output"] or {}).get("grand_total") or 0)) > limit
+            and store.over_approval_limit(i["final_output"] or {}, limit)
             and first <= (i["reviewed_at"] or "") < last
         ]
         if limit

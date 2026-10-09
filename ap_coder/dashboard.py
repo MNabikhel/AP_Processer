@@ -29,6 +29,7 @@ from ap_coder.webapp.activity import page_activity
 from ap_coder.webapp.common import (
     ASSETS,
     DB_PATH,
+    NAV_SECTIONS,
     PAGES,
     PUBLIC_DEMO,
     approved_today,
@@ -82,18 +83,26 @@ if PUBLIC_DEMO:  # the public demo on the web (streamlit_app.py): made-up invoic
 
     public_demo.bootstrap(_store)
     public_demo.banner()
+_waiting = len(_store.list_invoices(REVIEW))
 with st.sidebar:
-    st.html(ui.sidebar_profile(reviewer(), approved_today(_store), len(_store.list_invoices(REVIEW))))
-    if _store.demo_count():
-        st.html(ui.pill("Demo invoices loaded", "violet", "science"))
     if PUBLIC_DEMO:
-        st.caption(":material/science: Public demo · made-up invoices · no Azure")
-    else:
-        st.caption(f":material/lock: Runs on this computer only · `{short_path(DB_PATH)}`")
+        _env, _tone, _where, _tip = "Public demo", "violet", "made-up invoices · no Azure", ""
+    else:  # the folder itself is a tooltip: a clerk needs to know data stays here, not the path
+        _env, _tone, _where, _tip = "Offline", "ok", "Data stays on this computer", short_path(DB_PATH.parent)
+    if _store.demo_count():
+        st.html(ui.pill("Demo invoices loaded", "gray", "science"))
+    st.html(ui.sidebar_profile(reviewer(), approved_today(_store), _waiting, _env, _tone, _where, _tip))
+# Count badges on the navigation (see style.css): invoices waiting for review (accent, the one queue to work
+# through), approved ones not exported yet (neutral).
+_badges = {"": _waiting, "page_exports": len(_store.unexported_approved())}
+_rules = "".join(
+    f'[data-testid="stSidebarNavLink"][href$="/{path}"]::after {{content: "{count}";'
+    + ("background: var(--lg-accent-weak); color: var(--lg-accent);" if not path else "")
+    + "}"
+    for path, count in _badges.items()
+    if count
+)
+if _rules:
+    st.html(f"<style>{_rules}</style>")
 
-NAV_SECTIONS = {
-    "Work": ["review", "search", "process", "exports", "statements", "month_end", "sales_tax"],
-    "Insight": ["insights", "spend", "learning", "vendors", "activity"],
-    "Setup": ["accounts", "purchase_orders", "settings", "help"],
-}
 st.navigation({section: [PAGES[k] for k in keys] for section, keys in NAV_SECTIONS.items()}, expanded=True).run()

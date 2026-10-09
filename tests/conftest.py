@@ -20,6 +20,22 @@ def isolated_private_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("AP_USER_SETTINGS", str(tmp_path / "user_settings.json"))  # not the real ~/.ap_coder
 
 
+@pytest.fixture(autouse=True)
+def no_local_model(monkeypatch):
+    """Never ask a real LM Studio on this computer: every test sees no local model unless it starts a fake one
+    (tests/test_local_llm.py restores the real fetch for that)."""
+    from ap_coder import local_llm
+
+    def refused(url, api_key, timeout):
+        raise ConnectionRefusedError(f"no local model in tests ({url})")
+
+    monkeypatch.setattr(local_llm, "_fetch_json", refused)
+    local_llm.forget_status()
+    local_llm._mode_by_model.clear()
+    yield
+    local_llm.forget_status()
+
+
 @pytest.fixture
 def reference():
     return load_reference_data(

@@ -40,6 +40,26 @@ def test_cli_evaluate_command(capsys):
     assert json.loads(capsys.readouterr().out)["meets_target"] is True
 
 
+def test_watch_works_offline_without_azure_or_a_model(tmp_path, monkeypatch):
+    """The folder watcher reads invoices on this computer like the dashboard does: no Azure and no local model is
+    the offline pilot set-up, not "not set up yet"."""
+    import os
+    import shutil
+
+    from ap_coder.store import Store
+
+    for key in [k for k in os.environ if k.startswith(("AZURE_", "AP_LLM_"))]:
+        monkeypatch.delenv(key)
+    folder = tmp_path / "invoices"
+    folder.mkdir()
+    pdf = shutil.copy(SAMPLES / "northwind_ON_HST_NW-2026-0912.pdf", folder)
+    os.utime(pdf, (1_700_000_000, 1_700_000_000))  # copied in long ago: settled
+    db = tmp_path / "ap.db"
+    env = tmp_path / "none.env"
+    assert cli.main(["--env-file", str(env), "--db", str(db), "watch", str(folder), "--once", "--cache-dir", ""]) == 0
+    assert [i["status"] for i in Store(db).list_invoices()] == ["review"]
+
+
 def test_render_sample_pdf_pages():
     pdf = SAMPLES / "northwind_ON_HST_NW-2026-0912.pdf"
     images = render_page_images(pdf, max_pages=1)

@@ -1,0 +1,364 @@
+/* AP Coder review queue and invoice review workspace (webapp/review.py), "Ledger" style: layered on assets/style.css.
+   Every rule is scoped to these two screens: the queue (classes rq-*, cards st-key-card_queue / _approved_list /
+   _others / _parked / _second, rows st-key-qcard_* and st-key-rqi_*) and the workspace (classes rvw-*, cards
+   st-key-card_* of render_invoice). Colours come from the app's --lg-* tokens, with the spec's values as fallbacks. */
+
+:root {
+  --rv-bg: var(--lg-bg, #F7F8FA);
+  --rv-surface: var(--lg-surface, #FFFFFF);
+  --rv-border: var(--lg-border, #E5E7EB);
+  --rv-hairline: var(--lg-hairline, #EEF0F3);
+  --rv-text: var(--lg-text, #0F172A);
+  --rv-muted: var(--lg-muted, #5B6474);
+  --rv-subtle: var(--lg-subtle, #8A93A3);
+  --rv-accent: var(--lg-accent, #2563EB);
+  --rv-accent-hover: var(--lg-accent-hover, #1D4ED8);
+  --rv-accent-weak: var(--lg-accent-weak, #EEF3FE);
+  --rv-success: var(--lg-success, #15803D);
+  --rv-success-weak: var(--lg-success-weak, #ECFDF3);
+  --rv-warning: var(--lg-warning, #B45309);
+  --rv-warning-weak: var(--lg-warning-weak, #FFF7E6);
+  --rv-danger: var(--lg-danger, #B91C1C);
+  --rv-danger-weak: var(--lg-danger-weak, #FEF2F2);
+  --rv-neutral: #F1F5F9;
+  --rv-head: #FAFBFC;
+  --rv-hover: #F9FAFB;
+  --rv-ring: 0 0 0 3px rgba(37, 99, 235, .18);
+}
+
+/* ==== Shared pieces ====================================================================================== */
+.rq-pill {display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 11.5px;
+  font-weight: 500; line-height: 16px; white-space: nowrap; background: var(--rv-neutral); color: var(--rv-muted);}
+.rq-pill.ok {background: var(--rv-success-weak); color: var(--rv-success);}
+.rq-pill.warn {background: var(--rv-warning-weak); color: var(--rv-warning);}
+.rq-pill.err {background: var(--rv-danger-weak); color: var(--rv-danger);}
+.rq-pill.accent {background: var(--rv-accent-weak); color: var(--rv-accent);}
+.rq-tax {display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 18px;
+  letter-spacing: .02em; color: var(--rv-muted); background: var(--rv-surface); border: 1px solid var(--rv-border);
+  white-space: nowrap;}
+.rq-av {flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--rv-neutral); color: var(--rv-muted); font-size: 11px; font-weight: 600; letter-spacing: .02em;}
+.rq-conf {display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--rv-muted);
+  font-variant-numeric: tabular-nums;}
+.rq-conf .bar {width: 48px; height: 4px; border-radius: 2px; background: var(--rv-hairline); overflow: hidden; flex: none;}
+.rq-conf .bar i {display: block; height: 100%; border-radius: 2px; background: var(--rv-success);}
+.rq-conf.warn .bar i {background: var(--rv-warning);}
+.rq-conf b {font-weight: 500; color: var(--rv-text); min-width: 2.4em;}
+.rq-cur {font-size: 11.5px; color: var(--rv-subtle); font-weight: 500;}
+.rvw-muted {color: var(--rv-muted);}
+.rvw-warn {color: var(--rv-warning); font-weight: 600;}
+.rvw-ok {color: var(--rv-success); display: inline-flex; vertical-align: -2px;}
+
+/* Tables (ui.table) on these screens: 13px, quiet header, hairline rows, tabular numbers */
+:is(.block-container:has(.rq-kpis), .block-container:has(.st-key-card_actionbar)) .apc-table {font-size: 13px;
+  border-collapse: collapse; width: 100%;}
+/* Aligned figures in the number columns only: Inter's tabular figures also widen hyphens in text */
+:is(.block-container:has(.rq-kpis), .block-container:has(.st-key-card_actionbar)) .apc-table td.r {
+  font-variant-numeric: tabular-nums;}
+:is(.block-container:has(.rq-kpis), .block-container:has(.st-key-card_actionbar)) .apc-table th {font-size: 12px;
+  font-weight: 500; color: var(--rv-muted); text-transform: none; letter-spacing: 0; background: var(--rv-head);
+  padding: 9px 12px; border-bottom: 1px solid var(--rv-hairline); border-top: 0; white-space: nowrap;}
+:is(.block-container:has(.rq-kpis), .block-container:has(.st-key-card_actionbar)) .apc-table td {padding: 9px 12px;
+  border-bottom: 1px solid var(--rv-hairline); color: var(--rv-text); vertical-align: middle;}
+:is(.block-container:has(.rq-kpis), .block-container:has(.st-key-card_actionbar)) .apc-table tbody tr:hover td {
+  background: var(--rv-hover);}
+:is(.block-container:has(.rq-kpis), .block-container:has(.st-key-card_actionbar)) .apc-table tbody tr:nth-child(even) td {
+  background: transparent;}
+:is(.block-container:has(.rq-kpis), .block-container:has(.st-key-card_actionbar)) .apc-table tbody tr:nth-child(even):hover td {
+  background: var(--rv-hover);}
+:is(.block-container:has(.rq-kpis), .block-container:has(.st-key-card_actionbar)) .apc-table tfoot td {
+  border-bottom: 0; border-top: 1px solid var(--rv-border); font-weight: 600; background: transparent;}
+
+/* ==== Review queue ======================================================================================= */
+/* KPI strip: one bordered card, figures divided by hairlines */
+.rq-kpis {display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--rv-surface);
+  border: 1px solid var(--rv-border); border-radius: 10px;}
+.rq-kpi {padding: 16px 20px; min-width: 0; border-left: 1px solid var(--rv-hairline);}
+.rq-kpi:first-child {border-left: 0;}
+.rq-kpi .l {font-size: 12.5px; font-weight: 500; color: var(--rv-muted);}
+.rq-kpi .v {margin-top: 4px; font-size: 22px; font-weight: 600; line-height: 28px; letter-spacing: -.01em;
+  color: var(--rv-text); font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "cv11" 1;}
+.rq-kpi .s {margin-top: 2px; font-size: 12px; color: var(--rv-subtle); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;}
+.rq-kpi .d {font-weight: 500;} .rq-kpi .d.up {color: var(--rv-success);} .rq-kpi .d.down {color: var(--rv-danger);}
+.rq-kpi-bar {display: block; width: min(100%, 140px); height: 4px; margin: 6px 0 4px; border-radius: 2px;
+  background: var(--rv-hairline); overflow: hidden;}
+.rq-kpi-bar i {display: block; height: 100%; border-radius: 2px; background: var(--rv-accent);}
+@media (max-width: 860px) {
+  .rq-kpis {grid-template-columns: repeat(2, minmax(0, 1fr));}
+  .rq-kpi:nth-child(3) {border-left: 0;}
+  .rq-kpi:nth-child(n+3) {border-top: 1px solid var(--rv-hairline);}
+}
+
+/* "Today": one quiet line of status chips */
+.rq-today {display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -2px 0 -6px; font-size: 12.5px;}
+.rq-today b {font-weight: 600; color: var(--rv-muted); margin-right: 4px;}
+
+/* Tabs: underline */
+.block-container:has(.rq-kpis) .stTabs [role="tablist"] {gap: 24px; background: transparent; padding: 0; border-radius: 0;
+  width: 100%; border-bottom: 1px solid var(--rv-border) !important; box-shadow: none !important;}
+.block-container:has(.rq-kpis) .stTabs [data-testid="stTab"] {min-height: 0; height: auto; padding: 8px 0 10px;
+  margin-bottom: -1px; border-radius: 0; background: transparent !important; box-shadow: none !important;
+  border: 0 !important; border-bottom: 2px solid transparent !important; color: var(--rv-muted);}
+.block-container:has(.rq-kpis) .stTabs [data-testid="stTab"] p {font-size: 13.5px; font-weight: 500;}
+.block-container:has(.rq-kpis) .stTabs [data-testid="stTab"]:hover {color: var(--rv-text);}
+.block-container:has(.rq-kpis) .stTabs [data-testid="stTab"][aria-selected="true"] {color: var(--rv-text);
+  border-bottom-color: var(--rv-accent) !important;}
+.block-container:has(.rq-kpis) .stTabs .react-aria-SelectionIndicator {display: none;}
+.block-container:has(.rq-kpis) .stTabs [data-testid="stTabPanel"], .block-container:has(.rq-kpis) .stTabs [role="tabpanel"] {
+  padding-top: 16px;}
+
+/* The queue: one card; toolbar, the clean-invoices bar, a header row and dense rows divided by hairlines */
+.st-key-card_queue {padding: 0 !important; gap: 0 !important; overflow: hidden; box-shadow: none !important;
+  container-type: inline-size;}
+.st-key-rq_toolbar {padding: 12px 16px; border-bottom: 1px solid var(--rv-hairline);}
+.st-key-rq_toolbar [data-testid="stHorizontalBlock"] {gap: 12px;}
+/* Compact fields (34px) in the toolbar and the invoice form */
+:is(.st-key-rq_toolbar, .st-key-card_details) :is([data-testid="stTextInputRootElement"],
+  [data-testid="stNumberInputContainer"], [data-testid="stSelectbox"] > div > div) {height: 34px; min-height: 34px;
+  border-radius: 8px;}
+:is(.st-key-rq_toolbar, .st-key-card_details) :is([data-testid="stTextInputRootElement"],
+  [data-testid="stNumberInputContainer"], [data-testid="stSelectbox"] > div > div) input {height: 32px;
+  padding-top: 4px; padding-bottom: 4px; font-size: 13.5px;}
+/* The filter: a quiet segmented control (neutral track, the chosen one white) */
+.st-key-rq_toolbar [role="radiogroup"] {display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px;
+  background: var(--rv-neutral); width: fit-content;}
+.st-key-rq_toolbar [data-variant="segmented_control"] {min-height: 30px; height: 30px; padding: 0 12px; border: 0 !important;
+  border-radius: 6px !important; background: transparent; color: var(--rv-muted); box-shadow: none !important;}
+.st-key-rq_toolbar [data-variant="segmented_control"]:hover {color: var(--rv-text); background: transparent;}
+.st-key-rq_toolbar [data-variant="segmented_control"][data-selected="true"] {background: var(--rv-surface);
+  color: var(--rv-text); box-shadow: 0 0 0 1px var(--rv-border) !important;}
+.st-key-rq_toolbar [data-variant="segmented_control"] p {font-size: 13px; font-weight: 500; color: inherit;}
+
+.st-key-rq_bulk {padding: 8px 16px; background: var(--rv-accent-weak); border-bottom: 1px solid var(--rv-hairline);
+  gap: 12px !important; flex-wrap: nowrap !important;}
+.st-key-rq_bulk > [data-testid="stElementContainer"] {flex: 1 1 0; width: auto !important; min-width: 0;}
+.st-key-rq_bulk > [data-testid="stLayoutWrapper"] {flex: none;}
+.rq-bulk {display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--rv-text); min-width: 0;}
+.rq-bulk > span:first-child {color: var(--rv-accent); display: inline-flex;}
+.rq-bulk b {font-weight: 600;}
+.rq-bulk-sub {color: var(--rv-muted);}
+.st-key-rq_bulk [data-testid="stPopover"] button {min-height: 30px; height: 30px; padding: 0 12px; font-size: 13px;
+  background: var(--rv-surface);}
+
+.rq-row {display: grid; align-items: center; column-gap: 14px; padding: 0 16px; min-height: 56px; font-size: 13px;
+  color: var(--rv-text); border-top: 1px solid var(--rv-hairline);
+  grid-template-columns: minmax(180px, 1fr) 116px 82px 36px 84px 112px 88px 112px 14px;
+  transition: background .1s ease;}
+.rq-row > * {min-width: 0;}
+.rq-row.rq-cols {min-height: 36px; border-top: 0; background: var(--rv-head); font-size: 12px; font-weight: 500;
+  color: var(--rv-muted); border-bottom: 0;}
+.rq-row .c-vendor {display: flex; align-items: center; gap: 10px;}
+.rq-row .who {min-width: 0;}
+.rq-row .name {font-weight: 500; color: var(--rv-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.rq-row .due {font-size: 12px; color: var(--rv-subtle); margin-top: 1px; white-space: nowrap;}
+.rq-row .due.err {color: var(--rv-danger);} .rq-row .due.warn {color: var(--rv-warning);}
+.rq-row .due.ok {color: var(--rv-success);}
+.rq-row .c-num {color: var(--rv-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.rq-row .c-date, .rq-row .c-prov {color: var(--rv-muted); white-space: nowrap;}
+.rq-row .c-tax {display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden;}
+.rq-row .c-amt {text-align: right; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums;}
+.rq-row .c-amt small {margin-left: 4px; font-size: 11.5px; font-weight: 500; color: var(--rv-subtle);}
+.rq-row.rq-cols .c-amt {font-weight: 500;}
+.rq-row .c-chev {color: var(--rv-subtle); display: flex; justify-content: flex-end;}
+@container (max-width: 960px) {
+  .rq-row {grid-template-columns: minmax(170px, 1fr) 112px 82px 112px 88px 112px 14px;}
+  .rq-row .c-prov, .rq-row .c-tax {display: none;}
+}
+@container (max-width: 760px) {
+  .rq-row {grid-template-columns: minmax(150px, 1fr) 108px 112px 108px 14px;}
+  .rq-row .c-date, .rq-row .c-conf {display: none;}
+}
+@container (max-width: 560px) {
+  .rq-row {grid-template-columns: minmax(140px, 1fr) 108px 14px;}
+  .rq-row .c-num, .rq-row .c-status {display: none;}
+}
+
+/* A whole row opens the invoice: the real button is stretched over it, invisible */
+[class*="st-key-qcard_"] {position: relative; gap: 0 !important;}
+[class*="st-key-qopen_"] {position: absolute !important; inset: 0; z-index: 3; margin: 0 !important;}
+[class*="st-key-qopen_"] > div, [class*="st-key-qopen_"] .stButton {width: 100% !important; height: 100% !important;}
+[class*="st-key-qopen_"] button {width: 100% !important; height: 100% !important; opacity: 0; cursor: pointer;}
+[class*="st-key-qcard_"]:hover .rq-row {background: var(--rv-hover);}
+[class*="st-key-qcard_"]:hover .rq-row .c-chev {color: var(--rv-accent);}
+[class*="st-key-qcard_"]:has(button:focus-visible) .rq-row {box-shadow: inset 3px 0 0 var(--rv-accent);
+  background: var(--rv-hover);}
+.st-key-queue_more button {color: var(--rv-accent);}
+.st-key-card_queue .st-key-queue_more {border-top: 1px solid var(--rv-hairline); padding: 4px 0;}
+
+/* Lists of the other tabs (parked, second approval, failed / rejected): rows in one card, hairlines between */
+:is(.st-key-card_parked, .st-key-card_second, .st-key-card_others) {padding: 4px 20px !important; gap: 0 !important;
+  box-shadow: none !important;}
+[class*="st-key-rqi_"] {padding: 12px 0; gap: 8px !important;}
+[data-testid="stLayoutWrapper"]:has(> [class*="st-key-rqi_"]) ~ [data-testid="stLayoutWrapper"]:has(> [class*="st-key-rqi_"]) {
+  border-top: 1px solid var(--rv-hairline);}
+.rq-item {display: flex; align-items: center; gap: 12px; min-width: 0;}
+.rq-item-body {min-width: 0;}
+.rq-item-title {display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 14px; color: var(--rv-text);}
+.rq-item-title b {font-weight: 500;}
+.rq-num {font-size: 13px; color: var(--rv-muted);}
+[class*="st-key-rqi_"] [data-testid="stExpander"] details {border: 0; background: transparent; border-radius: 0;}
+[class*="st-key-rqi_"] [data-testid="stExpander"] summary {padding: 4px 0 4px 40px; font-size: 13px; font-weight: 500;
+  color: var(--rv-muted);}
+[class*="st-key-rqi_"] [data-testid="stExpander"] summary:hover {color: var(--rv-text);}
+[class*="st-key-rqi_"] [data-testid="stExpanderDetails"] {padding-left: 40px;}
+.rq-item-sub {margin-top: 2px; font-size: 12.5px; color: var(--rv-muted); line-height: 1.45;}
+
+/* Approved tab */
+.st-key-card_approved_list {box-shadow: none !important;}
+.rq-card-title {font-size: 14px; font-weight: 600; color: var(--rv-text);}
+.rq-card-title span {margin-left: 6px; font-weight: 400; color: var(--rv-subtle); font-size: 12.5px;}
+.rq-who {display: flex; align-items: center; gap: 10px;}
+.rq-who b {font-weight: 500;}
+
+/* ==== Review workspace =================================================================================== */
+.block-container:has(.st-key-card_actionbar) {padding-left: 24px; padding-right: 24px; padding-top: 16px; max-width: 1720px;}
+.block-container:has(.st-key-card_actionbar) [class*="st-key-card_"] {padding: 16px 20px; box-shadow: none !important;
+  border-radius: 10px !important;}
+.block-container:has(.st-key-card_actionbar) [class*="st-key-card_"] > [data-testid="stVerticalBlock"],
+.block-container:has(.st-key-card_actionbar) [class*="st-key-card_"] {gap: 12px;}
+
+/* Navigation row: back, where we are, shortcuts, previous / next */
+.st-key-rvw_nav {gap: 8px !important; margin-bottom: -4px;}
+.st-key-rvw_nav button {min-height: 32px; font-size: 13px;}
+.rvw-pos {display: block; font-size: 13px; color: var(--rv-muted); white-space: nowrap;
+  border-left: 1px solid var(--rv-border); margin-left: 4px; padding: 2px 0 2px 12px;}
+.rvw-pos b {color: var(--rv-text); font-weight: 600;}
+.rvw-pos-bar {display: inline-block; vertical-align: middle; margin-left: 10px; width: 72px; height: 4px;
+  border-radius: 2px; background: var(--rv-hairline); overflow: hidden;}
+.rvw-pos-bar i {display: block; height: 100%; background: var(--rv-accent); border-radius: 2px;}
+
+/* Invoice header: vendor, number, dates, status, confidence on one row, the total on the right */
+.st-key-card_summary {padding: 14px 20px !important;}
+.rvw-head {display: flex; align-items: center; gap: 24px; min-width: 0;}
+.rvw-head-main {flex: 1; min-width: 0;}
+.rvw-head-title {display: flex; align-items: center; gap: 10px; flex-wrap: wrap;}
+.rvw-vendor {font-size: 20px; font-weight: 600; letter-spacing: -.01em; color: var(--rv-text); line-height: 28px;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; margin-right: 2px;}
+.rvw-head-meta {display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; margin-top: 4px; font-size: 13px;
+  color: var(--rv-muted);}
+.rvw-head-meta .m {white-space: nowrap;}
+.rvw-head-meta .m + .m::before {content: "·"; margin: 0 8px; color: var(--rv-subtle);}
+.rvw-head-meta .chips {display: inline-flex; gap: 4px; margin-left: 12px;}
+.rvw-head-meta .chips:empty {display: none;}
+.rvw-head-total {flex: none; display: flex; flex-direction: column; align-items: flex-end; text-align: right;}
+.rvw-head-total span {font-size: 12.5px; font-weight: 500; color: var(--rv-muted);}
+.rvw-head-total b {font-size: 24px; font-weight: 600; letter-spacing: -.01em; color: var(--rv-text); line-height: 30px;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "cv11" 1; white-space: nowrap;}
+.rvw-head-total small {margin-left: 6px; font-size: 12px; font-weight: 500; color: var(--rv-subtle); letter-spacing: 0;}
+
+/* Card titles: 14/600, no icons; an info mark for the hint, a status on the right */
+.rvw-sec-head, .rvw-doc-head {display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600;
+  color: var(--rv-text); min-width: 0; line-height: 20px;}
+.rvw-sec-aside {margin-left: auto; display: inline-flex; gap: 6px;}
+.rvw-doc-head b {font-weight: 600;}
+.rvw-doc-head .file {color: var(--rv-subtle); font-weight: 400; font-size: 12.5px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; min-width: 0;}
+.rvw-doc-head .file::before {content: "·"; margin-right: 6px;}
+.rvw-hint {display: inline-flex; color: var(--rv-subtle); cursor: help;}
+.rvw-hint:hover {color: var(--rv-text);}
+.rvw-group {font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--rv-subtle);
+  padding-top: 12px; border-top: 1px solid var(--rv-hairline); margin-top: 2px;}
+.rvw-subhead {font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--rv-subtle);
+  margin: 4px 0 8px;}
+.rvw-sugg-line {margin: 4px 0 0; font-size: 13px;}
+.rvw-text {font-size: 13px;}
+
+/* Document card: the viewer is the card's body (no card inside the card) */
+.st-key-card_document {padding: 12px 0 0 !important; overflow: hidden;}
+.st-key-card_document > :not([class*="_viewer"]) {padding-left: 16px; padding-right: 16px;}
+.st-key-card_document > [class*="_viewer"] {margin-bottom: -12px;}
+.st-key-card_document [data-testid="stCustomComponentV1"], .st-key-card_document iframe {display: block;}
+.st-key-card_document [data-testid="stExpander"] details {border: 0; border-top: 1px solid var(--rv-hairline);
+  border-radius: 0; background: transparent;}
+.st-key-card_document [data-testid="stHorizontalBlock"] [data-testid="stPopover"] button {min-height: 32px; font-size: 13px;}
+
+/* Document on the left stays in view while the form on the right scrolls */
+[data-testid="stHorizontalBlock"]:has(.st-key-card_document) {align-items: flex-start; gap: 16px;}
+[data-testid="stColumn"]:has(.st-key-card_document) {position: sticky; top: 3.25rem; z-index: 2; align-self: flex-start;}
+@media (max-width: 1100px) {
+  [data-testid="stColumn"]:has(.st-key-card_document) {position: static;}
+}
+
+/* Invoice details: a compact form */
+.st-key-card_details [data-testid="stNumberInputStepDown"],
+.st-key-card_details [data-testid="stNumberInputStepUp"] {display: none;}
+/* Aligned figures in the amount fields only: Inter's tabular figures also widen hyphens ("Mont - Royal") */
+.st-key-card_details [data-testid="stNumberInput"] input {font-variant-numeric: tabular-nums; text-align: right;}
+.st-key-card_details [data-testid="stWidgetLabel"] p {font-size: 12.5px; color: var(--rv-muted); font-weight: 500;}
+.st-key-card_details [data-testid="stWidgetLabel"] [data-testid="stIconMaterial"] {font-size: 14px; vertical-align: -2px;}
+.st-key-card_details [data-testid="stHorizontalBlock"] {gap: 12px;}
+.st-key-card_details [data-testid="stVerticalBlock"] {gap: 10px;}
+.rvw-amounts {font-size: 12.5px; color: var(--rv-muted); text-align: right; font-variant-numeric: tabular-nums;
+  margin-top: -4px;}
+.rvw-amounts b {color: var(--rv-text); font-weight: 600;}
+
+/* Notes: a borderless row with a chevron */
+.st-key-card_notes {padding: 4px 8px !important;}
+.st-key-card_notes [data-testid="stExpander"] details {border: 0; background: transparent;}
+
+/* Checks: one quiet status row (weak background of the status colour) */
+.rvw-status {border-radius: 8px; padding: 10px 12px; font-size: 13px; color: var(--rv-text); border: 0;}
+.rvw-status-title {display: flex; align-items: center; gap: 8px; font-weight: 600;}
+.rvw-status-sub {margin-top: 2px; color: var(--rv-muted); font-size: 12.5px; padding-left: 26px;}
+.rvw-status.ok {background: var(--rv-success-weak);} .rvw-status.ok .rvw-status-title {color: var(--rv-success);}
+.rvw-status.warn {background: var(--rv-warning-weak);} .rvw-status.warn .rvw-status-title {color: var(--rv-warning);}
+.rvw-status.err {background: var(--rv-danger-weak);} .rvw-status.err .rvw-status-title {color: var(--rv-danger);}
+.rvw-status ul {list-style: none; margin: 6px 0 0; padding: 0 0 0 26px; display: flex; flex-direction: column; gap: 4px;}
+.rvw-status li {display: flex; gap: 8px; align-items: flex-start; line-height: 1.45; margin: 0; font-size: 12.5px;
+  color: var(--rv-text);}
+.rvw-status li .m {flex: none; width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; display: grid;
+  place-items: center; font-size: 9px; font-weight: 700; color: #fff;}
+.rvw-status li.err .m {background: var(--rv-danger);}
+.rvw-status li.warn .m {background: var(--rv-warning);}
+.rvw-status li .t {display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
+.rvw-sr {position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0;}
+.st-key-card_checks {gap: 8px !important;}
+.st-key-card_checks [data-testid="stExpander"] details, .st-key-card_lines [data-testid="stExpander"] details {
+  border: 0; border-bottom: 1px solid var(--rv-hairline); border-radius: 0; background: transparent;}
+.st-key-card_checks [data-testid="stExpander"] summary, .st-key-card_lines [data-testid="stExpander"] summary {
+  padding-left: 0; padding-right: 0; font-size: 13px; font-weight: 500;}
+.st-key-card_checks .apc-check {padding: 8px 10px; margin-bottom: 6px; font-size: 12.5px;}
+
+/* Grids (st.data_editor): one hairline frame, 8px corners */
+.block-container:has(.st-key-card_actionbar) [data-testid="stDataFrame"],
+.block-container:has(.st-key-card_actionbar) [data-testid="stDataFrameResizable"] {border-radius: 8px;}
+
+/* GL posting preview: a thin proportional bar in shades of the accent, then a clean table */
+.rvw-split .bar {display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; margin: 2px 0 10px;}
+.rvw-split .bar i {display: block; min-width: 3px;}
+.rvw-split .s0 {background: var(--rv-accent);}
+.rvw-split .s1 {background: color-mix(in srgb, var(--rv-accent) 62%, #fff);}
+.rvw-split .s2 {background: color-mix(in srgb, var(--rv-accent) 38%, #fff);}
+.rvw-split .s3 {background: color-mix(in srgb, var(--rv-accent) 22%, #fff);}
+.rvw-split .s4 {background: #CBD5E1;}
+.rvw-split .s5 {background: #E2E8F0;}
+.rvw-split .legend {display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12.5px; color: var(--rv-muted);}
+.rvw-split .legend span {display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;}
+.rvw-split .legend i {width: 8px; height: 8px; border-radius: 2px; display: inline-block;}
+.rvw-split .legend b {color: var(--rv-text); font-weight: 600; font-variant-numeric: tabular-nums;}
+.rvw-split .legend em {font-style: normal; color: var(--rv-subtle); font-variant-numeric: tabular-nums;}
+.rvw-gl .gl {font-weight: 500; color: var(--rv-text);}
+.rvw-gl .gl small {display: block; font-size: 12px; font-weight: 400; color: var(--rv-muted);}
+.rvw-gl .gl.todo {color: var(--rv-warning);}
+.rvw-kind {font-size: 12px; color: var(--rv-subtle); white-space: nowrap;}
+.rvw-gl .apc-table td:first-child, .rvw-gl .apc-table th:first-child {padding-left: 0; width: 1%;}
+.st-key-card_tax .apc-table .ok {color: var(--rv-success);} .st-key-card_tax .apc-table .bad {color: var(--rv-danger);}
+
+/* Sticky action bar: white, a hairline on top, one primary action */
+[data-testid="stLayoutWrapper"]:has(> .st-key-card_actionbar) {position: sticky; bottom: 0; z-index: 20;
+  margin: 0 -24px; width: calc(100% + 48px) !important; max-width: none;}
+.block-container:has(.st-key-card_actionbar) .st-key-card_actionbar {padding: 10px 24px !important;
+  background: var(--rv-surface) !important; backdrop-filter: none; border: 0 !important;
+  border-top: 1px solid var(--rv-border) !important; border-radius: 0 !important; box-shadow: none !important;}
+.st-key-card_actionbar button {min-height: 34px; height: 34px; font-size: 13.5px; font-weight: 500; border-radius: 8px;}
+.st-key-card_actionbar button[kind="primary"] {padding: 0 16px;}
+.rvw-post {display: flex; flex-direction: column; min-width: 0;}
+.rvw-post-amount {font-size: 14px; color: var(--rv-muted); white-space: nowrap;}
+.rvw-post-amount b {font-weight: 600; color: var(--rv-text); font-variant-numeric: tabular-nums;}
+.rvw-post-sub {display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--rv-subtle);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+
+/* Why these codes: reason rows */
+.block-container:has(.st-key-card_actionbar) .apc-reason .badges {display: flex; gap: 4px; flex-wrap: wrap;}

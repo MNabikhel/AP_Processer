@@ -7,6 +7,7 @@ import getpass
 import html
 import io
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,33 @@ TARGET_GRAY = "#8a8985"
 
 # Filled in by dashboard.py at start-up: pages link to each other with ``st.page_link(PAGES["process"])``.
 PAGES: dict[str, Any] = {}
+
+# The sidebar's sections (PAGES keys, in order). Page headers show the section as a breadcrumb.
+NAV_SECTIONS: dict[str, list[str]] = {
+    "Work": ["review", "process", "search"],
+    "Close & compliance": ["exports", "month_end", "sales_tax", "statements"],
+    "Master data": ["vendors", "purchase_orders", "accounts"],
+    "Analytics": ["learning", "spend", "insights", "activity"],
+    "System": ["settings", "help"],
+}
+SECTION_OF = {key: section for section, keys in NAV_SECTIONS.items() for key in keys}
+
+
+def page_head(page: str, title: str, subtitle: str = "", aside: str = "", action: bool = False) -> Any:
+    """The standard page header: breadcrumb (AP Coder / section), title, one-line description.
+
+    ``aside``: HTML on the right (pills, a status). ``action=True`` returns a right-aligned container for
+    the page's primary action (a button or page link), e.g. ``with page_head(...): st.page_link(...)``.
+    """
+    crumbs = ("AP Coder", SECTION_OF.get(page, ""))
+    html_head = ui.page_header("", title, subtitle, aside, crumbs=[c for c in crumbs if c])
+    if not action:
+        st.html(html_head)
+        return None
+    with st.container(key=f"pagehead_{page}"):
+        left, right = st.columns([3, 1], vertical_alignment="bottom")
+        left.html(html_head)
+    return right
 
 
 # --- Shared helpers -----------------------------------------------------------------------------
@@ -74,9 +102,10 @@ def first_name() -> str:
 
 def money(value: Any, currency: str = "") -> str:
     try:
-        return f"{float(value):,.2f}{' ' + currency if currency else ''}"
+        float(value)
     except (TypeError, ValueError):
         return "-"
+    return ui.money(value) + (f" {currency}" if currency else "")
 
 
 def esc(value: Any) -> str:
@@ -128,8 +157,22 @@ def reference_or_none(store: Store) -> ReferenceData | None:
         return None
 
 
+# What a clerk sees instead of the stored UNASSIGNED code (the stored value never changes).
+NEEDS_GL = "Needs an account"
+NEEDS_CC = "Needs a cost center"
+
+
+def gl_display(code: str | None) -> str:
+    """A GL code for display: UNASSIGNED reads as "Needs an account", a blank as an em dash."""
+    return NEEDS_GL if code == UNASSIGNED else (code or "—")
+
+
+def cc_display(code: str | None) -> str:
+    return NEEDS_CC if code == UNASSIGNED else (code or "")
+
+
 def gl_label_map(reference: ReferenceData | None) -> dict[str, str]:
-    labels = {UNASSIGNED: f"{UNASSIGNED} · needs a code", "": "(none)"}
+    labels = {UNASSIGNED: NEEDS_GL, "": "(none)"}
     if reference is not None:
         for row in reference.chart_of_accounts.rows:
             name = short_name(row.get("description", ""))
@@ -143,7 +186,7 @@ def gl_name(reference: ReferenceData, code: str) -> str:
 
 
 def cc_label_map(reference: ReferenceData | None) -> dict[str, str]:
-    labels = {UNASSIGNED: f"{UNASSIGNED} · needs a cost center", "": "(none)"}
+    labels = {UNASSIGNED: NEEDS_CC, "": "(none)"}
     if reference is not None and reference.cost_centers is not None:
         for row in reference.cost_centers.rows:
             labels[row["cost_center"]] = f"{row['cost_center']} · {row.get('description', '')[:30]}"
@@ -233,9 +276,21 @@ def replace_editor(key: str, data: pd.DataFrame) -> None:
 
 
 def forget_drafts(prefix: str) -> None:
-    """Drop the saved drafts of a finished invoice."""
-    for k in [k for k in st.session_state if str(k).startswith((f"_base_{prefix}_", f"_draft_{prefix}_"))]:
+    """Drop the saved drafts of a finished invoice: its grids and the header fields kept for the session."""
+    for k in [
+        k for k in st.session_state if str(k).startswith((f"_base_{prefix}_", f"_draft_{prefix}_", f"{prefix}_"))
+    ]:
         del st.session_state[k]
+
+
+_INVOICE_STATE = re.compile(r"^(?:_base_|_draft_)?inv\d+_")
+
+
+def forget_all_drafts() -> None:
+    """Drop every invoice's drafts (after a restore, invoice numbers are given out again to new invoices)."""
+    for k in [k for k in st.session_state if _INVOICE_STATE.match(str(k))]:
+        del st.session_state[k]
+    st.session_state.pop("unsaved_edits", None)
 
 
 def card(name: str) -> Any:
@@ -252,18 +307,18 @@ def weekly_accuracy(metrics: dict[str, Any]) -> list[float]:
 
 
 def demo_card(store: Store, where: str) -> None:
-    """Load or remove the demo invoices (the bundled samples, coded as if by Azure; no Azure needed)."""
+    """Load or remove the demo invoices (the bundled samples, already read and coded; nothing to connect)."""
     from ap_coder.demo import demo_available, load_demo, remove_demo
 
     if not demo_available():
         return
     demo_count = store.demo_count()
     with card(f"demo_{where}"):
-        st.markdown("#### :material/science: Demo invoices")
+        st.markdown("#### Demo invoices")
         if not demo_count:
             st.caption(
-                "Look around before connecting Azure: ten sample invoices from across Canada (including a US vendor "
-                "and a credit note) are added as if the AI had read and coded them, including a few realistic "
+                "Look around first: ten sample invoices from across Canada (including a US vendor "
+                "and a credit note) are added already read and coded, including a few realistic "
                 "mistakes to correct, plus sample purchase orders and a sample vendor list. Uses the sample GL "
                 "accounts if you haven't imported yours."
             )
@@ -276,8 +331,8 @@ def demo_card(store: Store, where: str) -> None:
                 st.rerun()
         else:
             st.caption(
-                f"{demo_count} demo invoice(s) are loaded. Removing them also forgets what the AI learned from "
-                "them, and removes the sample purchase orders and vendor list loaded with them; your own "
+                f"{ui.plural(demo_count, 'demo invoice')} loaded. Removing them also forgets what the AI "
+                "learned from them, and removes the sample purchase orders and vendor list loaded with them; your own "
                 "invoices, POs, vendors and settings are untouched."
             )
             sure = st.checkbox("Yes, remove the demo invoices", key=f"demo_sure_{where}")
@@ -285,7 +340,7 @@ def demo_card(store: Store, where: str) -> None:
                 "Remove demo invoices", icon=":material/delete_sweep:", disabled=not sure, key=f"demo_rm_{where}"
             ):
                 removed = remove_demo(store)
-                notify(f"Removed {removed} demo invoice(s).", ":material/delete_sweep:")
+                notify(f"Removed {ui.plural(removed, 'demo invoice')}.", ":material/delete_sweep:")
                 st.rerun()
 
 

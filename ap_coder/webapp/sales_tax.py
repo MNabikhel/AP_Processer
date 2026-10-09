@@ -8,7 +8,7 @@ from typing import Any
 import streamlit as st
 
 from ap_coder import taxreturn, ui
-from ap_coder.webapp.common import card, esc, get_store, money, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, page_head, show_toast
 
 ISSUE_TONES = {
     taxreturn.NO_GST_NUMBER: "err",
@@ -33,18 +33,16 @@ def _amounts(by_currency: dict[str, float], rates: dict[str, float]) -> tuple[st
 def page_sales_tax() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Close",
-            "Sales tax",
-            "The GST/HST and QST you paid to vendors and can claim back on your return, from approved invoices.",
-        )
+    page_head(
+        "sales_tax",
+        "Sales tax",
+        "The GST/HST and QST you paid to vendors and can claim back on your return, from approved invoices.",
     )
     with card("tax_period"):
         default_start, default_end = taxreturn.default_period()
         c1, c2, c3 = st.columns([1, 1, 2.4], vertical_alignment="bottom")
-        start = c1.date_input("From (invoice date)", default_start, key="tax_start")
-        end = c2.date_input("To", default_end, key="tax_end")
+        start = c1.date_input("From (invoice date)", default_start, format="YYYY-MM-DD", key="tax_start")
+        end = c2.date_input("To", default_end, format="YYYY-MM-DD", key="tax_end")
         c3.caption(
             "Claimed by invoice date. Only taxes set up as *recoverable* (GL accounts & tax page) count; credit "
             "notes reduce the claim."
@@ -68,7 +66,7 @@ def page_sales_tax() -> None:
                     itc,
                     "account_balance",
                     "blue",
-                    "ITCs · " + (itc_hint or f"{invoices} invoice(s)"),
+                    "ITCs · " + (itc_hint or ui.plural(invoices, "invoice")),
                 ),
                 ui.tile(
                     "QST to claim", itr, "account_balance", "violet", "ITRs" + (f" · {itr_hint}" if itr_hint else "")
@@ -78,7 +76,9 @@ def page_sales_tax() -> None:
                     risky,
                     "rule",
                     "amber" if risky else "green",
-                    "invoice(s) with something to check" if risky else "nothing to check",
+                    ("invoice" if risky == 1 else "invoices") + " with something to check"
+                    if risky
+                    else "nothing to check",
                 ),
                 ui.tile(
                     "Not approved yet",
@@ -112,7 +112,7 @@ def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
     items = taxreturn.self_assessment(store, start, end)
     if not items:
         with card("tax_self_none"):
-            st.markdown("#### :material/assignment_return: PST / QST possibly to self-assess")
+            st.markdown("#### PST / QST possibly to self-assess")
             st.caption(
                 "None in this period: no approved invoice for a supply in BC, SK, MB or Quebec came without the "
                 "provincial tax."
@@ -120,7 +120,7 @@ def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
         return
     with card("tax_self"):
         head, button = st.columns([3, 1.4], vertical_alignment="center")
-        head.markdown("#### :material/assignment_return: PST / QST possibly to self-assess")
+        head.markdown("#### PST / QST possibly to self-assess")
         button.download_button(
             "Download (CSV)", taxreturn.self_assessment_csv(items, start, end),
             file_name=f"self_assessment_{start}_{end}.csv", mime="text/csv", icon=":material/download:",
@@ -138,8 +138,10 @@ def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
                         f"{money(total)} {cur}",
                         "assignment_return",
                         "amber",
-                        f"{sum(1 for s in items if (s.province, s.tax_type, s.currency) == (prov, tax, cur))} "
-                        "invoice(s), estimate",
+                        ui.plural(
+                            sum(1 for s in items if (s.province, s.tax_type, s.currency) == (prov, tax, cur)), "invoice"
+                        )
+                        + ", estimate",  # fmt: skip
                     )
                     for (prov, tax, cur), total in sorted(totals.items())
                 ]  # fmt: skip
@@ -147,7 +149,7 @@ def _self_assessment(store: Any, start: dt.date, end: dt.date) -> None:
         )
         rows = [
             [
-                f"<b>{esc(s.vendor)}</b><div class='apc-muted'>{esc(s.invoice_number)} · #{s.invoice_id}</div>",
+                f"<b>{esc(s.vendor)}</b><div class='apc-muted'>{esc(s.invoice_number)}</div>",
                 esc(s.invoice_date),
                 f"{esc(s.tax_type)} {esc(s.province)} {s.rate * 100:g}%",
                 f"{money(s.base)}",
@@ -168,9 +170,14 @@ def _claims(report: taxreturn.Report, start: dt.date, end: dt.date) -> None:
     at_risk = report.at_risk()
 
     with card("tax_rates"):
-        st.markdown("#### :material/percent: By tax and rate")
+        st.markdown("#### By tax and rate")
         rows = [
-            [esc(t), esc(p or "—"), f"{r * 100:g}%", f"{money(total)} <span class='apc-muted'>{esc(cur)}</span>"]
+            [
+                ui.tax_chip(t),
+                esc(p or "—"),
+                f"{r * 100:g}%",
+                f"{money(total)} <span class='apc-muted'>{esc(cur)}</span>",
+            ]
             for t, p, r, cur, total in report.by_type()
         ]
         st.html(ui.table(["Tax", "Province", "Rate", "To claim"], rows, right=[2, 3]))
@@ -181,7 +188,7 @@ def _claims(report: taxreturn.Report, start: dt.date, end: dt.date) -> None:
 
     with card("tax_lines"):
         head, button = st.columns([3, 1.4], vertical_alignment="center")
-        head.markdown("#### :material/list_alt: Invoices")
+        head.markdown("#### Invoices")
         button.download_button(
             "Download (CSV)", taxreturn.to_csv(report), file_name=f"sales_tax_{start}_{end}.csv", mime="text/csv",
             icon=":material/download:", width="stretch", key="tax_download",
@@ -191,9 +198,9 @@ def _claims(report: taxreturn.Report, start: dt.date, end: dt.date) -> None:
         shown = at_risk if only_risky else report.claims
         rows = [
             [
-                f"<b>{esc(c.vendor)}</b><div class='apc-muted'>{esc(c.invoice_number)} · #{c.invoice_id}</div>",
+                f"<b>{esc(c.vendor)}</b><div class='apc-muted'>{esc(c.invoice_number)}</div>",
                 esc(c.invoice_date),
-                f"{esc(c.tax_type)} {esc(c.province)} {c.rate * 100:g}%"
+                f"{ui.tax_chip(c.tax_type)} {esc(c.province)} {c.rate * 100:g}%"
                 + f"<div class='apc-muted'>{esc(c.registration or 'no number')}</div>",
                 f"{money(c.amount)} <span class='apc-muted'>{esc(c.currency)}</span>",
                 " ".join(ui.pill(i, ISSUE_TONES.get(i, "gray")) for i in c.issues),

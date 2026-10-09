@@ -8,17 +8,17 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
-import hashlib
 import html
 import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-# Dark enough for white initials (>= 4.5:1 contrast).
-AVATAR_COLORS = ("#1f63b5", "#b54a1f", "#127a56", "#8a5a00", "#b23a6b", "#2f6b2f", "#4a3aa7", "#9b2c2c")
 # Categorical palette (dataviz reference palette, fixed order).
 SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")
-OK, WARN, ERR, BRAND = "#1a7f4b", "#e59a00", "#c53030", "#2a78d6"
+# Status colours (style.css --lg-success / --lg-warning / --lg-danger / --lg-accent; BRAND = theme.toml primaryColor).
+OK, WARN, ERR, BRAND = "#15803d", "#b45309", "#b91c1c", "#2563eb"
+INK = "#0f172a"
+TRACK = "#eef0f3"  # the empty part of a bar or gauge (--lg-hairline)
 
 
 def esc(value: Any) -> str:
@@ -26,10 +26,12 @@ def esc(value: Any) -> str:
 
 
 def money(value: Any) -> str:
+    """1,234.50; a credit as (1,234.50), the accounting style the editable grids use too."""
     try:
-        return f"{float(value):,.2f}"
+        amount = float(value)
     except (TypeError, ValueError):
         return "—"
+    return f"({-amount:,.2f})" if amount < -0.004 else f"{abs(amount) if amount > -0.005 else 0.0:,.2f}"
 
 
 def icon(name: str, size: str = "1.1em", color: str = "") -> str:
@@ -50,18 +52,26 @@ def initials(name: str) -> str:
 
 
 def avatar(name: str, size: str = "") -> str:
-    digest = int(hashlib.sha1((name or "").lower().encode()).hexdigest(), 16)
-    color = AVATAR_COLORS[digest % len(AVATAR_COLORS)]
-    return f"<div class='apc-avatar {size}' style='background:{color}' aria-hidden='true'>{esc(initials(name))}</div>"
+    """Initials on a neutral disc (no colour per name: colour is kept for status)."""
+    return f"<div class='apc-avatar {size}' aria-hidden='true'>{esc(initials(name))}</div>"
 
 
 def pill(text: str, tone: str = "gray", icon_name: str = "") -> str:
-    ico = icon(icon_name, ".95em") if icon_name else ""
+    ico = icon(icon_name, "13px") if icon_name else ""
     return f"<span class='apc-pill {tone}'>{ico}{esc(text)}</span>"
 
 
+def plural(n: int, word: str, many: str = "") -> str:
+    """ "1 invoice", "5 invoices", "1,204 lines" (``many`` for irregular plurals)."""
+    return f"{n:,} {word if n == 1 else (many or word + 's')}"
+
+
+# Display names for tax types whose code is not what a clerk calls them (the stored value is unchanged).
+TAX_LABELS = {"OTHER": "Other tax"}
+
+
 def tax_chip(tax_type: str) -> str:
-    return f"<span class='apc-tax {esc(tax_type)}'>{esc(tax_type)}</span>"
+    return f"<span class='apc-tax {esc(tax_type)}'>{esc(TAX_LABELS.get(tax_type, tax_type))}</span>"
 
 
 def kbd(key: str) -> str:
@@ -72,8 +82,8 @@ def confidence_color(value: float, threshold: float = 0.85) -> str:
     return OK if value >= threshold else WARN
 
 
-def ring(value: float, size: int = 64, stroke: int = 7, color: str = BRAND, track: str = "#e8edf4",
-         text_color: str = "#142033", label: str | None = None) -> str:  # fmt: skip
+def ring(value: float, size: int = 64, stroke: int = 7, color: str = BRAND, track: str = TRACK,
+         text_color: str = INK, label: str | None = None) -> str:  # fmt: skip
     """Donut gauge for a single 0..1 value (pure CSS: inline SVG is stripped by Streamlit's sanitiser)."""
     value = max(0.0, min(1.0, value or 0.0))
     text = label if label is not None else f"{value:.0%}"
@@ -110,28 +120,90 @@ def sparkline(values: Sequence[float], width: int = 96, height: int = 28, color:
     return svg_img(svg, width, height)
 
 
-def tile(label: str, value: Any, icon_name: str, tone: str = "blue", hint: str = "", trend: str = "",
-         spark: Sequence[float] | None = None) -> str:  # fmt: skip
-    """``trend`` is 'up', 'down' or ''."""
-    spark_svg = sparkline(spark or [], color={"green": OK, "amber": WARN}.get(tone, BRAND)) if spark else ""
+_UNIT = re.compile(r"^(.*\d)\s+([A-Z]{3})$")  # "55,019.35 CAD": a figure and its currency
+
+
+def tile_value(value: Any) -> str:
+    """The value of a tile as HTML: a trailing currency code is set small beside the figure."""
+    text = "" if value is None else str(value)
+    m = _UNIT.match(text)
+    if m:
+        return f"{esc(m.group(1))}<span class='unit'>{esc(m.group(2))}</span>"
+    return esc(text)
+
+
+def tile(label: str, value: Any, icon_name: str = "", tone: str = "blue", hint: str = "", trend: str = "",
+         spark: Sequence[float] | None = None, text: bool = False) -> str:  # fmt: skip
+    """One KPI: label, figure and a short note under it. ``trend`` is 'up', 'down' or '' (only a trend is
+    coloured). ``text=True`` for a value that is a date or words, not a figure. A KPI shows no icon:
+    ``icon_name`` is accepted for older callers, and ``tone`` only colours the sparkline."""
+    color = {"green": OK, "amber": WARN}.get(tone, BRAND)
+    spark_svg = sparkline(spark or [], width=72, height=22, color=color) if spark else ""
     hint_html = f"<span class='hint {trend}'>{esc(hint)}</span>" if hint else "<span></span>"
     return (
-        f"<div class='apc-tile tone-{tone} apc-anim'><div class='top'><span class='label'>{esc(label)}</span>"
-        f"<span class='icon'>{icon(icon_name)}</span></div><div class='value'>{esc(value)}</div>"
+        f"<div class='apc-tile'><div class='label' title='{esc(label)}'>{esc(label)}</div>"
+        f"<div class='value{' text' if text else ''}'>{tile_value(value)}</div>"
         f"<div class='foot'>{hint_html}{spark_svg}</div></div>"
     )
 
 
 def tiles(items: Iterable[str]) -> str:
-    return f"<div class='apc-tiles'>{''.join(items)}</div>"
+    """A row of KPIs as one bordered strip with hairline dividers: up to four to a row, or as many as there
+    are when fewer (no empty slot at the end)."""
+    items = list(items)
+    size = f" n{len(items)}" if len(items) in (1, 2, 3) else ""
+    return f"<div class='apc-tiles{size} apc-anim'>{''.join(items)}</div>"
 
 
-def page_header(eyebrow: str, title: str, subtitle: str = "") -> str:
+def breadcrumbs(parts: Sequence[str]) -> str:
+    """ "AP Coder / Close & compliance": where a page sits; the last part is emphasised."""
+    sep = "<span class='sep' aria-hidden='true'>/</span>"
+    items = [esc(p) if i < len(parts) - 1 else f"<b>{esc(p)}</b>" for i, p in enumerate(parts)]
+    return f"<nav class='apc-crumbs' aria-label='Breadcrumb'>{sep.join(items)}</nav>"
+
+
+def page_header(eyebrow: str, title: str, subtitle: str = "", aside: str = "",
+                crumbs: Sequence[str] = ()) -> str:  # fmt: skip
+    """Title block of a page. ``crumbs`` (e.g. ``("AP Coder", "Close & compliance")``) replaces the eyebrow
+    with a breadcrumb; ``aside`` is HTML (pills, a status) shown on the right, built with these helpers."""
     sub = f"<div class='apc-sub'>{esc(subtitle)}</div>" if subtitle else ""
-    return (
-        f"<div class='apc-head apc-anim'><div><div class='apc-eyebrow'>{esc(eyebrow)}</div>"
-        f"<div class='apc-title'>{esc(title)}</div>{sub}</div></div>"
-    )
+    top = breadcrumbs(crumbs) if crumbs else f"<div class='apc-eyebrow'>{esc(eyebrow)}</div>"
+    side = f"<div class='aside'>{aside}</div>" if aside else ""
+    return f"<div class='apc-head apc-anim'><div>{top}<div class='apc-title'>{esc(title)}</div>{sub}</div>{side}</div>"
+
+
+def section_title(title: str, note: str = "") -> str:
+    """A small uppercase heading between cards, with an optional note on the right."""
+    note_html = f"<span>{esc(note)}</span>" if note else ""
+    return f"<div class='apc-section'><h5>{esc(title)}</h5>{note_html}</div>"
+
+
+def subhead(title: str, note: str = "", first: bool = False) -> str:
+    """A small uppercase heading that groups fields inside a card (``first``: no rule above it)."""
+    note_html = f"<span>{esc(note)}</span>" if note else ""
+    return f"<div class='apc-subhead{' first' if first else ''}'><b>{esc(title)}</b>{note_html}</div>"
+
+
+def colheads(*titles: str) -> str:
+    """One column head (use one per st.columns cell above a hand-built grid of widgets)."""
+    return "".join(f"<div class='apc-colhead'>{esc(t)}</div>" for t in titles)
+
+
+def status(text: str, tone: str = "ok") -> str:
+    """A coloured dot and a short state: "Offline · Local", "Connected" (tone: ok, warn, err, info, violet)."""
+    return f"<span class='apc-status {esc(tone)}'>{esc(text)}</span>"
+
+
+def empty_note(title: str, text: str = "", icon_name: str = "inbox") -> str:
+    """A compact empty state for inside a card (``empty_state`` is for a whole card or tab)."""
+    body = f"<b>{esc(title)}</b>{esc(text)}" if text else f"<b>{esc(title)}</b>"
+    return f"<div class='apc-empty-sm'><span class='ico'>{icon(icon_name)}</span><div>{body}</div></div>"
+
+
+def kv(pairs: Iterable[tuple[str, str]]) -> str:
+    """A two-column label / value list (plain text, escaped)."""
+    rows = "".join(f"<dt>{esc(k)}</dt><dd>{esc(v)}</dd>" for k, v in pairs)
+    return f"<dl class='apc-kv'>{rows}</dl>"
 
 
 def greeting(now: dt.datetime | None = None) -> str:
@@ -141,14 +213,18 @@ def greeting(now: dt.datetime | None = None) -> str:
 
 def hero(eyebrow: str, title: str, lead: str, chips: Iterable[str], ring_value: float, ring_label: str,
          ring_caption: str) -> str:  # fmt: skip
+    """A plain page header (no banner): ``eyebrow`` above the title, ``lead`` under it, ``chips`` (HTML) as
+    quiet notes, and on the right ``ring_label`` over ``ring_caption`` (e.g. "2/10", "today's progress") with
+    a thin bar filled to ``ring_value``."""
     chips_html = "".join(f"<span class='chip'>{c}</span>" for c in chips)
-    gauge = ring(ring_value, size=104, stroke=10, color="#6aa9f2", track="rgba(255,255,255,.14)",
-                 text_color="#ffffff", label=ring_label)  # fmt: skip
+    pct = max(0.0, min(1.0, ring_value or 0.0)) * 100
     return (
-        f"<div class='apc-hero apc-anim'><div style='position:relative;z-index:1'>"
+        f"<div class='apc-hero apc-anim'><div class='main'>"
         f"<div class='eyebrow'>{esc(eyebrow)}</div><h1>{esc(title)}</h1><p class='lead'>{esc(lead)}</p>"
         f"<div class='chips'>{chips_html}</div></div>"
-        f"<div class='ring-wrap'>{gauge}<div class='ring-label'>{esc(ring_caption)}</div></div></div>"
+        f"<div class='goal'><div class='num'>{esc(ring_label)}</div><div class='cap'>{esc(ring_caption)}</div>"
+        f"<div class='bar' role='progressbar' aria-valuenow='{pct:.0f}' aria-valuemin='0' aria-valuemax='100'>"
+        f"<div style='width:{pct:.0f}%'></div></div></div></div>"
     )
 
 
@@ -164,7 +240,7 @@ def meter(value: float, threshold: float = 0.85) -> str:
 def queue_card(inv: dict[str, Any], taxes: Sequence[str] = (), province: str = "", badge: str = "") -> str:
     """``badge``: extra HTML (e.g. a due-date pill) shown with the invoice details."""
     flagged = bool(inv.get("requires_review"))
-    status = pill("Needs attention", "warn", "flag") if flagged else pill("Ready", "ok", "check_circle")
+    status = pill("Needs attention", "warn") if flagged else pill("Ready", "ok")
     meta = [f"<span>{icon('receipt_long', '1em')} {esc(inv.get('invoice_number') or '—')}</span>",
             f"<span>{icon('event', '1em')} {esc(inv.get('invoice_date') or '—')}</span>"]  # fmt: skip
     if province:
@@ -291,8 +367,26 @@ LEARNING_SVG = """
 </svg>"""
 
 
-def empty_state(title: str, text: str, art: str = EMPTY_INBOX_SVG) -> str:
-    return f"<div class='apc-empty apc-anim'>{svg_img(art, 150, 110)}<h3>{esc(title)}</h3><p>{esc(text)}</p></div>"
+# A neutral empty tray: "nothing here yet" (the tick above is for "all done").
+EMPTY_TRAY_SVG = """
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="110" viewBox="0 0 150 110">
+  <ellipse cx="75" cy="100" rx="52" ry="6" fill="#e3e9f2"/>
+  <rect x="44" y="18" width="62" height="40" rx="8" fill="#f4f7fb" stroke="#cfdcee" stroke-width="2"/>
+  <path d="M56 32h38M56 42h26" stroke="#cfdcee" stroke-width="3" stroke-linecap="round"/>
+  <rect x="28" y="38" width="94" height="56" rx="12" fill="#ffffff" stroke="#cfdcee" stroke-width="2"/>
+  <path d="M28 66h26l6 10h30l6-10h26" fill="none" stroke="#cfdcee" stroke-width="2"/>
+</svg>"""
+
+
+_EMPTY_ICONS = {EMPTY_INBOX_SVG: "task_alt", LEARNING_SVG: "school", EMPTY_TRAY_SVG: "inbox"}
+
+
+def empty_state(title: str, text: str, art: str = EMPTY_TRAY_SVG) -> str:
+    """A whole-card empty state: a small neutral icon, a title and one sentence (the page adds the action).
+    ``art`` picks the icon: ``EMPTY_INBOX_SVG`` when empty means done, ``LEARNING_SVG`` for learning."""
+    mark = icon(_EMPTY_ICONS.get(art, "inbox"), "20px")
+    body = f"<h3>{esc(title)}</h3><p>{esc(text)}</p>"
+    return f"<div class='apc-empty apc-anim'><span class='ico'>{mark}</span>{body}</div>"
 
 
 def time_ago(iso: str | None, now: dt.datetime | None = None) -> str:
@@ -358,6 +452,31 @@ def vendor_row(name: str, lines: int, accuracy: float, corrections: int) -> str:
     )
 
 
+SUPPLIER_STATE_PILLS = {
+    "learning": ("Learning", "gray", "school"),
+    "supervised": ("Supervised", "info", "visibility"),
+    "ready": ("Ready", "violet", "verified"),
+    "autonomous": ("Autonomous", "ok", "bolt"),
+    "suspended": ("Suspended", "err", "gpp_maybe"),
+}
+
+
+def supplier_row(name: str, sub: str, state: str, progress: float, explanation: str) -> str:
+    """A supplier on the Supplier learning tab: what it scored, its autonomy state and how far it is."""
+    label, tone, icon_name = SUPPLIER_STATE_PILLS.get(state, (state.title(), "gray", ""))
+    progress = max(0.0, min(1.0, progress or 0.0))
+    color = {"autonomous": OK, "suspended": ERR, "ready": "#4a3aa7"}.get(state, BRAND)
+    return (
+        f"<div class='apc-rrow' style='border-bottom:none'>{avatar(name, 'sm')}<div style='min-width:0'>"
+        f"<div class='name'>{esc(name)}</div><div class='sub'>{esc(sub)}</div>"
+        f"<div class='apc-meter' style='margin-top:.35rem'><div class='bar' role='progressbar' "
+        f"aria-valuenow='{progress * 100:.0f}' aria-valuemin='0' aria-valuemax='100'><div class='fill' "
+        f"style='width:{progress * 100:.0f}%;background:{color}'></div></div></div>"
+        f"<div class='apc-muted' style='margin-top:.3rem'>{esc(explanation)}</div></div>"
+        f"{pill(label, tone, icon_name)}</div>"
+    )
+
+
 def step(state: str, label: str, detail: str) -> str:
     mark = {"ok": "✓", "todo": "!", "bad": "✕"}.get(state, "•")
     return (
@@ -366,12 +485,19 @@ def step(state: str, label: str, detail: str) -> str:
     )
 
 
-def sidebar_profile(name: str, approved_today: int, waiting: int) -> str:
+def sidebar_profile(name: str, approved_today: int, waiting: int, env: str = "", env_tone: str = "ok",
+                    where: str = "", where_title: str = "") -> str:  # fmt: skip
+    """The sidebar footer: one quiet line on where the app runs (``env`` and ``where``, e.g. "Offline · Data
+    stays on this computer", with ``where_title``, e.g. the data folder, as a tooltip), then who is reviewing
+    and what they approved today (``waiting`` is on the Review queue's nav badge, so it is only in the tooltip)."""
+    env_html = ""
+    if env:
+        text = " · ".join(x for x in (env, where) if x)
+        env_html = f"<div class='apc-env' title='{esc(where_title or text)}'>{status(text, env_tone)}</div>"
+    today = f"{approved_today:,} approved today"
     return (
-        f"<div class='apc-me'>{avatar(name)}<div><div class='name'>{esc(name)}</div>"
-        f"<div class='role'>AP reviewer</div></div></div>"
-        f"<div class='apc-today'><div><b>{approved_today}</b><span>done today</span></div>"
-        f"<div><b>{waiting}</b><span>waiting</span></div></div>"
+        f"{env_html}<div class='apc-me' title='AP reviewer · {esc(today)} · {waiting:,} waiting'>{avatar(name, 'sm')}"
+        f"<div><div class='name'>{esc(name)}</div><div class='role'>{esc(today)}</div></div></div>"
     )
 
 

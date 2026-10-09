@@ -14,23 +14,23 @@ gatherUsageStats = false
 toolbarMode = "minimal"
 
 [theme]
-primaryColor = "#2a78d6"
-backgroundColor = "#f3f5f9"
+primaryColor = "#2563eb"
+backgroundColor = "#f7f8fa"
 secondaryBackgroundColor = "#ffffff"
-textColor = "#142033"
-linkColor = "#1f63b5"
-borderColor = "#e4e8ef"
+textColor = "#0f172a"
+linkColor = "#1d4ed8"
+borderColor = "#e5e7eb"
 showWidgetBorder = true
-baseRadius = "12px"
-buttonRadius = "10px"
+baseRadius = "8px"
+buttonRadius = "8px"
 font = "Inter, sans-serif"
 headingFont = "Inter, sans-serif"
-headingFontWeights = [700, 700, 650, 600, 600, 600]
-headingFontSizes = ["1.9rem", "1.35rem", "1.1rem", "1rem", "0.95rem", "0.9rem"]
-metricValueFontSize = "1.7rem"
-metricValueFontWeight = 700
-dataframeHeaderBackgroundColor = "#f5f7fb"
-dataframeBorderColor = "#e4e8ef"
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+headingFontSizes = ["1.5rem", "1.25rem", "1.0625rem", "0.875rem", "0.875rem", "0.8125rem"]
+metricValueFontSize = "1.375rem"
+metricValueFontWeight = 600
+dataframeHeaderBackgroundColor = "#fafbfc"
+dataframeBorderColor = "#eef0f3"
 chartCategoricalColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 
 [[theme.fontFaces]]
@@ -39,10 +39,10 @@ url = "app/static/InterVariable.woff2"
 weight = "100 900"
 
 [theme.sidebar]
-backgroundColor = "#0d1a2d"
-secondaryBackgroundColor = "#172a45"
-textColor = "#d9e2ef"
-borderColor = "#253a5a"
-primaryColor = "#6aa9f2"
-linkColor = "#9cc6f7"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f3f4f6"
+textColor = "#0f172a"
+borderColor = "#e5e7eb"
+primaryColor = "#2563eb"
+linkColor = "#1d4ed8"
 font = "Inter, sans-serif"

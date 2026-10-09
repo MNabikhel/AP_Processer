@@ -9,7 +9,7 @@ import streamlit as st
 from ap_coder import ui
 from ap_coder.help import AREAS, CHECKS, FAQ, QUICK_START, ROUTINE
 from ap_coder.paths import PROJECT_DIR
-from ap_coder.webapp.common import DB_PATH, PAGES, card, esc, short_path, show_toast
+from ap_coder.webapp.common import DB_PATH, PAGES, card, esc, page_head, short_path, show_toast
 
 STEP_PAGES = ["accounts", "purchase_orders", "process", "review", "exports"]
 SHORTCUTS = [
@@ -44,7 +44,11 @@ def checks_table(query: str = "", area: str | None = None) -> tuple[str, int]:
 
 def page_help() -> None:
     show_toast()
-    st.html(ui.page_header("Guide", "Help", "How AP Coder works, what each check means and what to do about it."))
+    action = page_head(
+        "help", "Help", "How AP Coder works, what each check means and what to do about it.", action=True
+    )
+    if "review" in PAGES:
+        action.page_link(PAGES["review"], label="Go to the review queue", icon=":material/inbox:")
 
     news = PROJECT_DIR / "docs" / "WHATS_NEW.md"
     if news.exists():
@@ -54,20 +58,22 @@ def page_help() -> None:
             st.markdown(re.sub(r"\[([^\]]+)\]\([^)]*\.md[^)]*\)", r"\1", text))  # links to other docs: plain text
 
     with card("help_start"):
-        st.markdown("#### :material/rocket_launch: Getting started")
+        st.markdown("#### Getting started")
         for i, ((title, text), page) in enumerate(zip(QUICK_START, STEP_PAGES, strict=True), start=1):
-            c1, c2 = st.columns([4, 1.3], vertical_alignment="center")
+            c1, c2 = st.columns([5, 1], vertical_alignment="center")
             c1.html(
-                f"<div style='display:flex;gap:.7rem;align-items:flex-start'><span class='apc-step-no' "
-                f"style='flex:none;width:1.6rem;height:1.6rem;border-radius:50%;background:#eaf2fc;color:#2a78d6;"
-                f"display:grid;place-items:center;font-weight:700;font-size:.85rem'>{i}</span><div><b>{esc(title)}"
-                f"</b><div class='apc-muted'>{esc(text)}</div></div></div>"
+                f"<div style='display:flex;gap:12px;align-items:flex-start;font-size:14px'><span class='apc-step-no' "
+                f"style='flex:none;width:22px;height:22px;border-radius:50%;background:var(--lg-neutral);color:var(--lg-muted);"
+                f"display:grid;place-items:center;font-weight:600;font-size:12px'>{i}</span>"
+                f"<div><b style='font-weight:600'>{esc(title)}</b><div class='apc-muted'>{esc(text)}</div></div></div>"
             )
             if page in PAGES:
-                c2.page_link(PAGES[page], label="Open", icon=":material/arrow_forward:")
+                c2.page_link(
+                    PAGES[page], label="Open", icon=":material/arrow_forward:", help=f"Go to {PAGES[page].title}"
+                )
 
     with card("help_routine"):
-        st.markdown("#### :material/checklist: Your AP routine")
+        st.markdown("#### Your AP routine")
         columns = st.columns(len(ROUTINE))
         for col, (when, tasks) in zip(columns, ROUTINE, strict=True):
             col.markdown(f"**{when}**")
@@ -78,7 +84,7 @@ def page_help() -> None:
                     col.markdown(f"- {task}")
 
     with card("help_checks"):
-        st.markdown("#### :material/fact_check: What the checks mean")
+        st.markdown("#### What the checks mean")
         st.caption(
             "Every invoice is checked before you see it. Errors must be fixed (or overridden), warnings deserve "
             "a look, and 'good to know' notes never block anything."
@@ -94,13 +100,13 @@ def page_help() -> None:
 
     left, right = st.columns([3, 2], gap="medium")
     with left, card("help_faq"):
-        st.markdown("#### :material/help: Questions")
+        st.markdown("#### Questions")
         for question, answer in FAQ:
             with st.expander(question):
                 st.markdown(answer)
     with right:
         with card("help_keys"):
-            st.markdown("#### :material/keyboard: Shortcuts")
+            st.markdown("#### Shortcuts")
             st.html(
                 ui.table(
                     ["", ""],
@@ -109,7 +115,7 @@ def page_help() -> None:
                 )
             )
         with card("help_data"):
-            st.markdown("#### :material/lock: Where your data is")
+            st.markdown("#### Where your data is")
             st.html(
                 ui.table(
                     ["", ""],

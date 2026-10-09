@@ -9,8 +9,10 @@ from typing import Any
 import streamlit as st
 
 from ap_coder import ui
+from ap_coder.capture.layout import ocr_available
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS
+from ap_coder.local_llm import provider_status
 from ap_coder.mailbox import EMAIL_EXTENSIONS, unpack, unpack_folder
 from ap_coder.pipeline import InvoicePipeline, invoice_files
 from ap_coder.safe import md
@@ -29,6 +31,7 @@ from ap_coder.webapp.common import (
     not_in_public_demo,
     notify,
     open_folder,
+    page_head,
     short_path,
     show_toast,
 )
@@ -45,7 +48,7 @@ def safe_file_name(name: str) -> str:
 
 def _email_note(mail: Any) -> None:
     """What was taken out of a saved email, and what was left out and why."""
-    took = f"{len(mail.saved)} attachment(s) taken out" if mail.saved else "no invoice attached"
+    took = f"{ui.plural(len(mail.saved), 'attachment')} taken out" if mail.saved else "no invoice attached"
     st.caption(f":material/mail: **{md(mail.email)}**: {took}; the email is in the `emails` subfolder.")
     if mail.skipped:
         st.caption("Left out: " + md("; ".join(mail.skipped)))
@@ -59,7 +62,7 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
     settings = get_settings()
     pipeline = InvoicePipeline(settings, reference, cache_dir=CACHE_DIR, store=store)
     ok = 0
-    with st.status(f"Processing {len(paths)} invoice(s)…", expanded=True) as status:
+    with st.status(f"Processing {ui.plural(len(paths), 'invoice')}…", expanded=True) as status:
         for n, path in enumerate(paths, start=1):
             st.write(f":material/document_scanner: Reading and coding **{path.name}** ({n}/{len(paths)})")
             result = pipeline.process(path)
@@ -72,9 +75,12 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
         status.update(label=f"Processed {ok} of {len(paths)}", state="complete" if ok == len(paths) else "error")
     failed = len(paths) - ok
     if ok:
-        notify(f"{ok} invoice(s) read and coded. They're waiting in the review queue.", ":material/inbox:")
+        notify(f"{ui.plural(ok, 'invoice')} read and coded. They're waiting in the review queue.", ":material/inbox:")
     if failed:
-        notify(f"{failed} file(s) could not be processed. See Review queue → Failed / rejected.", ":material/error:")
+        notify(
+            f"{ui.plural(failed, 'file')} could not be processed. See Review queue → Failed / rejected.",
+            ":material/error:",
+        )
 
 
 def tax_types_mapped(store: Store) -> int:
@@ -86,16 +92,19 @@ def tax_types_mapped(store: Store) -> int:
 def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
     mapped = tax_types_mapped(store)
     gl_count = len(store.list_accounts("gl_accounts"))
+    ai = provider_status(settings)  # Azure OpenAI, or LM Studio on this computer
+    if settings.document_intelligence.endpoint:
+        reader = ("ok", "Reading invoices", "Azure Document Intelligence")
+    elif ocr_available():
+        reader = ("ok", "Reading invoices", "on this computer (text + OCR)")
+    else:
+        reader = ("todo", "Reading invoices", "text PDFs only: scans need OCR (run the launcher again)")
     return [
+        reader,
         (
-            "ok" if settings.document_intelligence.endpoint else "bad",
-            "Azure Document Intelligence",
-            "connected" if settings.document_intelligence.endpoint else "set it up in Settings → Azure",
-        ),
-        (
-            "ok" if settings.openai.endpoint else "bad",
-            "Azure OpenAI",
-            f"{settings.openai.deployment}" if settings.openai.endpoint else "set it up in Settings → Azure",
+            "ok" if ai.ready else "todo",
+            "AI model" if ai.provider != "azure" else "Azure OpenAI",
+            ai.label if ai.ready else "optional",
         ),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
@@ -105,20 +114,24 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
 def page_process() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header("Inbox", "Process invoices", "Read new invoices with Azure and send them to the review queue.")
-    )
     settings = get_settings()
     steps = setup_steps(store, settings)
-    ready = all(s == "ok" for s, _, _ in steps[:3])
+    ready = steps[0][0] != "bad" and steps[2][0] == "ok"  # a reader and GL accounts; the AI model is optional
+    page_head(
+        "process",
+        "Process invoices",
+        "Read new invoices and send them to the review queue.",
+        aside=ui.status("Ready to read invoices", "ok") if ready else ui.status("Setup not finished", "warn"),
+    )
 
     left, right = st.columns([3, 2], gap="medium")
     with right, card("setup_steps"):
         done = sum(1 for s, _, _ in steps if s == "ok")
-        head, gauge = st.columns([3, 1], vertical_alignment="center")
-        head.markdown("#### :material/checklist: Setup")
-        head.caption("Everything the engine needs before it can read invoices.")
-        gauge.html(ui.ring(done / len(steps), size=56, stroke=6, label=f"{done}/{len(steps)}"))
+        head, gauge = st.columns([3, 1], vertical_alignment="top")
+        head.markdown("#### Setup")
+        head.caption("What AP Coder needs before it reads invoices.")
+        progress = ui.pill(f"{done} of {len(steps)} done", "ok" if done == len(steps) else "gray")
+        gauge.html(f"<div style='text-align:right'>{progress}</div>")
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
         if any(s != "ok" for s, _, _ in steps[2:]):
             st.page_link(PAGES["accounts"], label="Finish setup", icon=":material/arrow_forward:")
@@ -126,7 +139,7 @@ def page_process() -> None:
     recent = sorted(store.list_invoices(), key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
     if recent:
         with right, card("recent"):
-            st.markdown("#### :material/history: Recently processed")
+            st.markdown("#### Recently processed")
             st.html("".join(ui.recent_row(i) for i in recent))
             if any(i["status"] == REVIEW for i in recent):
                 st.page_link(PAGES["review"], label="Go to the review queue", icon=":material/arrow_forward:")
@@ -136,7 +149,7 @@ def page_process() -> None:
 
     if PUBLIC_DEMO:
         with left, card("public_demo"):
-            st.markdown("#### :material/cloud_off: Processing new invoices")
+            st.markdown("#### Processing new invoices")
             not_in_public_demo("Reading and coding new invoices with Azure")
             st.caption(
                 "In your own copy, AP Coder reads each PDF or scan with Azure Document Intelligence, codes every "
@@ -148,16 +161,16 @@ def page_process() -> None:
 
     with left:
         with card("upload"):
-            st.markdown("#### :material/upload_file: Upload invoices")
+            st.markdown("#### Upload invoices")
+            st.caption("Each file is saved to the invoices folder on this computer, then read, coded and checked.")
             uploaded = st.file_uploader(
-                "Drop PDFs, TIFFs, PNGs or JPGs here, or saved emails (.eml) with invoices attached. They are saved "
-                "to your private invoices folder on this computer.",
+                "PDFs, scans or photos (TIFF, PNG, JPG), or saved emails (.eml) with invoices attached",
                 type=sorted(e.lstrip(".") for e in SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS),
                 accept_multiple_files=True,
                 key=f"upload_{st.session_state.get('upload_round', 0)}",  # new key = empty uploader after a run
             )
             if uploaded and st.button(
-                f"Process {len(uploaded)} uploaded invoice(s)", type="primary", icon=":material/play_arrow:",
+                f"Process {ui.plural(len(uploaded), 'uploaded invoice')}", type="primary", icon=":material/play_arrow:",
                 disabled=not ready,
             ):  # fmt: skip
                 INVOICE_DIR.mkdir(parents=True, exist_ok=True)
@@ -187,21 +200,25 @@ def page_process() -> None:
                     run_pipeline(store, todo)
                 if already:
                     notify(
-                        f"Skipped {len(already)} file(s) already in AP Coder: {', '.join(p.name for p in already)}",
+                        f"Skipped {ui.plural(len(already), 'file')} already in AP Coder: "
+                        + ", ".join(p.name for p in already),
                         ":material/content_copy:",
                     )
                 st.session_state["upload_round"] = st.session_state.get("upload_round", 0) + 1
                 st.rerun()
 
         with card("folder"):
-            st.markdown("#### :material/folder_open: Invoices folder")
-            hint, button = st.columns([2.6, 1.4], vertical_alignment="center")
+            st.markdown("#### Invoices folder")
+            hint, button = st.columns([2.3, 1], vertical_alignment="center")
             hint.caption(
-                f"Copy files into `{short_path(INVOICE_DIR)}` and they appear here. To process them automatically "
-                "(e.g. overnight, or from a scanner or mail rule saving into this folder), run "
-                "`python -m ap_coder watch` in the AP Coder terminal."
+                "Copy invoices into this folder, or have a scanner or mail rule save them there. New files are "
+                "listed here, ready to process."
             )
-            if button.button("Open folder", icon=":material/folder_open:", key="open_invoices"):
+            if button.button(
+                "Open folder", icon=":material/folder_open:", key="open_invoices", width="stretch",
+                help=f"{short_path(INVOICE_DIR)}  \n\nTo process new files automatically (e.g. overnight), whoever "
+                "runs AP Coder can start the folder watcher: `python -m ap_coder watch`.",
+            ):  # fmt: skip
                 if not open_folder(INVOICE_DIR):
                     st.info(f"Open this folder yourself: {INVOICE_DIR}")
             unpacked = unpack_folder(INVOICE_DIR)  # saved emails dropped in the folder: their attachments
@@ -212,7 +229,7 @@ def page_process() -> None:
             files = invoice_files(INVOICE_DIR) if INVOICE_DIR.exists() else []
             new_files = [p for p in files if store.find_by_hash(p, include_failed=True) is None]
             if not new_files:
-                st.html(ui.pill("No new files", "gray", "done_all"))
+                st.html(ui.empty_note("No new files", "Everything in the folder has been processed.", "done_all"))
             else:
                 rows = [
                     [f"{ui.icon('picture_as_pdf' if p.suffix.lower() == '.pdf' else 'image', '1.1em', '#c53030')} "
@@ -221,7 +238,7 @@ def page_process() -> None:
                 ]  # fmt: skip
                 st.html(ui.table(["File", "Size"], rows, right=[1]))
                 if st.button(
-                    f"Process {len(new_files)} file(s)", type="primary", icon=":material/play_arrow:",
+                    f"Process {ui.plural(len(new_files), 'file')}", type="primary", icon=":material/play_arrow:",
                     disabled=not ready,
                 ):  # fmt: skip
                     run_pipeline(store, new_files)

@@ -12,7 +12,7 @@ from ap_coder import ui
 from ap_coder.safe import md
 from ap_coder.store import Store, load_sample_purchase_orders
 from ap_coder.webapp.accounts import _read_upload
-from ap_coder.webapp.common import card, esc, get_store, money, notify, reviewer, show_toast
+from ap_coder.webapp.common import card, esc, get_store, money, notify, page_head, reviewer, show_toast
 
 FIELD_LABELS = {
     "po_number": "PO number",
@@ -34,8 +34,8 @@ def _bar(fraction: float) -> str:
     width = max(0.0, min(fraction, 1.0))
     color = ui.ERR if fraction > 1.02 else (ui.OK if fraction >= 0.98 else ui.BRAND)
     return (
-        "<div style='min-width:90px;height:6px;background:#eef1f6;border-radius:4px'>"
-        f"<div style='height:6px;width:{width:.0%};background:{color};border-radius:4px'></div></div>"
+        "<div style='min-width:56px;height:4px;background:#eef0f3;border-radius:2px'>"
+        f"<div style='height:4px;width:{width:.0%};background:{color};border-radius:2px'></div></div>"
     )
 
 
@@ -62,7 +62,7 @@ def _importer(store: Store, has_pos: bool) -> None:
             "export also updates the quantities received. Columns are recognised automatically; check them below."
         )
         c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-        upload = c1.file_uploader("PO lines file", type=["csv", "xlsx"], key="po_upload")
+        upload = c1.file_uploader("PO lines (CSV or Excel)", type=["csv", "xlsx"], key="po_upload")
         c2.download_button(
             "Template", po_mod.template_csv(), file_name="purchase_orders_template.csv", mime="text/csv",
             icon=":material/download:", width="stretch",
@@ -97,9 +97,10 @@ def _importer(store: Store, has_pos: bool) -> None:
                 rows, skipped = po_mod.rows_from_records(df.to_dict("records"), chosen)
                 result = store.import_purchase_orders(rows, replace_all=replace, actor=reviewer())
                 notify(
-                    f"Imported {result['orders']} PO(s) with {result['lines']} line(s): {result['added']} new, "
-                    f"{result['updated']} updated" + (f", {skipped} row(s) skipped (no PO number or description)."
-                                                       if skipped else "."),
+                    f"Imported {ui.plural(result['orders'], 'PO')} with {ui.plural(result['lines'], 'line')}: "
+                    f"{result['added']} new, "
+                    f"{result['updated']} updated"
+                    + (f", {ui.plural(skipped, 'row')} skipped (no PO number or description)." if skipped else "."),
                     ":material/shopping_cart:",
                 )  # fmt: skip
                 st.rerun()
@@ -166,22 +167,21 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
         )  # fmt: skip
     )
     if invoices:
-        st.markdown("**Invoices on this PO**")
+        st.html(ui.subhead("Invoices on this PO", ui.plural(len(invoices), "invoice")))
         inv_rows = [
             [
-                f"#{i['id']}",
                 esc(i["invoice_number"] or ""),
                 esc(i["invoice_date"] or ""),
                 ui.pill("Approved", "ok", "check")
                 if i["status"] == "approved"
                 else ui.pill("Second approval", "violet")
                 if i["status"] == "pending_approval"
-                else ui.pill("In review", "warn"),
+                else ui.pill("In queue", "info", "inbox"),
                 money(i["coding"].get("subtotal")),
             ]
             for i in invoices
         ]
-        st.html(ui.table(["", "Invoice #", "Date", "", "Subtotal"], inv_rows, right=[4]))
+        st.html(ui.table(["Invoice #", "Date", "Status", "Subtotal"], inv_rows, right=[3]))
     else:
         st.caption("No invoices have quoted this PO yet.")
 
@@ -190,7 +190,7 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
     if c1.button("Reopen PO" if closed else "Close PO", icon=":material/lock_open:" if closed else ":material/lock:",
                  key=f"po_toggle_{po['po_key']}", width="stretch"):  # fmt: skip
         store.set_po_status(po["po_key"], po_mod.OPEN if closed else po_mod.CLOSED, actor=reviewer())
-        st.session_state["po_status_filter"] = "All"  # keep this PO in view (not jump to another one)
+        st.session_state["po_show_all"] = True  # keep this PO in view (not jump to another one), on the next run
         notify(
             f"{md(po_mod.po_label(po['po_number']))} {'reopened' if closed else 'closed'}.", ":material/shopping_cart:"
         )
@@ -207,12 +207,10 @@ def _detail(store: Store, po: dict[str, Any]) -> None:
 def page_purchase_orders() -> None:
     store = get_store()
     show_toast()
-    st.html(
-        ui.page_header(
-            "Matching",
-            "Purchase orders",
-            "Invoices that quote a PO are checked against it: price, quantity ordered and received, and coding.",
-        )
+    page_head(
+        "purchase_orders",
+        "Purchase orders",
+        "Invoices that quote a PO are checked against it: price, quantity ordered and received, and coding.",
     )
     pos = store.purchase_orders()
     _importer(store, bool(pos))
@@ -234,14 +232,14 @@ def page_purchase_orders() -> None:
             [
                 ui.tile("Open POs", len(open_pos), "shopping_cart", "blue", f"{len(pos)} in total"),
                 ui.tile(
-                    "Still to be invoiced", f"${committed:,.0f}", "pending_actions", "violet", "on open POs"
+                    "Still to be invoiced", money(committed), "pending_actions", "violet", "on open POs"
                 ),  # fmt: skip
                 ui.tile(
                     "Invoiced against POs",
-                    f"${sum(p['billed'] for p in pos):,.0f}",
+                    money(sum(p["billed"] for p in pos)),
                     "receipt_long",
                     "green",
-                    f"{sum(p['invoices'] for p in pos)} invoice(s)",
+                    ui.plural(sum(p["invoices"] for p in pos), "invoice"),
                 ),
                 ui.tile(
                     "Over-billed",
@@ -258,6 +256,8 @@ def page_purchase_orders() -> None:
         c1, c2 = st.columns([3, 1.2], vertical_alignment="bottom")
         query = c1.text_input("Search", placeholder="PO number or vendor", key="po_search",
                               label_visibility="collapsed")  # fmt: skip
+        if st.session_state.pop("po_show_all", False):  # set before the widget: it can't change after
+            st.session_state["po_status_filter"] = "All"
         status = c2.segmented_control("Status", STATUS_FILTERS, default="Open", key="po_status_filter",
                                       label_visibility="collapsed")  # fmt: skip
         shown = [

@@ -195,10 +195,11 @@ def test_doctor_flags_missing_config_and_bad_reference():
 
     checks = run_checks(Settings(), broken)
     by_area = {c.area: c for c in checks}
-    assert by_area["DI endpoint"].status == FAIL
-    assert by_area["AOAI endpoint"].status == FAIL
+    # Azure is optional: without it invoices are read and coded on this computer.
+    assert by_area["DI endpoint"].status == SKIP
+    assert by_area["AOAI endpoint"].status == SKIP
     assert by_area["reference data"].status == FAIL
-    assert by_area["AOAI model"].status == WARN
+    assert "AOAI model" not in by_area
 
 
 def test_doctor_large_chart_falls_back_from_enums(tmp_path):
@@ -216,7 +217,7 @@ def test_doctor_large_chart_falls_back_from_enums(tmp_path):
 def test_cli_doctor_uses_sample_data_by_default(capsys, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("AP_REFERENCE_DIR", raising=False)
-    assert cli.main(["doctor"]) == 1  # endpoints missing in an empty environment
+    assert cli.main(["doctor"]) == 0  # no Azure and no model: still ready (read and coded on this computer)
     out = capsys.readouterr().out
     assert "BUNDLED SAMPLE DATA" in out
 

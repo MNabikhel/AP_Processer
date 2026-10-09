@@ -140,7 +140,7 @@ def test_settings_page_saves_to_the_env_file(db, monkeypatch):
     assert list((db.parent / "backups").glob("ap_coder-*-manual.db"))
     reviewer = next(t for t in at.text_input if t.label == "Your name")
     reviewer.input("Jane Doe")
-    review_form_submit = next(b for b in at.button if b.label == "Save" and b.proto.is_form_submitter)
+    review_form_submit = next(b for b in at.button if b.label == "Save review settings" and b.proto.is_form_submitter)
     _ok(review_form_submit.click().run())
     from ap_coder.paths import read_user_settings
 
@@ -228,9 +228,7 @@ def test_today_strip_on_the_queue(db):
 
     load_demo(Store(db))
     at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
-    today = [
-        h.proto.body for h in at.get("html") if "<b style='color:#142033;margin-right:.2rem'>Today</b>" in h.proto.body
-    ]
+    today = [h.proto.body for h in at.get("html") if "<div class='rq-today'><b>Today</b>" in h.proto.body]
     assert today and "ready to export" in today[0]  # the demo's approved invoices are not exported yet
 
 
@@ -260,7 +258,7 @@ def test_saved_emails_in_the_invoices_folder_are_unpacked(db):
     _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages the setup steps link to
     at = _ok(_page("process", "page_process").run())
     assert (folder / "vendor mail - INV-9.pdf").exists() and (folder / "emails" / "vendor mail.eml").exists()
-    assert any("attachment(s) taken out" in c.value for c in at.caption)
+    assert any("attachment taken out" in c.value for c in at.caption)
 
 
 def test_sales_tax_page_self_assessment_card(db):
@@ -432,8 +430,8 @@ def test_a_credit_note_is_not_shown_as_due(db):
     at = AppTest.from_file(APP, default_timeout=TIMEOUT)
     at.session_state["open_invoice"] = credit["id"]
     _ok(at.run())
-    hero = next(h.proto.body for h in at.get("html") if "apc-inv" in h.proto.body)
-    assert "<div class='label'>Credit</div>" in hero and "Due in" not in hero and "Overdue" not in hero
+    hero = next(h.proto.body for h in at.get("html") if "rvw-head" in h.proto.body)
+    assert "<span>Credit</span>" in hero and "Due in" not in hero and "Overdue" not in hero
 
 
 def test_find_brings_back_a_parked_invoice(busy_db):

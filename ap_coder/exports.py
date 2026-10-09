@@ -9,6 +9,8 @@ Formats
 * ``xlsx``: a workbook with an *Invoices* sheet (one row per invoice), a *GL lines* sheet (the posting:
   one row per expense line and per recoverable-tax account) and a *By GL account* summary.
 * ``csv``: one row per GL line, the shape most ERP AP-invoice imports accept.
+* ``custom``: a CSV with the columns of your ERP's import (``export_layout``).
+* ``jde``: JD Edwards E1 Z-table files (F0411Z1 / F0911Z1), built by ``jde.build_zip``.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ FORMATS = {
     "xlsx": "Excel workbook: invoices, GL lines and a GL summary",
     "csv": "CSV: one row per GL line (for ERP import)",
     "custom": "Custom CSV: your ERP's columns (set up below)",
+    "jde": "JD Edwards E1 (F0411Z1 / F0911Z1): ZIP of Z-table files (Settings → JD Edwards E1)",
 }
 
 INVOICE_COLUMNS = [
@@ -195,6 +198,8 @@ def build(
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(file bytes, file name, mime type)."""
     name = f"ap_coder_export_{batch}" if batch != "" else "ap_coder_export"
+    if fmt == "jde":  # needs its settings and checks: see ap_coder.jde.build_zip
+        raise ValueError("JD Edwards files are built with ap_coder.jde.build_zip")
     if fmt == "csv":
         return build_csv(invoices, gl_names, batch, vendor_ids), f"{name}.csv", "text/csv"
     if fmt == "custom":

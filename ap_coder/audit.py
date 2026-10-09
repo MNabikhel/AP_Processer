@@ -58,6 +58,9 @@ ACTIONS = {
     "pos_imported": ("shopping_cart", "info", "Purchase orders imported"),
     "po_status": ("shopping_cart", "info", "Purchase order updated"),
     "pos_deleted": ("remove_shopping_cart", "warn", "Purchase orders deleted"),
+    "autonomy_on": ("bolt", "ok", "Autonomy turned on"),
+    "autonomy_off": ("pan_tool", "gray", "Autonomy turned off"),
+    "autonomy_suspended": ("gpp_maybe", "err", "Autonomy suspended"),
 }
 
 
@@ -126,6 +129,15 @@ def _tax_text(doc: dict[str, Any]) -> str:
     )
 
 
+_TABLES = {"gl_accounts": "GL accounts", "cost_centers": "Cost centers"}
+
+
+def _table(d: dict[str, Any]) -> str:
+    """The account list an event is about, as the app names it ("GL accounts", not gl_accounts)."""
+    table = str(d.get("table", ""))
+    return _TABLES.get(table, table)
+
+
 def describe(event: dict[str, Any]) -> str:
     """One readable sentence for an event (plain text; escape before putting it in HTML)."""
     d = event.get("detail") or {}
@@ -150,18 +162,20 @@ def describe(event: dict[str, Any]) -> str:
     if action == "exported":
         return f"in export batch {d.get('batch', '')}"
     if action == "export_undone":
-        return f"batch {d.get('batch', '')}: {d.get('invoices', 0)} invoice(s) back in the ready-to-export list"
+        n = d.get("invoices", 0)
+        return f"batch {d.get('batch', '')}: {n} invoice{'' if n == 1 else 's'} back in the ready-to-export list"
     if action == "accounts_imported":
-        return f"{d.get('table', '')}: {d.get('added', 0)} added, {d.get('updated', 0)} updated" + (
+        return f"{_table(d)}: {d.get('added', 0)} added, {d.get('updated', 0)} updated" + (
             " (replaced the list)" if d.get("replace_all") else ""
         )
     if action in ("accounts_edited", "accounts_deleted"):
         codes = d.get("codes") or []
-        return f"{d.get('table', '')}: {', '.join(codes[:8])}{' …' if len(codes) > 8 else ''}"
+        return f"{_table(d)}: {', '.join(codes[:8])}{' …' if len(codes) > 8 else ''}"
     if action == "tax_setup_changed":
         return f"{d.get('tax_type')}: {d.get('treatment')}" + (f" → GL {d['gl_code']}" if d.get("gl_code") else "")
     if action == "lessons_forgotten":
-        return f"{d.get('count', 0)} lesson(s)"
+        n = d.get("count", 0)
+        return f"{n} lesson{'' if n == 1 else 's'}"
     if action == "settings_changed":
         rename = d.get("reviewer") or {}
         renamed = f" (reviewer name {rename.get('from')} → {rename.get('to')})" if rename else ""
@@ -203,6 +217,11 @@ def describe(event: dict[str, Any]) -> str:
     if action == "pos_deleted":
         pos = d.get("pos") or []
         return f"{', '.join(pos[:8])}{' …' if len(pos) > 8 else ''}"
+    if action in ("autonomy_on", "autonomy_off", "autonomy_suspended"):
+        text = str(d.get("supplier") or d.get("key") or "")
+        if action == "autonomy_on" and d.get("audit_rate") is not None:
+            text += f": touchless, {float(d['audit_rate']):.0%} audited"
+        return text + (f" · {d['reason']}" if d.get("reason") else "")
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", ""))
     return ""
