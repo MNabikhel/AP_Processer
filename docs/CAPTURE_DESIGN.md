@@ -140,6 +140,57 @@ is made as a digital PDF and as a "scan": rasterized, slightly rotated, noisy an
 - the precision of fields marked *verified* (target ≥ 99.5%) and how many are verified (coverage);
 - calibration: stated confidence against observed accuracy.
 
+### Confidence is measured, not guessed
+
+Every field result carries an **evidence pattern**: which readers found the value, how the rule
+reader found it (label to the right, below, in a header grid, top of page...), whether the page was a
+text PDF or a scan, and which checks confirmed it (for example
+`grand_total|rules|label-right|text|adds-up,confirmed`). `python -m ap_coder.bench calibrate RUN...`
+counts, over benchmark runs, how often each pattern was right and writes
+`ap_coder/capture/calibration.json`. A field's confidence is then the **lower 95% bound** of its
+pattern's measured accuracy (Wilson interval), once the pattern has been seen at least 40 times.
+So *verified* (≥ 98.5%) means "this kind of evidence was right at least 98.5% of the time, allowing
+for chance": a pattern seen 300 times without a single error qualifies; one seen 100 times does not
+yet.
+
+Three rules sit on top, because the benchmark is synthetic and real invoices will surprise it:
+- a value found by **one reader only**, with no check confirming it, is capped at 97% (*likely* at
+  best): *verified* needs a second reader or a hard check to agree;
+- checks that only show a value is *reasonable* (the date is plausible, the due date is after the
+  invoice date) confirm nothing; *verified* comes from checks a misread almost never passes: the
+  totals add up, the tax is the official rate, the GST/HST number's check digit, the vendor master,
+  and the due date = invoice date + the payment terms;
+- a date that reads both ways (03/04/2026) and that nothing on the page resolves stays at *check*.
+  The order is taken from the document's other dates, a US supplier address, or the terms.
+
+## Accuracy on the benchmark
+
+Measured on invoices the reader was never tuned on (fresh random seeds), with **only the rule
+reader and the checks**: no AI, no Document Intelligence, no supplier template. In production those
+add independent readers, which is what lifts identifiers and names to *verified*.
+
+BENCH_TABLE
+
+What this means for "99%":
+- On digital PDFs the reader is already at 99%+ per field, and no field it marked *verified* was
+  wrong. On scans OCR misreads characters (l/I, O/0, accents) and drops spaces; most of the gap is
+  there, and Document Intelligence's OCR or the AI's reading of the same page closes it.
+- 99% of fields right is not 99% of invoices right: an invoice has ~10 printed fields. That is why
+  the route is per field (*verified* fields need no look) and why autonomy is earned **per
+  supplier** on its own confirmed invoices, not granted on benchmark numbers.
+- The benchmark is a tool, not a guarantee: its layouts are varied but invented. The pilot measures
+  the same numbers on real invoices (every approval records which fields AP corrected), and a
+  supplier only goes touchless once *its* corrections over its recent invoices show ≥ 99% with
+  confidence (lower bound, not a streak).
+
+### Scale
+
+Text-layer capture takes about 20 ms per invoice on one CPU core; OCR of a scanned page about
+2-4 s. A million invoices a month is ~23 per minute in a working month: one core for digital
+PDFs, a handful of OCR workers (or Document Intelligence) for scans. Capture is stateless per
+invoice, so it runs in parallel workers behind a queue; supplier templates and statistics are small
+rows keyed by supplier.
+
 ## Review screen
 
 The invoice page with a box over every field, coloured by status (green verified, blue likely, amber
