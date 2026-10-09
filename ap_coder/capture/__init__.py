@@ -98,7 +98,7 @@ def _cross_read(path: Path, layout: DocLayout) -> dict[str, list[Reading]]:
 
 def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values: dict[str, Any] | None = None,
             template: Any = None, vendor: dict[str, Any] | None = None, ocr: str | bool = "auto",
-            cross_read: bool = False, layout: DocLayout | None = None,
+            cross_read: bool = False, layout: DocLayout | None = None, second_read: bool = True,
             today: dt.date | None = None) -> CaptureResult:  # fmt: skip
     path = Path(path)
     layout = layout or build_layout(path, di_raw=di_raw, ocr=ocr)
@@ -114,6 +114,15 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         sources["di"] = _di_readings(di_raw)
     if ai_values:
         sources["ai"] = _ai_readings(layout, ai_values)
+    if second_read and layout.source == "ocr":
+        try:
+            from .layout import second_read_layout
+
+            second_layout = second_read_layout(path)
+            if second_layout is not None:
+                sources["ocr"] = read_fields(second_layout, received=today)
+        except Exception as exc:  # an extra reader: never fatal
+            log.warning("%s: second read failed (%s)", path.name, exc)
     if cross_read:
         second = _cross_read(path, layout)
         if second:

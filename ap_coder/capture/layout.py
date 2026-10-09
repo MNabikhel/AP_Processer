@@ -273,3 +273,67 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 sources.add("text")
     source = sources.pop() if len(sources) == 1 else ("mixed" if sources else "none")
     return DocLayout(pages, source)
+
+
+# ---------------------------------------------------------------- second read of a scan
+
+
+def _deskew_angle(gray: Any) -> float:
+    """The page's tilt in degrees (-2..2): the rotation that makes the text rows sharpest
+    (largest variance of the horizontal ink profile), searched on a small copy."""
+    import numpy as np
+    from PIL import Image
+
+    small = gray.copy()
+    small.thumbnail((900, 900))
+    ink = np.asarray(small, dtype=np.float32) < 128
+    best, best_score = 0.0, -1.0
+    for tenth in range(-20, 21, 2):
+        angle = tenth / 10
+        img = Image.fromarray((ink * 255).astype(np.uint8)).rotate(angle, resample=Image.NEAREST, fillcolor=0)
+        profile = (np.asarray(img) > 0).sum(axis=1).astype(np.float64)
+        score = float(profile.var())
+        if score > best_score:
+            best, best_score = angle, score
+    return best
+
+
+def _prepared(png_bytes: bytes) -> bytes:
+    """The page straightened and enlarged 1.5x: OCR reads small, tilted print better."""
+    import io
+
+    from PIL import Image, ImageFilter
+
+    img = Image.open(io.BytesIO(png_bytes)).convert("L")
+    angle = _deskew_angle(img)
+    if abs(angle) >= 0.2:
+        img = img.rotate(angle, resample=Image.BICUBIC, fillcolor=255, expand=False)
+    img = img.resize((int(img.width * 1.5), int(img.height * 1.5)), Image.LANCZOS).filter(ImageFilter.SHARPEN)
+    out = io.BytesIO()
+    img.convert("RGB").save(out, "PNG")
+    return out.getvalue()
+
+
+def second_read_layout(path: str | Path, max_pages: int = 20) -> DocLayout | None:
+    """An independent second OCR of a scanned invoice, from a straightened, enlarged copy of each page.
+    Its boxes are fractions of the page like the first read's (the straightening moves them by at most
+    a few thousandths). None for a text PDF or when OCR is not installed."""
+    path = Path(path)
+    if not ocr_available():
+        return None
+    import pymupdf
+
+    pages: list[PageLayout] = []
+    if path.suffix.lower() in IMAGE_EXTENSIONS:
+        with pymupdf.open(path) as img_doc:
+            png = path.read_bytes() if path.suffix.lower() == ".png" else img_doc[0].get_pixmap().tobytes("png")
+        pages.append(ocr_image(_prepared(png), 1))
+    else:
+        with pymupdf.open(path) as doc:
+            for i, page in enumerate(doc):
+                if i >= max_pages:
+                    break
+                if len(_text_layer_page(page, i + 1).words) >= MIN_TEXT_WORDS:
+                    return None  # a text PDF: the text layer is exact
+                pages.append(ocr_image(_prepared(_page_png(page)), i + 1))
+    return DocLayout(pages, "ocr")

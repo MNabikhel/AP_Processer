@@ -190,12 +190,16 @@ def invoice_metrics(per_case: list[tuple[dict[str, Any], list[dict[str, Any]]]])
     """Whole-invoice numbers: all fields right; touchless (every printed field verified, nothing
     spurious) and how many of those touchless invoices had a wrong field."""
     n = len(per_case)
-    fully = touchless = touchless_wrong = 0
+    fully = touchless = touchless_wrong = no_silent = 0
     for _truth, recs in per_case:
         present = [r for r in recs if r["present"]]
         spurious = [r for r in recs if r["spurious"]]
         ok = all(r["correct"] for r in present) and not spurious
         fully += ok
+        # Every value is right, or the field that is not is flagged for a person (check / missing):
+        # nothing wrong is presented as verified or likely.
+        wrong = [r for r in present if not r["correct"]] + spurious
+        no_silent += all(r["status"] not in (VERIFIED, LIKELY) for r in wrong)
         if (
             present
             and all(r["status"] == VERIFIED for r in present)
@@ -206,6 +210,7 @@ def invoice_metrics(per_case: list[tuple[dict[str, Any], list[dict[str, Any]]]])
     return {
         "n": n,
         "fully_correct": _ratio(fully, n),
+        "no_silent_error": _ratio(no_silent, n),
         "touchless": _ratio(touchless, n),
         "touchless_n": touchless,
         "touchless_wrong": touchless_wrong,

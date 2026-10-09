@@ -368,3 +368,17 @@ def test_ocr_slips_in_amounts_rates_and_dates():
     assert parse_date("Jun-22,2025") == "2025-06-22"
     assert "138" not in _PERCENT.sub(" ", "HST@138 $209.64")  # "13%" read as "138"
     assert "12.00" in _PERCENT.sub(" ", "Credit (12.00)")  # a negative amount is not a rate
+
+
+def test_deskew_finds_the_page_tilt():
+    from PIL import Image, ImageDraw
+
+    from ap_coder.capture.layout import _deskew_angle
+
+    img = Image.new("L", (800, 1000), 255)
+    draw = ImageDraw.Draw(img)
+    for y in range(80, 900, 40):
+        draw.rectangle((60, y, 740, y + 12), fill=0)  # text rows
+    tilted = img.rotate(1.2, resample=Image.BICUBIC, fillcolor=255)
+    assert abs(_deskew_angle(tilted) + 1.2) <= 0.25
+    assert abs(_deskew_angle(img)) <= 0.2

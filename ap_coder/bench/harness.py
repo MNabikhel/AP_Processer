@@ -403,14 +403,23 @@ def render_markdown(report: dict[str, Any]) -> str:
         "Accuracy is the top value against the truth, over the fields printed on the invoice. *Verified precision* "
         "counts every verified answer, including values reported for fields the invoice does not print "
         "(spurious). Coverage is the share of printed fields given that status. Box hit: of the correct values, "
-        "how many point at a place where the value is printed.\n",
+        "how many point at a place where the value is printed. *No silent error*: every value is right, or the "
+        "field that is not is flagged *check*/*missing* for a person (nothing wrong shown as verified or likely).\n",
         "## Invoices\n",
         _table(
-            ["invoices", "fully correct", "touchless", "touchless with an error", "touchless precision"],
+            [
+                "invoices",
+                "fully correct",
+                "no silent error",
+                "touchless",
+                "touchless with an error",
+                "touchless precision",
+            ],  # fmt: skip
             [
                 [
                     inv["n"],
                     _pct(inv["fully_correct"]),
+                    _pct(inv.get("no_silent_error")),
                     _pct(inv["touchless"]),
                     inv["touchless_wrong"],
                     _pct(inv["touchless_precision"]),

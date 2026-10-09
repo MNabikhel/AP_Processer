@@ -101,7 +101,8 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"reader {report['config']['reader']}: {report['cases']} invoices, field accuracy {pct(o['accuracy'])}, "
         f"verified precision {pct(o['verified_precision'])} (coverage {pct(o['verified_coverage'])}), "
-        f"fully correct invoices {pct(inv['fully_correct'])}, ECE {s['calibration']['ece']}"
+        f"fully correct invoices {pct(inv['fully_correct'])}, no silent error {pct(inv.get('no_silent_error'))}, "
+        f"ECE {s['calibration']['ece']}"
     )
     print(f"report: {Path(a.out) / 'report.md'}")
     return 0
