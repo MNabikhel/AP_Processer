@@ -31,7 +31,7 @@ ap-coder = "ap_coder.cli:main"
 include = ["ap_coder*"]
 
 [tool.setuptools.package-data]
-ap_coder = ["assets/*", "static/*"]
+ap_coder = ["assets/*", "static/*", "webapp/components/invoice_viewer/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
