@@ -391,3 +391,10 @@ def test_deskew_finds_the_page_tilt():
 )  # fmt: skip
 def test_ocr_slips_in_dates(text, iso):
     assert parse_date(text) == iso
+
+
+def test_labels_and_headings_are_not_the_supplier(tmp_path):
+    got = _read(
+        _pdf(tmp_path, [(60, 40, "Code"), (60, 60, "Cust. P.O.#"), (300, 60, "Services techniques Saint-Laurent ltée")])
+    )
+    assert got["vendor_name"] == "Services techniques Saint-Laurent ltée"

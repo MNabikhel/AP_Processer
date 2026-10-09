@@ -292,7 +292,7 @@ def _ocr_id_fix(value: str) -> str:
     return re.sub(r"^([A-Za-z]+)0([A-Za-z]*)(?=-)", lambda m: m.group(1) + "O" + m.group(2), value)
 
 
-_OCR_NAME_WORDS = {"itee": "ltée", "ltee": "ltée", "itée": "ltée", "lnc": "Inc", "lnc.": "Inc.", "ltd": "Ltd",
+_OCR_NAME_WORDS = {"itee": "ltée", "ltee": "ltée", "itée": "ltée", "lnc": "Inc", "lnc.": "Inc.", "ine": "Inc", "ine.": "Inc.", "ltd": "Ltd",
                    "ltd.": "Ltd.", "limitee": "limitée"}  # fmt: skip
 
 
@@ -604,6 +604,7 @@ _CONTACT = re.compile(
     r":\s*$|^\d+\s*,?\s+(?:[a-z]+\.?\s+)*(?:rue|boul|blvd|ave|av|st|rd|road|street|chemin|ch|route|hwy|dr|way|cres|pkwy)\b|"
     r"\s-\s(?:jan|feb|fev|mar|apr|avr|may|mai|jun|juin|jul|juil|aug|aou|sep|oct|nov|dec)"  # "Consulting services - September": a line item
 )
+_COLUMN_WORD = re.compile(r"^(?:net\s*\d+|code|item\s*code|part\s*(?:#|no\.?)|sku|uom|unit|ref\.?|#)$")
 _POSTAL_CODE = re.compile(r"[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d|,\s*(?:ON|QC|BC|AB|MB|SK|NS|NB|NL|PE|YT|NT|NU)(?![a-z])")
 _TITLE_PREFIX = re.compile(
     r"^(?:sales\s*|tax\s*|commercial\s*)?(?:invoice|facture)\s*(?:#|no\.?|n°)?\s*[a-z]{0,3}[\d/-]*\d\S*\s+"
@@ -641,6 +642,13 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             continue
         if _POSTAL_CODE.search(text) or _US_ADDRESS.search(text) or _CONTACT.search(p):
             continue  # an address, e-mail or web line
+        heading = (
+            len(p.split()) <= 2
+            and not _COMPANY.search(p)
+            and (any(rx.match(p.strip()) for rx in _HEAD.values()) or _COLUMN_WORD.match(p.strip()))
+        )
+        if heading or (_label_hits(line) and not _COMPANY.search(p)):
+            continue  # a field's label ("Cust. P.O.#") or a column heading ("Code") is not a name
         letters = sum(c.isalpha() for c in text)
         if letters < 3:
             continue
