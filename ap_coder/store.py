@@ -710,11 +710,18 @@ class Store:
             self.log_event("note", invoice_id=invoice_id, actor=actor, detail={"text": text.strip()[:2000]})
 
     def reject_invoice(self, invoice_id: int, reviewer: str, reason: str = "") -> None:
+        """Reject an invoice. One exported to the ERP cannot be (undo its batch first): rejected, it could then be
+        reopened and exported again. What an approval taught is withdrawn, as when it is reopened."""
         with self._conn() as conn:
-            conn.execute(
-                "UPDATE invoices SET status = ?, reviewer = ?, reviewed_at = ?, error = ? WHERE id = ?",
+            cur = conn.execute(
+                "UPDATE invoices SET status = ?, reviewer = ?, reviewed_at = ?, second_reviewer = NULL, "
+                "second_reviewed_at = NULL, error = ? WHERE id = ? AND export_batch IS NULL",
                 (REJECTED, reviewer, _now(), reason or None, invoice_id),
             )
+            if cur.rowcount == 0:
+                raise ValueError(f"invoice {invoice_id} cannot be rejected (exported to the ERP, or deleted)")
+            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
             self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason})
 
     def delete_invoice(self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None) -> None:
@@ -803,9 +810,10 @@ class Store:
             raise KeyError(invoice_id)
         if inv["status"] in (APPROVED, PENDING):
             raise ValueError(f"invoice {invoice_id} is already approved")
+        if inv["status"] == REJECTED:  # e.g. rejected by someone else meanwhile: reopen it first
+            raise ValueError(f"invoice {invoice_id} was rejected: reopen it before approving it")
         ai = inv["ai_output"] or {"line_items": []}
-        limit = self.approval_limit()
-        needs_second = bool(limit) and abs(float(final_output.get("grand_total") or 0)) > limit
+        needs_second = self.over_approval_limit(final_output)
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
@@ -859,7 +867,7 @@ class Store:
                 """UPDATE invoices SET status = ?, final_output = ?, edits = ?, reviewer = ?, reviewed_at = ?,
                    vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?,
                    currency = ?, po_key = ?, due_date = ?, second_reviewer = NULL, second_reviewed_at = NULL
-                   WHERE id = ? AND status NOT IN (?, ?)""",
+                   WHERE id = ? AND status NOT IN (?, ?, ?)""",
                 (
                     PENDING if needs_second else APPROVED,
                     json.dumps(final_output),
@@ -877,10 +885,11 @@ class Store:
                     invoice_id,
                     APPROVED,
                     PENDING,
+                    REJECTED,
                 ),  # fmt: skip
             )
             if cur.rowcount == 0:
-                raise ValueError(f"invoice {invoice_id} is already approved")
+                raise ValueError(f"invoice {invoice_id} is already approved, or was rejected")
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
@@ -907,6 +916,16 @@ class Store:
             return max(float(self.get_setting("approval_limit") or 0), 0.0)
         except ValueError:
             return 0.0
+
+    def over_approval_limit(self, coding: dict[str, Any], limit: float | None = None) -> bool:
+        """Is this invoice's total over the approval limit? The limit is in CAD: a foreign-currency total is
+        converted at the rate set in Settings (compared as it is when no rate is set)."""
+        limit = self.approval_limit() if limit is None else limit
+        if not limit:
+            return False
+        currency = str(coding.get("currency") or "CAD").strip().upper()
+        rate = self.fx_rates().get(currency, 1.0)
+        return abs(float(coding.get("grand_total") or 0)) * rate > limit
 
     def final_approve(self, invoice_id: int, approver: str, login: str = "") -> None:
         """The second approval: by someone other than the first approver (another name and, when the
@@ -1671,7 +1690,7 @@ class Store:
                 for r in conn.execute(
                     """SELECT vendor_key, MAX(vendor_name) vendor_name, COUNT(*) invoices,
                               SUM(status = 'approved') approved, SUM(status = 'review') to_review,
-                              SUM(CASE WHEN status = 'approved' AND currency = 'CAD'
+                              SUM(CASE WHEN status = 'approved' AND COALESCE(NULLIF(currency, ''), 'CAD') = 'CAD'
                                        THEN grand_total ELSE 0 END) spend_cad,
                               MIN(invoice_date) first_invoice, MAX(invoice_date) last_invoice,
                               MIN(created_at) first_seen

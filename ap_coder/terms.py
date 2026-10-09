@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 DEFAULT_TERMS_DAYS = 30
@@ -121,6 +121,8 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
     if vendor_terms and terms.net_days is None and not terms.on_receipt:  # none printed, or unreadable ("As agreed")
         vendor = parse_terms(vendor_terms)
         if vendor.net_days is not None or vendor.on_receipt:
+            if terms.discount_pct:  # "2% 10 days" printed: the vendor master gives the net days, not the discount
+                vendor = replace(vendor, discount_pct=terms.discount_pct, discount_days=terms.discount_days)
             terms, from_vendor = vendor, True
     invoice_date = _date(coding.get("invoice_date"))
     printed = _date(coding.get("due_date"))

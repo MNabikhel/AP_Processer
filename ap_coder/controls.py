@@ -52,7 +52,7 @@ def build(store: Store, start: dt.date, end: dt.date) -> dict[str, Any]:
             i
             for i in store.invoice_columns(("id", "reviewed_at", "second_reviewer", "final_output"), APPROVED)
             if not i["second_reviewer"]
-            and abs(float((i["final_output"] or {}).get("grand_total") or 0)) > limit
+            and store.over_approval_limit(i["final_output"] or {}, limit)
             and first <= (i["reviewed_at"] or "") < last
         ]
         if limit
