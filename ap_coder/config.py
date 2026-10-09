@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -11,6 +13,9 @@ from dotenv import load_dotenv
 from . import paths
 
 DEFAULT_AOAI_API_VERSION = "2024-10-21"  # first GA version with strict Structured Outputs
+DEFAULT_LLM_BASE_URL = "http://127.0.0.1:1234/v1"  # LM Studio's local server (Ollama: http://127.0.0.1:11434/v1)
+LLM_PROVIDERS = ("auto", "local", "azure", "off")
+LLM_VISION_MODES = ("auto", "on", "off")
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -35,6 +40,38 @@ def _env_float(name: str, default: float | None) -> float | None:
 def _env_int(name: str, default: int | None) -> int | None:
     value = _env(name)
     return int(value) if value is not None else default
+
+
+def _on_this_network(host: str) -> bool:
+    """localhost, a bare machine name, a .local/.lan name, or a private or loopback address."""
+    name = host.rsplit("@", 1)[-1]
+    name = name[1:].split("]", 1)[0] if name.startswith("[") else name.rsplit(":", 1)[0]
+    name = name.lower()
+    if name == "localhost" or name.endswith((".local", ".lan", ".home")) or "." not in name:
+        return True
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified
+
+
+def normalise_base_url(value: str | None) -> str:
+    """Accept any URL LM Studio or Ollama shows (…/v1/chat/completions, …/api/v0/models, host:port) as the /v1 base."""
+    text = str(value or "").strip().strip("\"'").rstrip("/")
+    if not text:
+        return DEFAULT_LLM_BASE_URL
+    if "://" not in text:
+        text = "http://" + text
+    scheme, rest = text.split("://", 1)
+    host, _, path = rest.partition("/")
+    path = "/" + path if path else ""
+    path = re.sub(r"/(chat/completions|completions|responses|models|embeddings)$", "", path)
+    # Hosted gateways (OpenRouter) really live under /api/v1; only a server on this machine or network is
+    # LM Studio's own /api/vN address or Ollama's /api.
+    if _on_this_network(host):
+        path = re.sub(r"^/api(/v\d+)?(/chat|/models|/tags|/generate)?$", "", path)
+    return f"{scheme.lower()}://{host}{path or '/v1'}"
 
 
 @dataclass(frozen=True)
@@ -65,6 +102,26 @@ class OpenAISettings:
 
 
 @dataclass(frozen=True)
+class LocalLLMSettings:
+    """Which AI codes invoices, and the local OpenAI-compatible server (LM Studio, Ollama) when it is a local one.
+
+    ``provider``: ``auto`` (Azure OpenAI when its endpoint is set, else a local model when one answers, else none),
+    ``local``, ``azure`` or ``off``. An empty ``model`` means the chat model loaded in LM Studio.
+    """
+
+    provider: str = "auto"
+    base_url: str = DEFAULT_LLM_BASE_URL
+    model: str = ""
+    api_key: str = "lm-studio"  # LM Studio and Ollama accept any key
+    timeout_seconds: float = 300.0  # a laptop without a graphics card can take minutes per invoice
+    max_output_tokens: int = 4096
+    vision: str = "auto"  # auto = when the loaded model can see pages; on / off to force it
+    # Document text sent to a local model, so a small context window is not overrun (start and end are kept).
+    max_prompt_chars: int = 24_000
+    temperature: float = 0.0
+
+
+@dataclass(frozen=True)
 class EngineSettings:
     vision: bool = False  # attach page images alongside the extracted text
     vision_max_pages: int = 5
@@ -78,6 +135,7 @@ class Settings:
     document_intelligence: DocumentIntelligenceSettings = field(default_factory=DocumentIntelligenceSettings)
     openai: OpenAISettings = field(default_factory=OpenAISettings)
     engine: EngineSettings = field(default_factory=EngineSettings)
+    llm: LocalLLMSettings = field(default_factory=LocalLLMSettings)
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> Settings:
@@ -118,7 +176,24 @@ class Settings:
             review_threshold=_env_float("AP_REVIEW_THRESHOLD", 0.85),
             max_document_chars=_env_int("AP_MAX_DOCUMENT_CHARS", 200_000),
         )
-        return cls(document_intelligence=di, openai=oai, engine=engine)
+        provider = (_env("AP_LLM_PROVIDER", "auto") or "auto").lower()
+        vision_mode = (_env("AP_LLM_VISION", "auto") or "auto").lower()
+        vision_mode = {"true": "on", "yes": "on", "1": "on", "false": "off", "no": "off", "0": "off"}.get(
+            vision_mode, vision_mode
+        )
+        model = _env("AP_LLM_MODEL", "") or ""
+        llm = LocalLLMSettings(
+            provider=provider if provider in LLM_PROVIDERS else "auto",
+            base_url=normalise_base_url(_env("AP_LLM_BASE_URL")),
+            model="" if model.lower() == "auto" else model,
+            api_key=_env("AP_LLM_API_KEY", "lm-studio"),
+            timeout_seconds=_env_float("AP_LLM_TIMEOUT_SECONDS", 300.0),
+            max_output_tokens=_env_int("AP_LLM_MAX_TOKENS", 4096),
+            vision=vision_mode if vision_mode in LLM_VISION_MODES else "auto",
+            max_prompt_chars=_env_int("AP_LLM_MAX_PROMPT_CHARS", 24_000),
+            temperature=_env_float("AP_LLM_TEMPERATURE", 0.0),
+        )
+        return cls(document_intelligence=di, openai=oai, engine=engine, llm=llm)
 
     def with_overrides(
         self,

@@ -166,7 +166,9 @@ class InvoicePipeline:
             result.timings["extraction"] = time.perf_counter() - t0
 
             images = None
-            if self.settings.engine.vision and path.suffix.lower() not in TEXT_EXTENSIONS:
+            # Azure: AP_VISION. A local model: when it can see pages (AP_LLM_VISION).
+            wants_images = getattr(self.coder, "wants_images", lambda: self.settings.engine.vision)
+            if path.suffix.lower() not in TEXT_EXTENSIONS and wants_images():
                 try:
                     images = render_page_images(path, self.settings.engine.vision_max_pages)
                 except Exception as exc:  # vision is an extra; the text extraction is enough to code
