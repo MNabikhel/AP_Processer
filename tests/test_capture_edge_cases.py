@@ -217,3 +217,27 @@ def test_a_canadian_supplier_billing_in_usd_keeps_03_04_ambiguous(tmp_path):
     us = [(x, y, t.replace("12 Main St, Toronto, ON M5V 1A1", "500 Pine St, Seattle, WA 98101")) for x, y, t in lines]
     assert analyze(_pdf(tmp_path, us, "us.pdf"), ocr=False, today=dt.date(2026, 4, 9)).fields["invoice_date"].value \
         == "2026-03-04"  # fmt: skip
+
+
+def test_a_template_does_not_read_the_gst_registration_number_as_the_gst(tmp_path):
+    """The template learned "GST" beside the GST amount. On a two-page invoice from the same supplier, the
+    first page has no GST row, only "GST Reg. No. 123456782 RT0001": that number is not a GST of $123 million."""
+    from ap_coder.capture.supplier import apply_template
+
+    layout = build_layout(_pdf(tmp_path, _ACME), ocr=False)
+    template = None
+    for _ in range(3):
+        template = learn(template, layout, confirmed_values(_ACME_TRUTH))
+    head = [line for line in _ACME if line[1] < 300]
+    tail = [(380, 500, "Subtotal"), (500, 500, "1,000.00"), (380, 515, "GST 5%"), (500, 515, "50.00"),
+            (380, 530, "Total Due CAD"), (500, 530, "1,050.00")]  # fmt: skip
+    import pymupdf
+
+    doc = pymupdf.open()
+    for lines in (head, tail):
+        page = doc.new_page(width=612, height=792)
+        for x, y, text in lines:
+            page.insert_text((x, y), text, fontsize=10)
+    doc.save(tmp_path / "two.pdf")
+    read = apply_template(template, build_layout(tmp_path / "two.pdf", ocr=False))
+    assert all(abs(r.value) < 1_000_000 for r in read.get("gst_amount", [])), read.get("gst_amount")

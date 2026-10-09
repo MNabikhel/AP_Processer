@@ -873,6 +873,10 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         if name == "payment_terms" and not _has_letters(raw):
             return  # terms are words ("Net 30", "30 days"), never a bare number
         if name in AMOUNT_FIELDS:
+            from .normalize import looks_like_money
+
+            if sum(c.isdigit() for c in raw) >= 9 and not looks_like_money(raw):
+                return  # a registration or account number ("GST Reg. No. 123456782"), not an amount
             mark = _credit_mark(rows, words)
             if mark is not None:  # "$1,370.34 CR": the sign is printed beside the amount
                 words, raw = [*words, mark], f"{raw} {mark.text}"
