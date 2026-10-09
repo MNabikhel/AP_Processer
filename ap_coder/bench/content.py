@@ -649,8 +649,9 @@ def invoice_number(rng: random.Random, credit: bool = False) -> str:
     return rng.choice(styles)
 
 
-def po_number(rng: random.Random) -> str:
-    return rng.choice(
+def po_number(rng: random.Random, pick: random.Random | None = None) -> str:
+    """A purchase order number; ``pick`` chooses the format (one customer's POs share theirs)."""
+    return (pick or rng).choice(
         [
             f"PO-{rng.randint(10000, 99999)}",
             f"45000{rng.randint(10000, 99999)}",

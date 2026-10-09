@@ -31,8 +31,49 @@ def main(argv: list[str] | None = None) -> int:
     )
     g = sub.add_parser("generate", help="only write the invoices and their truth")
     common(g)
+    lp = sub.add_parser("learn", help="supplier learning: each supplier's invoices read in order as AP approves them")
+    lp.add_argument("--suppliers", type=int, default=20, help="number of suppliers (default 20)")
+    lp.add_argument("--invoices", type=int, default=40, help="invoices per supplier (default 40)")
+    lp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same suppliers")
+    lp.add_argument("--scanned", type=float, default=0.0, help="share of invoices that arrive as scans (default 0)")
+    lp.add_argument("--out", default="bench_learn", help="output folder (default bench_learn)")
+    lp.add_argument("--workers", type=int, default=default_workers(), help="processes (one supplier each)")
+    lp.add_argument(
+        "--no-vendor-master", action="store_true", help="suppliers are not in the vendor master (no name/GST check)"
+    )
+    lp.add_argument(
+        "--ignore-check",
+        action="append",
+        default=[],
+        metavar="CODE",
+        help="what-if: a failed check with this code (e.g. LINES_ADD_UP) does not hold an invoice back",
+    )
     a = p.parse_args(argv)
 
+    if a.cmd == "learn":
+        from ap_coder.bench.learning import run_learning
+
+        report = run_learning(
+            a.suppliers,
+            a.invoices,
+            a.seed,
+            a.scanned,
+            a.out,
+            a.workers,
+            vendor_master=not a.no_vendor_master,
+            ignore_checks=tuple(a.ignore_check),
+        )
+        au, b = report["summary"]["autonomy"], report["summary"]["buckets"]
+        first, last = next(iter(b.values())), list(b.values())[-1]
+        print(
+            f"{report['summary']['suppliers']} suppliers x {a.invoices} invoices: field accuracy "
+            f"{100 * (first['accuracy'] or 0):.1f}% on the first invoice, {100 * (last['accuracy'] or 0):.1f}% "
+            f"from #{list(b)[-1]}; {au['suppliers_ready']} suppliers reached autonomy "
+            f"(median before #{au['ready_at_median']}); "
+            f"after that {au['touchless']}/{au['invoices_after_ready']} touchless with {au['touchless_errors']} errors"
+        )
+        print(f"report: {Path(a.out) / 'report.md'}")
+        return 0
     if a.cmd == "generate":
         cases = prepare_cases(Path(a.out) / "cases", a.n, a.seed, a.scanned, a.workers, a.regen)
         print(f"{len(cases)} invoices in {Path(a.out) / 'cases'}")

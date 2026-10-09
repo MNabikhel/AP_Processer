@@ -16,6 +16,7 @@ import io
 import json
 import math
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -66,6 +67,39 @@ ID_KEYS = {
     "original_invoice",
 }
 _FONTS: dict[str, Any] = {}
+
+
+class Style:
+    """Where a *style* choice (vendor, wording, fonts, layout, date and number formats) draws its
+    randomness, so a supplier's invoices can all look alike.
+
+    Unpinned (``key`` None), every choice comes from the invoice's own random stream, in the same order
+    as ever: a single invoice is unchanged. Pinned to a supplier, each named choice comes from its own
+    generator seeded by (supplier, name), so it is the same on every invoice of that supplier whatever
+    else differs; the content (numbers, dates, lines, amounts) still comes from the invoice's stream.
+    """
+
+    def __init__(self, rng: random.Random, key: str | None = None, index: int = 0):
+        self.rng, self.key, self.index = rng, key, index
+
+    @property
+    def pinned(self) -> bool:
+        return self.key is not None
+
+    def __call__(self, name: str) -> random.Random:
+        if self.key is None:
+            return self.rng
+        return random.Random(f"ap-bench-style:{self.key}:{name}")
+
+
+def _bump(number: str, step: int) -> str:
+    """The next invoice number of a supplier: its last run of digits counted on by ``step``."""
+    runs = list(re.finditer(r"\d+", number))
+    if not runs:
+        return number
+    last = runs[-1]
+    width = len(last.group())
+    return number[: last.start()] + f"{int(last.group()) + step:0{width}d}" + number[last.end() :]
 
 
 def _pymupdf():
@@ -286,6 +320,7 @@ class Inv:
     k: dict[str, Any] = field(default_factory=dict)  # layout knobs
     header: list[Item] = field(default_factory=list)  # header entries in print order
     extras: dict[str, Any] = field(default_factory=dict)
+    sty: Style | None = None  # where style choices come from (see Style)
 
     def d(self, x: date) -> str:
         return C.format_date(x, self.date_style)
@@ -349,55 +384,75 @@ def _province(rng: random.Random) -> str:
     return rng.choices(provs, [PROVINCE_WEIGHTS[p] for p in provs])[0]
 
 
-def make_invoice(rng: random.Random, arch: str) -> Inv:
-    k = _knobs(rng, arch)
+def _minimal_number(rng: random.Random) -> str:
+    return rng.choice([f"{rng.randint(1, 999):04d}", str(rng.randint(1, 400)), f"{rng.randint(1, 99):03d}"])
+
+
+def make_invoice(rng: random.Random, arch: str, style: Style | None = None) -> Inv:
+    """One invoice of layout ``arch``. ``style`` pinned to a supplier keeps everything but the content
+    the same from one invoice to the next (see Style); without it every choice comes from ``rng``."""
+    S = style or Style(rng)
+    k = _knobs(S("knobs"), arch)
     kind = {"credit_note": "credit", "utility_bill": "utility", "minimal_courier": "minimal"}.get(arch, "invoice")
     country = "US" if arch == "us_vendor" else "CA"
     if arch in ("quebec_fr",):
         province, lang = "QC", "fr"
     elif arch == "bilingual":
-        province, lang = rng.choice(["QC", "QC", "ON", "NS"]), "bi"
+        province, lang = S("province").choice(["QC", "QC", "ON", "NS"]), "bi"
     elif country == "US":
         province, lang = "", "en"
     else:
-        province = _province(rng)
+        province = _province(S("province"))
         if kind == "minimal" and province == "QC":
             province = "ON"
-        lang = "fr" if kind == "credit" and province == "QC" and rng.random() < 0.6 else "en"
+        lang = "fr" if kind == "credit" and province == "QC" and S("lang").random() < 0.6 else "en"
 
     vendor_kind = (
         {"US": "us"}.get(country)
         or {"minimal": "small", "utility": "utility"}.get(kind)
         or ("fr" if lang == "fr" else "en")
     )
-    vendor = C.make_vendor(rng, vendor_kind, province or "ON")
+    vendor = C.make_vendor(S("vendor"), vendor_kind, province or "ON")
     # Tax follows the place of supply: the customer's site is in the province whose tax is charged.
-    customer = C.make_customer(rng, province or _province(rng))
+    customer = C.make_customer(S("customer"), province or _province(S("customer_province")))
     currency = "USD" if country == "US" else "CAD"
 
     if country == "US":
-        date_style = rng.choice(C.DATE_STYLES_US)
+        date_style = S("date_style").choice(C.DATE_STYLES_US)
     elif lang == "fr":
-        date_style = rng.choice(C.DATE_STYLES_FR)
+        date_style = S("date_style").choice(C.DATE_STYLES_FR)
     else:
-        date_style = rng.choice(C.DATE_STYLES_EN)
-    ms = C.money_style(rng, lang, currency)
+        date_style = S("date_style").choice(C.DATE_STYLES_EN)
+    ms = C.money_style(S("money"), lang, currency)
     if kind == "minimal":
-        ms.code, ms.group = "", rng.choice([",", ""])
+        ms.code, ms.group = "", S("money_minimal").choice([",", ""])
 
     credit = kind == "credit"
-    inv_date = C.random_date(rng)
-    if kind == "minimal":
-        number = rng.choice([f"{rng.randint(1, 999):04d}", str(rng.randint(1, 400)), f"{rng.randint(1, 99):03d}"])
+    if S.pinned:  # a supplier's invoices: dated in order, numbered in sequence
+        period = S("date_gap").choice([7, 10, 14, 14, 30, 30])
+        inv_date = C.random_date(S("first_date")) + timedelta(days=S.index * period + rng.randint(0, period // 2))
     else:
-        number = C.invoice_number(rng, credit)
-    terms = C.payment_terms(rng, "fr" if lang == "fr" else "en") if rng.random() < 0.65 and not credit else None
-    days = terms.days if terms and terms.days is not None else rng.choice([30, 30, 15, 45])
-    due = inv_date + timedelta(days=days) if (kind == "utility" or rng.random() < 0.55) and not credit else None
+        inv_date = C.random_date(rng)
+    if kind == "minimal":
+        number = _minimal_number(S("number"))
+    else:
+        number = C.invoice_number(S("number"), credit)
+    if S.pinned:
+        gap = S("number_gap").choice([1, 1, 3, 8, 25, 120])
+        number = _bump(number, S.index * gap + rng.randint(0, gap - 1))
+    has_terms = S("has_terms").random() < 0.65
+    terms = C.payment_terms(S("terms"), "fr" if lang == "fr" else "en") if has_terms and not credit else None
+    days = terms.days if terms and terms.days is not None else S("days").choice([30, 30, 15, 45])
+    has_due = kind == "utility" or S("has_due").random() < 0.55
+    due = inv_date + timedelta(days=days) if has_due and not credit else None
     if kind == "utility":
-        terms = None if rng.random() < 0.6 else terms
-        due = inv_date + timedelta(days=rng.choice([14, 18, 21, 30]))
-    po = C.po_number(rng) if rng.random() < (0.25 if kind in ("utility", "minimal") else 0.62) else None
+        terms = None if S("utility_terms").random() < 0.6 else terms
+        due = inv_date + timedelta(days=S("utility_due").choice([14, 18, 21, 30]))
+    po = (
+        C.po_number(rng, pick=S("po_format"))
+        if rng.random() < (0.25 if kind in ("utility", "minimal") else 0.62)
+        else None
+    )
 
     if kind == "utility":
         lines = _utility_lines(rng, lang)
@@ -419,10 +474,10 @@ def make_invoice(rng: random.Random, arch: str) -> Inv:
             base = sum(li.amount for li in lines)
             pct = rng.choice([2, 5, 10])
             dl = C.money(-base * Decimal(pct) / 100)
-            name = label(rng, "discount", "fr" if lang == "fr" else "en") + f" {pct}%"
+            name = label(S("label:discount"), "discount", "fr" if lang == "fr" else "en") + f" {pct}%"
             lines.append(C.LineItem(name, None, "", None, dl, kind="discount"))
         if not credit and kind != "minimal" and rng.random() < 0.1:
-            name = label(rng, "freight", "fr" if lang == "fr" else "en")
+            name = label(S("label:freight"), "freight", "fr" if lang == "fr" else "en")
             lines.append(C.LineItem(name, None, "", None, C.money(rng.uniform(15, 140)), kind="freight"))
     subtotal = sum((li.amount for li in lines), Decimal("0"))
     freight = None
@@ -432,7 +487,7 @@ def make_invoice(rng: random.Random, arch: str) -> Inv:
     if country == "US":
         state = vendor.province
         taxes = []
-        if rng.random() < 0.5:
+        if S("us_tax").random() < 0.5:
             rate = Decimal(C.US_SALES_TAX.get(state, "0.07"))
             taxes = [C.Tax("SALES", "tax_total", rate, C.money(taxable * rate))]
     else:
@@ -460,6 +515,7 @@ def make_invoice(rng: random.Random, arch: str) -> Inv:
         subtotal,
         grand,
         k,
+        sty=S,
     )
     inv.header = _header_items(rng, inv)
     return inv
@@ -492,18 +548,19 @@ def _account_number(rng: random.Random) -> str:
 
 
 def _header_items(rng: random.Random, inv: Inv) -> list[Item]:
+    S = inv.sty or Style(rng)
     lang = inv.lang
     sep = inv.k["sep"]
-    if lang == "fr" and sep == ":" and rng.random() < 0.6:
+    if lang == "fr" and sep == ":" and S("fr_colon").random() < 0.6:
         sep = " :"  # French spacing before the colon
 
     def lab(key: str, s: str | None = None) -> str:
         if inv.k["header"] != "kv":
-            return label(rng, key, lang)  # label above the value: no separator
+            return label(S(f"label:{key}"), key, lang)  # label above the value: no separator
         own = sep
         if sep == "#" and key not in ID_KEYS:
-            own = ":" if rng.random() < 0.7 else ""
-        return with_sep(s or label(rng, key, lang), own)
+            own = ":" if S(f"sep:{key}").random() < 0.7 else ""
+        return with_sep(s or label(S(f"label:{key}"), key, lang), own)
 
     num_key = {"credit": "credit_number", "utility": "bill_number"}.get(inv.kind, "invoice_number")
     date_key = {"credit": "credit_date", "utility": "statement_date"}.get(inv.kind, "invoice_date")
@@ -511,7 +568,7 @@ def _header_items(rng: random.Random, inv: Inv) -> list[Item]:
         Item("invoice_number", lab(num_key), inv.number, "invoice_number", inv.number),
         Item("invoice_date", lab(date_key), inv.d(inv.inv_date), "invoice_date", inv.inv_date.isoformat()),
     ]
-    if rng.random() < 0.3:
+    if S("date_first").random() < 0.3:
         first.reverse()
     rest: list[Item] = []
     if inv.due:
@@ -522,28 +579,29 @@ def _header_items(rng: random.Random, inv: Inv) -> list[Item]:
         rest.append(Item("payment_terms", lab("payment_terms"), inv.terms.raw, "payment_terms", inv.terms.raw))
     if inv.k["currency_where"] == "header":
         rest.append(Item("currency", lab("currency"), inv.currency, "currency", inv.currency))
-    if inv.kind == "utility" or rng.random() < 0.6:
-        acct = _account_number(rng)
+    if inv.kind == "utility" or S("has:customer_account").random() < 0.6:
+        acct = _account_number(S("customer_account"))
         inv.extras["customer_account"] = acct
         rest.insert(0 if inv.kind == "utility" else len(rest), Item("customer_account", lab("customer_account"), acct))
     if inv.kind == "utility":
         start = inv.inv_date - timedelta(days=rng.randint(28, 33) + rng.randint(1, 6))
         end = inv.inv_date - timedelta(days=rng.randint(1, 6))
         rest.append(Item("billing_period", lab("billing_period"), f"{inv.d(start)} - {inv.d(end)}"))
-    if rng.random() < 0.35 and inv.kind != "utility":
+    if S("has:order_date").random() < 0.35 and inv.kind != "utility":
         rest.append(Item("order_date", lab("order_date"), inv.d(inv.inv_date - timedelta(days=rng.randint(1, 25)))))
-    if rng.random() < 0.35 and inv.kind != "utility":
+    if S("has:ship_date").random() < 0.35 and inv.kind != "utility":
         rest.append(Item("ship_date", lab("ship_date"), inv.d(inv.inv_date - timedelta(days=rng.randint(0, 6)))))
-    if rng.random() < 0.15 and inv.kind == "invoice":
+    if S("has:quote_number").random() < 0.15 and inv.kind == "invoice":
         rest.append(Item("quote_number", lab("quote_number"), f"Q-{rng.randint(2025, 2026)}-{rng.randint(1, 999):03d}"))
-    if rng.random() < 0.25 and inv.kind in ("invoice", "credit"):
+    if S("has:sales_order").random() < 0.25 and inv.kind in ("invoice", "credit"):
         rest.append(Item("sales_order", lab("sales_order"), f"SO-{rng.randint(10000, 99999)}"))
-    if rng.random() < 0.2 and inv.kind == "invoice":
-        rest.append(Item("sales_rep", lab("sales_rep"), rng.choice(["JM", "K. Singh", "MLT", "A. Roy", "House"])))
-    if rng.random() < 0.15 and inv.kind == "invoice":
-        rest.append(
-            Item("ship_via", lab("ship_via"), rng.choice(["Purolator", "UPS Ground", "Canpar", "FedEx", "Pickup"]))
-        )
+    if S("has:sales_rep").random() < 0.2 and inv.kind == "invoice":
+        lbl = lab("sales_rep")  # the label is drawn before the value
+        rest.append(Item("sales_rep", lbl, S("sales_rep").choice(["JM", "K. Singh", "MLT", "A. Roy", "House"])))
+    if S("has:ship_via").random() < 0.15 and inv.kind == "invoice":
+        lbl = lab("ship_via")
+        via = S("ship_via").choice(["Purolator", "UPS Ground", "Canpar", "FedEx", "Pickup"])
+        rest.append(Item("ship_via", lbl, via))
     if inv.kind == "credit":
         orig = C.invoice_number(rng)
         inv.extras["original_invoice"] = orig
@@ -556,14 +614,17 @@ def _header_items(rng: random.Random, inv: Inv) -> list[Item]:
             )
             rest.append(Item("reason", lab("reason"), reason))
     if inv.k["bn_where"] == "header" and inv.vendor.bn:
-        raw = C.format_bn(rng, inv.vendor.bn)
+        raw = C.format_bn(S("bn_format"), inv.vendor.bn)
         rest.append(Item("bn", lab("bn"), raw, "gst_hst_registration_number", C.reg_value(raw)))
         if inv.vendor.qst:
-            raw = C.format_qst(rng, inv.vendor.qst)
+            raw = C.format_qst(S("qst_format"), inv.vendor.qst)
             rest.append(Item("qst", lab("qst"), raw, "qst_registration_number", C.reg_value(raw)))
     head = rest[:2]
     tail = rest[2:]
-    rng.shuffle(tail)
+    if S.pinned:  # the supplier's own order of header entries
+        tail.sort(key=lambda it: S(f"order:{it.key}").random())
+    else:
+        rng.shuffle(tail)
     return first + head + tail
 
 
@@ -573,6 +634,7 @@ def _header_items(rng: random.Random, inv: Inv) -> list[Item]:
 class Renderer:
     def __init__(self, inv: Inv, rng: random.Random):
         self.inv, self.rng, self.k = inv, rng, inv.k
+        self.S = S = inv.sty or Style(rng)  # style choices (the same on every invoice of a supplier)
         w, h = (595.0, 842.0) if self.k["a4"] else (612.0, 792.0)
         self.cv = Canvas(w, h, self.k["family"], rng, jitter=0.7 if inv.kind == "minimal" else 0.0)
         self.t = Truth()
@@ -581,15 +643,15 @@ class Renderer:
         self.s = self.k["size"]
         self.accent = self.k["accent"]
         self.lh = self.s * 1.42
-        self.bn_raw = C.format_bn(rng, inv.vendor.bn) if inv.vendor.bn else ""
-        self.qst_raw = C.format_qst(rng, inv.vendor.qst) if inv.vendor.qst else ""
-        self.show_bn = bool(inv.vendor.bn) and rng.random() < 0.95
-        self.show_qst = bool(inv.vendor.qst) and rng.random() < 0.92
+        self.bn_raw = C.format_bn(S("bn_raw"), inv.vendor.bn) if inv.vendor.bn else ""
+        self.qst_raw = C.format_qst(S("qst_raw"), inv.vendor.qst) if inv.vendor.qst else ""
+        self.show_bn = bool(inv.vendor.bn) and S("show_bn").random() < 0.95
+        self.show_qst = bool(inv.vendor.qst) and S("show_qst").random() < 0.92
         self.page_bottom = self.H - self.m - 14  # leave room for the page number line
 
     # small helpers
     def lab(self, key: str) -> str:
-        return label(self.rng, key, self.inv.lang)
+        return label(self.S(f"label:{key}"), key, self.inv.lang)
 
     def put(self, fld: str, value: Any, raw: str, box: PtBox, lbl: str = "") -> None:
         self.t.put(fld, value, raw, box, lbl)
@@ -608,7 +670,7 @@ class Renderer:
             if not self.show_qst:
                 return None
             lbl, raw, fld = self.lab("qst"), self.qst_raw, "qst_registration_number"
-        lbl = with_sep(lbl, self.rng.choice([":", "", "#"]))
+        lbl = with_sep(lbl, self.S(f"reg_sep:{which}").choice([":", "", "#"]))
         boxes = self.cv.parts(x, y, [lbl, raw], size, align=align)
         self.put(fld, C.reg_value(raw), raw, boxes[1], lbl)
         return _union(boxes)
@@ -626,10 +688,10 @@ class Renderer:
 
     def page_numbers(self) -> None:
         n = self.cv.pno
-        if n == 1 and self.rng.random() < 0.6:
+        if n == 1 and self.S("page_numbers").random() < 0.6:
             return
         word = "de" if self.inv.lang == "fr" else "of"
-        align = self.rng.choice(["right", "center"])
+        align = self.S("page_numbers_align").choice(["right", "center"])
         x = self.W - self.m if align == "right" else self.W / 2
         for p in range(1, n + 1):
             self.cv.text(x, self.H - self.m + 4, f"Page {p} {word} {n}", self.s * 0.85, color=GREY, align=align, page=p)
@@ -637,12 +699,12 @@ class Renderer:
     # --- vendor block ---
     def vendor_block(self, x: float, y: float, align: str) -> float:
         """Returns the y below the block."""
-        v, cv, s = self.inv.vendor, self.cv, self.s
-        name_size = self.rng.uniform(12, 17)
+        v, cv, s, S = self.inv.vendor, self.cv, self.s, self.S
+        name_size = S("vendor_name_size").uniform(12, 17)
         logo = self.k["logo"]
         top = y
         if logo:
-            ls = self.rng.uniform(26, 40)
+            ls = S("logo_size").uniform(26, 40)
             if logo == "initials":
                 initials = "".join(w[0] for w in v.name.split()[:2] if w[0].isalpha()).upper() or "AB"
                 lx = {"left": x, "right": x - ls * 1.4, "center": x - ls * 0.7}[align]
@@ -667,7 +729,8 @@ class Renderer:
         else:
             name_size = cv.fit(v.name, name_size, self.W * 0.42, bold=True)
             y += name_size
-            box = cv.text(x, y, v.name, name_size, bold=True, color=self.rng.choice([INK, self.accent]), align=align)
+            color = S("vendor_color").choice([INK, self.accent])
+            box = cv.text(x, y, v.name, name_size, bold=True, color=color, align=align)
             y += name_size * 0.35 + 3
         self.put("vendor_name", v.name, v.name, box)
         y += s * 1.2
@@ -676,11 +739,11 @@ class Renderer:
             y += self.lh
         contact = []
         if v.phone:
-            contact.append(f"{self.lab('phone')}: {v.phone}" if self.rng.random() < 0.8 else v.phone)
+            contact.append(f"{self.lab('phone')}: {v.phone}" if S("phone_label").random() < 0.8 else v.phone)
         if v.fax:
             contact.append(f"{self.lab('fax')}: {v.fax}")
         if contact:
-            if self.rng.random() < 0.5:
+            if S("contact_line").random() < 0.5:
                 cv.text(x, y, "   ".join(contact), s, align=align)
                 y += self.lh
             else:
@@ -691,13 +754,14 @@ class Renderer:
             if extra:
                 cv.text(x, y, extra, s, align=align, color=GREY)
                 y += self.lh
-        if self.inv.country == "US" and self.rng.random() < 0.5:
+        r = S("us_tax_id")
+        if self.inv.country == "US" and r.random() < 0.5:
             cv.parts(
                 x,
                 y,
                 [
-                    label(self.rng, "tax_id_us", "en") + ":",
-                    f"{self.rng.randint(10, 99)}-{self.rng.randint(1000000, 9999999)}",
+                    label(r, "tax_id_us", "en") + ":",
+                    f"{r.randint(10, 99)}-{r.randint(1000000, 9999999)}",
                 ],
                 s,
                 align=align,
@@ -714,18 +778,19 @@ class Renderer:
     def header_kv(self, items: list[Item], x0: float, x1: float, y: float) -> float:
         cv = self.cv
         size = self.s
-        bold_labels = self.rng.random() < 0.6
+        r = self.S("header_kv")
+        bold_labels = r.random() < 0.6
         lw = max(cv.tw(it.label, size, bold_labels) for it in items)
         vw = max(cv.tw(it.raw, size) for it in items)
         while lw + 10 + vw > x1 - x0 and size > 6:
             size -= 0.25
             lw = max(cv.tw(it.label, size, bold_labels) for it in items)
             vw = max(cv.tw(it.raw, size) for it in items)
-        right = self.rng.random() < 0.45
-        label_right = self.rng.random() < 0.3
+        right = r.random() < 0.45
+        label_right = r.random() < 0.3
         lx = x0
         vx = x1 if right else x0 + lw + 10
-        lh = size * self.rng.uniform(1.4, 1.75)
+        lh = size * r.uniform(1.4, 1.75)
         for it in items:
             y += lh
             if label_right:
@@ -743,12 +808,11 @@ class Renderer:
     def header_cells(self, items: list[Item], x0: float, x1: float, y: float, style: str) -> float:
         """grid: label row over value row with cell lines; boxed: one box per field; stacked: no lines."""
         cv = self.cv
-        per_row = {"grid": self.rng.randint(3, 5), "boxed": self.rng.randint(3, 4), "stacked": self.rng.randint(3, 5)}[
-            style
-        ]
+        r = self.S("header_cells")
+        per_row = {"grid": r.randint(3, 5), "boxed": r.randint(3, 4), "stacked": r.randint(3, 5)}[style]
         gap = 6 if style == "boxed" else 0
         lsize, vsize = self.s * 0.85, self.s * 1.02
-        shade = self.rng.random() < 0.6
+        shade = r.random() < 0.6
         for r in range(0, len(items), per_row):
             row = items[r : r + per_row]
             cw = (x1 - x0 - gap * (per_row - 1)) / per_row
@@ -756,6 +820,7 @@ class Renderer:
             for j, it in enumerate(row):
                 cx0 = x0 + j * (cw + gap)
                 cx1 = cx0 + cw
+                rc = self.S(f"cell:{it.key}")
                 if style == "grid":
                     if shade:
                         cv.rect(cx0, y, cx1, y + lh_lab, fill=LIGHT, stroke=GREY)
@@ -763,8 +828,8 @@ class Renderer:
                         cv.rect(cx0, y, cx1, y + lh_lab, stroke=GREY)
                     cv.rect(cx0, y + lh_lab, cx1, y + lh_lab + lh_val, stroke=GREY)
                 elif style == "boxed":
-                    cv.rect(cx0, y, cx1, y + lh_lab + lh_val, stroke=self.rng.choice([GREY, self.accent]), width=0.8)
-                centered = style == "grid" and self.rng.random() < 0.5
+                    cv.rect(cx0, y, cx1, y + lh_lab + lh_val, stroke=rc.choice([GREY, self.accent]), width=0.8)
+                centered = style == "grid" and rc.random() < 0.5
                 tx = (cx0 + cx1) / 2 if centered else cx0 + 4
                 al = "center" if centered else "left"
                 ls = cv.fit(it.label, lsize, cw - 8, bold=True)
@@ -779,9 +844,10 @@ class Renderer:
 
     def party_block(self, x: float, y: float, key: str, party: C.Party, width: float, customer_gst: bool) -> float:
         cv, s = self.cv, self.s
-        cv.text(x, y, with_sep(self.lab(key), self.rng.choice([":", ""])), s, bold=True, color=self.accent)
+        cv.text(x, y, with_sep(self.lab(key), self.S(f"party_sep:{key}").choice([":", ""])), s, bold=True,
+                color=self.accent)  # fmt: skip
         y += self.lh
-        cv.text(x, y, cv.clip(party.name, s, width), s, bold=self.rng.random() < 0.6)
+        cv.text(x, y, cv.clip(party.name, s, width), s, bold=self.S(f"party_bold:{key}").random() < 0.6)
         y += self.lh
         for line in party.lines:
             cv.text(x, y, cv.clip(line, s, width), s)
@@ -793,23 +859,24 @@ class Renderer:
 
     # --- standard invoice / credit note ---
     def render_standard(self) -> None:
-        inv, cv, k, m, s, rng = self.inv, self.cv, self.k, self.m, self.s, self.rng
+        inv, cv, k, m, s = self.inv, self.cv, self.k, self.m, self.s
         W = self.W
         pos = k["vendor_pos"]
+        S = self.S
         y0 = m
-        ttl = title(rng, inv.kind, inv.lang)
-        tsize = rng.uniform(16, 26)
+        ttl = title(S("title"), inv.kind, inv.lang)
+        tsize = S("title_size").uniform(16, 26)
         items = list(inv.header)
         if k["title_number"]:
             num_item = next(it for it in items if it.fld == "invoice_number")
-            if rng.random() < 0.6:
+            if S("title_number_only").random() < 0.6:
                 items.remove(num_item)
         else:
             num_item = None
 
         def draw_title(x: float, y: float, align: str) -> float:
             if num_item:
-                parts = [ttl, inv.number] if rng.random() < 0.5 else [ttl, "#" + inv.number]
+                parts = [ttl, inv.number] if S("title_hash").random() < 0.5 else [ttl, "#" + inv.number]
                 boxes = cv.parts(
                     x,
                     y + tsize,
@@ -863,9 +930,8 @@ class Renderer:
                 by = self.party_blocks(m, ty + 6, W - 2 * m)
                 y = self.header_cells(items, m, W - m, by + 6, header_style) + 8
         if k["currency_where"] == "note":
-            boxes = cv.parts(
-                m, y, [phrase(rng, "amounts_in", "fr" if inv.lang == "fr" else "en"), inv.currency], s * 0.9, color=GREY
-            )
+            note = phrase(S("amounts_in"), "amounts_in", "fr" if inv.lang == "fr" else "en")
+            boxes = cv.parts(m, y, [note, inv.currency], s * 0.9, color=GREY)
             self.put("currency", inv.currency, inv.currency, boxes[1])
             y += self.lh + 4
         y = self.table(m, W - m, y)
@@ -874,13 +940,14 @@ class Renderer:
 
     def party_blocks(self, x: float, y: float, width: float) -> float:
         ship = self.k["ship_to"]
-        cg = self.rng.random() < 0.15
+        cg = self.S("customer_gst").random() < 0.15
         colw = width / 2 - 8 if ship else width
         a = self.party_block(x, y, "bill_to", self.inv.customer, colw, cg)
         if ship:
+            site = self.S("ship_site").choice(["Receiving Dock 3", "Plant 2", "Warehouse"])
             other = C.Party(
                 self.inv.customer.name,
-                [self.rng.choice(["Receiving Dock 3", "Plant 2", "Warehouse"])] + self.inv.customer.lines[-2:],
+                [site] + self.inv.customer.lines[-2:],
                 self.inv.customer.province,
                 "CA",
             )
@@ -890,15 +957,15 @@ class Renderer:
 
     # --- table ---
     def columns(self, x0: float, x1: float) -> list[tuple[str, str, float, str]]:
-        inv, rng = self.inv, self.rng
+        inv, S = self.inv, self.S
         has_qty = any(li.quantity is not None for li in inv.lines)
         cols = []
-        if any(li.sku for li in inv.lines) and rng.random() < 0.6:
+        if any(li.sku for li in inv.lines) and S("col_sku").random() < 0.6:
             cols.append(("sku", self.lab("sku"), 0.13, "left"))
         cols.append(("description", self.lab("description"), 0.0, "left"))
-        if has_qty and (inv.kind != "minimal" or rng.random() < 0.5):
+        if has_qty and (inv.kind != "minimal" or S("col_qty").random() < 0.5):
             cols.append(("qty", self.lab("qty"), 0.08, "right"))
-            if rng.random() < 0.3:
+            if S("col_unit").random() < 0.3:
                 cols.append(("unit", self.lab("unit"), 0.07, "left"))
             cols.append(("unit_price", self.lab("unit_price"), 0.14, "right"))
         cols.append(("amount", self.lab("amount"), 0.15, "right"))
@@ -939,7 +1006,7 @@ class Renderer:
         y = m + s * 1.6
         box = cv.text(m, y, inv.vendor.name, s * 1.2, bold=True)
         self.put("vendor_name", inv.vendor.name, inv.vendor.name, box)
-        if self.rng.random() < 0.8:
+        if self.S("cont_number").random() < 0.8:
             lbl = with_sep(self.lab({"credit": "credit_number"}.get(inv.kind, "invoice_number")), ":")
             boxes = cv.parts(self.W - m, y, [lbl, inv.number], s, align="right")
             self.put("invoice_number", inv.number, inv.number, boxes[1], lbl)
@@ -950,17 +1017,17 @@ class Renderer:
         cols = self.columns(x0, x1)
         self.cols = cols
         y = self.table_header(cols, y)
-        rowh = s * rng.uniform(1.75, 2.15)
+        rowh = s * self.S("row_height").uniform(1.75, 2.15)
         style = self.k["table"]
         dec = inv.ms.decimal
-        sym_lines = inv.ms.symbol and rng.random() < 0.4
+        sym_lines = inv.ms.symbol and self.S("line_symbols").random() < 0.4
         start_y = y
         for i, li in enumerate(inv.lines):
             if y + rowh > self.page_bottom - 6:
                 cv.text(
                     x1,
                     y + rowh * 0.7,
-                    phrase(rng, "continued", "fr" if inv.lang == "fr" else "en"),
+                    phrase(self.S("continued"), "continued", "fr" if inv.lang == "fr" else "en"),
                     s * 0.85,
                     color=GREY,
                     align="right",
@@ -1024,12 +1091,12 @@ class Renderer:
 
     # --- totals ---
     def total_rows(self) -> list[tuple[str, Decimal, str | None, bool]]:
-        inv, rng = self.inv, self.rng
+        inv = self.inv
         lang = inv.lang
         rows: list[tuple[str, Decimal, str | None, bool]] = [(self.lab("subtotal"), inv.subtotal, "subtotal", False)]
         if inv.freight is not None:
             rows.append((self.lab("freight"), inv.freight, None, False))
-        rate_style = rng.choice(["paren", "plain", "at", "none"])
+        rate_style = self.S("rate_style").choice(["paren", "plain", "at", "none"])
         for tax in inv.taxes:
             name = self.lab(tax.code)
             rt = C.rate_text(tax.rate, "fr" if lang == "fr" or (lang == "bi" and inv.ms.decimal == ",") else "en")
@@ -1050,19 +1117,19 @@ class Renderer:
         return rows
 
     def totals(self, y: float) -> float:
-        inv, cv, s, rng, k = self.inv, self.cv, self.s, self.rng, self.k
+        inv, cv, s, S, k = self.inv, self.cv, self.s, self.S, self.k
         rows = self.total_rows()
-        lh = s * rng.uniform(1.55, 1.9)
+        lh = s * S("totals_lh").uniform(1.55, 1.9)
         need = lh * len(rows) + 14 + self.lh * 4.5 + (122 if k["stub"] else 0)
         if y + need > self.page_bottom:
             cv.new_page()
             y = self.cont_header()
         style = k["totals"]
-        sep = rng.choice([":", "", ""])
+        sep = S("totals_sep").choice([":", "", ""])
         code_on_total = k["currency_where"] == "total" or bool(inv.ms.code)
         if code_on_total and not inv.ms.code:
             inv.ms.code = inv.currency
-        total_size = s * rng.uniform(1.0, 1.3)
+        total_size = s * S("total_size").uniform(1.0, 1.3)
         amt_texts = [inv.amt(a, code=(fld == "grand_total" and code_on_total)) for _l, a, fld, _e in rows]
         if style == "footer":
             cols = self.cols
@@ -1085,13 +1152,13 @@ class Renderer:
             row_lx = min(lx, ax - cv.tw(raw, size, emph) - 14)  # never under a wide amount
             if style == "footer":
                 cv.hline(self.cols[0][2], self.cols[-1][3], y - lh + 2, (0.7, 0.7, 0.7), 0.4)
-            elif emph and rng.random() < 0.5:
+            elif emph and (r := S(f"total_box:{lbl}")).random() < 0.5:
                 x_left = row_lx - cv.tw(lbl_text, size, True) - 6
-                if rng.random() < 0.5:
+                if r.random() < 0.5:
                     cv.rect(x_left, y - size * 1.15, ax + 3, y + size * 0.45, fill=LIGHT, stroke=None)
                 else:
                     cv.hline(x_left, ax + 3, y - size * 1.2, INK, 0.8)
-            cv.text(row_lx, y, lbl_text, size, bold=emph or rng.random() < 0.3, align="right")
+            cv.text(row_lx, y, lbl_text, size, bold=emph or S(f"total_bold:{lbl}").random() < 0.3, align="right")
             if fld == "grand_total" and code_on_total and inv.ms.code and inv.ms.code in raw:
                 num = raw.replace(inv.ms.code, "").strip()
                 parts = [num, inv.ms.code] if inv.ms.code_after else [inv.ms.code, num]
@@ -1113,7 +1180,7 @@ class Renderer:
 
     # --- footer and stub ---
     def footer(self, y: float) -> None:
-        inv, cv, s, rng, k, m = self.inv, self.cv, self.s, self.rng, self.k, self.m
+        inv, cv, s, S, k, m = self.inv, self.cv, self.s, self.S, self.k, self.m
         lang = "fr" if inv.lang == "fr" else "en"
         y += self.lh
         if inv.terms and k["terms_where"] == "footer":
@@ -1121,31 +1188,31 @@ class Renderer:
             boxes = cv.parts(m, y, [lbl, inv.terms.raw], s)
             self.put("payment_terms", inv.terms.raw, inv.terms.raw, boxes[1], lbl)
             y += self.lh
-        if rng.random() < 0.4:
-            cv.text(m, y, phrase(rng, "interest", lang), s * 0.8, color=GREY)
+        if (r := S("footer_interest")).random() < 0.4:
+            cv.text(m, y, phrase(r, "interest", lang), s * 0.8, color=GREY)
             y += self.lh
-        if rng.random() < 0.3:
+        if (r := S("footer_bank")).random() < 0.3:
             cv.text(
                 m,
                 y,
-                f"Transit {rng.randint(10000, 99999)}  Institution {rng.randint(1, 9):03d}  "
-                f"Account {rng.randint(1000000, 9999999)}",
+                f"Transit {r.randint(10000, 99999)}  Institution {r.randint(1, 9):03d}  "
+                f"Account {r.randint(1000000, 9999999)}",
                 s * 0.8,
                 color=GREY,
             )
             y += self.lh
-        if rng.random() < 0.5:
-            cv.text(self.W / 2, y + 2, phrase(rng, "thanks", lang), s, color=self.accent, align="center")
+        if (r := S("footer_thanks")).random() < 0.5:
+            cv.text(self.W / 2, y + 2, phrase(r, "thanks", lang), s, color=self.accent, align="center")
             y += self.lh * 1.5
         stub_top = self.page_bottom - 118
         if k["bn_where"] == "footer":
-            one_line = self.show_bn and self.show_qst and rng.random() < 0.6
+            one_line = self.show_bn and self.show_qst and S("bn_one_line").random() < 0.6
             n_lines = 1 if one_line else int(self.show_bn) + int(self.show_qst)
             bottom = (stub_top - 10) if k["stub"] else self.page_bottom - 4
             fy = bottom - self.lh * (n_lines - 1)
             if fy < y:  # no room at the foot of the page: print it right here
                 fy = y
-            x = self.W / 2 if rng.random() < 0.5 else m
+            x = self.W / 2 if S("bn_footer_x").random() < 0.5 else m
             al = "center" if x == self.W / 2 else "left"
             if one_line:
                 parts = [with_sep(self.lab("bn"), ":"), self.bn_raw, "|", with_sep(self.lab("qst"), ":"), self.qst_raw]
@@ -1160,14 +1227,14 @@ class Renderer:
             self.stub(stub_top)
 
     def stub(self, y: float) -> None:
-        inv, cv, s, rng, m, W = self.inv, self.cv, self.s, self.rng, self.m, self.W
+        inv, cv, s, S, m, W = self.inv, self.cv, self.s, self.S, self.m, self.W
         lang = "fr" if inv.lang == "fr" else "en"
         cv.hline(m, W - m, y, GREY, 0.8, dashes="[4 3] 0")
         y += s * 1.6
-        cv.text(W / 2, y, phrase(rng, "remit", lang), s * 0.85, bold=True, align="center")
+        cv.text(W / 2, y, phrase(S("remit"), "remit", lang), s * 0.85, bold=True, align="center")
         y += s * 1.4
         left_y = y + self.lh
-        lbl = phrase(rng, "payable", lang) + ":"
+        lbl = phrase(S("payable"), "payable", lang) + ":"
         cv.text(m, left_y, lbl, s * 0.9, color=GREY)
         box = cv.text(m, left_y + self.lh, inv.vendor.name, s, bold=True)
         self.put("vendor_name", inv.vendor.name, inv.vendor.name, box)
@@ -1182,12 +1249,11 @@ class Renderer:
             items.append((self.lab("customer_account"), acct, None, None))
         num_key = {"credit": "credit_number", "utility": "bill_number"}.get(inv.kind, "invoice_number")
         items.append((self.lab(num_key), inv.number, "invoice_number", inv.number))
-        if inv.due and rng.random() < 0.7:
+        if inv.due and S("stub_due").random() < 0.7:
             items.append((self.lab("due_date"), inv.d(inv.due), "due_date", inv.due.isoformat()))
-        items.append(
-            (self.lab("amount_due"), inv.amt(inv.grand, symbol=rng.random() < 0.5), "grand_total", float(inv.grand))
-        )
-        items.append((phrase(rng, "enclosed", lang), "______________", None, None))
+        lbl = self.lab("amount_due")
+        items.append((lbl, inv.amt(inv.grand, symbol=S("stub_symbol").random() < 0.5), "grand_total", float(inv.grand)))
+        items.append((phrase(S("enclosed"), "enclosed", lang), "______________", None, None))
         x0 = W * 0.5
         x1 = W - m
         yy = y
@@ -1202,9 +1268,10 @@ class Renderer:
     # --- utility bill ---
     def render_utility(self) -> None:
         inv, cv, s, rng, m, W = self.inv, self.cv, self.s, self.rng, self.m, self.W
+        S = self.S
         lang = inv.lang
         vb = self.vendor_block(m, m, "left")
-        ttl = title(rng, "utility", lang)
+        ttl = title(S("title"), "utility", lang)
         cv.text(W - m, m + 18, ttl, 18, bold=True, color=self.accent, align="right")
         # amount-due panel, top right
         px0, px1 = W * 0.58, W - m
@@ -1220,7 +1287,8 @@ class Renderer:
         self.put("due_date", inv.due.isoformat(), inv.d(inv.due), boxes[1], dl)
         items = [it for it in inv.header if it.fld != "due_date"]
         hy = self.header_kv(items, px0, px1, py0 + 76)
-        by = self.party_block(m, vb + 10, "ship_to" if rng.random() < 0.5 else "bill_to", inv.customer, W * 0.45, False)
+        party = "ship_to" if S("utility_party").random() < 0.5 else "bill_to"
+        by = self.party_block(m, vb + 10, party, inv.customer, W * 0.45, False)
         y = max(hy, by) + 16
         # account summary
         prev = C.money(rng.uniform(80, 2400))
@@ -1245,7 +1313,7 @@ class Renderer:
         y += self.lh * 1.6
         # meter
         if any(li.unit for li in inv.lines):
-            meter = rng.randint(1000000, 9999999)
+            meter = S("meter").randint(1000000, 9999999)
             prev_r = rng.randint(10000, 90000)
             usage = next(int(li.quantity) for li in inv.lines if li.unit)
             cv.text(
@@ -1259,14 +1327,14 @@ class Renderer:
             y += self.lh * 1.4
         cv.text(m, y, "Current charges" if lang != "fr" else "Frais courants", s * 1.1, bold=True, color=self.accent)
         y += 6
-        self.k["table"] = rng.choice(["lines", "plain"])
+        self.k["table"] = S("utility_table").choice(["lines", "plain"])
         y = self.table(m, W - m, y)
         y = self.totals(y)
         self.footer(y)
 
     # --- minimal handwritten-style ---
     def render_minimal(self) -> None:
-        inv, cv, s, rng, m, W = self.inv, self.cv, self.s, self.rng, self.m, self.W
+        inv, cv, s, S, m, W = self.inv, self.cv, self.s, self.S, self.m, self.W
         y = m + 14
         box = cv.text(m, y, inv.vendor.name, 13, bold=True)
         self.put("vendor_name", inv.vendor.name, inv.vendor.name, box)
@@ -1277,20 +1345,20 @@ class Renderer:
             cv.text(m, y, inv.vendor.phone, s)
             y += self.lh
         y += 10
-        cv.text(W - m, m + 14, "INVOICE" if rng.random() < 0.7 else "Invoice", 16, bold=True, align="right")
-        numlbl = rng.choice(["No.", "Invoice #", "#", "Invoice No:", "Inv"])
+        cv.text(W - m, m + 14, "INVOICE" if S("title_case").random() < 0.7 else "Invoice", 16, bold=True, align="right")
+        numlbl = S("label:invoice_number").choice(["No.", "Invoice #", "#", "Invoice No:", "Inv"])
         boxes = cv.parts(W - m, m + 34, [numlbl, inv.number], s * 1.1, align="right")
         self.put("invoice_number", inv.number, inv.number, boxes[1], numlbl)
-        dl = rng.choice(["Date:", "Date", "Dated"])
+        dl = S("label:invoice_date").choice(["Date:", "Date", "Dated"])
         boxes = cv.parts(W - m, m + 34 + self.lh * 1.3, [dl, inv.d(inv.inv_date)], s * 1.1, align="right")
         self.put("invoice_date", inv.inv_date.isoformat(), inv.d(inv.inv_date), boxes[1], dl)
         yy = m + 34 + self.lh * 2.6
         if inv.po:
-            pl = rng.choice(["PO:", "P.O.", "Your PO#"])
+            pl = S("label:po_number").choice(["PO:", "P.O.", "Your PO#"])
             boxes = cv.parts(W - m, yy, [pl, inv.po], s * 1.1, align="right")
             self.put("po_number", inv.po, inv.po, boxes[1], pl)
             yy += self.lh * 1.3
-        cv.text(m, y, rng.choice(["To:", "Bill to:", "For:"]), s, bold=True)
+        cv.text(m, y, S("label:bill_to").choice(["To:", "Bill to:", "For:"]), s, bold=True)
         cv.text(m + 50, y, inv.customer.name, s)
         y += self.lh
         cv.text(m + 50, y, inv.customer.lines[-1], s)
@@ -1305,11 +1373,11 @@ class Renderer:
             self.put("payment_terms", inv.terms.raw, inv.terms.raw, boxes[1], "Terms:")
             y += self.lh
         if self.show_bn and self.k["bn_where"] != "tax":
-            gl = rng.choice(["GST #", "GST/HST #", "HST #", "GST No."])
+            gl = S("label:bn").choice(["GST #", "GST/HST #", "HST #", "GST No."])
             boxes = cv.parts(m, y + 6, [gl, self.bn_raw], s)
             self.put("gst_hst_registration_number", C.reg_value(self.bn_raw), self.bn_raw, boxes[1], gl)
             y += self.lh
-        cv.text(m, y + 20, rng.choice(["Thanks!", "Thank you!", "Much appreciated."]), s)
+        cv.text(m, y + 20, S("thanks").choice(["Thanks!", "Thank you!", "Much appreciated."]), s)
 
     # --- truth ---
     def truth(self) -> dict[str, Any]:
@@ -1484,10 +1552,13 @@ def make_case(out_dir: str | Path, seed: int, index: int, archetype: str, scanne
     rng = case_rng(seed, index)
     inv = make_invoice(rng, archetype)
     pdf, truth = Renderer(inv, rng).render()
-    cid = f"s{seed}-{index:04d}"
+    return _write_case(out, f"s{seed}-{index:04d}", pdf, truth, scanned, f"ap-bench-scan:{seed}:{index}")
+
+
+def _write_case(out: Path, cid: str, pdf: bytes, truth: dict[str, Any], scanned: bool, scan_seed: str) -> Case:
     truth = {"id": cid, **truth, "scanned": scanned}
     if scanned:
-        srng = random.Random(f"ap-bench-scan:{seed}:{index}")
+        srng = random.Random(scan_seed)
         as_png = truth["page_count"] == 1 and srng.random() < 0.4
         data, meta = scan(pdf, srng, as_png)
         _rotate_truth(truth, meta["angles"])
@@ -1501,6 +1572,44 @@ def make_case(out_dir: str | Path, seed: int, index: int, archetype: str, scanne
     tpath = out / f"{cid}.truth.json"
     tpath.write_text(json.dumps(truth, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     return Case(cid, path, tpath, truth)
+
+
+# --- supplier streams: many invoices from one supplier ---------------------------------------
+
+
+def supplier_id(seed: int, supplier: int) -> str:
+    return f"s{seed}-v{supplier:03d}"
+
+
+def supplier_archetype(seed: int, supplier: int) -> str:
+    """Suppliers take the layouts in a seeded rotation, so every layout has suppliers."""
+    order = list(ARCHETYPES)
+    random.Random(f"ap-bench-suppliers:{seed}").shuffle(order)
+    return order[supplier % len(order)]
+
+
+def stream_scanned(seed: int, supplier: int, index: int, scanned_fraction: float) -> bool:
+    """Whether this invoice of the supplier arrives as a scan (each one on its own: a share, at random)."""
+    if scanned_fraction <= 0:
+        return False
+    return scanned_fraction >= 1 or random.Random(f"ap-bench-stream-scan:{seed}:{supplier}:{index}").random() < (
+        scanned_fraction
+    )
+
+
+def make_stream_case(out_dir: str | Path, seed: int, supplier: int, index: int, scanned: bool = False) -> Case:
+    """Invoice ``index`` (from 0) of supplier ``supplier``: the supplier's name, address, tax numbers,
+    layout, fonts, wording and formats are the same on every one; the number (in sequence), dates (in
+    order), PO, lines and amounts are new each time. Deterministic from (seed, supplier, index)."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    sid = supplier_id(seed, supplier)
+    rng = random.Random(f"ap-bench-stream:{GENERATOR_VERSION}:{seed}:{supplier}:{index}")
+    style = Style(rng, key=f"{GENERATOR_VERSION}:{sid}", index=index)
+    inv = make_invoice(rng, supplier_archetype(seed, supplier), style)
+    pdf, truth = Renderer(inv, rng).render()
+    truth = {**truth, "supplier": sid, "stream_index": index}
+    return _write_case(out, f"{sid}-{index:04d}", pdf, truth, scanned, f"ap-bench-scan:{sid}:{index}")
 
 
 def generate(out_dir: str | Path, n: int, seed: int, scanned_fraction: float = 0.3) -> list[Case]:
