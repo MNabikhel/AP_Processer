@@ -373,10 +373,12 @@ def test_doctor_reports_the_local_model(lm_studio, reference):
 def test_doctor_local_dry_run(lm_studio, reference, ground_truth):
     from ap_coder.doctor import PASS, run_checks
 
-    truth = json.dumps(ground_truth)
-    server = lm_studio(["qwen2.5-7b-instruct"], V0_LOADED, reply=lambda body: chat_reply(truth))
+    # The dry run asks what the pipeline asks a local model: the accounts of two lines.
+    picks = {"lines": [{"line_number": 1, "gl_code": "6000", "cost_center": "", "reason": "supplies"},
+                       {"line_number": 2, "gl_code": "6800", "cost_center": "", "reason": "courier"}]}  # fmt: skip
+    server = lm_studio(["qwen2.5-7b-instruct"], V0_LOADED, reply=lambda body: chat_reply(json.dumps(picks)))
     checks = {c.area: c for c in run_checks(local_settings(server.base_url), lambda: reference, online=True)}
-    assert checks["local dry run"].status == PASS
+    assert checks["local dry run"].status == PASS and "line 1 -> 6000" in checks["local dry run"].detail
 
 
 # --- Settings page --------------------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import importlib.metadata
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlparse
 
 from .config import Settings, _on_this_network
@@ -197,7 +198,7 @@ def run_checks(
         add("DI connectivity", SKIP, "run with --online to test")
         add("AOAI connectivity", SKIP, "run with --online to test")
         if provider == "local":
-            add("local dry run", SKIP, "run with --online to code one made-up invoice with the local model")
+            add("local dry run", SKIP, "run with --online to ask the local model for two lines' accounts")
         return checks
 
     if di.endpoint:
@@ -215,7 +216,7 @@ def run_checks(
 
     if provider == "local":
         if reference is not None and check_server(settings.llm).active:
-            add(*_aoai_dry_run(settings, reference, provider="local"))
+            add(*_local_dry_run(settings, reference))
         else:
             add("local dry run", SKIP, "no model loaded or reference data missing")
     elif oai.endpoint and reference is not None:
@@ -309,3 +310,23 @@ def format_checks(checks: list[Check]) -> str:
 
 def exit_code(checks: list[Check]) -> int:
     return 1 if any(c.status == FAIL for c in checks) else 0
+
+
+def _local_dry_run(settings: Settings, reference: Any) -> tuple[str, str, str]:
+    """What the pipeline asks a local model for: the accounts of lines nothing else could code (the invoice
+    itself is read by the local reader). Two made-up lines, so it answers in seconds even on a laptop CPU."""
+    import time
+
+    from .inference import suggest_accounts
+
+    lines = [(1, "Printer paper, letter size, 10 cases", 420.0), (2, "Courier delivery, same day", 35.0)]
+    started = time.perf_counter()
+    try:
+        picks = suggest_accounts(InvoiceCoder(settings, reference), "Sample Office Supply Ltd.", lines)
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        return "local dry run", WARN, f"reached the model but: {_scrub(str(exc), settings)}"
+    took = time.perf_counter() - started
+    if not picks:
+        return "local dry run", WARN, f"the model answered in {took:.0f}s but gave no account from the chart"
+    chosen = ", ".join(f"line {n} -> {gl}" for n, (gl, _, _) in sorted(picks.items()))
+    return "local dry run", PASS, f"accounts from the chart in {took:.0f}s: {chosen}"

@@ -149,7 +149,7 @@ codes one made-up invoice with it.
 | `AP_LLM_MODEL` | empty | empty = the chat model loaded in LM Studio (never an embedding model) |
 | `AP_LLM_VISION` | `auto` | `on` / `off`: show the model page images |
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
-| `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `300`, `4096` | a laptop without a graphics card is slow |
+| `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
 
 The model is asked for the same strict JSON schema as Azure (LM Studio supports it). A server that
 refuses it gets plain JSON mode, then the schema in the prompt; replies wrapped in code fences or

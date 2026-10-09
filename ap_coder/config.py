@@ -113,7 +113,7 @@ class LocalLLMSettings:
     base_url: str = DEFAULT_LLM_BASE_URL
     model: str = ""
     api_key: str = "lm-studio"  # LM Studio and Ollama accept any key
-    timeout_seconds: float = 300.0  # a laptop without a graphics card can take minutes per invoice
+    timeout_seconds: float = 600.0  # a laptop without a graphics card: the first call took 6.5 min with a 7B model
     max_output_tokens: int = 4096
     vision: str = "auto"  # auto = when the loaded model can see pages; on / off to force it
     # Document text sent to a local model, so a small context window is not overrun (start and end are kept).
@@ -187,7 +187,7 @@ class Settings:
             base_url=normalise_base_url(_env("AP_LLM_BASE_URL")),
             model="" if model.lower() == "auto" else model,
             api_key=_env("AP_LLM_API_KEY", "lm-studio"),
-            timeout_seconds=_env_float("AP_LLM_TIMEOUT_SECONDS", 300.0),
+            timeout_seconds=_env_float("AP_LLM_TIMEOUT_SECONDS", 600.0),
             max_output_tokens=_env_int("AP_LLM_MAX_TOKENS", 4096),
             vision=vision_mode if vision_mode in LLM_VISION_MODES else "auto",
             max_prompt_chars=_env_int("AP_LLM_MAX_PROMPT_CHARS", 24_000),
