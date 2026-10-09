@@ -116,11 +116,14 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         sources["ai"] = _ai_readings(layout, ai_values)
     if second_read and layout.source == "ocr":
         try:
-            from .layout import second_read_layout
+            from .layout import _engine_name, second_engine_name, second_read_layout
 
             second_layout = second_read_layout(path)
             if second_layout is not None:
-                sources["ocr"] = read_fields(second_layout, received=today)
+                # Another OCR model makes its own mistakes: an independent reader ("ocr2"). The same
+                # model on a straightened page shares the first read's blind spots ("ocr").
+                name = "ocr2" if second_engine_name() != _engine_name() else "ocr"
+                sources[name] = read_fields(second_layout, received=today)
         except Exception as exc:  # an extra reader: never fatal
             log.warning("%s: second read failed (%s)", path.name, exc)
     if cross_read:

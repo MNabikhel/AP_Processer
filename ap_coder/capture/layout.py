@@ -107,21 +107,30 @@ def _rotated(page: Any, matrix: Any, x0: float, y0: float, x1: float, y1: float)
 
 # ---------------------------------------------------------------- OCR
 
-_OCR_ENGINE: Any = None
+
+def _installed(module: str) -> bool:
+    try:
+        __import__(module)
+        return True
+    except Exception:
+        return False
 
 
 def _engine_name() -> str:
-    """The OCR engine: "ppocrv5" (RapidOCR 3 with PP-OCRv5 models, which keeps the spaces between
-    words) when installed, else "rapidocr" (rapidocr-onnxruntime, PP-OCRv4). ``AP_OCR_ENGINE`` forces one."""
+    """The first-read OCR engine: "rapidocr" (rapidocr-onnxruntime, PP-OCRv4; the reader is tuned on
+    it) when installed, else "ppocrv5" (RapidOCR 3, PP-OCRv5). ``AP_OCR_ENGINE`` forces one."""
     forced = os.environ.get("AP_OCR_ENGINE")
     if forced:
         return forced
-    try:
-        import rapidocr  # noqa: F401
+    return "rapidocr" if _installed("rapidocr_onnxruntime") else "ppocrv5"
 
-        return "ppocrv5"
-    except Exception:
-        return "rapidocr"
+
+def second_engine_name() -> str:
+    """The engine of the second read: the other model when both are installed (two models make
+    independent mistakes), else the same one on a straightened, enlarged page."""
+    first = _engine_name()
+    other = "ppocrv5" if first == "rapidocr" else "rapidocr"
+    return other if _installed("rapidocr" if other == "ppocrv5" else "rapidocr_onnxruntime") else first
 
 
 def ocr_available() -> bool:
@@ -134,11 +143,14 @@ def ocr_available() -> bool:
     return False
 
 
-def _engine() -> Any:
+_ENGINES: dict[str, Any] = {}
+
+
+def _engine(name: str | None = None) -> Any:
     """A callable: RGB image array -> [(quad, text, score), ...]."""
-    global _OCR_ENGINE
-    if _OCR_ENGINE is None:
-        if _engine_name() == "ppocrv5":
+    name = name or _engine_name()
+    if name not in _ENGINES:
+        if name == "ppocrv5":
             from rapidocr import ModelType, OCRVersion, RapidOCR
 
             params = {"Det.ocr_version": OCRVersion.PPOCRV5, "Rec.ocr_version": OCRVersion.PPOCRV5,
@@ -152,16 +164,16 @@ def _engine() -> Any:
                     return []
                 return [(b.tolist(), t, float(c)) for b, t, c in zip(res.boxes, res.txts, res.scores, strict=False)]
 
-            _OCR_ENGINE = run
+            _ENGINES[name] = run
         else:
             from rapidocr_onnxruntime import RapidOCR
 
             eng4 = RapidOCR()
-            _OCR_ENGINE = lambda img: eng4(img)[0]  # noqa: E731
-    return _OCR_ENGINE
+            _ENGINES[name] = lambda img: eng4(img)[0]
+    return _ENGINES[name]
 
 
-def _ocr_cached(png_bytes: bytes, run: Any) -> Any:
+def _ocr_cached(png_bytes: bytes, run: Any, engine: str | None = None) -> Any:
     """The OCR engine's raw result, kept on disk by image hash when ``AP_OCR_CACHE`` names a folder
     (for benchmark iterations: the reader changes, the scans do not)."""
     folder = os.environ.get("AP_OCR_CACHE")
@@ -170,7 +182,8 @@ def _ocr_cached(png_bytes: bytes, run: Any) -> Any:
     import hashlib
     import json
 
-    tag = "" if _engine_name() == "rapidocr" else f"-{_engine_name()}"
+    engine = engine or _engine_name()
+    tag = "" if engine == "rapidocr" else f"-{engine}"
     path = Path(folder) / f"{hashlib.sha256(png_bytes).hexdigest()}{tag}.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -186,7 +199,7 @@ def _ocr_cached(png_bytes: bytes, run: Any) -> Any:
     return result
 
 
-def ocr_image(png_bytes: bytes, number: int) -> PageLayout:
+def ocr_image(png_bytes: bytes, number: int, engine: str | None = None) -> PageLayout:
     """OCR one page image. Each OCR line becomes words (split on spaces, boxes shared by length)."""
     import io
 
@@ -195,7 +208,7 @@ def ocr_image(png_bytes: bytes, number: int) -> PageLayout:
 
     img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
     width, height = img.size
-    result = _ocr_cached(png_bytes, lambda: _engine()(np.asarray(img)))
+    result = _ocr_cached(png_bytes, lambda: _engine(engine)(np.asarray(img)), engine)
     words: list[Word] = []
     for quad, text, score in result or []:
         xs = [p[0] for p in quad]
@@ -349,6 +362,12 @@ def _prepared(png_bytes: bytes) -> bytes:
     return out.getvalue()
 
 
+def _second_image(png_bytes: bytes) -> bytes:
+    """The page as the second read sees it: as scanned for another model (its own view of the same
+    pixels), straightened and enlarged when it is the same model again."""
+    return png_bytes if second_engine_name() != _engine_name() else _prepared(png_bytes)
+
+
 def second_read_layout(path: str | Path, max_pages: int = 20) -> DocLayout | None:
     """An independent second OCR of a scanned invoice, from a straightened, enlarged copy of each page.
     Its boxes are fractions of the page like the first read's (the straightening moves them by at most
@@ -362,7 +381,7 @@ def second_read_layout(path: str | Path, max_pages: int = 20) -> DocLayout | Non
     if path.suffix.lower() in IMAGE_EXTENSIONS:
         with pymupdf.open(path) as img_doc:
             png = path.read_bytes() if path.suffix.lower() == ".png" else img_doc[0].get_pixmap().tobytes("png")
-        pages.append(ocr_image(_prepared(png), 1))
+        pages.append(ocr_image(_second_image(png), 1, second_engine_name()))
     else:
         with pymupdf.open(path) as doc:
             for i, page in enumerate(doc):
@@ -370,5 +389,5 @@ def second_read_layout(path: str | Path, max_pages: int = 20) -> DocLayout | Non
                     break
                 if len(_text_layer_page(page, i + 1).words) >= MIN_TEXT_WORDS:
                     return None  # a text PDF: the text layer is exact
-                pages.append(ocr_image(_prepared(_page_png(page)), i + 1))
+                pages.append(ocr_image(_second_image(_page_png(page)), i + 1, second_engine_name()))
     return DocLayout(pages, "ocr")

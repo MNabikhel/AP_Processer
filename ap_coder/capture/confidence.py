@@ -37,7 +37,7 @@ from .types import (
 )
 
 # How far each reader is trusted on its own (before its per-reading score).
-RELIABILITY = {"rules": 0.85, "template": 0.92, "di": 0.85, "ai": 0.8, "ocr": 0.8}
+RELIABILITY = {"rules": 0.85, "template": 0.92, "di": 0.85, "ai": 0.8, "ocr": 0.8, "ocr2": 0.8}
 VERIFIED_AT = 0.985
 SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
 # Checks whose failure has innocent explanations (exempt lines, shipping not taxed, line items the
@@ -107,6 +107,8 @@ def _groups(field: str, by_source: dict[str, list[Reading]]) -> list[_Group]:
             if isinstance(key, float):
                 key = round(key, 2)
             g = groups.setdefault(key, _Group(key, r.value, []))
+            if field == "vendor_name" and len(str(r.value)) > len(str(g.value)):
+                g.value = r.value  # names that agree once legal suffixes are ignored: the fuller one as printed
             # Lower-ranked candidates of one reader count less: the reader itself preferred another.
             weight = 1.0 if rank == 0 else 0.35
             g.readings.append((source, Reading(r.field, r.value, r.raw, r.boxes, r.score * weight, r.method)))
@@ -339,6 +341,12 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         # shares the first one's blind spots (a word OCR never saw), so with the rule reader it
         # counts as one reader.
         independent = {"rules" if s == "ocr" else s for s in sources}
+        texts = {" ".join(str(r.value).split()).casefold() for _, r in g.readings}
+        if field == "vendor_name" and len(texts) > 1:
+            independent = {"one"}  # they agree on the supplier, not on how its name is printed
+            reasons.append(
+                "readers differ on the exact name: " + " / ".join(sorted({str(r.value) for _, r in g.readings}))
+            )
         if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
         ambiguous = all("ambiguous" in r.method for _, r in g.readings)
