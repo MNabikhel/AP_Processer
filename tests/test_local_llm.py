@@ -292,7 +292,8 @@ def test_codes_with_lm_studio_json_schema(lm_studio, reference, ground_truth, sa
     sent = server.chats[0]
     assert sent["model"] == "qwen2.5-7b-instruct"
     assert sent["response_format"]["type"] == "json_schema"
-    assert sent["max_tokens"] == 4096 and "max_completion_tokens" not in sent and "reasoning_effort" not in sent
+    assert sent["max_tokens"] == 4096 and "max_completion_tokens" not in sent
+    assert sent["reasoning_effort"] == "none"  # never Azure's effort: only the switch that turns thinking off
 
 
 def test_json_schema_rejected_falls_back(lm_studio, reference, ground_truth, sample_markdown_path):
@@ -455,3 +456,105 @@ def test_a_province_as_a_model_writes_it():
     assert province_code("Québec") == "QC" and province_code("Seattle, USA") == "OUTSIDE_CANADA"
     with pytest.raises(ValueError):
         province_code("Narnia")
+
+
+# --- Thinking models (Qwen 3.5 in LM Studio) --------------------------------------------------------------------
+# LM Studio may ignore chat_template_kwargs (its bug tracker #1990): the model thinks anyway, the reasoning comes
+# back in reasoning_content, and with a token limit the answer can be empty.
+
+QWEN35_V0 = [{"id": "qwen3.5-9b", "type": "vlm", "state": "loaded"}]
+TWO_LINES = [(1, "Printer paper, letter size", 420.0), (2, "Courier delivery", 35.0)]
+PICKS = {"lines": [{"line_number": 1, "gl_code": "6000", "cost_center": "", "reason": "supplies"},
+                   {"line_number": 2, "gl_code": "6800", "cost_center": "", "reason": "courier"}]}  # fmt: skip
+
+
+def thinking_reply(content, reasoning, finish="stop"):
+    status, payload = chat_reply(content, finish, model="qwen3.5-9b")
+    payload["choices"][0]["message"]["reasoning_content"] = reasoning
+    return status, payload
+
+
+def ask_accounts(server, reference):
+    from ap_coder.inference import suggest_accounts
+
+    return suggest_accounts(InvoiceCoder(local_settings(server.base_url), reference), "Staples", TWO_LINES)
+
+
+def test_thinking_is_asked_off_and_a_reply_only_in_reasoning_is_read(lm_studio, reference):
+    draft = {"lines": [{"line_number": 1, "gl_code": "6400", "cost_center": "", "reason": "first idea"}]}
+    reasoning = f"Thinking Process:\n1. Paper... maybe {json.dumps(draft)}\nNo, better:\n{json.dumps(PICKS)}"
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: thinking_reply("", reasoning))
+    picks = ask_accounts(server, reference)
+    assert {n: gl for n, (gl, _, _) in picks.items()} == {1: "6000", 2: "6800"}  # the final draft, not the first
+    sent = server.chats[0]
+    assert sent["reasoning_effort"] == "none"  # LM Studio 0.4.8+ turns a Qwen 3.5's thinking off with this
+    assert sent["chat_template_kwargs"] == {"enable_thinking": False}  # vLLM, llama.cpp, hosted Qwen
+    assert sent["response_format"]["type"] == "json_schema"
+
+
+def test_an_answer_left_inside_think_tags_is_read(lm_studio, reference):
+    content = f"<think>Paper is office supplies, courier is freight.\n{json.dumps(PICKS)}</think>"
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: chat_reply(content, model="qwen3.5-9b"))
+    assert set(ask_accounts(server, reference)) == {1, 2}
+
+
+@pytest.mark.parametrize(
+    "content, reasoning",
+    [
+        ("", "Thinking Process:\n\n1. **Analyze the Request:**\n * Line 1: Printer paper ->"),  # split off
+        ("Thinking Process:\n\n1. **Analyze the Request:** {not json", None),  # the template opened <think> itself
+        ("<think>\nLine 1 is paper, so", None),
+    ],
+)
+def test_thinking_until_the_token_limit_is_a_clear_error(lm_studio, reference, sample_markdown_path,
+                                                         content, reasoning):  # fmt: skip
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: thinking_reply(content, reasoning, "length"))
+    with pytest.raises(CodingError, match=r"spent its answer thinking.*4,096.*AP_LLM_MAX_TOKENS.*thinking off"):
+        ask_accounts(server, reference)
+    calls = len(server.chats)
+    with pytest.raises(CodingError, match="spent its answer thinking"):
+        InvoiceCoder(local_settings(server.base_url), reference).code(result_from_text(sample_markdown_path))
+    assert len(server.chats) == calls + 1  # no repair turn: it would be cut off the same way
+
+
+def test_a_cut_off_json_answer_says_so(lm_studio, reference):
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: chat_reply('{"lines": [{"line_', "length"))
+    with pytest.raises(CodingError, match="cut off before the JSON was complete.*AP_LLM_MAX_TOKENS"):
+        ask_accounts(server, reference)
+
+
+def test_an_answer_without_json_is_an_error_not_an_empty_suggestion(lm_studio, reference):
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: chat_reply("Paper is office supplies."))
+    with pytest.raises(CodingError, match="held no JSON"):
+        ask_accounts(server, reference)
+
+
+def test_the_doctor_dry_run_names_the_thinking_problem(lm_studio, reference):
+    from ap_coder.doctor import WARN, run_checks
+
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: thinking_reply("", "Thinking Process:", "length"))
+    checks = {c.area: c for c in run_checks(local_settings(server.base_url), lambda: reference, online=True)}
+    assert checks["local dry run"].status == WARN and "spent its answer thinking" in checks["local dry run"].detail
+
+
+def test_a_server_refusing_the_thinking_fields_is_asked_again_with_fewer(lm_studio, reference):
+    def reply(body):
+        for name in ("reasoning_effort", "chat_template_kwargs"):
+            if name in body:
+                return 400, {"error": {"message": f"Unrecognized request argument supplied: {name}"}}
+        return chat_reply(json.dumps(PICKS), model="qwen3.5-9b")
+
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=reply)
+    assert set(ask_accounts(server, reference)) == {1, 2}
+    sent = [(("reasoning_effort" in c) + ("chat_template_kwargs" in c), c["response_format"]["type"])
+            for c in server.chats]  # fmt: skip
+    assert sent == [(2, "json_schema"), (1, "json_schema"), (0, "json_schema")]  # the schema is kept
+    ask_accounts(server, reference)  # the next call starts with what worked
+    assert len(server.chats) == 4 and "chat_template_kwargs" not in server.chats[-1]
+
+
+def test_qwen35_can_see_pages():
+    from ap_coder.local_llm import looks_like_vision
+
+    assert looks_like_vision("qwen3.5-9b") and looks_like_vision("qwen3.5:9b") and looks_like_vision("Qwen3.5-2B")
+    assert not looks_like_vision("qwen3-8b")

@@ -283,8 +283,9 @@ class InvoiceCoder:
 
     # --- A local model (LM Studio, Ollama) -------------------------------------------------------------------
 
-    def _local_kwargs(self, model: str, mode: str) -> dict[str, Any]:
-        """No Azure-only fields (max_completion_tokens, reasoning_effort): every local server takes these."""
+    def _local_kwargs(self, model: str, mode: str, schema: dict[str, Any] | None = None) -> dict[str, Any]:
+        """No max_completion_tokens: every local server takes max_tokens. Thinking is asked to be off (in the
+        fields each kind of server reads; see local_llm.THINKING_OFF)."""
         llm = self.settings.llm
         kwargs: dict[str, Any] = {"model": model, "temperature": llm.temperature}
         if llm.max_output_tokens:
@@ -292,14 +293,41 @@ class InvoiceCoder:
         if self.settings.openai.seed is not None:
             kwargs["seed"] = self.settings.openai.seed
         if mode == "json_schema":
-            kwargs["response_format"] = response_format(self.schema)
+            kwargs["response_format"] = response_format(schema or self.schema)
         elif mode == "json_object":
             kwargs["response_format"] = {"type": "json_object"}
+        kwargs.update(local_llm.thinking_off(llm.base_url, model))
         return kwargs
 
-    def _with_json_instructions(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _with_json_instructions(
+        self, messages: list[dict[str, Any]], schema: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         system, *rest = messages
-        return [{**system, "content": system["content"] + local_llm.json_instructions(self.schema)}, *rest]
+        return [{**system, "content": system["content"] + local_llm.json_instructions(schema or self.schema)}, *rest]
+
+    def _local_create(self, model: str, messages: list[dict[str, Any]], schema: dict[str, Any] | None = None) -> Any:
+        """One chat call to the local model, in the best way its server takes: the strict schema, else plain JSON
+        mode, else the schema in the prompt; with the thinking switch, else without the fields the server refused.
+        What worked is remembered for the next call."""
+        base = self.settings.llm.base_url
+        mode = local_llm.start_mode(base, model)
+        while True:
+            kind = local_llm.RESPONSE_MODES[mode]
+            kwargs = self._local_kwargs(model, kind, schema)
+            sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
+            try:
+                return self.client.chat.completions.create(messages=sent, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
+                if "extra_body" in kwargs and local_llm.refuses_extra_fields(exc):
+                    if local_llm.refuse_thinking_off(base, model):
+                        log.info("%s refused the thinking switch (%s); asking without it", model, exc)
+                        continue
+                if local_llm.rejects_format(exc) and mode + 1 < len(local_llm.RESPONSE_MODES):
+                    log.info("%s refused response_format=%s (%s); trying the next way", model, kind, exc)
+                    mode += 1
+                    local_llm.remember_mode(base, model, mode)
+                    continue
+                raise self._local_error(exc) from exc
 
     def _local_error(self, exc: Exception) -> CodingError:
         import openai
@@ -331,39 +359,22 @@ class InvoiceCoder:
         """Ask for the strict schema first; a server that refuses it gets plain JSON mode, then the schema in the
         prompt. Each reply is parsed loosely and validated with the same model as Azure's, with one repair turn."""
         model = self._prepare_local()
-        base = self.settings.llm.base_url
         messages = self.build_messages(extraction, images, history)
         images_attached = len(images) if images and self.profile.supports_vision else 0
         usage_total: dict[str, int] = {}
-        mode = local_llm.start_mode(base, model)
         calls = repairs = 0
         while True:
             calls += 1
-            kind = local_llm.RESPONSE_MODES[mode]
-            sent = messages if kind == "json_schema" else self._with_json_instructions(messages)
-            try:
-                response = self.client.chat.completions.create(messages=sent, **self._local_kwargs(model, kind))
-            except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
-                if local_llm.rejects_format(exc) and mode + 1 < len(local_llm.RESPONSE_MODES):
-                    log.info("%s refused response_format=%s (%s); trying the next way", model, kind, exc)
-                    mode += 1
-                    local_llm.remember_mode(base, model, mode)
-                    continue
-                raise self._local_error(exc) from exc
+            response = self._local_create(model, messages)
             _accumulate_usage(usage_total, getattr(response, "usage", None))
             choice = response.choices[0]
-            message = choice.message
-            # LM Studio puts a reasoning model's text in reasoning_content when it never got to the answer.
-            raw = message.content or getattr(message, "reasoning_content", None) or ""
-            data = local_llm.parse_json_reply(raw)
+            reply = local_llm.read_reply(choice, self.settings.llm.max_output_tokens)
+            raw, data = reply.raw, reply.data
             try:
                 if data is None:
-                    if choice.finish_reason == "length":
-                        raise CodingError(
-                            "The model's reply was cut off before it finished; raise AP_LLM_MAX_TOKENS "
-                            "(or load a model that doesn't think at length)"
-                        )
-                    raise ValueError("the reply held no JSON object")
+                    if reply.cut_off:
+                        raise CodingError(reply.problem)  # a repair turn would be cut off the same way
+                    raise ValueError(reply.problem)
                 coding = InvoiceCoding.model_validate(data)
             except (ValueError, ValidationError) as exc:
                 if repairs >= self.max_repair_attempts:
@@ -431,27 +442,11 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
     if history:
         user += f"\n\nHow AP coded similar lines before:\n{history}"
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-    base = coder.settings.llm.base_url
-    mode = local_llm.start_mode(base, model)
-    while True:
-        kind = local_llm.RESPONSE_MODES[mode]
-        kwargs = coder._local_kwargs(model, kind)
-        if kind == "json_schema":
-            kwargs["response_format"] = response_format(schema)
-        sent = messages if kind == "json_schema" else [
-            {**messages[0], "content": messages[0]["content"] + local_llm.json_instructions(schema)}, messages[1]
-        ]  # fmt: skip
-        try:
-            response = coder.client.chat.completions.create(messages=sent, **kwargs)
-        except Exception as exc:  # noqa: BLE001 - the lines stay for AP to code
-            if local_llm.rejects_format(exc) and mode + 1 < len(local_llm.RESPONSE_MODES):
-                mode += 1
-                local_llm.remember_mode(base, model, mode)
-                continue
-            raise coder._local_error(exc) from exc
-        break
-    message = response.choices[0].message
-    data = local_llm.parse_json_reply(message.content or getattr(message, "reasoning_content", None) or "") or {}
+    response = coder._local_create(model, messages, schema)
+    reply = local_llm.read_reply(response.choices[0], coder.settings.llm.max_output_tokens)
+    if reply.data is None:  # the lines stay for AP to code; the reason is logged, and shown by the doctor
+        raise CodingError(reply.problem[:1].upper() + reply.problem[1:])
+    data = reply.data
     valid_gl = set(schema["properties"]["lines"]["items"]["properties"]["gl_code"]["enum"])
     valid_cc = set(coder.reference.cost_centers.codes) if coder.reference.cost_centers is not None else set()
     wanted = {n for n, _, _ in lines}
