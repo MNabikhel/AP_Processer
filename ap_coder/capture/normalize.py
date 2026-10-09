@@ -124,8 +124,13 @@ _NUMERIC = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b")
 _WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?[,.]?\s*(\d{4})\b")
 _WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*([a-z]{3,9})\.?,?\s*(\d{4})\b")
 # OCR reads letters of a month as digits ("0ct", "Ju1", "N0v"); fixed in place, same length.
-_OCR_MONTHS = [(re.compile(r"0ct"), "oct"), (re.compile(r"ju1"), "jul"), (re.compile(r"n0v"), "nov"),
-               (re.compile(r"(?<![a-z])1an"), "jan"), (re.compile(r"ap1"), "apr")]
+_OCR_MONTHS = [
+    (re.compile(r"0ct"), "oct"),
+    (re.compile(r"ju1"), "jul"),
+    (re.compile(r"n0v"), "nov"),
+    (re.compile(r"(?<![a-z])1an"), "jan"),
+    (re.compile(r"ap1"), "apr"),
+]
 
 
 def _ocr_date_text(s: str) -> str:
