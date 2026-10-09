@@ -28,7 +28,11 @@ FIELDS = (
     "grand_total",
     "payment_terms",
 )
-AMOUNT_FIELDS = ("subtotal", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total", "grand_total")
+AMOUNT_FIELDS = ("subtotal", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total", "grand_total",
+                 "other_charges")  # fmt: skip
+# Read and checked, but not a header field of the ERP voucher: freight, delivery or a discount printed
+# between the subtotal and the total (so that subtotal + charges + taxes = total).
+EXTRA_FIELDS = ("other_charges",)
 DATE_FIELDS = ("invoice_date", "due_date")
 
 VERIFIED, LIKELY, CHECK, MISSING = "verified", "likely", "check", "missing"

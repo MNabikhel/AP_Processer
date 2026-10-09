@@ -17,7 +17,7 @@ from .confidence import LABELS, fuse
 from .layout import build_layout, ocr_available
 from .locate import locate
 from .reader import read_fields, read_line_items
-from .types import FIELDS, Box, CaptureResult, DocLayout, Reading
+from .types import EXTRA_FIELDS, FIELDS, Box, CaptureResult, DocLayout, Reading
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +119,7 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         if second:
             sources["ocr"] = second
     items = read_line_items(layout)
-    fields, checks = fuse(sources, items, vendor=vendor, today=today, layout_source=layout.source)
+    fields, checks = fuse(sources, items, vendor=vendor, today=today, layout_source=layout.source,
+                          fields=FIELDS + EXTRA_FIELDS)  # fmt: skip
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
                          page_count=len(layout.pages))  # fmt: skip

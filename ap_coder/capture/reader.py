@@ -83,6 +83,11 @@ LABELS: dict[str, list[tuple[str, float]]] = {
     "pst_amount": [(rf"(?:[a-z]{{2}}\s*)?{_A('pst')}", 1.0), (rf"(?:[a-z]{{2}}\s*)?{_A('rst')}", 1.0), (rf"{_A('tvp')}", 1.0), (r"provincial\s*sales\s*tax", 1.0),
                    (r"retail\s*sales\s*tax", 1.0)],
     "qst_amount": [(rf"(?:qc\s+)?{_A('qst')}", 1.0), (rf"{_A('tvq')}", 1.0), (r"quebec\s*sales\s*tax", 1.0)],
+    "other_charges": [
+        (r"(?:freight|shipping|delivery|handling|transport|livraison|frais\s*de\s*(?:livraison|transport|manutention)|"
+         r"environmental\s*(?:fee|levy|handling)|eco\s*-?\s*fees?|ecofrais|fuel\s*surcharge)", 0.9),
+        (r"(?:volume\s*|promotional\s*|early\s*payment\s*)?discount|escompte|rabais|remise", 0.9),
+    ],
     "tax_total": [
         (r"total\s*(?:sales\s*)?tax(?:es)?\b", 1.0), (r"tax(?:es)?\s*total", 0.95), (r"total\s*des\s*taxes", 1.0),
         (r"taxes\b(?!\s*incl)", 0.6), (r"(?:[a-z]{2,3}\s+)?(?:state\s+|county\s+|city\s+|local\s+)?sales\s*tax\b", 0.85), (r"tax\s*(?:amount)?\s*$", 0.55), (r"tax\s*:", 0.6),
@@ -462,6 +467,10 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
 # ---------------------------------------------------------------- pattern-only fields
 
 
+# The customer's own numbers, also as OCR prints the words ("C1ient", "Cust0mer").
+_CUSTOMER_WORD = re.compile(r"c[l1i|]ient|cust[o0]mer|y[o0]ur\b|v[o0]tre|acheteur|buyer")
+
+
 def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
     gst: list[Reading] = []
     qst: list[Reading] = []
@@ -475,7 +484,7 @@ def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
             near = lower[max(0, a - 40) : a]
             if re.search(r"gst|hst|tps|tvh|bn\b|business|entreprise|reg", near):
                 score = min(1.0, score + 0.03)
-            if re.search(r"client|customer|your|votre|acheteur|buyer", near):
+            if _CUSTOMER_WORD.search(near):
                 continue  # the customer's own number, printed for them
             if bill_to:
                 score *= 0.35
@@ -486,7 +495,7 @@ def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
             words = _span_words(line, a, b)
             score = 0.95 * _min_conf(words)
             near = lower[max(0, a - 40) : a]
-            if re.search(r"client|customer|your|votre", near) or bill_to:
+            if _CUSTOMER_WORD.search(near) or bill_to:
                 score *= 0.35
             qst.append(Reading("qst_registration_number", value, text[a:b], _boxes(words), score, "pattern"))
     return {"gst_hst_registration_number": gst, "qst_registration_number": qst}
@@ -627,17 +636,20 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
     subs = top["subtotal"] or [None]
     totals = top["grand_total"] or [None]
     tax_options = {f: [*top[f], None] for f in _TAX_FIELDS}
+    charge_options = [*top["other_charges"][:2], None]
     best = None
-    for sub, total in product(subs, totals):
+    for sub, total, charge in product(subs, totals, charge_options):
+        extra = charge.value if charge else 0.0
         for taxes in product(*tax_options.values()):
             present = [t for t in taxes if t is not None]
             if len({_where(t) for t in present}) < len(present):
                 continue  # one printed amount ("GST/HST") is one tax
             score = (sub.score if sub else 0) + (total.score if total else 0) + sum(t.score for t in present)
+            score += charge.score if charge else 0.0
             bonus = 0.0
             if sub and total:
                 tax_sum = sum(t.value for t in present)
-                if abs(sub.value + tax_sum - total.value) <= 0.011:
+                if abs(sub.value + extra + tax_sum - total.value) <= 0.011:
                     # Subtotal = total with no tax is weaker evidence: one number printed twice.
                     bonus += 3.0 + 0.5 * len(present) if present else 2.5
                 elif present and abs(sub.value - total.value) <= 0.011:
@@ -647,11 +659,14 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
             if sub and sub.value:
                 for f, t in zip(tax_options, taxes, strict=True):
                     if t is not None and any(
-                        abs(t.value - r * sub.value) <= max(0.02, 0.01 * abs(t.value)) for r in _RATES[f]
+                        abs(t.value - r * base) <= max(0.02, 0.01 * abs(t.value))
+                        for r in _RATES[f]
+                        for base in {sub.value, sub.value + extra}  # taxed with or without the freight
                     ):
                         bonus += 0.3
             if best is None or score + bonus > best[0]:
-                best = (score + bonus, sub, total, dict(zip(tax_options, taxes, strict=True)), bonus)
+                chosen_taxes = dict(zip(tax_options, taxes, strict=True))
+                best = (score + bonus, sub, total, {**chosen_taxes, "other_charges": charge}, bonus)
     if best is None:
         return cands
     _, sub, total, taxes, bonus = best
@@ -660,7 +675,7 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
     taken = {_where(r) for f, r in chosen.items() if r is not None and f in _TAX_FIELDS}
     for f, r in chosen.items():
         if r is None:
-            if bonus >= 3.0 and f in _TAX_FIELDS:
+            if bonus >= 3.0 and (f in _TAX_FIELDS or f == "other_charges"):
                 out[f] = []  # the totals add up without this tax: what was read for it is not a tax
             elif f in _TAX_FIELDS:
                 out[f] = [x for x in cands.get(f, []) if _where(x) not in taken]
@@ -820,6 +835,9 @@ def _date_fit(cands: dict[str, list[Reading]]) -> int:
     return 2 if days in (0, 7, 10, 14, 15, 20, 21, 30, 45, 60, 90) else 1
 
 
+_DISCOUNT = re.compile(r".*(discount|escompte|rabais|remise)")
+
+
 def _table_header_line(line: Line, page_lines: list[Line]) -> bool:
     """The line is a column heading of a line-item table (two or more other headings beside it)."""
     others = 0
@@ -851,7 +869,11 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         page_lines = by_page
         readings: list[Reading] = []
         for hit in fhits:
-            readings += _labelled([hit], page_lines.get(hit.line.box.page, []))
+            got = _labelled([hit], page_lines.get(hit.line.box.page, []))
+            if field == "other_charges" and _DISCOUNT.match(plain(hit.label_text)):
+                for r in got:
+                    r.value = -abs(r.value)  # a discount lowers the total, however it is printed
+            readings += got
         cands[field] = readings
     # Totals: the lowest "total" on the last page with one is usually the invoice total.
     if cands.get("grand_total"):

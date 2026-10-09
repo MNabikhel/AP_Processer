@@ -433,6 +433,14 @@ def test_should_auto_approve_only_when_everything_is_verified():
     assert not should_auto_approve(AUTONOMOUS, None, True)[0]
 
 
+def test_lines_not_adding_up_do_not_block_once_the_totals_add_up():
+    lines = _capture()  # its totals add up
+    lines.checks.append({"code": "LINES_ADD_UP", "ok": False, "detail": "lines 90.00 ≠ subtotal 100.00"})
+    assert should_auto_approve(AUTONOMOUS, lines, True)[0]
+    lines.checks = [c for c in lines.checks if c["code"] != "TOTALS_ADD_UP"]
+    assert should_auto_approve(AUTONOMOUS, lines, True) == (False, "check failed: LINES_ADD_UP")
+
+
 def test_audit_sampling_is_deterministic_and_close_to_the_rate():
     picks = [pick_for_audit(i, 0.05) for i in range(20_000)]
     assert picks == [pick_for_audit(i, 0.05) for i in range(20_000)]

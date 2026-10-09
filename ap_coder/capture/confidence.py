@@ -72,6 +72,7 @@ LABELS = {
     "qst_amount": "QST",
     "tax_total": "Total tax",
     "grand_total": "Total",
+    "other_charges": "Freight / other charges",
     "payment_terms": "Terms",
 }
 
@@ -127,12 +128,16 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
     sub, total = _v(values, "subtotal"), _v(values, "grand_total")
     taxes = {f: _v(values, f) for f in TAX_FIELDS if _v(values, f) is not None}
     tax_total = _v(values, "tax_total")
+    charges = _v(values, "other_charges")
     if sub is not None and total is not None:
         tax_sum = sum(taxes.values()) if taxes else (tax_total or 0.0)
-        ok = amounts_equal(round(sub + tax_sum, 2), total, 0.011)
+        ok = amounts_equal(round(sub + (charges or 0.0) + tax_sum, 2), total, 0.011)
         fields = ["subtotal", "grand_total", *taxes] if taxes else ["subtotal", "grand_total", "tax_total"]
+        if charges is not None:
+            fields.append("other_charges")
+        extra = f" + charges {charges:,.2f}" if charges is not None else ""
         checks.append({"code": "TOTALS_ADD_UP", "ok": ok, "fields": fields,
-                       "detail": f"subtotal {sub:,.2f} + tax {tax_sum:,.2f} {'=' if ok else '≠'} total {total:,.2f}"})  # fmt: skip
+                       "detail": f"subtotal {sub:,.2f}{extra} + tax {tax_sum:,.2f} {'=' if ok else '≠'} total {total:,.2f}"})  # fmt: skip
     if taxes and tax_total is not None:
         ok = amounts_equal(round(sum(taxes.values()), 2), tax_total, 0.011)
         checks.append({"code": "TAXES_ADD_UP", "ok": ok, "fields": ["tax_total", *taxes],
@@ -140,7 +145,8 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
     if sub:
         for f, amount in taxes.items():
             rate = abs(amount / sub) if sub else 0
-            ok = any(abs(amount - round(sub * r, 2)) <= max(0.02, abs(sub) * 0.0002) for r in KNOWN_RATES[f])
+            bases = {sub, sub + (charges or 0.0)}  # taxed with or without the freight
+            ok = any(abs(amount - round(b * r, 2)) <= max(0.02, abs(b) * 0.0002) for r in KNOWN_RATES[f] for b in bases)
             checks.append({"code": "TAX_RATE", "ok": ok, "fields": [f, "subtotal"],
                            "detail": f"{LABELS[f]} is {rate:.3%} of the subtotal"})  # fmt: skip
     if line_items and sub is not None:

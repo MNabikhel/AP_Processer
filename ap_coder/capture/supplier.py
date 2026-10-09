@@ -1137,6 +1137,9 @@ def autonomy_status(
     return SUPERVISED, progress, "; ".join(gaps) + "."
 
 
+HEADER_PROVEN_SOFT = {"LINES_ADD_UP"}
+
+
 def should_auto_approve(
     state: str, capture: CaptureResult | dict[str, Any] | None, checks_ok: bool,
     issues: Iterable[dict[str, Any]] | None = None,
@@ -1152,6 +1155,11 @@ def should_auto_approve(
     if not checks_ok:
         return False, "a check failed"
     failed = [c.get("code") or "check" for c in capture.checks if not c.get("ok", True)]
+    totals_ok = any(c.get("code") == "TOTALS_ADD_UP" and c.get("ok") for c in capture.checks)
+    if totals_ok:
+        # Line items that do not sum to the subtotal (a line the reader could not separate) do not
+        # make the header wrong once subtotal + charges + taxes = total: the voucher is the header.
+        failed = [code for code in failed if code not in HEADER_PROVEN_SOFT]
     if failed:
         return False, f"check failed: {', '.join(failed)}"
     errors = [i.get("code") or "error" for i in issues or [] if str(i.get("severity", "")).lower() == "error"]
