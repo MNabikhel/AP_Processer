@@ -48,6 +48,22 @@ def test_bulk_approve_does_not_discard_a_correction_made_on_screen(db):
     assert inv["status"] == REVIEW or inv["final_output"]["invoice_number"] == "NW-2026-0912-A"
 
 
+def test_a_rejected_invoice_reopens_without_the_edits_dropped_at_rejection(db):
+    store = Store(db)
+    load_sample_setup(store)
+    invoice_id = _clean(store)
+    key = f"inv{invoice_id}"
+    at = _open(invoice_id)
+    at.text_input(key=f"{key}_invoice_number").input("TYPO-123")
+    _ok(at.run())
+    at.text_input(key=f"{key}_reason").input("not our invoice")
+    _ok(at.button(key=f"{key}_reject").click().run())
+    _ok(at.button(key=f"reopen_{invoice_id}").click().run())  # Failed / rejected tab: rejected by mistake
+    _ok(at.button(key=f"qopen_{invoice_id}").click().run())
+    shown = at.text_input(key=f"{key}_invoice_number").value
+    assert shown == store.get_invoice(invoice_id)["invoice_number"] == "NW-2026-0912"
+
+
 def test_a_suggested_gl_codes_a_line_just_added(db):
     """A line the reviewer adds has no number in the grid yet: the suggestion's button must still code it."""
     store = Store(db)

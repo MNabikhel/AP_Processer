@@ -275,8 +275,10 @@ def replace_editor(key: str, data: pd.DataFrame) -> None:
 
 
 def forget_drafts(prefix: str) -> None:
-    """Drop the saved drafts of a finished invoice."""
-    for k in [k for k in st.session_state if str(k).startswith((f"_base_{prefix}_", f"_draft_{prefix}_"))]:
+    """Drop the saved drafts of a finished invoice: its grids and the header fields kept for the session."""
+    for k in [
+        k for k in st.session_state if str(k).startswith((f"_base_{prefix}_", f"_draft_{prefix}_", f"{prefix}_"))
+    ]:
         del st.session_state[k]
 
 
