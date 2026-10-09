@@ -352,3 +352,64 @@ def test_harness_runs_end_to_end_with_the_stub(tmp_path):
     rows = [json.loads(x) for x in (tmp_path / "failures.jsonl").read_text(encoding="utf-8").splitlines()]
     assert rows and {"case", "field", "truth", "got", "status", "confidence", "reasons"} <= set(rows[0])
     assert not math.isnan(rep["summary"]["overall"]["accuracy"])
+
+
+# --- supplier streams and the learning simulation ---------------------------------------------------
+
+
+def test_a_supplier_stream_keeps_the_vendor_and_varies_the_content(tmp_path):
+    from ap_coder.bench.generator import make_stream_case, supplier_archetype
+
+    streams = {s: [make_stream_case(tmp_path / "a", 3, s, i) for i in range(4)] for s in (0, 1)}
+    for s, cases in streams.items():
+        truths = [c.truth for c in cases]
+        assert {t["layout"] for t in truths} == {supplier_archetype(3, s)}
+        assert {t["supplier"] for t in truths} == {f"s3-v{s:03d}"}
+        name = [(t["fields"]["vendor_name"]["value"], t["fields"]["vendor_name"]["box"]) for t in truths]
+        assert len(set(map(str, name))) == 1  # the same vendor, printed in the same place
+        for f in ("gst_hst_registration_number", "qst_registration_number"):
+            assert len({str(t["fields"].get(f, {}).get("value")) for t in truths}) == 1
+        assert len({t["fields"]["invoice_number"]["label"] for t in truths}) == 1  # the same wording
+        assert len({t["extras"]["font"] for t in truths}) == len({t["extras"]["date_style"] for t in truths}) == 1
+        numbers = [t["fields"]["invoice_number"]["value"] for t in truths]
+        dates = [t["fields"]["invoice_date"]["value"] for t in truths]
+        assert len(set(numbers)) == 4 and dates == sorted(dates) and len(set(dates)) == 4
+        assert len({t["fields"]["grand_total"]["value"] for t in truths}) == 4
+    assert streams[0][0].truth["fields"]["vendor_name"] != streams[1][0].truth["fields"]["vendor_name"]
+    again = make_stream_case(tmp_path / "b", 3, 1, 2)  # deterministic from (seed, supplier, index)
+    assert again.truth == streams[1][2].truth and again.path.read_bytes() == streams[1][2].path.read_bytes()
+
+
+def test_approved_values_keep_an_equivalent_proposal_and_implied_values_only_when_proposed():
+    from ap_coder.bench.learning import approved_values
+
+    truth = {
+        "fields": {"payment_terms": {"value": "30 days"}, "grand_total": {"value": 113.0}},
+        "implied": {"currency": "CAD", "tax_total": 13.0},
+    }
+    capture = CaptureResult(
+        fields={
+            "payment_terms": FieldResult("payment_terms", "Net 30", 0.9, "likely"),
+            "grand_total": FieldResult("grand_total", 112.0, 0.9, "likely"),
+            "currency": FieldResult("currency", "CAD", 0.9, "likely"),
+        }
+    )
+    assert approved_values(truth, capture) == {"payment_terms": "Net 30", "grand_total": 113.0, "currency": "CAD"}
+
+
+def test_learn_command_runs_and_writes_a_report(tmp_path, capsys):
+    from ap_coder.bench.__main__ import main
+
+    out = tmp_path / "learn"
+    assert main(["learn", "--suppliers", "2", "--invoices", "4", "--workers", "1", "--out", str(out)]) == 0
+    assert "suppliers x 4 invoices" in capsys.readouterr().out
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    s = report["summary"]
+    assert s["invoices"] == 8 and s["suppliers"] == 2 and list(s["buckets"]) == ["1", "2-5"]
+    assert s["autonomy"]["suppliers_ready"] == 0  # 4 invoices are too few for the policy (20)
+    rows = [json.loads(x) for x in (out / "invoices.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["index"] for r in rows if r["supplier"] == "s1-v000"] == [1, 2, 3, 4]
+    assert rows[0]["template_fields"] == 0 and rows[1]["template_fields"] > 0  # learned from the first approval
+    assert all(r["state"] == "learning" and not r["touchless"] for r in rows)
+    md = (out / "report.md").read_text(encoding="utf-8")
+    assert "## Learning curve" in md and "## Autonomy" in md and "s1-v001" in md

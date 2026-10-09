@@ -339,7 +339,20 @@ def normalize_value(field: str, value: object) -> object:
         return norm_name(str(value))
     if field == "currency":
         return str(value).upper().strip()
+    if field == "payment_terms":
+        return terms_key(str(value))
     return " ".join(str(value).split()).lower()
+
+
+def terms_key(text: str) -> str:
+    """Payment terms by what they mean: "30 days", "Net 30" and "NET 30 jours" are the same terms;
+    "2% 10, Net 30" is not; "Due on receipt" and "Payable à réception" are."""
+    s = _plain(unicodedata.normalize("NFKC", text))
+    numbers = re.findall(r"\d+", s)
+    receipt = bool(re.search(r"receipt|reception", s))
+    if not numbers and not receipt:
+        return " ".join(s.split())
+    return "terms:" + "/".join(str(int(n)) for n in numbers) + (":receipt" if receipt else "")
 
 
 def same_value(field: str, a: object, b: object) -> bool:

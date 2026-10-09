@@ -59,6 +59,11 @@ STATE_LABELS = {
 }  # fmt: skip
 
 ANCHOR_SCORE, POSITION_SCORE, SHAPE_WEIGHT = 0.75, 0.45, 0.2
+ABOVE_MAX = 0.05  # a label above its value is at most this far above it (fraction of the page)
+# A value read at its label's learned offset gains up to EXPERIENCE_BONUS in score as the variant is
+# confirmed again, in full after EXPERIENCE_FULL more confirmations (a label-anchored score tops out at 0.99).
+EXPERIENCE_BONUS, EXPERIENCE_FULL = 0.04, 4
+RIVAL_MARGIN = 0.1  # template readings scoring this much below the best are not offered
 _LABEL_WORDS = {
     "invoice", "inv", "facture", "date", "total", "subtotal", "sous", "tps", "tvq", "gst", "hst", "pst", "qst", "rst",
     "tax", "taxe", "taxes", "po", "order", "commande", "bon", "due", "echeance", "terms", "conditions", "amount",
@@ -66,6 +71,7 @@ _LABEL_WORDS = {
     "registration", "payer", "pay",
 }  # fmt: skip
 _CURRENCY_WORDS = {"cad", "usd", "eur", "gbp", "ca", "us", "cdn", "dr", "cr"}
+_RATE = re.compile(r"[(@]*\d*(?:[.,]\d+)?\s*%\)?:?|@")  # "5%", "(13%)", "%)", "5%:", "@"
 
 
 def _now() -> str:
@@ -255,11 +261,25 @@ def compare_key(name: str, value: Any) -> Any:
         return vendor_key(str(value)) or None
     if name in ID_FIELDS:
         return _compact(norm_id(value)) or None
+    if name == "payment_terms":
+        return _terms_key(value)
     return _compact(value) or None
+
+
+def _terms_key(value: Any) -> str | None:
+    """Terms by what they mean ("30 days" = "Net 30"; "2% 10, Net 30" is other terms)."""
+    s = _fold(value)
+    numbers = re.findall(r"\d+", s)
+    receipt = bool(re.search(r"receipt|reception", s))
+    if not numbers and not receipt:
+        return _compact(value) or None
+    return "terms:" + "/".join(str(int(n)) for n in numbers) + (":receipt" if receipt else "")
 
 
 def _matches(name: str, raw: str, value: Any) -> str | None:
     """Does printed ``raw`` show ``value``? Returns the date order it was read in (or "" for a match)."""
+    if name == "payment_terms" and (not _has_letters(raw) or any(t.endswith(":") for t in raw.split())):
+        return None  # the terms as printed ("30 days"): not just the number in them, nor with their label
     if name in DATE_FIELDS:
         target = compare_key(name, value)
         for iso, order in date_candidates(raw):
@@ -321,6 +341,20 @@ class Shape:
             return 0.7  # same structure, a digit more or less (INV-999 -> INV-1000)
         if name in ID_FIELDS or name in TAX_ID_FIELDS or name == "currency":
             return 0.0
+        return 0.3 if in_range else 0.1
+
+    def fit(self, raw: str) -> float:
+        """0..1: how much ``raw`` looks like the values confirmed so far, by their printed pattern only
+        ("2 292,84" fits "9 999,99"; its first word "2" does not), whatever the field."""
+        text = " ".join(str(raw or "").split())
+        if not self.patterns or not text:
+            return 0.5 if text else 0.0
+        pattern = value_shape(text)
+        if pattern in self.patterns:
+            return 1.0
+        in_range = self.min_len - 2 <= len(text) <= self.max_len + 2
+        if in_range and _collapsed(pattern) in {_collapsed(p) for p in self.patterns}:
+            return 0.7
         return 0.3 if in_range else 0.1
 
     def to_dict(self) -> dict[str, Any]:
@@ -474,12 +508,17 @@ def _find_anchor_words(rows: list[list[Word]], value: list[Word]) -> tuple[list[
     if row is not None:  # left: walk left from the value, a phrase of up to 4 words
         left = [w for w in row if id(w) not in ids and w.box.x1 <= vbox.x0 + 0.002]
         picked: list[Word] = []
+        rate = False
         for w in reversed(left):
             gap_to = picked[0].box.x0 if picked else vbox.x0
             if picked and gap_to - w.box.x1 > 2.5 * max(w.box.height, 0.004):
                 break
-            if not picked and re.fullmatch(r"[$€£:#.\-–]+", w.text.strip()):
+            token = w.text.strip()
+            if not picked and re.fullmatch(r"[$€£:#.\-–]+", token):
                 continue  # a currency sign or colon between label and value
+            if not picked and (_RATE.fullmatch(token) or (rate and re.fullmatch(r"\(?\d+(?:[.,]\d+)?", token))):
+                rate = rate or "%" in token
+                continue  # the tax rate between label and value: "GST 5%", "TPS (5 %)", "HST @ 13%"
             if not picked and not any(c.isalpha() for c in w.text):
                 break  # another value (a column of numbers), not a label
             if picked and not re.search(r"[A-Za-z#]", w.text):
@@ -489,12 +528,21 @@ def _find_anchor_words(rows: list[list[Word]], value: list[Word]) -> tuple[list[
                 break
         if picked and _has_letters(_join(picked)) and vbox.x0 - picked[-1].box.x1 < 0.5:
             dist = vbox.x0 - picked[-1].box.x1
-            candidates.append(((1.0 if _looks_like_label(_join(picked)) else 0.3) - dist, picked, "left"))
-    for r in rows:  # above: the nearest row above, overlapping the value horizontally
+            # A label on the value's own row is its label, whatever is printed in the row above (another
+            # field's label and value in a key-value header); labels above are for grids and boxes.
+            score = 1.3 if _looks_like_label(_join(picked)) else 0.3
+            candidates.append((score - dist, picked, "left"))
+    # Above: the nearest row above with words over the value; a label is printed right over its value,
+    # so a row further up (a title, a column heading over the line items) is not taken instead.
+    above = [
+        (r, [w for w in r if w.box.x1 >= vbox.x0 - 0.02 and w.box.x0 <= vbox.x1 + 0.02 and id(w) not in ids])
+        for r in rows
+        if _span_box(r).y1 <= vbox.y0 + 0.002 and vbox.y0 - _span_box(r).y1 <= ABOVE_MAX
+    ]
+    above = [(r, over) for r, over in above if over]
+    for r, over in sorted(above, key=lambda a: -_span_box(a[0]).y1)[:1]:
         rb = _span_box(r)
-        if rb.y1 > vbox.y0 + 0.002 or vbox.y0 - rb.y1 > 0.1:
-            continue
-        over = [w for w in r if w.box.x1 >= vbox.x0 - 0.02 and w.box.x0 <= vbox.x1 + 0.02 and _has_letters(w.text)]
+        over = [w for w in over if _has_letters(w.text) and not any(c.isdigit() for c in w.text)]  # not a value
         if not over:
             continue
         i0, i1 = r.index(over[0]), r.index(over[-1])
@@ -545,13 +593,16 @@ def _box_distance(a: list[float], b: list[float]) -> float:
 
 
 def learn(
-    template: Template | None, layout: DocLayout, confirmed: dict[str, tuple[Any, list[Box] | None]],
+    template: Template | dict[str, Any] | None, layout: DocLayout, confirmed: dict[str, tuple[Any, list[Box] | None]],
     when: str | None = None,
 ) -> Template:  # fmt: skip
-    """Update ``template`` from the values AP confirmed: ``{field: (value, boxes or None)}``.
+    """Update ``template`` (a ``Template`` or its dict, as the store keeps it) from the values AP
+    confirmed: ``{field: (value, boxes or None)}``.
 
     ``boxes`` are the words the reviewer clicked (teach-by-click) and are authoritative; without them the
     value is looked for on the page. A value that cannot be found on the page teaches nothing."""
+    if isinstance(template, dict):
+        template = Template.from_dict(template)
     template = template or Template()
     when = when or _now()
     learned = 0
@@ -658,31 +709,45 @@ def _update_variants(
 # --- Applying -----------------------------------------------------------------------------------------------------
 
 
-def _anchor_hits(rows: list[list[Word]], anchor: Anchor) -> list[tuple[Box, list[Word], str, float]]:
-    """Where the anchor's label is printed: (box, its words, text glued after it, similarity)."""
+def _glued(a: Word, b: Word) -> bool:
+    """``b`` follows ``a`` as the next word of one phrase: a word, not a value ("Sub" before "Total:",
+    "Taxes" after "Total"; not "INV-12" after "Invoice")."""
+    return (
+        _has_letters(a.text)
+        and _has_letters(b.text)
+        and not any(c.isdigit() for c in a.text + b.text)
+        and b.box.x0 - a.box.x1 < max(a.box.height, 0.004)
+    )
+
+
+def _anchor_hits(rows: list[list[Word]], anchor: Anchor) -> list[tuple[Box, list[Word], str, float, bool]]:
+    """Where the anchor's label is printed: (box, its words, text glued after it, similarity, whether
+    it is the whole label: "Total:" alone, not the end of "Sub Total:" or the start of "Total Taxes")."""
     key = anchor.key
-    hits: list[tuple[Box, list[Word], str, float]] = []
+    hits: list[tuple[Box, list[Word], str, float, bool]] = []
     if not key:
         return hits
     for row in rows:
         for i in range(len(row)):
             acc = ""
+            starts = i == 0 or not _glued(row[i - 1], row[i])
             for j in range(i, min(i + 6, len(row))):
                 before = acc
                 acc += _compact(row[j].text)
                 words = row[i : j + 1]
+                whole = starts and (j + 1 == len(row) or not _glued(row[j], row[j + 1]))
                 if acc == key:
-                    hits.append((_span_box(words), words, "", 1.0))
+                    hits.append((_span_box(words), words, "", 1.0, whole))
                     break
                 if acc.startswith(key) and len(before) < len(key):  # OCR glue: "InvoiceNo:INV-1"
-                    hits.append((_span_box(words), words, _after(row[j].text, len(key) - len(before)), 1.0))
+                    hits.append((_span_box(words), words, _after(row[j].text, len(key) - len(before)), 1.0, starts))
                     break
                 if len(acc) >= len(key) + 3:
                     break
                 if len(key) >= 5 and abs(len(acc) - len(key)) <= 2:
                     sim = SequenceMatcher(None, acc, key).ratio()
                     if sim >= 0.85:
-                        hits.append((_span_box(words), words, "", sim))
+                        hits.append((_span_box(words), words, "", sim, whole))
     return hits
 
 
@@ -757,7 +822,10 @@ def apply_template(template: Template | dict[str, Any] | None, layout: DocLayout
                 if key not in best or reading.score > best[key].score:
                     best[key] = reading
         if best:
-            out[name] = sorted(best.values(), key=lambda r: -r.score)
+            ranked = sorted(best.values(), key=lambda r: -r.score)
+            # A rival is offered only when nearly as good: the row below the learned spot is not a
+            # second opinion, and would only cast doubt on the reading where the value always is.
+            out[name] = [r for r in ranked if r.score >= ranked[0].score - RIVAL_MARGIN]
     return out
 
 
@@ -767,7 +835,7 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         return []
     rows = _rows(page.words)
     experience = 1.0 if variant.count >= 2 else 0.9
-    readings: list[Reading] = []
+    found: list[tuple[Reading, set[int], tuple[float, float, int, float]]] = []
 
     def add(words: list[Word], raw: str, shape: float, geometry: float, base: float) -> None:
         value = normalize_value(name, raw, variant.date_order)
@@ -775,13 +843,19 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
             return
         conf = min((w.conf for w in words), default=1.0)
         score = (base * (0.6 + 0.4 * geometry) + SHAPE_WEIGHT * shape) * experience * conf - 0.005 * (len(words) - 1)
-        readings.append(Reading(name, value, raw, [w.box for w in words], round(min(score, 0.99), 4), "template"))
+        reading = Reading(name, value, raw, [w.box for w in words], round(min(score, 0.99), 4), "template")
+        # Of nested spans that fit alike, the longer is the value: "2 074,06", not its tail "074,06".
+        rank = (variant.shape.fit(raw), shape, len(words), reading.score)
+        found.append((reading, {id(w) for w in words}, rank))
 
     hits = _anchor_hits(rows, variant.anchor) if variant.anchor else []
     if hits:
         learned = variant.anchor.box
-        abox, awords, glued, sim = min(hits, key=lambda h: (-h[3], _box_distance(_box4(h[0]), learned)))
-        base = ANCHOR_SCORE * sim
+        abox, awords, glued, sim, _whole = min(
+            hits, key=lambda h: (-h[3], not h[4], _box_distance(_box4(h[0]), learned))
+        )
+        # The label found where it always is: each confirmation at this label and offset adds trust.
+        base = ANCHOR_SCORE * sim + EXPERIENCE_BONUS * min(max(variant.count - 1, 0), EXPERIENCE_FULL) / EXPERIENCE_FULL
         if glued:
             shape = variant.shape.score(name, glued)
             if shape > 0:
@@ -790,12 +864,23 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         w, h = variant.box[2] - variant.box[0], variant.box[3] - variant.box[1]
         predicted = [abox.x0 + dx, abox.y0 + dy, abox.x0 + dx + w, abox.y0 + dy + h]
         exclude = {id(x) for x in awords}
+    elif variant.anchor and name not in REQUIRED_FIELDS:
+        return []  # the label of a field not every invoice has is missing: so, most likely, is the field
     else:
         base, predicted, exclude = POSITION_SCORE, variant.box, set()
     v_pad = 0.008 if hits else 0.025  # without the label the page may have moved a little more
     for words, raw, shape, geometry in _candidates(name, variant, rows, predicted, exclude, v_pad):
         add(words, raw, shape, geometry, base)
-    return readings
+
+    # Of spans inside one another ("NET", "60" and "NET 60"), only the one shaped most like the values
+    # confirmed so far is a reading: the parts of a value are not rival values.
+    def nested(a: set[int], b: set[int]) -> bool:
+        return a != b and (a <= b or b <= a)
+
+    def beaten(ids: set[int], rank: tuple[float, float, int, float]) -> bool:
+        return any(nested(ids, o_ids) and o_rank > rank for _, o_ids, o_rank in found)
+
+    return [r for r, ids, rank in found if not beaten(ids, rank)]
 
 
 # --- Outcomes, statistics and policy ----------------------------------------------------------------------------
