@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import logging
 from pathlib import Path
@@ -53,7 +54,9 @@ def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: A
     template = (profile or {}).get("template") or None
     vendor = vendor_record(store, (output or {}).get("vendor_name"))
     try:
-        capture = analyze(path, di_raw=di_raw, ai_values=ai_values(output), template=template, vendor=vendor)
+        # Processed the day it arrives: that date also settles a 03/04/2026 the page leaves open.
+        capture = analyze(path, di_raw=di_raw, ai_values=ai_values(output), template=template, vendor=vendor,
+                          today=dt.date.today())  # fmt: skip
     except Exception as exc:  # capture is an extra check: never lose an invoice over it
         log.warning("%s: capture failed (%s)", path.name, exc)
         return None, key, profile

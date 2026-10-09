@@ -7,6 +7,8 @@ writes `report.json`, `report.md` and `failures.jsonl` into the output folder.
 
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
 import json
 import multiprocessing
 import os
@@ -98,15 +100,28 @@ def stub_analyze(path: str | Path) -> CaptureResult:
     return CaptureResult(fields=fields, layout_source="text", page_count=doc.page_count)
 
 
-def read_one(job: tuple[str, str]) -> dict[str, Any]:
+def received_date(truth: dict[str, Any]) -> dt.date | None:
+    """The day the invoice reaches AP: 1 to 25 days after its date (fixed per case), as the pipeline
+    would know it. None when the invoice prints no date."""
+    entry = (truth.get("fields") or {}).get("invoice_date") or {}
+    try:
+        issued = dt.date.fromisoformat(str(entry.get("value")))
+    except ValueError:
+        return None
+    lag = 1 + int(hashlib.sha256(str(truth.get("id")).encode()).hexdigest()[:6], 16) % 25
+    return issued + dt.timedelta(days=lag)
+
+
+def read_one(job: tuple[str, str] | tuple[str, str, str | None]) -> dict[str, Any]:
     """Read one file; never raises (an error is recorded against the case)."""
-    path, reader = job
+    path, reader = job[0], job[1]
+    received = dt.date.fromisoformat(job[2]) if len(job) > 2 and job[2] else None
     t0 = time.perf_counter()
     try:
         if reader == "capture":
             from ap_coder.capture import analyze
 
-            result = analyze(path)
+            result = analyze(path, today=received)
         else:
             result = stub_analyze(path)
         return {"result": result.to_dict(), "error": None, "seconds": time.perf_counter() - t0}
@@ -268,7 +283,8 @@ def run(
     t0 = time.perf_counter()
     cases = prepare_cases(out / "cases", n, seed, scanned, workers, regen)
     t_gen = time.perf_counter() - t0
-    outputs = _map(read_one, [(str(c.path), reader_name) for c in cases], workers, f"read ({reader_name})")
+    jobs = [(str(c.path), reader_name, (lambda d: d.isoformat() if d else None)(received_date(c.truth))) for c in cases]
+    outputs = _map(read_one, jobs, workers, f"read ({reader_name})")
     t_read = time.perf_counter() - t0 - t_gen
     scored = evaluate(cases, outputs)
     report = {

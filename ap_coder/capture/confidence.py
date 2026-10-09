@@ -226,9 +226,10 @@ def evidence_key(
 ) -> str:
     """field|readers|how it was read|flags: the unit the calibration measures. Coarse on purpose, so
     each pattern is seen often enough on the benchmark to measure."""
-    family = re.sub(r"[-+](ambiguous|adds-up|terms|dates)", "", method).split("+")[0]
+    family = re.sub(r"[-+](ambiguous|adds-up|terms|dates|received)", "", method).split("+")[0]
     flags = [f for f, on in (("adds-up", "adds-up" in method), ("confirmed", confirmed), ("contested", contested),
-                             ("soft", soft), ("ambiguous", "ambiguous" in method)) if on]  # fmt: skip
+                             ("soft", soft), ("ambiguous", "ambiguous" in method),
+                             ("received", "+received" in method)) if on]  # fmt: skip
     page = "scan" if layout_source in ("ocr", "di", "mixed") else "text"
     return "|".join([field, "+".join(sorted(sources)), family, page, ",".join(flags)])
 

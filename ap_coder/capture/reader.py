@@ -10,6 +10,7 @@ amounts). Totals are chosen together: the subtotal, taxes and total that add up 
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 import unicodedata
 from contextvars import ContextVar
@@ -50,7 +51,8 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (rf"bill\s*{_NO}", 0.9), (rf"document\s*{_NO}", 0.85), (r"invoice\s*ref(?:erence)?\b", 0.85),
 (rf"credit\s*(?:note|memo)?\s*{_NO}", 0.95), (r"(?:sales|tax|commercial)\s*invoice\b", 0.6), (r"inv(?![a-z])\.?(?![-\d])(?!\s*(?:date|total|amount))", 0.55), (rf"note\s*de\s*credit\s*{_NO}", 0.95),
         (rf"statement\s*{_NO}", 0.6), (r"invoice\s*:", 0.7), (r"facture\s*:", 0.7), (r"invoice\b(?!\s*(?:date|total|amount|to\b|period))", 0.45),
-        (r"facture\b(?!\s*(?:a|date|de\s*la|totale))", 0.4), (rf"ref(?:erence)?\.?\s*{_NO}?", 0.3), (r"(?:no\b\.?|n\s?°|nº|#)(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35),
+        (r"facture\b(?!\s*(?:a\s*:?\s*[a-z]|date|de\s*la|totale))", 0.45),
+        (r"(?:no|n\s?°|nº|n|numero)\.?\s*(?:de\s*)?(?:la\s*)?note\s*de\s*credit", 1.0), (r"credit\s*(?:note|memo)\b(?!\s*(?:date|total))", 0.6), (rf"ref(?:erence)?\.?\s*{_NO}?", 0.3), (r"(?:no\b\.?|n\s?°|nº|#)(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35),
     ],
     "po_number": [
         (r"p\.?\s?o\.?(?![-\d])\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
@@ -90,7 +92,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
     ],
     "tax_total": [
         (r"total\s*(?:sales\s*)?tax(?:es)?\b", 1.0), (r"tax(?:es)?\s*total", 0.95), (r"total\s*des\s*taxes", 1.0),
-        (r"taxes\b(?!\s*incl)", 0.6), (r"(?:[a-z]{2,3}\s+)?(?:state\s+|county\s+|city\s+|local\s+)?sales\s*tax\b", 0.85), (r"tax\s*(?:amount)?\s*$", 0.55), (r"tax\s*:", 0.6),
+        (r"taxes\b(?!\s*incl)", 0.6), (r"(?:[a-z]{2,3}\s+)?(?:state\s+|county\s+|city\s+|local\s+)?sales\s*tax\b", 0.85), (r"tax\s*(?:amount)?\s*$", 0.55), (r"tax\s*:", 0.6), (r"tax\s*[(@]?\s*\d{1,2}(?:[.,]\d{1,3})?\s*%", 0.85),
     ],
     "grand_total": [
         (r"(?:invoice\s*)?total\s*(?:amount\s*)?(?:due|payable)", 1.0), (r"amount\s*due", 0.95), (r"balance\s*due", 0.85),
@@ -169,7 +171,7 @@ def _label_hits(line: Line) -> list[_LabelHit]:
                 end = m.end()
                 # "Invoice No. / No facture: 123": the value follows the second (translated) label.
                 for _ in range(2):
-                    sep = re.match(r"\s*/\s*", text[end:])
+                    sep = re.match(r"\s*[/-]\s*", text[end:])
                     if not sep:
                         break
                     nxt = next(
@@ -384,7 +386,7 @@ _TERMS = [
     (re.compile(r"\bnet\s*(\d{1,3})(?!\d)", re.I), "Net {0}"),
     (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
     (re.compile(r"(?<!\d)(\d{1,3})\s*(?:days|jours|j)\b", re.I), "Net {0}"),
-    (re.compile(r"\bdue\s*(?:up)?on\s*receipt\b|payable\s*(?:a|à)\s*(?:la\s*)?r[ée]ception|on\s*receipt", re.I), "Due on receipt"),
+    (re.compile(r"\bdue\s*(?:up)?on\s*receipt\b|payable\s*(?:a|à|sur|des|dès)\s*(?:la\s*)?r[ée]ception|on\s*receipt", re.I), "Due on receipt"),
 ]  # fmt: skip
 
 
@@ -534,7 +536,7 @@ def _in_bill_to(layout: DocLayout, line: Line) -> bool:
 _COMPANY = re.compile(r"\b(inc|ltd|ltee|limited|limitee|llc|llp|corp|corporation|co\.|company|cie|enr|s\.?e\.?n\.?c|"
                       r"group|groupe|services|solutions|supply|supplies|industries|technologies|consulting|"
                       r"distribution|holdings|partners|associates|enterprises|entreprises)\b\.?", re.I)  # fmt: skip
-_NOT_NAME = re.compile(r"^(invoice|facture|(?:sales|tax|commercial|proforma|pro\s*forma)\s*invoice|please\s*pay|your\b|votre\b|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
+_NOT_NAME = re.compile(r"^(invoice|facture|credit\s*memo|debit\s*(?:note|memo)|avis\s*de\s*credit|(?:sales|tax|commercial|proforma|pro\s*forma)\s*invoice|please\s*pay|your\b|votre\b|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
                        r"ship|sold|remit|total|amount|description|qty|www\.|http|tel|phone|fax|email|courriel|"
                        r"gst|hst|tps|tvq|qst|po\b|p\.o|account|terms|due|original|copy|duplicata|paid|"
                        r"customer|client|attention|attn|from|de\s*:|to\s*:|a\s*:|bon\s*de)", re.I)  # fmt: skip
@@ -568,6 +570,12 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
     return out
 
 
+_POSTAL_CODE = re.compile(r"\b[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d\b")
+_TITLE_PREFIX = re.compile(
+    r"^(?:sales\s*|tax\s*|commercial\s*)?(?:invoice|facture)\s*(?:#|no\.?|n°)?\s*[a-z]{0,3}[\d/-]*\d\S*\s+"
+)
+
+
 def _vendor_names(layout: DocLayout) -> list[Reading]:
     if not layout.pages:
         return []
@@ -576,9 +584,16 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
     heights = sorted((ln.box.height for ln in page.lines), reverse=True)
     tall = heights[min(2, len(heights) - 1)] if heights else 0.0
     customer_names = {plain(ln.text.strip()) for ln in layout.lines() if _in_bill_to(layout, ln)}
+    # The line-items table starts below the header: nothing from it is the supplier's name.
+    table_top = min((ln.box.y0 for ln in page.lines if _table_header_line(ln, page.lines)), default=1.0)
     for line in page.lines:
         text = line.text.strip()
         p = plain(text)
+        title = _TITLE_PREFIX.match(p)
+        if title and title.end() < len(text):  # "SALES INVOICE #26/41538 Fraser Valley Fasteners Co."
+            line = Line(_span_words(line, title.end(), len(text)), line.box, text[title.end() :].strip())
+            line = Line(line.words, union_all([w.box for w in line.words]) or line.box, line.text)
+            text, p = line.text, plain(line.text)
         m = _REMIT.search(p)
         if m:
             name = text[m.end() :].strip(" :.,")
@@ -586,10 +601,12 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
                 words = _span_words(line, m.end(), len(text))
                 out.append(Reading("vendor_name", name, name, _boxes(words), 0.9 * _min_conf(words), "remit-to"))
             continue
-        if line.box.cy > 0.33 or _in_bill_to(layout, line):
+        if line.box.cy > 0.33 or line.box.y0 >= table_top - 0.002 or _in_bill_to(layout, line):
             continue
         if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
             continue
+        if _POSTAL_CODE.search(text) or _US_ADDRESS.search(text):
+            continue  # an address line
         letters = sum(c.isalpha() for c in text)
         if letters < 3:
             continue
@@ -781,8 +798,9 @@ def _us_vendor(layout: DocLayout) -> bool:
     return False
 
 
-def read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
-    """Candidate readings for every header field, best first."""
+def read_fields(layout: DocLayout, received: dt.date | None = None) -> dict[str, list[Reading]]:
+    """Candidate readings for every header field, best first. ``received``: the day the invoice came
+    in (it settles a 03/04/2026 the page itself does not: invoices arrive days after their date)."""
     text = layout.text()
     order = infer_day_first(text)
     if order is None and (find_currency(text) == "USD" or _us_vendor(layout)):
@@ -802,7 +820,27 @@ def read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             for r in out.get(f, []):
                 r.method += "+terms" if fit[best] >= 3 else "+dates"
         return out
+    if received is not None:
+        near = {o: _received_fit(c, received) for o, c in options.items()}
+        if near[True] != near[False] and max(near.values()) > 0:
+            out = options[max(near, key=near.get)]
+            for f in ("invoice_date", "due_date"):
+                for r in out.get(f, []):
+                    r.method += "+received"
+            return out
     return cands
+
+
+def _received_fit(cands: dict[str, list[Reading]], received: dt.date) -> float:
+    """How plausible the invoice date is for an invoice received on ``received``: not after it,
+    and the closer before it the better (most invoices arrive within weeks of their date)."""
+    inv = cands.get("invoice_date")
+    if not inv:
+        return 0.0
+    days = (received - dt.date.fromisoformat(inv[0].value)).days
+    if days < -3:
+        return -1.0
+    return max(0.0, 1.0 - max(days, 0) / 120)
 
 
 def _read_with_order(layout: DocLayout, order: bool | None) -> dict[str, list[Reading]]:
@@ -815,7 +853,6 @@ def _read_with_order(layout: DocLayout, order: bool | None) -> dict[str, list[Re
 
 def _date_fit(cands: dict[str, list[Reading]]) -> int:
     """How well the invoice date, due date and terms agree (higher is better)."""
-    import datetime as dt
 
     inv, due, terms = (
         cands.get(f, [None])[0] if cands.get(f) else None for f in ("invoice_date", "due_date", "payment_terms")

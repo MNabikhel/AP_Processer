@@ -102,7 +102,7 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
             today: dt.date | None = None) -> CaptureResult:  # fmt: skip
     path = Path(path)
     layout = layout or build_layout(path, di_raw=di_raw, ocr=ocr)
-    sources: dict[str, dict[str, list[Reading]]] = {"rules": read_fields(layout)}
+    sources: dict[str, dict[str, list[Reading]]] = {"rules": read_fields(layout, received=today)}
     if template is not None:
         try:
             from .supplier import apply_template

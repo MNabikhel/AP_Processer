@@ -33,7 +33,8 @@ OCR_MAX_SIDE = 2400
 
 
 def group_lines(words: list[Word], page: int) -> list[Line]:
-    """Words -> line segments: same baseline band, horizontal gaps under ~1.6 x the text height."""
+    """Words -> line segments: same baseline band, split at gaps over ~1.6 x the text height, or over
+    0.9 x when that is at least twice the row's ordinary word space."""
     if not words:
         return []
     ws = sorted(words, key=lambda w: (w.box.cy, w.box.x0))
@@ -53,10 +54,14 @@ def group_lines(words: list[Word], page: int) -> list[Line]:
     for row in rows:
         row.sort(key=lambda w: w.box.x0)
         h = statistics.median(w.box.height for w in row) or 0.01
+        gaps = [b.box.x0 - a.box.x1 for a, b in zip(row, row[1:], strict=False) if b.box.x0 > a.box.x1]
+        space = statistics.median(gaps) if gaps else 0.0
         seg = [row[0]]
         for w in row[1:]:
             gap = w.box.x0 - seg[-1].box.x1
-            if gap > 1.6 * h:
+            # A wide gap ends a segment; so does a gap well over the row's ordinary word space
+            # (two column labels of a header grid set close together).
+            if gap > 1.6 * h or (gap > 0.9 * h and gap > 2.0 * space):
                 lines.append(_line(seg, page))
                 seg = [w]
             else:
