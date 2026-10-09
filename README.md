@@ -1,147 +1,127 @@
-# AP Invoice Coder (prototype)
+# AP Coder
 
-## Run the offline pilot
+**Invoice capture, GL coding and Canadian sales-tax checks for Accounts Payable, on one laptop.**
+AP Coder reads each invoice, checks every number, proposes the GL split and learns from what AP approves.
+It then exports approved invoices to JD Edwards E1. It runs fully offline. A local model in
+[LM Studio](https://lmstudio.ai/) (Qwen 3.5 9B for the pilot) is optional, and no data leaves the laptop.
 
-Everything runs on one laptop: no Azure, no cloud, nothing sent out.
+![Review queue: today's work, KPIs and the invoices waiting for review](docs/screenshots/review-queue.png)
 
-1. **Install Python 3.11+** from [python.org](https://www.python.org/downloads/) (tick *Add python.exe to PATH*).
-2. **Unzip AP Coder** to a folder that OneDrive does not sync, and double-click **`APProcessor.bat`**
-   (Mac: `APProcessor.command`). The first run sets itself up in a few minutes, including the OCR models
-   for scans, then opens the dashboard. An air-gapped laptop installs from the offline bundle instead.
-3. **Optional local AI:** in [LM Studio](https://lmstudio.ai/), load a 3B–8B instruct model and start the
-   server (Developer tab → **Start server**). AP Coder finds it on its own (**Settings → AI model**).
+## Set up: one double-click
 
-Without a model, every invoice is still read on the laptop (PDF text, or OCR for scans), checked, and each
-line is coded from what AP approved before for that vendor. With a model, it also proposes accounts for
-vendors it hasn't seen. The full pilot guide is [docs/PILOT.md](docs/PILOT.md).
+1. **Unzip AP Coder** to a folder that OneDrive does not sync (e.g. `C:\APCoder\app`).
+2. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`; the first time, right-click → *Open*).
 
-## Try the live demo
+That's it. The launcher checks what is already on the laptop and adds only what is missing:
 
-[![Open the live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ap-coder-demo.streamlit.app)
+- **Python:** it uses an installed Python 3.11–3.13. Only if none is found does it offer to install one.
+- **Packages:** it creates its own `.venv` once and installs only the packages that are missing or out of date.
+  It never touches your system Python or other projects.
+- **OCR models:** it downloads the scan-reading models only if they are not there yet.
+- **Shortcut and data folder:** it creates one desktop shortcut and your data folder (`~/APCoder`) once.
+- **Health check:** it reads the sample invoices, then prints a short readiness summary (Python, packages,
+  OCR, data folder, LM Studio) and opens the dashboard in your browser.
 
-**[ap-coder-demo.streamlit.app](https://ap-coder-demo.streamlit.app)** opens the review dashboard in
-your browser with ten made-up invoices: no company data, no Azure, nothing to install. Review, correct
-and approve invoices, then look at Insights, Sales tax and Activity. *Reset demo* starts it over.
+Later double-clicks start in seconds. If AP Coder is already running, the launcher just opens it again.
+For an air-gapped laptop, build the offline bundle (`python scripts/build_offline_bundle.py`). The same
+double-click then installs from its `wheelhouse/` folder without going online. The full pilot guide is
+[docs/PILOT.md](docs/PILOT.md); the step-by-step for real data is [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
-![Review queue with today's numbers](docs/screenshots/review-queue.png)
+**Optional: local AI with LM Studio.** Install LM Studio (0.4.8 or newer) and download **Qwen 3.5 9B**
+(Q4_K_M). Load it with *Context Length 8192*, then go to **Developer → Start server**. AP Coder finds it
+on its own; see *Settings → AI model*. Without a model everything still works: lines are coded from what
+AP approved before for that vendor, from fixed rules and from account names. With a model, AP Coder also
+proposes accounts for lines it has not seen yet.
+
+## Screens
 
 | | |
 |---|---|
-| ![An invoice in review: checks, GL split and the approve bar](docs/screenshots/invoice-review.png) | ![Insights: the business case at 500 invoices a month](docs/screenshots/insights.png) |
-| ![Sales tax: GST/HST and QST to claim back](docs/screenshots/sales-tax.png) | ![Activity: the duplicate payment audit and the audit trail](docs/screenshots/activity.png) |
+| ![An invoice in review: the page with every field boxed, checks, the GL split and the approve bar](docs/screenshots/invoice-review.png) | ![Insights: straight-through rate, hours saved and the business case](docs/screenshots/insights.png) |
+| ![Sales tax: GST/HST and QST to claim back](docs/screenshots/sales-tax.png) | ![Activity: the audit trail and the duplicate payment audit](docs/screenshots/activity.png) |
+| ![Exports: approved invoices in batches for the ERP and JD Edwards E1](docs/screenshots/exports.png) | ![Settings → AI model: the LM Studio connection, with the setup steps when no model is running](docs/screenshots/settings-ai.png) |
 
-To run the same demo on your computer: `pip install -r requirements.txt`, then
-`streamlit run streamlit_app.py`. How the hosted demo is set up: [docs/DEMO.md](docs/DEMO.md).
+**Just want to look around?** Start the dashboard and click *Load demo invoices*. You get ten sample
+invoices from across Canada, with sample POs and a vendor list. A hosted copy is at
+[ap-coder-demo.streamlit.app](https://ap-coder-demo.streamlit.app) ([how it is set up](docs/DEMO.md)).
 
 ## What it does
 
-An Accounts Payable invoice coding prototype on Azure, built for Canadian AP:
+1. **Reads the invoice on the laptop.** AP Coder uses the PDF's text layer, or local OCR (RapidOCR
+   PP-OCRv4, with a PP-OCRv5 second read) for scans and photos. It reads the header, every line, and every
+   GST, HST, PST and QST line. Each field gets a measured confidence (*verified*, *likely*, *check* or
+   *missing*) and is boxed on the page.
+2. **Codes each line** to your GL accounts and cost centers. It tries, in order:
+   - fixed rules set by AP;
+   - what AP approved before for that vendor;
+   - the vendor master's default account;
+   - account names;
+   - the local model, only for what is left.
 
-1. **Extraction:** Azure AI Document Intelligence (`prebuilt-layout` or `prebuilt-invoice`) turns
-   a PDF, TIFF or image invoice into reading-order Markdown, keeping multi-page tables intact.
-2. **Coding:** Azure OpenAI (`gpt-4o`, `gpt-4o-mini` or any newer deployment) reads the
-   Markdown and returns structured output, enforced by **Structured Outputs (`strict: true`)**:
-   - the invoice header and every line item
-   - every sales tax charged (**GST, HST, PST, QST**)
-   - a GL account and optional cost center for each line
-3. **Controls:** deterministic checks, done in code rather than by the AI:
-   - totals reconcile
-   - tax amount = taxable amount × rate, at the official rate for the province and date
-   - the right tax regime for the province
-   - QST is charged on the pre-GST amount
-   - supplier registration numbers are present
-   - possible duplicate invoices (also under another vendor name, or already in the ERP's invoice
-     register), and vendor fraud signals (vendor not in the ERP's vendor master, on hold, changed
-     GST/HST number or bank account, unusual amount, same amount under another number)
-   - credit notes: the invoice they credit is found, and a credit larger than it is flagged
-   - purchase order match: price, quantity ordered and received, lines not on the PO, PO total
-   - payment terms and due dates, early-payment discounts
-   - agreement with past reviewer decisions, and fixed coding rules set by AP
-4. **GL distribution:** posting lines that add up to the grand total:
-   - recoverable GST/HST and QST go to their own receivable accounts
-   - non-recoverable PST is added pro rata to the expense lines it applies to
-5. **Review dashboard and learning:** a local web app where AP reviews and approves each invoice.
-   Every approved line is remembered as *confirmed* or *corrected* and shown to the AI on the next
-   invoice from that vendor. Accuracy is tracked against the 90% target.
-6. **The rest of the AP cycle, locally:** invoices taken out of saved emails, *Find an invoice* for
-   vendor calls, emails to vendors drafted for you, second approval above a limit, export batches
-   for the ERP with approved (stamped) PDFs, vendor statement reconciliation, month-end accruals, the
-   sales-tax claim and PST/QST self-assessment, spend analysis, a duplicate payment audit, an audit
-   trail with a controls report, and a business case from the pilot's own numbers.
-
-> **Just want to look around?** Install, start the dashboard and click *Load demo invoices*: ten
-> sample invoices from across Canada, sample purchase orders and a sample vendor list, with a few
-> realistic AI mistakes to correct (a sample vendor statement to upload is in `data/`). No Azure needed.
+   It can only pick codes from your chart, never invent one.
+3. **Checks everything in code, not by AI:**
+   - totals reconcile;
+   - tax = taxable amount × the official rate for the province and date, the right regime, and the QST base;
+   - registration numbers;
+   - duplicates (also under another vendor name, or already in the ERP), and vendor fraud signals
+     (unknown or held vendor, changed GST number or bank account);
+   - credit notes, the PO match (price, quantity ordered and received), payment terms and discounts;
+   - agreement with past decisions.
+4. **Builds the GL distribution.** The posting lines add up to the amount payable to the cent. Recoverable
+   GST/HST and QST go to their own accounts; non-recoverable PST is spread over the expense lines.
+5. **Review and learning.** AP reviews, corrects and approves. Every approval is remembered and used for that
+   vendor's next invoice. Once a supplier's own invoices prove at least 99% accurate, a manager can switch
+   it to touchless.
+6. **The rest of the AP cycle:**
+   - ERP export batches, including JD Edwards E1 F0411Z1/F0911Z1 Z-files;
+   - *Find an invoice* for vendor calls, and vendor emails drafted for you;
+   - second approval above a limit;
+   - vendor statement reconciliation and month-end accruals;
+   - the sales-tax claim, spend analysis and a duplicate payment audit;
+   - the audit trail with a controls report;
+   - the business case, built from the pilot's own numbers.
 
 ```
-invoice ─► Document Intelligence ─► Markdown + tables + OCR confidence
-                                              │
-GL accounts, cost centers, tax rates, policy ─┤   past approvals for this vendor
-                                              ▼   (learning memory) ──────────┐
-                              Azure OpenAI, strict JSON schema ◄──────────────┘
-                              (only your GL codes allowed; tax lines per type)
-                                              │
-                                              ▼
-                     Checks: totals · tax math · province rates · QST base · registration #s
-                             duplicates · history conflicts → confidence + review flag
-                                              │
-                                              ▼
-                     GL distribution (tax GLs, PST into expense lines) ─► Review dashboard
-                                                                               │ approve
-                                                                               ▼
-                                                     learning memory + accuracy tracking
+invoice (PDF, scan, photo, .eml) ─► local reader: text layer or OCR ─► fields + confidence, boxed on the page
+                                                                     │
+   fixed rules · vendor history · vendor master · account names ─────┤  local model (LM Studio),
+                                                                     │  only for lines still uncoded
+                                                                     ▼
+            checks: totals · tax math · province rates · QST base · duplicates · fraud · PO match
+                                                                     │
+                                                                     ▼
+            GL distribution ─► review dashboard ─► approve ─► learning memory ─► ERP / JDE E1 export
 ```
 
-> **Running this on real data?** Follow [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), then the
-> four-week [pilot plan](docs/PILOT_PLAN.md). Everything
-> stays in a local data folder outside the code (default `~/APCoder`), and the dashboard only listens on
-> `localhost`. Only redacted reports (`doctor`, `share-report`) are meant to leave your machine.
+Everything stays in a local data folder outside the code (default `~/APCoder`). The dashboard only listens
+on `127.0.0.1`, and a test fails if any page tries to connect to the internet. Only redacted reports
+(`doctor`, `share-report`) are meant to leave the laptop.
 
-## Quick start
-
-**Windows:** unzip, double-click **`APProcessor.bat`**. **Mac:** double-click `APProcessor.command`
-(Linux: `./APProcessor.command`). The first run sets itself up (a few minutes, Python 3.11+ needed), then
-the dashboard opens in your browser; later runs start straight away. It works offline, and with a
-`wheelhouse/` folder (the offline bundle) it even installs offline: see the pilot guide,
-[docs/PILOT.md](docs/PILOT.md).
-
-The full installer is still there: `install.bat` / `./install.sh` also updates a git checkout, asks for
-Azure settings and adds a desktop shortcut; `start.bat` / `./start.sh` do the same as `APProcessor`. It is
-safe to run again (see [GETTING_STARTED](docs/GETTING_STARTED.md#step-2-install-10-min-one-double-click)).
-
-By hand:
+## Run it by hand (developers)
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env              # endpoints/keys, or leave keys empty to use Entra ID (az login)
-
-python -m ap_coder doctor --online   # check configuration and Azure connectivity
-python -m ap_coder dashboard         # review app on http://127.0.0.1:8501 (or the next free port)
+pip install -e ".[ocr,dev]"
+python -m ap_coder doctor --online   # setup check; with LM Studio running, a two-line test call
+python -m ap_coder dashboard         # http://127.0.0.1:8501 (or the next free port)
+python scripts/pilot_check.py        # reads the ten samples offline and compares them with their answers
 ```
 
-In the dashboard:
-1. **GL accounts & tax** → *Load sample setup*, or import your own accounts (or click *Load demo
-   invoices* to skip ahead).
-2. **Process invoices** → upload the PDFs in `samples/`.
-3. **Review queue** → review and approve. **Help** explains every check.
+### LM Studio settings
 
-### Run offline with LM Studio
+`AP_LLM_PROVIDER=auto` (the default) chooses the model in this order:
 
-The coding step can use a model on your own computer instead of Azure OpenAI. Nothing is sent out.
+1. Azure OpenAI, if its endpoint is set;
+2. else the model loaded in LM Studio, if its server answers;
+3. else no AI.
 
-1. Install [LM Studio](https://lmstudio.ai/).
-2. Download and load a small *instruct* model: Qwen 3.5 9B, Qwen 2.5 7B Instruct, Llama 3.1 8B, or any
-   3B–9B instruct model, with a Context Length of 8192. One that can see (an eye icon in LM Studio, e.g.
-   Qwen 3.5 or Qwen 2.5 VL 7B) is also shown the page images. A thinking model (Qwen 3, Qwen 3.5) is
-   asked not to think; LM Studio 0.4.8 or newer honours that (see [docs/PILOT.md](docs/PILOT.md)).
-3. **Developer** tab → **Start server**.
+**Settings → AI model** shows what was found (e.g. *Connected to LM Studio · qwen3.5-9b*). It also has
+a **Test connection** button.
 
-AP Coder finds it on its own: `AP_LLM_PROVIDER=auto` (the default) uses Azure OpenAI when its endpoint
-is set, else the model loaded in LM Studio when the server answers, else no AI. **Settings → AI model**
-shows what it found (*Connected to LM Studio · qwen2.5-7b-instruct · can see pages: no*), has a
-**Test connection** button, and picks the server address and model. `python -m ap_coder doctor --online`
-asks it for the accounts of two made-up lines, as the pipeline does for lines nothing else could code.
+Qwen 3.5 is asked not to think (`reasoning_effort: "none"`, which LM Studio honours from 0.4.8 on). Replies
+are still read when they come wrapped in `<think>` blocks or code fences, or when the answer is left in the
+model's reasoning. If the model spends its whole budget thinking, AP Coder reports a plain error instead of
+coding nothing silently. Speed and model advice are in [docs/PILOT.md](docs/PILOT.md).
 
 | Setting | Default | |
 | --- | --- | --- |
@@ -152,12 +132,9 @@ asks it for the accounts of two made-up lines, as the pipeline does for lines no
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
 | `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
 
-The model is asked for the same strict JSON schema as Azure (LM Studio supports it). A server that
-refuses it gets plain JSON mode, then the schema in the prompt; replies wrapped in code fences or
-`<think>` blocks, or left in the model's reasoning, are still read, and an invalid answer gets one repair
-turn. A model that thinks until `AP_LLM_MAX_TOKENS` runs out gets a plain error saying so. Every check after coding is
-the same as with Azure. With no model at all, the rest of AP Coder still works; invoices just aren't
-coded by AI. Reading the invoice itself (Document Intelligence, or reading text files) is a separate step.
+**Azure stays optional.** With Azure Document Intelligence and Azure OpenAI set in *Settings → Azure*, those
+services do the reading and coding instead. They use strict Structured Outputs, and every check after
+coding is the same.
 
 ## Dashboard
 
@@ -170,14 +147,14 @@ coded by AI. Reading the invoice itself (Document Intelligence, or reading text 
 | Work | **Vendor statements** | Upload a vendor's statement of account: matched, amount differs, not received, not on the statement; the email asking for the missing invoices. |
 | Work | **Month-end** | The accruals schedule: received not invoiced (from POs), invoices not in the ERP yet, expected recurring invoices; by GL; CSV. |
 | Work | **Sales tax** | GST/HST (ITCs) and QST (ITRs) to claim back for a period, by tax and rate, with the claims to check before filing (no valid registration number on the invoice, foreign currency); PST / QST possibly to self-assess; CSV. |
-| Insight | **Insights** | Straight-through rate, hours saved, Azure cost per invoice, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
+| Insight | **Insights** | Straight-through rate, hours saved, cost per invoice, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
 | Insight | **Spend** | Spend by month (by GL category), top GL accounts, vendors and cost centers, net of recoverable tax; **all invoice data as Excel** (invoices, lines, GL posting) for pivot tables or Power BI. |
 | Insight | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). *Teach from past coding* imports last year's AP lines from the ERP. |
 | Insight | **Vendors** | Import the **vendor master** from the ERP (vendor IDs in exports, unknown vendors flagged, vendor terms, default GL); spend, AI accuracy and controls per vendor (hold, expected GST/HST number, notes); recurring vendors and late invoices. |
 | Insight | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit; the **duplicate payment audit** (number typos, same bill under two vendor names, same amount days apart, also against the ERP register). |
 | Setup | **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete. Optional cost centers. Tax treatments and GLs. Coding policy. **Fixed rules** (vendor and/or words → GL account and cost center), with rules suggested from past coding. |
 | Setup | **Purchase orders** | Import open POs (one row per line, received quantities optional); what has been invoiced against each; close, reopen, delete. |
-| Setup | **Settings** | Azure connection (with a connection test), your name (per Windows user), review threshold, page images for the AI (vision), only-my-GL-codes, approval limit, default payment days, backups and restore (with an optional second backup folder, e.g. OneDrive). |
+| Setup | **Settings** | AI model (LM Studio found automatically, with a connection test), optional Azure connection, your name (per Windows user), review threshold, page images for the AI (vision), only-my-GL-codes, approval limit, default payment days, backups and restore (with an optional second backup folder, e.g. OneDrive). |
 | Setup | **Help** | Quick start, every check explained, questions, shortcuts. |
 
 ## Canadian sales tax
@@ -291,6 +268,9 @@ Each invoice produces the original target fields plus the Canadian tax fields, a
 
 ## Design decisions
 
+- **Local first.** The reader, the checks, the GL distribution and the learning run on the laptop with no
+  AI at all. A model only fills accounts nothing else could code, so a small local model is enough, and a
+  slow or missing model never stops an invoice from being read and checked.
 - **Structured Outputs, natively enforced.** The schema (`ap_coder/schema.py`) follows strict-mode
   rules: closed objects, all properties required. A Pydantic mirror re-validates values (dates,
   provinces, tax types, rate ranges). If that fails, the model gets one repair round-trip.
@@ -301,13 +281,13 @@ Each invoice produces the original target fields plus the Canadian tax fields, a
   Rates, regimes and amounts are verified in Python, and the GL distribution is computed in
   Python. An invoice whose posting does not equal the amount payable to the cent is flagged
   (`POSTING_UNBALANCED`) before it can be approved without an override.
-- **Model-agnostic and ready for vision.** Capabilities are inferred from
+- **Model-agnostic and ready for vision.** With Azure, capabilities are inferred from
   `AZURE_OPENAI_MODEL_NAME`:
   - reasoning models get `reasoning_effort` instead of `temperature`/`seed`
   - `--vision` sends page images to models that can read them
 - **Prompt-cache friendly.** Instructions and reference data form a stable system prompt. History
   and the document go in the user message.
-- **Cheap iteration.** Document Intelligence results are cached by file hash, so re-runs only pay
+- **Cheap iteration (Azure).** Document Intelligence results are cached by file hash, so re-runs only pay
   for the LLM.
 - **Enterprise auth.** Without keys, both services use Entra ID (`DefaultAzureCredential`). The
   SDK retries 429 and 5xx responses with backoff.
@@ -340,7 +320,8 @@ Next to the AI coder, AP Coder reads every invoice itself and shows *where* each
 ```
 ap_coder/
   extraction.py      Document Intelligence → ExtractionResult (+ cache)
-  inference.py       Azure OpenAI Structured Outputs, model profiles, repair loop
+  inference.py       Structured Outputs (Azure or local), model profiles, repair loop, account suggestions
+  offline_coder.py   coding with no model: rules, vendor history, vendor master, account names
   local_llm.py       LM Studio / Ollama: finding the server and model, reading a small model's JSON
   prompts.py         system prompt (extraction, Canadian tax, GL coding, learning rules)
   schema.py          strict JSON Schema + Pydantic mirror
@@ -363,17 +344,19 @@ ap_coder/
   doctor.py · share_report.py · labels.py · evaluation.py · reference_data.py · cli.py
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement
 samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
-scripts/             sample invoice generator
-docs/                GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md,
+scripts/             first_run.py, check_deps.py, fetch_models.py (launcher steps), pilot_check.py,
+                     build_offline_bundle.py, sample invoice generator
+APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
+docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md,
                      DEMO.md (the public web demo), screenshots/
 streamlit_app.py     the public web demo: the dashboard with made-up invoices (.streamlit/ and static/ go with it)
 private/             git-ignored: default data folder when the installer is not used
-tests/               offline test suite (Azure clients mocked)
+tests/               offline test suite (Azure clients and LM Studio mocked)
 ```
 
 Run the tests with `pytest`; lint with `ruff check . && ruff format --check .`.
 
-## Phase 2 hooks
+## Phase 2 hooks (beyond the laptop pilot)
 
 - **Ingestion:** Logic Apps / Power Automate → Blob Storage → a Service Bus message → a worker
   calling `InvoicePipeline.process()`. Locally, `watch` already processes a shared folder.
