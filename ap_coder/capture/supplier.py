@@ -227,7 +227,8 @@ def normalize_value(name: str, raw: Any, date_order: str | None = None) -> Any:
                                                                              str(raw or "")):  # fmt: skip
         return parse_date(raw, date_order)  # the order this supplier prints its dates in
     ext = _external_normalizer()
-    if ext is not None:
+    # The shared normalizer gives comparison keys; ids, names and terms keep their printed form here.
+    if ext is not None and (name in AMOUNT_FIELDS or name in DATE_FIELDS or name.endswith("registration_number")):
         try:
             value = ext(name, raw)
         except Exception:
