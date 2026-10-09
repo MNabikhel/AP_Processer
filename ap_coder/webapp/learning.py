@@ -210,7 +210,7 @@ def _coding_accuracy(store) -> None:
         ui.tiles(
             [
                 ui.tile(
-                    "AI coding accuracy",
+                    "Coding accuracy",
                     f"{accuracy:.1%}",
                     "auto_awesome",
                     "green" if accuracy >= TARGET_ACCURACY else "violet",

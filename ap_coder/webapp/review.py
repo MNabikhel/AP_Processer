@@ -124,7 +124,7 @@ def page_review() -> None:
                 ui.tile("Waiting for review", len(pending), "inbox", "blue", f"{len(flagged)} flagged by checks"),
                 ui.tile("Approved", len(approved), "task_alt", "green", f"{done_today} today"),
                 ui.tile(
-                    "AI coding accuracy",
+                    "Coding accuracy",
                     "—" if accuracy is None else f"{accuracy:.0%}",
                     "auto_awesome",
                     "violet",
@@ -408,7 +408,7 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
         )
         with action.popover(f"Approve {len(candidates)} clean…", icon=":material/done_all:", width="stretch"):
             st.markdown(
-                "These invoices are approved **exactly as the AI coded them**, and each one teaches the AI. "
+                "These invoices are approved **exactly as coded**, and each one teaches AP Coder. "
                 "Every invoice is re-checked first; any that is no longer clean is left for you."
             )
             st.html(
@@ -593,7 +593,7 @@ def _document_panel(inv: dict[str, Any], store: Store, key: str = "") -> None:
         st.image(pages[page_no - 1], width="stretch")
     elif not path.exists():
         st.warning(f"Original file not found at {path}", icon=":material/warning:")
-    with st.expander("Extracted text (what the AI read)", expanded=not pages, icon=":material/text_snippet:"):
+    with st.expander("Extracted text", expanded=not pages, icon=":material/text_snippet:"):
         st.html(f"<div style='font-size:0.85rem'>{ui.document_text(inv.get('extraction_md') or '')}</div>")
     _history(inv, store)
 
@@ -695,7 +695,7 @@ def _checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> str:
     if low:
         items.append(
             f"<li class='warn'><span class='m' aria-hidden='true'>!</span><span class='rvw-sr'>Worth a look: </span>"
-            f"<span class='t'>AI confidence {report.adjusted_confidence:.0%} is below the "
+            f"<span class='t'>Confidence {report.adjusted_confidence:.0%} is below the "
             f"{report.review_threshold:.0%} threshold.</span></li>"
         )
     if errors:
@@ -726,7 +726,7 @@ def _checks_html(report: Any) -> str:
             ui.check(
                 "warning",
                 "Low confidence",
-                f"AI confidence {report.adjusted_confidence:.0%} is below the {report.review_threshold:.0%} "
+                f"Confidence {report.adjusted_confidence:.0%} is below the {report.review_threshold:.0%} "
                 "threshold, so a person should look it over.",
             )
         )
@@ -1016,7 +1016,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 # a blank GL becomes UNASSIGNED, which blocks approval until a code is picked
             ),  # fmt: skip
             "taxes_applied": st.column_config.MultiselectColumn("Taxes", options=list(TAX_TYPES), width=120),
-            "reasoning_justification": st.column_config.TextColumn("AI reasoning", disabled=True, width="large"),
+            "reasoning_justification": st.column_config.TextColumn("Reasoning", disabled=True, width="large"),
         }
         column_order = ["line_number", "description", "amount", "predicted_gl_code"]
         if reference.cost_centers is not None:
@@ -1103,7 +1103,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
         _ask_vendor(coding, report, key)
     with (
         reasons_box,
-        st.expander("Why the AI chose these codes", icon=":material/psychology_alt:"),
+        st.expander("Why these codes", icon=":material/psychology_alt:"),
     ):
         st.html(_reasons_html(coding, ai, report, reference))
     uncoded_lines = [
@@ -1130,11 +1130,11 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     with card("actionbar"):
         left, right = st.columns([1, 1.5], vertical_alignment="center")
         with left:
-            learn = f"you changed {changed} of its codes" if changed else "all as the AI suggested"
+            learn = f"you changed {changed} of its codes" if changed else "all as suggested"
             lines_n = len(coding.line_items)
             st.html(
                 f"<div class='rvw-post'><div class='rvw-post-amount'>Post <b>{money(coding.grand_total)}</b> "
-                f"{esc(coding.currency)}</div><div class='rvw-post-sub' title='Approving teaches the AI from "
+                f"{esc(coding.currency)}</div><div class='rvw-post-sub' title='Approving teaches AP Coder from "
                 f"{lines_n} line(s): {esc(learn)}.'>{ui.icon('school', '1em')} Teaches from {lines_n} "
                 f"line{'s' if lines_n != 1 else ''} · {learn}</div></div>"
             )
@@ -1452,7 +1452,7 @@ def _invoice_summary(
     confidence = report.adjusted_confidence
     sure = confidence >= report.review_threshold
     gauge = (
-        f"<span title='AI confidence; {report.review_threshold:.0%} or more needs no second look'>"
+        f"<span title='Confidence; {report.review_threshold:.0%} or more needs no second look'>"
         + ui.pill(f"{confidence:.0%} confidence", "ok" if sure else "warn", "verified" if sure else "help")
         + "</span>"
     )
@@ -1579,7 +1579,7 @@ def render_approved(store: Store, reference: ReferenceData, invoice_id: int) -> 
             f"{esc(final.get('vendor_name'))}</div><div class='apc-muted'>Invoice {esc(final.get('invoice_number'))}"
             f" · approved by {esc(inv['reviewer'])} {esc(ui.time_ago(inv['reviewed_at']))} · "
             + (
-                "no changes to the AI's coding"
+                "no changes to the suggested coding"
                 if not edits
                 else "changed: " + esc(", ".join(EDIT_LABELS.get(e, e) for e in edits))
             )
