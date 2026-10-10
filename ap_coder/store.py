@@ -258,6 +258,11 @@ class Store:
                     conn.execute("UPDATE invoices SET currency = ? WHERE id = ?", (currency, r["id"]))
         if version < 13:  # credit notes were given a due date like invoices
             conn.execute("UPDATE invoices SET due_date = NULL WHERE grand_total <= 0")
+        # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
+        # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
+        from .capture.workflow import AUTONOMOUS_REVIEWER
+
+        conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -734,20 +739,30 @@ class Store:
             self.log_event("note", invoice_id=invoice_id, actor=actor, detail={"text": text.strip()[:2000]})
 
     def reject_invoice(self, invoice_id: int, reviewer: str, reason: str = "") -> None:
-        """Reject an invoice. One exported to the ERP cannot be (undo its batch first): rejected, it could then be
-        reopened and exported again. What an approval taught is withdrawn, as when it is reopened."""
+        """Reject an invoice in the review queue, or a parked one. An approved invoice cannot be: a Reject clicked
+        on a screen opened before someone approved it would wipe a finished approval (reopen it first). Anything
+        learned from the invoice is withdrawn, as when it is reopened."""
         with self._conn() as conn:
             cur = conn.execute(
                 "UPDATE invoices SET status = ?, reviewer = ?, reviewed_at = ?, second_reviewer = NULL, "
-                "second_reviewed_at = NULL, error = ? WHERE id = ? AND export_batch IS NULL",
-                (REJECTED, reviewer, _now(), reason or None, invoice_id),
+                "second_reviewed_at = NULL, parked_reason = NULL, follow_up = NULL, error = ? "
+                "WHERE id = ? AND status IN (?, ?) AND export_batch IS NULL",
+                (REJECTED, reviewer, _now(), reason or None, invoice_id, REVIEW, PARKED),
             )
             if cur.rowcount == 0:
-                raise ValueError(f"invoice {invoice_id} cannot be rejected (exported to the ERP, or deleted)")
-            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
-            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
-            conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ?", (invoice_id,))
+                raise ValueError(
+                    f"invoice {invoice_id} cannot be rejected (approved, rejected or deleted meanwhile: only an "
+                    "invoice in the review queue or parked can be)"
+                )
+            self._forget_learning(conn, invoice_id)
             self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason})
+
+    @staticmethod
+    def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> None:
+        """Withdraw what an invoice's approval taught: its lessons, its supplier outcomes (from a review or an
+        audit sample alike, so none keeps counting towards the supplier's autonomy) and its reader scores."""
+        for table in ("feedback", "supplier_outcomes", "reader_outcomes"):
+            conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
 
     def delete_invoice(self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None) -> None:
         """Delete an invoice; with ``forget_lessons`` also what was learned when it was approved."""
@@ -830,7 +845,11 @@ class Store:
         login: str = "",
     ) -> dict[str, int]:
         """Store the reviewer's final version and record one feedback row per line. ``open_issues``: the
-        errors and warnings still showing when the reviewer approved (kept in the audit trail)."""
+        errors and warnings still showing when the reviewer approved (kept in the audit trail). Only an invoice
+        in the review queue can be approved. An approval by AP Coder on its own (``AUTONOMOUS_REVIEWER``)
+        records no feedback: nobody checked its coding, so it is no lesson and no measure of accuracy."""
+        from .capture.workflow import AUTONOMOUS_REVIEWER
+
         inv = self.get_invoice(invoice_id)
         if inv is None:
             raise KeyError(invoice_id)
@@ -838,6 +857,10 @@ class Store:
             raise ValueError(f"invoice {invoice_id} is already approved")
         if inv["status"] == REJECTED:  # e.g. rejected by someone else meanwhile: reopen it first
             raise ValueError(f"invoice {invoice_id} was rejected: reopen it before approving it")
+        if inv["status"] == PARKED:  # parked by someone else meanwhile: waiting for information
+            raise ValueError(f"invoice {invoice_id} is parked: bring it back to the queue before approving it")
+        if inv["status"] != REVIEW:  # a failed read has nothing checked to approve
+            raise ValueError(f"invoice {invoice_id} is not in the review queue ({inv['status']})")
         ai = inv["ai_output"] or {"line_items": []}
         needs_second = self.over_approval_limit(final_output)
         vendor_name = final_output.get("vendor_name", "")
@@ -893,7 +916,7 @@ class Store:
                 """UPDATE invoices SET status = ?, final_output = ?, edits = ?, reviewer = ?, reviewed_at = ?,
                    vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?,
                    currency = ?, po_key = ?, due_date = ?, second_reviewer = NULL, second_reviewed_at = NULL
-                   WHERE id = ? AND status NOT IN (?, ?, ?)""",
+                   WHERE id = ? AND status = ?""",
                 (
                     PENDING if needs_second else APPROVED,
                     json.dumps(final_output),
@@ -909,13 +932,13 @@ class Store:
                     po_key(final_output.get("po_number") or ""),
                     _due(final_output, self.default_terms_days(), self.vendor_terms(key)),
                     invoice_id,
-                    APPROVED,
-                    PENDING,
-                    REJECTED,
+                    REVIEW,
                 ),  # fmt: skip
             )
             if cur.rowcount == 0:
-                raise ValueError(f"invoice {invoice_id} is already approved, or was rejected")
+                raise ValueError(f"invoice {invoice_id} left the review queue (approved, parked or rejected)")
+            if reviewer == AUTONOMOUS_REVIEWER:
+                feedback_rows = []  # nobody checked it: nothing to learn from, nothing to measure accuracy on
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
@@ -989,9 +1012,7 @@ class Store:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
-            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
-            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
-            conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ?", (invoice_id,))
+            self._forget_learning(conn, invoice_id)
             self._log(conn, "sent_back", invoice_id, actor, {"reason": reason})
 
     def refresh_confidence(self, invoice_id: int, adjusted: float, requires_review: bool) -> bool:
@@ -1019,9 +1040,7 @@ class Store:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
-            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
-            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
-            conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ?", (invoice_id,))
+            self._forget_learning(conn, invoice_id)
             self._log(conn, "reopened", invoice_id, actor, {"reason": reason})
 
     # --- Purchase orders ---------------------------------------------------------------------------
@@ -1213,24 +1232,44 @@ class Store:
             ]
 
     def create_export_batch(self, invoice_ids: list[int], fmt: str, actor: str | None = None) -> int:
-        """Mark approved, not yet exported invoices as one batch. Returns the batch number."""
+        """Mark approved, not yet exported invoices as one batch. Returns the batch number. Two people exporting
+        at once never put the same invoice in two batches: the write lock is taken before the invoices are
+        read, and each is taken only if it is still approved and not exported."""
         with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")  # the write lock from the read to the marks
             marks = ", ".join("?" for _ in invoice_ids)
             eligible = conn.execute(
-                f"SELECT id, grand_total FROM invoices WHERE id IN ({marks}) AND status = ? AND export_batch IS NULL",
+                f"SELECT id, grand_total, currency FROM invoices WHERE id IN ({marks}) AND status = ? "
+                "AND export_batch IS NULL ORDER BY id",
                 (*invoice_ids, APPROVED),
             ).fetchall()
             if not eligible:
                 raise ValueError("none of these invoices can be exported (not approved, or already exported)")
-            total = round(sum(r["grand_total"] or 0 for r in eligible), 2)
             cur = conn.execute(
                 "INSERT INTO export_batches (created_at, actor, format, invoices, total) VALUES (?, ?, ?, ?, ?)",
-                (_now(), actor, fmt, len(eligible), total),
+                (_now(), actor, fmt, 0, 0.0),
             )
             batch = int(cur.lastrowid)
-            conn.executemany("UPDATE invoices SET export_batch = ? WHERE id = ?", [(batch, r["id"]) for r in eligible])
+            taken = []
             for r in eligible:
-                self._log(conn, "exported", r["id"], actor, {"batch": batch, "format": fmt})
+                cur = conn.execute(
+                    "UPDATE invoices SET export_batch = ? WHERE id = ? AND status = ? AND export_batch IS NULL",
+                    (batch, r["id"], APPROVED),
+                )
+                if cur.rowcount:
+                    taken.append(r)
+            if not taken:
+                raise ValueError("none of these invoices can be exported (not approved, or already exported)")
+            currencies = {(r["currency"] or "").strip().upper() or "CAD" for r in taken}
+            total = round(sum(r["grand_total"] or 0 for r in taken), 2) if len(currencies) == 1 else None
+            conn.execute(  # no total across currencies: dollars and euros do not add up
+                "UPDATE export_batches SET invoices = ?, total = ? WHERE id = ?", (len(taken), total, batch)
+            )
+            for r in taken:  # the amount and currency, so an undone batch still shows what went out
+                self._log(conn, "exported", r["id"], actor, {
+                    "batch": batch, "format": fmt, "total": r["grand_total"],
+                    "currency": (r["currency"] or "").strip().upper() or "CAD",
+                })  # fmt: skip
         return batch
 
     def export_batches(self) -> list[dict[str, Any]]:
@@ -1307,6 +1346,34 @@ class Store:
         for r in rows:
             out.setdefault(r["export_batch"], {})[r["cur"]] = round(r["total"] or 0, 2)
         return out
+
+    def exported_totals(self) -> dict[int, dict[str, float]]:
+        """{batch: {currency: total}} of what each batch held when it was exported, from the audit trail: an
+        undone batch's invoices are back in the ready list, but what went out is still shown per currency. An
+        export recorded by an older version (without the amount) counts the invoice's amount as it is now; a
+        batch with such an invoice since deleted is left out (its total is not known)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT e.detail, i.id, i.currency, i.grand_total FROM events e "
+                "LEFT JOIN invoices i ON i.id = e.invoice_id WHERE e.action = 'exported'"
+            ).fetchall()
+        out: dict[int, dict[str, float]] = {}
+        unknown: set[int] = set()
+        for r in rows:
+            detail = json.loads(r["detail"] or "{}") or {}
+            if detail.get("batch") is None:
+                continue
+            batch = int(detail["batch"])
+            if "currency" in detail:
+                currency, amount = detail["currency"], detail.get("total")
+            elif r["id"] is not None:
+                currency, amount = (r["currency"] or "").strip().upper() or "CAD", r["grand_total"]
+            else:
+                unknown.add(batch)
+                continue
+            totals = out.setdefault(batch, {})
+            totals[currency] = round(totals.get(currency, 0.0) + float(amount or 0), 2)
+        return {batch: totals for batch, totals in out.items() if batch not in unknown}
 
     def batch_invoice_ids(self, batch: int) -> list[int]:
         with self._conn() as conn:
