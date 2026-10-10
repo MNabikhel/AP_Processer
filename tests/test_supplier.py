@@ -469,7 +469,7 @@ def test_migration_from_schema_13(tmp_path, ground_truth):
             conn.execute(f"DROP TABLE {table}")
         conn.execute("UPDATE settings SET value = '13' WHERE key = 'schema_version'")
     upgraded = Store(path)
-    assert SCHEMA_VERSION == 14 and upgraded.get_setting("schema_version") == "14"
+    assert upgraded.get_setting("schema_version") == str(SCHEMA_VERSION)
     with sqlite3.connect(path) as conn:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'index')")}
     assert {"invoice_capture", "supplier_profiles", "supplier_outcomes", "supplier_outcomes_key_at"} <= tables
@@ -611,7 +611,7 @@ def _html(at):
 
 def test_learning_page_supplier_tab_empty(db):
     at = _ok(_learning_page().run())
-    assert [t.label for t in at.tabs] == ["Coding accuracy", "Supplier learning"]
+    assert [t.label for t in at.tabs] == ["Coding accuracy", "Supplier learning", "Readers"]
     assert "No supplier learned yet" in _html(at)
 
 

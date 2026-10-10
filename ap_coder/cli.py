@@ -192,6 +192,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-codes", action="store_true", help="Include GL/cost-center confusion pairs")
     p.add_argument("-o", "--out", default=str(private / "share_report.md"))
 
+    p = sub.add_parser(
+        "export-training", help="Approved invoices (pages + approved values) as a ZIP to fine-tune a vision model"
+    )
+    p.add_argument(
+        "-o", "--out", default=None,
+        help="ZIP to write (default: training/ap-coder-training-<today>.zip in the database's folder)",
+    )  # fmt: skip
+    p.add_argument("--since", default=None, help="Only invoices approved on or after this date (YYYY-MM-DD)")
+
     p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
     p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
 
@@ -448,6 +457,34 @@ def cmd_share_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export_training(args: argparse.Namespace) -> int:
+    import datetime as dt
+
+    from .training_export import export_training_set, training_invoices
+
+    store = Store(args.db)
+    try:
+        candidates = training_invoices(store, args.since)
+    except ValueError:
+        print(f"--since takes a date as YYYY-MM-DD, not {args.since!r}.", file=sys.stderr)
+        return 2
+    if not candidates["invoices"]:
+        print("No approved invoices to export yet" + (f" since {args.since}" if args.since else "") + ".",
+              file=sys.stderr)  # fmt: skip
+        return 1
+    default = Path(args.db).resolve().parent / "training" / f"ap-coder-training-{dt.date.today().isoformat()}.zip"
+    out = Path(args.out) if args.out else default
+    counts = export_training_set(store, out, since=args.since)
+    print(f"Wrote {counts['invoices']} invoice(s), {counts['pages']} page image(s) to {out}", file=sys.stderr)
+    for key, text in (("missing_files", "file no longer on this computer"), ("no_pages", "no page to show"),
+                      ("demo", "demo invoice"), ("unreviewed", "approved without a person")):  # fmt: skip
+        if counts[key]:
+            print(f"  left out: {counts[key]} ({text})", file=sys.stderr)
+    print("It stays on this computer: it holds your suppliers' invoices; README.txt inside says how to use it.",
+          file=sys.stderr)  # fmt: skip
+    return 0 if counts["invoices"] else 1
+
+
 def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
     from .demo import load_demo, remove_demo
 
@@ -494,6 +531,7 @@ def main(argv: list[str] | None = None) -> int:
         "labels": lambda: cmd_labels(args),
         "evaluate": lambda: cmd_evaluate(args),
         "share-report": lambda: cmd_share_report(args),
+        "export-training": lambda: cmd_export_training(args),
         "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
     }
