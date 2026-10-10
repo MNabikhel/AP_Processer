@@ -27,9 +27,9 @@ from .tax import (
     DEFAULT_TREATMENTS,
     PROVINCES,
     RECOVERABLE,
-    REGIME,
     TaxRateTable,
     TaxTreatment,
+    regime_on,
     valid_gst_number,
     valid_qst_number,
 )
@@ -164,6 +164,13 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
     return Report(start, end, claims, not_approved, not_recoverable)
 
 
+def _charged(tax_line: dict[str, Any]) -> bool:
+    try:
+        return abs(float(tax_line.get("tax_amount") or 0)) > 0.004
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class SelfAssessment:
     invoice_id: int
@@ -192,15 +199,17 @@ def self_assessment(
         if not (first <= date <= last):
             continue
         province = next((p for p in (doc.get("ship_to_province"), doc.get("supplier_province")) if p in PROVINCES), "")
-        charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or []}
+        # A printed "PST 0.00" is not a charge (as in the tax checks): that PST may still be owed.
+        charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or [] if _charged(tl)}
         base = float(doc.get("subtotal") or 0)
-        for tax_type in sorted(REGIME.get(province, frozenset()) & {"PST", "QST"}):
+        try:
+            on = dt.date.fromisoformat(date)
+        except ValueError:
+            on = None
+        for tax_type in sorted(regime_on(province, on, rates) & {"PST", "QST"}):
             if tax_type in charged or abs(base) < 0.005:
                 continue
-            try:
-                rate = rates.rate_for(tax_type, province, dt.date.fromisoformat(date))
-            except ValueError:
-                rate = None
+            rate = rates.rate_for(tax_type, province, on) if on else None
             if not rate:
                 continue
             out.append(

@@ -47,7 +47,7 @@ from typing import Any
 
 from .memory import vendor_key
 from .safe import csv_row
-from .tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PROVINCES
+from .tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from .vendors import norm_invoice_number
 
 SETTING_KEY = "jde_e1"
@@ -83,7 +83,7 @@ RECOVERABLE_BY_CODE: dict[str, frozenset[str]] = {
     "": frozenset(),
 }
 PST_PROVINCES = ("BC", "SK", "MB")
-NO_DECIMAL_CURRENCIES = {"JPY": 0, "KRW": 0, "CLP": 0, "ISK": 0}
+NO_DECIMAL_CURRENCIES = dict.fromkeys(sorted(ZERO_DECIMAL_CURRENCIES), 0)
 
 HEADER_COLUMNS = [
     "VLEDUS", "VLEDBT", "VLEDTN", "VLEDLN", "VLEDSP", "VLEDTC", "VLEDTR",
@@ -290,14 +290,23 @@ def _cents(x: Any) -> int:
         return 0
 
 
-def _split(total: int, weights: list[int]) -> list[int]:
-    """``total`` cents split in proportion to ``weights`` (exact: the remainder goes to the largest)."""
+def _units(x: Any, decimals: int = 2) -> int:
+    """An amount in cents, rounded to what the currency can hold (whole yen: a multiple of 100)."""
+    try:
+        return int(Decimal(str(x or 0)).quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP) * 100)
+    except ArithmeticError:
+        return 0
+
+
+def _split(total: int, weights: list[int], unit: int = 1) -> list[int]:
+    """``total`` cents split in proportion to ``weights``, in steps of ``unit`` cents (100 for a currency without
+    cents). Exact: the remainder goes to the largest."""
     if not weights:
         return []
     base = sum(weights)
     if base == 0:
         return [total] + [0] * (len(weights) - 1)
-    shares = [int(Decimal(total * w) / Decimal(base)) for w in weights]
+    shares = [int(Decimal(total * w) / Decimal(base * unit)) * unit for w in weights]
     biggest = max(range(len(weights)), key=lambda i: abs(weights[i]))
     shares[biggest] += total - sum(shares)
     return shares
@@ -372,6 +381,8 @@ class _Voucher:
     stam: int = 0
     atxa: int = 0
     recoverable: int = 0
+    charged: list[dict[str, Any]] = field(default_factory=list)  # Canadian tax lines with an amount
+    recoverable_types: frozenset[str] = frozenset()
     entries: list[dict[str, Any]] = field(default_factory=list)  # distribution lines (cents in "cents")
     po_matched: bool = False
 
@@ -453,11 +464,13 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     elif charged and v.tax_code in ("V", "C", "B") and not v.tax_area:
         add(f"no JDE tax area for {v.province} (Settings → JD Edwards → tax areas)")
 
-    v.gross = _cents(final.get("grand_total"))
-    v.stam = sum(_cents(t.get("tax_amount")) for t in charged)
-    v.atxa = max((_cents(t.get("taxable_amount")) for t in charged), key=abs, default=0)
-    recoverable_types = RECOVERABLE_BY_CODE.get(v.tax_code, frozenset())
-    v.recoverable = sum(_cents(t.get("tax_amount")) for t in charged if t["tax_type"] in recoverable_types)
+    # In the currency's own units: whole yen are sent as whole yen, so the voucher balances as E1 reads it.
+    v.gross = _units(final.get("grand_total"), v.decimals)
+    v.stam = sum(_units(t.get("tax_amount"), v.decimals) for t in charged)
+    v.atxa = max((_units(t.get("taxable_amount"), v.decimals) for t in charged), key=abs, default=0)
+    v.charged, v.recoverable_types = charged, RECOVERABLE_BY_CODE.get(v.tax_code, frozenset())
+    recoverable = [t for t in charged if t["tax_type"] in v.recoverable_types]
+    v.recoverable = sum(_units(t.get("tax_amount"), v.decimals) for t in recoverable)
 
     v.po_matched = bool(settings.po_matched and po)
     if v.po_matched:
@@ -473,7 +486,8 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     if not dist:
         add("no GL distribution to post")
     total = sum(_cents(e.get("amount")) for e in dist)
-    if dist and total != v.gross:
+    gross_cents = _cents(final.get("grand_total"))
+    if dist and total != gross_cents:
         add(f"the GL distribution adds up to {total / 100:,.2f}, not the invoice total {v.gross / 100:,.2f}")
     for e in dist:
         if _is_recoverable_entry(e):
@@ -484,10 +498,18 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
             add(f"{where} has no JDE account (BU.Object.Subsidiary): add it to the account mapping")
         elif len(account.bu) > 12 or len(account.obj) > 6 or len(account.sub) > 8:
             add(f"{where}: JDE account {ani(account)} is too long (BU 12, object 6, subsidiary 8 characters)")
-        v.entries.append({**e, "cents": _cents(e.get("amount")), "account": account})
+        v.entries.append({**e, "cents": _units(e.get("amount"), v.decimals), "account": account})
     expected = v.gross - v.recoverable
     kept = sum(e["cents"] for e in v.entries)
-    if dist and total == v.gross and kept != expected:
+    kept_cents = sum(_cents(e.get("amount")) for e in v.entries)
+    if v.decimals < 2 and v.entries and kept != expected:
+        # Whole units (yen): a distribution spread in cents (coded before tax was spread in whole units) balances
+        # in cents, but its lines each rounded to the yen can be a yen or two off: the largest line takes it.
+        if kept_cents == gross_cents - sum(_cents(t.get("tax_amount")) for t in recoverable):
+            biggest = max(range(len(v.entries)), key=lambda i: abs(v.entries[i]["cents"]))
+            v.entries[biggest]["cents"] += expected - kept
+            kept = expected
+    if dist and total == gross_cents and kept != expected:
         add(
             f"unbalanced: the distribution is {kept / 100:,.2f} but gross {v.gross / 100:,.2f} minus recoverable "
             f"tax {v.recoverable / 100:,.2f} (code {v.tax_code or 'blank'}) is {expected / 100:,.2f}: check the Tax "
@@ -597,14 +619,28 @@ def voucher_rows(
         return row
 
     if settings.line_numbering == MATCH_HEADER and len(v.entries) > 1:
-        # One pay item per distribution line: each gets its share of the recoverable tax (by net amount). Its tax
-        # is that share plus the non-recoverable tax already in its line (e.g. PST charged on some lines only).
-        weights = [_cents(e.get("net_amount")) if e.get("kind") == "expense" else 0 for e in v.entries]
-        if not any(weights):
-            weights = [e["cents"] for e in v.entries]
-        shares, atxas = _split(v.recoverable, weights), _split(v.atxa, weights)
-        stams = [s + _cents(e.get("non_recoverable_tax")) for e, s in zip(v.entries, shares, strict=True)]
-        stams[max(range(len(weights)), key=lambda i: abs(weights[i]))] += v.stam - sum(stams)
+        # One pay item per distribution line: each gets its share of each recoverable tax and of the taxable amount,
+        # split over the lines that carry that tax (an exempt line gets none). Its tax is that share plus the
+        # non-recoverable tax already in its line (e.g. PST charged on some lines only).
+        unit = 10 ** (2 - v.decimals)
+        taxes = _entry_taxes(v.entries, final.get("line_items") or [])
+        net = [_cents(e.get("net_amount")) if e.get("kind") == "expense" else 0 for e in v.entries]
+        weights = net if any(net) else [e["cents"] for e in v.entries]
+
+        def carrying(tax_type: str) -> list[int]:
+            w = [n if tax_type in t else 0 for n, t in zip(net, taxes, strict=True)]
+            return w if any(w) else weights  # no line marked with it: by net amount
+
+        shares = [0] * len(v.entries)
+        for t in v.charged:
+            if t["tax_type"] in v.recoverable_types:
+                part = _split(_units(t.get("tax_amount"), v.decimals), carrying(t["tax_type"]), unit)
+                shares = [a + b for a, b in zip(shares, part, strict=True)]
+        widest = max(v.charged, key=lambda t: abs(_units(t.get("taxable_amount"), v.decimals)), default=None)
+        base = carrying(widest["tax_type"]) if widest else weights  # the tax whose taxable amount is VLATXA
+        atxas = _split(v.atxa, base, unit)
+        stams = [s + _units(e.get("non_recoverable_tax"), v.decimals) for e, s in zip(v.entries, shares, strict=True)]
+        stams[max(range(len(base)), key=lambda i: abs(base[i]))] += v.stam - sum(stams)
         grosses = [e["cents"] + s for e, s in zip(v.entries, shares, strict=True)]
         headers = [
             {**common, "VLEDLN": n, **amounts(g, s, a), **extras}
@@ -613,6 +649,18 @@ def voucher_rows(
         return headers, [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
     header = {**common, "VLEDLN": 1, **amounts(v.gross, v.stam, v.atxa), **extras}
     return [header], [dist_row(n, e) for n, e in enumerate(v.entries, 1)], []
+
+
+def _entry_taxes(entries: list[dict[str, Any]], items: list[dict[str, Any]]) -> list[set[str]]:
+    """The taxes the invoice line behind each distribution line is marked with (none for a tax line). Expense
+    lines follow the invoice lines in order; matched by line number when the counts differ."""
+    if sum(1 for e in entries if e.get("kind") == "expense") == len(items):
+        marked = iter([set(li.get("taxes_applied") or []) for li in items])
+        return [next(marked) if e.get("kind") == "expense" else set() for e in entries]
+    by_number: dict[Any, set[str]] = {}
+    for li in items:
+        by_number.setdefault(li.get("line_number"), set(li.get("taxes_applied") or []))
+    return [by_number.get(e.get("line_number"), set()) if e.get("kind") == "expense" else set() for e in entries]
 
 
 def _text(value: Any, size: int) -> str:

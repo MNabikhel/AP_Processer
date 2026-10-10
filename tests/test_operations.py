@@ -36,12 +36,25 @@ def test_operations(tmp_path):
     assert ops["ageing"] == {"0–2 days": 1, "3–7 days": 0, "8–14 days": 0, "15+ days": 1}
     assert ops["median_days_to_approve"] == 19  # 3 and 35 days
     assert ops["approved_after_due"] == 1
-    assert ops["discounts_in_time"] == (1, 318.9) and ops["discounts_missed"] == (1, 318.9)
+    assert ops["discounts_in_time"] == (1, {"CAD": 318.9}) and ops["discounts_missed"] == (1, {"CAD": 318.9})
+
+
+def test_discounts_missed_are_kept_apart_by_currency(tmp_path):
+    """A yen discount is not dollars: the amounts stay per currency, like the duplicates stopped."""
+    from ap_coder.webapp.insights import _per_currency
+
+    store = Store(tmp_path / "a.db")
+    for number, currency in (("A", "CAD"), ("B", "JPY"), ("C", "JPY")):
+        doc = _gt(invoice_number=number, currency=currency, payment_terms="2/10 Net 30", due_date="")
+        store.approve_invoice(store.add_invoice(tmp_path / f"{number}.pdf", doc, {}), doc, "Jane")
+    ops = operations(store, today=dt.date(2026, 12, 1))  # approved today, well after the 10 days
+    assert ops["discounts_missed"] == (3, {"CAD": 318.9, "JPY": 637.8})
+    assert _per_currency(ops["discounts_missed"][1]) == "319 CAD + 638 JPY"
 
 
 def test_operations_on_an_empty_database(tmp_path):
     ops = operations(Store(tmp_path / "a.db"))
-    assert ops["waiting"] == 0 and ops["median_days_to_approve"] is None and ops["discounts_in_time"] == (0, 0.0)
+    assert ops["waiting"] == 0 and ops["median_days_to_approve"] is None and ops["discounts_in_time"] == (0, {})
 
 
 def test_vendors_that_make_work(tmp_path):

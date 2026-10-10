@@ -1767,7 +1767,7 @@ def _distribution_table(output: dict[str, Any], reference: ReferenceData, curren
         )
     total = round(sum(e["amount"] for e in output.get("gl_distribution") or []), 2)
     diff = round(total - (output.get("grand_total") or 0), 2)
-    balance = _pill("Balanced", "ok") if abs(diff) <= 0.01 else _pill(f"Off by {money(diff)}", "err")
+    balance = _pill("Balanced", "ok") if abs(diff) < 0.005 else _pill(f"Off by {money(diff)}", "err")
     foot = ["", balance, "", "Total", "", "", f"{money(total)} <span class='rq-cur'>{esc(currency)}</span>"]
     st.html(
         "<div class='rvw-gl'>"

@@ -75,6 +75,9 @@ DEFAULT_TREATMENTS = {
     "GST": RECOVERABLE, "HST": RECOVERABLE, "QST": RECOVERABLE, "PST": EXPENSE_TO_LINE, "OTHER": EXPENSE_TO_LINE,
 }  # fmt: skip
 
+# Currencies with no cents: amounts are whole units (an ERP rejects or rounds 0.50 yen).
+ZERO_DECIMAL_CURRENCIES = frozenset({"JPY", "KRW", "CLP", "ISK"})
+
 ERROR, WARNING = "error", "warning"
 _GST_NUMBER = re.compile(r"^\d{9}RT\d{4}$")
 _QST_NUMBER = re.compile(r"^\d{10}TQ\d{4}$")
@@ -218,6 +221,15 @@ def valid_qst_number(number: str) -> bool:
     return bool(_QST_NUMBER.match(normalise_registration(number)))
 
 
+def regime_on(province: str, on: dt.date | None, rates: TaxRateTable) -> frozenset[str]:
+    """The taxes normally charged in a province on a date: ``REGIME``, except where the rate table has HST in
+    force in a GST + PST province (British Columbia from 2010-07-01 to 2013-03-31)."""
+    usual = REGIME.get(province, frozenset())
+    if usual and "HST" not in usual and on is not None and rates.rate_for("HST", province, on) is not None:
+        return frozenset({"HST"})
+    return usual
+
+
 def place_of_supply(coding: Any) -> str:
     for prov in (coding.ship_to_province, coding.supplier_province):
         if prov in PROVINCES:
@@ -270,12 +282,23 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
             f"tax lines sum to {lines_total:.2f} but tax_total = {coding.tax_total:.2f}",
         )
 
+    # Tax is worked out once on the taxable amount (a cent of rounding), or line by line and added up (each line
+    # rounded). An amount neither way gives is a wrong charge: an error, or a warning when it is within what half a
+    # cent of rounding per line could add up to (tax rounded per unit, a line marked wrongly), never silently.
+    places = currency_places(getattr(coding, "currency", ""))
+    unit = 10.0**-places
+    rounding = unit * (n_items / 2 + 1)
     for tl in tax_lines:
         label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''}"
-        expected = round(tl.taxable_amount * tl.rate, 2)
-        if not _close(expected, tl.tax_amount, tol):
+        expected = round(tl.taxable_amount * tl.rate, places)
+        ways = [expected]
+        if sum(1 for t in tax_lines if t.tax_type == tl.tax_type) == 1:
+            flagged = [li for li in coding.line_items if tl.tax_type in li.taxes_applied]
+            if flagged:
+                ways.append(round(sum(round(li.amount * tl.rate, places) for li in flagged), places))
+        if not any(_close(way, tl.tax_amount, unit) for way in ways):
             add(
-                ERROR,
+                WARNING if _close(expected, tl.tax_amount, rounding) else ERROR,
                 "TAX_CALC_MISMATCH",
                 f"{label}: {tl.taxable_amount:.2f} x {tl.rate:.5g} = {expected:.2f} "
                 f"but invoice charges {tl.tax_amount:.2f}",
@@ -337,7 +360,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         if charged:
             add(WARNING, "PROVINCE_UNKNOWN", "province of supply unknown; tax regime cannot be verified")
     elif abs(coding.subtotal) > 0.004:  # credit notes (negative) are checked too
-        expected_types = REGIME[prov]
+        expected_types = regime_on(prov, on, setup.rates)
         name = PROVINCE_NAMES[prov]
         if not charged:
             add(
@@ -391,8 +414,14 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
 # --- GL distribution --------------------------------------------------------------------------
 
 
-def _allocate(total: float, weights: list[float]) -> list[float]:
-    """Split ``total`` proportionally to ``weights`` in cents; the remainder goes to the largest weight."""
+def currency_places(currency: str | None) -> int:
+    """Decimal places of an amount in this currency: 0 for the yen and the like, else 2."""
+    return 0 if str(currency or "").strip().upper() in ZERO_DECIMAL_CURRENCIES else 2
+
+
+def _allocate(total: float, weights: list[float], places: int = 2) -> list[float]:
+    """Split ``total`` proportionally to ``weights`` in cents (whole units when ``places`` is 0); the remainder
+    goes to the largest weight."""
     if not weights:
         return []
     base = sum(weights)
@@ -400,15 +429,17 @@ def _allocate(total: float, weights: list[float]) -> list[float]:
         shares = [0.0] * len(weights)
         shares[0] = round(total, 2)
         return shares
-    shares = [round(total * w / base, 2) for w in weights]
-    remainder = round(total - sum(shares), 2)
+    shares = [round(total * w / base, places) for w in weights]
+    remainder = round(total - sum(shares), 2)  # to the cent: the shares always add up to the total as read
     biggest = max(range(len(weights)), key=lambda i: abs(weights[i]))
     shares[biggest] = round(shares[biggest] + remainder, 2)
     return shares
 
 
 def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
-    """Posting lines that add up to the grand total (what the ERP voucher would contain)."""
+    """Posting lines that add up to the grand total (what the ERP voucher would contain). Tax spread over the
+    lines is spread in whole units for a currency without cents (the yen), so each line posts as printed."""
+    places = currency_places(getattr(coding, "currency", ""))
     entries: dict[int, dict[str, Any]] = {}  # keyed by position: line numbers may repeat
     for idx, li in enumerate(coding.line_items):
         entries[idx] = {
@@ -426,11 +457,11 @@ def build_gl_distribution(coding: Any, setup: TaxSetup) -> list[dict[str, Any]]:
         if abs(tl.tax_amount) < 0.005:
             continue
         t = setup.treatment(tl.tax_type)
-        label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''} {tl.rate * 100:.3g}%"
+        label = f"{tl.tax_type}{' ' + tl.province if tl.province else ''} {tl.rate * 100:.6g}%"  # QST 9.975%
         if t.treatment == EXPENSE_TO_LINE and coding.line_items:
             items = list(enumerate(coding.line_items))
             targets = [(i, li) for i, li in items if tl.tax_type in li.taxes_applied] or items
-            shares = _allocate(tl.tax_amount, [li.amount for _, li in targets])
+            shares = _allocate(tl.tax_amount, [li.amount for _, li in targets], places)
             for (idx, _li), share in zip(targets, shares, strict=True):
                 e = entries[idx]
                 e["non_recoverable_tax"] = round(e["non_recoverable_tax"] + share, 2)

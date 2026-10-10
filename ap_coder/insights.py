@@ -198,7 +198,8 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
     late = sum(1 for r in approved if r["status"] == APPROVED and r["due_date"] and done(r) > r["due_date"])
     finals = {i: (r["final_output"] or {}) for i, r in detail.items()}
     taken = missed = 0
-    taken_amount = missed_amount = 0.0
+    taken_amount: Counter[str] = Counter()  # per currency: a yen discount is not dollars
+    missed_amount: Counter[str] = Counter()
     default_days, vendor_terms = store.default_terms_days(), store.all_vendor_terms()
     for r in approved:
         final = finals.get(r["id"]) or {}
@@ -207,10 +208,11 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
             continue
         if r["status"] == PENDING and today <= p.discount_by:
             continue  # still waiting for the second approval, and the discount is still open
+        currency = str(final.get("currency") or "CAD").strip().upper()
         if r["status"] == APPROVED and done(r) <= p.discount_by.isoformat():
-            taken, taken_amount = taken + 1, taken_amount + p.discount_amount
+            taken, taken_amount[currency] = taken + 1, taken_amount[currency] + p.discount_amount
         else:
-            missed, missed_amount = missed + 1, missed_amount + p.discount_amount
+            missed, missed_amount[currency] = missed + 1, missed_amount[currency] + p.discount_amount
     return {
         "waiting": len(waiting),
         "ageing": ageing,
@@ -218,8 +220,9 @@ def operations(store: Store, today: dt.date | None = None) -> dict[str, Any]:
         "median_days_to_approve": statistics.median(cycle) if cycle else None,
         "approved": len(approved),
         "approved_after_due": late,
-        "discounts_in_time": (taken, round(taken_amount, 2)),
-        "discounts_missed": (missed, round(missed_amount, 2)),
+        # (count, {currency: amount}), like duplicates_stopped_total
+        "discounts_in_time": (taken, {c: round(t, 2) for c, t in sorted(taken_amount.items())}),
+        "discounts_missed": (missed, {c: round(t, 2) for c, t in sorted(missed_amount.items())}),
     }
 
 
