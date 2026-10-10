@@ -393,6 +393,13 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                                 contested=contest.get(field, 0.0) > 0.25, confirmed=bool(n_conf) and field not in failed,
                                 soft=field in soft)  # fmt: skip
         conf = calibrate(max(0.0, min(raw, 1.0)), evidence, local_evidence)
+        if "vlm" in sources and len(sources) > 1:
+            # The page reader agreeing is one more reader on top of a pattern the benchmark may have measured
+            # without it (patterns with it are not measured yet): it never makes the value less certain.
+            without = evidence_key(field, [s for s in sources if s != "vlm"], best.method, layout_source=layout_source,
+                                   contested=contest.get(field, 0.0) > 0.25,
+                                   confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
+            conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), without, local_evidence))
         # A lone reader is never verified on its own measured record (the benchmark is synthetic):
         # verified also needs a second reader or a check to agree. The second OCR read of a scan
         # shares the first one's blind spots (a word OCR never saw), so with the rule reader it
@@ -404,6 +411,17 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             reasons.append(
                 "readers differ on the exact name: " + " / ".join(sorted({str(r.value) for _, r in g.readings}))
             )
+        forms = {"".join(str(r.value).split()).upper() for s, r in g.readings if s != "ai"}  # how the page prints it
+        if field in ("invoice_number", "po_number") and len(forms) > 1:
+            # "BC-15.332" / "BC-15332": the same number to compare, but which is printed is not agreed. OCR adds
+            # specks as dots and commas far more often than it drops printed ones: the plainer form is shown.
+            independent = {"one"}
+            plain = min(forms, key=lambda f: (sum(not ch.isalnum() for ch in f), f))
+            g.value = next(
+                r.value for s, r in g.readings if s != "ai" and "".join(str(r.value).split()).upper() == plain
+            )
+            values[field] = g.value
+            reasons.append("readers write it differently: " + " / ".join(sorted(forms)))
         if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
         ambiguous = all("ambiguous" in r.method for _, r in g.readings)

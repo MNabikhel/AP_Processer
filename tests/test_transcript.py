@@ -324,3 +324,23 @@ def test_offline_coding_assumes_a_currency_by_the_suppliers_address(tmp_path, re
     coding = code_from_capture(capture, reference, [], text=build_layout(pdf, ocr=False).text()).coding
     assert coding.currency == currency
     assert "CURRENCY_NOT_FOUND" in [code for _, code, _ in review_issues(capture)]
+
+
+def test_a_number_readers_write_differently_is_not_verified_and_shows_the_plain_form():
+    """OCR's "BC-15.332" (a speck read as a dot) and the page reader's "BC-15332" compare equal, but the page
+    prints one of them: never verified on that agreement, and the form without the stray mark is shown."""
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import Box, Reading
+
+    box = [Box(1, 0.4, 0.15, 0.46, 0.17)]
+    by_source = {
+        "rules": {"po_number": [Reading("po_number", "BC-15.332", "BC-15.332", box, 1.0, "label-right")]},
+        "ocr2": {"po_number": [Reading("po_number", "BC-15.332", "BC-15.332", box, 1.0, "label-right")]},
+        "vlm": {"po_number": [Reading("po_number", "BC-15332", "BC-15332", box, 1.0, "label-right")]},
+    }
+    fr = fuse(by_source, [], fields=("po_number",))[0]["po_number"]
+    assert fr.value == "BC-15332" and fr.status != "verified"
+    assert any("write it differently" in r for r in fr.reasons)
+    same = {s: {"po_number": [Reading("po_number", "BC-15332", "BC-15332", box, 1.0, "label-right")]}
+            for s in ("rules", "vlm")}  # fmt: skip
+    assert fuse(same, [], fields=("po_number",))[0]["po_number"].value == "BC-15332"
