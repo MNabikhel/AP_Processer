@@ -2,8 +2,9 @@
 
 import time
 from email.message import EmailMessage
+from unittest.mock import patch
 
-from ap_coder.mailbox import attachments, emails_in, unpack, unpack_folder
+from ap_coder.mailbox import MAX_FORWARD_DEPTH, attachments, emails_in, safe_name, unpack, unpack_folder
 
 
 def _email(subject="Invoice INV-1"):
@@ -87,3 +88,46 @@ def test_attachment_types_by_content_not_only_by_name():
     _, found, skipped = attachments(m.as_bytes())
     assert [n for n, _ in found] == ["Invoice No. 12345.pdf", "scan.pdf", "photo.png"]  # a big inline photo is kept
     assert any("fake.pdf" in s and "not one" in s for s in skipped)
+
+
+def nested_email(depth: int) -> bytes:
+    """An invoice inside ``depth`` emails forwarded inside each other."""
+    msg = 'Content-Type: application/pdf\nContent-Disposition: attachment; filename="inv.pdf"\n\n%PDF-1.4 x'
+    for n in range(depth):
+        msg = f"Content-Type: message/rfc822\n\nSubject: Fwd {n}\nMIME-Version: 1.0\n" + msg
+    return ("From: a@b.example\nSubject: deep\nMIME-Version: 1.0\n" + msg).encode()
+
+
+def test_forwarded_emails_are_opened_only_so_deep():
+    assert attachments(nested_email(3))[1] == [("inv.pdf", b"%PDF-1.4 x")]
+    _, found, skipped = attachments(nested_email(MAX_FORWARD_DEPTH + 1))
+    assert found == [] and any("levels deep" in s for s in skipped)
+
+
+def test_an_email_that_cannot_be_read_is_filed_away_and_the_others_unpacked(tmp_path):
+    """~1000 emails forwarded inside each other raised RecursionError (only OSError was caught): the email stayed in
+    the folder and stopped every later check, also for the good emails next to it."""
+    (tmp_path / "a deep.eml").write_bytes(nested_email(1000))
+    (tmp_path / "b good.eml").write_bytes(_email().as_bytes())
+    (tmp_path / "c huge.eml").write_bytes(b"x" * 3_000_000)
+    later = time.time() + 60
+    with patch("ap_coder.mailbox.MAX_EMAIL_BYTES", 2_000_000):  # a smaller limit than the real one, for the test
+        deep, good, huge = unpack_folder(tmp_path, now=later)
+    assert deep.error.startswith("could not be read") and "forwarded inside each other" in deep.error
+    assert "larger than" in huge.error and good.error == "" and len(good.saved) == 2
+    assert {p.name for p in (tmp_path / "emails" / "could not read").iterdir()} == {"a deep.eml", "c huge.eml"}
+    assert emails_in(tmp_path) == [] and unpack_folder(tmp_path, now=later) == []  # nothing left to fail again
+
+
+def test_any_other_error_in_one_email_is_filed_away_too(tmp_path):
+    (tmp_path / "odd.eml").write_bytes(_email().as_bytes())
+    with patch("ap_coder.mailbox.attachments", side_effect=LookupError("unknown encoding")):
+        (odd,) = unpack_folder(tmp_path, now=time.time() + 60)
+    assert odd.error == "could not be read: it is damaged (LookupError)"
+    assert (tmp_path / "emails" / "could not read" / "odd.eml").exists()
+
+
+def test_long_attachment_names_are_shortened_keeping_the_extension():
+    assert safe_name("a" * 300 + ".pdf") == "a" * 76 + ".pdf"
+    cjk = safe_name("发票" * 45 + ".pdf")
+    assert cjk.endswith(".pdf") and len(cjk.encode()) <= 200

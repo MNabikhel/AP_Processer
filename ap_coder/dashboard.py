@@ -36,6 +36,7 @@ from ap_coder.webapp.common import (
     approved_today,
     get_settings,
     get_store,
+    refuse_foreign_host,
     reviewer,
     short_path,
 )
@@ -55,6 +56,7 @@ from ap_coder.webapp.statements import page_statements
 from ap_coder.webapp.vendors import page_vendors
 
 st.set_page_config(page_title="AP Coder", page_icon=str(ASSETS / "icon.svg"), layout="wide")
+refuse_foreign_host()  # first, before anything is read or shown: opened through another site's name, it stops here
 
 
 @st.cache_resource

@@ -2146,8 +2146,46 @@ class Store:
             old.unlink(missing_ok=True)
         return made
 
+    @staticmethod
+    def check_backup(backup: str | Path) -> None:
+        """Raise ValueError (in plain words) unless ``backup`` is an AP Coder database this version can open:
+        a ``schema_version`` setting no newer than this version's, and no triggers or views (AP Coder makes
+        none; one in a planted file would run on every later change)."""
+        path = Path(backup)
+        try:
+            conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        except sqlite3.Error as exc:
+            raise ValueError(f"{path.name} could not be opened ({exc})") from None
+        try:
+            kinds = {r[0] for r in conn.execute("SELECT type FROM sqlite_master WHERE type IN ('trigger', 'view')")}
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            row = (
+                conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
+                if "settings" in tables
+                else None
+            )
+        except sqlite3.DatabaseError:
+            raise ValueError(f"{path.name} is not an AP Coder database (or it is damaged)") from None
+        finally:
+            conn.close()
+        if kinds:
+            raise ValueError(f"{path.name} contains {' and '.join(sorted(kinds))}s, which AP Coder never makes")
+        if row is None or not {"invoices", "feedback"} <= tables:
+            raise ValueError(f"{path.name} is not an AP Coder database")
+        try:
+            version = int(row[0])
+        except (TypeError, ValueError):
+            raise ValueError(f"{path.name} is not an AP Coder database") from None
+        if version > SCHEMA_VERSION:
+            raise ValueError(f"{path.name} was made by a newer version of AP Coder: update AP Coder first")
+
     def restore_from(self, backup: str | Path) -> Path:
-        """Replace the database with a backup. The current one is backed up first (returned)."""
+        """Replace the database with a backup. The current one is backed up first (returned).
+        Raises ValueError, with nothing changed, when the file is not an AP Coder backup (``check_backup``).
+        The second backup folder is cleared after a restore: a backup file must not choose where later
+        backups are copied (set it again in Settings)."""
+        self.check_backup(backup)
+        copy_dir = self.get_setting("backup_copy_dir").strip()
         safety = self.backup_now("before-restore")
         source = sqlite3.connect(Path(backup))
         target = sqlite3.connect(self.path)
@@ -2159,7 +2197,12 @@ class Store:
         with self._conn() as conn:
             conn.executescript(_SCHEMA)  # an older backup may lack newer tables...
             self._migrate(conn)  # ...and columns
-            self._log(conn, "backup_restored", detail={"file": Path(backup).name, "safety_copy": safety.name})
+            restored_dir = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
+            conn.execute("DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status')")
+            detail = {"file": Path(backup).name, "safety_copy": safety.name}
+            if copy_dir or (restored_dir and str(restored_dir[0]).strip()):
+                detail["note"] = "second backup folder cleared: set it again in Settings (Data & backups)"
+            self._log(conn, "backup_restored", detail=detail)
         return safety
 
     # --- Learning memory ------------------------------------------------------------------------------

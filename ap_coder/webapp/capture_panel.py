@@ -250,7 +250,7 @@ def capture_panel(inv: dict[str, Any], capture_dict: dict[str, Any], key: str) -
             taught = dict(st.session_state.get(_taught_key(key)) or {})
             taught[field] = event.get("boxes") or []
             st.session_state[_taught_key(key)] = taught
-            notify(f"{LABELS.get(field, field)} set to {value}. Approving teaches it for this supplier.",
+            notify(f"{LABELS.get(field, field)} set to {md(value)}. Approving teaches it for this supplier.",
                    ":material/school:")  # fmt: skip
         st.session_state.pop(_teach_key(key), None)
         st.rerun()

@@ -110,7 +110,7 @@ def _demo_meta(pdf: Path, truth: dict[str, Any]) -> dict[str, Any]:
     lines = len(truth.get("line_items", []))
     return {
         "demo": True, "source": str(pdf), "status": "ok",
-        "extraction": {"model_id": "demo", "page_count": pages},
+        "extraction": {"model_id": "demo", "page_count": pages, "table_count": 1},
         "inference": {"model": "demo", "attempts": 1, "usage": {
             "prompt_tokens": 3600 + 500 * pages, "cached_prompt_tokens": 2304,
             "completion_tokens": 450 + 160 * lines, "total_tokens": 4050 + 500 * pages + 160 * lines,

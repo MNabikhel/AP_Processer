@@ -77,14 +77,7 @@ def build_share_report(
     labels = [f"doc-{i:02d}" for i in range(1, len(metas) + 1)]  # one per invoice, even for repeated files
     aliases: dict[str, str] = {}
     for label, m in zip(labels, metas, strict=True):
-        aliases.setdefault(Path(m["source"]).stem, label)
-    if key_file:
-        Path(key_file).parent.mkdir(parents=True, exist_ok=True)
-        with Path(key_file).open("w", newline="", encoding="utf-8") as fh:
-            writer = csv.writer(fh)
-            writer.writerow(["alias", "file"])
-            for label, m in zip(labels, metas, strict=True):
-                writer.writerow([label, Path(m["source"]).name])
+        aliases.setdefault(Path(m.get("source") or "").stem, label)
 
     ok = [m for m in metas if m.get("status") == "ok"]
     failed = [m for m in metas if m.get("status") != "ok"]
@@ -94,20 +87,21 @@ def build_share_report(
         cats = Counter(_failure_category(m.get("error")) for m in failed)
         lines.append("- failures: " + ", ".join(f"{k} x{v}" for k, v in cats.most_common()))
 
+    # Older runs and demo invoices do not record every figure: a missing one is left out, never a KeyError.
     ext = [m["extraction"] for m in metas if m.get("extraction")]
     if ext:
-        lines.append("- extraction models: " + ", ".join(sorted({e["model_id"] for e in ext})))
-        lines.append(f"- pages per invoice: {_stats([e['page_count'] for e in ext])}")
-        lines.append(f"- tables per invoice: {_stats([e['table_count'] for e in ext])}")
+        lines.append("- extraction models: " + ", ".join(sorted({str(e.get("model_id") or "?") for e in ext})))
+        lines.append(f"- pages per invoice: {_stats([e['page_count'] for e in ext if 'page_count' in e])}")
+        lines.append(f"- tables per invoice: {_stats([e['table_count'] for e in ext if 'table_count' in e])}")
         ocr = [e["mean_word_confidence"] for e in ext if e.get("mean_word_confidence") is not None]
         lines.append(f"- mean OCR word confidence: {_stats(ocr)}")
 
     inf = [m["inference"] for m in metas if m.get("inference")]
     if inf:
-        lines.append("- LLM models: " + ", ".join(sorted({i["model"] for i in inf})))
-        prompt = [i["usage"].get("prompt_tokens", 0) for i in inf]
-        completion = [i["usage"].get("completion_tokens", 0) for i in inf]
-        cached = sum(i["usage"].get("cached_prompt_tokens", 0) for i in inf)
+        lines.append("- LLM models: " + ", ".join(sorted({str(i.get("model") or "?") for i in inf})))
+        prompt = [(i.get("usage") or {}).get("prompt_tokens", 0) for i in inf]
+        completion = [(i.get("usage") or {}).get("completion_tokens", 0) for i in inf]
+        cached = sum((i.get("usage") or {}).get("cached_prompt_tokens", 0) for i in inf)
         lines.append(f"- prompt tokens/invoice: {_stats(prompt)}; cached share {cached / max(sum(prompt), 1):.0%}")
         lines.append(f"- completion tokens/invoice: {_stats(completion)}")
         lines.append(f"- repair retries needed: {sum(1 for i in inf if i.get('attempts', 1) > 1)}")
@@ -120,18 +114,18 @@ def build_share_report(
 
     vals = [m["validation"] for m in metas if m.get("validation")]
     if vals:
-        review = sum(1 for v in vals if v["requires_review"])
+        review = sum(1 for v in vals if v.get("requires_review"))
         lines += [
             "",
             "### Validation",
             f"- requires_review: {review}/{len(vals)} ({review / len(vals):.0%})",
-            f"- model confidence buckets: {_bucket_line([v['model_confidence'] for v in vals])}",
-            f"- adjusted confidence buckets: {_bucket_line([v['adjusted_confidence'] for v in vals])}",
+            f"- model confidence buckets: {_bucket_line([v.get('model_confidence') or 0.0 for v in vals])}",
+            f"- adjusted confidence buckets: {_bucket_line([v.get('adjusted_confidence') or 0.0 for v in vals])}",
         ]
         occurrences: Counter[str] = Counter()
         invoices_hit: Counter[str] = Counter()
         for v in vals:
-            codes = [i["code"] for i in v["issues"]]
+            codes = [i.get("code", "?") for i in v.get("issues") or []]
             occurrences.update(codes)
             invoices_hit.update(set(codes))
         if occurrences:
@@ -151,11 +145,13 @@ def build_share_report(
                 continue
             line_count = v.get("checks", {}).get("line_count", "")
             issues = ", ".join(
-                f"{i['code']}" + (f"@L{i['line_number']}" if i.get("line_number") else "") for i in v["issues"]
+                f"{i.get('code', '?')}" + (f"@L{i['line_number']}" if i.get("line_number") else "")
+                for i in v.get("issues") or []
             )
             lines.append(
-                f"| {alias} | {pages} | {line_count} | {v['model_confidence']:.2f} | {v['adjusted_confidence']:.2f} "
-                f"| {'YES' if v['requires_review'] else 'no'} | {issues or '-'} |"
+                f"| {alias} | {pages} | {line_count} | {v.get('model_confidence') or 0.0:.2f} "
+                f"| {v.get('adjusted_confidence') or 0.0:.2f} | {'YES' if v.get('requires_review') else 'no'} "
+                f"| {issues or '-'} |"
             )
 
     if store is not None:
@@ -164,7 +160,24 @@ def build_share_report(
         lines += ["", *_accuracy_section(output_dir, ground_truth, include_codes, aliases)]
 
     lines += ["", f"_codes included: {'yes' if include_codes else 'no'}_"]
+    if key_file:  # only once the report is complete: a failure above leaves no half-written files behind
+        names = [Path(m.get("source") or "").name for m in metas]
+        _write_key_file(Path(key_file), list(zip(labels, names, strict=True)))
     return "\n".join(lines) + "\n"
+
+
+def _write_key_file(path: Path, rows: list[tuple[str, str]]) -> None:
+    """The local doc-NN → file name mapping, written whole or not at all."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".partial")
+    try:
+        with partial.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["alias", "file"])
+            writer.writerows(rows)
+        partial.replace(path)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def _accuracy_section(

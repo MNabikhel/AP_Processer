@@ -1,8 +1,12 @@
 """Backups: consistent copies, once a day automatically, and a restore that can be undone."""
 
 import os
+import sqlite3
 import time
 
+import pytest
+
+from ap_coder.audit import describe
 from ap_coder.store import Store
 
 
@@ -48,3 +52,47 @@ def test_a_deleted_database_is_recreated_not_broken(tmp_path, ground_truth):
     assert store.list_invoices() == []  # empty, working database instead of "no such table"
     store.add_invoice(tmp_path / "b.pdf", ground_truth, {})
     assert len(store.list_invoices()) == 1
+
+
+def _planted(tmp_path, sql: str, name: str = "ap_coder-20260101-090000.db"):
+    """A backup file that is an AP Coder database with ``sql`` run on it."""
+    path = tmp_path / "planted" / name
+    path.parent.mkdir(exist_ok=True)
+    Store(path)
+    with sqlite3.connect(path) as conn:
+        conn.executescript(sql)
+    return path
+
+
+@pytest.mark.parametrize(
+    ("sql", "why"),
+    [
+        ("CREATE TRIGGER t AFTER INSERT ON invoices BEGIN DELETE FROM feedback; END;", "triggers"),
+        ("CREATE VIEW v AS SELECT * FROM invoices;", "views"),
+        ("DELETE FROM settings WHERE key = 'schema_version';", "not an AP Coder database"),
+        ("UPDATE settings SET value = '999' WHERE key = 'schema_version';", "newer version"),
+        ("DROP TABLE invoices;", "not an AP Coder database"),
+    ],
+)
+def test_restore_refuses_a_file_that_is_not_an_ap_coder_backup(tmp_path, ground_truth, sql, why):
+    store = Store(tmp_path / "ap.db")
+    store.add_invoice(tmp_path / "a.pdf", ground_truth, {})
+    planted = _planted(tmp_path, sql)
+    with pytest.raises(ValueError, match=why):
+        store.restore_from(planted)
+    assert len(store.list_invoices()) == 1 and not list(store.backup_dir().glob("*before-restore*"))
+    other = tmp_path / "notes.db"
+    other.write_bytes(b"just some text, not SQLite at all" * 10)
+    with pytest.raises(ValueError):
+        store.restore_from(other)
+
+
+def test_restore_clears_the_second_backup_folder(tmp_path):
+    """A backup must not decide where later backups are copied (e.g. a planted network share)."""
+    store = Store(tmp_path / "ap.db")
+    planted = _planted(tmp_path, "INSERT INTO settings (key, value) VALUES ('backup_copy_dir', '\\\\evil\\share');")
+    store.restore_from(planted)
+    assert store.get_setting("backup_copy_dir") == ""
+    (event,) = [e for e in store.events() if e["action"] == "backup_restored"]
+    assert "second backup folder cleared" in describe(event)
+    assert store.backup_now("manual") and store.get_setting("backup_copy_status") == ""  # copied nowhere

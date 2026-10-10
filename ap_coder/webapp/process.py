@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
 
 import streamlit as st
 
@@ -13,7 +12,7 @@ from ap_coder.capture.layout import ocr_available
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS
 from ap_coder.local_llm import provider_status
-from ap_coder.mailbox import EMAIL_EXTENSIONS, unpack, unpack_folder
+from ap_coder.mailbox import EMAIL_EXTENSIONS, Unpacked, safe_name, unpack, unpack_folder
 from ap_coder.pipeline import InvoicePipeline, invoice_files
 from ap_coder.safe import md
 from ap_coder.store import REVIEW, Store
@@ -38,16 +37,34 @@ from ap_coder.webapp.common import (
 
 
 def safe_file_name(name: str) -> str:
-    """Just the file name of an upload (no folders, Windows or POSIX), never empty or a dot name."""
+    """Just the file name of an upload (no folders, Windows or POSIX), never empty or a dot name, and short
+    enough for Windows paths (80 characters, the extension kept)."""
     base = PureWindowsPath(PurePosixPath(name or "").name).name.strip().lstrip(".")
-    return base or "invoice"
+    return safe_name(base) if base else "invoice"
+
+
+def save_upload(name: str, content: bytes) -> Path:
+    """Save an uploaded file to the invoices folder under a safe name (a different file with the same name
+    gets ``_1``, ``_2``...). Raises OSError when it cannot be written."""
+    INVOICE_DIR.mkdir(parents=True, exist_ok=True)
+    target = INVOICE_DIR / safe_file_name(name)
+    stem, n = target.stem, 1
+    while target.exists() and target.read_bytes() != content:
+        target = INVOICE_DIR / f"{stem}_{n}{target.suffix}"
+        n += 1
+    target.write_bytes(content)
+    return target
 
 
 # --- Process invoices --------------------------------------------------------------------------------------
 
 
-def _email_note(mail: Any) -> None:
+def _email_note(mail: Unpacked) -> None:
     """What was taken out of a saved email, and what was left out and why."""
+    if mail.error:
+        st.caption(f":material/mail: **{md(mail.email)}** {md(mail.error)}. It was moved to the "
+                   "`emails/could not read` subfolder; ask the sender to send the invoice again.")  # fmt: skip
+        return
     took = f"{ui.plural(len(mail.saved), 'attachment')} taken out" if mail.saved else "no invoice attached"
     st.caption(f":material/mail: **{md(mail.email)}**: {took}; the email is in the `emails` subfolder.")
     if mail.skipped:
@@ -65,12 +82,12 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
     waiting = store.page_reads_waiting()
     with st.status(f"Processing {ui.plural(len(paths), 'invoice')}…", expanded=True) as status:
         for n, path in enumerate(paths, start=1):
-            st.write(f":material/document_scanner: Reading and coding **{path.name}** ({n}/{len(paths)})")
+            st.write(f":material/document_scanner: Reading and coding **{md(path.name)}** ({n}/{len(paths)})")
             result = pipeline.process(path)
             if result.ok:
                 ok += 1
                 flag = "needs attention" if result.report and result.report.requires_review else "ready"
-                st.write(f":material/check_circle: {result.output.get('vendor_name', path.name)}: {flag}")
+                st.write(f":material/check_circle: {md(result.output.get('vendor_name') or path.name)}: {flag}")
             else:
                 st.error(f"{md(path.name)}: {md(result.error)}", icon=":material/error:")
         status.update(label=f"Processed {ok} of {len(paths)}", state="complete" if ok == len(paths) else "error")
@@ -185,16 +202,17 @@ def page_process() -> None:
                 INVOICE_DIR.mkdir(parents=True, exist_ok=True)
                 paths = []
                 for f in uploaded:
-                    target = INVOICE_DIR / safe_file_name(f.name)
-                    stem, n = target.stem, 1
-                    while target.exists() and target.read_bytes() != f.getvalue():
-                        target = INVOICE_DIR / f"{stem}_{n}{target.suffix}"
-                        n += 1
-                    target.write_bytes(f.getvalue())
-                    if target.suffix.lower() in EMAIL_EXTENSIONS:  # its invoice attachments, not the email
-                        mail = unpack(target, INVOICE_DIR)
-                        paths.extend(mail.saved)
-                        st.session_state.setdefault("unpacked_emails", []).append(mail)
+                    try:  # one file that cannot be saved (a name Windows refuses, disk full) is said and skipped
+                        target = save_upload(f.name, f.getvalue())
+                        if target.suffix.lower() in EMAIL_EXTENSIONS:  # its invoice attachments, not the email
+                            mail = unpack(target, INVOICE_DIR)
+                            paths.extend(mail.saved)
+                            st.session_state.setdefault("unpacked_emails", []).append(mail)
+                            continue
+                    except OSError as exc:
+                        notify(f"{md(f.name)} could not be saved to the invoices folder "
+                               f"({md(exc.strerror or type(exc).__name__)}). Rename it or save it there yourself.",
+                               ":material/error:")  # fmt: skip
                         continue
                     paths.append(target)
                 already, todo, hashes = [], [], set()
@@ -210,7 +228,7 @@ def page_process() -> None:
                 if already:
                     notify(
                         f"Skipped {ui.plural(len(already), 'file')} already in AP Coder: "
-                        + ", ".join(p.name for p in already),
+                        + md(", ".join(p.name for p in already)),
                         ":material/content_copy:",
                     )
                 st.session_state["upload_round"] = st.session_state.get("upload_round", 0) + 1

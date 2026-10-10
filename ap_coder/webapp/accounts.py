@@ -150,7 +150,7 @@ def account_manager(store: Store, table: str, noun: str) -> None:
         keep = keep[keep["code"] != ""]
         dupes = sorted(keep["code"][keep["code"].duplicated()].unique())
         if dupes:
-            st.error(f"These codes appear more than once: {', '.join(dupes)}")
+            st.error(f"These codes appear more than once: {md(', '.join(dupes))}")
         else:
             removed = len(edited) - len(keep)
             store.save_accounts(table, keep.fillna("").to_dict("records"), actor=reviewer())
