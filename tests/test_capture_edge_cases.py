@@ -241,3 +241,140 @@ def test_a_template_does_not_read_the_gst_registration_number_as_the_gst(tmp_pat
     doc.save(tmp_path / "two.pdf")
     read = apply_template(template, build_layout(tmp_path / "two.pdf", ocr=False))
     assert all(abs(r.value) < 1_000_000 for r in read.get("gst_amount", [])), read.get("gst_amount")
+
+
+_MAPLE = [(50, 60, "Maple Supply Inc."), (50, 75, "100 King St W, Toronto, ON M5H 1A1"),
+          (380, 60, "Invoice No.: INV-1001"), (380, 75, "Invoice Date: 2026-04-03")]  # fmt: skip
+
+
+def test_a_spaced_dash_or_a_run_of_dashes_before_an_amount_is_a_separator():
+    """A total printed "Total - $113.00" is 113.00, not a credit: a minus sign touches its number or its currency
+    sign. Credits printed with a sign, parentheses, a trailing minus or CR stay credits."""
+    from ap_coder.capture.normalize import find_amounts, parse_amount
+
+    for text in ("Total - $113.00", "Total – 113.00", "Invoice Total: -- 113.00", "Total ---------- 113.00"):
+        assert [v for v, _, _ in find_amounts(text)] == [113.0], text
+    assert parse_amount("Amount Due – $1,234.56") == 1234.56
+    for text in ("-113.00", "-$113.00", "$-113.00", "(113.00)", "113.00-", "113.00 CR", "Total: -113.00"):
+        assert parse_amount(text) == -113.0, text
+
+
+def test_totals_printed_after_a_spaced_dash_are_positive(tmp_path):
+    lines = _MAPLE + [(50, 230, "Description"), (300, 230, "Qty"), (500, 230, "Amount"), (50, 250, "Widgets"),
+                      (300, 250, "10"), (500, 250, "100.00"), (380, 320, "Subtotal - $100.00"),
+                      (380, 335, "HST 13% - $13.00"), (380, 350, "Total - $113.00")]  # fmt: skip
+    capture = analyze(_pdf(tmp_path, lines), ocr=False, today=TODAY)
+    assert capture.fields["subtotal"].value == 100.0
+    assert capture.fields["hst_amount"].value == 13.0
+    assert capture.fields["grand_total"].value == 113.0
+
+
+def _credit_note(title: str, label: str) -> list[tuple[float, float, str]]:
+    return [(50, 60, "Imprimerie Beauce Inc."), (50, 75, "195 boul. des Laurentides, Levis (QC) G2Y 6K1"),
+            (380, 50, title), (50, 180, "Date"), (250, 180, label), (50, 195, "2026-04-02"), (250, 195, "FA2627383"),
+            (50, 230, "Description"), (500, 230, "Montant"), (50, 250, "Cable Cat6"), (500, 250, "-100,00"),
+            (380, 320, "Sous-total"), (500, 320, "-100,00"), (380, 335, "TPS 5 %"), (500, 335, "-5,00"),
+            (380, 350, "Total"), (500, 350, "-105,00")]  # fmt: skip
+
+
+def test_a_credit_note_is_numbered_by_its_title_not_by_the_invoice_it_credits(tmp_path):
+    """A title "Note de crédit 051527-CR" over "Facture originale n° FA2627383": the credit note's own number is
+    its title's, and the original invoice's number is no candidate for it (also in English)."""
+    cases = [("Note de crédit 051527-CR", "Facture originale n°", "051527-CR"),
+             ("Note de crédit 051527-CR", "Facture d'origine", "051527-CR"),
+             ("CREDIT NOTE CN-0042", "Original Invoice No.", "CN-0042"),
+             ("CREDIT NOTE CN-0042", "Applies to Invoice #", "CN-0042"),
+             ("CREDIT NOTE CN-0042", "Ref. Invoice #", "CN-0042")]  # fmt: skip
+    for i, (title, label, number) in enumerate(cases):
+        capture = analyze(_pdf(tmp_path, _credit_note(title, label), f"cn{i}.pdf"), ocr=False, today=TODAY)
+        fr = capture.fields["invoice_number"]
+        assert fr.value == number, (title, label, fr.value)
+        assert not any("FA2627383" in f"{k} {v}" for k, v in fr.sources.items()), fr.sources
+
+
+def test_the_currency_the_amounts_are_in_wins_over_one_named_in_a_note():
+    """A note "All amounts in USD. Exchange rate 1 USD = 1.37 CAD": US dollars. Several codes and nothing to tell
+    which is the invoice's: a code is given, but not as sure (the reviewer checks it)."""
+    from ap_coder.capture.normalize import currency_evidence
+
+    assert currency_evidence("Total 113.00\nAll amounts in USD. Exchange rate 1 USD = 1.37 CAD") == ("USD", 0.8)
+    assert currency_evidence("Total Due USD 1,050.00\nUS customers pay in USD; others in CAD")[0] == "USD"
+    assert currency_evidence("Total 1,050.00 CAD") == ("CAD", 0.8)
+    assert currency_evidence("We accept CAD and USD")[1] < 0.8
+
+
+def test_a_usd_invoice_that_mentions_cad_reads_usd(tmp_path):
+    lines = _MAPLE + [(380, 320, "Subtotal"), (500, 320, "100.00"), (380, 350, "Total"), (500, 350, "100.00"),
+                      (50, 400, "All amounts in USD. Exchange rate 1 USD = 1.37 CAD")]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines), ocr=False, today=TODAY).fields["currency"].value == "USD"
+    several = _MAPLE + [(380, 350, "Total"), (500, 350, "100.00"), (50, 400, "We accept CAD and USD")]
+    fr = analyze(_pdf(tmp_path, several, "several.pdf"), ocr=False, today=TODAY).fields["currency"]
+    assert fr.status == "check"
+
+
+def test_an_ambiguous_date_the_coding_agrees_with_is_not_verified(tmp_path):
+    """03/04/2026 with nothing on the page to settle it: the AI's coding choosing the same order (or the day
+    the invoice arrived choosing it) does not make it verified."""
+    lines = [(50, 60, "Maple Supply Inc."), (50, 75, "100 King St W, Toronto, ON M5H 1A1"),
+             (380, 60, "Invoice No.: INV-1001"), (380, 75, "Invoice Date: 03/04/2026"),
+             (380, 320, "Subtotal"), (500, 320, "100.00"), (380, 335, "HST 13%"), (500, 335, "13.00"),
+             (380, 350, "Total"), (500, 350, "113.00")]  # fmt: skip
+    pdf = _pdf(tmp_path, lines)
+    ai = {"invoice_date": "2026-04-03", "invoice_number": "INV-1001", "subtotal": 100.0, "grand_total": 113.0}
+    for today in (None, dt.date(2026, 4, 20)):
+        fr = analyze(pdf, ocr=False, ai_values=ai, today=today).fields["invoice_date"]
+        assert fr.value == "2026-04-03" and fr.status != VERIFIED, (today, fr.status, fr.confidence)
+    # Settled on the page (a due date printed 25/04/2026: day first), the agreement verifies it as before.
+    settled = [*lines, (380, 90, "Due Date: 25/04/2026")]
+    ai["due_date"] = "2026-04-25"
+    fr = analyze(_pdf(tmp_path, settled, "settled.pdf"), ocr=False, ai_values=ai, today=None).fields["invoice_date"]
+    assert fr.value == "2026-04-03" and fr.status == VERIFIED
+
+
+def _table(rows: list[tuple[float, float, str]], heads=((280, "Qty"), (380, "Unit Price"))):
+    head = [(50, 230, "Description"), *((x, 230, t) for x, t in heads), (500, 230, "Amount")]
+    return _MAPLE + head + rows
+
+
+def test_unit_prices_to_three_decimals_are_not_thousands(tmp_path):
+    """Diesel 1,000 L at 1.459 = 1,459.00 and fasteners 200 at 0.125 = 25.00: "0.125" is never 125, and
+    "1.459" reads as the price that makes the line's amount."""
+    from ap_coder.capture.normalize import parse_amount
+
+    assert parse_amount("0.125") == 0.125 and parse_amount("0,125") == 0.125
+    rows = [(50, 250, "Diesel (L)"), (280, 250, "1,000"), (380, 250, "1.459"), (500, 250, "1,459.00"),
+            (50, 265, "Fasteners"), (280, 265, "200"), (380, 265, "0.125"), (500, 265, "25.00"),
+            (380, 320, "Subtotal"), (500, 320, "1,484.00"), (380, 350, "Total"), (500, 350, "1,484.00")]  # fmt: skip
+    capture = analyze(_pdf(tmp_path, _table(rows)), ocr=False, today=TODAY)
+    got = [(li.quantity, li.unit_price, li.amount) for li in capture.line_items]
+    assert got == [(1000.0, 1.459, 1459.0), (200.0, 0.125, 25.0)], got
+
+
+def test_a_quantity_beside_its_price_is_not_one_spaced_thousand(tmp_path):
+    """A row's "10 100.00" (quantity 10 set close to its price 100.00) is not 10,100; "1 234,56" and "1 234 567" are
+    still French thousands, and a French "3 250,00" quantity and price is told apart by the line's amount."""
+    from ap_coder.capture.normalize import find_amounts, parse_amount
+
+    assert [v for v, _, _ in find_amounts("10 100.00")] == [10.0, 100.0]
+    assert [v for v, _, _ in find_amounts("Bolts 3 250.00 750.00")] == [3.0, 250.0, 750.0]
+    assert parse_amount("1 234,56 $") == 1234.56 and parse_amount("1 234 567") == 1234567.0
+    rows = [(50, 250, "Widgets"), (330, 250, "10"), (345, 250, "100.00"), (500, 250, "1,000.00"),
+            (380, 320, "Subtotal"), (500, 320, "1,000.00"), (380, 350, "Total"), (500, 350, "1,000.00")]  # fmt: skip
+    capture = analyze(_pdf(tmp_path, _table(rows, ((330, "Qty"), (420, "Unit Price")))), ocr=False, today=TODAY)
+    assert [(li.quantity, li.unit_price, li.amount) for li in capture.line_items] == [(10.0, 100.0, 1000.0)]
+    fr_rows = [(50, 250, "Boulons"), (330, 250, "3"), (343, 250, "250,00"), (500, 250, "750,00"),
+               (380, 320, "Sous-total"), (500, 320, "750,00"), (380, 350, "Total"), (500, 350, "750,00")]  # fmt: skip
+    heads = ((330, "Qté"), (420, "Prix unitaire"))
+    capture = analyze(_pdf(tmp_path, _table(fr_rows, heads), "fr.pdf"), ocr=False, today=TODAY)
+    assert [(li.quantity, li.unit_price, li.amount) for li in capture.line_items] == [(3.0, 250.0, 750.0)]
+
+
+def test_column_headings_set_close_together_keep_their_own_columns(tmp_path):
+    """Headings "Qty" and "Unit Price" 13 points apart read as one segment: each heading still has its own column, so
+    the quantity is read under "Qty" (10), not the unit price (100.00)."""
+    rows = [(50, 250, "Widgets"), (330, 250, "10"), (360, 250, "100.00"), (500, 250, "1,000.00"),
+            (50, 265, "Bolts"), (330, 265, "3"), (360, 265, "250.00"), (500, 265, "750.00"),
+            (380, 320, "Subtotal"), (500, 320, "1,750.00"), (380, 350, "Total"), (500, 350, "1,750.00")]  # fmt: skip
+    capture = analyze(_pdf(tmp_path, _table(rows, ((330, "Qty"), (360, "Unit Price")))), ocr=False, today=TODAY)
+    got = [(li.quantity, li.unit_price, li.amount) for li in capture.line_items]
+    assert got == [(10.0, 100.0, 1000.0), (3.0, 250.0, 750.0)], got

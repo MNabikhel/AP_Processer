@@ -134,8 +134,13 @@ def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.da
         if not amount:
             continue
         official = table.rate_for(tax_type, province, on) if table and province in PROVINCE_VALUES else None
-        if official and tax_type != "GST" and abs(abs(amount / subtotal if subtotal else 0) - official) > 0.002:
-            # Charged on part of the subtotal (delivery exempt from Manitoba RST): the province's rate on its base.
+        charged = abs(amount / subtotal) if subtotal else 0.0
+        # Less tax than the province's rate on the whole subtotal: charged on part of it (delivery exempt from
+        # Manitoba RST), the province's rate on its base. More than that (14% Nova Scotia HST with the province
+        # read as Ontario) is no partial base: the rate the amounts show is kept, with the province it names,
+        # and the tax check flags the place of supply that differs (TAX_PROVINCE_DIFFERS).
+        partial = bool(official) and (not subtotal or abs(amount) < official * abs(subtotal))
+        if official and tax_type != "GST" and abs(charged - official) > 0.002 and partial:
             base = round(amount / official, 2)
             out.append(
                 TaxLine(tax_type=tax_type, province=province, rate=official, taxable_amount=base, tax_amount=amount)

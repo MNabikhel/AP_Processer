@@ -51,6 +51,7 @@ def locate(layout: DocLayout, field: str, value: object) -> list[Reading]:
     for line in layout.lines():
         text = line.text
         spans: list[tuple[int, int]] = []
+        ambiguous: set[tuple[int, int]] = set()  # dates printed so that they read both ways (03/04/2026)
         if field in AMOUNT_FIELDS:
             try:
                 target = round(float(value), 2)  # type: ignore[arg-type]
@@ -62,7 +63,9 @@ def locate(layout: DocLayout, field: str, value: object) -> list[Reading]:
                 if abs(round(v, 2) - target) <= 0.005 or abs(abs(v) - abs(target)) <= 0.005 and target != 0
             ]
         elif field in DATE_FIELDS:
-            spans = [(a, b) for d, a, b, _ in parse_dates(text) if d.isoformat() == str(value)]
+            printed = parse_dates(text)
+            ambiguous = {(a, b) for _, a, b, amb in printed if amb}
+            spans = [(a, b) for d, a, b, _ in printed if d.isoformat() == str(value)]
             spans += [
                 (a, b)
                 for d, a, b, amb in parse_dates(text, prefer_day_first=True)
@@ -106,7 +109,9 @@ def locate(layout: DocLayout, field: str, value: object) -> list[Reading]:
             near = _near_label(layout, field, line)
             conf = min((w.conf for w in words), default=1.0)
             score = (0.55 + 0.4 * near) * conf
-            found.append(Reading(field, value, text[a:b], [box], score, "located"))
+            # Found where the date is printed both ways: the page does not say which the value is.
+            method = "located-ambiguous" if (a, b) in ambiguous else "located"
+            found.append(Reading(field, value, text[a:b], [box], score, method))
     found.sort(key=lambda r: -r.score)
     return found
 

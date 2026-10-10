@@ -13,9 +13,19 @@ import unicodedata
 # ---------------------------------------------------------------- amounts
 
 _CURRENCY_WORDS = re.compile(r"\b(CAD|USD|EUR|GBP|CDN|CA\$|US\$|C\$)\b", re.I)
+# A minus sign touches its number or currency sign ("-113.00", "-$113.00", "$-113.00"); a dash with a space
+# after it ("Total - $113.00", "Amount Due – $1,234.56") or a run of dashes ("Total ------ 113.00") is a
+# separator. Thousands: commas, dots or apostrophes ("1,234.56", "1.234,56"); spaces only French style, before
+# a decimal comma ("1 234,56") or in two groups or more ("1 234 567"), so "10 100.00" in a line is a quantity
+# and a price. "0.125" is a unit price with three decimals, never thousands.
 _AMOUNT = re.compile(
-    r"""(?P<neg1>[-−–(])?\s*(?:[$€£]\s*)?
-        (?P<num>\d{1,3}(?:[ ,.  ']\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)
+    r"""(?P<neg1>\((?=\s*(?:[$€£]\s*)?\d)|(?<![-−–])[-−–](?=(?:[$€£]\s*)?\d))?
+        \s*(?:[$€£]\s*)?
+        (?P<num>(?!0[,.']\d)\d{1,3}(?:[,.']\d{3})+(?:[.,]\d{1,2})?
+          |\d{1,3}(?:[ \u00a0\u202f]\d{3})+,\d{1,2}(?!\d)
+          |\d{1,3}(?:[ \u00a0\u202f]\d{3}){2,}(?![.,]?\d)
+          |0[.,]\d{1,4}
+          |\d+(?:[.,]\d{1,2})?)
         \s*(?:[$€£])?\s*(?P<neg2>\)|-(?!\s*\w)|(?i:cr)\b)?""",
     re.X,
 )
@@ -56,6 +66,8 @@ def parse_amount(text: str | None) -> float | None:
 
 def _number(num: str) -> float | None:
     num = num.replace(" ", " ").replace(" ", " ").replace("'", " ")
+    if re.fullmatch(r"0[.,]\d{3,4}", num):
+        return float("0." + num[2:])  # a unit price to three or four decimals ("0.125"), not thousands
     last_sep = max(num.rfind("."), num.rfind(","))
     if last_sep >= 0 and len(num) - last_sep - 1 in (1, 2):
         whole, frac = num[:last_sep], num[last_sep + 1 :]
@@ -335,20 +347,48 @@ def norm_name(text: str | None) -> str:
 CURRENCIES = ("CAD", "USD", "EUR", "GBP")
 
 
+_CODE = r"(?<![A-Z])(CAD|USD|EUR|GBP)(?![A-Z])"  # also glued by OCR: "TOTALCAD"
+# "All amounts in USD", "Prices are quoted in CAD", "Currency: USD", "Montants en dollars CAD", "Devise : CAD".
+_CURRENCY_STATEMENT = re.compile(
+    r"(?:AMOUNTS?|PRICES?|FIGURES|MONTANTS?|PRIX)\s+(?:ARE\s+|SONT\s+)?(?:(?:STATED|SHOWN|EXPRESSED|QUOTED|BILLED|"
+    r"PAYABLE|EXPRIM[EÉ]S?|INDIQU[EÉ]S?|PAYABLES?)\s+)?(?:IN|EN)\s+(?:DOLLARS\s+)?" + _CODE
+    + r"|(?:CURRENCY|DEVISE|MONNAIE)\s*[:=]?\s*" + _CODE
+)  # fmt: skip
+# A code printed on an amount: "CAD 1,050.00", "$1,050.00 USD", "TOTALCAD1,050.00".
+_CODE_ON_AMOUNT = re.compile(_CODE + r"\s*\$?\s*\d|\d[.,]\d{2}\s*\$?\s*" + _CODE)
+_EXCHANGE = re.compile(r"EXCHANGE|\bRATE\b|\bTAUX\b|CONVERSION|=")
+
+
 def find_currency(text: str) -> str | None:
+    """The invoice's currency code (see ``currency_evidence``)."""
+    found = currency_evidence(text)
+    return found[0] if found else None
+
+
+def currency_evidence(text: str) -> tuple[str, float] | None:
+    """(currency, how sure, 0-1). A statement ("All amounts in USD", "Currency: CAD") or a code printed on the
+    amounts settles it; a code anywhere else counts when it is the only one. Several codes and nothing to tell
+    which the invoice is billed in ("1 USD = 1.37 CAD" in a note): the first is given, but not as sure."""
     s = text.upper()
-    for code in CURRENCIES:
-        if re.search(rf"(?<![A-Z]){code}(?![A-Z])", s):  # also glued by OCR: "TOTALCAD"
-            return code
+    stated = {m.group(1) or m.group(2) for m in _CURRENCY_STATEMENT.finditer(s)}
+    if len(stated) == 1:
+        return stated.pop(), 0.8
+    lines = [ln for ln in s.splitlines() if not _EXCHANGE.search(ln)]
+    on_amounts = {m.group(1) or m.group(2) for ln in lines for m in _CODE_ON_AMOUNT.finditer(ln)}
+    if len(on_amounts) == 1:
+        return on_amounts.pop(), 0.8
+    codes = [code for code in CURRENCIES if re.search(rf"(?<![A-Z]){code}(?![A-Z])", s)]
+    if codes:
+        return codes[0], 0.8 if len(codes) == 1 else 0.5
     if re.search(r"\bUS\$|\bUS\s?DOLLARS?\b|\$\s?US\b", s):
-        return "USD"
+        return "USD", 0.8
     if re.search(r"\bC\$|\bCDN\b|CANADIAN", s):
-        return "CAD"
+        return "CAD", 0.8
     # A euro or pound sign is that currency (a plain "$" is not: Canadian or US dollars).
     if "€" in s:
-        return "EUR"
+        return "EUR", 0.8
     if "£" in s:
-        return "GBP"
+        return "GBP", 0.8
     return None
 
 
