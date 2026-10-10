@@ -71,3 +71,14 @@ def test_process_many_parallel(settings, reference, ground_truth, sample_markdow
     pipe = _pipeline(Settings(), reference, make_completion(body), make_completion(body))
     results = pipe.process_many([sample_markdown_path, sample_markdown_path], workers=2)
     assert all(r.ok for r in results)
+
+
+def test_the_page_readers_text_reaches_capture_with_azure_too(settings, reference, ground_truth):
+    """Coded by Azure OpenAI (not the offline reader): the page reader's reading is still one more reader."""
+    pdf = SAMPLES / f"{SAMPLE_STEM}.pdf"
+    transcript = (SAMPLES / f"{SAMPLE_STEM}.md").read_text(encoding="utf-8")
+    raw = {"modelId": "prebuilt-layout", "content": transcript, "pages": [{"words": []}]}
+    pipe = _pipeline(settings, reference, make_completion(json.dumps(ground_truth)), di_raw=raw)
+    result = pipe.process(pdf, page_text=[transcript])
+    assert result.ok, result.error
+    assert any("vlm" in (f.sources or {}) for f in result.capture.fields.values())

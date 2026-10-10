@@ -278,8 +278,9 @@ class InvoicePipeline:
                 result.capture, key, profile = captured
             else:
                 result.capture, key, profile = capture_invoice(
-                    path, result.output, store=self.store, di_raw=result.extraction.raw if result.extraction else None
-                )
+                    path, result.output, store=self.store, page_text=page_text,
+                    di_raw=result.extraction.raw if result.extraction else None,
+                )  # fmt: skip
             result.timings["capture"] = time.perf_counter() - t2
             if result.capture is not None and result.report is not None:
                 for severity, code, message in review_issues(result.capture):
