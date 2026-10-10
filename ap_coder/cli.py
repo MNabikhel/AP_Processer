@@ -166,6 +166,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--minutes", type=float, default=60.0, help="Stop after this long (default 60; a page under way "
                    "is finished)")  # fmt: skip
     p.add_argument("--invoice", type=int, default=None, help="Read only this invoice (it is queued first)")
+    p.add_argument("--test", action="store_true", help="Test the page reader on the bundled test invoice instead "
+                   "(10 to 20 minutes on a laptop): a model that passes is linked and reads the queue")  # fmt: skip
     p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
 
     p = sub.add_parser("extract", help="Run Document Intelligence only and save Markdown + raw JSON")
@@ -398,11 +400,22 @@ def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_read_pages(args: argparse.Namespace, settings: Settings) -> int:
-    """The page reader's queue, read once (Windows Task Scheduler overnight, or by hand)."""
-    from .page_worker import ReadOutcome, read_one, ready, run_queue
-
+    """The page reader's queue, read once (Windows Task Scheduler overnight, or by hand). Ctrl+C stops it: the
+    invoice being read goes back in line, its pages read so far kept."""
     store = Store(args.db)
+    try:
+        return _read_pages(args, settings, store)
+    except KeyboardInterrupt:
+        print("Stopped: the invoice being read is back in line (pages already read are kept).", file=sys.stderr)
+        return 130
+
+
+def _read_pages(args: argparse.Namespace, settings: Settings, store: Store) -> int:
+    from .page_worker import ReadOutcome, read_one, ready, release_interrupted, run_queue
+
     cache = Path(args.cache_dir) if args.cache_dir else None
+    if getattr(args, "test", False):
+        return _test_page_reader(settings, store)
 
     def say(outcome: ReadOutcome) -> None:
         stamp = time.strftime("%H:%M:%S")
@@ -415,6 +428,7 @@ def cmd_read_pages(args: argparse.Namespace, settings: Settings) -> int:
         print(f"Nothing read: {why}.", file=sys.stderr)
         return 1
     if args.invoice is not None:
+        release_interrupted(store)
         store.queue_page_read(args.invoice, "asked", requested_by="command line")
         outcome = read_one(settings, store, cache_dir=cache, invoice_id=args.invoice)
         if outcome is None:
@@ -427,6 +441,36 @@ def cmd_read_pages(args: argparse.Namespace, settings: Settings) -> int:
     done = run_queue(settings, store, minutes=args.minutes, cache_dir=cache, on_result=say)
     print(f"Read {len(done)}; {store.page_reads_waiting()} still waiting.", file=sys.stderr)
     return 0
+
+
+def _test_page_reader(settings: Settings, store: Store) -> int:
+    """``read-pages --test``: Settings → Page reader → Test the page reader, from the command line."""
+    from . import page_reader
+    from .page_worker import run_test
+
+    status = page_reader.reader_status(settings)
+    if settings.page_reader.mode == "off" or not status.usable:
+        why = "the page reader is off" if settings.page_reader.mode == "off" else status.note or "no model can read"
+        print(f"Nothing tested: {why}.", file=sys.stderr)
+        return 1
+    estimate = page_reader.page_seconds_estimate(settings, model=status.model)
+    wait = page_reader.duration(estimate * 2) if estimate else "about 10–20 minutes on a laptop without a graphics card"
+    print(f"Testing {status.model} on the test invoice ({wait}); Ctrl+C stops it.", file=sys.stderr)
+    try:
+        record = run_test(settings, store, status.model,
+                          on_page=lambda n, total: print(f"{time.strftime('%H:%M:%S')} reading page {n} of {total}…",
+                                                         file=sys.stderr))  # fmt: skip
+    except KeyboardInterrupt:
+        print("Stopped: the test wasn't finished, so nothing was kept.", file=sys.stderr)
+        return 130
+    if record is None:
+        print("Nothing tested: a test of the page reader is already under way (in the dashboard?).", file=sys.stderr)
+        return 1
+    verdict = "passed: linked, it reads the queue" if record.get("ok") else "failed: not used"
+    print(f"{status.model} {verdict} ({record.get('fields_right', 0)} of {record.get('fields_total', 0)} fields "
+          f"right in {(record.get('seconds') or 0) / 60:.1f} min). {record.get('problem') or ''}".rstrip(),
+          file=sys.stderr)  # fmt: skip
+    return 0 if record.get("ok") else 1
 
 
 def _print_summary(rows: list[dict]) -> None:

@@ -47,9 +47,28 @@ def layout_from_transcript(pages: list[str]) -> DocLayout:
     pages numbered from 1 (a transcribed page too long for one goes on over the next)."""
     out: list[PageLayout] = []
     for text in pages:
-        for rows in _fit(_page_rows(text or "")):
+        for rows in _fit(_page_rows("" if made_up(text or "") else text)):
             out.append(_page(len(out) + 1, rows))
     return DocLayout(out, "vlm")
+
+
+# What a vision model writes for a page with nothing on it: a page number on its own ("## 1", "Page 1"), or a
+# typing-practice sentence (OvisOCR2 wrote "The quick brown fox jumps over the lazy dog." for a blank page).
+_PANGRAMS = ("the quick brown fox jumps over the lazy dog", "lorem ipsum dolor sit amet")
+_PAGE_WORDS = {"page", "p", "pg", "of"}
+
+
+def made_up(text: str) -> bool:
+    """The transcription of a page holds nothing a page shows: empty, a page number alone, or a boilerplate sentence
+    (the pangram) a vision model writes when it is shown a blank page. Read as a blank page."""
+    words = re.findall(r"\w+", " ".join(_clean(line, cell=False) for line in _without_thinking(text).splitlines()))
+    words = [word.casefold() for word in words]
+    if not words:
+        return True
+    if len(words) <= 4 and all(word.isdigit() or word in _PAGE_WORDS for word in words):
+        return True
+    joined = " ".join(words)
+    return any(joined.startswith(pangram) and len(words) <= 3 * len(pangram.split()) for pangram in _PANGRAMS)
 
 
 def transcript_fields(pages: list[str], received: dt.date | None = None) -> dict[str, list[Reading]]:

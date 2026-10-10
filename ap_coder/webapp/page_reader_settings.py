@@ -4,10 +4,7 @@ it, the page reader reads nothing."""
 
 from __future__ import annotations
 
-import dataclasses
-import datetime as dt
 import functools
-import json
 from pathlib import Path
 
 import pandas as pd
@@ -15,7 +12,8 @@ import streamlit as st
 
 from ap_coder import page_reader, ui
 from ap_coder.config import Settings, normalise_base_url
-from ap_coder.page_worker import TEST_KEY, confirmed, figure_totals, saved_test
+from ap_coder.page_worker import confirmed, figure_totals, saved_test, saved_tests, start_test, test_under_way
+from ap_coder.safe import md
 from ap_coder.store import Store
 from ap_coder.webapp.common import PUBLIC_DEMO, card, esc, get_settings, not_in_public_demo, notify
 
@@ -32,9 +30,12 @@ STATE_PILL = {
     "loaded": ("Ready: loaded in LM Studio", "ok", "check_circle"),
     "downloaded": ("Ready: LM Studio loads it when a page is read", "ok", "check_circle"),
     "missing": ("Not downloaded", "warn", "warning"),
+    "blind": ("Can't look at pictures: can't read pages", "err", "visibility_off"),
     "off": ("Off", "gray", "block"),
     "down": ("LM Studio isn't answering", "err", "error"),
 }
+TEST_POLL_SECONDS = 5  # the test's progress is looked up again this often while it runs
+FIRST_WAIT = "about 10–20 minutes on a laptop without a graphics card"  # before this computer has read a page
 SETUP_STEPS = (
     "Get OvisOCR2's two files from IT (the bartowski build at **Q8_0**: `ATH-MaaS_OvisOCR2-Q8_0.gguf` and "
     "`mmproj-ATH-MaaS_OvisOCR2-f16.gguf`, about 1 GB) and copy them into LM Studio's models folder, under "
@@ -52,24 +53,46 @@ def _status_html(status: page_reader.ReaderStatus) -> str:
     return ui.pill(label, tone, icon) + model + kind
 
 
-def _test_html(test: dict | None, model: str) -> str:
-    """The test that links the page reader: passed by the model in use, failed, or not run with it yet."""
+def _test_detail(test: dict) -> str:
+    right, total = test.get("fields_right", 0), test.get("fields_total", 0)
+    minutes = (test.get("seconds") or 0) / 60
+    when = (test.get("when") or "")[:16].replace("T", " ")
+    return f"{esc(test.get('model', ''))} read {right} of {total} fields right in {minutes:.1f} min · {esc(when)}"
+
+
+def _test_html(test: dict | None, model: str, others: list[dict] | None = None) -> str:
+    """The test that links the page reader: passed by the model in use, failed, or not run with it yet. Each model
+    keeps its own test: ``others`` are the other models tested (one that passed stays linked)."""
     if not test:
+        if others and model:
+            return ui.pill(f"Not tested with {model}", "warn", "pending") + (
+                " <span class='apc-muted'>Each model is tested once on this computer before it reads invoices: "
+                "test this one to link it.</span>"
+            )
         return ui.pill("Not tested yet", "gray", "pending") + (
             " <span class='apc-muted'>Test it once to confirm it reads invoices right on this computer; it reads "
             "nothing until then.</span>"
         )
-    right, total = test.get("fields_right", 0), test.get("fields_total", 0)
-    minutes = (test.get("seconds") or 0) / 60
-    when = (test.get("when") or "")[:16].replace("T", " ")
-    detail = f"{esc(test.get('model', ''))} read {right} of {total} fields right in {minutes:.1f} min · {esc(when)}"
-    if model and test.get("model") != model:
-        return ui.pill(f"Not tested with {model}", "warn", "pending") + (
-            f" <span class='apc-muted'>The last test was another model ({detail}). Test this one to link it.</span>"
-        )
+    detail = _test_detail(test)
     if test.get("ok"):
         return ui.pill("Linked: passed its test", "ok", "verified") + f" <span class='apc-muted'>{detail}</span>"
     return ui.pill("Failed its test: not used", "err", "error") + f" <span class='apc-muted'>{detail}</span>"
+
+
+def others_tested(tests: dict[str, dict], model: str) -> str:
+    """The other models tested on this computer, each with its own result ("" when none)."""
+    parts = []
+    for name, test in sorted(tests.items(), key=lambda kv: str(kv[1].get("when") or ""), reverse=True):
+        if name != model:
+            right, total = test.get("fields_right", 0), test.get("fields_total", 0)
+            verdict = "passed, linked" if test.get("ok") else "failed"
+            parts.append(f"{md(name)} {verdict} ({right} of {total} fields right)")
+    return ("Also tested here: " + "; ".join(parts) + ".") if parts else ""
+
+
+def _text(value: object) -> str:
+    """A value as the test table shows it: always text (a column of text and numbers trips Streamlit's table)."""
+    return "" if value is None else str(value)
 
 
 def _test_table(test: dict) -> None:
@@ -81,9 +104,9 @@ def _test_table(test: dict) -> None:
     frame = pd.DataFrame(
         [
             {
-                "Field": r.get("field", ""),
-                "On the invoice": r.get("expected", ""),
-                "Page reader read": r.get("read", ""),
+                "Field": _text(r.get("field", "")),
+                "On the invoice": _text(r.get("expected")),
+                "Page reader read": _text(r.get("read")),
                 "Match": "✓ right" if r.get("match") else "✗ different",
             }
             for r in rows
@@ -105,10 +128,10 @@ def _test_page_count() -> int:
 
 def test_wait(settings: Settings, model: str) -> str:
     """How long the test should take on this computer: the time ``model`` takes a page here, times the test
-    invoice's pages ("about 3 minutes"), or a plain guess before it has read a page."""
+    invoice's pages ("about 3 minutes"), or what a laptop takes before this one has read a page."""
     estimate = page_reader.page_seconds_estimate(settings, model=model)
     if not estimate:
-        return "a few minutes on a laptop without a graphics card"
+        return FIRST_WAIT
     return page_reader.duration(estimate * _test_page_count())
 
 
@@ -136,7 +159,7 @@ def setup_steps(settings: Settings, status: page_reader.ReaderStatus, store: Sto
          "its server answers" if running else "start LM Studio, then its server (Developer tab, Start server)"),
         ("ok" if downloaded else "todo", "OvisOCR2 is downloaded", have),
         ("ok" if linked else "todo", "Tested and linked",
-         f"{status.model} passed its test" if linked else "Test the page reader below (a few minutes)"),
+         f"{status.model} passed its test" if linked else "Test the page reader below (10–20 minutes)"),
         ("ok" if mode != "off" and linked else "todo", "Reading invoices", reading),
     ]  # fmt: skip
 
@@ -203,6 +226,23 @@ def lm_studio_models_card(settings: Settings, key: str) -> None:
                    "the context a page needs).")  # fmt: skip
 
 
+@st.fragment(run_every=TEST_POLL_SECONDS)
+def _test_progress(store: Store, wait: str) -> None:
+    """While the page reader is tested (in the background): since when, and how many pages it has read; the tab is
+    drawn again with the result once it is done."""
+    testing = test_under_way(store)
+    if not testing:
+        st.rerun()
+        return
+    started = str(testing.get("started") or "")[11:16]
+    done, pages = int(testing.get("done") or 0), int(testing.get("pages") or 0)
+    progress = f" · {done} of {pages} pages read" if pages else ""
+    st.caption(
+        f":material/hourglass_top: Testing {md(testing.get('model', ''))}… started {started}{progress} ({wait}). It "
+        "runs in the background: you can leave this page or close the browser, and its result is kept when it is done."
+    )
+
+
 def page_reader_tab(store: Store) -> None:
     if PUBLIC_DEMO:
         with card("page_reader"):
@@ -225,7 +265,12 @@ def page_reader_tab(store: Store) -> None:
         st.html(f"<div style='margin:.25rem 0'>{_status_html(status)}</div>")
         if status.note:
             st.caption(status.note)
-        st.html(f"<div style='margin:.25rem 0 .5rem'>{_test_html(saved_test(store), status.model)}</div>")
+        tests = saved_tests(store)
+        test = tests.get(status.model) if status.model else saved_test(store)
+        others = [t for name, t in tests.items() if name != status.model]
+        st.html(f"<div style='margin:.25rem 0 .5rem'>{_test_html(test, status.model, others)}</div>")
+        if others and status.model:
+            st.caption(others_tested(tests, status.model))
         steps = setup_steps(settings, status, store)
         st.html("".join(ui.step(state, label, detail) for state, label, detail in steps))
         if steps[0][0] == "ok" and steps[1][0] != "ok":
@@ -235,7 +280,7 @@ def page_reader_tab(store: Store) -> None:
             with st.expander("Set it up by hand instead", expanded=False):
                 st.markdown(steps_md)
         b1, b2, _ = st.columns([1, 1, 2])
-        can_read = bool(status.model) and status.state in ("loaded", "downloaded")
+        can_read = status.usable  # a model that can't look at pictures is neither loaded nor tested from here
         if b1.button("Load in LM Studio", icon=":material/download_for_offline:", key="pr_load",
                      disabled=not can_read or status.state == "loaded", width="stretch"):  # fmt: skip
             with st.spinner(f"LM Studio is loading {status.model}…"):
@@ -245,18 +290,18 @@ def page_reader_tab(store: Store) -> None:
             else:
                 notify(f"{status.model} is loaded.", ":material/check_circle:")
                 st.rerun()
+        testing = test_under_way(store)
+        wait = test_wait(settings, status.model) if status.model else FIRST_WAIT
         if b2.button("Test the page reader", icon=":material/fact_check:", key="pr_test", type="primary",
-                     disabled=not can_read, width="stretch"):  # fmt: skip
-            wait = test_wait(settings, status.model)
-            with st.spinner(f"Reading the test invoice with {status.model}: {wait}…"):
-                result = page_reader.test_reader(settings, model=status.model)
-            record = dataclasses.asdict(result)
-            record["when"] = record.get("when") or dt.datetime.now().isoformat(timespec="minutes")
-            store.set_setting(TEST_KEY, json.dumps(record))
-            store.log_event("page_reader_tested", detail={k: record.get(k) for k in
-                            ("model", "ok", "fields_right", "fields_total", "seconds")})  # fmt: skip
+                     disabled=not can_read or bool(testing), width="stretch"):  # fmt: skip
+            # In a thread of its own: its result is kept even if the browser is closed meanwhile.
+            if start_test(settings, store, status.model):
+                notify(f"Testing {status.model} in the background ({wait}).", ":material/fact_check:")
+            else:
+                notify("A test of the page reader is already under way: one at a time.", ":material/hourglass_top:")
             st.rerun()
-        test = saved_test(store)
+        if testing:
+            _test_progress(store, wait)
         if test:
             with st.expander("What it read on the test invoice", expanded=not test.get("ok")):
                 _test_table(test)

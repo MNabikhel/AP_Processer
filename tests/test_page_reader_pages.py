@@ -3,6 +3,7 @@ faked page reader: confirming the model, saving how it is used, asking for a rea
 
 import json
 import sys
+import time
 
 import pytest
 import streamlit as st
@@ -51,7 +52,10 @@ def ready(monkeypatch):
     monkeypatch.setattr(page_reader, "load_reader", lambda settings, model=None: "")
     monkeypatch.setattr(page_reader, "page_seconds_estimate", lambda settings, model=None: 180.0)
 
-    def tested(settings, model=None):
+    def tested(settings, model=None, on_page=None):
+        for number in (1, 2):
+            if on_page:
+                on_page(number, 2)
         rows = [
             {"field": "invoice_number", "expected": "NW-2026-0912", "read": "NW-2026-0912", "match": True},
             {"field": "grand_total", "expected": "2,457.83", "read": "2,457.83", "match": True},
@@ -83,12 +87,23 @@ def test_the_tab_explains_what_to_download_when_there_is_no_reader(db):
     assert "Not tested yet" in _html(at)
 
 
+def _test_finished(db, seconds=30):
+    from ap_coder import page_worker
+
+    deadline = time.monotonic() + seconds
+    while page_worker.test_under_way(Store(db)) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not page_worker.test_under_way(Store(db)), "the test never finished"
+
+
 def test_testing_the_reader_links_it(db, ready, monkeypatch):
     at = _ok(_settings_page().run())
     assert not at.button(key="pr_test").disabled
     _ok(at.button(key="pr_test").click().run())
+    _test_finished(db)  # in the background: the page needn't stay open for it
+    _ok(at.run())
 
-    saved = json.loads(Store(db).get_setting("page_reader_test"))
+    saved = json.loads(Store(db).get_setting("page_reader_test"))["models"][MODEL]
     assert saved["ok"] and saved["fields_right"] == 2 and saved["model"] == MODEL
     assert "Linked: passed its test" in _html(at) and "read 2 of 2 fields right" in _html(at)
     events = [e["action"] for e in Store(db).events()]
@@ -191,7 +206,7 @@ def test_the_wait_for_the_test_is_per_page_times_its_pages(db, monkeypatch):
     assert _test_page_count() == 2  # the test invoice's two pages
     assert test_wait(None, MODEL) == "about 3 minutes"  # 90 s a page, two pages (was "about 2 min")
     assert test_wait(None, "fast") == "about 10 seconds"  # never "about 0 min"
-    assert "a few minutes" in test_wait(None, "new")  # not measured yet
+    assert test_wait(None, "new") == "about 10–20 minutes on a laptop without a graphics card"  # not measured yet
     assert asked == [MODEL, "fast", "new"]  # the model being tested, not whichever read last
 
 
@@ -259,3 +274,77 @@ def test_missing_ovisocr2_says_where_to_copy_it_never_downloads(db, monkeypatch)
     shown = " ".join(i.value for i in at.info)
     assert "ATH-MaaS_OvisOCR2-GGUF" in shown and "nothing is downloaded" in shown
     assert not [b for b in at.button if (b.key or "") == "pr_download"]
+
+
+# --- The second review's findings ----------------------------------------------------------------------------------
+
+
+def test_a_test_under_way_shows_its_progress_and_isnt_started_twice(db, ready, monkeypatch):
+    """The test runs in the background: the tab says since when and how many pages are read, and the button waits."""
+    import threading
+
+    from ap_coder import page_worker
+
+    release, started = threading.Event(), threading.Event()
+
+    def slow(settings, model=None, on_page=None):
+        on_page(1, 2)
+        on_page(2, 2)
+        started.set()
+        release.wait(30)
+        return page_reader.ReaderTest(model=model, ok=True, seconds=1157.0, rows=[], fields_right=9, fields_total=9,
+                                      when="2026-10-10T22:27")  # fmt: skip
+
+    monkeypatch.setattr(page_reader, "test_reader", slow)
+    at = _ok(_settings_page().run())
+    _ok(at.button(key="pr_test").click().run())
+    try:
+        assert started.wait(30)
+        _ok(at.run())  # the page opened again (or another browser): the test is still under way
+        shown = _captions(at).replace("\\", "")  # model names are escaped for markdown
+        assert f"Testing {MODEL}… started " in shown and "1 of 2 pages read" in shown and "close the browser" in shown
+        assert at.button(key="pr_test").disabled
+    finally:
+        release.set()
+    _test_finished(db)
+    assert page_worker.saved_test(Store(db), MODEL)["ok"]
+
+
+def test_other_models_keep_their_tests(db, ready, monkeypatch):
+    from ap_coder import page_worker
+
+    store = Store(db)
+    page_worker.save_test(store, {"model": MODEL, "ok": True, "fields_right": 9, "fields_total": 9,
+                                  "when": "2026-10-10T22:27"})  # fmt: skip
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: _status(model="qwen3.5-9b"))
+    at = _ok(_settings_page().run())
+    assert "Not tested with qwen3.5-9b" in _html(at)
+    assert f"Also tested here: {MODEL} passed, linked (9 of 9 fields right)" in _captions(at).replace("\\", "")
+    assert page_worker.confirmed(store, MODEL)  # still linked: switching back needs no new test
+
+
+def test_the_test_table_shows_text_only(db, ready):
+    """Amounts and text in one column made Streamlit log an ArrowTypeError on every look at the tab."""
+    from ap_coder import page_worker
+
+    rows = [{"field": "invoice_number", "expected": "NW-2026-0912", "read": "NW-2026-0912", "match": True},
+            {"field": "tax_total", "expected": 2072.85, "read": None, "match": False},
+            {"field": "grand_total", "expected": 18017.85, "read": 18017.85, "match": True}]  # fmt: skip
+    page_worker.save_test(Store(db), {"model": MODEL, "ok": False, "fields_right": 2, "fields_total": 3, "rows": rows})
+    at = _ok(_settings_page().run())
+    table = next(d.value for d in at.dataframe if "On the invoice" in d.value.columns)
+    for column in ("On the invoice", "Page reader read"):
+        assert all(isinstance(v, str) for v in table[column]), table[column].tolist()
+    assert table["On the invoice"].tolist() == ["NW-2026-0912", "2072.85", "18017.85"]
+    assert table["Page reader read"].tolist()[1] == ""
+
+
+def test_a_model_that_cannot_see_cannot_be_tested_or_loaded(db, monkeypatch):
+    blind = _status(model="qwen2.5-7b-instruct")
+    blind.state, blind.document_reader = "blind", False
+    blind.note = "qwen2.5-7b-instruct can't look at pictures: pick a model that can, e.g. OvisOCR2 (or Automatic)."
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: blind)
+    at = _ok(_settings_page().run())
+    assert at.button(key="pr_test").disabled and at.button(key="pr_load").disabled
+    assert "look at pictures: can" in _html(at) and "Ready" not in _html(at)
+    assert "pick a model that can, e.g. OvisOCR2" in _captions(at)

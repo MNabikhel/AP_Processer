@@ -21,7 +21,7 @@ import json
 import re
 import shutil
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -122,12 +122,14 @@ CREATE TABLE IF NOT EXISTS page_reads (
     invoice_id INTEGER PRIMARY KEY, status TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
     pages INTEGER NOT NULL DEFAULT 0, seconds REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL);
+    updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS page_reads_status ON page_reads (status, created_at);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
-# interrupted (the computer slept, the app was closed): it waits in line again.
+# interrupted (the computer slept, the app was closed): it waits in line again. ``reader`` names the process
+# reading it (``page_worker.READER_ID``), so a read whose process is gone is put back in line at once
+# (``release_page_reads``); ``tries``: reads cut off by the model server since it was put in line.
 PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED = "waiting", "reading", "done", "failed", "skipped"
 PAGE_READ_STATUSES = (PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED)
 STALE_READING_HOURS = 2
@@ -258,6 +260,12 @@ class Store:
                     conn.execute("UPDATE invoices SET currency = ? WHERE id = ?", (currency, r["id"]))
         if version < 13:  # credit notes were given a due date like invoices
             conn.execute("UPDATE invoices SET due_date = NULL WHERE grand_total <= 0")
+        # The page reader's queue remembers who is reading an invoice and how many reads were cut off (added within
+        # schema 15: looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(page_reads)")}
+        for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0")):
+            if columns and column not in columns:
+                conn.execute(f"ALTER TABLE page_reads ADD COLUMN {column} {kind}")
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
         from .capture.workflow import AUTONOMOUS_REVIEWER
@@ -1740,16 +1748,17 @@ class Store:
                     reason = CASE WHEN {keep} THEN page_reads.reason ELSE excluded.reason END,
                     requested_by = CASE WHEN {keep} THEN page_reads.requested_by ELSE excluded.requested_by END,
                     created_at = CASE WHEN {waiting} THEN page_reads.created_at ELSE excluded.created_at END,
-                    error = '', updated_at = excluded.updated_at
+                    error = '', tries = 0, reader = '', updated_at = excluded.updated_at
                     WHERE page_reads.status != 'reading' OR page_reads.updated_at < ?""",
                 (invoice_id, reason or "", requested_by or "", now, now, _stale_before()),
             )
             return cur.rowcount > 0
 
-    def next_page_read(self, invoice_id: int | None = None) -> dict[str, Any] | None:
-        """The invoice the page reader should read next (the one waiting longest), marked as being read; None
-        when nothing waits. With ``invoice_id``: that invoice, if it is in line (the one AP asked for, read
-        first), else None. Two readers (the dashboard's and ``read-pages``) never take the same invoice."""
+    def next_page_read(self, invoice_id: int | None = None, reader: str = "") -> dict[str, Any] | None:
+        """The invoice the page reader should read next (the one waiting longest), marked as being read (by
+        ``reader``: the process reading it); None when nothing waits. With ``invoice_id``: that invoice, if it is in
+        line (the one AP asked for, read first), else None. Two readers (the dashboard's and ``read-pages``) never
+        take the same invoice."""
         now, stale = _now(), _stale_before()
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # the write lock from the choice to the mark
@@ -1765,28 +1774,49 @@ class Store:
             if row is None:
                 return None
             conn.execute(
-                "UPDATE page_reads SET status = 'reading', error = '', updated_at = ? WHERE invoice_id = ?",
-                (now, row[0]),
+                "UPDATE page_reads SET status = 'reading', error = '', reader = ?, updated_at = ? WHERE invoice_id = ?",
+                (reader or "", now, row[0]),
             )
             taken = conn.execute("SELECT * FROM page_reads WHERE invoice_id = ?", (row[0],)).fetchone()
         return dict(taken)
 
     def finish_page_read(
-        self, invoice_id: int, status: str, model: str = "", pages: int = 0, seconds: float = 0.0, error: str = ""
-    ) -> bool:
+        self, invoice_id: int, status: str, model: str = "", pages: int = 0, seconds: float = 0.0, error: str = "",
+        *, tries: int | None = None, only_if_reading: bool = False,
+    ) -> bool:  # fmt: skip
         """How a page read ended: ``done``, ``failed`` (``error`` says why), ``skipped`` (nothing to read, or the
-        invoice was dealt with meanwhile) or ``waiting`` (stopped part-way: it keeps its place in line). False
-        when the invoice is no longer in line (deleted meanwhile)."""
+        invoice was dealt with meanwhile) or ``waiting`` (stopped part-way: it keeps its place in line). ``tries``:
+        the reads cut off by the model server so far (None: as it was; ``done`` starts again from 0).
+        ``only_if_reading``: only while it is still marked as being read. False when the invoice is no longer in
+        line (deleted meanwhile)."""
         if status not in (PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED, PAGE_WAITING):
             raise ValueError(f"unknown page read status {status!r}")
+        if tries is None and status == PAGE_DONE:
+            tries = 0
         with self._conn() as conn:
             cur = conn.execute(
-                "UPDATE page_reads SET status = ?, model = ?, pages = ?, seconds = ?, error = ?, updated_at = ? "
-                "WHERE invoice_id = ?",
+                "UPDATE page_reads SET status = ?, model = ?, pages = ?, seconds = ?, error = ?, updated_at = ?, "
+                "reader = '', tries = COALESCE(?, tries) WHERE invoice_id = ?"
+                + (" AND status = 'reading'" if only_if_reading else ""),
                 (status, model or "", int(pages or 0), round(float(seconds or 0), 2), (error or "")[:2000], _now(),
-                 invoice_id),
+                 tries, invoice_id),
             )  # fmt: skip
             return cur.rowcount > 0
+
+    def release_page_reads(self, alive: Callable[[str], bool], why: str = "") -> int:
+        """Put back in line every invoice marked as being read by a reader that isn't reading any more
+        (``alive(reader)`` is False: its process was closed or killed part way). How many were put back."""
+        why = why or "interrupted (AP Coder was closed while it was read): it is read again"
+        with self._conn() as conn:
+            rows = conn.execute("SELECT invoice_id, reader FROM page_reads WHERE status = 'reading'").fetchall()
+            gone = [(r["invoice_id"], r["reader"]) for r in rows if not alive(r["reader"] or "")]
+            for invoice_id, reader in gone:
+                conn.execute(
+                    "UPDATE page_reads SET status = 'waiting', reader = '', error = ?, updated_at = ? "
+                    "WHERE invoice_id = ? AND status = 'reading' AND reader = ?",
+                    (why, _now(), invoice_id, reader),
+                )
+        return len(gone)
 
     def page_read(self, invoice_id: int) -> dict[str, Any] | None:
         """{invoice_id, status, model, pages, seconds, reason, error, requested_by, created_at, updated_at}, or

@@ -301,7 +301,8 @@ def test_a_named_model_is_used_as_it_is(serve):
     assert blind.state == "missing"  # not in this listing at all
     serve(lm_studio(v1_model("qwen2.5-7b-instruct", vision=False)))
     blind = page_reader.reader_status(reader_settings(model="qwen2.5-7b-instruct"))
-    assert blind.state == "downloaded" and "can't look at pictures" in blind.note
+    assert blind.state == "blind" and not blind.usable  # it would read nothing: not ready, never tested or loaded
+    assert "can't look at pictures: pick a model that can, e.g. OvisOCR2" in blind.note
 
 
 def test_turned_off_and_down(serve):
@@ -413,7 +414,7 @@ def test_post_json_gives_lm_studio_reason():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     root = f"http://127.0.0.1:{server.server_address[1]}"
     try:
-        with pytest.raises(PageReaderError, match="^Insufficient system resources$"):
+        with pytest.raises(PageReaderError, match=r"^not enough memory to load it \(Insufficient system resources\)$"):
             page_reader._post_json(root + "/api/v1/models/load", {"model": OVIS_KEY}, "lm-studio", 5)
         assert page_reader._post_json(root + "/api/v1/models/unload", {}, "", 5) == {"instance_id": OVIS_KEY}
     finally:
@@ -868,7 +869,10 @@ def test_test_reader_compares_with_the_ground_truth(test_invoice, pages_read):
     assert (tax["label"], tax["expected"], tax["read"], tax["match"]) == ("Total tax", 2072.85, 2072.85, True)
     assert test_invoice.given == [["text of page 1", "text of page 2"]] and result.pages == test_invoice.given[0]
     assert result.when and result.seconds >= 0
-    assert not page_reader.cache_dir().exists()  # nothing kept: the caller keeps the result
+    # No reading kept (the caller keeps the result), but each page's time is noted, as for any page read, so the
+    # next wait shown is this computer's.
+    assert [p.name for p in page_reader.cache_dir().iterdir()] == [page_reader.TIMINGS_FILE]
+    assert page_reader.page_seconds_estimate(Settings(), model=OVIS_KEY) is not None
 
 
 def test_test_reader_passes_with_one_field_wrong(test_invoice):
@@ -979,3 +983,103 @@ def test_load_a_chat_model_from_settings(serve, posts):
     assert page_reader.load_model(Settings(), OVIS_KEY) == ""  # the page reader: with the context a page needs
     assert posts[-1] == ("/api/v1/models/load", {"model": OVIS_KEY, "context_length": 20480})
     assert "doesn't have" in page_reader.load_model(Settings(), "missing-model")
+
+
+# --- The second review's findings (page reader read for real on a laptop) -----------------------------------------
+
+
+def test_an_oversized_picture_is_named_plainly(tmp_path, monkeypatch):
+    """A 225-megapixel PNG tripped Pillow's guard against decompression bombs and was reported as "it isn't a PDF or a
+    picture" (DecompressionBombError underneath)."""
+    huge = _image(tmp_path, "huge.png", (1000, 700))
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 200_000)  # 0.7 megapixels is more than twice this
+    with pytest.raises(PageReaderError, match=r"^the picture is too large \(0\.7 megapixels\)") as raised:
+        page_reader.render_pages(huge, OVIS, 1)
+    assert "DecompressionBomb" not in str(raised.value)
+    reading = page_reader.read_document(Settings(), huge, model=OVIS_KEY)
+    assert reading.error == "couldn't open huge.png: the picture is too large (0.7 megapixels): scan or save it at a " \
+        "lower resolution" and not reading.temporary  # fmt: skip
+
+
+def test_a_large_picture_is_brought_down_to_the_readers_size(tmp_path):
+    photo = _image(tmp_path, "large.jpg", (6000, 4500))  # a 27-megapixel photo: decoded small, then resized
+    assert _size(page_reader.render_pages(photo, OVIS, 1)[0]) == (2048, 1536)
+    scan = _image(tmp_path, "scan.png", (6800, 8800), dpi=(800, 800), mode="L")  # 8.5 x 11 inches at 800 DPI
+    width, height = _size(page_reader.render_pages(scan, GENERAL, 1)[0])
+    assert (width, height) == (1236, 1600)  # the long side capped (150 DPI would be 1,650)
+
+
+def test_a_refusal_that_isnt_about_the_thinking_switch_keeps_it(client):
+    """LM Studio answers 400 when it can't load the model: that is no refusal of the thinking switch, which was kept
+    being sent; and its words are shown whole enough to make sense, not cut at 200 characters mid-word."""
+    said = ('Failed to load model "qwen2.5-7b-instruct". Error: Model loading was stopped due to insufficient system '
+            "resources. Under the current settings, this model requires approximately 5.62 GB of memory, and "
+            "continuing to load it would likely overload your system and cause it to freeze. If you believe this is "
+            "a mistake, you can try to change the model loading guardrails in the settings.")  # fmt: skip
+    error = StatusError(400, f"Error code: 400 - {{'error': {{'message': '{said}'}}}}")
+    error.body = {"message": said}
+    fake = client(error)
+    with pytest.raises(PageReaderError) as raised:
+        page_reader.transcribe(Settings(), b"png", model=OVIS_KEY)
+    assert len(fake.calls) == 1  # not asked again without the switch
+    assert local_llm.thinking_off(BASE, OVIS_KEY) == {"extra_body": THINKING_OFF}  # still sent next time
+    message = str(raised.value)
+    assert message.startswith("the model server answered 400: not enough memory to load it (Failed to load model")
+    assert message.endswith("requires approximately 5.62 GB of memory, and continuing to load it would likely "
+                            "overload your system and cause it to freeze.)")  # fmt: skip
+    assert raised.value.temporary  # the server's trouble: the invoice is read again later
+
+
+def test_gist_keeps_whole_sentences_or_whole_words():
+    assert page_reader.gist("Model not found.") == "Model not found."
+    long = "word " * 100
+    assert page_reader.gist(long).endswith("word…") and len(page_reader.gist(long)) <= 301
+    sentences = "First sentence is here. " * 20
+    assert page_reader.gist(sentences).endswith("here.") and len(page_reader.gist(sentences)) <= 300
+    assert page_reader.gist("Insufficient system resources") == (
+        "not enough memory to load it (Insufficient system resources)"
+    )
+
+
+def test_a_server_failure_is_temporary_a_page_problem_is_not(pages_read):
+    pages_read.outcomes = [PageReaderError("the model server isn't answering", temporary=True)]
+    down = page_reader.read_document(Settings(), SAMPLE_PDF, model=OVIS_KEY)
+    assert down.temporary and not down.complete and "isn't answering" in down.error
+    pages_read.outcomes = [CutOff("stopped at the 12,288-token limit"), "second page"]
+    cut = page_reader.read_document(Settings(), SAMPLE_PDF, model=OVIS_KEY)
+    assert not cut.temporary and not cut.complete  # the page's own trouble: reading it again won't help
+
+
+def test_server_errors_are_temporary(client):
+    client(ConnectionRefusedError("refused"))
+    with pytest.raises(PageReaderError) as raised:
+        page_reader.transcribe(Settings(), b"png", model=OVIS_KEY)
+    assert raised.value.temporary
+    client(stream(PAGE, fail_after=2))  # the model unloaded part way
+    with pytest.raises(PageReaderError) as raised:
+        page_reader.transcribe(Settings(), b"png", model=OVIS_KEY)
+    assert raised.value.temporary
+    client(stream("Northwind IT Solutions Inc.", finish="length"))
+    with pytest.raises(CutOff) as raised:
+        page_reader.transcribe(Settings(), b"png", model=OVIS_KEY)
+    assert not raised.value.temporary
+
+
+def test_blank_pages_are_not_shown_to_the_model(pages_read):
+    """OvisOCR2 wrote "The quick brown fox jumps over the lazy dog." for a blank first page: a page OCR found no
+    words on isn't shown to it, and reads as blank."""
+    reading = page_reader.read_document(Settings(), SAMPLE_PDF, model=OVIS_KEY, blank_pages={1})
+    assert reading.pages == ["", "text of page 1"] and reading.complete  # only page 2 was shown to the model
+    assert len(pages_read.calls) == 1
+    pages_read.outcomes = ["The quick brown fox jumps over the lazy dog."]
+    again = page_reader.read_document(Settings(), SAMPLE_PDF, model="qwen3.5-9b")  # read before it was known blank
+    cached = page_reader.read_document(Settings(), SAMPLE_PDF, model="qwen3.5-9b", blank_pages={1})
+    assert again.pages[0].startswith("The quick") and cached.pages[0] == "" and cached.cached
+
+
+def test_the_test_notes_its_page_times(test_invoice, pages_read):
+    """Before any page was read here, the wait is a laptop's; the test's own pages then teach the estimate."""
+    assert page_reader.page_seconds_estimate(Settings(), model=OVIS_KEY) is None
+    page_reader.test_reader(Settings(), model=OVIS_KEY)
+    lines = (page_reader.cache_dir() / page_reader.TIMINGS_FILE).read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["model"] for line in lines] == [OVIS_KEY, OVIS_KEY]

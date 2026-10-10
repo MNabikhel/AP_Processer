@@ -133,7 +133,8 @@ def _page_reader_waiting(invoice_id: int) -> None:
     from ap_coder.page_worker import ready
 
     store = get_store()
-    state = (store.page_read(invoice_id) or {}).get("status", "")
+    row = store.page_read(invoice_id) or {}
+    state = row.get("status", "")
     if state not in ("waiting", "reading"):
         st.rerun()
     if state == "waiting":
@@ -145,6 +146,8 @@ def _page_reader_waiting(invoice_id: int) -> None:
     note = "reading it now" if state == "reading" else f"waiting to read it ({ahead} ahead)" if ahead else "next"
     st.caption(f":material/hourglass_top: Page reader: {note}. The fields update when it is done, unless you have "
                "edited the invoice.")  # fmt: skip
+    if state == "waiting" and row.get("tries") and row.get("error"):  # cut off by the model server last time
+        st.caption(f":material/sync_problem: Last time: {md(row['error'])}")
 
 
 def page_reader_line(inv: dict[str, Any], key: str) -> None:
