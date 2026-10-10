@@ -37,8 +37,14 @@ def launch(tmp_path, monkeypatch):
 # --- Packages: only what is missing -----------------------------------------------------------------------------
 
 
-def _fake_pip(launch, monkeypatch, missing: list[str], self_problem: str = "", fails: set[str] = frozenset()):
-    """pip that "installs" what it is asked for (except ``fails``); records each call."""
+WHEELHOUSE = ["--no-index", "--find-links", "wheelhouse"]
+
+
+def _fake_pip(launch, monkeypatch, missing: list[str], self_problem: str = "", fails: set[str] = frozenset(),
+              source: list[str] | None = WHEELHOUSE):  # fmt: skip
+    """pip that "installs" what it is asked for (except ``fails``) from ``source`` (the bundle's wheelhouse by
+    default); records each call."""
+    monkeypatch.setattr(launch, "pip_source", lambda: source)
     calls: list[list[str]] = []
     left = {"missing": list(missing), "self": self_problem}
 
@@ -97,14 +103,67 @@ def test_a_failed_install_stops_with_what_to_do(launch, monkeypatch):
     _fake_pip(launch, monkeypatch, ["streamlit>=1.62"], fails={"streamlit>=1.62"})
     with pytest.raises(launch.SetupError) as exc:
         launch.ensure_packages({})
+    assert "wheelhouse folder has no streamlit for Python" in exc.value.hint and "3.12" in exc.value.hint
+    _fake_pip(launch, monkeypatch, ["streamlit>=1.62"], fails={"streamlit>=1.62"}, source=[])  # opted in: PyPI
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
     assert "HTTPS_PROXY" in exc.value.hint
 
 
-def test_the_wheelhouse_is_used_when_there_is_one(launch, tmp_path, monkeypatch):
+def test_packages_come_only_from_the_wheelhouse_unless_the_internet_is_allowed(launch, tmp_path, monkeypatch):
     monkeypatch.setattr(launch, "ROOT", tmp_path)
-    assert launch.pip_source() == []
+    assert launch.pip_source() is None  # offline (the default) and no wheelhouse: nowhere to install from
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+    assert launch.pip_source() == []  # a developer's opt-in: PyPI
     (tmp_path / "wheelhouse").mkdir()
     assert launch.pip_source() == ["--no-index", "--find-links", str(tmp_path / "wheelhouse")]
+    monkeypatch.delenv("AP_ALLOW_INTERNET")
+    assert launch.pip_source() == ["--no-index", "--find-links", str(tmp_path / "wheelhouse")]
+
+
+def _record_pip(launch, monkeypatch) -> list[list[str]]:
+    """The real pip_install, with pip itself replaced: every command line it would run."""
+    commands: list[list[str]] = []
+
+    class Proc:
+        def __init__(self, cmd, **kwargs):
+            commands.append(list(cmd))
+            self.stdout = iter(())
+
+        def wait(self):
+            return 1  # nothing installed
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Proc)
+    return commands
+
+
+def test_offline_pip_never_runs_without_no_index(launch, tmp_path, monkeypatch, capsys):
+    """The offline default: pip runs only against the bundle's wheelhouse (``--no-index``), never PyPI."""
+    monkeypatch.setattr(launch, "ROOT", tmp_path)
+    commands = _record_pip(launch, monkeypatch)
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["streamlit>=1.62", "rapidocr>=3.4,<3.5"], "x"))
+    with pytest.raises(launch.SetupError) as exc:  # no wheelhouse: nothing run, and it says what is missing
+        launch.ensure_packages({})
+    assert commands == [] and "streamlit" in str(exc.value) and "offline bundle" in str(exc.value)
+    assert not launch.pip_install(["openpyxl"]) and commands == []
+    (tmp_path / "wheelhouse").mkdir()
+    with pytest.raises(launch.SetupError):
+        launch.ensure_packages({})
+    assert commands and all("--no-index" in cmd for cmd in commands)
+    assert "no internet needed" in capsys.readouterr().out
+
+
+def test_offline_without_wheelhouse_still_starts_when_the_core_is_there(launch, tmp_path, monkeypatch):
+    monkeypatch.setattr(launch, "ROOT", tmp_path)
+    commands = _record_pip(launch, monkeypatch)
+    ocr = [r for r in launch.check_deps.requirements(extras=("ocr",)) if launch.is_ocr(r)]
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (ocr, "Missing: ap_coder (pip install -e .)"))
+    level, text, installed = launch.ensure_packages({})
+    assert (level, installed, commands) == ("warn", False, [])
+    assert "missing rapidocr" in text and "offline bundle" in text and "scanned invoices can't be read" in text
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: ([], "Missing: ap_coder (pip install -e .)"))
+    level, text, _ = launch.ensure_packages({})
+    assert level == "ok" and "runs from this folder" in text and commands == []
 
 
 # --- .venv: made once, remade only when broken ---------------------------------------------------------------
@@ -181,6 +240,55 @@ def test_second_start_while_running_only_opens_the_browser(launch, monkeypatch):
     assert opened == ["http://localhost:8501"]
 
 
+@pytest.fixture
+def lock(launch, tmp_path, monkeypatch):
+    monkeypatch.setattr(launch, "LOCK", tmp_path / ".ap_coder_launch.lock")
+    monkeypatch.setattr(launch, "_held", [])
+    yield launch
+    launch.release_lock()
+
+
+def _other_start_holds_the_lock(launch):
+    """The lock taken as another start would take it (a second open file: the same as another process)."""
+    assert launch.take_lock()
+    return launch._held.pop()
+
+
+def test_one_start_at_a_time(lock):
+    launch = lock
+    other = _other_start_holds_the_lock(launch)
+    assert not launch.take_lock()  # a second double-click during the first setup does not set up again
+    other.close()  # the first start ended
+    assert launch.take_lock() and launch.take_lock()  # (taken once; asking again in the same start is fine)
+
+
+def test_a_second_start_waits_for_the_first_ones_dashboard(lock, monkeypatch, capsys):
+    launch = lock
+    other = _other_start_holds_the_lock(launch)
+    answers = iter([None, None, 8597])  # the first start is still installing, then its dashboard is up
+    monkeypatch.setattr(launch, "running_dashboard", lambda argv, state: next(answers))
+    opened: list[str] = []
+    monkeypatch.setattr(launch, "open_browser", opened.append)
+    assert launch.wait_for_other(["--port", "8597"], every=0) == 0
+    assert opened == ["http://localhost:8597"]
+    out = capsys.readouterr().out
+    assert "being set up or started in another window" in out and "already running" in out
+    # The first start ended without a dashboard (e.g. --no-start): this one takes over the setup.
+    monkeypatch.setattr(launch, "running_dashboard", lambda argv, state: None)
+    other.close()
+    assert launch.wait_for_other([], every=0) is None and launch._held
+
+
+def test_main_waits_instead_of_setting_up_twice(lock, monkeypatch):
+    launch = lock
+    other = _other_start_holds_the_lock(launch)
+    monkeypatch.setattr(launch, "wait_for_other", lambda argv: 0)
+    monkeypatch.setattr(launch, "bootstrap", lambda argv: pytest.fail("a second .venv setup started"))
+    monkeypatch.setattr(launch, "run", lambda args, rest: pytest.fail("a second setup started"))
+    assert launch.main([]) == 0
+    other.close()
+
+
 def test_ports(launch):
     assert launch.requested_port(["--port", "8597"]) == 8597
     assert launch.requested_port(["--port=8502"]) == 8502
@@ -207,7 +315,7 @@ def _quiet_setup(launch, monkeypatch, installed=False):
     monkeypatch.setattr(launch, "running_dashboard", lambda rest, state: None)
     monkeypatch.setattr(launch, "ensure_packages", lambda state: ("ok", "Packages: all 13 in place", installed))
     monkeypatch.setattr(launch, "ensure_data_folder", lambda: None)
-    monkeypatch.setattr(launch, "ensure_models", lambda first: None)
+    monkeypatch.setattr(launch, "ensure_models", lambda first, state: None)
     started: list[list[str]] = []
     monkeypatch.setattr(launch, "start_dashboard", lambda rest, state: started.append(rest) or 0)
     checks: list[int] = []
@@ -273,6 +381,57 @@ def test_marks_fall_back_to_ascii(launch, monkeypatch):
     monkeypatch.delenv("WT_SESSION", raising=False)
     monkeypatch.delenv("TERM_PROGRAM", raising=False)
     assert launch.mark("ok") == "[OK]"
+
+
+@pytest.fixture
+def no_models(launch, tmp_path, monkeypatch):
+    """RapidOCR 3 installed with an empty models folder; every download attempt recorded (and refused)."""
+    import fetch_models  # scripts/ is on sys.path: the launcher imports it the same way
+
+    from ap_coder import offline
+
+    empty = tmp_path / "rapidocr_models"
+    empty.mkdir()
+    monkeypatch.setattr(offline, "ppocrv5_installed", lambda: True)
+    monkeypatch.setattr(offline, "model_dir", lambda: empty)
+    monkeypatch.setattr(fetch_models, "BUNDLE_MODELS", tmp_path / "models")  # no bundle models/ folder
+    downloads: list[str] = []
+
+    def urlopen(url, timeout=None):
+        downloads.append(url)
+        raise OSError("network blocked")
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", urlopen)
+    return fetch_models, downloads
+
+
+def test_offline_models_are_never_downloaded_and_a_failure_is_said_once(launch, no_models, monkeypatch, capsys):
+    fetch_models, downloads = no_models
+    ran: list[list[str]] = []
+    real_main = fetch_models.main
+    monkeypatch.setattr(fetch_models, "main", lambda argv: ran.append(argv) or real_main(argv))
+    state: dict = {}
+    for _ in range(3):  # three starts
+        launch.ensure_models(first=False, state=state)
+    out = capsys.readouterr().out
+    assert downloads == [] and ran == []  # offline, and no bundle models folder: nothing tried at all
+    assert out.count("never downloads them") == 1 and state["models_failed"]
+
+    fetch_models.BUNDLE_MODELS.mkdir()  # the full bundle unzipped: tried again, once, from its folder only
+    for _ in range(2):
+        launch.ensure_models(first=False, state=state)
+    out = capsys.readouterr().out
+    assert downloads == [] and len(ran) == 1 and "Copying the OCR models from the offline bundle" in out
+    assert out.count("Not tried again") == 1
+
+
+def test_models_are_downloaded_only_with_the_opt_in(launch, no_models, monkeypatch, capsys):
+    fetch_models, downloads = no_models
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+    state: dict = {}
+    launch.ensure_models(first=False, state=state)
+    launch.ensure_models(first=False, state=state)  # the failed download is not retried on every start
+    assert len(downloads) == 3 and "Downloading the OCR models" in capsys.readouterr().out
 
 
 def test_shortcut_is_made_once(launch, tmp_path, monkeypatch):

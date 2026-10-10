@@ -63,3 +63,67 @@ def test_watch_picks_new_settled_files_only(tmp_path):
     store.add_invoice(old, None, None, error="Azure said no")  # a failed attempt is not retried in a loop
     assert old not in new_files(inbox, store, now=time.time() + 60)
     assert new_files(tmp_path / "missing", store) == []
+
+
+def test_identical_files_dropped_together_are_one_invoice(tmp_path):
+    store = Store(tmp_path / "a.db")
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    for name in ("scan.pdf", "scan (1).pdf", "scan - Copy.pdf"):
+        shutil.copy(SAMPLES / f"{SAMPLE_STEM}.pdf", inbox / name)
+    shutil.copy(SAMPLES / "pacific_BC_GST_PST_PO-77120.pdf", inbox / "other.pdf")
+    found = new_files(inbox, store, now=time.time() + 60)
+    assert len(found) == 2 and inbox / "other.pdf" in found  # one of the three copies, and the other invoice
+
+
+def _watch_args(tmp_path, *extra):
+    return ["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "a.db"), "watch", str(tmp_path / "in"),
+            "--cache-dir", "", *extra]  # fmt: skip
+
+
+def test_an_error_outside_one_invoice_does_not_stop_the_watcher(tmp_path, monkeypatch, capsys):
+    """E.g. the GL accounts CSV open in Excel: that check is skipped and said, the next one runs."""
+    from ap_coder import cli
+
+    checks: list[int] = []
+
+    def unpack_folder(folder):
+        checks.append(1)
+        raise PermissionError("chart_of_accounts.csv is open in Excel")
+
+    def sleep(seconds):
+        if len(checks) >= 2:
+            raise KeyboardInterrupt  # Ctrl+C after the second check
+
+    monkeypatch.setattr(cli, "unpack_folder", unpack_folder)
+    monkeypatch.setattr(cli.time, "sleep", sleep)
+    assert cli.main(_watch_args(tmp_path)) == 0
+    assert len(checks) == 2
+    assert capsys.readouterr().err.count("this check stopped: PermissionError") == 2
+    assert cli.main(_watch_args(tmp_path, "--once")) == 1  # Task Scheduler sees the failed run
+
+
+def test_watch_once_fails_when_every_invoice_failed(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from ap_coder import cli
+
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    (inbox / "a.pdf").write_bytes(b"%PDF-1.4 a")
+    os.utime(inbox / "a.pdf", (1_700_000_000, 1_700_000_000))
+
+    class Pipeline:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def process(self, path):
+            return SimpleNamespace(ok=self.ok, error="unreadable", output={"vendor_name": "V"}, report=None)
+
+    monkeypatch.setattr(cli, "InvoicePipeline", Pipeline)
+    Pipeline.ok = False
+    assert cli.main(_watch_args(tmp_path, "--once")) == 1
+    Pipeline.ok = True
+    (inbox / "b.pdf").write_bytes(b"%PDF-1.4 b")
+    os.utime(inbox / "b.pdf", (1_700_000_000, 1_700_000_000))
+    assert cli.main(_watch_args(tmp_path, "--once")) == 0

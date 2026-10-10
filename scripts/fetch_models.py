@@ -1,15 +1,17 @@
-"""Put the PP-OCRv5 OCR models where RapidOCR 3 looks for them, so scans can be read without internet.
+"""Put the PP-OCRv5 OCR models where RapidOCR 3 looks for them, so scans are read with two OCR engines.
 
-RapidOCR 3 downloads its models the first time it reads a page; an offline computer cannot. Run this
-once while online (the first-run setup of APProcessor.bat / APProcessor.command does), or let it copy
-them from the ``models/`` folder of the offline bundle. Safe to run again: files already there (and
-intact) are kept, nothing is downloaded twice.
+AP Coder is an offline build: this copies the models from the ``models/`` folder of the offline bundle and
+never downloads them. RapidOCR 3 itself is never allowed to download them either (``ap_coder/offline.py``).
+Safe to run again: files already there (and intact) are kept.
 
-    python scripts/fetch_models.py            # fetch what is missing (from models/ if present, else online)
-    python scripts/fetch_models.py --check    # only report; exit 1 if something is missing (no network)
+    python scripts/fetch_models.py            # copy what is missing from the bundle's models/ folder
+    python scripts/fetch_models.py --check    # only report; exit 1 if something is missing
     python scripts/fetch_models.py --to DIR   # put them in DIR instead (the offline bundle uses this)
 
-rapidocr-onnxruntime (the PP-OCRv4 engine) carries its models inside its package: nothing to fetch.
+Downloading from the internet (www.modelscope.cn) happens only with the developers' / bundle builder's
+opt-in, ``AP_ALLOW_INTERNET=1`` (scripts/build_offline_bundle.py sets it itself).
+
+rapidocr-onnxruntime (the PP-OCRv4 engine) carries its models inside its package: nothing to copy.
 """
 
 from __future__ import annotations
@@ -51,15 +53,19 @@ def intact(path: Path, model: offline.ModelFile) -> bool:
 
 
 def download(url: str, dest: Path) -> None:
-    """Fetch ``url`` into ``dest`` (through HTTPS_PROXY when set, as urllib does)."""
+    """Fetch ``url`` into ``dest`` (through HTTPS_PROXY when set, as urllib does). Only with the opt-in."""
+    if not offline.internet_allowed():
+        raise PermissionError(f"offline build: no download without {offline.INTERNET_ENV}=1")
     with urllib.request.urlopen(url, timeout=TIMEOUT) as response, open(dest, "wb") as out:  # noqa: S310
         shutil.copyfileobj(response, out, 1 << 20)
 
 
-def fetch(target: Path, source: Path | None = None, *, online: bool = True,
+def fetch(target: Path, source: Path | None = None, *, online: bool | None = None,
           get: Callable[[str, Path], None] = download, say: Callable[[str], None] = print) -> Result:  # fmt: skip
     """Make ``target`` hold every PP-OCRv5 model file, intact: keep what is there, copy from ``source``
-    (a folder of model files) what it has, download the rest when ``online``."""
+    (a folder of model files) what it has, and download the rest only when ``online`` (default: only with
+    the ``AP_ALLOW_INTERNET=1`` opt-in)."""
+    online = offline.internet_allowed() if online is None else online
     result = Result()
     target.mkdir(parents=True, exist_ok=True)
     for model in offline.ppocrv5_files():
@@ -92,16 +98,16 @@ def fetch(target: Path, source: Path | None = None, *, online: bool = True,
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Fetch the PP-OCRv5 OCR models for offline use (safe to re-run).")
-    parser.add_argument("--check", action="store_true", help="only report what is missing (no network)")
+    parser = argparse.ArgumentParser(description="Put the PP-OCRv5 OCR models in place, from the offline bundle.")
+    parser.add_argument("--check", action="store_true", help="only report what is missing")
     parser.add_argument("--to", help="put the models in this folder (default: RapidOCR's own models folder)")
-    parser.add_argument("--from", dest="source", help=f"copy from this folder first (default: {BUNDLE_MODELS})")
-    parser.add_argument("--offline", action="store_true", help="never download; copy from --from only")
+    parser.add_argument("--from", dest="source", help=f"copy from this folder (default: {BUNDLE_MODELS})")
+    parser.add_argument("--offline", action="store_true", help="never download, even with AP_ALLOW_INTERNET=1")
     args = parser.parse_args(argv)
 
     target = Path(args.to) if args.to else offline.model_dir()
     if target is None:
-        print("RapidOCR 3 is not installed: no OCR models to fetch (scans use rapidocr-onnxruntime if present).")
+        print("RapidOCR 3 is not installed: no OCR models to put in place (scans use rapidocr-onnxruntime if present).")
         return 0
     if args.check:
         missing = offline.missing_models(target, verify=True)
@@ -111,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if missing else 0
 
     source = Path(args.source) if args.source else (BUNDLE_MODELS if BUNDLE_MODELS.is_dir() else None)
-    result = fetch(target, source, online=not args.offline)
+    online = offline.internet_allowed() and not args.offline
+    result = fetch(target, source, online=online)
     parts = [f"{len(result.kept)} already there"]
     if result.copied:
         parts.append(f"{len(result.copied)} copied from {source}")
@@ -120,8 +127,14 @@ def main(argv: list[str] | None = None) -> int:
     if result.ok:
         print("OCR models ready: " + ", ".join(parts) + ".")
         return 0
-    print(f"OCR models: {len(result.failed)} could not be fetched ({', '.join(result.failed)}).")
-    print("Scans are still read, by one OCR engine. Run this again when online: python scripts/fetch_models.py")
+    print(f"OCR models: {len(result.failed)} missing ({', '.join(result.failed)}).")
+    if online:
+        print("Scans are still read, by one OCR engine. Run this again when the download works.")
+    else:
+        where = f"{source} does not have them intact" if source else f"there is no {BUNDLE_MODELS} folder"
+        print(f"This is an offline build: the OCR models come only from the offline bundle, and {where}.")
+        print("Scans are still read, by one OCR engine. Unzip the full offline bundle over this folder, then run this "
+              f"again (developers online: {offline.INTERNET_ENV}=1 downloads them).")  # fmt: skip
     return 1
 
 

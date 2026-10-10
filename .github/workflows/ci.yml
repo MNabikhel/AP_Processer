@@ -43,6 +43,7 @@ jobs:
     runs-on: windows-latest
     env:
       AP_NO_PAUSE: "1"
+      AP_ALLOW_INTERNET: "1"  # this job installs from PyPI and fetches the OCR models (the offline default would not)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -116,6 +117,7 @@ jobs:
     runs-on: windows-latest
     env:
       AP_NO_PAUSE: "1"
+      AP_ALLOW_INTERNET: "1"  # set up online, from PyPI (no wheelhouse here); the offline bundle job runs without it
       BROWSER: none
     steps:
       - uses: actions/checkout@v4
