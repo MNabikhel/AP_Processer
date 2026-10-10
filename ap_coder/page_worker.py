@@ -164,13 +164,50 @@ def ready(settings: Settings, store: Any) -> tuple[str, str]:
     return status.model, ""
 
 
+def decided(inv: dict[str, Any]) -> str:
+    """Why the page reader leaves this invoice alone, or "": AP has already approved, rejected, parked or edited it,
+    and nothing in such an invoice is changed, so reading its pages would only take minutes for nothing."""
+    from .store import REVIEW
+
+    if inv.get("status") != REVIEW:
+        return f"not read: the invoice is already {inv.get('status') or 'dealt with'}, so nothing in it would change"
+    if inv.get("final_output") or inv.get("reviewer") or inv.get("edits"):
+        return "not read: the invoice was already edited or decided, so nothing in it would change"
+    return ""
+
+
+class _BetweenPages:
+    """A ``should_stop`` for ``page_reader.read_document`` that is heeded between pages only: a page under way is
+    finished. The reader asks once before it starts, then once as each page starts (right after ``on_page``) and
+    again and again while the page is read; only the first question after ``on_page`` (or before the first page)
+    is passed on."""
+
+    def __init__(self, should_stop: Callable[[], bool]) -> None:
+        self._should_stop = should_stop
+        self._between = True
+
+    def on_page(self, page: int, total: int) -> None:
+        self._between = True
+
+    def __call__(self) -> bool:
+        if not self._between:
+            return False  # a page is being read: it is finished first
+        self._between = False
+        return bool(self._should_stop())
+
+
 def read_one(settings: Settings, store: Any, *, cache_dir: Path | None = None, invoice_id: int | None = None,
-             should_stop: Callable[[], bool] | None = None) -> ReadOutcome | None:  # fmt: skip
+             should_stop: Callable[[], bool] | None = None,
+             finish_page: bool = False) -> ReadOutcome | None:  # fmt: skip
     """Read the next waiting invoice (or ``invoice_id``) with the page reader and fold the reading in. None when
-    nothing is waiting or nothing can be read yet (the queue is left as it is)."""
+    nothing is waiting or nothing can be read yet (the queue is left as it is).
+
+    ``should_stop``: when it says stop, the reading stops and the invoice keeps its place in line ("postponed"; the
+    pages already read are kept on disk and not read again). ``finish_page``: it is asked between pages only, so a
+    page under way is finished first."""
     from . import page_reader
     from .capture.workflow import AUTONOMOUS_REVIEWER
-    from .figures import compare_figures
+    from .figures import compare_figures, first_pages
     from .pipeline import InvoicePipeline
     from .pipeline import _meta as pipeline_meta
 
@@ -187,31 +224,50 @@ def read_one(settings: Settings, store: Any, *, cache_dir: Path | None = None, i
     if inv is None or not path.exists():
         store.finish_page_read(iid, "skipped", model, 0, 0.0, "the invoice or its file is gone")
         return ReadOutcome(iid, "skipped", model, message="the invoice or its file is gone")
+    why_not = decided(inv)
+    if why_not:
+        store.finish_page_read(iid, "skipped", model, 0, 0.0, why_not)
+        return ReadOutcome(iid, "skipped", model, message=why_not)
     problem = page_reader.load_reader(settings, model)
     if problem:  # not enough memory, most often: it stays in the queue, asked again later
         store.finish_page_read(iid, "waiting", model, 0, 0.0, problem)
         return ReadOutcome(iid, "postponed", model, message=problem)
     t0 = time.perf_counter()
+    stop, on_page = should_stop, None
+    if should_stop is not None and finish_page:
+        stop = _BetweenPages(should_stop)
+        on_page = stop.on_page
     try:
-        reading = page_reader.read_document(settings, path, model=model, should_stop=should_stop)
+        reading = page_reader.read_document(settings, path, model=model, on_page=on_page, should_stop=stop)
     except Exception as exc:  # the server failed, the page was blank, the model looped twice
         message = f"{type(exc).__name__}: {exc}"
         store.finish_page_read(iid, "failed", model, 0, time.perf_counter() - t0, message)
         return ReadOutcome(iid, "failed", model, message=message)
     seconds = sum(reading.seconds) if reading.seconds else time.perf_counter() - t0
-    if reading.error or not any(p.strip() for p in reading.pages):
-        message = reading.error or "the page reader found nothing to read"
+    if reading.stopped:  # asked to stop (time is up, the app is closing): it keeps its place in line
+        message = f"stopped after {len(reading.pages)} of {reading.page_count or '?'} page(s): read again later"
+        store.finish_page_read(iid, "waiting", model, len(reading.pages), seconds, message)
+        return ReadOutcome(iid, "postponed", model, len(reading.pages), seconds, message=message)
+    if not reading.complete or not any(p.strip() for p in reading.pages):  # only a reading of every page is used
+        message = reading.error or (
+            "the page reader found nothing to read"
+            if len(reading.pages) >= reading.page_count
+            else f"the page reader read {len(reading.pages)} of {reading.page_count} page(s)"
+        )
         store.finish_page_read(iid, "failed", model, len(reading.pages), seconds, message)
         return ReadOutcome(iid, "failed", model, len(reading.pages), seconds, message=message)
 
     pipeline = InvoicePipeline(settings, store.reference_data(), cache_dir=cache_dir, store=store)
-    result = pipeline.process(path, page_text=reading.pages, save=False)
+    # The invoice is in the store already: its own row isn't a duplicate of it, nor counted in its vendor's history.
+    result = pipeline.process(path, page_text=reading.pages, save=False, invoice_id=iid)
     if result.error or result.output is None or result.report is None:
         message = result.error or "the invoice could not be read again"
         store.finish_page_read(iid, "failed", model, len(reading.pages), seconds, message)
         return ReadOutcome(iid, "failed", model, len(reading.pages), seconds, message=message)
     summary = agreement(result.capture)
-    figures = compare_figures(result.extraction.content if result.extraction else "", "\n\n".join(reading.pages))
+    # Only the pages the page reader read (at most AP_PAGE_READER_MAX_PAGES) are compared with OCR's.
+    first = first_pages(result.extraction.content if result.extraction else "", len(reading.pages))
+    figures = compare_figures(first, "\n\n".join(reading.pages))
     layout_source = result.capture.layout_source if result.capture is not None else ""
     if not reading.cached:  # a page read again from the cache is not counted twice
         record_figures(store, layout_source, figures)
@@ -239,12 +295,14 @@ def read_one(settings: Settings, store: Any, *, cache_dir: Path | None = None, i
 
 def run_queue(settings: Settings, store: Any, *, minutes: float = 30.0, cache_dir: Path | None = None,
               on_result: Callable[[ReadOutcome], None] | None = None) -> list[ReadOutcome]:  # fmt: skip
-    """Read waiting invoices until the queue is empty or ``minutes`` have passed (a page under way is finished).
-    For ``python -m ap_coder read-pages`` and a scheduled overnight run."""
+    """Read waiting invoices until the queue is empty or ``minutes`` have passed (a page under way is finished; an
+    invoice whose pages aren't all read by then keeps its place in line, its pages read so far kept). For
+    ``python -m ap_coder read-pages`` and a scheduled overnight run."""
     deadline = time.monotonic() + minutes * 60
     done: list[ReadOutcome] = []
     while time.monotonic() < deadline:
-        outcome = read_one(settings, store, cache_dir=cache_dir, should_stop=lambda: time.monotonic() > deadline)
+        outcome = read_one(settings, store, cache_dir=cache_dir, should_stop=lambda: time.monotonic() > deadline,
+                           finish_page=True)  # fmt: skip
         if outcome is None or outcome.status == "postponed":
             if outcome is not None and on_result:
                 on_result(outcome)

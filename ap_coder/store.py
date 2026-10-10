@@ -1717,6 +1717,23 @@ class Store:
             row = conn.execute(f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}", (_stale_before(),)).fetchone()
         return int(row[0])
 
+    def page_reads_ahead(self, invoice_id: int) -> int:
+        """How many invoices the page reader reads before this one: the one being read now, and those in line
+        ahead of it in the order ``next_page_read`` takes them. 0 when it isn't waiting."""
+        stale = _stale_before()
+        with self._conn() as conn:
+            me = conn.execute(
+                f"SELECT created_at FROM page_reads WHERE invoice_id = ? AND {_IN_LINE}", (invoice_id, stale)
+            ).fetchone()
+            if me is None:
+                return 0
+            row = conn.execute(
+                f"""SELECT COUNT(*) FROM page_reads WHERE invoice_id != ? AND ((status = 'reading' AND updated_at >= ?)
+                    OR ({_IN_LINE} AND (created_at < ? OR (created_at = ? AND invoice_id < ?))))""",
+                (invoice_id, stale, stale, me[0], me[0], invoice_id),
+            ).fetchone()
+        return int(row[0])
+
     def replace_proposal(
         self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
         actor: str = "AP Coder",
