@@ -91,3 +91,44 @@ def test_cli_labels_with_nothing_processed_writes_nothing(tmp_path, capsys):
     args = ["labels", "--predictions", str(tmp_path / "out"), "-o", str(dest)]
     assert _cli(tmp_path, *args) == 1 and not dest.exists()  # so the next run (after `process`) is not refused
     assert "Nothing to label" in capsys.readouterr().err
+
+
+# --- Doctor: the checks an offline install needs ---------------------------------------------------------------
+
+
+def test_doctor_python_range_matches_the_launcher():
+    from ap_coder.doctor import FAIL, PASS, WARN, _python_check
+
+    assert _python_check((3, 12, 1))[1] == PASS and _python_check((3, 11, 0))[1] == PASS
+    assert _python_check((3, 13, 2))[1] == PASS
+    assert _python_check((3, 10, 4))[1] == WARN  # still tested in CI: a warning, not a failure
+    assert _python_check((3, 14, 0))[1] == WARN and "not tested" in _python_check((3, 14, 0))[2]
+    assert _python_check((3, 9, 7))[1] == FAIL
+
+
+def test_doctor_missing_packages_fail_with_the_offline_fix(reference, monkeypatch):
+    """pymupdf reads every PDF, so it is a failure; the fix never needs the internet (pip install -e .)."""
+    from ap_coder import doctor
+    from ap_coder.config import LocalLLMSettings
+
+    gone = {"pymupdf", "streamlit", "pandas", "python-dotenv"}
+    real = doctor._version
+    monkeypatch.setattr(doctor, "_version", lambda pkg: None if pkg in gone else real(pkg))
+    checks = {c.area: c for c in doctor.run_checks(Settings(llm=LocalLLMSettings(provider="off")), lambda: reference)}
+    for pkg in gone:
+        check = checks[f"package {pkg}"]
+        assert check.status == doctor.FAIL and "APProcessor.bat" in check.detail
+        assert "pip install" not in check.detail
+    assert "PDFs can't be read" in checks["package pymupdf"].detail
+
+
+def test_doctor_skips_the_local_model_when_ai_coding_is_off(reference, monkeypatch):
+    from ap_coder import doctor
+    from ap_coder.config import LocalLLMSettings
+
+    def never(*args, **kwargs):
+        raise AssertionError("asked the local server although AI coding is off")
+
+    monkeypatch.setattr(doctor, "check_server", never)
+    checks = {c.area: c for c in doctor.run_checks(Settings(llm=LocalLLMSettings(provider="off")), lambda: reference)}
+    assert checks["local model"].status == doctor.SKIP and "turned off" in checks["local model"].detail

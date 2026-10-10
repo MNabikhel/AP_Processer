@@ -45,10 +45,10 @@ _VISION_HINTS = (
 )  # fmt: skip
 
 LM_STUDIO_STEPS = (
-    "Install LM Studio from lmstudio.ai.",
-    "Download and load a small instruct model, e.g. Qwen 3.5 9B or Qwen 2.5 7B Instruct (any 3B–9B instruct "
-    "model), with Context Length 8192. LM Studio 0.4.8 or newer, so a thinking model can be told not to think.",
-    "Developer tab → Start server.",
+    "Open LM Studio. Your IT team installs it with the models already in it: the chat model (Qwen 3.5 9B, or "
+    "another 7B–9B instruct model, Q4_K_M) and OvisOCR2. If it isn't on this computer, ask IT.",
+    "In LM Studio: Developer tab → Start server.",
+    "If no model is loaded: Models in LM Studio (below) → pick the chat model → Load.",
 )
 
 

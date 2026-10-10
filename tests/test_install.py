@@ -33,6 +33,55 @@ def test_placeholders_count_as_not_filled_in():
     assert "AZURE_OPENAI_ENDPOINT" not in values and values["AZURE_OPENAI_DEPLOYMENT"] == "gpt-4o"
 
 
+def _forget_env_after_test(monkeypatch, text):
+    """load_dotenv writes os.environ: every key in ``text`` is put back as it was after the test."""
+    for line in text.splitlines():
+        key = line.lstrip("# ").partition("=")[0].strip()
+        if key.isupper() and "=" in line:
+            monkeypatch.setenv(key, "")
+            monkeypatch.delenv(key)
+
+
+def test_installer_env_has_no_example_endpoints(tmp_path, monkeypatch):
+    """The .env the installer writes never points the app at an example Azure endpoint: it stays offline."""
+    from ap_coder.local_llm import resolve_provider
+
+    env = tmp_path / ".env"
+    install.write_example_env(env)
+    _forget_env_after_test(monkeypatch, env.read_text())
+    live = [line for line in env.read_text().splitlines() if not line.startswith("#")]
+    assert not [line for line in live if "<your-resource>" in line]
+    settings = Settings.from_env(env)
+    assert settings.openai.endpoint is None and settings.document_intelligence.endpoint is None
+    assert resolve_provider(settings, probe=False) == "off"  # not "azure"
+
+
+def test_example_endpoints_left_in_an_older_env_count_as_unset(tmp_path, monkeypatch):
+    """A .env written by an older installer still has the example endpoints in effect: the app ignores them."""
+    from ap_coder.local_llm import resolve_provider
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://<your-resource>.cognitiveservices.azure.com/\n"
+        "AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/\n"
+        "AZURE_OPENAI_DEPLOYMENT=gpt-4o\n"
+    )
+    _forget_env_after_test(monkeypatch, env.read_text() + "AP_LLM_PROVIDER=\n")
+    settings = Settings.from_env(env)
+    assert settings.openai.endpoint is None and settings.document_intelligence.endpoint is None
+    assert resolve_provider(settings, probe=False) == "off"
+
+
+def test_terminal_works_after_the_folder_is_moved():
+    """activate.bat has the folder the .venv was made in written into it: terminal.bat puts .venv\\Scripts on PATH."""
+    raw = (ROOT / "terminal.bat").read_bytes()
+    text = raw.decode()
+    assert b"\r\n" in raw and b"\n" not in raw.replace(b"\r\n", b"")  # Windows line endings throughout
+    assert 'set "PATH=%~dp0.venv\\Scripts;%PATH%"' in text
+    assert "Scripts\\activate" not in text
+    assert "APProcessor.bat first" in text
+
+
 def test_endpoints_are_tidied():
     assert install.clean_url(" myres.openai.azure.com ") == "https://myres.openai.azure.com/"
     assert (

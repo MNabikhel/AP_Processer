@@ -157,3 +157,9 @@ folder.
 - **Ten sample invoices** with their correct answers: every Canadian tax regime (HST, GST+PST,
   TPS/TVQ, GST only), a two-page French invoice, a US invoice and a credit note.
 - **CI:** every change is tested on Windows and Linux, including the real installer on Windows.
+- **Offline setup fixes:** the installer no longer writes the example Azure endpoints into your `.env`,
+  and an `.env` that still has them (`<your-resource>`) is read as "no Azure", so nothing tries to reach
+  Azure. The doctor checks every package the app needs (without `pymupdf` no PDF can be read), says to
+  run `APProcessor.bat` (the offline bundle) instead of `pip install`, shows the Python range the launcher
+  uses (3.11 to 3.13), and skips the local model when AI coding is turned off. `terminal.bat` still works
+  after the AP Coder folder is moved. The setup steps now say that IT installs LM Studio and its models.

@@ -390,7 +390,7 @@ def test_settings_page_when_lm_studio_is_not_running(db, monkeypatch):  # noqa: 
     monkeypatch.setenv("AP_ENV_FILE", str(db.parent / ".env"))
     at = _ok(_page("settings", "page_settings").run())
     page = " ".join(m.value for m in at.markdown)
-    assert "Install LM Studio" in page and "Start server" in page
+    assert "IT team installs it" in page and "Start server" in page and "lmstudio.ai" not in page
     assert any(b.label == "Test connection" for b in at.button)
     _ok(at.button(key="test_llm").click().run())
 
@@ -405,7 +405,7 @@ def test_settings_page_lists_models_and_saves(db, lm_studio, monkeypatch):  # no
         monkeypatch.setenv(key, "")  # restored after the test (the page writes os.environ)
     monkeypatch.setenv("AP_LLM_BASE_URL", server.base_url)
     at = _ok(_page("settings", "page_settings").run())
-    assert "Install LM Studio" not in " ".join(m.value for m in at.markdown)
+    assert "IT team installs it" not in " ".join(m.value for m in at.markdown)
     model = at.selectbox(key="llm_model")
     assert model.options[1:] == ["qwen2.5-7b-instruct", "llama-3.2-3b-instruct"]  # no embedding model
     model.select("llama-3.2-3b-instruct")

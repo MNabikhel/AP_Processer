@@ -38,48 +38,44 @@ before real invoices are sent.
 
 ## Step 2: Install (~10 min, one double-click)
 
-You need **Python 3.11, 3.12 or 3.13** and, ideally, **git**. A Python you already have is used as it
-is (AP Coder never installs a second one); if there is none, the first double-click below offers to
-install Python 3.12 for you with `winget` (answer **Y**). Git, if you want one-click updates:
+AP Coder is an offline enterprise build: the laptop never connects to the internet, not even to set up
+(see [PILOT.md](PILOT.md)). IT gives you three things:
 
-```bat
-winget install Git.Git
-```
+- **Python 3.11, 3.12 or 3.13**, already installed. AP Coder uses the Python you have and never installs
+  a second one. If there is none, ask IT to install Python 3.12 from python.org, with **"Add python.exe
+  to PATH"** ticked on the first screen.
+- **The offline bundle**, a ZIP such as `APProcessor-offline-<version>-<date>.zip` (on a USB stick or a
+  share). It holds the code, every package (`wheelhouse/`) and the OCR models (`models/`).
+- **LM Studio** (optional), with the chat model and OvisOCR2 already in it.
 
-(Without `winget`: install Python from python.org and tick **"Add python.exe to PATH"** on the first
-screen.)
+**Get the code.** Unzip the bundle to a folder that is **not** synced by OneDrive, e.g.
+`C:\APCoder\app`.
 
-**Get the code** into your Downloads folder, either way:
+**Install and start: one button.** Open that folder and **double-click `APProcessor.bat`** (macOS:
+`APProcessor.command`; the first time right-click → *Open*). That is the only file you need, now and
+every day after. The first time (a few minutes) it:
 
-- **With git (recommended: updates are one click).** Open *Command Prompt* and run:
-
-  ```bat
-  cd %USERPROFILE%\Downloads
-  git clone --branch claude/epic-feynman-r6ns86 https://github.com/MNabikhel/AP_Processer.git
-  ```
-
-- **Without git.** On GitHub, open the `claude/epic-feynman-r6ns86` branch, *Code → Download ZIP*,
-  and extract it in `Downloads`. The ZIP holds one folder (named after the branch): rename it to
-  `AP_Processer`. For a later version, extract the new ZIP and copy its contents **over the same
-  folder** (replace files) so nothing is duplicated.
-
-**Install and start: one button.** Open `Downloads\AP_Processer` and **double-click
-`APProcessor.bat`** (macOS: `APProcessor.command`; the first time right-click → *Open*). That is the
-only file you need, now and every day after. The first time (a few minutes) it:
-
-1. finds your Python 3.11–3.13 (or offers to install 3.12) and makes AP Coder's own environment
-   (`.venv`), once
-2. installs the packages, then on later starts only ones that are missing or too old
+1. finds your Python 3.11–3.13 and makes AP Coder's own environment (`.venv`), once
+2. installs the packages from the bundle's `wheelhouse/` folder, then on later starts only ones that
+   are missing or too old
 3. records the data folder, `C:\Users\<you>\APCoder`: outside the code folder and outside OneDrive.
    The database, invoices, outputs and your Azure keys live there, so **every future version uses the
    same data**
-4. fetches the OCR models for scanned invoices, and puts one **AP Coder** shortcut on the desktop
+4. copies the OCR models for scanned invoices from the bundle's `models/` folder, and puts one
+   **AP Coder** shortcut on the desktop
 5. runs the self-check (the ten sample invoices, about 10 seconds) and prints a readiness summary:
-   Python, packages, OCR, data folder, LM Studio (optional) and the self-check's OK/FAILED
+   Python, packages, OCR, data folder, LM Studio and the page reader (both optional) and the
+   self-check's OK/FAILED
 6. opens the dashboard in your browser
 
 Later double-clicks reuse all of it and start in seconds; double-clicking while AP Coder already runs
 just opens it in the browser again.
+
+**For developers (online).** On a computer with internet you can work from a git checkout instead of
+the bundle. Set `AP_ALLOW_INTERNET=1` in a terminal (`set AP_ALLOW_INTERNET=1`), then run
+`APProcessor.bat` from it. Packages then come from PyPI and the OCR models are downloaded;
+`install.bat` updates the checkout with git; with no Python, APProcessor.bat offers to install 3.12
+with `winget`. Never set it on a pilot laptop.
 
 **Azure settings and the other installer options.** The dashboard's **Settings → Azure** page holds
 your Azure details. If you prefer to answer them in the window, or need an option below, use
@@ -88,16 +84,15 @@ questions for the data folder, your Azure details (endpoints, keys, deployment n
 Enter to keep a value in brackets, leave the keys empty if you use `az login`) and the desktop
 shortcut, then a self-test and the setup check.
 
-**Running either again is always safe.** The installer updates the code in place (with git); both
-install packages only when something is missing, and keep your data folder, Azure settings and
-shortcut. Nothing is duplicated. Options are typed after the name in **`terminal.bat`** (double-click
+**Running either again is always safe.** Both install packages only when something is missing (from
+the bundle), and keep your data folder, Azure settings and shortcut. Nothing is duplicated. Options are typed after the name in **`terminal.bat`** (double-click
 it, then type e.g. `install.bat --fresh-start`):
 
 | Option | What it does |
 |---|---|
 | `--fresh-start` | moves the database, invoices and outputs into a dated `backup-…` folder inside the data folder (Azure settings are kept) |
 | `--yes` | no questions; keeps current answers |
-| `--no-update` | don't check GitHub for a newer version |
+| `--no-update` | developers online only: don't check GitHub for a newer version (the offline build never does) |
 | `--data-dir <folder>` | use a different data folder |
 | `--no-shortcut` / `--no-start` | no desktop shortcut / don't offer to start the dashboard at the end |
 | `--skip-tests` / `--reinstall` | skip the self-test / reinstall AP Coder itself even if unchanged |
@@ -266,10 +261,10 @@ through.
 
 ## Step 9: Iterate
 
-When I push improvements, close AP Coder and **double-click `install.bat` again** (without git:
-extract the new ZIP over the same folder, then double-click `APProcessor.bat`). It pulls the new
-version, installs only the packages that changed and keeps everything else. Your database, memory, GL accounts and Azure settings are
-untouched by updates. We repeat until the AI's coding
+When there are improvements, IT gives you a new offline bundle. Close AP Coder, unzip the new bundle
+**over** the same folder (replace files), then double-click `APProcessor.bat`. It installs only the
+packages that changed, from the new bundle, and keeps everything else. Your data folder (database,
+memory, GL accounts and Azure settings) is not touched by updates: keep it where it is. We repeat until the AI's coding
 accuracy on the **Learning & accuracy** page holds at or above **90%**. That is the gate for
 Phase 2.
 
