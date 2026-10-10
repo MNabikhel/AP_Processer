@@ -41,6 +41,8 @@
   const READERS = {
     text: "PDF text",
     ocr: "OCR",
+    ocr2: "OCR, second engine",
+    vlm: "Page reader",
     rules: "Rule reader",
     rule: "Rule reader",
     template: "Supplier template",

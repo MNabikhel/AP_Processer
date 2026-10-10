@@ -23,16 +23,18 @@ from __future__ import annotations
 import streamlit as st
 
 from ap_coder import ui
-from ap_coder.store import REVIEW
+from ap_coder.store import REVIEW, Store
 from ap_coder.webapp.accounts import page_accounts
 from ap_coder.webapp.activity import page_activity
 from ap_coder.webapp.common import (
     ASSETS,
+    CACHE_DIR,
     DB_PATH,
     NAV_SECTIONS,
     PAGES,
     PUBLIC_DEMO,
     approved_today,
+    get_settings,
     get_store,
     reviewer,
     short_path,
@@ -53,6 +55,16 @@ from ap_coder.webapp.statements import page_statements
 from ap_coder.webapp.vendors import page_vendors
 
 st.set_page_config(page_title="AP Coder", page_icon=str(ASSETS / "icon.svg"), layout="wide")
+
+
+@st.cache_resource
+def _page_reader_thread():
+    """The page reader's background thread, once per dashboard process (Settings → Page reader)."""
+    from ap_coder.page_worker import start_background
+
+    return start_background(get_settings, lambda: Store(DB_PATH), cache_dir=CACHE_DIR)
+
+
 st.html(f"<style>{(ASSETS / 'style.css').read_text(encoding='utf-8')}</style>")
 
 PAGES.update(
@@ -83,6 +95,8 @@ if PUBLIC_DEMO:  # the public demo on the web (streamlit_app.py): made-up invoic
 
     public_demo.bootstrap(_store)
     public_demo.banner()
+else:
+    _page_reader_thread()
 _waiting = len(_store.list_invoices(REVIEW))
 with st.sidebar:
     if PUBLIC_DEMO:

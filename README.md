@@ -70,7 +70,8 @@ invoices from across Canada, with sample POs and a vendor list. A hosted copy is
 1. **Reads the invoice on the laptop.** AP Coder uses the PDF's text layer, or local OCR (RapidOCR
    PP-OCRv4, with a PP-OCRv5 second read) for scans and photos. It reads the header, every line, and every
    GST, HST, PST and QST line. Each field gets a measured confidence (*verified*, *likely*, *check* or
-   *missing*) and is boxed on the page.
+   *missing*) and is boxed on the page. Optionally, a **page reader** (OvisOCR2, a small vision model in
+   LM Studio) reads each scan again on its own in the background, as an independent second reader.
 2. **Codes each line** to your GL accounts and cost centers. It tries, in order:
    - fixed rules set by AP;
    - what AP approved before for that vendor;
@@ -103,6 +104,7 @@ invoices from across Canada, with sample POs and a vendor list. A hosted copy is
 
 ```
 invoice (PDF, scan, photo, .eml) ─► local reader: text layer or OCR ─► fields + confidence, boxed on the page
+        └─► page reader (vision model, optional, in the background) ─► agrees: verified · differs: check
                                                                      │
    fixed rules · vendor history · vendor master · account names ─────┤  local model (LM Studio),
                                                                      │  only for lines still uncoded
@@ -156,6 +158,42 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](docs/PILO
 services do the reading and coding instead. They use strict Structured Outputs, and every check after
 coding is the same.
 
+### Page reader: a vision model as a second reader
+
+OCR misreads digits on phone photos and poor scans. The page reader is a small vision model that reads the
+page image on its own and writes out its text and tables. AP Coder reads that with the same rule reader and
+compares it with OCR, field by field:
+
+- both read the same value: the field can be *verified* (two independent readers agree, and the checks pass);
+- they read different values: the field is marked *check* for AP;
+- only the page reader found it: *likely* at best.
+
+**Set it up once:**
+
+1. In LM Studio, search **OvisOCR2** and download the *bartowski* build at **Q8_0** (about 1 GB). No need to
+   load it: AP Coder has LM Studio load it when there is a page to read.
+2. *Settings → Page reader → Test the page reader.* It reads a scan of a sample invoice whose answers are
+   known and shows, field by field, what it read. When it reads it right, the model is **linked**. It reads
+   nothing until then, and another model needs its own test.
+
+It reads in the background while the dashboard is open (or overnight: `python -m ap_coder read-pages
+--minutes 240`) and never holds up *Process invoices*. An invoice is in the review queue at once, read by OCR;
+its fields update when the page reader is done, unless AP has started editing it.
+
+| Setting | Default | |
+| --- | --- | --- |
+| `AP_PAGE_READER` | `auto` | `auto` (in the background), `ask` (only when AP clicks *Read with the page reader*), `off` |
+| `AP_PAGE_READER_SCOPE` | `scans` | `scans` (scans and photos) or `all` (digital PDFs too: more fields verified, slower) |
+| `AP_PAGE_READER_MODEL` | empty | empty = OvisOCR2 when downloaded, else the chat model if it can see; or a model key |
+| `AP_PAGE_READER_BASE_URL` | empty | empty = the same LM Studio as the AI model |
+| `AP_PAGE_READER_TIMEOUT_SECONDS`, `AP_PAGE_READER_MAX_PAGES` | `1200`, `5` | a laptop CPU takes minutes a page |
+
+**Building confidence for touchless processing.** Every approval scores each reader (OCR, the page reader,
+the supplier's template, the AI) against what AP approved. *Learning & accuracy → Readers* shows each
+reader's record, field by field. The same approvals tune the confidence labels to your own invoices (local
+calibration, on top of the benchmark). *Export training data* packs the approved invoices (page images and
+the approved fields) to fine-tune a vision model on them later.
+
 ## Dashboard
 
 | Sidebar group | Page | What it does |
@@ -170,11 +208,11 @@ coding is the same.
 | Master data | **Vendors** | Import the **vendor master** from the ERP (vendor IDs in exports, unknown vendors flagged, vendor terms, default GL); spend, AI accuracy and controls per vendor (hold, expected GST/HST number, notes); recurring vendors and late invoices. |
 | Master data | **Purchase orders** | Import open POs (one row per line, received quantities optional); what has been invoiced against each; close, reopen, delete. |
 | Master data | **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete. Optional cost centers. Tax treatments and GLs. Coding policy. **Fixed rules** (vendor and/or words → GL account and cost center), with rules suggested from past coding. |
-| Analytics | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). *Teach from past coding* imports last year's AP lines from the ERP. |
+| Analytics | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). *Teach from past coding* imports last year's AP lines from the ERP. *Readers* scores each reader (OCR, page reader, template, AI) against AP's approvals and exports the training data. |
 | Analytics | **Spend** | Spend by month (by GL category), top GL accounts, vendors and cost centers, net of recoverable tax; **all invoice data as Excel** (invoices, lines, GL posting) for pivot tables or Power BI. |
 | Analytics | **Insights** | Straight-through rate, hours saved, cost per invoice, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
 | Analytics | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit; the **duplicate payment audit** (number typos, same bill under two vendor names, same amount days apart, also against the ERP register). |
-| System | **Settings** | AI model (LM Studio found automatically, with a connection test), optional Azure connection, your name (per Windows user), review threshold, page images for the AI (vision), only-my-GL-codes, approval limit, default payment days, backups and restore (with an optional second backup folder, e.g. OneDrive). |
+| System | **Settings** | AI model (LM Studio found automatically, with a connection test), page reader (the vision model that reads scans a second time, linked by a test on a known invoice), optional Azure connection, your name (per Windows user), review threshold, page images for the AI (vision), only-my-GL-codes, approval limit, default payment days, backups and restore (with an optional second backup folder, e.g. OneDrive). |
 | System | **Help** | Quick start, every check explained, questions, shortcuts. |
 
 ## Canadian sales tax
@@ -224,6 +262,8 @@ This is a memory of your team's decisions. No model is retrained.
 | `demo [--remove]` | Load (or remove) the demo invoices and sample POs; no Azure needed. |
 | `watch [folder] [--every 60] [--once]` | Keep processing new files dropped in the invoices folder (scanner, mail rule, Task Scheduler). |
 | `doctor [--online]` | Setup, reference-data, tax-mapping and connectivity check. No secrets or URLs in the output. |
+| `read-pages [--minutes 60] [--invoice ID]` | Read the invoices waiting for the page reader, then stop (Task Scheduler overnight). |
+| `export-training [--out PATH] [--since DATE]` | ZIP of approved invoices (page images and approved fields) to train a vision model on; stays local. |
 | `process <files/dirs…>` | Batch pipeline. Results go to `<data folder>/output` **and** the dashboard queue (`--no-db` to skip). Uses the learning memory. Skips files already processed (`--force` to redo). |
 | `share-report [--include-codes]` | Redacted summary of the dashboard database (or an output folder): no vendor names, amounts, descriptions or file names. |
 | `extract <files/dirs…>` | Document Intelligence only; writes `.extraction.md` and raw `.di.json`. |
@@ -343,6 +383,9 @@ ap_coder/
   inference.py       Structured Outputs (Azure or local), model profiles, repair loop, account suggestions
   offline_coder.py   coding with no model: rules, vendor history, vendor master, account names
   local_llm.py       LM Studio / Ollama: finding the server and model, reading a small model's JSON
+  page_reader.py     the page reader: a vision model in LM Studio transcribes each page (loop and cut-off
+                     checks, a cache, the linking test);  page_worker.py: its queue and background thread
+  training_export.py approved invoices as a training set (page images + approved fields), local ZIP
   prompts.py         system prompt (extraction, Canadian tax, GL coding, learning rules)
   schema.py          strict JSON Schema + Pydantic mirror
   tax.py             Canadian rates, tax checks, GL distribution
@@ -356,7 +399,8 @@ ap_coder/
   statements.py      vendor statement reconciliation;  accruals.py: month-end accruals
   exports.py · bulk.py · insights.py · controls.py · audit.py · help.py · demo.py
   capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
-                     templates and autonomy, calibration.json (measured confidence)
+                     templates and autonomy, calibration.json (measured confidence), transcript.py (reads
+                     the page reader's transcription as one more reader)
   bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation
   jde.py             JD Edwards E1 F0411Z1/F0911Z1 export
   pipeline.py        extract → code → validate → capture → store

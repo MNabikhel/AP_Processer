@@ -161,6 +161,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
     _add_reference_args(p)
 
+    p = sub.add_parser("read-pages", help="Read the invoices waiting for the page reader (vision model), then stop")
+    p.add_argument("--minutes", type=float, default=60.0, help="Stop after this long (default 60; a page under way "
+                   "is finished)")  # fmt: skip
+    p.add_argument("--invoice", type=int, default=None, help="Read only this invoice (it is queued first)")
+    p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
+
     p = sub.add_parser("extract", help="Run Document Intelligence only and save Markdown + raw JSON")
     p.add_argument("inputs", nargs="+")
     p.add_argument("-o", "--out", default=str(out_dir))
@@ -339,6 +345,38 @@ def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
         return 0
 
 
+def cmd_read_pages(args: argparse.Namespace, settings: Settings) -> int:
+    """The page reader's queue, read once (Windows Task Scheduler overnight, or by hand)."""
+    from .page_worker import ReadOutcome, read_one, ready, run_queue
+
+    store = Store(args.db)
+    cache = Path(args.cache_dir) if args.cache_dir else None
+
+    def say(outcome: ReadOutcome) -> None:
+        stamp = time.strftime("%H:%M:%S")
+        note = f": {outcome.message}" if outcome.message else ""
+        print(f"{stamp} invoice {outcome.invoice_id}: {outcome.status} ({outcome.pages} page(s), "
+              f"{outcome.seconds / 60:.1f} min){note}", file=sys.stderr)  # fmt: skip
+
+    model, why = ready(settings, store)
+    if not model:
+        print(f"Nothing read: {why}.", file=sys.stderr)
+        return 1
+    if args.invoice is not None:
+        store.queue_page_read(args.invoice, "asked", requested_by="command line")
+        outcome = read_one(settings, store, cache_dir=cache, invoice_id=args.invoice)
+        if outcome is None:
+            print("Nothing read: the invoice isn't there.", file=sys.stderr)
+            return 1
+        say(outcome)
+        return 0 if outcome.status == "done" else 1
+    waiting = store.page_reads_waiting()
+    print(f"{waiting} invoice(s) waiting for the page reader.", file=sys.stderr)
+    done = run_queue(settings, store, minutes=args.minutes, cache_dir=cache, on_result=say)
+    print(f"Read {len(done)}; {store.page_reads_waiting()} still waiting.", file=sys.stderr)
+    return 0
+
+
 def _print_summary(rows: list[dict]) -> None:
     print(
         f"\n{'file':<40} {'status':<7} {'lines':>5} {'total':>12} {'conf':>5} {'adj':>5} {'review':<6} err/warn",
@@ -451,6 +489,7 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": lambda: cmd_doctor(args, settings),
         "process": lambda: cmd_process(args, settings),
         "watch": lambda: cmd_watch(args, settings),
+        "read-pages": lambda: cmd_read_pages(args, settings),
         "extract": lambda: cmd_extract(args, settings),
         "labels": lambda: cmd_labels(args),
         "evaluate": lambda: cmd_evaluate(args),

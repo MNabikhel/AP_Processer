@@ -370,6 +370,29 @@ def lm_studio_line() -> tuple[str, str]:
     return "info", "LM Studio: not running (optional: invoices are still read and coded without it)"
 
 
+def page_reader_line() -> tuple[str, str]:
+    """The page reader is optional too: say which model reads pages, never download or load one."""
+    try:
+        from ap_coder.page_reader import reader_status
+
+        from ap_coder.config import Settings
+        from ap_coder.page_worker import linked
+
+        settings = Settings.from_env()
+        if settings.page_reader.mode == "off":
+            return "info", "Page reader: off (optional)"
+        status = reader_status(settings, use_cache=False)
+        is_linked = bool(status.model) and linked(status.model)
+    except Exception as exc:  # noqa: BLE001 - the summary never stops the start
+        return "info", f"Page reader: not checked ({type(exc).__name__}) (optional)"
+    if status.model and status.state in ("loaded", "downloaded"):
+        if not is_linked:
+            return "info", f"Page reader: {status.model} downloaded, not tested yet (Settings > Page reader > Test)"
+        how = "in the background" if settings.page_reader.mode == "auto" else "when asked"
+        return "ok", f"Page reader: {status.model} linked (reads scans as a second reader, {how})"
+    return "info", "Page reader: not set up (optional: download OvisOCR2 in LM Studio, see Settings > Page reader)"
+
+
 def readiness(packages: tuple[str, str]) -> list[tuple[str, str]]:
     """The lines of the readiness summary: (level, text)."""
     from ap_coder import offline, paths
@@ -392,6 +415,7 @@ def readiness(packages: tuple[str, str]) -> list[tuple[str, str]]:
     except OSError as exc:
         lines.append(("fail", f"Data folder {data} can't be written ({exc.strerror or exc})"))
     lines.append(lm_studio_line())
+    lines.append(page_reader_line())
     return lines
 
 

@@ -204,7 +204,9 @@ class InvoicePipeline:
             and not ex.settings.endpoint
         )
 
-    def process(self, path: str | Path) -> PipelineResult:
+    def process(self, path: str | Path, page_text: list[str] | None = None, save: bool = True) -> PipelineResult:
+        """Read, code and check one invoice, and save it to the review queue (``save``). ``page_text``: the page
+        reader's reading of each page (a vision model), read as one more independent reader."""
         path = Path(path)
         result = PipelineResult(source=path)
         captured: tuple[Any, str, Any] | None = None  # (capture, supplier key, profile) when read without AI
@@ -244,7 +246,7 @@ class InvoicePipeline:
                 # model), each line coded from what AP approved before; a local model codes the lines left over.
                 from .offline_coder import code_from_capture, read_invoice
 
-                captured = read_invoice(path, self.store, layout=layout)
+                captured = read_invoice(path, self.store, layout=layout, page_text=page_text)
                 result.coding = code_from_capture(
                     captured[0], self.reference, feedback, self.store, text=result.extraction.content
                 )
@@ -284,7 +286,7 @@ class InvoicePipeline:
                     result.report.issues.append(Issue(severity, code, message))
                 result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path)
 
-        if self.store is not None:
+        if self.store is not None and save:
             try:
                 result.invoice_id = self.store.add_invoice(
                     path,
@@ -298,6 +300,11 @@ class InvoicePipeline:
                     self.store.save_capture(result.invoice_id, result.capture.to_dict())
                 if result.autonomy.get("auto") and result.output is not None:
                     self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+                elif result.output is not None:  # the page reader reads it in the background, when it is set to
+                    from .page_worker import queue_new_invoice
+
+                    source = result.capture.layout_source if result.capture is not None else ""
+                    queue_new_invoice(self.store, self.settings, result.invoice_id, path, source)
             except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
                 log.exception("Could not save %s", path)
                 result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"

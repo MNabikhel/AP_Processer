@@ -30,7 +30,13 @@ from ap_coder.suggest import suggest_gl
 from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
 from ap_coder.terms import describe as terms_describe
-from ap_coder.webapp.capture_panel import VIEWABLE, capture_panel, document_head, taught_boxes
+from ap_coder.webapp.capture_panel import (
+    VIEWABLE,
+    capture_panel,
+    document_head,
+    follow_page_reader,
+    taught_boxes,
+)
 from ap_coder.webapp.common import (
     ASSETS,
     INVOICE_DIR,
@@ -972,6 +978,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     settings = get_settings()
     key = f"inv{invoice_id}"
     meta = inv.get("meta") or {}
+    follow_page_reader(invoice_id, key, meta)
     ids = [i["id"] for i in pending]
     position = ids.index(invoice_id)
     st.html(f"<style>{_review_css()}</style>")
