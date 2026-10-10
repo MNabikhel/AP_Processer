@@ -1425,7 +1425,7 @@ def _ocr_row() -> dict[str, str]:
     else:
         row["model"] = names.get(first, first)
         row["status"] = "On this computer: each scan is read twice by one OCR model (the second time straightened)."
-        row["note"] = "A second OCR model reads independently: run python scripts/fetch_models.py once while online."
+        row["note"] = "A second OCR model reads independently: it comes with the offline bundle (models folder)."
     return row
 
 
