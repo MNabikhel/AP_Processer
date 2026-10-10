@@ -268,6 +268,33 @@ its `mmproj`, about 1 GB).
   OCR; the reading is folded in only while the invoice is untouched (in review, never approved, no edits), and
   a reviewer's unsaved edits on screen are never replaced.
 
+### Measured with OvisOCR2
+
+Real OvisOCR2 readings (LM Studio, Q8_0) of 9 scanned benchmark invoices with known answers, from seeds never
+used to tune the readers (s212-0000, and s39 and s40 cases, among them the ones OCR got wrong or missed):
+
+| | OCR only | OCR + page reader |
+| --- | --- | --- |
+| Header fields right | 87 of 91 | **91 of 91** |
+| Fields verified | 41 | **81** |
+| Line items right | 31 of 56 | **56 of 56** |
+| Wrong values shown as verified | 0 | 0 |
+
+It read the invoice number OCR made "p.0", the due date, PO and HST OCR missed, and the line tables OCR could not
+put in rows. These readings also found two fusion bugs, fixed: a PO two readers wrote differently ("BC-15.332" /
+"BC-15332") was verified (now: never verified, the plainer form shown), and a field a third reader agreed on could
+lose confidence (now: the pattern without the page reader is the floor until patterns with it are measured).
+Four phone photos (no known answers) were checked by hand: currency, dates and totals verified where both read
+them; the one total both misread (a year in "Incoterm® 2010") stays marked Check.
+
+The benchmark without the page reader is unchanged by this work: 300 digital invoices (seed 211) 99.8% field
+accuracy, 100.0% of verified values right (coverage 55.6%); 400 scans (seed 39) 99.7%, 100.0% (coverage 45.8%),
+99.8% with no silent error.
+
+Speed: 7.6 to 12.4 minutes a scanned page, 3.5 to 5.7 minutes a photo, on a 4-core server CPU where LM Studio
+gave the model one thread; a laptop letting it use its cores is several times faster (CloseDesk: about 3 minutes
+on 4 cores).
+
 ## Learning from approvals: each reader's record, local calibration, training data
 
 Every approval is the ground truth for that invoice. When it is approved, each reader's raw value for each

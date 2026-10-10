@@ -188,6 +188,11 @@ its fields update when the page reader is done, unless AP has started editing it
 | `AP_PAGE_READER_BASE_URL` | empty | empty = the same LM Studio as the AI model |
 | `AP_PAGE_READER_TIMEOUT_SECONDS`, `AP_PAGE_READER_MAX_PAGES` | `1200`, `5` | a laptop CPU takes minutes a page |
 
+**Measured** on 9 real scans with known answers ([details](docs/CAPTURE_DESIGN.md#measured-with-ovisocr2)):
+OCR alone read 87 of 91 header fields right and verified 41; with the page reader, 91 of 91 right and 81
+verified, line items 56 of 56 (31 with OCR alone), and no wrong value verified. A page takes minutes on a laptop
+CPU, so it reads in the background.
+
 **Building confidence for touchless processing.** Every approval scores each reader (OCR, the page reader,
 the supplier's template, the AI) against what AP approved. *Learning & accuracy → Readers* shows each
 reader's record, field by field. The same approvals tune the confidence labels to your own invoices (local
