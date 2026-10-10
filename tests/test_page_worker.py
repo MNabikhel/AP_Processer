@@ -499,9 +499,10 @@ def test_read_pages_command(store, fake_reader, tmp_path, monkeypatch, capsys):
     from ap_coder import cli
 
     env = tmp_path / "pr.env"
-    env.write_text("AP_PAGE_READER=auto\nAP_PAGE_READER_SCOPE=all\nAP_LLM_PROVIDER=off\n", encoding="utf-8")
-    for key in ("AP_PAGE_READER", "AP_PAGE_READER_SCOPE", "AP_LLM_PROVIDER"):
-        monkeypatch.delenv(key, raising=False)
+    env.write_text("", encoding="utf-8")
+    # Set here, not in the .env: what load_dotenv puts in os.environ would outlive the test.
+    for key, value in (("AP_PAGE_READER", "auto"), ("AP_PAGE_READER_SCOPE", "all"), ("AP_LLM_PROVIDER", "off")):
+        monkeypatch.setenv(key, value)
     first = _process(store, _settings("auto", "all"))
     db = str(store.path)
 
