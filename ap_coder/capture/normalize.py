@@ -15,19 +15,27 @@ import unicodedata
 _CURRENCY_WORDS = re.compile(r"\b(CAD|USD|EUR|GBP|CDN|CA\$|US\$|C\$)\b", re.I)
 # A minus sign touches its number or currency sign ("-113.00", "-$113.00", "$-113.00"); a dash with a space
 # after it ("Total - $113.00", "Amount Due – $1,234.56") or a run of dashes ("Total ------ 113.00") is a
-# separator. Thousands: commas, dots or apostrophes ("1,234.56", "1.234,56"); spaces only French style, before
-# a decimal comma ("1 234,56") or in two groups or more ("1 234 567"), so "10 100.00" in a line is a quantity
-# and a price. "0.125" is a unit price with three decimals, never thousands.
+# separator. Thousands: commas, dots, apostrophes or spaces ("1,234.56", "1.234,56", "1 234,56", "1 234.56",
+# "1 234 567"). One space group may also be a quantity set close to its price ("10 100.00" in a line item):
+# ``find_amounts`` tells them apart. "0.125" is a unit price with three decimals, never thousands.
 _AMOUNT = re.compile(
     r"""(?P<neg1>\((?=\s*(?:[$€£]\s*)?\d)|(?<![-−–])[-−–](?=(?:[$€£]\s*)?\d))?
         \s*(?:[$€£]\s*)?
         (?P<num>(?!0[,.']\d)\d{1,3}(?:[,.']\d{3})+(?:[.,]\d{1,2})?
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+,\d{1,2}(?!\d)
-          |\d{1,3}(?:[ \u00a0\u202f]\d{3}){2,}(?![.,]?\d)
+          |\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:\.\d{1,2})?(?![.,]?\d)
           |0[.,]\d{1,4}
           |\d+(?:[.,]\d{1,2})?)
         \s*(?:[$€£])?\s*(?P<neg2>\)|-(?!\s*\w)|(?i:cr)\b)?""",
     re.X,
+)
+# One space group ("1 050.00", "1 234"): 1,050.00, or a quantity 1 set close to a price 50.00.
+_ONE_SPACE_GROUP = re.compile(r"(\d{1,3})[   ](\d{3}(?:\.\d{1,2})?)")
+# A header or totals label: an amount after it is one amount ("Total Due 1 050.00", "GST 1 250.00").
+_TOTALS_LABEL = re.compile(
+    r"\b(?:sub[\s-]?total|sous[\s-]?total|total|amount\s+due|balance\s+due|montant|tax(?:es)?|taxe|gst|hst|pst|"
+    r"qst|rst|tps|tvh|tvq)\b",
+    re.I,
 )
 
 
@@ -84,8 +92,14 @@ def amounts_equal(a: float | None, b: float | None, tol: float = 0.005) -> bool:
 
 
 def find_amounts(text: str) -> list[tuple[float, int, int]]:
-    """Every amount in ``text`` with its character span (a sign or parentheses included)."""
-    out = []
+    """Every amount in ``text`` with its character span (a sign or parentheses included).
+
+    One space group ("1 050.00") is one amount after a totals label ("Total Due 1 050.00") or when nothing on the
+    line says otherwise; it is a quantity and a price when their product is another amount on the line ("Bolts
+    3 250.00 750.00"). A whole number in one space group ("10 100") is two numbers unless a totals label is before
+    it. A row whose quantity and price stand apart from the amount is split by the line-item reader, which checks
+    quantity x price = amount itself."""
+    found = []
     # Character by character, so the spans index ``text`` itself: "…" becomes "..." under NFKC, which
     # would move every span after it.
     s = _ocr_amount_text("".join(n if len(n := unicodedata.normalize("NFKC", c)) == 1 else c for c in text))
@@ -99,7 +113,18 @@ def find_amounts(text: str) -> list[tuple[float, int, int]]:
         neg = bool(m.group("neg1") and m.group("neg1") != "(") or bool(m.group("neg2") and m.group("neg2") != ")")
         if m.group("neg1") == "(" and m.group("neg2") == ")":
             neg = True
-        out.append((-value if neg else value, m.start(), m.end()))
+        found.append((-value if neg else value, m))
+    out = []
+    for i, (value, m) in enumerate(found):
+        pair = _ONE_SPACE_GROUP.fullmatch(m.group("num"))
+        if pair and value > 0 and not _TOTALS_LABEL.search(s, 0, m.start()):
+            qty, price = float(pair.group(1)), float(pair.group(2))
+            others = [abs(v) for j, (v, _) in enumerate(found) if j != i]
+            if "." not in pair.group(2) or any(abs(qty * price - v) <= 0.011 for v in others):
+                cut = m.start("num") + len(pair.group(1))
+                out += [(qty, m.start(), cut), (price, cut + 1, m.end())]
+                continue
+        out.append((value, m.start(), m.end()))
     return out
 
 

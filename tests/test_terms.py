@@ -33,6 +33,15 @@ from .conftest import SAMPLE_STEM, SAMPLES
         ("Net 30 - 1.5% per month on overdue", Terms(30)),
         ("1.5% interest per month after 30 days", Terms(30)),
         ("Overdue accounts are charged 2% interest per month", Terms()),
+        # A rate for a number of months or years, or charged on late payment, is interest, not a discount.
+        ("Net 30 days 1.5% 1 month interest", Terms(30)),
+        ("Net 30, 2% 2 months", Terms(30)),
+        ("Net 30, 1% 1 an", Terms(30)),
+        ("Net 30. Interest of 2% 30 days after due date", Terms(30)),
+        ("Net 30 days; 2% 30 days past due", Terms(30)),
+        ("Net 15, 2% 30 days late charge", Terms(15)),
+        ("Net 30, 1.5% per month on overdue accounts, 2% 10 days", Terms(30, 2.0, 10)),
+        ("Net 30 jours, 2% 10 jours, intérêts 1% par mois", Terms(30, 2.0, 10)),
         ("", Terms()),
     ],
 )

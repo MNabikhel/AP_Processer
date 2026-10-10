@@ -457,6 +457,8 @@ def test_a_province_as_a_model_writes_it():
     assert province_code("Québec") == "QC" and province_code("Seattle, USA") == "OUTSIDE_CANADA"
     with pytest.raises(ValueError):
         province_code("Narnia")
+    with pytest.raises(ValueError):
+        province_code("Ontario St, Quebec City")  # two provinces named, neither at the end: not a guess
 
 
 @pytest.mark.parametrize(
@@ -482,6 +484,13 @@ def test_a_province_as_a_model_writes_it():
         ("Los Angeles, CA", "OUTSIDE_CANADA"),
         ("Portland, OR 97201", "OUTSIDE_CANADA"),
         ("Boston, Massachusetts", "OUTSIDE_CANADA"),
+        # The one province named, not at the end: a city, a region, a tax in brackets.
+        ("Quebec City", "QC"),
+        ("Québec City", "QC"),
+        ("Ontario Region", "ON"),
+        ("Nunavut Territory", "NU"),
+        ("Ontario, Canada (HST)", "ON"),
+        ("Manitoba (RST)", "MB"),
     ],
 )
 def test_a_province_from_an_address_or_an_old_abbreviation(written, code):

@@ -68,3 +68,26 @@ def test_bulk_approve_only_takes_invoices_that_are_still_clean(demo_store):
     assert store.get_invoice(victim["id"])["status"] == REVIEW
     approved_event = store.events(result["approved"][0], actions=["approved"])[0]
     assert approved_event["detail"]["bulk"] is True and approved_event["actor"] == "jane"
+
+
+def test_bulk_approve_skips_an_invoice_a_colleague_parks_meanwhile(demo_store, monkeypatch):
+    """One invoice parked (or approved) by someone else while the loop checks the others is skipped with the
+    reason; the rest are still approved and the result is not lost."""
+    from ap_coder import bulk
+
+    store = demo_store
+    ids = [c["id"] for c in clean_candidates(store)]
+    assert len(ids) >= 2
+    real = bulk.finalise_coding
+
+    def finalise(coding, *args, **kwargs):
+        out = real(coding, *args, **kwargs)
+        if kwargs.get("exclude_invoice_id") == ids[1]:  # parked between its check and its approval
+            store.park_invoice(ids[1], "bob", "waiting on buyer")
+        return out
+
+    monkeypatch.setattr(bulk, "finalise_coding", finalise)
+    result = bulk_approve(store, store.reference_data(), Settings(), ids, "jane")
+    assert [i for i, _ in result["skipped"]] == [ids[1]] and "no longer in the queue" in result["skipped"][0][1]
+    assert sorted(result["approved"]) == sorted(i for i in ids if i != ids[1])
+    assert store.get_invoice(ids[1])["status"] != APPROVED

@@ -224,6 +224,8 @@ _PROVINCE_ALIASES = {
     "YK": "YT", "YUKON TERRITORY": "YT",
 }  # fmt: skip
 _PROVINCE_TAILS = sorted(((alias.split(), code) for alias, code in _PROVINCE_ALIASES.items()), key=lambda a: -len(a[0]))
+# Names, not abbreviations ("MAN", "QUE", "ONT" are words too), looked for anywhere when nothing else tells.
+_PROVINCE_NAMED = [(words, code) for words, code in _PROVINCE_TAILS if len(" ".join(words)) >= 5]
 _US_STATES = frozenset(
     "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK "
     "OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR".split()
@@ -285,6 +287,15 @@ def province_code(value: str) -> str:
     zip_code = re.search(r"\b\d{5}(?:-\d{4})?$", text)  # "Portland 97201": a US ZIP at the end
     if "US" in words or zip_code or re.search(r"\b(?:usa|united states)\b", plain.lower()):
         return OUTSIDE_CANADA
+    # A province named anywhere, when only one is ("Quebec City", "Ontario Region", "Manitoba (RST)").
+    upper_words = [w.upper() for w in words]
+    named = {
+        code
+        for name, code in _PROVINCE_NAMED
+        if any(upper_words[i : i + len(name)] == name for i in range(len(upper_words) - len(name) + 1))
+    }
+    if len(named) == 1:
+        return named.pop()
     raise ValueError(f"province must be a Canadian province code, got {text!r}")
 
 

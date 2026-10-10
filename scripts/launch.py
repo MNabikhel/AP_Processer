@@ -759,15 +759,20 @@ def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     setup_console()
+    args, rest = parse(argv)  # first: what to do when another start holds the lock depends on it
     if not os.environ.get(LOCK_HELD_ENV):  # (set: a parent start holds it, e.g. the first phase for the second)
         if not take_lock():  # another start is setting up or running AP Coder
+            if args.installer:
+                # The installer may reinstall packages into the .venv the running AP Coder uses: never under it.
+                line("fail", "AP Coder is open (or being set up) in another window: close AP Coder first, then run "
+                             "install.bat again. Nothing was installed.")  # fmt: skip
+                return 1
             code = wait_for_other(argv)
             if code is not None:
                 return code
         os.environ[LOCK_HELD_ENV] = str(os.getpid())  # for what this start runs: never waits for itself
     if not in_venv():
         return bootstrap(argv)
-    args, rest = parse(argv)
     if args.installer:
         import install
 
