@@ -80,7 +80,7 @@ def test_changed_gst_number_is_flagged(tmp_path, ground_truth, reference):
     _approved(store, _variant(ground_truth, "A-1", date="2026-06-01"), tmp_path, "a.pdf")
     codes, _ = _codes(store, _variant(ground_truth, "A-2", gst="987654321 RT0001"), reference)
     assert codes.get("VENDOR_TAX_NUMBER_CHANGED") == "warning"
-    same, _ = _codes(store, _variant(ground_truth, "A-3", gst="123456789RT0001"), reference)
+    same, _ = _codes(store, _variant(ground_truth, "A-3", gst="123456782RT0001"), reference)
     assert "VENDOR_TAX_NUMBER_CHANGED" not in same  # spacing differences don't count
 
 

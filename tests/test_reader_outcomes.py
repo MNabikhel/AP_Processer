@@ -210,7 +210,7 @@ def test_learn_from_approval_records_the_readers(tmp_path, ground_truth, monkeyp
     counts = store.evidence_counts()
     assert counts["grand_total|rules+vlm|label-right|scan|contested"] == (1, 0)
     assert counts["invoice_number|ocr2+rules|label-right|scan|"] == (1, 1)
-    supplier = store.supplier_stats(store.supplier_key_for(ground_truth["vendor_name"], "123456789RT0001"))
+    supplier = store.supplier_stats(store.supplier_key_for(ground_truth["vendor_name"], "123456782RT0001"))
     assert supplier.invoices == 1  # the supplier learning still happens
 
     # Learning never blocks an approval: a failure is logged, and the rest still learns.

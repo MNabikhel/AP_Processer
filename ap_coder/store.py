@@ -826,14 +826,20 @@ class Store:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM invoices WHERE meta LIKE '%\"demo\": true%'").fetchone()[0])
 
-    def approved_since(self, since_iso: str) -> int:
-        with self._conn() as conn:
-            return int(
-                conn.execute(
-                    "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?",
-                    (APPROVED, PENDING, since_iso),
-                ).fetchone()[0]
+    def approved_since(self, since_iso: str, reviewer: str | None = None) -> int:
+        """Invoices approved since ``since_iso`` (and still approved, or waiting for a second approver). With
+        ``reviewer``: only those this person approved, first or second approval (names compared without case)."""
+        if reviewer is None:
+            sql, args = "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?", ()
+        else:
+            sql = (
+                "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND ((reviewed_at >= ? AND "
+                "lower(trim(reviewer)) = ?) OR (second_reviewed_at >= ? AND lower(trim(second_reviewer)) = ?))"
             )
+            me = reviewer.strip().lower()
+            args = (me, since_iso, me)
+        with self._conn() as conn:
+            return int(conn.execute(sql, (APPROVED, PENDING, since_iso, *args)).fetchone()[0])
 
     def approve_invoice(
         self,
@@ -871,6 +877,16 @@ class Store:
         # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
+
+        def kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str) -> bool:
+            """Whether the reviewer kept what was proposed. A GL or cost center left blank ("UNASSIGNED", or a
+            cost center still to pick) was not proposed: filling it in confirms the rest, it corrects nothing.
+            A line with nothing proposed at all (or added by the reviewer) is the reviewer's own coding."""
+            gl_blank, cc_blank = s_gl in (None, "", UNASSIGNED), (s_cc or "") in ("", UNASSIGNED)
+            if s_gl is None or (gl_blank and cc_blank):
+                return False
+            return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
             s_cc = suggestion.get("predicted_cost_center", "") if suggestion else None
@@ -879,11 +895,12 @@ class Store:
                 continue  # not a coding decision: nothing to learn from it
             rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
             kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
-            if not kept_rule and (s_gl != f_gl or (s_cc or "") != (f_cc or "")):
+            if not kept_rule and not kept(s_gl, s_cc, f_gl, f_cc):
                 reviewer_changed += 1
             if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
-            outcome = ACCEPTED if (s_gl == f_gl and (s_cc or "") == (f_cc or "")) else CORRECTED
+            # Accuracy measures what the AI proposed: the blanks it left are not counted against it.
+            outcome = ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc) else CORRECTED
             counts[outcome] += 1
             feedback_rows.append(
                 (
@@ -2048,7 +2065,19 @@ class Store:
                 )
             }
             masters = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors")}
+            spend: dict[str, dict[str, float]] = {}
+            for r in conn.execute(
+                """SELECT vendor_key, COALESCE(NULLIF(UPPER(TRIM(currency)), ''), 'CAD') currency,
+                          SUM(grand_total) total
+                   FROM invoices WHERE vendor_key != '' AND status = 'approved' GROUP BY vendor_key, 2"""
+            ):
+                spend.setdefault(r["vendor_key"], {})[r["currency"]] = round(r["total"] or 0, 2)
+        rates = self.fx_rates()
         for r in rows:
+            # Per currency: dollars and euros do not add up, and a USD-only vendor did not spend 0.00 CAD.
+            r["spend"] = dict(sorted(spend.get(r["vendor_key"], {}).items()))
+            # In CAD at the Settings rates (for sorting; a currency without a rate counts at face value).
+            r["spend_in_cad"] = round(sum(t * rates.get(c, 1.0) for c, t in r["spend"].items()), 2)
             fb = lessons.get(r["vendor_key"]) or {}
             r["lessons"] = fb.get("lessons", 0)
             r["accuracy"] = (fb["accepted"] / fb["lines"]) if fb.get("lines") else None
@@ -2059,7 +2088,7 @@ class Store:
             for field in ("erp_id", "terms", "default_gl"):
                 r[field] = master.get(field) or ""
             r["in_master"] = bool(master.get("in_master"))
-        return sorted(rows, key=lambda r: -(r["spend_cad"] or 0))
+        return sorted(rows, key=lambda r: -r["spend_in_cad"])
 
     def vendor_gl_usage(self, key: str) -> list[dict[str, Any]]:
         """GL accounts reviewers used for this vendor's lines, most used first."""
@@ -2285,10 +2314,10 @@ class Store:
             lines = conn.execute(
                 "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome != 'history' GROUP BY outcome"
             ).fetchall()
-            weekly = conn.execute(
-                """SELECT strftime('%Y-W%W', created_at) week,
+            daily = conn.execute(
+                """SELECT substr(created_at, 1, 10) day,
                           SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
-                   FROM feedback WHERE outcome != 'history' GROUP BY week ORDER BY week"""
+                   FROM feedback WHERE outcome != 'history' GROUP BY day"""
             ).fetchall()
             by_vendor = conn.execute(
                 """SELECT vendor_name, COUNT(*) lines, SUM(outcome = 'accepted') accepted,
@@ -2304,6 +2333,12 @@ class Store:
             untouched = conn.execute(
                 "SELECT COUNT(*) FROM invoices WHERE status = ? AND edits = '[]'", (APPROVED,)
             ).fetchone()[0]
+        # ISO weeks (Monday to Sunday, "2026-W41"), as on the Insights page: SQLite's %W numbers them differently.
+        weeks: dict[str, dict[str, Any]] = {}
+        for r in daily:
+            week = weeks.setdefault(_iso_week(r["day"]), {"week": _iso_week(r["day"]), "accepted": 0, "corrected": 0})
+            week["accepted"] += r["accepted"] or 0
+            week["corrected"] += r["corrected"] or 0
         outcome = {r["outcome"]: r["n"] for r in lines}
         total = sum(outcome.values())
         return {
@@ -2313,10 +2348,19 @@ class Store:
             "line_accuracy": round(outcome.get(ACCEPTED, 0) / total, 4) if total else None,
             "invoices_by_status": {r["status"]: r["n"] for r in statuses},
             "invoices_approved_without_edits": untouched,
-            "weekly": [dict(r) for r in weekly],
+            "weekly": [weeks[w] for w in sorted(weeks)],
             "by_vendor": [dict(r) for r in by_vendor],
             "top_corrections": [dict(r) for r in corrections],
         }
+
+
+def _iso_week(day: str | None) -> str:
+    """'2026-10-10' -> '2026-W41' (the ISO week, as Insights shows it); '?' for a date that cannot be read."""
+    try:
+        year, week, _ = dt.date.fromisoformat((day or "")[:10]).isocalendar()
+    except ValueError:
+        return "?"
+    return f"{year}-W{week:02d}"
 
 
 def _tax_signature(output: dict[str, Any]) -> list[tuple[str, float]]:

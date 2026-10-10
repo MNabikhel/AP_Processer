@@ -328,6 +328,13 @@ CHECKS: dict[str, CheckHelp] = {
         "The GST/HST number is not in the format 123456789 RT 0001.",
         "Check it against the document; you can verify numbers on the CRA GST/HST registry.",
     ),
+    "GST_NUMBER_CHECK_DIGIT": CheckHelp(
+        TAX, "GST/HST number fails the check",
+        "The GST/HST number is in the right format but its first nine digits fail the CRA's check digit, so it "
+        "was misread, mistyped or is not a real number. An input tax credit claimed with it can be denied.",
+        "Compare it digit by digit with the document; if the document shows it, ask the vendor to confirm the "
+        "number (you can verify it on the CRA GST/HST registry).",
+    ),
     "QST_NUMBER_MISSING": CheckHelp(
         TAX, "No QST number",
         "QST is charged but the vendor's QST number was not found (needed to claim the refund).",

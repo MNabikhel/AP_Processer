@@ -47,13 +47,19 @@ def _layout(store: Store) -> export_layout.Layout:
     return export_layout.Layout.from_json(store.get_setting(LAYOUT_SETTING))
 
 
+def _jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[int, list[str]]]:
+    """(the batch's invoices, {invoice: why it cannot go to JD Edwards}) with the current JD Edwards settings."""
+    ids = store.batch_invoice_ids(batch)
+    invoices = [i for i in (store.get_invoice(x) for x in ids) if i]
+    left_out = jde.validate(invoices, jde.load(store), store.vendor_ids(), jde.prior_records(store, exclude_ids=ids))
+    return invoices, left_out
+
+
 def _jde_file(store: Store, batch: int) -> tuple[bytes, str, str]:
     """The batch's JD Edwards ZIP, rebuilt from the approved data and the current JD Edwards settings (an
     invoice that no longer passes the checks is left out and listed in the README)."""
-    ids = store.batch_invoice_ids(batch)
-    invoices = [i for i in (store.get_invoice(x) for x in ids) if i]
+    invoices, left_out = _jde_left_out(store, batch)
     settings, lookup = jde.load(store), store.vendor_ids()
-    left_out = jde.validate(invoices, settings, lookup, jde.prior_records(store, exclude_ids=ids))
     created = next((b["created_at"] for b in store.export_batches() if b["id"] == batch), "")
     return jde.build_zip(
         [i for i in invoices if i["id"] not in left_out], settings, lookup, batch=batch, fx_rates=store.fx_rates(),
@@ -376,15 +382,30 @@ def page_exports() -> None:
         }
         c1, c2, c3 = st.columns([2, 1.2, 1.2], vertical_alignment="bottom")
         chosen_batch = c1.selectbox("Batch", list(labels), format_func=labels.get, key="export_batch_choice")
+        formats = list(exports.FORMATS)
+        exported_as = next((b["format"] for b in live if b["id"] == chosen_batch), "")
         fmt = c2.selectbox(
             "Format",
-            list(exports.FORMATS),
+            formats,
+            # The format the batch went out in, unless another one is picked (one choice per batch).
+            index=formats.index(exported_as) if exported_as in formats else 0,
             format_func=lambda f: {"custom": "Custom CSV", jde.FORMAT: "JD Edwards E1 (ZIP)"}.get(f, f.upper()),
-            key="export_again_fmt",
+            key=f"export_again_fmt_{chosen_batch}",
         )
         data, name, mime = _batch_file(store, chosen_batch, fmt)
         c3.download_button("Download again", data, file_name=name, mime=mime, icon=":material/download:",
                            width="stretch", key="export_download_again")  # fmt: skip
+        if fmt == jde.FORMAT:
+            invoices, left_out = _jde_left_out(store, chosen_batch)
+            if left_out:
+                st.warning(
+                    f"{len(left_out)} of {ui.plural(len(invoices), 'invoice')} in batch {chosen_batch} cannot go "
+                    f"to JD Edwards and {'are' if len(left_out) > 1 else 'is'} left out of this file"
+                    + (", so it holds no invoice" if len(left_out) == len(invoices) else "")
+                    + " (e.g. no supplier number in the vendor master). The reasons are listed in README.txt in "
+                    "the ZIP.",
+                    icon=":material/rule:",
+                )
         pdfs = undo = st.container(horizontal=True, vertical_alignment="center")
         ready_zip = st.session_state.get("export_pdfs")
         if ready_zip and ready_zip[0] == chosen_batch:

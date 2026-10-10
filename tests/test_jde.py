@@ -368,7 +368,7 @@ def test_an8_from_the_vendor_master_and_the_overrides():
     final = _invoice(ON)["final_output"]
     ids = {"northwind it solutions": "4410"}
     assert jde.resolve_an8(final, ids, jde.JdeSettings()) == "4410"
-    by_gst = {"gst:123456789rt0001": "4411"}
+    by_gst = {"gst:123456782rt0001": "4411"}
     assert jde.resolve_an8(final, by_gst, jde.JdeSettings()) == "4411"
     override = jde.JdeSettings(an8_overrides={vendor_key(final["vendor_name"]): "777"})
     assert jde.resolve_an8(final, ids, override) == "777"

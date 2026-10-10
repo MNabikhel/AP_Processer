@@ -290,14 +290,25 @@ def _tax_chip(tax_type: str) -> str:
     return f"<span class='rq-tax'>{esc(ui.TAX_LABELS.get(tax_type, tax_type))}</span>"
 
 
+def confidence_pct(value: float, threshold: float) -> str:
+    """The invoice's confidence as a percentage, rounded the usual way (as the bulk approval's messages show it),
+    so the header and the messages agree. Where that rounding would mislead (84.9% shown as the 85% threshold it
+    is below, or 99.6% as certainty) it keeps one decimal, rounded down."""
+    value = max(0.0, min(1.0, value or 0.0))
+    whole = int(f"{value * 100:.0f}")
+    if (value < threshold and whole >= int(f"{threshold * 100:.0f}")) or (value < 1 and whole >= 100):
+        return f"{math.floor(value * 1000 + 1e-9) / 10:.1f}%"
+    return f"{whole}%"
+
+
 def _confidence(value: float, threshold: float) -> str:
-    """A thin bar with the figure beside it (floored: it never rounds up to certainty)."""
+    """A thin bar with the figure beside it."""
     value = max(0.0, min(1.0, value or 0.0))
     tone = "ok" if value >= threshold else "warn"
     return (
         f"<span class='rq-conf {tone}' title='Confidence; {threshold:.0%} or more needs no second look'>"
         f"<span class='bar' aria-hidden='true'><i style='width:{value * 100:.0f}%'></i></span>"
-        f"<b>{math.floor(value * 100 + 1e-9)}%</b></span>"
+        f"<b>{confidence_pct(value, threshold)}</b></span>"
     )
 
 
@@ -825,7 +836,8 @@ def _checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> str:
     if low:
         items.append(
             f"<li class='warn'><span class='m' aria-hidden='true'>!</span><span class='rvw-sr'>Worth a look: </span>"
-            f"<span class='t'>Confidence {report.adjusted_confidence:.0%} is below the "
+            f"<span class='t'>Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} is "
+            "below the "
             f"{report.review_threshold:.0%} threshold.</span></li>"
         )
     if errors:
@@ -856,8 +868,8 @@ def _checks_html(report: Any) -> str:
             ui.check(
                 "warning",
                 "Low confidence",
-                f"Confidence {report.adjusted_confidence:.0%} is below the {report.review_threshold:.0%} "
-                "threshold, so a person should look it over.",
+                f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} is below the "
+                f"{report.review_threshold:.0%} threshold, so a person should look it over.",
             )
         )
     history = report.checks.get("history") or []
@@ -1333,16 +1345,22 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 except ValueError as exc:
                     changed_meanwhile(exc)
                 learn_from_approval(store, invoice_id, output, actor=reviewer(), taught=taught_boxes(key))
-                if (store.get_invoice(invoice_id) or {}).get("status") == PENDING:
-                    notify("Over the approval limit: it now waits for a second approver.", ":material/how_to_reg:")
+                waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
+                if waits:  # not approved yet: never "Approved <vendor>" for it
+                    notify(
+                        f"First approval recorded for {md(coding.vendor_name.rstrip('.'))}: over the approval "
+                        "limit, it waits for a second approver.",
+                        ":material/how_to_reg:",
+                    )
                 total = sum(counts.values())
                 forget_drafts(key)
                 _advance(ids, position)
                 if not store.list_invoices(REVIEW):  # the whole queue is done, not just the current view
                     st.session_state["celebrate"] = True
                 notify(
-                    f"Approved {md(coding.vendor_name.rstrip('.'))}. Learned from {ui.plural(total, 'line')}: "
-                    f"{counts[ACCEPTED]} confirmed, {total - counts[ACCEPTED]} corrected.",
+                    ("Learned" if waits else f"Approved {md(coding.vendor_name.rstrip('.'))}. Learned")
+                    + f" from {ui.plural(total, 'line')}: {counts[ACCEPTED]} confirmed, "
+                    f"{total - counts[ACCEPTED]} corrected.",
                     ":material/school:",
                 )
                 st.rerun()

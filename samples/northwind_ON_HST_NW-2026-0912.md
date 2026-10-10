@@ -1,6 +1,6 @@
 Northwind IT Solutions Inc.
 200 Bay Street, Suite 1500, Toronto, ON M5J 2J2
-GST/HST Reg. No: 123456789 RT0001
+GST/HST Reg. No: 123456782 RT0001
 
 # INVOICE
 

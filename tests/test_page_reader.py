@@ -841,7 +841,7 @@ def test_invoice(monkeypatch, pages_read):
     monkeypatch.setattr(page_reader, "test_pages", lambda reader=OVIS: [b"\x89PNG page 1", b"\x89PNG page 2"])
     found = {
         "vendor_name": "Northwind IT Solutions Inc.", "invoice_number": "NW-2026-0912", "invoice_date": "2026-09-14",
-        "due_date": "2026-10-14", "po_number": "PO-88213", "gst_hst_registration_number": "123456789 RT0001",
+        "due_date": "2026-10-14", "po_number": "PO-88213", "gst_hst_registration_number": "123456782 RT0001",
         "subtotal": 15945.0, "hst_amount": 2072.85, "grand_total": 18017.85, "payment_terms": "Net 30",
     }  # fmt: skip
     given = []

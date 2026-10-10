@@ -217,6 +217,19 @@ def valid_gst_number(number: str) -> bool:
     return bool(_GST_NUMBER.match(normalise_registration(number)))
 
 
+def gst_check_digit_ok(number: str) -> bool:
+    """Whether the 9-digit Business Number of a GST/HST number passes the CRA's check digit (the Luhn formula
+    the CRA uses on its Business Numbers). A number that fails it was misread, mistyped or made up."""
+    digits = normalise_registration(number)[:9]
+    if len(digits) != 9 or not digits.isdigit():
+        return False
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        n = int(ch) * (2 if i % 2 else 1)
+        total += n - 9 if n > 9 else n
+    return total % 10 == 0
+
+
 def valid_qst_number(number: str) -> bool:
     return bool(_QST_NUMBER.match(normalise_registration(number)))
 
@@ -392,6 +405,9 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
             add(WARNING, "GST_HST_NUMBER_MISSING", "supplier GST/HST registration number not found (needed for ITC)")
         elif not valid_gst_number(number):
             add(WARNING, "GST_HST_NUMBER_FORMAT", "GST/HST number is not in the format 123456789RT0001")
+        elif not gst_check_digit_ok(number):
+            add(WARNING, "GST_NUMBER_CHECK_DIGIT",
+                "GST/HST number fails the CRA check digit: misread, mistyped or not a real number")  # fmt: skip
     if "QST" in charged:
         number = coding.qst_registration_number
         if not number.strip():
