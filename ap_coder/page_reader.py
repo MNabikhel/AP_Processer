@@ -1414,7 +1414,7 @@ def _ocr_row() -> dict[str, str]:
     row = {"role": "OCR for scans", "model": "", "state": "off", "status": "", "note": ""}
     if not layout.ocr_available():
         row["status"] = "Not installed: scans and photos can't be read on this computer (text PDFs can)."
-        row["note"] = 'Run pip install -e ".[ocr]".'
+        row["note"] = "Run APProcessor.bat: it installs the OCR add-on from the offline bundle."
         return row
     names = {"rapidocr": "PP-OCRv4", "ppocrv5": "PP-OCRv5"}
     first, second = layout._engine_name(), layout.second_engine_name()

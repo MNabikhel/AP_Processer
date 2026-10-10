@@ -238,10 +238,11 @@ def offline_checks() -> list[tuple[str, str, str]]:
     dashboard's network settings. Reads files only; never connects anywhere."""
     out: list[tuple[str, str, str]] = []
     v4, v5 = ppocrv4_installed(), ppocrv5_installed()
-    v4_detail = "rapidocr-onnxruntime, models inside the package" if v4 else "not installed: pip install -e .[ocr]"
+    from_bundle = "run APProcessor.bat (it installs from the offline bundle)"
+    v4_detail = "rapidocr-onnxruntime, models inside the package" if v4 else f"not installed: {from_bundle}"
     out.append(("OCR PP-OCRv4", PASS if v4 else WARN, v4_detail))
     if not v5:
-        out.append(("OCR PP-OCRv5", WARN if v4 else SKIP, "RapidOCR 3 not installed: pip install -e .[ocr]"))
+        out.append(("OCR PP-OCRv5", WARN if v4 else SKIP, f"RapidOCR 3 not installed: {from_bundle}"))
     else:
         missing = missing_models()
         out.append(("OCR PP-OCRv5", PASS if not missing else WARN,

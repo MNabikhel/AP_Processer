@@ -949,7 +949,7 @@ def test_models_in_use_with_a_general_model_or_none(serve, two_ocr_models, monke
     coding, reader, ocr = page_reader.models_in_use(Settings())
     assert (coding["state"], reader["state"], ocr["state"]) == ("fallback", "off", "off")
     assert "Nothing answered" in reader["note"] and "OCR alone" in reader["status"]
-    assert 'pip install -e ".[ocr]"' in ocr["note"]
+    assert "offline bundle" in ocr["note"]
     coding = page_reader.models_in_use(replace(Settings(), llm=replace(Settings().llm, provider="off")))[0]
     assert coding["state"] == "fallback" and "turned off" in coding["status"]
 
