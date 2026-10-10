@@ -18,6 +18,8 @@ DEFAULT_AOAI_API_VERSION = "2024-10-21"  # first GA version with strict Structur
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:1234/v1"  # LM Studio's local server (Ollama: http://127.0.0.1:11434/v1)
 LLM_PROVIDERS = ("auto", "local", "azure", "off")
 LLM_VISION_MODES = ("auto", "on", "off")
+PAGE_READER_MODES = ("auto", "ask", "off")
+PAGE_READER_SCOPES = ("scans", "all")
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -138,6 +140,25 @@ class LocalLLMSettings:
 
 
 @dataclass(frozen=True)
+class PageReaderSettings:
+    """The page reader: a model that can see (OvisOCR2 in LM Studio by default) transcribes a scan or a photo, an
+    independent reader beside OCR (see ap_coder/page_reader.py).
+
+    ``mode``: ``auto`` (pages are read in the background), ``ask`` (only when AP clicks) or ``off``. ``scope``:
+    ``scans`` (scans and photos) or ``all`` (every invoice, digital ones too). ``model``: "" = automatic (a document
+    reader such as OvisOCR2 when LM Studio has one downloaded, else the chat model when it can see), or a model key.
+    ``base_url``: "" = the same server as AP_LLM_BASE_URL.
+    """
+
+    mode: str = "auto"
+    scope: str = "scans"
+    model: str = ""
+    base_url: str = ""
+    timeout_seconds: float = 1200.0  # a laptop CPU takes minutes a page, most of it looking before the first word
+    max_pages: int = 5
+
+
+@dataclass(frozen=True)
 class EngineSettings:
     vision: bool = False  # attach page images alongside the extracted text
     vision_max_pages: int = 5
@@ -152,6 +173,7 @@ class Settings:
     openai: OpenAISettings = field(default_factory=OpenAISettings)
     engine: EngineSettings = field(default_factory=EngineSettings)
     llm: LocalLLMSettings = field(default_factory=LocalLLMSettings)
+    page_reader: PageReaderSettings = field(default_factory=PageReaderSettings)
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> Settings:
@@ -209,7 +231,7 @@ class Settings:
             max_prompt_chars=_env_int("AP_LLM_MAX_PROMPT_CHARS", 24_000),
             temperature=_env_float("AP_LLM_TEMPERATURE", 0.0),
         )
-        return cls(document_intelligence=di, openai=oai, engine=engine, llm=llm)
+        return cls(document_intelligence=di, openai=oai, engine=engine, llm=llm, page_reader=_page_reader_from_env())
 
     def with_overrides(
         self,
@@ -230,3 +252,24 @@ class Settings:
         if vision is not None:
             engine = replace(engine, vision=vision)
         return replace(self, document_intelligence=di, openai=oai, engine=engine)
+
+
+def _page_reader_from_env() -> PageReaderSettings:
+    """AP_PAGE_READER* from the environment. A value that isn't one of the choices (or isn't a positive number) keeps
+    the default, so a typo never stops the app; "false" / "no" / "0" turn the page reader off."""
+    default = PageReaderSettings()
+    mode = (_env("AP_PAGE_READER", default.mode) or default.mode).lower()
+    mode = {"false": "off", "no": "off", "0": "off", "none": "off", "disabled": "off"}.get(mode, mode)
+    scope = (_env("AP_PAGE_READER_SCOPE", default.scope) or default.scope).lower()
+    model = _env("AP_PAGE_READER_MODEL", "") or ""
+    base_url = _env("AP_PAGE_READER_BASE_URL")
+    timeout = _env_float("AP_PAGE_READER_TIMEOUT_SECONDS", default.timeout_seconds)
+    max_pages = _env_int("AP_PAGE_READER_MAX_PAGES", default.max_pages)
+    return PageReaderSettings(
+        mode=mode if mode in PAGE_READER_MODES else default.mode,
+        scope=scope if scope in PAGE_READER_SCOPES else default.scope,
+        model="" if model.lower() in {"auto", "automatic"} else model,
+        base_url=normalise_base_url(base_url) if base_url else "",
+        timeout_seconds=timeout if timeout and 0 < timeout < float("inf") else default.timeout_seconds,
+        max_pages=max_pages if max_pages and max_pages > 0 else default.max_pages,
+    )
