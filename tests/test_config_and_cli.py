@@ -1,4 +1,5 @@
 import json
+import os
 
 from ap_coder import cli
 from ap_coder.config import Settings
@@ -64,3 +65,29 @@ def test_render_sample_pdf_pages():
     pdf = SAMPLES / "northwind_ON_HST_NW-2026-0912.pdf"
     images = render_page_images(pdf, max_pages=1)
     assert len(images) == 1 and images[0].data.startswith(b"\x89PNG")
+
+
+def _cli(tmp_path, *args):
+    return cli.main(["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "a.db"), *args])
+
+
+def test_cli_mistakes_are_one_line_and_a_non_zero_exit(tmp_path, monkeypatch, capsys):
+    """A typo, nothing processed yet, no Azure: one plain line each, never a traceback."""
+    for key in [k for k in os.environ if k.startswith("AZURE_")]:
+        monkeypatch.delenv(key)
+    assert _cli(tmp_path, "process", str(tmp_path / "typo")) == 2
+    assert "Not found:" in capsys.readouterr().err
+    assert _cli(tmp_path, "share-report", "--predictions", str(tmp_path / "out"), "-o", str(tmp_path / "r.md")) == 1
+    assert "No report written: No processed invoices" in capsys.readouterr().err
+    pdf = tmp_path / "scan.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    assert _cli(tmp_path, "extract", str(pdf), "-o", str(tmp_path / "x"), "--cache-dir", "") == 1
+    assert "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT is not set" in capsys.readouterr().err
+    assert _cli(tmp_path, "extract", str(tmp_path / "typo.pdf"), "-o", str(tmp_path / "x")) == 2
+
+
+def test_cli_labels_with_nothing_processed_writes_nothing(tmp_path, capsys):
+    dest = tmp_path / "labels.xlsx"
+    args = ["labels", "--predictions", str(tmp_path / "out"), "-o", str(dest)]
+    assert _cli(tmp_path, *args) == 1 and not dest.exists()  # so the next run (after `process`) is not refused
+    assert "Nothing to label" in capsys.readouterr().err

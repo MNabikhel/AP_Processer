@@ -1,11 +1,15 @@
 """Offline readiness: the local OCR models, and checks that the app keeps everything on this computer.
 
-RapidOCR 3 (the PP-OCRv5 reader) downloads its model files into its own package folder the first time
-it is used. A computer without internet cannot do that, so ``scripts/fetch_models.py`` fetches them once
-(while online, or from the ``models/`` folder of the offline bundle), and the capture code asks
-:func:`ppocrv5_ready` before using that engine: with the models missing it falls back to the other
-engine (rapidocr-onnxruntime, whose PP-OCRv4 models come inside its package) instead of trying to
-download them.
+AP Coder is an offline build: nothing it runs connects to the internet unless a developer or the bundle
+builder opts in with ``AP_ALLOW_INTERNET=1`` (:func:`internet_allowed`). The setup scripts check it before
+any package, model, git or Python download.
+
+RapidOCR 3 (the PP-OCRv5 reader) would download its model files into its own package folder the first time
+it is used. AP Coder never lets it: ``scripts/fetch_models.py`` copies them from the ``models/`` folder of
+the offline bundle, the capture code asks :func:`ppocrv5_ready` (every file there, with the right SHA-256)
+before using that engine and builds it with those files' paths (:func:`ppocrv5_engine_params`), so
+RapidOCR's own downloader never runs. With the models missing it falls back to the other engine
+(rapidocr-onnxruntime, whose PP-OCRv4 models come inside its package).
 
 :func:`offline_checks` adds the matching lines to ``python -m ap_coder doctor``.
 """
@@ -38,9 +42,23 @@ _PPOCRV5_FALLBACK = (
 )  # fmt: skip
 _FALLBACK_BASE = "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.4.0/"
 
+# The one opt-in to the internet, for developers and the bundle builder (scripts/build_offline_bundle.py):
+# AP_ALLOW_INTERNET=1 lets the setup download packages from PyPI, the OCR models, git updates and Python.
+INTERNET_ENV = "AP_ALLOW_INTERNET"
+
 # Environment variable that lets the dashboard listen on the office network (default: this computer only).
 ADDRESS_ENV = "AP_DASHBOARD_ADDRESS"
 LOCAL_ADDRESS = "127.0.0.1"
+
+
+def internet_allowed() -> bool:
+    """The setup may use the internet: only when ``AP_ALLOW_INTERNET`` is 1 / true / yes / on."""
+    return (os.environ.get(INTERNET_ENV) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def allow_internet() -> None:
+    """Opt in for this process and the ones it starts (the bundle builder, scripts/build_offline_bundle.py)."""
+    os.environ[INTERNET_ENV] = "1"
 
 
 @dataclass(frozen=True)
@@ -118,34 +136,61 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+_checked: dict[tuple[str, int, int], str] = {}  # (path, size, mtime) -> SHA-256: each file version read once
+
+
+def _sha256_once(path: Path, stat: os.stat_result) -> str:
+    key = (str(path), stat.st_size, stat.st_mtime_ns)
+    if key not in _checked:
+        _checked[key] = sha256(path)
+    return _checked[key]
+
+
 def missing_models(folder: Path | None = None, verify: bool = False) -> list[ModelFile]:
     """The PP-OCRv5 model files not in ``folder`` (default: RapidOCR's own); ``verify`` also checks
-    each file's SHA-256, so a half-downloaded file counts as missing."""
+    each file's SHA-256 (once per file version), so a half-copied or damaged file counts as missing."""
     folder = folder or model_dir()
     if folder is None:
         return list(ppocrv5_files())
     out = []
     for f in ppocrv5_files():
         path = folder / f.name
-        if not path.is_file() or path.stat().st_size == 0 or (verify and f.sha256 and sha256(path) != f.sha256):
+        try:
+            stat = path.stat()
+        except OSError:
+            out.append(f)
+            continue
+        if not path.is_file() or stat.st_size == 0 or (verify and f.sha256 and _sha256_once(path, stat) != f.sha256):
             out.append(f)
     return out
+
+
+def ppocrv5_engine_params() -> dict:
+    """:func:`ppocrv5_params` plus the path of each model file on disk. RapidOCR downloads a model only when
+    it is given no path (or the file at its default path fails the checksum); given the paths, it never does."""
+    folder = model_dir()
+    params = ppocrv5_params()
+    if folder is not None:
+        for task, model in zip(("Det", "Cls", "Rec"), ppocrv5_files(), strict=False):
+            params[f"{task}.model_path"] = str(folder / model.name)
+    return params
 
 
 _warned = False
 
 
 def ppocrv5_ready() -> bool:
-    """RapidOCR 3 is installed and its PP-OCRv5 models are on disk, so using it needs no download."""
+    """RapidOCR 3 is installed and its PP-OCRv5 models are on disk, each with the right size and SHA-256, so
+    using it needs no download (a damaged file would make RapidOCR fetch it again: it counts as missing)."""
     global _warned
     if not ppocrv5_installed():
         return False
-    missing = missing_models()
+    missing = missing_models(verify=True)
     if missing and not _warned:
         _warned = True
         log.warning(
-            "PP-OCRv5 models missing (%s): scans are read with one OCR engine. "
-            "Run 'python scripts/fetch_models.py' once while online.",
+            "PP-OCRv5 models missing or damaged (%s): scans are read with one OCR engine. They come from the "
+            "offline bundle's models/ folder: 'python scripts/fetch_models.py' copies them.",
             ", ".join(f.name for f in missing),
         )
     return not missing
@@ -202,7 +247,7 @@ def offline_checks() -> list[tuple[str, str, str]]:
         out.append(("OCR PP-OCRv5", PASS if not missing else WARN,
                     f"{len(ppocrv5_files())} model files present" if not missing else
                     "models missing (" + ", ".join(f.name for f in missing) + "): scans get one OCR read; "
-                    "run python scripts/fetch_models.py once while online"))  # fmt: skip
+                    "copy them from the offline bundle: python scripts/fetch_models.py"))  # fmt: skip
     if not v4 and not v5:
         out.append(("OCR", WARN, "no local OCR: scanned invoices and photos can't be read here (text PDFs can)"))
 

@@ -15,11 +15,13 @@ It then exports approved invoices to JD Edwards E1. It runs fully offline. A loc
 That's it, the first time and every day after. The launcher looks at what is already on the computer and adds
 only what is missing:
 
-- **Python:** it uses the Python 3.11–3.13 already installed. Only if there is none does it offer, once, to
-  install Python 3.12 for you.
-- **Packages:** it sets up its own environment (`.venv`) once and installs only missing packages. Your
-  system Python and other programs are not touched.
-- **OCR models, data folder, desktop shortcut:** each is made once, only if it is not there yet.
+- **Python:** it uses the Python already installed: 3.12 or 3.11 first (the offline bundle has packages for
+  them), else 3.13. It never downloads Python; if there is none, it says so (IT installs Python 3.12).
+- **Packages:** it sets up its own environment (`.venv`) once and installs only missing packages, from the
+  offline bundle's `wheelhouse/` folder (never from the internet). Your system Python and other programs are
+  not touched.
+- **OCR models, data folder, desktop shortcut:** each is made once, only if it is not there yet (the OCR
+  models are copied from the bundle's `models/` folder).
 - **Self-check:** it reads the ten sample invoices and one scan, then shows what is ready and opens the
   dashboard:
 
@@ -41,8 +43,10 @@ lives in `~/APCoder`, outside the code, so updates never touch it. On a clean Wi
 every change: it confirms the existing Python is used, a second start installs nothing, only one copy runs,
 and only one shortcut is made.
 
-No internet on the laptop? Build the offline bundle (`python scripts/build_offline_bundle.py`). The same
-double-click then installs from its `wheelhouse/` folder. `install.bat` / `install.sh` and `start.bat` /
+This is an offline enterprise build: the laptop never connects to the internet. IT builds the offline bundle
+once, online (`python scripts/build_offline_bundle.py`), and the double-click installs from its `wheelhouse/`
+folder. A package or model missing from the bundle is said plainly, and AP Coder still starts when its core
+packages are there. `install.bat` / `install.sh` and `start.bat` /
 `start.sh` still work for older shortcuts; they run the same setup. The full pilot guide is
 [docs/PILOT.md](docs/PILOT.md). The step-by-step for real data is
 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
@@ -120,6 +124,14 @@ on `127.0.0.1`, and a test fails if any page tries to connect to the internet. O
 (`doctor`, `share-report`) are meant to leave the laptop.
 
 ## Run it by hand (developers)
+
+The launcher, the installer and `scripts/fetch_models.py` are offline by default: packages only from the
+bundle's `wheelhouse/` (`pip --no-index`), OCR models only from its `models/`, no `git` update, no `winget`
+Python. On a developer machine with internet, opt in with one environment variable, **`AP_ALLOW_INTERNET=1`**
+(`set AP_ALLOW_INTERNET=1` in cmd, `export AP_ALLOW_INTERNET=1` in bash): then missing packages come from
+PyPI, the PP-OCRv5 models from www.modelscope.cn, `install.bat` checks GitHub for updates and APProcessor.bat
+offers to install Python 3.12 with `winget`. `scripts/build_offline_bundle.py` sets it for itself (building the
+bundle is the one step that downloads). CI's online jobs set it; its offline-bundle job runs without it.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

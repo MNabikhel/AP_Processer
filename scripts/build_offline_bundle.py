@@ -16,6 +16,9 @@ The ZIP (in ``dist/``) holds one ``APProcessor/`` folder:
 
 On the offline computer: unzip, double-click ``APProcessor.bat`` (or ``APProcessor.command``). Seeing
 ``wheelhouse/``, the launcher installs with ``pip --no-index --find-links wheelhouse``.
+
+This is the one build-time tool that uses the internet (it is how the bundle is made, by IT, online): it sets
+the opt-in ``AP_ALLOW_INTERNET=1`` for itself. Everything the bundle runs on the laptop stays offline.
 """
 
 from __future__ import annotations
@@ -69,6 +72,8 @@ def excluded(rel: Path) -> bool:
     if parts[0] == "private" and rel.as_posix() != "private/README.md":
         return True  # enterprise data, never shipped
     name = parts[-1]
+    if name == ".ap_coder_launch.lock":
+        return True  # the launcher's lock file (scripts/launch.py)
     if name == ".env" or (name.startswith(".env.") and name != ".env.example"):
         return True  # settings with keys
     if rel.as_posix() == ".streamlit/secrets.toml":
@@ -214,6 +219,9 @@ def build(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from ap_coder.offline import allow_internet
+
+    allow_internet()  # building the bundle is the one step that downloads (packages, OCR models), on IT's computer
     parser = argparse.ArgumentParser(description="Build the offline install ZIP (code + wheelhouse + OCR models).")
     parser.add_argument("--out", default=str(ROOT / "dist"), help="output folder (default: dist/)")
     parser.add_argument("--platform", action="append", help=f"wheel platform, repeatable (default {DEFAULT_PLATFORMS})")

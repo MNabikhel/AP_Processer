@@ -1,21 +1,31 @@
 """AP Coder's one-button setup and start: what APProcessor.bat (Windows) and APProcessor.command (Mac) run.
 
-The double-click finds a Python (3.11 to 3.13) and runs this file with it. It then:
+The double-click finds a Python (3.12 or 3.11 first, 3.13 too) and runs this file with it. It then:
 
 1. reuses ``.venv`` (it creates it only the first time, and again only when it is broken);
 2. installs only the packages that are missing or too old (``scripts/check_deps.py``), from the offline
-   bundle's ``wheelhouse/`` folder when there is one;
-3. picks the data folder and fetches the OCR models, only when they are not there yet;
+   bundle's ``wheelhouse/`` folder (``pip --no-index``: never from the internet);
+3. picks the data folder and copies the OCR models from the bundle's ``models/`` folder, only when they
+   are not there yet;
 4. puts one "AP Coder" shortcut on the Windows desktop, once;
 5. prints a short readiness summary (and, the first time, the result of the self-check,
    ``scripts/pilot_check.py``);
 6. opens the dashboard: the one already running if there is one, else it starts it.
 
-It never installs Python itself (APProcessor.bat offers that when no Python is found) and never installs
-LM Studio: it only says whether a model is loaded. Safe to run again at any time.
+Offline by default: this is an enterprise build, so nothing here connects to the internet. A package that is
+not in the wheelhouse is said plainly to be missing (it must come from the offline bundle); AP Coder still
+starts when its core packages are there. Developers and the bundle builder opt in to the internet (packages
+from PyPI, the OCR models from www.modelscope.cn, ``install.py``'s git update, APProcessor.bat's winget
+Python) with one environment variable, ``AP_ALLOW_INTERNET=1`` (e.g. ``set AP_ALLOW_INTERNET=1`` in cmd, then
+``APProcessor.bat``).
 
-``--installer`` runs the installer's extra steps instead (``scripts/install.py``: update, data folder and
-Azure questions, self-test); ``install.bat`` / ``install.sh`` pass it. Other options: ``--check`` (run the
+It never installs Python itself (APProcessor.bat offers that only with the opt-in) and never installs
+LM Studio: it only says whether a model is loaded. Safe to run again at any time, and from two windows at
+once: an exclusive lock file (``.ap_coder_launch.lock``) is held while one sets up and runs AP Coder, and a
+second double-click waits for its dashboard and opens it in the browser.
+
+``--installer`` runs the installer's extra steps instead (``scripts/install.py``: data folder and Azure
+questions, self-test); ``install.bat`` / ``install.sh`` pass it. Other options: ``--check`` (run the
 self-check again), ``--no-start``, ``--yes``. Anything else (e.g. ``--port 8502``) goes to the dashboard.
 
 Standard library only until the packages are installed: the first run starts with no packages at all.
@@ -35,19 +45,26 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
+for _folder in (ROOT, SCRIPTS):  # ap_coder/offline.py is standard-library only, usable before installing
+    if str(_folder) not in sys.path:
+        sys.path.insert(0, str(_folder))
 
 import check_deps  # noqa: E402  (standard library plus pip's packaging)
+
+from ap_coder.offline import INTERNET_ENV, internet_allowed  # noqa: E402
 
 WINDOWS = os.name == "nt"
 VENV = ROOT / ".venv"
 VENV_PY = VENV / ("Scripts/python.exe" if WINDOWS else "bin/python")
 STATE = VENV / "ap_coder_launcher.json"  # what this .venv has been through (gone with it when it is recreated)
-SUPPORTED = ((3, 11), (3, 13))  # the Python versions APProcessor looks for (every package has wheels for them)
+LOCK = ROOT / ".ap_coder_launch.lock"  # held while one start sets up and runs AP Coder (not in .venv: remade)
+LOCK_HELD_ENV = "AP_LAUNCH_LOCK_HELD"  # set for the second phase, whose parent holds the lock
+WAIT_FOR_OTHER = 1800  # seconds a second double-click waits for the first one's dashboard (a first setup)
+SUPPORTED = ((3, 11), (3, 13))  # the Python versions APProcessor looks for (3.12 and 3.11 first: the bundle's)
 DEFAULT_PORT = 8501
 SIGNATURE = "/app/static/InterVariable.woff2"  # a file only AP Coder's dashboard serves
 SHORTCUT = "AP Coder.lnk"
@@ -180,11 +197,24 @@ def ensure_venv(python: str = sys.executable) -> str:
     return status
 
 
+def bundle_pythons() -> list[str]:
+    """The Python versions the offline bundle's wheelhouse was built for ("3.12", ...; [] when unknown)."""
+    try:
+        targets = json.loads((ROOT / "bundle_manifest.json").read_text(encoding="utf-8")).get("targets", [])
+    except (OSError, ValueError, AttributeError):
+        return []
+    return sorted({t.rsplit("Python ", 1)[-1].strip(")") for t in targets if "Python " in t})
+
+
 def bootstrap(argv: list[str]) -> int:
     """Run with a Python found on this computer: make ``.venv``, then carry on inside it."""
     version = sys.version_info[:2]
     if not supported(version) and not VENV_PY.exists():
         say(f"Note: Python {version[0]}.{version[1]} is not one AP Coder is tested with (3.11 to 3.13).")
+    built_for = bundle_pythons()
+    if built_for and f"{version[0]}.{version[1]}" not in built_for and not VENV_PY.exists():
+        say(f"Note: this offline bundle has packages for Python {' and '.join(built_for)}, not "
+            f"{version[0]}.{version[1]}: if the setup stops, install Python {built_for[-1]}.")  # fmt: skip
     if not VENV_PY.exists():
         say("First run: setting up AP Coder. This takes a few minutes; later starts take seconds.")
     say(f"Python {sys.version.split()[0]} found on this computer: {sys.executable}")
@@ -192,7 +222,7 @@ def bootstrap(argv: list[str]) -> int:
         status = ensure_venv()
     except SetupError as exc:
         return failed(exc)
-    try:
+    try:  # (this process holds the lock for both phases: main() says so to the second one, LOCK_HELD_ENV)
         return subprocess.call([str(VENV_PY), str(Path(__file__).resolve()), *argv, f"--venv={status}"])
     except KeyboardInterrupt:
         return 0
@@ -208,16 +238,24 @@ def failed(exc: SetupError) -> int:
 # --- Phase 2: packages, data, checks (inside .venv) -------------------------------------------------------------
 
 
-def pip_source() -> list[str]:
-    """pip options that install from the offline bundle's wheelhouse/ folder, when there is one."""
+def pip_source() -> list[str] | None:
+    """Where pip may install from: the offline bundle's wheelhouse/ folder, with ``--no-index`` (never the
+    internet). Without one: PyPI ([]) only with the opt-in (AP_ALLOW_INTERNET=1), else None (nowhere)."""
     wheelhouse = ROOT / "wheelhouse"
-    return ["--no-index", "--find-links", str(wheelhouse)] if wheelhouse.is_dir() else []
+    if wheelhouse.is_dir():
+        return ["--no-index", "--find-links", str(wheelhouse)]
+    return [] if internet_allowed() else None
 
 
 def pip_install(args: list[str]) -> bool:
-    """``pip install`` with its progress lines (not the long "already satisfied" list)."""
+    """``pip install`` with its progress lines (not the long "already satisfied" list). Offline without a
+    wheelhouse it runs nothing: there is nowhere to install from."""
+    source = pip_source()
+    if source is None:
+        say("    Nothing installed: this offline build installs packages only from the bundle's wheelhouse folder.")
+        return False
     cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off",
-           *pip_source(), *args]  # fmt: skip
+           *source, *args]  # fmt: skip
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             errors="replace")  # fmt: skip
     assert proc.stdout is not None
@@ -244,9 +282,44 @@ def editable(extras: tuple[str, ...]) -> list[str]:
     return ["-e", f".[{','.join(extras)}]" if extras else "."]
 
 
+def names(requirements: list[str]) -> str:
+    return ", ".join(check_deps.requirement_name(r) for r in requirements)
+
+
+def install_hint(source: list[str], left: list[str]) -> str:
+    """What to do when pip could not install ``left``: from the wheelhouse, or (opted in) from PyPI."""
+    if not source:
+        return ("Check the internet connection (behind a company proxy: set HTTPS_PROXY=http://proxy:port in this "
+                "window), close any other AP Coder window, then start AP Coder again.")  # fmt: skip
+    version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    what = names(left) or "AP Coder itself"
+    return (f"The offline bundle's wheelhouse folder has no {what} for Python {version} on this computer: use a "
+            "bundle built for this Python (it is built for 3.11 and 3.12), or install Python 3.12, close any other "
+            "AP Coder window, then start AP Coder again.")  # fmt: skip
+
+
+def without_wheelhouse(missing: list[str], total: int) -> tuple[str, str, bool]:
+    """Offline with no wheelhouse/ folder: nothing can be installed, and nothing is downloaded. AP Coder starts
+    when its core packages are there (running from this folder); what is missing is said plainly."""
+    core = set(check_deps.requirements())
+    missing_core = [r for r in missing if r in core]
+    if missing_core:
+        raise SetupError(
+            f"Missing packages: {names(missing_core)}. This offline build never downloads packages: they come "
+            "only from the offline bundle's wheelhouse folder, and there is none here.",
+            "Unzip the full offline bundle (with its wheelhouse folder) over this folder, then start AP Coder "
+            f"again. (Developers with internet: set {INTERNET_ENV}=1.)",
+        )
+    if missing:
+        scans = " (scanned invoices can't be read without the OCR add-on)" if any(map(is_ocr, missing)) else ""
+        return ("warn", f"Packages: core in place; missing {names(missing)}: it must come from the offline "
+                        f"bundle's wheelhouse folder{scans}", False)  # fmt: skip
+    return "ok", f"Packages: all {total} in place (AP Coder runs from this folder)", False
+
+
 def ensure_packages(state: dict, extras: tuple[str, ...] = ("ocr",)) -> tuple[str, str, bool]:
-    """Install only what is missing or too old: nothing when everything is in place.
-    Returns (level, summary line, whether pip installed something)."""
+    """Install only what is missing or too old: nothing when everything is in place. Offline (the default)
+    only from the bundle's wheelhouse/ folder. Returns (level, summary line, whether pip installed something)."""
     total = len(check_deps.requirements(extras=extras))
     missing, self_problem = missing_packages(extras)
     if not missing and not self_problem:
@@ -254,8 +327,13 @@ def ensure_packages(state: dict, extras: tuple[str, ...] = ("ocr",)) -> tuple[st
     if not self_problem and all(is_ocr(r) for r in missing) and state.get("ocr_failed") == fingerprint():
         return "warn", "Packages: in place, without the OCR add-on (it could not be installed here)", False
 
-    if pip_source():
+    source = pip_source()
+    if source is None:
+        return without_wheelhouse(missing, total)
+    if source:
         say("Installing from the wheelhouse folder (no internet needed).")
+    else:
+        say(f"Installing from the internet (PyPI): {INTERNET_ENV}=1 allows it.")
     plain = tuple(e for e in extras if e != "ocr")
     if self_problem and missing:
         say(f"Installing AP Coder's packages ({len(missing)} missing). The first time takes a few minutes.")
@@ -276,8 +354,7 @@ def ensure_packages(state: dict, extras: tuple[str, ...] = ("ocr",)) -> tuple[st
     if self_left or [r for r in left if not is_ocr(r)]:
         raise SetupError(
             "Installing the packages failed (the messages above say why).",
-            "Check the internet connection (behind a company proxy: set HTTPS_PROXY=http://proxy:port in this "
-            "window), close any other AP Coder window, then start AP Coder again.",
+            install_hint(source, [r for r in left if not is_ocr(r)]),
         )
     if left:  # only the OCR add-on: AP Coder runs without it, and doesn't try again until pyproject changes
         state["ocr_failed"] = fingerprint()
@@ -300,16 +377,46 @@ def ensure_data_folder() -> Path:
     return data
 
 
-def ensure_models(first: bool) -> None:
-    """The PP-OCRv5 OCR models, fetched only when missing (checksums checked on the first run)."""
+def models_attempt() -> str:
+    """What a copy of the OCR models depends on: this version, the opt-in, and the bundle's models/ folder.
+    A copy that failed is tried again only when one of them changes (e.g. the full bundle is unzipped)."""
+    import fetch_models
+
+    folder = fetch_models.BUNDLE_MODELS
+    try:
+        files = sorted(f"{p.name}:{p.stat().st_size}" for p in folder.iterdir()) if folder.is_dir() else []
+    except OSError:
+        files = []
+    return f"{fingerprint()}|{internet_allowed()}|{folder.is_dir()}|{','.join(files)}"
+
+
+def ensure_models(first: bool, state: dict) -> None:
+    """The PP-OCRv5 OCR models, put in place only when missing (checksums checked on the first run): copied from
+    the offline bundle's models/ folder, never downloaded (only with AP_ALLOW_INTERNET=1). When that fails it is
+    said once and recorded, not tried again on every start."""
     from ap_coder import offline
 
-    if offline.ppocrv5_installed() and offline.missing_models(verify=first):
-        import fetch_models
+    if not offline.ppocrv5_installed() or not offline.missing_models(verify=first):
+        state.pop("models_failed", None)
+        return
+    import fetch_models
 
-        say("Fetching the OCR models (once).")
-        if fetch_models.main([]) != 0:
-            say("(Not needed to start: scans are read with the other OCR engine.)")
+    attempt = models_attempt()
+    if state.get("models_failed") == attempt:
+        return  # said when it failed; the readiness summary still says scans are read with one engine
+    if not internet_allowed() and not fetch_models.BUNDLE_MODELS.is_dir():
+        say("The PP-OCRv5 OCR models are not here, and this offline build never downloads them: they come from the "
+            "offline bundle's models folder. Scans are read with the other OCR engine.")  # fmt: skip
+        state["models_failed"] = attempt
+        return
+    say("Downloading the OCR models (once)." if internet_allowed() and not fetch_models.BUNDLE_MODELS.is_dir()
+        else "Copying the OCR models from the offline bundle (once).")  # fmt: skip
+    if fetch_models.main([]) != 0:
+        say("(Not needed to start: scans are read with the other OCR engine. Not tried again until the models "
+            "folder changes.)")  # fmt: skip
+        state["models_failed"] = attempt
+    else:
+        state.pop("models_failed", None)
 
 
 def desktop() -> Path | None:
@@ -401,7 +508,8 @@ def readiness(packages: tuple[str, str]) -> list[tuple[str, str]]:
     if v5 and not offline.missing_models():
         lines.append(("ok", "OCR for scanned invoices"))
     elif v4 or v5:
-        lines.append(("ok", "OCR for scanned invoices (one engine; run scripts/fetch_models.py online for both)"))
+        lines.append(("ok", "OCR for scanned invoices (one engine: the PP-OCRv5 models come from the offline "
+                            "bundle's models folder)"))  # fmt: skip
     else:
         lines.append(("warn", "OCR not installed: scanned invoices can't be read (text PDFs are fine)"))
     data = paths.private_dir()
@@ -488,6 +596,71 @@ def running_dashboard(rest: list[str], state: dict) -> int | None:
     return next((p for p in ports if is_ap_coder(p)), None)
 
 
+def open_running(port: int) -> int:
+    url = f"http://localhost:{port}"
+    say(f"AP Coder is already running: opening {url} in your browser.")
+    say("Nothing new was started. This window can be closed; the AP Coder window already open runs it.")
+    open_browser(url)
+    return 0
+
+
+# --- One start at a time ----------------------------------------------------------------------------------------
+
+_held: list[Any] = []  # the open lock file: the lock lasts as long as this process
+
+
+def take_lock() -> bool:
+    """An exclusive lock on ``LOCK`` for this start (setup and the dashboard), released when this process ends.
+    False when another start holds it. True also when no lock file can be made here (a read-only folder: then
+    there is no .venv to set up either)."""
+    if _held:
+        return True
+    try:
+        handle = open(LOCK, "a+b")  # kept open on purpose: the lock lasts as long as the file
+    except OSError:
+        return True
+    try:
+        if WINDOWS:
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return False
+    _held.append(handle)
+    return True
+
+
+def release_lock() -> None:
+    while _held:
+        _held.pop().close()  # closing the file releases the lock (msvcrt and flock alike)
+
+
+def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: float = 2.0) -> int | None:
+    """Another start holds the lock (a first setup, or the running dashboard): wait for its dashboard and open
+    it. None when that start ended without one: this start then holds the lock and carries on."""
+    port = running_dashboard(argv, load_state())
+    if port:
+        return open_running(port)
+    say("AP Coder is being set up or started in another window: waiting for it to open the dashboard...")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(every)
+        port = running_dashboard(argv, load_state())
+        if port:
+            return open_running(port)
+        if take_lock():
+            return None
+    say("The other AP Coder window has not opened the dashboard yet: look at that window, or close it and start "
+        "AP Coder again.")  # fmt: skip
+    return 1
+
+
 def free_port(start: int = DEFAULT_PORT) -> int:
     """The first port from ``start`` this computer can listen on (a bind test: instant, unlike connecting)."""
     from ap_coder.offline import dashboard_address
@@ -538,11 +711,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
 
     port = running_dashboard(rest, state)
     if port:
-        url = f"http://localhost:{port}"
-        say(f"AP Coder is already running: opening {url} in your browser.")
-        say("Nothing new was started. This window can be closed; the AP Coder window already open runs it.")
-        open_browser(url)
-        return 0
+        return open_running(port)
 
     try:
         level, packages, installed = ensure_packages(state)
@@ -552,7 +721,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     if str(ROOT) not in sys.path:  # ap_coder itself, even when it was only just installed
         sys.path.insert(0, str(ROOT))
     ensure_data_folder()
-    ensure_models(first)
+    ensure_models(first, state)
     shortcut = ensure_shortcut()
     lines = readiness((level, packages))
     if shortcut:
@@ -590,6 +759,12 @@ def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     setup_console()
+    if not os.environ.get(LOCK_HELD_ENV):  # (set: a parent start holds it, e.g. the first phase for the second)
+        if not take_lock():  # another start is setting up or running AP Coder
+            code = wait_for_other(argv)
+            if code is not None:
+                return code
+        os.environ[LOCK_HELD_ENV] = str(os.getpid())  # for what this start runs: never waits for itself
     if not in_venv():
         return bootstrap(argv)
     args, rest = parse(argv)
