@@ -344,6 +344,11 @@ def find_currency(text: str) -> str | None:
         return "USD"
     if re.search(r"\bC\$|\bCDN\b|CANADIAN", s):
         return "CAD"
+    # A euro or pound sign is that currency (a plain "$" is not: Canadian or US dollars).
+    if "€" in s:
+        return "EUR"
+    if "£" in s:
+        return "GBP"
     return None
 
 

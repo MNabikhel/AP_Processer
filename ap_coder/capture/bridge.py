@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .types import CHECK, CaptureResult
+from .types import CHECK, MISSING, CaptureResult, FieldResult
 
 TAX_FIELD = {"GST": "gst_amount", "HST": "hst_amount", "PST": "pst_amount", "QST": "qst_amount"}
 
@@ -60,7 +60,9 @@ def vendor_record(store: Any, vendor_name: str | None) -> dict[str, Any] | None:
 
 
 def review_issues(capture: CaptureResult) -> list[tuple[str, str, str]]:
-    """(severity, code, message) for the review screen: header fields the readers could not confirm."""
+    """(severity, code, message) for the review screen: header fields the readers could not confirm, and a
+    currency the page does not show (the coding's is then assumed)."""
+    from ..validation import currency_not_found
     from .confidence import LABELS
 
     out: list[tuple[str, str, str]] = []
@@ -71,4 +73,17 @@ def review_issues(capture: CaptureResult) -> list[tuple[str, str, str]]:
     if unsure:
         names = ", ".join(LABELS.get(f.field, f.field) for f in unsure)
         out.append(("info", "CAPTURE_CHECK_FIELDS", f"check on the page: {names} (highlighted in amber)"))
+    currency = capture.fields.get("currency")
+    if currency is not None and not currency_read(currency):
+        issue = currency_not_found()
+        out.append((issue.severity, issue.code, issue.message))
     return out
+
+
+def currency_read(field: FieldResult) -> bool:
+    """A reader of the page found the currency: printed as a code or a sign, not only the AI coding's
+    answer that the page does not show."""
+    if field.status == MISSING or field.value in (None, ""):
+        return False
+    readers = {s for s in field.sources if not s.startswith("other:")} - {"ai"}
+    return bool(readers) or bool(field.boxes)

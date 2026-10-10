@@ -366,6 +366,12 @@ CHECKS: dict[str, CheckHelp] = {
         READING, "Amount read differently", "Azure's invoice model and the AI read a different amount.",
         "Check the subtotal, tax and total against the document.",
     ),
+    "CURRENCY_NOT_FOUND": CheckHelp(
+        READING, "Currency not printed",
+        "The invoice shows no currency the reader could read (no code such as CAD or USD, no € or £ sign), so "
+        "the currency was assumed: US dollars for a supplier with a US address, Canadian dollars otherwise.",
+        "Check the currency against the document and what this vendor usually bills in, and correct it if needed.",
+    ),
 }  # fmt: skip
 
 

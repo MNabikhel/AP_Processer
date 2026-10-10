@@ -34,6 +34,11 @@ def plain(text: str) -> str:
     return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
 
 
+# Words spelled as printed: a PDF's text layer, and a page reader's transcription (it writes words apart and
+# whole). OCR's slips (a label glued to its value, O read as 0) are undone only in the other words.
+_AS_PRINTED = ("text", "vlm")
+
+
 # ---------------------------------------------------------------- labels
 
 
@@ -350,7 +355,7 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         if len(norm_id(value)) < 2 or len(value) > 30:
             return None
         words = _span_words(line, a, b)
-        if any(w.source != "text" for w in words):
+        if any(w.source not in _AS_PRINTED for w in words):
             value = _ocr_id_fix(_unglue_label(value))
         return Reading(field, value, value, _boxes(words), base * _min_conf(words), method)
     if field in ("invoice_date", "due_date"):
@@ -680,7 +685,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
         words = _without_logo_initials(line.words)
         if len(words) != len(line.words):
             text = " ".join(w.text for w in words)
-        if any(w.source != "text" for w in words):
+        if any(w.source not in _AS_PRINTED for w in words):
             text = _ocr_name_fix(text)
         out.append(Reading("vendor_name", text, text, [union_all([w.box for w in words])] if words else [line.box],
                            min(score, 0.95) * _min_conf(line.words), "top-of-page"))  # fmt: skip
@@ -992,7 +997,7 @@ def _glued_title_numbers(layout: DocLayout) -> list[Reading]:
     """OCR glued the title to the number beside it: "INVOICEA-2026-29266", "TAXINVOICEA-90595"."""
     out = []
     for line in layout.lines():
-        if not any(w.source != "text" for w in line.words):
+        if all(w.source in _AS_PRINTED for w in line.words):
             continue
         m = _GLUED_TITLE.match(line.text.replace(" ", ""))
         if m and len(m.group(1)) >= 3:

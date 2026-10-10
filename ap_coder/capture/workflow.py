@@ -44,9 +44,25 @@ def supplier_for(store: Any, output: dict[str, Any] | None) -> tuple[str, dict[s
     return key, (store.get_supplier_profile(key) if key else None)
 
 
+def local_evidence(store: Any) -> dict[str, tuple[int, int]] | None:
+    """{evidence: (cases, right)}: how often each evidence pattern was right on the invoices AP approved here
+    (``store.evidence_counts``), for the local calibration of confidence. None without a store, or with a store
+    that does not count them."""
+    counts = getattr(store, "evidence_counts", None) if store is not None else None
+    if counts is None:
+        return None
+    try:
+        return dict(counts() or {})
+    except Exception as exc:  # the benchmark's calibration stands alone
+        log.warning("local calibration not used (%s)", exc)
+        return None
+
+
 def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: Any = None,
-                    di_raw: dict[str, Any] | None = None) -> tuple[CaptureResult | None, str, dict[str, Any] | None]:  # fmt: skip
-    """(capture, supplier key, supplier profile). None for text files or when the file cannot be read."""
+                    di_raw: dict[str, Any] | None = None,
+                    page_text: list[str] | None = None) -> tuple[CaptureResult | None, str, dict[str, Any] | None]:  # fmt: skip
+    """(capture, supplier key, supplier profile). None for text files or when the file cannot be read.
+    ``page_text``: the page reader's transcription of each page, when it has read them."""
     path = Path(path)
     if path.suffix.lower() in TEXT_EXTENSIONS or not path.exists():
         return None, "", None
@@ -56,7 +72,7 @@ def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: A
     try:
         # Processed the day it arrives: that date also settles a 03/04/2026 the page leaves open.
         capture = analyze(path, di_raw=di_raw, ai_values=ai_values(output), template=template, vendor=vendor,
-                          today=dt.date.today())  # fmt: skip
+                          today=dt.date.today(), page_text=page_text, local_evidence=local_evidence(store))  # fmt: skip
     except Exception as exc:  # capture is an extra check: never lose an invoice over it
         log.warning("%s: capture failed (%s)", path.name, exc)
         return None, key, profile

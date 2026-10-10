@@ -8,6 +8,8 @@ highlighted. When a value is printed several times, the copy next to a label for
 
 from __future__ import annotations
 
+import re
+
 from .normalize import (
     find_amounts,
     find_gst_numbers,
@@ -17,8 +19,9 @@ from .normalize import (
     norm_name,
     norm_qst,
     parse_dates,
+    terms_key,
 )
-from .reader import _label_hits, _span_words, plain
+from .reader import _TERMS, _label_hits, _span_words, plain
 from .types import AMOUNT_FIELDS, DATE_FIELDS, DocLayout, Line, Reading, union_all
 
 
@@ -82,6 +85,14 @@ def locate(layout: DocLayout, field: str, value: object) -> list[Reading]:
             target_n = norm_name(str(value))
             if target_n and (target_n == norm_name(text) or (len(target_n) > 6 and target_n in norm_name(text))):
                 spans = [(0, len(text))]
+        elif field == "currency":  # the code as a word ("CAD", "CAD1,050.00"), not inside one ("Cascade")
+            code = re.escape(str(value).strip())
+            spans = [m.span() for m in re.finditer(rf"(?<![A-Za-z]){code}(?![A-Za-z])", text, re.I)] if code else []
+        elif field == "payment_terms":  # the same terms however printed ("Net30 days" for "Net 30")
+            want = terms_key(str(value))
+            spans = [
+                m.span() for rx, fmt in _TERMS for m in rx.finditer(text) if terms_key(fmt.format(*m.groups())) == want
+            ][:1]
         else:
             p, t = plain(text), plain(str(value))
             i = p.find(t)
