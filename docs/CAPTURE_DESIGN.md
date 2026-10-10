@@ -11,7 +11,9 @@ No single reader is right on every invoice. Accuracy comes from three things tog
    - a rule reader (labels, patterns and positions, English and French);
    - the supplier's learned template, once AP has confirmed a few invoices;
    - Azure Document Intelligence `prebuilt-invoice` fields, when used;
-   - the AI coder's answer, located back on the page.
+   - the AI coder's answer, located back on the page;
+   - the **page reader**, a vision model that transcribes the page image on its own (optional; see
+     [The page reader](#the-page-reader-a-vision-model-as-a-second-reader) below).
 2. **Checks that cannot be fooled by a misread:**
    - subtotal + taxes = total, and the lines add up to the subtotal;
    - tax = rate × taxable amount, at the official rate for the province;
@@ -234,6 +236,51 @@ approval), and the autonomy policy is applied, switched on as soon as a supplier
 report gives accuracy by invoice position (against the same invoices read without a template), when
 each supplier would reach the policy, and after that the touchless share and its errors.
 `--ignore-check CODE` is a what-if: a failed check with that code does not hold an invoice back.
+
+## The page reader: a vision model as a second reader
+
+OCR on a phone photo or a poor scan misreads digits and runs column titles together, and a value only one
+reader found can be *likely* at best. CloseDesk (the same owner's Outlook assistant) adds a **page reader**:
+a vision language model in LM Studio that transcribes the page image (text, and tables as HTML), compared
+figure by figure with OCR. AP Coder does the same, with the same recommended model: **OvisOCR2** (0.85B,
+Apache-2.0, a Qwen3.5-0.8B trained to read document pages; `bartowski/ATH-MaaS_OvisOCR2-GGUF`, Q8_0 plus
+its `mmproj`, about 1 GB).
+
+- **Reading** (`ap_coder/page_reader.py`): each page is rendered at 200 dpi (long side 2048 px) and sent with
+  OvisOCR2's own prompt, greedy. A reply that starts repeating itself is stopped and read once more with
+  Qwen's sampling; a reply cut off at the length limit, or a blank page, is an error, never a short reading.
+  Readings are cached by file, page, model and prompt, so a page is never read twice.
+- **One more independent reader** (`capture/transcript.py`): the transcription is laid out as a page (each
+  table's cells as separate lines at their column positions) and read by the same rule reader as OCR's
+  words. Each value is located back on the real page for its box. The reader is `vlm`
+  (`RELIABILITY["vlm"] = 0.85`), independent of the text layer, OCR and the rules: OCR and the page reader
+  agreeing makes two readers (a field can reach *verified*), disagreeing sends it to *check*. Its line items
+  are used when they add up to the subtotal and OCR's don't.
+- **Figure by figure** (`ap_coder/figures.py`, from CloseDesk): every amount in the transcription is counted
+  against OCR's text or the PDF's own. The review screen shows how many figures both read the same and lists
+  the ones read two ways ("1,105.00 / 1,150.00"). On a digital PDF the first reading is exact, so the share
+  read the same is the page reader's own accuracy, measured on every invoice it reads (Settings → Page reader).
+- **Linked before it is trusted:** *Settings → Page reader → Test the page reader* reads a scan of a sample
+  invoice whose answers are known and shows each field. Until the model in use has passed, the page reader
+  reads nothing; another model needs its own test.
+- **Never in the way:** reading takes minutes a page on a laptop CPU, so it runs in the background (a thread of
+  the dashboard, or `python -m ap_coder read-pages` overnight). An invoice is in the queue at once, read by
+  OCR; the reading is folded in only while the invoice is untouched (in review, never approved, no edits), and
+  a reviewer's unsaved edits on screen are never replaced.
+
+## Learning from approvals: each reader's record, local calibration, training data
+
+Every approval is the ground truth for that invoice. When it is approved, each reader's raw value for each
+field is scored against what AP approved (`reader_outcomes`), along with the fused value and its evidence key:
+
+- **Readers scorecard** (*Learning & accuracy → Readers*): fields compared and agreed per reader (OCR, OCR's
+  second engine, rules, template, page reader, AI), per field, and how often *verified* values were right.
+- **Local calibration:** the benchmark gives each evidence key (which readers agreed, which checks passed) a
+  measured accuracy. Once AP's approvals hold enough rows for a key, the bound comes from the benchmark and
+  the approvals together, so the confidence labels follow your own invoices, not only synthetic ones.
+- **Training data** (*Export training data*, or `python -m ap_coder export-training`): a local ZIP of the
+  approved invoices: page images, the approved header fields, tax lines and line items, which readers agreed,
+  and the same as chat fine-tuning rows. It is the data set to fine-tune a vision model on your own invoices.
 
 ## Review screen
 

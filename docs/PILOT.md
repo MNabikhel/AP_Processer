@@ -53,6 +53,19 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
     is several times larger, so expect it to be slower on the same laptop; a graphics card is much faster.
   - The doctor shows *can see pages: yes* for it (every Qwen 3.5 size has a vision encoder). Invoices are
     read by AP Coder's own reader either way.
+- **Optional: the page reader (OvisOCR2).** A second, independent reader for scans and photos: a small vision
+  model that reads the page image on its own, compared with OCR field by field and figure by figure (see the
+  [README](../README.md#page-reader-a-vision-model-as-a-second-reader)). In LM Studio search for *OvisOCR2*
+  and download the *bartowski* build at **Q8_0** (813 MB, plus its 205 MB `mmproj` vision file, in the same
+  repo). Leave it unloaded: AP Coder has LM Studio load it, with the context it needs, when there is a page to
+  read. Then *Settings → Page reader → Test the page reader*: it reads a scanned sample invoice whose answers
+  are known, field by field, and links the model when it reads it right. It reads nothing before that.
+  - *Speed.* Minutes a page on a laptop CPU, so it reads in the background and invoices never wait for it:
+    PAGE_READER_SPEED_LINE
+  - *Memory.* OvisOCR2 is small (about 1 GB on disk), but reading a page image needs working memory too:
+    PAGE_READER_MEMORY_LINE
+  - *Overnight instead.* `python -m ap_coder read-pages --minutes 240` reads the queue and stops; schedule
+    it with Task Scheduler for a laptop that is busy during the day.
 - **No Azure needed.** Azure Document Intelligence and Azure OpenAI stay optional; leave Settings → Azure
   empty for the pilot.
 
