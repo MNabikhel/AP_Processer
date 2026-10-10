@@ -422,8 +422,8 @@ FAQ: list[tuple[str, str]] = [
         "A small vision model (OvisOCR2, about 1 GB, in LM Studio) that reads each scan or photo on its own, as a "
         "second reader beside OCR. Where both read the same value, a field can be verified; where they differ, it "
         "is marked Check. It runs on this computer, in the background, a few minutes a page without a graphics "
-        "card, and never holds up processing. Set it up in Settings → Page reader: download OvisOCR2 in LM Studio, "
-        "then press Test the page reader. It reads nothing until the model passes that test.",
+        "card, and never holds up processing. Set it up in Settings → Page reader: with OvisOCR2 in LM Studio, "
+        "press Test the page reader. It reads nothing until the model passes that test.",
     ),
     (
         "How do I know the readers can be trusted before going touchless?",

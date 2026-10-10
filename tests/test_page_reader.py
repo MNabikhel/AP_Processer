@@ -286,7 +286,7 @@ def test_no_model_reads_pages_when_none_can_see(serve):
     status = page_reader.reader_status(Settings())
     assert (status.model, status.state, status.usable, status.candidates) == ("", "missing", False, [])
     assert status.note.startswith(NOT_DOWNLOADED)
-    with pytest.raises(PageReaderError, match="OvisOCR2 isn't downloaded"):
+    with pytest.raises(PageReaderError, match="OvisOCR2 isn't in LM Studio"):
         page_reader.transcribe(Settings(), b"png")
 
 
@@ -954,7 +954,7 @@ def test_models_in_use_with_a_general_model_or_none(serve, two_ocr_models, monke
     assert coding["state"] == "fallback" and "turned off" in coding["status"]
 
 
-# --- What LM Studio has, and getting OvisOCR2 ------------------------------------------------------------------
+# --- What LM Studio has, and loading a model ---------------------------------------------------------------------
 
 
 def test_lm_studio_models_says_what_is_loaded_and_what_each_does(serve, monkeypatch):
@@ -970,24 +970,6 @@ def test_lm_studio_models_says_what_is_loaded_and_what_each_does(serve, monkeypa
     assert rows[-1]["model"] == "gemma-3-4b"  # loaded ones first
     serve({})
     assert page_reader.lm_studio_models(Settings()) is None  # LM Studio not answering
-
-
-def test_download_ovisocr2_through_lm_studio(serve, posts, monkeypatch):
-    serve(lm_studio(v1_model("qwen3.5-9b", loaded=8192)))
-    monkeypatch.setattr(page_reader, "_post_json", lambda url, body, key, timeout: posts.append(
-        (urlparse(url).path, body)) or {"job_id": "job_1", "status": "downloading"})  # fmt: skip
-    assert page_reader.download_reader(Settings()) == ("job_1", "")
-    assert posts[-1] == ("/api/v1/models/download", {"model": page_reader.OVIS_DOWNLOAD[0], "quantization": "Q8_0"})
-    serve({**lm_studio(v1_model("qwen3.5-9b")), "/api/v1/models/download/status/job_1": {
-        "job_id": "job_1", "status": "downloading", "downloaded_bytes": 250_000_000,
-        "total_size_bytes": 1_000_000_000, "bytes_per_second": 5_000_000}})  # fmt: skip
-    progress = page_reader.download_progress(Settings(), "job_1")
-    assert progress["status"] == "downloading" and progress["done"] == 250_000_000 and progress["seconds_left"] == 150
-    serve(lm_studio(v1_model(OVIS_KEY)))
-    assert page_reader.download_reader(Settings()) == ("", "")  # already there: nothing to do
-    serve({})
-    job, problem = page_reader.download_reader(Settings())
-    assert job == "" and "isn't answering" in problem
 
 
 def test_load_a_chat_model_from_settings(serve, posts):

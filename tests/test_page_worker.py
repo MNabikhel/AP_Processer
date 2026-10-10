@@ -382,7 +382,7 @@ def test_launcher_line(store, fake_reader, monkeypatch):
     assert launch.page_reader_line() == ("ok", f"Page reader: {MODEL} linked (reads scans as a second reader, in "
                                          "the background)")  # fmt: skip
     store.set_setting(page_worker.TEST_KEY, "")
-    assert launch.page_reader_line() == ("info", f"Page reader: {MODEL} downloaded, not tested yet (Settings > Page "
+    assert launch.page_reader_line() == ("info", f"Page reader: {MODEL} in LM Studio, not tested yet (Settings > Page "
                                          "reader > Test)")  # fmt: skip
     monkeypatch.setenv("AP_PAGE_READER", "off")
     assert launch.page_reader_line() == ("info", "Page reader: off (optional)")

@@ -283,7 +283,7 @@ def _page_reader_check(settings: Settings) -> tuple[str, str, str]:
         how = "in the background" if settings.page_reader.mode == "auto" else "when asked"
         return "page reader", PASS, (f"{status.model} ({kind}), linked, {status.state}; reads "
                                      f"{settings.page_reader.scope} {how}")  # fmt: skip
-    return "page reader", WARN, status.note or "no model can read pages (optional: download OvisOCR2 in LM Studio)"
+    return "page reader", WARN, status.note or "no model can read pages (optional: OvisOCR2 isn't in LM Studio)"
 
 
 def _aoai_dry_run(settings: Settings, reference: ReferenceData, provider: str | None = None) -> tuple[str, str, str]:

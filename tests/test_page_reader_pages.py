@@ -197,14 +197,11 @@ def test_setup_checklist_and_the_models_lm_studio_has(db, ready, monkeypatch):
                if "Model" in t.columns and "Loaded" in t.columns)  # fmt: skip
 
 
-def test_download_button_when_ovisocr2_is_missing(db, monkeypatch):
+def test_missing_ovisocr2_says_where_to_copy_it_never_downloads(db, monkeypatch):
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: page_reader.ReaderStatus(
         reachable=True, lm_studio=True, model="", document_reader=False, state="missing", candidates=[],
         note=page_reader.NOT_DOWNLOADED))  # fmt: skip
-    monkeypatch.setattr(page_reader, "download_reader", lambda settings: ("job_9", ""))
-    monkeypatch.setattr(page_reader, "download_progress", lambda settings, job: {
-        "status": "downloading", "done": 400_000_000, "total": 1_000_000_000, "seconds_left": 120})  # fmt: skip
     at = _ok(_settings_page().run())
-    _ok(at.button(key="pr_download").click().run())
-    assert at.session_state["pr_download_job"] == "job_9"
-    assert any("Downloading OvisOCR2: 400 of 1,000 MB" in str(p.proto) for p in at.get("progress"))
+    shown = " ".join(i.value for i in at.info)
+    assert "ATH-MaaS_OvisOCR2-GGUF" in shown and "nothing is downloaded" in shown
+    assert not [b for b in at.button if (b.key or "") == "pr_download"]

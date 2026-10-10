@@ -304,7 +304,10 @@ class ReaderStatus:
         return bool(self.model) and self.state in {"loaded", "downloaded"}
 
 
-NOT_DOWNLOADED = "OvisOCR2 isn't downloaded in LM Studio: search OvisOCR2, bartowski build, Q8_0, about 1 GB."
+NOT_DOWNLOADED = (
+    "OvisOCR2 isn't in LM Studio: copy its two files (bartowski build, Q8_0, about 1 GB, from IT) into LM Studio's "
+    "models folder; Settings > Page reader shows where."
+)
 TRIES_AGAIN = "AP Coder tries it again in half an hour, or when the settings are saved."
 
 
@@ -360,7 +363,8 @@ def _use_named(out: ReaderStatus, named: str, status: Any, listing: LMListing | 
         found = listing.find(named)
         if found is None:
             out.state = "missing"
-            out.note = f"LM Studio doesn't have {named}: download it there, or choose Automatic for the page reader."
+            out.note = (f"LM Studio doesn't have {named}: add it to LM Studio's models folder, or choose Automatic "
+                        "for the page reader.")  # fmt: skip
             return
         _describe(out, found, reader_for(named))
         if not found.vision:
@@ -1425,10 +1429,7 @@ def _ocr_row() -> dict[str, str]:
     return row
 
 
-# --- What LM Studio has, and getting OvisOCR2 ---------------------------------------------------------------------
-
-OVIS_DOWNLOAD = ("https://huggingface.co/bartowski/ATH-MaaS_OvisOCR2-GGUF", "Q8_0")  # (Hugging Face link, quantization)
-DOWNLOAD_TIMEOUT = 30.0  # seconds: LM Studio answers at once and downloads in the background
+# --- What LM Studio has, and loading a model ------------------------------------------------------------------------
 
 
 def lm_studio_models(settings: Settings, *, use_cache: bool = True) -> list[dict[str, Any]] | None:
@@ -1483,56 +1484,6 @@ def load_model(settings: Settings, model: str) -> str:
     finally:
         forget_status()
     return ""
-
-
-def download_reader(settings: Settings) -> tuple[str, str]:
-    """Have LM Studio (0.4 or newer) download OvisOCR2 (bartowski build, Q8_0, about 1 GB). Returns (job id, problem):
-    ("", "") when it is already downloaded, (job id, "") while it downloads, ("", why) when it can't."""
-    listing = lm_studio_listing(settings, use_cache=False)
-    if listing is None:
-        return "", "LM Studio isn't answering: start it, and its server (Developer tab, Start server)."
-    if any(document_reader(m.key) for m in listing.models):
-        return "", ""
-    if listing.route != "v1":
-        return "", "This LM Studio can't download when asked: search OvisOCR2 in LM Studio and download it there."
-    link, quantization = OVIS_DOWNLOAD
-    root = local_llm._root(reader_base_url(settings))
-    try:
-        answer = _post_json(root + "/api/v1/models/download", {"model": link, "quantization": quantization},
-                            settings.llm.api_key, DOWNLOAD_TIMEOUT)  # fmt: skip
-    except PageReaderError as exc:
-        return "", f"LM Studio couldn't start the download ({exc}): search OvisOCR2 in LM Studio and download it there."
-    finally:
-        forget_status()
-    answer = answer if isinstance(answer, dict) else {}
-    if answer.get("status") in ("already_downloaded", "completed"):
-        return "", ""
-    if answer.get("status") == "failed" or not answer.get("job_id"):
-        return "", "LM Studio couldn't download OvisOCR2: search OvisOCR2 in LM Studio and download it there."
-    return str(answer["job_id"]), ""
-
-
-def download_progress(settings: Settings, job_id: str) -> dict[str, Any]:
-    """How a download LM Studio is doing is going: ``status`` (downloading, paused, completed, failed, or unknown when
-    LM Studio doesn't answer), ``done`` and ``total`` bytes, ``seconds_left`` (None when not said)."""
-    root = local_llm._root(reader_base_url(settings))
-    try:
-        data = local_llm._fetch_json(f"{root}/api/v1/models/download/status/{job_id}", settings.llm.api_key,
-                                     LISTING_TIMEOUT)  # fmt: skip
-    except (OSError, ValueError):
-        data = None
-    data = data if isinstance(data, dict) else {}
-    seconds_left = None
-    rate, done, total = (
-        data.get("bytes_per_second"),
-        _int(data.get("downloaded_bytes")),
-        _int(data.get("total_size_bytes")),
-    )
-    if isinstance(rate, (int, float)) and rate > 0 and total > done:
-        seconds_left = (total - done) / rate
-    if data.get("status") == "completed":
-        forget_status()
-    return {"status": str(data.get("status") or "unknown"), "done": done, "total": total, "seconds_left": seconds_left}
 
 
 def models_in_use(settings: Settings) -> list[dict[str, str]]:

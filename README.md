@@ -170,8 +170,10 @@ compares it with OCR, field by field:
 
 **Set it up once:**
 
-1. In LM Studio, search **OvisOCR2** and download the *bartowski* build at **Q8_0** (about 1 GB). No need to
-   load it: AP Coder has LM Studio load it when there is a page to read.
+1. OvisOCR2 is in LM Studio already (installed by IT with the chat model: the *bartowski* build at **Q8_0**, about
+   1 GB). *Settings → Page reader* shows it, and *Models in LM Studio* lists every model with whether it is
+   loaded. No need to load it: AP Coder has LM Studio load it when there is a page to read. Nothing is
+   downloaded: AP Coder never connects to the internet.
 2. *Settings → Page reader → Test the page reader.* It reads a scan of a sample invoice whose answers are
    known and shows, field by field, what it read. When it reads it right, the model is **linked**. It reads
    nothing until then, and another model needs its own test.
@@ -184,7 +186,7 @@ its fields update when the page reader is done, unless AP has started editing it
 | --- | --- | --- |
 | `AP_PAGE_READER` | `auto` | `auto` (in the background), `ask` (only when AP clicks *Read with the page reader*), `off` |
 | `AP_PAGE_READER_SCOPE` | `scans` | `scans` (scans and photos) or `all` (digital PDFs too: more fields verified, slower) |
-| `AP_PAGE_READER_MODEL` | empty | empty = OvisOCR2 when downloaded, else the chat model if it can see; or a model key |
+| `AP_PAGE_READER_MODEL` | empty | empty = OvisOCR2 when LM Studio has it, else the chat model if it can see; or a model key |
 | `AP_PAGE_READER_BASE_URL` | empty | empty = the same LM Studio as the AI model |
 | `AP_PAGE_READER_TIMEOUT_SECONDS`, `AP_PAGE_READER_MAX_PAGES` | `1200`, `5` | a laptop CPU takes minutes a page |
 

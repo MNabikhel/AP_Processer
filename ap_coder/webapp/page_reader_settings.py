@@ -7,6 +7,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -34,7 +35,9 @@ STATE_PILL = {
     "down": ("LM Studio isn't answering", "err", "error"),
 }
 SETUP_STEPS = (
-    "In LM Studio, search **OvisOCR2** and download the bartowski build at **Q8_0** (about 1 GB).",
+    "Get OvisOCR2's two files from IT (the bartowski build at **Q8_0**: `ATH-MaaS_OvisOCR2-Q8_0.gguf` and "
+    "`mmproj-ATH-MaaS_OvisOCR2-f16.gguf`, about 1 GB) and copy them into LM Studio's models folder, under "
+    "`bartowski/ATH-MaaS_OvisOCR2-GGUF`. Nothing is downloaded on this computer.",
     "No need to load it: AP Coder has LM Studio load it when it reads pages, next to the chat model.",
     "Press **Test the page reader** below: it reads an invoice whose answers are known and shows what it got. "
     "When it reads it right, the model is linked and starts reading invoices.",
@@ -90,9 +93,6 @@ def _test_table(test: dict) -> None:
         st.caption(test["problem"])
 
 
-DOWNLOAD_KEY = "pr_download_job"  # the download LM Studio is doing for this session
-
-
 def setup_steps(settings: Settings, status: page_reader.ReaderStatus, store: Store) -> list[tuple[str, str, str]]:
     """(state, step, detail) for the page reader's set-up, in order: "ok" when done, "todo" when it is next."""
     running = status.reachable and status.lm_studio
@@ -105,49 +105,28 @@ def setup_steps(settings: Settings, status: page_reader.ReaderStatus, store: Sto
         ("ok" if running else "todo", "LM Studio is running",
          "its server answers" if running else "start LM Studio, then its server (Developer tab, Start server)"),
         ("ok" if downloaded else "todo", "OvisOCR2 is downloaded",
-         "in LM Studio" if downloaded else "Download OvisOCR2 below (about 1 GB), or in LM Studio"),
+         "in LM Studio" if downloaded else "copy its two files into LM Studio's models folder (below)"),
         ("ok" if linked else "todo", "Tested and linked",
          f"{status.model} passed its test" if linked else "Test the page reader below (a few minutes)"),
         ("ok" if mode != "off" else "todo", "Reading invoices", reading),
     ]  # fmt: skip
 
 
-def _download_button(settings: Settings) -> None:
-    job = st.session_state.get(DOWNLOAD_KEY)
-    if job:
-        _download_progress(job)
-        return
-    if st.button("Download OvisOCR2", icon=":material/download:", key="pr_download", type="primary",
-                 help="LM Studio downloads the bartowski build at Q8_0 (about 1 GB) from Hugging Face."):  # fmt: skip
-        job, problem = page_reader.download_reader(settings)
-        if problem:
-            st.error(problem)
-            return
-        if job:
-            st.session_state[DOWNLOAD_KEY] = job
-        else:
-            notify("OvisOCR2 is downloaded.", ":material/check_circle:")
-        st.rerun()
+def models_folder() -> Path:
+    """Where LM Studio keeps its models (its default: .lmstudio/models in the user's folder)."""
+    return Path.home() / ".lmstudio" / "models"
 
 
-@st.fragment(run_every=5)
-def _download_progress(job: str) -> None:
-    """LM Studio's download, looked up again every few seconds; the page is drawn again when it is done."""
-    progress = page_reader.download_progress(get_settings(), job)
-    if progress["status"] == "completed":
-        st.session_state.pop(DOWNLOAD_KEY, None)
-        notify("OvisOCR2 is downloaded. Next: Test the page reader.", ":material/check_circle:")
-        st.rerun(scope="app")
-    if progress["status"] == "failed":
-        st.session_state.pop(DOWNLOAD_KEY, None)
-        st.error("LM Studio couldn't finish the download: try again, or download OvisOCR2 in LM Studio itself.")
-        return
-    done, total = progress["done"], progress["total"]
-    left = progress["seconds_left"]
-    text = f"Downloading OvisOCR2: {done / 1e6:,.0f} of {total / 1e6:,.0f} MB" if total else "Downloading OvisOCR2…"
-    if left:
-        text += f", about {max(left / 60, 1):.0f} min left"
-    st.progress(min(done / total, 1.0) if total else 0.0, text=text)
+def _copy_in_note() -> None:
+    """Offline: the model files come from IT (downloaded once elsewhere), never from the internet."""
+    folder = models_folder() / "bartowski" / "ATH-MaaS_OvisOCR2-GGUF"
+    st.info(
+        "**Add OvisOCR2 without the internet.** Copy its two files, from your IT team's model share or a USB "
+        f"stick, into this folder (make it if it isn't there):\n\n`{folder}`\n\n"
+        "- `ATH-MaaS_OvisOCR2-Q8_0.gguf` (813 MB)\n- `mmproj-ATH-MaaS_OvisOCR2-f16.gguf` (205 MB)\n\n"
+        "Then press **Check again**. LM Studio finds models in that folder on its own; nothing is downloaded.",
+        icon=":material/usb:",
+    )
 
 
 def lm_studio_models_card(settings: Settings, key: str) -> None:
@@ -221,7 +200,7 @@ def page_reader_tab(store: Store) -> None:
         steps = setup_steps(settings, status, store)
         st.html("".join(ui.step(state, label, detail) for state, label, detail in steps))
         if steps[0][0] == "ok" and steps[1][0] != "ok":
-            _download_button(settings)
+            _copy_in_note()
         if not (status.reachable and status.lm_studio) or not status.document_reader:
             steps_md = "\n".join(f"{n}. {step}" for n, step in enumerate(SETUP_STEPS, start=1))
             with st.expander("Set it up by hand instead", expanded=False):

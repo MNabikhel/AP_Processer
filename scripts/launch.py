@@ -386,10 +386,10 @@ def page_reader_line() -> tuple[str, str]:
         return "info", f"Page reader: not checked ({type(exc).__name__}) (optional)"
     if status.model and status.state in ("loaded", "downloaded"):
         if not is_linked:
-            return "info", f"Page reader: {status.model} downloaded, not tested yet (Settings > Page reader > Test)"
+            return "info", f"Page reader: {status.model} in LM Studio, not tested yet (Settings > Page reader > Test)"
         how = "in the background" if settings.page_reader.mode == "auto" else "when asked"
         return "ok", f"Page reader: {status.model} linked (reads scans as a second reader, {how})"
-    return "info", "Page reader: not set up (optional: download OvisOCR2 in LM Studio, see Settings > Page reader)"
+    return "info", "Page reader: not set up (optional: OvisOCR2 isn't in LM Studio, see Settings > Page reader)"
 
 
 def readiness(packages: tuple[str, str]) -> list[tuple[str, str]]:
