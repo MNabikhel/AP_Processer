@@ -123,14 +123,21 @@ def setup_steps(settings: Settings, status: page_reader.ReaderStatus, store: Sto
     mode = settings.page_reader.mode
     reading = {"auto": "in the background, after each invoice", "ask": "when you ask, from the invoice",
                "off": "turned off (How it is used, below)"}[mode]  # fmt: skip
+    if mode != "off" and not linked:  # it reads nothing until a model has passed its test
+        reading = "will read " + ("in the background" if mode == "auto" else "when you ask") + " once linked"
+    if downloaded:
+        have = "in LM Studio"
+    elif not running:  # it cannot be asked: the model may well be there
+        have = "LM Studio isn't answering: start it to check"
+    else:
+        have = "copy its two files into LM Studio's models folder (below)"
     return [
         ("ok" if running else "todo", "LM Studio is running",
          "its server answers" if running else "start LM Studio, then its server (Developer tab, Start server)"),
-        ("ok" if downloaded else "todo", "OvisOCR2 is downloaded",
-         "in LM Studio" if downloaded else "copy its two files into LM Studio's models folder (below)"),
+        ("ok" if downloaded else "todo", "OvisOCR2 is downloaded", have),
         ("ok" if linked else "todo", "Tested and linked",
          f"{status.model} passed its test" if linked else "Test the page reader below (a few minutes)"),
-        ("ok" if mode != "off" else "todo", "Reading invoices", reading),
+        ("ok" if mode != "off" and linked else "todo", "Reading invoices", reading),
     ]  # fmt: skip
 
 

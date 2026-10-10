@@ -42,6 +42,14 @@ def _accuracy_cell(value: float | None) -> str:
     return f"<b style='color:{color}'>{value:.0%}</b>"
 
 
+def _spend_cell(v: dict[str, Any]) -> str:
+    """Approved spend per currency ("4,350.00 CAD · 1,200.00 USD"): a USD-only vendor never shows 0.00 CAD."""
+    spend = {c: t for c, t in (v.get("spend") or {}).items() if t}
+    if not spend:
+        return "<span class='apc-muted'>—</span>"
+    return " · ".join(f"{money(t)} <span class='apc-muted'>{esc(c)}</span>" for c, t in spend.items())
+
+
 def _sorted(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
     if order == "Most invoices":
         return sorted(rows, key=lambda r: -r["invoices"])
@@ -51,7 +59,7 @@ def _sorted(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
         return sorted(rows, key=lambda r: (r["accuracy"] is None, r["accuracy"] or 0))
     if order == "Name A–Z":
         return sorted(rows, key=lambda r: (r["vendor_name"] or "").lower())
-    return sorted(rows, key=lambda r: -(r["spend_cad"] or 0))
+    return sorted(rows, key=lambda r: -r["spend_in_cad"])
 
 
 def page_vendors() -> None:
@@ -70,7 +78,9 @@ def page_vendors() -> None:
     month_ago = (dt.datetime.now() - dt.timedelta(days=30)).isoformat()
     new = [v for v in vendors if (v["first_seen"] or "") >= month_ago]
     on_hold = [v for v in vendors if v["status"] == ON_HOLD]
-    top = vendors[0]
+    top = vendors[0]  # the most spend, in CAD at the Settings exchange rates
+    top_spend = sorted(((t, c) for c, t in (top.get("spend") or {}).items() if t), reverse=True)
+    others = ", ".join(c for _, c in top_spend[1:])
     st.html(
         ui.tiles(
             [
@@ -87,10 +97,12 @@ def page_vendors() -> None:
                 ),  # fmt: skip
                 ui.tile(
                     "Top spend",
-                    money(top["spend_cad"]) if top["spend_cad"] else "—",
+                    money(*top_spend[0]) if top_spend else "—",
                     "payments",
                     "violet",
-                    (top["vendor_name"] or "") if top["spend_cad"] else "no approved spend yet",
+                    ((top["vendor_name"] or "") + (f" · also in {others}" if others else ""))
+                    if top_spend
+                    else "no approved spend yet",
                 ),
             ]
         )
@@ -117,7 +129,7 @@ def page_vendors() -> None:
                 f"<div style='display:flex;gap:.6rem;align-items:center'>{ui.avatar(v['vendor_name'] or '', 'sm')}"
                 f"<b>{esc(v['vendor_name'])}</b></div>",
                 f"{v['approved']} / {v['invoices']}",
-                money(v["spend_cad"]),
+                _spend_cell(v),
                 esc(v["last_invoice"] or "—"),
                 _accuracy_cell(v["accuracy"]),
                 (ui.pill("On hold", "warn", "front_hand") if v["status"] == ON_HOLD else ui.pill("Active", "ok"))
@@ -128,7 +140,7 @@ def page_vendors() -> None:
         if rows:
             st.html(
                 ui.table(
-                    ["Vendor", "Approved / all", "Spend (CAD)", "Last invoice", "AI accuracy", ""],
+                    ["Vendor", "Approved / all", "Spend", "Last invoice", "AI accuracy", ""],
                     rows,
                     right=[1, 2, 4],
                     wrap=[0, 5],

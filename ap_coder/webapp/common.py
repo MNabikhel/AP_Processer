@@ -374,7 +374,8 @@ def card(name: str) -> Any:
 
 
 def approved_today(store: Store) -> int:
-    return store.approved_since(dt.date.today().isoformat())
+    """How many invoices this reviewer approved today (shown under their name: not the whole team's)."""
+    return store.approved_since(dt.date.today().isoformat(), reviewer())
 
 
 def weekly_accuracy(metrics: dict[str, Any]) -> list[float]:

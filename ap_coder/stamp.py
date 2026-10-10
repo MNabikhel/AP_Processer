@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .extraction import DOCUMENT_EXTENSIONS
+from .store import APPROVED
 
 GREEN, INK, MUTED, LINE = (0.07, 0.55, 0.33), (0.08, 0.13, 0.2), (0.36, 0.39, 0.45), (0.85, 0.88, 0.92)
 FONT, BOLD, FALLBACK = "helv", "hebo", "fallback"
@@ -162,8 +163,19 @@ def _coding_pages(doc: Any, inv: dict[str, Any], gl_names: dict[str, str]) -> No
     text(MARGIN, "Made by AP Coder from the approved coding. Tax lines are posted as shown above.", 7.5, color=MUTED)
 
 
+def can_stamp(inv: dict[str, Any] | None) -> bool:
+    """Whether ``inv`` is fully approved. An invoice waiting for its second approver (or reopened, rejected...)
+    must never leave with an APPROVED stamp on it."""
+    return bool(inv) and inv.get("status") == APPROVED
+
+
 def stamped_pdf(inv: dict[str, Any], gl_names: dict[str, str] | None = None) -> bytes:
-    """The approved invoice ``inv`` (a ``Store.get_invoice`` row) as a stamped PDF with its coding page."""
+    """The approved invoice ``inv`` (a ``Store.get_invoice`` row) as a stamped PDF with its coding page.
+
+    Raises ``ValueError`` when the invoice is not fully approved (see ``can_stamp``).
+    """
+    if not can_stamp(inv):
+        raise ValueError(f"Invoice {inv.get('id')} is not fully approved ({inv.get('status')}): no APPROVED stamp.")
     gl_names = gl_names or {}
     doc = _source_document(Path(inv.get("source_path") or ""))
     try:
@@ -185,10 +197,11 @@ def file_name(inv: dict[str, Any]) -> str:
 
 
 def batch_zip(invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None) -> bytes:
+    """The stamped PDFs of ``invoices`` in one ZIP. Invoices not fully approved are left out (see ``can_stamp``)."""
     out = io.BytesIO()
     names: set[str] = set()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        for inv in invoices:
+        for inv in filter(can_stamp, invoices):
             name = file_name(inv)
             if name.casefold() in names:  # Windows: "ACME" and "Acme" are the same file
                 name = name.replace(" - approved.pdf", f" (#{inv['id']}) - approved.pdf")

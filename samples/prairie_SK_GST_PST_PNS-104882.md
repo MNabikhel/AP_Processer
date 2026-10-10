@@ -1,6 +1,6 @@
 Prairie Network Supply Ltd.
 1150 8th Avenue, Regina, SK S4R 1C9
-GST# 609274185 RT0001    SK PST# 4471920
+GST# 609274188 RT0001    SK PST# 4471920
 
 # INVOICE
 

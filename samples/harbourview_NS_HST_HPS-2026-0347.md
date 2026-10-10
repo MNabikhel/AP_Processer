@@ -1,6 +1,6 @@
 Harbourview Professional Services LLP
 1801 Hollis Street, Suite 900, Halifax, NS B3J 3N4
-HST Registration No. 356201847 RT0001
+HST Registration No. 356201848 RT0001
 
 # INVOICE - PROFESSIONAL SERVICES
 

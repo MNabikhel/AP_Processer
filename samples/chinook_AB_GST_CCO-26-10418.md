@@ -1,6 +1,6 @@
 Chinook Courier & Office Services Ltd.
 3220 - 12 Street NE, Calgary, AB T2E 7S9
-GST Registration: 823145967 RT0001
+GST Registration: 823145966 RT0001
 
 # INVOICE
 

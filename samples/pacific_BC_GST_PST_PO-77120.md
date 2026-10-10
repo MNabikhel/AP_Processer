@@ -1,6 +1,6 @@
 Pacific Office Supply Ltd.
 880 West Georgia Street, Vancouver, BC V6C 2W6
-GST No. 555666777 RT0001    PST No. PST-1234-5678
+GST No. 555666775 RT0001    PST No. PST-1234-5678
 
 # INVOICE
 

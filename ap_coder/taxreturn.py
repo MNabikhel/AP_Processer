@@ -4,7 +4,8 @@
   treats the tax as recoverable
 * Input tax refunds (ITRs): the same for Quebec's QST
 * Claims at risk: tax claimed on an invoice of $30 or more that shows no valid GST/HST (or QST)
-  registration number (a documentary requirement for the claim), tax in a foreign currency (the return
+  registration number (a documentary requirement for the claim; a GST/HST number failing the CRA's check
+  digit is not a valid one), tax in a foreign currency (the return
   is in Canadian dollars), and approved invoices not exported to the ERP yet (the ERP's receivable will
   not match)
 
@@ -29,6 +30,7 @@ from .tax import (
     RECOVERABLE,
     TaxRateTable,
     TaxTreatment,
+    gst_check_digit_ok,
     regime_on,
     valid_gst_number,
     valid_qst_number,
@@ -40,9 +42,10 @@ DOCUMENT_THRESHOLD = 30.0  # below this total, no registration number is require
 
 NO_GST_NUMBER = "No valid GST/HST number"
 NO_QST_NUMBER = "No valid QST number"
+GST_CHECK_DIGIT = "GST/HST number fails the CRA check digit"
 FOREIGN = "Foreign currency: convert to CAD"
 NOT_EXPORTED = "Not exported yet"
-RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, FOREIGN}
+RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, FOREIGN}
 
 
 @dataclass
@@ -98,7 +101,9 @@ def _registration_issue(tax_type: str, doc: dict[str, Any]) -> tuple[str, str]:
         number = str(doc.get("qst_registration_number") or "")
         return number, "" if valid_qst_number(number) else NO_QST_NUMBER
     number = str(doc.get("gst_hst_registration_number") or "")
-    return number, "" if valid_gst_number(number) else NO_GST_NUMBER
+    if not valid_gst_number(number):
+        return number, NO_GST_NUMBER
+    return number, "" if gst_check_digit_ok(number) else GST_CHECK_DIGIT
 
 
 def province(tax_type: str, tax_line: dict[str, Any], doc: dict[str, Any]) -> str:

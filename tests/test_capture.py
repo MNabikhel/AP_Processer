@@ -113,7 +113,7 @@ def _top(cands, field):
                 "gst_amount": 120.0,
                 "qst_amount": 239.4,
                 "grand_total": 2759.4,
-                "gst_hst_registration_number": "987654321RT0001",
+                "gst_hst_registration_number": "987654324RT0001",
                 "qst_registration_number": "1234567890TQ0001",
             },
         ),
