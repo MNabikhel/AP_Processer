@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from itertools import product
 
 from .normalize import (
+    currency_evidence,
     find_currency,
     find_gst_numbers,
     find_qst_numbers,
@@ -58,6 +59,8 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (rf"statement\s*{_NO}", 0.6), (r"invoice\s*:", 0.7), (r"facture\s*:", 0.7), (r"invoice\b(?!\s*(?:date|total|amount|to\b|period))", 0.45),
         (r"facture\b(?!\s*(?:a\s*:?\s*[a-z]|date|de\s*la|totale))", 0.45),
         (r"(?:no|n\s?°|nº|n|numero)\.?\s*(?:de\s*)?(?:la\s*)?note\s*de\s*credit", 1.0), (r"credit\s*(?:note|memo)\b(?!\s*(?:date|total))", 0.6), (rf"ref(?:erence)?\.?\s*{_NO}?", 0.3), (r"(?:no\b\.?|n\s?°|nº|#)(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35),
+        # A credit note's title with its number: "Note de crédit 051527-CR", "Avis de crédit AC-104".
+        (r"(?:note|avis)\s*de\s*credit(?=\s*[:#]?\s*[a-z]{0,4}-?\d)", 0.6),
     ],
     "po_number": [
         (r"p\.?\s?o\.?(?![-\d])\s*(?!box\b|b\.?\s?p)(?:no\b\.?|#|number|n\s?°)?", 0.9), (r"purchase\s*order(?:\s*" + _NO + ")?", 1.0),
@@ -122,7 +125,10 @@ DISTRACTORS: dict[str, list[str]] = {
     "invoice_number": [r"invoice\s*date", r"invoice\s*total", r"invoice\s*amount", r"customer\s*(?:no|#|number|id)",
                        r"account\s*(?:no|#|number)", r"no\s*de\s*client", r"no\s*de\s*compte", r"client\s*(?:no|#)",
                        r"quote", r"soumission", r"order", r"commande", r"p\.?o\.?\b", r"phone", r"tel", r"fax",
-                       r"date"],
+                       r"date",
+                       # A credit note's reference to the invoice it credits is not its own number.
+                       r"facture\s*(?:originale|d'?\s*origine)", r"original\s*invoice", r"applies\s*to", r"against\s*invoice",
+                       r"re(?:f\.?|:)?\s*invoice", r"ref\.?\s*(?:de\s*(?:la\s*)?)?facture"],
     "po_number": [r"p\.?\s?o\.?\s*box", r"p\.?\s?o\.?\s*date", r"date\s*(?:du\s*)?(?:b\.?\s?c\.?|bon)", r"our\s*(?:order|ref)", r"notre\s*(?:commande|reference)", r"packing\s*slip", r"bon\s*de\s*livraison", r"c\.?\s?p\.?\s*\d", r"case\s*postale", r"sales\s*order", r"order\s*date",
                   r"date\s*de\s*commande"],
     "grand_total": [r"sub\s*-?\s*total", r"sous\s*-?\s*total", r"total\s*(?:tax|taxes|des\s*taxes)", r"previous",
@@ -805,6 +811,84 @@ def credit_printed_positive(layout: DocLayout) -> bool:
     return True
 
 
+def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
+    """The column headings a line segment holds, each with its box. Headings set close together read as one
+    segment ("Qty Unit Price"): when the segment is nothing but two or more different headings, each gets the
+    box of its own words, so a column's values are looked for under its heading and not the segment's middle."""
+    p = plain(line.text).strip()
+    whole = [(name, line.box) for name, rx in _HEAD.items() if name not in taken and rx.match(p)]
+    words = [plain(w.text) for w in line.words]
+    if len(words) < 2 or len(words) > 6:
+        return whole
+    cells: list[tuple[str, int, int]] = []  # (heading, first word, last word + 1)
+    i = 0
+    while i < len(words):
+        rest = " ".join(words[i:])
+        ends = [len(" ".join(words[i : j + 1])) for j in range(i, len(words))]
+        best = None
+        for name, rx in _HEAD.items():
+            m = rx.match(rest)
+            if m and m.end() in ends and (best is None or m.end() > best[1]):
+                best = (name, m.end())  # the longest heading here: "Unit Price", not "Unit"
+        if best is None:
+            return whole  # a word that is no heading: not a run of headings
+        n = ends.index(best[1]) + 1
+        cells.append((best[0], i, i + n))
+        i += n
+    if len(cells) < 2 or len({c[0] for c in cells}) < len(cells):
+        return whole
+    out = []
+    for name, a, b in cells:
+        box = union_all([w.box for w in line.words[a:b]])
+        if name not in taken and box is not None:
+            out.append((name, box))
+    return out
+
+
+_THREE_PLACES = re.compile(r"-?\d{1,3}([.,])\d{3}")  # "1.459": a price to three decimals, or 1,459
+_SPACED_PAIR = re.compile(r"(\d{1,3})[   ](\d{3}[.,]\d{1,2})")  # "3 250,00": quantity 3 at 250,00
+
+
+def _qty_times_price(segs: list[Line], nums: list[tuple[Line, list[tuple[float, int, int]]]], amt_seg: Line | None,
+                     amount: float) -> tuple[float, float] | None:  # fmt: skip
+    """The quantity and unit price of a row whose columns did not give two that make its amount: two numbers
+    left of the amount, in order, whose product is the amount. A number printed "1.459" may be a price to three
+    decimals as well as 1459, and "3 250,00" a quantity and a price set close together; among readings that fit,
+    those that read each separator as the amount's own decimal mark (or not) the way the amount does win."""
+    amt_text = (amt_seg.text if amt_seg else "").strip()
+    decimal = "," if re.search(r",\d{2}(?!\d)", amt_text) and not re.search(r"\.\d{2}(?!\d)", amt_text) else "."
+    # (position, value, how unnatural the reading is)
+    options: list[tuple[float, float, int]] = []
+    k = 0
+    for s in sorted(segs, key=lambda seg: seg.box.x0):
+        found = next((f for seg, f in nums if seg is s), [])
+        if s is amt_seg:
+            found = found[:-1]  # the amount itself
+        for value, a, b in found:
+            token = s.text[a:b].strip()
+            k += 1
+            options.append((k, value, 0))
+            three = _THREE_PLACES.fullmatch(token)
+            if three:
+                as_decimal = round(value / 1000, 4)
+                natural = three.group(1) == decimal
+                options[-1] = (k, value, 1 if natural else 0)
+                options.append((k, as_decimal, 0 if natural else 1))
+            pair = _SPACED_PAIR.fullmatch(token)
+            if pair:
+                second = re.sub(r"[.,]", ".", pair.group(2))
+                options.append((k, float(pair.group(1)), 1))
+                options.append((k + 0.5, float(second), 1))
+    best = None
+    for k1, q, cost1 in options:
+        for k2, p, cost2 in options:
+            if k2 <= k1 or q <= 0 or abs(q * p - amount) > 0.011:
+                continue
+            if best is None or cost1 + cost2 < best[0]:
+                best = (cost1 + cost2, q, p)
+    return (best[1], best[2]) if best else None
+
+
 def read_line_items(layout: DocLayout) -> list[LineReading]:
     items = _read_line_items(layout)
     if items and credit_printed_positive(layout):
@@ -819,13 +903,11 @@ def _read_line_items(layout: DocLayout) -> list[LineReading]:
     for page in layout.pages:
         header = None
         for line in page.lines:
-            cols = {}
+            cols: dict[str, Box] = {}
             for other in page.lines:
                 if abs(other.box.cy - line.box.cy) < 0.006:
-                    p = plain(other.text).strip()
-                    for name, rx in _HEAD.items():
-                        if name not in cols and rx.match(p):
-                            cols[name] = other.box
+                    for name, box in _heading_cells(other, cols):
+                        cols[name] = box
             if "amount" in cols and len(cols) >= 2 and ("description" in cols or "quantity" in cols):
                 header = (line.box.y1, cols)
                 break
@@ -871,6 +953,12 @@ def _read_line_items(layout: DocLayout) -> list[LineReading]:
                     None,
                 )
                 price = u[-1][0] if u else None
+            if {"quantity", "unit_price"} <= cols.keys() and not (
+                qty is not None and price is not None and abs(qty * price - amount) <= 0.011
+            ):
+                fit = _qty_times_price(segs, nums, amt_seg, amount)
+                if fit:
+                    qty, price = fit
             row_box = union_all([s.box for s in segs])
             score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
             items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score))
@@ -1061,9 +1149,11 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     cands.setdefault("invoice_number", []).extend(_glued_title_numbers(layout))
     cands.update(_registration_numbers(layout))
     cands["vendor_name"] = _vendor_names(layout)
-    currency = find_currency(layout.text())
+    currency = currency_evidence(layout.text())
     if currency:
-        cands["currency"] = [Reading("currency", currency, currency, [], 0.8, "pattern")]
+        # Several codes and none clearly the invoice's: its own evidence pattern, so it is not calibrated as sure.
+        method = "pattern" if currency[1] >= 0.8 else "pattern-several-codes"
+        cands["currency"] = [Reading("currency", currency[0], currency[0], [], currency[1], method)]
     items = read_line_items(layout)
     line_sum = round(sum(i.amount for i in items if i.amount is not None), 2) if items else None
     cands = _solve_totals(cands, line_sum)

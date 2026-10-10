@@ -29,10 +29,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .normalize import amounts_equal, gst_valid, norm_name, normalize_value, qst_valid
+from .normalize import amounts_equal, gst_valid, norm_name, normalize_value, parse_dates, qst_valid
 from .types import (
     AMOUNT_FIELDS,
     CHECK,
+    DATE_FIELDS,
     FIELDS,
     LIKELY,
     MISSING,
@@ -424,10 +425,16 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             reasons.append("readers write it differently: " + " / ".join(sorted(forms)))
         if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
-        ambiguous = all("ambiguous" in r.method for _, r in g.readings)
-        if ambiguous:
-            conf = min(conf, 0.6)
-            reasons.append("the date reads both day/month and month/day")
+        # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
+        # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
+        unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []
+        if unsure and all(unsure):
+            if all(u == "ambiguous" for u in unsure):
+                conf = min(conf, 0.6)
+                reasons.append("the date reads both day/month and month/day")
+            else:
+                conf = min(conf, SINGLE_READER_CAP)
+                reasons.append("the date reads both day/month and month/day: the day it arrived chose one")
         # The AI's coding is what an approval posts: a page value it does not share is not verified for it,
         # however well the page's own values add up.
         ai_top = (by_source.get("ai") or {}).get(field, [])[:1]
@@ -457,6 +464,21 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     _derive_tax_total(results)
     _vendor_master_name(results, checks, vendor)
     return results, checks
+
+
+def _date_unsure(r: Reading) -> str:
+    """Why a date reading may have the day and month the wrong way round: "ambiguous" (printed 03/04/2026 and
+    read so), "received" (the arrival date chose the order), or "" (the page settles it). A value found on
+    the page by locating it (the AI's, Document Intelligence's) is as ambiguous as the text it was found in."""
+    if "ambiguous" in r.method:
+        return "ambiguous"
+    if "+received" in r.method:
+        return "received"
+    if "located" in r.method or r.method == "di":
+        found = parse_dates(str(r.raw or ""))
+        if found and found[0][3]:
+            return "ambiguous"
+    return ""
 
 
 def _vendor_master_name(
