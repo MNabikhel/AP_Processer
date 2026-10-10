@@ -939,9 +939,9 @@ def test_models_in_use_with_a_general_model_or_none(serve, two_ocr_models, monke
     serve(lm_studio(v1_model("qwen3.5-9b", loaded=8192)))
     reader = page_reader.models_in_use(Settings())[1]
     assert (reader["model"], reader["state"]) == ("qwen3.5-9b", "fallback") and NOT_DOWNLOADED in reader["note"]
-    serve(lm_studio(v1_model(OVIS_KEY, loaded=20480)))  # OvisOCR2 alone: taken for the chat model too
+    serve(lm_studio(v1_model(OVIS_KEY, loaded=20480)))  # OvisOCR2 alone: never taken for the chat model
     coding = page_reader.models_in_use(Settings())[0]
-    assert coding["model"] == OVIS_KEY and "load a chat model" in coding["note"]
+    assert coding["model"] != OVIS_KEY
     serve({})
     from ap_coder.capture import layout
 

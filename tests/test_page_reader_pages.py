@@ -49,7 +49,7 @@ def ready(monkeypatch):
     """A page reader that is downloaded; its test reads every field right."""
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: _status())
     monkeypatch.setattr(page_reader, "load_reader", lambda settings, model=None: "")
-    monkeypatch.setattr(page_reader, "page_seconds_estimate", lambda settings: 180.0)
+    monkeypatch.setattr(page_reader, "page_seconds_estimate", lambda settings, model=None: 180.0)
 
     def tested(settings, model=None):
         rows = [
@@ -173,7 +173,7 @@ def test_a_reading_that_arrives_while_the_invoice_is_open_is_shown(db, monkeypat
     assert outcome.updated, outcome
     _ok(at.run())
     assert any("page reader has read this invoice" in t.value for t in at.toast)
-    assert f"Page reader {MODEL}: agrees on" in _captions(at)
+    assert "ovisocr2: agrees on" in _captions(at) and "figures on the page read the same" in _captions(at)
     assert at.session_state[f"inv{invoice_id}_page_reader_seen"]
 
 

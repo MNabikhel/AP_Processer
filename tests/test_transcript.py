@@ -298,7 +298,10 @@ def test_a_currency_the_page_does_not_show_is_flagged():
              (("missing", missing), ("ai", ai_only), ("read", read))}  # fmt: skip
     assert "CURRENCY_NOT_FOUND" in codes["missing"] and "CURRENCY_NOT_FOUND" in codes["ai"]
     assert "CURRENCY_NOT_FOUND" not in codes["read"]
-    assert ("warning", "CURRENCY_NOT_FOUND") == review_issues(_capture(missing))[-1][:2]
+    # Taken as CAD (how most Canadian invoices print): worth knowing. Another currency assumed: a warning.
+    assert ("info", "CURRENCY_NOT_FOUND") == review_issues(_capture(missing))[-1][:2]
+    usd = FieldResult("currency", "USD", 0.36, CHECK, [], {"ai": "USD"})
+    assert ("warning", "CURRENCY_NOT_FOUND") == review_issues(_capture(usd))[-1][:2]
     from ap_coder.help import help_for
 
     assert help_for("CURRENCY_NOT_FOUND").title == "Currency not printed"

@@ -255,8 +255,11 @@ def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, 
                 add(WARNING, "DI_AMOUNT_DIFFERS", f"prebuilt-invoice {di_name} = {amount}, model {attr} = {ours}")
 
 
-def currency_not_found() -> Issue:
+def currency_not_found(assumed: str | None = None) -> Issue:
     """The invoice prints no currency a reader of the page could read (no code such as CAD or USD, no € or £):
     the coding's currency is assumed (CAD, or USD from a supplier with a US address), so AP checks it. Raised
-    from what capture read (``capture.bridge.review_issues``)."""
-    return Issue(WARNING, "CURRENCY_NOT_FOUND", "the currency isn't printed clearly: check it")
+    from what capture read (``capture.bridge.review_issues``). Assumed CAD is how most Canadian invoices are
+    printed, so that is worth knowing only; any other assumed currency is a warning."""
+    if (assumed or "CAD").upper() == "CAD":
+        return Issue(INFO, "CURRENCY_NOT_FOUND", "no currency printed: taken as CAD")
+    return Issue(WARNING, "CURRENCY_NOT_FOUND", f"the currency isn't printed clearly: taken as {assumed}, check it")

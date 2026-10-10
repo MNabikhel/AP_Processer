@@ -265,15 +265,15 @@ class BackgroundReader(threading.Thread):
         self._settings_factory = settings_factory
         self._store_factory = store_factory
         self._cache_dir = cache_dir
-        self._stop = threading.Event()
+        self._halt = threading.Event()
         self.current: int | None = None  # the invoice being read now
         self.last: ReadOutcome | None = None
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
 
     def run(self) -> None:
-        while not self._stop.is_set():
+        while not self._halt.is_set():
             pause = IDLE_SECONDS
             try:
                 settings = self._settings_factory()
@@ -281,7 +281,7 @@ class BackgroundReader(threading.Thread):
                     pause = OFF_SECONDS
                 else:
                     store = self._store_factory()
-                    outcome = read_one(settings, store, cache_dir=self._cache_dir, should_stop=self._stop.is_set)
+                    outcome = read_one(settings, store, cache_dir=self._cache_dir, should_stop=self._halt.is_set)
                     if outcome is not None:
                         self.last = outcome
                         log.info("page reader: invoice %s %s (%s page(s), %.0f s)", outcome.invoice_id,
@@ -292,7 +292,7 @@ class BackgroundReader(threading.Thread):
             except Exception:  # never let the thread die: the next round tries again
                 log.exception("page reader round failed")
                 pause = OFF_SECONDS
-            self._stop.wait(pause)
+            self._halt.wait(pause)
 
 
 _background: BackgroundReader | None = None

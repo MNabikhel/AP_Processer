@@ -75,7 +75,7 @@ def review_issues(capture: CaptureResult) -> list[tuple[str, str, str]]:
         out.append(("info", "CAPTURE_CHECK_FIELDS", f"check on the page: {names} (highlighted in amber)"))
     currency = capture.fields.get("currency")
     if currency is not None and not currency_read(currency):
-        issue = currency_not_found()
+        issue = currency_not_found(str(currency.value or ""))
         out.append((issue.severity, issue.code, issue.message))
     return out
 
