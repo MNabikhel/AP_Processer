@@ -17,6 +17,7 @@ from typing import Any
 _DATE = re.compile(r"\b\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}\b")
 _FIGURE = re.compile(r"(?<![\w.])([-−(]?)\s?[$€£]?\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\)?)(%?)(?![\w])")
 _TAGS = re.compile(r"<[^>]+>")
+PAGE_BREAK = "<!-- PageBreak -->"  # between pages in OCR's text and Document Intelligence's (``extraction``)
 LISTED = 8  # figures listed per kind (read differently, only one reading has them)
 
 
@@ -70,6 +71,15 @@ class FigureComparison:
             "only_reader": self.only_reader[:LISTED],
             "only_first": self.only_first[:LISTED],
         }
+
+
+def first_pages(text: str, pages: int) -> str:
+    """The first ``pages`` pages of OCR's text (pages separated by ``PAGE_BREAK``): what the page reader read, when it
+    stopped at AP_PAGE_READER_MAX_PAGES, is compared with those pages only. A text without page breaks is kept
+    whole."""
+    if pages < 1 or PAGE_BREAK not in (text or ""):
+        return text or ""
+    return PAGE_BREAK.join(text.split(PAGE_BREAK)[:pages])
 
 
 def compare_figures(first: str, reader: str) -> FigureComparison:

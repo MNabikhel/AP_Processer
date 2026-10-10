@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import functools
 import json
 from pathlib import Path
 
@@ -91,6 +92,27 @@ def _test_table(test: dict) -> None:
     st.dataframe(frame, hide_index=True, width="stretch")
     if test.get("problem"):
         st.caption(test["problem"])
+
+
+@functools.cache
+def _test_page_count() -> int:
+    """The pages of the test invoice the page reader reads (both pages of the sample: the totals are on the second)."""
+    try:
+        return max(1, page_reader._page_count(page_reader.TEST_SAMPLE.read_bytes(), True))
+    except Exception:  # noqa: BLE001 - the sample missing or unreadable: the test itself says so
+        return 2
+
+
+def test_wait(settings: Settings, model: str) -> str:
+    """How long the test should take on this computer: the time ``model`` takes a page here, times the test
+    invoice's pages ("about 3 minutes"), or a plain guess before it has read a page."""
+    estimate = page_reader.page_seconds_estimate(settings, model=model)
+    if not estimate:
+        return "a few minutes on a laptop without a graphics card"
+    return page_reader.duration(estimate * _test_page_count())
+
+
+test_wait.__test__ = False  # type: ignore[attr-defined]  # not a pytest test
 
 
 def setup_steps(settings: Settings, status: page_reader.ReaderStatus, store: Store) -> list[tuple[str, str, str]]:
@@ -218,8 +240,7 @@ def page_reader_tab(store: Store) -> None:
                 st.rerun()
         if b2.button("Test the page reader", icon=":material/fact_check:", key="pr_test", type="primary",
                      disabled=not can_read, width="stretch"):  # fmt: skip
-            estimate = page_reader.page_seconds_estimate(settings)
-            wait = f"about {estimate / 60:.0f} min" if estimate else "a few minutes on a laptop without a graphics card"
+            wait = test_wait(settings, status.model)
             with st.spinner(f"Reading the test invoice with {status.model}: {wait}…"):
                 result = page_reader.test_reader(settings, model=status.model)
             record = dataclasses.asdict(result)

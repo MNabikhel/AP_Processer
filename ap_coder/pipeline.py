@@ -170,27 +170,28 @@ class InvoicePipeline:
         coding = result.coding
         # Lines nothing could code. A match on the account's name stays: on the samples a small model
         # (1.5B) picked the right account less often (11 of 41) than the name match did (21 of 41).
-        todo = [
-            (li.line_number, li.description, li.amount)
-            for li in coding.line_items
-            if li.predicted_gl_code == UNASSIGNED
-        ]
+        # Each is numbered by its place on the invoice, not its printed line number: those can repeat (a second
+        # page that numbers from 1 again), and a suggestion must never land on a line already coded.
+        todo = {n: li for n, li in enumerate(coding.line_items, start=1) if li.predicted_gl_code == UNASSIGNED}
         if not todo:
             return
         try:
-            picks = suggest_accounts(self.coder, coding.vendor_name, todo, history)
+            picks = suggest_accounts(
+                self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history
+            )
         except Exception as exc:  # the model is an extra here: the invoice is already read and checked
             log.warning("local model could not suggest accounts (%s); left for AP", exc)
             return
-        for li in coding.line_items:
-            if li.line_number in picks:
-                gl, cc, reason = picks[li.line_number]
-                li.predicted_gl_code = gl
-                if cc:
-                    li.predicted_cost_center = cc
-                li.reasoning_justification = (
-                    f"Suggested by the local model: {reason}" if reason else "Suggested by the local model"
-                )
+        for n, (gl, cc, reason) in picks.items():
+            li = todo.get(n)
+            if li is None:
+                continue
+            li.predicted_gl_code = gl
+            if cc:
+                li.predicted_cost_center = cc
+            li.reasoning_justification = (
+                f"Suggested by the local model: {reason}" if reason else "Suggested by the local model"
+            )
         model = getattr(self.coder, "_local_model", "") or "local model"
         result.model = f"local reader + {model}"
 
@@ -204,9 +205,13 @@ class InvoicePipeline:
             and not ex.settings.endpoint
         )
 
-    def process(self, path: str | Path, page_text: list[str] | None = None, save: bool = True) -> PipelineResult:
+    def process(
+        self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None
+    ) -> PipelineResult:
         """Read, code and check one invoice, and save it to the review queue (``save``). ``page_text``: the page
-        reader's reading of each page (a vision model), read as one more independent reader."""
+        reader's reading of each page (a vision model), read as one more independent reader. ``invoice_id``: the
+        invoice is already in the store as this row (read again by the page reader), so the checks against other
+        invoices (duplicate, vendor history, purchase order) leave it out instead of finding it against itself."""
         path = Path(path)
         result = PipelineResult(source=path)
         captured: tuple[Any, str, Any] | None = None  # (capture, supplier key, profile) when read without AI
@@ -265,6 +270,7 @@ class InvoicePipeline:
                 self.settings,
                 result.extraction,
                 store=self.store,
+                exclude_invoice_id=invoice_id,
                 feedback=feedback,
             )
         except Exception as exc:  # one bad invoice must not stop a batch

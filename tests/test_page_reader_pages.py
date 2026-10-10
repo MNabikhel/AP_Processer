@@ -163,7 +163,7 @@ def test_a_reading_that_arrives_while_the_invoice_is_open_is_shown(db, monkeypat
     transcript = (SAMPLES / f"{STEM}.md").read_text(encoding="utf-8")
 
     def read(settings, path, model=None, on_page=None, should_stop=None):
-        return page_reader.PageReading(model=MODEL, pages=[transcript], seconds=[120.0])
+        return page_reader.PageReading(model=MODEL, pages=[transcript], seconds=[120.0], page_count=1)
 
     monkeypatch.setattr(page_reader, "read_document", read)
     at = _ok(_review(invoice_id).run())
@@ -175,6 +175,60 @@ def test_a_reading_that_arrives_while_the_invoice_is_open_is_shown(db, monkeypat
     assert any("page reader has read this invoice" in t.value for t in at.toast)
     assert "ovisocr2: agrees on" in _captions(at) and "figures on the page read the same" in _captions(at)
     assert at.session_state[f"inv{invoice_id}_page_reader_seen"]
+
+
+def test_the_wait_for_the_test_is_per_page_times_its_pages(db, monkeypatch):
+    from ap_coder.webapp.page_reader_settings import _test_page_count, test_wait
+
+    asked = []
+
+    def estimate(settings, model=None):
+        asked.append(model)
+        return speeds[model]
+
+    speeds = {MODEL: 90.0, "fast": 2.0, "new": None}
+    monkeypatch.setattr(page_reader, "page_seconds_estimate", estimate)
+    assert _test_page_count() == 2  # the test invoice's two pages
+    assert test_wait(None, MODEL) == "about 3 minutes"  # 90 s a page, two pages (was "about 2 min")
+    assert test_wait(None, "fast") == "about 10 seconds"  # never "about 0 min"
+    assert "a few minutes" in test_wait(None, "new")  # not measured yet
+    assert asked == [MODEL, "fast", "new"]  # the model being tested, not whichever read last
+
+
+def test_the_queue_position_counts_only_who_is_ahead(db, monkeypatch, ready):
+    store, invoice_id, _ = _invoice(db, monkeypatch, mode="auto")
+    for other in (901, 902):  # queued after it
+        store.queue_page_read(other, "new invoice")
+    with store._conn() as conn:
+        conn.execute("UPDATE page_reads SET created_at = '2999-01-01T00:00:00' WHERE invoice_id IN (901, 902)")
+    at = _ok(_review(invoice_id).run())
+    assert "Page reader: next" in _captions(at)  # first in line: nothing ahead of it (was "2 ahead")
+
+    store.queue_page_read(900, "new invoice")
+    with store._conn() as conn:
+        conn.execute("UPDATE page_reads SET created_at = '2000-01-01T00:00:00' WHERE invoice_id = 900")
+    _ok(at.run())
+    assert "waiting to read it (1 ahead)" in _captions(at)
+
+
+def test_an_edit_made_as_the_reading_arrives_is_kept(db, monkeypatch, ready):
+    """The reading lands in the store, then the reviewer's first edit comes in before the screen looked again: the
+    edit is on that same run, not counted yet, and must not be wiped by the fields being drawn from the reading."""
+    store, invoice_id, _ = _invoice(db, monkeypatch, mode="auto")
+    inv = store.get_invoice(invoice_id)
+    at = _ok(_review(invoice_id).run())
+    key = f"inv{invoice_id}"
+    assert at.text_input(key=f"{key}_invoice_number").value == inv["ai_output"]["invoice_number"]
+
+    read = dict(inv["ai_output"], po_number="PO-FROM-THE-READER")
+    assert store.replace_proposal(invoice_id, read, inv["validation"], None,
+                                  meta={"page_reader": {"model": MODEL, "at": "2026-10-10T12:00:00"}})  # fmt: skip
+    _ok(at.text_input(key=f"{key}_invoice_number").input("CORRECTED-123").run())
+
+    assert at.text_input(key=f"{key}_invoice_number").value == "CORRECTED-123"
+    assert not any("fields show its reading now" in t.value for t in at.toast)
+    assert "your edits are kept" in _captions(at)
+    assert [b for b in at.button if b.key == f"{key}_page_reader_reset"]  # it can still start over from the reading
 
 
 def test_off_hides_the_page_reader_line(db, monkeypatch, ready):

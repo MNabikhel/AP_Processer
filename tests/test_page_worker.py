@@ -3,6 +3,7 @@ the page reader's answers are faked)."""
 
 import json
 import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,7 +52,8 @@ def fake_reader(monkeypatch):
 
     def read(settings, path, model=None, on_page=None, should_stop=None):
         calls["read"] += 1
-        return page_reader.PageReading(model=model or MODEL, pages=[calls.get("text", transcript)], seconds=[95.0])
+        return page_reader.PageReading(model=model or MODEL, pages=[calls.get("text", transcript)], seconds=[95.0],
+                                       page_count=1)  # fmt: skip
 
     monkeypatch.setattr(page_reader, "reader_status", status)
     monkeypatch.setattr(page_reader, "load_reader", load)
@@ -171,22 +173,191 @@ def test_an_edited_invoice_keeps_what_ap_typed(store, fake_reader):
 
     outcome = page_worker.read_one(settings, store)
 
-    assert outcome.status == "done" and not outcome.updated
+    assert outcome.status == "skipped" and not outcome.updated
     assert "already edited or decided" in outcome.message
     inv = store.get_invoice(first.invoice_id)
     assert inv["final_output"]["invoice_number"] == "TYPED-BY-AP" and "page_reader" not in (inv["meta"] or {})
-    assert store.page_read(first.invoice_id)["status"] == "done"
+    row = store.page_read(first.invoice_id)
+    assert row["status"] == "skipped" and "already edited or decided" in row["error"]
+    assert fake_reader == {"load": 0, "read": 0}  # its pages weren't read: no minutes spent for nothing
 
 
-def test_a_decided_invoice_is_not_changed(store, fake_reader):
+@pytest.mark.parametrize("decide", ["approve", "reject", "park"])
+def test_a_decided_invoice_is_not_read(store, fake_reader, decide):
     settings = _settings("auto", "all")
     first = _process(store, settings)
-    store.approve_invoice(first.invoice_id, first.output, "Pat")
+    if decide == "approve":
+        store.approve_invoice(first.invoice_id, first.output, "Pat")
+    elif decide == "reject":
+        store.reject_invoice(first.invoice_id, "Pat", "not ours")
+    else:
+        store.park_invoice(first.invoice_id, "Pat", "waiting for the buyer")
+    before = store.get_invoice(first.invoice_id)
 
     outcome = page_worker.read_one(settings, store)
 
-    assert outcome.status == "done" and not outcome.updated
-    assert store.get_invoice(first.invoice_id)["status"] == APPROVED
+    assert outcome.status == "skipped" and not outcome.updated and "already" in outcome.message
+    assert fake_reader == {"load": 0, "read": 0}
+    assert store.page_read(first.invoice_id)["status"] == "skipped"
+    after = store.get_invoice(first.invoice_id)
+    assert after == before and (decide != "approve" or after["status"] == APPROVED)
+    assert page_worker.read_one(settings, store) is None  # out of the queue
+
+
+def test_a_reading_is_not_a_duplicate_of_the_invoice_itself(store, fake_reader):
+    """The invoice is read again with the page reader's text while it is in the store: its own row is no duplicate
+    of it."""
+    settings = _settings("auto", "all")
+    first = _process(store, settings)
+    assert "DUPLICATE_INVOICE" not in {i["code"] for i in store.get_invoice(first.invoice_id)["validation"]["issues"]}
+
+    outcome = page_worker.read_one(settings, store)
+
+    assert outcome.status == "done" and outcome.updated, outcome
+    issues = store.get_invoice(first.invoice_id)["validation"]["issues"]
+    assert "DUPLICATE_INVOICE" not in {i["code"] for i in issues}, issues
+    # A real duplicate (the same invoice processed twice) is still found when the second one is read.
+    second = _process(store, settings)
+    assert page_worker.read_one(settings, store).invoice_id == second.invoice_id
+    issues = store.get_invoice(second.invoice_id)["validation"]["issues"]
+    assert any(i["code"] == "DUPLICATE_INVOICE" and f"#{first.invoice_id}" in i["message"] for i in issues), issues
+
+
+@pytest.mark.parametrize("pages_read", [0, 1])
+def test_a_stopped_reading_keeps_its_place_in_line(store, fake_reader, monkeypatch, pages_read):
+    """Stopped part way (time is up, the app is closing): nothing is folded in, and it waits to be read again."""
+    settings = _settings("auto", "all")
+    first = _process(store, settings)
+    before = store.get_invoice(first.invoice_id)
+
+    def stopped(settings, path, model=None, on_page=None, should_stop=None):
+        return page_reader.PageReading(model=MODEL, pages=["Page one\nWidget 1,234.00"][:pages_read],
+                                       seconds=[60.0][:pages_read], stopped=True, page_count=2)  # fmt: skip
+
+    monkeypatch.setattr(page_reader, "read_document", stopped)
+    outcome = page_worker.read_one(settings, store)
+
+    assert outcome.status == "postponed" and not outcome.updated and outcome.pages == pages_read
+    assert f"{pages_read} of 2" in outcome.message
+    assert store.page_read(first.invoice_id)["status"] == "waiting" and store.page_reads_waiting() == 1
+    after = store.get_invoice(first.invoice_id)
+    assert after["ai_output"] == before["ai_output"] and "page_reader" not in after["meta"]
+
+
+def test_a_reading_of_some_pages_only_is_not_folded_in(store, fake_reader, monkeypatch):
+    settings = _settings("auto", "all")
+    first = _process(store, settings)
+    before = store.get_invoice(first.invoice_id)
+
+    def partial(settings, path, model=None, on_page=None, should_stop=None):
+        return page_reader.PageReading(model=MODEL, pages=["Page one\nWidget 1,234.00"], seconds=[60.0],
+                                       page_count=2)  # fmt: skip
+
+    monkeypatch.setattr(page_reader, "read_document", partial)
+    outcome = page_worker.read_one(settings, store)
+
+    assert outcome.status == "failed" and "1 of 2" in outcome.message
+    assert store.get_invoice(first.invoice_id)["ai_output"] == before["ai_output"]
+
+
+def _two_page_reader(monkeypatch, tmp_path, transcribe):
+    """The real ``read_document`` on a two-page sample, with ``transcribe`` in place of the model."""
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: page_reader.ReaderStatus(
+        reachable=True, lm_studio=True, model=MODEL, document_reader=True, state="downloaded", candidates=[MODEL],
+        note=""))  # fmt: skip
+    monkeypatch.setattr(page_reader, "load_reader", lambda settings, model=None: "")
+    monkeypatch.setattr(page_reader, "cache_dir", lambda: tmp_path / "page-reader")
+    monkeypatch.setattr(page_reader, "transcribe", transcribe)
+
+
+TWO_PAGES = SAMPLES / "northwind_ON_HST_NW-2026-0912.pdf"
+
+
+def test_run_queue_finishes_the_page_under_way(store, monkeypatch, tmp_path):
+    """Time runs out while page 1 is read: page 1 is finished (and kept), page 2 isn't started, and the invoice keeps
+    its place in line, so the next run reads page 2 only."""
+    settings = _settings("auto", "all")
+    first = _process(store, settings, TWO_PAGES)
+    pages = []
+
+    def slow(settings, png, model=None, should_stop=None):
+        for _ in range(15):  # 1.5 s, past the deadline below, asking to stop all the while
+            if should_stop and should_stop():
+                raise page_reader.Stopped("stopped before the page was read")
+            time.sleep(0.1)
+        pages.append(png)
+        return f"Page {len(pages)}\nWidget 1,234.00"
+
+    _two_page_reader(monkeypatch, tmp_path, slow)
+    seen = []
+    done = page_worker.run_queue(settings, store, minutes=0.6 / 60, on_result=seen.append)
+
+    assert done == [] and len(seen) == 1 and seen[0].status == "postponed", seen
+    assert len(pages) == 1 and seen[0].pages == 1  # page 1 finished, page 2 not started
+    row = store.page_read(first.invoice_id)
+    assert row["status"] == "waiting" and row["pages"] == 1
+
+    pages.clear()
+    _two_page_reader(monkeypatch, tmp_path, lambda settings, png, model=None, should_stop=None: (
+        pages.append(png) or "Page 2\nTotal 2,457.83"))  # fmt: skip
+    outcome = page_worker.read_one(settings, store)
+    assert outcome.status == "done" and outcome.pages == 2 and len(pages) == 1  # page 1 came from the disk
+
+
+def test_the_background_reader_stops_mid_page(store, monkeypatch, tmp_path):
+    """The dashboard closing (``should_stop`` without ``finish_page``) stops at once; the invoice keeps its place."""
+    settings = _settings("auto", "all")
+    first = _process(store, settings, TWO_PAGES)
+    halt = threading.Event()
+
+    def stopped(settings, png, model=None, should_stop=None):
+        halt.set()
+        if should_stop and should_stop():
+            raise page_reader.Stopped("stopped before the page was read")
+        return "never"
+
+    _two_page_reader(monkeypatch, tmp_path, stopped)
+    outcome = page_worker.read_one(settings, store, should_stop=halt.is_set)
+
+    assert outcome.status == "postponed" and outcome.pages == 0
+    assert store.page_read(first.invoice_id)["status"] == "waiting"
+
+
+def test_queue_position_counts_who_is_ahead(store):
+    """Where an invoice is in the page reader's line: those waiting before it (oldest first, as ``next_page_read``
+    takes them) and the one being read now."""
+    for invoice_id in (11, 12, 13):
+        store.queue_page_read(invoice_id, "new invoice")
+    with store._conn() as conn:  # queued a second apart, 13 first
+        for invoice_id, at in ((13, "2026-10-10T09:00:00"), (11, "2026-10-10T09:00:01"), (12, "2026-10-10T09:00:02")):
+            conn.execute("UPDATE page_reads SET created_at = ? WHERE invoice_id = ?", (at, invoice_id))
+
+    assert [store.page_reads_ahead(i) for i in (13, 11, 12)] == [0, 1, 2]
+    assert store.page_reads_ahead(99) == 0  # not in line
+    assert store.next_page_read()["invoice_id"] == 13
+    assert [store.page_reads_ahead(i) for i in (11, 12)] == [1, 2]  # 13 is being read: still ahead of both
+    store.finish_page_read(13, "done")
+    assert [store.page_reads_ahead(i) for i in (11, 12)] == [0, 1]
+
+
+def test_figures_are_compared_on_the_pages_the_page_reader_read(store, fake_reader, monkeypatch):
+    """At most AP_PAGE_READER_MAX_PAGES pages are read: OCR's later pages aren't counted as figures it missed."""
+    from ap_coder import figures
+    from ap_coder.figures import PAGE_BREAK, compare_figures, first_pages
+
+    pages = [f"Page {p}\nLine A 1,{p}00.00\nLine B {p}50.75\nSubtotal 9,{p}12.40" for p in range(1, 8)]
+    full = f"\n\n{PAGE_BREAK}\n\n".join(pages)
+    read = "\n\n".join(pages[:5])
+    assert compare_figures(full, read).share < 0.75  # against the whole text, 6 figures look missed
+    assert compare_figures(first_pages(full, 5), read).share == 1.0
+    assert first_pages(full, 9) == full and first_pages("no breaks 1,234.00", 1) == "no breaks 1,234.00"
+
+    settings = _settings("auto", "all")
+    _process(store, settings)
+    seen = []
+    monkeypatch.setattr(figures, "first_pages", lambda text, count: seen.append(count) or first_pages(text, count))
+    assert page_worker.read_one(settings, store).status == "done"
+    assert seen == [1]  # the one page it read
 
 
 def test_not_enough_memory_leaves_it_waiting(store, fake_reader, monkeypatch):

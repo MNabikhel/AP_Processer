@@ -30,6 +30,10 @@ TEACHABLE = (
     "qst_registration_number", "payment_terms", "currency", "subtotal", "tax_total", "grand_total",
 )  # fmt: skip
 AMOUNT_FORM_FIELDS = {"subtotal", "tax_total", "grand_total"}
+# The review form's header fields (widgets keyed ``inv<id>_<field>``).
+FORM_FIELDS = (
+    *TEACHABLE, "supplier_province", "ship_to_province", "remit_bank_account", "original_invoice_number",
+)  # fmt: skip
 
 
 def _teach_key(key: str) -> str:
@@ -72,15 +76,47 @@ def document_head(file_name: str) -> str:
     )
 
 
+def edited_on_screen(key: str, shown: dict[str, Any]) -> bool:
+    """Whether the review form holds something other than ``shown`` (the proposal its fields were drawn from): a
+    header field typed or taught, or a line or tax row changed, added or deleted. Read from the widgets themselves,
+    so an edit made on the run under way counts too."""
+    state = st.session_state
+    for field in FORM_FIELDS:
+        name = f"{key}_{field}"
+        if name not in state:
+            continue
+        value, before = state[name], shown.get(field, "CAD" if field == "currency" else "")  # the form's defaults
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            try:
+                if abs(float(before or 0) - float(value)) > 0.005:
+                    return True
+            except (TypeError, ValueError):
+                return True
+        elif str(value or "").strip() != str(before or "").strip():
+            return True
+    for grid in ("lines", "taxlines"):
+        edits = state.get(f"{key}_{grid}")
+        if isinstance(edits, dict) and any(edits.get(k) for k in ("edited_rows", "added_rows", "deleted_rows")):
+            return True
+    return False
+
+
 def follow_page_reader(invoice_id: int, key: str, meta: dict[str, Any]) -> None:
     """The page reader's reading came in while this invoice was open (it reads in the background): the fields show
     it at once when the reviewer hasn't typed anything; what they typed is never changed under them (a note under the
     document offers to start over from the reading instead)."""
     at = (meta.get("page_reader") or {}).get("at", "")
     seen = st.session_state.setdefault(f"{key}_page_reader_seen", at)
+    if f"{key}_page_reader_base" not in st.session_state:  # what the fields were drawn from, before any reading
+        inv = get_store().get_invoice(invoice_id) or {}
+        st.session_state[f"{key}_page_reader_base"] = inv.get("final_output") or inv.get("ai_output") or {}
     if at == seen:
         return
-    if invoice_id in (st.session_state.get("unsaved_edits") or set()):
+    # Edits counted on an earlier run, or made on this very run (the reading came in just before it, and this run's
+    # edit isn't counted yet): either way they are kept.
+    if invoice_id in (st.session_state.get("unsaved_edits") or set()) or edited_on_screen(
+        key, st.session_state[f"{key}_page_reader_base"]
+    ):
         st.session_state[f"{key}_page_reader_seen"] = at
         st.session_state[f"{key}_page_reader_kept"] = True
         return
@@ -105,7 +141,7 @@ def _page_reader_waiting(invoice_id: int) -> None:
         if not model:
             st.caption(f":material/pause_circle: Page reader: waiting, not reading yet ({md(why)}).")
             return
-    ahead = max(store.page_reads_waiting() - 1, 0) if state == "waiting" else 0
+    ahead = store.page_reads_ahead(invoice_id) if state == "waiting" else 0  # in line before it, and the one read now
     note = "reading it now" if state == "reading" else f"waiting to read it ({ahead} ahead)" if ahead else "next"
     st.caption(f":material/hourglass_top: Page reader: {note}. The fields update when it is done, unless you have "
                "edited the invoice.")  # fmt: skip
