@@ -267,6 +267,7 @@ def test_several_credit_notes_together_exceed_the_invoice(tmp_path, reference):
     codes, _ = _codes(store, {**credit, "invoice_number": "CN-7"}, reference)  # 18,532.00 in all
     assert codes.get("CREDIT_EXCEEDS_INVOICE") == "warning"
     first_credit = next(i["id"] for i in store.list_invoices() if i["invoice_number"] == "CN-0")
+    store.reopen(first_credit, "Jane", "duplicate")  # an approved credit is reopened, then rejected
     store.reject_invoice(first_credit, "Jane", "duplicate")  # a rejected credit does not count
     codes, _ = _codes(store, {**credit, "invoice_number": "CN-7"}, reference)
     assert "CREDIT_EXCEEDS_INVOICE" not in codes

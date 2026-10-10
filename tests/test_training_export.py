@@ -29,15 +29,16 @@ PNG = b"\x89PNG\r\n\x1a\n"
 README_TEXTS = (
     "OvisOCR2", "Qwen 3.5", "it leaves the computer only if someone copies it", "fields.jsonl", "chat.jsonl",
     "1 because their file is no longer on the computer", "1 because they are demo invoices",
-    "1 because they were approved without a person",
+    "1 because they were approved without a person", "1 because they were bulk-approved unchanged",
+    "including bank account and remittance details",
 )  # fmt: skip
 
 
-def _approve(store, path, final, reviewer="Ann", meta=None, capture=None):
+def _approve(store, path, final, reviewer="Ann", meta=None, capture=None, bulk=False):
     invoice_id = store.add_invoice(path, final, {"requires_review": False}, meta=meta)
     if capture is not None:
         store.save_capture(invoice_id, capture)
-    store.approve_invoice(invoice_id, final, reviewer)
+    store.approve_invoice(invoice_id, final, reviewer, bulk=bulk)
     if capture is not None:
         learn_from_approval(store, invoice_id, final, actor=reviewer)
     return invoice_id
@@ -62,6 +63,7 @@ def approved(tmp_path, ground_truth):
         "photo": _approve(store, _photo(tmp_path / "photo.jpg"), photo_truth),
         "demo": _approve(store, PDF, ground_truth, meta={"demo": True}),
         "autonomous": _approve(store, PDF, ground_truth, reviewer=AUTONOMOUS_REVIEWER),
+        "bulk": _approve(store, PDF, ground_truth, bulk=True),  # approved unchanged, never opened
         "gone": _approve(store, shutil.copy(PDF, tmp_path / "gone.pdf"), ground_truth),
         "text": _approve(store, SAMPLES / f"{SAMPLE_STEM}.md", ground_truth),
         "review": store.add_invoice(PDF, ground_truth, {"requires_review": True}),
@@ -79,7 +81,7 @@ def test_export_training_set(approved, tmp_path, ground_truth):
     out = tmp_path / "exports" / "training.zip"
     counts = export_training_set(store, out)
     assert counts == {"invoices": 2, "pages": pdf_pages + 1, "missing_files": 1, "no_pages": 1, "demo": 1,
-                      "unreviewed": 1}  # fmt: skip
+                      "unreviewed": 1, "bulk": 1}  # fmt: skip
     with zipfile.ZipFile(out) as zf:
         names = set(zf.namelist())
         images = sorted(n for n in names if n.startswith("images/"))
@@ -112,6 +114,7 @@ def test_export_training_set(approved, tmp_path, ground_truth):
     readme = " ".join(readme.split())
     for text in README_TEXTS:
         assert text in readme, text
+    assert "Bank account numbers" not in readme  # the page images can show them: never promised away
 
 
 def test_export_since_a_date_and_into_memory(approved):
@@ -124,9 +127,20 @@ def test_export_since_a_date_and_into_memory(approved):
         assert "approved since 2026-02-01" in zf.read("README.txt").decode("utf-8")
     picked = training_invoices(store)
     assert [i["id"] for i in picked["invoices"]] == [ids["pdf"], ids["photo"], ids["gone"], ids["text"]]
-    assert (picked["demo"], picked["unreviewed"]) == (1, 1)
+    assert (picked["demo"], picked["unreviewed"], picked["bulk"]) == (1, 1, 1)
     with pytest.raises(ValueError):
         training_invoices(store, "last week")
+
+
+def test_a_bulk_approval_is_left_out_until_a_person_approves_it_again(approved, ground_truth):
+    # Bulk approval takes the AI's values without anyone opening the invoice: no checked answers to train on.
+    # Reopened and approved by a person from the review screen, its latest approval is a checked one.
+    store, ids = approved
+    assert ids["bulk"] not in [i["id"] for i in training_invoices(store)["invoices"]]
+    store.reopen(ids["bulk"], "Ann", "check the PO")
+    store.approve_invoice(ids["bulk"], ground_truth, "Ann")
+    picked = training_invoices(store)
+    assert ids["bulk"] in [i["id"] for i in picked["invoices"]] and picked["bulk"] == 0
 
 
 def test_an_empty_export_still_explains_itself(tmp_path):

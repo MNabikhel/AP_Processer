@@ -10,8 +10,9 @@ tools start from:
 * ``chat.jsonl``: the same as chat fine-tuning rows (the pages and an instruction, then the approved JSON);
 * ``README.txt``: what each file is and how it can be used.
 
-Only invoices a person approved go in: never a demo invoice (made up) or one approved without a person
-(nobody checked its values). The ZIP is written where it is asked to be and goes nowhere else.
+Only invoices a person checked go in: never a demo invoice (made up), one approved without a person, or one
+bulk-approved unchanged without anyone opening it (nobody checked its values on the page). The ZIP is
+written where it is asked to be and goes nowhere else.
 """
 
 from __future__ import annotations
@@ -52,8 +53,9 @@ def _since(since: str | dt.date | None) -> str:
 
 def training_invoices(store: Store, since: str | dt.date | None = None) -> dict[str, Any]:
     """{"invoices": the approved invoices a training set is made from (oldest first), "demo": demo invoices
-    left out, "unreviewed": invoices approved without a person, left out}. ``since``: only invoices approved
-    on or after this date (YYYY-MM-DD)."""
+    left out, "unreviewed": invoices approved without a person, left out, "bulk": invoices bulk-approved
+    unchanged without anyone opening them (their latest approval says so), left out}. ``since``: only invoices
+    approved on or after this date (YYYY-MM-DD)."""
     from .capture.workflow import AUTONOMOUS_REVIEWER
 
     start = _since(since)
@@ -61,8 +63,18 @@ def training_invoices(store: Store, since: str | dt.date | None = None) -> dict[
         ("id", "file_name", "source_path", "reviewer", "reviewed_at", "second_reviewed_at", "final_output", "meta"),
         status=APPROVED,
     )
+    # The latest approval of each invoice (events come newest first): a bulk approval took the AI's values as
+    # they were, without anyone looking at the page.
+    bulk_ids: set[int] = set()
+    seen: set[int] = set()
+    for e in store.events(actions=["approved"], limit=10_000_000):
+        if e["invoice_id"] in seen:
+            continue
+        seen.add(e["invoice_id"])
+        if (e["detail"] or {}).get("bulk"):
+            bulk_ids.add(e["invoice_id"])
     picked: list[dict[str, Any]] = []
-    demo = unreviewed = 0
+    demo = unreviewed = bulk = 0
     for r in rows:
         approved_at = max(r["reviewed_at"] or "", r["second_reviewed_at"] or "")  # approved once both have
         if not r["final_output"] or (start and approved_at < start):
@@ -71,9 +83,11 @@ def training_invoices(store: Store, since: str | dt.date | None = None) -> dict[
             demo += 1
         elif r["reviewer"] == AUTONOMOUS_REVIEWER:
             unreviewed += 1
+        elif r["id"] in bulk_ids:
+            bulk += 1
         else:
             picked.append({**r, "approved_at": approved_at})
-    return {"invoices": picked, "demo": demo, "unreviewed": unreviewed}
+    return {"invoices": picked, "demo": demo, "unreviewed": unreviewed, "bulk": bulk}
 
 
 def page_pngs(path: str | Path, max_pages: int = MAX_PAGES) -> list[bytes]:
@@ -150,10 +164,11 @@ def export_training_set(
     """Write the training ZIP to ``dest`` (a path, or a binary file such as ``io.BytesIO``). Returns counts:
     invoices and pages written; invoices left out because their file is no longer on this computer
     (``missing_files``) or has no page to show (``no_pages``: a text file, a damaged file); and approved
-    invoices that never go in (``demo``, ``unreviewed``: approved without a person)."""
+    invoices that never go in (``demo``, ``unreviewed``: approved without a person, ``bulk``: bulk-approved
+    unchanged without anyone opening them)."""
     picked = training_invoices(store, since)
     counts = {"invoices": 0, "pages": 0, "missing_files": 0, "no_pages": 0, "demo": picked["demo"],
-              "unreviewed": picked["unreviewed"]}  # fmt: skip
+              "unreviewed": picked["unreviewed"], "bulk": picked["bulk"]}  # fmt: skip
     if isinstance(dest, (str, Path)):
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
     fields_rows: list[str] = []
@@ -199,6 +214,7 @@ _LEFT_OUT = (
     ("no_pages", "their file has no page to show (a text file, or a damaged file)"),
     ("demo", "they are demo invoices (made up)"),
     ("unreviewed", "they were approved without a person (nobody checked their values)"),
+    ("bulk", "they were bulk-approved unchanged, without anyone opening them (nobody checked them on the page)"),
 )
 
 
@@ -215,6 +231,8 @@ def readme(counts: dict[str, int], since: str = "") -> str:
 ======================
 
 {made}
+Only invoices a person checked are in it: never demo invoices, invoices AP Coder approved on its own,
+or invoices bulk-approved unchanged without anyone opening them.
 
 What is in this ZIP
 -------------------
@@ -243,7 +261,9 @@ Where it goes
 -------------
 AP Coder made this file on your computer and sends it nowhere: it leaves the computer only if someone
 copies it. It holds your suppliers' real invoices and amounts, so keep and share it as you would the
-invoices themselves. Bank account numbers and the GL coding are not in it.
+invoices themselves. The page images show anything printed on the invoices, including bank account
+and remittance details when a supplier prints them: share it only with people who may see those. The
+GL coding is not in it.
 
 What it is for
 --------------
