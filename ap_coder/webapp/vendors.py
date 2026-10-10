@@ -195,7 +195,7 @@ def _master_importer(store: Store) -> None:
             st.warning(
                 f"{ui.plural(len(dupes), 'vendor')} appear more than once in the file under similar names (merged "
                 "here; one on hold keeps the vendor on hold). Often the same supplier set up twice in the ERP: "
-                + "; ".join(" / ".join(n) for n in dupes[:8])
+                + md("; ".join(" / ".join(n) for n in dupes[:8]))
             )
 
 

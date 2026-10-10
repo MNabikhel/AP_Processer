@@ -340,7 +340,11 @@ def new_files(folder: Path, store: Store, now: float | None = None) -> list[Path
 
 def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folder: Path) -> tuple[int, int]:
     """One check of the watched folder: (invoices processed, of which failed)."""
-    for mail in unpack_folder(folder):  # invoices attached to saved emails (.eml)
+    for mail in unpack_folder(folder):  # invoices attached to saved emails (.eml); a bad one is filed away
+        if mail.error:
+            print(f"{time.strftime('%H:%M:%S')} {mail.email}: {mail.error}; moved to emails/could not read",
+                  file=sys.stderr)  # fmt: skip
+            continue
         print(f"{time.strftime('%H:%M:%S')} {mail.email}: {len(mail.saved)} attachment(s) to process",
               file=sys.stderr)  # fmt: skip
     files = new_files(folder, store)

@@ -127,3 +127,35 @@ def test_watch_once_fails_when_every_invoice_failed(tmp_path, monkeypatch):
     (inbox / "b.pdf").write_bytes(b"%PDF-1.4 b")
     os.utime(inbox / "b.pdf", (1_700_000_000, 1_700_000_000))
     assert cli.main(_watch_args(tmp_path, "--once")) == 0
+
+
+def test_a_crafted_email_does_not_stop_the_watcher(tmp_path, monkeypatch, capsys):
+    """An email the watcher cannot read (1000 forwarded emails inside each other) stopped every check, so no
+    invoice was processed any more: it is filed away, said, and the invoices next to it are processed."""
+    from types import SimpleNamespace
+
+    from ap_coder import cli
+
+    from .test_mailbox import nested_email
+
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    (inbox / "deep.eml").write_bytes(nested_email(1000))
+    (inbox / "a.pdf").write_bytes(b"%PDF-1.4 a")
+    for f in inbox.iterdir():
+        os.utime(f, (1_700_000_000, 1_700_000_000))
+    processed = []
+
+    class Pipeline:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def process(self, path):
+            processed.append(path.name)
+            return SimpleNamespace(ok=True, error=None, output={"vendor_name": "V"}, report=None)
+
+    monkeypatch.setattr(cli, "InvoicePipeline", Pipeline)
+    assert cli.main(_watch_args(tmp_path, "--once")) == 0
+    assert processed == ["a.pdf"]
+    assert (inbox / "emails" / "could not read" / "deep.eml").exists()
+    assert "deep.eml: could not be read" in capsys.readouterr().err
