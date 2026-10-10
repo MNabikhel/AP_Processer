@@ -289,7 +289,7 @@ def vendor_detail(store: Store, v: dict[str, Any]) -> None:
     key, name = v["vendor_key"], v["vendor_name"] or ""
     invoices = store.vendor_invoices(key)
     reference = reference_or_none(store)
-    with card(f"vendor_{_slug(key)}"):
+    with card(f"vendor_detail_{_slug(key)}"):  # a vendor keyed "list" is not the list card
         status = ui.pill("On hold", "warn", "front_hand") if v["status"] == ON_HOLD else ui.pill("Active", "ok")
         st.html(
             f"<div style='display:flex;gap:.9rem;align-items:center;margin-bottom:.4rem'>{ui.avatar(name)}"

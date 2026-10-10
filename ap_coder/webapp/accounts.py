@@ -283,6 +283,13 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
         names = {a["code"]: f"{a['code']} · {a['description']}" for a in gl}
         cc_codes = ["", *(a["code"] for a in cc)]
         df = _rules_frame(current)
+        # The draft kept for the session starts from the rules as stored. When they change underneath it (a
+        # backup restored, another user's save), the grid starts over from them: Save never writes back old rules.
+        stored = tuple((r.vendor, r.contains, r.gl_code, r.cost_center) for r in current)
+        if st.session_state.get("_rules_grid_from") != stored:
+            if "_rules_grid_from" in st.session_state:
+                replace_editor("rules_grid", df)
+            st.session_state["_rules_grid_from"] = stored
         edited = persistent_editor(
             df, "rules_grid",
             column_config={
@@ -343,7 +350,7 @@ def rules_editor(store: Store, gl: list[dict[str, Any]], cc: list[dict[str, Any]
                 if button.button("Add rule", key=f"rule_add_{n}", icon=":material/add:", width="stretch"):
                     store.save_coding_rules([*current, rule], actor=reviewer())
                     replace_editor("rules_grid", _rules_frame(store.coding_rules()))
-                    notify(f"Rule added: {rule.vendor} → {rule.gl_code}.", ":material/rule_settings:")
+                    notify(f"Rule added: {md(rule.vendor)} → {rule.gl_code}.", ":material/rule_settings:")
                     st.rerun()
 
 
