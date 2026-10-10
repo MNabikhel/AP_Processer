@@ -620,7 +620,7 @@ def take_lock() -> bool:
     except OSError:
         return True
     try:
-        if WINDOWS:
+        if os.name == "nt":  # the operating system's own lock (not WINDOWS, which tests set to try either path)
             import msvcrt
 
             handle.seek(0)
