@@ -275,6 +275,9 @@ def ai_model_tab() -> None:
             forget_status()
             notify(f"Saved {ui.plural(len(changed), 'change')}." if changed else "Nothing changed.", ":material/save:")
             st.rerun()
+    from ap_coder.webapp.page_reader_settings import lm_studio_models_card
+
+    lm_studio_models_card(settings, "ai")
 
 
 def _reference(store: Store):

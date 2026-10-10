@@ -182,3 +182,29 @@ def test_off_hides_the_page_reader_line(db, monkeypatch, ready):
     at = _ok(_review(invoice_id).run())
     assert not [b for b in at.button if b.key == f"inv{invoice_id}_read_pages"]
     assert "Page reader" not in _captions(at)
+
+
+def test_setup_checklist_and_the_models_lm_studio_has(db, ready, monkeypatch):
+    rows = [{"model": MODEL, "loaded": True, "context": 20480, "vision": True, "document_reader": True,
+             "used_for": "reads pages"}]  # fmt: skip
+    monkeypatch.setattr(page_reader, "lm_studio_models", lambda settings, use_cache=True: rows)
+    at = _ok(_settings_page().run())
+    html = _html(at)
+    assert "LM Studio is running" in html and "OvisOCR2 is downloaded" in html and "Tested and linked" in html
+    assert "Test the page reader below" in html  # not linked yet: the next step says what to do
+    tables = [d.value for d in at.dataframe]
+    assert any(MODEL in t["Model"].tolist() and "yes, 20,480 tokens" in t["Loaded"].tolist() for t in tables
+               if "Model" in t.columns and "Loaded" in t.columns)  # fmt: skip
+
+
+def test_download_button_when_ovisocr2_is_missing(db, monkeypatch):
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: page_reader.ReaderStatus(
+        reachable=True, lm_studio=True, model="", document_reader=False, state="missing", candidates=[],
+        note=page_reader.NOT_DOWNLOADED))  # fmt: skip
+    monkeypatch.setattr(page_reader, "download_reader", lambda settings: ("job_9", ""))
+    monkeypatch.setattr(page_reader, "download_progress", lambda settings, job: {
+        "status": "downloading", "done": 400_000_000, "total": 1_000_000_000, "seconds_left": 120})  # fmt: skip
+    at = _ok(_settings_page().run())
+    _ok(at.button(key="pr_download").click().run())
+    assert at.session_state["pr_download_job"] == "job_9"
+    assert any("Downloading OvisOCR2: 400 of 1,000 MB" in str(p.proto) for p in at.get("progress"))

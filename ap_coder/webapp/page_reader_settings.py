@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import page_reader, ui
-from ap_coder.config import normalise_base_url
+from ap_coder.config import Settings, normalise_base_url
 from ap_coder.page_worker import TEST_KEY, confirmed, figure_totals, saved_test
 from ap_coder.store import Store
 from ap_coder.webapp.common import PUBLIC_DEMO, card, esc, get_settings, not_in_public_demo, notify
@@ -90,6 +90,111 @@ def _test_table(test: dict) -> None:
         st.caption(test["problem"])
 
 
+DOWNLOAD_KEY = "pr_download_job"  # the download LM Studio is doing for this session
+
+
+def setup_steps(settings: Settings, status: page_reader.ReaderStatus, store: Store) -> list[tuple[str, str, str]]:
+    """(state, step, detail) for the page reader's set-up, in order: "ok" when done, "todo" when it is next."""
+    running = status.reachable and status.lm_studio
+    downloaded = status.document_reader or any(page_reader.document_reader(m) for m in status.candidates)
+    linked = confirmed(store, status.model)
+    mode = settings.page_reader.mode
+    reading = {"auto": "in the background, after each invoice", "ask": "when you ask, from the invoice",
+               "off": "turned off (How it is used, below)"}[mode]  # fmt: skip
+    return [
+        ("ok" if running else "todo", "LM Studio is running",
+         "its server answers" if running else "start LM Studio, then its server (Developer tab, Start server)"),
+        ("ok" if downloaded else "todo", "OvisOCR2 is downloaded",
+         "in LM Studio" if downloaded else "Download OvisOCR2 below (about 1 GB), or in LM Studio"),
+        ("ok" if linked else "todo", "Tested and linked",
+         f"{status.model} passed its test" if linked else "Test the page reader below (a few minutes)"),
+        ("ok" if mode != "off" else "todo", "Reading invoices", reading),
+    ]  # fmt: skip
+
+
+def _download_button(settings: Settings) -> None:
+    job = st.session_state.get(DOWNLOAD_KEY)
+    if job:
+        _download_progress(job)
+        return
+    if st.button("Download OvisOCR2", icon=":material/download:", key="pr_download", type="primary",
+                 help="LM Studio downloads the bartowski build at Q8_0 (about 1 GB) from Hugging Face."):  # fmt: skip
+        job, problem = page_reader.download_reader(settings)
+        if problem:
+            st.error(problem)
+            return
+        if job:
+            st.session_state[DOWNLOAD_KEY] = job
+        else:
+            notify("OvisOCR2 is downloaded.", ":material/check_circle:")
+        st.rerun()
+
+
+@st.fragment(run_every=5)
+def _download_progress(job: str) -> None:
+    """LM Studio's download, looked up again every few seconds; the page is drawn again when it is done."""
+    progress = page_reader.download_progress(get_settings(), job)
+    if progress["status"] == "completed":
+        st.session_state.pop(DOWNLOAD_KEY, None)
+        notify("OvisOCR2 is downloaded. Next: Test the page reader.", ":material/check_circle:")
+        st.rerun(scope="app")
+    if progress["status"] == "failed":
+        st.session_state.pop(DOWNLOAD_KEY, None)
+        st.error("LM Studio couldn't finish the download: try again, or download OvisOCR2 in LM Studio itself.")
+        return
+    done, total = progress["done"], progress["total"]
+    left = progress["seconds_left"]
+    text = f"Downloading OvisOCR2: {done / 1e6:,.0f} of {total / 1e6:,.0f} MB" if total else "Downloading OvisOCR2…"
+    if left:
+        text += f", about {max(left / 60, 1):.0f} min left"
+    st.progress(min(done / total, 1.0) if total else 0.0, text=text)
+
+
+def lm_studio_models_card(settings: Settings, key: str) -> None:
+    """Every model LM Studio has, whether it is loaded (and with what context) and what AP Coder uses it for: so the
+    set-up can be checked at a glance."""
+    with card(f"lm_models_{key}"):
+        head, check = st.columns([3, 1], vertical_alignment="center")
+        head.markdown("#### Models in LM Studio")
+        head.caption("What LM Studio has downloaded, which are loaded now, and what AP Coder uses each one for.")
+        fresh = check.button("Check again", icon=":material/refresh:", key=f"lm_models_check_{key}", width="stretch")
+        rows = page_reader.lm_studio_models(settings, use_cache=not fresh)
+        if rows is None:
+            st.caption(
+                ":material/error: LM Studio isn't answering: start it, then its server (Developer tab, Start server). "
+                "Without it, invoices are still read by OCR and coded from what AP approved."
+            )
+            return
+        if not rows:
+            st.caption("LM Studio has no chat or vision model downloaded yet.")
+            return
+        frame = pd.DataFrame([{
+            "Model": r["model"],
+            "Loaded": (f"yes, {r['context']:,} tokens" if r["context"] else "yes") if r["loaded"] else "no",
+            "Reads pages": "document reader" if r["document_reader"] else ("can see" if r["vision"] else "no"),
+            "Used for": r["used_for"] or "—",
+        } for r in rows])  # fmt: skip
+        st.dataframe(frame, hide_index=True, width="stretch")
+        # The AI model tab offers chat models first, the page reader's tab document readers first.
+        unloaded = [r["model"] for r in sorted(rows, key=lambda r: r["document_reader"] == (key == "ai"))
+                    if not r["loaded"]]  # fmt: skip
+        if unloaded:
+            pick, go = st.columns([3, 1], vertical_alignment="bottom")
+            model = pick.selectbox("Load a model now", unloaded, key=f"lm_models_pick_{key}",
+                                   help="A chat model with an 8,192-token context; the page reader with the context "
+                                   "a page needs.")  # fmt: skip
+            if go.button("Load", icon=":material/play_arrow:", key=f"lm_models_load_{key}", width="stretch"):
+                with st.spinner(f"LM Studio is loading {model}…"):
+                    problem = page_reader.load_model(settings, model)
+                if problem:
+                    st.error(problem)
+                else:
+                    notify(f"{model} is loaded.", ":material/check_circle:")
+                    st.rerun()
+        st.caption("A model that isn't loaded is loaded by LM Studio when AP Coder first asks it (the page reader with "
+                   "the context a page needs).")  # fmt: skip
+
+
 def page_reader_tab(store: Store) -> None:
     if PUBLIC_DEMO:
         with card("page_reader"):
@@ -113,10 +218,14 @@ def page_reader_tab(store: Store) -> None:
         if status.note:
             st.caption(status.note)
         st.html(f"<div style='margin:.25rem 0 .5rem'>{_test_html(saved_test(store), status.model)}</div>")
-        if status.state in ("missing", "down") or not status.document_reader:
-            steps = "\n".join(f"{n}. {step}" for n, step in enumerate(SETUP_STEPS, start=1))
-            with st.container(key="note_page_reader"):
-                st.markdown(f"**To use OvisOCR2, the recommended page reader**\n\n{steps}")
+        steps = setup_steps(settings, status, store)
+        st.html("".join(ui.step(state, label, detail) for state, label, detail in steps))
+        if steps[0][0] == "ok" and steps[1][0] != "ok":
+            _download_button(settings)
+        if not (status.reachable and status.lm_studio) or not status.document_reader:
+            steps_md = "\n".join(f"{n}. {step}" for n, step in enumerate(SETUP_STEPS, start=1))
+            with st.expander("Set it up by hand instead", expanded=False):
+                st.markdown(steps_md)
         b1, b2, _ = st.columns([1, 1, 2])
         can_read = bool(status.model) and status.state in ("loaded", "downloaded")
         if b1.button("Load in LM Studio", icon=":material/download_for_offline:", key="pr_load",
@@ -144,6 +253,8 @@ def page_reader_tab(store: Store) -> None:
         if test:
             with st.expander("What it read on the test invoice", expanded=not test.get("ok")):
                 _test_table(test)
+
+    lm_studio_models_card(settings, "reader")
 
     with card("page_reader_settings"), st.form("page_reader_form", border=False):
         st.markdown("#### How it is used")

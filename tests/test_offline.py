@@ -223,6 +223,7 @@ ALLOWED_HOSTS = {
     "cognitiveservices.azure.com",  # the Azure sign-in scope, used only when Azure is set up
     "github.com", "scripts.sil.org",  # the font licence text
     "www.modelscope.cn",  # where scripts/fetch_models.py gets the OCR models at setup; never by the app
+    "huggingface.co",  # OvisOCR2, handed to LM Studio to download when AP asks (Settings); AP Coder never fetches it
 }  # fmt: skip
 
 
