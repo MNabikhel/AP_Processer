@@ -681,3 +681,14 @@ def test_template_keeps_the_credit_mark_of_an_amount(tmp_path):
     template = learn(None, build_layout(paths[0], ocr=False), {"grand_total": -256.28})
     got = apply_template(template, build_layout(paths[1], ocr=False))["grand_total"][0]
     assert got.value == -1370.34
+
+
+def test_supplier_key_for_matches_a_business_number_only_master(tmp_path):
+    """The vendor master keeps only the 9-digit Business Number; the invoice prints the full GST/HST account (or the
+    other way round): the same registration, so the ERP vendor ID is found."""
+    store = Store(tmp_path / "s.db")
+    store.import_vendor_master([{"vendor_name": "Northwind Supplies", "erp_id": "V1001", "gst": "123456789"},
+                                {"vendor_name": "Pacific Paper", "erp_id": "V2002", "gst": "555555555RT0001"}])  # fmt: skip
+    assert store.supplier_key_for("Northwind (renamed)", "123456789 RT0001") == "id:V1001"
+    assert store.supplier_key_for("Pacific (renamed)", "555555555") == "id:V2002"
+    assert store.supplier_key_for("Pacific (renamed)", "555555555RT0002") != "id:V2002"  # another account

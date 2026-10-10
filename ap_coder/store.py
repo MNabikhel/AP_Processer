@@ -1421,7 +1421,12 @@ class Store:
         ids = self.vendor_ids()
         vendor_id = ids.get(vendor_key(vendor_name or ""))
         if not vendor_id and gst_number:
-            vendor_id = ids.get(f"gst:{norm_tax_number(gst_number)}")
+            number = norm_tax_number(gst_number)
+            bn = number[:9] if number[:9].isdigit() else ""
+            # The same registration however much of it either side keeps (vendors.same_tax_number): the master's
+            # 9-digit Business Number for the invoice's full account, or the master's full account for 9 digits.
+            vendor_id = ids.get(f"gst:{number}") or (bn and (ids.get(f"bn:{bn}") or (
+                ids.get(f"bnx:{bn}") if len(number) == 9 else None)))  # fmt: skip
         return supplier_key(vendor_name, gst_number, vendor_id)
 
     @staticmethod
@@ -1962,6 +1967,8 @@ class Store:
             number = norm_tax_number(r[2])
             if sum(c.isdigit() for c in number) >= 9:
                 ids.setdefault(f"gst:{number}", r[1])
+                if number[:9].isdigit():  # bn: the master keeps only the Business Number; bnx: the full account
+                    ids.setdefault(f"{'bn' if len(number) == 9 else 'bnx'}:{number[:9]}", r[1])
         return ids
 
     def all_vendor_terms(self) -> dict[str, str]:
