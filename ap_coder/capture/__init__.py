@@ -13,11 +13,24 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .confidence import LABELS, fuse
+from .confidence import LABELS, TAX_FIELDS, fuse
 from .layout import build_layout, ocr_available
 from .locate import locate
-from .reader import read_fields, read_line_items
-from .types import EXTRA_FIELDS, FIELDS, Box, CaptureResult, DocLayout, Reading
+from .normalize import find_amounts
+from .reader import _table_header_line, read_fields, read_line_items
+from .types import (
+    AMOUNT_FIELDS,
+    EXTRA_FIELDS,
+    FIELDS,
+    MISSING,
+    Box,
+    CaptureResult,
+    DocLayout,
+    FieldResult,
+    LineReading,
+    Reading,
+    union_all,
+)
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +97,104 @@ def _ai_readings(layout: DocLayout, ai_values: dict[str, Any]) -> dict[str, list
     return out
 
 
+def _page_reader(layout: DocLayout, page_text: list[str],
+                 today: dt.date | None) -> tuple[dict[str, list[Reading]], list[LineReading]]:  # fmt: skip
+    """The page reader's transcription read by the rule reader: its readings, each with the boxes where its
+    value is printed on the page (none when the page's text does not show it: it cannot be verified alone),
+    and its line items. Its first choice only, but for amounts (the runners-up there let the totals that add
+    up be found): a transcription has no columns, so a label's "value below" is often just the next line."""
+    from .transcript import layout_from_transcript
+
+    vlm = layout_from_transcript(page_text)
+    out: dict[str, list[Reading]] = {}
+    for field, readings in read_fields(vlm, received=today).items():
+        out[field] = []
+        for r in readings[: 3 if field in AMOUNT_FIELDS else 1]:  # at most what fusion weighs
+            found = locate(layout, field, r.value)
+            out[field].append(Reading(field, r.value, r.raw, list(found[0].boxes) if found else [], r.score, r.method))
+    return out, read_line_items(vlm)
+
+
+def _line_targets(fields: dict[str, FieldResult]) -> list[float]:
+    """What the line items should add up to: the subtotal, or the total less the taxes and charges."""
+
+    def amount(f: str) -> float | None:
+        fr = fields.get(f)
+        ok = fr is not None and fr.status != MISSING and isinstance(fr.value, (int, float))
+        return float(fr.value) if ok else None
+
+    targets = [] if amount("subtotal") is None else [amount("subtotal")]
+    total = amount("grand_total")
+    if total is not None:
+        taxes = [t for t in (amount(f) for f in TAX_FIELDS) if t is not None]
+        tax = sum(taxes) if taxes else (amount("tax_total") or 0.0)
+        targets.append(round(total - tax - (amount("other_charges") or 0.0), 2))
+    return targets
+
+
+def _adds_up(items: list[LineReading], targets: list[float]) -> bool:
+    amounts = [li.amount for li in items if li.amount is not None]
+    return bool(amounts) and any(abs(round(sum(amounts), 2) - t) <= 0.02 for t in targets)
+
+
+def _choose_lines(layout: DocLayout, fields: dict[str, FieldResult], own: list[LineReading],
+                  vlm: list[LineReading]) -> list[LineReading]:  # fmt: skip
+    """The page reader's line items when they add up to the invoice's subtotal and the page's own don't (each
+    row boxed where its amount is printed on the page). On a scan, when both add up to the same amounts row by
+    row, the page reader's descriptions, quantities and prices are taken on the page's own row boxes (OCR breaks
+    words up and misplaces a tilted row's cells; the page reader reads a table cell by cell)."""
+    targets = _line_targets(fields)
+    if not vlm or not targets or not _adds_up(vlm, targets):
+        return own
+    if not _adds_up(own, targets):
+        return _boxed_rows(layout, vlm)
+    same = len(own) == len(vlm) and all(
+        a.amount is not None and b.amount is not None and abs(a.amount - b.amount) <= 0.005
+        for a, b in zip(own, vlm, strict=True)
+    )
+    if same and layout.source in ("ocr", "mixed"):
+        return [LineReading(b.description, b.quantity, b.unit_price, b.amount, list(a.boxes), max(a.score, b.score))
+                for a, b in zip(own, vlm, strict=True)]  # fmt: skip
+    return own
+
+
+def _boxed_rows(layout: DocLayout, items: list[LineReading]) -> list[LineReading]:
+    """``items`` with the box of the page row that prints each one's amount: in reading order, below the line
+    table's heading, the rightmost copy on the first row below the last one found."""
+    spots: dict[float, list[Box]] = {}
+    for line in layout.lines():
+        for value, a, b in find_amounts(line.text):
+            box = _span_box(line, a, b)
+            if box is not None:
+                spots.setdefault(round(abs(value), 2), []).append(box)
+    heading = next((ln.box for page in layout.pages for ln in page.lines if _table_header_line(ln, page.lines)), None)
+    after = (heading.page, heading.cy + 0.006) if heading else (0, -1.0)  # rows are further apart than this
+    out = []
+    for li in items:
+        boxes: list[Box] = []
+        amount = round(abs(li.amount), 2) if li.amount is not None else None
+        below = sorted((b for b in spots.get(amount, []) if (b.page, b.cy) > after), key=lambda b: (b.page, b.cy))
+        if below:
+            first = below[0]
+            spot = max((b for b in below if b.page == first.page and abs(b.cy - first.cy) < 0.006), key=lambda b: b.x1)
+            page = next((p for p in layout.pages if p.number == spot.page), None)
+            boxes = [union_all([ln.box for ln in page.lines if _same_row(ln.box, spot)] if page else []) or spot]
+            after = (spot.page, max(first.cy, spot.cy) + 0.006)
+        out.append(LineReading(li.description, li.quantity, li.unit_price, li.amount, boxes, li.score))
+    return out
+
+
+def _span_box(line: Any, a: int, b: int) -> Box | None:
+    from .reader import _span_words
+
+    return union_all([w.box for w in _span_words(line, a, b)])
+
+
+def _same_row(box: Box, spot: Box) -> bool:
+    overlap = min(box.y1, spot.y1) - max(box.y0, spot.y0)
+    return box.page == spot.page and overlap > 0.5 * min(box.height, spot.height)
+
+
 def _cross_read(path: Path, layout: DocLayout) -> dict[str, list[Reading]]:
     """A second, independent reading of a digital PDF through OCR of the rendered page."""
     if layout.source != "text" or not ocr_available():
@@ -99,7 +210,11 @@ def _cross_read(path: Path, layout: DocLayout) -> dict[str, list[Reading]]:
 def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values: dict[str, Any] | None = None,
             template: Any = None, vendor: dict[str, Any] | None = None, ocr: str | bool = "auto",
             cross_read: bool = False, layout: DocLayout | None = None, second_read: bool = True,
-            today: dt.date | None = None) -> CaptureResult:  # fmt: skip
+            today: dt.date | None = None, page_text: list[str] | None = None,
+            local_evidence: dict[str, tuple[int, int]] | None = None) -> CaptureResult:  # fmt: skip
+    """``page_text``: the page reader's transcription of each page (a vision model's markdown), read as one more
+    independent reader ("vlm"). ``local_evidence``: {evidence: (cases, right)} from what AP approved on this
+    computer, for the calibration of confidence."""
     path = Path(path)
     layout = layout or build_layout(path, di_raw=di_raw, ocr=ocr)
     sources: dict[str, dict[str, list[Reading]]] = {"rules": read_fields(layout, received=today)}
@@ -130,8 +245,23 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         second = _cross_read(path, layout)
         if second:
             sources["ocr"] = second
+    vlm_items: list[LineReading] = []
+    if page_text and any((page or "").strip() for page in page_text):
+        try:
+            sources["vlm"], vlm_items = _page_reader(layout, page_text, today)
+        except Exception as exc:  # an extra reader: never fatal
+            log.warning("%s: page reader's transcription not read (%s)", path.name, exc)
     items = read_line_items(layout)
-    fields, checks = fuse(sources, items, vendor=vendor, today=today, layout_source=layout.source,
-                          fields=FIELDS + EXTRA_FIELDS)  # fmt: skip
+
+    def fused(lines: list[LineReading]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        return fuse(sources, lines, vendor=vendor, today=today, layout_source=layout.source,
+                    fields=FIELDS + EXTRA_FIELDS, local_evidence=local_evidence)  # fmt: skip
+
+    fields, checks = fused(items)
+    if vlm_items:
+        chosen = _choose_lines(layout, fields, items, vlm_items)
+        if chosen is not items:
+            items = chosen
+            fields, checks = fused(items)  # the lines-add-up check on the lines kept
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
                          page_count=len(layout.pages))  # fmt: skip

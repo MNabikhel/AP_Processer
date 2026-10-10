@@ -1,0 +1,262 @@
+{
+ "id": "s212-0000",
+ "layout": "table_footer",
+ "doc_type": "invoice",
+ "language": "en",
+ "country": "CA",
+ "province": "BC",
+ "page_count": 1,
+ "page_size": [
+  595.0,
+  842.0
+ ],
+ "fields": {
+  "vendor_name": {
+   "value": "Okanagan Consulting Group Co.",
+   "raw": "Okanagan Consulting Group Co.",
+   "label": "",
+   "box": [
+    1,
+    0.15357,
+    0.05438,
+    0.484,
+    0.07905
+   ],
+   "also": []
+  },
+  "invoice_number": {
+   "value": "26/71677",
+   "raw": "26/71677",
+   "label": "INVOICE #:",
+   "box": [
+    1,
+    0.88442,
+    0.08534,
+    0.94348,
+    0.09971
+   ],
+   "also": []
+  },
+  "invoice_date": {
+   "value": "2025-07-18",
+   "raw": "Jul 18, 2025",
+   "label": "Inv. Date:",
+   "box": [
+    1,
+    0.8661,
+    0.09917,
+    0.94314,
+    0.11377
+   ],
+   "also": []
+  },
+  "po_number": {
+   "value": "4500095595",
+   "raw": "4500095595",
+   "label": "Cust. P.O.:",
+   "box": [
+    1,
+    0.86418,
+    0.11321,
+    0.94281,
+    0.12782
+   ],
+   "also": []
+  },
+  "currency": {
+   "value": "CAD",
+   "raw": "CAD",
+   "label": "Currency Code:",
+   "box": [
+    1,
+    0.9124,
+    0.12784,
+    0.94247,
+    0.14187
+   ],
+   "also": []
+  },
+  "subtotal": {
+   "value": 3722.18,
+   "raw": "$3,722.18",
+   "label": "Total before tax",
+   "box": [
+    1,
+    0.86727,
+    0.4257,
+    0.93023,
+    0.44012
+   ],
+   "also": []
+  },
+  "gst_amount": {
+   "value": 186.11,
+   "raw": "$186.11",
+   "label": "G.S.T. 5%",
+   "box": [
+    1,
+    0.87863,
+    0.44162,
+    0.92985,
+    0.4559
+   ],
+   "also": []
+  },
+  "pst_amount": {
+   "value": 260.55,
+   "raw": "$260.55",
+   "label": "BC PST 7%",
+   "box": [
+    1,
+    0.87825,
+    0.4574,
+    0.92947,
+    0.47168
+   ],
+   "also": []
+  },
+  "grand_total": {
+   "value": 4168.84,
+   "raw": "$4,168.84",
+   "label": "Total (incl. tax)",
+   "box": [
+    1,
+    0.86082,
+    0.47212,
+    0.92911,
+    0.48779
+   ],
+   "also": []
+  },
+  "payment_terms": {
+   "value": "Net 30 days",
+   "raw": "Net 30 days",
+   "label": "Terms:",
+   "box": [
+    1,
+    0.11527,
+    0.49002,
+    0.19073,
+    0.50459
+   ],
+   "also": []
+  },
+  "gst_hst_registration_number": {
+   "value": "911557288RT0001",
+   "raw": "911557288RT0001",
+   "label": "BN:",
+   "box": [
+    1,
+    0.45081,
+    0.92197,
+    0.55356,
+    0.93482
+   ],
+   "also": []
+  }
+ },
+ "implied": {
+  "tax_total": 446.66
+ },
+ "line_items": [
+  {
+   "description": "Disinfectant 4 L",
+   "quantity": 1.0,
+   "unit_price": 27.05,
+   "amount": 27.05,
+   "kind": "item",
+   "box": [
+    1,
+    0.07646,
+    0.28188,
+    0.93347,
+    0.30585
+   ]
+  },
+  {
+   "description": "Hydraulic hose assembly 1/2 in.",
+   "quantity": 2.0,
+   "unit_price": 168.03,
+   "amount": 336.06,
+   "kind": "item",
+   "box": [
+    1,
+    0.07596,
+    0.30273,
+    0.93296,
+    0.32671
+   ]
+  },
+  {
+   "description": "Printing - brochures 8 pages",
+   "quantity": 2.0,
+   "unit_price": 378.96,
+   "amount": 757.92,
+   "kind": "item",
+   "box": [
+    1,
+    0.07546,
+    0.32358,
+    0.93246,
+    0.34756
+   ]
+  },
+  {
+   "description": "Janitorial service - Unit 4",
+   "quantity": 1.0,
+   "unit_price": 351.28,
+   "amount": 351.28,
+   "kind": "item",
+   "box": [
+    1,
+    0.18763,
+    0.3458,
+    0.93196,
+    0.36842
+   ]
+  },
+  {
+   "description": "Electrician - labour",
+   "quantity": 10.5,
+   "unit_price": 96.25,
+   "amount": 1010.63,
+   "kind": "item",
+   "box": [
+    1,
+    0.07445,
+    0.3653,
+    0.93146,
+    0.38927
+   ]
+  },
+  {
+   "description": "Cable Cat6 plenum, 1000 ft",
+   "quantity": 4.0,
+   "unit_price": 309.81,
+   "amount": 1239.24,
+   "kind": "item",
+   "box": [
+    1,
+    0.07395,
+    0.38615,
+    0.93096,
+    0.41013
+   ]
+  }
+ ],
+ "extras": {
+  "font": "helv",
+  "date_style": "mon_d_y"
+ },
+ "scanned": true,
+ "scan": {
+  "dpi": 198,
+  "jpeg_quality": 80,
+  "angles": [
+   -0.975
+  ],
+  "gray": true,
+  "format": "pdf"
+ },
+ "file": "s212-0000.pdf"
+}
