@@ -99,7 +99,8 @@ def test_suggestion_button_codes_the_line(tmp_path, monkeypatch):
     at.session_state["open_invoice"] = harbour["id"]
     at.run()
     assert not at.exception
-    at.button(key=f"{key}_sugg_4_6800").click().run()
+    # The key is <invoice>_sugg_<line>_<position>_<GL>: line 4, account 6800.
+    next(b for b in at.button if (b.key or "").startswith(f"{key}_sugg_4_") and b.key.endswith("_6800")).click().run()
     at.run()
     assert not at.exception
     assert not [b for b in at.button if (b.key or "").startswith(f"{key}_sugg_")]  # line 4 is coded now

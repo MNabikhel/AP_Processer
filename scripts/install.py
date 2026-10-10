@@ -2,11 +2,14 @@
 
 Most people just double-click ``APProcessor.bat`` (Windows) or ``APProcessor.command`` (Mac): that sets
 up whatever is missing and starts AP Coder. This installer is the same setup (``scripts/launch.py``: one
-``.venv``, only missing packages installed, OCR models fetched once, one desktop shortcut) with the
+``.venv``, only missing packages installed, OCR models copied once, one desktop shortcut) with the
 questions on top. ``install.bat`` / ``install.sh`` run it (through APProcessor, so Python is found the
 same way). It is safe to run again at any time: each run updates what changed and keeps everything else.
 
-* the code is updated in place (git checkout) — never a second copy
+* offline by default (an enterprise build): packages only from the offline bundle's ``wheelhouse/``, the
+  OCR models only from its ``models/``, and no git update. Developers opt in to the internet (PyPI, the
+  model download, ``git fetch`` / ``git pull`` of a checkout) with the environment variable ``AP_ALLOW_INTERNET=1``
+* with that opt-in, a git checkout is updated in place — never a second copy
 * one virtual environment (``.venv``), packages installed only when missing or too old
 * one data folder outside the code (default ``~/APCoder``) for the database, invoices,
   outputs and the ``.env`` with your Azure settings, so updates never lose or duplicate them
@@ -37,6 +40,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import launch  # noqa: E402  (the one setup: .venv, packages, models, shortcut, readiness)
 
 from ap_coder.envfile import clean_url, read_env, write_env  # noqa: E402
+from ap_coder.offline import internet_allowed  # noqa: E402
 
 WINDOWS = os.name == "nt"
 USER_SETTINGS = Path(os.environ.get("AP_USER_SETTINGS") or Path.home() / ".ap_coder" / "settings.json")
@@ -130,6 +134,10 @@ def update_code(c: Console, args: argparse.Namespace) -> int | None:
     if args.no_update:
         c.ok("not checking for updates (--no-update)")
         return None
+    if not internet_allowed():
+        c.ok(f"{ROOT} (offline build: no update check; developers: AP_ALLOW_INTERNET=1)")
+        c.info("To update, unzip the new offline bundle over this folder and run its installer; your data is kept.")
+        return None
     if not (ROOT / ".git").exists() or not shutil.which("git"):
         c.ok(f"{ROOT}")
         c.info("Downloaded without git: to update later, download the new version and run its installer.")
@@ -169,7 +177,9 @@ def ensure_venv_and_packages(c: Console, args: argparse.Namespace, venv: str | N
     else:
         c.ok(f"reusing .venv (Python {sys.version.split()[0]})")
     state = launch.load_state()
-    if args.reinstall:
+    if args.reinstall and launch.pip_source() is None:
+        c.warn("Not reinstalled (--reinstall): this offline build installs only from the bundle's wheelhouse folder.")
+    elif args.reinstall:
         c.info("Reinstalling AP Coder itself (--reinstall)...")
         if not launch.pip_install(["--force-reinstall", "--no-deps", *launch.editable(())]):
             c.warn("Reinstalling failed (see the messages above).")
@@ -184,8 +194,8 @@ def ensure_venv_and_packages(c: Console, args: argparse.Namespace, venv: str | N
 
 
 def read_user_settings() -> dict:
-    try:
-        return json.loads(USER_SETTINGS.read_text(encoding="utf-8"))
+    try:  # -sig: a settings file saved by Notepad starts with a byte-order mark
+        return json.loads(USER_SETTINGS.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
 
@@ -351,8 +361,13 @@ def create_shortcut(c: Console, args: argparse.Namespace) -> None:
 
 def fetch_models(c: Console) -> None:
     c.step("OCR models (for scanned invoices)")
-    launch.ensure_models(first=True)
-    c.ok("in place (fetched only when missing)")
+    state = launch.load_state()
+    launch.ensure_models(first=True, state=state)
+    launch.save_state(state)
+    if state.get("models_failed"):
+        c.warn("not all in place: scans are read with one OCR engine (the models come from the offline bundle)")
+    else:
+        c.ok("in place (copied from the offline bundle only when missing)")
 
 
 def run_checks(c: Console, args: argparse.Namespace, env: Path) -> None:

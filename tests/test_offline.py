@@ -252,9 +252,51 @@ def test_ppocrv5_settings_match_the_capture_engine(monkeypatch):
     monkeypatch.setattr(rapidocr, "RapidOCR", FakeRapidOCR)
     monkeypatch.setattr(layout, "_ENGINES", {})
     layout._engine("ppocrv5")
-    assert seen["params"] == offline.ppocrv5_params()
+    assert seen["params"] == offline.ppocrv5_engine_params()
+    assert {k: v for k, v in seen["params"].items() if not k.endswith(".model_path")} == offline.ppocrv5_params()
     names = [m.name for m in offline.ppocrv5_files()]
     assert names == [n for n, _, _ in offline._PPOCRV5_FALLBACK]  # RapidOCR's own list agrees with ours
+    # Each model by its path on disk: RapidOCR's downloader runs only for a model given no path.
+    folder = offline.model_dir()
+    assert [seen["params"][f"{task}.model_path"] for task in ("Det", "Cls", "Rec")] == [
+        str(folder / name) for name in names
+    ]
+
+
+def test_a_damaged_model_file_counts_as_missing_and_is_checked_once(tmp_path, monkeypatch):
+    """RapidOCR downloads again a model whose checksum is wrong: a damaged file of the right size is missing."""
+    contents = {"det.onnx": b"detector", "rec.onnx": b"recogniser"}
+    models = tuple(offline.ModelFile(n, f"https://models.invalid/{n}", hashlib.sha256(d).hexdigest())
+                   for n, d in contents.items())  # fmt: skip
+    monkeypatch.setattr(offline, "ppocrv5_files", lambda: models)
+    monkeypatch.setattr(offline, "ppocrv5_installed", lambda: True)
+    monkeypatch.setattr(offline, "model_dir", lambda: tmp_path)
+    monkeypatch.setattr(offline, "_warned", False)
+    for name, data in contents.items():
+        (tmp_path / name).write_bytes(data)
+    reads: list[Path] = []
+    real = offline.sha256
+    monkeypatch.setattr(offline, "sha256", lambda path: reads.append(path) or real(path))
+    assert offline.ppocrv5_ready() and offline.ppocrv5_ready()
+    assert len(reads) == 2  # each file read once, not on every OCR'd page
+    damaged = tmp_path / "det.onnx"
+    damaged.write_bytes(b"detectoX")  # the same size, the wrong content
+    # Written later than the first check, as a real damaged copy is: a quick test write can keep the same timestamp
+    # (Windows updates it lazily), which would look like the file already checked.
+    later = damaged.stat().st_mtime_ns + 2_000_000_000
+    os.utime(damaged, ns=(later, later))
+    assert not offline.ppocrv5_ready()
+
+
+def test_only_the_bundle_builder_opts_in_to_the_internet(monkeypatch):
+    assert not offline.internet_allowed()  # the default (tests/conftest.py clears it): offline
+    for value in ("1", "true", "YES", "on"):
+        monkeypatch.setenv("AP_ALLOW_INTERNET", value)
+        assert offline.internet_allowed()
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "0")
+    assert not offline.internet_allowed()
+    bundle = _script("build_offline_bundle")
+    assert bundle.main(["--dry-run", "--no-models"]) == 0 and offline.internet_allowed()
 
 
 @pytest.fixture
@@ -268,7 +310,7 @@ def fake_models(monkeypatch):
     return contents
 
 
-def test_fetch_models_downloads_once(tmp_path, fake_models):
+def test_fetch_models_downloads_once(tmp_path, fake_models, monkeypatch):
     fetch_models = _script("fetch_models")
     calls = []
 
@@ -276,6 +318,9 @@ def test_fetch_models_downloads_once(tmp_path, fake_models):
         calls.append(url)
         dest.write_bytes(fake_models[url.rsplit("/", 1)[-1]])
 
+    offline_run = fetch_models.fetch(tmp_path / "models", get=get, say=lambda _: None)
+    assert offline_run.failed and calls == []  # the offline default: never downloaded
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # the bundle builder's / a developer's opt-in
     first = fetch_models.fetch(tmp_path / "models", get=get, say=lambda _: None)
     assert first.ok and sorted(first.downloaded) == sorted(fake_models) and len(calls) == 2
     second = fetch_models.fetch(tmp_path / "models", get=get, say=lambda _: None)
@@ -284,6 +329,16 @@ def test_fetch_models_downloads_once(tmp_path, fake_models):
     third = fetch_models.fetch(tmp_path / "models", get=get, say=lambda _: None)
     assert third.downloaded == ["det.onnx"] and len(calls) == 3
     assert not list((tmp_path / "models").glob("*.part"))
+
+
+def test_fetch_models_never_downloads_offline(tmp_path, fake_models, monkeypatch, capsys, no_network):
+    fetch_models = _script("fetch_models")
+    monkeypatch.setattr(fetch_models, "BUNDLE_MODELS", tmp_path / "no-bundle")
+    with pytest.raises(PermissionError):
+        fetch_models.download("https://www.modelscope.cn/x.onnx", tmp_path / "x.onnx")
+    assert fetch_models.main(["--to", str(tmp_path / "models")]) == 1
+    out = capsys.readouterr().out
+    assert "Downloading" not in out and "offline build" in out and no_network == []
 
 
 def test_fetch_models_from_the_bundle_folder_offline(tmp_path, fake_models):
@@ -390,9 +445,16 @@ def test_windows_launcher():
     text = (ROOT / "APProcessor.bat").read_text(encoding="ascii")
     assert "%PY% scripts\\launch.py %*" in text
     assert '".venv\\Scripts\\python.exe" -c "import encodings, pip"' in text  # set up before: straight in
-    assert "for %%V in (3.12 3.13 3.11)" in text and "(3, 11) <= sys.version_info[:2] <= (3, 13)" in text
+    # 3.12 and 3.11 first: the offline bundle has packages for them (3.13 only when neither is there).
+    assert "for %%V in (3.12 3.11 3.13)" in text and "(3, 11) <= sys.version_info[:2] <= (3, 13)" in text
+    assert "for %%V in (312 311 313)" in text
     assert "winget install -e --id Python.Python.3.12 --scope user" in text  # only when no Python is found
     assert text.index("call :findpython") < text.index("call :installpython")
+    # Offline build: winget (the internet) only with the developers' opt-in, never by default or --yes alone.
+    assert "if not defined PY if defined AP_ONLINE call :installpython" in text
+    assert 'if /i "%AP_ALLOW_INTERNET%"=="%%V" set "AP_ONLINE=1"' in text
+    # From a network share (\\server\share): pushd maps a drive letter, cd /d cannot.
+    assert 'pushd "%~dp0"' in text and 'cd /d "%~dp0"' not in text and "popd" in text
     assert "if not defined AP_YES set /p" in text  # asked once; automated runs (AP_NO_PAUSE, --yes) are not
     assert "https://www.python.org/downloads/" in text and "if not defined AP_NO_PAUSE pause" in text
     assert 'call "%~dp0APProcessor.bat" --installer %*' in (ROOT / "install.bat").read_text()
@@ -423,6 +485,27 @@ def test_check_deps():
     assert "rapidocr>=3.4,<3.5" not in check_deps.requirements()
     assert {"rapidocr>=3.4,<3.5", "pytest>=8"} <= set(check_deps.requirements(extras=("ocr", "dev")))
     assert check_deps.requirement_name("Rapidocr_ONNXRuntime>=1.3; sys_platform == 'win32'") == "rapidocr-onnxruntime"
+
+
+def test_python_3_13_does_not_need_the_ocr_package_it_cannot_install(monkeypatch):
+    """rapidocr-onnxruntime is published for Python up to 3.12: on 3.13 it is not asked for (RapidOCR 3 reads)."""
+    check_deps = _script("check_deps")
+    (pinned,) = [r for r in check_deps.requirements(extras=("ocr",)) if r.startswith("rapidocr-onnxruntime")]
+    assert "python_version < '3.13'" in pinned
+    monkeypatch.setattr(check_deps, "Requirement", None)  # the fallback without packaging understands it too
+    monkeypatch.setattr(check_deps.sys, "version_info", (3, 13, 0))
+    assert not check_deps.applies(pinned) and check_deps.problem(pinned) == ""
+    monkeypatch.setattr(check_deps.sys, "version_info", (3, 12, 4))
+    assert check_deps.applies(pinned)
+
+
+def test_ap_coder_installed_from_a_network_share_is_this_folder():
+    """pip records \\\\server\\share\\AP Coder as file://server/share/AP%20Coder: the server is the URL's host."""
+    check_deps = _script("check_deps")
+    unc = check_deps.file_url_path("file://server/share/AP%20Coder")
+    assert unc.as_posix().lstrip("/") == "server/share/AP Coder" and str(unc).startswith(("//", "\\\\"))
+    assert check_deps.file_url_path(Path(ROOT).as_uri()) == Path(ROOT)
+    assert check_deps.file_url_path("file://localhost" + Path(ROOT).as_uri()[7:]) == Path(ROOT)
 
 
 def test_check_deps_knows_where_ap_coder_is_installed_from(tmp_path, monkeypatch):

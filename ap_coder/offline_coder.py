@@ -20,7 +20,7 @@ from .capture import analyze, build_layout
 from .capture.bridge import vendor_record
 from .capture.reader import _US_ADDRESS
 from .capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout
-from .capture.workflow import supplier_for
+from .capture.workflow import local_evidence, supplier_for
 from .extraction import ExtractionResult
 from .inference import CodingResult
 from .memory import vendor_key
@@ -51,21 +51,24 @@ _CUSTOMER_LABEL = re.compile(
 )
 
 
-def read_invoice(path: str | Path, store: Any = None,
-                 layout: DocLayout | None = None) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
+def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None = None,
+                 page_text: list[str] | None = None) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
     """(capture, supplier key, supplier profile): a first read, then again with the supplier's template
     and vendor-master record once the first read says who the supplier is. ``layout``: the page, already
-    read (a scan is OCR'd once)."""
+    read (a scan is OCR'd once). ``page_text``: the page reader's transcription of each page, when it has
+    read them (one more independent reader). What AP approved on this computer calibrates the confidence."""
     path = Path(path)
     today = dt.date.today()
     layout = layout or build_layout(path)
-    capture = analyze(path, layout=layout, today=today)
+    local = local_evidence(store)
+    capture = analyze(path, layout=layout, today=today, page_text=page_text, local_evidence=local)
     first = _values(capture)
     key, profile = supplier_for(store, first)
     template = (profile or {}).get("template") or None
     vendor = vendor_record(store, first.get("vendor_name"))
     if template or vendor:
-        capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today)
+        capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today, page_text=page_text,
+                          local_evidence=local)  # fmt: skip
     return capture, key, profile
 
 
@@ -117,6 +120,12 @@ def provinces(text: str) -> tuple[str, str]:
     return supplier, ship_to or bill_to or supplier
 
 
+def default_currency(supplier_province: str) -> str:
+    """The currency of an invoice that prints none: US dollars from a supplier with a US address, Canadian dollars
+    otherwise. Never silent: the review report warns that the currency was not read (``bridge.review_issues``)."""
+    return "USD" if supplier_province == OUTSIDE_CANADA else "CAD"
+
+
 def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.date | None = None) -> list[TaxLine]:
     out = []
     table = _rate_table()
@@ -125,8 +134,13 @@ def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.da
         if not amount:
             continue
         official = table.rate_for(tax_type, province, on) if table and province in PROVINCE_VALUES else None
-        if official and tax_type != "GST" and abs(abs(amount / subtotal if subtotal else 0) - official) > 0.002:
-            # Charged on part of the subtotal (delivery exempt from Manitoba RST): the province's rate on its base.
+        charged = abs(amount / subtotal) if subtotal else 0.0
+        # Less tax than the province's rate on the whole subtotal: charged on part of it (delivery exempt from
+        # Manitoba RST), the province's rate on its base. More than that (14% Nova Scotia HST with the province
+        # read as Ontario) is no partial base: the rate the amounts show is kept, with the province it names,
+        # and the tax check flags the place of supply that differs (TAX_PROVINCE_DIFFERS).
+        partial = bool(official) and (not subtotal or abs(amount) < official * abs(subtotal))
+        if official and tax_type != "GST" and abs(charged - official) > 0.002 and partial:
             base = round(amount / official, 2)
             out.append(
                 TaxLine(tax_type=tax_type, province=province, rate=official, taxable_amount=base, tax_amount=amount)
@@ -233,7 +247,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         po_number=str(values.get("po_number") or ""),
         payment_terms=str(values.get("payment_terms") or ""),
         due_date=_iso_or_empty(values.get("due_date")),
-        currency=str(values.get("currency") or "CAD"),
+        currency=str(values.get("currency") or default_currency(supplier_province)),
         supplier_province=supplier_province,
         ship_to_province=ship_to_province,
         gst_hst_registration_number=str(values.get("gst_hst_registration_number") or ""),

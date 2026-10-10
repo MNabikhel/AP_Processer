@@ -8,6 +8,8 @@ highlighted. When a value is printed several times, the copy next to a label for
 
 from __future__ import annotations
 
+import re
+
 from .normalize import (
     find_amounts,
     find_gst_numbers,
@@ -17,8 +19,9 @@ from .normalize import (
     norm_name,
     norm_qst,
     parse_dates,
+    terms_key,
 )
-from .reader import _label_hits, _span_words, plain
+from .reader import _TERMS, _label_hits, _span_words, plain
 from .types import AMOUNT_FIELDS, DATE_FIELDS, DocLayout, Line, Reading, union_all
 
 
@@ -48,6 +51,7 @@ def locate(layout: DocLayout, field: str, value: object) -> list[Reading]:
     for line in layout.lines():
         text = line.text
         spans: list[tuple[int, int]] = []
+        ambiguous: set[tuple[int, int]] = set()  # dates printed so that they read both ways (03/04/2026)
         if field in AMOUNT_FIELDS:
             try:
                 target = round(float(value), 2)  # type: ignore[arg-type]
@@ -59,7 +63,9 @@ def locate(layout: DocLayout, field: str, value: object) -> list[Reading]:
                 if abs(round(v, 2) - target) <= 0.005 or abs(abs(v) - abs(target)) <= 0.005 and target != 0
             ]
         elif field in DATE_FIELDS:
-            spans = [(a, b) for d, a, b, _ in parse_dates(text) if d.isoformat() == str(value)]
+            printed = parse_dates(text)
+            ambiguous = {(a, b) for _, a, b, amb in printed if amb}
+            spans = [(a, b) for d, a, b, _ in printed if d.isoformat() == str(value)]
             spans += [
                 (a, b)
                 for d, a, b, amb in parse_dates(text, prefer_day_first=True)
@@ -82,6 +88,14 @@ def locate(layout: DocLayout, field: str, value: object) -> list[Reading]:
             target_n = norm_name(str(value))
             if target_n and (target_n == norm_name(text) or (len(target_n) > 6 and target_n in norm_name(text))):
                 spans = [(0, len(text))]
+        elif field == "currency":  # the code as a word ("CAD", "CAD1,050.00"), not inside one ("Cascade")
+            code = re.escape(str(value).strip())
+            spans = [m.span() for m in re.finditer(rf"(?<![A-Za-z]){code}(?![A-Za-z])", text, re.I)] if code else []
+        elif field == "payment_terms":  # the same terms however printed ("Net30 days" for "Net 30")
+            want = terms_key(str(value))
+            spans = [
+                m.span() for rx, fmt in _TERMS for m in rx.finditer(text) if terms_key(fmt.format(*m.groups())) == want
+            ][:1]
         else:
             p, t = plain(text), plain(str(value))
             i = p.find(t)
@@ -95,7 +109,9 @@ def locate(layout: DocLayout, field: str, value: object) -> list[Reading]:
             near = _near_label(layout, field, line)
             conf = min((w.conf for w in words), default=1.0)
             score = (0.55 + 0.4 * near) * conf
-            found.append(Reading(field, value, text[a:b], [box], score, "located"))
+            # Found where the date is printed both ways: the page does not say which the value is.
+            method = "located-ambiguous" if (a, b) in ambiguous else "located"
+            found.append(Reading(field, value, text[a:b], [box], score, method))
     found.sort(key=lambda r: -r.score)
     return found
 

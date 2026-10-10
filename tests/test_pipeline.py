@@ -71,3 +71,59 @@ def test_process_many_parallel(settings, reference, ground_truth, sample_markdow
     pipe = _pipeline(Settings(), reference, make_completion(body), make_completion(body))
     results = pipe.process_many([sample_markdown_path, sample_markdown_path], workers=2)
     assert all(r.ok for r in results)
+
+
+def test_the_page_readers_text_reaches_capture_with_azure_too(settings, reference, ground_truth):
+    """Coded by Azure OpenAI (not the offline reader): the page reader's reading is still one more reader."""
+    pdf = SAMPLES / f"{SAMPLE_STEM}.pdf"
+    transcript = (SAMPLES / f"{SAMPLE_STEM}.md").read_text(encoding="utf-8")
+    raw = {"modelId": "prebuilt-layout", "content": transcript, "pages": [{"words": []}]}
+    pipe = _pipeline(settings, reference, make_completion(json.dumps(ground_truth)), di_raw=raw)
+    result = pipe.process(pdf, page_text=[transcript])
+    assert result.ok, result.error
+    assert any("vlm" in (f.sources or {}) for f in result.capture.fields.values())
+
+
+def test_local_model_suggestions_only_fill_uncoded_lines(monkeypatch):
+    """Printed line numbers can repeat (a second page numbering from 1 again): the local model's account for the
+    uncoded line must not overwrite the coded line with the same number."""
+    from types import SimpleNamespace
+
+    import ap_coder.inference as inference
+    from ap_coder.schema import InvoiceCoding
+
+    data = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text())
+    data["line_items"][1]["line_number"] = 1  # lines numbered 1, 1, 3
+    data["line_items"][1]["predicted_gl_code"] = "UNASSIGNED"
+    coding = InvoiceCoding.model_validate(data)
+    coded = [li.predicted_gl_code for li in coding.line_items]
+    asked = {}
+
+    def suggest(coder, vendor, lines, history=""):
+        asked["lines"] = lines
+        return {n: ("6999", "", "a guess") for n, _, _ in lines}
+
+    monkeypatch.setattr(inference, "suggest_accounts", suggest)
+    result = SimpleNamespace(coding=coding, model="")
+    InvoicePipeline._local_accounts(SimpleNamespace(coder=SimpleNamespace(_local_model="m")), result, "")
+
+    assert len(asked["lines"]) == 1  # only the uncoded line is asked about
+    assert [li.predicted_gl_code for li in coding.line_items] == [coded[0], "6999", *coded[2:]]
+    assert "local model" not in coding.line_items[0].reasoning_justification
+    assert result.model == "local reader + m"
+
+
+def test_an_invoice_read_again_is_no_duplicate_of_itself(tmp_path, settings, reference, ground_truth,
+                                                         sample_markdown_path):  # fmt: skip
+    from ap_coder.store import Store
+
+    store = Store(tmp_path / "ap.db")
+    pipe = _pipeline(settings, reference, *[make_completion(json.dumps(ground_truth))] * 3)
+    pipe.store = store
+    first = pipe.process(sample_markdown_path)
+    assert first.invoice_id and "DUPLICATE_INVOICE" not in {i.code for i in first.report.issues}
+
+    again = pipe.process(sample_markdown_path, save=False, invoice_id=first.invoice_id)
+    assert "DUPLICATE_INVOICE" not in {i.code for i in again.report.issues}
+    without = pipe.process(sample_markdown_path, save=False)  # a new copy of it is still a duplicate
+    assert "DUPLICATE_INVOICE" in {i.code for i in without.report.issues}

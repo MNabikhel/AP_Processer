@@ -11,6 +11,23 @@ from pathlib import Path
 PLACEHOLDER = "<your-resource>"  # the example endpoints in .env.example
 
 
+_QUOTED = {'"': re.compile(r'"((?:[^"\\]|\\.)*)"'), "'": re.compile(r"'((?:[^'\\]|\\.)*)'")}
+_ESCAPES = {'"': re.compile(r'\\([\\"])'), "'": re.compile(r"\\([\\'])")}
+
+
+def parse_value(value: str) -> str:
+    """One value as python-dotenv (what the app reads with) reads it: a quoted value ends at its closing quote
+    (an inline ``# comment`` after it is not part of it), an unquoted one at `` #`` (``abc#def`` is kept)."""
+    value = value.strip()
+    quote = value[:1]
+    if quote in _QUOTED:
+        match = _QUOTED[quote].match(value)
+        if match:
+            return _ESCAPES[quote].sub(r"\1", match.group(1))
+        return value  # no closing quote: kept as it is (python-dotenv cannot read the line either)
+    return re.sub(r"\s+#.*", "", value).strip()
+
+
 def read_env(path: Path) -> dict[str, str]:
     """``KEY=value`` pairs that are set (commented lines and example placeholders are skipped)."""
     values = {}
@@ -20,11 +37,10 @@ def read_env(path: Path) -> dict[str, str]:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+            key = re.sub(r"^export\s+", "", key.strip())
+            value = parse_value(value)
             if PLACEHOLDER not in value:
-                values[key.strip()] = value
+                values[key] = value
     return values
 
 

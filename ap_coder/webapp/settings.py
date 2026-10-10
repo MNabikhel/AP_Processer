@@ -275,6 +275,9 @@ def ai_model_tab() -> None:
             forget_status()
             notify(f"Saved {ui.plural(len(changed), 'change')}." if changed else "Nothing changed.", ":material/save:")
             st.rerun()
+    from ap_coder.webapp.page_reader_settings import lm_studio_models_card
+
+    lm_studio_models_card(settings, "ai")
 
 
 def _reference(store: Store):
@@ -544,10 +547,11 @@ def about_tab() -> None:
 def page_settings() -> None:
     store = get_store()
     show_toast()
-    page_head("settings", "Settings", "AI model, review behaviour, JD Edwards E1, your data and backups.")
-    ai_model, azure, review, erp, data, about = st.tabs(
+    page_head("settings", "Settings", "AI model, page reader, review behaviour, JD Edwards E1, your data and backups.")
+    ai_model, reader, azure, review, erp, data, about = st.tabs(
         [
             "AI model",
+            "Page reader",
             "Azure",
             "Review",
             "JD Edwards E1",
@@ -557,6 +561,10 @@ def page_settings() -> None:
     )
     with ai_model:
         ai_model_tab()
+    with reader:
+        from ap_coder.webapp.page_reader_settings import page_reader_tab
+
+        page_reader_tab(store)
     with azure:
         azure_tab(store)
     with review:

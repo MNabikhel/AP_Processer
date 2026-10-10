@@ -51,6 +51,8 @@ ACTIONS = {
     "note": ("sticky_note_2", "violet", "Note"),
     "final_approved": ("how_to_reg", "ok", "Second approval"),
     "sent_back": ("undo", "warn", "Sent back"),
+    "proposal_updated": ("visibility", "info", "Page reader read it: proposal updated"),
+    "page_reader_tested": ("fact_check", "info", "Page reader tested"),
     "reopened": ("undo", "warn", "Reopened for correction"),
     "erp_register_imported": ("receipt_long", "info", "ERP invoice register imported"),
     "history_imported": ("history_edu", "info", "History imported"),

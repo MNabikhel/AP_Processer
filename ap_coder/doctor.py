@@ -131,6 +131,7 @@ def run_checks(
         if eng.vision and not profile.supports_vision and provider == "azure":
             add("vision mode", WARN, "AP_VISION=true but the model is not vision-capable; images will be dropped")
     add(*_local_check(settings, provider))
+    add(*_page_reader_check(settings))
     add(
         "engine",
         PASS,
@@ -260,6 +261,29 @@ def _local_check(settings: Settings, provider: str) -> tuple[str, str, str]:
         )
     detail = f"not running at {where} (LM Studio: load a model, then Developer tab -> Start server)"
     return "local model", FAIL if provider == "local" else WARN, detail
+
+
+def _page_reader_check(settings: Settings) -> tuple[str, str, str]:
+    """The page reader (a vision model that reads each page as a second reader): optional, so never a failure."""
+    if settings.page_reader.mode == "off":
+        return "page reader", SKIP, "turned off (AP_PAGE_READER=off): scans are read with OCR only"
+    try:
+        from .page_reader import reader_status
+        from .page_worker import linked
+
+        status = reader_status(settings, use_cache=False)
+        is_linked = bool(status.model) and linked(status.model)
+    except Exception as exc:  # optional: a problem here never stops the doctor
+        return "page reader", WARN, f"not checked ({type(exc).__name__})"
+    if status.model and status.state in ("loaded", "downloaded"):
+        kind = "a document reader" if status.document_reader else "a general model that can see"
+        if not is_linked:
+            return "page reader", WARN, (f"{status.model} ({kind}) is {status.state} but hasn't passed its test: "
+                                         "Settings > Page reader > Test the page reader links it")  # fmt: skip
+        how = "in the background" if settings.page_reader.mode == "auto" else "when asked"
+        return "page reader", PASS, (f"{status.model} ({kind}), linked, {status.state}; reads "
+                                     f"{settings.page_reader.scope} {how}")  # fmt: skip
+    return "page reader", WARN, status.note or "no model can read pages (optional: OvisOCR2 isn't in LM Studio)"
 
 
 def _aoai_dry_run(settings: Settings, reference: ReferenceData, provider: str | None = None) -> tuple[str, str, str]:

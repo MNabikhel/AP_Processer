@@ -1,14 +1,22 @@
-"""Learning & accuracy: coding accuracy vs target, trend, vendors, corrections and the memory; and supplier
-learning (header-field accuracy per supplier and its path to touchless processing)."""
+"""Learning & accuracy: coding accuracy vs target, trend, vendors, corrections and the memory; supplier
+learning (header-field accuracy per supplier and its path to touchless processing); and the readers (each
+capture reader against what AP approved, and the training data export)."""
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
+import io
+import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
 from ap_coder import history, ui
+from ap_coder.safe import md
 from ap_coder.store import APPROVED
 from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import (
@@ -84,12 +92,14 @@ def page_learning() -> None:
     store = get_store()
     show_toast()
     page_head("learning", "Learning & accuracy", "How often the coding is right, and what AP Coder has learned.")
-    coding_tab, supplier_tab = st.tabs(["Coding accuracy", "Supplier learning"])
+    coding_tab, supplier_tab, readers_tab = st.tabs(["Coding accuracy", "Supplier learning", "Readers"])
     with coding_tab:
         _history_card(store)
         _coding_accuracy(store)
     with supplier_tab:
         _supplier_learning(store)
+    with readers_tab:
+        _readers(store)
 
 
 # --- Supplier learning ---------------------------------------------------------------------------------------
@@ -164,7 +174,7 @@ def _supplier_learning(store) -> None:
                     "Turn on autonomy…", icon=":material/bolt:", width="stretch", key=f"sup_menu_{slug}"
                 ):
                     st.markdown(
-                        f"Process **{name}** invoices without a person when every header field is verified and "
+                        f"Process **{md(name)}** invoices without a person when every header field is verified and "
                         f"every check passes. The policy: {policy.describe()}."
                     )
                     if st.button("Yes, turn on autonomy", type="primary", key=f"sup_on_{slug}"):
@@ -173,13 +183,13 @@ def _supplier_learning(store) -> None:
                         except ValueError as exc:
                             st.error(str(exc))
                         else:
-                            notify(f"Autonomy is on for {name}.", ":material/bolt:")
+                            notify(f"Autonomy is on for {md(name)}.", ":material/bolt:")
                             st.rerun()
             if p["state"] in (AUTONOMOUS, SUSPENDED) and actions.button(
                 "Turn off", icon=":material/pan_tool:", key=f"sup_off_{slug}", width="stretch"
             ):
                 store.set_supplier_state(p["key"], SUPERVISED, reviewer(), reason="turned off on the Learning page")
-                notify(f"{name} is back to supervised: every invoice is reviewed.", ":material/pan_tool:")
+                notify(f"{md(name)} is back to supervised: every invoice is reviewed.", ":material/pan_tool:")
                 st.rerun()
 
 
@@ -374,3 +384,175 @@ def _coding_accuracy(store) -> None:
             store.delete_feedback([int(i) for i in selected], actor=reviewer())
             notify(f"Forgot {ui.plural(len(selected), 'lesson')}.", ":material/delete_sweep:")
             st.rerun()
+
+
+# --- Readers ------------------------------------------------------------------------------------------------------
+
+READER_LABELS = {
+    "fused": "Combined (what AP saw)", "rules": "OCR + rules", "ocr2": "OCR (second engine)",
+    "ocr": "OCR (second engine)", "vlm": "Page reader", "template": "Supplier template", "ai": "AI model",
+    "di": "Azure Document Intelligence",
+}  # fmt: skip
+_READER_ORDER = list(dict.fromkeys(READER_LABELS.values()))  # labels in the order the tab lists them
+
+
+def reader_label(reader: str) -> str:
+    return READER_LABELS.get(reader, reader)
+
+
+def _added(rows: list[dict[str, Any]], key: Callable[[dict[str, Any]], str]) -> dict[str, dict[str, Any]]:
+    """Score rows that share ``key`` added together: the two kinds of second OCR read are one reader here."""
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        m = out.setdefault(key(r), {"readers": [], "fields": 0, "agreed": 0, "invoices": 0, "last_read": None,
+                                    "last_final": None})  # fmt: skip
+        if r.get("reader"):
+            m["readers"].append(r["reader"])
+        for count in ("fields", "agreed", "invoices"):
+            m[count] += r[count]
+        if m["last_read"] is None and r.get("last_read") is not None:
+            m["last_read"], m["last_final"] = r["last_read"], r.get("last_final")
+    for m in out.values():
+        m["rate"] = m["agreed"] / m["fields"] if m["fields"] else 0.0
+    return out
+
+
+def _rate_pill(rate: float) -> str:
+    return ui.pill(f"{rate:.1%}" if 0.995 <= rate < 1 else f"{rate:.0%}", "ok" if rate >= 0.95 else "warn")
+
+
+def _readers(store) -> None:
+    from ap_coder.capture.confidence import MIN_EVIDENCE
+
+    st.caption(
+        "Each approval compares what every reader found on the page with what AP approved. The combined value is "
+        "what the review screen showed; a reader that keeps agreeing with AP earns its trust."
+    )
+    scores = _added(store.reader_scorecard(), lambda r: reader_label(r["reader"]))
+    if not scores:
+        with card("noreaders"):
+            st.html(
+                ui.empty_state(
+                    "No reader compared with AP yet",
+                    "Once invoices are approved on the review screen, this shows how often each reader (OCR and "
+                    "the rules, the page reader, the supplier's template, the AI model) read what AP approved.",
+                    ui.LEARNING_SVG,
+                )
+            )
+    else:
+        labels = sorted(scores, key=lambda label: (_READER_ORDER.index(label) if label in _READER_ORDER else 99, label))
+        combined = scores.get(READER_LABELS["fused"])
+        verified = next((s for s in store.fused_status_scorecard() if s["status"] == "verified"), None)
+        tiles = []
+        if combined:
+            tiles.append(ui.tile("Combined value agreed with AP", f"{combined['rate']:.1%}", tone="green",
+                                 hint=f"{ui.plural(combined['fields'], 'field')} on "
+                                 f"{ui.plural(combined['invoices'], 'invoice')}"))  # fmt: skip
+        tiles.append(
+            ui.tile("Verified values right", f"{verified['rate']:.1%}", tone="green",
+                    hint=f"{ui.plural(verified['fields'], 'value')} shown as verified")
+            if verified
+            else ui.tile("Verified values right", "—", hint="no value shown as verified yet")
+        )  # fmt: skip
+        st.html(ui.tiles(tiles))
+        with card("readers_scorecard"):
+            st.markdown("#### Scorecard")
+            st.html(
+                ui.table(
+                    ["Reader", "Fields compared", "Agreed with AP", "% agreed", "Invoices"],
+                    [[f"<b>{esc(label)}</b>" if label == READER_LABELS["fused"] else esc(label),
+                      f"{scores[label]['fields']:,}", f"{scores[label]['agreed']:,}", _rate_pill(scores[label]["rate"]),
+                      f"{scores[label]['invoices']:,}"] for label in labels],
+                    right=[1, 2, 3, 4],
+                )
+            )  # fmt: skip
+            st.caption(
+                "OCR + rules: AP Coder's rules reading the page's text (from the PDF, or OCR for a scan). A field "
+                "counts for a reader when it read a value there."
+            )
+        with card("readers_fields"):
+            st.markdown("#### Field by field")
+            pick = st.selectbox("Reader", labels, key="readers_pick")
+            fields = _added(
+                [row for reader in scores[pick]["readers"] for row in store.reader_field_scorecard(reader)],
+                lambda r: r["field"],
+            )
+            rows = []
+            for field, f in sorted(fields.items(), key=lambda kv: (kv[1]["rate"], kv[0])):
+                latest = (
+                    f"<span class='apc-muted'>read {esc(f['last_read'])} · AP approved {esc(f['last_final'])}</span>"
+                    if f["last_read"] is not None
+                    else ""
+                )
+                rows.append([esc(FIELD_LABELS.get(field, field)), f"{f['fields']:,}", f"{f['agreed']:,}",
+                             _rate_pill(f["rate"]), latest])  # fmt: skip
+            st.html(ui.table(["Field", "Compared", "Agreed", "% agreed", "Latest disagreement"], rows, right=[1, 2, 3],
+                             wrap=[4]))  # fmt: skip
+        patterns = sum(1 for n, _ in store.evidence_counts().values() if n >= MIN_EVIDENCE)
+        st.caption(
+            ":material/tune: "
+            + (
+                f"{ui.plural(patterns, 'evidence pattern')} now {'has' if patterns == 1 else 'have'} enough approvals "
+                f"to set {'its' if patterns == 1 else 'their'} own confidence"
+                if patterns
+                else "No evidence pattern has enough approvals yet to set its own confidence"
+            )
+            + f" (each needs {MIN_EVIDENCE} approved values; until then the benchmark's measure is used)."
+        )
+    _training_card(store)
+
+
+def _training_card(store) -> None:
+    from ap_coder.training_export import export_training_set, training_invoices
+
+    with card("training_export"):
+        st.markdown("#### Export training data")
+        picked = training_invoices(store)
+        invoices = picked["invoices"]
+        if not invoices:
+            st.caption(
+                "Each invoice AP approves becomes an example to fine-tune a vision model on your own suppliers' "
+                "invoices: its pages, with the values AP approved. "
+                + (
+                    "None to include yet: demo invoices and invoices approved without a person are never included."
+                    if picked["demo"] or picked["unreviewed"]
+                    else "Nothing approved yet."
+                )
+            )
+            return
+        missing = sum(1 for i in invoices if not Path(i["source_path"] or "").is_file())
+        notes = [
+            f"{ui.plural(len(invoices), 'approved invoice')}, each with its pages as images and the values AP "
+            "approved: ready to fine-tune a vision model such as OvisOCR2 or Qwen 3.5 on your own suppliers' invoices."
+        ]
+        if missing:
+            notes.append(f"{ui.plural(missing, 'invoice')} whose file is no longer on this computer will be left out.")
+        if picked["demo"] or picked["unreviewed"]:
+            notes.append("Demo invoices and invoices approved without a person are never included.")
+        st.caption(" ".join(notes))
+        # Prepared for exactly these approvals: an invoice reopened, corrected and approved again (the count
+        # unchanged) makes a new ZIP, not the one with the old values.
+        made_for = hashlib.sha1(
+            json.dumps(
+                [(i["id"], i["approved_at"], i["final_output"]) for i in invoices], sort_keys=True, default=str
+            ).encode()
+        ).hexdigest()
+        ready = st.session_state.get("training_zip")
+        if ready and ready[0] == made_for:
+            _, data, counts = ready
+            st.download_button(
+                "Download training data (ZIP)", data, file_name=f"ap-coder-training-{dt.date.today().isoformat()}.zip",
+                mime="application/zip", type="primary", icon=":material/download:", key="training_zip_download",
+                on_click=lambda: st.session_state.pop("training_zip", None),
+            )  # fmt: skip
+            st.caption(f"{ui.plural(counts['invoices'], 'invoice')}, {ui.plural(counts['pages'], 'page image')}.")
+        elif st.button("Prepare training data", icon=":material/folder_zip:", key="training_zip_make"):
+            with st.spinner("Rendering the pages…"):
+                buf = io.BytesIO()
+                counts = export_training_set(store, buf)
+            st.session_state["training_zip"] = (made_for, buf.getvalue(), counts)
+            st.rerun()
+        st.caption(
+            "Made on this computer and kept here unless someone copies it: it holds your suppliers' invoices. "
+            "For a large set, `python -m ap_coder export-training` writes it straight to a file."
+        )

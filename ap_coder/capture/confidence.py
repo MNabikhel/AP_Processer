@@ -9,7 +9,12 @@ unlikely to be misread together, so the checks lift them to *verified*; a failed
 fields involved to *check*.
 
 The raw confidence is mapped through a calibration table measured on the benchmark (see
-``ap_coder.bench``), so "99%" means right 99 times in 100 on the benchmark.
+``ap_coder.bench``), so "99%" means right 99 times in 100 on the benchmark; what AP approved on this
+computer counts too (``local_evidence``), so real invoices refine the benchmark's measure.
+
+The page reader ("vlm": a vision model's transcription of the page, read by the rule reader) is one more
+independent reader: agreeing with the page's own text it can make a value *verified*; disagreeing with it,
+it sends the field to *check*.
 """
 
 from __future__ import annotations
@@ -24,10 +29,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .normalize import amounts_equal, gst_valid, norm_name, normalize_value, qst_valid
+from .normalize import amounts_equal, gst_valid, norm_name, normalize_value, parse_dates, qst_valid
 from .types import (
     AMOUNT_FIELDS,
     CHECK,
+    DATE_FIELDS,
     FIELDS,
     LIKELY,
     MISSING,
@@ -37,8 +43,10 @@ from .types import (
     Reading,
 )
 
-# How far each reader is trusted on its own (before its per-reading score).
-RELIABILITY = {"rules": 0.85, "template": 0.92, "di": 0.85, "ai": 0.8, "ocr": 0.8, "ocr2": 0.8}
+# How far each reader is trusted on its own (before its per-reading score). "vlm": the page reader.
+RELIABILITY = {"rules": 0.85, "template": 0.92, "di": 0.85, "ai": 0.8, "ocr": 0.8, "ocr2": 0.8, "vlm": 0.85}
+# Readers of the page itself, whose first choice the page reader's is held against.
+PAGE_READERS = ("rules", "ocr", "ocr2", "template", "di")
 VERIFIED_AT = 0.985
 SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
 # Checks whose failure has innocent explanations (exempt lines, shipping not taxed, line items the
@@ -99,7 +107,9 @@ class _Group:
         return 1.0 - p_wrong * SAME_MISREAD ** max(extra, 0.0)
 
     def best(self) -> Reading:
-        return max((r for _, r in self.readings), key=lambda r: (bool(r.boxes), r.score))
+        # The page reader's value is found back on the page; another reader's reading of the same value comes
+        # first, so the evidence pattern names how the page's own text was read.
+        return max(self.readings, key=lambda sr: (bool(sr[1].boxes), sr[0] != "vlm", sr[1].score))[1]
 
 
 def _groups(field: str, by_source: dict[str, list[Reading]]) -> list[_Group]:
@@ -263,24 +273,65 @@ def wilson_lower(correct: int, n: int, z: float = 1.96) -> float:
     return max(0.0, (centre - margin) / den)
 
 
-def calibrate(raw: float, evidence: str = "") -> float:
+def calibrate(raw: float, evidence: str = "", local: dict[str, tuple[int, int]] | None = None) -> float:
     """The confidence a value deserves. When the benchmark has measured this evidence pattern often
     enough, it is the lower 95% bound of that pattern's accuracy (so "verified" at 98.5% means the
     pattern was right at least 98.5% of the time, with room for chance); otherwise the readers' own
-    combined score."""
-    seen = calibration_table().get(evidence) if evidence else None
-    if seen and seen[0] >= MIN_EVIDENCE:
-        return round(wilson_lower(seen[1], seen[0]), 4)
+    combined score. ``local``: {evidence: (cases, right)} from what AP approved on this computer. Real
+    invoices are added to the benchmark's cases of the same pattern (the synthetic ones keep their weight),
+    and the bound is taken over both once they are ``MIN_EVIDENCE`` together."""
+    if not evidence:
+        return raw
+    n, right = calibration_table().get(evidence) or (0, 0)
+    mine = _counts((local or {}).get(evidence))
+    if mine[0] and n + mine[0] >= MIN_EVIDENCE:
+        return round(wilson_lower(right + mine[1], n + mine[0]), 4)
+    if n >= MIN_EVIDENCE:
+        return round(wilson_lower(right, n), 4)
     return raw
+
+
+def _counts(seen: Any) -> tuple[int, int]:
+    """(cases, right) from a store's count, made safe: whole numbers, 0 <= right <= cases."""
+    try:
+        n = max(0, int(seen[0]))
+        return n, min(max(0, int(seen[1])), n)
+    except (TypeError, ValueError, IndexError, KeyError):
+        return 0, 0
 
 
 # ---------------------------------------------------------------- fusion
 
 
+def _key(field: str, value: Any) -> Any:
+    """A value as readers are grouped by (amounts to the cent)."""
+    key = normalize_value(field, value)
+    return round(key, 2) if isinstance(key, float) else key
+
+
+def _page_reader_differs(
+    field: str, by_source: dict[str, dict[str, list[Reading]]]
+) -> tuple[Reading, str, Reading] | None:
+    """(the page reader's reading, the other reader, its reading) when the page reader's first choice for
+    ``field`` and another page reader's first choice are different values."""
+    vlm = (by_source.get("vlm") or {}).get(field) or []
+    mine = _key(field, vlm[0].value) if vlm else None
+    if mine is None:
+        return None
+    for source in PAGE_READERS:
+        other = (by_source.get(source) or {}).get(field) or []
+        theirs = _key(field, other[0].value) if other else None
+        if theirs is not None and theirs != mine:
+            return vlm[0], source, other[0]
+    return None
+
+
 def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineReading],
          vendor: dict[str, Any] | None = None, fields: tuple[str, ...] = FIELDS,
-         today: dt.date | None = None, layout_source: str = "text") -> tuple[dict[str, FieldResult], list[dict[str, Any]]]:  # fmt: skip
-    """``by_source``: reader name -> field -> readings (best first). Returns field results and checks."""
+         today: dt.date | None = None, layout_source: str = "text",
+         local_evidence: dict[str, tuple[int, int]] | None = None) -> tuple[dict[str, FieldResult], list[dict[str, Any]]]:  # fmt: skip
+    """``by_source``: reader name -> field -> readings (best first). Returns field results and checks.
+    ``local_evidence``: {evidence: (cases, right)} from AP's approvals, for the calibration."""
     chosen: dict[str, _Group | None] = {}
     contest: dict[str, float] = {}
     all_groups: dict[str, list[_Group]] = {}
@@ -342,7 +393,14 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         evidence = evidence_key(field, sources, best.method, layout_source=layout_source,
                                 contested=contest.get(field, 0.0) > 0.25, confirmed=bool(n_conf) and field not in failed,
                                 soft=field in soft)  # fmt: skip
-        conf = calibrate(max(0.0, min(raw, 1.0)), evidence)
+        conf = calibrate(max(0.0, min(raw, 1.0)), evidence, local_evidence)
+        if "vlm" in sources and len(sources) > 1:
+            # The page reader agreeing is one more reader on top of a pattern the benchmark may have measured
+            # without it (patterns with it are not measured yet): it never makes the value less certain.
+            without = evidence_key(field, [s for s in sources if s != "vlm"], best.method, layout_source=layout_source,
+                                   contested=contest.get(field, 0.0) > 0.25,
+                                   confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
+            conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), without, local_evidence))
         # A lone reader is never verified on its own measured record (the benchmark is synthetic):
         # verified also needs a second reader or a check to agree. The second OCR read of a scan
         # shares the first one's blind spots (a word OCR never saw), so with the rule reader it
@@ -354,19 +412,41 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             reasons.append(
                 "readers differ on the exact name: " + " / ".join(sorted({str(r.value) for _, r in g.readings}))
             )
+        forms = {"".join(str(r.value).split()).upper() for s, r in g.readings if s != "ai"}  # how the page prints it
+        if field in ("invoice_number", "po_number") and len(forms) > 1:
+            # "BC-15.332" / "BC-15332": the same number to compare, but which is printed is not agreed. OCR adds
+            # specks as dots and commas far more often than it drops printed ones: the plainer form is shown.
+            independent = {"one"}
+            plain = min(forms, key=lambda f: (sum(not ch.isalnum() for ch in f), f))
+            g.value = next(
+                r.value for s, r in g.readings if s != "ai" and "".join(str(r.value).split()).upper() == plain
+            )
+            values[field] = g.value
+            reasons.append("readers write it differently: " + " / ".join(sorted(forms)))
         if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
-        ambiguous = all("ambiguous" in r.method for _, r in g.readings)
-        if ambiguous:
-            conf = min(conf, 0.6)
-            reasons.append("the date reads both day/month and month/day")
+        # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
+        # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
+        unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []
+        if unsure and all(unsure):
+            if all(u == "ambiguous" for u in unsure):
+                conf = min(conf, 0.6)
+                reasons.append("the date reads both day/month and month/day")
+            else:
+                conf = min(conf, SINGLE_READER_CAP)
+                reasons.append("the date reads both day/month and month/day: the day it arrived chose one")
         # The AI's coding is what an approval posts: a page value it does not share is not verified for it,
         # however well the page's own values add up.
         ai_top = (by_source.get("ai") or {}).get(field, [])[:1]
         coding_differs = bool(ai_top) and normalize_value(field, ai_top[0].value) is not None and "ai" not in g.top
         if coding_differs:
             reasons.append(f"the coding has {ai_top[0].value}, the page reads {g.value}")
-        if field in failed or coding_differs:
+        # Two independent readings of the page that disagree: a person looks, however the rest adds up.
+        readers_differ = _page_reader_differs(field, by_source)
+        if readers_differ:
+            vlm_reading, other, other_reading = readers_differ
+            reasons.append(f"the page reader read {vlm_reading.value}, {other} read {other_reading.value}")
+        if field in failed or coding_differs or readers_differ:
             status = CHECK
         elif conf >= VERIFIED_AT and best.boxes:
             status = VERIFIED
@@ -384,6 +464,21 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     _derive_tax_total(results)
     _vendor_master_name(results, checks, vendor)
     return results, checks
+
+
+def _date_unsure(r: Reading) -> str:
+    """Why a date reading may have the day and month the wrong way round: "ambiguous" (printed 03/04/2026 and
+    read so), "received" (the arrival date chose the order), or "" (the page settles it). A value found on
+    the page by locating it (the AI's, Document Intelligence's) is as ambiguous as the text it was found in."""
+    if "ambiguous" in r.method:
+        return "ambiguous"
+    if "+received" in r.method:
+        return "received"
+    if "located" in r.method or r.method == "di":
+        found = parse_dates(str(r.raw or ""))
+        if found and found[0][3]:
+            return "ambiguous"
+    return ""
 
 
 def _vendor_master_name(

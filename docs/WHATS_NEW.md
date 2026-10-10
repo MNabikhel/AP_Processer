@@ -5,11 +5,17 @@ the demo: start AP Coder and click **Load demo invoices** (no Azure needed). The
 [Getting started guide](GETTING_STARTED.md#step-4-try-the-dashboard-with-the-sample-data-no-enterprise-data)
 has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a decision.
 
-Your existing data is safe. On first start the database upgrades itself (schema version 14), and a
+Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
 ## Highlights
 
+- **New: the page reader, a second reader for scans and photos.** A small vision model (OvisOCR2 in LM
+  Studio, about 1 GB) reads each scan on its own in the background. Where it and OCR agree, a field can be
+  verified; where they differ, it is marked Check, and every figure on the page is compared between the two.
+  It is linked in *Settings → Page reader* by a test on an invoice whose answers are known. Every approval
+  now scores each reader (*Learning & accuracy → Readers*), tunes the confidence labels to your own
+  invoices, and can be exported as training data. See [CAPTURE_DESIGN.md](CAPTURE_DESIGN.md#the-page-reader-a-vision-model-as-a-second-reader).
 - **New: invoice capture with the highlighted page.** Every field boxed on the invoice in its
   confidence colour, teach-by-click, a measured confidence per field, and **supplier autonomy**:
   suppliers whose invoices AP has confirmed at 99%+ can go touchless, with an audit sample. See

@@ -33,3 +33,6 @@ bench_out/
 # Offline bundle (python scripts/build_offline_bundle.py): downloaded packages and OCR models
 /wheelhouse/
 /models/
+
+# The launcher's lock file (scripts/launch.py: one start at a time)
+/.ap_coder_launch.lock

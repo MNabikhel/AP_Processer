@@ -36,9 +36,13 @@ except ImportError:  # pragma: no cover - depends on what is installed
 
 
 def applies(requirement: str) -> bool:
-    """Fallback without ``packaging``: only ``sys_platform == '...'`` markers are understood."""
+    """Fallback without ``packaging``: only ``sys_platform == '...'`` and ``python_version < 'X.Y'`` markers
+    are understood."""
     marker = requirement.partition(";")[2]
     platform = re.search(r"sys_platform\s*==\s*['\"]([^'\"]+)['\"]", marker)
+    below = re.search(r"python_version\s*<\s*['\"](\d+)\.(\d+)['\"]", marker)
+    if below and sys.version_info[:2] >= (int(below.group(1)), int(below.group(2))):
+        return False
     return platform is None or platform.group(1) == sys.platform
 
 
@@ -78,6 +82,16 @@ def requirements(pyproject: Path = ROOT / "pyproject.toml", extras: tuple[str, .
     return list(dict.fromkeys(reqs))
 
 
+def file_url_path(url: str) -> Path:
+    """The folder a ``file:`` URL names, also on a network share: pip records ``\\\\server\\share\\AP Coder``
+    as ``file://server/share/AP%20Coder`` (the server is the URL's host, not part of its path)."""
+    parts = urllib.parse.urlparse(url)
+    path = parts.path
+    if parts.netloc and parts.netloc.lower() != "localhost":
+        path = f"//{parts.netloc}{path}"
+    return Path(urllib.request.url2pathname(path))
+
+
 def self_problem(root: Path = ROOT) -> str:
     """ "" when ap_coder is installed (editable) from ``root``, else why not. Read from the installed
     package's record, so a copy of the folder on sys.path does not count."""
@@ -92,7 +106,7 @@ def self_problem(root: Path = ROOT) -> str:
         if not url.startswith("file:"):
             found = "ap_coder is not installed from this folder"
             continue
-        where = Path(urllib.request.url2pathname(urllib.parse.urlparse(url).path))
+        where = file_url_path(url)
         try:
             if where.resolve() == root.resolve():
                 return ""

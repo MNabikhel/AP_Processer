@@ -3,15 +3,15 @@ APProcessor.command) uses its ``choose_data_dir``; run on its own, it does both 
 
 * records the data folder (database, invoices, outputs) outside the code, default ``~/APCoder``, so
   unzipping a newer version never loses or duplicates your data; an existing choice is kept
-* puts the PP-OCRv5 OCR models in place (``scripts/fetch_models.py``); if that fails, OCR still works
-  with one engine and this says how to fetch them later
+* puts the PP-OCRv5 OCR models in place (``scripts/fetch_models.py``: copied from the offline bundle's
+  ``models/`` folder, never downloaded unless ``AP_ALLOW_INTERNET=1``); if that fails, OCR still works
+  with one engine and this says where they come from
 
 Safe to run again: it changes nothing that is already set up. Never asks questions.
 """
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -30,8 +30,8 @@ def has_data(folder: Path) -> bool:
 
 def choose_data_dir() -> Path:
     """The folder already in use, else ``~/APCoder`` (or ``private/`` when it already holds data)."""
-    if os.getenv("AP_PRIVATE_DIR"):
-        return Path(os.environ["AP_PRIVATE_DIR"])
+    if chosen := paths._env_path("AP_PRIVATE_DIR"):  # without the quotes of cmd's  set AP_PRIVATE_DIR="D:\AP Data"
+        return chosen
     recorded = paths.read_user_settings().get("data_dir")
     if recorded:
         return Path(recorded)

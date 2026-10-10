@@ -47,6 +47,10 @@ def test_rejecting_an_approved_invoice_withdraws_what_it_taught(tmp_path):
     invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
     store.approve_invoice(invoice_id, _gt(), "Jane")
     assert store.feedback_rows()
+    with pytest.raises(ValueError):  # a Reject from a screen opened before the approval keeps the approval
+        store.reject_invoice(invoice_id, "Sam", "not ours after all")
+    assert store.get_invoice(invoice_id)["status"] == APPROVED and store.feedback_rows()
+    store.reopen(invoice_id, "Sam", "not ours after all")  # the way: reopen, then reject
     store.reject_invoice(invoice_id, "Sam", "not ours after all")
     assert store.get_invoice(invoice_id)["status"] == REJECTED
     assert store.feedback_rows() == []  # a rejected bill must not keep teaching the AI its coding

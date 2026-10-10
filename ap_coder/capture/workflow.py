@@ -44,9 +44,25 @@ def supplier_for(store: Any, output: dict[str, Any] | None) -> tuple[str, dict[s
     return key, (store.get_supplier_profile(key) if key else None)
 
 
+def local_evidence(store: Any) -> dict[str, tuple[int, int]] | None:
+    """{evidence: (cases, right)}: how often each evidence pattern was right on the invoices AP approved here
+    (``store.evidence_counts``), for the local calibration of confidence. None without a store, or with a store
+    that does not count them."""
+    counts = getattr(store, "evidence_counts", None) if store is not None else None
+    if counts is None:
+        return None
+    try:
+        return dict(counts() or {})
+    except Exception as exc:  # the benchmark's calibration stands alone
+        log.warning("local calibration not used (%s)", exc)
+        return None
+
+
 def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: Any = None,
-                    di_raw: dict[str, Any] | None = None) -> tuple[CaptureResult | None, str, dict[str, Any] | None]:  # fmt: skip
-    """(capture, supplier key, supplier profile). None for text files or when the file cannot be read."""
+                    di_raw: dict[str, Any] | None = None,
+                    page_text: list[str] | None = None) -> tuple[CaptureResult | None, str, dict[str, Any] | None]:  # fmt: skip
+    """(capture, supplier key, supplier profile). None for text files or when the file cannot be read.
+    ``page_text``: the page reader's transcription of each page, when it has read them."""
     path = Path(path)
     if path.suffix.lower() in TEXT_EXTENSIONS or not path.exists():
         return None, "", None
@@ -56,7 +72,7 @@ def capture_invoice(path: str | Path, output: dict[str, Any] | None, *, store: A
     try:
         # Processed the day it arrives: that date also settles a 03/04/2026 the page leaves open.
         capture = analyze(path, di_raw=di_raw, ai_values=ai_values(output), template=template, vendor=vendor,
-                          today=dt.date.today())  # fmt: skip
+                          today=dt.date.today(), page_text=page_text, local_evidence=local_evidence(store))  # fmt: skip
     except Exception as exc:  # capture is an extra check: never lose an invoice over it
         log.warning("%s: capture failed (%s)", path.name, exc)
         return None, key, profile
@@ -95,13 +111,64 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
     return {"state": state, "auto": ok and not audit, "audit": audit, "reason": reason}
 
 
+NOT_READERS = ("computed", "vendor master")  # a field's sources that did not read the page
+
+
+def reader_outcome_rows(capture: CaptureResult | dict[str, Any] | None, final: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each reader against what AP approved: per header field AP approved, one row per reader with what it read
+    ({reader, field, read_value, final_value, correct, layout_source}), plus reader "fused": the value AP saw,
+    with its evidence key and status. ``correct``: the same value once normalized (``normalize.same_value``).
+
+    A reader whose own value lost to another is scored on that value (the ``other:<value>`` sources); one that
+    only offered the winning value as a runner-up counts as having read it. Fields AP left blank are not
+    scored: blank may mean not printed, or not needed."""
+    from .normalize import same_value
+    from .supplier import header_values
+
+    if not capture:
+        return []
+    if isinstance(capture, dict):
+        capture = CaptureResult.from_dict(capture)
+    rows: list[dict[str, Any]] = []
+    for field, approved in header_values(final).items():
+        fr = capture.fields.get(field)
+        if approved in (None, "") or fr is None or fr.value in (None, ""):
+            continue
+        base = {"field": field, "final_value": approved, "layout_source": capture.layout_source}
+        scored: set[str] = set()
+        for reader, raw in fr.sources.items():  # the readers behind the value AP saw
+            if reader.startswith("other:") or reader in NOT_READERS:
+                continue
+            scored.add(reader)
+            # They all read that value; the raw text decides when the vendor master's name replaced theirs.
+            right = same_value(field, fr.value, approved) or same_value(field, raw, approved)
+            rows.append({**base, "reader": reader, "read_value": raw, "correct": right})
+        for other, readers in fr.sources.items():  # readers that read something else
+            if not other.startswith("other:"):
+                continue
+            value = other[len("other:") :]
+            for reader in (r.strip() for r in str(readers).split(",")):
+                if reader and reader not in scored and reader not in NOT_READERS:
+                    scored.add(reader)
+                    rows.append({**base, "reader": reader, "read_value": value,
+                                 "correct": same_value(field, value, approved)})  # fmt: skip
+        rows.append({**base, "reader": "fused", "read_value": fr.value, "correct": same_value(field, fr.value, approved),
+                     "evidence": fr.evidence, "status": fr.status})  # fmt: skip
+    return rows
+
+
 def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, actor: str = "",
                         taught: dict[str, list[Box]] | None = None) -> None:  # fmt: skip
-    """After a person approves: count what was corrected towards the supplier's accuracy, and teach the
-    supplier's template where each confirmed value sits on the page."""
+    """After a person approves: score each reader against what AP approved (the Learning page's Readers tab and
+    the local calibration of confidence), count what was corrected towards the supplier's accuracy, and teach
+    the supplier's template where each confirmed value sits on the page."""
     inv = store.get_invoice(invoice_id)
     if inv is None:
         return
+    try:
+        store.record_reader_outcomes(invoice_id, reader_outcome_rows(store.get_capture(invoice_id), final))
+    except Exception as exc:  # learning must never block an approval
+        log.warning("invoice %s: reader outcomes not recorded (%s)", invoice_id, exc)
     name = final.get("vendor_name") or ""
     key = store.supplier_key_for(name, final.get("gst_hst_registration_number"))
     if not key:

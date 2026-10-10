@@ -37,8 +37,8 @@ from .terms import DEFAULT_TERMS_DAYS, payment
 from .vendors import norm_invoice_number
 
 # 10: erp_invoices, 11: coding_rules (by _SCHEMA), 12: currency, 13: credit notes not due,
-# 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA)
-SCHEMA_VERSION = 14
+# 14: invoice_capture, supplier_profiles, supplier_outcomes (by _SCHEMA), 15: reader_outcomes, page_reads (by _SCHEMA)
+SCHEMA_VERSION = 15
 ACCOUNT_TABLES = {"gl_accounts": "gl_code", "cost_centers": "cost_center"}
 
 REVIEW, APPROVED, REJECTED, FAILED = "review", "approved", "rejected", "failed"
@@ -112,7 +112,26 @@ CREATE TABLE IF NOT EXISTS supplier_outcomes (
     at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS supplier_outcomes_key_at ON supplier_outcomes (supplier_key, at);
 CREATE INDEX IF NOT EXISTS supplier_outcomes_invoice ON supplier_outcomes (invoice_id);
+CREATE TABLE IF NOT EXISTS reader_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_id INTEGER, reader TEXT NOT NULL, field TEXT NOT NULL,
+    read_value TEXT, final_value TEXT, correct INTEGER NOT NULL, evidence TEXT NOT NULL DEFAULT '',
+    layout_source TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS reader_outcomes_invoice ON reader_outcomes (invoice_id);
+CREATE INDEX IF NOT EXISTS reader_outcomes_reader ON reader_outcomes (reader, field);
+CREATE TABLE IF NOT EXISTS page_reads (
+    invoice_id INTEGER PRIMARY KEY, status TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
+    pages INTEGER NOT NULL DEFAULT 0, seconds REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS page_reads_status ON page_reads (status, created_at);
 """
+
+# The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
+# interrupted (the computer slept, the app was closed): it waits in line again.
+PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED = "waiting", "reading", "done", "failed", "skipped"
+PAGE_READ_STATUSES = (PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED)
+STALE_READING_HOURS = 2
+_IN_LINE = "(status = 'waiting' OR (status = 'reading' AND updated_at < ?))"  # ? = _stale_before()
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
 _HEADER_FIELDS = (
@@ -126,6 +145,11 @@ _HEADER_FIELDS = (
 
 def _now() -> str:
     return dt.datetime.now().isoformat(timespec="seconds")
+
+
+def _stale_before() -> str:
+    """A page read started before this time is no longer under way (see STALE_READING_HOURS)."""
+    return (dt.datetime.now() - dt.timedelta(hours=STALE_READING_HOURS)).isoformat(timespec="seconds")
 
 
 def parse_fx_rates(text: str) -> dict[str, float]:
@@ -234,6 +258,11 @@ class Store:
                     conn.execute("UPDATE invoices SET currency = ? WHERE id = ?", (currency, r["id"]))
         if version < 13:  # credit notes were given a due date like invoices
             conn.execute("UPDATE invoices SET due_date = NULL WHERE grand_total <= 0")
+        # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
+        # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
+        from .capture.workflow import AUTONOMOUS_REVIEWER
+
+        conn.execute("DELETE FROM feedback WHERE reviewer = ?", (AUTONOMOUS_REVIEWER,))
         if version < SCHEMA_VERSION:
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -710,19 +739,30 @@ class Store:
             self.log_event("note", invoice_id=invoice_id, actor=actor, detail={"text": text.strip()[:2000]})
 
     def reject_invoice(self, invoice_id: int, reviewer: str, reason: str = "") -> None:
-        """Reject an invoice. One exported to the ERP cannot be (undo its batch first): rejected, it could then be
-        reopened and exported again. What an approval taught is withdrawn, as when it is reopened."""
+        """Reject an invoice in the review queue, or a parked one. An approved invoice cannot be: a Reject clicked
+        on a screen opened before someone approved it would wipe a finished approval (reopen it first). Anything
+        learned from the invoice is withdrawn, as when it is reopened."""
         with self._conn() as conn:
             cur = conn.execute(
                 "UPDATE invoices SET status = ?, reviewer = ?, reviewed_at = ?, second_reviewer = NULL, "
-                "second_reviewed_at = NULL, error = ? WHERE id = ? AND export_batch IS NULL",
-                (REJECTED, reviewer, _now(), reason or None, invoice_id),
+                "second_reviewed_at = NULL, parked_reason = NULL, follow_up = NULL, error = ? "
+                "WHERE id = ? AND status IN (?, ?) AND export_batch IS NULL",
+                (REJECTED, reviewer, _now(), reason or None, invoice_id, REVIEW, PARKED),
             )
             if cur.rowcount == 0:
-                raise ValueError(f"invoice {invoice_id} cannot be rejected (exported to the ERP, or deleted)")
-            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
-            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
+                raise ValueError(
+                    f"invoice {invoice_id} cannot be rejected (approved, rejected or deleted meanwhile: only an "
+                    "invoice in the review queue or parked can be)"
+                )
+            self._forget_learning(conn, invoice_id)
             self._log(conn, "rejected", invoice_id, reviewer, {"reason": reason})
+
+    @staticmethod
+    def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> None:
+        """Withdraw what an invoice's approval taught: its lessons, its supplier outcomes (from a review or an
+        audit sample alike, so none keeps counting towards the supplier's autonomy) and its reader scores."""
+        for table in ("feedback", "supplier_outcomes", "reader_outcomes"):
+            conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
 
     def delete_invoice(self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None) -> None:
         """Delete an invoice; with ``forget_lessons`` also what was learned when it was approved."""
@@ -732,9 +772,10 @@ class Store:
             ).fetchone()
             conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
             # What capture read, and the supplier accuracy measured on it, go with the invoice: a deleted
-            # invoice (a duplicate upload, a demo) must not count towards a supplier's autonomy.
-            conn.execute("DELETE FROM invoice_capture WHERE invoice_id = ?", (invoice_id,))
-            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ?", (invoice_id,))
+            # invoice (a duplicate upload, a demo) must not count towards a supplier's autonomy, a reader's
+            # record or the confidence calibration, and is no longer waiting for the page reader.
+            for table in ("invoice_capture", "supplier_outcomes", "reader_outcomes", "page_reads"):
+                conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
             if row is not None:
                 self._log(conn, "deleted", invoice_id, actor, {
                     "file": row["file_name"], "vendor": row["vendor_name"], "invoice_number": row["invoice_number"],
@@ -754,7 +795,7 @@ class Store:
     _JSON_COLUMNS = ("ai_output", "final_output", "validation", "meta", "edits")
     _LIGHT_COLUMNS = (
         "id", "status", "requires_review", "created_at", "reviewed_at", "reviewer", "second_reviewer",
-        "second_reviewed_at", "invoice_date", "due_date", "export_batch", *_JSON_COLUMNS
+        "second_reviewed_at", "invoice_date", "due_date", "export_batch", "source_path", "file_name", *_JSON_COLUMNS
     )  # fmt: skip
 
     def invoice_columns(
@@ -804,7 +845,11 @@ class Store:
         login: str = "",
     ) -> dict[str, int]:
         """Store the reviewer's final version and record one feedback row per line. ``open_issues``: the
-        errors and warnings still showing when the reviewer approved (kept in the audit trail)."""
+        errors and warnings still showing when the reviewer approved (kept in the audit trail). Only an invoice
+        in the review queue can be approved. An approval by AP Coder on its own (``AUTONOMOUS_REVIEWER``)
+        records no feedback: nobody checked its coding, so it is no lesson and no measure of accuracy."""
+        from .capture.workflow import AUTONOMOUS_REVIEWER
+
         inv = self.get_invoice(invoice_id)
         if inv is None:
             raise KeyError(invoice_id)
@@ -812,6 +857,10 @@ class Store:
             raise ValueError(f"invoice {invoice_id} is already approved")
         if inv["status"] == REJECTED:  # e.g. rejected by someone else meanwhile: reopen it first
             raise ValueError(f"invoice {invoice_id} was rejected: reopen it before approving it")
+        if inv["status"] == PARKED:  # parked by someone else meanwhile: waiting for information
+            raise ValueError(f"invoice {invoice_id} is parked: bring it back to the queue before approving it")
+        if inv["status"] != REVIEW:  # a failed read has nothing checked to approve
+            raise ValueError(f"invoice {invoice_id} is not in the review queue ({inv['status']})")
         ai = inv["ai_output"] or {"line_items": []}
         needs_second = self.over_approval_limit(final_output)
         vendor_name = final_output.get("vendor_name", "")
@@ -867,7 +916,7 @@ class Store:
                 """UPDATE invoices SET status = ?, final_output = ?, edits = ?, reviewer = ?, reviewed_at = ?,
                    vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?, grand_total = ?,
                    currency = ?, po_key = ?, due_date = ?, second_reviewer = NULL, second_reviewed_at = NULL
-                   WHERE id = ? AND status NOT IN (?, ?, ?)""",
+                   WHERE id = ? AND status = ?""",
                 (
                     PENDING if needs_second else APPROVED,
                     json.dumps(final_output),
@@ -883,13 +932,13 @@ class Store:
                     po_key(final_output.get("po_number") or ""),
                     _due(final_output, self.default_terms_days(), self.vendor_terms(key)),
                     invoice_id,
-                    APPROVED,
-                    PENDING,
-                    REJECTED,
+                    REVIEW,
                 ),  # fmt: skip
             )
             if cur.rowcount == 0:
-                raise ValueError(f"invoice {invoice_id} is already approved, or was rejected")
+                raise ValueError(f"invoice {invoice_id} left the review queue (approved, parked or rejected)")
+            if reviewer == AUTONOMOUS_REVIEWER:
+                feedback_rows = []  # nobody checked it: nothing to learn from, nothing to measure accuracy on
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
@@ -963,8 +1012,7 @@ class Store:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} is not waiting for a second approval")
-            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
-            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
+            self._forget_learning(conn, invoice_id)
             self._log(conn, "sent_back", invoice_id, actor, {"reason": reason})
 
     def refresh_confidence(self, invoice_id: int, adjusted: float, requires_review: bool) -> bool:
@@ -992,8 +1040,7 @@ class Store:
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
-            conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
-            conn.execute("DELETE FROM supplier_outcomes WHERE invoice_id = ? AND source = 'review'", (invoice_id,))
+            self._forget_learning(conn, invoice_id)
             self._log(conn, "reopened", invoice_id, actor, {"reason": reason})
 
     # --- Purchase orders ---------------------------------------------------------------------------
@@ -1185,24 +1232,44 @@ class Store:
             ]
 
     def create_export_batch(self, invoice_ids: list[int], fmt: str, actor: str | None = None) -> int:
-        """Mark approved, not yet exported invoices as one batch. Returns the batch number."""
+        """Mark approved, not yet exported invoices as one batch. Returns the batch number. Two people exporting
+        at once never put the same invoice in two batches: the write lock is taken before the invoices are
+        read, and each is taken only if it is still approved and not exported."""
         with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")  # the write lock from the read to the marks
             marks = ", ".join("?" for _ in invoice_ids)
             eligible = conn.execute(
-                f"SELECT id, grand_total FROM invoices WHERE id IN ({marks}) AND status = ? AND export_batch IS NULL",
+                f"SELECT id, grand_total, currency FROM invoices WHERE id IN ({marks}) AND status = ? "
+                "AND export_batch IS NULL ORDER BY id",
                 (*invoice_ids, APPROVED),
             ).fetchall()
             if not eligible:
                 raise ValueError("none of these invoices can be exported (not approved, or already exported)")
-            total = round(sum(r["grand_total"] or 0 for r in eligible), 2)
             cur = conn.execute(
                 "INSERT INTO export_batches (created_at, actor, format, invoices, total) VALUES (?, ?, ?, ?, ?)",
-                (_now(), actor, fmt, len(eligible), total),
+                (_now(), actor, fmt, 0, 0.0),
             )
             batch = int(cur.lastrowid)
-            conn.executemany("UPDATE invoices SET export_batch = ? WHERE id = ?", [(batch, r["id"]) for r in eligible])
+            taken = []
             for r in eligible:
-                self._log(conn, "exported", r["id"], actor, {"batch": batch, "format": fmt})
+                cur = conn.execute(
+                    "UPDATE invoices SET export_batch = ? WHERE id = ? AND status = ? AND export_batch IS NULL",
+                    (batch, r["id"], APPROVED),
+                )
+                if cur.rowcount:
+                    taken.append(r)
+            if not taken:
+                raise ValueError("none of these invoices can be exported (not approved, or already exported)")
+            currencies = {(r["currency"] or "").strip().upper() or "CAD" for r in taken}
+            total = round(sum(r["grand_total"] or 0 for r in taken), 2) if len(currencies) == 1 else None
+            conn.execute(  # no total across currencies: dollars and euros do not add up
+                "UPDATE export_batches SET invoices = ?, total = ? WHERE id = ?", (len(taken), total, batch)
+            )
+            for r in taken:  # the amount and currency, so an undone batch still shows what went out
+                self._log(conn, "exported", r["id"], actor, {
+                    "batch": batch, "format": fmt, "total": r["grand_total"],
+                    "currency": (r["currency"] or "").strip().upper() or "CAD",
+                })  # fmt: skip
         return batch
 
     def export_batches(self) -> list[dict[str, Any]]:
@@ -1280,6 +1347,34 @@ class Store:
             out.setdefault(r["export_batch"], {})[r["cur"]] = round(r["total"] or 0, 2)
         return out
 
+    def exported_totals(self) -> dict[int, dict[str, float]]:
+        """{batch: {currency: total}} of what each batch held when it was exported, from the audit trail: an
+        undone batch's invoices are back in the ready list, but what went out is still shown per currency. An
+        export recorded by an older version (without the amount) counts the invoice's amount as it is now; a
+        batch with such an invoice since deleted is left out (its total is not known)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT e.detail, i.id, i.currency, i.grand_total FROM events e "
+                "LEFT JOIN invoices i ON i.id = e.invoice_id WHERE e.action = 'exported'"
+            ).fetchall()
+        out: dict[int, dict[str, float]] = {}
+        unknown: set[int] = set()
+        for r in rows:
+            detail = json.loads(r["detail"] or "{}") or {}
+            if detail.get("batch") is None:
+                continue
+            batch = int(detail["batch"])
+            if "currency" in detail:
+                currency, amount = detail["currency"], detail.get("total")
+            elif r["id"] is not None:
+                currency, amount = (r["currency"] or "").strip().upper() or "CAD", r["grand_total"]
+            else:
+                unknown.add(batch)
+                continue
+            totals = out.setdefault(batch, {})
+            totals[currency] = round(totals.get(currency, 0.0) + float(amount or 0), 2)
+        return {batch: totals for batch, totals in out.items() if batch not in unknown}
+
     def batch_invoice_ids(self, batch: int) -> list[int]:
         with self._conn() as conn:
             return [
@@ -1300,12 +1395,16 @@ class Store:
     def save_capture(self, invoice_id: int, capture: dict[str, Any]) -> None:
         """What the capture readers found on an invoice (``CaptureResult.to_dict()``), kept with it."""
         with self._conn() as conn:
-            conn.execute(
-                """INSERT INTO invoice_capture (invoice_id, capture_json, layout_source, created_at)
-                   VALUES (?, ?, ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET capture_json = excluded.capture_json,
-                   layout_source = excluded.layout_source, created_at = excluded.created_at""",
-                (invoice_id, json.dumps(capture, default=str), str(capture.get("layout_source") or ""), _now()),
-            )
+            self._save_capture(conn, invoice_id, capture)
+
+    @staticmethod
+    def _save_capture(conn: sqlite3.Connection, invoice_id: int, capture: dict[str, Any]) -> None:
+        conn.execute(
+            """INSERT INTO invoice_capture (invoice_id, capture_json, layout_source, created_at)
+               VALUES (?, ?, ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET capture_json = excluded.capture_json,
+               layout_source = excluded.layout_source, created_at = excluded.created_at""",
+            (invoice_id, json.dumps(capture, default=str), str(capture.get("layout_source") or ""), _now()),
+        )
 
     def get_capture(self, invoice_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
@@ -1322,7 +1421,12 @@ class Store:
         ids = self.vendor_ids()
         vendor_id = ids.get(vendor_key(vendor_name or ""))
         if not vendor_id and gst_number:
-            vendor_id = ids.get(f"gst:{norm_tax_number(gst_number)}")
+            number = norm_tax_number(gst_number)
+            bn = number[:9] if number[:9].isdigit() else ""
+            # The same registration however much of it either side keeps (vendors.same_tax_number): the master's
+            # 9-digit Business Number for the invoice's full account, or the master's full account for 9 digits.
+            vendor_id = ids.get(f"gst:{number}") or (bn and (ids.get(f"bn:{bn}") or (
+                ids.get(f"bnx:{bn}") if len(number) == 9 else None)))  # fmt: skip
         return supplier_key(vendor_name, gst_number, vendor_id)
 
     @staticmethod
@@ -1513,6 +1617,243 @@ class Store:
                 keys,
             ).rowcount
 
+    # --- Each reader against what AP approved; the page reader's queue -------------------------------------------
+
+    def record_reader_outcomes(self, invoice_id: int, rows: list[dict[str, Any]], at: str | None = None) -> int:
+        """What each capture reader read on an approved invoice, against what AP approved
+        (``capture.workflow.reader_outcome_rows``): one row per reader and field; reader "fused" is the value
+        AP saw, with its evidence key and status. Recording an invoice again replaces its rows (an invoice
+        approved again after a reopen). Returns how many rows were kept."""
+        at = at or _now()
+
+        def text(value: Any) -> str | None:
+            return None if value is None else str(value)
+
+        keep = [
+            (invoice_id, str(r["reader"]), str(r["field"]), text(r.get("read_value")), text(r.get("final_value")),
+             1 if r.get("correct") else 0, str(r.get("evidence") or ""), str(r.get("layout_source") or ""),
+             str(r.get("status") or ""), str(r.get("at") or at))
+            for r in rows
+            if r.get("reader") and r.get("field")
+        ]  # fmt: skip
+        with self._conn() as conn:
+            conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ?", (invoice_id,))
+            conn.executemany(
+                """INSERT INTO reader_outcomes (invoice_id, reader, field, read_value, final_value, correct, evidence,
+                   layout_source, status, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                keep,
+            )
+        return len(keep)
+
+    @staticmethod
+    def _score(row: sqlite3.Row) -> dict[str, Any]:
+        fields, agreed = int(row["fields"]), int(row["agreed"] or 0)
+        return {"fields": fields, "agreed": agreed, "rate": agreed / fields if fields else None,
+                "invoices": int(row["invoices"])}  # fmt: skip
+
+    def reader_scorecard(self) -> list[dict[str, Any]]:
+        """Each reader's record against AP's approvals: {reader, fields (compared), agreed (with AP), rate,
+        invoices}. Reader "fused" is the combined value AP saw on the review screen."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT reader, COUNT(*) fields, SUM(correct) agreed, COUNT(DISTINCT invoice_id) invoices
+                   FROM reader_outcomes GROUP BY reader ORDER BY reader"""
+            ).fetchall()
+        return [{"reader": r["reader"], **self._score(r)} for r in rows]
+
+    def reader_field_scorecard(self, reader: str) -> list[dict[str, Any]]:
+        """One reader's record field by field, the weakest first: {field, fields, agreed, rate, invoices,
+        last_read, last_final}, the last two being its latest disagreement with AP (None if it always agreed)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT field, COUNT(*) fields, SUM(correct) agreed, COUNT(DISTINCT invoice_id) invoices
+                   FROM reader_outcomes WHERE reader = ? GROUP BY field""",
+                (reader,),
+            ).fetchall()
+            # With MAX(id), SQLite takes the other columns from that row: the latest disagreement of each field.
+            latest = {
+                r["field"]: r
+                for r in conn.execute(
+                    """SELECT field, MAX(id) id, read_value, final_value FROM reader_outcomes
+                       WHERE reader = ? AND correct = 0 GROUP BY field""",
+                    (reader,),
+                )
+            }
+        out = []
+        for r in rows:
+            wrong = latest.get(r["field"])
+            out.append({"field": r["field"], **self._score(r), "last_read": wrong["read_value"] if wrong else None,
+                        "last_final": wrong["final_value"] if wrong else None})  # fmt: skip
+        return sorted(out, key=lambda r: (r["rate"], r["field"]))
+
+    def fused_status_scorecard(self) -> list[dict[str, Any]]:
+        """How often the value AP saw was the one AP approved, by the status it showed (verified first):
+        {status, fields, agreed, rate, invoices}."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT status, COUNT(*) fields, SUM(correct) agreed, COUNT(DISTINCT invoice_id) invoices
+                   FROM reader_outcomes WHERE reader = 'fused' AND status != '' GROUP BY status"""
+            ).fetchall()
+        order = {"verified": 0, "likely": 1, "check": 2}
+        scores = [{"status": r["status"], **self._score(r)} for r in rows]
+        return sorted(scores, key=lambda r: order.get(r["status"], 9))
+
+    def evidence_counts(self) -> dict[str, tuple[int, int]]:
+        """{evidence key: (values, right)}: how often each pattern of readers and checks
+        (``capture.confidence.evidence_key``) gave the value AP approved on this company's own invoices (the
+        values AP saw, reader "fused"). The local calibration of confidence counts them."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT evidence, COUNT(*) n, SUM(correct) ok FROM reader_outcomes
+                   WHERE reader = 'fused' AND evidence != '' GROUP BY evidence"""
+            ).fetchall()
+        return {r["evidence"]: (int(r["n"]), int(r["ok"] or 0)) for r in rows}
+
+    def queue_page_read(self, invoice_id: int, reason: str, requested_by: str = "") -> bool:
+        """Put an invoice in line for the page reader. One already waiting keeps its place in line (a person
+        asking for it is noted); one read before goes to the back of the line; a read under way is left to
+        finish (False)."""
+        now = _now()
+        waiting = "page_reads.status IN ('waiting', 'reading')"  # past the WHERE below, a reading row is stale
+        keep = f"{waiting} AND excluded.requested_by = ''"  # a background request never replaces a person's
+        with self._conn() as conn:
+            cur = conn.execute(
+                f"""INSERT INTO page_reads (invoice_id, status, reason, requested_by, created_at, updated_at)
+                    VALUES (?, 'waiting', ?, ?, ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET status = 'waiting',
+                    reason = CASE WHEN {keep} THEN page_reads.reason ELSE excluded.reason END,
+                    requested_by = CASE WHEN {keep} THEN page_reads.requested_by ELSE excluded.requested_by END,
+                    created_at = CASE WHEN {waiting} THEN page_reads.created_at ELSE excluded.created_at END,
+                    error = '', updated_at = excluded.updated_at
+                    WHERE page_reads.status != 'reading' OR page_reads.updated_at < ?""",
+                (invoice_id, reason or "", requested_by or "", now, now, _stale_before()),
+            )
+            return cur.rowcount > 0
+
+    def next_page_read(self, invoice_id: int | None = None) -> dict[str, Any] | None:
+        """The invoice the page reader should read next (the one waiting longest), marked as being read; None
+        when nothing waits. With ``invoice_id``: that invoice, if it is in line (the one AP asked for, read
+        first), else None. Two readers (the dashboard's and ``read-pages``) never take the same invoice."""
+        now, stale = _now(), _stale_before()
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")  # the write lock from the choice to the mark
+            if invoice_id is None:
+                row = conn.execute(
+                    f"SELECT invoice_id FROM page_reads WHERE {_IN_LINE} ORDER BY created_at, invoice_id LIMIT 1",
+                    (stale,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    f"SELECT invoice_id FROM page_reads WHERE invoice_id = ? AND {_IN_LINE}", (invoice_id, stale)
+                ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE page_reads SET status = 'reading', error = '', updated_at = ? WHERE invoice_id = ?",
+                (now, row[0]),
+            )
+            taken = conn.execute("SELECT * FROM page_reads WHERE invoice_id = ?", (row[0],)).fetchone()
+        return dict(taken)
+
+    def finish_page_read(
+        self, invoice_id: int, status: str, model: str = "", pages: int = 0, seconds: float = 0.0, error: str = ""
+    ) -> bool:
+        """How a page read ended: ``done``, ``failed`` (``error`` says why), ``skipped`` (nothing to read, or the
+        invoice was dealt with meanwhile) or ``waiting`` (stopped part-way: it keeps its place in line). False
+        when the invoice is no longer in line (deleted meanwhile)."""
+        if status not in (PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED, PAGE_WAITING):
+            raise ValueError(f"unknown page read status {status!r}")
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE page_reads SET status = ?, model = ?, pages = ?, seconds = ?, error = ?, updated_at = ? "
+                "WHERE invoice_id = ?",
+                (status, model or "", int(pages or 0), round(float(seconds or 0), 2), (error or "")[:2000], _now(),
+                 invoice_id),
+            )  # fmt: skip
+            return cur.rowcount > 0
+
+    def page_read(self, invoice_id: int) -> dict[str, Any] | None:
+        """{invoice_id, status, model, pages, seconds, reason, error, requested_by, created_at, updated_at}, or
+        None if the invoice was never put in line. A read interrupted long ago shows as waiting."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM page_reads WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        if row is None:
+            return None
+        read = dict(row)
+        if read["status"] == PAGE_READING and read["updated_at"] < _stale_before():
+            read["status"] = PAGE_WAITING
+        return read
+
+    def page_reads_waiting(self) -> int:
+        """How many invoices wait for the page reader (interrupted reads included)."""
+        with self._conn() as conn:
+            row = conn.execute(f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}", (_stale_before(),)).fetchone()
+        return int(row[0])
+
+    def page_reads_ahead(self, invoice_id: int) -> int:
+        """How many invoices the page reader reads before this one: the one being read now, and those in line
+        ahead of it in the order ``next_page_read`` takes them. 0 when it isn't waiting."""
+        stale = _stale_before()
+        with self._conn() as conn:
+            me = conn.execute(
+                f"SELECT created_at FROM page_reads WHERE invoice_id = ? AND {_IN_LINE}", (invoice_id, stale)
+            ).fetchone()
+            if me is None:
+                return 0
+            row = conn.execute(
+                f"""SELECT COUNT(*) FROM page_reads WHERE invoice_id != ? AND ((status = 'reading' AND updated_at >= ?)
+                    OR ({_IN_LINE} AND (created_at < ? OR (created_at = ? AND invoice_id < ?))))""",
+                (invoice_id, stale, stale, me[0], me[0], invoice_id),
+            ).fetchone()
+        return int(row[0])
+
+    def replace_proposal(
+        self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
+        actor: str = "AP Coder",
+    ) -> bool:  # fmt: skip
+        """Replace what AP Coder proposes for an invoice nobody has worked on yet (the page reader read it after
+        it was processed): the coding, its checks and confidence, the columns the queue shows, the capture
+        (``CaptureResult`` or its dict; None keeps the stored one), and ``meta`` merged into the processing
+        notes. ``report``: the ``ValidationReport`` or its dict.
+
+        Only while the invoice waits in the review queue untouched: no edits recorded and never approved (a
+        reopened invoice keeps the reviewer's coding). Otherwise nothing changes and it returns False."""
+        if not output:
+            return False
+        validation = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
+        if capture is not None and hasattr(capture, "to_dict"):
+            capture = capture.to_dict()
+        key = vendor_key(output.get("vendor_name", ""))
+        due = _due(output, self.default_terms_days(), self.vendor_terms(key))
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")  # checked and changed in one go: an approval cannot slip in between
+            row = conn.execute(
+                "SELECT status, edits, final_output, reviewer, ai_output, meta FROM invoices WHERE id = ?",
+                (invoice_id,),
+            ).fetchone()
+            if (row is None or row["status"] != REVIEW or row["final_output"] or row["reviewer"]
+                    or json.loads(row["edits"] or "null")):  # fmt: skip
+                return False
+            merged = {**(json.loads(row["meta"] or "null") or {}), **(meta or {})}
+            conn.execute(
+                """UPDATE invoices SET ai_output = ?, validation = ?, model_confidence = ?, adjusted_confidence = ?,
+                   requires_review = ?, vendor_name = ?, vendor_key = ?, invoice_number = ?, invoice_date = ?,
+                   currency = ?, grand_total = ?, po_key = ?, due_date = ?, meta = ? WHERE id = ?""",
+                (json.dumps(output), json.dumps(validation) if validation else None,
+                 validation.get("model_confidence"), validation.get("adjusted_confidence"),
+                 int(bool(validation.get("requires_review", True))), output.get("vendor_name"), key,
+                 output.get("invoice_number"), output.get("invoice_date"), output.get("currency"),
+                 output.get("grand_total"), po_key(output.get("po_number") or ""), due,
+                 json.dumps(merged, default=str), invoice_id),
+            )  # fmt: skip
+            if capture is not None:
+                self._save_capture(conn, invoice_id, capture)
+            self._log(conn, "proposal_updated", invoice_id, actor, {
+                "by": "page reader", "changes": diff_coding(json.loads(row["ai_output"] or "null") or {}, output),
+                "confidence": validation.get("adjusted_confidence"),
+                "requires_review": bool(validation.get("requires_review", True)),
+            })  # fmt: skip
+        return True
+
     # --- Vendors ----------------------------------------------------------------------------------------
 
     def get_vendor(self, key: str) -> dict[str, Any] | None:
@@ -1626,6 +1967,8 @@ class Store:
             number = norm_tax_number(r[2])
             if sum(c.isdigit() for c in number) >= 9:
                 ids.setdefault(f"gst:{number}", r[1])
+                if number[:9].isdigit():  # bn: the master keeps only the Business Number; bnx: the full account
+                    ids.setdefault(f"{'bn' if len(number) == 9 else 'bnx'}:{number[:9]}", r[1])
         return ids
 
     def all_vendor_terms(self) -> dict[str, str]:

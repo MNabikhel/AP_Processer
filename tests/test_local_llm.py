@@ -23,6 +23,7 @@ from ap_coder.local_llm import (
     parse_json_reply,
     pick_model,
     provider_status,
+    read_reply,
     resolve_provider,
 )
 
@@ -458,6 +459,37 @@ def test_a_province_as_a_model_writes_it():
         province_code("Narnia")
 
 
+@pytest.mark.parametrize(
+    "written, code",
+    [
+        ("1234 Rue Ontario Est, Montréal, QC", "QC"),  # a street named after a province is not the province
+        ("500 Quebec St, Vancouver, BC", "BC"),
+        ("Alberta St, Portland, OR, USA", "OUTSIDE_CANADA"),
+        ("Halifax, Nova Scotia, Canada", "NS"),
+        ("Toronto ON M5V 2T6", "ON"),
+        ("Toronto, ON, CA", "ON"),
+        ("Montréal (Québec) H2X 1Y4", "QC"),
+        ("PEI", "PE"),
+        ("P.E.I.", "PE"),
+        ("PQ", "QC"),
+        ("Que.", "QC"),
+        ("NF", "NL"),
+        ("Nfld", "NL"),
+        ("Newfoundland & Labrador", "NL"),
+        ("Île-du-Prince-Édouard", "PE"),
+        ("Boston, MA", "OUTSIDE_CANADA"),
+        ("Seattle, WA, USA", "OUTSIDE_CANADA"),
+        ("Los Angeles, CA", "OUTSIDE_CANADA"),
+        ("Portland, OR 97201", "OUTSIDE_CANADA"),
+        ("Boston, Massachusetts", "OUTSIDE_CANADA"),
+    ],
+)
+def test_a_province_from_an_address_or_an_old_abbreviation(written, code):
+    from ap_coder.schema import province_code
+
+    assert province_code(written) == code
+
+
 # --- Thinking models (Qwen 3.5 in LM Studio) --------------------------------------------------------------------
 # LM Studio may ignore chat_template_kwargs (its bug tracker #1990): the model thinks anyway, the reasoning comes
 # back in reasoning_content, and with a token limit the answer can be empty.
@@ -520,6 +552,30 @@ def test_thinking_until_the_token_limit_is_a_clear_error(lm_studio, reference, s
 def test_a_cut_off_json_answer_says_so(lm_studio, reference):
     server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: chat_reply('{"lines": [{"line_', "length"))
     with pytest.raises(CodingError, match="cut off before the JSON was complete.*AP_LLM_MAX_TOKENS"):
+        ask_accounts(server, reference)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"vendor_name": "ACME", "line_items": [{"line_number": 1, "amount": 10.0}, {"line_number": 2, "descr',
+        '{"lines": [{"line_number": 1, "gl_code": "6000", "reason": "x"}, {"line_number": 2, "gl_co',
+    ],
+)
+def test_a_reply_cut_off_at_the_token_limit_is_not_read_as_one_of_its_line_items(content):
+    from types import SimpleNamespace
+
+    assert parse_json_reply(content) is None  # the first "{" never closes: an object inside it is not the answer
+    reply = read_reply(SimpleNamespace(message=SimpleNamespace(content=content), finish_reason="length"), 2048)
+    assert reply.data is None and reply.cut_off and "cut off before the JSON was complete" in reply.problem
+    closed = read_reply(SimpleNamespace(message=SimpleNamespace(content=content + '"]}'), finish_reason="length"))
+    assert closed.data is None and closed.cut_off  # stopped at the limit: not trusted even when it closes
+
+
+def test_a_cut_off_suggestion_is_an_error_not_just_its_first_line(lm_studio, reference):
+    cut = json.dumps(PICKS)[:-60]  # the first line complete, the second cut
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: chat_reply(cut, "length"))
+    with pytest.raises(CodingError, match="cut off before the JSON was complete"):
         ask_accounts(server, reference)
 
 

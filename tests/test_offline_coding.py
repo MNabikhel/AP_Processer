@@ -13,6 +13,21 @@ from .conftest import SAMPLES
 STEM = "harbourview_NS_HST_HPS-2026-0347"
 
 
+def test_a_tax_above_the_provinces_rate_is_not_a_partial_base():
+    """14% HST on $1,000 while the province was read as Ontario (13%) is Nova Scotia's rate on the whole
+    subtotal, not 13% on a $1,076.92 base: the rate the amounts show is kept, with the province it names (the
+    tax check then flags the place of supply that differs). Less than the rate is still a partial base."""
+    import datetime as dt
+
+    from ap_coder.offline_coder import _tax_lines
+
+    on = dt.date(2026, 4, 3)
+    (hst,) = _tax_lines({"hst_amount": 140.0}, 1000.0, "ON", on)
+    assert (hst.rate, hst.province, hst.taxable_amount, hst.tax_amount) == (0.14, "NS", 1000.0, 140.0)
+    (rst,) = _tax_lines({"pst_amount": 63.0}, 1000.0, "MB", on)  # delivery exempt from Manitoba RST
+    assert (rst.rate, rst.province, rst.taxable_amount) == (0.07, "MB", 900.0)
+
+
 def _offline_settings():
     s = Settings()
     return replace(s, llm=replace(s.llm, provider="off"))

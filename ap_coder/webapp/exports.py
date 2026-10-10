@@ -346,11 +346,14 @@ def page_exports() -> None:
             st.html(ui.empty_note("No exports yet", "Each export appears here and can be downloaded again.", "history"))
             return
         totals = store.batch_totals()
+        exported = store.exported_totals()
 
         def batch_total(b: dict[str, Any]) -> str:
-            amounts = totals.get(b["id"])
-            if not amounts:  # undone: its invoices are back in the ready list
-                return money(b["total"])
+            # Undone: its invoices are back in the ready list, so what went out is taken from the audit trail.
+            # Always per currency: dollars and euros do not add up to one total.
+            amounts = totals.get(b["id"]) or exported.get(b["id"])
+            if not amounts:
+                return "—"
             return " · ".join(f"{money(t)} <span class='apc-muted'>{esc(c)}</span>" for c, t in sorted(amounts.items()))
 
         rows = [

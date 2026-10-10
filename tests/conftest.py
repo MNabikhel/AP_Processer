@@ -18,6 +18,8 @@ def isolated_private_dir(monkeypatch, tmp_path):
     """Never let a test touch the real private/ folder (database, invoices, outputs)."""
     monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path / "private"))
     monkeypatch.setenv("AP_USER_SETTINGS", str(tmp_path / "user_settings.json"))  # not the real ~/.ap_coder
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)  # the offline default, even in an online CI job
+    monkeypatch.delenv("AP_LAUNCH_LOCK_HELD", raising=False)
 
 
 @pytest.fixture(autouse=True)

@@ -170,27 +170,28 @@ class InvoicePipeline:
         coding = result.coding
         # Lines nothing could code. A match on the account's name stays: on the samples a small model
         # (1.5B) picked the right account less often (11 of 41) than the name match did (21 of 41).
-        todo = [
-            (li.line_number, li.description, li.amount)
-            for li in coding.line_items
-            if li.predicted_gl_code == UNASSIGNED
-        ]
+        # Each is numbered by its place on the invoice, not its printed line number: those can repeat (a second
+        # page that numbers from 1 again), and a suggestion must never land on a line already coded.
+        todo = {n: li for n, li in enumerate(coding.line_items, start=1) if li.predicted_gl_code == UNASSIGNED}
         if not todo:
             return
         try:
-            picks = suggest_accounts(self.coder, coding.vendor_name, todo, history)
+            picks = suggest_accounts(
+                self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history
+            )
         except Exception as exc:  # the model is an extra here: the invoice is already read and checked
             log.warning("local model could not suggest accounts (%s); left for AP", exc)
             return
-        for li in coding.line_items:
-            if li.line_number in picks:
-                gl, cc, reason = picks[li.line_number]
-                li.predicted_gl_code = gl
-                if cc:
-                    li.predicted_cost_center = cc
-                li.reasoning_justification = (
-                    f"Suggested by the local model: {reason}" if reason else "Suggested by the local model"
-                )
+        for n, (gl, cc, reason) in picks.items():
+            li = todo.get(n)
+            if li is None:
+                continue
+            li.predicted_gl_code = gl
+            if cc:
+                li.predicted_cost_center = cc
+            li.reasoning_justification = (
+                f"Suggested by the local model: {reason}" if reason else "Suggested by the local model"
+            )
         model = getattr(self.coder, "_local_model", "") or "local model"
         result.model = f"local reader + {model}"
 
@@ -204,7 +205,13 @@ class InvoicePipeline:
             and not ex.settings.endpoint
         )
 
-    def process(self, path: str | Path) -> PipelineResult:
+    def process(
+        self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None
+    ) -> PipelineResult:
+        """Read, code and check one invoice, and save it to the review queue (``save``). ``page_text``: the page
+        reader's reading of each page (a vision model), read as one more independent reader. ``invoice_id``: the
+        invoice is already in the store as this row (read again by the page reader), so the checks against other
+        invoices (duplicate, vendor history, purchase order) leave it out instead of finding it against itself."""
         path = Path(path)
         result = PipelineResult(source=path)
         captured: tuple[Any, str, Any] | None = None  # (capture, supplier key, profile) when read without AI
@@ -244,7 +251,7 @@ class InvoicePipeline:
                 # model), each line coded from what AP approved before; a local model codes the lines left over.
                 from .offline_coder import code_from_capture, read_invoice
 
-                captured = read_invoice(path, self.store, layout=layout)
+                captured = read_invoice(path, self.store, layout=layout, page_text=page_text)
                 result.coding = code_from_capture(
                     captured[0], self.reference, feedback, self.store, text=result.extraction.content
                 )
@@ -263,6 +270,7 @@ class InvoicePipeline:
                 self.settings,
                 result.extraction,
                 store=self.store,
+                exclude_invoice_id=invoice_id,
                 feedback=feedback,
             )
         except Exception as exc:  # one bad invoice must not stop a batch
@@ -276,15 +284,16 @@ class InvoicePipeline:
                 result.capture, key, profile = captured
             else:
                 result.capture, key, profile = capture_invoice(
-                    path, result.output, store=self.store, di_raw=result.extraction.raw if result.extraction else None
-                )
+                    path, result.output, store=self.store, page_text=page_text,
+                    di_raw=result.extraction.raw if result.extraction else None,
+                )  # fmt: skip
             result.timings["capture"] = time.perf_counter() - t2
             if result.capture is not None and result.report is not None:
                 for severity, code, message in review_issues(result.capture):
                     result.report.issues.append(Issue(severity, code, message))
                 result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path)
 
-        if self.store is not None:
+        if self.store is not None and save:
             try:
                 result.invoice_id = self.store.add_invoice(
                     path,
@@ -298,6 +307,11 @@ class InvoicePipeline:
                     self.store.save_capture(result.invoice_id, result.capture.to_dict())
                 if result.autonomy.get("auto") and result.output is not None:
                     self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
+                elif result.output is not None:  # the page reader reads it in the background, when it is set to
+                    from .page_worker import queue_new_invoice
+
+                    source = result.capture.layout_source if result.capture is not None else ""
+                    queue_new_invoice(self.store, self.settings, result.invoice_id, path, source)
             except Exception as exc:  # a file that cannot be saved (locked, gone) must not stop the batch
                 log.exception("Could not save %s", path)
                 result.error = result.error or f"not saved: {type(exc).__name__}: {exc}"

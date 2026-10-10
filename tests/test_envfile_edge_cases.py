@@ -50,3 +50,28 @@ def test_a_data_folder_set_with_quotes_on_windows_is_the_folder(tmp_path, monkey
     assert paths.private_dir() == folder
     monkeypatch.setenv("AP_ENV_FILE", f'"{folder / ".env"}"')
     assert paths.env_file() == folder / ".env"
+
+
+def test_an_inline_comment_is_not_part_of_the_value(tmp_path):
+    """Read as python-dotenv (the app) reads it, so the installer and Settings never write a comment back into a
+    key or an endpoint."""
+    from dotenv import dotenv_values
+
+    env = tmp_path / ".env"
+    lines = [
+        "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://di-prod.cognitiveservices.azure.com/   # prod resource",
+        'AZURE_OPENAI_DEPLOYMENT="gpt 4o" # the shared one',
+        "AZURE_OPENAI_API_KEY='abc#123' # single quotes",
+        "AP_REVIEWER=Pat#2",  # no space before #: part of the value
+        "export AP_REVIEW_THRESHOLD=0.9",
+        'AP_LLM_MODEL="say \\"hi\\" C:\\\\x"',
+    ]
+    env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    values = read_env(env)
+    assert values == {k: v for k, v in dotenv_values(env).items() if v is not None}
+    assert values["AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"] == "https://di-prod.cognitiveservices.azure.com/"
+    assert values["AZURE_OPENAI_DEPLOYMENT"] == "gpt 4o" and values["AP_REVIEWER"] == "Pat#2"
+    assert values["AP_LLM_MODEL"] == 'say "hi" C:\\x'
+
+    write_env(env, {"AP_REVIEWER": "Jo"})  # the installer saving one answer keeps the others as they read
+    assert read_env(env)["AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"] == "https://di-prod.cognitiveservices.azure.com/"

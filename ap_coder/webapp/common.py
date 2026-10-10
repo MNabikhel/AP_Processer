@@ -287,10 +287,13 @@ _INVOICE_STATE = re.compile(r"^(?:_base_|_draft_)?inv\d+_")
 
 
 def forget_all_drafts() -> None:
-    """Drop every invoice's drafts (after a restore, invoice numbers are given out again to new invoices)."""
+    """Drop every invoice's drafts (after a restore, invoice numbers are given out again to new invoices), and
+    the fixed-rules grid's draft (the restored rules are shown, not the ones edited before)."""
     for k in [k for k in st.session_state if _INVOICE_STATE.match(str(k))]:
         del st.session_state[k]
     st.session_state.pop("unsaved_edits", None)
+    for k in ("rules_grid", "_base_rules_grid", "_draft_rules_grid", "_rules_grid_from"):
+        st.session_state.pop(k, None)
 
 
 def card(name: str) -> Any:

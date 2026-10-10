@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -15,7 +16,7 @@ from .config import Settings
 from .doctor import exit_code, format_checks, run_checks
 from .evaluation import evaluate
 from .extraction import DocumentExtractor
-from .labels import export_labels
+from .labels import _prediction_files, export_labels
 from .mailbox import unpack_folder
 from .pipeline import (
     InvoicePipeline,
@@ -161,6 +162,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
     _add_reference_args(p)
 
+    p = sub.add_parser("read-pages", help="Read the invoices waiting for the page reader (vision model), then stop")
+    p.add_argument("--minutes", type=float, default=60.0, help="Stop after this long (default 60; a page under way "
+                   "is finished)")  # fmt: skip
+    p.add_argument("--invoice", type=int, default=None, help="Read only this invoice (it is queued first)")
+    p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
+
     p = sub.add_parser("extract", help="Run Document Intelligence only and save Markdown + raw JSON")
     p.add_argument("inputs", nargs="+")
     p.add_argument("-o", "--out", default=str(out_dir))
@@ -186,6 +193,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-codes", action="store_true", help="Include GL/cost-center confusion pairs")
     p.add_argument("-o", "--out", default=str(private / "share_report.md"))
 
+    p = sub.add_parser(
+        "export-training", help="Approved invoices (pages + approved values) as a ZIP to fine-tune a vision model"
+    )
+    p.add_argument(
+        "-o", "--out", default=None,
+        help="ZIP to write (default: training/ap-coder-training-<today>.zip in the database's folder)",
+    )  # fmt: skip
+    p.add_argument("--since", default=None, help="Only invoices approved on or after this date (YYYY-MM-DD)")
+
     p = sub.add_parser("demo", help="Load the sample invoices into the review queue (no Azure needed)")
     p.add_argument("--remove", action="store_true", help="Remove the demo invoices and their lessons instead")
 
@@ -198,6 +214,8 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
     checks = run_checks(settings, lambda: _load_reference(args), online=args.online)
     report = format_checks(checks)
+    if hasattr(sys.stdout, "reconfigure"):  # a Windows console (cp1252) can't print every character a note may hold
+        sys.stdout.reconfigure(errors="replace")
     print(report.replace("\n\n", f"\n\nreference data source: {reference_source(args)}\n\n", 1))
     return exit_code(checks)
 
@@ -239,6 +257,16 @@ def free_port(start: int) -> int:
     return start
 
 
+def _inputs(paths: list[str]) -> list[Path] | None:
+    """The invoice files named on the command line (folders expanded); None, said in one line, when one of
+    them is not there (a typo)."""
+    try:
+        return discover_inputs(paths)
+    except FileNotFoundError as exc:
+        print(f"Not found: {exc}. Give an invoice file or a folder of them.", file=sys.stderr)
+        return None
+
+
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
     settings = settings.with_overrides(
         di_model=args.extraction_model,
@@ -246,16 +274,18 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
         model_name=args.model_name,
         vision=args.vision,
     )
+    inputs = _inputs(args.inputs)
+    if inputs is None:
+        return 2
+    if not inputs:
+        print("No supported invoice files found.", file=sys.stderr)
+        return 2
     source = reference_source(args)
     if source.startswith("BUNDLED"):
         print("NOTE: using the bundled SAMPLE GL accounts (import yours in the dashboard).", file=sys.stderr)
     reference = _load_reference(args)
     store = None if args.no_db else Store(args.db)
     pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
-    inputs = discover_inputs(args.inputs)
-    if not inputs:
-        print("No supported invoice files found.", file=sys.stderr)
-        return 2
     if store is not None and not args.force:
         done = [p for p in inputs if store.find_by_hash(p) is not None]
         if done:
@@ -288,18 +318,52 @@ SETTLE_SECONDS = 5  # a file changed more recently than this may still be copyin
 
 
 def new_files(folder: Path, store: Store, now: float | None = None) -> list[Path]:
-    """Invoice files in ``folder`` that AP Coder has not seen (failed attempts count as seen: no retry loop)."""
+    """Invoice files in ``folder`` that AP Coder has not seen (failed attempts count as seen: no retry loop).
+    Two identical files dropped together are one invoice: only the first is returned."""
     now = time.time() if now is None else now
     if not folder.is_dir():
         return []
     found = []
+    seen: set[str] = set()  # the contents already in this check (the store knows them only once processed)
     for p in invoice_files(folder):
         try:  # a file being copied, locked by a scanner or removed meanwhile waits for the next check
-            if now - p.stat().st_mtime >= SETTLE_SECONDS and store.find_by_hash(p, include_failed=True) is None:
+            if now - p.stat().st_mtime < SETTLE_SECONDS:
+                continue
+            digest = hashlib.sha256(p.read_bytes()).hexdigest()
+            if digest not in seen and store.find_by_hash(p, include_failed=True) is None:
                 found.append(p)
+            seen.add(digest)
         except OSError:
             continue
     return found
+
+
+def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folder: Path) -> tuple[int, int]:
+    """One check of the watched folder: (invoices processed, of which failed)."""
+    for mail in unpack_folder(folder):  # invoices attached to saved emails (.eml)
+        print(f"{time.strftime('%H:%M:%S')} {mail.email}: {len(mail.saved)} attachment(s) to process",
+              file=sys.stderr)  # fmt: skip
+    files = new_files(folder, store)
+    if not files:
+        return 0, 0
+    reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
+    pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
+    done = failed = 0
+    for path in files:
+        try:
+            result = pipeline.process(path)
+        except OSError as exc:  # unreadable now: try again at the next check
+            print(f"{time.strftime('%H:%M:%S')} {path.name}: skipped for now ({exc})", file=sys.stderr)
+            continue
+        stamp = time.strftime("%H:%M:%S")
+        done += 1
+        if result.ok:
+            flag = "needs attention" if result.report and result.report.requires_review else "ready"
+            print(f"{stamp} {path.name}: {result.output.get('vendor_name', '?')} ({flag})", file=sys.stderr)
+        else:
+            failed += 1
+            print(f"{stamp} {path.name}: FAILED {result.error}", file=sys.stderr)
+    return done, failed
 
 
 def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
@@ -312,31 +376,53 @@ def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
           file=sys.stderr)  # fmt: skip
     try:
         while True:
-            for mail in unpack_folder(folder):  # invoices attached to saved emails (.eml)
-                print(f"{time.strftime('%H:%M:%S')} {mail.email}: {len(mail.saved)} attachment(s) to process",
+            try:
+                done, failed = watch_once(args, settings, store, folder)
+            except Exception as exc:  # noqa: BLE001 - e.g. the GL accounts CSV open in Excel: the next check retries
+                again = "run it again" if args.once else "trying again at the next check"
+                print(f"{time.strftime('%H:%M:%S')} this check stopped: {type(exc).__name__}: {exc} ({again})",
                       file=sys.stderr)  # fmt: skip
-            files = new_files(folder, store)
-            if files:
-                reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
-                pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
-                for path in files:
-                    try:
-                        result = pipeline.process(path)
-                    except OSError as exc:  # unreadable now: try again at the next check
-                        print(f"{time.strftime('%H:%M:%S')} {path.name}: skipped for now ({exc})", file=sys.stderr)
-                        continue
-                    stamp = time.strftime("%H:%M:%S")
-                    if result.ok:
-                        flag = "needs attention" if result.report and result.report.requires_review else "ready"
-                        print(f"{stamp} {path.name}: {result.output.get('vendor_name', '?')} ({flag})", file=sys.stderr)
-                    else:
-                        print(f"{stamp} {path.name}: FAILED {result.error}", file=sys.stderr)
-            if args.once:
-                return 0
+                if args.once:
+                    return 1
+            else:
+                if args.once:
+                    return 1 if done and failed == done else 0  # every invoice failed: say so to Task Scheduler
             time.sleep(max(args.every, 5))
     except KeyboardInterrupt:
         print("Stopped.", file=sys.stderr)
         return 0
+
+
+def cmd_read_pages(args: argparse.Namespace, settings: Settings) -> int:
+    """The page reader's queue, read once (Windows Task Scheduler overnight, or by hand)."""
+    from .page_worker import ReadOutcome, read_one, ready, run_queue
+
+    store = Store(args.db)
+    cache = Path(args.cache_dir) if args.cache_dir else None
+
+    def say(outcome: ReadOutcome) -> None:
+        stamp = time.strftime("%H:%M:%S")
+        note = f": {outcome.message}" if outcome.message else ""
+        print(f"{stamp} invoice {outcome.invoice_id}: {outcome.status} ({outcome.pages} page(s), "
+              f"{outcome.seconds / 60:.1f} min){note}", file=sys.stderr)  # fmt: skip
+
+    model, why = ready(settings, store)
+    if not model:
+        print(f"Nothing read: {why}.", file=sys.stderr)
+        return 1
+    if args.invoice is not None:
+        store.queue_page_read(args.invoice, "asked", requested_by="command line")
+        outcome = read_one(settings, store, cache_dir=cache, invoice_id=args.invoice)
+        if outcome is None:
+            print("Nothing read: the invoice isn't there.", file=sys.stderr)
+            return 1
+        say(outcome)
+        return 0 if outcome.status == "done" else 1
+    waiting = store.page_reads_waiting()
+    print(f"{waiting} invoice(s) waiting for the page reader.", file=sys.stderr)
+    done = run_queue(settings, store, minutes=args.minutes, cache_dir=cache, on_result=say)
+    print(f"Read {len(done)}; {store.page_reads_waiting()} still waiting.", file=sys.stderr)
+    return 0
 
 
 def _print_summary(rows: list[dict]) -> None:
@@ -359,11 +445,17 @@ def _print_summary(rows: list[dict]) -> None:
 def cmd_extract(args: argparse.Namespace, settings: Settings) -> int:
     settings = settings.with_overrides(di_model=args.extraction_model)
     extractor = DocumentExtractor(settings.document_intelligence, cache_dir=args.cache_dir or None)
+    paths = _inputs(args.inputs)
+    if paths is None:
+        return 2
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    paths = discover_inputs(args.inputs)
     for path, stem in zip(paths, output_stems(paths), strict=True):
-        result = extractor.extract(path)
+        try:
+            result = extractor.extract(path)
+        except RuntimeError as exc:  # e.g. no Azure endpoint set: one line, not a traceback
+            print(f"{path.name}: not extracted: {exc}", file=sys.stderr)
+            return 1
         (out / f"{stem}.extraction.md").write_text(result.content, encoding="utf-8")
         if result.raw is not None:
             (out / f"{stem}.di.json").write_text(json.dumps(result.raw, indent=2), encoding="utf-8")
@@ -379,6 +471,10 @@ def cmd_labels(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if not any(_prediction_files(Path(args.predictions))):  # an empty workbook would only block the next run
+        print(f"Nothing to label: no processed invoices in {args.predictions} (run `process` first).",
+              file=sys.stderr)  # fmt: skip
+        return 1
     reference = _load_reference(args) if args.out.lower().endswith(".xlsx") else None
     count = export_labels(args.predictions, args.out, reference=reference, blind=args.blind)
     print(f"Wrote {count} invoice(s) to {args.out}. Ask the AP team to correct it and mark rows reviewed=Y.")
@@ -397,9 +493,13 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
 def cmd_share_report(args: argparse.Namespace) -> int:
     out = Path(args.out)
     key_file = out.with_name(out.stem + "_key.csv")
-    text = build_share_report(
-        args.predictions, args.ground_truth, args.include_codes, key_file=key_file, db_path=args.db
-    )
+    try:
+        text = build_share_report(
+            args.predictions, args.ground_truth, args.include_codes, key_file=key_file, db_path=args.db
+        )
+    except FileNotFoundError as exc:  # nothing processed yet (or a ground-truth path that is not there)
+        print(f"No report written: {exc}.", file=sys.stderr)
+        return 1
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
     print(text)
@@ -408,6 +508,34 @@ def cmd_share_report(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return 0
+
+
+def cmd_export_training(args: argparse.Namespace) -> int:
+    import datetime as dt
+
+    from .training_export import export_training_set, training_invoices
+
+    store = Store(args.db)
+    try:
+        candidates = training_invoices(store, args.since)
+    except ValueError:
+        print(f"--since takes a date as YYYY-MM-DD, not {args.since!r}.", file=sys.stderr)
+        return 2
+    if not candidates["invoices"]:
+        print("No approved invoices to export yet" + (f" since {args.since}" if args.since else "") + ".",
+              file=sys.stderr)  # fmt: skip
+        return 1
+    default = Path(args.db).resolve().parent / "training" / f"ap-coder-training-{dt.date.today().isoformat()}.zip"
+    out = Path(args.out) if args.out else default
+    counts = export_training_set(store, out, since=args.since)
+    print(f"Wrote {counts['invoices']} invoice(s), {counts['pages']} page image(s) to {out}", file=sys.stderr)
+    for key, text in (("missing_files", "file no longer on this computer"), ("no_pages", "no page to show"),
+                      ("demo", "demo invoice"), ("unreviewed", "approved without a person")):  # fmt: skip
+        if counts[key]:
+            print(f"  left out: {counts[key]} ({text})", file=sys.stderr)
+    print("It stays on this computer: it holds your suppliers' invoices; README.txt inside says how to use it.",
+          file=sys.stderr)  # fmt: skip
+    return 0 if counts["invoices"] else 1
 
 
 def cmd_demo(args: argparse.Namespace, settings: Settings) -> int:
@@ -451,10 +579,12 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": lambda: cmd_doctor(args, settings),
         "process": lambda: cmd_process(args, settings),
         "watch": lambda: cmd_watch(args, settings),
+        "read-pages": lambda: cmd_read_pages(args, settings),
         "extract": lambda: cmd_extract(args, settings),
         "labels": lambda: cmd_labels(args),
         "evaluate": lambda: cmd_evaluate(args),
         "share-report": lambda: cmd_share_report(args),
+        "export-training": lambda: cmd_export_training(args),
         "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
     }

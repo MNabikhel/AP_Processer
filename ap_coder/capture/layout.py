@@ -156,12 +156,11 @@ def _engine(name: str | None = None) -> Any:
     name = name or _engine_name()
     if name not in _ENGINES:
         if name == "ppocrv5":
-            from rapidocr import ModelType, OCRVersion, RapidOCR
+            from rapidocr import RapidOCR
 
-            params = {"Det.ocr_version": OCRVersion.PPOCRV5, "Rec.ocr_version": OCRVersion.PPOCRV5,
-                      "Det.model_type": ModelType.MOBILE, "Rec.model_type": ModelType.MOBILE,
-                      "Global.log_level": "error"}  # fmt: skip
-            eng = RapidOCR(params=params)
+            from ..offline import ppocrv5_engine_params
+
+            eng = RapidOCR(params=ppocrv5_engine_params())  # the model files on disk: RapidOCR never downloads
 
             def run(img: Any) -> list:
                 res = eng(img)

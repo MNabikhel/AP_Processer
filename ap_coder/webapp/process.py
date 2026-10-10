@@ -62,6 +62,7 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
     settings = get_settings()
     pipeline = InvoicePipeline(settings, reference, cache_dir=CACHE_DIR, store=store)
     ok = 0
+    waiting = store.page_reads_waiting()
     with st.status(f"Processing {ui.plural(len(paths), 'invoice')}…", expanded=True) as status:
         for n, path in enumerate(paths, start=1):
             st.write(f":material/document_scanner: Reading and coding **{path.name}** ({n}/{len(paths)})")
@@ -76,6 +77,14 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
     failed = len(paths) - ok
     if ok:
         notify(f"{ui.plural(ok, 'invoice')} read and coded. They're waiting in the review queue.", ":material/inbox:")
+    queued = store.page_reads_waiting() - waiting
+    if queued > 0:
+        from ap_coder.page_worker import ready
+
+        model, why = ready(settings, store)
+        when = "in the background" if model else f"once it can ({why})"
+        notify(f"{ui.plural(queued, 'invoice')} queued for the page reader: it reads them {when}.",
+               ":material/visibility:")  # fmt: skip
     if failed:
         notify(
             f"{ui.plural(failed, 'file')} could not be processed. See Review queue → Failed / rejected.",

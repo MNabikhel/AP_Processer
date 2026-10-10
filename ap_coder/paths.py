@@ -27,8 +27,8 @@ def user_settings_path() -> Path:
 
 
 def read_user_settings() -> dict:
-    try:
-        return json.loads(user_settings_path().read_text(encoding="utf-8"))
+    try:  # -sig: a settings file saved by Notepad starts with a byte-order mark (it is not an empty file)
+        return json.loads(user_settings_path().read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
 

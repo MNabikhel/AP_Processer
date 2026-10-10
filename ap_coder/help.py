@@ -366,6 +366,12 @@ CHECKS: dict[str, CheckHelp] = {
         READING, "Amount read differently", "Azure's invoice model and the AI read a different amount.",
         "Check the subtotal, tax and total against the document.",
     ),
+    "CURRENCY_NOT_FOUND": CheckHelp(
+        READING, "Currency not printed",
+        "The invoice shows no currency the reader could read (no code such as CAD or USD, no € or £ sign), so "
+        "the currency was assumed: US dollars for a supplier with a US address, Canadian dollars otherwise.",
+        "Check the currency against the document and what this vendor usually bills in, and correct it if needed.",
+    ),
 }  # fmt: skip
 
 
@@ -410,6 +416,22 @@ FAQ: list[tuple[str, str]] = [
         "account (and cost center) to use. Rules are applied after the AI when an invoice is processed, and the "
         "review screen says which lines a rule changed. Vendors your team always coded to one account are "
         "suggested as rules. The AI's accuracy is still measured on its own answer, not on the rule's.",
+    ),
+    (
+        "What is the page reader, and should I turn it on?",
+        "A small vision model (OvisOCR2, about 1 GB, in LM Studio) that reads each scan or photo on its own, as a "
+        "second reader beside OCR. Where both read the same value, a field can be verified; where they differ, it "
+        "is marked Check. It runs on this computer, in the background, a few minutes a page without a graphics "
+        "card, and never holds up processing. Set it up in Settings → Page reader: with OvisOCR2 in LM Studio, "
+        "press Test the page reader. It reads nothing until the model passes that test.",
+    ),
+    (
+        "How do I know the readers can be trusted before going touchless?",
+        "It is measured, three ways. Every approval scores each reader (OCR, the page reader, the supplier's "
+        "template, the AI) against what you approved: Learning & accuracy → Readers. On every digital PDF it reads, "
+        "the page reader is checked figure by figure against the PDF's own text, which is exact (Settings → Page "
+        "reader). And the confidence labels are tuned with your own approvals, not only the benchmark. Export "
+        "training data packs the approved invoices to train a model on them later.",
     ),
     (
         "What is the difference between errors, warnings and 'good to know'?",

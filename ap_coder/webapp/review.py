@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import functools
+import hashlib
 import math
 import re
 from pathlib import Path
@@ -30,7 +31,13 @@ from ap_coder.suggest import suggest_gl
 from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
 from ap_coder.terms import describe as terms_describe
-from ap_coder.webapp.capture_panel import VIEWABLE, capture_panel, document_head, taught_boxes
+from ap_coder.webapp.capture_panel import (
+    VIEWABLE,
+    capture_panel,
+    document_head,
+    follow_page_reader,
+    taught_boxes,
+)
 from ap_coder.webapp.common import (
     ASSETS,
     INVOICE_DIR,
@@ -972,6 +979,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
     settings = get_settings()
     key = f"inv{invoice_id}"
     meta = inv.get("meta") or {}
+    follow_page_reader(invoice_id, key, meta)
     ids = [i["id"] for i in pending]
     position = ids.index(invoice_id)
     st.html(f"<style>{_review_css()}</style>")
@@ -1290,11 +1298,22 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             )
             allow = True
             uncoded = [str(li.line_number) for li in coding.line_items if li.predicted_gl_code == UNASSIGNED]
-            if uncoded:
+            # Where the organisation uses cost centers, a line without one is not posted either.
+            no_cc = (
+                [str(li.line_number) for li in coding.line_items if li.predicted_cost_center == UNASSIGNED]
+                if reference.cost_centers is not None and reference.cost_centers.codes
+                else []
+            )
+            if uncoded or no_cc:
                 allow = False  # never post to UNASSIGNED
-                st.html(_pill(f"Pick a GL account for line {', '.join(uncoded)} to approve", "warn"))
+                pick = [f"a GL account for line {', '.join(uncoded)}"] if uncoded else []
+                pick += [f"a cost center for line {', '.join(no_cc)}"] if no_cc else []
+                st.html(_pill(f"Pick {' and '.join(pick)} to approve", "warn"))
             elif errors:
-                allow = st.checkbox(f"Approve anyway, despite {ui.plural(len(errors), 'error')}", key=f"{key}_override")
+                # Keyed on the errors: a new error (an edit after the tick) asks again instead of riding along.
+                seen = ",".join(sorted(f"{i.code}:{i.line_number}" for i in errors))
+                override_key = f"{key}_override_{hashlib.sha1(seen.encode()).hexdigest()[:10]}"
+                allow = st.checkbox(f"Approve anyway, despite {ui.plural(len(errors), 'error')}", key=override_key)
         with right:
             buttons = st.container(
                 horizontal=True, horizontal_alignment="right", vertical_alignment="center", wrap=False
@@ -1443,16 +1462,17 @@ def _suggestion_card(
     with card("suggest"):
         st.html(_section_head("Suggested GL accounts"))
         st.caption("From how similar lines were coded before and from your GL account descriptions.")
-        for li, suggestions in found:
+        for pos, (li, suggestions) in enumerate(found):
             st.html(f"<div class='rvw-sugg-line'><b>Line {li.line_number}</b> "
                     f"<span class='rvw-muted'>{esc(li.description)}</span></div>")  # fmt: skip
             row = st.container(horizontal=True, gap="small")
             for s in suggestions:
                 label = f"{s.gl_code} · {gl_name(reference, s.gl_code) or s.gl_code}"
-                if row.button(label, key=f"{key}_sugg_{li.line_number}_{s.gl_code}", icon=":material/add_task:",
-                              help="; ".join(s.reasons).capitalize()):  # fmt: skip
+                # The position is in the key: two lines can share a number (as read from the invoice).
+                if row.button(label, key=f"{key}_sugg_{li.line_number}_{pos}_{s.gl_code}",
+                              icon=":material/add_task:", help="; ".join(s.reasons).capitalize()):  # fmt: skip
                     updated = numbered_lines(edited_lines)
-                    at = updated["line_number"] == li.line_number
+                    at = _grid_row(updated, coding, li)
                     updated.loc[at, "predicted_gl_code"] = s.gl_code
                     blank_cc = li.predicted_cost_center in ("", UNASSIGNED)
                     if s.cost_center and blank_cc and reference.cost_centers is not None:
@@ -1461,6 +1481,18 @@ def _suggestion_card(
                     notify(f"Line {li.line_number} coded to GL {s.gl_code}.", ":material/add_task:")
                     st.rerun()
             st.caption(" · ".join(f"{s.gl_code}: {s.reasons[0]}" for s in suggestions))
+
+
+def _grid_row(lines: pd.DataFrame, coding: InvoiceCoding, li: Any) -> Any:
+    """The grid row of a line of the coding: the first, second… row with its number, as it comes in the
+    coding (lines that share a number are told apart by their order). Every row with the number if unsure."""
+    same = lines["line_number"] == li.line_number
+    position = next((n for n, x in enumerate(coding.line_items) if x is li), None)
+    if position is None:
+        return same
+    nth = sum(1 for x in coding.line_items[:position] if x.line_number == li.line_number)
+    rows = lines.index[same]
+    return [rows[nth]] if nth < len(rows) else same
 
 
 def _split_popover(
