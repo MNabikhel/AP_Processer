@@ -44,3 +44,16 @@ def test_assumptions_are_saved_and_the_report_has_no_invoice_details(tmp_path):
     assert "At 1,200 invoices a month" in page
     for detail in ("Northwind", "Pacific", "NW-2026-0912", ".pdf"):
         assert detail not in page
+
+
+def test_a_damaged_stored_check_does_not_break_insights_or_vendors(tmp_path):
+    """A hand-edited or damaged database with a check stored as plain text: the pages still draw."""
+    from ap_coder import insights
+    from ap_coder.store import Store
+
+    store = Store(tmp_path / "ap.db")
+    iid = store.add_invoice(tmp_path / "x.pdf", {"vendor_name": "Acme", "grand_total": 10.0, "currency": "CAD"},
+                            {"issues": ["not a check", {"code": "TOTAL_MISMATCH", "severity": "error"}]})  # fmt: skip
+    assert iid
+    insights.compute(store)  # raised AttributeError ('str' object has no attribute 'get') before
+    insights.vendor_workload(store, min_invoices=1)

@@ -53,6 +53,12 @@ class Assumptions:
         store.set_setting("insights_assumptions", json.dumps(asdict(self)), actor=actor)
 
 
+def _issues(validation: Any) -> list[dict[str, Any]]:
+    """The stored checks of an invoice, leaving out anything that isn't one (a damaged or hand-edited database)."""
+    issues = (validation or {}).get("issues") if isinstance(validation, dict) else None
+    return [i for i in issues or [] if isinstance(i, dict) and i.get("code")]
+
+
 def invoice_cost_usd(meta: dict[str, Any], a: Assumptions) -> tuple[float, bool]:
     """(Azure cost in USD, whether usage was recorded) for one processed invoice."""
     pages = ((meta.get("extraction") or {}).get("page_count")) or 1
@@ -108,7 +114,7 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     stopped_count = 0
     for r in light:
         codes = set()
-        for issue in (r["validation"] or {}).get("issues") or []:
+        for issue in _issues(r["validation"]):
             if issue.get("severity") in ("error", "warning"):
                 issue_counts[issue["code"]] += 1
                 codes.add(issue["code"])
@@ -333,7 +339,7 @@ def vendor_workload(store: Store, min_invoices: int = 2) -> list[dict[str, Any]]
         s = stats.setdefault(key, {"vendor_name": name, "invoices": 0, "with_problems": 0, "corrected": 0,
                                    "approved": 0, "codes": Counter()})  # fmt: skip
         s["invoices"] += 1
-        codes = {i.get("code") for i in (r["validation"] or {}).get("issues") or []} & ASKABLE
+        codes = {i.get("code") for i in _issues(r["validation"])} & ASKABLE
         if codes:
             s["with_problems"] += 1
             s["codes"].update(codes)
