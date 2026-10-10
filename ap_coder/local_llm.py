@@ -36,7 +36,7 @@ _cache: dict[str, tuple[float, ModelStatus]] = {}
 _lock = threading.Lock()
 
 # Model ids that are not chat models: never picked to code an invoice.
-_NOT_CHAT = ("embed", "rerank", "whisper", "tts", "bge-", "e5-")
+_NOT_CHAT = ("embed", "rerank", "whisper", "tts", "bge-", "e5-", "ovisocr")  # ovisocr: a page reader, not a chat model
 # Families that can look at pictures, for servers that don't say (Ollama, llama.cpp). LM Studio says itself.
 _VISION_HINTS = (
     "-vl", "vl-", "_vl", "vision", "llava", "pixtral", "gemma-3", "gemma3", "minicpm-v", "moondream", "internvl",
