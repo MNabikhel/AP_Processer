@@ -213,20 +213,77 @@ def response_format(schema: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Other ways a province is written: old postal abbreviations, short forms, French names (accents and dots dropped).
+_PROVINCE_ALIASES = {
+    **{name.upper(): code for code, name in PROVINCE_NAMES.items()},
+    **{code: code for code in PROVINCES},
+    "ALTA": "AB", "COLOMBIE BRITANNIQUE": "BC", "MAN": "MB", "NOUVEAU BRUNSWICK": "NB",
+    "NF": "NL", "NFLD": "NL", "NEWFOUNDLAND": "NL", "LABRADOR": "NL", "TERRE NEUVE": "NL",
+    "TERRE NEUVE ET LABRADOR": "NL", "NOUVELLE ECOSSE": "NS", "NWT": "NT", "TERRITOIRES DU NORD OUEST": "NT",
+    "ONT": "ON", "PEI": "PE", "ILE DU PRINCE EDOUARD": "PE", "PQ": "QC", "QUE": "QC", "SASK": "SK",
+    "YK": "YT", "YUKON TERRITORY": "YT",
+}  # fmt: skip
+_PROVINCE_TAILS = sorted(((alias.split(), code) for alias, code in _PROVINCE_ALIASES.items()), key=lambda a: -len(a[0]))
+_US_STATES = frozenset(
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK "
+    "OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR".split()
+)
+_US_NAMES = [
+    name.split()
+    for name in (
+        "USA,US,UNITED STATES,UNITED STATES OF AMERICA,ALABAMA,ALASKA,ARIZONA,ARKANSAS,CALIFORNIA,COLORADO,"
+        "CONNECTICUT,DELAWARE,FLORIDA,GEORGIA,HAWAII,IDAHO,ILLINOIS,INDIANA,IOWA,KANSAS,KENTUCKY,LOUISIANA,MAINE,"
+        "MARYLAND,MASSACHUSETTS,MICHIGAN,MINNESOTA,MISSISSIPPI,MISSOURI,MONTANA,NEBRASKA,NEVADA,NEW HAMPSHIRE,"
+        "NEW JERSEY,NEW MEXICO,NEW YORK,NORTH CAROLINA,NORTH DAKOTA,OHIO,OKLAHOMA,OREGON,PENNSYLVANIA,RHODE ISLAND,"
+        "SOUTH CAROLINA,SOUTH DAKOTA,TENNESSEE,TEXAS,UTAH,VERMONT,VIRGINIA,WASHINGTON,WEST VIRGINIA,WISCONSIN,WYOMING"
+    ).split(",")
+]
+
+
+def _province_at_end(words: list[str]) -> str | None:
+    """The province (or OUTSIDE_CANADA) an address ends with, ignoring postal/ZIP codes and the country."""
+    words = [w for w in words if not any(c.isdigit() for c in w)]
+    upper = [w.upper() for w in words]
+    while upper and upper[-1] in ("CANADA", "CAN"):
+        words, upper = words[:-1], upper[:-1]
+    if not upper:
+        return None
+    if upper[-1] == "CA" and len(upper) > 1:  # "Toronto, ON, CA" is Canada; "Los Angeles, CA" is California
+        before = _province_at_end(words[:-1])
+        if before and before != OUTSIDE_CANADA:
+            return before
+    for tail, code in _PROVINCE_TAILS:
+        if upper[-len(tail) :] == tail:
+            return code
+    # A state code as written in capitals ("Boston, MA"), so a trailing "or"/"in"/"me" is not read as a state.
+    if upper[-1] in _US_STATES and (len(words) == 1 or words[-1].isupper()):
+        return OUTSIDE_CANADA
+    if any(upper[-len(tail) :] == tail for tail in _US_NAMES):
+        return OUTSIDE_CANADA
+    return None
+
+
 def province_code(value: str) -> str:
-    """A province code from what a model wrote: "BC", "Vancouver, BC", "British Columbia", "Québec"."""
+    """A province code from what a model wrote: "BC", "Vancouver, BC", "British Columbia", "Québec", "PEI", "Nfld".
+    The province at the end of an address wins, so a street named after one ("500 Quebec St, Vancouver, BC",
+    "1234 Rue Ontario Est, Montréal, QC") is not read as the province. A US state or ZIP is OUTSIDE_CANADA."""
     text = (value or "").strip()
     upper = text.upper()
     if upper in PROVINCE_VALUES:
         return upper
-    plain = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)).lower()
-    for code, name in PROVINCE_NAMES.items():
-        if name.lower() in plain:
-            return code
-    codes = [t for t in re.findall(r"\b[A-Z]{2}\b", upper) if t in PROVINCES]
-    if len(set(codes)) == 1:
-        return codes[0]
-    if re.search(r"\b(?:usa|u\.s\.|united states|outside canada)\b", plain):
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)).replace(".", "")
+    if re.search(r"\boutside[\s_-]+canada\b", plain.lower()):
+        return OUTSIDE_CANADA
+    words = re.findall(r"[A-Za-z0-9]+", plain)
+    found = _province_at_end(words)
+    if found:
+        return found
+    # A province code standing alone somewhere else ("BC (Vancouver)"), as written in capitals.
+    codes = {w for w in words if w in PROVINCES}
+    if len(codes) == 1:
+        return codes.pop()
+    zip_code = re.search(r"\b\d{5}(?:-\d{4})?$", text)  # "Portland 97201": a US ZIP at the end
+    if "US" in words or zip_code or re.search(r"\b(?:usa|united states)\b", plain.lower()):
         return OUTSIDE_CANADA
     raise ValueError(f"province must be a Canadian province code, got {text!r}")
 

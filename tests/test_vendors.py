@@ -119,6 +119,37 @@ def test_expected_gst_number_from_the_vendor_master_wins(tmp_path, ground_truth,
 @pytest.mark.parametrize(
     "a, b, same",
     [
+        ("123456789", "123456789 RT0001", True),  # the vendor master keeps only the Business Number
+        ("123456789RT0001", "123 456 789", True),
+        ("123456789 RT 0001", "123456789rt0001", True),
+        ("123456789RT0001", "123456789RT0002", False),  # two program accounts of one business
+        ("123456789", "987654321RT0001", False),
+        ("", "123456789RT0001", False),
+    ],
+)
+def test_tax_numbers_compare_by_business_number(a, b, same):
+    from ap_coder.vendors import same_tax_number
+
+    assert same_tax_number(a, b) is same
+
+
+def test_a_vendor_master_with_only_the_business_number(tmp_path, ground_truth, reference):
+    store = Store(tmp_path / "ap.db")
+    _approved(store, _variant(ground_truth, "A-1"), tmp_path, "a.pdf")
+    bn = ground_truth["gst_hst_registration_number"].replace(" ", "")[:9]
+    row = {"vendor_name": ground_truth["vendor_name"], "gst": bn, "status": "active", "status_given": False,
+           "erp_id": None, "terms": None, "default_gl": None}  # fmt: skip
+    store.import_vendor_master([row])
+    codes, _ = _codes(store, _variant(ground_truth, "A-2"), reference)
+    assert "VENDOR_TAX_NUMBER_CHANGED" not in codes  # "123456789" and "123456789 RT0001" are the same registration
+    renamed = {**_variant(ground_truth, "A-3"), "vendor_name": "NW IT Sol."}
+    codes, _ = _codes(store, renamed, reference)
+    assert "VENDOR_MATCHED_BY_TAX_NUMBER" in codes and "VENDOR_NOT_IN_MASTER" not in codes
+
+
+@pytest.mark.parametrize(
+    "a, b, same",
+    [
         ("004-12345-1234567", "Inst 004 Transit 12345 Account 1234567", True),
         ("Transit 12345, Institution 004, Account 1234567", "004 12345 1234567", True),
         ("00412345 1234567", "004-12345-1234567", True),

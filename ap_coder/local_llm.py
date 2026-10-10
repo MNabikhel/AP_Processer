@@ -367,16 +367,12 @@ class Reply:
 def read_reply(choice: Any, max_tokens: int | None = None) -> Reply:
     """The JSON in a local model's reply: in its answer, else in a reply that is all <think>, else in the reasoning
     the server split off (LM Studio's ``reasoning_content``, Ollama's ``reasoning``). A model that thought until the
-    token limit gets a message saying so, not a parse error."""
+    token limit gets a message saying so, not a parse error. A reply stopped at the token limit is never read: the
+    JSON in it is unfinished, and an inner object that happens to be complete (one line item) is not the answer."""
     message = getattr(choice, "message", None)
     content = str(_field(message, "content") or "")
     reasoning = str(_field(message, "reasoning_content") or _field(message, "reasoning") or "")
-    data = parse_json_reply(content)
-    if data is None:
-        data = last_json_object(content) or last_json_object(reasoning)
     raw = content if content.strip() else reasoning
-    if data is not None:
-        return Reply(data, raw)
     answer = strip_thinking(content)
     # Thinking: split off by the server, in <think> tags, or (a template that opens the tag itself, cut off before
     # closing it) a bare "Thinking Process:" in the answer.
@@ -386,6 +382,11 @@ def read_reply(choice: Any, max_tokens: int | None = None) -> Reply:
         started_json = answer.lstrip().startswith(("{", "```"))
         problem = (CUT_OFF_MESSAGE if started_json or not thought else THINKING_MESSAGE).format(limit=limit)
         return Reply(None, raw, problem, cut_off=True)
+    data = parse_json_reply(content)
+    if data is None:
+        data = last_json_object(content) or last_json_object(reasoning)
+    if data is not None:
+        return Reply(data, raw)
     if thought and not answer:
         return Reply(None, raw, THINKING_MESSAGE.format(limit=""), cut_off=True)
     return Reply(None, raw, "the reply held no JSON object")
@@ -443,20 +444,22 @@ def _balanced(text: str, start: int) -> str | None:
 
 def parse_json_reply(content: str | None) -> dict[str, Any] | None:
     """The JSON object in a model's reply. Tolerates <think> blocks, code fences, prose around it, trailing text and
-    trailing commas. The first complete object wins (the coding is the outermost one)."""
+    trailing commas. Only an outermost object counts (the coding is the outermost one): when the first "{" never
+    closes, the reply was cut off and an object inside it (a line item) is not the answer, so there is none."""
     text = _FENCE_RE.sub("", strip_thinking(content or ""))
     start = text.find("{")
     while start != -1:
         chunk = _balanced(text, start)
-        if chunk:
-            for candidate in (chunk, re.sub(r",\s*([}\]])", r"\1", chunk)):
-                try:
-                    data = json.loads(candidate)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(data, dict):
-                    return data
-        start = text.find("{", start + 1)
+        if chunk is None:
+            return None  # everything after is inside this unfinished object
+        for candidate in (chunk, re.sub(r",\s*([}\]])", r"\1", chunk)):
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                return data
+        start = text.find("{", start + len(chunk))  # past it: braces in prose, not the objects inside a broken one
     return None
 
 
@@ -470,9 +473,8 @@ def last_json_object(text: str | None) -> dict[str, Any] | None:
         data = parse_json_reply(chunk) if chunk else None
         if data is not None:
             found = data
-            start = text.find("{", start + len(chunk or ""))  # past this object: its inner ones are not answers
-        else:
-            start = text.find("{", start + 1)
+        # Past a closed object, valid or broken: its inner ones are not answers. An unclosed "{" may be prose.
+        start = text.find("{", start + (len(chunk) if chunk else 1))
     return found
 
 

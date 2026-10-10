@@ -376,8 +376,10 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         elif not valid_qst_number(number):
             add(WARNING, "QST_NUMBER_FORMAT", "QST number is not in the format 1234567890TQ0001")
 
-    # Every tax charged must have a GL treatment the user has set up.
-    for tax_type in sorted(charged):
+    # Every tax charged must have a GL treatment the user has set up. Non-Canadian tax (OTHER) too: set up to post
+    # to its own account, it would otherwise post to a blank GL.
+    posted = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004}
+    for tax_type in sorted(posted):
         t = setup.treatment(tax_type)
         if t.needs_gl and not t.gl_code:
             add(ERROR, "TAX_GL_UNMAPPED", f"no GL account mapped for {tax_type}; set it in Tax setup")

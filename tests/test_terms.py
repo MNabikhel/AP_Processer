@@ -27,6 +27,11 @@ from .conftest import SAMPLE_STEM, SAMPLES
         ("Due on receipt", Terms(0, on_receipt=True)),
         ("Payable sur réception", Terms(0, on_receipt=True)),
         ("Net 30 due 10/31", Terms(30)),  # a date is not a 10% discount
+        ("2/10 EOM", Terms(30, 2.0, 10, eom=True)),  # no net printed: due 20 days after the discount date
+        ("2/10 EOM net 45", Terms(45, 2.0, 10, eom=True)),
+        ("Net 30, 2% 10", Terms(30, 2.0, 10)),  # "days" left out
+        ("Net 30 - 1.5% per month on overdue", Terms(30)),
+        ("1.5% interest per month after 30 days", Terms(30)),
         ("Overdue accounts are charged 2% interest per month", Terms()),
         ("", Terms()),
     ],
@@ -120,3 +125,9 @@ def test_a_printed_discount_is_kept_when_the_net_days_come_from_the_vendor_maste
     p = payment(coding, vendor_terms="Net 45")
     assert p.due == dt.date(2026, 10, 16) and p.source == "vendor"
     assert p.discount_by == dt.date(2026, 9, 11) and p.discount_amount == 2.0
+
+
+def test_2_10_eom_counts_the_discount_and_the_net_from_month_end():
+    p = payment({"payment_terms": "2/10 EOM", "invoice_date": "2026-09-15", "grand_total": 113.0, "subtotal": 100.0})
+    assert p.source == "terms" and p.discount_amount == 2.0
+    assert p.discount_by == dt.date(2026, 10, 10) and p.due == dt.date(2026, 10, 30)

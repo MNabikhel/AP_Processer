@@ -153,6 +153,21 @@ def test_unmapped_tax_gl_is_an_error(reference):
     assert "TAX_GL_UNMAPPED" in codes
 
 
+@pytest.mark.parametrize(("gl_code", "code"), [("", "TAX_GL_UNMAPPED"), ("9999", "TAX_GL_UNKNOWN")])
+def test_non_canadian_tax_posted_to_its_own_gl_must_be_mapped(reference, gl_code, code):
+    us = _gt(BC)
+    us.update(supplier_province="OUTSIDE_CANADA", ship_to_province="", currency="USD", gst_hst_registration_number="")
+    us["tax_lines"] = [{"tax_type": "OTHER", "province": "", "rate": 0.08, "taxable_amount": 2726.0,
+                        "tax_amount": 218.08}]  # fmt: skip
+    us["tax_total"], us["grand_total"] = 218.08, 2944.08
+    for li in us["line_items"]:
+        li["taxes_applied"] = ["OTHER"]
+    treatments = {**reference.tax.treatments, "OTHER": TaxTreatment("OTHER", EXPENSE_SEPARATE, gl_code)}
+    setup = TaxSetup(reference.tax.rates, treatments)
+    findings = check_taxes(InvoiceCoding.model_validate(us), setup, set(reference.chart_of_accounts.codes))
+    assert {f.code: f.severity for f in findings}.get(code) == "error"  # not a silent posting to a blank GL
+
+
 def test_line_coded_to_tax_account_is_an_error(reference):
     gt = _gt(ON)
     gt["line_items"][0]["predicted_gl_code"] = "2310"

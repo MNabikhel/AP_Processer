@@ -23,20 +23,24 @@ _RECEIPT = re.compile(
     re.IGNORECASE,
 )
 _EOM = re.compile(r"\b(eom|end of (the )?month|fin de mois)\b", re.I)
-# A discount: 2/10 net 30, 2/10 EOM net 30, 1.5/15 n60 (the net part is required, and the rate must look
-# like a discount, so "Due 10/15 net 45" stays a date), 2% 10 net 30, 2% discount if paid within 10 days.
+# A discount: 2/10 net 30, 2/10 EOM net 30, 2/10 EOM, 1.5/15 n60 (a net part or EOM is required, and the rate
+# must look like a discount, so "Due 10/15 net 45" stays a date), 2% 10 net 30, 2% discount if paid within 10 days,
+# "Net 30, 2% 10" (the word "days" may be left out).
 _SLASH = re.compile(
-    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom)?\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I
+    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*%?\s*/\s*(\d+)\s*(?:days?)?\s*(?:eom\b)?\s*[,;]?\s*(?:n(?:et)?\s*/?\s*(\d+)|(?<=eom))",
+    re.I,
 )
 _DISCOUNT = [
     _SLASH,
     re.compile(r"(\d+(?:[.,]\d+)?)\s*%\s*(\d+)\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I),
     re.compile(
         r"(\d+(?:[.,]\d+)?)\s*%\s*(?:discount|escompte)?\s*(?:if paid|si pay[ée]e?)?\s*(?:within|in|dans les|sous)?"
-        r"\s*(\d+)\s*(?:days?|jours?)",
+        r"\s*(\d+)\b(?!\s*%|[.,]\d)\s*(?:days?|jours?)?",
         re.I,
     ),
 ]
+# "2/10 EOM" prints no net days: the usual reading is that the net amount is due 20 days after the discount date.
+EOM_NET_AFTER_DISCOUNT = 20
 _NET = [
     re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,3})\b", re.I),
     re.compile(r"(\d{1,3})\s*(?:days?|jours?)\b", re.I),
@@ -88,6 +92,8 @@ def parse_terms(text: str | None) -> Terms:
             net = int(m.group(3)) if m.lastindex and m.lastindex >= 3 and m.group(3) else None
             if net is None:  # "Net 45, 1% 15 days" or "2% 10 days, net 30": the net days are elsewhere
                 net = _net_days(text[: m.start()] + " " + text[m.end() :])
+            if net is None and eom:  # "2/10 EOM": 2% by the 10th after month end, the net 20 days later
+                net = days + EOM_NET_AFTER_DISCOUNT
             if 0 < pct < 20 and 0 < days <= 60:
                 return Terms(net_days=net, discount_pct=pct, discount_days=days, eom=eom)
     net = _net_days(text)  # before "on receipt": "Net 30 days upon receipt of invoice" is net 30

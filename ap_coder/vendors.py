@@ -56,6 +56,24 @@ def norm_tax_number(value: Any) -> str:
     return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
 
 
+_BUSINESS_NUMBER = re.compile(r"(\d{9})(?:rt\d{0,4})?")
+
+
+def same_tax_number(a: Any, b: Any) -> bool:
+    """Whether two GST/HST numbers are the same registration. A vendor master often keeps only the 9-digit Business
+    Number ("123456789") while the invoice shows the full account ("123456789 RT0001"): when either side lacks the
+    RT program suffix, the 9 digits decide. Two full accounts (RT0001 and RT0002) must match exactly."""
+    a, b = norm_tax_number(a), norm_tax_number(b)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    bn_a, bn_b = _BUSINESS_NUMBER.fullmatch(a), _BUSINESS_NUMBER.fullmatch(b)
+    if not bn_a or not bn_b or (len(a) == 15 and len(b) == 15):
+        return False
+    return bn_a.group(1) == bn_b.group(1)
+
+
 _ACCOUNT_LABEL = re.compile(r"(?i)\b(?:account|acct|acc|a/c|compte|cpte)\b\D{0,12}?(\d[\d\s-]*\d|\d)")
 
 
@@ -138,7 +156,7 @@ def vendor_findings(
     if store.has_vendor_master() and not (master and master.get("in_master")):
         number = norm_tax_number(coding.gst_hst_registration_number)
         real = sum(c.isdigit() for c in number) >= 9  # a Business Number, not "N/A" or "pending"
-        by_number = [v for v in store.master_vendors() if real and norm_tax_number(v["expected_gst"]) == number]
+        by_number = [v for v in store.master_vendors() if real and same_tax_number(v["expected_gst"], number)]
         if by_number:
             master = by_number[0]
             findings.append(
@@ -183,7 +201,7 @@ def vendor_findings(
     known = {norm_tax_number(h["gst_hst_number"]) for h in history if h["status"] == "approved"} - {""}
     if master and master.get("expected_gst"):
         known = {norm_tax_number(master["expected_gst"])}
-    if number and known and number not in known:
+    if number and known and not any(same_tax_number(number, k) for k in known):
         findings.append(
             (
                 WARNING,
