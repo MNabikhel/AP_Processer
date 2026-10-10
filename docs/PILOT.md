@@ -61,9 +61,15 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   read. Then *Settings → Page reader → Test the page reader*: it reads a scanned sample invoice whose answers
   are known, field by field, and links the model when it reads it right. It reads nothing before that.
   - *Speed.* Minutes a page on a laptop CPU, so it reads in the background and invoices never wait for it:
-    PAGE_READER_SPEED_LINE
+    measured with LM Studio's headless server on a 4-core server CPU, no graphics card, where LM Studio gave
+    the model a single thread: 3.5 to 6 minutes for a phone photo, 8 to 12 minutes for a scanned PDF page. On a
+    laptop that LM Studio lets use several cores, expect a few minutes a page (CloseDesk measured about 3 on 4
+    cores); a graphics card is many times faster. If it seems slow, check *CPU Thread Pool Size* for OvisOCR2
+    in LM Studio (My Models, the gear next to it).
   - *Memory.* OvisOCR2 is small (about 1 GB on disk), but reading a page image needs working memory too:
-    PAGE_READER_MEMORY_LINE
+    LM Studio holds up to 4 readings at once by default, each with the 20,480-token context a page image needs,
+    and the model's server used about 8 GB while reading. On a 16 GB laptop that also has the 9B chat model
+    loaded, set *Max Concurrent Predictions* to 1 for OvisOCR2 in LM Studio.
   - *Overnight instead.* `python -m ap_coder read-pages --minutes 240` reads the queue and stops; schedule
     it with Task Scheduler for a laptop that is busy during the day.
 - **No Azure needed.** Azure Document Intelligence and Azure OpenAI stay optional; leave Settings → Azure
