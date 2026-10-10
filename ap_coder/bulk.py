@@ -59,7 +59,12 @@ def bulk_approve(
         if report.requires_review:
             skipped.append((invoice_id, f"confidence {report.adjusted_confidence:.0%} is below the threshold"))
             continue
-        store.approve_invoice(invoice_id, output, reviewer, bulk=True, login=login)
+        try:
+            store.approve_invoice(invoice_id, output, reviewer, bulk=True, login=login)
+        except (KeyError, ValueError):
+            # A colleague parked, rejected or approved it while the loop checked the others: skip this one only.
+            skipped.append((invoice_id, "no longer in the queue (someone else acted on it meanwhile)"))
+            continue
         learn_from_approval(store, invoice_id, output, actor=reviewer)
         approved.append(invoice_id)
     return {"approved": approved, "skipped": skipped}

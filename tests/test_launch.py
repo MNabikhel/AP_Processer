@@ -289,6 +289,23 @@ def test_main_waits_instead_of_setting_up_twice(lock, monkeypatch):
     other.close()
 
 
+def test_the_installer_refuses_while_ap_coder_is_running(lock, monkeypatch, capsys):
+    """install.bat while AP Coder runs (its start holds the lock) says to close it first and fails: it does not
+    open the browser and report success with the installer's steps skipped, nor reinstall under the running app."""
+    import install
+
+    launch = lock
+    other = _other_start_holds_the_lock(launch)
+    monkeypatch.delenv(launch.LOCK_HELD_ENV, raising=False)
+    monkeypatch.setattr(launch, "running_dashboard", lambda rest, state: 8501)
+    monkeypatch.setattr(launch, "open_browser", lambda url: pytest.fail("opened the running dashboard"))
+    monkeypatch.setattr(launch, "in_venv", lambda: True)
+    monkeypatch.setattr(install, "main", lambda argv, venv=None: pytest.fail("installed under the running app"))
+    assert launch.main(["--installer", "--yes"]) != 0
+    assert "close AP Coder first" in capsys.readouterr().out
+    other.close()
+
+
 def test_ports(launch):
     assert launch.requested_port(["--port", "8597"]) == 8597
     assert launch.requested_port(["--port=8502"]) == 8502

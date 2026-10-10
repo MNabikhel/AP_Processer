@@ -207,6 +207,21 @@ def test_readers_tab_before_any_approval(db):
     assert "training_zip_make" not in {b.key for b in at.button}
 
 
+def test_training_card_when_every_approval_was_a_bulk_approval(db, ground_truth):
+    """Bulk approvals are approvals: the card says why they are left out instead of "Nothing approved yet"."""
+    store = Store(db)
+    _approve(store, PDF, ground_truth, bulk=True)
+    _approve(store, PDF, ground_truth | {"invoice_number": "NW-2026-0913"}, bulk=True)
+    at = _ok(_learning_page().run())
+    captions = _captions(at)
+    assert "Nothing approved yet" not in captions
+    assert "2 bulk-approved invoices are left out: nobody opened them." in captions
+    assert "training_zip_make" not in {b.key for b in at.button}
+    _approve(store, PDF, ground_truth | {"invoice_number": "NW-2026-0914"})  # one a person approved
+    at = _ok(_learning_page().run())
+    assert "1 approved invoice" in _captions(at) and "2 bulk-approved invoices are left out" in _captions(at)
+
+
 def test_readers_tab_with_approvals(db, ground_truth):
     store = Store(db)
     box = [Box(1, 0.6, 0.1, 0.8, 0.12)]

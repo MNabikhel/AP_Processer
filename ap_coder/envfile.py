@@ -17,15 +17,16 @@ _ESCAPES = {'"': re.compile(r'\\([\\"])'), "'": re.compile(r"\\([\\'])")}
 
 def parse_value(value: str) -> str:
     """One value as python-dotenv (what the app reads with) reads it: a quoted value ends at its closing quote
-    (an inline ``# comment`` after it is not part of it), an unquoted one at `` #`` (``abc#def`` is kept)."""
-    value = value.strip()
-    quote = value[:1]
+    (an inline ``# comment`` after it is not part of it), an unquoted one at `` #`` (``abc#def`` is kept).
+    ``KEY= #paste key here`` is empty: the space after ``=`` makes the rest a comment (``KEY=#x`` reads ``#x``)."""
+    stripped = value.strip()
+    quote = stripped[:1]
     if quote in _QUOTED:
-        match = _QUOTED[quote].match(value)
+        match = _QUOTED[quote].match(stripped)
         if match:
             return _ESCAPES[quote].sub(r"\1", match.group(1))
-        return value  # no closing quote: kept as it is (python-dotenv cannot read the line either)
-    return re.sub(r"\s+#.*", "", value).strip()
+        return stripped  # no closing quote: kept as it is (python-dotenv cannot read the line either)
+    return re.sub(r"\s+#.*", "", value).strip()  # before stripping, so a space after "=" counts
 
 
 def read_env(path: Path) -> dict[str, str]:

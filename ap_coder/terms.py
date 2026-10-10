@@ -35,10 +35,27 @@ _DISCOUNT = [
     re.compile(r"(\d+(?:[.,]\d+)?)\s*%\s*(\d+)\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I),
     re.compile(
         r"(\d+(?:[.,]\d+)?)\s*%\s*(?:discount|escompte)?\s*(?:if paid|si pay[ée]e?)?\s*(?:within|in|dans les|sous)?"
-        r"\s*(\d+)\b(?!\s*%|[.,]\d)\s*(?:days?|jours?)?",
+        r"\s*(\d+)\b(?!\s*%|[.,]\d)(?!\s*(?:months?|mois|years?|yrs?|ans?|ann[ée]es?)\b)\s*(?:days?|jours?)?",
         re.I,
     ),
 ]
+# A rate charged on late payment, not a discount: "1.5% 1 month interest", "2% 30 days past due".
+_INTEREST = re.compile(
+    r"interest|int[ée]r[êe]ts?|per\s+month|par\s+mois|monthly|\blate\b|overdue|past\s+due|retard|arrears|penalt|"
+    r"p[ée]nalit",
+    re.I,
+)
+# Where one clause of the terms ends: "," ";" a full stop (not a decimal point) or a spaced dash.
+_CLAUSE_END = re.compile(r"[,;]|\.(?!\d)|\s[-–—/]\s")
+
+
+def _clause(text: str, start: int, end: int) -> str:
+    """The clause of ``text`` around ``text[start:end]`` (the whole of "Interest of 2% 30 days after due date")."""
+    before = [m.end() for m in _CLAUSE_END.finditer(text, 0, start)]
+    after = _CLAUSE_END.search(text, end)
+    return text[before[-1] if before else 0 : after.start() if after else len(text)]
+
+
 # "2/10 EOM" prints no net days: the usual reading is that the net amount is due 20 days after the discount date.
 EOM_NET_AFTER_DISCOUNT = 20
 _NET = [
@@ -85,8 +102,9 @@ def parse_terms(text: str | None) -> Terms:
         return Terms()
     eom = bool(_EOM.search(text))
     for pattern in _DISCOUNT:
-        m = pattern.search(text)
-        if m:
+        for m in pattern.finditer(text):
+            if _INTEREST.search(_clause(text, m.start(), m.end())):
+                continue  # a late-payment rate ("1.5% per month on overdue accounts"), not a discount
             pct = float(m.group(1).replace(",", "."))
             days = int(m.group(2))
             net = int(m.group(3)) if m.lastindex and m.lastindex >= 3 and m.group(3) else None
