@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import io
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from ap_coder import history, ui
+from ap_coder.safe import md
 from ap_coder.store import APPROVED
 from ap_coder.webapp.accounts import _read_upload
 from ap_coder.webapp.common import (
@@ -172,7 +174,7 @@ def _supplier_learning(store) -> None:
                     "Turn on autonomy…", icon=":material/bolt:", width="stretch", key=f"sup_menu_{slug}"
                 ):
                     st.markdown(
-                        f"Process **{name}** invoices without a person when every header field is verified and "
+                        f"Process **{md(name)}** invoices without a person when every header field is verified and "
                         f"every check passes. The policy: {policy.describe()}."
                     )
                     if st.button("Yes, turn on autonomy", type="primary", key=f"sup_on_{slug}"):
@@ -181,13 +183,13 @@ def _supplier_learning(store) -> None:
                         except ValueError as exc:
                             st.error(str(exc))
                         else:
-                            notify(f"Autonomy is on for {name}.", ":material/bolt:")
+                            notify(f"Autonomy is on for {md(name)}.", ":material/bolt:")
                             st.rerun()
             if p["state"] in (AUTONOMOUS, SUSPENDED) and actions.button(
                 "Turn off", icon=":material/pan_tool:", key=f"sup_off_{slug}", width="stretch"
             ):
                 store.set_supplier_state(p["key"], SUPERVISED, reviewer(), reason="turned off on the Learning page")
-                notify(f"{name} is back to supervised: every invoice is reviewed.", ":material/pan_tool:")
+                notify(f"{md(name)} is back to supervised: every invoice is reviewed.", ":material/pan_tool:")
                 st.rerun()
 
 
@@ -528,8 +530,15 @@ def _training_card(store) -> None:
         if picked["demo"] or picked["unreviewed"]:
             notes.append("Demo invoices and invoices approved without a person are never included.")
         st.caption(" ".join(notes))
+        # Prepared for exactly these approvals: an invoice reopened, corrected and approved again (the count
+        # unchanged) makes a new ZIP, not the one with the old values.
+        made_for = hashlib.sha1(
+            json.dumps(
+                [(i["id"], i["approved_at"], i["final_output"]) for i in invoices], sort_keys=True, default=str
+            ).encode()
+        ).hexdigest()
         ready = st.session_state.get("training_zip")
-        if ready and ready[0] == len(invoices):  # prepared for the invoices approved so far
+        if ready and ready[0] == made_for:
             _, data, counts = ready
             st.download_button(
                 "Download training data (ZIP)", data, file_name=f"ap-coder-training-{dt.date.today().isoformat()}.zip",
@@ -541,7 +550,7 @@ def _training_card(store) -> None:
             with st.spinner("Rendering the pages…"):
                 buf = io.BytesIO()
                 counts = export_training_set(store, buf)
-            st.session_state["training_zip"] = (len(invoices), buf.getvalue(), counts)
+            st.session_state["training_zip"] = (made_for, buf.getvalue(), counts)
             st.rerun()
         st.caption(
             "Made on this computer and kept here unless someone copies it: it holds your suppliers' invoices. "

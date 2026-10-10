@@ -231,6 +231,6 @@ def test_readers_tab_with_approvals(db, ground_truth):
 
     assert "2 approved invoices" in _captions(at)
     _ok(at.button(key="training_zip_make").click().run())
-    prepared, data, counts = at.session_state["training_zip"]
-    assert prepared == 2 and data.startswith(b"PK") and counts["invoices"] == 2
+    _, data, counts = at.session_state["training_zip"]
+    assert data.startswith(b"PK") and counts["invoices"] == 2
     assert any("training_zip_download" in (b.proto.id or "") for b in at.get("download_button"))

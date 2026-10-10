@@ -33,7 +33,10 @@ def clean_candidates(store: Store) -> list[dict[str, Any]]:
 def bulk_approve(
     store: Store, reference: ReferenceData, settings: Settings, invoice_ids: list[int], reviewer: str, login: str = ""
 ) -> dict[str, Any]:
-    """Approve each invoice exactly as the AI coded it, if it is still clean. Returns approved / skipped."""
+    """Approve each invoice exactly as it is coded, if it is still clean. Returns approved / skipped.
+
+    "As coded" is what the review screen shows: an earlier approver's corrections (a reopened or sent-back
+    invoice) when there are some, otherwise the AI's coding."""
     approved: list[int] = []
     skipped: list[tuple[int, str]] = []
     for invoice_id in invoice_ids:
@@ -41,11 +44,12 @@ def bulk_approve(
         if inv is None or inv["status"] != REVIEW or not inv.get("ai_output"):
             skipped.append((invoice_id, "no longer in the queue"))
             continue
-        ai = {k: v for k, v in inv["ai_output"].items() if k != "gl_distribution"}
+        coded = inv.get("final_output") or inv["ai_output"]
+        coded = {k: v for k, v in coded.items() if k != "gl_distribution"}
         try:
-            coding = InvoiceCoding.model_validate(ai)
+            coding = InvoiceCoding.model_validate(coded)
         except ValueError:
-            skipped.append((invoice_id, "the AI output needs fixing by hand"))
+            skipped.append((invoice_id, "the coding needs fixing by hand"))
             continue
         output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id)
         blocking = [i for i in report.issues if i.severity in ("error", "warning")]
