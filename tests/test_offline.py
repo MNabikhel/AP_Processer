@@ -279,7 +279,12 @@ def test_a_damaged_model_file_counts_as_missing_and_is_checked_once(tmp_path, mo
     monkeypatch.setattr(offline, "sha256", lambda path: reads.append(path) or real(path))
     assert offline.ppocrv5_ready() and offline.ppocrv5_ready()
     assert len(reads) == 2  # each file read once, not on every OCR'd page
-    (tmp_path / "det.onnx").write_bytes(b"detectoX")  # the same size, the wrong content
+    damaged = tmp_path / "det.onnx"
+    damaged.write_bytes(b"detectoX")  # the same size, the wrong content
+    # Written later than the first check, as a real damaged copy is: a quick test write can keep the same timestamp
+    # (Windows updates it lazily), which would look like the file already checked.
+    later = damaged.stat().st_mtime_ns + 2_000_000_000
+    os.utime(damaged, ns=(later, later))
     assert not offline.ppocrv5_ready()
 
 
