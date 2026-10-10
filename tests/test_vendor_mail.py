@@ -117,3 +117,9 @@ def test_credit_note_subject():
     issues = [Issue("error", "GST_HST_NUMBER_MISSING", "x")]
     assert vendor_mail.draft(doc, issues).subject.startswith("Credit note CN-2026-0047")
     assert vendor_mail.draft(doc, issues, vendor_mail.FRENCH).subject.startswith("Note de crédit")
+
+
+def test_a_gst_number_failing_its_check_digit_is_asked_about():
+    from ap_coder.vendor_mail import ASKABLE
+
+    assert "GST_NUMBER_CHECK_DIGIT" in ASKABLE

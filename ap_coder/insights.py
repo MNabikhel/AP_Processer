@@ -53,6 +53,14 @@ class Assumptions:
         store.set_setting("insights_assumptions", json.dumps(asdict(self)), actor=actor)
 
 
+def _corrected(event: dict[str, Any]) -> bool:
+    """Whether an approval changed what was proposed. Filling in what was left blank (a cost center the AI could
+    not pick, an UNASSIGNED account) completes the coding: it is in the audit trail, but it is not a correction."""
+    changes = (event.get("detail") or {}).get("changes") or []
+    return any(str(c.get("before") or "").strip().upper() not in ("", "UNASSIGNED", "NONE") for c in changes
+               if isinstance(c, dict))  # fmt: skip
+
+
 def _issues(validation: Any) -> list[dict[str, Any]]:
     """The stored checks of an invoice, leaving out anything that isn't one (a damaged or hand-edited database)."""
     issues = (validation or {}).get("issues") if isinstance(validation, dict) else None
@@ -87,8 +95,8 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     for e in sorted(store.events(actions=["approved"], limit=100_000), key=lambda e: (e["created_at"], e["id"])):
         latest[e["invoice_id"]] = e
     approvals = [e for i, e in latest.items() if i in rows and rows[i]["status"] in (APPROVED, PENDING)]
-    clean = [e for e in approvals if not (e["detail"] or {}).get("changes")]
-    changed = [e for e in approvals if (e["detail"] or {}).get("changes")]
+    clean = [e for e in approvals if not _corrected(e)]
+    changed = [e for e in approvals if _corrected(e)]
 
     costs = [invoice_cost_usd(metas.get(r["id"]) or {}, a) for r in processed]
     measured = [c for c, recorded in costs if recorded]
@@ -127,7 +135,7 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     for r in processed:
         weekly[_week(r["created_at"])]["processed"] += 1
     for e in approvals:
-        weekly[_week(e["created_at"])]["clean" if not (e["detail"] or {}).get("changes") else "changed"] += 1
+        weekly[_week(e["created_at"])]["changed" if _corrected(e) else "clean"] += 1
 
     projection = None
     if per_invoice_minutes is not None:

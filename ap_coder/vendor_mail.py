@@ -24,7 +24,8 @@ _TAX_WRONG = {"TAX_RATE_NONSTANDARD", "TAX_REGIME_MISMATCH", "TAX_TYPE_NOT_LEVIE
 _PO_LINE = {"PO_LINE_NOT_ON_PO", "PO_PRICE_OVER", "PO_QTY_OVER", "PO_NOT_RECEIVED"}
 ASKABLE = (
     _TOTALS | _TAX_WRONG | _PO_LINE
-    | {"NO_TAX_CHARGED", "GST_HST_NUMBER_MISSING", "GST_HST_NUMBER_FORMAT", "QST_NUMBER_MISSING", "QST_NUMBER_FORMAT",
+    | {"NO_TAX_CHARGED", "GST_HST_NUMBER_MISSING", "GST_HST_NUMBER_FORMAT", "GST_NUMBER_CHECK_DIGIT",
+       "QST_NUMBER_MISSING", "QST_NUMBER_FORMAT",
        "PO_UNKNOWN", "PO_CLOSED", "PO_VENDOR_MISMATCH", "PO_OVER_BILLED", "PO_NOT_QUOTED", "MISSING_INVOICE_NUMBER",
        "DUE_BEFORE_INVOICE", "DUPLICATE_INVOICE", "DUPLICATE_IN_ERP", "CREDIT_NOTE_ORIGINAL_UNKNOWN",
        "CREDIT_EXCEEDS_INVOICE"}
@@ -202,7 +203,7 @@ def points(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLIS
         numbers = sorted({n for i in issues if _code(i) in _TOTALS and (n := _line(i))})
         lines = t["lines"].format(lines=", ".join(str(n) for n in numbers)) if numbers else ""
         out.append(t["totals"].format(lines=lines))
-    if codes & {"GST_HST_NUMBER_MISSING", "GST_HST_NUMBER_FORMAT"}:
+    if codes & {"GST_HST_NUMBER_MISSING", "GST_HST_NUMBER_FORMAT", "GST_NUMBER_CHECK_DIGIT"}:
         out.append(t["gst_number"])
     if codes & {"QST_NUMBER_MISSING", "QST_NUMBER_FORMAT"}:
         out.append(t["qst_number"])

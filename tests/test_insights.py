@@ -57,3 +57,13 @@ def test_a_damaged_stored_check_does_not_break_insights_or_vendors(tmp_path):
     assert iid
     insights.compute(store)  # raised AttributeError ('str' object has no attribute 'get') before
     insights.vendor_workload(store, min_invoices=1)
+
+
+def test_filling_in_a_blank_is_not_a_correction():
+    """The audit trail keeps every change; Insights counts as corrected only what changed what was proposed."""
+    from ap_coder.insights import _corrected
+
+    filled = {"detail": {"changes": [{"what": "line 1 cost center", "before": "UNASSIGNED", "after": "100"},
+                                     {"what": "line 2 cost center", "before": "", "after": "200"}]}}  # fmt: skip
+    fixed = {"detail": {"changes": [{"what": "line 1 GL account", "before": "6010", "after": "1510"}]}}
+    assert not _corrected(filled) and _corrected(fixed) and not _corrected({"detail": {}})
