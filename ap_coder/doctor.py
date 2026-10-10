@@ -279,7 +279,7 @@ def _page_reader_check(settings: Settings) -> tuple[str, str, str]:
         kind = "a document reader" if status.document_reader else "a general model that can see"
         if not is_linked:
             return "page reader", WARN, (f"{status.model} ({kind}) is {status.state} but hasn't passed its test: "
-                                         "Settings → Page reader → Test the page reader links it")  # fmt: skip
+                                         "Settings > Page reader > Test the page reader links it")  # fmt: skip
         how = "in the background" if settings.page_reader.mode == "auto" else "when asked"
         return "page reader", PASS, (f"{status.model} ({kind}), linked, {status.state}; reads "
                                      f"{settings.page_reader.scope} {how}")  # fmt: skip

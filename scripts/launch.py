@@ -373,9 +373,8 @@ def lm_studio_line() -> tuple[str, str]:
 def page_reader_line() -> tuple[str, str]:
     """The page reader is optional too: say which model reads pages, never download or load one."""
     try:
-        from ap_coder.page_reader import reader_status
-
         from ap_coder.config import Settings
+        from ap_coder.page_reader import reader_status
         from ap_coder.page_worker import linked
 
         settings = Settings.from_env()

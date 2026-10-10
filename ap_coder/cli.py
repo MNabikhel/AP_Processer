@@ -213,6 +213,8 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
     checks = run_checks(settings, lambda: _load_reference(args), online=args.online)
     report = format_checks(checks)
+    if hasattr(sys.stdout, "reconfigure"):  # a Windows console (cp1252) can't print every character a note may hold
+        sys.stdout.reconfigure(errors="replace")
     print(report.replace("\n\n", f"\n\nreference data source: {reference_source(args)}\n\n", 1))
     return exit_code(checks)
 
