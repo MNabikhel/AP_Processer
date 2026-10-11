@@ -105,6 +105,7 @@ PAGES: list[Page] = [
         "insights",
         A,
         "How often the coding is right, and what AP Coder has learned.",
+        module="learning",
     ),
     Page(
         "spend",
@@ -113,6 +114,7 @@ PAGES: list[Page] = [
         "donut_small",
         A,
         "Where the money goes, by month, GL account, cost center and vendor, from approved invoices.",
+        module="spend",
     ),
     Page(
         "insights",
@@ -121,6 +123,7 @@ PAGES: list[Page] = [
         "query_stats",
         A,
         "The business case: how much goes straight through, the time it saves and what it costs.",
+        module="insights",
     ),
     Page(
         "activity",
@@ -129,6 +132,7 @@ PAGES: list[Page] = [
         "history",
         A,
         "Who processed, changed, approved, rejected, deleted or exported what, and when.",
+        module="activity",
     ),
     Page(
         "settings",

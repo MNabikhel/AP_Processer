@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
+{% block aside %}{% if s.processed %}<a class="btn" href="/insights/business-case" download title="Totals only: no vendor names, amounts of individual invoices or file names.">
+  <span class="ms" aria-hidden="true">download</span>Business case (one page)</a>{% endif %}{% endblock %}
+{% block content %}
+{% if not s.processed %}
+<section class="card">{{ ui.empty_state("Nothing to measure yet", "Process and approve a few invoices (or load the demo).") }}</section>
+{% else %}
+<div class="apc-tiles apc-anim" aria-label="The business case at a glance">
+  {% for label, value, tone, hint in kpis %}{{ ui.tile(label, value, "", tone, hint) }}{% endfor %}
+</div>
+
+{{ ui.section_title("AP operations") }}
+<div class="apc-tiles apc-anim">
+  {% for label, value, tone, hint in ops_kpis %}{{ ui.tile(label, value, "", tone, hint) }}{% endfor %}
+</div>
+{% if ops.waiting %}
+<section class="card" aria-labelledby="ageing-title">
+  <h4 id="ageing-title">Waiting by age</h4>
+  <div class="an-ageing">
+    {% for b in ageing %}
+    <div class="an-age"><div class="apc-muted">{{ b.label }}</div>
+      <div class="an-meter" role="img" aria-label="{{ b.n }} waiting {{ b.label }}"><i class="{{ 'warn' if b.late else 'ok' }}" style="width: {{ (b.share * 100) | round | int }}%"></i></div>
+      <b>{{ b.n }}</b></div>
+    {% endfor %}
+  </div>
+  <p class="muted">Waiting invoices by days since they were received (queue and parked).</p>
+</section>
+{% endif %}
+
+<div class="grid-3-2">
+  <section class="card" aria-labelledby="projection-title">
+    <h4 id="projection-title">At {{ a.monthly_volume | num }} invoices a month</h4>
+    {% if projection %}
+    <div class="table-wrap"><table class="apc-table">
+      <tbody>
+        <tr><td>AP time saved</td><td class="r"><b>{{ "{:,.0f}".format(projection.hours_saved) }} h</b> / month</td></tr>
+        <tr><td>Value of that time (${{ "{:,.0f}".format(a.hourly_cost) }}/h)</td><td class="r"><b>${{ "{:,.0f}".format(projection.value_saved) }}</b> / month</td></tr>
+        <tr><td>Cloud cost</td><td class="r">${{ "{:,.0f}".format(projection.azure_cost) }} / month</td></tr>
+      </tbody>
+      <tfoot><tr><td>Net benefit</td><td class="r">${{ "{:,.0f}".format(net) }} / month</td></tr></tfoot>
+    </table></div>
+    <p class="muted">Based on the share approved as coded so far and the assumptions below. It firms up as more invoices are reviewed.</p>
+    {% else %}
+    <p class="muted">Approve a few invoices to see the projection.</p>
+    {% endif %}
+  </section>
+  <section class="card" aria-labelledby="issues-title">
+    <h4 id="issues-title">What the checks catch</h4>
+    {% if issues %}
+    <ul class="an-bars">
+      {% for i in issues %}
+      <li><div class="an-bar-head"><span title="{{ i.code }}">{{ i.title }}</span><b>{{ i.n }}</b></div>
+        <div class="an-meter" aria-hidden="true"><i style="width: {{ (i.n / biggest_issue * 100) | round | int }}%; background: {{ issue_color }}"></i></div></li>
+      {% endfor %}
+    </ul>
+    <p class="muted">Sent for a closer look: {{ attention }} of processed invoices.</p>
+    {% if stopped %}{{ ui.pill(stopped, "ok", "shield") }}{% endif %}
+    {% else %}
+    <p class="muted">No errors or warnings so far.</p>
+    {% endif %}
+  </section>
+</div>
+
+{% if chart %}
+<section class="card" aria-labelledby="weekly-title">
+  <h4 id="weekly-title">Approvals by week</h4>
+  <figure class="an-figure">{{ chart }}</figure>
+  <details class="tech"><summary>Show as table</summary>
+    <div class="table-wrap"><table class="apc-table">
+      <thead><tr><th>Week</th><th class="r">Processed</th><th class="r">Approved as coded</th><th class="r">Corrected</th></tr></thead>
+      <tbody>{% for w in s.weekly %}<tr><td>{{ w.week }}</td><td class="r">{{ w.processed }}</td><td class="r">{{ w.clean }}</td><td class="r">{{ w.changed }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+</section>
+{% endif %}
+
+<details class="card an-expander" id="assumptions">
+  <summary><span class="ms" aria-hidden="true">tune</span>Assumptions (edit to match your team)</summary>
+  <form method="post" action="/insights/assumptions" data-busy="Saving…">
+    <div class="an-form-grid">
+      {% for f in fields %}
+      <label class="field">{{ f.label }}
+        <input type="number" name="{{ f.name }}" value="{{ f.value }}" min="0" step="{{ f.step }}" required></label>
+      {% endfor %}
+    </div>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save assumptions</button>
+  </form>
+  <p class="muted">Azure prices change by region and agreement; check your Azure invoice. Defaults are list prices for prebuilt-layout and gpt-4o.</p>
+</details>
+{% endif %}
+{% endblock %}

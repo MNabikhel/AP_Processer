@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
+{% block aside %}<a class="btn" href="/spend/data.xlsx" download title="Every invoice, its lines and its GL posting, as three Excel tables that join on AP Coder #: ready for pivot tables or Power BI.">
+  <span class="ms" aria-hidden="true">table_view</span>All invoice data (Excel)</a>{% endblock %}
+{% macro breakdown(title, label, items, with_names) %}
+<section class="card" aria-label="{{ title }}">
+  <h4>{{ title }}</h4>
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>{{ label }}</th><th class="r">Invoices</th><th class="r">Spend</th><th class="r">Share</th></tr></thead>
+    <tbody>
+      {% for r in items %}
+      <tr><td class="w"><b>{{ r.key }}</b>{% if with_names %}<div class="apc-muted">{{ r.name }}</div>{% endif %}</td>
+        <td class="r">{{ r.invoices }}</td><td class="r">{{ r.amount }}</td><td class="r">{{ r.share }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endmacro %}
+{% block content %}
+<section class="card">
+  <form class="an-filters" method="get" action="/spend" aria-label="Period and currency">
+    <label class="field">From (invoice date)<input type="date" name="start" value="{{ start.isoformat() }}"></label>
+    <label class="field">To<input type="date" name="end" value="{{ end.isoformat() }}"></label>
+    <label class="field">Currency
+      <select name="currency" data-autosubmit>
+        {% for c in currencies %}<option value="{{ c }}"{% if c == currency %} selected{% endif %}>{{ c }}</option>{% endfor %}
+      </select></label>
+    <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">refresh</span>Show</button>
+  </form>
+  {% if bad_date %}<p class="muted">A date could not be read; the default period is used instead.</p>{% endif %}
+</section>
+{% if backwards %}
+<div class="flash warn" role="status"><span class="ms" aria-hidden="true">event_busy</span><div>The start date is after the end date.</div></div>
+{% else %}
+{% if rates_note %}<p class="muted">{{ rates_note }}</p>{% endif %}
+{% if not rows %}
+<section class="card">{{ ui.empty_state("No spend yet", "No approved invoice dated " ~ start ~ " to " ~ end ~ " in " ~ shown_currency ~ ".") }}</section>
+{% else %}
+<div class="apc-tiles apc-anim">
+  {% for label, value, tone, hint in tiles %}{{ ui.tile(label, value, "", tone, hint) }}{% endfor %}
+</div>
+<section class="card" aria-labelledby="months-title">
+  <h4 id="months-title">By month</h4>
+  <div class="apc-legend" aria-label="GL categories">{% for name, color in legend %}<span><i style="background: {{ color }}"></i>{{ name }}</span>{% endfor %}</div>
+  <figure class="an-figure">{{ chart }}</figure>
+  <p class="muted">Coloured by the GL account's category (GL accounts &amp; tax page).</p>
+  <details class="tech"><summary>Show as table</summary>
+    <div class="table-wrap"><table class="apc-table">
+      <thead><tr><th>Month</th><th>Category</th><th class="r">Spend ({{ shown_currency }})</th></tr></thead>
+      <tbody>{% for r in month_rows %}<tr><td>{{ r.month }}</td><td>{{ r.category }}</td><td class="r">{{ r.amount }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+</section>
+<div class="an-two">
+  {{ breakdown("Top GL accounts", "GL account", gl_rows, true) }}
+  {{ breakdown("Top vendors", "Vendor", vendor_rows, false) }}
+</div>
+{% if cc_rows %}{{ breakdown("By cost center", "Cost center", cc_rows, true) }}{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

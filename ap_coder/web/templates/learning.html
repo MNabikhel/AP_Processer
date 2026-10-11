@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Learning">
+  {% for key, label in tabs.items() %}
+  <a href="{{ url(tab=key) }}" class="{{ 'on' if key == tab else '' }}"{% if key == tab %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+{% if tab == "coding" %}
+{# --- Teach from past coding --------------------------------------------------------------------------- #}
+<details class="card an-expander" id="history"{% if upload or upload_gone %} open{% endif %}>
+  <summary><span class="ms" aria-hidden="true">history_edu</span>Teach from past coding{% if history_count %} ({{ history_count | plural("past line") }} taught){% endif %}</summary>
+  <p class="muted">Export last year's posted AP invoice lines from the ERP (vendor, line description, GL account, cost
+    center) and import them here: the AI then sees how each vendor was coded before, from the first invoice. Past lines
+    never count in the accuracy figures.</p>
+  {% if upload %}
+  <p><b>{{ upload.name }}</b> · {{ upload.rows | plural("line") }}</p>
+  {% if upload.sheets | length > 1 %}
+  <form class="row" method="get" action="/learning#history">
+    <input type="hidden" name="history" value="{{ upload.token }}">
+    <label class="field">Sheet<select name="sheet" data-autosubmit>
+      {% for s in upload.sheets %}<option value="{{ s }}"{% if s == upload.sheet %} selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select></label>
+  </form>
+  {% endif %}
+  <form method="post" action="/learning/history/teach" data-busy="Teaching…">
+    <input type="hidden" name="token" value="{{ upload.token }}">
+    <input type="hidden" name="sheet" value="{{ upload.sheet }}">
+    <div class="an-form-grid three">
+      {% for field, label in history_labels.items() %}
+      <label class="field">{{ label }}
+        <select name="col_{{ field }}">
+          <option value="">(none)</option>
+          {% for c in upload.columns %}<option value="{{ c }}"{% if upload.guessed.get(field) == c %} selected{% endif %}>{{ c }}</option>{% endfor %}
+        </select></label>
+      {% endfor %}
+    </div>
+    <p class="muted">* needed. Lines without a vendor, a description or a GL account are skipped.</p>
+    <div class="row">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">school</span>Teach {{ upload.rows | plural("line") }}</button>
+      <a class="btn" href="/learning#history">Cancel</a>
+    </div>
+  </form>
+  {% else %}
+  {% if upload_gone %}{{ ui.empty_note("That upload has expired", " Upload the file again.", "schedule") }}{% endif %}
+  <form class="row" method="post" action="/learning/history/upload" enctype="multipart/form-data" data-busy="Reading…">
+    <label class="field">AP line history (CSV or Excel)
+      <input type="file" name="file" accept=".csv,.xlsx,.xls,.txt" required></label>
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">upload</span>Read the file</button>
+  </form>
+  {% endif %}
+  {% if history_count %}
+  <form method="post" action="/learning/history/forget" data-confirm="Forget all {{ history_count | num }} past lines? The AI no longer sees how vendors were coded in the ERP.">
+    <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Forget all past coding</button>
+  </form>
+  {% endif %}
+</details>
+
+{% if not metrics %}
+<section class="card">{{ ui.empty_state("Nothing learned yet", "Accuracy and the AI's memory appear here once invoices are approved in the review queue.") }}</section>
+{% else %}
+<div class="apc-tiles apc-anim">{% for t in tiles %}{{ t }}{% endfor %}</div>
+
+<div class="grid-3-2">
+  <section class="card" aria-labelledby="trend-title">
+    <h4 id="trend-title">Accuracy by week</h4>
+    <figure class="an-figure">{{ chart }}</figure>
+    <details class="tech"><summary>Show as table</summary>
+      <div class="table-wrap"><table class="apc-table">
+        <thead><tr><th>Week</th><th class="r">Confirmed</th><th class="r">Corrected</th><th class="r">Accuracy</th></tr></thead>
+        <tbody>{% for w in weekly %}<tr><td>{{ w.week }}</td><td class="r">{{ w.accepted }}</td><td class="r">{{ w.corrected }}</td><td class="r">{{ w.accuracy | pct }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </details>
+  </section>
+  <section class="card" aria-labelledby="feed-title">
+    <h4 id="feed-title">Recent lessons</h4>
+    {% if not feed %}<p class="muted">No reviewed lines yet: only past coding from the ERP.</p>{% endif %}
+    <div class="apc-feed">
+      {% for r in feed %}
+      <div class="item">{{ ui.avatar(r.reviewer or "?", "sm") }}<div>
+        <div class="txt">
+          {% if r.outcome == "corrected" %}
+          <b>{{ r.reviewer }}</b> corrected <b>{{ r.short }}</b>
+          {% if r.suggested_gl %}<span class="apc-strike apc-mono">{{ r.suggested_gl }}</span>{% else %}<i>new line</i>{% endif %}<span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
+          {% else %}
+          <b>{{ r.reviewer }}</b> confirmed <b>{{ r.short }}</b> <span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
+          {% endif %}
+          <br><span class="apc-muted">{{ r.vendor_name }}</span></div>
+        <div class="when">{{ r.when }}</div></div></div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+<div class="an-two">
+  <section class="card" aria-labelledby="vendors-title">
+    <h4 id="vendors-title">Accuracy by vendor</h4>
+    <div>{% for v in vendors %}{{ v }}{% endfor %}</div>
+  </section>
+  <section class="card" aria-labelledby="corrections-title">
+    <h4 id="corrections-title">Most common corrections</h4>
+    {% if not corrections %}
+    <p class="muted">No corrections yet: the AI has matched every reviewer decision.</p>
+    {% else %}
+    <div class="table-wrap"><table class="apc-table">
+      <thead><tr><th>AI suggested</th><th></th><th>Reviewer chose</th><th class="r">Times</th></tr></thead>
+      <tbody>{% for c in corrections %}
+        <tr><td><div class="gl">{{ c.suggested_gl }}<small>{{ c.before_name }}</small></div></td><td><span class="apc-arrow">→</span></td>
+          <td><div class="gl">{{ c.final_gl }}<small>{{ c.after_name }}</small></div></td><td class="r">{{ ui.pill("×" ~ c.n, "violet") }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+  </section>
+</div>
+
+<details class="card an-expander" id="memory"{% if mem_q %} open{% endif %}>
+  <summary><span class="ms" aria-hidden="true">psychology</span>Memory: every lesson, with the option to forget</summary>
+  <p class="muted">Lessons from the same vendor are shown to the AI on the next invoice; corrections count most. Tick
+    <i>Forget?</i> to remove a lesson a reviewer got wrong.</p>
+  <form class="an-filters" method="get" action="/learning#memory" role="search">
+    <label class="field an-grow">Search the memory
+      <span class="an-search"><span class="ms" aria-hidden="true">search</span>
+        <input type="search" name="mem_q" value="{{ mem_q }}" placeholder="vendor, line, GL code, reviewer…"></span></label>
+    <button class="btn sm" type="submit">Search</button>
+  </form>
+  {% if not memory %}
+  {{ ui.empty_note("No lessons match", " Try another search.", "search_off") }}
+  {% else %}
+  <form method="post" action="/learning/memory/forget" data-confirm="Forget the ticked lessons? The AI no longer sees them.">
+    <div class="table-wrap an-scroll"><table class="apc-table">
+      <thead><tr><th>Forget?</th><th>Date</th><th>Vendor</th><th>Line</th><th>AI suggested</th><th>Final GL</th><th>Cost center</th><th>Outcome</th><th>Reviewer</th></tr></thead>
+      <tbody>{% for r in memory %}
+        <tr><td><input type="checkbox" name="ids" value="{{ r.id }}" aria-label="Forget the lesson {{ r.description }}"></td>
+          <td>{{ r.date }}</td><td>{{ r.vendor_name }}</td><td class="w">{{ r.description }}</td><td>{{ r.suggested_gl or "" }}</td>
+          <td>{{ r.final_gl }}</td><td>{{ r.final_cc or "" }}</td><td>{{ r.outcome_text }}</td><td>{{ r.reviewer or "" }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    <div class="row">
+      <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Forget the ticked lessons</button>
+      <span class="muted">{% if memory_matching > memory | length %}Showing {{ memory | length }} of {{ memory_matching | num }}{% else %}{{ memory_matching | plural("lesson") }}{% endif %}{% if mem_q %} matching “{{ mem_q }}”{% endif %} · {{ memory_total | num }} in the memory{% if memory_total >= 2000 %} (the newest 2,000){% endif %}.</span>
+    </div>
+  </form>
+  {% endif %}
+</details>
+{% endif %}
+
+{% elif tab == "suppliers" %}
+{% if not suppliers %}
+<section class="card">{{ ui.empty_state("No supplier learned yet", "Each approved invoice teaches AP Coder where that supplier prints its invoice number, dates and totals, and records each field the reviewer had to correct. Once a supplier has enough clean invoices in a row, it goes touchless by itself when touchless processing is on (Settings → Automation), and every invoice still goes through all the checks.") }}</section>
+{% else %}
+<p class="muted">
+  {% if touchless_on %}Touchless processing is <b>on</b>: a vendor that meets the bar goes touchless by itself, and one correction sends it back to review.
+  {% else %}Touchless processing is <b>off</b> (Settings → Automation): every invoice is reviewed by a person, and each approval keeps training its vendor.{% endif %}
+  The bar, the same for every vendor: {{ policy }}.</p>
+{% for s in suppliers %}
+<section class="card an-supplier" aria-label="{{ s.name }}">
+  {{ s.row }}
+  <div class="an-supplier-actions">
+    <details class="tech">
+      <summary><span class="ms" aria-hidden="true">table_rows</span>What the clerk corrected</summary>
+      {% if not s.fields %}
+      <p class="muted">No fields checked yet.</p>
+      {% else %}
+      <div class="table-wrap"><table class="apc-table">
+        <thead><tr><th>Field</th><th class="r">Checked</th><th class="r">Corrected</th><th class="r">Accuracy</th></tr></thead>
+        <tbody>{% for f in s.fields %}<tr><td>{{ f.label }}</td><td class="r">{{ f.n | num }}</td><td class="r">{{ f.corrected | num }}</td><td class="r">{{ ui.pill(f.accuracy, f.tone) }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      <p class="muted">Over the last {{ s.window }}.</p>
+      {% if s.latest %}
+      <div class="table-wrap"><table class="apc-table">
+        <thead><tr><th>Latest corrections</th><th>Read</th><th>Approved</th><th>When</th></tr></thead>
+        <tbody>{% for r in s.latest %}<tr><td>{{ r.label }}</td><td>{{ r.read }}</td><td>{{ r.final }}</td><td>{{ r.at }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% endif %}
+      {% endif %}
+    </details>
+    {% if s.held %}
+    <form method="post" action="/learning/suppliers/allow">
+      <input type="hidden" name="key" value="{{ s.key }}">
+      <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">bolt</span>Allow again</button>
+    </form>
+    {% else %}
+    <details class="pop">
+      <summary class="btn sm"><span class="ms" aria-hidden="true">pan_tool</span>Keep supervised…</summary>
+      <div class="pop-body">
+        <p>Every <b>{{ s.name }}</b> invoice goes to a person, whatever its record, until you allow it again. Recorded in the Activity log with your name.</p>
+        <form method="post" action="/learning/suppliers/hold" class="stack">
+          <input type="hidden" name="key" value="{{ s.key }}">
+          <label class="field an-full">Why (optional)<input type="text" name="reason" placeholder="e.g. new contract, prices changing" maxlength="300"></label>
+          <button class="btn primary" type="submit">Keep supervised</button>
+        </form>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</section>
+{% endfor %}
+{% endif %}
+
+{% else %}
+<p class="muted">Each approval compares what every reader found on the page with what AP approved. The combined value is
+  what the review screen showed; a reader that keeps agreeing with AP earns its trust.</p>
+{% if not scores %}
+<section class="card">{{ ui.empty_state("No reader compared with AP yet", "Once invoices are approved on the review screen, this shows how often each reader (OCR and the rules, the page reader, the supplier's template, the AI model) read what AP approved.") }}</section>
+{% else %}
+<div class="apc-tiles apc-anim">{% for t in tiles %}{{ t }}{% endfor %}</div>
+<section class="card" aria-labelledby="scorecard-title">
+  <h4 id="scorecard-title">Scorecard</h4>
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Reader</th><th class="r">Fields compared</th><th class="r">Agreed with AP</th><th class="r">% agreed</th><th class="r">Invoices</th></tr></thead>
+    <tbody>{% for r in scores %}
+      <tr><td>{% if r.combined %}<b>{{ r.label }}</b>{% else %}{{ r.label }}{% endif %}</td><td class="r">{{ r.fields | num }}</td>
+        <td class="r">{{ r.agreed | num }}</td><td class="r">{{ ui.pill(r.rate_text, "ok" if r.rate >= 0.95 else "warn") }}</td><td class="r">{{ r.invoices | num }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <p class="muted">OCR + rules: AP Coder's rules reading the page's text (from the PDF, or OCR for a scan). A field counts for a reader when it read a value there.</p>
+</section>
+<section class="card" id="fields" aria-labelledby="fields-title">
+  <div class="card-head">
+    <h4 id="fields-title">Field by field</h4>
+    <form method="get" action="/learning#fields">
+      <input type="hidden" name="tab" value="readers">
+      <label class="field">Reader<select name="reader" data-autosubmit>
+        {% for label in labels %}<option value="{{ label }}"{% if label == pick %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></label>
+      <noscript><button class="btn sm" type="submit">Show</button></noscript>
+    </form>
+  </div>
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Field</th><th class="r">Compared</th><th class="r">Agreed</th><th class="r">% agreed</th><th>Latest disagreement</th></tr></thead>
+    <tbody>{% for f in fields %}
+      <tr><td>{{ f.label }}</td><td class="r">{{ f.fields | num }}</td><td class="r">{{ f.agreed | num }}</td>
+        <td class="r">{{ ui.pill(f.rate_text, "ok" if f.rate >= 0.95 else "warn") }}</td>
+        <td class="w">{% if f.last_read is not none %}<span class="apc-muted">read {{ f.last_read }} · AP approved {{ f.last_final }}</span>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+<p class="muted"><span class="ms" aria-hidden="true">tune</span>
+  {% if patterns %}{{ patterns | plural("evidence pattern") }} now {{ "has" if patterns == 1 else "have" }} enough approvals to set {{ "its" if patterns == 1 else "their" }} own confidence
+  {% else %}No evidence pattern has enough approvals yet to set its own confidence{% endif %}
+  (each needs {{ min_evidence }} approved values; until then the benchmark's measure is used).</p>
+{% endif %}
+
+<section class="card" id="training" aria-labelledby="training-title">
+  <h4 id="training-title">Export training data</h4>
+  {% if not training.count %}
+  <p class="muted">Each invoice AP approves becomes an example to fine-tune a vision model on your own suppliers' invoices: its pages, with the values AP approved. {{ training.note }}</p>
+  {% else %}
+  <p class="muted">{{ training.note }}</p>
+  <a class="btn primary" href="/learning/training.zip" download><span class="ms" aria-hidden="true">folder_zip</span>Download training data (ZIP)</a>
+  <p class="muted">Made on this computer when you click (rendering the pages takes a moment) and kept here unless someone
+    copies it: it holds your suppliers' invoices. For a large set, <code>python -m ap_coder export-training</code> writes it straight to a file.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
