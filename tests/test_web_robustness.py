@@ -116,3 +116,11 @@ def test_every_page_starts_with_a_skip_link_past_the_rail(client):
         assert 'class="skip" href="#main"' in text, path
         assert text.index('href="#main"') < text.index('class="brand"'), path
         assert '<main class="main" id="main" tabindex="-1">' in text, path
+
+
+def test_pages_are_never_kept_by_the_browser_so_back_shows_where_things_stand(client, store):
+    """Parked, then Back: the browser showed the review screen it had kept, as if nothing had happened (its first
+    check then said "no longer in the review queue: reload the page"). Pages are drawn afresh each time."""
+    for path in ("/review", "/settings/data", "/no-such-page"):
+        response = client.get(path, headers={"Accept": "text/html"})
+        assert "no-store" in response.headers.get("cache-control", ""), path

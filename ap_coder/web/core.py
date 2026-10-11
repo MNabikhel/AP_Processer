@@ -329,4 +329,8 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         "settings": settings,
     }
     base.update(context)
-    return templates.TemplateResponse(request, template, base, status_code=status_code)
+    response = templates.TemplateResponse(request, template, base, status_code=status_code)
+    # Never kept by the browser: Back after an action (park, approve...) shows where things stand now, not the page
+    # as it was before.
+    response.headers["Cache-Control"] = "no-store"
+    return response
