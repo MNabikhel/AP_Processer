@@ -226,9 +226,9 @@ def table_finder_dirs() -> list[Path]:
 def table_finder_path() -> Path | None:
     """The table finder's model on this computer, intact (its SHA-256 checked once per file version), or None: the
     path in ``AP_TABLE_FINDER_MODEL``, else the first of :func:`table_finder_dirs` that has it. Never downloaded."""
-    from .paths import _env_path
+    from .paths import env_path
 
-    chosen = _env_path(TABLE_FINDER_ENV)
+    chosen = env_path(TABLE_FINDER_ENV)
     candidates = [chosen] if chosen else [folder / TABLE_FINDER_NAME for folder in table_finder_dirs()]
     for path in candidates:
         try:
