@@ -142,6 +142,26 @@ def test_no_env_file_is_taken_from_a_folder_above_ap_coder(tmp_path, monkeypatch
     assert "AP_STRAY_SETTING" not in os.environ
 
 
+def test_folders_set_in_the_environment_with_quotes_or_a_tilde(tmp_path, monkeypatch):
+    """`set AP_REFERENCE_DIR="C:\\AP Reference"` in cmd keeps the quotes in the value: AP_PRIVATE_DIR and
+    AP_ENV_FILE dropped them, AP_REFERENCE_DIR and AP_DB_PATH did not (the GL accounts "not found", a database
+    made in a folder named with quotes). A ~ (home folder) was not expanded: the data went to a folder named "~"
+    inside the folder AP Coder was started from."""
+    reference = tmp_path / "AP Reference"
+    reference.mkdir()
+    monkeypatch.setenv("AP_REFERENCE_DIR", f'"{reference}"')
+    assert cli.reference_dir() == (reference, False)
+    monkeypatch.setenv("AP_DB_PATH", f'"{tmp_path / "My Data" / "ap.db"}"')
+    assert Path(cli.build_parser().parse_args(["schema"]).db) == tmp_path / "My Data" / "ap.db"
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setenv("AP_PRIVATE_DIR", "~/APCoder")
+    assert paths.private_dir() == tmp_path / "home" / "APCoder"
+    monkeypatch.delenv("AP_PRIVATE_DIR")
+    paths.write_user_settings(data_dir="~/AP Data")  # edited by hand
+    assert paths.private_dir() == tmp_path / "home" / "AP Data"
+
+
 # --- Command line ------------------------------------------------------------------------------------------------
 
 

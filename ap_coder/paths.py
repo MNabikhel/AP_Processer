@@ -41,20 +41,25 @@ def write_user_settings(**values: str) -> Path:
     return path
 
 
-def _env_path(name: str) -> Path | None:
-    """A folder or file from an environment variable. Windows cmd's ``set NAME="C:\\My Folder"`` keeps the
-    quotes in the value: they are not part of the path."""
-    value = (os.environ.get(name) or "").strip().strip('"').strip()
-    return Path(value) if value else None
+def user_path(value: str) -> Path | None:
+    """A folder or file as a person writes it: Windows cmd's ``set NAME="C:\\My Folder"`` keeps the quotes in the
+    value (they are not part of the path), and ``~`` is the home folder."""
+    value = (value or "").strip().strip('"').strip()
+    return Path(value).expanduser() if value else None
+
+
+def env_path(name: str) -> Path | None:
+    """A folder or file from an environment variable (see ``user_path``)."""
+    return user_path(os.environ.get(name) or "")
 
 
 def private_dir() -> Path:
     """The folder for enterprise data (see the module docstring for the lookup order)."""
-    if folder := _env_path("AP_PRIVATE_DIR"):
+    if folder := env_path("AP_PRIVATE_DIR"):
         return folder
-    recorded = read_user_settings().get("data_dir")
+    recorded = user_path(str(read_user_settings().get("data_dir") or ""))
     if recorded:
-        return Path(recorded)
+        return recorded
     if (PROJECT_DIR / "pyproject.toml").exists() and (PROJECT_DIR / "ap_coder").is_dir():
         return PROJECT_DIR / "private"
     return Path("private")
@@ -67,7 +72,7 @@ def default_db_path() -> Path:
 def env_file() -> Path | None:
     """The ``.env`` with Azure settings: ``AP_ENV_FILE``, else the data folder's, else the folder
     the command runs from, else the project folder's."""
-    if chosen := _env_path("AP_ENV_FILE"):
+    if chosen := env_path("AP_ENV_FILE"):
         return chosen
     for candidate in (private_dir() / ".env", Path.cwd() / ".env", PROJECT_DIR / ".env"):
         if candidate.is_file():

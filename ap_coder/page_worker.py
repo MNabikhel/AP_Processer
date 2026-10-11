@@ -150,7 +150,7 @@ def _dashboard_store(db_path: Path | None = None) -> Any:
     from . import paths
     from .store import Store
 
-    db = Path(db_path or os.environ.get("AP_DB_PATH") or paths.default_db_path())
+    db = Path(db_path or paths.env_path("AP_DB_PATH") or paths.default_db_path())
     return Store(db) if db.exists() else None
 
 

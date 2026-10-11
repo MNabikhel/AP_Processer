@@ -18,6 +18,7 @@ from .evaluation import evaluate
 from .extraction import DocumentExtractor
 from .labels import _prediction_files, export_labels
 from .mailbox import EMAIL_EXTENSIONS, emails_in, unpack, unpack_folder
+from .paths import env_path
 from .pipeline import (
     InvoicePipeline,
     PipelineResult,
@@ -45,9 +46,9 @@ _REFERENCE_FILES = {
 
 def reference_dir() -> tuple[Path, bool]:
     """Return (directory, is_sample). AP_REFERENCE_DIR > <data folder>/reference > bundled sample data."""
-    env_dir = os.getenv("AP_REFERENCE_DIR")
+    env_dir = env_path("AP_REFERENCE_DIR")
     if env_dir:
-        return Path(env_dir), False
+        return env_dir, False
     private = private_dir() / "reference"
     if (private / "chart_of_accounts.csv").exists() or (private / "chart_of_accounts.json").exists():
         return private, False
@@ -119,7 +120,7 @@ def _add_reference_args(p: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     private = private_dir()
     db_path, out_dir, cache_dir = private / "ap_coder.db", private / "output", private / ".cache" / "extraction"
-    db_path = Path(os.environ.get("AP_DB_PATH") or db_path)  # the database the dashboard uses, as it chooses it
+    db_path = env_path("AP_DB_PATH") or db_path  # the database the dashboard uses, as it chooses it
     parser = argparse.ArgumentParser(prog="ap_coder", description="Enterprise AP Invoice Coder Engine (PoC)")
     parser.add_argument(
         "--env-file", default=None, help="Path to a .env file (default: the data folder's, else ./.env)"

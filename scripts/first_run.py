@@ -30,11 +30,11 @@ def has_data(folder: Path) -> bool:
 
 def choose_data_dir() -> Path:
     """The folder already in use, else ``~/APCoder`` (or ``private/`` when it already holds data)."""
-    if chosen := paths._env_path("AP_PRIVATE_DIR"):  # without the quotes of cmd's  set AP_PRIVATE_DIR="D:\AP Data"
+    if chosen := paths.env_path("AP_PRIVATE_DIR"):  # without the quotes of cmd's  set AP_PRIVATE_DIR="D:\AP Data"
         return chosen
-    recorded = paths.read_user_settings().get("data_dir")
+    recorded = paths.user_path(str(paths.read_user_settings().get("data_dir") or ""))  # as private_dir() reads it
     if recorded:
-        return Path(recorded)
+        return recorded
     legacy = ROOT / "private"
     data = legacy if has_data(legacy) else DEFAULT_DATA_DIR  # never move data someone already has
     paths.write_user_settings(data_dir=str(data))
