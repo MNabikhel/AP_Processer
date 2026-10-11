@@ -119,6 +119,7 @@ def _add_reference_args(p: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     private = private_dir()
     db_path, out_dir, cache_dir = private / "ap_coder.db", private / "output", private / ".cache" / "extraction"
+    db_path = Path(os.environ.get("AP_DB_PATH") or db_path)  # the database the dashboard uses, as it chooses it
     parser = argparse.ArgumentParser(prog="ap_coder", description="Enterprise AP Invoice Coder Engine (PoC)")
     parser.add_argument(
         "--env-file", default=None, help="Path to a .env file (default: the data folder's, else ./.env)"
