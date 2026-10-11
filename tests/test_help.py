@@ -6,7 +6,7 @@ from ap_coder.help import AREAS, CHECKS, help_for
 
 from .conftest import ROOT
 
-SOURCES = ["validation.py", "tax.py", "vendors.py", "po.py", "terms.py"]
+SOURCES = ["validation.py", "tax.py", "vendors.py", "po.py", "terms.py", "capture/bridge.py"]
 
 
 def _raised_codes():

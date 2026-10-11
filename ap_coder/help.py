@@ -373,6 +373,26 @@ CHECKS: dict[str, CheckHelp] = {
         READING, "Amount read differently", "Azure's invoice model and the AI read a different amount.",
         "Check the subtotal, tax and total against the document.",
     ),
+    "CAPTURE_TOTALS": CheckHelp(
+        READING, "Totals don't add up as printed",
+        "As the invoice prints them, the subtotal, taxes and total don't add up (or the taxes don't add up to the "
+        "total tax), so one of them was misread or the invoice itself is wrong.",
+        "Compare the amounts with the page; if the invoice is wrong, ask the vendor for a corrected one.",
+    ),
+    "CAPTURE_CHECK_FIELDS": CheckHelp(
+        READING, "Fields to check on the page",
+        "The readers of the page didn't agree on these fields, or a check involving them failed, so they are "
+        "highlighted in amber on the page.",
+        "Click each amber field and compare it with the page before approving.",
+    ),
+    "TEXT_LAYER_MATCHES_PAGE": CheckHelp(
+        FRAUD, "Hidden text differs from the page",
+        "This PDF carries text (what a computer reads) that is not what its page shows: the page reader, which "
+        "reads the page as printed, didn't find the PDF's totals there, or most of its figures differ. Editing the "
+        "hidden text of a PDF is a known way to slip a different amount past a system that reads the text alone.",
+        "Compare every amount with the page as displayed, not the values read, and ask the supplier for a fresh copy "
+        "on a number you already have before paying.",
+    ),
     "CURRENCY_NOT_FOUND": CheckHelp(
         READING, "Currency not printed",
         "The invoice shows no currency the reader could read (no code such as CAD or USD, no € or £ sign), so "
