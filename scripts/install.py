@@ -240,7 +240,10 @@ def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
     (data / "invoices").mkdir(exist_ok=True)
     paths.write_user_settings(data_dir=str(data))
     if not (ROOT / ".git").exists():  # data and a .env left in this code folder move to the data folder
-        upgrade.adopt_legacy(ROOT, data, c.info)
+        try:
+            upgrade.adopt_legacy(ROOT, data, c.info)
+        except OSError as exc:  # in use or read-only: the launcher tries again on every start
+            c.warn(f"The settings or data in {ROOT} can't be moved yet ({exc.strerror or exc}).")
 
     if args.fresh_start:
         fresh_start(c, data)

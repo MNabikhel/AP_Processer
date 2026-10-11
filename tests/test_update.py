@@ -401,6 +401,23 @@ def test_read_only_files_in_an_older_folder_are_removed_too(upgrade, tmp_path, m
     assert "Removed the older AP Coder folder" in said[-1]
 
 
+def test_an_older_folders_data_that_cannot_be_moved_keeps_the_folder(upgrade, tmp_path, monkeypatch):
+    """A file of the older folder's data in use (or read-only): the clean-up stopped the start with a traceback."""
+    import shutil
+
+    old = make_install(tmp_path / "AP Coder 0.1", "0.1.0")
+    _with_data(old)
+
+    def move(src, dst, *args, **kwargs):
+        raise PermissionError(32, "The process cannot access the file because it is being used", src)
+
+    monkeypatch.setattr(shutil, "move", move)
+    said: list[str] = []
+    assert upgrade.clean_up(tmp_path / "new", tmp_path / "data", [old], said.append) == 0
+    assert (old / "private" / "ap_coder.db").read_text() == "db" and (old / ".venv").exists()
+    assert "it is cleaned up on a later start" in said[0]
+
+
 def test_legacy_installs_are_found_from_the_data_folder_they_used(upgrade, tmp_path):
     old = make_install(tmp_path / "AP Coder 0.1", "0.1.0", venv=False)
     paths.write_user_settings(data_dir=str(old / "private"))

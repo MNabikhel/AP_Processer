@@ -288,6 +288,24 @@ def test_settings_no_longer_used_are_commented_out_and_a_code_folder_env_moves(l
     assert "no longer used" in capsys.readouterr().out
 
 
+def test_a_settings_file_that_cannot_be_changed_never_stops_the_start(launch, monkeypatch, tmp_path, capsys):
+    """A read-only (or open) .env with settings no longer used stopped every start with a traceback."""
+    started, _, _ = _quiet_setup(launch, monkeypatch)
+    data = tmp_path / "private"
+    data.mkdir()
+    (data / ".env").write_text("AP_PAGE_READER=on\n")
+    (launch.ROOT / ".env").write_text("AP_REVIEWER=Old\n")
+
+    def refused(*args, **kwargs):
+        raise PermissionError(13, "Access is denied", str(data / ".env"))
+
+    monkeypatch.setattr(launch.envfile, "retire", refused)
+    monkeypatch.setattr(launch.upgrade.shutil, "move", refused)
+    assert launch.run(*launch.parse([])) == 0 and started
+    out = capsys.readouterr().out
+    assert "can't be changed" in out and "Traceback" not in out
+
+
 def test_leftovers_of_an_older_version_unzipped_over_are_removed(launch, monkeypatch, capsys):
     _quiet_setup(launch, monkeypatch)
     manifest = {

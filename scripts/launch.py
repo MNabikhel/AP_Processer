@@ -768,9 +768,14 @@ def ensure_data_folder() -> Path:
 def settle_settings(data: Path, version: str) -> list[tuple[str, str]]:
     """The settings file: a ``.env`` (or data) left in this code folder moves to the data folder, and settings no
     longer used are commented out, with a note, instead of looking like they still do something."""
+    notes = []
     if not (ROOT / ".git").exists():  # a developer's checkout keeps its own files
-        upgrade.adopt_legacy(ROOT, data, say)
-    return retire_settings(data, version)
+        try:
+            upgrade.adopt_legacy(ROOT, data, say)
+        except OSError as exc:  # in use or read-only: tried again on the next start, never a reason to stop
+            notes.append(("warn", f"The settings or data in {ROOT} can't be changed ({exc.strerror or exc}): not "
+                                  "moved to the data folder yet"))  # fmt: skip
+    return notes + retire_settings(data, version)
 
 
 def retire_settings(data: Path, version: str) -> list[tuple[str, str]]:
@@ -778,7 +783,11 @@ def retire_settings(data: Path, version: str) -> list[tuple[str, str]]:
 
     env = data / ".env"
     short = ".".join(version.split(".")[:2]) or version
-    found = envfile.retire(env, RETIRED_SETTINGS, f"no longer used (AP Coder {short})")
+    try:
+        found = envfile.retire(env, RETIRED_SETTINGS, f"no longer used (AP Coder {short})")
+    except OSError as exc:  # read-only or open: the settings no longer used do nothing either way
+        return [("info", f"Settings file {env} can't be changed ({exc.strerror or exc}): settings no longer used "
+                         "are left in it (they do nothing)")]  # fmt: skip
     if not found:
         return []
     return [("info", f"Settings file: {', '.join(found)} no longer used (commented out in {env})")]

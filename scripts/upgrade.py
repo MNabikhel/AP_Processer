@@ -495,7 +495,12 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
         if lock_held(folder):
             say(f"  {folder}: AP Coder is running from it; it is cleaned up on a later start.")
             continue
-        adopt_legacy(folder, data, say)
+        try:
+            adopt_legacy(folder, data, say)
+        except OSError as exc:  # a file of its data in use or read-only: the folder stays, whole, for now
+            say(f"  {folder}: its data could not be moved yet ({exc.strerror or exc}); it is cleaned up on a later "
+                "start.")  # fmt: skip
+            continue
         why = removable(folder, root)
         later = False  # the whole folder is to go, on a later start: kept on record
         if not why:
