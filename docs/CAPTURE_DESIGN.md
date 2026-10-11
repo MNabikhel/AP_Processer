@@ -388,6 +388,14 @@ Speed: 7.6 to 12.4 minutes a scanned page, 3.5 to 5.7 minutes a photo, on a 4-co
 gave the model one thread; a laptop letting it use its cores is several times faster (CloseDesk: about 3 minutes
 on 4 cores).
 
+**The uniform pipeline, end to end** (a fresh database, real LM Studio with OvisOCR2 Q8_0, nothing set up or pressed):
+`read-pages` found OvisOCR2 and ran its self-test on its own (9 of 9 fields right, 17.7 minutes), then read the queue.
+A digital sample PDF (2 pages, 18 minutes): OvisOCR2 read all 24 of its figures as the PDF's text layer has them,
+`TEXT_LAYER_MATCHES_PAGE` passed, it agreed on all 11 fields it read, and 11 fields are *verified*. A real scan
+(1 page, 8.3 minutes): it agreed with OCR on all 11 fields both read, 10 *verified*; across the scan 27 of 34 figures
+were read the same by both, and a field they read differently is marked *Check*. Both stayed in review: touchless
+processing is off, and neither vendor has a record yet.
+
 ## Learning from approvals: each reader's record, local calibration, training data
 
 Every approval is the ground truth for that invoice. When it is approved, each reader's raw value for each
