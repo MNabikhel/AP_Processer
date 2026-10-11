@@ -16,7 +16,7 @@ import streamlit as st
 from ap_coder import recurring, rules, stamp, ui, vendor_mail
 from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.capture.types import MISSING, CaptureResult
-from ap_coder.capture.workflow import learn_from_approval, on_reopen
+from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
 from ap_coder.extraction import ExtractionResult
 from ap_coder.help import help_for
 from ap_coder.memory import ACCEPTED, pair_lines, vendor_key
@@ -1344,7 +1344,7 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                     )
                 except ValueError as exc:
                     changed_meanwhile(exc)
-                learn_from_approval(store, invoice_id, output, actor=reviewer(), taught=taught_boxes(key))
+                learned = learn_from_approval(store, invoice_id, output, actor=reviewer(), taught=taught_boxes(key))
                 waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
                 if waits:  # not approved yet: never "Approved <vendor>" for it
                     notify(
@@ -1357,12 +1357,15 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 _advance(ids, position)
                 if not store.list_invoices(REVIEW):  # the whole queue is done, not just the current view
                     st.session_state["celebrate"] = True
+                # What the header taught the vendor's training, in plain words, then the GL coding lines.
+                taught = md(taught_message(store, learned))
+                lines = f"{counts[ACCEPTED]} of {ui.plural(total, 'line')} coded as suggested."
                 notify(
-                    ("Learned" if waits else f"Approved {md(coding.vendor_name.rstrip('.'))}. Learned")
-                    + f" from {ui.plural(total, 'line')}: {counts[ACCEPTED]} confirmed, "
-                    f"{total - counts[ACCEPTED]} corrected.",
+                    ("" if waits else f"Approved {md(coding.vendor_name.rstrip('.'))}. ")
+                    + (f"{taught} {lines}" if taught else f"Learned from {ui.plural(total, 'line')}: "
+                       f"{counts[ACCEPTED]} confirmed, {total - counts[ACCEPTED]} corrected."),
                     ":material/school:",
-                )
+                )  # fmt: skip
                 st.rerun()
 
 
