@@ -34,3 +34,13 @@ def test_the_welcome_pages_sample_accounts_never_go_into_an_imported_chart(clien
     assert response.status_code == 400 and "already have GL accounts" in response.json()["error"]
     assert [a["code"] for a in store.list_accounts("gl_accounts")] == ["1000"]
     assert store.get_setting("policy_notes") == "Our own policy."
+
+
+@pytest.mark.parametrize("url", ["/\t/evil.example", "/\n/evil.example", "/\r\n/evil.example"])
+def test_a_redirect_never_leaves_this_server_through_a_control_character(url):
+    """Browsers drop tabs and line breaks from an address, so "/<tab>/evil.example" is "//evil.example" to them:
+    another site."""
+    from ap_coder.web import core
+
+    assert core.local_url(url, "/x") == "/x"
+    assert core.local_url("/review?tab=parked&q=a%20b") == "/review?tab=parked&q=a%20b"

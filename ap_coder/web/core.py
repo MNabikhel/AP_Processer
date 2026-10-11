@@ -263,7 +263,8 @@ def local_url(url: str, fallback: str = "/") -> str:
     """``url`` when it is a path on this server ("/review?tab=parked"), else ``fallback``: a page never sends the
     browser somewhere else."""
     url = str(url or "")
-    if not url.startswith("/") or url.startswith("//") or "\\" in url:
+    # Browsers drop tabs and line breaks from an address: "/<tab>/other.site" would be "//other.site" to them.
+    if not url.startswith("/") or url.startswith("//") or "\\" in url or any(c < " " or c == "\x7f" for c in url):
         return fallback
     return url
 
