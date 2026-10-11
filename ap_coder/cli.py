@@ -693,7 +693,13 @@ def main(argv: list[str] | None = None) -> int:
         "demo": lambda: cmd_demo(args, settings),
         "schema": lambda: cmd_schema(args),
     }
-    return commands[args.command]()
+    try:
+        return commands[args.command]()
+    except PermissionError as exc:  # Windows locks a file open in Excel (or the folder is read-only)
+        where = exc.filename or "a file"
+        print(f"{where} could not be opened or written: it is open in another program (Excel?) or the folder is "
+              "read-only. Close it, then run the command again.", file=sys.stderr)  # fmt: skip
+        return 1
 
 
 if __name__ == "__main__":

@@ -204,6 +204,26 @@ def test_command_line_output_on_a_windows_1252_console(tmp_path, monkeypatch):
     assert b"Wrote 1 invoice(s)" in console.buffer.getvalue()
 
 
+def test_a_file_open_in_excel_is_one_plain_line(tmp_path, monkeypatch, capsys):
+    """Windows locks a workbook open in Excel: `labels --force` (or share-report, export-training) writing over it
+    stopped with a PermissionError traceback."""
+    from openpyxl import Workbook
+
+    predictions = tmp_path / "output"
+    predictions.mkdir()
+    (predictions / "inv.json").write_text(json.dumps({"vendor_name": "Laval", "line_items": []}), encoding="utf-8")
+    dest = tmp_path / "labels.xlsx"
+    dest.write_bytes(b"open in Excel")
+
+    def locked(self, filename):
+        raise PermissionError(13, "Permission denied", str(filename))
+
+    monkeypatch.setattr(Workbook, "save", locked)
+    assert _cli(tmp_path, "labels", "--predictions", str(predictions), "-o", str(dest), "--force") == 1
+    err = capsys.readouterr().err
+    assert "labels.xlsx" in err and "open in another program" in err
+
+
 def test_export_training_says_why_bulk_approvals_are_left_out(tmp_path, capsys, ground_truth):
     """Every approval a bulk approval: the command said "No approved invoices to export yet", and with some
     checked ones it listed what was left out without the bulk approvals."""
