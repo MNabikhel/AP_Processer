@@ -139,17 +139,23 @@ tried again a day later, or at once with *Run the self-test again* in *Settings 
 (the one step that downloads; it opts in to the internet for itself):
 
 ```
-python scripts/build_offline_bundle.py
+python scripts/build_offline_bundle.py          # Windows laptops
+python scripts/build_offline_bundle.py --mac    # Windows laptops and Macs
 ```
 
 It writes `dist/APProcessor-offline-<version>-<date>.zip` with the code, a `wheelhouse/` folder (every
-package, for Windows 64-bit and the computer that built it, Python 3.11 and 3.12) and the OCR models.
-Add `--platform macosx_11_0_arm64` for Apple-silicon Macs; `--dry-run` shows the plan without
-downloading. Copy the ZIP to the laptop (USB stick), unzip it, double-click `APProcessor.bat`. Seeing
-`wheelhouse/`, the launcher installs from it with `pip --no-index` and never goes online.
+package, for Windows 64-bit and the computer that built it, Python 3.11, 3.12, 3.13 and 3.14) and the OCR
+models: about 0.5 GB. **When a tester has a Mac, add `--mac`**: it adds Apple-silicon Macs (macOS 14 or
+later) and Intel Macs (macOS 13 or later), for the same Python versions, and makes the ZIP about 1.5 GB
+(`--platform win_amd64 --platform macosx_14_0_arm64`: Windows and Apple silicon only, about 1 GB). The bundle can be built on any of these
+computers for all the others. `--dry-run` shows the plan without downloading. Copy the ZIP to the laptop (USB
+stick), unzip it, double-click `APProcessor.bat` (Mac: `APProcessor.command`). Seeing `wheelhouse/`, the
+launcher installs from it with `pip --no-index` and never goes online.
 
-The laptop's Python must match one the bundle was built for (3.11 or 3.12 by default; add
-`--python 3.13` for a laptop that only has 3.13).
+The laptop's Python must be one the bundle was built for (3.11 to 3.14 by default; `--python 3.12` alone
+makes a smaller bundle). One exception: the OCR engine (onnxruntime) is not published for Intel Macs on
+Python 3.14, so there AP Coder installs without the OCR add-on (text PDFs are read, scans are not; Python
+3.13 on that Mac has it). The build says so, and `bundle_manifest.json` lists it under `without_ocr`.
 
 **Developers with internet** can set up from a plain checkout instead: `set AP_ALLOW_INTERNET=1` in a
 terminal, then run `APProcessor.bat` from it (see *What is sent over the network*).
@@ -158,7 +164,7 @@ terminal, then run `APProcessor.bat` from it (see *What is sent over the network
 self-check before starting; for every sample's line, run `.venv\Scripts\python.exe scripts\pilot_check.py`
 in the AP Coder folder. The same check runs on a clean Windows machine in CI for every change, from the
 double-click (first start, a second double-click while it runs, a later start) and from the offline
-bundle with the internet cut off.
+bundle with the internet cut off, on Windows and on a Mac that has only Python 3.14.
 
 ## Daily use
 

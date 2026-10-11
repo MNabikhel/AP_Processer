@@ -12,6 +12,7 @@ import os
 import pkgutil
 import re
 import socket
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -381,10 +382,106 @@ def test_bundle_dry_run_plans_without_writing(tmp_path, capsys, no_network):
     assert not out.exists()  # nothing downloaded or written
     assert {"rapidocr>=3.4,<3.5", "streamlit>=1.62", "setuptools>=68", "pip"} <= set(plan["requirements"])
     cross = [s for s in plan["pip_commands"] if "--platform" in s["cmd"]]
-    assert {s["target"] for s in cross} == {"win_amd64, Python 3.11", "win_amd64, Python 3.12"}
+    pythons = ("3.11", "3.12", "3.13", "3.14")
+    assert [s["target"] for s in cross] == [f"win_amd64, Python {v}" for v in pythons]
     assert all("--only-binary=:all:" in s["cmd"] for s in cross)
+    # Without the OCR add-on when a package of it has no wheel there: the same command, minus its packages.
+    assert all("onnxruntime>=1.17" in s["cmd"] and "onnxruntime>=1.17" not in s["fallback"] for s in cross)
+    assert all("streamlit>=1.62" in s["fallback"] for s in cross)
+    # The second OCR engine says Python < 3.13 but works there: downloaded for every version, ignoring that.
+    assert all(s["also"][-2:] == ["--ignore-requires-python", "rapidocr-onnxruntime>=1.3"] for s in cross)
+    assert not any("rapidocr-onnxruntime" in arg for s in cross for arg in s["cmd"] + s["fallback"])
+    assert cross[-1]["also"][:-2] == cross[-1]["cmd"][: len(cross[-1]["also"]) - 2]  # same target, same pip
     assert len(plan["models"]) == 3
+    # --mac: one download per platform and Python version, Macs included.
+    assert bundle.main(["--dry-run", "--no-models", "--mac", "--out", str(out)]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    platforms = ("win_amd64", "macosx_14_0_arm64", "macosx_13_0_x86_64")
+    expected = [f"{p}, Python {v}" for p in platforms for v in pythons]
+    assert [s["target"] for s in plan["pip_commands"]] == ["this computer", *expected]
+    assert plan["targets"][1:] == expected and plan["targets"][0].startswith("this computer (")
+    assert not out.exists()
     assert no_network == []
+
+
+def test_bundle_judges_markers_as_the_target_computer():
+    bundle = _script("build_offline_bundle")
+    win = bundle.marker_env("win_amd64", "3.14")
+    assert (win["sys_platform"], win["platform_system"], win["os_name"], win["platform_machine"]) == (
+        "win32", "Windows", "nt", "AMD64")  # fmt: skip
+    mac = bundle.marker_env("macosx_14_0_arm64", "3.13")
+    assert (mac["sys_platform"], mac["platform_system"], mac["platform_machine"], mac["python_version"]) == (
+        "darwin", "Darwin", "arm64", "3.13")  # fmt: skip
+    assert bundle.marker_env("macosx_13_0_x86_64", "3.11")["platform_machine"] == "x86_64"
+    assert bundle.marker_env("manylinux_2_28_x86_64", "3.12")["sys_platform"] == "linux"
+    assert bundle.marker_env("some_future_tag", "3.15") == {
+        "python_version": "3.15", "python_full_version": "3.15.0", "implementation_name": "cpython",
+        "implementation_version": "3.15.0", "platform_python_implementation": "CPython"}  # fmt: skip
+
+
+def _wheel(folder: Path, name: str, requires: tuple[str, ...] = ()) -> None:
+    info = f"{name}-1.0.dist-info"
+    with zipfile.ZipFile(folder / f"{name}-1.0-py3-none-any.whl", "w") as zf:
+        zf.writestr(f"{info}/METADATA", f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n"
+                                        + "".join(f"Requires-Dist: {r}\n" for r in requires))  # fmt: skip
+        zf.writestr(f"{info}/WHEEL", "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+        zf.writestr(f"{info}/RECORD", "")
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [("win_amd64", {"app", "colorama", "watchdog"}), ("macosx_14_0_arm64", {"app"}),
+     ("manylinux_2_28_x86_64", {"app", "watchdog"})],
+)  # fmt: skip
+def test_bundle_downloads_what_the_target_computer_needs(tmp_path, platform, expected):
+    """pip judges the markers in requirements by the Python running it, even for another platform: the builder's
+    pip judges them as the target computer, so a bundle built on any computer has what Windows needs (click's
+    colorama) and no package a Mac must not get (streamlit's watchdog has no Mac wheel for Python 3.14).
+    Offline: the packages come from a local folder."""
+    bundle = _script("build_offline_bundle")
+    src, dest = tmp_path / "src", tmp_path / "dest"
+    src.mkdir()
+    _wheel(src, "app", ('colorama; platform_system == "Windows"', 'watchdog; platform_system != "Darwin"',
+                        'old; python_version < "3.13"'))  # fmt: skip
+    for name in ("colorama", "watchdog", "old"):
+        _wheel(src, name)
+    cmd = bundle.pip_commands(["app"], dest, [platform], ["3.14"], current=False)[0]["cmd"]
+    at = cmd.index("download") + 1
+    cmd[at:at] = ["--no-index", "--find-links", str(src)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert {p.name.split("-")[0] for p in dest.iterdir()} == expected
+
+
+def test_bundle_leaves_out_ocr_only_where_it_has_no_wheel(tmp_path, monkeypatch, capsys):
+    """onnxruntime has no wheel for Intel Macs on Python 3.14: that target gets everything else (AP Coder runs
+    there without OCR), the manifest says so, and the other targets keep the OCR add-on."""
+    bundle = _script("build_offline_bundle")
+    real_run = subprocess.run
+    downloads: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        if cmd[0] != sys.executable:
+            return real_run(cmd, **kwargs)  # git ls-files
+        downloads.append(cmd)
+        if "macosx_13_0_x86_64" in cmd and "onnxruntime>=1.17" in cmd:
+            return subprocess.CompletedProcess(cmd, 1, "", "ERROR: No matching distribution found for onnxruntime\n")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(bundle.subprocess, "run", run)
+    out = tmp_path / "dist"
+    assert bundle.main(["--out", str(out), "--no-models", "--mac", "--python", "3.14"]) == 0
+    manifest = json.loads((out / "offline-bundle" / "APProcessor" / "bundle_manifest.json").read_text())
+    assert manifest["without_ocr"] == ["macosx_13_0_x86_64, Python 3.14"]
+    assert manifest["targets"][1:] == ["win_amd64, Python 3.14", "macosx_14_0_arm64, Python 3.14",
+                                       "macosx_13_0_x86_64, Python 3.14"]  # fmt: skip
+    # This computer and 2 targets: everything, then rapidocr-onnxruntime ignoring its Requires-Python; the Intel
+    # Mac: everything (failed), then everything but the OCR add-on.
+    assert len(downloads) == 8
+    assert sum("--ignore-requires-python" in cmd for cmd in downloads) == 3
+    assert not any("--ignore-requires-python" in cmd and "macosx_13_0_x86_64" in cmd for cmd in downloads)
+    assert "No matching distribution found for onnxruntime" in capsys.readouterr().out
+    assert list(out.glob("APProcessor-offline-*.zip"))
 
 
 def test_bundle_ships_the_code_but_never_data_or_keys():

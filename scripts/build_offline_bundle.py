@@ -2,15 +2,16 @@
 
 Run it on a computer with internet (any OS):
 
-    python scripts/build_offline_bundle.py              # Windows 64-bit + this computer, Python 3.11 and 3.12
+    python scripts/build_offline_bundle.py              # Windows 64-bit + this computer, Python 3.11 to 3.14
+    python scripts/build_offline_bundle.py --mac        # also Macs (Apple silicon and Intel)
     python scripts/build_offline_bundle.py --dry-run    # show what it would do; downloads and writes nothing
-    python scripts/build_offline_bundle.py --platform macosx_11_0_arm64   # add Apple silicon Macs
 
 The ZIP (in ``dist/``) holds one ``APProcessor/`` folder:
 
 * the code (the files git tracks, never ``private/`` data or a ``.env``)
 * ``wheelhouse/``: every package for ``pip install -e ".[ocr]"`` (and ``.[dev]`` for install.bat), as
-  wheels for each platform and Python version asked for, plus pip, setuptools and wheel
+  wheels for each platform and Python version asked for, plus pip, setuptools and wheel (where a package of
+  the OCR add-on has no wheel, that target gets the rest without it: the launcher runs AP Coder without OCR)
 * ``models/``: the PP-OCRv5 OCR models (``scripts/fetch_models.py`` copies them into place)
 * ``bundle_manifest.json``: what is inside, with the models' SHA-256
 
@@ -27,6 +28,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,12 +40,20 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from check_deps import tomllib  # noqa: E402  (tomllib, or pip's copy on Python 3.10)
+from check_deps import requirement_name, tomllib  # noqa: E402  (tomllib, or pip's copy on Python 3.10)
 
 DEFAULT_PLATFORMS = ["win_amd64"]
-DEFAULT_PYTHONS = ["3.11", "3.12"]
+# --mac: both kinds of Mac, each at the oldest macOS the current packages are built for. Apple silicon: macOS 14
+# (onnxruntime, the OCR engine, publishes only macosx_14_0_arm64 wheels). Intel: macOS 13 (onnxruntime 1.23, its
+# last Intel release, and opencv); onnxruntime has no Intel-Mac wheel for Python 3.14, so that one is without OCR.
+MAC_PLATFORMS = ["macosx_14_0_arm64", "macosx_13_0_x86_64"]
+DEFAULT_PYTHONS = ["3.11", "3.12", "3.13", "3.14"]
 DEFAULT_EXTRAS = ["ocr", "dev"]
 BUILD_TOOLS = ["pip", "setuptools>=68", "wheel"]  # an offline editable install builds with setuptools
+# Pure-Python packages whose metadata says Python < 3.13 but that work on 3.13 and 3.14 (rapidocr-onnxruntime, the
+# second OCR engine: it reads scans right there). Downloaded for every Python version, whatever their marker in
+# pyproject says, with pip's --ignore-requires-python (the launcher installs them the same way).
+IGNORE_REQUIRES_PYTHON = {"rapidocr-onnxruntime"}
 TOP = "APProcessor"
 
 # Never in the bundle: data, settings, environments and build output.
@@ -101,19 +111,63 @@ def source_files() -> list[Path]:
     return sorted({p for p in found if (ROOT / p).is_file() and not excluded(p)})
 
 
+# pip, run with the marker values of the target computer (marker_env, as JSON in the first argument).
+PIP_FOR_TARGET = ("import json, sys; from pip._vendor.packaging import markers; "
+                  "env = {**markers.default_environment(), **json.loads(sys.argv.pop(1))}; "
+                  "markers.default_environment = lambda: dict(env); "
+                  "from pip._internal.cli.main import main; sys.exit(main())")  # fmt: skip
+
+
+def marker_env(platform: str, version: str) -> dict[str, str]:
+    """The PEP 508 marker values of a computer with this wheel platform and Python version. pip evaluates the
+    markers in requirements for the Python that runs it, even with ``--platform`` and ``--python-version``:
+    built on Linux, a Windows wheelhouse would lack click's ``colorama; platform_system == "Windows"``, and a
+    Mac one would ask for streamlit's ``watchdog; platform_system != "Darwin"`` (no Mac wheel for 3.14)."""
+    found = re.search(r"(amd64|x86_64|arm64|aarch64|universal2|win32|i686)$", platform)
+    machine = found.group(1) if found else ""
+    env = {"python_version": version, "python_full_version": f"{version}.0", "implementation_name": "cpython",
+           "implementation_version": f"{version}.0", "platform_python_implementation": "CPython"}  # fmt: skip
+    if platform.startswith("win"):
+        machine = {"amd64": "AMD64", "arm64": "ARM64", "win32": "x86"}.get(machine, machine)
+        env.update(sys_platform="win32", platform_system="Windows", os_name="nt")
+    elif platform.startswith("macosx"):
+        env.update(sys_platform="darwin", platform_system="Darwin", os_name="posix")
+    elif "linux" in platform:
+        env.update(sys_platform="linux", platform_system="Linux", os_name="posix")
+    else:
+        return env  # a platform not known here: only the Python version is the target's
+    return {**env, "platform_machine": machine, "platform_release": "", "platform_version": ""}
+
+
 def pip_commands(reqs: list[str], wheelhouse: Path, platforms: list[str], pythons: list[str],
-                 current: bool = True) -> list[dict]:  # fmt: skip
+                 current: bool = True, plain: list[str] | None = None) -> list[dict]:  # fmt: skip
     """``pip download`` commands ({"target", "cmd"}): this computer's own Python, then each platform and
-    Python version (wheels only: nothing can be compiled on the offline computer)."""
-    base = [sys.executable, "-m", "pip", "download", "--disable-pip-version-check", "--dest", str(wheelhouse)]
+    Python version (wheels only: nothing can be compiled on the offline computer). "also": the
+    IGNORE_REQUIRES_PYTHON packages (without their marker) with ``--ignore-requires-python``, run after ``cmd``.
+    Given ``plain`` (the requirements without the OCR add-on), each also has a "fallback" command, run instead
+    when ``cmd`` fails (then without "also": those packages are part of the OCR add-on)."""
+    args = ["download", "--disable-pip-version-check", "--dest", str(wheelhouse)]
+    loose = [r.split(";")[0].strip() for r in reqs if requirement_name(r) in IGNORE_REQUIRES_PYTHON]
+    strict = [r for r in reqs if requirement_name(r) not in IGNORE_REQUIRES_PYTHON]
+    plain = None if plain is None else [r for r in plain if requirement_name(r) not in IGNORE_REQUIRES_PYTHON]
+
+    def step(target: str, cmd: list[str]) -> dict:
+        found = {"target": target, "cmd": [*cmd, *strict]}
+        if loose:
+            found["also"] = [*cmd, "--ignore-requires-python", *loose]
+        if plain is not None and plain != strict:
+            found["fallback"] = [*cmd, *plain]
+        return found
+
     cmds = []
     if current:
-        cmds.append({"target": "this computer", "cmd": [*base, "--prefer-binary", *reqs]})
+        cmds.append(step("this computer", [sys.executable, "-m", "pip", *args, "--prefer-binary"]))
     for platform in platforms:
         for version in pythons:
-            cmd = [*base, "--only-binary=:all:", "--implementation", "cp", "--platform", platform,
-                   "--python-version", version, *reqs]  # fmt: skip
-            cmds.append({"target": f"{platform}, Python {version}", "cmd": cmd})
+            pip = [sys.executable, "-c", PIP_FOR_TARGET, json.dumps(marker_env(platform, version))]
+            cmds.append(step(f"{platform}, Python {version}",
+                             [*pip, *args, "--only-binary=:all:", "--implementation", "cp", "--platform", platform,
+                              "--python-version", version]))  # fmt: skip
     return cmds
 
 
@@ -122,6 +176,7 @@ def plan(args: argparse.Namespace) -> dict:
     out_dir = Path(args.out).resolve()
     stage = out_dir / "offline-bundle" / TOP
     reqs = requirements(args.extras)
+    plain = requirements([e for e in args.extras if e != "ocr"])
     from ap_coder import offline
 
     return {
@@ -136,7 +191,9 @@ def plan(args: argparse.Namespace) -> dict:
             else []
         )
         + [f"{p}, Python {v}" for p in args.platform for v in args.python],
-        "pip_commands": pip_commands(reqs, stage / "wheelhouse", args.platform, args.python, not args.no_current),
+        "pip_commands": pip_commands(
+            reqs, stage / "wheelhouse", args.platform, args.python, not args.no_current, plain
+        ),
         "models": [] if args.no_models else [{"name": m.name, "sha256": m.sha256} for m in offline.ppocrv5_files()],
     }
 
@@ -175,10 +232,20 @@ def build(args: argparse.Namespace) -> int:
 
     print(f"[2/4] wheelhouse: {', '.join(p['targets'])}")
     (stage / "wheelhouse").mkdir(exist_ok=True)
+    without_ocr: list[str] = []
     for step in p["pip_commands"]:
         target = step["target"]
         print(f"      pip download ({target}) ...")
         result = subprocess.run(step["cmd"], cwd=ROOT, capture_output=True, text=True)
+        if result.returncode != 0 and step.get("fallback"):
+            why = [ln for ln in result.stderr.splitlines() if ln.startswith("ERROR")][-2:] or ["(no message)"]
+            print("      " + "\n      ".join(why))
+            print(f"      ... so {target} gets everything but the OCR add-on (AP Coder runs there without it)")
+            result = subprocess.run(step["fallback"], cwd=ROOT, capture_output=True, text=True)
+            if result.returncode == 0:
+                without_ocr.append(target)
+        elif result.returncode == 0 and step.get("also"):
+            result = subprocess.run(step["also"], cwd=ROOT, capture_output=True, text=True)
         if result.returncode != 0:
             print(result.stdout[-3000:] + result.stderr[-3000:])
             print(f"pip download failed for {target}: see the messages above.")
@@ -205,7 +272,7 @@ def build(args: argparse.Namespace) -> int:
         "app": "AP Coder", "version": project()["version"], "built": dt.datetime.now().isoformat(timespec="seconds"),
         "built_with": f"Python {sys.version.split()[0]} on {sysconfig.get_platform()}",
         "targets": p["targets"], "requirements": p["requirements"], "source_files": len(p["source_files"]),
-        "wheels": wheels, "models": models,
+        "wheels": wheels, "without_ocr": without_ocr, "models": models,
         "install": "Unzip, then double-click APProcessor.bat (Windows) or APProcessor.command (Mac).",
     }  # fmt: skip
     (stage / "bundle_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -215,6 +282,8 @@ def build(args: argparse.Namespace) -> int:
     _zip(stage, dest)
     size = dest.stat().st_size / 1e6
     print(f"Done: {dest} ({size:,.0f} MB, {len(wheels)} wheels, {len(models)} models)")
+    if without_ocr:
+        print(f"Without the OCR add-on (a package of it has no wheel there): {'; '.join(without_ocr)}")
     return 0
 
 
@@ -225,13 +294,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build the offline install ZIP (code + wheelhouse + OCR models).")
     parser.add_argument("--out", default=str(ROOT / "dist"), help="output folder (default: dist/)")
     parser.add_argument("--platform", action="append", help=f"wheel platform, repeatable (default {DEFAULT_PLATFORMS})")
+    parser.add_argument("--mac", action="store_true", help=f"also Macs: {' and '.join(MAC_PLATFORMS)}")
     parser.add_argument("--python", nargs="+", default=DEFAULT_PYTHONS, help=f"Python versions ({DEFAULT_PYTHONS})")
     parser.add_argument("--extras", nargs="+", default=DEFAULT_EXTRAS, help=f"optional extras ({DEFAULT_EXTRAS})")
     parser.add_argument("--no-current", action="store_true", help="no wheels for this computer's own Python")
     parser.add_argument("--no-models", action="store_true", help="leave out the OCR models")
     parser.add_argument("--dry-run", action="store_true", help="print the plan as JSON; download and write nothing")
     args = parser.parse_args(argv)
-    args.platform = args.platform or list(DEFAULT_PLATFORMS)
+    args.platform = list(dict.fromkeys((args.platform or DEFAULT_PLATFORMS) + (MAC_PLATFORMS if args.mac else [])))
     if args.dry_run:
         p = plan(args)
         print(json.dumps({**p, "source_files": f"{len(p['source_files'])} files"}, indent=2))

@@ -46,7 +46,8 @@ every change: it confirms the existing Python is used, a second start installs n
 and only one shortcut is made.
 
 This is an offline enterprise build: the laptop never connects to the internet. IT builds the offline bundle
-once, online (`python scripts/build_offline_bundle.py`), and the double-click installs from its `wheelhouse/`
+once, online (`python scripts/build_offline_bundle.py`: Windows, Python 3.11 to 3.14; add `--mac` for Macs),
+and the double-click installs from its `wheelhouse/`
 folder. A package or model missing from the bundle is said plainly, and AP Coder still starts when its core
 packages are there. `install.bat` / `install.sh` and `start.bat` /
 `start.sh` still work for older shortcuts; they run the same setup. The full pilot guide is
