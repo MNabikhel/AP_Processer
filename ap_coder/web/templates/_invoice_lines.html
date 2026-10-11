@@ -1,0 +1,60 @@
+{# The review screen's grids: the line items with their GL coding, and the sales tax lines. Every cell belongs to the
+   form "inv" (the approve form); a row's cells are posted in order, one value per row (invoice_view.LINE_INPUTS). #}
+
+{% macro opts(options, current) -%}
+{% for code, label in options %}<option value="{{ code }}"{% if code == current %} selected{% endif %}>{{ label }}</option>{% endfor %}
+{%- endmacro %}
+
+{# A number as the input shows it: amounts with cents, a quantity without a useless ".0". #}
+{% macro num(value) -%}
+{%- if value is none or value == "" %}{% elif value is number and value == value | int %}{{ value | int }}{% else %}{{ value }}{% endif -%}
+{%- endmacro %}
+{% macro cents(value) -%}
+{%- if value is none or value == "" %}{% elif value is number %}{{ "%.2f" | format(value) }}{% else %}{{ value }}{% endif -%}
+{%- endmacro %}
+
+{% macro line_row(row, g, key) -%}
+<tr data-row="{{ key }}">
+  <td class="c-no"><input type="hidden" name="line_key" value="{{ key }}" form="inv">
+    <input type="hidden" name="line_reason" value="{{ row.reasoning_justification or '' }}" form="inv">
+    {% if not g.has_cc %}<input type="hidden" name="line_cc" value="{{ row.predicted_cost_center or '' }}" form="inv">{% endif %}
+    <input type="number" name="line_number" value="{{ num(row.line_number) }}" step="1" min="0" form="inv" aria-label="Line number"></td>
+  <td class="c-desc"><input type="text" name="line_description" value="{{ row.description or '' }}" form="inv" aria-label="Description"></td>
+  <td class="c-amt"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="Amount"></td>
+  <td class="c-gl"><select name="line_gl" form="inv" aria-label="GL account" data-gl>{{ opts(g.gl_options, row.predicted_gl_code or "UNASSIGNED") }}</select></td>
+  {% if g.has_cc %}<td class="c-cc"><select name="line_cc" form="inv" aria-label="Cost center">{{ opts(g.cc_options, row.predicted_cost_center or "UNASSIGNED") }}</select></td>{% endif %}
+  <td class="c-tax"><div class="inv-taxes" role="group" aria-label="Taxes on this line">
+    {% for t in g.tax_types %}<label title="{{ g.tax_labels[t] }}"><input type="checkbox" name="line_tax_{{ key }}" value="{{ t }}" form="inv"{% if t in (row.taxes_applied or []) %} checked{% endif %}><span>{{ g.tax_labels[t] }}</span></label>{% endfor %}
+  </div></td>
+  <td class="c-qty"><input type="number" name="line_quantity" value="{{ num(row.quantity) }}" step="any" form="inv" aria-label="Quantity"></td>
+  <td class="c-price"><input type="number" name="line_unit_price" value="{{ num(row.unit_price) }}" step="any" form="inv" aria-label="Unit price"></td>
+  <td class="c-del"><button type="button" class="icon-btn" data-del-row title="Delete this line" aria-label="Delete this line"><span class="ms" aria-hidden="true">delete</span></button></td>
+</tr>
+{%- endmacro %}
+
+{% macro line_rows(g) -%}
+{% for row in g.lines %}{{ line_row(row, g, row.key) }}{% endfor %}
+{%- endmacro %}
+
+{% macro line_template(g) -%}
+<template id="line-template">{{ line_row({"taxes_applied": []}, g, "__KEY__") }}</template>
+{%- endmacro %}
+
+{% macro tax_row(t, g) -%}
+<tr data-row>
+  <td><select name="tax_type" form="inv" aria-label="Tax">{% for code in g.tax_types %}<option value="{{ code }}"{% if code == t.tax_type %} selected{% endif %}>{{ g.tax_labels[code] }}</option>{% endfor %}</select></td>
+  <td><select name="tax_province" form="inv" aria-label="Province">{{ opts(g.tax_provinces, t.province or "") }}</select></td>
+  <td class="c-amt"><input type="number" name="tax_rate_pct" value="{{ num(t.rate_pct) }}" step="any" form="inv" aria-label="Rate, percent (13% HST = 13)"></td>
+  <td class="c-amt"><input type="number" name="tax_taxable" value="{{ cents(t.taxable_amount) }}" step="0.01" form="inv" aria-label="Taxable amount"></td>
+  <td class="c-amt"><input type="number" name="tax_amount" value="{{ cents(t.tax_amount) }}" step="0.01" form="inv" aria-label="Tax amount"></td>
+  <td class="c-del"><button type="button" class="icon-btn" data-del-row title="Delete this tax line" aria-label="Delete this tax line"><span class="ms" aria-hidden="true">delete</span></button></td>
+</tr>
+{%- endmacro %}
+
+{% macro tax_rows(g) -%}
+{% for t in g.taxes %}{{ tax_row(t, g) }}{% endfor %}
+{%- endmacro %}
+
+{% macro tax_template(g) -%}
+<template id="tax-template">{{ tax_row({"tax_type": "GST", "province": ""}, g) }}</template>
+{%- endmacro %}

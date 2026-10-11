@@ -1,11 +1,314 @@
 {% extends "base.html" %}
-{# The invoice review screen: a placeholder until pages/invoice.py is built (see its docstring). #}
-{% block heading %}{{ invoice.vendor_name or invoice.file_name or "Invoice" }}{% endblock %}
-{% block subtitle %}{{ invoice.invoice_number or "No invoice number" }} · {{ invoice.invoice_date or "no date" }} ·
-  {{ invoice.grand_total | money(invoice.currency or "") }}{% endblock %}
-{% block aside %}<a class="btn" href="/review"><span class="ms" aria-hidden="true">arrow_back</span>Back to the queue</a>{% endblock %}
+{# The invoice review screen (pages/invoice.py). ``mode``: "review" (the workspace), else read-only: "pending" (second
+   approval), "parked", "approved", "rejected", "failed", "nogl" (no GL accounts yet). The sections that follow the
+   edits are macros of _invoice_live.html, drawn again by POST /review/<id>/check; static/js/invoice.js runs it. #}
+{% import "_invoice_live.html" as live_ui %}
+{% import "_invoice_lines.html" as grids %}
+{% block title %}{{ title }} · Review · AP Coder{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/invoice.css?v={{ static_version }}">
+<link rel="stylesheet" href="/static/invoice_viewer.css?v={{ static_version }}">
+{% endblock %}
+
+{% block header %}
+<header class="inv-top apc-anim">
+  {{ ui.breadcrumbs(["AP Coder", "Work", "Review queue"]) }}
+  <nav class="rvw-nav" aria-label="Invoices">
+    <a class="btn sm ghost" href="{{ queue_url }}" data-nav="queue" aria-keyshortcuts="Alt+ArrowUp" title="Back to the queue (Alt+↑)"><span class="ms" aria-hidden="true">arrow_back</span>Queue</a>
+    {% if nav.position is not none %}
+    <span class="rvw-pos">Reviewing <b class="n">{{ nav.position + 1 }}</b> of {{ nav.count }}<span class="rvw-pos-bar" aria-hidden="true"><i style="width: {{ nav.done_pct }}%"></i></span></span>
+    {% endif %}
+    <span class="spacer"></span>
+    {% if mode == "review" %}
+    <details class="pop">
+      <summary class="btn sm ghost"><span class="ms" aria-hidden="true">keyboard</span>Shortcuts</summary>
+      <div class="pop-body">
+        <table class="apc-table"><tbody>
+          <tr><td>{{ ui.kbd("Ctrl") }} + {{ ui.kbd("Enter") }}</td><td>Approve &amp; teach</td></tr>
+          <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("→") }}</td><td>Next invoice</td></tr>
+          <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("←") }}</td><td>Previous invoice</td></tr>
+          <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("↑") }}</td><td>Back to the queue</td></tr>
+          <tr><td>{{ ui.kbd("N") }}</td><td>Next field to check (on the page)</td></tr>
+          <tr><td>{{ ui.kbd("Esc") }}</td><td>Stop teaching a field</td></tr>
+        </tbody></table>
+      </div>
+    </details>
+    {% endif %}
+    {% if nav.position is not none %}
+    <a class="btn sm" href="{{ nav.prev }}" data-nav="prev" aria-keyshortcuts="Alt+ArrowLeft" title="Previous invoice (Alt+←)"><span class="ms" aria-hidden="true">chevron_left</span>Previous</a>
+    <a class="btn sm" href="{{ nav.next }}" data-nav="next" aria-keyshortcuts="Alt+ArrowRight" title="Next invoice (Alt+→)">Next<span class="ms" aria-hidden="true">chevron_right</span></a>
+    {% endif %}
+  </nav>
+  <h1 class="rvw-sr">Review invoice: {{ title }}</h1>
+</header>
+{% endblock %}
+
 {% block content %}
-<section class="card">
-  {{ ui.empty_state("The review screen is on its way", "Reviewing an invoice is being moved to the new AP Coder dashboard. The invoice is safe in your data and waits in the queue.") }}
+{# ---------------------------------------------------------------- the workspace #}
+{% if mode == "review" %}
+<form id="inv" method="post" action="/review/{{ inv.id }}/approve" data-busy="Approving…" data-invoice="{{ inv.id }}">
+  <input type="hidden" name="grids" value="1">
+  <input type="hidden" name="reader_at" value="{{ draft.reader_at }}">
+  <input type="hidden" name="taught" value="{{ taught_json | tojson | forceescape }}" data-taught>
+  {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+</form>
+
+<section class="card inv-summary" data-live="summary">{{ live_ui.summary(live, inv.id) }}</section>
+
+{% if sent_back %}
+<div class="rvw-status warn" role="status"><div class="rvw-status-title"><span class="ms" aria-hidden="true">undo</span>
+  <span>{{ sent_back.verb }} by {{ sent_back.actor }}</span></div>
+  <div class="rvw-status-sub">{{ sent_back.reason }}. The approved coding is kept below; fix what is needed and approve again.</div></div>
+{% endif %}
+
+<div class="inv-split">
+  {% include "_invoice_document.html" %}
+
+  <div class="col">
+    <section class="card inv-checks" data-live="checks" aria-live="polite">{{ live_ui.checks(live, inv.id) }}</section>
+
+    <section class="card inv-details">
+      {{ live_ui.head("Invoice details") }}
+      {% macro field(name, cls="", type="text", placeholder="", hint="", step="") -%}
+      {% set s = sure.get(name) %}
+      <label class="field {{ cls }}" data-field="{{ name }}">
+        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="How sure AP Coder is of what it read"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+          {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
+        <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}>
+      </label>
+      {%- endmacro %}
+      {% macro province(name, hint="") -%}
+      <label class="field" data-field="{{ name }}"><span class="lbl">{{ labels[name] }}{% if hint %} <span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
+        <select name="{{ name }}" form="inv">{% for code, label in provinces %}<option value="{{ code }}"{% if code == draft.header[name] %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      {%- endmacro %}
+      <div class="rvw-group">Supplier</div>
+      <div class="inv-grid">
+        {{ field("vendor_name", "wide") }}
+        {{ field("gst_hst_registration_number", hint="The supplier's GST/HST registration number") }}
+        {{ field("qst_registration_number", hint="The supplier's QST registration number (Québec)") }}
+        {{ province("supplier_province") }}
+        {{ field("remit_bank_account", hint="The bank details printed for payment, if any: compared with this vendor's earlier invoices") }}
+      </div>
+      <div class="rvw-group">Invoice</div>
+      <div class="inv-grid">
+        {{ field("invoice_number") }}
+        {{ field("invoice_date", placeholder="YYYY-MM-DD", hint="Format YYYY-MM-DD") }}
+        {{ field("po_number", hint="Purchase order the invoice quotes, if any") }}
+        {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
+        {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
+        {{ field("currency") }}
+        {{ province("ship_to_province", "Where goods are delivered / services performed") }}
+        {{ field("original_invoice_number", hint="On a credit note: the invoice it credits") }}
+      </div>
+      <div class="rvw-group">Amounts</div>
+      <div class="inv-grid three">
+        {{ field("subtotal", type="number", step="0.01") }}
+        {{ field("tax_total", type="number", step="0.01") }}
+        {{ field("grand_total", type="number", step="0.01") }}
+      </div>
+      <div data-live="amounts">{{ live_ui.amounts(live, inv.id) }}</div>
+    </section>
+
+    {% include "_invoice_notes.html" %}
+  </div>
+</div>
+
+<section class="card inv-lines">
+  {{ live_ui.head("Line items", "Change a GL account or cost center in its cell; add or delete lines below the grid.") }}
+  <div class="table-wrap">
+    <table class="apc-table inv-grid-table" id="lines">
+      <thead><tr><th>#</th><th>Description</th><th class="r">Amount</th><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}
+        <th>Taxes</th><th class="r">Qty</th><th class="r">Unit price</th><th><span class="rvw-sr">Delete</span></th></tr></thead>
+      <tbody data-grid="lines">{{ grids.line_rows(grid) }}</tbody>
+    </table>
+  </div>
+  {{ grids.line_template(grid) }}
+  <div class="row">
+    <button type="button" class="btn sm" data-add-row="lines"><span class="ms" aria-hidden="true">add</span>Add a line</button>
+    <details class="pop" data-split>
+      <summary class="btn sm"><span class="ms" aria-hidden="true">call_split</span>Split a line…</summary>
+      <div class="pop-body inv-split-pop">
+        <p class="muted">Split one line across several GL accounts{% if grid.has_cc %} or cost centers{% endif %} by percentage (shared costs).</p>
+        <label class="field">Line<select name="split_line" data-split-line></select></label>
+        <table class="apc-table inv-parts"><thead><tr><th>GL account</th>{% if grid.has_cc %}<th>Cost center</th>{% endif %}<th class="r">%</th><th></th></tr></thead>
+          <tbody data-parts></tbody></table>
+        <template id="part-template"><tr>
+          <td><select name="part_gl" aria-label="GL account">{% for code, label in grid.gl_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></td>
+          {% if grid.has_cc %}<td><select name="part_cc" aria-label="Cost center">{% for code, label in grid.cc_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></td>{% endif %}
+          <td class="r"><input type="number" name="part_pct" value="50" min="0" max="100" step="any" aria-label="Percent"></td>
+          <td><button type="button" class="icon-btn" data-del-part aria-label="Remove this part"><span class="ms" aria-hidden="true">close</span></button></td>
+        </tr></template>
+        <div class="row"><button type="button" class="btn sm ghost" data-add-part><span class="ms" aria-hidden="true">add</span>Add a part</button>
+          <span class="muted" data-split-total></span></div>
+        <p class="muted">Each part keeps the description and taxes of the line.</p>
+        <button type="button" class="btn primary sm" data-split-go disabled><span class="ms" aria-hidden="true">call_split</span>Split the line</button>
+      </div>
+    </details>
+  </div>
+  <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
 </section>
+
+<div data-live="po" class="inv-live">{{ live_ui.po(live, inv.id) }}</div>
+<div data-live="suggest" class="inv-live">{{ live_ui.suggest(live, inv.id) }}</div>
+
+<section class="card inv-tax">
+  {{ live_ui.head("Sales tax") }}
+  <div class="table-wrap">
+    <table class="apc-table inv-grid-table" id="taxes">
+      <thead><tr><th>Tax</th><th>Province</th><th class="r">Rate %</th><th class="r">Taxable</th><th class="r">Amount</th><th><span class="rvw-sr">Delete</span></th></tr></thead>
+      <tbody data-grid="taxes">{{ grids.tax_rows(grid) }}</tbody>
+    </table>
+  </div>
+  {{ grids.tax_template(grid) }}
+  <button type="button" class="btn sm" data-add-row="taxes"><span class="ms" aria-hidden="true">add</span>Add a tax line</button>
+  <div data-live="taxcheck">{{ live_ui.taxcheck(live, inv.id) }}</div>
+</section>
+
+<section class="card inv-posting">
+  {{ live_ui.head("GL posting preview", "The journal lines approval sends to the ERP.") }}
+  <div data-live="posting">{{ live_ui.posting(live, inv.id) }}</div>
+</section>
+
+<div class="inv-actionbar" role="region" aria-label="Approve">
+  <div class="inv-actionbar-left" data-live="bar">{{ live_ui.bar(live, inv.id) }}</div>
+  <div class="inv-actionbar-right">
+    <details class="pop up">
+      <summary class="btn" title="Set it aside while waiting for information"><span class="ms" aria-hidden="true">pause_circle</span>Park</summary>
+      <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/park">
+        <p class="muted">Set it aside while waiting for information.</p>
+        <label class="field">Waiting for<input type="text" name="reason" required placeholder="e.g. buyer to confirm the price"></label>
+        <label class="field">Follow up on<input type="date" name="follow_up" min="{{ today }}"></label>
+        {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        <button class="btn" type="submit"><span class="ms" aria-hidden="true">pause_circle</span>Park</button>
+      </form>
+    </details>
+    <details class="pop up">
+      <summary class="btn" title="Not ours, or not to be paid"><span class="ms" aria-hidden="true">block</span>Reject</summary>
+      <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/reject">
+        <p class="muted">Not ours, or not to be paid. It can be reopened later.</p>
+        <label class="field">Reason<input type="text" name="reason" placeholder="e.g. not our invoice"></label>
+        {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        <button class="btn" type="submit"><span class="ms" aria-hidden="true">block</span>Reject</button>
+      </form>
+    </details>
+    <details class="pop up">
+      <summary class="btn" title="More: delete the invoice" aria-label="More"><span class="ms" aria-hidden="true">more_horiz</span></summary>
+      <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/delete">
+        <p class="muted">Nothing is learned from a deleted invoice. Its file moves to <code>invoices/deleted</code>.</p>
+        <label class="check"><input type="checkbox" data-enables> Yes, delete this invoice</label>
+        <input type="hidden" name="back" value="{{ nav.next if nav.count > 1 else queue_url }}">
+        <button class="btn" type="submit" disabled><span class="ms" aria-hidden="true">delete</span>Delete invoice</button>
+      </form>
+    </details>
+    <button class="btn primary" type="submit" form="inv" data-approve aria-keyshortcuts="Control+Enter" title="Approve & teach (Ctrl+Enter)"{% if not live.ok or not live.bar.allow %} disabled{% endif %}>
+      <span class="ms" aria-hidden="true">check</span>Approve &amp; teach</button>
+  </div>
+</div>
+
+{# ---------------------------------------------------------------- read-only #}
+{% else %}
+<section class="card inv-summary">
+  <div class="rvw-head">
+    <div class="rvw-head-main">
+      <div class="rvw-head-title"><span class="rvw-vendor">{{ stored.vendor }}</span>
+        {% if mode == "pending" %}{{ ui.pill("Waiting for a second approval", "info") }}
+        {% elif mode == "parked" %}{{ ui.pill("Parked", "warn") }}
+        {% elif mode == "approved" %}{{ ui.pill("Approved", "ok") }}
+        {% elif mode == "rejected" %}{{ ui.pill("Rejected", "gray") }}
+        {% elif mode == "failed" %}{{ ui.pill("Failed", "err") }}
+        {% elif mode == "nogl" %}{{ ui.pill("Waiting for GL accounts", "warn") }}{% endif %}</div>
+      <div class="rvw-head-meta">{% for text, about in stored.meta %}<span class="m" title="{{ about }}">{{ text }}</span>{% endfor %}
+        <span class="chips">{% for t in stored.taxes %}<span class="rq-tax">{{ t }}</span>{% endfor %}</span></div>
+    </div>
+    <div class="rvw-head-total"><span>{{ stored.total_label }}</span><b>{{ stored.total }}<small>{{ stored.currency }}</small></b></div>
+  </div>
+</section>
+
+<section class="card inv-state">
+  {% if mode == "pending" %}
+  <div class="card-head"><div>
+    <h4><span class="ms" aria-hidden="true">how_to_reg</span>Waiting for a second approval</h4>
+    <p class="muted">Approved by {{ inv.reviewer }} {{ inv.reviewed_at | time_ago }} · {{ edits }}.
+      {% if limit %}Invoices over {{ limit | money }} CAD need a second approver before they can be exported. {% endif %}The second approver must be someone other than the first.</p></div>
+    <div class="row end">
+      <form method="post" action="/review/{{ inv.id }}/final-approve">
+        <button class="btn primary" type="submit"{% if same %} disabled title="You approved it first (same name or computer login): someone else gives the second approval"{% endif %}>
+          <span class="ms" aria-hidden="true">how_to_reg</span>Final approval</button></form>
+      <details class="pop">
+        <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Send back</summary>
+        <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/send-back">
+          <label class="field">Why<input type="text" name="reason" placeholder="e.g. wrong cost center"></label>
+          <button class="btn" type="submit">Send back to the queue</button>
+        </form>
+      </details>
+    </div></div>
+  {% elif mode == "parked" %}
+  <div class="card-head"><div>
+    <h4><span class="ms" aria-hidden="true">pause_circle</span>Parked</h4>
+    <p class="muted">Waiting for: {{ inv.parked_reason }}{% if inv.follow_up %} · follow up {{ inv.follow_up }}{% endif %}</p></div>
+    <form method="post" action="/review/{{ inv.id }}/resume"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Back to the queue</button></form>
+  </div>
+  {% elif mode == "approved" %}
+  <div class="card-head"><div>
+    <h4><span class="ms" aria-hidden="true">task_alt</span>Approved</h4>
+    <p class="muted">Approved by {{ inv.reviewer }}{% if inv.second_reviewer %} → {{ inv.second_reviewer }}{% endif %} {{ inv.reviewed_at | time_ago }} · {{ edits }}</p></div>
+    <div class="row end">
+      {% if can_stamp %}<a class="btn" href="/review/{{ inv.id }}/approved.pdf" title="The invoice with an APPROVED stamp and its coding page, to attach in the ERP or to file."><span class="ms" aria-hidden="true">approval</span>Approved PDF</a>{% endif %}
+      {% if inv.export_batch %}
+      <span class="muted">Exported in batch {{ inv.export_batch }}: to correct it, undo the batch on the Exports page first.</span>
+      {% else %}
+      <details class="pop">
+        <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Reopen for correction…</summary>
+        <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/correct">
+          <label class="field">What needs correcting<input type="text" name="reason" required></label>
+          <button class="btn primary" type="submit">Reopen</button>
+        </form>
+      </details>
+      {% endif %}
+    </div></div>
+  {% elif mode == "rejected" %}
+  <div class="card-head"><div>
+    <h4><span class="ms" aria-hidden="true">block</span>Rejected</h4>
+    <p class="muted">{{ inv.error or "No reason recorded." }}</p></div>
+    <div class="row end">
+      <form method="post" action="/review/{{ inv.id }}/restore"><button class="btn" type="submit" title="Back to the review queue (e.g. rejected by mistake)"><span class="ms" aria-hidden="true">undo</span>Reopen</button></form>
+      <form method="post" action="/review/{{ inv.id }}/delete" data-confirm="Delete this invoice? Its file moves to invoices/deleted.">
+        <input type="hidden" name="back" value="/review?tab=other">
+        <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete</span>Delete</button></form>
+    </div></div>
+  {% elif mode == "failed" %}
+  <div class="card-head"><div>
+    <h4><span class="ms" aria-hidden="true">error</span>Could not be read</h4>
+    <p class="muted">{{ error_first }}</p>
+    {% if error_details %}<details class="tech"><summary>Technical details</summary><pre>{{ error_details }}</pre></details>{% endif %}</div>
+    <div class="row end">
+      <form method="post" action="/review/{{ inv.id }}/retry"><button class="btn" type="submit"><span class="ms" aria-hidden="true">refresh</span>Retry</button></form>
+      <form method="post" action="/review/{{ inv.id }}/delete" data-confirm="Delete this invoice? Its file moves to invoices/deleted.">
+        <input type="hidden" name="back" value="/review?tab=other">
+        <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete</span>Delete</button></form>
+    </div></div>
+  {% elif mode == "nogl" %}
+  <div class="card-head"><div>
+    <h4><span class="ms" aria-hidden="true">account_tree</span>Waiting for your GL accounts</h4>
+    <p class="muted">Import your GL accounts (the chart of accounts from JD Edwards) to review it, or start with the sample accounts and switch to yours later.</p></div>
+    <div class="row end"><a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>Import GL accounts</a>
+      <form method="post" action="/review/sample-gl"><button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button></form></div>
+  </div>
+  {% endif %}
+</section>
+
+<div class="inv-split">
+  {% include "_invoice_document.html" %}
+  <div class="col">
+    {% if posting %}
+    <section class="card">{{ live_ui.head("GL posting") }}{{ live_ui.posting_table(posting) }}</section>
+    {% endif %}
+    {% include "_invoice_notes.html" %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/js/invoice.js?v={{ static_version }}"></script>
 {% endblock %}

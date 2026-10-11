@@ -1,0 +1,44 @@
+{# The document card of the review screen: the invoice's pages with a box over every field read from them (the
+   viewer, static/js/invoice_viewer.js), what OvisOCR2 made of it, and the text that was read. #}
+{% import "_invoice_live.html" as live_ui %}
+<section class="card flush inv-doc" aria-label="Document">
+  <div class="inv-doc-head">
+    <div class="rvw-doc-head"><b>Document</b><span class="file" title="{{ doc.file_name }}">{{ doc.file_name }}</span></div>
+    {% if doc.teachable %}
+    <details class="pop" data-teach>
+      <summary class="btn sm" title="Show AP Coder where a field is printed: it learns it for this supplier."><span class="ms" aria-hidden="true">touch_app</span>Teach a field</summary>
+      <div class="pop-body stack">
+        <label class="field">Field<select data-teach-field>{% for name, label in doc.teach_fields %}<option value="{{ name }}">{{ label }}</option>{% endfor %}</select></label>
+        <p class="muted">Then click the words on the page that hold it, and <b>Use these words</b>.</p>
+        <button type="button" class="btn primary sm" data-teach-go><span class="ms" aria-hidden="true">ads_click</span>Show it on the page</button>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+  <div class="inv-doc-notes">
+    {% if mode == "review" %}
+    <div data-reader data-state="{{ doc.reader.state }}"{% if doc.reader.poll %} data-poll="{{ poll_seconds }}"{% endif %}>{{ live_ui.reader(doc.reader, inv.id) }}</div>
+    {% if kept %}
+    <div class="inv-note"><span class="ms" aria-hidden="true">edit_note</span><span>OvisOCR2 finished after you started editing: your edits are kept, so the fields still show the first reading.</span>
+      <form method="post" action="/review/{{ inv.id }}/start-over" class="inv-inline"><button class="btn sm ghost" type="submit"><span class="ms" aria-hidden="true">restart_alt</span>Start over from its reading</button></form></div>
+    {% endif %}
+    {% endif %}
+    {% if doc.lines_note %}<div class="inv-note"><span class="ms" aria-hidden="true">table_rows</span><span>{{ doc.lines_note }}</span></div>{% endif %}
+    {% if doc.original %}<div class="inv-note"><span class="ms" aria-hidden="true">photo</span><span>Made into a PDF from the picture <b>{{ doc.original.file }}</b>, kept as it came in, in the <code>{{ doc.original.folder }}</code> folder beside the PDF.</span></div>{% endif %}
+    {% if doc.problem %}<div class="inv-note warn"><span class="ms" aria-hidden="true">broken_image</span><span>{{ doc.problem }}</span></div>{% endif %}
+  </div>
+  {% if doc.viewer %}
+  <div class="iv-wrap"><div id="iv" class="iv" aria-label="Invoice page viewer"></div></div>
+  <script type="application/json" id="viewer-data">{{ doc.viewer | tojson }}</script>
+  {% endif %}
+  <details class="inv-more inv-text"{% if not doc.viewer %} open{% endif %}>
+    <summary><span class="ms" aria-hidden="true">text_snippet</span>Extracted text</summary>
+    <div class="rvw-text">{{ doc.text }}</div>
+  </details>
+  {% if history %}
+  <details class="inv-more inv-history">
+    <summary><span class="ms" aria-hidden="true">history</span>History · {{ history | length }}</summary>
+    {{ ui.timeline(history) }}
+  </details>
+  {% endif %}
+</section>

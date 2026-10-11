@@ -1,0 +1,234 @@
+{# The review screen's sections that follow the edits (pages/invoice.py draws them in the page, and again for each
+   POST /review/<id>/check). Each macro takes ``live`` (invoice_view.analyse(...).live) and the invoice id. #}
+
+{% macro conf(value, text, ok, threshold) -%}
+<span class="rq-conf {{ 'ok' if ok else 'warn' }}" title="Confidence; {{ threshold | pct }} or more needs no second look">
+  <span class="bar" aria-hidden="true"><i style="width: {{ (value * 100) | round | int }}%"></i></span><b>{{ text }}</b></span>
+{%- endmacro %}
+
+{% macro head(title, hint="", aside="") -%}
+<div class="rvw-sec-head"><span>{{ title }}</span>
+  {%- if hint %}<span class="rvw-hint" title="{{ hint }}" role="note" aria-label="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}
+  {%- if aside %}<span class="rvw-sec-aside">{{ aside }}</span>{% endif %}</div>
+{%- endmacro %}
+
+{% macro summary(live, invoice_id) -%}
+{% if not live.ok %}{# the stored coding doesn't build (a field to fix): the invoice as stored #}
+{% set s = live.fallback %}
+<div class="rvw-head">
+  <div class="rvw-head-main">
+    <div class="rvw-head-title"><span class="rvw-vendor">{{ s.vendor }}</span>{{ ui.pill("A field to fix", "err") }}</div>
+    <div class="rvw-head-meta">{% for text, about in s.meta %}<span class="m" title="{{ about }}">{{ text }}</span>{% endfor %}</div>
+  </div>
+  <div class="rvw-head-total"><span>{{ s.total_label }}</span><b>{{ s.total }}<small>{{ s.currency }}</small></b></div>
+</div>
+{% else %}
+{% set s = live.summary %}
+<div class="rvw-head">
+  <div class="rvw-head-main">
+    <div class="rvw-head-title"><span class="rvw-vendor">{{ s.vendor }}</span>{{ ui.pill(s.status[0], s.status[1]) }}{{ conf(s.confidence, s.confidence_text, s.confidence_ok, s.threshold) }}</div>
+    <div class="rvw-head-meta">{% for text, about in s.meta %}<span class="m" title="{{ about }}">{{ text }}</span>{% endfor %}
+      <span class="chips">{% for t in s.taxes %}<span class="rq-tax">{{ t }}</span>{% endfor %}{% if s.learned %}{{ ui.pill("Learned pattern", "gray") }}{% endif %}</span></div>
+  </div>
+  <div class="rvw-head-total"><span>{{ s.total_label }}</span><b>{{ s.total }}<small>{{ s.currency }}</small></b></div>
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro status_block(tone, icon, title, items, sub="") -%}
+<div class="rvw-status {{ tone }}" role="status">
+  <div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ icon }}</span><span>{{ title }}</span></div>
+  {% if items %}<ul>{% for i in items %}<li class="{{ 'err' if i.bad else 'warn' }}" title="{{ i.text }}"><span class="m" aria-hidden="true">{{ '✕' if i.bad else '!' }}</span><span class="rvw-sr">{{ 'Must fix' if i.bad else 'Worth a look' }}: </span><span class="t">{{ i.text }}</span></li>{% endfor %}</ul>
+  {% elif sub %}<div class="rvw-status-sub">{{ sub }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro checks(live, invoice_id) -%}
+{% if not live.ok %}
+{{ status_block("err", "error", "Fix this field to see the checks", []) }}
+{% for p in live.problems %}{{ ui.check("error", "Fix this field", p) }}{% endfor %}
+{% else %}
+{% set c = live.checks %}
+{{ status_block(c.tone, c.icon, c.title, c["items"], c.sub) }}
+<details class="inv-more">
+  <summary><span class="ms" aria-hidden="true">checklist</span>Details and what to do</summary>
+  <div class="inv-more-body">
+    {% for d in live.details %}{{ ui.check(d.kind, d.title, d.message, d.code, d.hint) }}{% endfor %}
+    {% for r in live.rules_applied %}{{ ui.check("info", "Coding rule", r) }}{% endfor %}
+  </div>
+</details>
+{% if live.rule_changes %}
+<button type="button" class="btn sm" data-grid-action="/review/{{ invoice_id }}/apply-rules" title="{{ live.rule_changes.help }}">
+  <span class="ms" aria-hidden="true">rule_settings</span>Apply the coding rules to line {{ live.rule_changes.numbers }}</button>
+{% endif %}
+{% if live.mail %}
+<details class="inv-more" data-mail>
+  <summary><span class="ms" aria-hidden="true">forward_to_inbox</span>Ask the vendor</summary>
+  <div class="inv-more-body inv-mail">
+    <div class="segmented" role="radiogroup" aria-label="Language">
+      {% for d in live.mail.drafts %}
+      <label class="seg-radio"><input type="radio" name="mail_lang" form="inv" value="{{ d.lang }}"{% if d.lang == live.mail.chosen %} checked{% endif %}>{{ d.name }}</label>
+      {% endfor %}
+    </div>
+    {% for d in live.mail.drafts %}
+    <div class="inv-mail-draft" data-lang="{{ d.lang }}"{% if d.lang != live.mail.chosen %} hidden{% endif %}>
+      <div class="muted">Subject</div>
+      <div class="inv-copy"><pre>{{ d.subject }}</pre><button type="button" class="btn sm" data-copy aria-label="Copy the subject"><span class="ms" aria-hidden="true">content_copy</span></button></div>
+      <div class="muted">Message</div>
+      <div class="inv-copy"><pre>{{ d.body }}</pre><button type="button" class="btn sm" data-copy aria-label="Copy the message"><span class="ms" aria-hidden="true">content_copy</span></button></div>
+      <a class="btn sm" href="{{ d.mailto }}"><span class="ms" aria-hidden="true">mail</span>Open in email</a>
+    </div>
+    {% endfor %}
+    <p class="muted">Only what the vendor can fix is asked. Internal checks (bank account or GST/HST number changed,
+      vendor on hold, unusual amount) are never mentioned: confirm those by phone, on a number from your vendor file.</p>
+  </div>
+</details>
+{% endif %}
+{% endif %}
+{%- endmacro %}
+
+{% macro amounts(live, invoice_id) -%}
+{% set a = live.amount_line %}
+{% if a %}<div class="rvw-amounts">{{ a.subtotal }} + {{ a.tax }} tax = <b>{{ a.total }}</b> {{ a.currency }}
+  {% if a.adds_up %}<span class="rvw-ok" title="Adds up"><span class="ms" aria-hidden="true">check</span></span>{% else %}{{ ui.pill("does not add up", "warn") }}{% endif %}</div>{% endif %}
+{%- endmacro %}
+
+{% macro reasons(live, invoice_id) -%}
+<details class="inv-more">
+  <summary><span class="ms" aria-hidden="true">psychology_alt</span>Why these codes</summary>
+  <div class="apc-reasons">
+    {% for r in live.reasons %}
+    <div class="apc-reason"><span class="apc-pill gray">{{ r.number }}</span><div class="body">
+      <div class="head"><span class="desc">{{ r.description }}</span><span class="apc-arrow">→</span><b class="apc-mono">{{ r.gl }}</b> <span class="apc-muted">{{ r.gl_name }}</span></div>
+      <div class="why">{{ r.why }}</div>
+      <div class="badges">{% for text, tone in r.badges %}{{ ui.pill(text, tone) }}{% endfor %}</div></div></div>
+    {% endfor %}
+  </div>
+</details>
+{%- endmacro %}
+
+{% macro suggest(live, invoice_id) -%}
+{% if live.suggestions %}
+<section class="card">
+  {{ head("Suggested GL accounts") }}
+  <p class="muted">From how similar lines were coded before and from your GL account descriptions.</p>
+  {% for s in live.suggestions %}
+  <div class="inv-sugg">
+    <div class="rvw-sugg-line"><b>Line {{ s.number }}</b> <span class="rvw-muted">{{ s.description }}</span></div>
+    <div class="row">
+      {% for o in s.options %}
+      <button type="button" class="btn sm" title="{{ o.why }}" data-grid-action="/review/{{ invoice_id }}/suggestion"
+        data-position="{{ s.position }}" data-gl="{{ o.gl }}" data-cc="{{ o.cc }}"><span class="ms" aria-hidden="true">add_task</span>{{ o.label }}</button>
+      {% endfor %}
+    </div>
+    <div class="muted small">{% for o in s.options %}{{ o.gl }}: {{ o.first }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+{%- endmacro %}
+
+{% macro po(live, invoice_id) -%}
+{% set p = live.po %}
+{% if p %}
+<section class="card">
+  {% if not p.found %}
+  {{ head(p.label, aside=ui.pill("Not found", "warn")) }}
+  <p class="muted">This PO is not in the purchase orders list. Check the number, or import the PO.</p>
+  <a class="link" href="/purchase-orders"><span class="ms" aria-hidden="true">shopping_cart</span>Purchase orders</a>
+  {% else %}
+  {{ head("Matched to " ~ p.label, aside=ui.pill(p.status[0], p.status[1])) }}
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>#</th><th>Invoice line</th><th>PO line</th><th class="r">Billed / ordered{% if p.received %} / received{% endif %}</th><th class="r">Unit price</th><th></th></tr></thead>
+    <tbody>{% for r in p.rows %}
+      <tr><td>{{ r.line }}</td><td class="w">{{ r.description }}</td>
+        <td class="w">{% if r.po_line %}{{ r.po_line }}{% else %}<span class="rvw-muted">not on the PO</span>{% endif %}</td>
+        <td class="r">{{ r.qty }}</td>
+        <td class="r">{% if r.price_po %}<b class="rvw-warn">{{ r.price }}</b> <span class="rvw-muted">PO {{ r.price_po }}</span>{% else %}{{ r.price }}{% endif %}</td>
+        <td>{% for text, tone in r.pills %}{{ ui.pill(text, tone) }} {% endfor %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  <p class="muted">{{ p.notes }}</p>
+  {% if p.differs %}
+  <button type="button" class="btn sm" data-grid-action="/review/{{ invoice_id }}/po-coding" title="Sets the GL account and cost center of these lines to the ones on the PO">
+    <span class="ms" aria-hidden="true">auto_fix_high</span>Use the PO's coding on {{ p.differs | plural("line") }}</button>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+{%- endmacro %}
+
+{% macro taxcheck(live, invoice_id) -%}
+{% if not live.ok %}
+<p class="muted">Fix the highlighted field to see the rate and amount check.</p>
+{% elif not live.tax_check %}
+<p class="muted">No sales tax on this invoice.</p>
+{% else %}
+<div class="rvw-subhead">Rate and amount check</div>
+<div class="table-wrap"><table class="apc-table">
+  <thead><tr><th>Tax</th><th class="r">Rate</th><th class="r">Official</th><th class="r">Charged</th><th>Posts to</th></tr></thead>
+  <tbody>{% for t in live.tax_check %}
+    <tr><td><span class="rq-tax">{{ t.tax }}</span> {{ t.province }}</td>
+      <td class="r"><span class="{{ 'ok' if t.rate_ok else 'bad' }}" aria-label="{{ 'Right' if t.rate_ok else 'Wrong' }}">{{ '✓' if t.rate_ok else '✕' }}</span> {{ t.rate }}</td>
+      <td class="r">{{ t.official }}</td>
+      <td class="r"><span class="{{ 'ok' if t.math_ok else 'bad' }}" aria-label="{{ 'Adds up' if t.math_ok else 'Does not add up' }}">{{ '✓' if t.math_ok else '✕' }}</span> {{ t.amount }}</td>
+      <td class="w">{{ t.posts_to }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% endif %}
+{%- endmacro %}
+
+{% macro posting_table(p) -%}
+<div class="rvw-gl table-wrap"><table class="apc-table">
+  <thead><tr><th></th><th>GL account</th><th>Cost center</th><th>Description</th><th class="r">Net</th><th class="r">Non-rec. tax</th><th class="r">Amount</th></tr></thead>
+  <tbody>{% for r in p.rows %}
+    <tr><td><span class="rvw-kind">{{ r.kind }}</span></td>
+      <td><div class="gl{{ ' todo' if r.todo else '' }}">{{ r.gl }}<small>{{ r.gl_name }}</small></div></td>
+      <td>{{ r.cc }}</td><td class="w">{{ r.description }}</td>
+      <td class="r">{{ r.net }}</td><td class="r">{{ r.nonrec }}</td><td class="r"><b>{{ r.amount }}</b></td></tr>
+  {% endfor %}</tbody>
+  <tfoot><tr><td></td><td>{{ ui.pill("Balanced", "ok") if p.balanced else ui.pill("Off by " ~ p.off, "err") }}</td><td></td><td>Total</td><td></td><td></td>
+    <td class="r">{{ p.total }} <span class="rq-cur">{{ p.currency }}</span></td></tr></tfoot>
+</table></div>
+{%- endmacro %}
+
+{% macro posting(live, invoice_id) -%}
+{% if not live.ok %}
+<p class="muted">Fix the highlighted field to see the journal lines.</p>
+{% else %}
+{% if live.split %}
+<div class="rvw-split" role="img" aria-label="Spend by account">
+  <div class="bar">{% for s in live.split %}<i class="s{{ loop.index0 }}" style="flex: {{ '%.4f' | format(s.share) }}" title="{{ s.label }}: {{ s.amount }} ({{ s.pct }})"></i>{% endfor %}</div>
+  <div class="legend">{% for s in live.split %}<span><i class="s{{ loop.index0 }}"></i>{{ s.label }} <b>{{ s.amount }}</b> <em>{{ s.pct }}</em></span>{% endfor %}</div>
+</div>
+{% endif %}
+{{ posting_table(live.posting) }}
+{% endif %}
+{%- endmacro %}
+
+{% macro bar(live, invoice_id) -%}
+{% if not live.ok %}
+<div class="rvw-post-sub">Fix the highlighted field to see the checks and approve.</div>
+{% else %}
+{% set b = live.bar %}
+<div class="rvw-post">
+  <div class="rvw-post-amount">Post <b>{{ b.amount }}</b> {{ b.currency }}</div>
+  <div class="rvw-post-sub" title="Approving teaches AP Coder from {{ b.lines | plural('line') }}: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
+    Teaches from {{ b.lines | plural("line") }} · <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
+</div>
+{% if b.pick %}{{ ui.pill(b.pick, "warn") }}
+{% elif b.errors %}
+<label class="check inv-override"><input type="checkbox" name="override" value="{{ b.override_key }}" form="inv"{% if b.override %} checked{% endif %}>
+  Approve anyway, despite {{ b.errors | plural("error") }}</label>
+{% endif %}
+{% endif %}
+{%- endmacro %}
+
+{% macro reader(state, invoice_id) -%}
+{% for icon, text in state.lines %}<div class="inv-note"><span class="ms" aria-hidden="true">{{ icon }}</span><span>{{ text }}</span></div>{% endfor %}
+{% if state.queue %}
+<form method="post" action="/review/{{ invoice_id }}/read-pages" class="inv-inline">
+  <button type="submit" class="btn sm ghost"><span class="ms" aria-hidden="true">playlist_add</span>Add it to OvisOCR2's queue</button>
+</form>
+{% endif %}
+{%- endmacro %}

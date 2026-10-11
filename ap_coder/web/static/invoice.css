@@ -1,0 +1,211 @@
+/* The invoice review screen (/review/<id>, templates/invoice.html). The look of the Streamlit screen
+   (ap_coder/assets/review.css, classes rvw-*), on the dashboard's Ledger tokens (app.css). The page viewer's own
+   styles are in invoice_viewer.css. */
+/* ---- Top: breadcrumb, then Queue · Reviewing 3 of 9 · Shortcuts · Previous · Next ---------------------------- */
+.inv-top {display: flex; flex-direction: column; gap: 8px;}
+.rvw-nav {display: flex; align-items: center; gap: 8px; flex-wrap: wrap;}
+.rvw-nav .spacer {flex: 1;}
+.rvw-pos {display: block; font-size: 13px; color: var(--rv-muted); white-space: nowrap;
+  border-left: 1px solid var(--rv-border); margin-left: 4px; padding: 2px 0 2px 12px;}
+.rvw-pos b {color: var(--rv-text); font-weight: 600;}
+.rvw-pos-bar {display: inline-block; vertical-align: middle; margin-left: 10px; width: 72px; height: 4px;
+  border-radius: 2px; background: var(--rv-hairline); overflow: hidden;}
+.rvw-pos-bar i {display: block; height: 100%; background: var(--rv-accent); border-radius: 2px;}
+.btn.ghost {border-color: transparent; background: transparent; color: var(--lg-muted);}
+.btn.ghost:hover {background: var(--lg-nav-hover); color: var(--lg-text);}
+.icon-btn {display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--lg-subtle); cursor: pointer;}
+.icon-btn:hover {background: var(--lg-danger-weak); color: var(--lg-danger);}
+.small {font-size: 12px;}
+.rvw-sr {position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0;}
+.rvw-muted {color: var(--rv-muted);}
+.rvw-warn {color: var(--rv-warning); font-weight: 600;}
+.rvw-ok {color: var(--rv-success); display: inline-flex; vertical-align: -2px;}
+.rvw-ok .ms {font-size: 15px;}
+
+/* ---- The invoice at a glance ----------------------------------------------------------------------------- */
+.inv-summary {padding: 14px 20px;}
+.rvw-head {display: flex; align-items: center; gap: 24px; min-width: 0;}
+.rvw-head-main {flex: 1; min-width: 0;}
+.rvw-head-title {display: flex; align-items: center; gap: 10px; flex-wrap: wrap;}
+.rvw-vendor {font-size: 20px; font-weight: 600; letter-spacing: -.01em; color: var(--rv-text); line-height: 28px;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; margin-right: 2px;}
+.rvw-head-meta {display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; margin-top: 4px; font-size: 13px;
+  color: var(--rv-muted);}
+.rvw-head-meta .m {white-space: nowrap;}
+.rvw-head-meta .m + .m::before {content: "·"; margin: 0 8px; color: var(--rv-subtle);}
+.rvw-head-meta .chips {display: inline-flex; gap: 4px; margin-left: 12px;}
+.rvw-head-meta .chips:empty {display: none;}
+.rvw-head-total {flex: none; display: flex; flex-direction: column; align-items: flex-end; text-align: right;}
+.rvw-head-total span {font-size: 12.5px; font-weight: 500; color: var(--rv-muted);}
+.rvw-head-total b {font-size: 24px; font-weight: 600; letter-spacing: -.01em; color: var(--rv-text); line-height: 30px;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "cv11" 1; white-space: nowrap;}
+.rvw-head-total small {margin-left: 6px; font-size: 12px; font-weight: 500; color: var(--rv-subtle); letter-spacing: 0;}
+
+/* ---- Card titles, groups ---------------------------------------------------------------------------------- */
+.rvw-sec-head, .rvw-doc-head {display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600;
+  color: var(--rv-text); min-width: 0; line-height: 20px;}
+.rvw-sec-aside {margin-left: auto; display: inline-flex; gap: 6px;}
+.rvw-doc-head .file {color: var(--rv-subtle); font-weight: 400; font-size: 12.5px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; min-width: 0;}
+.rvw-doc-head .file::before {content: "·"; margin-right: 6px;}
+.rvw-hint {display: inline-flex; color: var(--rv-subtle); cursor: help;}
+.rvw-hint .ms {font-size: 15px;}
+.rvw-hint:hover {color: var(--rv-text);}
+.rvw-group {font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--rv-subtle);
+  padding-top: 12px; border-top: 1px solid var(--rv-hairline);}
+.rvw-subhead {font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--rv-subtle);
+  margin: 4px 0 8px;}
+.rvw-text {font-size: 13px; padding: 0 16px 12px; max-height: 420px; overflow: auto;}
+.rvw-text table {border-collapse: collapse; margin: 6px 0;} .rvw-text td, .rvw-text th {border: 1px solid var(--lg-hairline); padding: 2px 6px;}
+
+/* An expandable part of a card ("Details and what to do", "Why these codes", "History") */
+.inv-more > summary {display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; padding: 8px 0;
+  font-size: 13px; font-weight: 500; color: var(--lg-text);}
+.inv-more > summary::-webkit-details-marker {display: none;}
+.inv-more > summary::after {content: "expand_more"; font-family: "Material Symbols Rounded"; margin-left: auto;
+  color: var(--lg-subtle); font-size: 18px; transition: transform .12s ease;}
+.inv-more[open] > summary::after {transform: rotate(180deg);}
+.inv-more > summary .ms {color: var(--lg-subtle); font-size: 17px;}
+.inv-more-body > * + * {margin-top: 8px;}
+.inv-more-body .apc-check {padding: 8px 10px; font-size: 12.5px;}
+
+/* ---- Two columns: the document (sticky) and the checks / details / notes ------------------------------------ */
+.inv-split {display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start;}
+.inv-split > .inv-doc {position: sticky; top: 12px; z-index: 2;}
+@media (max-width: 1100px) {.inv-split {grid-template-columns: minmax(0, 1fr);} .inv-split > .inv-doc {position: static;}}
+
+.inv-doc > * + * {margin-top: 0;}
+.inv-doc-head {display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px 8px;}
+.inv-doc-notes {padding: 0 16px 8px; display: flex; flex-direction: column; gap: 4px;}
+.inv-doc-notes:empty {display: none;}
+.inv-doc > .inv-more {border-top: 1px solid var(--lg-hairline); padding: 0 16px;}
+.inv-doc > .inv-more > .apc-timeline {padding-bottom: 8px;}
+.inv-doc > .inv-more.inv-text > summary {padding-left: 0;}
+.inv-doc > .inv-more .rvw-text {padding: 0 0 12px;}
+.inv-note {display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--lg-muted); line-height: 1.45;
+  flex-wrap: wrap;}
+.inv-note .ms {font-size: 16px; color: var(--lg-subtle); margin-top: 1px;}
+.inv-note > span:not(.ms) {flex: 1 1 260px; min-width: 0;}
+.inv-note.warn {color: var(--lg-warning);} .inv-note.warn .ms {color: var(--lg-warning);}
+.inv-inline {display: inline-flex;}
+
+/* Checks: one quiet status row (weak background of the status colour) */
+.inv-checks > * + * {margin-top: 8px;}
+.rvw-status {border-radius: 8px; padding: 10px 12px; font-size: 13px; color: var(--rv-text);}
+.rvw-status-title {display: flex; align-items: center; gap: 8px; font-weight: 600;}
+.rvw-status-sub {margin-top: 2px; color: var(--rv-muted); font-size: 12.5px; padding-left: 26px;}
+.rvw-status.ok {background: var(--rv-success-weak);} .rvw-status.ok .rvw-status-title {color: var(--rv-success);}
+.rvw-status.warn {background: var(--rv-warning-weak);} .rvw-status.warn .rvw-status-title {color: var(--rv-warning);}
+.rvw-status.err {background: var(--rv-danger-weak);} .rvw-status.err .rvw-status-title {color: var(--rv-danger);}
+.rvw-status ul {list-style: none; margin: 6px 0 0; padding: 0 0 0 26px; display: flex; flex-direction: column; gap: 4px;}
+.rvw-status li {display: flex; gap: 8px; align-items: flex-start; line-height: 1.45; margin: 0; font-size: 12.5px;
+  color: var(--rv-text);}
+.rvw-status li .m {flex: none; width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; display: grid;
+  place-items: center; font-size: 9px; font-weight: 700; color: #fff;}
+.rvw-status li.err .m {background: var(--rv-danger);}
+.rvw-status li.warn .m {background: var(--rv-warning);}
+.rvw-status li .t {display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
+.inv-checks .inv-more {border-bottom: 1px solid var(--rv-hairline);}
+
+/* Ask the vendor */
+.seg-radio {height: 28px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: var(--lg-r-sm);
+  color: var(--lg-muted); font-size: 13px; font-weight: 500; cursor: pointer;}
+.seg-radio input {position: absolute; opacity: 0; width: 1px; height: 1px;}
+.seg-radio:has(input:checked) {background: var(--lg-surface); color: var(--lg-text); box-shadow: 0 0 0 1px var(--lg-border);}
+.seg-radio:has(input:focus-visible) {box-shadow: var(--lg-focus);}
+.inv-mail-draft > * + * {margin-top: 6px;}
+.inv-copy {display: flex; gap: 6px; align-items: flex-start;}
+.inv-copy pre {flex: 1; margin: 0; max-height: 220px; overflow: auto;}
+
+/* Invoice details: a compact form */
+.inv-details > * + * {margin-top: 10px;}
+.inv-grid {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px;}
+.inv-grid.three {grid-template-columns: repeat(3, minmax(0, 1fr));}
+.inv-grid .wide {grid-column: 1 / -1;}
+.inv-grid .field input, .inv-grid .field select {width: 100%; min-width: 0;}
+.inv-grid .field input[type="number"] {font-variant-numeric: tabular-nums; text-align: right;}
+.field .lbl {display: flex; align-items: center; gap: 4px; flex-wrap: wrap;}
+.inv-sure {display: inline-flex; align-items: center; gap: 2px; font-size: 11.5px; font-weight: 500; color: var(--lg-subtle);}
+.inv-sure .ms {font-size: 14px;}
+.inv-sure.ok .ms {color: var(--lg-success);} .inv-sure.info .ms {color: var(--lg-accent);}
+.inv-sure.warn .ms {color: var(--apc-warn-dot);} .inv-sure.err .ms {color: var(--lg-danger);}
+.inv-flash input, .inv-flash select {animation: inv-flash 1.6s ease-out;}
+@keyframes inv-flash {0%, 40% {border-color: var(--lg-accent); box-shadow: var(--lg-focus);} 100% {box-shadow: none;}}
+.rvw-amounts {font-size: 12.5px; color: var(--rv-muted); text-align: right; font-variant-numeric: tabular-nums;}
+.rvw-amounts b {color: var(--rv-text); font-weight: 600;}
+.inv-notes {padding: 4px 16px;}
+.inv-notes .apc-timeline {margin-top: 6px;}
+.inv-note-form {display: flex; align-items: flex-end; gap: 8px; padding-bottom: 12px;}
+.inv-note-form .field {flex: 1;}
+.inv-note-form input {width: 100%;}
+
+/* ---- The grids: a cell is an input ----------------------------------------------------------------------- */
+.inv-grid-table td {padding: 4px 6px; height: auto;}
+.inv-grid-table th {padding: 6px 8px;}
+.inv-grid-table input, .inv-grid-table select {height: 30px; font-size: 13px; width: 100%; padding: 0 8px; min-width: 0;}
+.inv-grid-table input[type="number"] {text-align: right; font-variant-numeric: tabular-nums;}
+.inv-grid-table .c-no {width: 64px;} .inv-grid-table .c-no input {text-align: center;}
+.inv-grid-table .c-desc {min-width: 200px;}
+.inv-grid-table .c-amt {width: 120px;}
+.inv-grid-table .c-gl {min-width: 200px;} .inv-grid-table .c-cc {min-width: 150px;}
+.inv-grid-table .c-qty, .inv-grid-table .c-price {width: 96px;}
+.inv-grid-table .c-del {width: 36px;}
+.inv-taxes {display: flex; gap: 2px;}
+.inv-taxes label {display: inline-flex; cursor: pointer;}
+.inv-taxes input {position: absolute; opacity: 0; width: 1px; height: 1px;}
+.inv-taxes span {padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 22px; letter-spacing: .02em;
+  color: var(--lg-subtle); border: 1px dashed var(--lg-border); white-space: nowrap;}
+.inv-taxes input:checked + span {color: var(--lg-text); border: 1px solid var(--lg-accent-line); background: var(--lg-accent-weak);}
+.inv-taxes input:focus-visible + span {box-shadow: var(--lg-focus);}
+.inv-lines > .row {margin-top: 10px;}
+.inv-split-pop {width: min(560px, 92vw);}
+.inv-split-pop .field select {width: 100%;}
+.inv-parts td {padding: 4px 6px; height: auto;}
+.inv-parts select, .inv-parts input {width: 100%; height: 30px; font-size: 13px;}
+.inv-parts input {text-align: right;}
+.inv-sugg + .inv-sugg {border-top: 1px solid var(--lg-hairline); padding-top: 10px;}
+.inv-sugg > * + * {margin-top: 6px;}
+.rvw-sugg-line {font-size: 13px;}
+.inv-live:empty {display: none;}
+
+/* ---- GL posting preview: a thin proportional bar in shades of the accent, then a clean table ------------------ */
+.rvw-split .bar {display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; margin: 2px 0 10px;}
+.rvw-split .bar i {display: block; min-width: 3px;}
+.rvw-split .s0 {background: var(--rv-accent);}
+.rvw-split .s1 {background: color-mix(in srgb, var(--rv-accent) 62%, #fff);}
+.rvw-split .s2 {background: color-mix(in srgb, var(--rv-accent) 38%, #fff);}
+.rvw-split .s3 {background: color-mix(in srgb, var(--rv-accent) 22%, #fff);}
+.rvw-split .s4 {background: #CBD5E1;}
+.rvw-split .s5 {background: #E2E8F0;}
+.rvw-split .legend {display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12.5px; color: var(--rv-muted);}
+.rvw-split .legend span {display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;}
+.rvw-split .legend i {width: 8px; height: 8px; border-radius: 2px; display: inline-block;}
+.rvw-split .legend b {color: var(--rv-text); font-weight: 600; font-variant-numeric: tabular-nums;}
+.rvw-split .legend em {font-style: normal; color: var(--rv-subtle); font-variant-numeric: tabular-nums;}
+.rvw-gl .gl {font-weight: 500; color: var(--rv-text);}
+.rvw-gl .gl small {display: block; font-size: 12px; font-weight: 400; color: var(--rv-muted);}
+.rvw-gl .gl.todo {color: var(--rv-warning);}
+.rvw-kind {font-size: 12px; color: var(--rv-subtle); white-space: nowrap;}
+[data-live="posting"] > * + * {margin-top: 10px;}
+
+/* ---- The approve bar: sticky at the bottom, one primary action -------------------------------------------------- */
+.inv-actionbar {position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin: 16px -40px -96px; padding: 10px 40px; background: var(--lg-surface);
+  border-top: 1px solid var(--lg-border);}
+@media (max-width: 900px) {.inv-actionbar {margin: 16px -16px -64px; padding: 10px 16px;}}
+.inv-actionbar-left {display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-width: 0;}
+.inv-actionbar-right {display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;}
+.rvw-post {display: flex; flex-direction: column; min-width: 0;}
+.rvw-post-amount {font-size: 14px; color: var(--rv-muted); white-space: nowrap;}
+.rvw-post-amount b {font-weight: 600; color: var(--rv-text); font-variant-numeric: tabular-nums;}
+.rvw-post-sub {display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--rv-subtle);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.rvw-post-sub .ms {font-size: 15px;}
+.inv-override {font-size: 13px; color: var(--lg-danger); font-weight: 500;}
+.pop.up .pop-body {top: auto; bottom: calc(100% + 6px);}
+
+/* ---- Read-only states ------------------------------------------------------------------------------------- */
+.inv-state .card-head {flex-wrap: wrap;}
+.inv-state h4 .ms {color: var(--lg-subtle);}
