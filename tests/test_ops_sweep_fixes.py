@@ -3,7 +3,13 @@ reproduces the bug as it was found, so it is not made again."""
 
 from __future__ import annotations
 
-from ap_coder import jde
+import csv
+import io
+import json
+
+from openpyxl import load_workbook
+
+from ap_coder import jde, labels
 
 from .test_jde import AN8, ON, _files, _invoice
 
@@ -36,3 +42,53 @@ def test_jde_text_made_formula_safe_still_fits_its_column():
     assert len(line["VNEXR"]) <= 30
     header = files[jde.HEADER_FILE][0]
     assert header["VLVINV"].startswith("'=") and len(header["VLVINV"]) == 25
+
+
+# --- Labels workbook (python -m ap_coder labels) ---------------------------------------------------------------
+
+
+def _prediction(tmp_path, **changes):
+    out = tmp_path / "output"
+    out.mkdir()
+    doc = {
+        "vendor_name": "Fournitures Laval", "invoice_number": "A-1", "invoice_date": "2026-01-05", "currency": "CAD",
+        "subtotal": 10, "tax_total": 0, "grand_total": 10,
+        "line_items": [{"line_number": 1, "description": "Paper", "quantity": 1, "unit_price": 10, "amount": 10}],
+        **changes,
+    }  # fmt: skip
+    (out / "inv.json").write_text(json.dumps(doc), encoding="utf-8")
+    return out
+
+
+def test_labels_workbook_with_a_damaged_pdfs_control_characters(tmp_path):
+    """Text read from a damaged PDF can hold control characters: openpyxl refused them and the labels command
+    stopped with a traceback (the export workbook already dropped them)."""
+    out = _prediction(tmp_path, invoice_number="A\x0c1")
+    out_doc = json.loads((out / "inv.json").read_text())
+    out_doc["line_items"][0]["description"] = "Pa\x01per"
+    (out / "inv.json").write_text(json.dumps(out_doc))
+    assert labels.export_labels(out, tmp_path / "labels.xlsx") == 1
+    wb = load_workbook(tmp_path / "labels.xlsx")
+    values = [c.value for row in wb["Labels"].iter_rows(min_row=2) for c in row]
+    assert "A1" in values and "Paper" in values
+
+
+def test_labels_csv_is_formula_safe_and_reads_back_the_same(tmp_path):
+    """The CSV labels file is opened in Excel by the AP team: a vendor name from a document such as
+    =HYPERLINK(...) ran as a formula there. Neutralised with an apostrophe, and read back without it."""
+    evil = '=HYPERLINK("http://evil.example","x")'
+    out = _prediction(tmp_path, vendor_name=evil)
+    dest = tmp_path / "labels.csv"
+    labels.export_labels(out, dest)
+    text = dest.read_text(encoding="utf-8-sig")
+    assert '"=HYPERLINK' not in text and "\"'=HYPERLINK" in text
+    rows = list(csv.DictReader(io.StringIO(text)))
+    assert rows[0]["amount"] == "10"  # numbers untouched
+    for row in rows:
+        row["reviewed"] = "Y"
+    with dest.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    docs, unreviewed = labels.load_labels(dest)
+    assert not unreviewed and docs["inv"]["vendor_name"] == evil
