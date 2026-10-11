@@ -311,7 +311,7 @@ class InvoicePipeline:
                 )  # fmt: skip
             result.timings["capture"] = time.perf_counter() - t2
             if result.capture is not None and result.report is not None:
-                for severity, code, message in review_issues(result.capture):
+                for severity, code, message in review_issues(result.capture, result.output.get("currency")):
                     result.report.issues.append(Issue(severity, code, message))
                 # Not read by the page reader yet: it will be (queued below), and decides then.
                 awaiting = page_text is None and not text_file
