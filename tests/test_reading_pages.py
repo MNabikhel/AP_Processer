@@ -165,6 +165,20 @@ def test_settings_tabs_are_reading_automation_review_erp_data_about(db, status):
     assert "touchless processing" in (_markdown(at) + _captions(at)).lower()  # the Automation tab is drawn
 
 
+def test_every_settings_tab_the_app_names_exists():
+    """No message points AP to a Settings tab that is gone ("Settings → AI model", "Settings → Page reader")."""
+    import re
+
+    named = []
+    for path in [*(ROOT / "ap_coder").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")]:
+        source = re.sub(r"\"\s*\n\s*(f?)\"", "", path.read_text(encoding="utf-8"))  # strings split over lines
+        named += [(path.name, m.group(1)) for m in re.finditer(r"Settings (?:→|->|>) ([A-Za-z&][\w &]*)", source)]
+    assert named
+    wrong = [(name, tab) for name, tab in named if not any(tab.startswith(t) or t.startswith(tab) for t in TABS)
+             and not tab.startswith("JD Edwards")]  # fmt: skip
+    assert not wrong, wrong
+
+
 def test_there_is_nothing_to_choose_about_reading(db, status):
     at = _ok(_settings_page().run())
     keys = {w.key for w in [*at.radio, *at.selectbox, *at.toggle, *at.text_input] if w.key}
