@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import ipaddress
 import logging
 import os
@@ -11,7 +12,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from . import paths
+from . import envfile, paths
 
 log = logging.getLogger(__name__)
 DEFAULT_AOAI_API_VERSION = "2024-10-21"  # first GA version with strict Structured Outputs
@@ -196,7 +197,10 @@ class Settings:
         if env_file is None:
             # The data folder's .env (written by the installer), else ./.env, else the project's.
             env_file = paths.env_file()
-        load_dotenv(env_file, override=False, encoding="utf-8-sig")  # -sig: Notepad's byte-order mark
+        # Read here (UTF-8 or Notepad's ANSI), never searched for: without a file, python-dotenv would load the first
+        # .env in any folder above AP Coder's code.
+        if env_file is not None and Path(env_file).is_file():
+            load_dotenv(stream=io.StringIO(envfile.read_text(Path(env_file))), override=False)
 
         di = DocumentIntelligenceSettings(
             endpoint=_env("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"),

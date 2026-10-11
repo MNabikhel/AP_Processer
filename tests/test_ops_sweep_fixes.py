@@ -6,10 +6,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 
 from openpyxl import load_workbook
 
-from ap_coder import jde, labels
+from ap_coder import envfile, jde, labels, paths
+from ap_coder.config import Settings
 
 from .test_jde import AN8, ON, _files, _invoice
 
@@ -92,3 +94,37 @@ def test_labels_csv_is_formula_safe_and_reads_back_the_same(tmp_path):
         writer.writerows(rows)
     docs, unreviewed = labels.load_labels(dest)
     assert not unreviewed and docs["inv"]["vendor_name"] == evil
+
+
+# --- The .env settings file -------------------------------------------------------------------------------------
+
+
+def test_an_env_file_saved_as_ansi_by_notepad_is_read(tmp_path, monkeypatch):
+    """Older Notepad saves "ANSI" (Windows-1252): one accented letter in a comment (Paramètres) made every AP Coder
+    command, the dashboard and the installer stop with UnicodeDecodeError."""
+    env = tmp_path / ".env"
+    env.write_bytes("# Paramètres de Zoé\nAP_REVIEWER=Zoé Tremblay\nAP_LLM_MODEL=qwen\n".encode("cp1252"))
+    monkeypatch.delenv("AP_REVIEWER", raising=False)
+    monkeypatch.setenv("AP_LLM_MODEL", "")  # restored after the test (load_dotenv writes os.environ)
+    monkeypatch.delenv("AP_LLM_MODEL")
+    assert envfile.read_env(env) == {"AP_REVIEWER": "Zoé Tremblay", "AP_LLM_MODEL": "qwen"}
+    Settings.from_env(env)
+    assert os.environ["AP_REVIEWER"] == "Zoé Tremblay"
+    envfile.write_env(env, {"AP_LLM_MODEL": "other"})
+    assert envfile.read_env(env)["AP_REVIEWER"] == "Zoé Tremblay"  # the rest kept (now saved as UTF-8)
+
+
+def test_no_env_file_is_taken_from_a_folder_above_ap_coder(tmp_path, monkeypatch):
+    """With no .env in the data folder, the current folder or AP Coder's folder, python-dotenv went looking in every
+    folder above AP Coder's code and loaded the first .env it found there (another program's settings)."""
+    import dotenv.main
+
+    stray = tmp_path / "Downloads" / ".env"
+    stray.parent.mkdir()
+    stray.write_text("AP_STRAY_SETTING=from-another-program\n", encoding="utf-8")
+    monkeypatch.setattr(dotenv.main, "find_dotenv", lambda *a, **k: str(stray))
+    monkeypatch.setattr(paths, "env_file", lambda: None)
+    monkeypatch.setenv("AP_STRAY_SETTING", "")
+    monkeypatch.delenv("AP_STRAY_SETTING")
+    Settings.from_env()
+    assert "AP_STRAY_SETTING" not in os.environ
