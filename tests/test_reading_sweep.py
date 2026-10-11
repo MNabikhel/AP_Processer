@@ -110,6 +110,50 @@ def test_a_french_pdf_whose_hidden_text_is_not_the_page_fails_the_check(tmp_path
     assert not check["ok"] and set(check["fields"]) >= {"subtotal", "grand_total"}, check
 
 
+def test_a_page_the_page_reader_wrote_nothing_real_for_is_not_counted_as_read(tmp_path, monkeypatch):
+    """A page OCR finds words on, for which OvisOCR2 wrote only a page number or its pangram, is read as blank: the
+    page reader did not read it. It was still counted as read, so a two-page invoice whose second page it never
+    read passed the "every page read by the page reader" gate and could be approved without a person."""
+    import json
+
+    from ap_coder import page_reader, page_worker
+    from ap_coder.config import PageReaderSettings
+    from ap_coder.figures import PAGE_BREAK
+    from ap_coder.pipeline import autonomy_decision
+    from ap_coder.store import load_sample_setup
+
+    from .conftest import SAMPLES
+
+    model, stem = "ath-maas_ovisocr2", "northwind_ON_HST_NW-2026-0912"  # two pages
+    s = Settings()
+    settings = replace(s, llm=replace(s.llm, provider="off"), page_reader=PageReaderSettings())
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    store.set_setting(page_worker.TEST_KEY, json.dumps({"model": model, "ok": True, "fields_right": 9,
+                                                        "fields_total": 9}))  # fmt: skip
+    status = page_reader.ReaderStatus(reachable=True, lm_studio=True, model=model, document_reader=True,
+                                      state="downloaded", candidates=[model], note="")  # fmt: skip
+    first_page = (SAMPLES / f"{stem}.md").read_text(encoding="utf-8").split(PAGE_BREAK)[0]
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: status)
+    monkeypatch.setattr(page_reader, "load_reader", lambda settings, model=None: "")
+    monkeypatch.setattr(page_reader, "read_document", lambda *a, **k: page_reader.PageReading(
+        model=model, pages=[first_page, "The quick brown fox jumps over the lazy dog."], seconds=[90.0, 80.0],
+        page_count=2))  # fmt: skip
+    monkeypatch.setattr(page_worker, "blank_pages", lambda settings, path: (set(), 2))  # OCR found words on both
+    decided = []
+
+    def spy(*args, **kwargs):
+        decided.append(kwargs.get("pages_read"))
+        return autonomy_decision(*args, **kwargs)
+
+    monkeypatch.setattr("ap_coder.pipeline.autonomy_decision", spy)
+    result = InvoicePipeline(settings, store.reference_data(), store=store).process(SAMPLES / f"{stem}.pdf")
+    assert result.ok and result.capture.page_count == 2
+    outcome = page_worker.read_one(settings, store)
+    assert outcome.status == "done", outcome
+    assert decided[-1] == 1  # one of its two pages read
+
+
 def test_days_in_a_late_interest_clause_are_not_the_net_days():
     """ "Due on receipt. Interest of 2% per month on accounts over 30 days" (common on Canadian invoices) was read
     as net 30: the due date came out 30 days late. Days in a late-payment clause say when interest starts."""

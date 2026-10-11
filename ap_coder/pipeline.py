@@ -225,12 +225,15 @@ class InvoicePipeline:
             return None
 
     def process(
-        self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None
-    ) -> PipelineResult:
+        self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None,
+        pages_read: int | None = None,
+    ) -> PipelineResult:  # fmt: skip
         """Read, code and check one invoice, and save it to the review queue (``save``). ``page_text``: the page
         reader's reading of each page (OvisOCR2), read as one more independent reader. ``invoice_id``: the invoice is
         already in the store as this row (read again by the page reader), so the checks against other invoices
         (duplicate, vendor history, purchase order) leave it out instead of finding it against itself.
+        ``pages_read``: the pages the page reader really read (a page it wrote nothing real for is in ``page_text``,
+        blank, but was not read); all of ``page_text`` when not given.
 
         Every file is read the same way: a PDF's text layer where its page has one, local OCR (two engines) for a scan
         or a photo, a text file as it is; the same readers and checks, then coded from AP's history. A document the
@@ -316,6 +319,8 @@ class InvoicePipeline:
                 # Not read by the page reader yet: it will be (queued below), and decides then.
                 awaiting = page_text is None and not text_file
                 read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
+                if read is not None and pages_read is not None:
+                    read = min(read, pages_read)
                 result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
                                                     output=result.output, awaiting_page_reader=awaiting,
                                                     pages_read=read)  # fmt: skip
