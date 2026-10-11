@@ -162,7 +162,7 @@ def _touchless_supplier(tmp_path, ground_truth):
     store = Store(tmp_path / "ap.db")
     store.set_touchless(True, "Mia")
     store.set_touchless_limit(1_000_000, "Mia")
-    old = {**ground_truth, "invoice_number": "OLD-1", "invoice_date": "2025-06-01"}
+    old = {**ground_truth, "invoice_number": "OLD-1", "invoice_date": "2025-06-01", "po_number": ""}
     store.approve_invoice(store.add_invoice(tmp_path / "first.pdf", old, {}), old, "jane")
     key = store.supplier_key_for(ground_truth["vendor_name"], ground_truth["gst_hst_registration_number"])
     clean = [{"field": f"f{n}", "ai_value": "a", "final_value": "a", "correct": True} for n in range(13)]
@@ -216,6 +216,29 @@ def test_another_vendor_name_on_a_touchless_suppliers_gst_number_needs_a_person(
     assert _decision(store, {**ground_truth, "invoice_number": "NEW-4"}, reference, tmp_path)["auto"]
     decision = _decision(store, {**other, "invoice_number": "NEW-5"}, reference, tmp_path)
     assert not decision["auto"] and "only its GST/HST number" in decision["reason"], decision
+
+
+def test_an_invoice_that_does_not_match_its_purchase_order_needs_a_person(tmp_path, ground_truth, reference):
+    """PO matching only warns (PO_UNKNOWN, PO_NOT_RECEIVED, PO_OVER_BILLED...), and touchless processing let
+    warnings through: a touchless supplier's invoice quoting a PO that is not in the list, or billing goods not yet
+    received, was approved without a person. A purchase-order exception always goes to a person."""
+    store = _touchless_supplier(tmp_path, ground_truth)
+
+    def po(number: str, received: bool) -> list[dict]:
+        return [{"po_number": number, "vendor_name": ground_truth["vendor_name"], "line_number": li["line_number"],
+                 "description": li["description"], "quantity": li["quantity"], "unit_price": li["unit_price"],
+                 "amount": li["amount"], "received_quantity": li["quantity"] if received else 0, "gl_code": "",
+                 "cost_center": "", "status": "open"} for li in ground_truth["line_items"]]  # fmt: skip
+
+    store.import_purchase_orders(po("PO-70001", received=True) + po("PO-70002", received=False))
+    matched = _decision(store, {**ground_truth, "invoice_number": "NEW-7", "po_number": "PO-70001"}, reference,
+                        tmp_path)  # fmt: skip
+    assert matched["auto"], matched  # matches its PO, ordered and received: touchless
+    for number, po_number in (("NEW-8", "PO-55555"), ("NEW-9", "PO-70002")):  # not in the list; not received
+        decision = _decision(store, {**ground_truth, "invoice_number": number, "po_number": po_number}, reference,
+                             tmp_path)  # fmt: skip
+        assert decision == {"state": "autonomous", "auto": False, "audit": False,
+                            "reason": "always a person: it does not match its purchase order"}, decision  # fmt: skip
 
 
 def _billed(account_lines: list[str], number: str) -> list[str | tuple[float, str]]:

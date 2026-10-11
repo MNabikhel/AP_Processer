@@ -301,7 +301,8 @@ Automation):
   unusual amount (`AMOUNT_UNUSUAL`: over 3× the vendor's median approved total), a vendor on hold or not in an imported
   vendor master, a vendor name with no approved invoice yet (`VENDOR_NEW`) or not in the vendor master though its
   GST/HST number is (`VENDOR_MATCHED_BY_TAX_NUMBER`): a supplier's record is kept by its business number, so another
-  name printing it does not inherit it, a credit note, a total over the touchless limit (setting `touchless_limit`, default 5,000.00 CAD; a
+  name printing it does not inherit it, a purchase-order exception (`PO_UNKNOWN`, `PO_CLOSED`, `PO_VENDOR_MISMATCH`,
+  `PO_LINE_NOT_ON_PO`, `PO_PRICE_OVER`, `PO_QTY_OVER`, `PO_NOT_RECEIVED`, `PO_OVER_BILLED`), a credit note, a total over the touchless limit (setting `touchless_limit`, default 5,000.00 CAD; a
   foreign currency is converted at the Settings → Review exchange rates; with no rate for it, it goes to a person), a
   total over the second-approver limit, an invoice the page reader has not read yet (or not every page of it), and a
   text file (.md, .txt), which the page reader cannot look at. On top of these, as before,
