@@ -208,6 +208,26 @@ TEXT_LAYER_REST_SHARE = 0.9  # ... the other figures it read the same, for missi
 TOTAL_FIELDS = ("subtotal", *TAX_FIELDS, "tax_total", "grand_total")
 
 
+def _printed_once(line: Any) -> str:
+    """A line of the PDF's text with a word drawn over itself kept once: some PDF writers make bold by drawing the
+    text twice a hair apart, so the text has each figure twice though the page shows it once."""
+    kept: list[Any] = []
+    for word in line.words:
+        b = word.box
+        if any(k.text == word.text and _overlap(k.box, b) for k in kept[-4:]):
+            continue
+        kept.append(word)
+    return " ".join(w.text for w in kept)
+
+
+def _overlap(a: Box, b: Box) -> bool:
+    """The two boxes cover mostly the same spot (at least half of the smaller one)."""
+    width = min(a.x1, b.x1) - max(a.x0, b.x0)
+    height = min(a.y1, b.y1) - max(a.y0, b.y0)
+    smaller = min(a.width * a.height, b.width * b.height)
+    return a.page == b.page and width > 0 and height > 0 and width * height >= 0.5 * smaller
+
+
 def text_layer_check(layout: DocLayout, page_text: list[str], fields: dict[str, FieldResult],
                      text_readings: dict[str, list[Reading]] | None = None) -> dict[str, Any]:  # fmt: skip
     """``TEXT_LAYER_MATCHES_PAGE`` for a digital PDF the page reader read: its figures (``figures.compare_figures``)
@@ -223,7 +243,7 @@ def text_layer_check(layout: DocLayout, page_text: list[str], fields: dict[str, 
 
     # Page by page, the pages the page reader read only (one it found blank, or didn't reach, is left out of both).
     pairs = [(page, text) for page, text in zip(layout.pages, page_text, strict=False) if (text or "").strip()]
-    hidden = "\n".join(line.text for page, _text in pairs for line in page.lines)
+    hidden = "\n".join(_printed_once(line) for page, _text in pairs for line in page.lines)
     shown = "\n\n".join(text for _page, text in pairs)
     comparison = compare_figures(hidden, shown)
     compared = max(comparison.figures, comparison.first_figures)

@@ -286,6 +286,28 @@ def test_a_page_that_shows_other_figures_fails_the_check():
     assert not check["ok"] and "only" in check["detail"] and check["figures"] >= 8
 
 
+def test_text_printed_over_itself_is_no_alarm(tmp_path):
+    """Some PDF writers make bold by drawing the text twice, a hair apart: the PDF's text then has every figure twice
+    though the page shows it once. That is no hidden text."""
+    import pymupdf
+
+    lines = ["INVOICE NW-2026-0042", "Northwind Supplies Ltd.", "Paper A4 12 42.25 507.00", "Toner 4 155.15 620.60",
+             "Desk 2 1,234.56 2,469.12", "Delivery 1 125.00 125.00", "Subtotal 3,721.72", "GST (5%) 186.09",
+             "Total 3,907.81"]  # fmt: skip
+    doc = pymupdf.open()
+    page = doc.new_page()
+    for i, line in enumerate(lines):
+        for dx in (0, 0.3):  # drawn twice
+            page.insert_text((40 + dx, 60 + 18 * i), line, fontsize=9)
+    bold = tmp_path / "bold.pdf"
+    doc.save(bold)
+    check = _check(analyze(bold, ocr=False, page_text=["\n".join(lines)], today=TODAY))
+    assert check["ok"] and check["confirmed"] == check["figures"] >= 8, check
+    tampered = "\n".join(lines).replace("3,721.72", "2,721.72").replace("3,907.81", "2,907.81")
+    check = _check(analyze(bold, ocr=False, page_text=[tampered], today=TODAY))
+    assert not check["ok"] and set(check["fields"]) >= {"subtotal", "grand_total"}, check
+
+
 def test_too_few_figures_are_not_judged(tmp_path):
     import pymupdf
 
