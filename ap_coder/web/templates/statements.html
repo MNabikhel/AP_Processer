@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% from "_sheet.html" import preview, columns %}
+{% from "_tiles.html" import tile_row %}
+{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+{% if not names %}
+<section class="card">{{ ui.empty_state("No vendors yet", "Process a few invoices first; then reconcile their statements.") }}</section>
+{% else %}
+<section class="card">
+  <h4>Statement</h4>
+  <form method="post" action="/statements/upload" enctype="multipart/form-data" class="row upload-row" data-busy="Reading…">
+    <label class="field">Vendor
+      <select name="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+    <label class="field">Statement (CSV or Excel)
+      <input type="file" name="file" accept=".csv,.xlsx,.xls" required></label>
+    <button class="btn{{ '' if s else ' primary' }}" type="submit"><span class="ms" aria-hidden="true">upload_file</span>Upload</button>
+  </form>
+  <p class="muted small">One row per invoice, credit or payment, as the vendor sent it. Nothing is stored.</p>
+  {% if s %}
+  {{ preview(s, "/statements", {"vendor": vendor, "file": s.token}) }}
+  <form method="get" action="/statements" class="stack">
+    {{ columns(s) }}
+    <div class="row">
+      <label class="field inline">Vendor
+        <select name="vendor">{% for key, name in names.items() %}<option value="{{ key }}"{% if key == vendor %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">fact_check</span>Reconcile</button>
+    </div>
+  </form>
+  {% endif %}
+  {% if error %}<div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>{{ error }}</div></div>{% endif %}
+</section>
+
+{% if rec %}
+{{ tile_row(tiles) }}
+<section class="card" id="result">
+  <div class="card-head">
+    <h4>{{ names[vendor] }}</h4>
+    <a class="btn" href="/statements/reconciliation.csv?{{ query }}" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+  </div>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th></th><th>Invoice #</th><th>Date</th><th class="r">Statement</th><th class="r">AP Coder</th><th class="r">Difference</th><th>In AP Coder</th></tr></thead>
+      <tbody>
+        {% for r in lines %}{% set li = r.line %}
+        <tr>
+          <td>{{ ui.pill(r.label, r.tone[0], r.tone[1]) }}</td>
+          <td>{{ li.number or "—" }}</td>
+          <td>{{ li.date }}</td>
+          <td class="r">{{ "" if li.statement_amount is none else li.statement_amount | money }}</td>
+          <td class="r">{{ "" if li.ap_amount is none else li.ap_amount | money }}</td>
+          <td class="r">{% if li.difference %}<b class="bad">{{ li.difference | money }}</b>{% endif %}</td>
+          <td class="w">{{ r.where }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted small">Not received: ask the vendor for a copy (or check it was not sent to someone else). Amount differs:
+    compare the two documents; a credit note may be missing. Not on statement: the vendor may have missed it, or it was
+    already paid.</p>
+  {% if mail %}
+  <details class="expander" id="mail"{% if request.query_params.get("lang") %} open{% endif %}>
+    <summary><span class="ms" aria-hidden="true">forward_to_inbox</span>Ask the vendor for the missing invoices</summary>
+    <div class="segmented" role="group" aria-label="Language">
+      {% for key, label in languages.items() %}
+      <a href="/statements?{{ query }}&lang={{ key }}#mail" class="{{ 'on' if key == lang else '' }}"{% if key == lang %} aria-current="true"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </div>
+    <span class="muted small">Subject</span>
+    <pre class="code">{{ mail.subject }}</pre>
+    <span class="muted small">Message</span>
+    <pre class="code wrap">{{ mail.body }}</pre>
+    <a class="btn" href="{{ mailto }}"><span class="ms" aria-hidden="true">mail</span>Open in email</a>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

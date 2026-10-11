@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<section class="card">
+  <form method="get" action="/search" role="search" class="search-box">
+    <label class="search-field"><span class="ms" aria-hidden="true">search</span>
+      <input type="search" name="q" value="{{ q }}" placeholder="e.g. northwind 0912 · 18,017.85 · PO-88213"
+             aria-label="Search" autofocus></label>
+    <button class="btn primary" type="submit">Search</button>
+  </form>
+  <p class="muted">Words match the vendor name; numbers match the invoice number (however written), the PO or the amount
+    (dates are not searched). Use both to narrow it down.</p>
+</section>
+
+{% if searched and not hits %}
+<section class="card">
+  {{ ui.empty_state("Not found", "Not in AP Coder or the ERP register. Ask the vendor to send it (or check it was not sent to someone else).") }}
+</section>
+{% endif %}
+
+{% for h in hits %}
+<section class="card hit">
+  <div class="hit-body">
+    <div class="row"><b>{{ h.vendor }}</b>{{ ui.pill(*h.pill) }}</div>
+    <div class="muted">Invoice {{ h.number }} · {{ h.date }}{% if h.due %} · due {{ h.due }}{% endif %} · {{ h.total | money }} {{ h.currency }}</div>
+    <div>{{ h.where }}</div>
+  </div>
+  <div class="hit-actions">
+    {% if not h.erp and h.status == "review" %}
+    <a class="btn" href="/review/{{ h.id }}"><span class="ms" aria-hidden="true">open_in_new</span>Open</a>
+    {% elif not h.erp and h.status == "pending_approval" %}
+    <span class="muted small">Approved PDF once the second approver has approved it.</span>
+    {% elif not h.erp and h.status == "approved" %}
+    <a class="btn" href="/search/{{ h.id }}/approved.pdf" download title="The invoice with its APPROVED stamp and coding page">
+      <span class="ms" aria-hidden="true">approval</span>Approved PDF</a>
+    {% elif not h.erp and h.status == "parked" %}
+    <form method="post" action="/search/{{ h.id }}/unpark">
+      <button class="btn" type="submit" title="Back to the review queue, and open it"><span class="ms" aria-hidden="true">play_circle</span>Bring back</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% endfor %}
+{% if limited %}<p class="muted">The best {{ limit }} matches: add words or numbers to narrow it down.</p>{% endif %}
+{% endblock %}
