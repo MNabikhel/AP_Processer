@@ -668,9 +668,8 @@ def cmd_schema(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    for stream in (sys.stdout, sys.stderr):  # a Windows console or log file (cp1252) can't show every character
-        if hasattr(stream, "reconfigure"):  # of a file name or vendor: shown as "?", never a crash
-            stream.reconfigure(errors="replace")
+    if hasattr(sys.stdout, "reconfigure"):  # a Windows console or log file (cp1252) can't show every character of a
+        sys.stdout.reconfigure(errors="replace")  # file name or vendor: "?", never a crash (stderr escapes them)
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
