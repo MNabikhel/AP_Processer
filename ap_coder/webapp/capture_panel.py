@@ -31,7 +31,7 @@ from ap_coder.webapp.viewer import invoice_viewer, page_words, render_pages
 
 VIEWER_HEIGHT = 760  # px; the page scrolls inside, the field list stays beside it
 PAGE_READER_POLL_SECONDS = 20  # while the page reader has the open invoice in its queue
-VIEWABLE = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+VIEWABLE = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".heic", ".heif"}
 
 # Capture fields a reviewer can teach: they are fields of the review form (same names).
 TEACHABLE = (

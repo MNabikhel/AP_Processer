@@ -309,11 +309,13 @@ def render_pages(path: str, mtime: float) -> list[bytes]:
 
         with pymupdf.open(path) as doc:
             return [page.get_pixmap(dpi=120).tobytes("png") for page in doc]
-    if suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}:
-        from PIL import Image, ImageSequence
+    if suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".heic", ".heif"}:
+        from PIL import ImageSequence
+
+        from ap_coder.capture.layout import open_image
 
         pages = []
-        with Image.open(path) as img:
+        with open_image(path) as img:  # an iPhone's HEIC/HEIF photo too, with pillow-heif
             for frame in ImageSequence.Iterator(img):
                 buf = io.BytesIO()
                 frame.convert("RGB").save(buf, format="PNG")
