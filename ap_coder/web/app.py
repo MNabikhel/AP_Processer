@@ -64,16 +64,22 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             app.state.reader = page_worker.start_background(
                 settings_factory, lambda: Store(store.path), cache_dir=core.cache_dir(store)
             )
+            from ap_coder import azure_check
+
+            # The optional Azure check (Settings → Reading): it does nothing while it is off, the default.
+            app.state.azure_checker = azure_check.start_background(settings_factory, lambda: Store(store.path))
         yield
-        reader = getattr(app.state, "reader", None)
-        if reader is not None:
-            reader.stop()
+        for name in ("reader", "azure_checker"):
+            worker = getattr(app.state, name, None)
+            if worker is not None:
+                worker.stop()
 
     app = FastAPI(title="AP Coder", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.store = store
     app.state.settings_factory = settings_factory
     app.state.jobs = Jobs()
     app.state.reader = None
+    app.state.azure_checker = None  # the Azure check's thread (ap_coder/azure_check.py), started with the reader
     app.state.port = None  # set by server.serve
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve

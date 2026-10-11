@@ -129,6 +129,11 @@ CREATE TABLE IF NOT EXISTS page_reads (
     error TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS page_reads_status ON page_reads (status, created_at);
+CREATE TABLE IF NOT EXISTS azure_checks (
+    invoice_id INTEGER PRIMARY KEY, reason TEXT NOT NULL, status TEXT NOT NULL, pages INTEGER NOT NULL DEFAULT 0,
+    compared INTEGER NOT NULL DEFAULT 0, agreed INTEGER NOT NULL DEFAULT 0, result_json TEXT,
+    error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, compared_at TEXT);
+CREATE INDEX IF NOT EXISTS azure_checks_status ON azure_checks (status, created_at);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
@@ -139,6 +144,14 @@ PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED = "waiting", "r
 PAGE_READ_STATUSES = (PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED)
 STALE_READING_HOURS = 2
 _IN_LINE = "(status = 'waiting' OR (status = 'reading' AND updated_at < ?))"  # ? = _stale_before()
+
+# The Azure check's queue (``azure_checks.status``, ``ap_coder/azure_check.py``): off unless AP turns it on in
+# Settings → Reading. A check still "checking" after STALE_READING_HOURS was interrupted: it waits in line again.
+AZURE_WAITING, AZURE_CHECKING, AZURE_DONE = "waiting", "checking", "done"
+AZURE_FAILED, AZURE_SKIPPED = "failed", "skipped"
+_AZURE_IN_LINE = (  # ? = _stale_before()
+    "(azure_checks.status = 'waiting' OR (azure_checks.status = 'checking' AND azure_checks.updated_at < ?))"
+)
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
 _HEADER_FIELDS = (
@@ -825,7 +838,7 @@ class Store:
             # What capture read, and the supplier accuracy measured on it, go with the invoice: a deleted
             # invoice (a duplicate upload, a demo) must not count towards a supplier's autonomy, a reader's
             # record or the confidence calibration, and is no longer waiting for the page reader.
-            for table in ("invoice_capture", "supplier_outcomes", "reader_outcomes", "page_reads"):
+            for table in ("invoice_capture", "supplier_outcomes", "reader_outcomes", "page_reads", "azure_checks"):
                 conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
             if row is not None:
                 self._log(conn, "deleted", invoice_id, actor, {
@@ -1812,12 +1825,17 @@ class Store:
 
     # --- Each reader against what AP approved; the page reader's queue -------------------------------------------
 
-    def record_reader_outcomes(self, invoice_id: int, rows: list[dict[str, Any]], at: str | None = None) -> int:
+    def record_reader_outcomes(
+        self, invoice_id: int, rows: list[dict[str, Any]], at: str | None = None, reader: str | None = None
+    ) -> int:
         """What each capture reader read on an approved invoice, against what AP approved
         (``capture.workflow.reader_outcome_rows``): one row per reader and field; reader "fused" is the value
         AP saw, with its evidence key and status. Recording an invoice again replaces its rows (an invoice
-        approved again after a reopen). Returns how many rows were kept."""
+        approved again after a reopen). ``reader``: only that reader's rows are replaced (the Azure check, run on an
+        invoice already approved, adds reader "di" beside the others). Returns how many rows were kept."""
         at = at or _now()
+        if reader:
+            rows = [r for r in rows if r.get("reader") == reader]
 
         def text(value: Any) -> str | None:
             return None if value is None else str(value)
@@ -1830,7 +1848,10 @@ class Store:
             if r.get("reader") and r.get("field")
         ]  # fmt: skip
         with self._conn() as conn:
-            conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ?", (invoice_id,))
+            if reader:
+                conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ? AND reader = ?", (invoice_id, reader))
+            else:
+                conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ?", (invoice_id,))
             conn.executemany(
                 """INSERT INTO reader_outcomes (invoice_id, reader, field, read_value, final_value, correct, evidence,
                    layout_source, status, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -2041,6 +2062,151 @@ class Store:
                 (invoice_id, stale, stale, me[0], me[0], invoice_id),
             ).fetchone()
         return int(row[0])
+
+    # --- The Azure check's queue (ap_coder/azure_check.py) -----------------------------------------------------
+
+    def queue_azure_check(self, invoice_id: int, reason: str) -> bool:
+        """Put an invoice in line for the Azure check (``reason``: "low-confidence" or "spot-check"). One already in
+        line or checked stays as it is, except that a low-confidence reason replaces a spot-check still waiting, and
+        one skipped before is put back in line. False when nothing changed."""
+        now = _now()
+        with self._conn() as conn:
+            cur = conn.execute(
+                """INSERT INTO azure_checks (invoice_id, reason, status, created_at, updated_at)
+                   VALUES (?, ?, 'waiting', ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET reason = excluded.reason,
+                   status = 'waiting', error = '', updated_at = excluded.updated_at
+                   WHERE azure_checks.status = 'skipped' OR (azure_checks.status = 'waiting'
+                   AND azure_checks.reason != excluded.reason AND excluded.reason = 'low-confidence')""",
+                (invoice_id, reason, now, now),
+            )
+            return cur.rowcount > 0
+
+    def next_azure_check(self, *, after_page_reader: bool = False) -> dict[str, Any] | None:
+        """The invoice the Azure check takes next (the one waiting longest), marked as being checked; None when
+        nothing waits. ``after_page_reader``: leave invoices still waiting for the page reader (OvisOCR2 is running
+        and will read them): they are checked once it has, on the invoice as it then stands."""
+        now, stale = _now(), _stale_before()
+        later = (
+            " AND NOT EXISTS (SELECT 1 FROM page_reads p WHERE p.invoice_id = azure_checks.invoice_id "
+            "AND p.status IN ('waiting', 'reading'))"
+            if after_page_reader
+            else ""
+        )
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                f"SELECT invoice_id FROM azure_checks WHERE {_AZURE_IN_LINE}{later} "
+                "ORDER BY created_at, invoice_id LIMIT 1",
+                (stale,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE azure_checks SET status = 'checking', error = '', updated_at = ? WHERE invoice_id = ?",
+                (now, row[0]),
+            )
+            taken = conn.execute("SELECT * FROM azure_checks WHERE invoice_id = ?", (row[0],)).fetchone()
+        return dict(taken)
+
+    def finish_azure_check(
+        self, invoice_id: int, status: str, *, result: dict[str, Any] | None = None, pages: int = 0,
+        compared: int = 0, agreed: int = 0, error: str = "", reason: str | None = None,
+    ) -> bool:  # fmt: skip
+        """How a check ended: ``done`` (``result``: Azure's values and the comparison), ``failed`` (``error``),
+        ``skipped`` (nothing to check), or ``waiting`` (back in line, e.g. the day's page cap is reached)."""
+        if status not in (AZURE_WAITING, AZURE_DONE, AZURE_FAILED, AZURE_SKIPPED):
+            raise ValueError(f"unknown Azure check status {status!r}")
+        now = _now()
+        with self._conn() as conn:
+            cur = conn.execute(
+                """UPDATE azure_checks SET status = ?, result_json = COALESCE(?, result_json), pages = ?,
+                   compared = ?, agreed = ?, error = ?, updated_at = ?, reason = COALESCE(?, reason),
+                   compared_at = CASE WHEN ? = 'done' THEN ? ELSE compared_at END WHERE invoice_id = ?""",
+                (status, json.dumps(result, default=str) if result is not None else None, int(pages or 0),
+                 int(compared or 0), int(agreed or 0), (error or "")[:2000], now, reason, status, now, invoice_id),
+            )  # fmt: skip
+            return cur.rowcount > 0
+
+    def azure_check(self, invoice_id: int) -> dict[str, Any] | None:
+        """The invoice's Azure check: {invoice_id, reason, status, pages, compared, agreed, result (dict or None),
+        error, created_at, updated_at, compared_at}, or None when it was never put in line."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM azure_checks WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        if row is None:
+            return None
+        check = dict(row)
+        check["result"] = json.loads(check.pop("result_json") or "null")
+        if check["status"] == AZURE_CHECKING and check["updated_at"] < _stale_before():
+            check["status"] = AZURE_WAITING
+        return check
+
+    def azure_pages_on(self, day: str | None = None) -> int:
+        """The pages sent to Azure on ``day`` (YYYY-MM-DD, default today): what the daily cap counts."""
+        day = day or dt.date.today().isoformat()
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(pages), 0) FROM azure_checks WHERE status = 'done' "
+                "AND substr(compared_at, 1, 10) = ?",
+                (day,),
+            ).fetchone()
+        return int(row[0] or 0)
+
+    def azure_checks_since(self, since_iso: str) -> list[dict[str, Any]]:
+        """Every check done since ``since_iso``, newest first, with the invoice's vendor, number and status:
+        {invoice_id, reason, pages, compared, agreed, result, compared_at, vendor_name, invoice_number,
+        invoice_status}."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT a.invoice_id, a.reason, a.pages, a.compared, a.agreed, a.result_json, a.compared_at,
+                   i.vendor_name, i.invoice_number, i.status invoice_status FROM azure_checks a
+                   LEFT JOIN invoices i ON i.id = a.invoice_id WHERE a.status = 'done' AND a.compared_at >= ?
+                   ORDER BY a.compared_at DESC, a.invoice_id DESC""",
+                (since_iso,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["result"] = json.loads(item.pop("result_json") or "null")
+            out.append(item)
+        return out
+
+    def azure_check_counts(self) -> dict[str, int]:
+        """How many checks are in each state: {waiting, checking, done, failed, skipped}."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT status, COUNT(*) n FROM azure_checks GROUP BY status").fetchall()
+        counts = dict.fromkeys((AZURE_WAITING, AZURE_CHECKING, AZURE_DONE, AZURE_FAILED, AZURE_SKIPPED), 0)
+        counts.update({r["status"]: int(r["n"]) for r in rows})
+        return counts
+
+    def update_after_azure_check(
+        self, invoice_id: int, capture: dict[str, Any] | None, issue: dict[str, Any] | None, code: str,
+        meta: dict[str, Any] | None = None,
+    ) -> bool:  # fmt: skip
+        """Fold an Azure check into an invoice still open (in review or parked): the capture (fields Azure read
+        differently marked Check), the review issue ``code`` replaced by ``issue`` (None removes it) and ``meta``
+        merged into the processing notes. Nothing changes on an invoice approved, rejected or deleted (False)."""
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status, validation, meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+            if row is None or row["status"] not in (REVIEW, PARKED):
+                return False
+            validation = json.loads(row["validation"] or "null") or {}
+            issues = [i for i in validation.get("issues") or [] if i.get("code") != code]
+            if issue:
+                issues.append(issue)
+                validation["requires_review"] = True
+            if validation:
+                validation["issues"] = issues
+            merged = {**(json.loads(row["meta"] or "null") or {}), **(meta or {})}
+            conn.execute(
+                "UPDATE invoices SET validation = ?, meta = ?, requires_review = CASE WHEN ? THEN 1 "
+                "ELSE requires_review END WHERE id = ?",
+                (json.dumps(validation) if validation else None, json.dumps(merged, default=str), int(bool(issue)),
+                 invoice_id),
+            )  # fmt: skip
+            if capture is not None:
+                self._save_capture(conn, invoice_id, capture)
+        return True
 
     def replace_proposal(
         self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
