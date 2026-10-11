@@ -397,7 +397,8 @@ jobs:
           python-version: "3.12"
       - name: AP Coder 0.1 in folder A, its data inside it
         run: |
-          A="$RUNNER_TEMP/AP Coder 0.1"
+          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -u "$RUNNER_TEMP")"; fi  # tar takes D: for a host
+          A="$T/AP Coder 0.1"
           mkdir -p "$A"
           old=""
           for c in $(git log --format=%H -- pyproject.toml); do
@@ -438,7 +439,8 @@ jobs:
           python -c "import json, pathlib, sys; h = pathlib.Path.home() / '.ap_coder'; h.mkdir(exist_ok=True); (h / 'settings.json').write_text(json.dumps({'data_dir': str(pathlib.Path(sys.argv[1]).resolve() / 'private'), 'desktop_shortcut': True}))" "$A"
       - name: The new version unzipped into folder B
         run: |
-          B="$RUNNER_TEMP/AP Coder 0.2"
+          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -u "$RUNNER_TEMP")"; fi  # tar takes D: for a host
+          B="$T/AP Coder 0.2"
           mkdir -p "$B"
           git archive HEAD | tar -x -C "$B"
           python scripts/build_offline_bundle.py --manifest-for "$B"
@@ -446,11 +448,12 @@ jobs:
       # One step from here on: a process started in the background may not outlive its step on Windows.
       - name: A's dashboard running; double-click B; double-click B again
         run: |
-          A="$RUNNER_TEMP/AP Coder 0.1"
-          B="$RUNNER_TEMP/AP Coder 0.2"
+          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -u "$RUNNER_TEMP")"; fi  # tar takes D: for a host
+          A="$T/AP Coder 0.1"
+          B="$T/AP Coder 0.2"
           # Its Streamlit dashboard: the font only AP Coder 0.1 serves, run as "streamlit run <A>/ap_coder/dashboard.py".
-          mkdir -p "$RUNNER_TEMP/bin"
-          cat > "$RUNNER_TEMP/bin/streamlit" <<'EOF'
+          mkdir -p "$T/bin"
+          cat > "$T/bin/streamlit" <<'EOF'
           import http.server, sys
           class H(http.server.BaseHTTPRequestHandler):
               def log_message(self, *a): pass
@@ -459,32 +462,32 @@ jobs:
                   self.end_headers()
           http.server.HTTPServer(("127.0.0.1", int(sys.argv[-1])), H).serve_forever()
           EOF
-          nohup python "$RUNNER_TEMP/bin/streamlit" run "$A/ap_coder/dashboard.py" --server.port 8501 > "$RUNNER_TEMP/old.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/old.pid"
+          nohup python "$T/bin/streamlit" run "$A/ap_coder/dashboard.py" --server.port 8501 > "$T/old.log" 2>&1 &
+          echo $! > "$T/old.pid"
           for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8501/app/static/InterVariable.woff2 && break; sleep 1; done
           curl -fsS -o /dev/null http://127.0.0.1:8501/app/static/InterVariable.woff2
           # The double-click: APProcessor.bat on Windows, APProcessor.command elsewhere.
           launch() { if [ "$RUNNER_OS" = Windows ]; then cmd //c "APProcessor.bat $*"; else ./APProcessor.command "$@"; fi; }
           cd "$B"
-          launch --port 8597 > "$RUNNER_TEMP/launch.out" 2>&1 &
+          launch --port 8597 > "$T/launch.out" 2>&1 &
           health=""
           for _ in $(seq 1 180); do
             sleep 5
             if health="$(curl -fsS --max-time 5 http://127.0.0.1:8597/healthz)"; then break; fi
             health=""
           done
-          cat "$RUNNER_TEMP/launch.out"
+          cat "$T/launch.out"
           if [ -z "$health" ]; then echo 'the new version did not start'; exit 1; fi
           echo "healthz: $health"
           curl -fsS -o /dev/null http://127.0.0.1:8597/  # opens the database (backed up before it is brought up to date)
           fail() { echo "FAILED: $*"; exit 1; }
-          out="$RUNNER_TEMP/launch.out"
+          out="$T/launch.out"
           grep -q 'Updated AP Coder from 0.1.0' "$out" || fail 'it did not say it updated from 0.1.0'
           grep -q 'Self-check OK' "$out" || fail 'the self-check did not run (or failed)'
           grep -q 'stopping it, so this version takes over' "$out" || fail 'the old dashboard was not noticed'
           grep -q 'Removed the older AP Coder folder' "$out" || fail 'the old folder was not removed'
           grep -q 'Removed 1 file the older version left' "$out" || fail 'the leftover file was not removed'
-          if kill -0 "$(cat "$RUNNER_TEMP/old.pid")" 2>/dev/null; then fail 'the old dashboard still runs'; fi
+          if kill -0 "$(cat "$T/old.pid")" 2>/dev/null; then fail 'the old dashboard still runs'; fi
           if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:8501/app/static/InterVariable.woff2; then fail 'port 8501 still serves the old dashboard'; fi
           [ ! -e "$A" ] || fail "the old folder is still there: $(ls -a "$A")"
           [ ! -e "$B/ap_coder/stale_module.py" ] || fail 'the leftover file is still there'
