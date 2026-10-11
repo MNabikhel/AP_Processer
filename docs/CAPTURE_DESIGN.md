@@ -400,6 +400,77 @@ A digital sample PDF (2 pages, 18 minutes): OvisOCR2 read all 24 of its figures 
 were read the same by both, and a field they read differently is marked *Check*. Both stayed in review: touchless
 processing is off, and neither vendor has a record yet.
 
+## Pictures become PDFs, and line items read with the table finder
+
+**Every invoice is a PDF** (`ap_coder/intake.py`). A JPEG, PNG, iPhone HEIC/HEIF, TIFF (every frame) or BMP that
+comes in (upload, invoices folder, email attachment, `process`/`watch`) is made into a PDF first
+(`InvoicePipeline.process`): one page a picture, upright as its EXIF says, at its resolution (a believable DPI gives
+the page its size, else a letter-sized page). A JPEG goes in as it is, turned by the page's `/Rotate`; PNG, TIFF and
+BMP losslessly; HEIC (which a PDF can't hold) as a quality-95 JPEG. The invoice is stored, read, shown and stamped as
+the PDF; the picture moves to `originals/` beside it, and the PDF's metadata records its name, SHA-256 and where it
+was kept (`intake.original_of`). `invoices.original_sha256` keeps the picture's hash, so `Store.find_by_hash` finds
+the same photo sent twice (upload, folder or `watch`). OCR of a converted page reads the picture's own pixels
+(`layout._scan_png`), not a re-rendering: the text read is the same as before the conversion. A picture stored by an
+older version and read again by the page reader stays where it is.
+
+**The table finder** (`capture/table_finder.py`) is RapidAI's YOLOv8n "general6" layout model, as CloseDesk uses
+it (12 MB ONNX, Apache-2.0, SHA-256 `927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95`). It ships in
+the offline bundle's `models/` folder (`offline.bundle_models`, `scripts/build_offline_bundle.py`), is looked for
+there or in the data folder's `models/`, checked against its SHA-256, and never downloaded by the app. It looks at
+every page (digital PDFs rendered too) and returns the tables on it (score ≥ 0.25, overlapping finds merged).
+Without it, line items are read as before and Settings → Reading shows its row as missing.
+
+**Line items, read three ways from the page** (`capture/__init__._page_lines`), best first:
+1. the words inside the tables found (`reader.inside_tables`): a note or remittance box beside the rows is left out;
+2. the words under the column headings across the page (the reading as before);
+3. on a digital PDF, the PDF's own table (`capture/tables.py`, the essentials of CloseDesk's `pdf_layout.py`):
+   columns from the lines drawn down the table, or the strips no row writes across, named by their headings; a line
+   without an amount under a line item is the rest of its description.
+
+The first that adds up to the subtotal is kept. All of them read the rows on the page straightened: a scan's tilt
+is measured from the OCR's own text lines (`PageLayout.skew`), and at 1.4° a row's description sits a whole row
+away from its amount. A found table whose headings OCR can't read (bilingual headings run together) is read by its
+amount column (`reader._headerless_rows`). Sentences under a table that reach the amount column ("subject to GST 5%")
+and a total row whose label OCR lost are no longer read as lines.
+
+Camelot (CloseDesk's other table reader) is not used: it installs from wheels for Python 3.11-3.14 on Windows and
+macOS, but it needs `opencv-python-headless`, which can't sit beside the `opencv-python` the OCR engines need (both
+are the `cv2` module), and adds about 45 MB a platform to the bundle.
+
+**In tandem with OvisOCR2** (`capture/line_items.py`). Once OvisOCR2 has read the invoice, its table is compared row
+by row with the page's readings: the same amount, the same quantity when both read one, and descriptions at least
+60% alike (letters, or one's words all in the other: OCR runs words together, a code may be in one only). The first
+reading of the page that agrees marks every line *agreed* (`LineReading.agreed`, with `source` saying whose row it
+is); none agreeing fails `LINE_ITEMS_AGREE` with the first line read differently. A failed `LINE_ITEMS_AGREE` is a
+failed check like any other: the invoice is not approved without a person (`should_auto_approve`; it is not one of
+`HEADER_PROVEN_SOFT`). When only one side read line items there is nothing to compare and no check. The review
+screen says where the lines came from and whether two readers agree.
+
+**Measured.** The benchmark (no page reader, so the readers of the page alone), on the same invoices before and after,
+with the table finder:
+
+| test set | header-field accuracy | verified coverage | invoices fully right | line items found (recall) | line items returned that are right (precision) |
+| --- | --- | --- | --- | --- | --- |
+| 100 scans (seed 41) | 99.7% → 99.7% | 47.0% → **50.1%** | 96.0% → 96.0% | 89.9% → **98.3%** | 89.3% → **99.3%** |
+| 300 digital PDFs (seed 211) | 99.9% → 99.9% | 55.6% → 55.8% | 98.7% → 98.7% | 98.2% → **99.7%** | 96.8% → **99.8%** |
+
+No header field read worse, field by field; *verified* values stayed 100% right (more of them, as lines that add up
+confirm the subtotal). The benchmark's line matcher counts a line with no description (which OCR often gave a tilted
+scan's rows) as found, so the lines were also scored strictly, amount and description (at least 60% alike) both
+right:
+
+| test set | before | after, without the table finder | after, with it | invoices with every line right, no extra line |
+| --- | --- | --- | --- | --- |
+| 100 scans (seed 41) | 29.1% | 95.2% | **98.3%** | 22 → 89 → **91** |
+| 300 digital PDFs (seed 211) | 98.2% | 98.2% | **99.7%** | 219 → 287 → **295** |
+
+Most of the gain on scans is the straightening; the table finder adds the tables whose headings can't be read and
+keeps text beside the table out. On the 9 real OvisOCR2 readings above, OCR's own line items went from 31 to 55 of 56 lines
+(the benchmark's matcher; it also counts a line with no description, which OCR often gave before); with OvisOCR2,
+56 of 56 as before, and `LINE_ITEMS_AGREE` passed on 8 of the 9: on the ninth OCR missed one line's amount (a
+misread "9.61"), and the check sent it to a person. The 10 sample invoices, with their text copies standing in for
+OvisOCR2, agree on every line. The table finder takes about half a second a page on the (busy) 4-core test machine.
+
 ## Learning from approvals: each reader's record, local calibration, training data
 
 Every approval is the ground truth for that invoice. When it is approved, each reader's raw value for each
