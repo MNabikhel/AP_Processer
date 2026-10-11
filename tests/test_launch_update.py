@@ -421,6 +421,12 @@ def test_a_wheelhouse_for_another_python_says_which_to_install(launch, monkeypat
     message = launch.wheelhouse_misfit()
     assert "built for Windows, Python 3.11/3.12; this computer has Python 3.14" in message
     assert "install Python 3.12" in message and "--python 3.14" in message
+    # The tester's case: what to do agrees with it (it said to unzip "the bundle built for this computer", which this
+    # one is: only its Python differs).
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1"], "Missing: ap_coder"))
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert "Install Python 3.12" in exc.value.hint and "bundle built for this computer" not in exc.value.hint
 
 
 def test_a_wheelhouse_that_fits_says_nothing(launch, monkeypatch):

@@ -735,9 +735,13 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
         return without_wheelhouse(missing, total)
     misfit = wheelhouse_misfit() if wheelhouse_dir().is_dir() else ""
     if misfit and source:  # offline: pip would only fail with a long, unclear error
+        python = re.search(r"this computer has Python [\d.]+: install Python ([\d.]+)", misfit)  # (only Python differs)
         raise SetupError(
             f"{misfit}: nothing was installed.",
-            "Unzip the offline bundle built for this computer (into a new folder, or over this one), then start "
+            f"Install Python {python.group(1)} on this computer (from python.org, or ask IT), then start AP Coder "
+            "again: it is found and used on its own. Or unzip a bundle built for this Python."
+            if python
+            else "Unzip the offline bundle built for this computer (into a new folder, or over this one), then start "
             "AP Coder again.",
         )
     if source:
