@@ -140,13 +140,18 @@ on `127.0.0.1`, and a test fails if any page tries to connect to the internet. O
 One way for every invoice, with nothing to configure. A digital PDF, a scan and a phone photo (iPhone HEIC
 too) go through the same steps:
 
+- **Every invoice becomes a PDF.** A photo or scan (JPG, PNG, HEIC, TIFF) is turned into a PDF when it
+  arrives; the original is kept next to it, and a photo sent twice is still caught as a duplicate.
 - **The page's own words.** A digital PDF's text layer is read as it is; a scan or a photo is read by OCR on
-  the laptop, with two engines.
+  the laptop, with two engines (tilted scans are straightened first).
+- **The table finder** (a small layout model, as in CloseDesk, in the offline bundle) finds the line-item
+  table on each page, so line items are read from the table alone.
 - **OvisOCR2 reads every page too**, digital PDFs included, as an independent second reader. It runs in LM
   Studio, in the background, and is trusted only after its self-test, which runs on its own.
 - **The rule reader, the supplier's template and the business checks** (totals, tax, GST/HST number, vendor
   master, PO, duplicates, bank account) compare what the readers found. A field they agree on is
-  *verified*; one they read differently is marked *Check*.
+  *verified*; one they read differently is marked *Check*. Line items must agree between the table reading
+  and OvisOCR2 (`LINE_ITEMS_AGREE`), or the invoice goes to a person.
 - **Hidden text is checked against the page.** On a digital PDF, the text layer is compared with what
   OvisOCR2 sees printed (`TEXT_LAYER_MATCHES_PAGE`). A PDF whose hidden text gives another total than its
   page shows is flagged.
