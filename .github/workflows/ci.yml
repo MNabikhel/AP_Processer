@@ -331,13 +331,11 @@ jobs:
           HTTP_PROXY: http://127.0.0.1:9
           HTTPS_PROXY: http://127.0.0.1:9
           ALL_PROXY: http://127.0.0.1:9
-          http_proxy: http://127.0.0.1:9
-          https_proxy: http://127.0.0.1:9
-          all_proxy: http://127.0.0.1:9
           PIP_INDEX_URL: http://127.0.0.1:9/simple
           NO_PROXY: 127.0.0.1,localhost
-          no_proxy: 127.0.0.1,localhost
         run: |
+          # GitHub's env names are case-insensitive, so the lower-case copies (read by curl and some tools) are set here.
+          export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" all_proxy="$ALL_PROXY" no_proxy="$NO_PROXY"
           ./APProcessor.command --port 8596 > launch.out 2> launch.err &
           pid=$!
           ok=""
@@ -361,11 +359,9 @@ jobs:
           HTTP_PROXY: http://127.0.0.1:9
           HTTPS_PROXY: http://127.0.0.1:9
           ALL_PROXY: http://127.0.0.1:9
-          http_proxy: http://127.0.0.1:9
-          https_proxy: http://127.0.0.1:9
-          all_proxy: http://127.0.0.1:9
           NO_PROXY: 127.0.0.1,localhost
-          no_proxy: 127.0.0.1,localhost
         run: |
+          # GitHub's env names are case-insensitive, so the lower-case copies (read by curl and some tools) are set here.
+          export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" all_proxy="$ALL_PROXY" no_proxy="$NO_PROXY"
           .venv/bin/python scripts/fetch_models.py --check
           .venv/bin/python scripts/pilot_check.py
