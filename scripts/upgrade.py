@@ -24,6 +24,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -78,6 +79,24 @@ def shown_size(size: int) -> str:
     return f"{size / 1e6:,.0f} MB" if size >= 1e6 else f"{size / 1e3:,.0f} KB"
 
 
+def rmtree(path: Path) -> None:
+    """Delete ``path`` and everything in it as far as possible, read-only files too (Windows refuses to delete one
+    until it is made writable). What is in use is left, for a later start."""
+
+    def writable_again(func: Callable, name: str, _exc: object) -> None:
+        try:
+            for target in (os.path.dirname(name), name):
+                os.chmod(target, os.stat(target).st_mode | stat.S_IWRITE | stat.S_IREAD)
+            func(name)
+        except OSError:
+            pass
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=writable_again)
+    else:  # pragma: no cover - Python 3.11
+        shutil.rmtree(path, onerror=writable_again)
+
+
 def remove_folder(folder: Path) -> bool:
     """Remove ``folder`` whole, or not at all as far as possible: it is first renamed (which fails at once while a
     program in it runs, on Windows), then deleted. True when it is gone; a part that could not be deleted is left as
@@ -89,7 +108,7 @@ def remove_folder(folder: Path) -> bool:
         folder.rename(aside)
     except OSError:
         return False
-    shutil.rmtree(aside, ignore_errors=True)
+    rmtree(aside)
     return not aside.exists()
 
 
@@ -431,7 +450,7 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
         if not folder.exists():
             for rest in removing(folder):  # what an earlier removal left behind
                 size = size_of(rest)
-                shutil.rmtree(rest, ignore_errors=True)
+                rmtree(rest)
                 freed += size - (size_of(rest) if rest.exists() else 0)
             if not removing(folder):
                 paths.forget_install(folder)
@@ -441,6 +460,7 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
             continue
         adopt_legacy(folder, data, say)
         why = removable(folder, root)
+        later = False  # the whole folder is to go, on a later start: kept on record
         if not why:
             size = size_of(folder)
             if remove_folder(folder):
@@ -448,15 +468,19 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
                 paths.forget_install(folder)
                 say(f"  Removed the older AP Coder folder {folder} ({shown_size(size)}).")
                 continue
-            freed += size - sum(size_of(p) for p in removing(folder))
-            say(f"  {folder}: most of it was removed; the rest is removed on a later start (a file in it is in use).")
-            continue
+            if removing(folder):  # renamed, then partly deleted
+                freed += size - sum(size_of(p) for p in removing(folder))
+                say(f"  {folder}: most of it was removed; the rest is removed on a later start (a file in it is in "
+                    "use).")  # fmt: skip
+                continue
+            # Not even renamed (Windows: an old AP Coder window still has it as its current folder): what can go now.
+            why, later = "a program still has it open (an old AP Coder window?); it is removed on a later start", True
         parts = [p for p in (folder / ".venv", folder / "models") if p.exists()] + removing(folder)
         size = sum(size_of(p) for p in parts)
         left = [p for p in parts if not remove_folder(p)] + removing(folder)
         gone = size - sum(size_of(p) for p in left if p.exists())
         freed += gone
-        if not left:
+        if not left and not later:
             paths.forget_install(folder)
         what = f"removed its .venv and models ({shown_size(gone)}); " if gone else ""
         say(f"  Kept the older AP Coder folder {folder}: {what}the folder itself stays because {why}.")

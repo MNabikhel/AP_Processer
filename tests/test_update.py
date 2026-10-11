@@ -314,6 +314,58 @@ def test_an_unfinished_removal_is_finished_by_a_later_start(upgrade, tmp_path):
     assert not rest.exists() and paths.installs() == []
 
 
+def test_an_older_folder_a_window_still_has_open_loses_its_venv_and_is_removed_later(upgrade, tmp_path, monkeypatch):
+    """Windows: the old AP Coder window (stopped by the new one, waiting at "Press any key") has its folder as its
+    current folder, so the folder can't be renamed or removed. Nothing was removed, yet the start said "most of it
+    was removed" and counted the whole folder as freed."""
+    old = make_install(tmp_path / "AP Coder 0.1", "0.1.0", "2026-09-01T10:00:00")
+    paths.record_install(paths.install_identity(old), current=False)
+    real_rename = Path.rename
+
+    def rename(self, target):
+        if self == old:
+            raise PermissionError(32, "The process cannot access the file because it is being used", str(self))
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    said: list[str] = []
+    freed = upgrade.clean_up(tmp_path / "new", tmp_path / "data", [old], said.append)
+    assert old.exists() and not (old / ".venv").exists() and not (old / "models").exists()
+    assert freed == 7000 and not list(tmp_path.glob("*.removing-*"))
+    assert "removed its .venv and models" in said[0] and "most of it was removed" not in said[0]
+    assert [e["folder"] for e in paths.installs()] == [str(old)]  # still on record: removed whole later
+    monkeypatch.setattr(Path, "rename", real_rename)  # the window was closed
+    upgrade.clean_up(tmp_path / "new", tmp_path / "data", [old], said.append)
+    assert not old.exists() and paths.installs() == []
+
+
+def test_read_only_files_in_an_older_folder_are_removed_too(upgrade, tmp_path, monkeypatch):
+    """Windows refuses to delete a read-only file: the folder was left half-removed (``.removing-...``) on every
+    start, and the older install never left the record."""
+    import os
+    import stat
+
+    old = make_install(tmp_path / "AP Coder 0.1", "0.1.0", "2026-09-01T10:00:00")
+    (old / "docs").mkdir()
+    (old / "docs" / "guide.pdf").write_text("read-only")
+    (old / "docs" / "guide.pdf").chmod(stat.S_IREAD)
+    (old / ".venv" / "lib" / "big.bin").chmod(stat.S_IREAD)
+    paths.record_install(paths.install_identity(old), current=False)
+    real_unlink = os.unlink
+
+    def unlink(path, *, dir_fd=None):  # as Windows: a read-only file is never deleted
+        if not os.stat(path, dir_fd=dir_fd, follow_symlinks=False).st_mode & stat.S_IWUSR:
+            raise PermissionError(13, "Access is denied", path)
+        return real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "remove", unlink)
+    said: list[str] = []
+    upgrade.clean_up(tmp_path / "new", tmp_path / "data", [old], said.append)
+    assert not old.exists() and not list(tmp_path.glob("*.removing-*")) and paths.installs() == []
+    assert "Removed the older AP Coder folder" in said[-1]
+
+
 def test_legacy_installs_are_found_from_the_data_folder_they_used(upgrade, tmp_path):
     old = make_install(tmp_path / "AP Coder 0.1", "0.1.0", venv=False)
     paths.write_user_settings(data_dir=str(old / "private"))
