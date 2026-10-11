@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{# The invoice review screen: a placeholder until pages/invoice.py is built (see its docstring). #}
+{% block heading %}{{ invoice.vendor_name or invoice.file_name or "Invoice" }}{% endblock %}
+{% block subtitle %}{{ invoice.invoice_number or "No invoice number" }} · {{ invoice.invoice_date or "no date" }} ·
+  {{ invoice.grand_total | money(invoice.currency or "") }}{% endblock %}
+{% block aside %}<a class="btn" href="/review"><span class="ms" aria-hidden="true">arrow_back</span>Back to the queue</a>{% endblock %}
+{% block content %}
+<section class="card">
+  {{ ui.empty_state("The review screen is on its way", "Reviewing an invoice is being moved to the new AP Coder dashboard. The invoice is safe in your data and waits in the queue.") }}
+</section>
+{% endblock %}
