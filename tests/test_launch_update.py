@@ -221,6 +221,30 @@ def test_the_older_install_is_kept_while_the_self_check_fails(launch, monkeypatc
     assert cleaned == [] and f"kept in {old} until the self-check passes" in capsys.readouterr().out
 
 
+def test_an_ap_coder_0_1_folder_whose_data_moved_out_is_still_cleaned_up(launch, monkeypatch, tmp_path, capsys):
+    """AP Coder 0.1 kept no record of itself: it was found only from its data folder (``<folder>/private``). The
+    start moved that data out first, so the older folder (and its 1 GB .venv) was never cleaned up: not on this
+    start, nor on a later one after a failed self-check."""
+    monkeypatch.delenv("AP_PRIVATE_DIR")
+    home = tmp_path / "APCoder"
+    monkeypatch.setattr(launch, "ensure_data_folder",
+                        lambda: launch.upgrade.settle_data_folder(launch.ROOT, launch.say, default=home))  # fmt: skip
+    old = tmp_path / "AP Coder 0.1"
+    (old / "ap_coder").mkdir(parents=True)
+    (old / "scripts").mkdir()
+    (old / "scripts" / "launch.py").write_text("")
+    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    (old / "private").mkdir()
+    (old / "private" / "ap_coder.db").write_text("the data")
+    paths.write_user_settings(data_dir=str(old / "private"))  # all AP Coder 0.1 recorded
+    _, _, cleaned = _quiet_setup(launch, monkeypatch, self_check_ok=False)
+    assert launch.run(*launch.parse(["--venv=created"])) == 0
+    assert (home / "ap_coder.db").read_text() == "the data" and cleaned == []
+    assert f"kept in {old} until the self-check passes" in capsys.readouterr().out
+    _, _, cleaned = _quiet_setup(launch, monkeypatch)
+    assert launch.run(*launch.parse(["--check"])) == 0 and cleaned == [[old]]
+
+
 def test_a_database_made_by_a_newer_ap_coder_stops_the_start_plainly(launch, monkeypatch, tmp_path, capsys):
     started, _, _ = _quiet_setup(launch, monkeypatch)
     import sqlite3

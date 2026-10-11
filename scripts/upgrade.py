@@ -201,6 +201,16 @@ def legacy_installs(root: Path, extra: list[str | Path] = ()) -> list[Path]:
     return found
 
 
+def remember(folders: list[Path]) -> None:
+    """Put older AP Coder folders that kept no record of themselves (AP Coder 0.1) on the record, not as the current
+    one. What found them (the data folder they used, the desktop shortcut) is changed by this start, and they are to
+    be cleaned up once the new version passed its self-check: on this start, or a later one."""
+    known = paths.installs()
+    for folder in folders:
+        if is_install(folder) and not any(paths.same_folder(folder, e["folder"]) for e in known):
+            paths.record_install(paths.install_identity(folder), current=False)
+
+
 def previous_versions(root: Path, extra: list[str | Path] = ()) -> list[dict]:
     """The identities of every other install on record (and the unrecorded AP Coder 0.1 ones), oldest first."""
     folders = [Path(e["folder"]) for e in paths.installs() if not paths.same_folder(e["folder"], root)]
@@ -345,6 +355,8 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
             say(f"Note: your data is still in {recorded}, inside an AP Coder code folder, because {default} already "
                 f"holds other data. Keep that folder until you move one of them.")  # fmt: skip
             return recorded
+        if not paths.same_folder(recorded.parent, root):
+            remember([recorded.parent])  # (found from this data folder only: on the record before it moves)
         items = [p for p in recorded.iterdir() if p.name not in ("README.md", ".ap_coder_server.json")]
         _move_into(items, default)
         paths.write_user_settings(data_dir=str(default))

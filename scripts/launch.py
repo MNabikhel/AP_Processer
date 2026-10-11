@@ -1273,6 +1273,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
 
     legacy = legacy_folders()  # (before the shortcut is pointed here: an AP Coder 0.1 shortcut names its folder)
     previous = previous_install(state, ident, legacy)
+    upgrade.remember(upgrade.legacy_installs(ROOT, legacy))  # (what found them changes below: kept on record)
     if previous:
         exact = paths.describe(previous) == paths.describe(ident)  # the same version, rebuilt the same day
         say(f"Updated AP Coder from {paths.describe(previous, exact)} to {paths.describe(ident, exact)}.")
