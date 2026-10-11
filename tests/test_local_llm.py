@@ -149,14 +149,14 @@ def test_settings_from_env(monkeypatch, tmp_path):
         monkeypatch.setenv(name, value)
     llm = Settings.from_env(tmp_path / "missing.env").llm
     assert (llm.provider, llm.base_url, llm.model, llm.vision, llm.max_prompt_chars) == (
-        "local",
+        "auto",  # AP_LLM_PROVIDER is no longer read: every invoice is coded the same way
         "http://127.0.0.1:1234/v1",
         "",
         "off",
         8000,
     )
     assert llm.api_key == "lm-studio"
-    monkeypatch.setenv("AP_LLM_PROVIDER", "something-else")
+    monkeypatch.setenv("AP_LLM_PROVIDER", "off")
     assert Settings.from_env(tmp_path / "missing.env").llm.provider == "auto"
 
 
@@ -182,7 +182,10 @@ def test_lm_studio_vision_model_and_nothing_loaded(lm_studio):
 
     idle = lm_studio(["qwen2.5-7b-instruct", "llama-3.2-3b-instruct"], [{**V0_LOADED[2], "state": "not-loaded"}])
     status = check_server(LocalLLMSettings(base_url=idle.base_url))
-    assert status.reachable and not status.active  # never makes LM Studio load the first model on its list
+    assert status.active and status.model == "qwen2.5-7b-instruct"  # downloaded: LM Studio loads it when asked
+    reader_only = lm_studio(["ath-maas_ovisocr2", "text-embedding-nomic-embed-text-v1.5"], [])
+    status = check_server(LocalLLMSettings(base_url=reader_only.base_url))
+    assert status.reachable and not status.active  # OvisOCR2 reads pages, it never suggests accounts
     assert "no model is loaded" in status.describe()
 
 
@@ -203,7 +206,8 @@ def test_detection_when_nothing_answers_is_quick_and_cached(real_fetch, monkeypa
         ("my-model", ["a", "b"], [], False, "my-model"),  # AP_LLM_MODEL wins
         ("", ["nomic-embed-text", "llama3.1:8b"], [], False, "llama3.1:8b"),  # Ollama: no embedding model
         ("", ["a", "b"], ["text-embedding-x", "b"], True, "b"),
-        ("", ["a", "b"], [], True, ""),  # LM Studio with nothing loaded: none
+        ("", ["a", "b"], [], True, "a"),  # LM Studio with nothing loaded: a downloaded chat model, loaded when asked
+        ("", ["ath-maas_ovisocr2", "text-embedding-x"], [], True, ""),  # never OvisOCR2 or an embedding model
         ("", [], [], False, ""),
     ],
 )
@@ -220,35 +224,46 @@ def test_other_servers_guess_vision_from_the_name(lm_studio):
 # --- Which provider -------------------------------------------------------------------------------------------
 
 
-def test_provider_auto(lm_studio):
+def test_every_invoice_is_coded_the_same_way(lm_studio, monkeypatch):
+    """Local always in the offline build, whether LM Studio answers or not (it used to be "off" when it didn't, and
+    an invoice was coded differently depending on the moment). Azure only with the internet allowed."""
     azure = Settings(openai=OpenAISettings(endpoint="https://x.openai.azure.com/"))
-    assert resolve_provider(azure) == "azure"
-    assert resolve_provider(Settings(llm=LocalLLMSettings(base_url="http://127.0.0.1:9/v1"))) == "off"
+    assert resolve_provider(azure) == "local"  # offline: an Azure endpoint in the .env is never used
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+    assert resolve_provider(azure) == "azure" and provider_status(azure).ready
+    assert resolve_provider(replace(azure, llm=LocalLLMSettings(provider="local"))) == "local"
+    monkeypatch.delenv("AP_ALLOW_INTERNET")
+    assert resolve_provider(Settings(llm=LocalLLMSettings(base_url="http://127.0.0.1:9/v1"))) == "local"
     server = lm_studio(["qwen2.5-7b-instruct"], V0_LOADED)
     local = Settings(llm=LocalLLMSettings(base_url=server.base_url))
     assert resolve_provider(local) == "local"
     assert provider_status(local).label == "LM Studio · qwen2.5-7b-instruct"
     assert resolve_provider(replace(local, llm=replace(local.llm, provider="off"))) == "off"
-    assert resolve_provider(replace(azure, llm=LocalLLMSettings(provider="local"))) == "local"
 
 
 def test_no_model_anywhere(reference, sample_markdown_path):
     settings = Settings()  # auto, no Azure, nothing answering (conftest)
-    assert resolve_provider(settings) == "off"
+    assert resolve_provider(settings) == "local"
     status = provider_status(settings)
     assert not status.ready and "Not running" in status.detail
     coder = InvoiceCoder(settings, reference)  # building it never waits on a server
     assert coder.wants_images() is False
-    with pytest.raises(CodingError, match="No AI model is set up"):
+    with pytest.raises(CodingError, match="isn't answering"):
         coder.code(result_from_text(sample_markdown_path))
 
 
-def test_pipeline_without_a_model_records_a_readable_failure(reference, sample_markdown_path):
+def test_a_text_invoice_without_a_model_is_read_by_the_rule_reader(reference, sample_markdown_path, ground_truth):
+    """A .md/.txt invoice with no AI model used to fail ("No AI model is set up"): it is read by the same rule reader
+    and checks as a PDF, its text taken as exact, and coded from AP's history (none here: left for AP)."""
+    from ap_coder.offline_coder import MODEL_NAME
     from ap_coder.pipeline import InvoicePipeline
 
     result = InvoicePipeline(Settings(), reference).process(sample_markdown_path)
-    assert not result.ok and "No AI model is set up" in result.error
-    assert result.extraction is not None  # the text was still read
+    assert result.ok, result.error
+    assert result.coding.model == MODEL_NAME and result.capture is not None
+    for name in ("vendor_name", "invoice_number", "invoice_date", "grand_total", "subtotal"):
+        assert result.output[name] == ground_truth[name], name
+    assert result.capture.layout_source == "text"
 
 
 # --- Reading a small model's reply ----------------------------------------------------------------------------
@@ -345,7 +360,7 @@ def test_server_down_while_coding(real_fetch, reference, sample_markdown_path):
 
 
 def test_lm_studio_running_without_a_model(lm_studio, reference, sample_markdown_path):
-    server = lm_studio(["qwen2.5-7b-instruct"], [{**V0_LOADED[2], "state": "not-loaded"}])
+    server = lm_studio(["ath-maas_ovisocr2"], [{"id": "ath-maas_ovisocr2", "type": "vlm", "state": "loaded"}])
     with pytest.raises(CodingError, match="no model is loaded"):
         InvoiceCoder(local_settings(server.base_url), reference).code(result_from_text(sample_markdown_path))
 

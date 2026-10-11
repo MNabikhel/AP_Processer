@@ -53,7 +53,7 @@ def test_installer_env_has_no_example_endpoints(tmp_path, monkeypatch):
     assert not [line for line in live if "<your-resource>" in line]
     settings = Settings.from_env(env)
     assert settings.openai.endpoint is None and settings.document_intelligence.endpoint is None
-    assert resolve_provider(settings, probe=False) == "off"  # not "azure"
+    assert resolve_provider(settings, probe=False) == "local"  # not "azure"
 
 
 def test_example_endpoints_left_in_an_older_env_count_as_unset(tmp_path, monkeypatch):
@@ -69,7 +69,7 @@ def test_example_endpoints_left_in_an_older_env_count_as_unset(tmp_path, monkeyp
     _forget_env_after_test(monkeypatch, env.read_text() + "AP_LLM_PROVIDER=\n")
     settings = Settings.from_env(env)
     assert settings.openai.endpoint is None and settings.document_intelligence.endpoint is None
-    assert resolve_provider(settings, probe=False) == "off"
+    assert resolve_provider(settings, probe=False) == "local"
 
 
 def test_terminal_works_after_the_folder_is_moved():
