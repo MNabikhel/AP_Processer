@@ -197,8 +197,12 @@ def launch(tmp_path, monkeypatch):
     return module
 
 
-def _manifest(launch, *versions: str, current: str = "") -> None:
-    targets = [f"win_amd64, Python {v}" for v in versions]
+def _manifest(launch, *versions: str, current: str = "", platform: str = "win_amd64", here: bool = True) -> None:
+    """A bundle for ``platform`` (and for the Linux computer that built it, ``current``). ``here``: the computer the
+    launcher runs on is a ``platform`` one (else it is what launch.wheel_platform() works out)."""
+    if here:
+        launch.wheel_platform = lambda: platform
+    targets = [f"{platform}, Python {v}" for v in versions]
     if current:
         targets.insert(0, f"this computer (linux-x86_64, Python {current})")
     (launch.ROOT / "bundle_manifest.json").write_text(json.dumps({"targets": targets}), encoding="utf-8")
@@ -226,7 +230,7 @@ def test_bundle_pythons_are_read_from_the_manifest_in_version_order(launch):
 
 def test_a_python_the_bundle_was_not_built_for_is_said_plainly(launch, monkeypatch, capsys):
     """Found: Python 3.14; the bundle has 3.11 and 3.12. It says which, and what IT can do; it still goes on."""
-    _manifest(launch, "3.11", "3.12")
+    _manifest(launch, "3.11", "3.12", platform="macosx_14_0_arm64", here=False)  # this Mac: macOS 15.4, arm64
     monkeypatch.setattr(launch, "sys", _found((3, 14, 5), "/usr/local/bin/python3", "darwin"))
     monkeypatch.setattr(launch.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(launch.platform, "mac_ver", lambda: ("15.4", ("", "", ""), "arm64"))
@@ -242,7 +246,7 @@ def test_a_python_the_bundle_was_not_built_for_is_said_plainly(launch, monkeypat
 
 
 def test_a_python_the_bundle_has_gets_no_note(launch, monkeypatch, capsys):
-    _manifest(launch, "3.11", "3.12", "3.13", "3.14")
+    _manifest(launch, "3.11", "3.12", "3.13", "3.14", platform="macosx_14_0_arm64")
     monkeypatch.setattr(launch, "sys", _found((3, 14, 5), "/usr/local/bin/python3", "darwin"))
     monkeypatch.setattr(launch, "ensure_venv", lambda: "created")
     monkeypatch.setattr(launch.subprocess, "call", lambda cmd: 0)

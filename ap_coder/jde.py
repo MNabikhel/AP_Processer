@@ -112,6 +112,9 @@ UNCONFIRMED = (
 )
 
 HEADER_FILE, DIST_FILE, MATCH_FILE = "F0411Z1.csv", "F0911Z1.csv", "F0411Z1T.csv"
+# The text columns filled from invoice text, at their Z-table widths: still within them once made formula-safe.
+TEXT_WIDTHS = {"VLVINV": 25, "VLRMK": 30, "VNEXA": 30, "VNEXR": 30, "DSC1": 30}
+E1_YEARS = range(1900, 2900)  # what CYYDDD holds: century digit 0 (1900s) to 9 (2800s)
 
 
 @dataclass
@@ -269,8 +272,8 @@ def julian(value: dt.date | dt.datetime | str) -> int:
         value = dt.date.fromisoformat(value.strip()[:10])
     if isinstance(value, dt.datetime):
         value = value.date()
-    if value.year < 1900:
-        raise ValueError(f"{value} is before 1900")
+    if value.year not in E1_YEARS:
+        raise ValueError(f"{value} is outside what JD Edwards dates hold (1900 to 2899)")
     return (value.year - 1900) * 1000 + value.timetuple().tm_yday
 
 
@@ -434,8 +437,11 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     po = str(final.get("po_number") or "").strip()
     if po and len(po) > 8 and (settings.send_po_reference or settings.po_matched):
         add(f"PO number {po!r} is longer than 8 characters (VLPO)")
-    if _date(final.get("invoice_date")) is None:
+    invoice_date = _date(final.get("invoice_date"))
+    if invoice_date is None:
         add("no invoice date")
+    elif invoice_date.year not in E1_YEARS:
+        add(f"invoice date {invoice_date} is outside what JD Edwards dates hold (1900 to 2899)")
 
     v.currency = _norm(final.get("currency")) or settings.domestic_currency.upper()
     allowed = {_norm(c) for c in settings.currencies} | {_norm(settings.domestic_currency)}
@@ -466,6 +472,9 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
 
     # In the currency's own units: whole yen are sent as whole yen, so the voucher balances as E1 reads it.
     v.gross = _units(final.get("grand_total"), v.decimals)
+    due = _date(final.get("due_date") or inv.get("due_date"))
+    if settings.send_due_date and v.gross >= 0 and due is not None and due.year not in E1_YEARS:
+        add(f"due date {due} is outside what JD Edwards dates hold (1900 to 2899)")  # (a credit's is not sent)
     v.stam = sum(_units(t.get("tax_amount"), v.decimals) for t in charged)
     v.atxa = max((_units(t.get("taxable_amount"), v.decimals) for t in charged), key=abs, default=0)
     v.charged, v.recoverable_types = charged, RECOVERABLE_BY_CODE.get(v.tax_code, frozenset())
@@ -771,7 +780,9 @@ def _csv(columns: list[str], rows: list[dict[str, Any]]) -> bytes:
     writer = csv.writer(buf, lineterminator="\r\n")
     writer.writerow(columns)
     for r in rows:
-        writer.writerow(csv_row(["" if r.get(c) is None else r.get(c) for c in columns]))
+        safe = csv_row(["" if r.get(c) is None else r.get(c) for c in columns])
+        writer.writerow([v[: TEXT_WIDTHS[c]] if c in TEXT_WIDTHS and isinstance(v, str) else v
+                         for c, v in zip(columns, safe, strict=True)])  # fmt: skip
     return buf.getvalue().encode("utf-8")  # no BOM: database loaders read the first header as-is
 
 

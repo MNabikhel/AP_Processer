@@ -2312,6 +2312,9 @@ class Store:
         target = sqlite3.connect(dest)
         try:
             source.backup(target)
+            # One self-contained file (not WAL, which needs -wal / -shm files beside it): it opens and restores from
+            # anywhere, also a read-only network share or USB stick.
+            target.execute("PRAGMA journal_mode=DELETE")
         finally:
             target.close()
             source.close()
@@ -2376,15 +2379,38 @@ class Store:
         return made
 
     @staticmethod
+    @contextmanager
+    def _local_copy(backup: str | Path) -> Iterator[Path]:
+        """A copy of ``backup`` in a temporary folder on this computer, to open: nothing is ever written next to the
+        backup itself (SQLite would, for a WAL-format one), which may be on a read-only share or a UNC path."""
+        import tempfile
+
+        path = Path(backup)
+        with tempfile.TemporaryDirectory(prefix="ap_coder-backup-", ignore_cleanup_errors=True) as folder:
+            copy = Path(folder) / "backup.db"
+            try:
+                shutil.copyfile(path, copy)
+                wal = path.with_name(path.name + "-wal")  # a database still open elsewhere: its latest changes
+                if wal.is_file():
+                    shutil.copyfile(wal, copy.with_name(copy.name + "-wal"))
+            except OSError as exc:
+                raise ValueError(f"{path.name} could not be opened ({exc.strerror or exc})") from None
+            yield copy
+
+    @staticmethod
     def check_backup(backup: str | Path) -> None:
         """Raise ValueError (in plain words) unless ``backup`` is an AP Coder database this version can open:
         a ``schema_version`` setting no newer than this version's, and no triggers or views (AP Coder makes
         none; one in a planted file would run on every later change)."""
-        path = Path(backup)
+        with Store._local_copy(backup) as copy:
+            Store._check_backup_file(copy, Path(backup).name)
+
+    @staticmethod
+    def _check_backup_file(path: Path, name: str) -> None:
         try:
             conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         except sqlite3.Error as exc:
-            raise ValueError(f"{path.name} could not be opened ({exc})") from None
+            raise ValueError(f"{name} could not be opened ({exc})") from None
         try:
             kinds = {r[0] for r in conn.execute("SELECT type FROM sqlite_master WHERE type IN ('trigger', 'view')")}
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -2394,35 +2420,36 @@ class Store:
                 else None
             )
         except sqlite3.DatabaseError:
-            raise ValueError(f"{path.name} is not an AP Coder database (or it is damaged)") from None
+            raise ValueError(f"{name} is not an AP Coder database (or it is damaged)") from None
         finally:
             conn.close()
         if kinds:
-            raise ValueError(f"{path.name} contains {' and '.join(sorted(kinds))}s, which AP Coder never makes")
+            raise ValueError(f"{name} contains {' and '.join(sorted(kinds))}s, which AP Coder never makes")
         if row is None or not {"invoices", "feedback"} <= tables:
-            raise ValueError(f"{path.name} is not an AP Coder database")
+            raise ValueError(f"{name} is not an AP Coder database")
         try:
             version = int(row[0])
         except (TypeError, ValueError):
-            raise ValueError(f"{path.name} is not an AP Coder database") from None
+            raise ValueError(f"{name} is not an AP Coder database") from None
         if version > SCHEMA_VERSION:
-            raise ValueError(f"{path.name} was made by a newer version of AP Coder: update AP Coder first")
+            raise ValueError(f"{name} was made by a newer version of AP Coder: update AP Coder first")
 
     def restore_from(self, backup: str | Path) -> Path:
         """Replace the database with a backup. The current one is backed up first (returned).
         Raises ValueError, with nothing changed, when the file is not an AP Coder backup (``check_backup``).
         The second backup folder is cleared after a restore: a backup file must not choose where later
         backups are copied (set it again in Settings)."""
-        self.check_backup(backup)
-        copy_dir = self.get_setting("backup_copy_dir").strip()
-        safety = self.backup_now("before-restore")
-        source = sqlite3.connect(Path(backup))
-        target = sqlite3.connect(self.path)
-        try:
-            source.backup(target)
-        finally:
-            target.close()
-            source.close()
+        with self._local_copy(backup) as copy:  # read from this computer, never written next to the backup
+            self._check_backup_file(copy, Path(backup).name)
+            copy_dir = self.get_setting("backup_copy_dir").strip()
+            safety = self.backup_now("before-restore")
+            source = sqlite3.connect(copy)
+            target = sqlite3.connect(self.path)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+                source.close()
         with self._conn() as conn:
             conn.executescript(_SCHEMA)  # an older backup may lack newer tables...
             self._migrate(conn)  # ...and columns

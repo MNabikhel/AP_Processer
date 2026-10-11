@@ -205,6 +205,13 @@ class DocumentExtractor:
             raise RuntimeError(
                 "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT is not set (pass a .md/.txt file to skip extraction)"
             )
+        from .offline import INTERNET_ENV, internet_allowed
+
+        if not internet_allowed():  # the offline build: an invoice never leaves this computer
+            raise RuntimeError(
+                f"Azure Document Intelligence is not used in this offline build (developers: {INTERNET_ENV}=1); "
+                "`process` reads invoices on this computer"
+            )
         return DocumentIntelligenceClient(endpoint=self.settings.endpoint, credential=build_credential(self.settings))
 
     def _cache_path(self, data: bytes) -> Path | None:

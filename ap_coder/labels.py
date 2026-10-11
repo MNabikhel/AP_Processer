@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .reference_data import UNASSIGNED, ReferenceData
-from .safe import neutralise_sheet, parse_amount
+from .safe import FORMULA_START, csv_cell, neutralise_sheet, parse_amount, xlsx_row
 
 SHEET = "Labels"
 HEADER_FIELDS = (
@@ -122,7 +122,7 @@ def export_labels(
         with dest.open("w", newline="", encoding="utf-8-sig") as fh:
             writer = csv.DictWriter(fh, fieldnames=COLUMNS)
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows({k: csv_cell(v) for k, v in row.items()} for row in rows)  # opened in Excel
     elif dest.suffix.lower() == ".xlsx":
         _write_xlsx(dest, rows, reference)
     else:
@@ -143,7 +143,7 @@ def _write_xlsx(dest: Path, rows: list[dict[str, str]], reference: ReferenceData
         cell.font = Font(bold=True)
     flagged_fill = PatternFill("solid", fgColor="FFF4CC")
     for row in rows:
-        ws.append([row[c] for c in COLUMNS])
+        ws.append(xlsx_row([row[c] for c in COLUMNS]))
         if row["model_flagged_for_review"]:
             for cell in ws[ws.max_row]:
                 cell.fill = flagged_fill
@@ -199,7 +199,8 @@ def _read_rows(path: Path) -> list[tuple[int, dict[str, Any]]]:
         for encoding in ("utf-8-sig", "cp1252"):
             try:
                 with path.open(newline="", encoding=encoding) as fh:
-                    return [(i, row) for i, row in enumerate(csv.DictReader(fh), start=2)]
+                    rows = enumerate(csv.DictReader(fh), start=2)
+                    return [(i, {k: _from_csv(v) for k, v in row.items()}) for i, row in rows]
             except UnicodeDecodeError:
                 continue
         raise ValueError(f"{path}: could not decode CSV (save it as UTF-8)")
@@ -213,6 +214,13 @@ def _read_rows(path: Path) -> list[tuple[int, dict[str, Any]]]:
     rows = [(i, dict(zip(header, values, strict=False))) for i, values in enumerate(it, start=2)]
     wb.close()
     return rows
+
+
+def _from_csv(value: Any) -> Any:
+    """A CSV cell as it was before ``csv_cell`` put an apostrophe in front of formula-looking text."""
+    if isinstance(value, str) and value[1:].startswith(FORMULA_START) and csv_cell(value[1:]) == value:
+        return value[1:]
+    return value
 
 
 def _text(value: Any) -> str:

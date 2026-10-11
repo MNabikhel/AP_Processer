@@ -23,7 +23,7 @@ from ap_coder.reference_data import UNASSIGNED, ReferenceData, short_name
 from ap_coder.safe import md
 from ap_coder.store import Store, default_db_path
 
-DB_PATH = Path(os.environ.get("AP_DB_PATH") or default_db_path())
+DB_PATH = paths.env_path("AP_DB_PATH") or default_db_path()
 # The public demo on the web (``streamlit_app.py`` sets it): made-up invoices only, read ahead of time, no folders.
 PUBLIC_DEMO = os.environ.get("AP_PUBLIC_DEMO", "").strip().lower() in {"1", "true", "yes", "on"}
 INVOICE_DIR = DB_PATH.parent / "invoices"
