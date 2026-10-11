@@ -532,7 +532,7 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .card.flush > * + * {margin-top: 0;}
 .card.list {padding: 4px 20px;}
 .card.list > * + * {margin-top: 0;}
-.card-head {display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;}
+.card-head {display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px;}
 .card-head p {margin: 2px 0 0;}
 .pad {padding: 16px;}
 .grid-3-2 {display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start;}
@@ -543,7 +543,7 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .row.end {justify-content: flex-end;}
 .row.center {justify-content: center;}
 .stack {display: flex; flex-direction: column; gap: 8px; align-items: flex-start;}
-.table-wrap {overflow-x: auto;}
+.table-wrap {overflow-x: auto; position: relative; max-width: 100%;}  /* relative: a hidden label inside scrolls with it */
 .link {display: inline-flex; align-items: center; gap: 4px; font-size: 13.5px; font-weight: 500;}
 
 /* ==== Buttons and fields ===================================================================================== */
@@ -585,7 +585,8 @@ textarea {height: auto; padding: 8px 10px; line-height: 1.45;}
 .tabs a.on {color: var(--lg-text); border-bottom-color: var(--lg-accent);}
 
 /* A segmented filter (links): neutral track, the chosen one white */
-.segmented {display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--lg-r); background: var(--lg-neutral);}
+.segmented {display: inline-flex; flex-wrap: wrap; max-width: 100%; gap: 2px; padding: 2px; border-radius: var(--lg-r);
+  background: var(--lg-neutral);}
 .segmented a {height: 30px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: var(--lg-r-sm);
   color: var(--lg-muted); font-size: 13px; font-weight: 500; white-space: nowrap;}
 .segmented a:hover {color: var(--lg-text); text-decoration: none;}

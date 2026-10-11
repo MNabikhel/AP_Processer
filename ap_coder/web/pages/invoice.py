@@ -85,6 +85,11 @@ def forget_draft(request: Request, invoice_id: int) -> None:
     _drafts(request).pop(invoice_id, None)
 
 
+def forget_all_drafts(request: Request) -> None:
+    """After a restore the invoices are the backup's (and their numbers are given again): no edit applies to them."""
+    _drafts(request).clear()
+
+
 def _reader_at(inv: dict[str, Any]) -> str:
     return str(((inv.get("meta") or {}).get("page_reader") or {}).get("at") or "")
 

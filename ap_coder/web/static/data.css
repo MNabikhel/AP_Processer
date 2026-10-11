@@ -44,7 +44,7 @@ details.expander[open] > summary {margin-bottom: 4px;}
 /* Code-like text: an email draft, a CSV preview */
 pre.code {margin: 0; padding: 10px 12px; background: var(--lg-head); border: 1px solid var(--lg-hairline);
   border-radius: var(--lg-r); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  overflow-x: auto; white-space: pre; color: var(--lg-text);}
+  overflow-x: auto; white-space: pre; color: var(--lg-text); max-width: 100%;}
 pre.code.wrap {white-space: pre-wrap; word-break: break-word;}
 
 /* Tables with fields in their cells (layout, GL accounts, rules) */

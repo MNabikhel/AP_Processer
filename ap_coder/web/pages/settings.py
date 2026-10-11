@@ -306,6 +306,9 @@ def restore_backup(request: Request, name: str = Form(""), confirm: str = Form("
         safety = store.restore_from(path)
     except ValueError as exc:  # not an AP Coder backup: nothing was changed
         return refuse(f"Not restored: {exc}.")
+    from ap_coder.web.pages.invoice import forget_all_drafts
+
+    forget_all_drafts(request)  # edits made on the replaced invoices would open on the restored ones
     cleared = " The second backup folder was cleared: set it again below." if had_copy_dir else ""
     said = f"Restored {name}. The previous database was saved as {safety.name}.{cleared}"
     return done(request, tab_url("data"), said)

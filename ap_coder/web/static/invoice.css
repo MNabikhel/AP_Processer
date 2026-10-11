@@ -180,7 +180,7 @@
 .rvw-split .s4 {background: #CBD5E1;}
 .rvw-split .s5 {background: #E2E8F0;}
 .rvw-split .legend {display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12.5px; color: var(--rv-muted);}
-.rvw-split .legend span {display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;}
+.rvw-split .legend span {display: inline-flex; align-items: center; gap: 6px; max-width: 100%;}  /* a long GL name wraps */
 .rvw-split .legend i {width: 8px; height: 8px; border-radius: 2px; display: inline-block;}
 .rvw-split .legend b {color: var(--rv-text); font-weight: 600; font-variant-numeric: tabular-nums;}
 .rvw-split .legend em {font-style: normal; color: var(--rv-subtle); font-variant-numeric: tabular-nums;}

@@ -375,7 +375,10 @@ def review_delete(request: Request, invoice_id: int, back: str = Form("/review?t
     store = get_store(request)
     if store.get_invoice(invoice_id) is None:
         return refuse("That invoice is no longer in AP Coder.", 404)
+    from ap_coder.web.pages.invoice import forget_draft
+
     delete_invoice(store, invoice_id)
+    forget_draft(request, invoice_id)
     return done(request, back, flash_message("Deleted. The file moved to invoices/deleted.", "ok", icon="delete"))
 
 
