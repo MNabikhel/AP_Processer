@@ -155,7 +155,8 @@ def test_text_from_invoices_is_escaped(client, store, tmp_path):
     from ap_coder.store import load_sample_setup
 
     load_sample_setup(store)
-    pdf = tmp_path / "<script>alert(1).pdf"
+    # "<" and ">" can't be in a Windows file name; there the vendor name below carries the markup
+    pdf = tmp_path / ("<script>alert(1).pdf" if os.name != "nt" else "&lt;script&gt;alert(1).pdf")
     pdf.write_bytes(b"%PDF-1.4 test")
     output = {"vendor_name": "<img src=x onerror=alert(1)>", "invoice_number": "<b>1</b>", "grand_total": 10,
               "currency": "CAD", "lines": [], "tax_lines": []}  # fmt: skip

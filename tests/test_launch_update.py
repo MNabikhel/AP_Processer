@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -110,7 +111,7 @@ def test_a_mac_gets_one_launcher_on_its_desktop_that_opens_the_current_install(l
     made = desk / "AP Coder.command"
     text = made.read_text()
     assert text.startswith("#!/bin/bash") and f"exec '{launch.ROOT / 'APProcessor.command'}'" in text
-    assert made.stat().st_mode & 0o111
+    assert os.name == "nt" or made.stat().st_mode & 0o111  # executable on the Mac (Windows has no such bit)
     newer = tmp_path / "AP Coder 0.3"
     monkeypatch.setattr(launch, "ROOT", newer)
     assert "now opens" in launch.ensure_shortcut() and str(newer / "APProcessor.command") in made.read_text()
@@ -635,4 +636,4 @@ def test_a_desktop_and_shortcut_with_accents_are_read_right_on_windows(launch, m
     paths.write_user_settings(desktop_shortcut=True)
     monkeypatch.setattr(launch, "desktop", lambda: launch.ROOT)
     (launch.ROOT / "AP Coder.lnk").write_text("")
-    assert launch.old_shortcut_folder() == "/Users/José/Données/AP Coder 0.1"
+    assert Path(launch.old_shortcut_folder()) == Path("/Users/José/Données/AP Coder 0.1")  # "\\" on Windows
