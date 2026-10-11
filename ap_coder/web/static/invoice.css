@@ -151,6 +151,10 @@
 .inv-grid-table .c-gl {min-width: 200px;} .inv-grid-table .c-cc {min-width: 150px;}
 .inv-grid-table .c-qty, .inv-grid-table .c-price {width: 96px;}
 .inv-grid-table .c-del {width: 36px;}
+/* A cell's width is only a wish in a table: without these, a wide row squeezed 1200.00 down to "12". */
+.inv-grid-table .c-no input {min-width: 52px;}
+.inv-grid-table .c-amt input {min-width: 104px;}
+.inv-grid-table .c-qty input, .inv-grid-table .c-price input {min-width: 80px;}
 .inv-taxes {display: flex; gap: 2px;}
 .inv-taxes label {display: inline-flex; cursor: pointer;}
 .inv-taxes input {position: absolute; opacity: 0; width: 1px; height: 1px;}
@@ -195,6 +199,9 @@
   border-top: 1px solid var(--lg-border);}
 @media (max-width: 900px) {.inv-actionbar {margin: 16px -16px -64px; padding: 10px 16px;}}
 .inv-actionbar-left {display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-width: 0;}
+/* "Pick a GL account for lines 1, 3 and a cost center for…" wraps instead of widening the page on a phone */
+.inv-actionbar-left .apc-pill {white-space: normal; max-width: 100%;}
+@media (max-width: 600px) {.rvw-split .legend span {white-space: normal;}}
 .inv-actionbar-right {display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;}
 .rvw-post {display: flex; flex-direction: column; min-width: 0;}
 .rvw-post-amount {font-size: 14px; color: var(--rv-muted); white-space: nowrap;}

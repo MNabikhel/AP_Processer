@@ -263,7 +263,8 @@ def local_url(url: str, fallback: str = "/") -> str:
     """``url`` when it is a path on this server ("/review?tab=parked"), else ``fallback``: a page never sends the
     browser somewhere else."""
     url = str(url or "")
-    if not url.startswith("/") or url.startswith("//") or "\\" in url:
+    # Browsers drop tabs and line breaks from an address: "/<tab>/other.site" would be "//other.site" to them.
+    if not url.startswith("/") or url.startswith("//") or "\\" in url or any(c < " " or c == "\x7f" for c in url):
         return fallback
     return url
 
@@ -328,4 +329,8 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         "settings": settings,
     }
     base.update(context)
-    return templates.TemplateResponse(request, template, base, status_code=status_code)
+    response = templates.TemplateResponse(request, template, base, status_code=status_code)
+    # Never kept by the browser: Back after an action (park, approve...) shows where things stand now, not the page
+    # as it was before.
+    response.headers["Cache-Control"] = "no-store"
+    return response

@@ -91,8 +91,18 @@ export async function pollJob(url, onUpdate, everyMs = 800) {
   }
 }
 
-function setBusy(form, busy) {
-  const button = form.querySelector('button[type="submit"], button:not([type])');
+/** The button a form is sent with: the one clicked (it may sit outside the form, with form="id"), else its first. */
+function submitButton(form, submitter) {
+  if (submitter instanceof HTMLButtonElement) return submitter;
+  return (
+    form.querySelector('button[type="submit"], button:not([type])') ||
+    (form.id ? document.querySelector(`button[type="submit"][form="${CSS.escape(form.id)}"]`) : null)
+  );
+}
+
+function setBusy(form, busy, submitter) {
+  const button = busy ? submitButton(form, submitter) : form._busyButton;
+  if (busy) form._busyButton = button;
   if (!button) return;
   if (busy) {
     button.dataset.label = button.innerHTML;
@@ -115,18 +125,32 @@ export function watchJob(statusUrl, onUpdate) {
 }
 
 async function submitForm(form, submitter) {
+  if (form.dataset.sending) return; // already sent (a double click, Enter twice): never the same action twice
   if (form.dataset.confirm && !confirm(form.dataset.confirm)) return;
   const body = new FormData(form);
   if (submitter && submitter.name) body.append(submitter.name, submitter.value);
-  setBusy(form, true);
+  form.dataset.sending = "1";
+  setBusy(form, true, submitter);
   const answer = await post(form.action, body);
   if (answer.job && answer.status) {
     document.dispatchEvent(new CustomEvent("apc:job", { detail: answer }));
     if (!document.getElementById("job")) await watchJob(answer.status);
     return;
   }
-  if (!follow(answer)) setBusy(form, false);
+  if (!follow(answer)) {
+    delete form.dataset.sending;
+    setBusy(form, false);
+  }
 }
+
+// Back to a page the browser kept as it was left (after a form sent it elsewhere): its forms work again.
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  document.querySelectorAll("form[data-sending]").forEach((form) => {
+    delete form.dataset.sending;
+    setBusy(form, false);
+  });
+});
 
 document.addEventListener("submit", (event) => {
   const form = event.target;

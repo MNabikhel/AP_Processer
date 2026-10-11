@@ -512,6 +512,11 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .rail-foot {margin-top: auto; padding: 14px 0 16px 10px; border-top: 1px solid var(--lg-hairline);
   position: sticky; bottom: 0; background: var(--lg-surface);}
 .rail-demo {margin-bottom: 10px;}
+/* Keyboard: the first Tab of every page offers to skip the rail */
+.skip {position: absolute; left: 8px; top: -48px; z-index: 100; padding: 8px 14px; border-radius: var(--lg-r);
+  background: var(--lg-surface); color: var(--lg-text); box-shadow: var(--lg-focus); font-weight: 500;}
+.skip:focus {top: 8px;}
+.main:focus {outline: none;}
 .main {min-width: 0; margin-left: 256px; padding: 32px 40px 96px; max-width: 1656px;}
 .main > * + * {margin-top: 16px;}
 .main > .apc-head + * {margin-top: 12px;}
@@ -522,6 +527,11 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
   .nav-section {width: 100%; margin: 8px 0 2px;}
   .rail-foot {position: static;}
   .main {margin-left: 0; padding: 20px 16px 64px;}
+}
+/* A phone: long button labels wrap, and a card's title and its buttons share the width. */
+@media (max-width: 600px) {
+  .btn {white-space: normal; text-align: center; max-width: 100%; padding-top: 6px; padding-bottom: 6px; line-height: 1.25;}
+  .card-head {flex-wrap: wrap;}
 }
 
 /* ==== Cards and layout ====================================================================================== */
@@ -542,7 +552,11 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .row.end {justify-content: flex-end;}
 .row.center {justify-content: center;}
 .stack {display: flex; flex-direction: column; gap: 8px; align-items: flex-start;}
-.table-wrap {overflow-x: auto; position: relative; max-width: 100%;}  /* relative: a hidden label inside scrolls with it */
+/* Nothing in a column is wider than it: a wide table or text scrolls inside its own box, never the page. */
+.stack > * {max-width: 100%;}
+.stack > .table-wrap {align-self: stretch;}
+/* position: a visually hidden label (absolute) in a wide table stays in this box instead of widening the page */
+.table-wrap {overflow-x: auto; position: relative; max-width: 100%;}
 .link {display: inline-flex; align-items: center; gap: 4px; font-size: 13.5px; font-weight: 500;}
 
 /* ==== Buttons and fields ===================================================================================== */
@@ -563,8 +577,9 @@ input[type="text"], input[type="search"], input[type="number"], input[type="date
   height: 34px; border: 1px solid var(--lg-border); border-radius: var(--lg-r); background: var(--lg-surface);
   color: var(--lg-text); font: 14px Inter, system-ui, sans-serif; padding: 0 10px;}
 textarea {height: auto; padding: 8px 10px; line-height: 1.45;}
+select {max-width: 100%; text-overflow: ellipsis;} /* a long vendor name in its options never widens the page */
 :is(input, select, textarea):focus {outline: none; border-color: var(--lg-accent); box-shadow: var(--lg-focus);}
-.field {display: flex; flex-direction: column; gap: 4px; color: var(--lg-muted); font-size: 12.5px; font-weight: 500;}
+.field {display: flex; flex-direction: column; gap: 4px; color: var(--lg-muted); font-size: 12.5px; font-weight: 500; max-width: 100%; min-width: 0;}
 .check {display: inline-flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer;}
 .check input {width: 16px; height: 16px; accent-color: var(--lg-accent);}
 
@@ -584,8 +599,7 @@ textarea {height: auto; padding: 8px 10px; line-height: 1.45;}
 .tabs a.on {color: var(--lg-text); border-bottom-color: var(--lg-accent);}
 
 /* A segmented filter (links): neutral track, the chosen one white */
-.segmented {display: inline-flex; flex-wrap: wrap; max-width: 100%; gap: 2px; padding: 2px; border-radius: var(--lg-r);
-  background: var(--lg-neutral);}
+.segmented {display: inline-flex; flex-wrap: wrap; max-width: 100%; gap: 2px; padding: 2px; border-radius: var(--lg-r); background: var(--lg-neutral);}
 .segmented a {height: 30px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: var(--lg-r-sm);
   color: var(--lg-muted); font-size: 13px; font-weight: 500; white-space: nowrap;}
 .segmented a:hover {color: var(--lg-text); text-decoration: none;}

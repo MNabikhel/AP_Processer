@@ -327,7 +327,7 @@ def test_acting_on_an_invoice_someone_else_changed_says_so(client, store):
     data = form_of(store, inv_id)
     store.reject_invoice(inv_id, "Someone else", "duplicate")
     answer = client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).json()
-    assert "someone else changed this invoice meanwhile" in flash_text(client, answer)
+    assert "changed meanwhile, in another tab or by someone else. It is rejected." in flash_text(client, answer)
     assert store.get_invoice(inv_id)["status"] == REJECTED
 
 

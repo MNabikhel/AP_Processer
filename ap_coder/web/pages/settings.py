@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ap_coder import __version__, paths, ui
 from ap_coder.envfile import read_env, write_env
-from ap_coder.store import Store
+from ap_coder.store import Store, unread_fx_text
 from ap_coder.web.core import (
     data_dir,
     done,
@@ -158,6 +158,12 @@ def save_review(
         store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["reviewer"], "reviewer": rename})
         paths.write_user_settings(reviewer=name)
         changed.append("reviewer")
+    elif not name and paths.read_user_settings().get("reviewer"):  # cleared: back to AP_REVIEWER or the login
+        saved = reviewer()
+        paths.write_user_settings(reviewer="")
+        rename = {"from": saved, "to": reviewer()}
+        store.log_event("settings_changed", actor=saved, detail={"keys": ["reviewer"], "reviewer": rename})
+        changed.append("reviewer")
     # Only what differs from the values in effect: a default is not written to the .env as a "change".
     updates = {}
     new_threshold = percent / 100
@@ -184,6 +190,10 @@ def save_approval(
         return refuse("The approval limit can't be below 0 (0 = never a second approval).")
     if not 0 <= days <= 180:
         return refuse("The days to pay must be from 0 to 180.")
+    unread = unread_fx_text(fx_rates)
+    if unread:  # saved as it was, a rate typed the wrong way round would be ignored without a word
+        return refuse(f"Exchange rates not saved: “{unread}” can't be read. Write each one as a currency code, then "
+                      "the CAD for one unit, e.g. USD=1.37, EUR=1.50.")  # fmt: skip
     changed = []
     if fx_rates.strip() != store.get_setting("fx_rates"):
         store.set_setting("fx_rates", fx_rates.strip(), actor=reviewer())
@@ -272,7 +282,11 @@ def save_backup_copy(request: Request, folder: str = Form("")) -> JSONResponse:
     folder = folder.strip().strip('"')
     if folder == store.get_setting("backup_copy_dir"):
         return done(request, tab_url("data"), "Nothing changed.")
-    if folder and not Path(folder).expanduser().is_dir():
+    try:  # a name the computer refuses (too long, a character it does not allow) is a folder that does not exist
+        exists = Path(folder).expanduser().is_dir() if folder else True
+    except (OSError, ValueError):
+        exists = False
+    if not exists:
         return refuse("That folder does not exist (or is not reachable from this computer).")
     if folder and Path(folder).expanduser().resolve() == store.backup_dir().resolve():
         return refuse("That is the local backups folder: choose a folder on OneDrive or a network drive.")

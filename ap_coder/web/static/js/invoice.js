@@ -72,7 +72,7 @@ function applySections(answer) {
 async function check() {
   clearTimeout(timer);
   timer = 0;
-  if (!form) return;
+  if (!form || form.dataset.sending) return; // being approved: nothing more to check
   if (running) {
     queued = true;
     return running;
@@ -120,7 +120,14 @@ document.addEventListener(
   "submit",
   (e) => {
     const f = e.target;
-    if (!form || f === form || passing === f || !(timer || running)) return;
+    if (f === form) {
+      // Approving sends every field as it is now: a check still waiting (the field just left fired "change") would
+      // only reach the server after the approval, and be told the invoice is no longer in the queue.
+      clearTimeout(timer);
+      timer = 0;
+      return;
+    }
+    if (!form || passing === f || !(timer || running)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     flush().then(() => {
