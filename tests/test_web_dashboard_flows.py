@@ -258,7 +258,8 @@ def test_actions_on_an_invoice_someone_else_just_changed_show_a_message_not_an_e
         response = post(client, f"/review/{invoice_id}/{action}", data)
         assert (
             response.status_code == 200
-            and "someone else changed this invoice meanwhile" in client.get(response.json()["redirect"]).text
+            and "this invoice changed meanwhile, in another tab or by someone else"
+            in client.get(response.json()["redirect"]).text
         ), action
         assert store.get_invoice(invoice_id)["status"] == APPROVED
 

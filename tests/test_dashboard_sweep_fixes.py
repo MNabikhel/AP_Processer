@@ -172,7 +172,7 @@ def test_tables_scroll_in_their_card_at_a_narrow_width(client, store):
     page = client.get(f"/review/{invoice_id}").text
     sections = check(client, invoice_id)["sections"]
     css = "".join(p.read_text(encoding="utf-8") for p in STATIC_DIR.glob("*.css"))
-    wrap = re.search(r"\.table-wrap\s*\{([^}]*)\}", css).group(1)
+    wrap = re.search(r"(?m)^\.table-wrap\s*\{([^}]*)\}", css).group(1)  # the wrapper's own rule
     assert re.search(r"overflow-x:\s*auto", wrap) and re.search(r"position:\s*relative", wrap)
     assert re.search(r"max-width:\s*100%", wrap)
     assert re.search(r"\.pop-body\s*\{[^}]*width:\s*min\([^)]*vw\)", css)
