@@ -1645,9 +1645,10 @@ class Store:
         if state == AUTONOMOUS and rate is None:
             rate = policy.audit_rate
         # Since when it is touchless (kept while suspended, to show; cleared otherwise), and when it was suspended
-        # (its fresh clean streak counts from then).
+        # (its fresh clean streak counts from then: kept while a manager keeps it supervised and once allowed again,
+        # cleared when it is touchless again).
         since = _now() if state == AUTONOMOUS else profile["autonomous_since"] if state == SUSPENDED else None
-        suspended = _now() if state == SUSPENDED else None
+        suspended = _now() if state == SUSPENDED else None if state == AUTONOMOUS else profile.get("suspended_at")
         conn.execute(
             "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, suspended_at = ?, audit_rate = ?, "
             "updated_at = ?, updated_by = ? WHERE key = ?",

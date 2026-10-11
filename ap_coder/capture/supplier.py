@@ -1175,8 +1175,9 @@ def fresh_streak(stats: SupplierStats, since: str | None) -> int:
 
 def judged_stats(stats: SupplierStats, stored_state: str, suspended_at: str | None = None) -> SupplierStats:
     """The record the bar is checked on: a suspended supplier's clean streak counts only invoices reviewed since
-    it was suspended (a reopened touchless invoice suspends it without recording a correction)."""
-    if stored_state != SUSPENDED:
+    it was suspended (a reopened touchless invoice suspends it without recording a correction), also while a
+    manager keeps it supervised and once allowed again (``suspended_at`` is kept until it is touchless again)."""
+    if stored_state != SUSPENDED and not suspended_at:
         return stats
     from dataclasses import replace
 

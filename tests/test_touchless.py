@@ -204,6 +204,22 @@ def test_keep_supervised_overrides_the_bar_until_allowed_again(tmp_path, path):
     assert store.get_supplier_profile(KEY)["state"] == AUTONOMOUS  # it meets the bar: touchless at once
 
 
+def test_keeping_a_suspended_vendor_supervised_then_allowing_it_still_needs_a_fresh_streak(tmp_path):
+    """Kept supervised while suspended, then allowed again: its clean streak from before the suspension still doesn't
+    count (allowing it again is no shortcut past the fresh streak)."""
+    store = Store(tmp_path / "s.db")
+    _ready(store)
+    store.set_touchless(True, "Mia")
+    store.set_supplier_state(KEY, SUSPENDED, "Ann", reason="an invoice approved without review was reopened")
+    store.set_supplier_state(KEY, HELD, "Mia")
+    store.set_supplier_state(KEY, SUPERVISED, "Mia", reason="allowed again")
+    assert store.get_supplier_profile(KEY)["state"] == SUPERVISED
+    for i in range(10):
+        store.record_outcomes(KEY, 4000 + i, _outcomes(), at=_at(i, "2099-01-01"))
+    assert store.get_supplier_profile(KEY)["state"] == AUTONOMOUS
+    assert store.get_supplier_profile(KEY)["suspended_at"] is None  # touchless again: a later one starts afresh
+
+
 def test_a_vendor_made_touchless_by_hand_under_another_bar_goes_back_to_review(tmp_path):
     store = Store(tmp_path / "s.db")
     _ready(store, 5)
