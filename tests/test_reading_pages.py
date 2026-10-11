@@ -502,6 +502,20 @@ def test_when_ovisocr2_couldnt_read_it_a_person_decides(db, status):
     assert "OvisOCR2 couldn't read it: LM Studio stopped answering; a person decides." in _captions(at)
 
 
+def test_an_invoice_ovisocr2_failed_to_read_can_be_added_again(db, status):
+    """Cut off by the model server MAX_TRIES times, the invoice leaves the queue as failed, and its message says to
+    read it again from the invoice (Add it to OvisOCR2's queue): that button is there."""
+    store, invoice_id, _ = _invoice(db)
+    store.next_page_read(invoice_id)
+    message = ("the model server cut the reading off 3 times (no answer); read it again from the invoice (Add it to "
+               "OvisOCR2's queue) once LM Studio is running with the model loaded")  # fmt: skip
+    store.finish_page_read(invoice_id, "failed", MODEL, 0, 3.0, message, tries=3)
+    at = _ok(_review(invoice_id).run())
+    assert "OvisOCR2 couldn't read it" in _captions(at)
+    _ok(at.button(key=f"inv{invoice_id}_read_pages").click().run())
+    assert store.page_read(invoice_id)["status"] == "waiting" and store.page_read(invoice_id)["tries"] == 0
+
+
 def test_an_invoice_not_in_its_queue_can_be_added(db, status):
     store, invoice_id, _ = _invoice(db, queued=False)
     at = _ok(_review(invoice_id).run())
