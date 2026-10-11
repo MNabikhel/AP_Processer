@@ -44,6 +44,8 @@ ACTIONS = {
     "settings_changed": ("settings", "info", "Settings changed"),
     "backup_made": ("backup", "info", "Backup made"),
     "backup_restored": ("settings_backup_restore", "warn", "Backup restored"),
+    "files_moved": ("drive_file_move", "info", "Invoice files moved by the update"),
+    "file_found": ("find_in_page", "info", "Invoice file found in its new place"),
     "vendor_updated": ("storefront", "info", "Vendor updated"),
     "export_undone": ("undo", "warn", "Export undone"),
     "parked": ("pause_circle", "warn", "Parked"),
@@ -233,6 +235,12 @@ def describe(event: dict[str, Any]) -> str:
         if action == "autonomy_on" and d.get("audit_rate") is not None:
             text += f": touchless, {float(d['audit_rate']):.0%} audited"
         return text + (f" · {d['reason']}" if d.get("reason") else "")
+    if action == "files_moved":
+        copied = f"; {d['copied']} copied into the data folder" if d.get("copied") else ""
+        left = f"; {len(d['not_moved'])} could not be copied (the old folder is kept)" if d.get("not_moved") else ""
+        return f"{d.get('invoices', 0)} invoice(s) of {d.get('from', '?')} now point to the new place{copied}{left}"
+    if action == "file_found":
+        return f"{d.get('from', '?')} → {d.get('to', '?')}"
     if action in ("backup_made", "backup_restored"):
         return str(d.get("file", "")) + (f" · {d['note']}" if d.get("note") else "")
     return ""

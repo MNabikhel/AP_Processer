@@ -401,7 +401,29 @@ jobs:
           python -m venv "$A/.venv"
           mkdir -p "$A/private/invoices"
           echo "an invoice" > "$A/private/invoices/a.pdf"
-          python -c "import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)'); c.execute(\"INSERT INTO settings VALUES ('schema_version', '14')\"); c.commit()" "$A/private/ap_coder.db"
+          cp "$A/samples/pacific_BC_GST_PST_PO-77120.pdf" "$A/private/invoices/b.pdf"
+          # Its database: invoices record their file by absolute path, a demo invoice in A/samples, one in A/private.
+          python - "$A" <<'EOF'
+          import hashlib, sqlite3, sys
+          from pathlib import Path
+          a = Path(sys.argv[1]).resolve()
+          c = sqlite3.connect(a / "private" / "ap_coder.db")
+          c.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+          c.execute("INSERT INTO settings VALUES ('schema_version', '14')")
+          c.execute("CREATE TABLE invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, source_path TEXT NOT NULL, "
+                    "file_name TEXT NOT NULL, file_sha256 TEXT, status TEXT NOT NULL, vendor_name TEXT, vendor_key TEXT, "
+                    "invoice_number TEXT, invoice_date TEXT, currency TEXT, grand_total REAL, model_confidence REAL, "
+                    "adjusted_confidence REAL, requires_review INTEGER, ai_output TEXT, final_output TEXT, validation TEXT, "
+                    "extraction_md TEXT, meta TEXT, edits TEXT, error TEXT, created_at TEXT NOT NULL, reviewed_at TEXT, "
+                    "reviewer TEXT, export_batch INTEGER, po_key TEXT NOT NULL DEFAULT '', due_date TEXT, "
+                    "second_reviewer TEXT, second_reviewed_at TEXT, parked_reason TEXT, follow_up TEXT)")
+          for path, demo in ((a / "samples" / "northwind_ON_HST_NW-2026-0912.pdf", True), (a / "private" / "invoices" / "b.pdf", False)):
+              sha = hashlib.sha256(path.read_bytes()).hexdigest()
+              meta = '{"demo": true}' if demo else "{}"
+              c.execute("INSERT INTO invoices (source_path, file_name, file_sha256, status, meta, created_at) VALUES "
+                        "(?, ?, ?, 'review', ?, '2026-09-02T10:00:00')", (str(path), path.name, sha, meta))
+          c.commit()
+          EOF
           printf 'AP_REVIEWER=Ann\nAP_PAGE_READER=on\n' > "$A/.env"
           mkdir -p ~/.ap_coder
           printf '{"data_dir": "%s/private", "desktop_shortcut": true}\n' "$A" > ~/.ap_coder/settings.json
@@ -459,6 +481,12 @@ jobs:
           grep -q '^# no longer used (AP Coder 0.2): AP_PAGE_READER=on' ~/APCoder/.env || fail 'the retired setting was not commented out'
           grep -q '^AP_REVIEWER=Ann' ~/APCoder/.env || fail 'the settings file was not kept'
           ls ~/APCoder/backups/ap_coder-*-before-update-from-schema-14.db || fail 'the database was not backed up before the update'
+          # Every invoice still has its file (they pointed into the old folder, now deleted), and its page shows.
+          python -c "import sqlite3, pathlib as p; rows = sqlite3.connect(p.Path.home() / 'APCoder' / 'ap_coder.db').execute('SELECT id, source_path FROM invoices').fetchall(); print(rows); assert len(rows) == 2 and all(p.Path(f).is_file() for _, f in rows), rows" || fail 'an invoice has no file after the update'
+          for id in 1 2; do
+            type="$(curl -fsS -o /dev/null -w '%{content_type}' "http://127.0.0.1:8597/review/$id/page/1.png")" || fail "invoice $id: its page picture is not served"
+            [ "$type" = "image/png" ] || fail "invoice $id: its page picture is $type, not image/png"
+          done
           python - "$B" "$health" <<'EOF'
           import json, os, sys
           from pathlib import Path

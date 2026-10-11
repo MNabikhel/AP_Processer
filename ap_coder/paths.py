@@ -187,6 +187,69 @@ def default_db_path() -> Path:
     return private_dir() / "ap_coder.db"
 
 
+def file_sha256(path: str | Path) -> str | None:
+    """The SHA-256 of the file at ``path`` (None when it can't be read)."""
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def after_private(stored: str | Path) -> Path | None:
+    """``C:\\AP Coder 0.1\\private\\invoices\\a.pdf`` -> ``invoices/a.pdf``: where a file kept in an AP Coder 0.1
+    data folder (``<folder>/private``) is, relative to the data folder (None for a path with no ``private`` in it)."""
+    parts = Path(stored).parts
+    names = [p.lower() for p in parts]
+    if "private" not in names[:-1]:
+        return None
+    last = len(names) - 1 - names[::-1].index("private")
+    return Path(*parts[last + 1 :]) if last + 1 < len(parts) else None
+
+
+def _same_name(candidate: str, name: str) -> bool:
+    """``candidate`` is the file ``name``, or that file renamed beside one of the same name when it moved
+    (``a.from-old-install.pdf``, ``a.from-old-install-2.pdf``: scripts/upgrade.py)."""
+    if os.path.normcase(candidate) == os.path.normcase(name):
+        return True
+    stem, suffix = os.path.splitext(name)
+    lower = os.path.normcase(candidate)
+    return lower.startswith(os.path.normcase(f"{stem}.from-old-install")) and lower.endswith(os.path.normcase(suffix))
+
+
+def find_moved_file(
+    stored: str | Path, sha: str | None, places: list[Path], name: str = "", data: Path | None = None
+) -> Path | None:
+    """Where the file recorded at ``stored`` (no longer there: an update moved it, or deleted the folder it was in)
+    is now: the same place in the data folder ``data`` for a file of an AP Coder 0.1 data folder (``private/...``),
+    else a file of the same name (``name``, else the stored one's) anywhere in ``places`` (searched in order, folders
+    within them too). It must have the bytes recorded (``sha``); with no SHA-256 recorded, only a name found once."""
+    name = name or Path(stored).name
+    found: list[Path] = []
+    rest = after_private(stored)
+    if data is not None and rest is not None:
+        found.append(data / rest)
+    for place in places:
+        if not place.is_dir():
+            continue
+        for folder, dirs, files in os.walk(place):
+            dirs[:] = sorted(d for d in dirs if d not in (".cache", "__pycache__") and ".removing-" not in d)
+            found += [Path(folder) / f for f in sorted(files) if _same_name(f, name)]
+    seen: set[str] = set()
+    unique = []
+    for candidate in found:
+        key = os.path.normcase(str(candidate))
+        if key not in seen and candidate.is_file():
+            seen.add(key)
+            unique.append(candidate)
+    if not sha:
+        return unique[0] if len(unique) == 1 else None
+    return next((c for c in unique if file_sha256(c) == sha), None)
+
+
 def env_file() -> Path | None:
     """The ``.env`` with Azure settings: ``AP_ENV_FILE``, else the data folder's, else the folder
     the command runs from, else the project folder's."""

@@ -12,9 +12,13 @@ double-clicking APProcessor. The launcher (scripts/launch.py) then uses what is 
 * :func:`settle_data_folder`: data kept inside a code folder (``<folder>/private``, AP Coder 0.1) is moved to the data
   folder outside the code (``~/APCoder``), so replacing the code never touches it; a ``.env`` left in a code folder
   goes there too.
+* :func:`repoint_files`: invoices record their file as an absolute path, so every path into an older folder (its
+  demo invoices' samples, the invoices in its ``private/``) is pointed at the file's new place, or the file copied
+  into the data folder, before the folder goes.
 * :func:`clean_up`: once the new version is set up and its self-check passed, each older install's ``.venv`` (with
   its copy of the OCR models) and models are removed, and the whole folder when it is clearly an AP Coder folder
-  holding nothing but what AP Coder put there. What was removed, and the space freed, is said.
+  holding nothing but what AP Coder put there (and nothing the database still needs). What was removed, and the
+  space freed, is said.
 
 The data folder's contents are never touched, except to move legacy data into it. Standard library only.
 """
@@ -22,8 +26,10 @@ The data folder's contents are never touched, except to move legacy data into it
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -204,8 +210,6 @@ def write_marker(root: Path, identity: dict) -> None:
     a git checkout."""
     if (root / ".git").exists():
         return
-    import json
-
     try:
         (root / MARKER).write_text(json.dumps({"app": "AP Coder", **identity}, indent=2), encoding="utf-8")
     except OSError:
@@ -401,6 +405,8 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
         source, target = Path(pending["from"]), Path(pending["to"])
         move_data(source, target, resume=True)
         say(f"Finished moving your data from {source} to {target}: new versions use it from there.")
+        if source.name == "private":
+            repoint_files(source.parent, target, root, say, copy=False)
         return target
     default = default or paths.default_data_dir()
     recorded = paths.user_path(str(settings.get("data_dir") or ""))
@@ -417,6 +423,8 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
             remember([recorded.parent])  # (found from this data folder only: on the record before it moves)
         move_data(recorded, default)
         say(f"Moved your data from {recorded} (inside the code folder) to {default}: new versions use it from there.")
+        # Its invoices point at their files' new place at once (the folder's other files: when it is cleaned up).
+        repoint_files(recorded.parent, default, root, say, copy=False)
         return default
     return recorded
 
@@ -441,6 +449,234 @@ def move_data(source: Path, target: Path, resume: bool = False) -> None:
             "the move picks up where it stopped.",
         ) from exc
     paths.write_user_settings(data_dir=str(target), data_move=None)
+
+
+# --- The files the database points to ---------------------------------------------------------------------------
+#
+# An invoice records its file as an absolute path. AP Coder 0.1's demo invoices point into its own samples/, and the
+# invoices of one that kept its data inside it into its private/: moving private/ and deleting the old folder would
+# leave each of them without its file. Before an older folder is deleted, every path into it is pointed at the file's
+# new place (copied out first when it has none), in one transaction after a backup.
+
+UPDATE_ACTOR = "AP Coder update"
+
+
+def _relative(path: str | Path, folder: Path) -> Path | None:
+    """``path`` relative to ``folder`` (as written, or with links resolved); None when it is not in it."""
+    try:
+        written, real = Path(path), Path(path).resolve()
+        bases = {folder.absolute(), folder.resolve()}
+    except (OSError, ValueError):
+        return None
+    for candidate in (written, real):
+        for base in bases:
+            key, base_key = os.path.normcase(str(candidate)), os.path.normcase(str(base))
+            if key.startswith(base_key.rstrip(os.sep) + os.sep):
+                return Path(str(candidate)[len(str(base).rstrip(os.sep)) + 1 :])
+    return None
+
+
+def live_database(data: Path) -> Path:
+    """The database the dashboard uses (``AP_DB_PATH``, else the data folder's)."""
+    return paths.env_path("AP_DB_PATH") or data / "ap_coder.db"
+
+
+def _databases(folder: Path, data: Path) -> list[tuple[Path, list[Path]]]:
+    """Each database that may point into ``folder``, with where that folder's ``private/`` went for it: the live
+    one, and those of ``folder``'s data kept aside (``backups/from-<folder>-<date>/``) when the data folder had its
+    own."""
+    try:  # (not a glob: a folder name may hold "[")
+        kept = [p for p in (data / "backups").iterdir() if p.name.startswith(f"from-{folder.name}-") and p.is_dir()]
+    except OSError:
+        kept = []
+    asides = sorted(kept, reverse=True)
+    found = [(live_database(data), [data, *asides])]
+    found += [(aside / "ap_coder.db", [aside, data]) for aside in asides]
+    return [(db, bases) for db, bases in found if is_database(db)]
+
+
+def is_database(path: Path) -> bool:
+    """``path`` is an SQLite database file (whatever else is there is no database to update)."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(16) == b"SQLite format 3\x00"
+    except OSError:
+        return False
+
+
+class _Mover:
+    """Where each file of ``folder`` the database points to is now (or is copied to, when ``copy``)."""
+
+    def __init__(self, folder: Path, data: Path, root: Path, bases: list[Path], copy: bool) -> None:
+        self.folder, self.data, self.root, self.bases, self.copy = folder, data, root, bases, copy
+        self.done: dict[str, str | None] = {}
+        self.copied: list[Path] = []
+        self.left: list[str] = []
+
+    def place(self, stored: str, sha: str | None) -> str | None:
+        """The new path for ``stored`` (None: it is not in the folder, or stays where it is)."""
+        rel = _relative(stored, self.folder) if stored else None
+        if rel is None or not rel.parts:
+            return None
+        key = os.path.normcase(stored)
+        if key not in self.done:
+            new = self._find(rel, sha)
+            self.done[key] = str(new.resolve()) if new is not None else None
+        found = self.done[key]
+        return found if found and os.path.normcase(found) != key else None
+
+    def _find(self, rel: Path, sha: str | None) -> Path | None:
+        old = self.folder / rel
+        sha = sha or (paths.file_sha256(old) if old.is_file() else None)
+        top = rel.parts[0].lower()
+        if top == "private" and len(rel.parts) > 1:  # moved with the data: the same place in the data folder
+            rest = Path(*rel.parts[1:])
+            for base in self.bases:
+                candidate = base / rest
+                if paths.same_folder(candidate, old):
+                    return None  # the data folder is this private/ itself: nothing moved
+                if candidate.is_file() and (not sha or paths.file_sha256(candidate) == sha):
+                    return candidate
+            renamed = paths.find_moved_file(old, sha, [b / rest.parent for b in self.bases])  # a.from-old-install.pdf
+            if renamed is not None:
+                return renamed
+        elif top == "samples":  # this version's own sample, when it has the same bytes
+            candidate = self.root / rel
+            if sha and candidate.is_file() and paths.file_sha256(candidate) == sha:
+                return candidate
+        if old.is_file():
+            return self._copy_out(old, rel, sha) if self.copy else None
+        return paths.find_moved_file(old, sha, [self.data / "invoices", self.root / "samples"], data=self.data)
+
+    def _copy_out(self, old: Path, rel: Path, sha: str | None) -> Path | None:
+        """Copy ``old`` into the data folder: a sample into ``invoices/``, any other file into
+        ``invoices/from-<folder>/`` (its place in the folder kept). None (and noted) when it can't be copied."""
+        if rel.parts[0].lower() == "samples":
+            target = self.data / "invoices" / Path(*rel.parts[1:]).parent
+        else:
+            target = self.data / "invoices" / f"from-{self.folder.name}" / rel.parent
+        dest, n = target / old.name, 2
+        while dest.exists():
+            if dest.is_file() and paths.file_sha256(dest) == sha:
+                return dest  # copied before (an earlier start, or another invoice of the same file)
+            dest, n = target / f"{old.stem}_{n}{old.suffix}", n + 1
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(old, dest)
+        except OSError:
+            self.left.append(str(old))
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            return None
+        self.copied.append(dest)
+        return dest
+
+
+def _backed_up(db: Path) -> None:
+    """A copy of ``db`` in its ``backups/`` folder before it is changed: the update's own (``...-before-update-...``)
+    when it was made since ``db`` last changed, else a new one."""
+    folder = db.parent / "backups"
+    changed = max((p.stat().st_mtime for p in (db, db.with_name(db.name + "-wal")) if p.exists()), default=0)
+    if any(p.stat().st_mtime >= changed for p in folder.glob("ap_coder-*before-update*.db")):
+        return
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / f"ap_coder-{time.strftime('%Y%m%d-%H%M%S')}-before-update-file-paths.db"
+    source, target = sqlite3.connect(db, timeout=30), sqlite3.connect(dest)
+    try:
+        source.backup(target)
+        target.execute("PRAGMA journal_mode=DELETE")
+    finally:
+        target.close()
+        source.close()
+
+
+def _repoint_database(db: Path, mover: _Mover, folder: Path) -> int:
+    """Point ``db``'s invoices (their file, the meta's copy of it, the picture a PDF was made from) and the backup
+    copy folder at their new place, in one transaction after a backup. Returns how many invoices changed."""
+    conn = sqlite3.connect(db, timeout=30)
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "invoices" not in tables:
+            return 0
+        rows = conn.execute("SELECT id, source_path, file_sha256, meta FROM invoices").fetchall()
+        changes: list[tuple[str, str, int]] = []
+        for invoice_id, stored, sha, meta_text in rows:
+            try:
+                meta = json.loads(meta_text) if meta_text else {}
+            except ValueError:
+                meta = {}
+            meta = meta if isinstance(meta, dict) else {}
+            new = mover.place(str(stored or ""), sha) or str(stored or "")
+            edited = False
+            source = meta.get("source")
+            if isinstance(source, str) and source:
+                moved = new if source == stored else (mover.place(source, None) or source)
+                edited, meta["source"] = moved != source, moved
+            original = meta.get("original")
+            if isinstance(original, dict) and original.get("kept"):
+                kept = str(original["kept"])
+                moved = mover.place(kept, original.get("sha256")) or kept
+                edited, original["kept"] = edited or moved != kept, moved
+            if new != stored or edited:
+                changes.append((new, json.dumps(meta, default=str) if edited else meta_text, invoice_id))
+        setting = None
+        if "settings" in tables:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
+            rel = _relative(row[0], folder) if row and row[0] else None
+            if rel is not None and rel.parts and rel.parts[0].lower() == "private":
+                moved = next((b / Path(*rel.parts[1:]) for b in mover.bases if (b / Path(*rel.parts[1:])).is_dir()),
+                             None)  # fmt: skip
+                setting = str(moved) if moved is not None else None
+    finally:
+        conn.close()
+    if not changes and setting is None:
+        return 0
+    _backed_up(db)
+    conn = sqlite3.connect(db, timeout=30)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.executemany("UPDATE invoices SET source_path = ?, meta = ? WHERE id = ?", changes)
+        if setting is not None:
+            conn.execute("UPDATE settings SET value = ? WHERE key = 'backup_copy_dir'", (setting,))
+        if "events" in tables:
+            detail = {"from": str(folder), "invoices": len(changes), "copied": len(mover.copied),
+                      "copied_to": sorted({str(p.parent) for p in mover.copied}), "not_moved": mover.left}  # fmt: skip
+            when = dt.datetime.now().isoformat(timespec="seconds")
+            conn.execute("INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (NULL, ?, ?, ?, ?)",
+                         ("files_moved", UPDATE_ACTOR, json.dumps(detail), when))  # fmt: skip
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return len(changes)
+
+
+def repoint_files(folder: Path, data: Path, root: Path = ROOT, say: Say = print, copy: bool = True) -> list[str]:
+    """Point every file path the databases record inside AP Coder folder ``folder`` at the file's new place, before
+    ``folder`` goes: a file of its ``private/`` at the same place in the data folder ``data`` (or where that data
+    was kept aside), a sample at this version's own (``root``) when the bytes are the same, else (``copy``) a copy in
+    ``data/invoices/`` (``from-<folder>/`` for a file from elsewhere in it). Returns the files in ``folder`` the
+    database still needs (it could not copy them): while there is one, ``folder`` is kept. A database that can't be
+    read or changed is said, never a reason to stop the update (the dashboard looks for a file that moved, too)."""
+    left: list[str] = []
+    for db, bases in _databases(folder, data):
+        mover = _Mover(folder, data, root, bases, copy)
+        try:
+            changed = _repoint_database(db, mover, folder)
+        except (OSError, sqlite3.Error) as exc:
+            say(f"  {db}: could not point its invoices at their files' new place yet ({exc}).")
+            if copy:
+                left.append(f"{db} could not be updated")
+            continue
+        left += mover.left
+        if changed:
+            copied = f"; {len(mover.copied)} copied into {data / 'invoices'}" if mover.copied else ""
+            say(f"  {changed} invoice{'' if changed == 1 else 's'} now point to their files' new place{copied}.")
+    return left
 
 
 # --- Cleaning up after an update --------------------------------------------------------------------------------
@@ -523,8 +759,14 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
             say(f"  {folder}: its data could not be moved yet ({exc.strerror or exc}); it is cleaned up on a later "
                 "start.")  # fmt: skip
             continue
+        needed = repoint_files(folder, data, root, say)  # before anything in it goes
         why = removable(folder, root)
         later = False  # the whole folder is to go, on a later start: kept on record
+        if not why and needed:
+            shown = ", ".join(Path(n).name for n in needed[:3]) + (" …" if len(needed) > 3 else "")
+            why, later = (f"the database still points to {len(needed)} file{'' if len(needed) == 1 else 's'} in it "
+                          f"that could not be copied to the data folder ({shown}); it is tried again on a later "
+                          "start", True)  # fmt: skip
         if not why:
             size = size_of(folder)
             if remove_folder(folder):

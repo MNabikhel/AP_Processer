@@ -225,8 +225,8 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
     capture = view.capture_of(store, inv["id"])
     sizes: list[tuple[float, float]] = []
     problem = ""
-    if not path.exists():
-        problem = f"Original file not found at {path}"
+    if not path.exists():  # (a file an update moved was found again by get_invoice)
+        problem = f"This invoice's file is no longer at {path}."
     elif path.suffix.lower() in document.VIEWABLE:
         try:
             sizes = document.page_sizes(path)
@@ -370,6 +370,8 @@ def _closed(store: Store, reference: ReferenceData | None, inv: dict[str, Any]) 
 @router.get("/review/{invoice_id:int}/page/{number:int}.png")
 def page_picture(request: Request, invoice_id: int, number: int) -> Response:
     inv = _invoice(get_store(request), invoice_id)
+    if not Path(inv.get("source_path") or "").is_file():
+        raise HTTPException(status_code=404, detail=f"This invoice's file is no longer at {inv.get('source_path')}.")
     try:
         png = document.page_png(inv["source_path"], number)
     except (IndexError, OSError) as exc:

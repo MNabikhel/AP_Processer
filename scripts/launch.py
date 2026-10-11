@@ -836,7 +836,8 @@ def settle_settings(data: Path, version: str) -> list[tuple[str, str]]:
     notes = []
     if not (ROOT / ".git").exists():  # a developer's checkout keeps its own files
         try:
-            upgrade.adopt_legacy(ROOT, data, say)
+            if upgrade.adopt_legacy(ROOT, data, say):
+                upgrade.repoint_files(ROOT, data, ROOT, say, copy=False)  # its invoices: where their files went
         except OSError as exc:  # in use or read-only: tried again on the next start, never a reason to stop
             notes.append(("warn", f"The settings or data in {ROOT} can't be changed ({exc.strerror or exc}): not "
                                   "moved to the data folder yet"))  # fmt: skip

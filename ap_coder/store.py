@@ -21,6 +21,7 @@ import json
 import re
 import shutil
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -28,7 +29,7 @@ from typing import Any
 
 from .audit import diff_coding
 from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
-from .paths import default_db_path, private_dir  # noqa: F401  (re-exported)
+from .paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from .po import OPEN, po_key
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 from .rules import Rule
@@ -46,6 +47,11 @@ PENDING = "pending_approval"  # approved once, over the approval limit: waiting 
 PARKED = "parked"  # out of the queue while waiting for information (a buyer, a credit note...)
 ACTIVE_STATUSES = (REVIEW, PARKED, PENDING, APPROVED)  # invoices that count (for POs, recurring vendors...)
 _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
+
+# An invoice file looked for and not found (``Store.invoice_file``) is looked for again after this long, not on every
+# page picture the review screen asks for.
+_LOOK_AGAIN_SECONDS = 30.0
+_NOT_FOUND: dict[tuple[str, int, str], float] = {}
 
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
 # the largest invoice total approved without a person, in CAD.
@@ -820,7 +826,58 @@ class Store:
         inv = dict(row)
         for key in ("ai_output", "final_output", "validation", "meta", "edits"):
             inv[key] = json.loads(inv[key]) if inv[key] else None
+        if inv["source_path"] and not Path(inv["source_path"]).exists():
+            self.invoice_file(inv)  # moved (an update): found again, and ``inv`` points there
         return inv
+
+    def invoice_file(self, inv: dict[str, Any]) -> Path | None:
+        """The file of invoice ``inv`` (a row with ``id``, ``source_path``...), or None when it is nowhere. A file no
+        longer where it was recorded (an update moved the data folder or deleted the old install's folder) is looked
+        for by its name and SHA-256 in the data folder (``invoices/``, data an update kept aside in ``backups/``) and
+        this install's ``samples/`` (a demo invoice); found, the invoice points there from then on (``inv`` too)."""
+        stored = str(inv.get("source_path") or "")
+        if not stored:
+            return None
+        if Path(stored).exists():
+            return Path(stored)
+        key = (str(self.path), int(inv.get("id") or 0), stored)
+        if time.monotonic() - _NOT_FOUND.get(key, -_LOOK_AGAIN_SECONDS) < _LOOK_AGAIN_SECONDS:
+            return None  # looked for a moment ago: not again on every page picture
+        data = self.path.parent
+        sha = inv.get("file_sha256")
+        if sha is None and "file_sha256" not in inv:
+            with self._conn() as conn:
+                row = conn.execute("SELECT file_sha256 FROM invoices WHERE id = ?", (inv.get("id"),)).fetchone()
+            sha = row["file_sha256"] if row else None
+        backups = data / "backups"
+        aside = sorted((p for p in backups.glob("from-*") if p.is_dir()), reverse=True) if backups.is_dir() else []
+        meta = inv.get("meta")
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except ValueError:
+                meta = {}
+        demo = isinstance(meta, dict) and bool(meta.get("demo"))  # only a demo invoice's file is one of the samples
+        places = [data / "invoices", *aside, *([PROJECT_DIR / "samples"] if demo else [])]
+        found = find_moved_file(stored, sha, places, name=str(inv.get("file_name") or ""), data=data)
+        if found is None:
+            _NOT_FOUND[key] = time.monotonic()
+            return None
+        new = str(found.resolve())
+        with self._conn() as conn:
+            row = conn.execute("SELECT meta FROM invoices WHERE id = ? AND source_path = ?",
+                               (inv.get("id"), stored)).fetchone()  # fmt: skip
+            if row is not None:
+                meta = json.loads(row["meta"]) if row["meta"] else {}
+                if isinstance(meta, dict) and meta.get("source") == stored:
+                    meta["source"] = new
+                conn.execute("UPDATE invoices SET source_path = ?, meta = ? WHERE id = ?",
+                             (new, json.dumps(meta, default=str) if meta else row["meta"], inv.get("id")))  # fmt: skip
+                self._log(conn, "file_found", inv.get("id"), detail={"from": stored, "to": new})
+        inv["source_path"] = new
+        if isinstance(inv.get("meta"), dict) and inv["meta"].get("source") == stored:
+            inv["meta"]["source"] = new
+        return found
 
     def park_invoice(self, invoice_id: int, actor: str, reason: str, follow_up: str | None = None) -> None:
         """Take an invoice out of the queue while waiting for information; ``follow_up``: YYYY-MM-DD."""
