@@ -79,7 +79,8 @@ def queued_note(queued: int) -> str:
     them = "it" if queued == 1 else "them"
     status = reading_status_or_none()
     if status is not None and not status.page_reader_ready:
-        return (f"{ui.plural(queued, 'invoice')} queued for OvisOCR2, which isn't running: {them} wait for it "
+        wait = "it waits" if queued == 1 else "they wait"
+        return (f"{ui.plural(queued, 'invoice')} queued for OvisOCR2, which isn't running: {wait} for it "
                 "(Settings → Reading).")  # fmt: skip
     eta = ""
     if status is not None and status.eta_minutes:

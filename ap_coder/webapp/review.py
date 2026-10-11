@@ -664,7 +664,8 @@ def _getting_started(store: Store) -> None:
     invoices = store.list_invoices()
     has_invoices = bool(invoices)
     steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
-    done = sum(1 for s, _, _ in steps if s == "ok")
+    needed = [s for s, _, _ in steps if s != "opt"]  # as the Process page counts: the chat model is optional
+    done = sum(1 for s in needed if s == "ok")
     waiting = sum(1 for i in invoices if i["status"] == REVIEW)
     if waiting and reference_or_none(store) is None:
         # Read and waiting: only the chart of accounts stands between AP and the queue.
@@ -684,7 +685,7 @@ def _getting_started(store: Store) -> None:
         head, gauge = st.columns([5, 1], vertical_alignment="center")
         head.markdown("#### :material/flag: Getting started")
         head.caption("Finish these steps and invoices will start arriving in your review queue.")
-        ring = ui.ring(done / len(steps), size=60, stroke=6, label=f"{done}/{len(steps)}")
+        ring = ui.ring(done / len(needed), size=60, stroke=6, label=f"{done}/{len(needed)}")
         gauge.html(f"<div style='text-align:right'>{ring}</div>")
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
         links = st.container(horizontal=True)
