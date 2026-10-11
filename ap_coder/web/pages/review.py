@@ -321,7 +321,12 @@ def review_bulk_approve(request: Request, ids: list[int] = Form(default=[])) -> 
     reference = reference_or_none(store)
     if reference is None or not ids:
         return refuse("Nothing to approve.")
-    result = bulk_approve(store, reference, settings, ids, reviewer(), login=login())
+    # an invoice with edits open on its review screen would be approved without them: leave it for that screen
+    from ap_coder.web.pages.invoice import unsaved_edits
+
+    editing = unsaved_edits(request)
+    result = bulk_approve(store, reference, settings, [i for i in ids if i not in editing], reviewer(), login=login())
+    result["skipped"] = [(i, "it has edits open on its review screen") for i in ids if i in editing] + result["skipped"]
     waiting = sum(1 for i in result["approved"] if (store.get_invoice(i) or {}).get("status") == PENDING)
     messages = [flash_message(
         f"Approved {ui.plural(len(result['approved']), 'invoice')}"

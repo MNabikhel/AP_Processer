@@ -448,3 +448,14 @@ def test_form_values_from_the_words_on_the_page():
     assert invoice_view.form_value("invoice_date", "October 1, 2026") == "2026-10-01"
     assert invoice_view.form_value("vendor_name", "  Acme \n Ltd ") == "Acme Ltd"
     assert invoice_view.parse_taught("not json") == {} and invoice_view.parse_taught('{"po_number": "x"}') == {}
+
+
+def test_bulk_approve_leaves_an_invoice_with_open_edits_for_its_review_screen(client, store):
+    """An invoice with edits on its review screen, not approved yet, is not bulk-approved as coded (the edits would be
+    lost): it is skipped with the reason, and the other clean invoices are approved."""
+    edited = clean_invoice(client, store)
+    check(client, edited, form_of(store, edited, vendor_name="Edited Vendor Ltd"))
+    others = [i["id"] for i in store.list_invoices(REVIEW) if i["id"] != edited]
+    answer = client.post("/review/bulk-approve", data={"ids": [edited, *others]}, headers=PAGE).json()
+    assert store.get_invoice(edited)["status"] == REVIEW
+    assert "edits open on its review screen" in flash_text(client, answer)
