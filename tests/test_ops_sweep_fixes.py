@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import dataclasses
+import importlib.util
 import io
 import json
 import os
@@ -12,6 +13,7 @@ import sqlite3
 import sys
 from email.message import EmailMessage
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from openpyxl import load_workbook
@@ -22,7 +24,7 @@ from ap_coder.doctor import run_checks
 from ap_coder.extraction import DocumentExtractor
 from ap_coder.store import Store
 
-from .conftest import SAMPLE_STEM, SAMPLES
+from .conftest import ROOT, SAMPLE_STEM, SAMPLES
 from .test_jde import AN8, ON, _files, _invoice
 
 # --- JD Edwards: dates and field widths ------------------------------------------------------------------------
@@ -294,3 +296,51 @@ def test_checking_and_restoring_a_backup_writes_nothing_next_to_it(tmp_path):
     store.restore_from(old)
     assert store.get_setting("x") == "old"
     assert sorted(p.name for p in share.iterdir()) == before
+
+
+# --- Launcher: what the offline bundle has for this computer ---------------------------------------------------
+
+
+@pytest.fixture
+def launch(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("ap_script_launch_sweep", ROOT / "scripts" / "launch.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "VENV", tmp_path / ".venv")
+    monkeypatch.setattr(module, "VENV_PY", tmp_path / ".venv" / "bin" / "python")
+    return module
+
+
+def _bundle(launch, *targets: str) -> None:
+    (launch.ROOT / "bundle_manifest.json").write_text(json.dumps({"targets": list(targets)}), encoding="utf-8")
+
+
+def test_a_bundle_without_packages_for_this_kind_of_computer_says_so(launch, monkeypatch):
+    """A Windows-only bundle (built on Linux) unzipped on a Mac: the launcher said it was built for Python 3.11 to
+    3.13 and to "install Python 3.12", which cannot help: it has no Mac packages at all."""
+    _bundle(launch, "this computer (linux-x86_64, Python 3.12)", "win_amd64, Python 3.11", "win_amd64, Python 3.12",
+            "win_amd64, Python 3.13")  # fmt: skip
+    monkeypatch.setattr(launch, "wheel_platform", lambda: "macosx_15_0_arm64")
+    assert launch.bundle_pythons() == []
+    hint = launch.install_hint(["--no-index"], ["streamlit>=1.62"])
+    assert "no packages for this kind of computer (macosx_15_0_arm64)" in hint
+    assert "--platform macosx_15_0_arm64" in hint and "install Python 3.12" not in hint
+    monkeypatch.setattr(launch, "wheel_platform", lambda: "win_amd64")  # a Windows laptop: those are its versions
+    assert launch.bundle_pythons() == ["3.11", "3.12", "3.13"]
+    monkeypatch.setattr(launch, "wheel_platform", lambda: "manylinux2014_x86_64")  # the builder's own kind
+    assert launch.bundle_pythons() == ["3.12"]
+    _bundle(launch, "macosx_14_0_arm64, Python 3.12", "macosx_13_0_x86_64, Python 3.13")
+    monkeypatch.setattr(launch, "wheel_platform", lambda: "macosx_15_0_arm64")
+    assert launch.bundle_pythons() == ["3.12"]
+
+
+def test_installing_the_advised_python_is_not_undone_by_the_existing_venv(launch, monkeypatch):
+    """Inside a .venv made with Python 3.14 and a bundle for 3.12, the advice was "install Python 3.12": done, the
+    double-click still started the working 3.14 .venv, with the same failure. The .venv must go too."""
+    _bundle(launch, "win_amd64, Python 3.12")
+    monkeypatch.setattr(launch, "wheel_platform", lambda: "win_amd64")
+    monkeypatch.setattr(launch, "sys", SimpleNamespace(version_info=(3, 14, 0)))
+    hint = launch.install_hint(["--no-index"], ["streamlit>=1.62"])
+    assert "install Python 3.12 on this computer and delete the .venv folder" in hint

@@ -41,6 +41,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -208,13 +209,37 @@ def _version_key(version: str) -> tuple[int, ...]:
         return (0,)
 
 
-def bundle_pythons() -> list[str]:
-    """The Python versions the offline bundle's wheelhouse was built for ("3.11", "3.12", ...; [] when unknown)."""
+_ARCH = re.compile(r"(amd64|x86_64|arm64|aarch64|universal2|win32|i686)$")
+_SAME_ARCH = {"amd64": "x86_64", "aarch64": "arm64"}
+
+
+def _computer_kind(platform_tag: str) -> tuple[str, str]:
+    """("windows" / "mac" / "linux", processor) of a wheel platform ("win_amd64", "macosx_14_0_arm64",
+    "manylinux2014_x86_64") or a sysconfig one ("win-amd64", "linux-x86_64"). The macOS version is not compared."""
+    tag = re.sub(r"[-.]", "_", platform_tag.strip().lower())
+    system = "windows" if tag.startswith("win") else "mac" if tag.startswith("macosx") else "linux" * ("linux" in tag)
+    found = _ARCH.search(tag)
+    arch = found.group(1) if found else ""
+    return system, _SAME_ARCH.get(arch, "x86" if arch == "win32" else arch)
+
+
+def _for_this_computer(target: str) -> bool:
+    """A manifest target ("win_amd64, Python 3.12", "this computer (linux-x86_64, Python 3.12)") has packages for
+    this kind of computer (the same system and processor; a universal2 Mac build counts for either Mac)."""
+    tag = target.split(", Python ")[0].removeprefix("this computer (").strip()
+    (system, arch), (here_system, here_arch) = _computer_kind(tag), _computer_kind(wheel_platform())
+    return bool(system) and system == here_system and (arch == here_arch or "universal2" in (arch, here_arch))
+
+
+def bundle_pythons(here_only: bool = True) -> list[str]:
+    """The Python versions the offline bundle's wheelhouse was built for ("3.11", "3.12", ...; [] when unknown), on
+    this kind of computer (``here_only``; a Windows-only bundle has none for a Mac) or on any."""
     try:
         targets = json.loads((ROOT / "bundle_manifest.json").read_text(encoding="utf-8")).get("targets", [])
     except (OSError, ValueError, AttributeError):
         return []
-    found = {t.rsplit("Python ", 1)[-1].strip(")").strip() for t in targets if isinstance(t, str) and "Python " in t}
+    found = {t.rsplit("Python ", 1)[-1].strip(")").strip() for t in targets
+             if isinstance(t, str) and "Python " in t and (not here_only or _for_this_computer(t))}  # fmt: skip
     return sorted(found, key=_version_key)
 
 
@@ -236,13 +261,18 @@ def listed(versions: list[str]) -> str:
     return versions[0] if len(versions) == 1 else f"{', '.join(versions[:-1])} and {versions[-1]}"
 
 
-def bundle_advice(version: str) -> str:
-    """What to do when the offline bundle has no packages for Python ``version`` ("3.14") on this computer."""
+def bundle_advice(version: str, venv_made: bool = False) -> str:
+    """What to do when the offline bundle has no packages for Python ``version`` ("3.14") on this computer.
+    ``venv_made``: .venv exists with that Python, and the double-click keeps using it until it is deleted."""
     built_for = bundle_pythons()
+    build = f"python scripts/build_offline_bundle.py --python {version} --platform {wheel_platform()}"
+    if not built_for and bundle_pythons(here_only=False):
+        return (f"This offline bundle has no packages for this kind of computer ({wheel_platform()}): IT can build "
+                f"one for it ({build}).")  # fmt: skip
     best = "3.12" if "3.12" in built_for or not built_for else built_for[-1]
     made = f"This offline bundle was built for Python {listed(built_for)}. " if built_for else ""
-    return (f"{made}IT can build a bundle for this Python (python scripts/build_offline_bundle.py --python {version} "
-            f"--platform {wheel_platform()}), or install Python {best} on this computer.")  # fmt: skip
+    venv = f" and delete the .venv folder in {ROOT}" if venv_made else ""
+    return f"{made}IT can build a bundle for this Python ({build}), or install Python {best} on this computer{venv}."
 
 
 def bootstrap(argv: list[str]) -> int:
@@ -252,9 +282,10 @@ def bootstrap(argv: list[str]) -> int:
     if not supported(version) and not VENV_PY.exists():
         say(f"Note: Python {shown} is older than AP Coder needs (3.11 or newer; 3.12 is best).")
     built_for = bundle_pythons()
-    if built_for and shown not in built_for and not VENV_PY.exists():
-        say(f"Note: this offline bundle has packages for Python {listed(built_for)}, not for Python {shown} (the "
-            f"Python found on this computer), so the setup may stop. {bundle_advice(shown)}")  # fmt: skip
+    if bundle_pythons(here_only=False) and shown not in built_for and not VENV_PY.exists():
+        has = (f"packages for Python {listed(built_for)}, not for Python {shown} (the Python found on this computer)"
+               if built_for else "no packages for this kind of computer")  # fmt: skip
+        say(f"Note: this offline bundle has {has}, so the setup may stop. {bundle_advice(shown)}")
     if not VENV_PY.exists():
         say("First run: setting up AP Coder. This takes a few minutes; later starts take seconds.")
     say(f"Python {sys.version.split()[0]} found on this computer: {sys.executable}")
@@ -334,7 +365,8 @@ def install_hint(source: list[str], left: list[str]) -> str:
     version = f"{sys.version_info[0]}.{sys.version_info[1]}"
     what = names(left) or "AP Coder itself"
     return (f"The offline bundle's wheelhouse folder has no {what} for Python {version} on this computer. "
-            f"{bundle_advice(version)} Then close any other AP Coder window and start AP Coder again.")  # fmt: skip
+            f"{bundle_advice(version, venv_made=True)} Then close any other AP Coder window and start AP Coder "
+            "again.")  # fmt: skip
 
 
 def without_wheelhouse(missing: list[str], total: int) -> tuple[str, str, bool]:
