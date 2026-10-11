@@ -376,6 +376,16 @@ def test_pages_the_page_reader_did_not_read_need_a_person(touchless, path):
     assert touchless_gates(pages_unread=1) == ["1 of its pages was not read by OvisOCR2"]
 
 
+def test_a_text_file_invoice_needs_a_person(touchless, path):
+    """A .md/.txt invoice has no page for OvisOCR2 to read: only one reader read it, so a person approves it."""
+    text = path.with_suffix(".txt")
+    text.write_text("Invoice", encoding="utf-8")
+    decision = _decide(touchless, text)
+    assert not decision["auto"]
+    assert decision["reason"] == "always a person: it is a text file: OvisOCR2 has no page to read"
+    assert _decide(touchless, path)["auto"]
+
+
 def test_an_error_still_blocks_and_the_audit_sample_still_applies(touchless, path, tmp_path):
     assert _decide(touchless, path, report=_report("GL_UNKNOWN", severity=ERROR))["reason"] == "a check failed"
     picked = next(tmp_path / f"p{n}.pdf" for n in range(500) if audit_pick(tmp_path / f"p{n}.pdf", 0.05))

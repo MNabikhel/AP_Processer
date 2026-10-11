@@ -300,8 +300,9 @@ Automation):
   duplicate signal (`DUPLICATE_INVOICE`, `DUPLICATE_IN_ERP`, `DUPLICATE_OTHER_VENDOR`, `POSSIBLE_DUPLICATE_AMOUNT`), an
   unusual amount (`AMOUNT_UNUSUAL`: over 3× the vendor's median approved total), a vendor on hold or not in an imported
   vendor master, a credit note, a total over the touchless limit (setting `touchless_limit`, default 5,000.00 CAD; a
-  foreign currency is converted at the Settings → Review exchange rates, compared as it is without a rate), a total
-  over the second-approver limit, and an invoice the page reader has not read yet. On top of these, as before,
+  foreign currency is converted at the Settings → Review exchange rates; with no rate for it, it goes to a person), a
+  total over the second-approver limit, an invoice the page reader has not read yet (or not every page of it), and a
+  text file (.md, .txt), which the page reader cannot look at. On top of these, as before,
   any failed check or any printed header field below *verified* sends the invoice to a person
   (`should_auto_approve`).
 - **How long it takes**: at about 13 header fields an invoice, a 99% lower bound with no error needs about 380

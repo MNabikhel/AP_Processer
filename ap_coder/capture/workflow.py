@@ -116,12 +116,13 @@ def _amounts(capture: CaptureResult | None, output: dict[str, Any] | None) -> di
 
 
 def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output: dict[str, Any] | None = None, *,
-                  awaiting_page_reader: bool = False, pages_read: int | None = None) -> list[str]:  # fmt: skip
+                  awaiting_page_reader: bool = False, pages_read: int | None = None,
+                  no_page: bool = False) -> list[str]:  # fmt: skip
     """Why this invoice always goes to a person, whatever its supplier's record (``supplier.touchless_gates``):
     its findings, a credit note, a total over the touchless limit (Settings → Automation) or over the approval
     limit (a second approver), a foreign currency with no exchange rate to check the limit with, and not yet read
     by the page reader, or not every page of it (``pages_read``: the pages it read, at most
-    AP_PAGE_READER_MAX_PAGES)."""
+    AP_PAGE_READER_MAX_PAGES), or a text file the page reader cannot look at (``no_page``)."""
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     coding = _amounts(capture, output)
     over_limit = store.touchless_limit() if store.over_touchless_limit(coding) else None
@@ -131,7 +132,7 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
                            awaiting_page_reader=awaiting_page_reader, pages_unread=unread,
-                           no_rate_for=no_rate)  # fmt: skip
+                           no_rate_for=no_rate, no_page=no_page)  # fmt: skip
 
 
 def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capture: CaptureResult | None,
@@ -164,7 +165,8 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
         return {"state": state, "auto": False, "audit": False, "reason": ""}
     if awaiting_page_reader:
         return {"state": state, "auto": False, "audit": False, "reason": WAITING_FOR_PAGE_READER}
-    gates = invoice_gates(store, capture, report, output, pages_read=pages_read)
+    no_page = Path(path).suffix.lower() in TEXT_EXTENSIONS  # OvisOCR2 never reads it: one reader only
+    gates = invoice_gates(store, capture, report, output, pages_read=pages_read, no_page=no_page)
     if gates:
         return {"state": state, "auto": False, "audit": False, "reason": "always a person: " + "; ".join(gates)}
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
