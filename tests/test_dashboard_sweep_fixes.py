@@ -112,6 +112,25 @@ def test_the_reading_tab_does_not_say_ovisocr2_is_missing_while_lm_studio_is_dow
     assert at.button(key="rd_selftest").disabled
 
 
+def test_the_vendor_master_duplicates_warning_is_about_the_last_import(db):
+    """The "appear more than once in the file" warning stayed after the corrected file was imported, naming vendors
+    the new file no longer has twice."""
+    _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages
+    at = _ok(AppTest.from_string("from ap_coder.webapp.vendors import page_vendors\npage_vendors()",
+                                 default_timeout=TIMEOUT).run())  # fmt: skip
+    head = "vendor_id,vendor_name,payment_terms\n"
+    twice = head + "V1,Northwind IT Solutions Inc.,Net 30\nV2,Northwind IT Solutions Inc,Net 30\nV3,Chinook,Net 15\n"
+    at.file_uploader(key="vm_upload").upload("vendors.csv", twice.encode(), "text/csv")
+    _ok(at.run())
+    _ok(at.button(key="vm_import").click().run())
+    assert any(w.value.startswith("1 vendor appears more than once") for w in at.warning)
+    once = head + "V1,Northwind IT Solutions Inc.,Net 30\nV3,Chinook,Net 15\n"
+    at.file_uploader(key="vm_upload").upload("vendors_fixed.csv", once.encode(), "text/csv")
+    _ok(at.run())
+    _ok(at.button(key="vm_import").click().run())
+    assert not any("more than once" in w.value for w in at.warning), [w.value for w in at.warning]
+
+
 def test_getting_started_counts_only_the_steps_that_are_needed(db):
     """The welcome screen's ring counted the optional chat model, so it read 1/6 where the Process page said 1 of 4
     (plus processing the first invoices), and could never be complete without that optional model."""

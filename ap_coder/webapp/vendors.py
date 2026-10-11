@@ -199,13 +199,13 @@ def _master_importer(store: Store) -> None:
             rows = master_rows(df.to_dict("records"), chosen)
             result = store.import_vendor_master(rows, actor=reviewer())
             notify(f"Vendor master: {result['added']} added, {result['updated']} updated.", ":material/storefront:")
-            if result["duplicates"]:
-                st.session_state["vm_duplicates"] = result["duplicates"]
+            st.session_state["vm_duplicates"] = result["duplicates"]  # this file's: none clears the last warning
             st.rerun()
         dupes = st.session_state.get("vm_duplicates")
         if dupes:
             st.warning(
-                f"{ui.plural(len(dupes), 'vendor')} appear more than once in the file under similar names (merged "
+                f"{ui.plural(len(dupes), 'vendor')} {'appears' if len(dupes) == 1 else 'appear'} more than once in "
+                "the file under similar names (merged "
                 "here; one on hold keeps the vendor on hold). Often the same supplier set up twice in the ERP: "
                 + md("; ".join(" / ".join(n) for n in dupes[:8]))
             )
