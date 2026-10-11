@@ -1326,7 +1326,8 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("Purchase order exception", "the PO is unknown, closed or another vendor's, or billed beyond what was ordered or "
      "received"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it, or it is a text file"),
-    ("Any failed check", "totals, tax, GST/HST check digit, or any field not verified"),
+    ("Any failed check", "totals, tax, GST/HST check digit, line items read differently by two readers, or any field "
+                         "not verified"),
 ]  # fmt: skip
 
 

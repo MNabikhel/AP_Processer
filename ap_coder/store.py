@@ -294,6 +294,12 @@ class Store:
                 "WHERE e.action = 'autonomy_suspended' AND CASE WHEN json_valid(e.detail) THEN "
                 "json_extract(e.detail, '$.key') END = supplier_profiles.key), updated_at) WHERE state = 'suspended'"
             )
+        # An invoice made from a picture remembers the picture's SHA-256 (intake.py), so the same photo sent again is
+        # found (looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+        if "original_sha256" not in columns:
+            conn.execute("ALTER TABLE invoices ADD COLUMN original_sha256 TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS invoices_original_sha ON invoices (original_sha256)")
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
         from .capture.workflow import AUTONOMOUS_REVIEWER
@@ -517,7 +523,10 @@ class Store:
         extraction_md: str = "",
         meta: dict[str, Any] | None = None,
         error: str | None = None,
+        original_sha256: str | None = None,
     ) -> int:
+        """``original_sha256``: the SHA-256 of the picture this PDF was made from (``intake.py``), so the same photo
+        sent again is found as this invoice (``find_by_hash``)."""
         source_path = Path(source_path)
         sha = hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.exists() else None
         out = output or {}
@@ -557,6 +566,11 @@ class Store:
                 ),
             )
             invoice_id = int(cur.lastrowid)
+            if original_sha256:
+                # Earlier failed attempts at the same picture (before or after it was made a PDF) are replaced too.
+                conn.execute("DELETE FROM invoices WHERE (original_sha256 = ? OR file_sha256 = ?) AND status = ? "
+                             "AND id != ?", (original_sha256, original_sha256, FAILED, invoice_id))  # fmt: skip
+                conn.execute("UPDATE invoices SET original_sha256 = ? WHERE id = ?", (original_sha256, invoice_id))
             if error:
                 self._log(conn, "failed", invoice_id, detail={"file": source_path.name, "error": error})
             else:
@@ -570,13 +584,14 @@ class Store:
             return invoice_id
 
     def find_by_hash(self, path: str | Path, include_failed: bool = False) -> dict[str, Any] | None:
-        """The latest invoice made from this exact file (failed attempts only if ``include_failed``)."""
+        """The latest invoice made from this exact file, or from this exact picture made into a PDF (failed attempts
+        only if ``include_failed``)."""
         sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        sql = "SELECT id, status FROM invoices WHERE file_sha256 = ?"
+        sql = "SELECT id, status FROM invoices WHERE (file_sha256 = ? OR original_sha256 = ?)"
         if not include_failed:
             sql += f" AND status != '{FAILED}'"
         with self._conn() as conn:
-            row = conn.execute(sql + " ORDER BY id DESC", (sha,)).fetchone()
+            row = conn.execute(sql + " ORDER BY id DESC", (sha, sha)).fetchone()
         return dict(row) if row else None
 
     def find_duplicates(

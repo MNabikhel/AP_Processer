@@ -48,6 +48,7 @@ class PipelineResult:
     rules_applied: list[dict[str, Any]] = field(default_factory=list)  # lines a fixed coding rule changed
     capture: Any = None  # capture.CaptureResult: every header field located, with its confidence
     autonomy: dict[str, Any] = field(default_factory=dict)  # supplier state and whether it went touchless
+    original: dict[str, Any] | None = None  # the picture this PDF was made from (intake.py): name, kept, sha256
 
     @property
     def ok(self) -> bool:
@@ -244,6 +245,9 @@ class InvoicePipeline:
         captured: tuple[Any, str, Any] | None = None  # (capture, supplier key, profile) when read without AI
         text_file = path.suffix.lower() in TEXT_EXTENSIONS
         try:
+            # A photo or a scanned picture coming in is made a PDF first; one stored as a picture by an older version
+            # (read again by the page reader) stays where the database has it.
+            path = result.source = _as_pdf(path, result, convert=invoice_id is None)
             t0 = time.perf_counter()
             layout = None
             if self._reads_locally(path):  # offline: the page's text layer, or local OCR for a scan
@@ -334,6 +338,7 @@ class InvoicePipeline:
                     extraction_md=result.extraction.content if result.extraction else "",
                     meta=_meta(result),
                     error=result.error,
+                    original_sha256=(result.original or {}).get("sha256"),
                 )
                 if result.capture is not None:
                     self.store.save_capture(result.invoice_id, result.capture.to_dict())
@@ -381,6 +386,25 @@ class InvoicePipeline:
             raise
         pool.shutdown()
         return [r for r in results if r is not None]
+
+
+def _as_pdf(path: Path, result: PipelineResult, convert: bool = True) -> Path:
+    """The PDF to read: a picture (JPEG, PNG, HEIC, TIFF, BMP) is made into one first (``convert``), the picture kept
+    in ``originals/`` (``intake.to_pdf``); a PDF made from a picture before says which (``result.original``)."""
+    from . import intake
+
+    if intake.is_image(path) and convert:
+        converted = intake.to_pdf(path)
+        result.original = {"file": path.name, "kept": str(converted.original), "sha256": converted.sha256,
+                           "pages": converted.pages}  # fmt: skip
+        log.info("%s: made into %s (the picture is kept in %s)", path.name, converted.pdf.name, converted.original)
+        return converted.pdf
+    if path.suffix.lower() == ".pdf":
+        note = intake.original_of(path)
+        if note:
+            kept = path.parent / str(note.get("kept") or "")
+            result.original = {"file": note.get("original"), "kept": str(kept), "sha256": note.get("sha256")}
+    return path
 
 
 def output_stems(paths: list[Path]) -> list[str]:
@@ -458,6 +482,8 @@ def _meta(result: PipelineResult) -> dict[str, Any]:
             "usage": result.coding.usage,
         }
     meta["history_examples"] = result.history_examples
+    if result.original:
+        meta["original"] = result.original
     if result.capture is not None:
         meta["capture"] = {
             "status_counts": result.capture.status_counts(),

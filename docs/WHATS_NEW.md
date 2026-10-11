@@ -8,7 +8,34 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
-## This release: one way to read every invoice, and touchless processing
+## This release: pictures become PDFs, and line items read with a table finder
+
+**For AP clerks**
+
+- **Every invoice is a PDF.** A photo or a scanned picture (JPEG, PNG, iPhone HEIC, TIFF with every page,
+  BMP) that is uploaded, dropped in the invoices folder or attached to an email is made into a PDF before it
+  is read: turned upright, at the resolution it was taken, a JPEG kept as it is. The invoice is stored, shown
+  and stamped as that PDF; the picture is kept as it came in, in an `originals` folder beside it (the review
+  screen says so). The same photo sent twice is still found as the same invoice.
+- **Line items from the table on the page.** A small layout model, the *table finder*, finds the line
+  table on each page (scans, photos and digital PDFs alike), and the line items are read from the words
+  inside it: a note or a remittance box printed beside the rows no longer runs into the descriptions. A
+  tilted scan's rows are straightened before they are read, and a table whose column headings OCR can't
+  read is read by its amount column. On the benchmark, line items read right (amount and description) went
+  from 29% to 98% on scans and from 98.2% to 99.7% on digital PDFs, with header fields read exactly as well as
+  before ([details](CAPTURE_DESIGN.md#pictures-become-pdfs-and-line-items-read-with-the-table-finder)).
+- **Line items checked by two readers** (`LINE_ITEMS_AGREE`). Once OvisOCR2 has read the invoice, its
+  reading of the table is compared row by row with the page's (amount, quantity and description). Lines
+  both read the same are marked so; when they differ, the invoice says which line and goes to a person.
+  The review screen says where each line came from.
+
+**For IT**
+
+- The table finder's model (`yolov8n_layout_general6.onnx`, 12 MB, Apache-2.0) comes in the offline
+  bundle's `models/` folder with its SHA-256, like the OCR models; AP Coder never downloads it. Without it,
+  line items are read as before and *Settings → Reading* shows the *Table finder* row as missing.
+
+## Earlier: one way to read every invoice, and touchless processing
 
 **For AP clerks**
 

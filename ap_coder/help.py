@@ -394,6 +394,14 @@ CHECKS: dict[str, CheckHelp] = {
         "Compare every amount with the page as displayed, not the values read, and ask the supplier for a fresh copy "
         "on a number you already have before paying.",
     ),
+    "LINE_ITEMS_AGREE": CheckHelp(
+        READING, "Line items read differently",
+        "Two independent readers read the invoice's line table differently: OvisOCR2, which reads the page image, "
+        "and the table finder or the PDF's own table, which read the words inside the table on the page. A line's "
+        "amount, quantity or description differs, or one reader found more lines than the other.",
+        "Compare each line (description, quantity, price and amount) with the page and correct it before approving. "
+        "Until the two readers agree, the invoice isn't approved without a person.",
+    ),
     "CURRENCY_NOT_FOUND": CheckHelp(
         READING, "Currency not printed",
         "The invoice shows no currency the reader could read (no code such as CAD or USD, no € or £ sign), so "

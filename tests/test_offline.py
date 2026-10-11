@@ -392,7 +392,11 @@ def test_bundle_dry_run_plans_without_writing(tmp_path, capsys, no_network):
     assert all(s["also"][-2:] == ["--ignore-requires-python", "rapidocr-onnxruntime>=1.3"] for s in cross)
     assert not any("rapidocr-onnxruntime" in arg for s in cross for arg in s["cmd"] + s["fallback"])
     assert cross[-1]["also"][:-2] == cross[-1]["cmd"][: len(cross[-1]["also"]) - 2]  # same target, same pip
-    assert len(plan["models"]) == 3
+    assert len(plan["models"]) == 4  # the three PP-OCRv5 models and the table finder
+    assert plan["models"][-1] == {
+        "name": "yolov8n_layout_general6.onnx",
+        "sha256": "927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95",
+    }
     # --mac: one download per platform and Python version, Macs included.
     assert bundle.main(["--dry-run", "--no-models", "--mac", "--out", str(out)]) == 0
     plan = json.loads(capsys.readouterr().out)
