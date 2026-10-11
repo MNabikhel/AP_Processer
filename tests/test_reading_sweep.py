@@ -59,10 +59,52 @@ def test_a_credit_lines_quantity_and_unit_price_are_read_with_the_credits_sign(t
 
     pdf = _pdf(tmp_path / "credit.pdf", [[
         "Harbour Supply Ltd.", "CREDIT NOTE", "", "Description            Qty   Unit Price    Amount",
-        "Returned pallets          4       50.00      200.00 CR", "Returned crates           2       25.00      (50.00)",
+        "Returned pallets          4       50.00      200.00 CR",
+        "Returned crates           2       25.00      (50.00)",
         "Damaged drums             3      -10.00      -30.00", "", (300, "Subtotal  280.00 CR"),
     ]])  # fmt: skip
     items = [(li.description, li.quantity, li.unit_price, li.amount) for li in read_line_items(build_layout(pdf))]
     assert items == [("Returned pallets", 4.0, -50.0, -200.0), ("Returned crates", 2.0, -25.0, -50.0),
                      ("Damaged drums", 3.0, -10.0, -30.0)]  # fmt: skip
 
+
+_FRENCH = ["FACTURE FL-2026-0042", "Fournitures Laval Inc.", "Papier A4 12 42,25 $ 507,00 $",
+           "Toner 4 155,15 $ 620,60 $", "Bureau 2 1 234,56 $ 2 469,12 $", "Livraison 1 125,00 $ 125,00 $",
+           "Sous-total 3 721,72 $", "TPS (5 %) 186,09 $", "TVQ (9,975 %) 371,24 $", "Total 4 279,05 $"]  # fmt: skip
+
+
+def test_figures_are_read_in_french_and_european_formats():
+    """ "1 234,56 $" was counted as the figure 234 (and "42,25" not at all): the figures of a French invoice were
+    fragments, so the page reader's figure-by-figure comparison measured nothing on them."""
+    from decimal import Decimal
+
+    from ap_coder.figures import compare_figures, figures
+
+    found = figures("\n".join(_FRENCH) + "\nNetto 1.234,56 EUR\nTotal 1 050.00")
+    for amount in ("42.25", "507.00", "1234.56", "2469.12", "3721.72", "186.09", "4279.05", "1050.00"):
+        assert Decimal(amount) in found, amount
+    assert Decimal("234") not in found and Decimal("279") not in found
+    assert figures("Total 1,234.56 and 3,907.81") == {
+        Decimal("1234.56"): ["1,234.56"],
+        Decimal("3907.81"): ["3,907.81"],
+    }
+    misread = compare_figures("Total 4 279,05 $", "Total 4 279,65 $")
+    assert misread.confirmed == 0 and misread.differ == [("4 279,65", "4 279,05")]
+
+
+def test_a_french_pdf_whose_hidden_text_is_not_the_page_fails_the_check(tmp_path):
+    """The edited-PDF check (``TEXT_LAYER_MATCHES_PAGE``) passed a French invoice whose hidden subtotal and total
+    differ from the page ("the page as printed shows 13 of the 13 figures"): its figures were never compared."""
+    import datetime as dt
+
+    from ap_coder.capture import analyze
+
+    pdf = _pdf(tmp_path / "fr.pdf", [list(_FRENCH)])
+    today = dt.date(2026, 10, 1)
+    same = analyze(pdf, ocr=False, page_text=["\n".join(_FRENCH)], today=today)
+    check = next(c for c in same.checks if c["code"] == "TEXT_LAYER_MATCHES_PAGE")
+    assert check["ok"] and check["confirmed"] == check["figures"] >= 8, check
+    printed = "\n".join(_FRENCH).replace("3 721,72", "2 721,72").replace("4 279,05", "3 279,05")
+    tampered = analyze(pdf, ocr=False, page_text=[printed], today=today)
+    check = next(c for c in tampered.checks if c["code"] == "TEXT_LAYER_MATCHES_PAGE")
+    assert not check["ok"] and set(check["fields"]) >= {"subtotal", "grand_total"}, check
