@@ -147,6 +147,24 @@ def finalise_coding(
     return output, report
 
 
+DAMAGED_PICTURE = ("UnidentifiedImageError", "DecompressionBombError")
+DAMAGED_PDF = ("FileDataError", "EmptyFileError")
+
+
+def plain_error(exc: Exception, path: Path) -> str:
+    """What AP reads when an invoice can't be processed: a damaged picture or PDF said plainly with what to do (the
+    technical detail is in the log), anything else as the error it is."""
+    name = type(exc).__name__
+    kind = path.suffix.lstrip(".").upper() or "picture"
+    if name in DAMAGED_PICTURE or (name == "OSError" and "image file" in str(exc)):
+        return (f"{path.name} can't be opened as a picture: the file is damaged or not really a {kind}. Ask the "
+                "vendor for a new copy, or scan it again.")  # fmt: skip
+    if name in DAMAGED_PDF:
+        return (f"{path.name} can't be opened as a PDF: the file is damaged or incomplete. Ask the vendor for a new "
+                "copy.")  # fmt: skip
+    return f"{name}: {exc}"
+
+
 class InvoicePipeline:
     def __init__(
         self,
@@ -304,7 +322,7 @@ class InvoicePipeline:
             result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch
             log.exception("Failed to process %s", path)
-            result.error = f"{type(exc).__name__}: {exc}"
+            result.error = plain_error(exc, path)
 
         key, profile = "", None
         if result.output is not None:

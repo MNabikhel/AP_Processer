@@ -127,3 +127,16 @@ def test_an_invoice_read_again_is_no_duplicate_of_itself(tmp_path, settings, ref
     assert "DUPLICATE_INVOICE" not in {i.code for i in again.report.issues}
     without = pipe.process(sample_markdown_path, save=False)  # a new copy of it is still a duplicate
     assert "DUPLICATE_INVOICE" in {i.code for i in without.report.issues}
+
+
+def test_a_damaged_file_is_said_plainly_not_as_a_python_error(tmp_path, settings, reference):
+    """A broken picture or PDF showed "UnidentifiedImageError: cannot identify image file <_io.BytesIO object at
+    0x...>" on the Process page; AP needs to know the file is damaged and what to do."""
+    (tmp_path / "photo.jpg").write_bytes(b"not an image")
+    (tmp_path / "scan.png").write_bytes(bytes(range(100)))
+    (tmp_path / "bad.pdf").write_bytes(b"%PDF-1.4 garbage")
+    pipeline = InvoicePipeline(settings, reference)
+    for name in ("photo.jpg", "scan.png", "bad.pdf"):
+        error = pipeline.process(tmp_path / name).error
+        assert error and "damaged" in error and "new copy" in error, (name, error)
+        assert "Error:" not in error and "0x" not in error and "<_io" not in error, (name, error)
