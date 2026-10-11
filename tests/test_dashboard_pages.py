@@ -456,3 +456,11 @@ def test_find_offers_the_approved_pdf(busy_db):
     _ok(at.button(key=f"search_pdf_make_{invoice_id}").click().run())
     name, data, _ = at.session_state[f"search_pdf_{invoice_id}"]
     assert name.endswith("approved.pdf") and data[:4] == b"%PDF"
+
+
+def test_opening_the_dashboard_in_a_test_leaves_no_page_reader_thread_behind():
+    """A page-reader thread left running by one test acts on the next test's fakes (CI on Windows, Python 3.13)."""
+    import threading
+
+    _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
+    assert not [t for t in threading.enumerate() if t.name == "ap-coder-page-reader" and t.is_alive()]

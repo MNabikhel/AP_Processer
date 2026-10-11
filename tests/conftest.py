@@ -23,6 +23,16 @@ def isolated_private_dir(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def no_dashboard_page_reader(monkeypatch):
+    """The dashboard's own page-reader thread runs for the life of the process: started by a test that opens the
+    dashboard, it would run on in later tests and act on their fakes (a self-test counted twice). Tests that need a
+    reader thread start their own BackgroundReader and stop it."""
+    from ap_coder import page_worker
+
+    monkeypatch.setattr(page_worker, "start_background", lambda *args, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
 def no_local_model(monkeypatch):
     """Never ask a real LM Studio on this computer: every test sees no local model unless it starts a fake one
     (tests/test_local_llm.py restores the real fetch for that)."""
