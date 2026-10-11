@@ -60,19 +60,23 @@ def vendor_record(store: Any, vendor_name: str | None) -> dict[str, Any] | None:
 
 
 def review_issues(capture: CaptureResult) -> list[tuple[str, str, str]]:
-    """(severity, code, message) for the review screen: header fields the readers could not confirm, and a
-    currency the page does not show (the coding's is then assumed)."""
-    from ..validation import currency_not_found
+    """(severity, code, message) for the review screen: header fields the readers could not confirm, totals that
+    don't add up as printed, a PDF whose hidden text is not what its page shows, and a currency the page does not
+    show (the coding's is then assumed)."""
+    from ..validation import INFO, WARNING, currency_not_found
     from .confidence import LABELS
 
     out: list[tuple[str, str, str]] = []
     unsure = [f for f in capture.fields.values() if f.status == CHECK]
     failed = [c for c in capture.checks if not c["ok"] and c["code"] in ("TOTALS_ADD_UP", "TAXES_ADD_UP")]
     for c in failed:
-        out.append(("warning", "CAPTURE_TOTALS", f"as printed, {c['detail']}"))
+        out.append((WARNING, "CAPTURE_TOTALS", f"as printed, {c['detail']}"))
+    for c in capture.checks:  # the PDF's hidden text is not what its page shows (capture.text_layer_check)
+        if c.get("code") == "TEXT_LAYER_MATCHES_PAGE" and not c.get("ok", True):
+            out.append((WARNING, "TEXT_LAYER_MATCHES_PAGE", str(c.get("detail") or "")))
     if unsure:
         names = ", ".join(LABELS.get(f.field, f.field) for f in unsure)
-        out.append(("info", "CAPTURE_CHECK_FIELDS", f"check on the page: {names} (highlighted in amber)"))
+        out.append((INFO, "CAPTURE_CHECK_FIELDS", f"check on the page: {names} (highlighted in amber)"))
     currency = capture.fields.get("currency")
     if currency is not None and not currency_read(currency):
         issue = currency_not_found(str(currency.value or ""))

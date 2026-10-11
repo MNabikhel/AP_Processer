@@ -8,17 +8,66 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## This release: one way to read every invoice, and touchless processing
+
+**For AP clerks**
+
+- **Every invoice is read the same way.** A digital PDF, a scan or a phone photo (iPhone HEIC too): the
+  PDF's own text or OCR, then OvisOCR2 reads every page again as a second reader. A field the readers agree
+  on is *verified*; one they read differently is marked *Check*.
+- **A new check: hidden text differs from the page** (`TEXT_LAYER_MATCHES_PAGE`). On a digital PDF, the
+  text a computer reads is compared with what is printed. An edited PDF that says another total than its
+  page shows goes to a person.
+- **No invoice is approved without a person before OvisOCR2 has read it.** A banner on the Process and
+  Review pages says when OvisOCR2 isn't running or is still testing itself.
+- **Approve & teach says what it learned**, e.g. *Learned from your 2 corrections (invoice number, due
+  date). Acme Ltd: 14 invoices reviewed, about 6 more clean invoices to go touchless.* Each corrected
+  field is recorded for that vendor and updates its template.
+
+**For AP managers**
+
+- **Touchless processing: one switch** in the new *Settings → Automation* tab, off by default, turned on
+  with a confirmation (recorded in the Activity log). With it on, a vendor goes touchless by itself once it
+  meets one fixed bar: at least 20 reviewed invoices, header fields at least 99% right with 95%
+  confidence over its last 200, and the last 10 without a correction (usually about 30 clean invoices).
+  5% of touchless invoices are still audited; one correction, or a touchless invoice reopened, suspends
+  the vendor until it has a fresh clean streak.
+- **Always a person:** a changed bank account or GST/HST number, any sign of a duplicate, an unusual
+  amount, a vendor not in the vendor master or on hold, a credit note, a total above *Largest invoice
+  approved without a person* (5,000.00 CAD by default) or above the second-approval limit, and an invoice
+  OvisOCR2 has not read yet.
+- **Learning & accuracy → Supplier learning** is now the training view, vendor by vendor: what was
+  corrected, how far each vendor is from touchless, and *Keep supervised* for a vendor that should always
+  go to a person. Bulk approvals nobody opened don't count toward the bar.
+- *Settings → Automation* shows the touchless rate of the last 30 days and the errors found in touchless
+  invoices. Our advice: leave it off for the first weeks of the pilot and watch *Supplier learning*.
+
+**For IT**
+
+- **Nothing to configure.** IT installs LM Studio with OvisOCR2 (and, optionally, the chat model) and
+  starts its server. AP Coder finds OvisOCR2 on its own and runs its self-test by itself (10 to 20 minutes
+  on a laptop the first time). There is no *Test the page reader* step any more; *Run the self-test again*
+  is in *Settings → Reading*.
+- **Settings tabs are now** Reading, Automation, Review, JD Edwards E1, Data & backups and About. *Settings
+  → Reading* replaces the *AI model* and *Page reader* tabs: how every invoice is read, each reader's
+  state, OvisOCR2's self-test and queue, and the models in LM Studio with **Load**.
+- **Settings removed:** `AP_PAGE_READER`, `AP_PAGE_READER_SCOPE`, `AP_LLM_PROVIDER`, `AP_VISION`,
+  `AP_LLM_VISION` and the model pickers. An older `.env` that still has them does no harm.
+- **Azure is for developers only** (`AP_ALLOW_INTERNET=1`). The offline installer asks no cloud questions.
+- The database upgrades itself on first start; your data is kept.
+
 ## Highlights
 
-- **New: the page reader, a second reader for scans and photos.** A small vision model (OvisOCR2 in LM
-  Studio, about 1 GB) reads each scan on its own in the background. Where it and OCR agree, a field can be
-  verified; where they differ, it is marked Check, and every figure on the page is compared between the two.
-  It is linked in *Settings → Page reader* by a test on an invoice whose answers are known. Every approval
+- **New: the page reader, a second reader for every invoice.** A small page-reading model (OvisOCR2 in LM
+  Studio, about 1 GB) reads every page of every invoice on its own in the background. Where it and the
+  PDF's text or OCR agree, a field can be verified; where they differ, it is marked Check, and every figure
+  on the page is compared between the two. It is found and self-tested on its own (*Settings → Reading*). Every approval
   now scores each reader (*Learning & accuracy → Readers*), tunes the confidence labels to your own
   invoices, and can be exported as training data. See [CAPTURE_DESIGN.md](CAPTURE_DESIGN.md#the-page-reader-a-vision-model-as-a-second-reader).
 - **New: invoice capture with the highlighted page.** Every field boxed on the invoice in its
   confidence colour, teach-by-click, a measured confidence per field, and **supplier autonomy**:
-  suppliers whose invoices AP has confirmed at 99%+ can go touchless, with an audit sample. See
+  with touchless processing on, suppliers whose invoices AP has confirmed at 99%+ go touchless, with an
+  audit sample. See
   [CAPTURE_DESIGN.md](CAPTURE_DESIGN.md) for how it works and the benchmark results.
 - **New: JD Edwards E1 export** (F0411Z1/F0911Z1 Z-files), see [JDE_E1.md](JDE_E1.md).
 
@@ -146,7 +195,7 @@ folder.
 
 ## Setup and safety
 
-- **Settings page:** Azure connection with a live test, review behaviour, approval limit, default
+- **Settings page:** how invoices are read, review behaviour, approval limit, default
   payment days, backups (make, download, restore, and a **second backup folder** such as OneDrive so
   a lost computer does not lose the database), **exchange rates to CAD** for estimates (Spend can show
   every currency in CAD; Sales tax estimates foreign-currency claims). Your name is kept per Windows user.

@@ -3,10 +3,13 @@
 
 * ``capture_invoice``: run every reader on a processed invoice (rule reader, the supplier's learned
   template, Document Intelligence, the AI's answer located on the page) and the checks.
-* ``route``: approve without a person only when the supplier is autonomous, every printed header
-  field is verified and every check passes; a deterministic sample still goes to a person (audit).
+* ``autonomy_decision``: approve without a person only when touchless processing is on (one switch for the
+  company), the supplier has earned it (one bar for every supplier, reached by itself), nothing on the invoice
+  always needs a person (``touchless_gates``: bank account changed, possible duplicate, unusual amount, over the
+  touchless or approval limit, credit note, vendor not in the master, not read by every reader), every printed
+  header field is verified and every check passes; a deterministic sample still goes to a person (audit).
 * ``learn_from_approval``: what AP approved trains the supplier's template and counts towards its
-  accuracy; a correction on an autonomous supplier suspends it at once.
+  accuracy; a correction on an autonomous supplier suspends it at once. ``taught_message`` says what was learned.
 """
 
 from __future__ import annotations
@@ -22,12 +25,16 @@ from . import analyze, build_layout
 from .bridge import ai_values, vendor_record
 from .supplier import (
     AUTONOMOUS,
+    READY,
     SUPERVISED,
     autonomy_status,
+    clean_invoices_to_go,
     confirmed_values,
+    judged_stats,
     learn,
     outcome_rows,
     should_auto_approve,
+    touchless_gates,
 )
 from .types import Box, CaptureResult
 
@@ -92,20 +99,79 @@ def audit_pick(path: str | Path, rate: float) -> bool:
     return int(digest[:15], 16) / float(16**15) < rate
 
 
+WAITING_FOR_PAGE_READER = "waiting for OvisOCR2 to read it"
+TOUCHLESS_OFF = "touchless processing is off: every invoice is reviewed"
+
+
+def _amounts(capture: CaptureResult | None, output: dict[str, Any] | None) -> dict[str, Any]:
+    """{"grand_total", "currency"} of the invoice: the coding's (what an approval posts), else what capture read
+    (the same values on any invoice that can go touchless: every printed field verified against the coding)."""
+    coding = {k: (output or {}).get(k) for k in ("grand_total", "currency")}
+    fields = capture.fields if capture is not None else {}
+    for name in ("grand_total", "currency"):
+        if coding[name] in (None, "") and fields.get(name) is not None:
+            coding[name] = fields[name].value
+    coding["currency"] = coding["currency"] or "CAD"  # no currency printed: CAD, as the vendor checks take it
+    return coding
+
+
+def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output: dict[str, Any] | None = None, *,
+                  awaiting_page_reader: bool = False, pages_read: int | None = None,
+                  no_page: bool = False) -> list[str]:  # fmt: skip
+    """Why this invoice always goes to a person, whatever its supplier's record (``supplier.touchless_gates``):
+    its findings, a credit note, a total over the touchless limit (Settings → Automation) or over the approval
+    limit (a second approver), a foreign currency with no exchange rate to check the limit with, and not yet read
+    by the page reader, or not every page of it (``pages_read``: the pages it read, at most
+    AP_PAGE_READER_MAX_PAGES), or a text file the page reader cannot look at (``no_page``)."""
+    issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
+    coding = _amounts(capture, output)
+    over_limit = store.touchless_limit() if store.over_touchless_limit(coding) else None
+    unread = max(0, capture.page_count - pages_read) if capture is not None and pages_read is not None else 0
+    currency = str(coding["currency"]).strip().upper()
+    no_rate = "" if currency in store.fx_rates() else currency  # the limit is in CAD: unknown without a rate
+    return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
+                           over_approval_limit=store.over_approval_limit(coding),
+                           awaiting_page_reader=awaiting_page_reader, pages_unread=unread,
+                           no_rate_for=no_rate, no_page=no_page)  # fmt: skip
+
+
 def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capture: CaptureResult | None,
-                      report: Any, path: str | Path) -> dict[str, Any]:  # fmt: skip
-    """{"state", "auto": bool, "audit": bool, "reason"} for one processed invoice."""
+                      report: Any, path: str | Path, *, awaiting_page_reader: bool = False,
+                      output: dict[str, Any] | None = None, pages_read: int | None = None) -> dict[str, Any]:  # fmt: skip
+    """{"state", "auto": bool, "audit": bool, "reason"} for one processed invoice. ``awaiting_page_reader``: the
+    page reader (OvisOCR2) has not read this invoice yet, so it is never approved without a person now: every
+    invoice is read by every reader before anything is decided for it. ``output``: the coding an approval would
+    post (its total and currency; what capture read otherwise). ``pages_read``: the pages the page reader read (it
+    stops at AP_PAGE_READER_MAX_PAGES): an invoice with more pages than that goes to a person.
+
+    Nothing is approved without a person while touchless processing is off. With it on, a supplier that meets the
+    bar is made touchless first (``Store.sync_autonomy``), then the invoice must pass every gate that always needs
+    a person and ``should_auto_approve``; a share of those that pass still goes to a person (the audit sample)."""
     if store is None or not key:
         return {"state": "", "auto": False, "audit": False, "reason": "no supplier"}
     policy = store.autonomy_policy()
+    on = store.touchless_enabled()
+    if on:
+        store.sync_autonomy(key)  # a supplier that reached the bar since its last approval goes touchless now
+        profile = store.get_supplier_profile(key) or profile
     stored = (profile or {}).get("state") or SUPERVISED
-    state, _, _ = autonomy_status(store.supplier_stats(key), policy, stored, (profile or {}).get("autonomous_since"))
+    state, _, _ = autonomy_status(store.supplier_stats(key, policy.window), policy, stored,
+                                  (profile or {}).get("autonomous_since"), touchless_on=on,
+                                  suspended_at=(profile or {}).get("suspended_at"))  # fmt: skip
+    if not on:
+        would = state == READY  # the supplier meets the bar: it would be touchless with the switch on
+        return {"state": state, "auto": False, "audit": False, "reason": TOUCHLESS_OFF if would else ""}
     if state != AUTONOMOUS:
         return {"state": state, "auto": False, "audit": False, "reason": ""}
+    if awaiting_page_reader:
+        return {"state": state, "auto": False, "audit": False, "reason": WAITING_FOR_PAGE_READER}
+    no_page = Path(path).suffix.lower() in TEXT_EXTENSIONS  # OvisOCR2 never reads it: one reader only
+    gates = invoice_gates(store, capture, report, output, pages_read=pages_read, no_page=no_page)
+    if gates:
+        return {"state": state, "auto": False, "audit": False, "reason": "always a person: " + "; ".join(gates)}
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     ok, reason = should_auto_approve(state, capture, checks_ok=not (report and report.errors), issues=issues)
-    rate = (profile or {}).get("audit_rate")
-    audit = ok and audit_pick(path, policy.audit_rate if rate is None else float(rate))
+    audit = ok and audit_pick(path, policy.audit_rate)  # the same audit share for every supplier
     if audit:
         reason = "picked for the audit sample"
     return {"state": state, "auto": ok and not audit, "audit": audit, "reason": reason}
@@ -158,13 +224,20 @@ def reader_outcome_rows(capture: CaptureResult | dict[str, Any] | None, final: d
 
 
 def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, actor: str = "",
-                        taught: dict[str, list[Box]] | None = None) -> None:  # fmt: skip
+                        taught: dict[str, list[Box]] | None = None, bulk: bool = False) -> dict[str, Any]:  # fmt: skip
     """After a person approves: score each reader against what AP approved (the Learning page's Readers tab and
-    the local calibration of confidence), count what was corrected towards the supplier's accuracy, and teach
-    the supplier's template where each confirmed value sits on the page."""
+    the local calibration of confidence), count what was corrected, field by field, towards the supplier's accuracy,
+    and teach the supplier's template where each confirmed value sits on the page.
+
+    ``bulk``: approved in bulk, without anyone opening it. Its corrections (made earlier, on a reopened or sent-back
+    invoice) still count, but an untouched bulk approval does not count as a clean invoice towards touchless
+    processing: nobody checked its fields. Returns what was learned ({"supplier", "name", "fields", "corrected":
+    [fields], "counted", "template"}), for ``taught_message``."""
+    learned: dict[str, Any] = {"supplier": "", "name": "", "fields": 0, "corrected": [], "counted": False,
+                               "template": False}  # fmt: skip
     inv = store.get_invoice(invoice_id)
     if inv is None:
-        return
+        return learned
     try:
         store.record_reader_outcomes(invoice_id, reader_outcome_rows(store.get_capture(invoice_id), final))
     except Exception as exc:  # learning must never block an approval
@@ -172,23 +245,87 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     name = final.get("vendor_name") or ""
     key = store.supplier_key_for(name, final.get("gst_hst_registration_number"))
     if not key:
-        return
+        return learned
+    learned.update(supplier=key, name=name)
     source = "audit" if ((inv.get("meta") or {}).get("capture") or {}).get("audit") else "review"
-    proposed = inv.get("ai_output") or {}
-    try:
-        store.record_outcomes(key, invoice_id, outcome_rows(proposed, final), source=source, display_name=name)
-    except Exception as exc:  # learning must never block an approval
-        log.warning("invoice %s: outcomes not recorded (%s)", invoice_id, exc)
+    rows = outcome_rows(inv.get("ai_output") or {}, final)
+    learned.update(fields=len(rows), corrected=[r["field"] for r in rows if not r["correct"]])
+    if not bulk or learned["corrected"]:
+        try:
+            store.record_outcomes(key, invoice_id, rows, source=source, display_name=name)
+            learned["counted"] = True
+        except Exception as exc:  # learning must never block an approval
+            log.warning("invoice %s: outcomes not recorded (%s)", invoice_id, exc)
     path = Path(inv.get("source_path") or "")
     if path.suffix.lower() in TEXT_EXTENSIONS or not path.exists():
-        return
+        return learned
     try:
         layout = build_layout(path)
         profile = store.get_supplier_profile(key) or {}
         template = learn(profile.get("template") or None, layout, confirmed_values(final, taught))
         store.save_supplier_profile(key, display_name=name, template=template, actor=actor or None)
+        learned["template"] = True
     except Exception as exc:
         log.warning("invoice %s: supplier template not updated (%s)", invoice_id, exc)
+    return learned
+
+
+FIELD_WORDS = {
+    "vendor_name": "vendor", "invoice_number": "invoice number", "invoice_date": "invoice date",
+    "due_date": "due date", "po_number": "PO number", "currency": "currency",
+    "gst_hst_registration_number": "GST/HST number", "qst_registration_number": "QST number", "subtotal": "subtotal",
+    "gst_amount": "GST", "hst_amount": "HST", "pst_amount": "PST", "qst_amount": "QST", "tax_total": "tax total",
+    "grand_total": "total", "payment_terms": "terms",
+}  # fmt: skip
+
+
+def supplier_progress(store: Any, key: str) -> tuple[str, int, str]:
+    """(state, invoices reviewed, plain English: where it stands on the way to touchless processing)."""
+    from .supplier import HELD, LEARNING, SUSPENDED, to_go_text
+
+    policy = store.autonomy_policy()
+    profile = store.get_supplier_profile(key) or {}
+    stats = store.supplier_stats(key, policy.window)
+    on = store.touchless_enabled()
+    stored = profile.get("state") or SUPERVISED
+    state, _, _ = autonomy_status(stats, policy, stored, profile.get("autonomous_since"), touchless_on=on,
+                                  suspended_at=profile.get("suspended_at"))  # fmt: skip
+    if state == AUTONOMOUS:
+        where = "touchless"
+    elif state == HELD:
+        where = "kept supervised by a manager"
+    elif state == READY:
+        where = "meets the bar to go touchless" + ("" if on else " (touchless processing is off)")
+    else:
+        to_go = clean_invoices_to_go(judged_stats(stats, stored, profile.get("suspended_at")), policy)
+        where = to_go_text(to_go) + (" again" if state == SUSPENDED and to_go else "")
+        if state == LEARNING and not stats.invoices:
+            where = "nothing reviewed yet"
+    return state, stats.invoices, where
+
+
+def taught_message(store: Any, learned: dict[str, Any]) -> str:
+    """What an approval taught, in plain words: "Learned from your 2 corrections (invoice number, due date). Acme
+    Ltd: 14 invoices reviewed, about 6 more clean invoices to go touchless." "" when no supplier was found."""
+    from ..ui import plural
+
+    key = learned.get("supplier")
+    if not key:
+        return ""
+    corrected = [FIELD_WORDS.get(f, f.replace("_", " ")) for f in learned.get("corrected") or []]
+    if corrected:
+        head = f"Learned from your {plural(len(corrected), 'correction')} ({', '.join(corrected)})."
+    elif learned.get("fields"):
+        head = "Every header field was read right."
+    else:
+        head = "Learned this vendor's layout." if learned.get("template") else ""
+    try:
+        _, invoices, where = supplier_progress(store, key)
+    except Exception as exc:  # the message must never block an approval
+        log.warning("supplier %s: progress not shown (%s)", key, exc)
+        return head
+    name = (learned.get("name") or key).rstrip(".")
+    return f"{head} {name}: {plural(invoices, 'invoice')} reviewed, {where}.".strip()
 
 
 def on_reopen(store: Any, invoice_id: int, actor: str, reason: str = "") -> None:

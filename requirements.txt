@@ -4,6 +4,7 @@ openpyxl>=3.1
 openai>=1.68
 pandas>=2.1
 pillow>=10
+pillow-heif>=0.18  # an iPhone's HEIC/HEIF photos (pyproject: the ocr extra, with the OCR engines)
 pydantic>=2.6
 pymupdf>=1.24
 python-dotenv>=1.0

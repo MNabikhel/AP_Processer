@@ -373,6 +373,26 @@ CHECKS: dict[str, CheckHelp] = {
         READING, "Amount read differently", "Azure's invoice model and the AI read a different amount.",
         "Check the subtotal, tax and total against the document.",
     ),
+    "CAPTURE_TOTALS": CheckHelp(
+        READING, "Totals don't add up as printed",
+        "As the invoice prints them, the subtotal, taxes and total don't add up (or the taxes don't add up to the "
+        "total tax), so one of them was misread or the invoice itself is wrong.",
+        "Compare the amounts with the page; if the invoice is wrong, ask the vendor for a corrected one.",
+    ),
+    "CAPTURE_CHECK_FIELDS": CheckHelp(
+        READING, "Fields to check on the page",
+        "The readers of the page didn't agree on these fields, or a check involving them failed, so they are "
+        "highlighted in amber on the page.",
+        "Click each amber field and compare it with the page before approving.",
+    ),
+    "TEXT_LAYER_MATCHES_PAGE": CheckHelp(
+        FRAUD, "Hidden text differs from the page",
+        "This PDF carries text (what a computer reads) that is not what its page shows: the page reader, which "
+        "reads the page as printed, didn't find the PDF's totals there, or most of its figures differ. Editing the "
+        "hidden text of a PDF is a known way to slip a different amount past a system that reads the text alone.",
+        "Compare every amount with the page as displayed, not the values read, and ask the supplier for a fresh copy "
+        "on a number you already have before paying.",
+    ),
     "CURRENCY_NOT_FOUND": CheckHelp(
         READING, "Currency not printed",
         "The invoice shows no currency the reader could read (no code such as CAD or USD, no € or £ sign), so "
@@ -389,9 +409,9 @@ def help_for(code: str) -> CheckHelp | None:
 FAQ: list[tuple[str, str]] = [
     (
         "Does any invoice or GL data leave this computer?",
-        "Only to your organisation's own Azure resources: the document goes to Azure Document Intelligence and "
-        "the text to your Azure OpenAI deployment, both in your tenant. The database, the invoices, what the AI "
-        "learns and the exports stay in the private folder on this computer.",
+        "No. Every invoice is read and coded on this computer: the PDF's own text or OCR, OvisOCR2 in LM Studio and "
+        "the checks all run here. The database, the invoices, what the AI learns and the exports stay in the "
+        "private folder on this computer.",
     ),
     (
         "How does the AI learn?",
@@ -425,20 +445,33 @@ FAQ: list[tuple[str, str]] = [
         "suggested as rules. The AI's accuracy is still measured on its own answer, not on the rule's.",
     ),
     (
-        "What is the page reader, and should I turn it on?",
-        "A small vision model (OvisOCR2, about 1 GB, in LM Studio) that reads each scan or photo on its own, as a "
-        "second reader beside OCR. Where both read the same value, a field can be verified; where they differ, it "
-        "is marked Check. It runs on this computer, in the background, a few minutes a page without a graphics "
-        "card, and never holds up processing. Set it up in Settings → Page reader: with OvisOCR2 in LM Studio, "
-        "press Test the page reader. It reads nothing until the model passes that test.",
+        "How is an invoice read? Is there anything to set up?",
+        "Every invoice is read the same way, whether a digital PDF, a scan or a phone photo, with nothing to choose: "
+        "the PDF's own text (or OCR with two engines for a scan or photo), then OvisOCR2, a small document reader in "
+        "LM Studio, reads every page again on its own, then the supplier's template and the business checks compare "
+        "them. Where the readers agree, a field can be verified; where they differ, it is marked Check. OvisOCR2 "
+        "runs in the background, a few minutes a page without a graphics card; AP Coder finds it in LM Studio and "
+        "trusts it only after its self-test, which runs by itself. No invoice is approved without a person before "
+        "OvisOCR2 has read it. Settings → Reading shows how each reader is doing.",
     ),
     (
         "How do I know the readers can be trusted before going touchless?",
-        "It is measured, three ways. Every approval scores each reader (OCR, the page reader, the supplier's "
-        "template, the AI) against what you approved: Learning & accuracy → Readers. On every digital PDF it reads, "
-        "the page reader is checked figure by figure against the PDF's own text, which is exact (Settings → Page "
-        "reader). And the confidence labels are tuned with your own approvals, not only the benchmark. Export "
+        "It is measured, three ways. Every approval scores each reader (OCR, OvisOCR2, the supplier's "
+        "template, the AI) against what you approved: Learning & accuracy → Readers. On every digital PDF, "
+        "OvisOCR2 is checked figure by figure against the PDF's own text, which is exact (Settings → "
+        "Reading). And the confidence labels are tuned with your own approvals, not only the benchmark. Export "
         "training data packs the approved invoices to train a model on them later.",
+    ),
+    (
+        "When is an invoice approved without a person?",
+        "Only once touchless processing is turned on (Settings → Automation; it is off until a manager turns it on). "
+        "Each invoice a clerk reviews trains its vendor, field by field. A vendor goes touchless by itself once it "
+        "meets the same bar as every vendor: 20 invoices reviewed, 99% of fields right with confidence, and the "
+        "last 10 without a correction. Its invoices still go to a person when a field is not verified, a check "
+        "fails, the bank account or GST/HST number changed, it may be a duplicate, the amount is unusual or over "
+        "the touchless limit, it is a credit note, or it needs a second approver; 5% are audited anyway. One "
+        "correction sends the vendor back to review. A manager can keep any vendor supervised on Learning & "
+        "accuracy.",
     ),
     (
         "What is the difference between errors, warnings and 'good to know'?",
@@ -497,9 +530,10 @@ FAQ: list[tuple[str, str]] = [
         "made to the AI's coding, rejections, exports, setup changes and backups. It can be downloaded as CSV.",
     ),
     (
-        "The connection to Azure fails.",
-        "Open Settings → Azure and click 'Run the test'. It checks each setting and says which one is wrong "
-        "(endpoint, key, deployment name or network). Keys are stored in the .env file on this computer only.",
+        "OvisOCR2 isn't reading invoices.",
+        "Open Settings → Reading: it shows each reader's state and what to do. Usually LM Studio isn't running "
+        "(start it, then its server) or OvisOCR2 isn't in LM Studio yet (copy its two files from IT). Invoices "
+        "processed meanwhile wait for it in the review queue, and a person can still approve them.",
     ),
 ]
 

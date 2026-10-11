@@ -24,7 +24,7 @@ from ap_coder.safe import md
 from ap_coder.store import Store, default_db_path
 
 DB_PATH = Path(os.environ.get("AP_DB_PATH") or default_db_path())
-# The public demo on the web (``streamlit_app.py`` sets it): made-up invoices only, no Azure, no folders.
+# The public demo on the web (``streamlit_app.py`` sets it): made-up invoices only, read ahead of time, no folders.
 PUBLIC_DEMO = os.environ.get("AP_PUBLIC_DEMO", "").strip().lower() in {"1", "true", "yes", "on"}
 INVOICE_DIR = DB_PATH.parent / "invoices"
 CACHE_DIR = DB_PATH.parent / ".cache" / "extraction"
@@ -57,11 +57,46 @@ def page_head(page: str, title: str, subtitle: str = "", aside: str = "", action
     html_head = ui.page_header("", title, subtitle, aside, crumbs=[c for c in crumbs if c])
     if not action:
         st.html(html_head)
+        if page in BANNER_PAGES:
+            reading_banner()
         return None
     with st.container(key=f"pagehead_{page}"):
         left, right = st.columns([3, 1], vertical_alignment="bottom")
         left.html(html_head)
+    if page in BANNER_PAGES:
+        reading_banner()
     return right
+
+
+# --- How invoices are read: a warning on the working pages when a reader isn't working ---------------------------
+
+BANNER_PAGES = {"process", "review"}  # where the reading banner shows, under the page header
+
+
+def reading_status_or_none(settings: Settings | None = None, store: Store | None = None, *,
+                           use_cache: bool = True) -> Any:  # fmt: skip
+    """``ap_coder.reading.reading_status`` for this dashboard, or None when it can't be worked out (never raises)."""
+    try:
+        from ap_coder.reading import reading_status
+
+        return reading_status(settings or get_settings(), store or get_store(), use_cache=use_cache)
+    except Exception:  # noqa: BLE001 - a page never breaks over a status line
+        return None
+
+
+def reading_banner() -> None:
+    """The one-line warning of ``reading_status`` (cached, so cheap), with a link to Settings → Reading; nothing when
+    every reader works or the status can't be read."""
+    if PUBLIC_DEMO:
+        return
+    status = reading_status_or_none()
+    banner = str(getattr(status, "banner", "") or "").strip()
+    if not banner:
+        return
+    with st.container(key="reading_banner"):
+        st.warning(md(banner), icon=":material/visibility_off:")
+        if "settings" in PAGES:
+            st.page_link(PAGES["settings"], label="Open Settings → Reading", icon=":material/arrow_forward:")
 
 
 # --- Shared helpers -----------------------------------------------------------------------------
@@ -274,11 +309,13 @@ def render_pages(path: str, mtime: float) -> list[bytes]:
 
         with pymupdf.open(path) as doc:
             return [page.get_pixmap(dpi=120).tobytes("png") for page in doc]
-    if suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}:
-        from PIL import Image, ImageSequence
+    if suffix in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".heic", ".heif"}:
+        from PIL import ImageSequence
+
+        from ap_coder.capture.layout import open_image
 
         pages = []
-        with Image.open(path) as img:
+        with open_image(path) as img:  # an iPhone's HEIC/HEIF photo too, with pillow-heif
             for frame in ImageSequence.Iterator(img):
                 buf = io.BytesIO()
                 frame.convert("RGB").save(buf, format="PNG")
@@ -288,10 +325,10 @@ def render_pages(path: str, mtime: float) -> list[bytes]:
 
 
 def not_in_public_demo(what: str) -> None:
-    """The friendly note shown instead of something the public demo can't do (Azure, folders on a computer)."""
+    """The friendly note shown instead of something the public demo can't do (reading new invoices, folders)."""
     st.info(
-        f"{what} is not available in the public demo. It runs on made-up invoices only, with no Azure "
-        "connection and no folders of its own; install AP Coder on your computer to use it.",
+        f"{what} is not available in the public demo. It runs on made-up invoices only, read ahead of time, with "
+        "no folders of its own; install AP Coder on your computer to use it.",
         icon=":material/science:",
     )
 

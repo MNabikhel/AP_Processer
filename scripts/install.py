@@ -12,7 +12,7 @@ same way). It is safe to run again at any time: each run updates what changed an
 * with that opt-in, a git checkout is updated in place — never a second copy
 * one virtual environment (``.venv``), packages installed only when missing or too old
 * one data folder outside the code (default ``~/APCoder``) for the database, invoices,
-  outputs and the ``.env`` with your Azure settings, so updates never lose or duplicate them
+  outputs and the ``.env`` settings file, so updates never lose or duplicate them
 * the desktop shortcut is overwritten, not added again
 
 Options: ``--yes`` (no questions, keep current answers), ``--no-update``, ``--skip-tests``,
@@ -210,7 +210,7 @@ def has_data(folder: Path) -> bool:
 
 
 def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
-    c.step("Data folder (database, invoices, outputs, Azure settings)")
+    c.step("Data folder (database, invoices, outputs, settings)")
     current = read_user_settings().get("data_dir")
     if args.data_dir:
         data = Path(args.data_dir).expanduser().resolve()
@@ -219,7 +219,7 @@ def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
     elif current:
         data = Path(current)
     else:
-        c.info("AP Coder keeps your invoices, its database and your Azure keys in one folder, outside the")
+        c.info("AP Coder keeps your invoices, its database and its settings in one folder, outside the")
         c.info("code, so new versions of the code use the same data. Do NOT use a OneDrive-synced folder.")
         data = Path(c.ask("Data folder", str(DEFAULT_DATA_DIR))).expanduser().resolve()
     if "onedrive" in str(data).lower():
@@ -305,8 +305,10 @@ def write_example_env(env: Path) -> None:
     env.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def configure_azure(c: Console, data: Path) -> Path:
-    c.step("Azure settings")
+def configure_settings(c: Console, data: Path) -> Path:
+    """The data folder's ``.env``. Offline (the pilot build), there is nothing to answer: every invoice is read on this
+    computer, the same way. Only a developer build that may reach the internet asks for cloud services."""
+    c.step("Settings")
     env = data / ".env"
     project_env = ROOT / ".env"
     if not env.exists():
@@ -319,6 +321,9 @@ def configure_azure(c: Console, data: Path) -> Path:
             c.ok(f"created {env}")
     elif project_env.exists():
         c.warn(f"There is also a .env in {ROOT}; AP Coder uses the one in the data folder: {env}")
+    if not internet_allowed():
+        c.ok("nothing to set up: invoices are read on this computer (OCR and OvisOCR2 in LM Studio)")
+        return env
 
     current = read_env(env)
     complete = all(current.get(k) for k in REQUIRED)
@@ -397,8 +402,12 @@ def run_checks(c: Console, args: argparse.Namespace, env: Path) -> None:
     print()
     run([sys.executable, "-m", "ap_coder", "doctor"])
     values = read_env(env)
-    if all(values.get(k) for k in REQUIRED) and c.yes(
-        "Test the connection to Azure now? (one tiny request to each service, a fraction of a cent)", default=False
+    if (
+        internet_allowed()
+        and all(values.get(k) for k in REQUIRED)
+        and c.yes(
+            "Test the connection to Azure now? (one tiny request to each service, a fraction of a cent)", default=False
+        )
     ):
         print()
         run([sys.executable, "-m", "ap_coder", "doctor", "--online"])
@@ -415,7 +424,7 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
     parser.add_argument("--no-shortcut", action="store_true", help="no desktop shortcut")
     parser.add_argument(
         "--fresh-start", action="store_true",
-        help="move the database, invoices and outputs to a backup folder (Azure settings are kept)",
+        help="move the database, invoices and outputs to a backup folder (the settings file is kept)",
     )  # fmt: skip
     parser.add_argument("--no-start", action="store_true", help="don't offer to start the dashboard at the end")
     args = parser.parse_args(argv)
@@ -430,7 +439,7 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
             return handed_over
         ensure_venv_and_packages(c, args, venv)
         data = choose_data_dir(c, args)
-        env = configure_azure(c, data)
+        env = configure_settings(c, data)
         create_shortcut(c, args)
         fetch_models(c)
         run_checks(c, args, env)
@@ -449,7 +458,7 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
     print("\nAll set.")
     print(f"  Start AP Coder:   {start}")
     print(f"  Your data:        {data}")
-    print(f"  Azure settings:   {env}")
+    print(f"  Settings file:    {env}")
     print("  Update later:     run the installer again (nothing is duplicated)")
     interactive = sys.stdin.isatty()  # never start a server when no one is there to stop it
     if not args.no_start and not args.yes and interactive and c.yes("Start AP Coder now?"):

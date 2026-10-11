@@ -18,8 +18,9 @@ DEFAULT_AOAI_API_VERSION = "2024-10-21"  # first GA version with strict Structur
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:1234/v1"  # LM Studio's local server (Ollama: http://127.0.0.1:11434/v1)
 LLM_PROVIDERS = ("auto", "local", "azure", "off")
 LLM_VISION_MODES = ("auto", "on", "off")
-PAGE_READER_MODES = ("auto", "ask", "off")
-PAGE_READER_SCOPES = ("scans", "all")
+# Settings an older AP Coder had, read no more: every invoice is read the same way now (an old .env that still has
+# them works as before, they are simply ignored).
+RETIRED_SETTINGS = ("AP_PAGE_READER", "AP_PAGE_READER_SCOPE", "AP_LLM_PROVIDER")
 
 
 _PLACEHOLDER = re.compile(r"<[^<>]+>")  # "https://<your-resource>.openai.azure.com/" in .env.example
@@ -125,10 +126,13 @@ class OpenAISettings:
 
 @dataclass(frozen=True)
 class LocalLLMSettings:
-    """Which AI codes invoices, and the local OpenAI-compatible server (LM Studio, Ollama) when it is a local one.
+    """The local OpenAI-compatible server (LM Studio, Ollama) whose chat model suggests GL accounts.
 
-    ``provider``: ``auto`` (Azure OpenAI when its endpoint is set, else a local model when one answers, else none),
-    ``local``, ``azure`` or ``off``. An empty ``model`` means the chat model loaded in LM Studio.
+    Every invoice is coded the same way (``local_llm.resolve_provider``): read by the local readers, coded from what
+    AP approved before, the chat model suggesting accounts for the lines left over when it answers. ``provider`` is
+    not read from the .env any more (AP_LLM_PROVIDER is ignored); it stays for code and tests that set it: ``auto``
+    (the default), ``local``, ``azure`` (only with the internet allowed, AP_ALLOW_INTERNET=1) or ``off`` (the chat
+    model is never asked). An empty ``model`` means the chat model LM Studio has, found on its own.
     """
 
     provider: str = "auto"
@@ -145,21 +149,29 @@ class LocalLLMSettings:
 
 @dataclass(frozen=True)
 class PageReaderSettings:
-    """The page reader: a model that can see (OvisOCR2 in LM Studio by default) transcribes a scan or a photo, an
-    independent reader beside OCR (see ap_coder/page_reader.py).
+    """The page reader: OvisOCR2 in LM Studio reads every page of every invoice (digital PDFs, scans and photos), an
+    independent reader beside the PDF's text and OCR (see ap_coder/page_reader.py). Nothing to choose: it is always
+    on, found in LM Studio on its own and trusted once its self-test passed.
 
-    ``mode``: ``auto`` (pages are read in the background), ``ask`` (only when AP clicks) or ``off``. ``scope``:
-    ``scans`` (scans and photos) or ``all`` (every invoice, digital ones too). ``model``: "" = automatic (a document
-    reader such as OvisOCR2 when LM Studio has one downloaded, else the chat model when it can see), or a model key.
-    ``base_url``: "" = the same server as AP_LLM_BASE_URL.
+    The fields are developer overrides, not settings for AP: ``model`` ("" = OvisOCR2, found among LM Studio's
+    models), ``base_url`` ("" = the chat model's server, AP_LLM_BASE_URL), how long a page may take, and how many
+    pages of an invoice are read.
     """
 
-    mode: str = "auto"
-    scope: str = "scans"
     model: str = ""
     base_url: str = ""
     timeout_seconds: float = 1200.0  # a laptop CPU takes minutes a page, most of it looking before the first word
     max_pages: int = 5
+
+    @property
+    def mode(self) -> str:
+        """Always "auto": every invoice is read in the background (AP_PAGE_READER is no longer read)."""
+        return "auto"
+
+    @property
+    def scope(self) -> str:
+        """Always "all": digital PDFs too (AP_PAGE_READER_SCOPE is no longer read)."""
+        return "all"
 
 
 @dataclass(frozen=True)
@@ -218,14 +230,12 @@ class Settings:
             review_threshold=_env_float("AP_REVIEW_THRESHOLD", 0.85),
             max_document_chars=_env_int("AP_MAX_DOCUMENT_CHARS", 200_000),
         )
-        provider = (_env("AP_LLM_PROVIDER", "auto") or "auto").lower()
         vision_mode = (_env("AP_LLM_VISION", "auto") or "auto").lower()
         vision_mode = {"true": "on", "yes": "on", "1": "on", "false": "off", "no": "off", "0": "off"}.get(
             vision_mode, vision_mode
         )
         model = _env("AP_LLM_MODEL", "") or ""
         llm = LocalLLMSettings(
-            provider=provider if provider in LLM_PROVIDERS else "auto",
             base_url=normalise_base_url(_env("AP_LLM_BASE_URL")),
             model="" if model.lower() == "auto" else model,
             api_key=_env("AP_LLM_API_KEY", "lm-studio"),
@@ -259,19 +269,15 @@ class Settings:
 
 
 def _page_reader_from_env() -> PageReaderSettings:
-    """AP_PAGE_READER* from the environment. A value that isn't one of the choices (or isn't a positive number) keeps
-    the default, so a typo never stops the app; "false" / "no" / "0" turn the page reader off."""
+    """The page reader's developer overrides (AP_PAGE_READER_MODEL, _BASE_URL, _TIMEOUT_SECONDS, _MAX_PAGES). A value
+    that isn't a positive number keeps the default, so a typo never stops the app. AP_PAGE_READER and
+    AP_PAGE_READER_SCOPE, which an older AP Coder read, are ignored: the page reader is always on, for every invoice."""
     default = PageReaderSettings()
-    mode = (_env("AP_PAGE_READER", default.mode) or default.mode).lower()
-    mode = {"false": "off", "no": "off", "0": "off", "none": "off", "disabled": "off"}.get(mode, mode)
-    scope = (_env("AP_PAGE_READER_SCOPE", default.scope) or default.scope).lower()
     model = _env("AP_PAGE_READER_MODEL", "") or ""
     base_url = _env("AP_PAGE_READER_BASE_URL")
     timeout = _env_float("AP_PAGE_READER_TIMEOUT_SECONDS", default.timeout_seconds)
     max_pages = _env_int("AP_PAGE_READER_MAX_PAGES", default.max_pages)
     return PageReaderSettings(
-        mode=mode if mode in PAGE_READER_MODES else default.mode,
-        scope=scope if scope in PAGE_READER_SCOPES else default.scope,
         model="" if model.lower() in {"auto", "automatic"} else model,
         base_url=normalise_base_url(base_url) if base_url else "",
         timeout_seconds=timeout if timeout and 0 < timeout < float("inf") else default.timeout_seconds,

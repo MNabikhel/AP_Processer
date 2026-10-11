@@ -41,7 +41,7 @@ FIELD_LABELS = {
     "tax_total": "Total tax", "grand_total": "Total", "payment_terms": "Terms",
 }  # fmt: skip
 
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp"}
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp", ".heic", ".heif"}
 MAX_SIDE = 2400  # pixels: a page is never drawn bigger than this, whatever the dpi asked for
 SCREEN_DPI = 96
 
@@ -94,8 +94,10 @@ def _render_pdf(path: str, dpi: int, max_pages: int) -> list[dict[str, Any]]:
 def _render_image(path: str, dpi: int, max_pages: int) -> list[dict[str, Any]]:
     from PIL import Image, ImageOps, ImageSequence
 
+    from ap_coder.capture.layout import open_image
+
     out = []
-    with Image.open(path) as img:
+    with open_image(path) as img:  # an iPhone's HEIC/HEIF photo too, with pillow-heif
         for index, frame in enumerate(ImageSequence.Iterator(img)):
             if index >= max_pages:
                 break

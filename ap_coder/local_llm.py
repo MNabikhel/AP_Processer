@@ -115,16 +115,14 @@ def looks_like_vision(model_id: str) -> bool:
 
 
 def pick_model(requested: str, ids: list[str], loaded: list[str] | None = None, *, lm_studio: bool = False) -> str:
-    """The model to ask: the one in AP_LLM_MODEL, else the chat model loaded now. With nothing loaded, LM Studio
-    lists every downloaded model and loads whichever a request names, so the first on its list would be loaded
-    though nobody chose it: none is picked, and Settings says to load one. Other servers list only what they serve."""
+    """The chat model that suggests GL accounts, found on its own: the one a developer named in AP_LLM_MODEL, else
+    the chat model loaded now, else (LM Studio loads a downloaded model when a request names it) the first chat model
+    it has downloaded. Never OvisOCR2 (it reads pages, it doesn't chat) nor an embedding model."""
     if requested:
         return requested
     chat_loaded = [m for m in loaded or [] if is_chat_model(m)]
     if chat_loaded:
         return chat_loaded[0]
-    if lm_studio:
-        return ""
     return next((m for m in ids if is_chat_model(m)), "")
 
 
@@ -214,16 +212,22 @@ def forget_status() -> None:
 
 
 def resolve_provider(settings: Settings, *, probe: bool = True) -> str:
-    """``azure``, ``local`` or ``off``. Auto: Azure OpenAI when its endpoint is set, else a local model when one
-    answers (``probe``), else none."""
+    """How invoices are coded: ``local`` always in this offline build, whether or not LM Studio answers right now,
+    so an invoice is coded the same way every time: the header, lines and taxes from the local readers, GL accounts
+    from what AP approved before and the coding rules, and the chat model's suggestion for a line left over when it
+    answers (when it doesn't, the line is left for AP, nothing else changes).
+
+    ``azure`` only when the internet is allowed (AP_ALLOW_INTERNET=1) and Azure OpenAI's endpoint is set. ``off``
+    only when code or a test sets ``settings.llm.provider`` to it (the same coding, the chat model never asked).
+    ``probe`` is kept for callers that pass it: nothing is asked any more."""
+    from .offline import internet_allowed
+
     provider = settings.llm.provider
-    if provider in {"azure", "local", "off"}:
-        return provider
-    if settings.openai.endpoint:
+    if provider == "off":
+        return "off"
+    if provider in {"auto", "azure"} and settings.openai.endpoint and internet_allowed():
         return "azure"
-    if probe and check_server(settings.llm).active:
-        return "local"
-    return "off"
+    return "local"
 
 
 @dataclass(frozen=True)
@@ -235,27 +239,23 @@ class ProviderStatus:
 
 
 def provider_status(settings: Settings) -> ProviderStatus:
+    """The GL coding model's state: ``ready`` when the chat model answers (local) or Azure OpenAI is in use. Not ready
+    is no failure: invoices are coded the same way, the lines nothing was learned for left for AP."""
     provider = resolve_provider(settings)
     if provider == "azure":
-        ready = bool(settings.openai.endpoint)
-        return ProviderStatus(
-            "azure", ready, f"Azure OpenAI · {settings.openai.deployment}" if ready else "Azure OpenAI",
-            "Coding with Azure OpenAI." if ready else "AP_LLM_PROVIDER=azure but the Azure OpenAI endpoint is not set.",
-        )  # fmt: skip
-    if provider == "local":
-        status = check_server(settings.llm)
-        if status.active:
-            return ProviderStatus("local", True, f"{status.server} · {status.model}", status.describe())
-        return ProviderStatus("local", False, "Local model", status.describe())
-    if settings.llm.provider == "off":
-        return ProviderStatus("off", False, "Off", "AI coding is turned off (AP_LLM_PROVIDER=off).")
+        label = f"Azure OpenAI · {settings.openai.deployment}"
+        return ProviderStatus("azure", True, label, "Coding with Azure OpenAI.")
+    if provider == "off":
+        return ProviderStatus("off", False, "Off", "The chat model isn't asked: accounts come from AP's history.")
     status = check_server(settings.llm)
-    return ProviderStatus("off", False, "No AI model", status.describe())
+    if status.active:
+        return ProviderStatus("local", True, f"{status.server} · {status.model}", status.describe())
+    return ProviderStatus("local", False, "Local model", status.describe())
 
 
 NO_MODEL_MESSAGE = (
-    "No AI model is set up to code invoices. Start LM Studio's server with a model loaded (Settings → AI model), "
-    "or connect Azure OpenAI."
+    "No AI model answers to code this invoice. Start LM Studio's server with a chat model loaded; invoices are still "
+    "read and coded from AP's history without it."
 )
 
 

@@ -9,12 +9,18 @@ Pure logic, no Streamlit and no database (the store keeps what this module compu
   ``MAX_VARIANTS`` variants, each with the page, the value box, the label printed next to it (the
   *anchor*) with the offset from the label to the value, and the *shape* of the confirmed values.
 * ``SupplierStats`` / ``wilson_lower`` / ``autonomy_status``: how accurate AP Coder has been on this
-  supplier, and whether it has earned touchless processing under an ``AutonomyPolicy``.
-* ``should_auto_approve`` / ``pick_for_audit``: the decision for one invoice of an autonomous supplier.
+  supplier, and whether it has earned touchless processing under the ``AutonomyPolicy`` (one fixed bar for
+  every supplier).
+* ``automatic_transition``: with touchless processing on (one company-wide switch), a supplier that meets
+  the bar goes touchless by itself, and one that no longer may goes back to review.
+* ``touchless_gates`` / ``should_auto_approve`` / ``pick_for_audit``: the decision for one invoice of a
+  touchless supplier; some invoices always go to a person whatever the supplier's record.
 
-States: ``learning`` (too few invoices), ``supervised``, ``ready`` (meets the policy; a manager must
-switch it on, never automatic), ``autonomous``, ``suspended`` (a correction was found since autonomy).
-Only ``supervised``, ``autonomous`` and ``suspended`` are stored; ``learning`` and ``ready`` are computed.
+States: ``learning`` (too few invoices), ``supervised``, ``ready`` (meets the bar; goes touchless as soon
+as touchless processing is on), ``autonomous`` (touchless), ``suspended`` (a person found an error since it
+went touchless: it needs a fresh clean streak to go touchless again) and ``held`` (a manager keeps it
+supervised whatever its record). Only ``supervised``, ``autonomous``, ``suspended`` and ``held`` are stored;
+``learning`` and ``ready`` are computed.
 """
 
 from __future__ import annotations
@@ -52,10 +58,12 @@ TAX_ID_FIELDS = ("gst_hst_registration_number", "qst_registration_number")
 REQUIRED_FIELDS = ("vendor_name", "invoice_number", "invoice_date", "grand_total")  # must be found to go touchless
 
 LEARNING, SUPERVISED, READY, AUTONOMOUS, SUSPENDED = "learning", "supervised", "ready", "autonomous", "suspended"
-STATES = (LEARNING, SUPERVISED, READY, AUTONOMOUS, SUSPENDED)
-STORED_STATES = (SUPERVISED, AUTONOMOUS, SUSPENDED)  # what a manager (or a found error) sets
+HELD = "held"  # a manager keeps this supplier supervised, whatever its record
+STATES = (LEARNING, SUPERVISED, READY, AUTONOMOUS, SUSPENDED, HELD)
+STORED_STATES = (SUPERVISED, AUTONOMOUS, SUSPENDED, HELD)  # what touchless processing, a manager or a found error sets
 STATE_LABELS = {
     LEARNING: "Learning", SUPERVISED: "Supervised", READY: "Ready", AUTONOMOUS: "Autonomous", SUSPENDED: "Suspended",
+    HELD: "Kept supervised",
 }  # fmt: skip
 
 ANCHOR_SCORE, POSITION_SCORE, SHAPE_WEIGHT = 0.75, 0.45, 0.2
@@ -1102,6 +1110,17 @@ class AutonomyPolicy:
             "are still audited, and one correction suspends it"
         )
 
+    def plain_rules(self) -> list[tuple[str, str]]:
+        """The bar in plain English, one (what, the standard) per rule, for the Automation settings."""
+        return [
+            ("Invoices reviewed by a person", f"at least {self.min_invoices}"),
+            ("Header fields read right",
+             f"at least {self.min_lower_bound:.0%}, with 95% confidence, over its last {self.window} invoices"),
+            ("Clean invoices in a row", f"the last {self.clean_streak}, with no correction at all"),
+            ("Audit sample", f"{self.audit_rate:.0%} of touchless invoices still go to a person"),
+            ("A correction", "suspends the vendor at once; it needs a fresh clean streak to go touchless again"),
+        ]  # fmt: skip
+
 
 DEFAULT_POLICY = AutonomyPolicy()
 
@@ -1141,45 +1160,188 @@ def meets_policy(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_POLICY) 
     return not policy_gaps(stats, policy)[0]
 
 
+def fresh_streak(stats: SupplierStats, since: str | None) -> int:
+    """Clean invoices in a row reviewed after ``since`` (when the supplier was suspended): the streak a suspended
+    supplier must build again. Without ``since`` (suspended by a correction), its clean streak."""
+    if not since:
+        return stats.clean_streak
+    streak = 0
+    for h in stats.history:  # newest first
+        if h["corrections"] or str(h["at"]) <= since:
+            break
+        streak += 1
+    return streak
+
+
+def judged_stats(stats: SupplierStats, stored_state: str, suspended_at: str | None = None) -> SupplierStats:
+    """The record the bar is checked on: a suspended supplier's clean streak counts only invoices reviewed since
+    it was suspended (a reopened touchless invoice suspends it without recording a correction), also while a
+    manager keeps it supervised and once allowed again (``suspended_at`` is kept until it is touchless again)."""
+    if stored_state != SUSPENDED and not suspended_at:
+        return stats
+    from dataclasses import replace
+
+    return replace(stats, clean_streak=min(stats.clean_streak, fresh_streak(stats, suspended_at)))
+
+
+def clean_invoices_to_go(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_POLICY) -> int | None:
+    """About how many more invoices reviewed with no correction would meet the bar (0: met; None: out of reach
+    within the window, which only more clean invoices replacing old corrections will change)."""
+    need_invoices = max(0, policy.min_invoices - stats.invoices)
+    need_streak = max(0, policy.clean_streak - stats.clean_streak)
+    need_fields = clean_fields_needed(stats.correct, stats.n, policy.min_lower_bound, policy.z)
+    if need_fields is None:
+        return None
+    per_invoice = stats.n / stats.window_invoices if stats.window_invoices else 10
+    need_bound = math.ceil(need_fields / max(per_invoice, 1)) if need_fields else 0
+    return max(need_invoices, need_streak, need_bound)
+
+
+def to_go_text(to_go: int | None) -> str:
+    """ "about 6 more clean invoices to go touchless" (plain English for ``clean_invoices_to_go``)."""
+    if to_go is None:
+        return "too many corrections in its recent invoices to go touchless yet"
+    if to_go == 0:
+        return "meets the bar to go touchless"
+    return f"about {_plural(to_go, 'more clean invoice')} to go touchless"
+
+
 def autonomy_status(
     stats: SupplierStats, policy: AutonomyPolicy | None = None, stored_state: str = SUPERVISED,
-    autonomous_since: str | None = None,
+    autonomous_since: str | None = None, *, touchless_on: bool = True, suspended_at: str | None = None,
 ) -> tuple[str, float, str]:  # fmt: skip
-    """(state, progress 0..1, one-line explanation). ``stored_state`` is what a manager set (supervised,
-    autonomous, suspended); ``ready`` is only ever a suggestion: a manager switches autonomy on."""
+    """(state, progress 0..1, one-line explanation). ``stored_state``: what touchless processing, a manager or a
+    found error set (supervised, autonomous, suspended, held). ``touchless_on``: the company-wide switch; while it
+    is off a supplier that meets the bar shows as *ready*, and nothing is approved without a person."""
     policy = policy or DEFAULT_POLICY
-    gaps, progress = policy_gaps(stats, policy)
     since = (autonomous_since or "")[:10]
+    if stored_state == HELD:
+        gaps, progress = policy_gaps(stats, policy)
+        record = "it meets the bar" if not gaps else "; ".join(gaps)
+        return HELD, progress, f"Kept supervised by a manager: every invoice is reviewed ({record})."
     if stored_state == AUTONOMOUS:
-        found = stats.corrections_since(autonomous_since)
-        if not found:
-            return (
-                AUTONOMOUS,
-                1.0,
-                (f"Touchless since {since or 'it was turned on'}; {policy.audit_rate:.0%} of invoices are audited."),
-            )
+        if not stats.corrections_since(autonomous_since):
+            if not touchless_on:
+                return (READY, 1.0, "Meets the bar, but touchless processing is off (Settings → Automation): "
+                                    "every invoice is reviewed.")  # fmt: skip
+            return (AUTONOMOUS, 1.0, f"Touchless since {since or 'it met the bar'}; {policy.audit_rate:.0%} of its "
+                                     "invoices are still audited, and one correction suspends it.")  # fmt: skip
         stored_state = SUSPENDED
+    judged = judged_stats(stats, stored_state, suspended_at)
+    gaps, progress = policy_gaps(judged, policy)
     if stored_state == SUSPENDED:
-        when = (stats.last_correction_at or "")[:10]
-        head = "Suspended: a correction was found" + (f" on {when}" if when else "")
+        when = (suspended_at or stats.last_correction_at or "")[:10]
+        head = "Suspended" + (f" on {when}" if when else "") + ": a person found an error in a touchless invoice"
         if not gaps:
-            return SUSPENDED, 1.0, head + "; it meets the bar again, so a manager can turn autonomy back on."
-        return SUSPENDED, progress, head + "; " + "; ".join(gaps) + "."
+            tail = "goes touchless again on its next invoice" if touchless_on else "touchless processing is off"
+            return SUSPENDED, 1.0, f"{head}; it meets the bar again ({tail})."
+        return SUSPENDED, progress, f"{head}; {to_go_text(clean_invoices_to_go(judged, policy))} again."
     if stats.invoices < policy.min_invoices:
         return LEARNING, progress, "; ".join(gaps) + "."
     if not gaps:
-        return (
-            READY,
-            1.0,
-            (
-                f"Meets the bar: {stats.invoices} invoices, accuracy at least {stats.lower_bound(policy.z):.1%}, "
-                f"last {policy.clean_streak} clean. A manager can turn on autonomy."
-            ),
-        )
+        when = "on its next invoice" if touchless_on else "once touchless processing is on (Settings → Automation)"
+        return (READY, 1.0, f"Meets the bar: {stats.invoices} invoices, accuracy at least "
+                            f"{stats.lower_bound(policy.z):.1%}, last {policy.clean_streak} clean. Goes touchless "
+                            f"{when}.")  # fmt: skip
     return SUPERVISED, progress, "; ".join(gaps) + "."
 
 
+def automatic_transition(
+    stats: SupplierStats, policy: AutonomyPolicy | None = None, stored_state: str = SUPERVISED,
+    autonomous_since: str | None = None, suspended_at: str | None = None,
+) -> tuple[str, str] | None:  # fmt: skip
+    """With touchless processing on: the stored state this supplier moves to now, and why (None: it stays).
+
+    * a supplier that meets the bar goes touchless (``autonomous``) by itself, the same bar for every supplier;
+    * a suspended one goes touchless again once it meets the bar with a fresh clean streak since its suspension;
+    * a touchless one with a correction since is suspended (``Store.record_outcomes`` does it at once);
+    * a touchless one that does not meet the standard bar (turned on by hand under another bar, before the bar was
+      the same for everyone) goes back to review;
+    * a supplier a manager keeps supervised (``held``) never moves."""
+    policy = policy or DEFAULT_POLICY
+    if stored_state == HELD:
+        return None
+    if stored_state == AUTONOMOUS:
+        if stats.corrections_since(autonomous_since):
+            return SUSPENDED, "a correction was found since it went touchless"
+        if not meets_policy(stats, policy):
+            return SUPERVISED, "it does not meet the standard bar for touchless processing"
+        return None
+    if not meets_policy(judged_stats(stats, stored_state, suspended_at), policy):
+        return None
+    if stored_state == SUSPENDED:
+        return (
+            AUTONOMOUS,
+            f"meets the bar again, with {policy.clean_streak} clean invoices in a row since it was suspended",
+        )
+    return AUTONOMOUS, "meets the bar for touchless processing"
+
+
 HEADER_PROVEN_SOFT = {"LINES_ADD_UP"}
+
+# Findings that always send an invoice to a person, whatever its supplier's record: fraud and duplicate signals.
+ALWAYS_A_PERSON: dict[str, str] = {
+    "VENDOR_BANK_CHANGED": "the bank account to pay into changed",
+    "VENDOR_TAX_NUMBER_CHANGED": "the GST/HST number changed",
+    "DUPLICATE_INVOICE": "it may be a duplicate",
+    "DUPLICATE_IN_ERP": "it may be a duplicate",
+    "DUPLICATE_OTHER_VENDOR": "it may be a duplicate",
+    "POSSIBLE_DUPLICATE_AMOUNT": "it may be a duplicate",
+    "AMOUNT_UNUSUAL": "the amount is unusual for this vendor",
+    "VENDOR_NOT_IN_MASTER": "the vendor is not in the vendor master",
+    "VENDOR_ON_HOLD": "the vendor is on hold",
+}
+# What always goes to a person, in plain English (Settings → Automation).
+ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
+    ("A vendor's first invoices", "until the vendor meets the bar above"),
+    ("Bank account changed", "the account to pay into differs from the vendor's approved invoices"),
+    ("GST/HST number changed", "it differs from the vendor's usual number or the vendor master"),
+    ("Possible duplicate", "same number, same amount under a new number, already in the ERP, or another vendor name"),
+    ("Unusual amount", "far above what this vendor usually bills"),
+    ("Over the touchless limit", "a total above the largest amount approved without a person"),
+    ("No exchange rate", "a foreign currency with no rate in Settings → Review, so the limit can't be checked"),
+    ("Over the approval limit", "it needs a second approver anyway"),
+    ("Credit note", "a credit is always applied by a person"),
+    ("Not in the vendor master", "once a vendor master is imported, a vendor that is not in it"),
+    ("Not read by every reader", "the page reader has not read it yet, not every page of it, or it is a text file"),
+    ("Any failed check", "totals, tax, GST/HST check digit, or any field not verified"),
+]  # fmt: skip
+
+
+def touchless_gates(
+    issues: Iterable[dict[str, Any]] | None = None, *, grand_total: Any = None, over_limit: float | None = None,
+    over_approval_limit: bool = False, awaiting_page_reader: bool = False, pages_unread: int = 0,
+    no_rate_for: str = "", no_page: bool = False,
+) -> list[str]:  # fmt: skip
+    """Why this invoice must be seen by a person whatever its supplier's record (plain English; empty: none applies).
+    ``issues``: the validation findings ({"code", ...}); ``grand_total``: below zero is a credit note;
+    ``over_limit``: the touchless limit its total is over (None: not over); ``no_rate_for``: its currency, when no
+    exchange rate is set for it (the limit is in CAD, so it can't be checked); ``over_approval_limit``: it needs a
+    second approver; ``awaiting_page_reader``: not every reader has read it yet; ``pages_unread``: pages of it the
+    page reader did not read (it reads at most AP_PAGE_READER_MAX_PAGES pages); ``no_page``: a text file (.md, .txt),
+    which the page reader cannot look at, so only one reader has read it."""
+    reasons: list[str] = []
+    for issue in issues or []:
+        reason = ALWAYS_A_PERSON.get(str(issue.get("code") or ""))
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    total = parse_amount(grand_total) if grand_total is not None else None
+    if total is not None and total < 0:
+        reasons.append("it is a credit note")
+    if over_limit is not None:
+        reasons.append(f"the total is over the touchless limit of {over_limit:,.2f}")
+    if no_rate_for:
+        reasons.append(f"no exchange rate for {no_rate_for} (Settings → Review) to compare its total with the "
+                       "touchless limit")  # fmt: skip
+    if over_approval_limit:
+        reasons.append("it is over the approval limit and needs a second approver")
+    if awaiting_page_reader:
+        reasons.append("the page reader has not read it yet")
+    if no_page:
+        reasons.append("it is a text file: OvisOCR2 has no page to read")
+    if pages_unread > 0:
+        reasons.append(f"{pages_unread} of its pages {'was' if pages_unread == 1 else 'were'} not read by OvisOCR2")
+    return reasons
 
 
 def should_auto_approve(
@@ -1187,13 +1349,19 @@ def should_auto_approve(
     issues: Iterable[dict[str, Any]] | None = None,
 ) -> tuple[bool, str]:  # fmt: skip
     """Approve without a person only for an ``autonomous`` supplier, every printed header field
-    ``verified``, no failed check and no error-level validation issue. Otherwise the reason it goes to review."""
+    ``verified``, no failed check, no error-level validation issue and none of the findings that always need a
+    person (``touchless_gates``). Otherwise the reason it goes to review."""
     if state != AUTONOMOUS:
         return False, f"supplier is {STATE_LABELS.get(state, state).lower()}, not autonomous"
     if capture is None:
         return False, "no capture result"
     if isinstance(capture, dict):
         capture = CaptureResult.from_dict(capture)
+    issues = list(issues or [])
+    total = capture.fields.get("grand_total")
+    gates = touchless_gates(issues, grand_total=total.value if total is not None else None)
+    if gates:
+        return False, "always a person: " + "; ".join(gates)
     if not checks_ok:
         return False, "a check failed"
     failed = [c.get("code") or "check" for c in capture.checks if not c.get("ok", True)]

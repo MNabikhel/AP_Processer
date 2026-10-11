@@ -11,6 +11,7 @@ from streamlit.testing.v1 import AppTest
 from ap_coder.capture.supplier import (
     AUTONOMOUS,
     DEFAULT_POLICY,
+    HELD,
     LEARNING,
     READY,
     SUPERVISED,
@@ -382,11 +383,14 @@ def test_state_machine_learning_supervised_ready_autonomous_suspended():
     assert state == SUPERVISED and "6 more clean in a row needed" in why
     clean = SupplierStats.from_rows(_rows(30))
     state, progress, why = autonomy_status(clean)
-    assert state == READY and progress == 1.0 and "manager" in why
+    assert state == READY and progress == 1.0 and "Goes touchless on its next invoice" in why
     assert meets_policy(clean)
-    # ready is never automatic: the stored state stays supervised until a manager turns it on
+    # with touchless processing off, ready says so (and nothing is approved without a person)
+    assert "once touchless processing is on" in autonomy_status(clean, touchless_on=False)[2]
     state, progress, _ = autonomy_status(clean, DEFAULT_POLICY, AUTONOMOUS, "2026-01-01T00:00:30")
     assert state == AUTONOMOUS and progress == 1.0
+    # a touchless supplier shows as ready while the switch is off
+    assert autonomy_status(clean, DEFAULT_POLICY, AUTONOMOUS, "2026-01-01T00:00:30", touchless_on=False)[0] == READY
     one_error = SupplierStats.from_rows(_rows(31, bad={30}))  # an audit after autonomy found one correction
     state, _, why = autonomy_status(one_error, DEFAULT_POLICY, AUTONOMOUS, "2026-01-01T00:00:30")
     assert state == SUSPENDED and why.startswith("Suspended")
@@ -425,8 +429,13 @@ def test_should_auto_approve_only_when_everything_is_verified():
     failed = _capture()
     failed.checks.append({"code": "TAX_RATE", "ok": False, "detail": "13% expected"})
     assert should_auto_approve(AUTONOMOUS, failed.to_dict(), True) == (False, "check failed: TAX_RATE")
-    issues = [{"severity": "warning", "code": "W"}, {"severity": "error", "code": "DUPLICATE_INVOICE"}]
-    assert should_auto_approve(AUTONOMOUS, _capture(), True, issues) == (False, "validation error: DUPLICATE_INVOICE")
+    issues = [{"severity": "warning", "code": "W"}, {"severity": "error", "code": "GL_UNKNOWN"}]
+    assert should_auto_approve(AUTONOMOUS, _capture(), True, issues) == (False, "validation error: GL_UNKNOWN")
+    duplicate = [{"severity": "error", "code": "DUPLICATE_INVOICE"}]
+    assert should_auto_approve(AUTONOMOUS, _capture(), True, duplicate) == (
+        False,
+        "always a person: it may be a duplicate",
+    )
     no_number = _capture()
     no_number.fields["invoice_number"] = FieldResult("invoice_number", None, 0, "missing")
     assert not should_auto_approve(AUTONOMOUS, no_number, True)[0]
@@ -529,7 +538,7 @@ def test_outcomes_stats_autonomy_and_suspension(tmp_path, ground_truth):
     assert event["detail"]["policy"]["min_invoices"] == 20
 
     result = store.record_outcomes(key, ids[30], _outcomes(bad=True), source="audit", at="2099-01-01T00:00:00")
-    assert result == {"fields": 13, "corrections": 1, "suspended": True}
+    assert result == {"fields": 13, "corrections": 1, "suspended": True, "touchless": False}
     assert store.get_supplier_profile(key)["state"] == SUSPENDED
     suspended = store.events(actions=["autonomy_suspended"])[0]
     assert suspended["actor"] == "AP Coder" and "audit found a correction: f0" in suspended["detail"]["reason"]
@@ -615,7 +624,7 @@ def test_learning_page_supplier_tab_empty(db):
     assert "No supplier learned yet" in _html(at)
 
 
-def test_learning_page_turns_autonomy_on_and_off(db, tmp_path, ground_truth, monkeypatch):
+def test_learning_page_is_a_training_view_with_keep_supervised(db, tmp_path, ground_truth, monkeypatch):
     monkeypatch.setenv("AP_REVIEWER", "Manager Mia")
     store = Store(db)
     ids = _invoice_ids(store, ground_truth, tmp_path, 42)
@@ -630,16 +639,23 @@ def test_learning_page_turns_autonomy_on_and_off(db, tmp_path, ground_truth, mon
     html = _html(at)
     assert "Northwind" in html and "Ready" in html and "Chinook" in html and "Learning" in html
     assert "12 of 20 invoices; 6 more clean in a row needed" in html
-    slug_ready = next(b.key for b in at.button if b.key and b.key.startswith("sup_on_"))
-    assert len([b for b in at.button if b.key and b.key.startswith("sup_on_")]) == 1  # only the ready supplier
-    _ok(at.button(key=slug_ready).click().run())
-    assert store.get_supplier_profile("id:V1")["state"] == AUTONOMOUS
-    assert store.events(actions=["autonomy_on"])[0]["actor"] == "Manager Mia"
-    assert "Autonomous" in _html(at)
-    off = next(b.key for b in at.button if b.key and b.key.startswith("sup_off_"))
-    _ok(at.button(key=off).click().run())
-    assert store.get_supplier_profile("id:V1")["state"] == SUPERVISED
-    assert store.events(actions=["autonomy_off"])[0]["actor"] == "Manager Mia"
+    assert "12 invoices reviewed · 1 correction in the last 12" in html
+    assert "about 32 more clean invoices to go touchless" in html  # the accuracy bound needs the most
+    assert "touchless processing is on (Settings → Automation)" in html  # Northwind waits for the switch
+    assert not [b for b in at.button if (b.key or "").startswith(("sup_on_", "sup_off_"))]  # no per-vendor switch
+    assert any("Touchless processing is **off**" in c.value for c in at.caption)
+    hold = next(b.key for b in at.button if (b.key or "").startswith("sup_hold_"))
+    at.text_input(key="sup_why_" + hold[len("sup_hold_") :]).set_value("prices changing")
+    _ok(at.button(key=hold).click().run())
+    held = [k for k in ("id:V1", "id:V2") if store.get_supplier_profile(k)["state"] == HELD]
+    assert len(held) == 1
+    event = store.events(actions=["autonomy_held"])[0]
+    assert event["actor"] == "Manager Mia" and event["detail"]["reason"] == "prices changing"
+    assert "Kept supervised" in _html(at)
+    allow = next(b.key for b in at.button if (b.key or "").startswith("sup_allow_"))
+    _ok(at.button(key=allow).click().run())
+    assert store.get_supplier_profile(held[0])["state"] == SUPERVISED
+    assert store.events(actions=["autonomy_allowed"])[0]["actor"] == "Manager Mia"
 
 
 def test_template_learns_the_whole_name_with_its_legal_suffix(tmp_path):

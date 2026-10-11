@@ -52,6 +52,19 @@ def test_image_invoice_and_missing_or_damaged_files(tmp_path):
     assert len(_text(stamp.stamped_pdf(inv))) >= 1
 
 
+def test_an_iphone_photo_invoice_is_a_page_of_the_stamped_pdf(tmp_path):
+    """PyMuPDF can't open a HEIC photo: it is opened with pillow-heif, so the PDF to attach in the ERP has the
+    invoice itself, not the coding page alone."""
+    import pytest
+
+    pillow_heif = pytest.importorskip("pillow_heif")
+    pillow_heif.register_heif_opener()
+    photo = tmp_path / "IMG_0004.HEIC"
+    Image.new("RGB", (400, 500), "white").save(photo, format="HEIF")
+    _, inv = _approved(tmp_path, photo)
+    assert len(_text(stamp.stamped_pdf(inv))) == 2  # the photo as a page, then the coding page
+
+
 def test_batch_zip_names_are_unique(tmp_path):
     _, inv = _approved(tmp_path, SAMPLES / f"{SAMPLE_STEM}.pdf")
     twin = {**inv, "id": inv["id"] + 1}

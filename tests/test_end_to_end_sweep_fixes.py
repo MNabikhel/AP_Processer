@@ -12,8 +12,7 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from ap_coder import help as help_catalog
-from ap_coder import page_reader, stamp, taxreturn
-from ap_coder.config import Settings
+from ap_coder import stamp, taxreturn
 from ap_coder.insights import _week
 from ap_coder.memory import ACCEPTED, CORRECTED
 from ap_coder.schema import InvoiceCoding
@@ -225,18 +224,17 @@ def test_download_again_defaults_to_the_batchs_format_and_warns_about_jde_left_o
 # --- 9. Page reader set-up steps ------------------------------------------------------------------------------------
 
 
-def test_setup_steps_never_claim_reading_before_it_is_linked(tmp_path):
-    from ap_coder.webapp.page_reader_settings import setup_steps
+def test_setup_steps_never_claim_the_self_test_passed_before_it_has(tmp_path):
+    from ap_coder.reading import ReadingStatus
+    from ap_coder.webapp.reading_settings import setup_steps
 
-    store = Store(tmp_path / "s.db")
-    up = page_reader.ReaderStatus(reachable=True, lm_studio=True, model="ovis", document_reader=True,
-                                  state="loaded")  # fmt: skip
-    steps = {label: (state, detail) for state, label, detail in setup_steps(Settings(), up, store)}
-    assert steps["Reading invoices"] == ("todo", "will read in the background once linked")
-    down = page_reader.ReaderStatus(reachable=False, lm_studio=False, model="", document_reader=False, state="down")
-    steps = {label: (state, detail) for state, label, detail in setup_steps(Settings(), down, store)}
-    assert "LM Studio isn't answering" in steps["OvisOCR2 is downloaded"][1]
-    assert "copy" not in steps["OvisOCR2 is downloaded"][1]
+    found = ReadingStatus(page_reader_model="ovis", self_test="pending")
+    steps = {label: (state, detail) for state, label, detail in setup_steps(found, True, (False, ""))}
+    assert steps["Self-test passed (automatic)"] == ("todo", "runs by itself once OvisOCR2 is found")
+    down = ReadingStatus(page_reader_model="", self_test="no model")
+    steps = {label: (state, detail) for state, label, detail in setup_steps(down, False, (False, ""))}
+    assert "start LM Studio first" in steps["OvisOCR2 is in LM Studio"][1]
+    assert "copy" not in steps["OvisOCR2 is in LM Studio"][1]
 
 
 # --- 10. Over the limit: first approval, not "Approved" ---------------------------------------------------------------

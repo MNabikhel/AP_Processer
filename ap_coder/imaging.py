@@ -3,7 +3,7 @@
 When vision mode is on, page images are sent alongside the Document
 Intelligence Markdown so the model can resolve layout ambiguities (stamps,
 handwritten approvals, rotated tables). Rendering relies on optional
-dependencies: PyMuPDF for PDFs and Pillow for multi-frame TIFF/BMP/HEIF.
+dependencies: PyMuPDF for PDFs, Pillow for multi-frame TIFF/BMP, and pillow-heif for an iPhone's HEIC/HEIF photos.
 """
 
 from __future__ import annotations
@@ -57,12 +57,14 @@ def _render_pdf(path: Path, max_pages: int) -> list[PageImage]:
 
 def _render_with_pillow(path: Path, max_pages: int) -> list[PageImage]:
     try:
-        from PIL import Image, ImageSequence
+        from PIL import ImageSequence
     except ImportError as exc:  # pragma: no cover - depends on optional install
         raise RuntimeError("Vision mode for TIFF/BMP requires Pillow: pip install pillow") from exc
 
+    from .capture.layout import open_image
+
     images = []
-    with Image.open(path) as img:
+    with open_image(path) as img:  # HEIC/HEIF photos too, with pillow-heif
         for index, frame in enumerate(ImageSequence.Iterator(img)):
             if index >= max_pages:
                 break

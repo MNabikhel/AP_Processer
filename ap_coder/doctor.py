@@ -18,6 +18,7 @@ from .config import Settings, _on_this_network
 from .extraction import ExtractionResult, build_credential
 from .inference import CodingError, InvoiceCoder, ModelProfile
 from .local_llm import check_server, resolve_provider
+from .offline import internet_allowed
 from .reference_data import ReferenceData
 from .schema import line_gl_codes, plan_code_enums
 from .tax import TAX_TYPES
@@ -128,18 +129,18 @@ def run_checks(
 
     # --- Configuration ----------------------------------------------------------
     di, oai, eng = settings.document_intelligence, settings.openai, settings.engine
-    if di.endpoint:
+    if di.endpoint and internet_allowed():
         add("DI endpoint", PASS, "set")
         add("DI auth", PASS, "API key" if di.api_key else "Entra ID (DefaultAzureCredential)")
         add("DI model", PASS, di.model_id)
+    elif di.endpoint:  # the offline build: set in the .env, but never used
+        add("DI endpoint", SKIP, "set, but not used: the internet isn't allowed, so invoices are read on this computer")
     else:  # optional: without it every invoice is read on this computer
         add("DI endpoint", SKIP, "not set: invoices are read on this computer (PDF text, local OCR for scans)")
     provider = resolve_provider(settings)
-    add("AI model", PASS if provider != "off" else WARN, _provider_detail(settings, provider))
-    if provider == "local" or settings.llm.provider == "off":
-        add("AOAI endpoint", SKIP, "not used (coding with the local model)" if provider == "local" else "not used")
-    elif not oai.endpoint:
-        add("AOAI endpoint", SKIP, "not set (optional: Azure OpenAI)")
+    add("AI model", PASS, _provider_detail(settings, provider))
+    if provider != "azure":
+        add("AOAI endpoint", SKIP, "not used (the offline build codes invoices on this computer)")
     else:
         add("AOAI endpoint", PASS, "set")
         add("AOAI auth", PASS, "API key" if oai.api_key else "Entra ID (DefaultAzureCredential)")
@@ -252,22 +253,21 @@ def run_checks(
 
 
 def _provider_detail(settings: Settings, provider: str) -> str:
-    chosen = settings.llm.provider
     if provider == "azure":
-        return f"Azure OpenAI (AP_LLM_PROVIDER={chosen})"
-    if provider == "local":
-        return f"local model (AP_LLM_PROVIDER={chosen})"
-    if chosen == "off":
-        return "turned off (AP_LLM_PROVIDER=off): invoices are not coded by AI"
-    return "none: no Azure OpenAI endpoint and no local model answering (start LM Studio's server)"
+        return "Azure OpenAI (the internet is allowed: AP_ALLOW_INTERNET=1)"
+    local = "local: read by the local readers, coded from AP's history and rules"
+    if provider == "off":
+        return f"{local} (the chat model is turned off for this run)"
+    return f"{local}; the LM Studio chat model suggests accounts for new lines when it runs"
 
 
 def _local_check(settings: Settings, provider: str) -> tuple[str, str, str]:
-    """The local server's state. Its address is shown only when it is on this computer or network (keys never are)."""
+    """The local server's state: optional (a line nothing was learned for is left for AP without it), so never a
+    failure. Its address is shown only when it is on this computer or network (keys never are)."""
     if provider == "azure":
         return "local model", SKIP, "not used (coding with Azure OpenAI)"
-    if settings.llm.provider == "off":
-        return "local model", SKIP, "AI coding turned off (AP_LLM_PROVIDER=off)"
+    if provider == "off":
+        return "local model", SKIP, "the chat model is turned off for this run"
     status = check_server(settings.llm, use_cache=False)
     where = status.base_url if _on_this_network(urlparse(status.base_url).netloc) else "AP_LLM_BASE_URL"
     if status.active:
@@ -282,34 +282,31 @@ def _local_check(settings: Settings, provider: str) -> tuple[str, str, str]:
     if status.reachable:
         return (
             "local model",
-            FAIL if provider == "local" else WARN,
+            WARN,
             f"{status.server_title} is running but no model is loaded",
         )
-    detail = f"not running at {where} (LM Studio: Developer tab -> Start server, then load the model)"
-    return "local model", FAIL if provider == "local" else WARN, detail
+    detail = (f"not running at {where} (optional: accounts come from AP's history meanwhile; LM Studio: Developer "
+              "tab -> Start server)")  # fmt: skip
+    return "local model", WARN, detail
 
 
 def _page_reader_check(settings: Settings) -> tuple[str, str, str]:
-    """The page reader (a vision model that reads each page as a second reader): optional, so never a failure."""
-    if settings.page_reader.mode == "off":
-        return "page reader", SKIP, "turned off (AP_PAGE_READER=off): scans are read with OCR only"
+    """The page reader (OvisOCR2, reading every page of every invoice as one more reader): found in LM Studio, and its
+    self-test passed. Without it invoices are still read and wait for a person, so it is never a failure."""
     try:
         from .page_reader import reader_status
-        from .page_worker import linked
+        from .page_worker import self_test_detail
 
         status = reader_status(settings, use_cache=False)
-        is_linked = bool(status.model) and linked(status.model)
+        if not status.usable:
+            return "page reader", WARN, status.note or "OvisOCR2 isn't running in LM Studio"
+        state, detail = self_test_detail(status.model)
     except Exception as exc:  # optional: a problem here never stops the doctor
         return "page reader", WARN, f"not checked ({type(exc).__name__})"
-    if status.model and status.state in ("loaded", "downloaded"):
-        kind = "a document reader" if status.document_reader else "a general model that can see"
-        if not is_linked:
-            return "page reader", WARN, (f"{status.model} ({kind}) is {status.state} but hasn't passed its test: "
-                                         "Settings > Page reader > Test the page reader links it")  # fmt: skip
-        how = "in the background" if settings.page_reader.mode == "auto" else "when asked"
-        return "page reader", PASS, (f"{status.model} ({kind}), linked, {status.state}; reads "
-                                     f"{settings.page_reader.scope} {how}")  # fmt: skip
-    return "page reader", WARN, status.note or "no model can read pages (optional: OvisOCR2 isn't in LM Studio)"
+    found = f"{status.model} found in LM Studio ({status.state})"
+    if state == "passed":
+        return "page reader", PASS, f"{found}; self-test passed: it reads every page of every invoice"
+    return "page reader", WARN, f"{found}; self-test {state}: {detail}"
 
 
 def _aoai_dry_run(settings: Settings, reference: ReferenceData, provider: str | None = None) -> tuple[str, str, str]:

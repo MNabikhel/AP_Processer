@@ -155,7 +155,8 @@ def test_processing_says_it_is_not_available(demo_dir):
 def test_settings_need_no_azure_and_write_no_folders(demo_dir):
     _run_demo()
     at = _ok(_page("settings", "page_settings").run())
-    assert "Connecting Azure is not available in the public demo" in _texts(at)
+    assert "Azure" not in _texts(at) + " ".join(m.value for m in at.markdown)  # no cloud services in Settings
+    assert "The demo invoices were read this way ahead of time" in _texts(at)
     assert not [t for t in at.text_input if "copy each backup" in t.label]
     assert at.button(key="open_data").disabled
     assert not [t for t in at.text_input if "endpoint" in t.label.lower()]

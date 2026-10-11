@@ -81,7 +81,7 @@ QUIET_PIP_LINES = (
     "Stored in",
     " ",
 )
-OCR_PACKAGES = {"rapidocr", "onnxruntime", "rapidocr-onnxruntime"}
+OCR_PACKAGES = {"rapidocr", "onnxruntime", "rapidocr-onnxruntime", "pillow-heif"}  # scans and photos
 
 
 class SetupError(Exception):
@@ -478,25 +478,24 @@ def lm_studio_line() -> tuple[str, str]:
 
 
 def page_reader_line() -> tuple[str, str]:
-    """The page reader is optional too: say which model reads pages, never download or load one."""
+    """The page reader (OvisOCR2 in LM Studio): found or not, and its self-test. Never downloads or loads a model."""
     try:
         from ap_coder.config import Settings
         from ap_coder.page_reader import reader_status
-        from ap_coder.page_worker import linked
+        from ap_coder.page_worker import self_test_detail
 
-        settings = Settings.from_env()
-        if settings.page_reader.mode == "off":
-            return "info", "Page reader: off (optional)"
-        status = reader_status(settings, use_cache=False)
-        is_linked = bool(status.model) and linked(status.model)
+        status = reader_status(Settings.from_env(), use_cache=False)
+        state, _detail = self_test_detail(status.model) if status.usable else ("no model", "")
     except Exception as exc:  # noqa: BLE001 - the summary never stops the start
-        return "info", f"Page reader: not checked ({type(exc).__name__}) (optional)"
-    if status.model and status.state in ("loaded", "downloaded"):
-        if not is_linked:
-            return "info", f"Page reader: {status.model} in LM Studio, not tested yet (Settings > Page reader > Test)"
-        how = "in the background" if settings.page_reader.mode == "auto" else "when asked"
-        return "ok", f"Page reader: {status.model} linked (reads scans as a second reader, {how})"
-    return "info", "Page reader: not set up (optional: OvisOCR2 isn't in LM Studio, see Settings > Page reader)"
+        return "info", f"Page reader: not checked ({type(exc).__name__})"
+    if not status.usable:
+        return "warn", ("Page reader: OvisOCR2 isn't running in LM Studio: invoices are read by OCR only and wait "
+                        "for a person")  # fmt: skip
+    if state == "passed":
+        return "ok", f"Page reader: {status.model} found, self-test passed (reads every page of every invoice)"
+    if state == "failed":
+        return "warn", f"Page reader: {status.model} found, but it failed its self-test (Settings > Reading)"
+    return "info", f"Page reader: {status.model} found; its self-test runs on its own before it reads invoices"
 
 
 def readiness(packages: tuple[str, str]) -> list[tuple[str, str]]:

@@ -1,6 +1,7 @@
 """The page reader's queue: which invoices are read, and how a reading is folded into an invoice (no real model:
 the page reader's answers are faked)."""
 
+import datetime as dt
 import json
 import threading
 import time
@@ -21,9 +22,9 @@ STEM = "harbourview_NS_HST_HPS-2026-0347"
 MODEL = "ath-maas_ovisocr2"
 
 
-def _settings(mode="auto", scope="scans", **kw):
+def _settings(**kw):
     s = Settings()
-    return replace(s, llm=replace(s.llm, provider="off"), page_reader=PageReaderSettings(mode=mode, scope=scope, **kw))
+    return replace(s, llm=replace(s.llm, provider="off"), page_reader=PageReaderSettings(**kw))
 
 
 @pytest.fixture
@@ -71,20 +72,28 @@ def _process(store, settings, path=None):
 
 
 @pytest.mark.parametrize(
-    ("mode", "scope", "name", "source", "wanted"),
+    ("name", "source", "wanted"),
     [
-        ("auto", "scans", "scan.png", "", True),  # a photo or image: always
-        ("auto", "scans", "scan.pdf", "ocr", True),  # a PDF that had to be OCR'd
-        ("auto", "scans", "scan.pdf", "mixed", True),
-        ("auto", "scans", "digital.pdf", "text", False),  # a digital PDF: its text layer is exact
-        ("auto", "all", "digital.pdf", "text", True),  # unless every invoice is read
-        ("auto", "all", "invoice.md", "", False),  # text files never
-        ("ask", "scans", "scan.png", "", False),  # only when AP asks
-        ("off", "all", "scan.png", "", False),
+        ("scan.png", "", True),  # a photo or image
+        ("photo.HEIC", "", True),  # an iPhone's photo
+        ("scan.pdf", "ocr", True),  # a PDF that had to be OCR'd
+        ("scan.pdf", "mixed", True),
+        ("digital.pdf", "text", True),  # a digital PDF too: its hidden text is checked against the page
+        ("invoice.md", "", False),  # a text file has no page to look at
+        ("invoice.txt", "", False),
     ],
 )
-def test_which_invoices_are_read_in_the_background(mode, scope, name, source, wanted):
-    assert page_worker.wants_reading(_settings(mode, scope), Path(name), source) is wanted
+def test_every_invoice_is_read_but_a_text_file(name, source, wanted):
+    assert page_worker.wants_reading(_settings(), Path(name), source) is wanted
+
+
+def test_the_old_settings_no_longer_turn_the_page_reader_off(monkeypatch, tmp_path):
+    """AP_PAGE_READER=off / ask and AP_PAGE_READER_SCOPE=scans in an older .env are ignored: every invoice is read."""
+    for key, value in (("AP_PAGE_READER", "off"), ("AP_PAGE_READER_SCOPE", "scans"), ("AP_PAGE_READER_MAX_PAGES", "3")):
+        monkeypatch.setenv(key, value)
+    settings = Settings.from_env(tmp_path / "missing.env")
+    assert (settings.page_reader.mode, settings.page_reader.scope, settings.page_reader.max_pages) == ("auto", "all", 3)
+    assert page_worker.wants_reading(settings, Path("digital.pdf"), "text")
 
 
 def test_queueing_never_stops_processing():
@@ -92,20 +101,18 @@ def test_queueing_never_stops_processing():
         def queue_page_read(self, invoice_id, reason, requested_by=""):
             raise RuntimeError("database is locked")
 
-    settings = _settings("auto", "all")
+    settings = _settings()
     assert page_worker.queue_new_invoice(Broken(), settings, 7, Path("a.pdf"), "text") is False
     assert page_worker.queue_new_invoice(None, settings, 7, Path("a.pdf"), "text") is False
     assert page_worker.queue_new_invoice(Broken(), settings, None, Path("a.pdf"), "text") is False
 
 
-def test_processing_queues_what_the_settings_say(store):
-    digital = _process(store, _settings("auto", "scans"))
-    assert store.page_read(digital.invoice_id) is None  # a digital PDF, scans only: not queued
-    every = _process(store, _settings("auto", "all"))
-    assert store.page_read(every.invoice_id)["status"] == "waiting"
-    assert store.page_read(every.invoice_id)["reason"] == "new invoice"
-    asked = _process(store, _settings("ask", "all"))
-    assert store.page_read(asked.invoice_id) is None
+def test_processing_queues_every_invoice_but_a_text_file(store):
+    digital = _process(store, _settings())
+    assert store.page_read(digital.invoice_id)["status"] == "waiting"  # a digital PDF is read too
+    assert store.page_read(digital.invoice_id)["reason"] == "new invoice"
+    text = _process(store, _settings(), SAMPLES / "pacific_BC_GST_PST_PO-77120.md")
+    assert store.page_read(text.invoice_id) is None  # a text file has no page to look at
     assert store.page_reads_waiting() == 1
 
 
@@ -148,7 +155,7 @@ def test_agreement_follows_what_capture_decided():
 
 
 def test_a_reading_is_folded_into_an_untouched_invoice(store, fake_reader):
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     before = store.get_invoice(first.invoice_id)
 
@@ -179,7 +186,7 @@ def test_a_reading_is_folded_into_an_untouched_invoice(store, fake_reader):
 
 def test_an_edited_invoice_keeps_what_ap_typed(store, fake_reader):
     """Approved with a correction, then reopened: back in review, with AP's coding as its starting point."""
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     store.approve_invoice(first.invoice_id, dict(first.output, invoice_number="TYPED-BY-AP"), "Pat")
     store.reopen(first.invoice_id, "Pat", "wrong cost center")
@@ -198,7 +205,7 @@ def test_an_edited_invoice_keeps_what_ap_typed(store, fake_reader):
 
 @pytest.mark.parametrize("decide", ["approve", "reject", "park"])
 def test_a_decided_invoice_is_not_read(store, fake_reader, decide):
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     if decide == "approve":
         store.approve_invoice(first.invoice_id, first.output, "Pat")
@@ -221,7 +228,7 @@ def test_a_decided_invoice_is_not_read(store, fake_reader, decide):
 def test_a_reading_is_not_a_duplicate_of_the_invoice_itself(store, fake_reader):
     """The invoice is read again with the page reader's text while it is in the store: its own row is no duplicate
     of it."""
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     assert "DUPLICATE_INVOICE" not in {i["code"] for i in store.get_invoice(first.invoice_id)["validation"]["issues"]}
 
@@ -240,7 +247,7 @@ def test_a_reading_is_not_a_duplicate_of_the_invoice_itself(store, fake_reader):
 @pytest.mark.parametrize("pages_read", [0, 1])
 def test_a_stopped_reading_keeps_its_place_in_line(store, fake_reader, monkeypatch, pages_read):
     """Stopped part way (time is up, the app is closing): nothing is folded in, and it waits to be read again."""
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     before = store.get_invoice(first.invoice_id)
 
@@ -259,7 +266,7 @@ def test_a_stopped_reading_keeps_its_place_in_line(store, fake_reader, monkeypat
 
 
 def test_a_reading_of_some_pages_only_is_not_folded_in(store, fake_reader, monkeypatch):
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     before = store.get_invoice(first.invoice_id)
 
@@ -290,7 +297,7 @@ TWO_PAGES = SAMPLES / "northwind_ON_HST_NW-2026-0912.pdf"
 def test_run_queue_finishes_the_page_under_way(store, monkeypatch, tmp_path):
     """Time runs out while page 1 is read: page 1 is finished (and kept), page 2 isn't started, and the invoice keeps
     its place in line, so the next run reads page 2 only."""
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings, TWO_PAGES)
     pages = []
 
@@ -320,7 +327,7 @@ def test_run_queue_finishes_the_page_under_way(store, monkeypatch, tmp_path):
 
 def test_the_background_reader_stops_mid_page(store, monkeypatch, tmp_path):
     """The dashboard closing (``should_stop`` without ``finish_page``) stops at once; the invoice keeps its place."""
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings, TWO_PAGES)
     halt = threading.Event()
 
@@ -366,7 +373,7 @@ def test_figures_are_compared_on_the_pages_the_page_reader_read(store, fake_read
     assert compare_figures(first_pages(full, 5), read).share == 1.0
     assert first_pages(full, 9) == full and first_pages("no breaks 1,234.00", 1) == "no breaks 1,234.00"
 
-    settings = _settings("auto", "all")
+    settings = _settings()
     _process(store, settings)
     seen = []
     monkeypatch.setattr(figures, "first_pages", lambda text, count: seen.append(count) or first_pages(text, count))
@@ -375,7 +382,7 @@ def test_figures_are_compared_on_the_pages_the_page_reader_read(store, fake_read
 
 
 def test_not_enough_memory_leaves_it_waiting(store, fake_reader, monkeypatch):
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     monkeypatch.setattr(page_reader, "load_reader", lambda settings, model=None: "not enough memory to load it")
 
@@ -387,7 +394,7 @@ def test_not_enough_memory_leaves_it_waiting(store, fake_reader, monkeypatch):
 
 
 def test_a_failed_read_is_recorded_and_the_invoice_is_unchanged(store, fake_reader, monkeypatch):
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     before = store.get_invoice(first.invoice_id)
 
@@ -404,7 +411,7 @@ def test_a_failed_read_is_recorded_and_the_invoice_is_unchanged(store, fake_read
 
 
 def test_a_blank_reading_is_a_failure_not_an_empty_invoice(store, fake_reader):
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     fake_reader["text"] = "   \n"
 
@@ -415,7 +422,7 @@ def test_a_blank_reading_is_a_failure_not_an_empty_invoice(store, fake_reader):
 
 
 def test_a_missing_file_is_skipped(store, fake_reader, tmp_path):
-    settings = _settings("auto", "all")
+    settings = _settings()
     copy = tmp_path / f"{STEM}.pdf"
     copy.write_bytes((SAMPLES / f"{STEM}.pdf").read_bytes())
     first = _process(store, settings, copy)
@@ -427,13 +434,12 @@ def test_a_missing_file_is_skipped(store, fake_reader, tmp_path):
     assert fake_reader["read"] == 0
 
 
-def test_nothing_is_read_while_the_reader_is_off_or_missing(store, fake_reader, monkeypatch):
-    first = _process(store, _settings("auto", "all"))
-    assert page_worker.read_one(_settings("off", "all"), store) is None
+def test_nothing_is_read_while_ovisocr2_is_missing(store, fake_reader, monkeypatch):
+    first = _process(store, _settings())
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: page_reader.ReaderStatus(
         reachable=True, lm_studio=True, model="", document_reader=False, state="missing", candidates=[],
         note="OvisOCR2 isn't downloaded"))  # fmt: skip
-    assert page_worker.read_one(_settings("auto", "all"), store) is None
+    assert page_worker.read_one(_settings(), store) is None
     assert store.page_read(first.invoice_id)["status"] == "waiting"  # left in the queue
     assert fake_reader["read"] == 0
 
@@ -446,21 +452,21 @@ def test_nothing_is_read_while_the_reader_is_off_or_missing(store, fake_reader, 
         {"model": "qwen3.5-9b", "ok": True, "fields_right": 9, "fields_total": 9},  # another model passed
     ],
 )
-def test_only_a_linked_model_reads(store, fake_reader, test):
-    """The page reader is linked by passing its test in Settings: a model that hasn't (or another one than the one
+def test_only_a_model_that_passed_its_self_test_reads(store, fake_reader, test):
+    """The page reader is trusted once it passed its self-test: a model that hasn't (or another one than the one
     that passed) reads nothing, and the invoices wait for it."""
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     store.set_setting(page_worker.TEST_KEY, json.dumps(test) if test else "")
 
     assert page_worker.read_one(settings, store) is None
     model, why = page_worker.ready(settings, store)
-    assert model == "" and "Test the page reader" in why
+    assert model == "" and ("self-test" in why or "test invoice" in why)
     assert store.page_read(first.invoice_id)["status"] == "waiting" and fake_reader["read"] == 0
 
 
 def test_an_invoice_asked_for_is_read_first(store, fake_reader):
-    settings = _settings("ask", "all")
+    settings = _settings()
     a = _process(store, settings)
     b = _process(store, settings)
     store.queue_page_read(a.invoice_id, "asked", requested_by="Pat")
@@ -473,7 +479,7 @@ def test_an_invoice_asked_for_is_read_first(store, fake_reader):
 
 
 def test_run_queue_reads_until_the_queue_is_empty(store, fake_reader):
-    settings = _settings("auto", "all")
+    settings = _settings()
     ids = [_process(store, settings).invoice_id for _ in range(2)]
     seen = []
 
@@ -485,7 +491,7 @@ def test_run_queue_reads_until_the_queue_is_empty(store, fake_reader):
 
 
 def test_the_background_thread_reads_and_stops(store, fake_reader, monkeypatch):
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     read = threading.Event()
     real = page_worker.read_one
@@ -515,9 +521,7 @@ def test_read_pages_command(store, fake_reader, tmp_path, monkeypatch, capsys):
     env = tmp_path / "pr.env"
     env.write_text("", encoding="utf-8")
     # Set here, not in the .env: what load_dotenv puts in os.environ would outlive the test.
-    for key, value in (("AP_PAGE_READER", "auto"), ("AP_PAGE_READER_SCOPE", "all"), ("AP_LLM_PROVIDER", "off")):
-        monkeypatch.setenv(key, value)
-    first = _process(store, _settings("auto", "all"))
+    first = _process(store, _settings())
     db = str(store.path)
 
     assert cli.main(["--env-file", str(env), "--db", db, "read-pages", "--minutes", "5", "--cache-dir", ""]) == 0
@@ -530,27 +534,32 @@ def test_read_pages_command(store, fake_reader, tmp_path, monkeypatch, capsys):
                      "--cache-dir", ""]) == 0  # fmt: skip
     assert fake_reader["read"] == 2
 
-    monkeypatch.setenv("AP_PAGE_READER", "off")
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: page_reader.ReaderStatus(
+        reachable=True, lm_studio=True, model="", document_reader=False, state="missing", candidates=[],
+        note="OvisOCR2 isn't in LM Studio"))  # fmt: skip
     assert cli.main(["--env-file", str(env), "--db", db, "read-pages", "--cache-dir", ""]) == 1
-    assert "off" in capsys.readouterr().err
+    assert "Nothing read: OvisOCR2 isn't in LM Studio" in capsys.readouterr().err
 
 
 def test_doctor_reports_the_page_reader_and_never_fails_on_it(store, fake_reader, monkeypatch):
     from ap_coder import doctor
-    from ap_coder.doctor import PASS, SKIP, WARN
+    from ap_coder.doctor import PASS, WARN
 
-    assert doctor._page_reader_check(_settings("off"))[1] == SKIP
     monkeypatch.setenv("AP_DB_PATH", str(store.path))
-    area, level, detail = doctor._page_reader_check(_settings("auto", "scans"))
+    area, level, detail = doctor._page_reader_check(_settings())
     assert (area, level) == ("page reader", PASS)
-    assert MODEL in detail and "a document reader" in detail and "linked" in detail and "in the background" in detail
+    assert MODEL in detail and "found in LM Studio" in detail and "self-test passed" in detail
     store.set_setting(page_worker.TEST_KEY, "")
-    level, detail = doctor._page_reader_check(_settings("auto", "scans"))[1:]
-    assert level == WARN and "hasn't passed its test" in detail
+    level, detail = doctor._page_reader_check(_settings())[1:]
+    assert level == WARN and "self-test pending" in detail and "starts on its own" in detail
+    page_worker.save_test(store, {"model": MODEL, "ok": False, "fields_right": 4, "fields_total": 9,
+                                  "when": "2026-10-10T22:27:00", "problem": "Only 4 of 9 fields right."})  # fmt: skip
+    level, detail = doctor._page_reader_check(_settings())[1:]
+    assert level == WARN and "self-test failed" in detail and "Only 4 of 9 fields right" in detail
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: page_reader.ReaderStatus(
         reachable=False, lm_studio=False, model="", document_reader=False, state="down", candidates=[],
         note="LM Studio isn't answering"))  # fmt: skip
-    assert doctor._page_reader_check(_settings("auto"))[1:] == (WARN, "LM Studio isn't answering")
+    assert doctor._page_reader_check(_settings())[1:] == (WARN, "LM Studio isn't answering")
 
 
 def test_launcher_line(store, fake_reader, monkeypatch):
@@ -563,29 +572,130 @@ def test_launcher_line(store, fake_reader, monkeypatch):
     launch = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, launch)
     spec.loader.exec_module(launch)
-    monkeypatch.setenv("AP_PAGE_READER", "auto")
+    monkeypatch.setenv("AP_PAGE_READER", "off")  # an older .env's setting: ignored
     monkeypatch.setenv("AP_DB_PATH", str(store.path))
-    assert launch.page_reader_line() == ("ok", f"Page reader: {MODEL} linked (reads scans as a second reader, in "
-                                         "the background)")  # fmt: skip
+    assert launch.page_reader_line() == ("ok", f"Page reader: {MODEL} found, self-test passed (reads every page of "
+                                         "every invoice)")  # fmt: skip
     store.set_setting(page_worker.TEST_KEY, "")
-    assert launch.page_reader_line() == ("info", f"Page reader: {MODEL} in LM Studio, not tested yet (Settings > Page "
-                                         "reader > Test)")  # fmt: skip
-    monkeypatch.setenv("AP_PAGE_READER", "off")
-    assert launch.page_reader_line() == ("info", "Page reader: off (optional)")
+    assert launch.page_reader_line() == ("info", f"Page reader: {MODEL} found; its self-test runs on its own before "
+                                         "it reads invoices")  # fmt: skip
+    page_worker.save_test(store, {"model": MODEL, "ok": False, "fields_right": 4, "fields_total": 9})
+    assert launch.page_reader_line()[0] == "warn" and "failed its self-test" in launch.page_reader_line()[1]
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: page_reader.ReaderStatus(
+        reachable=True, lm_studio=True, model="", document_reader=False, state="missing", candidates=[]))  # fmt: skip
+    assert launch.page_reader_line() == ("warn", "Page reader: OvisOCR2 isn't running in LM Studio: invoices are read "
+                                         "by OCR only and wait for a person")  # fmt: skip
 
 
-def test_the_background_thread_waits_while_off(monkeypatch):
+def test_the_background_thread_waits_while_ovisocr2_is_missing(store, monkeypatch):
+    """No OvisOCR2 in LM Studio: no other model reads instead, nothing is tested, the invoices wait."""
     rounds = []
-    worker = page_worker.BackgroundReader(lambda: rounds.append(1) or _settings("off"), lambda: pytest.fail("no store"))
-    monkeypatch.setattr(page_worker, "OFF_SECONDS", 0.01)
+    missing = page_reader.ReaderStatus(reachable=True, lm_studio=True, model="", document_reader=False,
+                                       state="missing", candidates=["qwen3.5-9b"],
+                                       note="OvisOCR2 isn't in LM Studio")  # fmt: skip
+    monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: missing)
+    monkeypatch.setattr(page_reader, "test_reader", lambda *a, **k: pytest.fail("nothing to test"))
+    monkeypatch.setattr(page_reader, "read_document", lambda *a, **k: pytest.fail("nothing to read with"))
+    monkeypatch.setattr(page_worker, "IDLE_SECONDS", 0.01)
+    worker = page_worker.BackgroundReader(lambda: rounds.append(1) or _settings(), lambda: store)
     worker.start()
     try:
-        deadline = threading.Event()
-        deadline.wait(0.2)
+        threading.Event().wait(0.2)
     finally:
         worker.stop()
         worker.join(5)
-    assert rounds and not worker.is_alive()
+    assert len(rounds) > 1 and not worker.is_alive() and worker.last_test is None
+
+
+def _passes(calls, ok=True):
+    def tested(settings, model=None, on_page=None):
+        calls.append(model)
+        if on_page:
+            on_page(1, 2)
+        right = 9 if ok else 3
+        problem = "" if ok else "Only 3 of 9 fields right."
+        return page_reader.ReaderTest(model=model, ok=ok, seconds=600.0, rows=[], fields_right=right, fields_total=9,
+                                      when=page_reader._now(), problem=problem)  # fmt: skip
+
+    return tested
+
+
+def test_the_self_test_runs_on_its_own_before_the_first_invoice_is_read(store, fake_reader, monkeypatch):
+    """Nobody has to press "Test the page reader": a model with no test that passed is tested before the queue is
+    read, and the queue is read once it passed."""
+    settings = _settings()
+    store.set_setting(page_worker.TEST_KEY, "")
+    first = _process(store, settings)
+    calls = []
+    monkeypatch.setattr(page_reader, "test_reader", _passes(calls))
+    worker = page_worker.BackgroundReader(lambda: settings, lambda: store)
+    worker.start()
+    try:
+        deadline = time.monotonic() + 60
+        while store.page_read(first.invoice_id)["status"] != "done" and time.monotonic() < deadline:
+            time.sleep(0.05)
+    finally:
+        worker.stop()
+        worker.join(10)
+    assert calls == [MODEL] and worker.last_test["ok"]
+    assert page_worker.confirmed(store, MODEL) and store.page_read(first.invoice_id)["status"] == "done"
+
+
+def test_a_failed_self_test_is_not_run_again_in_a_loop(store, fake_reader, monkeypatch):
+    settings = _settings()
+    store.set_setting(page_worker.TEST_KEY, "")
+    first = _process(store, settings)
+    calls = []
+    monkeypatch.setattr(page_reader, "test_reader", _passes(calls, ok=False))
+
+    tested = page_worker.self_test_if_due(settings, store)
+    assert tested is not None and not tested["ok"] and calls == [MODEL]
+    assert page_worker.self_test_if_due(settings, store) is None and calls == [MODEL]  # not again at once
+    assert page_worker.read_one(settings, store) is None  # nothing read until it passes
+    assert store.page_read(first.invoice_id)["status"] == "waiting" and fake_reader["read"] == 0
+    state, detail = page_worker.self_test(store, MODEL)
+    assert state == "failed" and "Only 3 of 9 fields right" in detail and "in about 24 hour(s)" in detail
+
+    later = dt.datetime.now() + dt.timedelta(hours=25)
+    assert page_worker.self_test_due(store, MODEL, now=later)  # a day later it is tried again
+    assert page_worker.self_test_due(store, "another-ovisocr2-build")  # another model: its own test
+    # A test that read nothing (LM Studio stopped) is tried again an hour later.
+    two_hours_ago = (dt.datetime.now() - dt.timedelta(hours=2)).isoformat(timespec="seconds")
+    page_worker.save_test(store, {"model": MODEL, "ok": False, "fields_right": 0, "fields_total": 0,
+                                  "when": two_hours_ago, "problem": "Page 1: the server isn't answering."})  # fmt: skip
+    assert page_worker.self_test_due(store, MODEL)
+    # Run again by a person: start_test runs it whatever the last result.
+    assert page_worker.run_test(settings, store, MODEL)["ok"] is False and calls == [MODEL, MODEL]
+
+
+def test_self_test_states(store):
+    assert page_worker.self_test(store, "")[0] == "no model"
+    assert page_worker.self_test(store, MODEL)[0] == "passed"
+    assert page_worker.self_test(store, "other-ovisocr")[0] == "pending"
+    store.set_setting(page_worker.TESTING_KEY, json.dumps({"model": MODEL, "reader": page_worker.READER_ID,
+                                                           "done": 1, "pages": 2}))  # fmt: skip
+    page_worker._testing_here.set()
+    try:
+        state, detail = page_worker.self_test(store, MODEL)
+        assert state == "running" and "page 2 of 2" in detail
+    finally:
+        page_worker._testing_here.clear()
+
+
+def test_the_wait_is_estimated_from_measured_page_times(store, monkeypatch):
+    settings = _settings()
+    monkeypatch.setattr(page_reader, "page_seconds_estimate", lambda settings, model=None: None)
+    assert page_worker.wait_seconds(settings, store, MODEL) is None  # nothing measured yet
+    monkeypatch.setattr(page_reader, "page_seconds_estimate", lambda settings, model=None: 120.0)
+    ids = [_process(store, settings).invoice_id for _ in range(3)]
+    assert page_worker.wait_seconds(settings, store, MODEL) == 3 * 120.0  # 3 invoices of (so far) 1 page
+    store.next_page_read(reader="1:x")  # the first is being read
+    store.finish_page_read(ids[0], "done", MODEL, pages=2, seconds=240.0)
+    assert store.page_read_pages_average() == 2.0
+    assert page_worker.wait_seconds(settings, store, MODEL, invoice_id=ids[2]) == 2 * 2 * 120.0
+    assert page_worker.wait_seconds(settings, store, MODEL, invoice_id=ids[0]) is None  # read already
+    store.set_setting(page_worker.TEST_KEY, "")  # not tested yet: its two test pages come first
+    assert page_worker.wait_seconds(settings, store, MODEL) == (2 * 2 + 2) * 120.0
 
 
 # --- The second review's findings (the page reader run for real on a laptop) ---------------------------------------
@@ -612,7 +722,7 @@ def _down(settings, path, model=None, on_page=None, should_stop=None, **kwargs):
 
 def test_a_read_cut_off_by_the_server_waits_and_gives_up_after_a_few_tries(store, fake_reader, monkeypatch):
     """LM Studio stopped part way: the invoice used to be marked failed and left the queue for good."""
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     before = store.get_invoice(first.invoice_id)
     reads = page_reader.read_document
@@ -639,7 +749,7 @@ def test_a_read_cut_off_by_the_server_waits_and_gives_up_after_a_few_tries(store
 
 
 def test_a_page_problem_still_fails_at_once(store, fake_reader, monkeypatch):
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
 
     def cut(settings, path, model=None, on_page=None, should_stop=None, **kwargs):
@@ -653,7 +763,7 @@ def test_a_page_problem_still_fails_at_once(store, fake_reader, monkeypatch):
 
 def test_an_interrupted_read_goes_back_in_line(store, fake_reader, monkeypatch):
     """Ctrl+C on read-pages (or the dashboard closing) used to leave the invoice "reading" for two hours."""
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
 
     def interrupted(*args, **kwargs):
@@ -687,7 +797,7 @@ def test_reads_of_a_process_that_is_gone_are_put_back_in_line(store):
 
 
 def test_the_background_thread_puts_back_what_a_closed_dashboard_was_reading(store, fake_reader):
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     store.next_page_read(first.invoice_id, reader=f"{2**22 + 12345}:dead")  # being read when the app was killed
     assert store.page_reads_waiting() == 0
@@ -709,9 +819,7 @@ def test_read_pages_stops_cleanly_on_ctrl_c(store, fake_reader, tmp_path, monkey
 
     env = tmp_path / "pr.env"
     env.write_text("", encoding="utf-8")
-    for key, value in (("AP_PAGE_READER", "auto"), ("AP_PAGE_READER_SCOPE", "all"), ("AP_LLM_PROVIDER", "off")):
-        monkeypatch.setenv(key, value)
-    first = _process(store, _settings("auto", "all"))
+    first = _process(store, _settings())
     monkeypatch.setattr(page_reader, "read_document", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
 
     code = cli.main(["--env-file", str(env), "--db", str(store.path), "read-pages", "--cache-dir", ""])
@@ -727,11 +835,11 @@ def test_read_pages_reads_what_process_coded_without_a_dashboard(tmp_path, fake_
     sample GL accounts: read-pages used to refuse it for good ("no GL accounts imported yet")."""
     store = Store(tmp_path / "cli.db")
     assert not store.has_reference()
-    settings = _settings("auto", "all")
+    settings = _settings()
     result = InvoicePipeline(settings, page_worker.reference_data(store), store=store).process(SAMPLES / f"{STEM}.pdf")
     assert result.ok and store.page_reads_waiting() == 1
     model, why = page_worker.ready(settings, store)
-    assert model == "" and "Settings → Page reader → Test the page reader" in why and "read-pages --test" in why
+    assert model == "" and "the test starts on its own" in why
 
     page_worker.save_test(store, {"model": MODEL, "ok": True, "fields_right": 9, "fields_total": 9})
     assert page_worker.ready(settings, store) == (MODEL, "")
@@ -746,13 +854,13 @@ def test_a_model_that_cannot_see_is_not_ready(store, fake_reader, monkeypatch):
                                      "OvisOCR2 (or Automatic).")  # fmt: skip
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: blind)
     page_worker.save_test(store, {"model": "qwen2.5-7b-instruct", "ok": True})
-    model, why = page_worker.ready(_settings("auto", "all"), store)
+    model, why = page_worker.ready(_settings(), store)
     assert model == "" and "can't look at pictures" in why
 
 
 def test_pages_ocr_found_blank_are_not_read(store, fake_reader, monkeypatch):
     """A page with no words isn't shown to the page reader, and what it wrote for one is never taken."""
-    settings = _settings("auto", "all")
+    settings = _settings()
     first = _process(store, settings)
     seen = {}
 
@@ -807,7 +915,7 @@ def test_the_page_reader_is_tested_in_the_background_one_test_at_a_time(store, m
                                       when="2026-10-10T22:27")  # fmt: skip
 
     monkeypatch.setattr(page_reader, "test_reader", tested)
-    settings = _settings("auto", "all")
+    settings = _settings()
     assert page_worker.start_test(settings, store, "qwen3.5-9b")
     assert pages_started.wait(30)
     under_way = page_worker.test_under_way(store)
@@ -835,7 +943,7 @@ def test_a_test_left_by_a_closed_dashboard_is_not_under_way(store):
 
 
 def test_the_background_reader_waits_while_the_page_reader_is_tested(store, fake_reader, monkeypatch):
-    settings = _settings("auto", "all")
+    settings = _settings()
     _process(store, settings)
     monkeypatch.setattr(page_worker, "test_under_way", lambda store: {"model": MODEL})
     monkeypatch.setattr(page_worker, "IDLE_SECONDS", 0.01)
@@ -854,8 +962,6 @@ def test_read_pages_test_option(store, tmp_path, monkeypatch, capsys):
 
     env = tmp_path / "pr.env"
     env.write_text("", encoding="utf-8")
-    for key, value in (("AP_PAGE_READER", "auto"), ("AP_LLM_PROVIDER", "off")):
-        monkeypatch.setenv(key, value)
     store.set_setting(page_worker.TEST_KEY, "")
     status = page_reader.ReaderStatus(reachable=True, lm_studio=True, model=MODEL, document_reader=True,
                                       state="downloaded", candidates=[MODEL])  # fmt: skip
