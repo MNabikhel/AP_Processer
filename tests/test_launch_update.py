@@ -465,6 +465,45 @@ def test_a_wheelhouse_copied_into_the_wheelhouse_folder_is_used_and_judged(launc
     assert launch.wheelhouse_misfit() == ""
 
 
+def _wheels_in(folder: Path, names=WINDOWS_ONLY) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (folder / name).write_bytes(b"")
+    return folder
+
+
+@pytest.mark.parametrize("where", [".wheelhouse", "wheelhouse (1)", "Wheelhouse-old", "APProcessor/wheelhouse",
+                                   ".wheelhouse/wheelhouse"])  # fmt: skip
+def test_a_wheelhouse_under_a_near_miss_name_is_found_and_judged(launch, monkeypatch, where, capsys):
+    """The tester had the older bundle's wheels in ".wheelhouse": not seen at all, so the start said "Missing
+    packages: ..." (no wheelhouse here) instead of what the wheels were built for. One folder of wheels under a
+    near-miss name (or one level deeper, after a double unzip) is used, and said once."""
+    found = _wheels_in(launch.ROOT / where)
+    _computer(launch, monkeypatch, "windows", (3, 14), ["cp314-cp314-win_amd64", "py3-none-any"])
+    assert launch.wheelhouse_dir() == found and launch.pip_source() == ["--no-index", "--find-links", str(found)]
+    assert "built for Windows, Python 3.11/3.12; this computer has Python 3.14" in launch.wheelhouse_misfit()
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1"], "Missing: ap_coder"))
+    monkeypatch.setattr(launch, "pip_install", lambda args: pytest.fail("pip ran"))
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert "built for Windows" in str(exc.value) and "Missing packages" not in str(exc.value)
+    assert f"Using the package folder {Path(where)}" in capsys.readouterr().out
+
+
+def test_several_near_miss_wheelhouses_are_named_not_guessed(launch, monkeypatch):
+    _wheels_in(launch.ROOT / ".wheelhouse")
+    _wheels_in(launch.ROOT / "wheelhouse (1)")
+    (launch.ROOT / "wheelhouse").mkdir()  # empty: the bundle's own was deleted
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1"], ""))
+    monkeypatch.setattr(launch, "pip_install", lambda args: pytest.fail("pip ran"))
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert ".wheelhouse" in str(exc.value) and "wheelhouse (1)" in str(exc.value)
+    assert "rename it to wheelhouse" in exc.value.hint
+    _wheels_in(launch.ROOT / "wheelhouse")  # the bundle's own is there: it is the one used, nothing to ask
+    assert launch.wheelhouse_dir() == launch.ROOT / "wheelhouse"
+
+
 def test_a_wheelhouse_that_does_not_fit_is_said_once_not_twice(launch, monkeypatch, capsys):
     """The first phase said what the manifest claims ("built for Python 3.12"), then the second what the wheels say
     ("built for Windows, Python 3.11/3.12"): two different messages. The wheels are judged once, in the second."""

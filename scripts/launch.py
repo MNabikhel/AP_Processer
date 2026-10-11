@@ -470,18 +470,43 @@ SYSTEM_NAMES = {"windows": "Windows", "mac": "Macs", "linux": "Linux"}
 THIS_KIND = {"windows": "a Windows computer", "mac": "a Mac", "linux": "a Linux computer"}
 
 
-def wheelhouse_dir() -> Path:
-    """The offline bundle's wheelhouse/ folder; when it holds no wheels itself, the one folder in it that does (a
-    wheelhouse copied over the folder as a whole lands in wheelhouse/wheelhouse)."""
-    folder = ROOT / "wheelhouse"
+def _holding_wheels(folder: Path) -> Path | None:
+    """``folder`` when it holds wheels; else the one folder in it that does (a wheelhouse copied over another as a
+    whole lands in wheelhouse/wheelhouse); else None."""
     try:
-        if folder.is_dir() and not any(folder.glob("*.whl")):
-            inner = [d for d in folder.iterdir() if d.is_dir() and any(d.glob("*.whl"))]
-            if len(inner) == 1:
-                return inner[0]
+        if not folder.is_dir():
+            return None
+        if any(folder.glob("*.whl")):
+            return folder
+        inner = [d for d in folder.iterdir() if d.is_dir() and any(d.glob("*.whl"))]
     except OSError:
-        pass
-    return folder
+        return None
+    return inner[0] if len(inner) == 1 else None
+
+
+NEAR_MISS = re.compile(r"[._\s-]*wheel[\s_-]?house\b.*", re.IGNORECASE)  # .wheelhouse, wheelhouse (1), Wheelhouse-old
+
+
+def wheelhouse_candidates() -> list[Path]:
+    """Folders of wheels under a near-miss name, when wheelhouse/ itself has none: ``.wheelhouse``, ``wheelhouse
+    (1)``, ``Wheelhouse-old``..., and a bundle unzipped into this folder (``<bundle>/wheelhouse``)."""
+    try:
+        children = [d for d in ROOT.iterdir() if d.is_dir() and d.name not in (".venv", "wheelhouse", "__pycache__")]
+    except OSError:
+        return []
+    found = [_holding_wheels(d) for d in children if NEAR_MISS.fullmatch(d.name)]
+    found += [_holding_wheels(d / "wheelhouse") for d in children if not NEAR_MISS.fullmatch(d.name)]
+    return list(dict.fromkeys(f for f in found if f is not None))
+
+
+def wheelhouse_dir() -> Path:
+    """The offline bundle's wheelhouse/ folder (or the one folder of wheels in it); when it holds none, the one folder
+    of wheels under a near-miss name (:func:`wheelhouse_candidates`; several: none is guessed)."""
+    own = _holding_wheels(ROOT / "wheelhouse")
+    if own is not None:
+        return own
+    found = wheelhouse_candidates()
+    return found[0] if len(found) == 1 else ROOT / "wheelhouse"
 
 
 def _core_wheels(folder: Path | None = None) -> dict[str, list[tuple[str, str, str]]]:
@@ -730,6 +755,15 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     if not self_problem and all(is_ocr(r) for r in missing) and state.get("ocr_failed") == fingerprint():
         return "warn", "Packages: in place, without the OCR add-on (it could not be installed here)", False
 
+    if _holding_wheels(ROOT / "wheelhouse") is None:  # a package folder under another name?
+        found = wheelhouse_candidates()
+        if len(found) > 1:
+            shown = ", ".join(str(f.relative_to(ROOT)) for f in found)
+            raise SetupError(f"There are several package folders here, none named wheelhouse: {shown}. Nothing was "
+                             "installed.", "Keep the one from the newest offline bundle, rename it to wheelhouse (next "
+                             "to APProcessor), delete the others, then start AP Coder again.")  # fmt: skip
+        if found:
+            say(f"Using the package folder {found[0].relative_to(ROOT)} (AP Coder looks for one named wheelhouse).")
     source = pip_source()
     if source is None:
         return without_wheelhouse(missing, total)
