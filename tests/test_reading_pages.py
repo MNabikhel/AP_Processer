@@ -162,7 +162,7 @@ def test_settings_tabs_are_reading_automation_review_erp_data_about(db, status):
     assert [t.label for t in at.tabs] == TABS
     labels = " ".join(t.label for t in at.tabs)
     assert "AI model" not in labels and "Page reader" not in labels and "Azure" not in labels
-    assert "every invoice is reviewed by a person" in _captions(at).lower()  # the Automation tab is drawn
+    assert "touchless processing" in (_markdown(at) + _captions(at)).lower()  # the Automation tab is drawn
 
 
 def test_there_is_nothing_to_choose_about_reading(db, status):
