@@ -486,4 +486,5 @@ def test_mac_launcher_explains_a_missing_python(tmp_path):
     out = subprocess.run(["/bin/bash", str(code / "APProcessor.command")], capture_output=True, text=True,
                          env={"PATH": str(bindir), "AP_NO_PAUSE": "1"}, timeout=60)  # fmt: skip
     assert out.returncode == 1
-    assert "needs Python 3.11, 3.12 or 3.13" in out.stdout and "What to do:" in out.stdout
+    assert "needs Python 3.11 or newer (3.12 is best), and it is not installed" in out.stdout
+    assert "What to do:" in out.stdout

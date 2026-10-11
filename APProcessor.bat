@@ -6,9 +6,10 @@ rem  The first time it sets up whatever is missing (a few minutes), checks that 
 rem  and opens the dashboard in your browser. After that it starts in seconds. Keep this window
 rem  open while you use AP Coder; close it to stop.
 rem
-rem  Offline build: nothing here connects to the internet. An installed Python 3.12 or 3.11
-rem  (3.13 too) is used as it is, the .venv folder is made once, and only missing packages are
-rem  installed, from the wheelhouse\ folder of the offline bundle.
+rem  Offline build: nothing here connects to the internet. An installed Python 3.11 or newer
+rem  (3.12 recommended: the offline bundle has packages for the Python versions it was built for)
+rem  is used as it is, the .venv folder is made once, and only missing packages are installed,
+rem  from the wheelhouse\ folder of the offline bundle.
 rem
 rem  Developers only: set AP_ALLOW_INTERNET=1 in this window first to let it download packages,
 rem  the OCR models, and - when no Python is found - offer to install Python 3.12 with winget.
@@ -28,7 +29,11 @@ for %%V in (1 true yes on) do if /i "%AP_ALLOW_INTERNET%"=="%%V" set "AP_ONLINE=
 for %%A in (%*) do if /i "%%~A"=="--yes" set "AP_YES=1"
 
 set "PY="
-rem Set up before: AP Coder's own Python in .venv starts it straight away.
+set "OLDPY="
+set "OLDV="
+rem Asking py for a version that is not installed must never download it (Python install manager).
+set "PYTHON_MANAGER_AUTOMATIC_INSTALL=false"
+rem Set up before: AP Coder's own Python in .venv starts it straight away (whatever Python made it).
 if exist ".venv\Scripts\python.exe" call :venvpython
 if not defined PY call :findpython
 if not defined PY if defined AP_ONLINE call :installpython
@@ -45,26 +50,37 @@ if not errorlevel 1 set PY=".venv\Scripts\python.exe"
 exit /b 0
 
 :findpython
-rem A Python already on this computer: 3.12 or 3.11 first (the offline bundle has packages for them),
-rem then 3.13. The py launcher, PATH, or the usual folders.
-for %%V in (3.12 3.11 3.13) do if not defined PY call :trypy %%V
-if defined PY exit /b 0
-python -c "import sys; sys.exit(0 if (3, 11) <= sys.version_info[:2] <= (3, 13) else 1)" >nul 2>&1
-if not errorlevel 1 set "PY=python"
-if defined PY exit /b 0
-for %%V in (312 311 313) do if not defined PY call :tryfolder "%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe"
-for %%V in (312 311 313) do if not defined PY call :tryfolder "%ProgramFiles%\Python%%V\python.exe"
+rem A Python 3.11 or newer already on this computer. 3.12 first, then 3.11, 3.13 and 3.14 (the
+rem offline bundle has packages for them), then any newer one: the py launcher, then python and
+rem python3 on PATH, then the usual folders.
+for %%V in (3.12 3.11 3.13 3.14) do if not defined PY call :try py -%%V
+if not defined PY call :try py -3
+if not defined PY call :try python
+if not defined PY call :try python3
+for %%V in (312 311 313 314) do if not defined PY call :tryfolder "%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe"
+for %%V in (312 311 313 314) do if not defined PY call :tryfolder "%ProgramFiles%\Python%%V\python.exe"
+for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python3*") do if not defined PY call :tryfolder "%%~D\python.exe"
+for /d %%D in ("%ProgramFiles%\Python3*") do if not defined PY call :tryfolder "%%~D\python.exe"
 exit /b 0
 
-:trypy
-py -%1 -c "import sys" >nul 2>&1
-if not errorlevel 1 set "PY=py -%1"
+:try
+rem %* is a Python command (py -3.12, python, or a quoted path). It exits with its version as a
+rem number (311 = 3.11): 3.11 or newer is used; the newest older one is remembered for the
+rem message, which then says it is too old (not that Python is missing).
+%* -c "import sys; sys.exit(sys.version_info[0] * 100 + sys.version_info[1])" <nul >nul 2>&1
+set /a "PYV=%ERRORLEVEL%"
+if %PYV% LSS 200 exit /b 0
+if %PYV% GEQ 400 exit /b 0
+if %PYV% GEQ 311 set PY=%*
+if defined PY exit /b 0
+if not defined OLDV set "OLDV=0"
+if %PYV% LEQ %OLDV% exit /b 0
+set /a "OLDV=PYV, OLDMAJOR=PYV / 100, OLDMINOR=PYV %% 100"
+set "OLDPY=%OLDMAJOR%.%OLDMINOR%"
 exit /b 0
 
 :tryfolder
-if not exist "%~1" exit /b 0
-"%~1" -c "import sys" >nul 2>&1
-if not errorlevel 1 set PY="%~1"
+if exist "%~1" call :try "%~1"
 exit /b 0
 
 :installpython
@@ -73,7 +89,8 @@ rem with winget (part of Windows). The offline build never does this.
 where winget >nul 2>&1
 if errorlevel 1 exit /b 0
 echo.
-echo AP Coder needs Python - 3.12, 3.11 or 3.13 - and this computer has none of them.
+if defined OLDPY echo Python %OLDPY% is installed, but AP Coder needs Python 3.11 or newer.
+if not defined OLDPY echo AP Coder needs Python 3.11 or newer, and this computer has none.
 set "ANSWER=Y"
 if not defined AP_YES set /p "ANSWER=Install Python 3.12 now from the internet, just for you? It is free and takes about 2 minutes. [Y/n] "
 if /i "%ANSWER:~0,1%"=="N" exit /b 0
@@ -85,7 +102,8 @@ exit /b 0
 
 :nopython
 echo.
-echo AP Coder needs Python 3.11, 3.12 or 3.13 (3.12 is best), and it is not installed.
+if defined OLDPY echo Python %OLDPY% is installed, but AP Coder needs Python 3.11 or newer (3.12 is best).
+if not defined OLDPY echo AP Coder needs Python 3.11 or newer (3.12 is best), and it is not installed.
 echo What to do: this is an offline build, so it does not download Python. Ask IT to install Python 3.12 -
 echo the installer from https://www.python.org/downloads/ with "Add python.exe to PATH" ticked - then
 echo double-click APProcessor.bat again.

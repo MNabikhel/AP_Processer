@@ -6,9 +6,12 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
 ## What you need
 
 - **Windows 10 or 11** (64-bit), or a Mac with macOS 12 or newer.
-- **Python 3.12 (or 3.11).** Nothing to do if the laptop has one: AP Coder uses it as it is and never
-  installs a second Python. The offline bundle has packages for 3.11 and 3.12; 3.13 is used only when neither
-  is installed, and needs a bundle built for it. AP Coder never downloads Python: if the laptop has none, IT
+- **Python 3.11 or newer** (3.12 recommended). Nothing to do if the laptop has one: AP Coder uses it as it
+  is and never installs a second Python. When several are installed, the ones the offline bundle has
+  packages for come first (3.12, 3.11, 3.13, 3.14, then any newer); a Python the bundle was not built for
+  needs a bundle built for it (the launcher says so, with the command). AP Coder never downloads Python: if
+  the laptop has none, or only an older one (it then says *Python 3.10 is installed, but AP Coder needs
+  Python 3.11 or newer*), IT
   installs Python 3.12 from [python.org](https://www.python.org/downloads/) with **Add python.exe to PATH**
   ticked on the first screen (Mac: the python.org installer).
 - About **2 GB** free disk space.
@@ -89,7 +92,8 @@ by OneDrive (e.g. `C:\APCoder\app`), and double-click **`APProcessor.bat`** (Mac
 the first time, right-click → *Open*). The first run takes a few minutes and sets up only what is
 missing:
 
-- **Python**: uses the Python already installed, 3.12 or 3.11 first (see *What you need*); never downloads one.
+- **Python**: uses the Python already installed, 3.11 or newer, 3.12 first (see *What you need*); never
+  downloads one.
 - **`.venv`**: AP Coder's own environment, made once and reused (made again only if it is broken).
 - **Packages**: installs only the ones that are missing or too old (all of them the first time), from the
   bundle's `wheelhouse/` folder. One that is not in it is named in the summary (it must come from the
@@ -148,8 +152,9 @@ Add `--platform macosx_11_0_arm64` for Apple-silicon Macs; `--dry-run` shows the
 downloading. Copy the ZIP to the laptop (USB stick), unzip it, double-click `APProcessor.bat`. Seeing
 `wheelhouse/`, the launcher installs from it with `pip --no-index` and never goes online.
 
-The laptop's Python must match one the bundle was built for (3.11 or 3.12 by default; add
-`--python 3.13` for a laptop that only has 3.13).
+The laptop's Python must match one the bundle was built for (`bundle_manifest.json` lists them; the
+launcher names them when it does not). For a laptop that only has another version, build for it, e.g.
+`--python 3.14 --platform macosx_11_0_arm64`.
 
 **Developers with internet** can set up from a plain checkout instead: `set AP_ALLOW_INTERNET=1` in a
 terminal, then run `APProcessor.bat` from it (see *What is sent over the network*).
@@ -227,7 +232,9 @@ never checks the internet for updates). Your data folder is not touched, so noth
 
 | What you see | What to do |
 |---|---|
-| *AP Coder needs Python 3.11, 3.12 or 3.13 (3.12 is best), and it is not installed* | IT installs Python 3.12 from python.org, with *Add python.exe to PATH* ticked; double-click again. |
+| *AP Coder needs Python 3.11 or newer (3.12 is best), and it is not installed* | IT installs Python 3.12 from python.org, with *Add python.exe to PATH* ticked; double-click again. |
+| *Python 3.10 is installed, but AP Coder needs Python 3.11 or newer* | The laptop's Python is too old: IT installs Python 3.12 next to it (the older one is left alone); double-click again. |
+| *Note: this offline bundle has packages for Python ..., not for Python 3.14* | The laptop's Python is newer than the bundle: IT builds a bundle for it (the note gives the `build_offline_bundle.py` command) or installs one of the versions listed. |
 | *AP Coder stopped. The message above says what to do.* | The `What to do:` line above it says it; most often a package could not install. *Missing packages: ...*: the folder has no `wheelhouse/` (unzip the full offline bundle over it). *The offline bundle's wheelhouse folder has no ...*: the bundle was built for another Python version. Developers online (`AP_ALLOW_INTERNET=1`): check the proxy (`set HTTPS_PROXY=http://proxy:8080`). |
 | *AP Coder is being set up or started in another window* | The first double-click is still setting up: it waits, then opens the dashboard. |
 | *Self-check FAILED* in the summary | AP Coder still runs. Run `.venv\Scripts\python.exe scripts\pilot_check.py` in `terminal.bat` and send the output. |

@@ -41,9 +41,10 @@ person. A banner on the Process and Review pages says so.
 AP Coder is an offline enterprise build: the laptop never connects to the internet, not even to set up
 (see [PILOT.md](PILOT.md)). IT gives you three things:
 
-- **Python 3.11, 3.12 or 3.13**, already installed. AP Coder uses the Python you have and never installs
-  a second one. If there is none, ask IT to install Python 3.12 from python.org, with **"Add python.exe
-  to PATH"** ticked on the first screen.
+- **Python 3.11 or newer**, already installed (3.12 recommended: the offline bundle has packages for the
+  Python versions it was built for). AP Coder uses the Python you have (`python3` or `python`) and never
+  installs a second one. If there is none, ask IT to install Python 3.12 from python.org, with **"Add
+  python.exe to PATH"** ticked on the first screen.
 - **The offline bundle**, a ZIP such as `APProcessor-offline-<version>-<date>.zip` (on a USB stick or a
   share). It holds the code, every package (`wheelhouse/`) and the OCR models (`models/`).
 - **LM Studio**, with OvisOCR2 (and, optionally, the chat model) already in it (Step 1).
@@ -55,7 +56,7 @@ AP Coder is an offline enterprise build: the laptop never connects to the intern
 `APProcessor.command`; the first time right-click → *Open*). That is the only file you need, now and
 every day after. The first time (a few minutes) it:
 
-1. finds your Python 3.11–3.13 and makes AP Coder's own environment (`.venv`), once
+1. finds your Python (3.11 or newer) and makes AP Coder's own environment (`.venv`), once
 2. installs the packages from the bundle's `wheelhouse/` folder, then on later starts only ones that
    are missing or too old
 3. records the data folder, `C:\Users\<you>\APCoder`: outside the code folder and outside OneDrive.
