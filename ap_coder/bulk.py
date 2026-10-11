@@ -65,6 +65,7 @@ def bulk_approve(
             # A colleague parked, rejected or approved it while the loop checked the others: skip this one only.
             skipped.append((invoice_id, "no longer in the queue (someone else acted on it meanwhile)"))
             continue
-        learn_from_approval(store, invoice_id, output, actor=reviewer)
+        # Nobody opened it: it teaches the template, but only a correction counts towards touchless processing.
+        learn_from_approval(store, invoice_id, output, actor=reviewer, bulk=True)
         approved.append(invoice_id)
     return {"approved": approved, "skipped": skipped}

@@ -47,6 +47,11 @@ PARKED = "parked"  # out of the queue while waiting for information (a buyer, a 
 ACTIVE_STATUSES = (REVIEW, PARKED, PENDING, APPROVED)  # invoices that count (for POs, recurring vendors...)
 _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
 
+# Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
+# the largest invoice total approved without a person, in CAD.
+TOUCHLESS_SETTING, TOUCHLESS_LIMIT_SETTING = "touchless_processing", "touchless_limit"
+DEFAULT_TOUCHLESS_LIMIT = 5000.0
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS gl_accounts (
     code TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
@@ -105,7 +110,7 @@ CREATE TABLE IF NOT EXISTS invoice_capture (
 CREATE TABLE IF NOT EXISTS supplier_profiles (
     key TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '', vendor_id TEXT NOT NULL DEFAULT '',
     state TEXT NOT NULL DEFAULT 'supervised', autonomous_since TEXT, audit_rate REAL, template_json TEXT,
-    updated_at TEXT NOT NULL, updated_by TEXT);
+    updated_at TEXT NOT NULL, updated_by TEXT, suspended_at TEXT);
 CREATE TABLE IF NOT EXISTS supplier_outcomes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, supplier_key TEXT NOT NULL, invoice_id INTEGER, field TEXT NOT NULL,
     ai_value TEXT, final_value TEXT, correct INTEGER NOT NULL, source TEXT NOT NULL DEFAULT 'review',
@@ -266,6 +271,11 @@ class Store:
         for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0")):
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE page_reads ADD COLUMN {column} {kind}")
+        # A suspended supplier remembers when, so it needs a fresh clean streak since then (looked for whatever the
+        # version, like the page reader's columns above).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(supplier_profiles)")}
+        if columns and "suspended_at" not in columns:
+            conn.execute("ALTER TABLE supplier_profiles ADD COLUMN suspended_at TEXT")
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
         from .capture.workflow import AUTONOMOUS_REVIEWER
@@ -1503,20 +1513,95 @@ class Store:
             ),
         )  # fmt: skip
 
+    # --- Touchless processing: one switch and one bar for every supplier ------------------------------------------
+
     def autonomy_policy(self) -> Any:
-        """The autonomy policy (``AutonomyPolicy``): the defaults, or the JSON in the ``autonomy_policy`` setting."""
+        """The bar every supplier must meet to go touchless (``AutonomyPolicy``): fixed standard values, the same
+        for every supplier and every installation. An ``autonomy_policy`` setting left by an older version is
+        ignored."""
         from .capture.supplier import AutonomyPolicy
 
+        return AutonomyPolicy()
+
+    def touchless_enabled(self) -> bool:
+        """Touchless processing (Settings → Automation), off until a manager turns it on: while it is off, every
+        invoice is approved by a person, whatever its supplier's record."""
+        return self.get_setting(TOUCHLESS_SETTING) == "on"
+
+    def set_touchless(self, on: bool, actor: str | None) -> list[dict[str, Any]]:
+        """Turn touchless processing on or off for the whole company (recorded in the audit trail with who did it).
+        Turned on, every supplier that meets the bar goes touchless at once and any supplier made touchless by hand
+        under another bar that does not meet it goes back to review (``sync_autonomy``); returns those changes.
+        Turned off, suppliers keep their record and state, and nothing is approved without a person."""
+        if on == self.touchless_enabled():
+            return []
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (TOUCHLESS_SETTING, "on" if on else "off"),
+            )
+            self._log(conn, "touchless_on" if on else "touchless_off", actor=actor, detail={
+                "policy": self.autonomy_policy().to_dict(), "limit": self.touchless_limit(),
+            })  # fmt: skip
+        return self.sync_autonomy() if on else []
+
+    def touchless_limit(self) -> float:
+        """The largest invoice total approved without a person (Settings → Automation), in CAD: a foreign-currency
+        total is converted at the exchange rates in Settings → Review (compared as it is, without a rate)."""
         try:
-            return AutonomyPolicy.from_dict(json.loads(self.get_setting("autonomy_policy") or "{}"))
-        except (ValueError, TypeError):
-            return AutonomyPolicy()
+            value = float(self.get_setting(TOUCHLESS_LIMIT_SETTING) or DEFAULT_TOUCHLESS_LIMIT)
+        except ValueError:
+            return DEFAULT_TOUCHLESS_LIMIT
+        return value if value > 0 else DEFAULT_TOUCHLESS_LIMIT
+
+    def set_touchless_limit(self, amount: float, actor: str | None) -> bool:
+        """Set the touchless limit (must be above zero). Returns whether it changed (recorded in the audit trail)."""
+        amount = round(float(amount), 2)
+        if amount <= 0:
+            raise ValueError("the touchless limit must be above zero")
+        before = self.touchless_limit()
+        if amount == before:
+            return False
+        self.set_setting(TOUCHLESS_LIMIT_SETTING, f"{amount:.2f}", actor=actor)
+        self.log_event("settings_changed", actor=actor,
+                       detail={"keys": [TOUCHLESS_LIMIT_SETTING], "from": before, "to": amount})  # fmt: skip
+        return True
+
+    def over_touchless_limit(self, coding: dict[str, Any]) -> bool:
+        """Is this invoice's total above the largest amount approved without a person?"""
+        return self.over_approval_limit(coding, limit=self.touchless_limit())
+
+    def sync_autonomy(self, key: str | None = None) -> list[dict[str, Any]]:
+        """With touchless processing on, move each supplier (or the one ``key``) to the state its record earns
+        (``supplier.automatic_transition``): it goes touchless by itself once it meets the bar, and back to review
+        when it no longer may. Each change is recorded in the audit trail by "AP Coder". Returns the changes."""
+        from .capture.supplier import automatic_transition
+
+        if not self.touchless_enabled():
+            return []
+        policy = self.autonomy_policy()
+        profiles = [p for p in [self.get_supplier_profile(key)] if p] if key else self.list_supplier_profiles()
+        changes = []
+        for p in profiles:
+            stats = self.supplier_stats(p["key"], policy.window)
+            move = automatic_transition(stats, policy, p["state"] or "supervised", p["autonomous_since"],
+                                        p.get("suspended_at"))  # fmt: skip
+            if move is None:
+                continue
+            state, reason = move
+            with self._conn() as conn:
+                self._set_state(conn, p, state, "AP Coder", reason, None, policy)
+            changes.append({"key": p["key"], "supplier": p["display_name"] or p["key"], "from": p["state"],
+                            "to": state, "reason": reason})  # fmt: skip
+        return changes
 
     def set_supplier_state(
         self, key: str, state: str, by: str | None, reason: str = "", audit_rate: float | None = None
     ) -> None:
-        """Switch a supplier's autonomy: ``autonomous`` (only when it meets the policy, by a manager),
-        ``supervised`` (turned off) or ``suspended`` (an audit or a failed check found an error)."""
+        """Set a supplier's state: ``held`` (a manager keeps it supervised, whatever its record), ``supervised``
+        (back to the automatic bar, e.g. "Allow again" after ``held``), ``suspended`` (a person found an error in a
+        touchless invoice) or ``autonomous`` (only when it meets the bar; touchless processing does this by itself).
+        Recorded in the audit trail with who did it and why."""
         from .capture.supplier import AUTONOMOUS, STORED_STATES, SUSPENDED, meets_policy
 
         if state not in STORED_STATES:
@@ -1530,23 +1615,74 @@ class Store:
                 raise ValueError(f"{profile['display_name'] or key} does not meet the autonomy policy yet")
         if state == profile["state"] or (state == SUSPENDED and profile["state"] != AUTONOMOUS):
             return  # nothing to suspend: the supplier is not touchless
-        action = {AUTONOMOUS: "autonomy_on", SUSPENDED: "autonomy_suspended"}.get(state, "autonomy_off")
+        with self._conn() as conn:
+            self._set_state(conn, profile, state, by, reason, audit_rate, policy)
+        if state != SUSPENDED:  # "Allow again": it may go touchless straight away
+            self.sync_autonomy(key)
+
+    def _set_state(
+        self, conn: sqlite3.Connection, profile: dict[str, Any], state: str, by: str | None, reason: str,
+        audit_rate: float | None, policy: Any,
+    ) -> None:  # fmt: skip
+        from .capture.supplier import AUTONOMOUS, HELD, SUPERVISED, SUSPENDED
+
+        key = profile["key"]
+        if state == HELD:
+            action = "autonomy_held"
+        elif state == SUPERVISED and profile["state"] == HELD:
+            action = "autonomy_allowed"
+        else:
+            action = {AUTONOMOUS: "autonomy_on", SUSPENDED: "autonomy_suspended"}.get(state, "autonomy_off")
         rate = audit_rate if audit_rate is not None else profile["audit_rate"]
         if state == AUTONOMOUS and rate is None:
             rate = policy.audit_rate
-        # Since when it is touchless (kept while suspended, to show; cleared when turned off).
+        # Since when it is touchless (kept while suspended, to show; cleared otherwise), and when it was suspended
+        # (its fresh clean streak counts from then).
         since = _now() if state == AUTONOMOUS else profile["autonomous_since"] if state == SUSPENDED else None
+        suspended = _now() if state == SUSPENDED else None
+        conn.execute(
+            "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, suspended_at = ?, audit_rate = ?, "
+            "updated_at = ?, updated_by = ? WHERE key = ?",
+            (state, since, suspended, rate, _now(), by, key),
+        )
+        self._log(conn, action, actor=by, detail={
+            "supplier": profile["display_name"] or key, "key": key, "from": profile["state"], "to": state,
+            **({"reason": reason} if reason else {}),
+            **({"audit_rate": rate, "policy": policy.to_dict()} if state == AUTONOMOUS else {}),
+        })  # fmt: skip
+
+    def touchless_summary(self, days: int = 30) -> dict[str, Any]:
+        """The touchless numbers over the last ``days`` days: invoices processed, approved without a person,
+        audited (a touchless candidate picked for a person to check) and how many of those a person corrected, and
+        touchless invoices reopened (a person found something wrong after the fact)."""
+        from .capture.workflow import AUTONOMOUS_REVIEWER
+
+        since = (dt.datetime.now() - dt.timedelta(days=days)).isoformat(timespec="seconds")
         with self._conn() as conn:
-            conn.execute(
-                "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, audit_rate = ?, updated_at = ?, "
-                "updated_by = ? WHERE key = ?",
-                (state, since, rate, _now(), by, key),
-            )
-            self._log(conn, action, actor=by, detail={
-                "supplier": profile["display_name"] or key, "key": key, "from": profile["state"], "to": state,
-                **({"reason": reason} if reason else {}),
-                **({"audit_rate": rate, "policy": policy.to_dict()} if state == AUTONOMOUS else {}),
-            })  # fmt: skip
+            processed = conn.execute(
+                "SELECT COUNT(DISTINCT invoice_id) FROM events WHERE action = 'processed' AND created_at >= ?", (since,)
+            ).fetchone()[0]
+            touchless = conn.execute(
+                "SELECT COUNT(DISTINCT invoice_id) FROM events WHERE action = 'approved' AND actor = ? "
+                "AND created_at >= ?",
+                (AUTONOMOUS_REVIEWER, since),
+            ).fetchone()[0]
+            audits = conn.execute(
+                "SELECT invoice_id, MIN(correct) AS clean FROM supplier_outcomes WHERE source = 'audit' AND at >= ? "
+                "GROUP BY invoice_id",
+                (since,),
+            ).fetchall()
+            reopened = conn.execute(
+                "SELECT COUNT(DISTINCT r.invoice_id) FROM events r WHERE r.action = 'reopened' AND r.created_at >= ? "
+                "AND EXISTS (SELECT 1 FROM events a WHERE a.invoice_id = r.invoice_id AND a.action = 'approved' "
+                "AND a.actor = ?)",
+                (since, AUTONOMOUS_REVIEWER),
+            ).fetchone()[0]
+        return {
+            "days": days, "processed": processed, "touchless": touchless,
+            "touchless_rate": touchless / processed if processed else None,
+            "audited": len(audits), "audit_errors": sum(1 for r in audits if not r["clean"]), "reopened": reopened,
+        }  # fmt: skip
 
     def record_outcomes(
         self, supplier_key: str, invoice_id: int | None, rows: list[dict[str, Any]], source: str = "review",
@@ -1555,13 +1691,14 @@ class Store:
         """Record, per header field, what AP Coder proposed and what AP approved (``outcome_rows``).
 
         Recording the same invoice and source again replaces its rows (an invoice approved again after
-        a reopen). A correction on an autonomous supplier suspends it at once."""
+        a reopen). A correction on an autonomous supplier suspends it at once; with touchless processing on, a
+        supplier this invoice brings up to the bar goes touchless (``sync_autonomy``)."""
         from .capture.supplier import AUTONOMOUS, SUSPENDED
 
         if source not in ("review", "audit"):
             raise ValueError(f"unknown outcome source {source!r}")
         if not supplier_key:
-            return {"fields": 0, "corrections": 0, "suspended": False}
+            return {"fields": 0, "corrections": 0, "suspended": False, "touchless": False}
         at = at or _now()
         corrections = [r["field"] for r in rows if not r.get("correct")]
         with self._conn() as conn:
@@ -1582,14 +1719,17 @@ class Store:
             suspended = bool(corrections) and profile["state"] == AUTONOMOUS
             if suspended:
                 conn.execute(
-                    "UPDATE supplier_profiles SET state = ?, updated_at = ?, updated_by = ? WHERE key = ?",
-                    (SUSPENDED, _now(), "AP Coder", supplier_key),
+                    "UPDATE supplier_profiles SET state = ?, suspended_at = ?, updated_at = ?, updated_by = ? "
+                    "WHERE key = ?",
+                    (SUSPENDED, at, _now(), "AP Coder", supplier_key),
                 )
                 self._log(conn, "autonomy_suspended", invoice_id, "AP Coder", {
                     "supplier": profile["display_name"] or supplier_key, "key": supplier_key, "from": AUTONOMOUS,
                     "to": SUSPENDED, "reason": f"{source} found a correction: {', '.join(corrections)}",
                 })  # fmt: skip
-        return {"fields": len(rows), "corrections": len(corrections), "suspended": suspended}
+        promoted = self.sync_autonomy(supplier_key)
+        return {"fields": len(rows), "corrections": len(corrections), "suspended": suspended,
+                "touchless": any(c["to"] == AUTONOMOUS for c in promoted)}  # fmt: skip
 
     def supplier_outcomes(self, key: str, limit: int = 5000) -> list[dict[str, Any]]:
         with self._conn() as conn:

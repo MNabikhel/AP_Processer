@@ -7,8 +7,9 @@ the app runs, in order, one supplier per process:
 1. read the invoice with ``capture.analyze`` and the supplier's template as stored so far;
 2. decide, as the pipeline does, whether it would be approved without a person: the supplier's state
    from ``autonomy_status`` over its recorded outcomes, then ``should_auto_approve`` and the audit sample
-   (``pick_for_audit``). A manager must switch autonomy on; here it is switched on as soon as the
-   supplier is *ready* (and back on after a suspension once it is ready again);
+   (``pick_for_audit``). Touchless processing is on, so a supplier goes touchless by itself as soon as it
+   meets the bar, and again after a suspension once it has a fresh clean streak (``automatic_transition``,
+   exactly as ``Store.sync_autonomy`` applies it);
 3. unless it went through untouched, AP "approves" the truth: the outcomes (what capture proposed against
    what was approved, ``outcome_rows``) are recorded in a real ``Store`` and the template learns from the
    approved values (``learn`` on ``confirmed_values``), exactly as ``workflow.learn_from_approval`` does.
@@ -105,14 +106,13 @@ def _simulate(job: Job) -> dict[str, Any]:
     from ap_coder.capture import analyze, build_layout
     from ap_coder.capture.supplier import (
         AUTONOMOUS,
-        READY,
         SUPERVISED,
         SUSPENDED,
         AutonomyPolicy,
+        automatic_transition,
         autonomy_status,
         confirmed_values,
         learn,
-        meets_policy,
         outcome_rows,
         pick_for_audit,
         should_auto_approve,
@@ -128,7 +128,8 @@ def _simulate(job: Job) -> dict[str, Any]:
     t0 = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="ap-learn-") as tmp:
         store = Store(Path(tmp) / "learn.db")
-        stored, since = SUPERVISED, None  # what a manager set, and since when it is autonomous
+        # The stored state, since when it is touchless and when it was last suspended (as the store keeps them).
+        stored, since, suspended_at = SUPERVISED, None, None
         key = ""
         for i in range(invoices):
             case = make_stream_case(cases_dir, seed, supplier, i, stream_scanned(seed, supplier, i, scanned_fraction))
@@ -145,10 +146,15 @@ def _simulate(job: Job) -> dict[str, Any]:
 
             # The supplier's state before this invoice, as the pipeline computes it.
             stats = store.supplier_stats(key, policy.window)
-            state, _progress, _why = autonomy_status(stats, policy, stored, since)
             turned_on = False
-            if state == READY or (state == SUSPENDED and meets_policy(stats, policy)):
-                stored, since, state, turned_on = AUTONOMOUS, at, AUTONOMOUS, True  # a manager switches it on
+            move = automatic_transition(stats, policy, stored, since, suspended_at)
+            if move is not None:  # touchless processing is on: the supplier's record moves it by itself
+                stored = move[0]
+                if stored == AUTONOMOUS:
+                    since, turned_on = at, True
+                elif stored == SUSPENDED:
+                    suspended_at = at
+            state, _progress, _why = autonomy_status(stats, policy, stored, since, suspended_at=suspended_at)
 
             layout = build_layout(case.path)
             profile = store.get_supplier_profile(key) or {}
@@ -179,7 +185,7 @@ def _simulate(job: Job) -> dict[str, Any]:
                 store.record_outcomes(key, i + 1, outcomes, source="audit" if audit else "review",
                                       display_name=name, at=at)  # fmt: skip
                 if corrections and stored == AUTONOMOUS:
-                    stored = SUSPENDED  # one correction suspends autonomy
+                    stored, suspended_at = SUSPENDED, at  # one correction suspends autonomy
                 learned = learn(template, layout, confirmed_values(final))
                 store.save_supplier_profile(key, display_name=name, template=learned)
 
@@ -336,7 +342,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "learns from every approval.\n",
         f"Autonomy policy: at least {pol['min_invoices']} reviewed invoices, a {pol['min_lower_bound']:.0%} "
         f"lower bound on header-field accuracy, the last {pol['clean_streak']} without a correction; "
-        f"{pol['audit_rate']:.0%} audit sample. Autonomy is switched on as soon as a supplier is ready.\n",
+        f"{pol['audit_rate']:.0%} audit sample. Touchless processing is on: a supplier goes touchless by itself as "
+        "soon as it meets the bar.\n",
         ("Suppliers are in the vendor master (name and GST/HST number checked). " if cfg["vendor_master"] else "")
         + (
             f"**What-if:** a failed {', '.join(cfg['ignore_checks'])} check does not hold an invoice back.\n"

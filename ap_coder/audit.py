@@ -63,6 +63,10 @@ ACTIONS = {
     "autonomy_on": ("bolt", "ok", "Autonomy turned on"),
     "autonomy_off": ("pan_tool", "gray", "Autonomy turned off"),
     "autonomy_suspended": ("gpp_maybe", "err", "Autonomy suspended"),
+    "autonomy_held": ("pan_tool", "warn", "Vendor kept supervised"),
+    "autonomy_allowed": ("bolt", "info", "Vendor allowed to go touchless again"),
+    "touchless_on": ("bolt", "ok", "Touchless processing turned on"),
+    "touchless_off": ("pan_tool", "gray", "Touchless processing turned off"),
 }
 
 
@@ -219,7 +223,12 @@ def describe(event: dict[str, Any]) -> str:
     if action == "pos_deleted":
         pos = d.get("pos") or []
         return f"{', '.join(pos[:8])}{' …' if len(pos) > 8 else ''}"
-    if action in ("autonomy_on", "autonomy_off", "autonomy_suspended"):
+    if action in ("touchless_on", "touchless_off"):
+        limit = d.get("limit")
+        return (
+            f"for every vendor; largest invoice without a person {float(limit):,.2f}" if limit else "for every vendor"
+        )
+    if action in ("autonomy_on", "autonomy_off", "autonomy_suspended", "autonomy_held", "autonomy_allowed"):
         text = str(d.get("supplier") or d.get("key") or "")
         if action == "autonomy_on" and d.get("audit_rate") is not None:
             text += f": touchless, {float(d['audit_rate']):.0%} audited"
