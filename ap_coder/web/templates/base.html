@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="same-origin">
+  <title>{% block title %}{{ title }} · AP Coder{% endblock %}</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+  {% block head %}{% endblock %}
+</head>
+<body data-page="{{ page }}">
+  <div class="shell">
+    <aside class="rail" aria-label="AP Coder">
+      <a class="brand" href="/" aria-label="AP Coder: review queue">
+        <img src="/assets/logo.svg" alt="AP Coder" height="24">
+      </a>
+      <nav class="nav">
+        {% for section in rail %}
+        <div class="nav-section">{{ section.title }}</div>
+        {% for item in section.pages %}
+        <a href="{{ item.page.path }}" class="nav-link{% if item.page.key == page %} on{% endif %}"
+           {% if item.page.key == page %}aria-current="page"{% endif %}>
+          <span class="ms" aria-hidden="true">{{ item.page.icon }}</span>
+          <span class="label">{{ item.page.title }}</span>
+          {% if item.count %}<span class="count{% if item.page.key == 'review' %} accent{% endif %}"
+            title="{{ item.count | num }}">{{ item.count | num }}</span>{% endif %}
+        </a>
+        {% endfor %}
+        {% endfor %}
+      </nav>
+      <div class="rail-foot">
+        {% if demo_count %}<div class="rail-demo">{{ ui.pill("Demo invoices loaded", "gray", "science") }}</div>{% endif %}
+        <div class="apc-env" title="{{ data_folder }}">{{ ui.status("Offline · Data stays on this computer", "ok") }}</div>
+        <div class="apc-me" title="AP reviewer · {{ approved_today | num }} approved today">
+          {{ ui.avatar(reviewer, "sm") }}
+          <div><div class="name">{{ reviewer }}</div><div class="role">{{ approved_today | num }} approved today</div></div>
+        </div>
+      </div>
+    </aside>
+    <main class="main" id="main">
+      {% block header %}
+      {% if meta %}
+      <header class="apc-head apc-anim">
+        <div>
+          {{ ui.breadcrumbs(["AP Coder", section]) }}
+          <h1 class="apc-title">{% block heading %}{{ title }}{% endblock %}</h1>
+          <div class="apc-sub">{% block subtitle %}{{ meta.subtitle }}{% endblock %}</div>
+        </div>
+        <div class="aside">{% block aside %}{% endblock %}</div>
+      </header>
+      {% endif %}
+      {% endblock %}
+      {% if banner %}
+      <div class="banner warn" role="status">
+        <span class="ms" aria-hidden="true">visibility_off</span>
+        <span>{{ banner }}</span>
+        <a href="/settings#reading">Open Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>
+      </div>
+      {% endif %}
+      <div id="flashes" class="flashes">
+        {% for f in flashes %}
+        <div class="flash {{ f.tone }}" role="status">
+          <span class="ms" aria-hidden="true">{{ f.icon }}</span>
+          <div><div>{{ f.text }}</div>
+            {% if f.details %}<ul>{% for d in f.details %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}
+          </div>
+          <button type="button" class="flash-close" data-dismiss aria-label="Dismiss"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        {% endfor %}
+      </div>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  {# No ?v= here: page scripts import "./app.js", which must be the very same URL to be the same module. #}
+  <script type="module" src="/static/js/app.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

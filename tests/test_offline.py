@@ -178,37 +178,38 @@ def test_doctor_offline_checks_need_no_network(no_network):
 # --- The dashboard listens locally and loads nothing from the internet ------------------------------------------
 
 
-def _dashboard_cmd(monkeypatch, *argv) -> list[str]:
-    import subprocess
+def _serve_call(monkeypatch, *argv, command="dashboard") -> dict:
+    """What ``python -m ap_coder dashboard`` (an alias of serve) would run the web server with."""
+    from ap_coder.web import server
 
     seen = {}
-    monkeypatch.setattr(subprocess, "call", lambda cmd, env=None: seen.setdefault("cmd", cmd) and 0)
-    assert cli.main(["dashboard", "--port", "8599", *argv]) == 0
-    return seen["cmd"]
 
+    def fake_serve(host, port, open_browser=True, store=None):
+        seen.update(host=host, port=port, open_browser=open_browser, store=store)
+        return 0
 
-def _opt(cmd: list[str], name: str) -> str:
-    return cmd[cmd.index(name) + 1]
+    monkeypatch.setattr(server, "serve", fake_serve)
+    assert cli.main([command, "--port", "8599", *argv]) == 0
+    return seen
 
 
 def test_dashboard_is_local_only_by_default(monkeypatch):
     monkeypatch.delenv(offline.ADDRESS_ENV, raising=False)
-    cmd = _dashboard_cmd(monkeypatch)
-    assert _opt(cmd, "--server.address") == "127.0.0.1"
-    assert _opt(cmd, "--browser.gatherUsageStats") == "false"
-    assert _opt(cmd, "--server.showEmailPrompt") == "false"
-    assert _opt(cmd, "--server.enableStaticServing") == "true"
+    seen = _serve_call(monkeypatch)
+    assert seen["host"] == "127.0.0.1" and seen["port"] == 8599 and seen["open_browser"] is True
+    assert _serve_call(monkeypatch, "--no-browser", command="serve")["open_browser"] is False
 
 
 def test_lan_access_is_opt_in(monkeypatch, capsys):
     monkeypatch.setenv(offline.ADDRESS_ENV, "0.0.0.0")
-    cmd = _dashboard_cmd(monkeypatch)
-    assert _opt(cmd, "--server.address") == "0.0.0.0" and _opt(cmd, "--browser.serverAddress") == "localhost"
+    assert _serve_call(monkeypatch)["host"] == "0.0.0.0"
     assert "other computers on the network" in capsys.readouterr().err
     checks = {area: status for area, status, _ in offline.offline_checks()}
     assert checks["dashboard network"] == offline.WARN
     monkeypatch.delenv(offline.ADDRESS_ENV)
-    assert _opt(_dashboard_cmd(monkeypatch, "--address", "127.0.0.1"), "--server.address") == "127.0.0.1"
+    assert _serve_call(monkeypatch, "--address", "127.0.0.1")["host"] == "127.0.0.1"
+    assert _serve_call(monkeypatch, "--host", "127.0.0.1", command="serve")["host"] == "127.0.0.1"
+    assert "other computers" not in capsys.readouterr().err
 
 
 def test_streamlit_config_sends_no_usage_statistics():

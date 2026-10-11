@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{# The review queue before there is anything to review: getting started, and the demo invoices. #}
+{% block header %}
+<header class="apc-head apc-anim"><div>
+  <div class="apc-eyebrow">Welcome</div>
+  <h1 class="apc-title">{{ greeting }}</h1>
+  <div class="apc-sub">A few quick steps and you're reviewing.</div>
+</div></header>
+{% endblock %}
+{% block content %}
+<div class="narrow">
+  {% if waiting %}
+  <section class="card">
+    <h4><span class="ms" aria-hidden="true">inbox</span> {{ waiting | plural("invoice") }} read and waiting</h4>
+    <p class="muted">Import your GL accounts (the chart of accounts from JD Edwards) to open them, or start with the
+      sample accounts and switch to yours later.</p>
+    <div class="row">
+      <a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>Import GL accounts</a>
+      <form method="post" action="/review/sample-gl"><button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button></form>
+    </div>
+  </section>
+  {% endif %}
+  <section class="card">
+    <div class="card-head">
+      <div><h4><span class="ms" aria-hidden="true">flag</span> Getting started</h4>
+        <p class="muted">Finish these steps and invoices will start arriving in your review queue.</p></div>
+      {{ ui.ring(ring_value, size=60, stroke=6, label=ring_label) }}
+    </div>
+    <div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail) }}{% endfor %}</div>
+    <div class="row">
+      {% if not chat_ready %}<span class="muted"><span class="ms" aria-hidden="true">info</span> Optional: start LM Studio's server, then check Settings → Reading.</span>{% endif %}
+      <a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>GL accounts &amp; tax</a>
+      <a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Process invoices</a>
+    </div>
+  </section>
+  {% include "_demo_card.html" %}
+</div>
+{% endblock %}

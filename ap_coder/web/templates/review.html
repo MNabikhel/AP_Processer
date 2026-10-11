@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block subtitle %}{{ lead }}{% endblock %}
+{% block aside %}<a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Process invoices</a>{% endblock %}
+{% block content %}
+<div class="rq-kpis apc-anim" role="group" aria-label="The queue at a glance">
+  {% for k in kpis %}
+  <div class="rq-kpi">
+    <div class="l">{{ k.label }}</div>
+    <div class="v">{{ k.value }}</div>
+    {% if k.bar is defined %}<span class="rq-kpi-bar" aria-hidden="true"><i style="width: {{ (k.bar * 100) | round | int }}%"></i></span>{% endif %}
+    <div class="s">{% if k.delta %}<span class="d {{ 'up' if k.good else 'down' }}">{{ k.delta }}</span> {% endif %}{{ k.sub }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% if today %}
+<div class="rq-today"><b>Today</b>{% for text, tone in today %}{{ ui.pill(text, tone) }}{% endfor %}</div>
+{% endif %}
+
+<nav class="tabs" aria-label="Lists">
+  {% for key, label in tabs %}
+  <a href="{{ view_url(tab=key) }}" class="{{ 'on' if key == tab else '' }}"{% if key == tab %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+{% if tab == "review" %}
+  {% if not pending %}
+  <section class="card">
+    {{ ui.empty_note("All caught up", " Every invoice has been reviewed.", "task_alt") }}
+    <a class="link" href="/process">Process new invoices <span class="ms" aria-hidden="true">arrow_forward</span></a>
+  </section>
+  {% else %}
+  <section class="card flush rq-queue">
+    <form class="rq-toolbar" method="get" action="/review" role="search">
+      <div class="segmented" role="group" aria-label="Show">
+        {% for key, name in shows.items() %}
+        <a href="{{ view_url(show=key, q=q, sort=sort) }}" class="{{ 'on' if key == show else '' }}"{% if key == show %} aria-current="true"{% endif %}>{{ name }} · {{ counts[key] }}</a>
+        {% endfor %}
+      </div>
+      <input type="hidden" name="show" value="{{ show }}">
+      <label class="search"><span class="ms" aria-hidden="true">search</span>
+        <input type="search" name="q" value="{{ q }}" placeholder="Search vendor or invoice #" aria-label="Search vendor or invoice #"></label>
+      <select name="sort" aria-label="Sort" data-autosubmit>
+        {% for key, name in sorts.items() %}<option value="{{ key }}"{% if key == sort %} selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+    </form>
+
+    {% if candidates %}
+    <div class="rq-bulk-bar">
+      <div class="rq-bulk" title="No errors or warnings, confidence above the threshold">
+        <span class="ms" aria-hidden="true">done_all</span>
+        <span><b>{{ candidates | length }} invoices look clean</b><span class="rq-bulk-sub"> · no errors or warnings · {{ candidates_total }}</span></span>
+      </div>
+      <details class="pop">
+        <summary class="btn sm"><span class="ms" aria-hidden="true">done_all</span>Approve {{ candidates | length }}</summary>
+        <div class="pop-body">
+          <p>These invoices are approved <b>exactly as coded</b>, and each one teaches AP Coder. Every invoice is
+            re-checked first; any that is no longer clean is left for you.</p>
+          <div class="table-wrap"><table class="apc-table">
+            <thead><tr><th>Vendor</th><th>Invoice</th><th class="r">Total</th></tr></thead>
+            <tbody>{% for i in candidates %}<tr><td>{{ i.vendor_name }}</td><td>{{ i.invoice_number }}</td><td class="r">{{ i.grand_total | money }}</td></tr>{% endfor %}</tbody>
+          </table></div>
+          <form method="post" action="/review/bulk-approve" data-busy="Approving…">
+            {% for i in candidates %}<input type="hidden" name="ids" value="{{ i.id }}">{% endfor %}
+            <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">done_all</span>Approve them</button>
+          </form>
+        </div>
+      </details>
+    </div>
+    {% endif %}
+
+    {% if not rows %}
+    <div class="pad">{{ ui.empty_note("No invoices match", " Try another search or filter.", "search_off") }}</div>
+    {% else %}
+    <div class="rq-row rq-cols" aria-hidden="true"><span>Vendor</span><span class="c-num">Invoice #</span>
+      <span class="c-date">Date</span><span class="c-prov">Prov.</span><span class="c-tax">Tax</span>
+      <span class="c-status">Status</span><span class="c-conf">Confidence</span><span class="c-amt">Amount</span><span></span></div>
+    <ul class="rq-list">
+      {% for r in rows %}
+      <li><a class="rq-row {{ 'attn' if r.flagged else 'ready' }}" href="/review/{{ r.id }}" aria-label="Review invoice from {{ r.name }}">
+        <div class="c-vendor"><span class="rq-av" aria-hidden="true">{{ r.name | initials }}</span>
+          <div class="who"><div class="name" title="{{ r.name }}">{{ r.name }}</div>
+            {% if r.due %}<div class="due {{ r.due_tone }}">{{ r.due }}</div>{% endif %}</div></div>
+        <div class="c-num" title="{{ r.number }}">{{ r.number }}</div>
+        <div class="c-date">{{ r.date }}</div>
+        <div class="c-prov" title="{{ r.province_title }}">{{ r.province }}</div>
+        <div class="c-tax">{% for t in r.taxes %}<span class="rq-tax">{{ "Other tax" if t == "OTHER" else t }}</span>{% endfor %}</div>
+        <div class="c-status">{{ ui.pill("Needs attention", "warn") if r.flagged else ui.pill("Ready", "ok") }}</div>
+        <div class="c-conf"><span class="rq-conf {{ 'ok' if r.confidence_ok else 'warn' }}" title="Confidence; {{ threshold | pct }} or more needs no second look">
+          <span class="bar" aria-hidden="true"><i style="width: {{ (r.confidence * 100) | round | int }}%"></i></span><b>{{ r.confidence_text }}</b></span></div>
+        <div class="c-amt">{{ r.amount }}<small>{{ r.currency }}</small></div>
+        <div class="c-chev"><span class="ms" aria-hidden="true">chevron_right</span></div>
+      </a></li>
+      {% endfor %}
+    </ul>
+    {% if more %}
+    <a class="rq-more" href="{{ view_url(show=show, q=q, sort=sort, limit=next_limit) }}">
+      <span class="ms" aria-hidden="true">expand_more</span>Show {{ [50, more] | min }} more · {{ more }} not shown</a>
+    {% endif %}
+    {% endif %}
+  </section>
+  {% endif %}
+
+{% elif tab == "approved" %}
+  <section class="card">
+    <div class="card-head">
+      <div class="rq-card-title">Recently approved <span>{{ approved | length }} of {{ approved_total }}</span></div>
+      <a class="btn" href="/exports"><span class="ms" aria-hidden="true">ios_share</span>{% if to_export %}Export to the ERP · {{ to_export }} ready{% else %}Exports{% endif %}</a>
+    </div>
+    {% if not approved %}
+    {{ ui.empty_note("No approved invoices yet", " Approved invoices are listed here.", "task_alt") }}
+    {% else %}
+    <div class="table-wrap"><table class="apc-table">
+      <thead><tr><th>Vendor</th><th>Invoice #</th><th>Date</th><th class="r">Total</th><th>Approved by</th><th>When</th></tr></thead>
+      <tbody>
+        {% for i in approved %}
+        <tr><td><a class="rq-who" href="/review/{{ i.id }}"><span class="rq-av" aria-hidden="true">{{ (i.vendor_name or "") | initials }}</span><b>{{ i.vendor_name }}</b></a></td>
+          <td>{{ i.invoice_number }}</td><td>{{ i.invoice_date }}</td>
+          <td class="r">{{ i.grand_total | money }} <span class="rq-cur">{{ i.currency }}</span></td>
+          <td>{{ i.reviewer }}{% if i.second_reviewer %} → {{ i.second_reviewer }}{% endif %}</td>
+          <td>{{ i.reviewed_at | time_ago }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    {% if approved_total > approved | length %}<p class="muted">The {{ approved | length }} most recent of {{ approved_total }}. Find an older one with Find an invoice.</p>{% endif %}
+    {% endif %}
+  </section>
+
+{% elif tab == "other" %}
+  <section class="card list">
+    {% if not others %}
+    {{ ui.empty_note("Nothing here", " Invoices that could not be read, or were rejected.", "check_circle") }}
+    {% endif %}
+    {% for inv in others %}
+    <div class="rq-li">
+      <div class="rq-item"><span class="rq-av" aria-hidden="true">{{ (inv.vendor_name or inv.file_name or "") | initials }}</span>
+        <div class="rq-item-body">
+          <div class="rq-item-title"><b>{{ inv.vendor_name or inv.file_name }}</b>{{ ui.pill("Failed", "err") if inv.status == "failed" else ui.pill("Rejected", "gray") }}</div>
+          <div class="rq-item-sub">{{ inv.first }}</div>
+          {% if inv.details %}<details class="tech"><summary>Technical details</summary><pre>{{ inv.details }}</pre></details>{% endif %}
+        </div></div>
+      <div class="row end">
+        {% if inv.status == "rejected" %}
+        <form method="post" action="/review/{{ inv.id }}/reopen"><button class="btn sm" type="submit" title="Back to the review queue (e.g. rejected by mistake)"><span class="ms" aria-hidden="true">undo</span>Reopen</button></form>
+        {% else %}
+        <form method="post" action="/review/{{ inv.id }}/retry"><button class="btn sm" type="submit"><span class="ms" aria-hidden="true">refresh</span>Retry</button></form>
+        {% endif %}
+        <form method="post" action="/review/{{ inv.id }}/delete" data-confirm="Delete this invoice? Its file moves to invoices/deleted.">
+          <input type="hidden" name="back" value="/review?tab=other">
+          <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete</span>Delete</button></form>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+
+{% elif tab == "parked" %}
+  <p class="muted">Invoices waiting for information. They stay out of the queue until you bring them back.</p>
+  <section class="card list">
+    {% for inv in parked %}
+    <div class="rq-li">
+      <div class="rq-item"><span class="rq-av" aria-hidden="true">{{ (inv.vendor_name or "") | initials }}</span>
+        <div class="rq-item-body">
+          <div class="rq-item-title"><a href="/review/{{ inv.id }}"><b>{{ inv.vendor_name }}</b></a>
+            <span class="rq-num">{{ inv.invoice_number }} · {{ inv.grand_total | money(inv.currency) }}</span>
+            {% if inv.follow_up %}{{ ui.pill("Follow up " ~ inv.follow_up, "err" if inv.late else "gray") }}{% endif %}</div>
+          <div class="rq-item-sub">Waiting for: {{ inv.parked_reason }}</div>
+        </div></div>
+      <form method="post" action="/review/{{ inv.id }}/unpark"><button class="btn sm" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Back to the queue</button></form>
+    </div>
+    {% endfor %}
+  </section>
+
+{% elif tab == "second" %}
+  <p class="muted">{% if limit_amount %}Invoices over {{ limit_amount | money }} CAD need a second approver before they can be exported. {% endif %}The second approver must be someone other than the first.</p>
+  <section class="card list">
+    {% if not awaiting %}
+    {{ ui.empty_note("Nothing waiting", " Invoices over the approval limit appear here once approved.", "how_to_reg") }}
+    {% endif %}
+    {% for inv in awaiting %}
+    <div class="rq-li">
+      <div class="rq-item"><span class="rq-av" aria-hidden="true">{{ (inv.vendor_name or "") | initials }}</span>
+        <div class="rq-item-body">
+          <div class="rq-item-title"><a href="/review/{{ inv.id }}"><b>{{ inv.vendor_name }}</b></a><span class="rq-num">{{ inv.invoice_number }}</span></div>
+          <div class="rq-item-sub">{{ inv.grand_total | money(inv.currency) }} · approved by {{ inv.reviewer }} {{ inv.reviewed_at | time_ago }}</div>
+        </div></div>
+      <div class="row end">
+        <form method="post" action="/review/{{ inv.id }}/final-approve">
+          <button class="btn primary sm" type="submit"{% if inv.same %} disabled title="You approved it first (same name or computer login): someone else gives the second approval"{% endif %}>
+            <span class="ms" aria-hidden="true">how_to_reg</span>Final approval</button></form>
+        <details class="pop right">
+          <summary class="btn sm"><span class="ms" aria-hidden="true">undo</span>Send back</summary>
+          <form class="pop-body stack" method="post" action="/review/{{ inv.id }}/send-back">
+            <label class="field">Why<input type="text" name="reason" placeholder="e.g. wrong cost center"></label>
+            <button class="btn" type="submit">Send back to the queue</button>
+          </form>
+        </details>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+{% endif %}
+{% endblock %}

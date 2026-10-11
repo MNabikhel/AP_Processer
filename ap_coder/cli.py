@@ -129,13 +129,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", default=str(db_path), help=f"Dashboard database (default: {db_path})")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("dashboard", help="Open the review dashboard in your browser (runs locally)")
-    p.add_argument("--port", type=int, default=None, help="Default: 8501, or the next free port")
-    p.add_argument(
-        "--address", default=None,
-        help="Address to listen on. Default 127.0.0.1 (this computer only), or AP_DASHBOARD_ADDRESS; "
-        "0.0.0.0 lets others on the network open it",
-    )  # fmt: skip
+    for name, text in (("serve", "Open the review dashboard in your browser (runs on this computer)"),
+                       ("dashboard", "The same as serve")):  # fmt: skip
+        p = sub.add_parser(name, help=text)
+        p.add_argument("--port", type=int, default=None, help="Default: 8501, or the next free port")
+        p.add_argument(
+            "--host", "--address", dest="host", default=None,
+            help="Address to listen on. Default 127.0.0.1 (this computer only), or AP_DASHBOARD_ADDRESS; "
+            "0.0.0.0 lets others on the network open it",
+        )  # fmt: skip
+        p.add_argument("--no-browser", action="store_true", help="Don't open the browser (it prints the address)")
 
     p = sub.add_parser("doctor", help="Check configuration, reference data and (with --online) Azure connectivity")
     p.add_argument("--online", action="store_true", help="Call both Azure services (costs about one invoice)")
@@ -222,30 +225,21 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
     return exit_code(checks)
 
 
-def cmd_dashboard(args: argparse.Namespace) -> int:
-    import subprocess
-
-    app = Path(__file__).resolve().parent / "dashboard.py"
-    env = {**os.environ, "AP_DB_PATH": str(Path(args.db).resolve())}
-    if args.env_file:
-        env["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
-    from .offline import dashboard_address, is_loopback, streamlit_flags
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the dashboard in this process (ap_coder/web/server.py) until Ctrl+C or the launcher stops it."""
+    if args.env_file:  # the settings the dashboard reads again for every page
+        os.environ["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
+    from .offline import dashboard_address, is_loopback
+    from .store import Store
+    from .web.server import browser_url, serve
 
     port = args.port or free_port(8501)
-    address = args.address or dashboard_address()
-    # Local only by default (127.0.0.1), no usage statistics, fonts and icons served from the package.
-    cmd = [
-        sys.executable, "-m", "streamlit", "run", str(app), *streamlit_flags(port, address),
-        "--theme.base", str(Path(__file__).resolve().parent / "assets" / "theme.toml"),
-    ]  # fmt: skip
-    host = address if address not in ("0.0.0.0", "::") else "localhost"
-    print(f"Dashboard: http://{host}:{port}  (it opens in your browser; Ctrl+C here to stop)", file=sys.stderr)
-    if not is_loopback(address):
-        print(f"Listening on {address}: other computers on the network can open the dashboard.", file=sys.stderr)
-    try:
-        return subprocess.call(cmd, env=env)
-    except KeyboardInterrupt:
-        return 0
+    host = args.host or dashboard_address()
+    print(f"Dashboard: {browser_url(host, port)}  (it opens in your browser; Ctrl+C here to stop)", file=sys.stderr)
+    if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
+        print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
+              "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
+    return serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)))
 
 
 def free_port(start: int) -> int:
@@ -680,7 +674,8 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = Settings.from_env(args.env_file)
     commands = {
-        "dashboard": lambda: cmd_dashboard(args),
+        "serve": lambda: cmd_serve(args),
+        "dashboard": lambda: cmd_serve(args),
         "doctor": lambda: cmd_doctor(args, settings),
         "process": lambda: cmd_process(args, settings),
         "watch": lambda: cmd_watch(args, settings),
