@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ap_coder import __version__, paths, ui
 from ap_coder.envfile import read_env, write_env
-from ap_coder.store import Store
+from ap_coder.store import Store, unread_fx_text
 from ap_coder.web.core import (
     data_dir,
     done,
@@ -184,6 +184,10 @@ def save_approval(
         return refuse("The approval limit can't be below 0 (0 = never a second approval).")
     if not 0 <= days <= 180:
         return refuse("The days to pay must be from 0 to 180.")
+    unread = unread_fx_text(fx_rates)
+    if unread:  # saved as it was, a rate typed the wrong way round would be ignored without a word
+        return refuse(f"Exchange rates not saved: “{unread}” can't be read. Write each one as a currency code, then "
+                      "the CAD for one unit, e.g. USD=1.37, EUR=1.50.")  # fmt: skip
     changed = []
     if fx_rates.strip() != store.get_setting("fx_rates"):
         store.set_setting("fx_rates", fx_rates.strip(), actor=reviewer())

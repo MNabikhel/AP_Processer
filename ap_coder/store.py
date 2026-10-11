@@ -172,14 +172,22 @@ def _stale_before() -> str:
     return (dt.datetime.now() - dt.timedelta(hours=STALE_READING_HOURS)).isoformat(timespec="seconds")
 
 
+_FX_RATE = re.compile(r"([A-Za-z]{3})\s*[=:]?\s*([0-9]+(?:[.,][0-9]+)?)")
+
+
 def parse_fx_rates(text: str) -> dict[str, float]:
     """ "USD=1.37, EUR 1,50; GBP: 1.85" -> {"USD": 1.37, "EUR": 1.5, "GBP": 1.85} (CAD is always 1)."""
     rates = {"CAD": 1.0}
-    for code, value in re.findall(r"([A-Za-z]{3})\s*[=:]?\s*([0-9]+(?:[.,][0-9]+)?)", text or ""):
+    for code, value in _FX_RATE.findall(text or ""):
         rate = float(value.replace(",", "."))
         if rate > 0:
             rates[code.upper()] = rate
     return rates
+
+
+def unread_fx_text(text: str) -> str:
+    """What of ``text`` is not a rate ``parse_fx_rates`` reads ("" when all of it is): "1.37 USD" -> "1.37 USD"."""
+    return re.sub(r"[\s,;]+", " ", _FX_RATE.sub(" ", text or "")).strip()
 
 
 def _clean_code(value: Any) -> str:

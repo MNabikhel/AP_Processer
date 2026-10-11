@@ -46,6 +46,23 @@ def test_a_redirect_never_leaves_this_server_through_a_control_character(url):
     assert core.local_url("/review?tab=parked&q=a%20b") == "/review?tab=parked&q=a%20b"
 
 
+@pytest.mark.parametrize("typed", ["dollars", "1.37 USD", "US$=1.37", "USD=1.37, EUR"])
+def test_exchange_rates_that_cannot_be_read_are_refused_not_saved(client, store, typed):
+    """A rate typed the wrong way round ("1.37 USD") used to be saved as if understood: USD invoices were then
+    compared with the approval limit at 1 CAD per USD."""
+    store.set_setting("fx_rates", "USD=1.37")
+    data = {"approval_limit": "1000", "terms_days": "30", "fx_rates": typed}
+    response = client.post("/settings/review/approval", data=data, headers=PAGE)
+    assert response.status_code == 400 and "USD=1.37" in response.json()["error"]
+    assert store.get_setting("fx_rates") == "USD=1.37" and store.approval_limit() == 0
+
+
+def test_exchange_rates_written_as_the_page_shows_are_saved(client, store):
+    data = {"approval_limit": "0", "terms_days": "30", "fx_rates": "USD=1.37, EUR 1,50; gbp: 1.85"}
+    assert client.post("/settings/review/approval", data=data, headers=PAGE).json()["ok"]
+    assert store.fx_rates() == {"CAD": 1.0, "USD": 1.37, "EUR": 1.5, "GBP": 1.85}
+
+
 def test_the_activity_search_finds_what_the_log_shows_in_its_what_column(client, store):
     """The clerk types the word the log shows for an event ("Approved", "Rejected"): it is found."""
     from ap_coder.audit import ACTIONS
