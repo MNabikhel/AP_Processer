@@ -200,6 +200,9 @@
   border-top: 1px solid var(--lg-border);}
 @media (max-width: 900px) {.inv-actionbar {margin: 16px -16px -64px; padding: 10px 16px;}}
 .inv-actionbar-left {display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-width: 0;}
+/* "Pick a GL account for lines 1, 3 and a cost center for…" wraps instead of widening the page on a phone */
+.inv-actionbar-left .apc-pill {white-space: normal; max-width: 100%;}
+@media (max-width: 600px) {.rvw-split .legend span {white-space: normal;}}
 .inv-actionbar-right {display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;}
 .rvw-post {display: flex; flex-direction: column; min-width: 0;}
 .rvw-post-amount {font-size: 14px; color: var(--rv-muted); white-space: nowrap;}
