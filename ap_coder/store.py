@@ -1836,6 +1836,27 @@ class Store:
             row = conn.execute(f"SELECT COUNT(*) FROM page_reads WHERE {_IN_LINE}", (_stale_before(),)).fetchone()
         return int(row[0])
 
+    def page_read_pages_average(self, recent: int = 50) -> float | None:
+        """The pages the page reader read per invoice, on average over its latest ``recent`` finished reads (None
+        before the first): how many pages an invoice in its queue is likely to have."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT AVG(pages) FROM (SELECT pages FROM page_reads WHERE status = 'done' AND pages > 0 "
+                "ORDER BY updated_at DESC LIMIT ?)",
+                (int(recent),),
+            ).fetchone()
+        return round(float(row[0]), 2) if row and row[0] is not None else None
+
+    def supplier_templates_count(self) -> int:
+        """How many suppliers have a learned template (for "How AP Coder reads every invoice"), without reading
+        them."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM supplier_profiles WHERE template_json IS NOT NULL "
+                "AND template_json NOT IN ('', 'null', '{}')"
+            ).fetchone()
+        return int(row[0]) if row else 0
+
     def page_reads_ahead(self, invoice_id: int) -> int:
         """How many invoices the page reader reads before this one: the one being read now, and those in line
         ahead of it in the order ``next_page_read`` takes them. 0 when it isn't waiting."""

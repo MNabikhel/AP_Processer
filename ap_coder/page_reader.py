@@ -1,15 +1,16 @@
-"""The page reader: a model that can see reads a scanned or photographed invoice and writes down its text, tables too.
+"""The page reader: OvisOCR2 reads every page of every invoice and writes down its text, tables too.
 
 OCR reads a scan's words but loses its tables, and on a phone photo it misreads digits and runs column titles
-together. A vision language model in LM Studio reads the page whole. The recommended one is OvisOCR2 (0.85B,
-Apache-2.0, a Qwen3.5-0.8B trained to read document pages): on 29 scanned pages it had never seen, it put 99.6% of
-the figures in their right row and invented none, at about 3 minutes a page on a 4-core laptop CPU. Its
-transcription is one more independent reader in capture: the rule reader reads it, each value is found back on the
-page, and a value OCR and the page reader agree on counts as two readers (see ``capture.transcript``).
+together. A vision language model in LM Studio reads the page whole: OvisOCR2 (0.85B, Apache-2.0, a Qwen3.5-0.8B
+trained to read document pages): on 29 scanned pages it had never seen, it put 99.6% of the figures in their right
+row and invented none, at about 3 minutes a page on a 4-core laptop CPU. Its transcription is one more independent
+reader in capture: the rule reader reads it, each value is found back on the page, and a value OCR (or the PDF's own
+text) and the page reader agree on counts as two readers (see ``capture.transcript``). It reads digital PDFs too, so
+the text hidden in a PDF is checked against the page as printed.
 
-- Which model reads pages (``reader_status``): a document reader LM Studio has downloaded (OvisOCR2), else the chat
-  model when it can see. LM Studio is asked to load a document reader with the context a page needs
-  (``load_reader``), since one it loads on its own gets a context too short for a page.
+- Which model reads pages (``reader_status``): OvisOCR2 as LM Studio has it downloaded, found on its own; no other
+  model reads pages instead. LM Studio is asked to load it with the context a page needs (``load_reader``), since
+  one it loads on its own gets a context too short for a page.
 - Each page is rendered at the reader's resolution (``render_pages``) and read with a streaming chat completion,
   greedy, stopped as soon as the model starts repeating itself and read once more with sampling (``transcribe``).
 - Readings are kept on disk by file, page, model and prompt (``read_document``), so a page is never read twice, and
@@ -89,7 +90,8 @@ OVIS = Reader("OvisOCR2, a document reader", OVIS_PROMPT, 200, 2048, 12288, 2048
 # About 150 DPI and 1,600 pixels: a general model pays for every image token; 8,192 tokens is a dense page's
 # reading with room to spare. LM Studio keeps the context it was loaded with (0).
 GENERAL = Reader("a general model that can see", GENERAL_PROMPT, 150, 1600, 8192, 0)
-# Models made for reading document pages, by a word in their name: preferred over a general model when downloaded.
+# Models made for reading document pages, by a word in their name: the only ones found to read pages (a general model
+# reads them only when a developer names it in AP_PAGE_READER_MODEL).
 READERS = {"ovisocr": OVIS}
 
 
@@ -318,9 +320,10 @@ TRIES_AGAIN = "AP Coder tries it again in half an hour, or when the settings are
 
 
 def reader_status(settings: Settings, *, use_cache: bool = True) -> ReaderStatus:
-    """The model that reads pages and its state. A model named in the settings (AP_PAGE_READER_MODEL) is used as it
-    is ("missing" when the server doesn't have it). Automatic: a document reader LM Studio has downloaded, unless it
-    couldn't load it lately; else the chat model when it can see; else none. Asks the server (cached briefly)."""
+    """The model that reads pages and its state. Automatic (always, but for a developer's AP_PAGE_READER_MODEL): a
+    document reader LM Studio has downloaded (OvisOCR2: any model whose key has "ovisocr" in it), unless it couldn't
+    load it lately; else none. A general model that can see is never used instead: the page reader is then simply
+    not available, and invoices wait for it. Asks the server (cached briefly)."""
     base = reader_base_url(settings)
     status = local_llm.check_server(_reader_llm(settings), use_cache=use_cache)
     out = ReaderStatus(status.reachable, False, "", False, "down", base_url=base)
@@ -335,9 +338,6 @@ def reader_status(settings: Settings, *, use_cache: bool = True) -> ReaderStatus
         if status.vision and status.model and status.model not in seeing:
             seeing.append(status.model)
         out.candidates = sorted(seeing, key=lambda m: not document_reader(m))
-    if settings.page_reader.mode == "off":
-        out.state, out.note = "off", "The page reader is turned off: scans and photos are read by OCR alone."
-        return out
     if not status.reachable:
         out.note = f"Nothing answered at {base}: start LM Studio's server (Developer tab → Start server)."
         return out
@@ -369,19 +369,19 @@ def _use_named(out: ReaderStatus, named: str, status: Any, listing: LMListing | 
         found = listing.find(named)
         if found is None:
             out.state = "missing"
-            out.note = (f"LM Studio doesn't have {named}: add it to LM Studio's models folder, or choose Automatic "
-                        "for the page reader.")  # fmt: skip
+            out.note = (f"LM Studio doesn't have {named} (AP_PAGE_READER_MODEL): add it to LM Studio's models folder, "
+                        "or remove that line from the .env so OvisOCR2 is found on its own.")  # fmt: skip
             return
         _describe(out, found, reader_for(named))
         if not found.vision:  # it would read nothing on a page: not a page reader at all
             out.state = "blind"
-            out.note = f"{named} can't look at pictures: pick a model that can, e.g. OvisOCR2 (or Automatic)."
+            out.note = f"{named} (AP_PAGE_READER_MODEL) can't look at pictures: remove that line from the .env."
         return
     if named in status.models:
         out.state = "loaded"
         return
     out.state = "missing"
-    out.note = f"The server at {out.base_url} doesn't list {named}: choose a model it has, or Automatic."
+    out.note = f"The server at {out.base_url} doesn't list {named} (AP_PAGE_READER_MODEL)."
 
 
 def _ready(model: LMModel) -> bool:
@@ -409,28 +409,16 @@ def _use_automatic(out: ReaderStatus, status: Any, listing: LMListing | None) ->
         if named:
             out.model, out.document_reader, out.state = named, True, "loaded"
             return
-    if status.active and status.vision:  # the chat model can look at pictures: it reads pages
-        out.model, out.document_reader = status.model, document_reader(status.model)
-        found = listing.find(status.model) if listing is not None else None
-        if found is not None:
-            _describe(out, found, reader_for(status.model))
-        else:
-            out.state = "loaded"
-        if failed:
-            out.note = f"{failed} {TRIES_AGAIN} Meanwhile {status.model} reads pages."
-        elif listing is not None:
-            out.note = f"{NOT_DOWNLOADED} It reads pages more accurately than {status.model}."
-        return
+    # No OvisOCR2: no other model reads pages instead (a general model that can see misreads figures OvisOCR2 gets
+    # right). Invoices are read by the PDF's text and OCR meanwhile and wait for it.
     out.state = "missing"
     if failed:
         out.note = f"{failed} {TRIES_AGAIN}"
     elif listing is not None:
-        out.note = f"{NOT_DOWNLOADED} Until then, scans and photos are read by OCR alone."
+        out.note = f"{NOT_DOWNLOADED} Until then, invoices are read by OCR alone and wait for a person."
     else:
-        out.note = (
-            f"{status.server_title} has no model that can look at pictures: scans and photos are read by OCR alone. "
-            "OvisOCR2 in LM Studio reads pages best."
-        )
+        out.note = (f"{status.server_title} has no OvisOCR2: invoices are read by OCR alone and wait for a person. "
+                    "OvisOCR2 runs in LM Studio.")  # fmt: skip
 
 
 def _reading_model(settings: Settings) -> str:
@@ -1432,54 +1420,38 @@ def _coding_row(settings: Settings) -> dict[str, str]:
         ready = local_llm.provider_status(settings)
         row.update(model=settings.openai.deployment, state="on" if ready.ready else "off", status=ready.detail)
         return row
-    if provider == "local":
-        status = local_llm.check_server(settings.llm)
-        if status.active:
-            status_line = f"Running in {status.server}: suggests accounts for lines AP hasn't coded before."
-            row.update(model=status.model, state="on", status=status_line)
-            if document_reader(status.model):
-                row["note"] = (
-                    f"{reader_name(status.model)} is made to read pages, not to suggest accounts: load a chat model "
-                    "in LM Studio beside it (Qwen 3.5 9B, say)."
-                )
-            return row
-        row.update(state="fallback", status=f"{status.describe()} Accounts come from what AP approved before.")
+    if provider == "off":  # only code or a test turns it off
+        row.update(state="fallback", status="The chat model isn't asked: accounts come from what AP approved before.")
         return row
-    row["state"] = "fallback"
-    if settings.llm.provider == "off":
-        row["status"] = "AI coding is turned off: accounts come from what AP approved before."
-    else:
-        row["status"] = "No AI model: accounts come from what AP approved before."
-        row["note"] = "Start LM Studio's server with a chat model (Qwen 3.5 9B) for suggestions on new vendors."
+    status = local_llm.check_server(settings.llm)
+    if status.active:
+        status_line = f"Running in {status.server}: suggests accounts for lines AP hasn't coded before."
+        row.update(model=status.model, state="on", status=status_line)
+        return row
+    row.update(state="fallback", status=f"{status.describe()} Accounts come from what AP approved before; lines "
+                                        "nothing was learned for are left for AP to code.")  # fmt: skip
+    row["note"] = "Start LM Studio's server with a chat model (Qwen 3.5 9B) for suggestions on new vendors."
     return row
 
 
 def _reader_row(settings: Settings) -> dict[str, str]:
     row = {"role": "Reads pages (page reader)", "model": "", "state": "off", "status": "", "note": ""}
-    if settings.page_reader.mode == "off":
-        row["status"] = "Turned off: scans and photos are read by OCR alone."
-        return row
     status = reader_status(settings)
     if not status.usable:
-        row.update(model=status.model, status="Scans and photos are read by OCR alone.", note=status.note)
+        row.update(model=status.model, status="Invoices are read by OCR alone and wait for a person.",
+                   note=status.note)  # fmt: skip
         return row
     row["model"] = reader_name(status.model)
-    row["state"] = "on" if status.document_reader else "fallback"
+    row["state"] = "on"
     parts = []
     if status.lm_studio:
         parts.append("Loaded." if status.state == "loaded" else "Downloaded: LM Studio loads it when a page is read.")
-    if settings.page_reader.mode == "ask":
-        parts.append("Reads pages when AP asks.")
-    else:
-        what = "every invoice" if settings.page_reader.scope == "all" else "each scan and photo"
-        parts.append(f"Reads {what} in the background.")
+    parts.append("Reads every page of every invoice in the background.")
     seconds = page_seconds_estimate(settings, model=status.model)
     if seconds is not None:
         parts.append(f"{duration(seconds).capitalize()} a page on this computer.")
     row["status"] = " ".join(parts)
     row["note"] = status.note
-    if not status.document_reader and not row["note"]:
-        row["note"] = "OvisOCR2, made for reading document pages, reads them more accurately: " + NOT_DOWNLOADED
     return row
 
 
@@ -1517,7 +1489,7 @@ def lm_studio_models(settings: Settings, *, use_cache: bool = True) -> list[dict
         return None
     chat = local_llm.check_server(settings.llm, use_cache=use_cache)
     chat_model = chat.model if chat.active and local_llm.resolve_provider(settings) == "local" else ""
-    reader = reader_status(settings, use_cache=use_cache).model if settings.page_reader.mode != "off" else ""
+    reader = reader_status(settings, use_cache=use_cache).model
     rows = []
     for model in listing.models:
         jobs = []

@@ -162,12 +162,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
     _add_reference_args(p)
 
-    p = sub.add_parser("read-pages", help="Read the invoices waiting for the page reader (vision model), then stop")
+    p = sub.add_parser("read-pages", help="Read the invoices waiting for the page reader (OvisOCR2), then stop")
     p.add_argument("--minutes", type=float, default=60.0, help="Stop after this long (default 60; a page under way "
                    "is finished)")  # fmt: skip
     p.add_argument("--invoice", type=int, default=None, help="Read only this invoice (it is queued first)")
-    p.add_argument("--test", action="store_true", help="Test the page reader on the bundled test invoice instead "
-                   "(10 to 20 minutes on a laptop): a model that passes is linked and reads the queue")  # fmt: skip
+    p.add_argument("--test", action="store_true", help="Run the page reader's self-test again now, instead of "
+                   "reading (10 to 20 minutes on a laptop; it runs on its own before the first invoice)")  # fmt: skip
     p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
 
     p = sub.add_parser("extract", help="Run Document Intelligence only and save Markdown + raw JSON")
@@ -411,7 +411,7 @@ def cmd_read_pages(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def _read_pages(args: argparse.Namespace, settings: Settings, store: Store) -> int:
-    from .page_worker import ReadOutcome, read_one, ready, release_interrupted, run_queue
+    from .page_worker import ReadOutcome, read_one, ready, release_interrupted, run_queue, self_test_if_due
 
     cache = Path(args.cache_dir) if args.cache_dir else None
     if getattr(args, "test", False):
@@ -423,6 +423,13 @@ def _read_pages(args: argparse.Namespace, settings: Settings, store: Store) -> i
         print(f"{stamp} invoice {outcome.invoice_id}: {outcome.status} ({outcome.pages} page(s), "
               f"{outcome.seconds / 60:.1f} min){note}", file=sys.stderr)  # fmt: skip
 
+    try:  # OvisOCR2 with no self-test that passed: tested first, on its own
+        tested = self_test_if_due(settings, store, on_page=_test_progress)
+    except KeyboardInterrupt:
+        print("Stopped: the self-test wasn't finished, so nothing was kept.", file=sys.stderr)
+        return 130
+    if tested is not None:
+        _say_test(tested)
     model, why = ready(settings, store)
     if not model:
         print(f"Nothing read: {why}.", file=sys.stderr)
@@ -443,15 +450,28 @@ def _read_pages(args: argparse.Namespace, settings: Settings, store: Store) -> i
     return 0
 
 
+def _test_progress(number: int, total: int) -> None:
+    if number == 1:
+        print("Self-test of the page reader: reading a test invoice whose answers are known (10 to 20 minutes on a "
+              "laptop without a graphics card); Ctrl+C stops it.", file=sys.stderr)  # fmt: skip
+    print(f"{time.strftime('%H:%M:%S')} reading page {number} of {total} of the test invoice…", file=sys.stderr)
+
+
+def _say_test(record: dict) -> None:
+    verdict = "passed: it reads the queue" if record.get("ok") else "failed: it reads nothing until it passes"
+    print(f"{record.get('model', '')} {verdict} ({record.get('fields_right', 0)} of {record.get('fields_total', 0)} "
+          f"fields right in {(record.get('seconds') or 0) / 60:.1f} min). {record.get('problem') or ''}".rstrip(),
+          file=sys.stderr)  # fmt: skip
+
+
 def _test_page_reader(settings: Settings, store: Store) -> int:
-    """``read-pages --test``: Settings → Page reader → Test the page reader, from the command line."""
+    """``read-pages --test``: the page reader's self-test, run again now (it runs on its own the first time)."""
     from . import page_reader
     from .page_worker import run_test
 
     status = page_reader.reader_status(settings)
-    if settings.page_reader.mode == "off" or not status.usable:
-        why = "the page reader is off" if settings.page_reader.mode == "off" else status.note or "no model can read"
-        print(f"Nothing tested: {why}.", file=sys.stderr)
+    if not status.usable:
+        print(f"Nothing tested: {status.note or 'OvisOCR2 is not running in LM Studio'}.", file=sys.stderr)
         return 1
     estimate = page_reader.page_seconds_estimate(settings, model=status.model)
     wait = page_reader.duration(estimate * 2) if estimate else "about 10–20 minutes on a laptop without a graphics card"
@@ -466,10 +486,7 @@ def _test_page_reader(settings: Settings, store: Store) -> int:
     if record is None:
         print("Nothing tested: a test of the page reader is already under way (in the dashboard?).", file=sys.stderr)
         return 1
-    verdict = "passed: linked, it reads the queue" if record.get("ok") else "failed: not used"
-    print(f"{status.model} {verdict} ({record.get('fields_right', 0)} of {record.get('fields_total', 0)} fields "
-          f"right in {(record.get('seconds') or 0) / 60:.1f} min). {record.get('problem') or ''}".rstrip(),
-          file=sys.stderr)  # fmt: skip
+    _say_test(record)
     return 0 if record.get("ok") else 1
 
 

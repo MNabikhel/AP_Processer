@@ -115,38 +115,35 @@ def test_testing_the_reader_links_it(db, ready, monkeypatch):
     assert "Not tested with qwen3.5-9b" in _html(at)
 
 
-def test_how_it_is_used_is_saved_to_the_env_file(db, ready):
+def test_the_model_is_saved_to_the_env_file(db, ready):
+    """The page reader is always on, for every invoice: only the model is saved (how it is used is not a choice)."""
     from ap_coder.envfile import read_env
 
     at = _ok(_settings_page().run())
-    at.radio(key="pr_mode").set_value("ask")
-    at.radio(key="pr_scope").set_value("all")
     at.selectbox(key="pr_model").set_value(MODEL)
     submit = next(b for b in at.button if b.label == "Save page reader settings" and b.proto.is_form_submitter)
     _ok(submit.click().run())
 
     env = read_env(db.parent / ".env")
-    assert env["AP_PAGE_READER"] == "ask" and env["AP_PAGE_READER_SCOPE"] == "all"
+    assert "AP_PAGE_READER" not in env and "AP_PAGE_READER_SCOPE" not in env
     assert env["AP_PAGE_READER_MODEL"] == MODEL
     assert "AP_PAGE_READER_BASE_URL" not in env  # left empty: the same server as the AI model
 
 
-def _invoice(db, monkeypatch, mode="ask", scope="all"):
-    """One sample invoice processed with the page reader in ``mode``."""
+def _invoice(db, monkeypatch, path=None):
+    """One sample invoice processed (queued for the page reader, as every invoice but a text file is)."""
     from dataclasses import replace
 
-    from ap_coder.config import PageReaderSettings, Settings
+    from ap_coder.config import Settings
     from ap_coder.page_worker import TEST_KEY
     from ap_coder.pipeline import InvoicePipeline
 
-    monkeypatch.setenv("AP_PAGE_READER", mode)
-    monkeypatch.setenv("AP_PAGE_READER_SCOPE", scope)
     store = Store(db)
     load_sample_setup(store)
     store.set_setting(TEST_KEY, json.dumps({"model": MODEL, "ok": True, "fields_right": 9, "fields_total": 9}))
     s = Settings()
-    settings = replace(s, llm=replace(s.llm, provider="off"), page_reader=PageReaderSettings(mode=mode, scope=scope))
-    result = InvoicePipeline(settings, store.reference_data(), store=store).process(SAMPLES / f"{STEM}.pdf")
+    settings = replace(s, llm=replace(s.llm, provider="off"))
+    result = InvoicePipeline(settings, store.reference_data(), store=store).process(path or SAMPLES / f"{STEM}.pdf")
     assert result.ok, result.error
     return store, result.invoice_id, settings
 
@@ -161,8 +158,10 @@ def _captions(at) -> str:
     return " ".join(c.value for c in at.caption)
 
 
-def test_asking_for_a_reading_from_the_invoice(db, monkeypatch, ready):
-    store, invoice_id, _ = _invoice(db, monkeypatch, mode="ask")
+def test_asking_for_a_reading_again_from_the_invoice(db, monkeypatch, ready):
+    store, invoice_id, _ = _invoice(db, monkeypatch)
+    store.next_page_read(invoice_id, reader="1:gone")
+    store.finish_page_read(invoice_id, "failed", MODEL, error="the model server cut the reading off 3 times")
     at = _ok(_review(invoice_id).run())
     _ok(at.button(key=f"inv{invoice_id}_read_pages").click().run())
 
@@ -174,7 +173,7 @@ def test_asking_for_a_reading_from_the_invoice(db, monkeypatch, ready):
 def test_a_reading_that_arrives_while_the_invoice_is_open_is_shown(db, monkeypatch, ready):
     from ap_coder import page_worker
 
-    store, invoice_id, settings = _invoice(db, monkeypatch, mode="auto")
+    store, invoice_id, settings = _invoice(db, monkeypatch)
     transcript = (SAMPLES / f"{STEM}.md").read_text(encoding="utf-8")
 
     def read(settings, path, model=None, on_page=None, should_stop=None):
@@ -211,7 +210,7 @@ def test_the_wait_for_the_test_is_per_page_times_its_pages(db, monkeypatch):
 
 
 def test_the_queue_position_counts_only_who_is_ahead(db, monkeypatch, ready):
-    store, invoice_id, _ = _invoice(db, monkeypatch, mode="auto")
+    store, invoice_id, _ = _invoice(db, monkeypatch)
     for other in (901, 902):  # queued after it
         store.queue_page_read(other, "new invoice")
     with store._conn() as conn:
@@ -229,7 +228,7 @@ def test_the_queue_position_counts_only_who_is_ahead(db, monkeypatch, ready):
 def test_an_edit_made_as_the_reading_arrives_is_kept(db, monkeypatch, ready):
     """The reading lands in the store, then the reviewer's first edit comes in before the screen looked again: the
     edit is on that same run, not counted yet, and must not be wiped by the fields being drawn from the reading."""
-    store, invoice_id, _ = _invoice(db, monkeypatch, mode="auto")
+    store, invoice_id, _ = _invoice(db, monkeypatch)
     inv = store.get_invoice(invoice_id)
     at = _ok(_review(invoice_id).run())
     key = f"inv{invoice_id}"
@@ -246,8 +245,9 @@ def test_an_edit_made_as_the_reading_arrives_is_kept(db, monkeypatch, ready):
     assert [b for b in at.button if b.key == f"{key}_page_reader_reset"]  # it can still start over from the reading
 
 
-def test_off_hides_the_page_reader_line(db, monkeypatch, ready):
-    _, invoice_id, _ = _invoice(db, monkeypatch, mode="off")
+def test_a_text_invoice_has_no_page_reader_line(db, monkeypatch, ready):
+    store, invoice_id, _ = _invoice(db, monkeypatch, SAMPLES / "pacific_BC_GST_PST_PO-77120.md")
+    assert store.page_read(invoice_id) is None  # no page to look at
     at = _ok(_review(invoice_id).run())
     assert not [b for b in at.button if b.key == f"inv{invoice_id}_read_pages"]
     assert "Page reader" not in _captions(at)
