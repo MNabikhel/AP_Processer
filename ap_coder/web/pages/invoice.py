@@ -168,11 +168,22 @@ def next_url(store: Store, invoice_id: int, query: dict[str, str]) -> str:
     return _with_query(f"/review/{remaining[at]}", query)
 
 
+_NOW = {APPROVED: "approved", PENDING: "approved, waiting for a second approval", REJECTED: "rejected",
+        PARKED: "parked", REVIEW: "in the review queue", FAILED: "a failed read"}  # fmt: skip
+
+
 def changed_meanwhile(request: Request, invoice_id: int, exc: Exception) -> JSONResponse:
-    """Someone else acted on the invoice after this screen was drawn: say so and show where it stands now."""
+    """The invoice was acted on after this screen was drawn (in another tab, or by someone else): say so plainly and
+    show where it stands now (the queue, when it was deleted)."""
+    inv = get_store(request).get_invoice(invoice_id)
+    if inv is None:
+        return done(request, "/review", flash_message("Not done: this invoice was deleted meanwhile.", "warn",
+                                                      icon="sync_problem"))  # fmt: skip
+    now = _NOW.get(inv["status"], str(inv["status"]))
+    by = f" by {inv['reviewer']}" if inv["status"] in (APPROVED, PENDING) and inv.get("reviewer") else ""
     return done(request, f"/review/{invoice_id}",
-                flash_message(f"Not done: someone else changed this invoice meanwhile ({exc}).", "warn",
-                              icon="sync_problem"))  # fmt: skip
+                flash_message(f"Not done: this invoice changed meanwhile, in another tab or by someone else. It is "
+                              f"{now}{by}.", "warn", icon="sync_problem"))  # fmt: skip
 
 
 NOTE_ACTIONS = ("note", "parked", "sent_back")  # what the notes card lists

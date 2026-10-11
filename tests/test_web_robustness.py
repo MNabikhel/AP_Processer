@@ -8,7 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ap_coder.config import Settings
-from ap_coder.store import Store
+from ap_coder.demo import load_demo
+from ap_coder.store import REVIEW, Store
 from ap_coder.web.app import create_app
 
 PAGE = {"X-AP-Coder": "1"}
@@ -17,6 +18,11 @@ PAGE = {"X-AP-Coder": "1"}
 @pytest.fixture
 def store(tmp_path):
     return Store(tmp_path / "private" / "ap_coder.db")
+
+
+@pytest.fixture(autouse=True)
+def reviewer_name(monkeypatch):
+    monkeypatch.setenv("AP_REVIEWER", "Jordan Lee")
 
 
 @pytest.fixture
@@ -44,6 +50,35 @@ def test_a_redirect_never_leaves_this_server_through_a_control_character(url):
 
     assert core.local_url(url, "/x") == "/x"
     assert core.local_url("/review?tab=parked&q=a%20b") == "/review?tab=parked&q=a%20b"
+
+
+def test_approving_in_a_second_tab_says_plainly_it_was_approved_meanwhile(client, store):
+    """The same invoice open in two tabs: approved in the first, the second's Approve says what happened."""
+    from tests.test_web_invoice import clean_invoice, flash_text, form_of
+
+    load_demo(store, Settings())
+    inv_id = clean_invoice(client, store)
+    data = form_of(store, inv_id)
+    assert client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).json()["ok"]
+    answer = client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).json()
+    assert answer["redirect"].startswith(f"/review/{inv_id}?")
+    text = flash_text(client, answer)
+    assert "changed meanwhile, in another tab or by someone else. It is approved by Jordan Lee." in text
+    assert "is already approved)" not in text
+
+
+def test_acting_on_an_invoice_deleted_meanwhile_goes_back_to_the_queue(client, store):
+    """Parked, then deleted in another tab: "Back to the queue" on the stale page leads to the queue with a plain
+    message, not to a "Not found" page."""
+    from tests.test_web_invoice import flash_text
+
+    load_demo(store, Settings())
+    inv_id = store.list_invoices(REVIEW)[0]["id"]
+    store.park_invoice(inv_id, "Jordan Lee", "waiting for the buyer")
+    store.delete_invoice(inv_id, actor="Jordan Lee")
+    answer = client.post(f"/review/{inv_id}/resume", headers=PAGE).json()
+    assert answer["redirect"].startswith("/review?")
+    assert "this invoice was deleted meanwhile" in flash_text(client, answer)
 
 
 @pytest.mark.parametrize("typed", ["dollars", "1.37 USD", "US$=1.37", "USD=1.37, EUR"])
