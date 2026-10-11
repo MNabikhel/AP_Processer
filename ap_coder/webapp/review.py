@@ -26,7 +26,17 @@ from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs, is_blank, split_line
 from ap_coder.safe import md
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
-from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
+from ap_coder.store import (
+    APPROVED,
+    FAILED,
+    PARKED,
+    PENDING,
+    REJECTED,
+    REVIEW,
+    Store,
+    load_sample_setup,
+    suggestion_kept,
+)
 from ap_coder.suggest import suggest_gl
 from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
@@ -972,13 +982,15 @@ def _ask_vendor(coding: InvoiceCoding, report: Any, key: str) -> None:
 
 
 def _ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
+    """The lines whose suggested coding the reviewer changed, counted as the approval counts them: a GL account or
+    cost center the AI left blank and the reviewer picked changes nothing; a line still without a GL isn't taught."""
     changed = 0
     for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items)):
-        if (
-            before is None
-            or before.get("predicted_gl_code") != li.predicted_gl_code
-            or (before.get("predicted_cost_center") or "") != (li.predicted_cost_center or "")
-        ):
+        if li.predicted_gl_code == UNASSIGNED:
+            continue
+        s_gl = before.get("predicted_gl_code") if before else None
+        s_cc = before.get("predicted_cost_center", "") if before else None
+        if not suggestion_kept(s_gl, s_cc, li.predicted_gl_code, li.predicted_cost_center):
             changed += 1
     return changed
 
@@ -1545,9 +1557,11 @@ def _split_popover(
             ),  # fmt: skip
         }
         if has_cc:
+            cc_labels = cc_label_map(reference)  # "Needs a cost center", as the line grid says it
             config["cc"] = st.column_config.SelectboxColumn(
-                "Cost center", options=[UNASSIGNED, *reference.cost_centers.codes], width=150
-            )
+                "Cost center", options=[UNASSIGNED, *reference.cost_centers.codes],
+                format_func=lambda c: cc_labels.get(c, c), width=150,
+            )  # fmt: skip
         parts = st.data_editor(
             start, column_config=config, column_order=["gl", "cc", "pct"] if has_cc else ["gl", "pct"],
             num_rows="dynamic", hide_index=True, key=f"{key}_split_parts_{number}",

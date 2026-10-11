@@ -1,12 +1,15 @@
 """Bugs found driving the dashboard in a browser as a clerk and a manager would (third sweep), each reproduced here
 through the page or the helper it came from, so they are not made again."""
 
+import json
 from types import SimpleNamespace
 
+import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from ap_coder.store import Store, load_sample_setup
 
+from .conftest import SAMPLE_STEM, SAMPLES
 from .test_dashboard_pages import APP, TIMEOUT, _ok
 from .test_dashboard_pages import db as db  # the fixture (a fresh database per test)
 
@@ -27,6 +30,50 @@ def test_the_queued_note_reads_as_a_sentence(db, monkeypatch):
         "1 invoice queued for OvisOCR2, which isn't running: it waits for it (Settings → Reading)."
     )
     assert process.queued_note(0) == ""
+
+
+def test_the_split_menu_names_cost_centers_as_the_line_grid_does(db):
+    """The "Split a line…" menu showed a line without a cost center as the stored code UNASSIGNED (and CC400 without
+    its name), where the line grid beside it says "Needs a cost center"."""
+    store = Store(db)
+    load_sample_setup(store)
+    doc = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    doc["line_items"][0]["predicted_cost_center"] = "UNASSIGNED"
+    invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", doc, {"requires_review": True})
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = invoice_id
+    _ok(at.run())
+    split = next(e for e in at.dataframe if "_split_parts_" in e.proto.id)
+    options = json.loads(split.proto.columns)["cc"]["type_config"]["options"]
+    # an option without a label shows the stored code itself
+    labels = dict((o["value"], o["label"]) if isinstance(o, dict) else (o, o) for o in options)
+    assert labels["UNASSIGNED"] == "Needs a cost center"
+    assert labels["CC400"].startswith("CC400 · ")
+
+
+def test_the_approve_bar_counts_changes_as_the_approval_does(db):
+    """Picking the cost centers the AI left blank read "you changed 4 of its codes" on the approve bar, and the
+    approval then said "3 of 4 lines coded as suggested": filling a blank corrects nothing."""
+    store = Store(db)
+    load_sample_setup(store)
+    doc = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    for li in doc["line_items"]:
+        li["predicted_cost_center"] = "UNASSIGNED"
+    invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", doc, {"requires_review": True})
+    key = f"inv{invoice_id}"
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = invoice_id
+    _ok(at.run())
+    n = len(doc["line_items"])
+    filled = [{**li, "predicted_cost_center": "CC400"} for li in doc["line_items"]]
+    filled[0]["predicted_gl_code"] = "6000" if filled[0]["predicted_gl_code"] != "6000" else "6010"  # one change
+    at.session_state[f"_draft_{key}_lines"] = pd.DataFrame(filled)
+    at.session_state[f"_base_{key}_lines"] = pd.DataFrame(filled)
+    _ok(at.run())
+    bar = _html(at).split("Teaches from ")[-1].split("</div>")[0]
+    assert bar == f"{n} lines · you changed 1 of its codes"
+    _ok(at.button(key=f"{key}_approve").click().run())
+    assert f"{n - 1} of {n} lines coded as suggested" in " ".join(t.value for t in at.toast)
 
 
 def test_getting_started_counts_only_the_steps_that_are_needed(db):

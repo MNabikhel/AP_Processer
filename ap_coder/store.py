@@ -192,6 +192,17 @@ def _norm_number(value: str) -> str:
     return norm_invoice_number(value)
 
 
+def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | None) -> bool:
+    """Whether the reviewer kept the GL account and cost center proposed for a line (``s_gl`` None: no line was
+    proposed). A GL or cost center left blank ("UNASSIGNED", or a cost center still to pick) was not proposed:
+    filling it in confirms the rest, it corrects nothing. A line with nothing proposed at all (or added by the
+    reviewer) is the reviewer's own coding. The approval's lessons and the review screen's count both use this."""
+    gl_blank, cc_blank = s_gl in (None, "", UNASSIGNED), (s_cc or "") in ("", UNASSIGNED)
+    if s_gl is None or (gl_blank and cc_blank):
+        return False
+    return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+
+
 class Store:
     def __init__(self, path: str | Path | None = None) -> None:
         path = default_db_path() if path is None else path
@@ -903,14 +914,7 @@ class Store:
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
 
-        def kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str) -> bool:
-            """Whether the reviewer kept what was proposed. A GL or cost center left blank ("UNASSIGNED", or a
-            cost center still to pick) was not proposed: filling it in confirms the rest, it corrects nothing.
-            A line with nothing proposed at all (or added by the reviewer) is the reviewer's own coding."""
-            gl_blank, cc_blank = s_gl in (None, "", UNASSIGNED), (s_cc or "") in ("", UNASSIGNED)
-            if s_gl is None or (gl_blank and cc_blank):
-                return False
-            return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+        kept = suggestion_kept
 
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
