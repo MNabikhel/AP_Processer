@@ -39,7 +39,8 @@ from ap_coder import paths  # noqa: E402  (standard library only)
 
 MARKER = ".ap_coder_install.json"  # written into a folder the launcher set up (not a git checkout)
 LOCK_NAME = ".ap_coder_launch.lock"
-PRUNED = ("ap_coder", "scripts", "tests", "wheelhouse", "models")  # what an unzip over an older version may leave
+# What an unzip over an older version may leave (samples/: a sample the self-check would read with no answer).
+PRUNED = ("ap_coder", "scripts", "tests", "samples", "wheelhouse", "models")
 # Made by AP Coder (or Python) inside a code folder: never user data, removed with the folder.
 GENERATED = {".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".cache", MARKER, LOCK_NAME,
              ".env.moved-to-data-folder", ".ap_coder_server.json", ".DS_Store", "launch.out", "launch.err"}  # fmt: skip
@@ -48,6 +49,10 @@ BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static
               ".streamlit", ".github", "APProcessor.bat", "APProcessor.command", "install.bat", "install.sh",
               "start.bat", "start.sh", "terminal.bat", "README.md", "pyproject.toml", "requirements.txt",
               "streamlit_app.py", "bundle_manifest.json", ".env.example", ".gitignore", ".gitattributes"}  # fmt: skip
+# Top-level names of a bundle folder never removed when a newer bundle no longer ships them: data, the person's own
+# notes may be there, the manifest itself (not in its own file list), and what starts AP Coder.
+RETIRED_KEPT = {"private", "data", "docs", "bundle_manifest.json", "pyproject.toml", "APProcessor.bat",
+                "APProcessor.command", "README.md"}  # fmt: skip
 DATA_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3", ".xlsx", ".xlsm", ".xls")
 
 Say = Callable[[str], None]
@@ -242,8 +247,9 @@ def previous_versions(root: Path, extra: list[str | Path] = ()) -> list[dict]:
 
 
 def prune_stale(root: Path = ROOT) -> tuple[list[str], int]:
-    """Remove the files under ap_coder/, scripts/, tests/, wheelhouse/ and models/ that this version's bundle does not
-    hold (an older version's, when the new bundle was unzipped over it): only when the manifest lists its files, and
+    """Remove the files under ap_coder/, scripts/, tests/, samples/, wheelhouse/ and models/ that this version's bundle
+    does not hold (an older version's, when the new bundle was unzipped over it), and AP Coder's own top-level files it
+    no longer ships (e.g. streamlit_app.py): only when the manifest lists its files, and
     never in a git checkout. A folder is pruned only when this bundle's own files for it are there (it was unzipped
     here): a wheelhouse copied in from another bundle, or the only one when a bundle without one was unzipped over an
     older folder, is kept (its wheels say what they fit). Python's own caches are left alone. Returns (the files
@@ -280,6 +286,22 @@ def prune_stale(root: Path = ROOT) -> tuple[list[str], int]:
                     shutil.rmtree(current, ignore_errors=True)
             except OSError:
                 continue
+    for name in sorted(BUNDLE_TOP - RETIRED_KEPT - set(PRUNED)):  # AP Coder's own top-level files it no longer ships
+        path = root / name
+        if not (path.is_file() or path.is_dir()) or any(n == name or n.startswith(f"{name}/") for n in keep):
+            continue
+        files = [path] if path.is_file() else sorted(p for p in path.rglob("*") if p.is_file())
+        size = sum(size_of(p) for p in files)
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                continue
+        else:
+            rmtree(path)
+        if not path.exists():
+            removed += [p.relative_to(root).as_posix() for p in files]
+            freed += size
     return removed, freed
 
 

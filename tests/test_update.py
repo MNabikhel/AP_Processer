@@ -139,6 +139,26 @@ def test_files_the_older_version_left_are_removed_when_unzipped_over_it(upgrade,
     assert upgrade.prune_stale(folder) == ([], 0)
 
 
+def test_retired_samples_and_top_level_files_of_an_older_version_are_removed(upgrade, tmp_path):
+    """Unzipped over an older version, a sample invoice the new one dropped stayed in samples/: the self-check read
+    it with no answer to compare, failed, and so the older install was never cleaned up. Files AP Coder no longer
+    ships at the top (its Streamlit dashboard's streamlit_app.py and .streamlit/) stayed for good too."""
+    folder = make_install(tmp_path / "AP Coder", "0.2.0", files=True,
+                          extra=("samples/a.pdf", "samples/ground_truth/a.json"))  # fmt: skip
+    stale = ["samples/retired.pdf", "samples/ground_truth/retired.json", "streamlit_app.py", ".streamlit/config.toml"]
+    for rel in stale:
+        (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+        (folder / rel).write_text("left by the older version")
+    (folder / "my notes.txt").write_text("the person's own")
+    (folder / "docs").mkdir()
+    (folder / "docs" / "my notes.md").write_text("the person's own")
+    removed, _ = upgrade.prune_stale(folder)
+    assert sorted(removed) == sorted(stale) and not (folder / ".streamlit").exists()
+    assert (folder / "samples" / "a.pdf").exists() and (folder / "samples" / "ground_truth" / "a.json").exists()
+    assert (folder / "my notes.txt").exists() and (folder / "docs" / "my notes.md").exists()
+    assert (folder / "private" / "README.md").exists() and (folder / ".venv").exists()
+
+
 def test_nothing_is_pruned_without_a_file_list_or_in_a_checkout(upgrade, tmp_path):
     folder = make_install(tmp_path / "old bundle", "0.1.0")  # an AP Coder 0.1 manifest: no file list
     (folder / "ap_coder" / "extra.py").write_text("x")
