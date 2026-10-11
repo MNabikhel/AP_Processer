@@ -4,6 +4,7 @@ reproduces the bug as it was found, so it is not made again."""
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import json
 import os
@@ -11,10 +12,13 @@ import sys
 from email.message import EmailMessage
 from pathlib import Path
 
+import pytest
 from openpyxl import load_workbook
 
 from ap_coder import cli, envfile, jde, labels, paths
-from ap_coder.config import Settings
+from ap_coder.config import DocumentIntelligenceSettings, Settings
+from ap_coder.doctor import run_checks
+from ap_coder.extraction import DocumentExtractor
 from ap_coder.store import Store
 
 from .conftest import SAMPLE_STEM, SAMPLES
@@ -212,3 +216,41 @@ def test_export_training_says_why_bulk_approvals_are_left_out(tmp_path, capsys, 
     store.approve_invoice(invoice_id, ground_truth, "Ann")
     assert _cli(tmp_path, "export-training", "-o", str(tmp_path / "t.zip")) == 0
     assert "left out: 2 (bulk-approved" in capsys.readouterr().err
+
+
+# --- Nothing reaches the internet unless AP_ALLOW_INTERNET=1 ----------------------------------------------------
+
+
+def _azure_di(monkeypatch) -> list[str]:
+    """Stand-ins for Azure Document Intelligence's clients: each one made is recorded (a call to Azure)."""
+    import azure.ai.documentintelligence as di
+
+    made: list[str] = []
+    monkeypatch.setattr(di, "DocumentIntelligenceClient", lambda *a, **k: made.append("client"))
+    monkeypatch.setattr(di, "DocumentIntelligenceAdministrationClient", lambda *a, **k: made.append("admin"))
+    return made
+
+
+def _with_di_endpoint() -> Settings:
+    di = DocumentIntelligenceSettings(endpoint="https://di-prod.cognitiveservices.azure.com/", api_key="k" * 32)
+    return dataclasses.replace(Settings(), document_intelligence=di)
+
+
+def test_doctor_online_never_calls_azure_in_the_offline_build(monkeypatch, reference):
+    """An Azure endpoint left in the .env (an older install): `doctor --online` said "set, but not used" and then
+    called Azure Document Intelligence anyway."""
+    made = _azure_di(monkeypatch)
+    checks = {c.area: c for c in run_checks(_with_di_endpoint(), lambda: reference, online=True)}
+    assert made == [] and checks["DI connectivity"].status == "SKIP"
+
+
+def test_extract_never_sends_an_invoice_to_azure_in_the_offline_build(monkeypatch):
+    """`python -m ap_coder extract` (and anything else building the extractor's client) sent the invoice to Azure
+    Document Intelligence whenever its endpoint was set, internet allowed or not."""
+    made = _azure_di(monkeypatch)
+    extractor = DocumentExtractor(_with_di_endpoint().document_intelligence)
+    with pytest.raises(RuntimeError, match="AP_ALLOW_INTERNET"):
+        extractor.extract(SAMPLES / f"{SAMPLE_STEM}.pdf")
+    assert made == []
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # a developer opted in: then it may
+    assert extractor.client is None and made == ["client"]

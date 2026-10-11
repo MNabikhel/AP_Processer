@@ -228,7 +228,9 @@ def run_checks(
             add("local dry run", SKIP, "run with --online to ask the local model for two lines' accounts")
         return checks
 
-    if di.endpoint:
+    if di.endpoint and not internet_allowed():  # the offline build: Azure is never called
+        add("DI connectivity", SKIP, "not tested: the internet isn't allowed, so invoices are read on this computer")
+    elif di.endpoint:
         try:
             from azure.ai.documentintelligence import DocumentIntelligenceAdministrationClient
 
