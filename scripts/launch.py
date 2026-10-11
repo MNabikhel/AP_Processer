@@ -1404,6 +1404,7 @@ def main(argv: list[str] | None = None) -> int:
         newer = upgrade.newer_install(ROOT)
         if newer is not None:
             say(f"A newer AP Coder ({paths.describe(newer)}) is in {newer['folder']}: opening that one.")
+            upgrade.remember([ROOT])  # (an older bundle unzipped again: on record, so the newest cleans it up)
             return upgrade.hand_over(Path(newer["folder"]), argv, LOCK_HELD_ENV)
     if not in_venv():
         return bootstrap(argv)

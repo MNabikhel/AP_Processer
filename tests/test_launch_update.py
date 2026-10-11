@@ -340,6 +340,9 @@ def test_an_older_folder_started_by_mistake_opens_the_newest(launch, monkeypatch
     assert launch.main(["--port", "8502"]) == 0
     assert handed == [(newest, ["--port", "8502"])]
     assert f"A newer AP Coder (0.3.0) is in {newest}: opening that one" in capsys.readouterr().out
+    # This older folder (an older bundle unzipped again by mistake) is on record: the newest cleans it up.
+    assert paths.current_install()["folder"] == str(newest)
+    assert any(paths.same_folder(e["folder"], launch.ROOT) for e in paths.installs())
 
 
 # --- The server -----------------------------------------------------------------------------------------------------
