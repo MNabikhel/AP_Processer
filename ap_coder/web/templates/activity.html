@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/analytics.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+{% if not events %}
+<section class="card">{{ ui.empty_state("No activity yet", "Everything that changes data is recorded here.") }}</section>
+{% else %}
+<div class="apc-tiles apc-anim">
+  {% for label, value, tone, hint in tiles %}{{ ui.tile(label, value | num, "", tone, hint) }}{% endfor %}
+</div>
+
+<section class="card" id="controls" aria-labelledby="controls-title">
+  <div class="card-head">
+    <div><h4 id="controls-title">Controls report</h4>
+      <p class="muted">Exceptions for internal audit: overridden errors, risky approvals, second approvals, setup changes.</p></div>
+    <form class="row an-period" method="get" action="/activity#controls">
+      {% for k, v in [("group", group), ("person", person), ("q", query), ("view", view)] %}{% if v and v not in ("All", "Everyone", "timeline") %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+      <label class="field">From<input type="date" name="start" value="{{ start.isoformat() }}" max="{{ today.isoformat() }}"></label>
+      <label class="field">To<input type="date" name="end" value="{{ end.isoformat() }}" max="{{ today.isoformat() }}"></label>
+      <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">refresh</span>Show</button>
+    </form>
+  </div>
+  {% if report is none %}
+  {{ ui.empty_note("Pick the first and last day", " The first day is after the last one.", "event_busy") }}
+  {% else %}
+  <div class="apc-tiles">
+    {{ ui.tile("Errors overridden", report.overrides | length, "", "amber" if report.overrides else "green", "approved despite an error") }}
+    {{ ui.tile("Risk signals approved", report.signals | length, "", "amber" if report.signals else "green", "duplicates, vendor, PO") }}
+    {{ ui.tile("Second approvals", report.finals | length, "", "violet", (report.sent_back | length) ~ " sent back or reopened · " ~ (report.waiting | length) ~ " waiting") }}
+    {{ ui.tile("Setup changes", report.setup | length, "", "blue", "accounts, tax, vendors, POs") }}
+  </div>
+  <a class="btn" href="/activity/controls-report?start={{ start.isoformat() }}&amp;end={{ end.isoformat() }}" download>
+    <span class="ms" aria-hidden="true">download</span>Download the controls report</a>
+  {% endif %}
+</section>
+
+<section class="card" id="dupaudit" aria-labelledby="dupaudit-title">
+  <div class="card-head">
+    <div><h4 id="dupaudit-title">Duplicate payment audit</h4>
+      <p class="muted">Bills that may have been approved, or posted in the ERP, twice: number typos, the same bill under two
+        vendor names, the same amount days apart. Includes the ERP invoice register when imported (Exports).</p></div>
+    <a class="btn" href="{{ url(audit=1) }}#dupaudit"><span class="ms" aria-hidden="true">search</span>{{ "Run it again" if pairs is not none else "Run the audit" }}</a>
+  </div>
+  {% if pairs is not none %}
+  <p class="muted">Results of {{ audit_at.strftime("%H:%M") }}: run it again after approving or importing more.</p>
+  {% if not pairs %}
+  {{ ui.pill("No likely duplicates found", "ok", "check") }}
+  {% else %}
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Why</th><th>Bill</th><th>Possible duplicate</th><th class="r">Amount</th></tr></thead>
+    <tbody>
+      {% for p in pair_rows %}
+      <tr><td>{{ ui.pill(p.why, p.tone) }}</td>
+        <td class="w"><b>{{ p.first.vendor_name }}</b><div class="apc-muted">{{ p.first.label }}</div></td>
+        <td class="w"><b>{{ p.second.vendor_name }}</b><div class="apc-muted">{{ p.second.label }}</div></td>
+        <td class="r">{{ p.amount }} <span class="apc-muted">{{ p.currency }}</span></td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% if pairs | length > pair_rows | length %}<p class="muted">The first {{ pair_rows | length }} of {{ pairs | length }}: download the CSV for all.</p>{% endif %}
+  <a class="btn" href="/activity/duplicates.csv" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+  <p class="muted">Check each pair against the documents: a real duplicate that was paid is recovered from the vendor as a credit or refund.</p>
+  {% endif %}
+  {% endif %}
+</section>
+
+<section class="card" id="log" aria-labelledby="log-title">
+  <h4 id="log-title" class="sr-only">Events</h4>
+  <form class="an-filters" method="get" action="/activity#log" role="search">
+    <div class="segmented" role="group" aria-label="Show">
+      {% for g in groups %}
+      <a href="{{ url(group=g) }}#log" class="{{ 'on' if g == group else '' }}"{% if g == group %} aria-current="true"{% endif %}>{{ g }}</a>
+      {% endfor %}
+    </div>
+    {% if group != "All" %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
+    {% if view != "timeline" %}<input type="hidden" name="view" value="{{ view }}">{% endif %}
+    <label class="field">Person
+      <select name="person" data-autosubmit>
+        <option value="Everyone">Everyone</option>
+        {% for p in people %}<option value="{{ p }}"{% if p == person %} selected{% endif %}>{{ p }}</option>{% endfor %}
+      </select></label>
+    <label class="field an-grow">Search
+      <span class="an-search"><span class="ms" aria-hidden="true">search</span>
+        <input type="search" name="q" value="{{ query }}" placeholder="vendor, invoice #, GL code…"></span></label>
+    <button class="btn sm" type="submit">Search</button>
+  </form>
+  <div class="card-head an-count">
+    <span class="muted">{{ shown | length | num }} of {{ events | length | plural("event") }}</span>
+    <a class="btn sm" href="{{ csv_url }}" download><span class="ms" aria-hidden="true">download</span>Download CSV</a>
+  </div>
+  <nav class="tabs" aria-label="View">
+    <a href="{{ url(view='timeline') }}#log" class="{{ 'on' if view == 'timeline' else '' }}"{% if view == 'timeline' %} aria-current="page"{% endif %}>Timeline</a>
+    <a href="{{ url(view='table') }}#log" class="{{ 'on' if view == 'table' else '' }}"{% if view == 'table' %} aria-current="page"{% endif %}>Table</a>
+  </nav>
+  {% if not shown %}
+  {{ ui.empty_note("No events match", " Try another search, filter or person.", "search_off") }}
+  {% elif view == "timeline" %}
+  {{ ui.timeline(timeline) }}
+  {% if timeline_more %}<p class="muted">Showing the newest {{ timeline | length }}; use the table or the CSV for everything.</p>{% endif %}
+  {% else %}
+  <div class="table-wrap an-scroll"><table class="apc-table">
+    <thead><tr><th>When</th><th>Who</th><th>What</th><th>Invoice</th><th>Details</th></tr></thead>
+    <tbody>{% for r in rows %}<tr><td>{{ r.When }}</td><td>{{ r.Who }}</td><td>{{ r.What }}</td><td>{{ r.Invoice }}</td><td class="w">{{ r.Details }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% if table_more %}<p class="muted">Showing {{ rows | length | num }}; the CSV has all {{ shown | length | num }}.</p>{% endif %}
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
