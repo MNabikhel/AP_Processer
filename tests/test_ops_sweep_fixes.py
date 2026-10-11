@@ -7,12 +7,17 @@ import csv
 import io
 import json
 import os
+import sys
+from email.message import EmailMessage
+from pathlib import Path
 
 from openpyxl import load_workbook
 
-from ap_coder import envfile, jde, labels, paths
+from ap_coder import cli, envfile, jde, labels, paths
 from ap_coder.config import Settings
+from ap_coder.store import Store
 
+from .conftest import SAMPLE_STEM, SAMPLES
 from .test_jde import AN8, ON, _files, _invoice
 
 # --- JD Edwards: dates and field widths ------------------------------------------------------------------------
@@ -128,3 +133,82 @@ def test_no_env_file_is_taken_from_a_folder_above_ap_coder(tmp_path, monkeypatch
     monkeypatch.delenv("AP_STRAY_SETTING")
     Settings.from_env()
     assert "AP_STRAY_SETTING" not in os.environ
+
+
+# --- Command line ------------------------------------------------------------------------------------------------
+
+
+def _cli(tmp_path, *args):
+    return cli.main(["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "a.db"), *args])
+
+
+def _offline(monkeypatch):
+    for key in [k for k in os.environ if k.startswith(("AZURE_", "AP_LLM_"))]:
+        monkeypatch.delenv(key)
+
+
+def test_process_codes_each_invoice_once(tmp_path, monkeypatch):
+    """`process folder folder/a.md` (the folder, and a file in it again), or the same invoice saved twice under two
+    names: each copy was coded and added to the review queue, so AP saw the invoice two or three times."""
+    _offline(monkeypatch)
+    folder = tmp_path / "in put"
+    folder.mkdir()
+    text = (SAMPLES / f"{SAMPLE_STEM}.md").read_text(encoding="utf-8")
+    (folder / "a.md").write_text(text, encoding="utf-8")
+    (folder / "copy of a.md").write_text(text, encoding="utf-8")
+    assert _cli(tmp_path, "process", str(folder), str(folder / "a.md"), "-o", str(tmp_path / "out"),
+                "--cache-dir", "") == 0  # fmt: skip
+    assert len(Store(tmp_path / "a.db").list_invoices()) == 1
+
+
+def _email(path, attachment: Path) -> None:
+    msg = EmailMessage()
+    msg["Subject"], msg["From"] = "Invoice", "billing@supplier.example"
+    msg.set_content("Please find our invoice attached.")
+    msg.add_attachment(attachment.read_bytes(), maintype="application", subtype="pdf", filename="facture.pdf")
+    path.write_bytes(bytes(msg))
+
+
+def test_process_takes_the_invoice_out_of_a_saved_email(tmp_path, monkeypatch, capsys):
+    """The dashboard and `watch` take the invoices out of saved emails (.eml); `process mail.eml` tried to read the
+    email itself as a PDF: a traceback, and a failed "mail.eml" invoice in the review queue."""
+    _offline(monkeypatch)
+    folder = tmp_path / "mail"
+    folder.mkdir()
+    _email(folder / "supplier mail.eml", SAMPLES / f"{SAMPLE_STEM}.pdf")
+    assert _cli(tmp_path, "process", str(folder / "supplier mail.eml"), "-o", str(tmp_path / "out"),
+                "--cache-dir", "") == 0  # fmt: skip
+    invoices = Store(tmp_path / "a.db").list_invoices()
+    assert [(i["file_name"], i["status"]) for i in invoices] == [("supplier mail - facture.pdf", "review")]
+    assert (folder / "emails" / "supplier mail.eml").exists()
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_command_line_output_on_a_windows_1252_console(tmp_path, monkeypatch):
+    """A Windows console or a log file (Task Scheduler) in Windows-1252: printing a Japanese file name or vendor
+    stopped the command with UnicodeEncodeError, after its work was done (exit code 1, a traceback)."""
+    predictions = tmp_path / "output"
+    predictions.mkdir()
+    (predictions / "inv.json").write_text(json.dumps({"vendor_name": "東京商事", "line_items": []}), encoding="utf-8")
+    console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", console)
+    assert _cli(tmp_path, "labels", "--predictions", str(predictions), "-o", str(tmp_path / "ラベル.csv")) == 0
+    console.flush()
+    assert b"Wrote 1 invoice(s)" in console.buffer.getvalue()
+
+
+def test_export_training_says_why_bulk_approvals_are_left_out(tmp_path, capsys, ground_truth):
+    """Every approval a bulk approval: the command said "No approved invoices to export yet", and with some
+    checked ones it listed what was left out without the bulk approvals."""
+    store = Store(tmp_path / "a.db")
+    pdf = SAMPLES / f"{SAMPLE_STEM}.pdf"
+    for number in ("A-1", "A-2"):
+        invoice_id = store.add_invoice(pdf, {**ground_truth, "invoice_number": number}, {"requires_review": False})
+        store.approve_invoice(invoice_id, {**ground_truth, "invoice_number": number}, "Ann", bulk=True)
+    assert _cli(tmp_path, "export-training", "-o", str(tmp_path / "t.zip")) == 1
+    err = capsys.readouterr().err
+    assert "No approved invoices" not in err and "left out: 2 (bulk-approved" in err
+    invoice_id = store.add_invoice(pdf, ground_truth, {"requires_review": False})
+    store.approve_invoice(invoice_id, ground_truth, "Ann")
+    assert _cli(tmp_path, "export-training", "-o", str(tmp_path / "t.zip")) == 0
+    assert "left out: 2 (bulk-approved" in capsys.readouterr().err

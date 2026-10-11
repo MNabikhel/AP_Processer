@@ -17,7 +17,7 @@ from .doctor import exit_code, format_checks, run_checks
 from .evaluation import evaluate
 from .extraction import DocumentExtractor
 from .labels import _prediction_files, export_labels
-from .mailbox import unpack_folder
+from .mailbox import EMAIL_EXTENSIONS, emails_in, unpack, unpack_folder
 from .pipeline import (
     InvoicePipeline,
     PipelineResult,
@@ -217,8 +217,6 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
     checks = run_checks(settings, lambda: _load_reference(args), online=args.online)
     report = format_checks(checks)
-    if hasattr(sys.stdout, "reconfigure"):  # a Windows console (cp1252) can't print every character a note may hold
-        sys.stdout.reconfigure(errors="replace")
     print(report.replace("\n\n", f"\n\nreference data source: {reference_source(args)}\n\n", 1))
     return exit_code(checks)
 
@@ -261,13 +259,38 @@ def free_port(start: int) -> int:
 
 
 def _inputs(paths: list[str]) -> list[Path] | None:
-    """The invoice files named on the command line (folders expanded); None, said in one line, when one of
-    them is not there (a typo)."""
+    """The invoice files named on the command line (folders expanded, the invoices taken out of saved emails, as
+    the dashboard and ``watch`` do), each invoice once: a file named twice, or two identical copies, is one invoice.
+    None, said in one line, when one of them is not there (a typo)."""
     try:
-        return discover_inputs(paths)
+        found = discover_inputs(paths)
     except FileNotFoundError as exc:
         print(f"Not found: {exc}. Give an invoice file or a folder of them.", file=sys.stderr)
         return None
+    files = [p for p in found if p.suffix.lower() not in EMAIL_EXTENSIONS]
+    emails = [p for p in found if p.suffix.lower() in EMAIL_EXTENSIONS]
+    emails += [e for raw in paths if Path(raw).is_dir() for e in emails_in(Path(raw))]
+    for path in dict.fromkeys(emails):
+        try:
+            mail = unpack(path)  # attachments saved next to the email; the email moves to emails/
+        except OSError as exc:
+            print(f"{path.name}: not read ({exc})", file=sys.stderr)
+            continue
+        if mail.error:
+            print(f"{mail.email}: {mail.error}; moved to emails/could not read", file=sys.stderr)
+        else:
+            print(f"{mail.email}: {len(mail.saved)} attachment(s) to process", file=sys.stderr)
+            files += mail.saved
+    unique: dict[str, Path] = {}
+    for path in files:
+        try:
+            key = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            key = str(path.resolve())  # unreadable now: processing it says so
+        unique.setdefault(key, path)
+    if len(unique) < len(files):
+        print(f"{len(files) - len(unique)} file(s) left out: the same invoice as another file given.", file=sys.stderr)
+    return list(unique.values())
 
 
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
@@ -576,6 +599,18 @@ def cmd_share_report(args: argparse.Namespace) -> int:
     return 0
 
 
+_LEFT_OUT = (
+    ("missing_files", "file no longer on this computer"), ("no_pages", "no page to show"), ("demo", "demo invoice"),
+    ("unreviewed", "approved without a person"), ("bulk", "bulk-approved unchanged, nobody opened them"),
+)  # fmt: skip
+
+
+def _say_left_out(counts: dict) -> None:
+    for key, text in _LEFT_OUT:
+        if counts.get(key):
+            print(f"  left out: {counts[key]} ({text})", file=sys.stderr)
+
+
 def cmd_export_training(args: argparse.Namespace) -> int:
     import datetime as dt
 
@@ -588,17 +623,18 @@ def cmd_export_training(args: argparse.Namespace) -> int:
         print(f"--since takes a date as YYYY-MM-DD, not {args.since!r}.", file=sys.stderr)
         return 2
     if not candidates["invoices"]:
-        print("No approved invoices to export yet" + (f" since {args.since}" if args.since else "") + ".",
-              file=sys.stderr)  # fmt: skip
+        since = f" since {args.since}" if args.since else ""
+        if any(candidates.get(key) for key, _ in _LEFT_OUT):
+            print(f"Nothing to export{since}: no approved invoice was checked by a person.", file=sys.stderr)
+            _say_left_out(candidates)
+        else:
+            print(f"No approved invoices to export yet{since}.", file=sys.stderr)
         return 1
     default = Path(args.db).resolve().parent / "training" / f"ap-coder-training-{dt.date.today().isoformat()}.zip"
     out = Path(args.out) if args.out else default
     counts = export_training_set(store, out, since=args.since)
     print(f"Wrote {counts['invoices']} invoice(s), {counts['pages']} page image(s) to {out}", file=sys.stderr)
-    for key, text in (("missing_files", "file no longer on this computer"), ("no_pages", "no page to show"),
-                      ("demo", "demo invoice"), ("unreviewed", "approved without a person")):  # fmt: skip
-        if counts[key]:
-            print(f"  left out: {counts[key]} ({text})", file=sys.stderr)
+    _say_left_out(counts)
     print("It stays on this computer: it holds your suppliers' invoices; README.txt inside says how to use it.",
           file=sys.stderr)  # fmt: skip
     return 0 if counts["invoices"] else 1
@@ -631,6 +667,9 @@ def cmd_schema(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):  # a Windows console or log file (cp1252) can't show every character
+        if hasattr(stream, "reconfigure"):  # of a file name or vendor: shown as "?", never a crash
+            stream.reconfigure(errors="replace")
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
