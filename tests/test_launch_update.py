@@ -249,8 +249,10 @@ def test_data_that_could_not_all_be_moved_stops_the_start_plainly(launch, monkey
     started, _, _ = _quiet_setup(launch, monkeypatch)
 
     def stuck():
-        raise launch.upgrade.DataMoveError("Your data could not all be moved from A to B (in use: A/ap_coder.db).",
-                                           "Close the program that has that file open, then start AP Coder again.")
+        raise launch.upgrade.DataMoveError(
+            "Your data could not all be moved from A to B (in use: A/ap_coder.db).",
+            "Close the program that has that file open, then start AP Coder again.",
+        )
 
     monkeypatch.setattr(launch, "ensure_data_folder", stuck)
     assert launch.run(*launch.parse([])) == 1 and not started
@@ -472,6 +474,32 @@ def test_a_wheelhouse_that_does_not_fit_is_said_once_not_twice(launch, monkeypat
     (launch.ROOT / "wheelhouse").rename(launch.ROOT / "elsewhere")  # no wheels to judge by: the manifest's word
     assert launch.bootstrap([]) == 1
     assert "Note: this offline bundle has packages for Python 3.12, not for Python 3.14" in capsys.readouterr().out
+
+
+def test_a_full_disk_is_said_plainly_not_as_missing_packages(launch, monkeypatch, tmp_path):
+    """pip stopped on a full disk (the new .venv is made while the older one still takes its 1 GB): the start said
+    the wheelhouse "has no openai, pandas, ... for Python 3.12" and to install Python 3.12, which it was."""
+    _wheelhouse(launch, "openpyxl-3.1.5-py2.py3-none-any.whl")
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1", "openai>=1.68"], ""))
+    lines = ["Processing ./wheelhouse/pandas-3.0.6-cp312-cp312-manylinux_2_28_x86_64.whl\n",
+             "ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device\n"]  # fmt: skip
+
+    class Pip:
+        def __init__(self, *args, **kwargs):
+            self.stdout = iter(lines)
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Pip)
+    old = tmp_path / "AP Coder 0.1"
+    (old / ".venv" / "lib").mkdir(parents=True)
+    (old / ".venv" / "lib" / "big.bin").write_bytes(b"v" * 3_000_000)
+    paths.record_install({"folder": str(old), "version": "0.1.0"}, current=False)
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert "disk is full" in str(exc.value) and "has no" not in exc.value.hint
+    assert f"{old / '.venv'} (3 MB)" in exc.value.hint
 
 
 # --- A .venv on a Python the bundle has no packages for ----------------------------------------------------------

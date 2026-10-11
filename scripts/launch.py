@@ -565,7 +565,32 @@ def pip_install(args: list[str]) -> bool:
         text = out.rstrip()
         if text and not text.startswith(QUIET_PIP_LINES):
             say(f"    {text}")
+        if any(sign in text for sign in DISK_FULL):
+            _disk_full.append(text)
     return proc.wait() == 0
+
+
+# How pip says the disk is full (Linux and Mac: errno 28; Windows: error 112, or errno 28 from Python's own code).
+DISK_FULL = ("No space left on device", "[Errno 28]", "[WinError 112]", "not enough space on the disk")
+_disk_full: list[str] = []  # pip's lines saying so, on this start
+
+
+def disk_full_error() -> SetupError:
+    """The disk is full: said as that, with the space the older installs' .venv folders take (each can go)."""
+    older = [Path(e["folder"]) / ".venv" for e in paths.installs() if not paths.same_folder(e["folder"], ROOT)]
+    sizes = [(venv, upgrade.size_of(venv)) for venv in older if venv.is_dir()]
+    free = ""
+    try:
+        free = f" ({upgrade.shown_size(shutil.disk_usage(ROOT).free)} free)"
+    except OSError:
+        pass
+    hint = (f"Free up space on the disk of {ROOT}{free}: AP Coder's packages need about 1.5 GB. Then close any "
+            "other AP Coder window and start AP Coder again.")  # fmt: skip
+    if sizes:
+        listed = ", ".join(f"{venv} ({upgrade.shown_size(size)})" for venv, size in sizes)
+        hint += (f" The older AP Coder's .venv folder can be deleted to make room: {listed} (it holds only "
+                 "packages, never your data; the older version is cleaned up once this one works).")  # fmt: skip
+    return SetupError("Installing the packages stopped: the disk is full.", hint)
 
 
 def missing_packages(extras: tuple[str, ...]) -> tuple[list[str], str]:
@@ -738,6 +763,8 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
         if pip_install(pip_args):
             break
     left, self_left = missing_packages(extras)
+    if (self_left or left) and _disk_full:
+        raise disk_full_error()
     if self_left or [r for r in left if not is_ocr(r)]:
         raise SetupError(
             "Installing the packages failed (the messages above say why).",
