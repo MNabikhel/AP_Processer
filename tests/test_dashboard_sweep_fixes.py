@@ -98,6 +98,20 @@ def test_a_restore_asks_for_restore_again_before_the_next_one(db):
     assert next(b for b in at.button if b.key == "restore").disabled
 
 
+def test_the_reading_tab_does_not_say_ovisocr2_is_missing_while_lm_studio_is_down(db):
+    """With LM Studio not running, Settings → Reading said "Not in LM Studio" and "No self-test: OvisOCR2 isn't in
+    LM Studio", while the steps below it (rightly) said "start LM Studio first to check": nobody knows yet whether
+    OvisOCR2 is there, and IT went looking for model files that were in place."""
+    _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages
+    at = _ok(AppTest.from_string("from ap_coder.webapp.settings import page_settings\npage_settings()",
+                                 default_timeout=TIMEOUT).run())  # fmt: skip
+    html = _html(at)
+    assert "start LM Studio first to check" in html  # LM Studio is not running here
+    assert "Not in LM Studio" not in html and "OvisOCR2 isn&#x27;t in LM Studio" not in html
+    assert "No self-test: LM Studio isn&#x27;t running" in html
+    assert at.button(key="rd_selftest").disabled
+
+
 def test_getting_started_counts_only_the_steps_that_are_needed(db):
     """The welcome screen's ring counted the optional chat model, so it read 1/6 where the Process page said 1 of 4
     (plus processing the first invoices), and could never be complete without that optional model."""

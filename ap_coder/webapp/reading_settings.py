@@ -59,8 +59,10 @@ def readers_table(status: Any) -> str:
     return ui.table(["Reader", "State", "What it does"], rows, wrap=[2])
 
 
-def self_test_html(status: Any) -> str:
+def self_test_html(status: Any, lm_studio_running: bool = True) -> str:
     label, tone, icon = SELF_TEST_PILL.get(status.self_test, (status.self_test or "Unknown", "gray", "help"))
+    if status.self_test == "no model" and not lm_studio_running:
+        label = "No self-test: LM Studio isn't running"  # whether OvisOCR2 is in it can't be known yet
     return ui.pill(label, tone, icon)
 
 
@@ -301,11 +303,13 @@ def page_reader_card(settings: Settings, store: Store, status: Any) -> None:
             ui.pill("Found in LM Studio", "ok", "check_circle") + f" <span class='apc-muted'>{esc(model)}</span>"
             if model
             else ui.pill("Not in LM Studio", "warn", "warning")
+            if running
+            else ui.pill("LM Studio isn't running", "warn", "warning")  # not "missing": it can't be looked for yet
         )
         st.html(f"<div style='margin:.25rem 0'>{found}</div>")
         line, button = st.columns([3, 1], vertical_alignment="center")
         detail = f" <span class='apc-muted'>{esc(status.self_test_detail)}</span>" if status.self_test_detail else ""
-        line.html(f"<div style='margin:.25rem 0'>{self_test_html(status)}{detail}</div>")
+        line.html(f"<div style='margin:.25rem 0'>{self_test_html(status, running)}{detail}</div>")
         testing = test_under_way(store)
         wait = test_wait(settings, model) if model else FIRST_WAIT
         if button.button("Run the self-test again", icon=":material/fact_check:", key="rd_selftest",
