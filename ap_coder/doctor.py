@@ -75,6 +75,32 @@ def _scrub(message: str, settings: Settings) -> str:
     return message[:400]
 
 
+# Packages every install needs, with what stops working without one (shown in the fix).
+_PACKAGES = {
+    "openai": "",
+    "azure-ai-documentintelligence": "",
+    "azure-identity": "",
+    "pydantic": "",
+    "openpyxl": "",
+    "pymupdf": " (PDFs can't be read)",
+    "streamlit": " (the dashboard can't start)",
+    "pandas": " (the dashboard can't start)",
+    "python-dotenv": " (settings can't be read)",
+}
+# Offline: packages come from the bundle's wheelhouse, never from the internet (pip install -e . needs PyPI).
+_INSTALL_FIX = "run APProcessor.bat (Mac: APProcessor.command); it installs from the offline bundle"
+
+
+def _python_check(version: tuple[int, ...]) -> tuple[str, str, str]:
+    """3.11 to 3.13 is what the launcher installs and the docs name; 3.10 still runs (CI tests it) but warns."""
+    shown = ".".join(str(n) for n in version[:3])
+    if (3, 11) <= tuple(version[:2]) <= (3, 13):
+        return "python", PASS, f"{shown} (3.11 to 3.13)"
+    if tuple(version[:2]) < (3, 10):
+        return "python", FAIL, f"{shown} (need 3.11 to 3.13)"
+    return "python", WARN, f"{shown} (not tested: use 3.11 to 3.13)"
+
+
 def run_checks(
     settings: Settings,
     load_reference: Callable[[], ReferenceData],
@@ -86,15 +112,13 @@ def run_checks(
         checks.append(Check(area, status, detail))
 
     # --- Runtime -------------------------------------------------------------
-    py = sys.version_info
-    add("python", PASS if py >= (3, 10) else FAIL, f"{py.major}.{py.minor}.{py.micro} (need >= 3.10)")
-    for pkg in ("openai", "azure-ai-documentintelligence", "azure-identity", "pydantic", "openpyxl"):
+    add(*_python_check(sys.version_info))
+    for pkg in _PACKAGES:
         v = _version(pkg)
-        add(f"package {pkg}", PASS if v else FAIL, v or "not installed: pip install -e .")
-    for pkg in ("pymupdf", "pillow"):
-        v = _version(pkg)
-        status = PASS if v else (FAIL if settings.engine.vision else WARN)
-        add(f"package {pkg}", status, v or "not installed (needed only for --vision)")
+        add(f"package {pkg}", PASS if v else FAIL, v or f"not installed{_PACKAGES[pkg]}: {_INSTALL_FIX}")
+    v = _version("pillow")
+    status = PASS if v else (FAIL if settings.engine.vision else WARN)
+    add("package pillow", status, v or "not installed (needed only for --vision)")
 
     # --- Offline readiness (OCR models, data folder, local-only dashboard) ----------------------------
     from .offline import offline_checks
@@ -242,6 +266,8 @@ def _local_check(settings: Settings, provider: str) -> tuple[str, str, str]:
     """The local server's state. Its address is shown only when it is on this computer or network (keys never are)."""
     if provider == "azure":
         return "local model", SKIP, "not used (coding with Azure OpenAI)"
+    if settings.llm.provider == "off":
+        return "local model", SKIP, "AI coding turned off (AP_LLM_PROVIDER=off)"
     status = check_server(settings.llm, use_cache=False)
     where = status.base_url if _on_this_network(urlparse(status.base_url).netloc) else "AP_LLM_BASE_URL"
     if status.active:
@@ -259,7 +285,7 @@ def _local_check(settings: Settings, provider: str) -> tuple[str, str, str]:
             FAIL if provider == "local" else WARN,
             f"{status.server_title} is running but no model is loaded",
         )
-    detail = f"not running at {where} (LM Studio: load a model, then Developer tab -> Start server)"
+    detail = f"not running at {where} (LM Studio: Developer tab -> Start server, then load the model)"
     return "local model", FAIL if provider == "local" else WARN, detail
 
 

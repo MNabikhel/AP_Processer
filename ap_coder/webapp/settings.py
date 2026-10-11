@@ -494,17 +494,24 @@ def data_tab(store: Store) -> None:
         )  # fmt: skip
         with c2.popover("Restore this backup…", icon=":material/settings_backup_restore:", width="stretch"):
             st.markdown(
-                f"Replace the current database with **{esc(chosen)}**? Everything done since that backup "
+                f"Replace the current database with **{md(chosen)}**? Everything done since that backup "
                 "(processed invoices, approvals, lessons, GL changes) is replaced. The current database is "
                 "backed up first, so this can be undone."
             )
             confirm = st.text_input("Type RESTORE to confirm", key="restore_confirm")
             if st.button("Restore", type="primary", disabled=confirm.strip().upper() != "RESTORE", key="restore"):
-                safety = store.restore_from(path)
-                st.session_state.pop("open_invoice", None)
-                forget_all_drafts()  # the invoices they belong to may be gone, their numbers given out again
-                notify(f"Restored {chosen}. The previous database was saved as {safety.name}.", ":material/restore:")
-                st.rerun()
+                had_copy_dir = bool(store.get_setting("backup_copy_dir").strip())
+                try:
+                    safety = store.restore_from(path)
+                except ValueError as exc:  # not an AP Coder backup: nothing was changed
+                    st.error(f"Not restored: {md(exc)}.", icon=":material/error:")
+                else:
+                    st.session_state.pop("open_invoice", None)
+                    forget_all_drafts()  # the invoices they belong to may be gone, their numbers given out again
+                    cleared = " The second backup folder was cleared: set it again above." if had_copy_dir else ""
+                    notify(f"Restored {md(chosen)}. The previous database was saved as {md(safety.name)}.{cleared}",
+                           ":material/restore:")  # fmt: skip
+                    st.rerun()
 
 
 def _git_version() -> str:

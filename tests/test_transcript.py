@@ -344,3 +344,25 @@ def test_a_number_readers_write_differently_is_not_verified_and_shows_the_plain_
     same = {s: {"po_number": [Reading("po_number", "BC-15332", "BC-15332", box, 1.0, "label-right")]}
             for s in ("rules", "vlm")}  # fmt: skip
     assert fuse(same, [], fields=("po_number",))[0]["po_number"].value == "BC-15332"
+
+
+@pytest.mark.parametrize(
+    ("text", "blank"),
+    [
+        ("The quick brown fox jumps over the lazy dog.", True),  # OvisOCR2 on a blank first page
+        ("## 1", True),  # ... and on a blank PNG
+        ("Page 2 of 3", True),
+        ("  \n<think>nothing</think>\n", True),
+        ("**The quick brown fox jumps over the lazy dog.**\nThe quick brown fox jumps over the lazy dog.", True),
+        ("Invoice 1042\nTotal 198.00", False),
+        ("INVOICE\n\nQuick Brown Fox Couriers Ltd.\nInvoice No: 77\nTotal $1,234.00", False),
+    ],
+)
+def test_a_made_up_transcription_of_a_blank_page_is_left_out(text, blank):
+    from ap_coder.capture.transcript import made_up
+
+    assert made_up(text) is blank
+    fields = transcript_fields([text, "Invoice No: NW-2026-0912"])
+    if blank:  # nothing taken from it: the pangram is never a supplier
+        assert _top(fields, "vendor_name") != "The quick brown fox jumps over the lazy dog."
+        assert not layout_from_transcript([text]).pages[0].words

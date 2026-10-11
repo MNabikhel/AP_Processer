@@ -251,7 +251,7 @@ def _other_row(store: Store, inv: dict[str, Any]) -> None:
             full = store.get_invoice(inv["id"])
             path = Path(full["source_path"])
             if not path.exists():
-                st.error(f"The original file is no longer at {path}.")
+                st.error(f"The original file is no longer at {md(path)}.")
             else:  # the new attempt replaces the failed one
                 run_pipeline(store, [path])
                 st.rerun()
@@ -290,14 +290,25 @@ def _tax_chip(tax_type: str) -> str:
     return f"<span class='rq-tax'>{esc(ui.TAX_LABELS.get(tax_type, tax_type))}</span>"
 
 
+def confidence_pct(value: float, threshold: float) -> str:
+    """The invoice's confidence as a percentage, rounded the usual way (as the bulk approval's messages show it),
+    so the header and the messages agree. Where that rounding would mislead (84.9% shown as the 85% threshold it
+    is below, or 99.6% as certainty) it keeps one decimal, rounded down."""
+    value = max(0.0, min(1.0, value or 0.0))
+    whole = int(f"{value * 100:.0f}")
+    if (value < threshold and whole >= int(f"{threshold * 100:.0f}")) or (value < 1 and whole >= 100):
+        return f"{math.floor(value * 1000 + 1e-9) / 10:.1f}%"
+    return f"{whole}%"
+
+
 def _confidence(value: float, threshold: float) -> str:
-    """A thin bar with the figure beside it (floored: it never rounds up to certainty)."""
+    """A thin bar with the figure beside it."""
     value = max(0.0, min(1.0, value or 0.0))
     tone = "ok" if value >= threshold else "warn"
     return (
         f"<span class='rq-conf {tone}' title='Confidence; {threshold:.0%} or more needs no second look'>"
         f"<span class='bar' aria-hidden='true'><i style='width:{value * 100:.0f}%'></i></span>"
-        f"<b>{math.floor(value * 100 + 1e-9)}%</b></span>"
+        f"<b>{confidence_pct(value, threshold)}</b></span>"
     )
 
 
@@ -609,7 +620,7 @@ def _queue_card(
             f"<div class='c-amt'>{money(inv.get('grand_total'))}<small>{esc(inv.get('currency') or '')}</small></div>"
             f"<div class='c-chev'>{ui.icon('chevron_right', '18px')}</div></div>"
         )
-        label = f"Review invoice from {name}"
+        label = f"Review invoice from {md(name)}"  # the name is text from the invoice
         if st.button(label, key=f"qopen_{inv['id']}"):
             st.session_state["open_invoice"] = inv["id"]
             st.rerun()
@@ -711,7 +722,7 @@ def _document_panel(inv: dict[str, Any], store: Store, key: str = "") -> None:
     if pages:
         st.image(pages[page_no - 1], width="stretch")
     elif not path.exists():
-        st.warning(f"Original file not found at {path}", icon=":material/warning:")
+        st.warning(f"Original file not found at {md(path)}", icon=":material/warning:")
     with st.expander("Extracted text", expanded=not pages, icon=":material/text_snippet:"):
         st.html(f"<div class='rvw-text'>{ui.document_text(inv.get('extraction_md') or '')}</div>")
     _history(inv, store)
@@ -825,7 +836,8 @@ def _checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> str:
     if low:
         items.append(
             f"<li class='warn'><span class='m' aria-hidden='true'>!</span><span class='rvw-sr'>Worth a look: </span>"
-            f"<span class='t'>Confidence {report.adjusted_confidence:.0%} is below the "
+            f"<span class='t'>Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} is "
+            "below the "
             f"{report.review_threshold:.0%} threshold.</span></li>"
         )
     if errors:
@@ -856,8 +868,8 @@ def _checks_html(report: Any) -> str:
             ui.check(
                 "warning",
                 "Low confidence",
-                f"Confidence {report.adjusted_confidence:.0%} is below the {report.review_threshold:.0%} "
-                "threshold, so a person should look it over.",
+                f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} is below the "
+                f"{report.review_threshold:.0%} threshold, so a person should look it over.",
             )
         )
     history = report.checks.get("history") or []
@@ -909,7 +921,7 @@ def _apply_rules_button(
     numbers = ", ".join(str(c["line_number"]) for c in changes)
     if st.button(
         f"Apply the coding rules to line {numbers}", icon=":material/rule_settings:", key=f"{key}_apply_rules",
-        help="; ".join(rules.describe(c) for c in changes).replace("the AI chose", "now"),
+        help=md("; ".join(rules.describe(c) for c in changes).replace("the AI chose", "now")),
     ):  # fmt: skip
         updated = edited_lines.copy()
         done = []
@@ -1333,16 +1345,22 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
                 except ValueError as exc:
                     changed_meanwhile(exc)
                 learn_from_approval(store, invoice_id, output, actor=reviewer(), taught=taught_boxes(key))
-                if (store.get_invoice(invoice_id) or {}).get("status") == PENDING:
-                    notify("Over the approval limit: it now waits for a second approver.", ":material/how_to_reg:")
+                waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
+                if waits:  # not approved yet: never "Approved <vendor>" for it
+                    notify(
+                        f"First approval recorded for {md(coding.vendor_name.rstrip('.'))}: over the approval "
+                        "limit, it waits for a second approver.",
+                        ":material/how_to_reg:",
+                    )
                 total = sum(counts.values())
                 forget_drafts(key)
                 _advance(ids, position)
                 if not store.list_invoices(REVIEW):  # the whole queue is done, not just the current view
                     st.session_state["celebrate"] = True
                 notify(
-                    f"Approved {md(coding.vendor_name.rstrip('.'))}. Learned from {ui.plural(total, 'line')}: "
-                    f"{counts[ACCEPTED]} confirmed, {total - counts[ACCEPTED]} corrected.",
+                    ("Learned" if waits else f"Approved {md(coding.vendor_name.rstrip('.'))}. Learned")
+                    + f" from {ui.plural(total, 'line')}: {counts[ACCEPTED]} confirmed, "
+                    f"{total - counts[ACCEPTED]} corrected.",
                     ":material/school:",
                 )
                 st.rerun()
@@ -1467,10 +1485,10 @@ def _suggestion_card(
                     f"<span class='rvw-muted'>{esc(li.description)}</span></div>")  # fmt: skip
             row = st.container(horizontal=True, gap="small")
             for s in suggestions:
-                label = f"{s.gl_code} · {gl_name(reference, s.gl_code) or s.gl_code}"
+                label = md(f"{s.gl_code} · {gl_name(reference, s.gl_code) or s.gl_code}")
                 # The position is in the key: two lines can share a number (as read from the invoice).
                 if row.button(label, key=f"{key}_sugg_{li.line_number}_{pos}_{s.gl_code}",
-                              icon=":material/add_task:", help="; ".join(s.reasons).capitalize()):  # fmt: skip
+                              icon=":material/add_task:", help=md("; ".join(s.reasons).capitalize())):  # fmt: skip
                     updated = numbered_lines(edited_lines)
                     at = _grid_row(updated, coding, li)
                     updated.loc[at, "predicted_gl_code"] = s.gl_code
@@ -1480,7 +1498,7 @@ def _suggestion_card(
                     replace_editor(f"{key}_lines", updated)
                     notify(f"Line {li.line_number} coded to GL {s.gl_code}.", ":material/add_task:")
                     st.rerun()
-            st.caption(" · ".join(f"{s.gl_code}: {s.reasons[0]}" for s in suggestions))
+            st.caption(md(" · ".join(f"{s.gl_code}: {s.reasons[0]}" for s in suggestions)))
 
 
 def _grid_row(lines: pd.DataFrame, coding: InvoiceCoding, li: Any) -> Any:
@@ -1767,7 +1785,7 @@ def _distribution_table(output: dict[str, Any], reference: ReferenceData, curren
         )
     total = round(sum(e["amount"] for e in output.get("gl_distribution") or []), 2)
     diff = round(total - (output.get("grand_total") or 0), 2)
-    balance = _pill("Balanced", "ok") if abs(diff) <= 0.01 else _pill(f"Off by {money(diff)}", "err")
+    balance = _pill("Balanced", "ok") if abs(diff) < 0.005 else _pill(f"Off by {money(diff)}", "err")
     foot = ["", balance, "", "Total", "", "", f"{money(total)} <span class='rq-cur'>{esc(currency)}</span>"]
     st.html(
         "<div class='rvw-gl'>"

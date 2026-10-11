@@ -231,3 +231,107 @@ def test_rounding_remainder_keeps_total_exact(reference):
     gt["tax_total"], gt["grand_total"] = 327.13, 3053.13
     dist = build_gl_distribution(InvoiceCoding.model_validate(gt), reference.tax)
     assert round(sum(e["amount"] for e in dist), 2) == 3053.13
+
+
+def _on_lines(amounts, hst):
+    """The Ontario sample with its lines replaced: ``amounts``, all charged HST, and ``hst`` as printed."""
+    gt = _gt(ON)
+    item = gt["line_items"][0]
+    gt["line_items"] = [
+        {**item, "line_number": n, "quantity": 1, "unit_price": a, "amount": a} for n, a in enumerate(amounts, 1)
+    ]
+    subtotal = round(sum(amounts), 2)
+    gt["tax_lines"] = [
+        {"tax_type": "HST", "province": "ON", "rate": 0.13, "taxable_amount": subtotal, "tax_amount": hst}
+    ]
+    gt.update(subtotal=subtotal, tax_total=hst, grand_total=round(subtotal + hst, 2))
+    return gt
+
+
+def _findings(coding_dict, reference):
+    return {(f.code, f.severity) for f in check_taxes(InvoiceCoding.model_validate(coding_dict), reference.tax, None)}
+
+
+@pytest.mark.parametrize(
+    ("amounts", "hst", "severity"),
+    [
+        ([200.0] * 5, 130.05, "error"),  # 5 cents over on 1,000.00: no rounding explains it
+        ([200.0] * 40, 1040.40, "error"),  # 40 cents over on a long invoice
+        ([100.01] * 40, 520.15, "warning"),  # 0.10 off: within half a cent a line, but still shown
+    ],
+)
+def test_tax_overcharge_is_never_passed_silently(reference, amounts, hst, severity):
+    assert ("TAX_CALC_MISMATCH", severity) in _findings(_on_lines(amounts, hst), reference)
+
+
+@pytest.mark.parametrize(
+    ("amounts", "hst"),
+    [
+        ([200.0] * 5, 130.00),  # worked out once on the taxable amount
+        ([200.0] * 5, 130.01),  # a cent of rounding
+        ([0.35] * 10, 0.50),  # worked out line by line (0.0455 → 0.05 each), not 0.46 on the total
+    ],
+)
+def test_correctly_rounded_tax_passes(reference, amounts, hst):
+    assert _codes(_on_lines(amounts, hst), reference) == set()
+
+
+@pytest.mark.parametrize(
+    ("tax_type", "province", "date", "rate"),
+    [
+        ("PST", "SK", "2017-03-22", 0.05),
+        ("PST", "SK", "2017-03-23", 0.06),
+        ("HST", "BC", "2012-06-01", 0.12),
+        ("PST", "BC", "2012-06-01", None),
+        ("PST", "BC", "2010-06-30", 0.07),
+        ("PST", "BC", "2013-04-01", 0.07),
+        ("HST", "BC", "2013-04-01", None),
+        ("PST", "MB", "2013-06-30", 0.07),
+        ("PST", "MB", "2013-07-01", 0.08),
+    ],
+)
+def test_historical_rates(tax_type, province, date, rate):
+    assert TaxRateTable.load().rate_for(tax_type, province, dt.date.fromisoformat(date)) == rate
+
+
+def test_older_invoices_check_against_the_rates_of_their_day(reference):
+    sk = _gt("prairie_SK_GST_PST_PNS-104882")
+    pst = next(t for t in sk["tax_lines"] if t["tax_type"] == "PST")
+    old = round(pst["taxable_amount"] * 0.05, 2)
+    sk["tax_total"] = round(sk["tax_total"] - pst["tax_amount"] + old, 2)
+    sk["grand_total"] = round(sk["subtotal"] + sk["tax_total"], 2)
+    pst.update(rate=0.05, tax_amount=old)
+    sk["invoice_date"] = "2016-05-02"
+    assert _codes(sk, reference) == set()
+    # British Columbia charged HST (12%) from July 2010 to March 2013, instead of GST + PST.
+    bc = _gt(BC)
+    bc["tax_lines"] = [
+        {"tax_type": "HST", "province": "BC", "rate": 0.12, "taxable_amount": 2726.0, "tax_amount": 327.12}
+    ]
+    for li in bc["line_items"]:
+        li["taxes_applied"] = ["HST"]
+    assert _codes({**bc, "invoice_date": "2012-01-16"}, reference) == set()
+    assert {"TAX_TYPE_NOT_LEVIED", "TAX_REGIME_MISMATCH"} <= _codes(bc, reference)  # the same invoice in 2026
+
+
+def test_qst_rate_keeps_its_three_decimals_in_the_posting(reference):
+    dist = build_gl_distribution(InvoiceCoding.model_validate(_gt(QC)), reference.tax)
+    assert any("QST QC 9.975%" in e["description"] for e in dist)
+    assert not any("9.98%" in e["description"] for e in dist)
+
+
+def test_tax_spread_over_lines_in_whole_yen(reference):
+    gt = _gt(BC)
+    gt["line_items"] = gt["line_items"][:3]
+    for li, amount in zip(gt["line_items"], (891.0, 1317.0, 519.0), strict=True):
+        li.update(quantity=1, unit_price=amount, amount=amount, taxes_applied=["GST", "PST"])
+    subtotal = 2727.0
+    gt["tax_lines"] = [
+        {"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": subtotal, "tax_amount": 136.0},
+        {"tax_type": "PST", "province": "BC", "rate": 0.07, "taxable_amount": subtotal, "tax_amount": 191.0},
+    ]
+    gt.update(currency="JPY", subtotal=subtotal, tax_total=327.0, grand_total=subtotal + 327.0)
+    dist = build_gl_distribution(InvoiceCoding.model_validate(gt), reference.tax)
+    assert all(e["amount"] == round(e["amount"]) for e in dist)  # the PST (spread over the lines) in whole yen
+    assert sum(e["non_recoverable_tax"] for e in dist if e["kind"] == "expense") == 191.0
+    assert sum(e["amount"] for e in dist) == gt["grand_total"]

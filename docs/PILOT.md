@@ -31,8 +31,12 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   slower than 10 minutes (`AP_LLM_TIMEOUT_SECONDS`), the invoice is still read and checked; its uncoded lines
   wait for AP. Each approval teaches AP Coder that vendor's accounts, which then come before the model.
 
-  **Qwen 3.5 9B in LM Studio.** In LM Studio search for *Qwen3.5 9B* and download the Q4_K_M file (5.6 GB,
-  plus its 0.9 GB vision file, `mmproj`, in the same lmstudio-community repo). Load it with **Context Length 8192**: the accounts
+  **Qwen 3.5 9B in LM Studio.** IT installs LM Studio with the models already in it: the chat model
+  (Qwen 3.5 9B, Q4_K_M: 5.6 GB, plus its 0.9 GB vision file, `mmproj`, from the lmstudio-community repo; or
+  another 7B–9B instruct model at Q4_K_M) and OvisOCR2 (below). Nothing is downloaded on the laptop. On the
+  laptop, open LM Studio and start its server (**Developer** tab → **Start server**). If no model is loaded,
+  load the chat model: in AP Coder, *Settings → AI model → Models in LM Studio* → **Load** (or in LM Studio
+  itself). Use **Context Length 8192**: the accounts
   call is short (about 1,300 tokens of chart and lines with the sample chart, and about 60 tokens of answer
   per line), and Qwen's own advice to keep 128K applies to thinking, which AP Coder turns off.
   - *Thinking.* Qwen 3.5 thinks before it answers unless told not to (LM Studio lists its reasoning
@@ -63,7 +67,7 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   are known, field by field, and links the model when it reads it right. It reads nothing before that.
   - *Speed.* Minutes a page on a laptop CPU, so it reads in the background and invoices never wait for it:
     measured with LM Studio's headless server on a 4-core server CPU, no graphics card, where LM Studio gave
-    the model a single thread: 3.5 to 6 minutes for a phone photo, 8 to 12 minutes for a scanned PDF page. On a
+    the model a single thread: 3.5 to 5.7 minutes for a phone photo, 7.6 to 12.4 minutes for a scanned PDF page. On a
     laptop that LM Studio lets use several cores, expect a few minutes a page (CloseDesk measured about 3 on 4
     cores); a graphics card is many times faster. If it seems slow, check *CPU Thread Pool Size* for OvisOCR2
     in LM Studio (My Models, the gear next to it).
@@ -107,6 +111,7 @@ AP Coder readiness:
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
   [--] LM Studio: not running (optional: invoices are still read and coded without it)
+  [--] Page reader: not set up (optional: OvisOCR2 isn't in LM Studio, see Settings > Page reader)
   [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR (9 s)
 ```
 

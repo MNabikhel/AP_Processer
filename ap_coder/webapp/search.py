@@ -12,6 +12,7 @@ from ap_coder.webapp.common import (
     esc,
     get_store,
     money,
+    notify,
     page_head,
     reference_or_none,
     reviewer,
@@ -83,7 +84,10 @@ def page_search() -> None:
                 if right.button("Open", icon=":material/open_in_new:", key=f"search_open_{r['id']}", width="stretch"):
                     st.session_state["open_invoice"] = r["id"]
                     st.switch_page(PAGES["review"])
-            elif hit.source == "AP Coder" and r["status"] in (APPROVED, PENDING):
+            elif hit.source == "AP Coder" and r["status"] == PENDING:
+                # Never an APPROVED stamp before the second approver has signed off.
+                right.caption("Approved PDF once the second approver has approved it.")
+            elif hit.source == "AP Coder" and r["status"] == APPROVED:
                 # Made again if the invoice changed since (reopened, approved again, exported).
                 version = (r.get("reviewed_at"), r.get("second_reviewed_at"), r.get("export_batch"))
                 ready = st.session_state.get(f"search_pdf_{r['id']}")
@@ -97,6 +101,9 @@ def page_search() -> None:
                     help="The invoice with its APPROVED stamp and coding page",
                 ):  # fmt: skip
                     inv = store.get_invoice(r["id"])
+                    if not stamp.can_stamp(inv):  # sent back or reopened since the search
+                        notify("No longer fully approved: no approved PDF.", ":material/info:")
+                        st.rerun()
                     reference = reference_or_none(store)
                     names = {row["gl_code"]: row.get("description", "") for row in reference.chart_of_accounts.rows} \
                         if reference else {}  # fmt: skip

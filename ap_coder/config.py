@@ -22,9 +22,13 @@ PAGE_READER_MODES = ("auto", "ask", "off")
 PAGE_READER_SCOPES = ("scans", "all")
 
 
+_PLACEHOLDER = re.compile(r"<[^<>]+>")  # "https://<your-resource>.openai.azure.com/" in .env.example
+
+
 def _env(name: str, default: str | None = None) -> str | None:
+    """A setting from the environment; empty, or an example placeholder such as ``<your-resource>``, is unset."""
     value = os.getenv(name)
-    if value is None or value.strip() == "":
+    if value is None or value.strip() == "" or _PLACEHOLDER.search(value):
         return default
     return value.strip()
 

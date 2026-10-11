@@ -169,6 +169,35 @@ def test_share_report_failure_category_hides_message(tmp_path):
     assert "ACME" not in text and "acme" not in text
 
 
+def test_share_report_on_a_database_with_demo_invoices(tmp_path):
+    """Demo invoices recorded no table count: a KeyError half-way, after the key file was already written."""
+    from ap_coder.demo import load_demo
+    from ap_coder.store import Store, load_sample_setup
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    load_demo(store)
+    with store._conn() as conn:  # a database from before demo invoices recorded one
+        conn.execute("UPDATE invoices SET meta = json_remove(meta, '$.extraction.table_count')")
+    key = tmp_path / "share_key.csv"
+    text = build_share_report(tmp_path / "none", key_file=key, db_path=tmp_path / "ap.db")
+    assert "tables per invoice: n/a" in text and "doc-01" in text
+    assert key.read_text().startswith("alias,file") and not list(tmp_path.glob("*.partial"))
+
+
+def test_share_report_that_fails_leaves_no_key_file(tmp_path, monkeypatch):
+    from ap_coder import share_report
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "a.validation.json").write_text(json.dumps({"source": "/x/a.pdf", "status": "failed", "error": "X"}))
+    monkeypatch.setattr(share_report, "_failure_category", lambda error: 1 / 0)  # any failure while building
+    key = tmp_path / "share_key.csv"
+    with pytest.raises(ZeroDivisionError):
+        build_share_report(out, key_file=key)
+    assert not key.exists() and not list(tmp_path.glob("*.partial"))
+
+
 # --- Doctor -----------------------------------------------------------------------------
 
 

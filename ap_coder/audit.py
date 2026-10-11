@@ -225,7 +225,7 @@ def describe(event: dict[str, Any]) -> str:
             text += f": touchless, {float(d['audit_rate']):.0%} audited"
         return text + (f" · {d['reason']}" if d.get("reason") else "")
     if action in ("backup_made", "backup_restored"):
-        return str(d.get("file", ""))
+        return str(d.get("file", "")) + (f" · {d['note']}" if d.get("note") else "")
     return ""
 
 

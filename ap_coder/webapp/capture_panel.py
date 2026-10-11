@@ -133,7 +133,8 @@ def _page_reader_waiting(invoice_id: int) -> None:
     from ap_coder.page_worker import ready
 
     store = get_store()
-    state = (store.page_read(invoice_id) or {}).get("status", "")
+    row = store.page_read(invoice_id) or {}
+    state = row.get("status", "")
     if state not in ("waiting", "reading"):
         st.rerun()
     if state == "waiting":
@@ -145,6 +146,8 @@ def _page_reader_waiting(invoice_id: int) -> None:
     note = "reading it now" if state == "reading" else f"waiting to read it ({ahead} ahead)" if ahead else "next"
     st.caption(f":material/hourglass_top: Page reader: {note}. The fields update when it is done, unless you have "
                "edited the invoice.")  # fmt: skip
+    if state == "waiting" and row.get("tries") and row.get("error"):  # cut off by the model server last time
+        st.caption(f":material/sync_problem: Last time: {md(row['error'])}")
 
 
 def page_reader_line(inv: dict[str, Any], key: str) -> None:
@@ -250,7 +253,7 @@ def capture_panel(inv: dict[str, Any], capture_dict: dict[str, Any], key: str) -
             taught = dict(st.session_state.get(_taught_key(key)) or {})
             taught[field] = event.get("boxes") or []
             st.session_state[_taught_key(key)] = taught
-            notify(f"{LABELS.get(field, field)} set to {value}. Approving teaches it for this supplier.",
+            notify(f"{LABELS.get(field, field)} set to {md(value)}. Approving teaches it for this supplier.",
                    ":material/school:")  # fmt: skip
         st.session_state.pop(_teach_key(key), None)
         st.rerun()

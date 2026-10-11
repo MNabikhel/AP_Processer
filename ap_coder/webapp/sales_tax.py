@@ -13,6 +13,7 @@ from ap_coder.webapp.common import card, esc, get_store, money, page_head, show_
 ISSUE_TONES = {
     taxreturn.NO_GST_NUMBER: "err",
     taxreturn.NO_QST_NUMBER: "err",
+    taxreturn.GST_CHECK_DIGIT: "err",
     taxreturn.FOREIGN: "warn",
     taxreturn.NOT_EXPORTED: "info",
 }

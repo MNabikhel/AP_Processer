@@ -6,8 +6,10 @@ import datetime as dt
 import getpass
 import html
 import io
+import ipaddress
 import os
 import re
+import socket
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,7 @@ import streamlit as st
 from ap_coder import paths, ui
 from ap_coder.config import Settings
 from ap_coder.reference_data import UNASSIGNED, ReferenceData, short_name
+from ap_coder.safe import md
 from ap_coder.store import Store, default_db_path
 
 DB_PATH = Path(os.environ.get("AP_DB_PATH") or default_db_path())
@@ -110,6 +113,75 @@ def money(value: Any, currency: str = "") -> str:
 
 def esc(value: Any) -> str:
     return html.escape(str(value or ""))
+
+
+# --- Only this computer's addresses (DNS rebinding) ---------------------------------------------------------------
+# A web page on the internet whose name is made to point at 127.0.0.1 could otherwise open the dashboard in the
+# clerk's browser and use it. Browsers send the name they used in the Host header, so the dashboard checks it.
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+WILDCARD_ADDRESSES = {"", "0.0.0.0", "::"}  # listening on every network: colleagues use an IP or this PC's name
+
+
+def host_name(host: str) -> str:
+    """The name part of a Host header ("localhost:8501" → "localhost", "[::1]:8501" → "::1")."""
+    host = host.strip().lower()
+    if host.startswith("["):
+        host = host[1 : host.find("]")] if "]" in host else ""  # "[::1" without "]" is not an address
+    elif host.count(":") == 1:
+        host = host.rsplit(":", 1)[0]
+    return host.rstrip(".")
+
+
+def host_allowed(host: str | None, address: str | None, extra: tuple[str | None, ...] = ()) -> bool:
+    """Whether a request whose Host header is ``host`` may use the dashboard listening on ``address``: this
+    computer (localhost, 127.0.0.1, ::1) or the configured address. When it listens on every network
+    (``0.0.0.0``), also an IP address or this computer's own name: a rebinding attack needs a domain name.
+    No Host header at all is not a browser (e.g. tests), so it is allowed."""
+    if host is None:
+        return True
+    name = host_name(host)
+    if not name:
+        return False
+    allowed = LOCAL_HOSTS | {host_name(a) for a in (address, *extra) if a}
+    if name in allowed:
+        return True
+    try:
+        ip = ipaddress.ip_address(name)
+    except ValueError:
+        ip = None
+    if ip is not None and (ip.is_loopback or (getattr(ip, "ipv4_mapped", None) or ip).is_loopback):
+        return True  # also ::ffff:127.0.0.1, as newer Pythons already say
+    if host_name(address or "") in WILDCARD_ADDRESSES:
+        if ip is not None:
+            return True
+        names = {socket.gethostname(), socket.getfqdn()}
+        return name in {n.lower().rstrip(".") for n in names if n}
+    return False
+
+
+def request_host() -> str | None:
+    """The Host header of the browser's connection, or None when there is none (tests, bare mode)."""
+    try:
+        return st.context.headers.get("Host")
+    except Exception:  # noqa: BLE001 - no browser connection
+        return None
+
+
+def refuse_foreign_host() -> None:
+    """Stop this run, showing only a short message, when the dashboard was opened through an address that is
+    not this computer's (see ``host_allowed``). The public demo on the web is meant to be opened by anyone."""
+    if PUBLIC_DEMO:
+        return
+    host = request_host()
+    if host_allowed(host, st.get_option("server.address"), (st.get_option("browser.serverAddress"),)):
+        return
+    st.error(
+        f"AP Coder was opened through **{md(host)}**, which is not this computer's address, so nothing is shown. "
+        f"Open it at http://localhost:{st.get_option('server.port')} (or with the AP Coder shortcut).",
+        icon=":material/gpp_bad:",
+    )
+    st.stop()
 
 
 def short_path(path: Path) -> str:
@@ -302,7 +374,8 @@ def card(name: str) -> Any:
 
 
 def approved_today(store: Store) -> int:
-    return store.approved_since(dt.date.today().isoformat())
+    """How many invoices this reviewer approved today (shown under their name: not the whole team's)."""
+    return store.approved_since(dt.date.today().isoformat(), reviewer())
 
 
 def weekly_accuracy(metrics: dict[str, Any]) -> list[float]:

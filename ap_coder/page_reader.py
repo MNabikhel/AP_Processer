@@ -35,7 +35,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -118,7 +118,13 @@ def reader_name(model: str) -> str:
 
 
 class PageReaderError(RuntimeError):
-    """The page couldn't be read: no model can read pages, the server failed, or the reading wasn't usable."""
+    """The page couldn't be read: no model can read pages, the server failed, or the reading wasn't usable.
+    ``temporary``: the model server's trouble (stopped, the model unloaded, no answer in time), not the page's: reading
+    it again later may well work."""
+
+    def __init__(self, message: str = "", *, temporary: bool = False) -> None:
+        super().__init__(message)
+        self.temporary = temporary
 
 
 class CutOff(PageReaderError):
@@ -292,7 +298,7 @@ class ReaderStatus:
     lm_studio: bool
     model: str  # the model that would read pages now ("" = none)
     document_reader: bool  # it is a document reader (OvisOCR2), trusted as one
-    state: str  # "loaded" | "downloaded" | "missing" | "off" | "down"
+    state: str  # "loaded" | "downloaded" | "missing" | "blind" (can't look at pictures) | "off" | "down"
     candidates: list[str] = field(default_factory=list)  # every model that can see (keys), document readers first
     note: str = ""  # plain-English why, or what to do
     base_url: str = ""
@@ -367,8 +373,9 @@ def _use_named(out: ReaderStatus, named: str, status: Any, listing: LMListing | 
                         "for the page reader.")  # fmt: skip
             return
         _describe(out, found, reader_for(named))
-        if not found.vision:
-            out.note = f"LM Studio says {named} can't look at pictures: choose one that can (OvisOCR2), or Automatic."
+        if not found.vision:  # it would read nothing on a page: not a page reader at all
+            out.state = "blind"
+            out.note = f"{named} can't look at pictures: pick a model that can, e.g. OvisOCR2 (or Automatic)."
         return
     if named in status.models:
         out.state = "loaded"
@@ -473,8 +480,38 @@ def _lm_studio_said(exc: urllib.error.HTTPError) -> str:
         error = None
     said = error.get("message") if isinstance(error, dict) else error
     if isinstance(said, str) and said.strip():
-        return " ".join(said.split())[:200]
+        return gist(said)
     return f"HTTP {exc.code}"
+
+
+_NO_MEMORY = ("insufficient system resources", "not enough memory", "out of memory", "failed to allocate")
+
+
+def gist(said: str, most: int = 300) -> str:
+    """A model server's message, short enough to show: whole sentences up to ``most`` characters (else cut at a word,
+    with "…"), led by what it means when it is about memory ("not enough memory to load it")."""
+    text = " ".join(str(said or "").split())
+    if len(text) > most:
+        cut = text[:most]
+        end = cut.rfind(". ")
+        text = cut[: end + 1] if end >= most // 3 else cut.rsplit(" ", 1)[0].rstrip(",;:") + "…"
+    if any(words in text.lower() for words in _NO_MEMORY):
+        return f"not enough memory to load it ({text})"
+    return text
+
+
+def _server_said(exc: Exception) -> str:
+    """What the model server said when it refused a request: its JSON error's message (the OpenAI SDK keeps it in
+    ``body``), else the error's own text."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error", body)
+        said = error.get("message") if isinstance(error, dict) else error
+        if isinstance(said, str) and said.strip():
+            return said
+    elif isinstance(body, str) and body.strip():
+        return body
+    return str(exc)
 
 
 def reader_load_problem(model: str) -> str:
@@ -566,11 +603,22 @@ def _page_count(data: bytes, pdf: bool) -> int:
 
         with _RENDER_LOCK, pymupdf.open(stream=data, filetype="pdf") as doc:
             return doc.page_count
+    with _open_picture(data) as img:
+        return max(1, int(getattr(img, "n_frames", 1) or 1))
+
+
+def _open_picture(data: bytes) -> Any:
+    """The picture in ``data`` (Pillow), opened lazily. Raises ``PageReaderError`` in plain words for a file that
+    isn't a picture, or one too large to be read safely (Pillow's guard against a decompression bomb)."""
     from PIL import Image
 
     try:
-        with Image.open(io.BytesIO(data)) as img:
-            return max(1, int(getattr(img, "n_frames", 1) or 1))
+        return Image.open(io.BytesIO(data))
+    except Image.DecompressionBombError as exc:
+        pixels = re.search(r"\((\d+) pixels\)", str(exc))
+        megapixels = int(pixels.group(1)) / 1e6 if pixels else 0.0
+        size = f" ({megapixels:,.{0 if megapixels >= 10 else 1}f} megapixels)" if pixels else ""
+        raise PageReaderError(f"the picture is too large{size}: scan or save it at a lower resolution") from exc
     except Exception as exc:  # Pillow raises several kinds for a file that isn't a picture
         raise PageReaderError("it isn't a PDF or a picture") from exc
 
@@ -596,25 +644,32 @@ def _render(data: bytes, pdf: bool, reader: Reader, numbers: Iterable[int]) -> d
 
     from .capture.layout import _on_paper
 
-    try:
-        img = Image.open(io.BytesIO(data))
-    except Exception as exc:  # Pillow raises several kinds for a file that isn't a picture
-        raise PageReaderError("it isn't a PDF or a picture") from exc
+    img = _open_picture(data)
     with img:
+        drafted = max(img.size)
+        if img.format == "JPEG" and drafted > 2 * reader.max_side:
+            img.draft("RGB", (reader.max_side, reader.max_side))  # a large photo decoded at a fraction of its size
+        else:
+            drafted = 0
         for number, frame in enumerate(ImageSequence.Iterator(img), start=1):
             if number > wanted[-1]:
                 break
             if number not in wanted:
                 continue
             dpi = frame.info.get("dpi") or img.info.get("dpi") or (0, 0)
-            pic = _on_paper(ImageOps.exif_transpose(frame.copy()))
-            scale = reader.max_side / max(pic.width, pic.height, 1)
+            full = drafted or max(frame.size)  # its long side as scanned, in pixels
+            frame = frame.copy()
+            if max(frame.size) > 2 * reader.max_side:  # a very large picture: brought down cheaply first
+                frame.thumbnail((2 * reader.max_side, 2 * reader.max_side), Image.LANCZOS, reducing_gap=2.0)
+            pic = _on_paper(ImageOps.exif_transpose(frame))
+            target = float(reader.max_side)
             try:
                 scanned = float(dpi[0])
             except (TypeError, ValueError, IndexError):
                 scanned = 0.0
             if scanned >= _SCAN_DPI and scanned > reader.dpi:  # a fine scan: brought to the reader's resolution
-                scale = min(scale, reader.dpi / scanned)
+                target = min(target, full * reader.dpi / scanned)
+            scale = target / max(pic.width, pic.height, 1)
             if scale < 1:
                 size = (max(1, round(pic.width * scale)), max(1, round(pic.height * scale)))
                 pic = pic.resize(size, Image.LANCZOS)
@@ -686,15 +741,16 @@ def _failure(exc: Exception, settings: Settings) -> str:
     if local_llm.context_overflow(exc):
         return "the page didn't fit the model's context: load it in LM Studio with a longer context"
     status = getattr(exc, "status_code", None)
-    text = " ".join(str(exc).split())[:200] or type(exc).__name__
+    text = gist(_server_said(exc)) or type(exc).__name__
     return f"the model server answered {status}: {text}" if status else f"the model server failed: {text}"
 
 
 def _open_stream(client: Any, base: str, model: str, params: dict[str, Any], sampling: dict[str, Any],
                  settings: Settings) -> Any:  # fmt: skip
     """Start the streaming request, thinking switched off as for coding calls (OvisOCR2 takes reasoning "off"). A
-    server that refuses fields it doesn't know gets the request again with fewer: the sampling fields first (the
-    greedy reading went through with the thinking switch), then the thinking fields, remembered per model."""
+    server that refuses a field it doesn't know, naming it, gets the request again without it: the sampling fields
+    (the greedy reading went through with the thinking switch), else the thinking fields, remembered per model. Any
+    other refusal (a model LM Studio couldn't load, say) is the reading's failure, and the switch is kept."""
     sampling = dict(sampling)
     while True:
         kwargs = dict(params)
@@ -704,15 +760,16 @@ def _open_stream(client: Any, base: str, model: str, params: dict[str, Any], sam
         try:
             return client.chat.completions.create(**kwargs)
         except Exception as exc:  # noqa: BLE001 - every failure becomes a PageReaderError the page can show
-            if "extra_body" in kwargs and local_llm.refuses_extra_fields(exc):
-                if sampling:
+            if "extra_body" in kwargs:
+                if sampling and local_llm.refuses_extra_fields(exc, local_llm.SAMPLING_FIELDS):
                     log.info("%s refused top_k / presence_penalty (%s); sampling without them", model, exc)
                     sampling = {}
                     continue
-                if local_llm.refuse_thinking_off(base, model):
+                thinking = local_llm.refuses_extra_fields(exc, local_llm.THINKING_FIELDS)
+                if thinking and local_llm.refuse_thinking_off(base, model):
                     log.info("%s refused the thinking switch (%s); asking without it", model, exc)
                     continue
-            raise PageReaderError(_failure(exc, settings)) from exc
+            raise PageReaderError(_failure(exc, settings), temporary=True) from exc
 
 
 def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
@@ -787,7 +844,7 @@ def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader
     except PageReaderError:
         raise
     except Exception as exc:  # noqa: BLE001 - the server failed part way (an error in the stream, a dropped link)
-        raise PageReaderError(_failure(exc, settings)) from exc
+        raise PageReaderError(_failure(exc, settings), temporary=True) from exc
     finally:
         close = getattr(stream, "close", None)
         if callable(close):
@@ -807,7 +864,7 @@ def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader
                 else "the model only thought and wrote nothing"
             )
         if not finish or finish == "length":
-            raise _NothingWritten("the model server ended the reading without a word")
+            raise _NothingWritten("the model server ended the reading without a word", temporary=True)
         raise Blank("the page has nothing on it to read")
     if finish == "length" and not looped:
         # Half a page would hide the rest of it: the reading is not kept.
@@ -1040,6 +1097,7 @@ class PageReading:
     error: str = ""
     stopped: bool = False  # ``should_stop`` asked to stop before every page was read
     page_count: int = 0  # the pages to read: the file's, at most AP_PAGE_READER_MAX_PAGES
+    temporary: bool = False  # ``error`` is the model server's trouble (stopped, unloaded, no answer): read it later
 
     @property
     def complete(self) -> bool:
@@ -1108,7 +1166,8 @@ def _loaded(settings: Settings, model: str) -> bool:
 
 def read_document(settings: Settings, path: Path, *, model: str | None = None,
                   on_page: Callable[[int, int], None] | None = None,
-                  should_stop: Callable[[], bool] | None = None) -> PageReading:  # fmt: skip
+                  should_stop: Callable[[], bool] | None = None,
+                  blank_pages: Collection[int] = ()) -> PageReading:  # fmt: skip
     """The page reader's reading of every page of a PDF or picture (up to AP_PAGE_READER_MAX_PAGES).
 
     Each page is kept on disk by the file's SHA-256, the page, the model and the prompt version as soon as it is
@@ -1117,11 +1176,22 @@ def read_document(settings: Settings, path: Path, *, model: str | None = None,
     else the model ``reader_status`` names (an earlier reading by any model is used while none can read pages).
     LM Studio is asked to load a document reader with the context it needs (``load_reader``) before the first page.
 
+    ``blank_pages`` (numbered from 1): pages OCR found no words on. They aren't shown to the model (on a blank page a
+    vision model makes something up, a pangram or a page number) and read as blank.
+
     ``on_page(n, total)`` is called as page n (from 1) starts. ``should_stop()`` is asked before each page and while a
     page is read; when it says stop, the pages read so far come back with ``stopped``. A page whose reading was cut
     off (``CutOff``) is left empty and named in ``error``, and the rest are read; when the server fails, reading stops
-    there (``error``). Never raises for a file or server problem."""
-    path = Path(path)
+    there (``error``, with ``temporary`` when it is the server's trouble). Never raises for a file or server
+    problem."""
+    blank = set(blank_pages)
+    reading = _read_document(settings, Path(path), model, on_page, should_stop, blank)
+    reading.pages = ["" if number in blank else text for number, text in enumerate(reading.pages, start=1)]
+    return reading
+
+
+def _read_document(settings: Settings, path: Path, model: str | None, on_page: Callable[[int, int], None] | None,
+                   should_stop: Callable[[], bool] | None, blank: set[int]) -> PageReading:  # fmt: skip
     try:
         data = path.read_bytes()
         digest, pdf, total = _file_pages(data, path.name, settings)
@@ -1138,15 +1208,16 @@ def read_document(settings: Settings, path: Path, *, model: str | None = None,
         if not status.usable:
             if earlier is not None:
                 return earlier  # an earlier reading beats none while no model can read pages
-            return PageReading("", [], [], error=status.note or "No model can read pages now.", page_count=total)
+            return PageReading("", [], [], error=status.note or "No model can read pages now.", page_count=total,
+                               temporary=True)  # fmt: skip
         named = status.model
         if earlier is not None and earlier.model == named:
             return earlier
     entries = {page: _cache_get(digest, page, named) for page in range(1, total + 1)}
     reading = PageReading(named, [], [], page_count=total)
-    if all(entries.values()):
-        reading.pages = [entry["text"] for entry in entries.values() if entry]
-        reading.seconds = [float(entry.get("seconds") or 0) for entry in entries.values() if entry]
+    if all(entries[page] or page in blank for page in entries):
+        reading.pages = [entry["text"] if entry else "" for entry in entries.values()]
+        reading.seconds = [float(entry.get("seconds") or 0) if entry else 0.0 for entry in entries.values()]
         reading.cached = True
         return reading
     if should_stop and should_stop():
@@ -1156,7 +1227,7 @@ def read_document(settings: Settings, path: Path, *, model: str | None = None,
     if problem:
         log.warning("Page reader: %s", problem)
         if not _loaded(settings, named):  # LM Studio couldn't load it: nothing is counted against the pages
-            reading.error = problem
+            reading.error, reading.temporary = problem, True
             return reading
     reader = reader_for(named)
     problems: list[str] = []
@@ -1164,9 +1235,9 @@ def read_document(settings: Settings, path: Path, *, model: str | None = None,
         if on_page:
             on_page(page, total)
         entry = entries[page]
-        if entry:
-            reading.pages.append(entry["text"])
-            reading.seconds.append(float(entry.get("seconds") or 0))
+        if entry or page in blank:
+            reading.pages.append(entry["text"] if entry else "")
+            reading.seconds.append(float(entry.get("seconds") or 0) if entry else 0.0)
             continue
         if should_stop and should_stop():
             reading.stopped = True
@@ -1193,6 +1264,7 @@ def read_document(settings: Settings, path: Path, *, model: str | None = None,
         except PageReaderError as exc:  # the server failed: the next pages would too
             log.warning("Page reader %s: page %d of %d failed (%s)", named, page, total, exc)
             problems.append(f"page {page}: {exc}")
+            reading.temporary = exc.temporary
             break
         took = time.monotonic() - started
         _cache_put(digest, page, named, text, took)
@@ -1299,8 +1371,9 @@ def test_reader(settings: Settings, *, model: str | None = None,
     """Read the test invoice (``test_pages``) with the page reader, read its transcription for fields
     (``capture.transcript.transcript_fields``) and compare them with the sample's ground truth: supplier, invoice
     number, dates, PO, GST number, subtotal, tax, total. ``ok``: every field right, or at least 80% with no amount
-    wrong (``problem`` names the rest). The pages are read afresh each time and nothing is kept: the caller keeps
-    the result. ``on_page(n, total)`` as each page starts. Never raises for a server problem."""
+    wrong (``problem`` names the rest). The pages are read afresh each time and no reading is kept (the caller keeps
+    the result), but each page's time is noted like any page read, so the waits shown are this computer's.
+    ``on_page(n, total)`` as each page starts. Never raises for a server problem."""
     when = _now()
     model = (model or "").strip()
     if not model:
@@ -1321,8 +1394,10 @@ def test_reader(settings: Settings, *, model: str | None = None,
     for number, png in enumerate(pngs, start=1):
         if on_page:
             on_page(number, len(pngs))
+        page_started = time.monotonic()
         try:
             texts.append(transcribe(settings, png, model=model))
+            _log_timing(model, time.monotonic() - page_started)  # the estimates learn from the test too
         except Blank:
             texts.append("")
         except PageReaderError as exc:
@@ -1414,7 +1489,7 @@ def _ocr_row() -> dict[str, str]:
     row = {"role": "OCR for scans", "model": "", "state": "off", "status": "", "note": ""}
     if not layout.ocr_available():
         row["status"] = "Not installed: scans and photos can't be read on this computer (text PDFs can)."
-        row["note"] = 'Run pip install -e ".[ocr]".'
+        row["note"] = "Run APProcessor.bat: it installs the OCR add-on from the offline bundle."
         return row
     names = {"rapidocr": "PP-OCRv4", "ppocrv5": "PP-OCRv5"}
     first, second = layout._engine_name(), layout.second_engine_name()

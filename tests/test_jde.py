@@ -227,6 +227,66 @@ def test_match_header_pay_items_carry_their_own_pst():
         assert atxa + atxn + stam == int(line["VNAA"]) + atxa // 20
 
 
+def test_match_header_gives_no_tax_to_an_exempt_line():
+    """The HST is split over the lines that carry it: an exempt line's pay item has no tax and no taxable amount
+    (it was weighted by net amount, so the exempt line got HST and VLATXN could go negative)."""
+    doc = json.loads((SAMPLES / "ground_truth" / f"{ON}.json").read_text())
+    doc["line_items"][-1]["taxes_applied"] = []
+    exempt = doc["line_items"][-1]["amount"]
+    taxable = round(doc["subtotal"] - exempt, 2)
+    hst = round(taxable * 0.13, 2)
+    doc["tax_lines"][0].update(taxable_amount=taxable, tax_amount=hst)
+    doc.update(tax_total=hst, grand_total=round(doc["subtotal"] + hst, 2))
+    inv = _invoice(ON, **doc)
+    settings = jde.JdeSettings(line_numbering=jde.MATCH_HEADER, amount_mode=jde.AMOUNT_TAX)
+    assert jde.validate([inv], settings, AN8) == {}
+    heads = _files([inv], settings)[jde.HEADER_FILE]
+    taxes = [(int(h["VLATXA"]), int(h["VLATXN"]), int(h["VLSTAM"])) for h in heads]
+    assert taxes[-1] == (0, round(exempt * 100), 0)
+    assert all(atxn == 0 for _, atxn, _ in taxes[:-1])  # the taxable lines: all taxable
+    assert sum(t[0] for t in taxes) == round(taxable * 100) and sum(t[2] for t in taxes) == round(hst * 100)
+    assert sum(sum(t) for t in taxes) == round(doc["grand_total"] * 100)
+
+
+def _yen_invoice(old_distribution=False):
+    """Three 10-yen lines with BC PST (2 yen), one 1,000-yen line without; GST 52 yen on everything. An old
+    distribution was spread in cents (10.66 + 10.67 + 10.67): rounded line by line to the yen, that is 33, not 32."""
+    doc = json.loads((SAMPLES / "ground_truth" / f"{BC}.json").read_text())
+    item = doc["line_items"][0]
+    doc["line_items"] = [
+        {**item, "line_number": n, "quantity": 1, "unit_price": a, "amount": a, "taxes_applied": t}
+        for n, (a, t) in enumerate([(10.0, ["GST", "PST"])] * 3 + [(1000.0, ["GST"])], 1)
+    ]
+    doc["tax_lines"] = [
+        {"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": 1030.0, "tax_amount": 52.0},
+        {"tax_type": "PST", "province": "BC", "rate": 0.07, "taxable_amount": 30.0, "tax_amount": 2.0},
+    ]
+    doc.update(subtotal=1030.0, tax_total=54.0, grand_total=1084.0, currency="CAD" if old_distribution else "JPY")
+    inv = _invoice(BC, **doc)
+    inv["final_output"]["currency"] = "JPY"
+    return inv
+
+
+@pytest.mark.parametrize("old_distribution", [False, True])
+@pytest.mark.parametrize("numbering", [jde.SEQUENTIAL, jde.MATCH_HEADER])
+def test_a_yen_voucher_balances_in_whole_yen(old_distribution, numbering):
+    inv = _yen_invoice(old_distribution)
+    if old_distribution:
+        assert any(e["amount"] != round(e["amount"]) for e in inv["final_output"]["gl_distribution"])
+    for mode in (jde.AMOUNT_GROSS, jde.AMOUNT_TAX):
+        settings = jde.JdeSettings(currencies=["CAD", "JPY"], line_numbering=numbering, amount_mode=mode)
+        assert jde.validate([inv], settings, AN8) == {}
+        files = _files([inv], settings)
+        heads, lines = files[jde.HEADER_FILE], files[jde.DIST_FILE]
+        if mode == jde.AMOUNT_GROSS:
+            gross = sum(int(h["VLACR"]) for h in heads)
+        else:
+            gross = sum(int(h["VLCTXA"]) + int(h["VLCTXN"]) + int(h["VLCTAM"]) for h in heads)
+            assert sum(int(h["VLCTAM"]) for h in heads) == 54
+        assert gross == 1084  # whole yen, implied decimals: none
+        assert sum(int(r["VNACR"]) for r in lines) + 52 == 1084  # the G/L lines + the recoverable GST
+
+
 def test_exchange_rate_keeps_every_decimal():
     """VLCRR carries 7 decimals in E1: the rate typed in Settings must not be cut to 6 significant digits."""
     for rate, text in ((1.3654321, "1.3654321"), (0.0000977, "0.0000977"), (1234567.0, "1234567"), (1.37, "1.37")):
@@ -308,7 +368,7 @@ def test_an8_from_the_vendor_master_and_the_overrides():
     final = _invoice(ON)["final_output"]
     ids = {"northwind it solutions": "4410"}
     assert jde.resolve_an8(final, ids, jde.JdeSettings()) == "4410"
-    by_gst = {"gst:123456789rt0001": "4411"}
+    by_gst = {"gst:123456782rt0001": "4411"}
     assert jde.resolve_an8(final, by_gst, jde.JdeSettings()) == "4411"
     override = jde.JdeSettings(an8_overrides={vendor_key(final["vendor_name"]): "777"})
     assert jde.resolve_an8(final, ids, override) == "777"

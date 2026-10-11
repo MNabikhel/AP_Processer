@@ -39,7 +39,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import launch  # noqa: E402  (the one setup: .venv, packages, models, shortcut, readiness)
 
-from ap_coder.envfile import clean_url, read_env, write_env  # noqa: E402
+from ap_coder.envfile import PLACEHOLDER, clean_url, read_env, write_env  # noqa: E402
 from ap_coder.offline import internet_allowed  # noqa: E402
 
 WINDOWS = os.name == "nt"
@@ -293,6 +293,18 @@ def display_name() -> str:
     return getpass.getuser()
 
 
+def write_example_env(env: Path) -> None:
+    """A new ``.env`` from ``.env.example``, with every example placeholder (``<your-resource>``) commented out,
+    so the app never takes an example endpoint for a real one."""
+    lines = []
+    for line in (ROOT / ".env.example").read_text(encoding="utf-8-sig").splitlines():
+        if PLACEHOLDER in line and not line.lstrip().startswith("#"):
+            line = "# " + line
+        lines.append(line)
+    env.parent.mkdir(parents=True, exist_ok=True)
+    env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def configure_azure(c: Console, data: Path) -> Path:
     c.step("Azure settings")
     env = data / ".env"
@@ -303,7 +315,7 @@ def configure_azure(c: Console, data: Path) -> Path:
             project_env.rename(ROOT / ".env.moved-to-data-folder")
             c.ok(f"moved your existing .env to {env}")
         else:
-            shutil.copy2(ROOT / ".env.example", env)
+            write_example_env(env)
             c.ok(f"created {env}")
     elif project_env.exists():
         c.warn(f"There is also a .env in {ROOT}; AP Coder uses the one in the data folder: {env}")

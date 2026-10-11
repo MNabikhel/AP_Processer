@@ -75,3 +75,17 @@ def test_an_inline_comment_is_not_part_of_the_value(tmp_path):
 
     write_env(env, {"AP_REVIEWER": "Jo"})  # the installer saving one answer keeps the others as they read
     assert read_env(env)["AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"] == "https://di-prod.cognitiveservices.azure.com/"
+
+
+def test_a_comment_right_after_the_equals_sign_is_an_empty_value(tmp_path):
+    """``KEY= #paste key here`` is an empty key (the hint is not the key), as python-dotenv reads it; ``KEY=#x``,
+    ``abc#def``, a URL's ``#frag`` and quoted values keep their ``#``."""
+    from dotenv import dotenv_values
+
+    env = tmp_path / ".env"
+    lines = ["AZURE_OPENAI_API_KEY= #paste key here", "A=\t# tab", "B=#notcomment", "C=abc#def", "D=https://x.y/#frag",
+             'E="abc #def"', "F='x #y'  # note", "G=val # comment", "H=  "]  # fmt: skip
+    env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    values = read_env(env)
+    assert values == {k: v for k, v in dotenv_values(env).items() if v is not None}
+    assert values["AZURE_OPENAI_API_KEY"] == "" and values["B"] == "#notcomment"

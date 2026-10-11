@@ -44,6 +44,11 @@ def _age_color(label: str) -> str:
     return WARN_AMBER if label.startswith(("8", "15")) else OK_GREEN
 
 
+def _per_currency(totals: dict[str, float]) -> str:
+    """Amounts kept apart by currency ("12 CAD + 3,000 JPY"): adding yen to dollars means nothing."""
+    return " + ".join(f"{t:,.0f} {c}" for c, t in totals.items()) or "0"
+
+
 def _operations_card(store) -> None:
     ops = operations(store)
     st.html(ui.section_title("AP operations"))
@@ -79,7 +84,7 @@ def _operations_card(store) -> None:
                     f"{taken} / {taken + missed}",
                     "sell",
                     "green" if not missed else "amber",
-                    f"${taken_amount:,.0f} taken · ${missed_amount:,.0f} missed"
+                    f"{_per_currency(taken_amount)} taken · {_per_currency(missed_amount)} missed"
                     if taken + missed
                     else "no discount terms yet",
                 ),

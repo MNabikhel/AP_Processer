@@ -3,6 +3,7 @@ import copy
 from ap_coder.extraction import result_from_raw
 from ap_coder.reference_data import UNASSIGNED
 from ap_coder.schema import InvoiceCoding
+from ap_coder.tax import build_gl_distribution
 from ap_coder.validation import validate_coding
 
 
@@ -74,3 +75,24 @@ def test_cross_check_against_prebuilt_invoice(reference, ground_truth):
     codes = _codes(report)
     assert "DI_INVOICE_ID_DIFFERS" not in codes  # punctuation-insensitive match
     assert {"DI_DATE_DIFFERS", "DI_AMOUNT_DIFFERS", "LOW_OCR_CONFIDENCE"} <= codes
+
+
+def test_posting_checked_as_it_is_posted_line_by_line(reference, ground_truth):
+    """Two lines of 10.005 post as 10.00 each (every posting line is rounded to the cent): the export would be
+    22.60 for a 22.61 invoice, so the check must not add the lines up first (20.01) and pass it."""
+    gt = copy.deepcopy(ground_truth)
+    item = gt["line_items"][0]
+    gt["line_items"] = [
+        {**item, "line_number": n, "quantity": 1, "unit_price": 10.005, "amount": 10.005} for n in (1, 2)
+    ]
+    gt["tax_lines"] = [{"tax_type": "HST", "province": "ON", "rate": 0.13, "taxable_amount": 20.01, "tax_amount": 2.60}]
+    gt.update(subtotal=20.01, tax_total=2.60, grand_total=22.61)
+    coding = InvoiceCoding.model_validate(gt)
+    report = validate_coding(coding, reference)
+    posted = round(sum(e["amount"] for e in build_gl_distribution(coding, reference.tax)), 2)
+    assert posted != 22.61 and report.checks["posting_total"] == posted
+    assert "POSTING_UNBALANCED" in _codes(report) and report.requires_review is True
+    # Amounts to the cent balance.
+    gt["line_items"][0].update(unit_price=10.01, amount=10.01)
+    gt["line_items"][1].update(unit_price=10.00, amount=10.00)
+    assert "POSTING_UNBALANCED" not in _codes(validate_coding(InvoiceCoding.model_validate(gt), reference))

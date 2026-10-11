@@ -1,6 +1,6 @@
 Red River Office Interiors Ltd.
 1450 Waverley Street, Winnipeg, MB R3T 0P7
-GST No. 741852963 RT0001    MB RST No. 160482-7
+GST No. 741852966 RT0001    MB RST No. 160482-7
 
 # SALES INVOICE
 

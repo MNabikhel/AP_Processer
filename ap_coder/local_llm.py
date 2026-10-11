@@ -45,10 +45,10 @@ _VISION_HINTS = (
 )  # fmt: skip
 
 LM_STUDIO_STEPS = (
-    "Install LM Studio from lmstudio.ai.",
-    "Download and load a small instruct model, e.g. Qwen 3.5 9B or Qwen 2.5 7B Instruct (any 3B–9B instruct "
-    "model), with Context Length 8192. LM Studio 0.4.8 or newer, so a thinking model can be told not to think.",
-    "Developer tab → Start server.",
+    "Open LM Studio. Your IT team installs it with the models already in it: the chat model (Qwen 3.5 9B, or "
+    "another 7B–9B instruct model, Q4_K_M) and OvisOCR2. If it isn't on this computer, ask IT.",
+    "In LM Studio: Developer tab → Start server.",
+    "If no model is loaded: Models in LM Studio (below) → pick the chat model → Load.",
 )
 
 
@@ -301,12 +301,22 @@ def rejects_format(exc: Exception) -> bool:
     return status == 500 and ("response_format" in text or "json_schema" in text or "grammar" in text)
 
 
-def refuses_extra_fields(exc: Exception) -> bool:
-    """A strict server refusing a field it doesn't know (the thinking switch), not ``response_format``."""
+# The fields AP sends that a strict server may not know, as its refusal names them: the thinking switch
+# (reasoning_effort, chat_template_kwargs.enable_thinking) and the page reader's sampling on a second reading.
+THINKING_FIELDS = ("reasoning", "thinking", "chat_template_kwargs")
+SAMPLING_FIELDS = ("top_k", "presence_penalty")
+
+
+def refuses_extra_fields(exc: Exception, names: tuple[str, ...] = THINKING_FIELDS + SAMPLING_FIELDS) -> bool:
+    """A strict server refusing a field it doesn't know (the thinking switch), not ``response_format``: a 400 or 422
+    whose message names one of ``names``. Any other 400 (LM Studio couldn't load the model, say) is not one: asking
+    again without the switch would only hide the real error."""
     if getattr(exc, "status_code", None) not in {400, 422} or context_overflow(exc):
         return False
     text = str(exc).lower()
-    return not any(word in text for word in ("response_format", "json_schema", "json_object", "grammar"))
+    if any(word in text for word in ("response_format", "json_schema", "json_object", "grammar")):
+        return False
+    return any(name in text for name in names)
 
 
 # --- Thinking models --------------------------------------------------------------------------------------------

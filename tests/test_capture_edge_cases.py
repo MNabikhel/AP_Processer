@@ -350,13 +350,37 @@ def test_unit_prices_to_three_decimals_are_not_thousands(tmp_path):
     assert got == [(1000.0, 1.459, 1459.0), (200.0, 0.125, 25.0)], got
 
 
+def test_space_thousands_with_a_decimal_point_are_one_amount(tmp_path):
+    """A space between the thousands and a decimal point ("1 050.00") is one amount on a totals line and as a single
+    value: a text PDF's "Subtotal 1 000.00 / GST 50.00 / Total Due 1 050.00" is not read 0 + 50 = 50."""
+    from ap_coder.capture import read_fields
+    from ap_coder.capture.normalize import find_amounts, parse_amount
+
+    singles = {"1 234.56": 1234.56, "$1 234.56": 1234.56, "CAD 1 234.56": 1234.56, "1 234": 1234.0,
+               "1 234.56 $": 1234.56, "12 345.67": 12345.67, "1 234 567.89": 1234567.89}  # fmt: skip
+    for text, value in singles.items():
+        assert parse_amount(text) == value, text
+    assert [v for v, _, _ in find_amounts("Total Due 1 050.00")] == [1050.0]
+    assert [v for v, _, _ in find_amounts("Subtotal 1 100.00 GST 55.00")] == [1100.0, 55.0]  # a label: never split
+    assert [v for v, _, _ in find_amounts("Total 1 234")] == [1234.0]
+    assert [v for v, _, _ in find_amounts("1 050.00")] == [1050.0]  # nothing on the line it adds up to
+    spans = [(a, b) for _, a, b in find_amounts("Bolts 3 250.00 750.00")]
+    assert [("Bolts 3 250.00 750.00")[a:b].strip() for a, b in spans] == ["3", "250.00", "750.00"]
+    lines = [(60, 60, "Acme Supply Ltd."), (380, 500, "Subtotal"), (500, 500, "1 000.00"), (380, 515, "GST 5%"),
+             (500, 515, "50.00"), (380, 530, "Total Due"), (500, 530, "1 050.00")]  # fmt: skip
+    fields = read_fields(build_layout(_pdf(tmp_path, lines), ocr=False))
+    got = {f: (c[0].value if c else None) for f, c in fields.items()}
+    assert (got["subtotal"], got["gst_amount"], got["grand_total"]) == (1000.0, 50.0, 1050.0)
+
+
 def test_a_quantity_beside_its_price_is_not_one_spaced_thousand(tmp_path):
     """A row's "10 100.00" (quantity 10 set close to its price 100.00) is not 10,100; "1 234,56" and "1 234 567" are
     still French thousands, and a French "3 250,00" quantity and price is told apart by the line's amount."""
     from ap_coder.capture.normalize import find_amounts, parse_amount
 
-    assert [v for v, _, _ in find_amounts("10 100.00")] == [10.0, 100.0]
+    assert [v for v, _, _ in find_amounts("Widgets 10 100.00 1,000.00")] == [10.0, 100.0, 1000.0]
     assert [v for v, _, _ in find_amounts("Bolts 3 250.00 750.00")] == [3.0, 250.0, 750.0]
+    assert [v for v, _, _ in find_amounts("10 100")] == [10.0, 100.0]  # whole numbers: a quantity and a price
     assert parse_amount("1 234,56 $") == 1234.56 and parse_amount("1 234 567") == 1234567.0
     rows = [(50, 250, "Widgets"), (330, 250, "10"), (345, 250, "100.00"), (500, 250, "1,000.00"),
             (380, 320, "Subtotal"), (500, 320, "1,000.00"), (380, 350, "Total"), (500, 350, "1,000.00")]  # fmt: skip

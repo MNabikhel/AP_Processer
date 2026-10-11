@@ -115,6 +115,25 @@ def test_pst_and_qst_to_self_assess(tmp_path):
     assert "X-1" in text and "6%" in text
 
 
+def test_pst_printed_as_zero_is_not_charged(tmp_path):
+    """A British Columbia invoice printing "PST 0.00" charged no PST: it is on the self-assessment list (as
+    the tax checks see it). One from BC's HST years (2010-07 to 2013-03) owes no PST."""
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    doc = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text())
+    zero = {**doc, "invoice_number": "Z-1", "tax_lines": [dict(t) for t in doc["tax_lines"]]}
+    zero["tax_lines"][1]["tax_amount"] = 0.0
+    zero["tax_total"] = zero["tax_lines"][0]["tax_amount"]
+    zero["grand_total"] = round(zero["subtotal"] + zero["tax_total"], 2)
+    hst = {"tax_type": "HST", "province": "BC", "rate": 0.12, "taxable_amount": 2726.0, "tax_amount": 327.12}
+    hst_years = {**doc, "invoice_number": "H-1", "invoice_date": "2012-05-01", "tax_total": 327.12, "tax_lines": [hst]}
+    for n, d in enumerate((doc, zero, hst_years)):
+        invoice_id = store.add_invoice(tmp_path / f"{n}.pdf", d, {})
+        store.approve_invoice(invoice_id, d, "Jane")
+    (item,) = taxreturn.self_assessment(store, dt.date(2010, 1, 1), dt.date(2030, 12, 31))
+    assert (item.invoice_number, item.province, item.tax_type, item.rate) == ("Z-1", "BC", "PST", 0.07)
+
+
 def test_gst_is_one_line_whatever_the_province(tmp_path):
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)

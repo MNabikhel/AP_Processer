@@ -1,6 +1,6 @@
 Services Informatiques Laurentides Inc.
 1250 boul. René-Lévesque O., Montréal (QC) H3B 4W8
-TPS/GST : 987654321 RT0001    TVQ/QST : 1234567890 TQ0001
+TPS/GST : 987654324 RT0001    TVQ/QST : 1234567890 TQ0001
 
 # FACTURE / INVOICE
 

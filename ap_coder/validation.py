@@ -17,7 +17,7 @@ from typing import Any
 from .extraction import ExtractionResult
 from .reference_data import UNASSIGNED, ReferenceData
 from .schema import InvoiceCoding
-from .tax import check_taxes
+from .tax import build_gl_distribution, check_taxes
 
 ERROR, WARNING, INFO = "error", "warning", "info"  # info: worth knowing, no penalty
 _ERROR_PENALTY = 0.6
@@ -163,7 +163,9 @@ def validate_coding(
         )
     # The GL posting (line amounts + tax lines) must equal the amount payable to the cent. The checks
     # above each allow a little rounding; this catches small differences that add up (e.g. a misread line).
-    posting_total = round(line_sum + sum(t.tax_amount for t in coding.tax_lines), 2)
+    # Added up from the posting itself, which rounds each line to the cent: two lines of 10.005 post as
+    # 10.00 + 10.00, so summing first (20.01) would pass an invoice whose export is a cent off.
+    posting_total = round(sum(e["amount"] for e in build_gl_distribution(coding, reference.tax)), 2)
     checks["posting_total"] = posting_total
     if coding.line_items and abs(posting_total - coding.grand_total) > 0.005:
         add(

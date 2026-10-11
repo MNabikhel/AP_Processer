@@ -509,15 +509,20 @@ def _training_card(store) -> None:
         st.markdown("#### Export training data")
         picked = training_invoices(store)
         invoices = picked["invoices"]
+        left_out = []  # approved invoices a training set never includes, and why
+        if picked["demo"] or picked["unreviewed"]:
+            left_out.append("Demo invoices and invoices approved without a person are never included.")
+        if picked["bulk"]:
+            n = picked["bulk"]
+            left_out.append(
+                f"{ui.plural(n, 'bulk-approved invoice')} {'is' if n == 1 else 'are'} left out: nobody opened "
+                f"{'it' if n == 1 else 'them'}."
+            )
         if not invoices:
             st.caption(
                 "Each invoice AP approves becomes an example to fine-tune a vision model on your own suppliers' "
                 "invoices: its pages, with the values AP approved. "
-                + (
-                    "None to include yet: demo invoices and invoices approved without a person are never included."
-                    if picked["demo"] or picked["unreviewed"]
-                    else "Nothing approved yet."
-                )
+                + (" ".join(["None to include yet."] + left_out) if left_out else "Nothing approved yet.")
             )
             return
         missing = sum(1 for i in invoices if not Path(i["source_path"] or "").is_file())
@@ -527,9 +532,7 @@ def _training_card(store) -> None:
         ]
         if missing:
             notes.append(f"{ui.plural(missing, 'invoice')} whose file is no longer on this computer will be left out.")
-        if picked["demo"] or picked["unreviewed"]:
-            notes.append("Demo invoices and invoices approved without a person are never included.")
-        st.caption(" ".join(notes))
+        st.caption(" ".join(notes + left_out))
         # Prepared for exactly these approvals: an invoice reopened, corrected and approved again (the count
         # unchanged) makes a new ZIP, not the one with the old values.
         made_for = hashlib.sha1(

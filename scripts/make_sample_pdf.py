@@ -26,7 +26,7 @@ SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 INVOICES = {
     "northwind_ON_HST_NW-2026-0912": {
         "supplier": ["Northwind IT Solutions Inc.", "200 Bay Street, Suite 1500, Toronto, ON M5J 2J2",
-                     "GST/HST Reg. No: 123456789 RT0001"],
+                     "GST/HST Reg. No: 123456782 RT0001"],
         "title": "INVOICE",
         "meta": ["Invoice No: NW-2026-0912", "Invoice Date: September 14, 2026", "Due Date: October 14, 2026",
                  "PO Number: PO-88213"],
@@ -51,7 +51,7 @@ INVOICES = {
     },
     "laurentides_QC_TPS_TVQ_SIL-4471": {
         "supplier": ["Services Informatiques Laurentides Inc.", "1250 boul. René-Lévesque O., Montréal (QC) H3B 4W8",
-                     "TPS/GST : 987654321 RT0001    TVQ/QST : 1234567890 TQ0001"],
+                     "TPS/GST : 987654324 RT0001    TVQ/QST : 1234567890 TQ0001"],
         "title": "FACTURE / INVOICE",
         "meta": ["Facture no : SIL-4471", "Date : 2026-10-01", "Échéance : 2026-10-31"],
         "bill_to": ["Facturer à : Fabrikam Canada Ltée, Attn: Facilities / Installations",
@@ -71,7 +71,7 @@ INVOICES = {
     },
     "pacific_BC_GST_PST_PO-77120": {
         "supplier": ["Pacific Office Supply Ltd.", "880 West Georgia Street, Vancouver, BC V6C 2W6",
-                     "GST No. 555666777 RT0001    PST No. PST-1234-5678"],
+                     "GST No. 555666775 RT0001    PST No. PST-1234-5678"],
         "title": "INVOICE",
         "meta": ["Invoice #: PO-77120", "Date: 2026-10-05", "Terms: Net 15"],
         "bill_to": ["Ship To: Fabrikam Canada Ltd. - Vancouver office, Requested by: IT Operations",
@@ -92,7 +92,7 @@ INVOICES = {
     # Alberta: GST only (no provincial sales tax), mixed GL accounts and cost centers incl. inbound freight.
     "chinook_AB_GST_CCO-26-10418": {
         "supplier": ["Chinook Courier & Office Services Ltd.", "3220 - 12 Street NE, Calgary, AB T2E 7S9",
-                     "GST Registration: 823145967 RT0001"],
+                     "GST Registration: 823145966 RT0001"],
         "title": "INVOICE",
         "layout": "split",
         "accent": (0.80, 0.33, 0.10),
@@ -117,7 +117,7 @@ INVOICES = {
     # Manitoba: GST + RST 7% (recorded as PST MB); the design service is RST-exempt, so taxes differ per line.
     "redriver_MB_GST_RST_RRO-55821": {
         "supplier": ["Red River Office Interiors Ltd.", "1450 Waverley Street, Winnipeg, MB R3T 0P7",
-                     "GST No. 741852963 RT0001    MB RST No. 160482-7"],
+                     "GST No. 741852966 RT0001    MB RST No. 160482-7"],
         "title": "SALES INVOICE",
         "accent": (0.55, 0.10, 0.15),
         "meta": ["Invoice: RRO-55821", "Date: 2026-08-21", "Customer PO: PO-90377", "Terms: Net 30"],
@@ -142,7 +142,7 @@ INVOICES = {
     # Nova Scotia: HST at the reduced 14% rate in force since 2025-04-01; legal fees go to CC800 by policy.
     "harbourview_NS_HST_HPS-2026-0347": {
         "supplier": ["Harbourview Professional Services LLP", "1801 Hollis Street, Suite 900, Halifax, NS B3J 3N4",
-                     "HST Registration No. 356201847 RT0001"],
+                     "HST Registration No. 356201848 RT0001"],
         "title": "INVOICE - PROFESSIONAL SERVICES",
         "layout": "split",
         "accent": (0.10, 0.25, 0.45),
@@ -194,7 +194,7 @@ INVOICES = {
     # Credit note (negative amounts) reversing part of northwind_ON_HST_NW-2026-0912.
     "northwind_ON_HST_CN-2026-0047": {
         "supplier": ["Northwind IT Solutions Inc.", "200 Bay Street, Suite 1500, Toronto, ON M5J 2J2",
-                     "GST/HST Reg. No: 123456789 RT0001"],
+                     "GST/HST Reg. No: 123456782 RT0001"],
         "title": "CREDIT NOTE",
         "meta": ["Credit Note No: CN-2026-0047", "Credit Date: September 28, 2026",
                  "Original Invoice: NW-2026-0912 (September 14, 2026)", "PO Number: PO-88213"],
@@ -214,7 +214,7 @@ INVOICES = {
     # French-language Quebec invoice over two pages: TPS/TVQ, "1 234,56 $" amounts, several cost centers.
     "montroyal_QC_TPS_TVQ_ACMR-2026-1187": {
         "supplier": ["Agence Créative Mont-Royal inc.", "4200 boul. Saint-Laurent, bureau 600, Montréal (QC) H2W 2R2",
-                     "No TPS : 812345678 RT0001    No TVQ : 1218765432 TQ0001"],
+                     "No TPS : 812345676 RT0001    No TVQ : 1218765432 TQ0001"],
         "title": "FACTURE",
         "meta": ["Facture no : ACMR-2026-1187", "Date de facturation : 22 septembre 2026",
                  "Échéance : 22 octobre 2026", "Bon de commande : BC-4410"],
@@ -248,7 +248,7 @@ INVOICES = {
     # Saskatchewan: GST + PST 6%, prepaid licence and capital-threshold hardware.
     "prairie_SK_GST_PST_PNS-104882": {
         "supplier": ["Prairie Network Supply Ltd.", "1150 8th Avenue, Regina, SK S4R 1C9",
-                     "GST# 609274185 RT0001    SK PST# 4471920"],
+                     "GST# 609274188 RT0001    SK PST# 4471920"],
         "title": "INVOICE",
         "accent": (0.75, 0.60, 0.05),
         "meta": ["Invoice No.: PNS-104882", "Invoice Date: 2026-06-12", "Order Ref: PO-89904", "Terms: Net 30"],

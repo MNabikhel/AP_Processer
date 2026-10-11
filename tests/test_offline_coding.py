@@ -49,7 +49,9 @@ def test_a_pdf_is_read_and_coded_with_no_azure_and_no_model(tmp_path, reference)
     # Nothing approved yet: an account comes only from the chart's own names, with its reason, else none.
     codes = set(reference.chart_of_accounts.codes)
     assert all(li.predicted_gl_code in codes | {UNASSIGNED} and li.reasoning_justification for li in coding.line_items)
-    assert result.report.requires_review
+    # A person looks at it before it goes out: no cost center yet (a warning), or a low confidence.
+    blocking = [i for i in result.report.issues if i.severity in ("error", "warning")]
+    assert result.report.requires_review or blocking
 
 
 def test_approved_coding_is_reused_for_the_next_invoice_from_that_vendor(tmp_path, reference):

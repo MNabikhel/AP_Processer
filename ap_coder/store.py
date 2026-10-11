@@ -21,7 +21,7 @@ import json
 import re
 import shutil
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -122,12 +122,14 @@ CREATE TABLE IF NOT EXISTS page_reads (
     invoice_id INTEGER PRIMARY KEY, status TEXT NOT NULL, model TEXT NOT NULL DEFAULT '',
     pages INTEGER NOT NULL DEFAULT 0, seconds REAL NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL);
+    updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS page_reads_status ON page_reads (status, created_at);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
-# interrupted (the computer slept, the app was closed): it waits in line again.
+# interrupted (the computer slept, the app was closed): it waits in line again. ``reader`` names the process
+# reading it (``page_worker.READER_ID``), so a read whose process is gone is put back in line at once
+# (``release_page_reads``); ``tries``: reads cut off by the model server since it was put in line.
 PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED = "waiting", "reading", "done", "failed", "skipped"
 PAGE_READ_STATUSES = (PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED)
 STALE_READING_HOURS = 2
@@ -258,6 +260,12 @@ class Store:
                     conn.execute("UPDATE invoices SET currency = ? WHERE id = ?", (currency, r["id"]))
         if version < 13:  # credit notes were given a due date like invoices
             conn.execute("UPDATE invoices SET due_date = NULL WHERE grand_total <= 0")
+        # The page reader's queue remembers who is reading an invoice and how many reads were cut off (added within
+        # schema 15: looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(page_reads)")}
+        for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0")):
+            if columns and column not in columns:
+                conn.execute(f"ALTER TABLE page_reads ADD COLUMN {column} {kind}")
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
         from .capture.workflow import AUTONOMOUS_REVIEWER
@@ -826,14 +834,20 @@ class Store:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM invoices WHERE meta LIKE '%\"demo\": true%'").fetchone()[0])
 
-    def approved_since(self, since_iso: str) -> int:
-        with self._conn() as conn:
-            return int(
-                conn.execute(
-                    "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?",
-                    (APPROVED, PENDING, since_iso),
-                ).fetchone()[0]
+    def approved_since(self, since_iso: str, reviewer: str | None = None) -> int:
+        """Invoices approved since ``since_iso`` (and still approved, or waiting for a second approver). With
+        ``reviewer``: only those this person approved, first or second approval (names compared without case)."""
+        if reviewer is None:
+            sql, args = "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?", ()
+        else:
+            sql = (
+                "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND ((reviewed_at >= ? AND "
+                "lower(trim(reviewer)) = ?) OR (second_reviewed_at >= ? AND lower(trim(second_reviewer)) = ?))"
             )
+            me = reviewer.strip().lower()
+            args = (me, since_iso, me)
+        with self._conn() as conn:
+            return int(conn.execute(sql, (APPROVED, PENDING, since_iso, *args)).fetchone()[0])
 
     def approve_invoice(
         self,
@@ -871,6 +885,16 @@ class Store:
         # Lines a fixed coding rule set: the AI's own answer is what its accuracy is measured on.
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
+
+        def kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str) -> bool:
+            """Whether the reviewer kept what was proposed. A GL or cost center left blank ("UNASSIGNED", or a
+            cost center still to pick) was not proposed: filling it in confirms the rest, it corrects nothing.
+            A line with nothing proposed at all (or added by the reviewer) is the reviewer's own coding."""
+            gl_blank, cc_blank = s_gl in (None, "", UNASSIGNED), (s_cc or "") in ("", UNASSIGNED)
+            if s_gl is None or (gl_blank and cc_blank):
+                return False
+            return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
             s_cc = suggestion.get("predicted_cost_center", "") if suggestion else None
@@ -879,11 +903,12 @@ class Store:
                 continue  # not a coding decision: nothing to learn from it
             rule = by_rule.get(suggestion.get("line_number")) if suggestion else None
             kept_rule = rule is not None and rule.get("gl_to") == f_gl and (rule.get("cc_to") or "") == (f_cc or "")
-            if not kept_rule and (s_gl != f_gl or (s_cc or "") != (f_cc or "")):
+            if not kept_rule and not kept(s_gl, s_cc, f_gl, f_cc):
                 reviewer_changed += 1
             if rule is not None:  # the AI's own answer, as first recorded (not a rule's)
                 s_gl, s_cc = rule.get("gl_from"), rule.get("cc_from", "")
-            outcome = ACCEPTED if (s_gl == f_gl and (s_cc or "") == (f_cc or "")) else CORRECTED
+            # Accuracy measures what the AI proposed: the blanks it left are not counted against it.
+            outcome = ACCEPTED if kept(s_gl, s_cc, f_gl, f_cc) else CORRECTED
             counts[outcome] += 1
             feedback_rows.append(
                 (
@@ -1723,16 +1748,17 @@ class Store:
                     reason = CASE WHEN {keep} THEN page_reads.reason ELSE excluded.reason END,
                     requested_by = CASE WHEN {keep} THEN page_reads.requested_by ELSE excluded.requested_by END,
                     created_at = CASE WHEN {waiting} THEN page_reads.created_at ELSE excluded.created_at END,
-                    error = '', updated_at = excluded.updated_at
+                    error = '', tries = 0, reader = '', updated_at = excluded.updated_at
                     WHERE page_reads.status != 'reading' OR page_reads.updated_at < ?""",
                 (invoice_id, reason or "", requested_by or "", now, now, _stale_before()),
             )
             return cur.rowcount > 0
 
-    def next_page_read(self, invoice_id: int | None = None) -> dict[str, Any] | None:
-        """The invoice the page reader should read next (the one waiting longest), marked as being read; None
-        when nothing waits. With ``invoice_id``: that invoice, if it is in line (the one AP asked for, read
-        first), else None. Two readers (the dashboard's and ``read-pages``) never take the same invoice."""
+    def next_page_read(self, invoice_id: int | None = None, reader: str = "") -> dict[str, Any] | None:
+        """The invoice the page reader should read next (the one waiting longest), marked as being read (by
+        ``reader``: the process reading it); None when nothing waits. With ``invoice_id``: that invoice, if it is in
+        line (the one AP asked for, read first), else None. Two readers (the dashboard's and ``read-pages``) never
+        take the same invoice."""
         now, stale = _now(), _stale_before()
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # the write lock from the choice to the mark
@@ -1748,28 +1774,49 @@ class Store:
             if row is None:
                 return None
             conn.execute(
-                "UPDATE page_reads SET status = 'reading', error = '', updated_at = ? WHERE invoice_id = ?",
-                (now, row[0]),
+                "UPDATE page_reads SET status = 'reading', error = '', reader = ?, updated_at = ? WHERE invoice_id = ?",
+                (reader or "", now, row[0]),
             )
             taken = conn.execute("SELECT * FROM page_reads WHERE invoice_id = ?", (row[0],)).fetchone()
         return dict(taken)
 
     def finish_page_read(
-        self, invoice_id: int, status: str, model: str = "", pages: int = 0, seconds: float = 0.0, error: str = ""
-    ) -> bool:
+        self, invoice_id: int, status: str, model: str = "", pages: int = 0, seconds: float = 0.0, error: str = "",
+        *, tries: int | None = None, only_if_reading: bool = False,
+    ) -> bool:  # fmt: skip
         """How a page read ended: ``done``, ``failed`` (``error`` says why), ``skipped`` (nothing to read, or the
-        invoice was dealt with meanwhile) or ``waiting`` (stopped part-way: it keeps its place in line). False
-        when the invoice is no longer in line (deleted meanwhile)."""
+        invoice was dealt with meanwhile) or ``waiting`` (stopped part-way: it keeps its place in line). ``tries``:
+        the reads cut off by the model server so far (None: as it was; ``done`` starts again from 0).
+        ``only_if_reading``: only while it is still marked as being read. False when the invoice is no longer in
+        line (deleted meanwhile)."""
         if status not in (PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED, PAGE_WAITING):
             raise ValueError(f"unknown page read status {status!r}")
+        if tries is None and status == PAGE_DONE:
+            tries = 0
         with self._conn() as conn:
             cur = conn.execute(
-                "UPDATE page_reads SET status = ?, model = ?, pages = ?, seconds = ?, error = ?, updated_at = ? "
-                "WHERE invoice_id = ?",
+                "UPDATE page_reads SET status = ?, model = ?, pages = ?, seconds = ?, error = ?, updated_at = ?, "
+                "reader = '', tries = COALESCE(?, tries) WHERE invoice_id = ?"
+                + (" AND status = 'reading'" if only_if_reading else ""),
                 (status, model or "", int(pages or 0), round(float(seconds or 0), 2), (error or "")[:2000], _now(),
-                 invoice_id),
+                 tries, invoice_id),
             )  # fmt: skip
             return cur.rowcount > 0
+
+    def release_page_reads(self, alive: Callable[[str], bool], why: str = "") -> int:
+        """Put back in line every invoice marked as being read by a reader that isn't reading any more
+        (``alive(reader)`` is False: its process was closed or killed part way). How many were put back."""
+        why = why or "interrupted (AP Coder was closed while it was read): it is read again"
+        with self._conn() as conn:
+            rows = conn.execute("SELECT invoice_id, reader FROM page_reads WHERE status = 'reading'").fetchall()
+            gone = [(r["invoice_id"], r["reader"]) for r in rows if not alive(r["reader"] or "")]
+            for invoice_id, reader in gone:
+                conn.execute(
+                    "UPDATE page_reads SET status = 'waiting', reader = '', error = ?, updated_at = ? "
+                    "WHERE invoice_id = ? AND status = 'reading' AND reader = ?",
+                    (why, _now(), invoice_id, reader),
+                )
+        return len(gone)
 
     def page_read(self, invoice_id: int) -> dict[str, Any] | None:
         """{invoice_id, status, model, pages, seconds, reason, error, requested_by, created_at, updated_at}, or
@@ -2048,7 +2095,19 @@ class Store:
                 )
             }
             masters = {r["vendor_key"]: dict(r) for r in conn.execute("SELECT * FROM vendors")}
+            spend: dict[str, dict[str, float]] = {}
+            for r in conn.execute(
+                """SELECT vendor_key, COALESCE(NULLIF(UPPER(TRIM(currency)), ''), 'CAD') currency,
+                          SUM(grand_total) total
+                   FROM invoices WHERE vendor_key != '' AND status = 'approved' GROUP BY vendor_key, 2"""
+            ):
+                spend.setdefault(r["vendor_key"], {})[r["currency"]] = round(r["total"] or 0, 2)
+        rates = self.fx_rates()
         for r in rows:
+            # Per currency: dollars and euros do not add up, and a USD-only vendor did not spend 0.00 CAD.
+            r["spend"] = dict(sorted(spend.get(r["vendor_key"], {}).items()))
+            # In CAD at the Settings rates (for sorting; a currency without a rate counts at face value).
+            r["spend_in_cad"] = round(sum(t * rates.get(c, 1.0) for c, t in r["spend"].items()), 2)
             fb = lessons.get(r["vendor_key"]) or {}
             r["lessons"] = fb.get("lessons", 0)
             r["accuracy"] = (fb["accepted"] / fb["lines"]) if fb.get("lines") else None
@@ -2059,7 +2118,7 @@ class Store:
             for field in ("erp_id", "terms", "default_gl"):
                 r[field] = master.get(field) or ""
             r["in_master"] = bool(master.get("in_master"))
-        return sorted(rows, key=lambda r: -(r["spend_cad"] or 0))
+        return sorted(rows, key=lambda r: -r["spend_in_cad"])
 
     def vendor_gl_usage(self, key: str) -> list[dict[str, Any]]:
         """GL accounts reviewers used for this vendor's lines, most used first."""
@@ -2146,8 +2205,46 @@ class Store:
             old.unlink(missing_ok=True)
         return made
 
+    @staticmethod
+    def check_backup(backup: str | Path) -> None:
+        """Raise ValueError (in plain words) unless ``backup`` is an AP Coder database this version can open:
+        a ``schema_version`` setting no newer than this version's, and no triggers or views (AP Coder makes
+        none; one in a planted file would run on every later change)."""
+        path = Path(backup)
+        try:
+            conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        except sqlite3.Error as exc:
+            raise ValueError(f"{path.name} could not be opened ({exc})") from None
+        try:
+            kinds = {r[0] for r in conn.execute("SELECT type FROM sqlite_master WHERE type IN ('trigger', 'view')")}
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            row = (
+                conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
+                if "settings" in tables
+                else None
+            )
+        except sqlite3.DatabaseError:
+            raise ValueError(f"{path.name} is not an AP Coder database (or it is damaged)") from None
+        finally:
+            conn.close()
+        if kinds:
+            raise ValueError(f"{path.name} contains {' and '.join(sorted(kinds))}s, which AP Coder never makes")
+        if row is None or not {"invoices", "feedback"} <= tables:
+            raise ValueError(f"{path.name} is not an AP Coder database")
+        try:
+            version = int(row[0])
+        except (TypeError, ValueError):
+            raise ValueError(f"{path.name} is not an AP Coder database") from None
+        if version > SCHEMA_VERSION:
+            raise ValueError(f"{path.name} was made by a newer version of AP Coder: update AP Coder first")
+
     def restore_from(self, backup: str | Path) -> Path:
-        """Replace the database with a backup. The current one is backed up first (returned)."""
+        """Replace the database with a backup. The current one is backed up first (returned).
+        Raises ValueError, with nothing changed, when the file is not an AP Coder backup (``check_backup``).
+        The second backup folder is cleared after a restore: a backup file must not choose where later
+        backups are copied (set it again in Settings)."""
+        self.check_backup(backup)
+        copy_dir = self.get_setting("backup_copy_dir").strip()
         safety = self.backup_now("before-restore")
         source = sqlite3.connect(Path(backup))
         target = sqlite3.connect(self.path)
@@ -2159,7 +2256,12 @@ class Store:
         with self._conn() as conn:
             conn.executescript(_SCHEMA)  # an older backup may lack newer tables...
             self._migrate(conn)  # ...and columns
-            self._log(conn, "backup_restored", detail={"file": Path(backup).name, "safety_copy": safety.name})
+            restored_dir = conn.execute("SELECT value FROM settings WHERE key = 'backup_copy_dir'").fetchone()
+            conn.execute("DELETE FROM settings WHERE key IN ('backup_copy_dir', 'backup_copy_status')")
+            detail = {"file": Path(backup).name, "safety_copy": safety.name}
+            if copy_dir or (restored_dir and str(restored_dir[0]).strip()):
+                detail["note"] = "second backup folder cleared: set it again in Settings (Data & backups)"
+            self._log(conn, "backup_restored", detail=detail)
         return safety
 
     # --- Learning memory ------------------------------------------------------------------------------
@@ -2242,10 +2344,10 @@ class Store:
             lines = conn.execute(
                 "SELECT outcome, COUNT(*) n FROM feedback WHERE outcome != 'history' GROUP BY outcome"
             ).fetchall()
-            weekly = conn.execute(
-                """SELECT strftime('%Y-W%W', created_at) week,
+            daily = conn.execute(
+                """SELECT substr(created_at, 1, 10) day,
                           SUM(outcome = 'accepted') accepted, SUM(outcome = 'corrected') corrected
-                   FROM feedback WHERE outcome != 'history' GROUP BY week ORDER BY week"""
+                   FROM feedback WHERE outcome != 'history' GROUP BY day"""
             ).fetchall()
             by_vendor = conn.execute(
                 """SELECT vendor_name, COUNT(*) lines, SUM(outcome = 'accepted') accepted,
@@ -2261,6 +2363,12 @@ class Store:
             untouched = conn.execute(
                 "SELECT COUNT(*) FROM invoices WHERE status = ? AND edits = '[]'", (APPROVED,)
             ).fetchone()[0]
+        # ISO weeks (Monday to Sunday, "2026-W41"), as on the Insights page: SQLite's %W numbers them differently.
+        weeks: dict[str, dict[str, Any]] = {}
+        for r in daily:
+            week = weeks.setdefault(_iso_week(r["day"]), {"week": _iso_week(r["day"]), "accepted": 0, "corrected": 0})
+            week["accepted"] += r["accepted"] or 0
+            week["corrected"] += r["corrected"] or 0
         outcome = {r["outcome"]: r["n"] for r in lines}
         total = sum(outcome.values())
         return {
@@ -2270,10 +2378,19 @@ class Store:
             "line_accuracy": round(outcome.get(ACCEPTED, 0) / total, 4) if total else None,
             "invoices_by_status": {r["status"]: r["n"] for r in statuses},
             "invoices_approved_without_edits": untouched,
-            "weekly": [dict(r) for r in weekly],
+            "weekly": [weeks[w] for w in sorted(weeks)],
             "by_vendor": [dict(r) for r in by_vendor],
             "top_corrections": [dict(r) for r in corrections],
         }
+
+
+def _iso_week(day: str | None) -> str:
+    """'2026-10-10' -> '2026-W41' (the ISO week, as Insights shows it); '?' for a date that cannot be read."""
+    try:
+        year, week, _ = dt.date.fromisoformat((day or "")[:10]).isocalendar()
+    except ValueError:
+        return "?"
+    return f"{year}-W{week:02d}"
 
 
 def _tax_signature(output: dict[str, Any]) -> list[tuple[str, float]]:

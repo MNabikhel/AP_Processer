@@ -4,7 +4,8 @@
   treats the tax as recoverable
 * Input tax refunds (ITRs): the same for Quebec's QST
 * Claims at risk: tax claimed on an invoice of $30 or more that shows no valid GST/HST (or QST)
-  registration number (a documentary requirement for the claim), tax in a foreign currency (the return
+  registration number (a documentary requirement for the claim; a GST/HST number failing the CRA's check
+  digit is not a valid one), tax in a foreign currency (the return
   is in Canadian dollars), and approved invoices not exported to the ERP yet (the ERP's receivable will
   not match)
 
@@ -27,9 +28,10 @@ from .tax import (
     DEFAULT_TREATMENTS,
     PROVINCES,
     RECOVERABLE,
-    REGIME,
     TaxRateTable,
     TaxTreatment,
+    gst_check_digit_ok,
+    regime_on,
     valid_gst_number,
     valid_qst_number,
 )
@@ -40,9 +42,10 @@ DOCUMENT_THRESHOLD = 30.0  # below this total, no registration number is require
 
 NO_GST_NUMBER = "No valid GST/HST number"
 NO_QST_NUMBER = "No valid QST number"
+GST_CHECK_DIGIT = "GST/HST number fails the CRA check digit"
 FOREIGN = "Foreign currency: convert to CAD"
 NOT_EXPORTED = "Not exported yet"
-RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, FOREIGN}
+RISKS = {NO_GST_NUMBER, NO_QST_NUMBER, GST_CHECK_DIGIT, FOREIGN}
 
 
 @dataclass
@@ -98,7 +101,9 @@ def _registration_issue(tax_type: str, doc: dict[str, Any]) -> tuple[str, str]:
         number = str(doc.get("qst_registration_number") or "")
         return number, "" if valid_qst_number(number) else NO_QST_NUMBER
     number = str(doc.get("gst_hst_registration_number") or "")
-    return number, "" if valid_gst_number(number) else NO_GST_NUMBER
+    if not valid_gst_number(number):
+        return number, NO_GST_NUMBER
+    return number, "" if gst_check_digit_ok(number) else GST_CHECK_DIGIT
 
 
 def province(tax_type: str, tax_line: dict[str, Any], doc: dict[str, Any]) -> str:
@@ -164,6 +169,13 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
     return Report(start, end, claims, not_approved, not_recoverable)
 
 
+def _charged(tax_line: dict[str, Any]) -> bool:
+    try:
+        return abs(float(tax_line.get("tax_amount") or 0)) > 0.004
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class SelfAssessment:
     invoice_id: int
@@ -192,15 +204,17 @@ def self_assessment(
         if not (first <= date <= last):
             continue
         province = next((p for p in (doc.get("ship_to_province"), doc.get("supplier_province")) if p in PROVINCES), "")
-        charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or []}
+        # A printed "PST 0.00" is not a charge (as in the tax checks): that PST may still be owed.
+        charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or [] if _charged(tl)}
         base = float(doc.get("subtotal") or 0)
-        for tax_type in sorted(REGIME.get(province, frozenset()) & {"PST", "QST"}):
+        try:
+            on = dt.date.fromisoformat(date)
+        except ValueError:
+            on = None
+        for tax_type in sorted(regime_on(province, on, rates) & {"PST", "QST"}):
             if tax_type in charged or abs(base) < 0.005:
                 continue
-            try:
-                rate = rates.rate_for(tax_type, province, dt.date.fromisoformat(date))
-            except ValueError:
-                rate = None
+            rate = rates.rate_for(tax_type, province, on) if on else None
             if not rate:
                 continue
             out.append(

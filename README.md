@@ -32,6 +32,7 @@ AP Coder readiness:
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
   [OK] LM Studio: model qwen3.5-9b loaded
+  [OK] Page reader: ath-maas_ovisocr2 linked (reads scans as a second reader, in the background)
   [OK] Desktop shortcut 'AP Coder' made (once)
   [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR
 ```
@@ -51,9 +52,11 @@ packages are there. `install.bat` / `install.sh` and `start.bat` /
 [docs/PILOT.md](docs/PILOT.md). The step-by-step for real data is
 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
-**Optional: local AI with LM Studio.** Install LM Studio (0.4.8 or newer) and download **Qwen 3.5 9B**
-(Q4_K_M). Load it with *Context Length 8192*, then go to **Developer → Start server**. AP Coder finds it
-on its own; see *Settings → AI model*. Without a model everything still works: lines are coded from what
+**Optional: local AI with LM Studio.** IT installs LM Studio (0.4.8 or newer) with the models already in
+it: the chat model (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) and OvisOCR2. Nothing is
+downloaded on the laptop. On the laptop, open LM Studio and go to **Developer → Start server**. If no model
+is loaded, load the chat model with *Context Length 8192* (*Settings → AI model → Models in LM Studio* →
+**Load**). AP Coder finds it on its own; see *Settings → AI model*. Without a model everything still works: lines are coded from what
 AP approved before for that vendor, from fixed rules and from account names. With a model, AP Coder also
 proposes accounts for lines it has not seen yet.
 
