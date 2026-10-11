@@ -225,9 +225,13 @@ def test_an_activity_search_that_finds_nothing_says_so(db):
     _ok(at.button_group(key="activity_group").set_value("Backups").run())
 
 
-def test_getting_started_counts_only_the_steps_that_are_needed(db):
+def test_getting_started_counts_only_the_steps_that_are_needed(db, monkeypatch):
     """The welcome screen's ring counted the optional chat model, so it read 1/6 where the Process page said 1 of 4
-    (plus processing the first invoices), and could never be complete without that optional model."""
+    (plus processing the first invoices), and could never be complete without that optional model. OCR is taken as
+    installed (CI's test jobs run without it)."""
+    from ap_coder.webapp import process
+
+    monkeypatch.setattr(process, "ocr_available", lambda: True)
     at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
     html = _html(at)
     assert "Chat model for GL suggestions" in html and "optional" in html
