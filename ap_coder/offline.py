@@ -42,6 +42,13 @@ _PPOCRV5_FALLBACK = (
 )  # fmt: skip
 _FALLBACK_BASE = "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.4.0/"
 
+# The table finder (capture/table_finder.py): RapidAI's YOLOv8n "general6" page layout model (RapidLayout, Apache-2.0),
+# 12 MB. Like the OCR models it comes in the offline bundle's models/ folder and is never downloaded by the app.
+TABLE_FINDER_NAME = "yolov8n_layout_general6.onnx"
+TABLE_FINDER_URL = "https://www.modelscope.cn/models/RapidAI/RapidLayout/resolve/v1.2.0/onnx/360/" + TABLE_FINDER_NAME
+TABLE_FINDER_SHA256 = "927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95"
+TABLE_FINDER_ENV = "AP_TABLE_FINDER_MODEL"  # a path to the model file elsewhere (still checked against its SHA-256)
+
 # The one opt-in to the internet, for developers and the bundle builder (scripts/build_offline_bundle.py):
 # AP_ALLOW_INTERNET=1 lets the setup download packages from PyPI, the OCR models, git updates and Python.
 INTERNET_ENV = "AP_ALLOW_INTERNET"
@@ -196,6 +203,47 @@ def ppocrv5_ready() -> bool:
     return not missing
 
 
+# --- The table finder's model ------------------------------------------------------------------------------------
+
+
+def table_finder_file() -> ModelFile:
+    return ModelFile(TABLE_FINDER_NAME, TABLE_FINDER_URL, TABLE_FINDER_SHA256)
+
+
+def bundle_models() -> tuple[ModelFile, ...]:
+    """Every model file the offline bundle carries in its models/ folder: the OCR models and the table finder."""
+    return (*ppocrv5_files(), table_finder_file())
+
+
+def table_finder_dirs() -> list[Path]:
+    """Where the table finder's model is looked for: the offline bundle's models/ folder (unzipped with the app), then
+    the data folder's models/ folder."""
+    from .paths import PROJECT_DIR, private_dir
+
+    return [PROJECT_DIR / "models", private_dir() / "models"]
+
+
+def table_finder_path() -> Path | None:
+    """The table finder's model on this computer, intact (its SHA-256 checked once per file version), or None: the
+    path in ``AP_TABLE_FINDER_MODEL``, else the first of :func:`table_finder_dirs` that has it. Never downloaded."""
+    from .paths import _env_path
+
+    chosen = _env_path(TABLE_FINDER_ENV)
+    candidates = [chosen] if chosen else [folder / TABLE_FINDER_NAME for folder in table_finder_dirs()]
+    for path in candidates:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if path.is_file() and stat.st_size and _sha256_once(path, stat) == TABLE_FINDER_SHA256:
+            return path
+    return None
+
+
+def onnxruntime_installed() -> bool:
+    return _package_dir("onnxruntime") is not None and _package_dir("numpy") is not None
+
+
 # --- Dashboard network settings ---------------------------------------------------------------------------------
 
 
@@ -251,6 +299,12 @@ def offline_checks() -> list[tuple[str, str, str]]:
                     "copy them from the offline bundle: python scripts/fetch_models.py"))  # fmt: skip
     if not v4 and not v5:
         out.append(("OCR", WARN, "no local OCR: scanned invoices and photos can't be read here (text PDFs can)"))
+    if table_finder_path() is not None and onnxruntime_installed():
+        out.append(("table finder", PASS, f"{TABLE_FINDER_NAME} present"))
+    else:
+        why = "ONNX Runtime not installed" if not onnxruntime_installed() else f"{TABLE_FINDER_NAME} missing"
+        out.append(("table finder", WARN, f"{why}: line items are read without it; it comes with the offline "
+                                          "bundle's models folder"))  # fmt: skip
 
     from .paths import private_dir
 

@@ -108,6 +108,9 @@ class PageLayout:
     words: list[Word]
     lines: list[Line]
     rotation: int = 0
+    # A scan's tilt: how far the text runs down the page per unit across (both as fractions of the page), from the
+    # OCR's own text lines; 0 for a PDF's text. The line items' rows are read straightened (reader.straightened).
+    skew: float = 0.0
 
 
 @dataclass
@@ -164,6 +167,15 @@ class FieldResult:
         )  # fmt: skip
 
 
+# Who read a line item (``LineReading.source``), in plain words for the review screen.
+LINE_SOURCES = {
+    "table": "the table finder",  # the words inside the table the layout model found on the page
+    "text table": "the PDF's table",  # the PDF's text, in the columns its ruling lines and gaps draw
+    "words": "the words on the page",  # the PDF's text or OCR, the whole page (no table found)
+    "vlm": "OvisOCR2",  # the page reader's transcription of the table
+}
+
+
 @dataclass
 class LineReading:
     description: str
@@ -172,6 +184,8 @@ class LineReading:
     amount: float | None
     boxes: list[Box] = field(default_factory=list)
     score: float = 0.0
+    source: str = ""  # the reader whose row this is (LINE_SOURCES); "" for a reading stored before it was recorded
+    agreed: list[str] = field(default_factory=list)  # other readers that read the same row (amount, quantity, words)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -181,7 +195,8 @@ class LineReading:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> LineReading:
         return cls(d.get("description") or "", d.get("quantity"), d.get("unit_price"), d.get("amount"),
-                   [Box.from_list(b) for b in d.get("boxes") or []], float(d.get("score") or 0))  # fmt: skip
+                   [Box.from_list(b) for b in d.get("boxes") or []], float(d.get("score") or 0),
+                   str(d.get("source") or ""), [str(s) for s in d.get("agreed") or []])  # fmt: skip
 
 
 @dataclass

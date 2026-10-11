@@ -206,7 +206,9 @@ def page_process() -> None:
     with left:
         with card("upload"):
             st.markdown("#### Upload invoices")
-            st.caption("Each file is saved to the invoices folder on this computer, then read, coded and checked.")
+            st.caption("Each file is saved to the invoices folder on this computer, then read, coded and checked. A "
+                       "photo or a scanned picture is made into a PDF first; the picture is kept in the `originals` "
+                       "folder there.")  # fmt: skip
             uploaded = st.file_uploader(
                 "PDFs, scans or photos (TIFF, PNG, JPG), or saved emails (.eml) with invoices attached",
                 type=sorted(e.lstrip(".") for e in SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS),

@@ -1304,7 +1304,8 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("Credit note", "a credit is always applied by a person"),
     ("Not in the vendor master", "once a vendor master is imported, a vendor that is not in it"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it, or it is a text file"),
-    ("Any failed check", "totals, tax, GST/HST check digit, or any field not verified"),
+    ("Any failed check", "totals, tax, GST/HST check digit, line items read differently by two readers, or any field "
+                         "not verified"),
 ]  # fmt: skip
 
 

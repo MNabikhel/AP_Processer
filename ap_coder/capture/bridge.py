@@ -74,6 +74,8 @@ def review_issues(capture: CaptureResult) -> list[tuple[str, str, str]]:
     for c in capture.checks:  # the PDF's hidden text is not what its page shows (capture.text_layer_check)
         if c.get("code") == "TEXT_LAYER_MATCHES_PAGE" and not c.get("ok", True):
             out.append((WARNING, "TEXT_LAYER_MATCHES_PAGE", str(c.get("detail") or "")))
+        if c.get("code") == "LINE_ITEMS_AGREE" and not c.get("ok", True):  # OvisOCR2 and the table read differently
+            out.append((WARNING, "LINE_ITEMS_AGREE", f"line items read differently: {c.get('detail') or ''}"))
     if unsure:
         names = ", ".join(LABELS.get(f.field, f.field) for f in unsure)
         out.append((INFO, "CAPTURE_CHECK_FIELDS", f"check on the page: {names} (highlighted in amber)"))

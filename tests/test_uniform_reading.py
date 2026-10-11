@@ -351,9 +351,9 @@ def test_reading_status_with_nothing_running(store):
 
     status = reading_status(Settings(), store)
     assert isinstance(status, ReadingStatus)
-    assert [r.name for r in status.readers] == ["PDF text layer", "OCR (two engines)", "Page reader (OvisOCR2)",
-                                                "Rule reader", "Supplier templates", "Business checks",
-                                                "GL coding model"]  # fmt: skip
+    assert [r.name for r in status.readers] == ["PDF text layer", "OCR (two engines)", "Table finder",
+                                                "Page reader (OvisOCR2)", "Rule reader", "Supplier templates",
+                                                "Business checks", "GL coding model"]  # fmt: skip
     assert (status.page_reader_model, status.page_reader_ready, status.self_test) == ("", False, "no model")
     assert status.reader("Page reader (OvisOCR2)").state == OFF and status.reader("GL coding model").state == OFF
     assert status.banner == "LM Studio isn't running: invoices are read by OCR only and wait for a person."
@@ -403,7 +403,7 @@ def test_reading_status_never_raises(monkeypatch):
 
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: _ovis())
     status = reading_status(Settings(), Broken())
-    assert len(status.readers) == 7 and not status.page_reader_ready and status.banner
+    assert len(status.readers) == 8 and not status.page_reader_ready and status.banner
     assert reading_status(Settings(), None).readers  # no database at all
     monkeypatch.setattr(page_reader, "reader_status", lambda *a, **k: (_ for _ in ()).throw(OSError("no")))
     assert reading_status(Settings(), None).self_test == "pending"

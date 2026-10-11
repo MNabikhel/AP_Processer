@@ -40,15 +40,19 @@ company-wide switch and the invoices that always go to a person.
 There is one reading pipeline, with nothing to configure (`ap_coder/reading.py`; Settings → Reading shows
 each reader's state):
 
-1. the PDF's own text layer where the page has one, local OCR (two engines) where it has not (scans,
-   photos, iPhone HEIC);
+1. every invoice is a PDF: a photo or a scanned picture is made into one when it comes in (see
+   [Pictures become PDFs](#pictures-become-pdfs-and-line-items-read-with-the-table-finder)); the PDF's own text
+   layer where the page has one, local OCR (two engines) where it has not (scans, photos, iPhone HEIC); the
+   table finder finds the line table on each page;
 2. OvisOCR2 reads every page of every invoice in the background, as an independent second reader, once it
    has passed its own self-test;
 3. the rule reader, the supplier's template and the business checks compare the readers: a field they
    agree on can be *verified*, one they read differently is *check*;
 4. on a digital PDF, the hidden text layer is compared with the page as OvisOCR2 sees it printed
    (`TEXT_LAYER_MATCHES_PAGE`);
-5. no invoice is approved without a person before OvisOCR2 has read it.
+5. the line items read from the page are compared row by row with OvisOCR2's reading of the same table
+   (`LINE_ITEMS_AGREE`);
+6. no invoice is approved without a person before OvisOCR2 has read it.
 
 The settings that used to choose a reading mode (`AP_PAGE_READER`, `AP_PAGE_READER_SCOPE`,
 `AP_LLM_PROVIDER`, the model pickers) are gone; an older `.env` that still has them is ignored.

@@ -254,6 +254,21 @@ def page_reader_line(inv: dict[str, Any], key: str) -> None:
         st.rerun()
 
 
+def line_items_line(capture: CaptureResult, inv: dict[str, Any] | None = None) -> None:
+    """Under the document title: which reader each line item came from, and whether two readers (the table finder
+    or the PDF's table, and OvisOCR2) read them the same; and the picture a converted photo was made from."""
+    from ap_coder.capture.line_items import sources_line
+
+    note = sources_line(capture.line_items, capture.checks)
+    if note:
+        st.caption(":material/table_rows: " + md(note))
+    original = ((inv or {}).get("meta") or {}).get("original") or {}
+    if original.get("file"):
+        kept = Path(str(original.get("kept") or ""))
+        st.caption(f":material/photo: Made into a PDF from the picture **{md(str(original['file']))}**, kept as it "
+                   f"came in, in the `{md(kept.parent.name or 'originals')}` folder beside the PDF.")  # fmt: skip
+
+
 def capture_panel(inv: dict[str, Any], capture_dict: dict[str, Any], key: str) -> None:
     path = Path(inv["source_path"])
     capture = CaptureResult.from_dict(capture_dict)
@@ -271,6 +286,7 @@ def capture_panel(inv: dict[str, Any], capture_dict: dict[str, Any], key: str) -
             st.session_state[_teach_key(key)] = field
             st.rerun()
     page_reader_line(inv, key)
+    line_items_line(capture, inv)
 
     pages = render_pages(path)
     words = None

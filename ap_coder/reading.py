@@ -2,7 +2,9 @@
 
 There is one way to read an invoice, with nothing to choose:
 
-1. the PDF's own text layer where the page has one, local OCR (two engines) where it has not (scans, photos);
+1. the PDF's own text layer where the page has one, local OCR (two engines) where it has not (scans, photos; a
+   picture is made into a PDF when it comes in); the table finder finds the line table on each page, and its words
+   are read as the line items;
 2. the page reader, OvisOCR2 in LM Studio, reads every page of every invoice (digital PDFs too) as an independent
    second reader, found in LM Studio on its own and checked by its own self-test before it is trusted;
 3. the rule reader, the supplier's learned template and the business checks (totals, tax, GST/HST number, vendor
@@ -23,9 +25,9 @@ log = logging.getLogger(__name__)
 
 OK, WARN, OFF = "ok", "warn", "off"
 
-PDF_TEXT, OCR, PAGE_READER, RULES, TEMPLATES, CHECKS, GL_MODEL = (
-    "PDF text layer", "OCR (two engines)", "Page reader (OvisOCR2)", "Rule reader", "Supplier templates",
-    "Business checks", "GL coding model",
+PDF_TEXT, OCR, TABLE_FINDER, PAGE_READER, RULES, TEMPLATES, CHECKS, GL_MODEL = (
+    "PDF text layer", "OCR (two engines)", "Table finder", "Page reader (OvisOCR2)", "Rule reader",
+    "Supplier templates", "Business checks", "GL coding model",
 )  # fmt: skip
 
 
@@ -70,6 +72,7 @@ def reading_status(settings: Any, store: Any, *, use_cache: bool = True) -> Read
     out.readers = [
         ReaderLine(PDF_TEXT, OK, "Digital PDFs: the PDF's own text, exact, with each word's place on the page."),
         _safe(OCR, _ocr),
+        _safe(TABLE_FINDER, _table_finder),
         reader_line,
         ReaderLine(RULES, OK, "Reads every field from labels, patterns and positions, in English and French."),
         _safe(TEMPLATES, lambda: _templates(store)),
@@ -104,6 +107,23 @@ def _ocr() -> ReaderLine:
                                      f"bundle's models folder: run APProcessor.bat).{photos}")  # fmt: skip
     return ReaderLine(OCR, OFF, "Not installed: scans and photos can't be read on this computer (digital PDFs can). "
                                 "Run APProcessor.bat: it installs OCR from the offline bundle.")  # fmt: skip
+
+
+def _table_finder() -> ReaderLine:
+    """The layout model that finds the line table on each page (capture/table_finder.py), found without loading it."""
+    from . import offline
+
+    if not offline.onnxruntime_installed():
+        return ReaderLine(TABLE_FINDER, OFF, "Not installed: it needs the OCR add-on (ONNX Runtime). Line items "
+                                             "are read from the words under the column headings. Run "
+                                             "APProcessor.bat.")  # fmt: skip
+    if offline.table_finder_path() is None:
+        return ReaderLine(TABLE_FINDER, WARN, "Missing: its model comes with the offline bundle's models folder "
+                                              f"({offline.TABLE_FINDER_NAME}). Until it is there, line items are read "
+                                              "from the words under the column headings, as before.")  # fmt: skip
+    return ReaderLine(TABLE_FINDER, OK, "Finds the line table on every page (a small layout model, on this computer): "
+                                        "line items are read from the words inside it, and compared with OvisOCR2's "
+                                        "reading of the same table.")  # fmt: skip
 
 
 def _templates(store: Any) -> ReaderLine:

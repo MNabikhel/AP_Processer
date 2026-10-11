@@ -194,7 +194,7 @@ def plan(args: argparse.Namespace) -> dict:
         "pip_commands": pip_commands(
             reqs, stage / "wheelhouse", args.platform, args.python, not args.no_current, plain
         ),
-        "models": [] if args.no_models else [{"name": m.name, "sha256": m.sha256} for m in offline.ppocrv5_files()],
+        "models": [] if args.no_models else [{"name": m.name, "sha256": m.sha256} for m in offline.bundle_models()],
     }
 
 
@@ -260,11 +260,14 @@ def build(args: argparse.Namespace) -> int:
         from ap_coder import offline
 
         result = fetch_models.fetch(stage / "models", offline.model_dir(), online=True)
-        if not result.ok:
+        # The table finder's model, from this checkout's models/ folder when it is there, else downloaded.
+        finder = (offline.table_finder_file(),)
+        table = fetch_models.fetch(stage / "models", ROOT / "models", online=True, models=finder)
+        if not result.ok or not table.ok:
             print("Could not get every OCR model; build again when online, or use --no-models.")
             return 1
         models = [{"name": m.name, "sha256": offline.sha256(stage / "models" / m.name)}
-                  for m in offline.ppocrv5_files()]  # fmt: skip
+                  for m in offline.bundle_models()]  # fmt: skip
     else:
         print("[3/4] OCR models: left out (--no-models)")
 
