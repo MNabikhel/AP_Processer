@@ -1,0 +1,113 @@
+{#- The Azure check's card (Settings → Reading). It draws itself from azure_check_card(request)
+    (ap_coder/web/pages/azure.py): include it anywhere, nothing to pass. The key is never put in the page. -#}
+{%- set az = azure_check_card(request) -%}
+<section class="card azure-check" id="azure-check" aria-labelledby="azure-check-title">
+  <style>
+    .azure-check input[type="password"], .azure-check input[type="url"] {height: 34px; border: 1px solid var(--lg-border);
+      border-radius: var(--lg-r); background: var(--lg-surface); color: var(--lg-text); font: 14px Inter, system-ui, sans-serif;
+      padding: 0 10px;}
+    .azure-check .az-grid {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px;}
+    .azure-check .az-grid .wide {grid-column: 1 / -1;}
+    @media (max-width: 700px) {.azure-check .az-grid {grid-template-columns: minmax(0, 1fr);}}
+    .azure-check .az-diff {font-size: 12.5px; color: var(--lg-muted);}
+  </style>
+  <div class="card-head">
+    <div>
+      <h4 id="azure-check-title">Azure check <span class="muted">· optional</span></h4>
+      <p class="muted">Azure AI Document Intelligence as a second opinion: invoices AP Coder isn't sure of, and a small
+        share of the ones it is, are also read by Azure and compared field by field. A field Azure reads differently
+        is marked <b>Check</b> and the invoice waits for a person.</p>
+    </div>
+    {% if az.ready %}{{ ui.pill("On", "ok", "cloud_done") }}{% else %}{{ ui.pill("Off", "gray", "cloud_off") }}{% endif %}
+  </div>
+
+  {% if az.broken %}
+  {{ ui.empty_note("Not available", az.broken, "error") }}
+  {% else %}
+  <div class="flash {{ 'ok' if az.ready else ('warn' if az.enabled else 'info') }}" role="status">
+    <span class="ms" aria-hidden="true">{{ "verified_user" if az.ready else "wifi_off" }}</span>
+    <div>{% if not az.enabled %}Off — AP Coder works fully offline without it.{% else %}{{ az.note }}{% endif %}
+      {% if az.enabled and not az.ready %}Turned on, but nothing is sent until this is fixed.{% endif %}</div>
+  </div>
+
+  <form method="post" action="/settings/azure-check" data-busy="Saving…" autocomplete="off">
+    <input type="hidden" name="back" value="{{ request.url.path }}#azure-check">
+    <label class="check"><input type="checkbox" name="enabled" value="on"{% if az.enabled %} checked{% endif %}>
+      Use the Azure check</label>
+    <div class="az-grid" style="margin-top: 12px">
+      <label class="field wide">Document Intelligence endpoint
+        <input type="text" name="endpoint" value="{{ az.endpoint }}" spellcheck="false"
+               placeholder="https://<name>.cognitiveservices.azure.com/"></label>
+      <label class="field">Key
+        <input type="password" name="api_key" value="" autocomplete="new-password" spellcheck="false"
+               placeholder="{{ ('Key ' ~ az.key_hint ~ ': leave empty to keep it') if az.key_hint else 'Paste the key' }}"></label>
+      <label class="field">Model
+        <input type="text" name="model" value="{{ az.model }}" spellcheck="false"></label>
+      <label class="field">Spot-check share of verified invoices (%)
+        <input type="number" name="spot_percent" value="{{ az.spot_percent }}" min="0" max="100" step="0.5"></label>
+      <label class="field">Daily cap (pages sent to Azure a day)
+        <input type="number" name="daily_pages" value="{{ az.daily_pages }}" min="0" step="1"></label>
+    </div>
+    {% if az.key_hint %}<label class="check" style="margin-top: 8px"><input type="checkbox" name="forget_key" value="1">
+      Remove the saved key</label>{% endif %}
+    <p class="muted">Invoices with a field not verified or a check that failed are always checked; the spot-check share
+      picks among the rest. Each invoice is sent once, in the background, never holding up processing. For IT: a
+      Document Intelligence resource's endpoint and key (Azure portal → Keys and Endpoint). Only that address is
+      contacted, over HTTPS; the key stays in this computer's settings file and is never shown here.</p>
+    <div class="row"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button></div>
+  </form>
+
+  <div class="card-head" style="margin-top: 20px">
+    <div><h4>Test connection</h4>
+      <p class="muted">Reads the made-up sample invoice that comes with AP Coder (1 page; nothing of yours is sent) and
+        compares Azure's fields with AP Coder's own reading.</p></div>
+    <form method="post" action="/settings/azure-check/test" data-busy="Testing…">
+      <button class="btn" type="submit"{% if not az.can_test or az.testing %} disabled{% endif %}>
+        <span class="ms" aria-hidden="true">network_check</span>Test connection</button>
+    </form>
+  </div>
+  {% if az.test %}
+  {% if az.test.ok %}
+  <p>{{ ui.pill("Connected", "ok", "check_circle") }} {{ az.test.summary }}.
+    <span class="muted">{{ az.test.host }} · {{ az.test.seconds }} s · {{ az.test.when | time_ago }}</span></p>
+  {% if az.test.rows %}
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Field</th><th>AP Coder</th><th>Azure</th><th></th></tr></thead>
+    <tbody>{% for r in az.test.rows %}
+      <tr><td>{{ r.label }}</td><td>{{ r.ours }}</td><td>{{ r.azure }}</td>
+        <td>{{ ui.pill("Agrees", "ok") if r.agree else ui.pill("Differs", "warn") }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+  {% else %}
+  <p>{{ ui.pill("Didn't work", "err", "error") }} {{ az.test.error }} <span class="muted">{{ az.test.when | time_ago }}</span></p>
+  {% endif %}
+  {% elif not az.can_test %}
+  <p class="muted">Add the endpoint and key to test the connection.</p>
+  {% endif %}
+
+  {% if az.enabled or az.checked %}
+  <h4 style="margin-top: 20px">Last {{ az.days }} days</h4>
+  {{ ui.tiles([
+      ui.tile("Invoices checked", az.checked | num, hint=(az.waiting | num) ~ " waiting"),
+      ui.tile("Azure agreed", az.agreed_rate | pct, hint=(az.agreed | num) ~ " of " ~ (az.checked | num) ~ " invoices"),
+      ui.tile("Fields agreed", (az.fields_agreed | num) ~ " of " ~ (az.fields_compared | num), text=True),
+      ui.tile("Pages today", az.pages_today | num, hint="cap " ~ (az.daily_pages | num)),
+  ]) }}
+  {% if az.failed %}<p class="muted">{{ az.failed | plural("check") }} couldn't be done (Azure didn't answer, or refused).</p>{% endif %}
+  {% if az.disagreements %}
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Invoice</th><th>Why checked</th><th>Azure read it differently</th><th>When</th></tr></thead>
+    <tbody>{% for d in az.disagreements %}
+      <tr><td><a href="/review/{{ d.invoice_id }}">{{ d.vendor or "Invoice" }} {{ d.number }}</a></td>
+        <td>{{ d.reason }}</td>
+        <td>{% for label, ours, azure in d.fields %}<div class="az-diff"><b>{{ label }}</b>: AP Coder {{ ours }}, Azure {{ azure }}</div>{% endfor %}</td>
+        <td class="muted">{{ d.when | time_ago }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% elif az.checked %}
+  {{ ui.empty_note("No disagreements", "Azure read every field it compared the same way AP Coder did.", "done_all") }}
+  {% endif %}
+  {% endif %}
+  {% endif %}
+</section>
