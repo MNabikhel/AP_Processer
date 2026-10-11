@@ -1,6 +1,7 @@
 """AP Coder's one-button setup and start: what APProcessor.bat (Windows) and APProcessor.command (Mac) run.
 
-The double-click finds a Python (3.12 or 3.11 first, 3.13 too) and runs this file with it. It then:
+The double-click finds a Python 3.11 or newer (3.12 first, then the other versions the offline bundle has
+packages for) and runs this file with it. It then:
 
 1. reuses ``.venv`` (it creates it only the first time, and again only when it is broken);
 2. installs only the packages that are missing or too old (``scripts/check_deps.py``), from the offline
@@ -36,8 +37,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -64,7 +67,7 @@ STATE = VENV / "ap_coder_launcher.json"  # what this .venv has been through (gon
 LOCK = ROOT / ".ap_coder_launch.lock"  # held while one start sets up and runs AP Coder (not in .venv: remade)
 LOCK_HELD_ENV = "AP_LAUNCH_LOCK_HELD"  # set for the second phase, whose parent holds the lock
 WAIT_FOR_OTHER = 1800  # seconds a second double-click waits for the first one's dashboard (a first setup)
-SUPPORTED = ((3, 11), (3, 13))  # the Python versions APProcessor looks for (3.12 and 3.11 first: the bundle's)
+MINIMUM = (3, 11)  # the oldest Python AP Coder runs on; any newer one is used (no upper bound)
 DEFAULT_PORT = 8501
 SIGNATURE = "/app/static/InterVariable.woff2"  # a file only AP Coder's dashboard serves
 SHORTCUT = "AP Coder.lnk"
@@ -160,8 +163,9 @@ def in_venv() -> bool:
         return False
 
 
-def supported(version: tuple[int, int]) -> bool:
-    return SUPPORTED[0] <= version <= SUPPORTED[1]
+def supported(version: tuple[int, ...]) -> bool:
+    """3.11 or newer: APProcessor.bat / .command accept any of them (3.12 first)."""
+    return tuple(version[:2]) >= MINIMUM
 
 
 def venv_works() -> bool:
@@ -197,24 +201,60 @@ def ensure_venv(python: str = sys.executable) -> str:
     return status
 
 
+def _version_key(version: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except ValueError:
+        return (0,)
+
+
 def bundle_pythons() -> list[str]:
-    """The Python versions the offline bundle's wheelhouse was built for ("3.12", ...; [] when unknown)."""
+    """The Python versions the offline bundle's wheelhouse was built for ("3.11", "3.12", ...; [] when unknown)."""
     try:
         targets = json.loads((ROOT / "bundle_manifest.json").read_text(encoding="utf-8")).get("targets", [])
     except (OSError, ValueError, AttributeError):
         return []
-    return sorted({t.rsplit("Python ", 1)[-1].strip(")") for t in targets if "Python " in t})
+    found = {t.rsplit("Python ", 1)[-1].strip(")").strip() for t in targets if isinstance(t, str) and "Python " in t}
+    return sorted(found, key=_version_key)
+
+
+def wheel_platform() -> str:
+    """This computer as ``build_offline_bundle.py --platform`` names it (``win_amd64``, ``macosx_14_0_arm64``)."""
+    machine = platform.machine().lower()
+    if WINDOWS:
+        return {"arm64": "win_arm64", "x86": "win32", "i386": "win32", "i686": "win32"}.get(machine, "win_amd64")
+    arm = machine in ("arm64", "aarch64")
+    if sys.platform == "darwin":
+        release = [int(n) for n in (platform.mac_ver()[0] or "11.0").split(".")[:2] if n.isdigit()] or [11]
+        major, minor = release[0], (release[1] if len(release) > 1 else 0)
+        return f"macosx_{f'{major}_0' if major >= 11 else f'10_{minor}'}_{'arm64' if arm else 'x86_64'}"
+    return f"manylinux2014_{'aarch64' if arm else 'x86_64'}"
+
+
+def listed(versions: list[str]) -> str:
+    """``3.11``, ``3.11 and 3.12``, ``3.11, 3.12 and 3.13``."""
+    return versions[0] if len(versions) == 1 else f"{', '.join(versions[:-1])} and {versions[-1]}"
+
+
+def bundle_advice(version: str) -> str:
+    """What to do when the offline bundle has no packages for Python ``version`` ("3.14") on this computer."""
+    built_for = bundle_pythons()
+    best = "3.12" if "3.12" in built_for or not built_for else built_for[-1]
+    made = f"This offline bundle was built for Python {listed(built_for)}. " if built_for else ""
+    return (f"{made}IT can build a bundle for this Python (python scripts/build_offline_bundle.py --python {version} "
+            f"--platform {wheel_platform()}), or install Python {best} on this computer.")  # fmt: skip
 
 
 def bootstrap(argv: list[str]) -> int:
     """Run with a Python found on this computer: make ``.venv``, then carry on inside it."""
     version = sys.version_info[:2]
+    shown = f"{version[0]}.{version[1]}"
     if not supported(version) and not VENV_PY.exists():
-        say(f"Note: Python {version[0]}.{version[1]} is not one AP Coder is tested with (3.11 to 3.13).")
+        say(f"Note: Python {shown} is older than AP Coder needs (3.11 or newer; 3.12 is best).")
     built_for = bundle_pythons()
-    if built_for and f"{version[0]}.{version[1]}" not in built_for and not VENV_PY.exists():
-        say(f"Note: this offline bundle has packages for Python {' and '.join(built_for)}, not "
-            f"{version[0]}.{version[1]}: if the setup stops, install Python {built_for[-1]}.")  # fmt: skip
+    if built_for and shown not in built_for and not VENV_PY.exists():
+        say(f"Note: this offline bundle has packages for Python {listed(built_for)}, not for Python {shown} (the "
+            f"Python found on this computer), so the setup may stop. {bundle_advice(shown)}")  # fmt: skip
     if not VENV_PY.exists():
         say("First run: setting up AP Coder. This takes a few minutes; later starts take seconds.")
     say(f"Python {sys.version.split()[0]} found on this computer: {sys.executable}")
@@ -293,9 +333,8 @@ def install_hint(source: list[str], left: list[str]) -> str:
                 "window), close any other AP Coder window, then start AP Coder again.")  # fmt: skip
     version = f"{sys.version_info[0]}.{sys.version_info[1]}"
     what = names(left) or "AP Coder itself"
-    return (f"The offline bundle's wheelhouse folder has no {what} for Python {version} on this computer: use a "
-            "bundle built for this Python (it is built for 3.11 and 3.12), or install Python 3.12, close any other "
-            "AP Coder window, then start AP Coder again.")  # fmt: skip
+    return (f"The offline bundle's wheelhouse folder has no {what} for Python {version} on this computer. "
+            f"{bundle_advice(version)} Then close any other AP Coder window and start AP Coder again.")  # fmt: skip
 
 
 def without_wheelhouse(missing: list[str], total: int) -> tuple[str, str, bool]:
@@ -317,9 +356,43 @@ def without_wheelhouse(missing: list[str], total: int) -> tuple[str, str, bool]:
     return "ok", f"Packages: all {total} in place (AP Coder runs from this folder)", False
 
 
+# The second OCR engine (PP-OCRv4, models inside the package) is pure Python but says "Python below 3.13" in its
+# metadata, so pip leaves it out on 3.13 and newer (pyproject's marker). It works there: installed on its own,
+# without that check, so a scan is read by two engines on every Python.
+SECOND_OCR = "rapidocr-onnxruntime>=1.3"
+
+
+def ensure_second_ocr(state: dict) -> str:
+    """On Python 3.13 or newer, the second OCR engine from the wheelhouse when it is missing (once per version of
+    AP Coder if it can't be installed). Returns a note for the readiness lines ("" when nothing to say)."""
+    if sys.version_info[:2] < (3, 13) or importlib.util.find_spec("rapidocr_onnxruntime") is not None:
+        return ""
+    if importlib.util.find_spec("rapidocr") is None or state.get("ocr2_failed") == fingerprint():
+        return ""  # no OCR add-on at all (said already), or tried for this version
+    if pip_source() is None:
+        return ""
+    say("Installing the second OCR engine (it reads scans a second way; its metadata predates this Python).")
+    if pip_install(["--ignore-requires-python", SECOND_OCR]):
+        importlib.invalidate_caches()
+        state.pop("ocr2_failed", None)
+        return ""
+    state["ocr2_failed"] = fingerprint()
+    return "The second OCR engine could not be installed: scans are read by one OCR engine (and OvisOCR2)."
+
+
 def ensure_packages(state: dict, extras: tuple[str, ...] = ("ocr",)) -> tuple[str, str, bool]:
     """Install only what is missing or too old: nothing when everything is in place. Offline (the default)
-    only from the bundle's wheelhouse/ folder. Returns (level, summary line, whether pip installed something)."""
+    only from the bundle's wheelhouse/ folder. Returns (level, summary line, whether pip installed something).
+    On Python 3.13 or newer the second OCR engine is added too (``ensure_second_ocr``)."""
+    level, summary, installed = _ensure_packages(state, extras)
+    if "ocr" in extras and level != "fail":
+        note = ensure_second_ocr(state)
+        if note and level == "ok":
+            level, summary = "warn", f"{summary}. {note}"
+    return level, summary, installed
+
+
+def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bool]:
     total = len(check_deps.requirements(extras=extras))
     missing, self_problem = missing_packages(extras)
     if not missing and not self_problem:

@@ -93,13 +93,14 @@ _INSTALL_FIX = "run APProcessor.bat (Mac: APProcessor.command); it installs from
 
 
 def _python_check(version: tuple[int, ...]) -> tuple[str, str, str]:
-    """3.11 to 3.13 is what the launcher installs and the docs name; 3.10 still runs (CI tests it) but warns."""
+    """3.11 or newer is what the launcher uses and the docs name (no upper bound); 3.10 still runs (CI tests it)
+    but warns."""
     shown = ".".join(str(n) for n in version[:3])
-    if (3, 11) <= tuple(version[:2]) <= (3, 13):
-        return "python", PASS, f"{shown} (3.11 to 3.13)"
+    if tuple(version[:2]) >= (3, 11):
+        return "python", PASS, f"{shown} (3.11 or newer)"
     if tuple(version[:2]) < (3, 10):
-        return "python", FAIL, f"{shown} (need 3.11 to 3.13)"
-    return "python", WARN, f"{shown} (not tested: use 3.11 to 3.13)"
+        return "python", FAIL, f"{shown} (need 3.11 or newer)"
+    return "python", WARN, f"{shown} (older than the 3.11 or newer AP Coder uses)"
 
 
 def run_checks(

@@ -542,9 +542,17 @@ def test_windows_launcher():
     text = (ROOT / "APProcessor.bat").read_text(encoding="ascii")
     assert "%PY% scripts\\launch.py %*" in text
     assert '".venv\\Scripts\\python.exe" -c "import encodings, pip"' in text  # set up before: straight in
-    # 3.12 and 3.11 first: the offline bundle has packages for them (3.13 only when neither is there).
-    assert "for %%V in (3.12 3.11 3.13)" in text and "(3, 11) <= sys.version_info[:2] <= (3, 13)" in text
-    assert "for %%V in (312 311 313)" in text
+    # Any Python 3.11 or newer (no upper bound): 3.12 first, then 3.11, 3.13, 3.14 (the offline bundle's), then
+    # any newer through py -3, then python before python3, then the usual folders (newer ones too).
+    assert "for %%V in (3.12 3.11 3.13 3.14) do if not defined PY call :try py -%%V" in text
+    assert text.index("call :try py -%%V") < text.index("call :try py -3\n") < text.index("call :try python\n")
+    assert text.index("call :try python\n") < text.index("call :try python3\n")
+    assert "for %%V in (312 311 313 314)" in text and 'Python\\Python3*")' in text
+    assert "sys.exit(sys.version_info[0] * 100 + sys.version_info[1])" in text  # its version, not a range
+    assert "if %PYV% GEQ 311 set PY=%*" in text and "3, 13" not in text and "LEQ 313" not in text
+    # A Python that is there but too old is said so, never "not installed".
+    assert "if defined OLDPY echo Python %OLDPY% is installed, but AP Coder needs Python 3.11 or newer" in text
+    assert "PYTHON_MANAGER_AUTOMATIC_INSTALL=false" in text  # py never downloads a missing version
     assert "winget install -e --id Python.Python.3.12 --scope user" in text  # only when no Python is found
     assert text.index("call :findpython") < text.index("call :installpython")
     # Offline build: winget (the internet) only with the developers' opt-in, never by default or --yes alone.
@@ -564,8 +572,10 @@ def test_mac_launcher():
     assert b"\r" not in raw and raw.startswith(b"#!/bin/bash")
     text = raw.decode()
     assert '"$PY" scripts/launch.py "$@"' in text and "PY=.venv/bin/python" in text
-    assert "(3, 11) <= sys.version_info[:2] <= (3, 13)" in text
-    assert "/usr/bin/python3" in text  # skipped on a Mac: it only offers Apple's developer tools
+    assert 'PREFERRED="3.12 3.11 3.13 3.14"' in text and "<= (3, 13)" not in text  # no upper bound
+    assert 'command -v "$py"' in text and "echo python3\n  echo python\n" in text  # python3 before python
+    # Apple's stand-in is run only when the developer tools are there (else it opens an install dialog).
+    assert "APPLE_STUB=/usr/bin/python3" in text and "xcode-select -p" in text
     assert "--installer" in (ROOT / "install.sh").read_text()
     if os.name == "posix":
         assert os.access(ROOT / "APProcessor.command", os.X_OK)

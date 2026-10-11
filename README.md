@@ -16,8 +16,9 @@ laptop by OCR and by OvisOCR2, a small page-reading model in [LM Studio](https:/
 That's it, the first time and every day after. The launcher looks at what is already on the computer and adds
 only what is missing:
 
-- **Python:** it uses the Python already installed: 3.12 or 3.11 first (the offline bundle has packages for
-  them), else 3.13. It never downloads Python; if there is none, it says so (IT installs Python 3.12).
+- **Python:** it uses the Python already installed: 3.11 or newer (3.12 recommended: the offline bundle has
+  packages for the Python versions it was built for, and those are looked for first). It never downloads
+  Python; if there is none, or only an older one, it says so (IT installs Python 3.12).
 - **Packages:** it sets up its own environment (`.venv`) once and installs only missing packages, from the
   offline bundle's `wheelhouse/` folder (never from the internet). Your system Python and other programs are
   not touched.

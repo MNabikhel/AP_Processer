@@ -54,6 +54,11 @@ backup of the database is made automatically once a day when AP Coder starts (th
 - **Settings removed:** `AP_PAGE_READER`, `AP_PAGE_READER_SCOPE`, `AP_LLM_PROVIDER`, `AP_VISION`,
   `AP_LLM_VISION` and the model pickers. An older `.env` that still has them does no harm.
 - **Azure is for developers only** (`AP_ALLOW_INTERNET=1`). The offline installer asks no cloud questions.
+- **Any Python 3.11 or newer.** APProcessor.bat and APProcessor.command no longer stop at 3.13: a Mac with
+  only Python 3.14 (as `python3` or `python`) is used. The offline bundle's versions still come first (3.12,
+  3.11, 3.13, 3.14). A Python that is too old is named (*Python 3.10 is installed, but AP Coder needs Python
+  3.11 or newer*) instead of *not installed*; a Python the bundle was not built for gets the command that
+  builds one for it.
 - The database upgrades itself on first start; your data is kept.
 
 ## Highlights
