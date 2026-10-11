@@ -373,8 +373,17 @@ jobs:
     # into folder B (with a file an older version left there) and double-clicked. B must take over: stop the old
     # dashboard, say it updated, check itself, move the data out of A into ~/APCoder, become the current install,
     # remove A whole, remove the leftover file, and serve the new version.
-    name: Update over an older install
-    runs-on: ubuntu-latest
+    # Run on all three systems: on Windows through APProcessor.bat (PowerShell finds the old dashboard by its port and
+    # ends it with taskkill), on a Mac through APProcessor.command (lsof).
+    name: Update over an older install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
     env:
       AP_NO_PAUSE: "1"
       AP_ALLOW_INTERNET: "1"  # B installs its packages from PyPI (no wheelhouse here); the bundle jobs run offline
@@ -386,7 +395,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: AP Coder 0.1 in folder A, its data inside it, its dashboard running
+      - name: AP Coder 0.1 in folder A, its data inside it
         run: |
           A="$RUNNER_TEMP/AP Coder 0.1"
           mkdir -p "$A"
@@ -425,8 +434,20 @@ jobs:
           c.commit()
           EOF
           printf 'AP_REVIEWER=Ann\nAP_PAGE_READER=on\n' > "$A/.env"
-          mkdir -p ~/.ap_coder
-          printf '{"data_dir": "%s/private", "desktop_shortcut": true}\n' "$A" > ~/.ap_coder/settings.json
+          # Written by Python: a Windows path's backslashes are not valid in JSON written by printf.
+          python -c "import json, pathlib, sys; h = pathlib.Path.home() / '.ap_coder'; h.mkdir(exist_ok=True); (h / 'settings.json').write_text(json.dumps({'data_dir': str(pathlib.Path(sys.argv[1]).resolve() / 'private'), 'desktop_shortcut': True}))" "$A"
+      - name: The new version unzipped into folder B
+        run: |
+          B="$RUNNER_TEMP/AP Coder 0.2"
+          mkdir -p "$B"
+          git archive HEAD | tar -x -C "$B"
+          python scripts/build_offline_bundle.py --manifest-for "$B"
+          echo "left by an older version" > "$B/ap_coder/stale_module.py"
+      # One step from here on: a process started in the background may not outlive its step on Windows.
+      - name: A's dashboard running; double-click B; double-click B again
+        run: |
+          A="$RUNNER_TEMP/AP Coder 0.1"
+          B="$RUNNER_TEMP/AP Coder 0.2"
           # Its Streamlit dashboard: the font only AP Coder 0.1 serves, run as "streamlit run <A>/ap_coder/dashboard.py".
           mkdir -p "$RUNNER_TEMP/bin"
           cat > "$RUNNER_TEMP/bin/streamlit" <<'EOF'
@@ -440,21 +461,12 @@ jobs:
           EOF
           nohup python "$RUNNER_TEMP/bin/streamlit" run "$A/ap_coder/dashboard.py" --server.port 8501 > "$RUNNER_TEMP/old.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/old.pid"
-          sleep 2
+          for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8501/app/static/InterVariable.woff2 && break; sleep 1; done
           curl -fsS -o /dev/null http://127.0.0.1:8501/app/static/InterVariable.woff2
-      - name: The new version unzipped into folder B
-        run: |
-          B="$RUNNER_TEMP/AP Coder 0.2"
-          mkdir -p "$B"
-          git archive HEAD | tar -x -C "$B"
-          python scripts/build_offline_bundle.py --manifest-for "$B"
-          echo "left by an older version" > "$B/ap_coder/stale_module.py"
-      - name: Double-click B
-        run: |
-          A="$RUNNER_TEMP/AP Coder 0.1"
-          B="$RUNNER_TEMP/AP Coder 0.2"
+          # The double-click: APProcessor.bat on Windows, APProcessor.command elsewhere.
+          launch() { if [ "$RUNNER_OS" = Windows ]; then cmd //c "APProcessor.bat $*"; else ./APProcessor.command "$@"; fi; }
           cd "$B"
-          ./APProcessor.command --port 8597 > "$RUNNER_TEMP/launch.out" 2>&1 &
+          launch --port 8597 > "$RUNNER_TEMP/launch.out" 2>&1 &
           health=""
           for _ in $(seq 1 180); do
             sleep 5
@@ -498,10 +510,8 @@ jobs:
           assert health["version"] == "0.2.0" and Path(health["folder"]).resolve() == folder, health
           print("record and server: OK")
           EOF
-      - name: A second double-click opens the running one
-        run: |
-          cd "$RUNNER_TEMP/AP Coder 0.2"
-          out="$(./APProcessor.command --port 8597 2>&1)"
+          # A second double-click opens the running one.
+          out="$(launch --port 8597 2>&1)"
           echo "$out"
           echo "$out" | grep -q 'already running' || { echo 'it did not open the running one'; exit 1; }
           if echo "$out" | grep -Eq 'stopping it|Updated AP Coder'; then echo 'it stopped or updated itself'; exit 1; fi
