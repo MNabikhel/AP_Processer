@@ -10,6 +10,7 @@
   {% block head %}{% endblock %}
 </head>
 <body data-page="{{ page }}">
+  <a class="skip" href="#main">Skip to the page</a>
   <div class="shell">
     <aside class="rail" aria-label="AP Coder">
       <a class="brand" href="/" aria-label="AP Coder: review queue">
@@ -38,7 +39,7 @@
         </div>
       </div>
     </aside>
-    <main class="main" id="main">
+    <main class="main" id="main" tabindex="-1">
       {% block header %}
       {% if meta %}
       <header class="apc-head apc-anim">

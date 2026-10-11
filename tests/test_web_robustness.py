@@ -106,3 +106,13 @@ def test_the_activity_search_finds_what_the_log_shows_in_its_what_column(client,
     label = ACTIONS["settings_changed"][2]
     text = client.get("/activity", params={"q": label.lower()}).text
     assert "1 of 1 event" in text and "No events match" not in text
+
+
+def test_every_page_starts_with_a_skip_link_past_the_rail(client):
+    """Keyboard only: 18 rail links came before the first invoice of the queue on every page; the first Tab now
+    offers to skip to the page itself."""
+    for path in ("/review", "/process", "/settings/data", "/help"):
+        text = client.get(path).text
+        assert 'class="skip" href="#main"' in text, path
+        assert text.index('href="#main"') < text.index('class="brand"'), path
+        assert '<main class="main" id="main" tabindex="-1">' in text, path

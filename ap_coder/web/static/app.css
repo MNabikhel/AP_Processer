@@ -513,6 +513,11 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .rail-foot {margin-top: auto; padding: 14px 0 16px 10px; border-top: 1px solid var(--lg-hairline);
   position: sticky; bottom: 0; background: var(--lg-surface);}
 .rail-demo {margin-bottom: 10px;}
+/* Keyboard: the first Tab of every page offers to skip the rail */
+.skip {position: absolute; left: 8px; top: -48px; z-index: 100; padding: 8px 14px; border-radius: var(--lg-r);
+  background: var(--lg-surface); color: var(--lg-text); box-shadow: var(--lg-focus); font-weight: 500;}
+.skip:focus {top: 8px;}
+.main:focus {outline: none;}
 .main {min-width: 0; margin-left: 256px; padding: 32px 40px 96px; max-width: 1656px;}
 .main > * + * {margin-top: 16px;}
 .main > .apc-head + * {margin-top: 12px;}
