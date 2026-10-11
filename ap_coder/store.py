@@ -1547,7 +1547,8 @@ class Store:
 
     def touchless_limit(self) -> float:
         """The largest invoice total approved without a person (Settings → Automation), in CAD: a foreign-currency
-        total is converted at the exchange rates in Settings → Review (compared as it is, without a rate)."""
+        total is converted at the exchange rates in Settings → Review (without a rate it goes to a person:
+        ``capture.workflow.invoice_gates``)."""
         try:
             value = float(self.get_setting(TOUCHLESS_LIMIT_SETTING) or DEFAULT_TOUCHLESS_LIMIT)
         except ValueError:

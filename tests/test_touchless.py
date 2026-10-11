@@ -307,6 +307,18 @@ def test_a_total_over_the_touchless_limit_needs_a_person_in_cad(touchless, path)
     assert _decide(touchless, path, capture=_capture(total=3500.0, currency="USD"))["auto"]  # 4,900 CAD
 
 
+def test_a_foreign_total_without_an_exchange_rate_needs_a_person(touchless, path):
+    """The touchless limit is in CAD: 4,000 USD (about 5,500 CAD) can't be compared with it without a rate."""
+    decision = _decide(touchless, path, capture=_capture(total=4000.0, currency="USD"))
+    assert not decision["auto"]
+    assert decision["reason"] == (
+        "always a person: no exchange rate for USD (Settings → Review) to compare its total with the touchless limit"
+    )
+    touchless.set_setting("fx_rates", "USD=1.30")
+    assert _decide(touchless, path, capture=_capture(total=3500.0, currency="USD"))["auto"]  # 4,550 CAD
+    assert _decide(touchless, path, capture=_capture(total=3500.0, currency="cad"))["auto"]
+
+
 def test_over_the_approval_limit_needs_a_person(touchless, path):
     touchless.set_setting("approval_limit", "1000")
     decision = _decide(touchless, path)

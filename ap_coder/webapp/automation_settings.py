@@ -77,7 +77,7 @@ def _limit_card(store) -> None:
         limit = c1.number_input(
             "Amount, in CAD", min_value=0.01, step=500.0, value=store.touchless_limit(), format="%.2f",
             help="A larger invoice always goes to a person. A foreign-currency total is converted to CAD at the "
-            "exchange rates in Settings → Review (compared as it is when no rate is set).",
+            "exchange rates in Settings → Review; one in a currency with no rate set always goes to a person.",
         )  # fmt: skip
         if st.form_submit_button("Save the limit", icon=":material/save:", disabled=PUBLIC_DEMO):
             changed = store.set_touchless_limit(limit, reviewer())
