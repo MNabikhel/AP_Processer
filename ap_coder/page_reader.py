@@ -314,7 +314,7 @@ class ReaderStatus:
 
 NOT_DOWNLOADED = (
     "OvisOCR2 isn't in LM Studio: copy its two files (bartowski build, Q8_0, about 1 GB, from IT) into LM Studio's "
-    "models folder; Settings > Page reader shows where."
+    "models folder; Settings → Reading shows where."
 )
 TRIES_AGAIN = "AP Coder tries it again in half an hour, or when the settings are saved."
 

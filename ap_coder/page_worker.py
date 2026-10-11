@@ -71,7 +71,7 @@ def saved_test(store: Any, model: str | None = None) -> dict[str, Any] | None:
 
 
 def save_test(store: Any, record: dict[str, Any]) -> None:
-    """Keep a test's result as its model's (the other models' tests are kept: testing one never unlinks another)."""
+    """Keep a test's result as its model's (the other models' tests are kept: testing one never undoes another's)."""
     tests = saved_tests(store)
     tests[str(record.get("model") or "")] = record
     store.set_setting(TEST_KEY, json.dumps({"models": tests}))
@@ -160,7 +160,7 @@ def linked(model: str, db_path: Path | None = None) -> bool:
     try:
         store = _dashboard_store(db_path)
         return store is not None and confirmed(store, model)
-    except Exception:  # a locked or damaged database: say "not linked", the dashboard tells the rest
+    except Exception:  # a locked or damaged database: say "not passed", the dashboard tells the rest
         return False
 
 
@@ -389,7 +389,7 @@ def _postpone_or_fail(store: Any, row: dict[str, Any], model: str, pages: int, s
     tries = int(row.get("tries") or 0) + 1
     if tries >= MAX_TRIES:
         message = (f"the model server cut the reading off {tries} times ({problem}); read it again from the invoice "
-                   "(Read with the page reader) once LM Studio is running with the model loaded")  # fmt: skip
+                   "(Add it to OvisOCR2's queue) once LM Studio is running with the model loaded")  # fmt: skip
         store.finish_page_read(iid, "failed", model, pages, seconds, message, tries=tries)
         return ReadOutcome(iid, "failed", model, pages, seconds, message=message)
     message = f"{problem}: read again later (try {tries} of {MAX_TRIES})"

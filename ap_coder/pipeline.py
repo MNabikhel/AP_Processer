@@ -11,14 +11,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import local_llm
 from .capture.bridge import review_issues
 from .capture.layout import CannotRead
 from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
 from .config import Settings
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
-from .inference import CodingResult, InvoiceCoder
+from .inference import CodingError, CodingResult, InvoiceCoder
 from .memory import compare_with_history, format_examples, select_examples, vendor_key
 from .po import po_findings
 from .reference_data import ReferenceData
@@ -177,12 +176,13 @@ class InvoicePipeline:
         todo = {n: li for n, li in enumerate(coding.line_items, start=1) if li.predicted_gl_code == UNASSIGNED}
         if not todo:
             return
-        if getattr(self.coder, "_client", None) is None and not local_llm.check_server(self.settings.llm).active:
-            return  # the chat model isn't running (it is optional): the lines stay for AP, nothing else changes
         try:
             picks = suggest_accounts(
                 self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history
             )
+        except CodingError as exc:  # the chat model isn't running (it is optional): the lines stay for AP
+            log.info("local model could not suggest accounts (%s); left for AP", exc)
+            return
         except Exception as exc:  # the model is an extra here: the invoice is already read and checked
             log.warning("local model could not suggest accounts (%s); left for AP", exc)
             return
@@ -316,7 +316,7 @@ class InvoicePipeline:
                 # Not read by the page reader yet: it will be (queued below), and decides then.
                 awaiting = page_text is None and not text_file
                 result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
-                                                    awaiting_page_reader=awaiting)  # fmt: skip
+                                                    output=result.output, awaiting_page_reader=awaiting)  # fmt: skip
 
         if self.store is not None and save:
             try:

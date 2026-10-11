@@ -53,7 +53,8 @@ def touchless(monkeypatch):
     """Every supplier touchless and every invoice passing the bar: only the page reader's wait holds it back."""
     seen = []
 
-    def decide(store, key, profile, capture, report, path, *, awaiting_page_reader=False):
+    def decide(store, key, profile, capture, report, path, *, awaiting_page_reader=False, output=None):
+        assert output is not None  # the coding an approval would post: its total and currency
         seen.append(awaiting_page_reader)
         if awaiting_page_reader:
             return {"state": AUTONOMOUS, "auto": False, "audit": False, "reason": WAITING_FOR_PAGE_READER}

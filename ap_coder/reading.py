@@ -189,4 +189,4 @@ def _banner(out: ReadingStatus) -> str:
         return "OvisOCR2 isn't running in LM Studio: invoices are read by OCR only and wait for a person."
     if out.self_test in ("pending", "running"):
         return "OvisOCR2 is testing itself before it reads invoices: invoices wait for a person meanwhile."
-    return "OvisOCR2 failed its self-test: invoices are read by OCR only and wait for a person (see Settings)."
+    return "OvisOCR2 failed its self-test: invoices are read by OCR only and wait for a person (Settings → Reading)."

@@ -494,7 +494,7 @@ def page_reader_line() -> tuple[str, str]:
     if state == "passed":
         return "ok", f"Page reader: {status.model} found, self-test passed (reads every page of every invoice)"
     if state == "failed":
-        return "warn", f"Page reader: {status.model} found, but it failed its self-test (Settings > Page reader)"
+        return "warn", f"Page reader: {status.model} found, but it failed its self-test (Settings > Reading)"
     return "info", f"Page reader: {status.model} found; its self-test runs on its own before it reads invoices"
 
 
