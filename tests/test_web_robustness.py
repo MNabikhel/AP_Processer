@@ -167,3 +167,26 @@ def test_a_backup_folder_name_the_computer_refuses_is_said_plainly(client, store
     response = client.post("/settings/data/backup-copy", data={"folder": folder}, headers=PAGE)
     assert response.status_code == 400 and "does not exist" in response.json()["error"]
     assert store.get_setting("backup_copy_dir") == ""
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/settings/data/backups/..%2Fap_coder.db",
+        "/settings/data/backups/ap_coder.db",
+        "/settings/data/backups/..%2F..%2F..%2Fetc%2Fpasswd",
+        "/static/..%2F..%2Fstore.py",
+        "/static/%2e%2e/%2e%2e/app.py",
+        "/fonts/..%2Fweb%2Fapp.py",
+        "/assets/..%2F..%2Fpyproject.toml",
+        "/review/1/page/..%2F..%2Fap_coder.db",
+        "/exports/batches/1/download?fmt=..%2F..%2Fx",
+        "/accounts/..%2F..%2Fx.csv",
+    ],
+)
+def test_no_file_route_serves_anything_outside_its_own_files(client, store, path):
+    """Backups, page pictures, exports and static files: a name with ../ in it is not found, never another file."""
+    store.backup_now("manual")
+    response = client.get(path)
+    assert response.status_code in (400, 404, 422), (path, response.status_code)
+    assert b"SQLite format" not in response.content and b"root:" not in response.content
