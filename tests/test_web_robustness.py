@@ -81,6 +81,24 @@ def test_acting_on_an_invoice_deleted_meanwhile_goes_back_to_the_queue(client, s
     assert "this invoice was deleted meanwhile" in flash_text(client, answer)
 
 
+@pytest.mark.parametrize("typed", ["1e309", "-1e309", "abc"])
+@pytest.mark.parametrize("field", ["line_amount", "line_quantity", "line_unit_price", "tax_rate_pct", "tax_amount"])
+def test_a_number_cell_that_is_not_a_finite_number_never_breaks_the_review_screen(client, store, field, typed):
+    """A cell posted as "1e309" (infinite once read) or as text: checking, splitting and approving answered 500
+    ("That didn't work"). Such a cell counts as empty and the checks say what is off."""
+    from tests.test_web_invoice import form_of
+
+    load_demo(store, Settings())
+    inv_id = store.list_invoices(REVIEW)[0]["id"]
+    data = form_of(store, inv_id)
+    data[field] = [typed] * len(data[field])
+    check = client.post(f"/review/{inv_id}/check", data=data, headers=PAGE)
+    assert check.status_code == 200, check.text
+    split = {**data, "split_line": "1", "part_gl": ["6000", "6010"], "part_pct": ["50", "50"]}
+    assert client.post(f"/review/{inv_id}/split", data=split, headers=PAGE).status_code < 500
+    assert client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).status_code < 500
+
+
 @pytest.mark.parametrize("typed", ["dollars", "1.37 USD", "US$=1.37", "USD=1.37, EUR"])
 def test_exchange_rates_that_cannot_be_read_are_refused_not_saved(client, store, typed):
     """A rate typed the wrong way round ("1.37 USD") used to be saved as if understood: USD invoices were then

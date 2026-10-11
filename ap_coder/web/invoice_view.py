@@ -99,6 +99,20 @@ def _amount_text(value: Any) -> str:
         return str(value)
 
 
+NUMBER_CELLS = ("amount", "quantity", "unit_price", "rate_pct", "taxable_amount", "tax_amount")
+
+
+def _number_cell(value: Any) -> str:
+    """A number cell of the grids as posted, or "" when it is not a finite number ("1e309" reads as infinity),
+    which the checks and the page could not use."""
+    text = str(value or "").strip()
+    try:
+        number = float(text.replace(",", "").replace("$", ""))
+    except ValueError:
+        return ""
+    return text if math.isfinite(number) else ""
+
+
 def _line_number(value: Any) -> int | None:
     if is_blank(value):
         return None
@@ -156,11 +170,14 @@ class Draft:
             for i, key in enumerate(keys):
                 row: dict[str, Any] = {c: (cols[c][i] if i < len(cols[c]) else "") for c in LINE_INPUTS}
                 row["line_number"] = _line_number(row["line_number"])
+                row.update({c: _number_cell(row[c]) for c in NUMBER_CELLS if c in row})
                 row["taxes_applied"] = [t for t in form.getlist(f"line_tax_{key}") if t in TAX_TYPES]
                 lines.append(row)
             tcols = {c: form.getlist(name) for c, name in TAX_INPUTS.items()}
             taxes = [{c: (tcols[c][i] if i < len(tcols[c]) else "") for c in TAX_INPUTS}
                      for i in range(len(tcols["tax_type"]))]  # fmt: skip
+            for t in taxes:
+                t.update({c: _number_cell(t[c]) for c in NUMBER_CELLS if c in t})
         return cls(header=header, lines=lines, taxes=taxes, taught=parse_taught(form.get("taught")),
                    override=str(form.get("override") or ""), reader_at=str(form.get("reader_at") or base.reader_at),
                    mail_lang=str(form.get("mail_lang") or ""))  # fmt: skip
