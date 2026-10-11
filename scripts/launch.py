@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import platform
@@ -355,9 +356,43 @@ def without_wheelhouse(missing: list[str], total: int) -> tuple[str, str, bool]:
     return "ok", f"Packages: all {total} in place (AP Coder runs from this folder)", False
 
 
+# The second OCR engine (PP-OCRv4, models inside the package) is pure Python but says "Python below 3.13" in its
+# metadata, so pip leaves it out on 3.13 and newer (pyproject's marker). It works there: installed on its own,
+# without that check, so a scan is read by two engines on every Python.
+SECOND_OCR = "rapidocr-onnxruntime>=1.3"
+
+
+def ensure_second_ocr(state: dict) -> str:
+    """On Python 3.13 or newer, the second OCR engine from the wheelhouse when it is missing (once per version of
+    AP Coder if it can't be installed). Returns a note for the readiness lines ("" when nothing to say)."""
+    if sys.version_info[:2] < (3, 13) or importlib.util.find_spec("rapidocr_onnxruntime") is not None:
+        return ""
+    if importlib.util.find_spec("rapidocr") is None or state.get("ocr2_failed") == fingerprint():
+        return ""  # no OCR add-on at all (said already), or tried for this version
+    if pip_source() is None:
+        return ""
+    say("Installing the second OCR engine (it reads scans a second way; its metadata predates this Python).")
+    if pip_install(["--ignore-requires-python", SECOND_OCR]):
+        importlib.invalidate_caches()
+        state.pop("ocr2_failed", None)
+        return ""
+    state["ocr2_failed"] = fingerprint()
+    return "The second OCR engine could not be installed: scans are read by one OCR engine (and OvisOCR2)."
+
+
 def ensure_packages(state: dict, extras: tuple[str, ...] = ("ocr",)) -> tuple[str, str, bool]:
     """Install only what is missing or too old: nothing when everything is in place. Offline (the default)
-    only from the bundle's wheelhouse/ folder. Returns (level, summary line, whether pip installed something)."""
+    only from the bundle's wheelhouse/ folder. Returns (level, summary line, whether pip installed something).
+    On Python 3.13 or newer the second OCR engine is added too (``ensure_second_ocr``)."""
+    level, summary, installed = _ensure_packages(state, extras)
+    if "ocr" in extras and level != "fail":
+        note = ensure_second_ocr(state)
+        if note and level == "ok":
+            level, summary = "warn", f"{summary}. {note}"
+    return level, summary, installed
+
+
+def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bool]:
     total = len(check_deps.requirements(extras=extras))
     missing, self_problem = missing_packages(extras)
     if not missing and not self_problem:

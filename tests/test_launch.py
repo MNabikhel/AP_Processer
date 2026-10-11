@@ -31,6 +31,8 @@ def launch(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "VENV_PY", venv / "bin" / "python")
     monkeypatch.setattr(module, "STATE", venv / "ap_coder_launcher.json")
     monkeypatch.setattr(module, "WINDOWS", False)
+    module.real_ensure_second_ocr = module.ensure_second_ocr
+    monkeypatch.setattr(module, "ensure_second_ocr", lambda state: "")  # its own tests below, on any Python
     return module
 
 
@@ -97,6 +99,40 @@ def test_ocr_add_on_failing_is_not_retried_on_every_start(launch, monkeypatch):
     assert len(calls) == 1
     level, text, installed = launch.ensure_packages(state)  # the next start
     assert len(calls) == 1 and not installed and level == "warn"
+
+
+def _second_ocr(launch, monkeypatch, *, python=(3, 14), has=(), ok=True):
+    """``ensure_second_ocr`` on ``python`` with the modules in ``has`` importable; pip succeeds when ``ok``."""
+    monkeypatch.setattr(launch.sys, "version_info", (*python, 0, "final", 0))
+    monkeypatch.setattr(launch.importlib.util, "find_spec", lambda name: object() if name in has else None)
+    monkeypatch.setattr(launch, "pip_source", lambda: WHEELHOUSE)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(launch, "pip_install", lambda args: calls.append(list(args)) or ok)
+    return calls
+
+
+def test_the_second_ocr_engine_is_installed_on_python_3_14(launch, monkeypatch):
+    """rapidocr-onnxruntime says "below 3.13" in its metadata but works there: installed without that check."""
+    calls = _second_ocr(launch, monkeypatch, has={"rapidocr"})
+    assert launch.real_ensure_second_ocr({}) == ""
+    assert calls == [["--ignore-requires-python", launch.SECOND_OCR]]
+
+
+def test_the_second_ocr_engine_is_left_alone_where_pip_installs_it(launch, monkeypatch):
+    calls = _second_ocr(launch, monkeypatch, python=(3, 12), has={"rapidocr"})  # pip installs it with the rest
+    assert launch.real_ensure_second_ocr({}) == "" and calls == []
+    calls = _second_ocr(launch, monkeypatch, has={"rapidocr", "rapidocr_onnxruntime"})  # already there
+    assert launch.real_ensure_second_ocr({}) == "" and calls == []
+    calls = _second_ocr(launch, monkeypatch, has=set())  # no OCR add-on at all: said elsewhere
+    assert launch.real_ensure_second_ocr({}) == "" and calls == []
+
+
+def test_a_second_ocr_engine_that_cannot_be_installed_is_said_once(launch, monkeypatch):
+    state: dict = {}
+    calls = _second_ocr(launch, monkeypatch, has={"rapidocr"}, ok=False)
+    assert "one OCR engine" in launch.real_ensure_second_ocr(state)
+    assert state["ocr2_failed"] == launch.fingerprint() and len(calls) == 1
+    assert launch.real_ensure_second_ocr(state) == "" and len(calls) == 1  # not tried again on every start
 
 
 def test_a_failed_install_stops_with_what_to_do(launch, monkeypatch):
