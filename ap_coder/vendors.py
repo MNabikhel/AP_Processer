@@ -9,7 +9,7 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
   a classic sign of a fake invoice or changed payment details
 * AMOUNT_UNUSUAL (warning): far above what this vendor usually bills
 * POSSIBLE_DUPLICATE_AMOUNT (warning): same vendor, same total, close date, different invoice number
-* VENDOR_NEW (info): first invoice from this vendor (no penalty; just worth knowing)
+* VENDOR_NEW (info): first invoice from this vendor, or none approved yet (no penalty, but never touchless)
 * DUPLICATE_IN_ERP (error): the same vendor and invoice number is in the ERP's invoice register
 * DUPLICATE_OTHER_VENDOR (warning): same invoice number and total under another vendor name
 * VENDOR_NOT_IN_MASTER (warning): a vendor master was imported from the ERP and this vendor is not in it
@@ -191,9 +191,15 @@ def vendor_findings(
 
     history = [h for h in store.vendor_invoices(key) if h["id"] != exclude_invoice_id]
     findings += _credit_note_findings(coding, store, history)
+    # No invoice under this name approved yet (its first, or the others still wait): a person confirms it is a known
+    # supplier, even when the GST/HST number printed is a touchless supplier's. The ERP's vendor master vouches for
+    # a vendor in it.
+    approved = any(h["status"] in ("approved", "pending_approval") for h in history)
+    if not in_master and not approved and store.has_other_vendors(key):
+        findings.append((INFO, "VENDOR_NEW", "first invoice from this vendor: confirm it is a known supplier"
+                         if not history else "no invoice from this vendor approved yet: confirm it is a known "
+                         "supplier"))  # fmt: skip
     if not history:
-        if store.has_other_vendors(key) and not in_master:  # the ERP's vendor master already vouches for it
-            findings.append((INFO, "VENDOR_NEW", "first invoice from this vendor: confirm it is a known supplier"))
         return findings
 
     # GST/HST number compared with what this vendor used before (approved invoices) or what AP recorded.

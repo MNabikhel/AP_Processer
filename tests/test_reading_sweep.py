@@ -154,6 +154,70 @@ def test_a_page_the_page_reader_wrote_nothing_real_for_is_not_counted_as_read(tm
     assert decided[-1] == 1  # one of its two pages read
 
 
+def _touchless_supplier(tmp_path, ground_truth):
+    """A store with touchless processing on, and the ground truth's supplier touchless: 30 clean reviewed invoices
+    (one of them stored, approved)."""
+    from ap_coder.capture.supplier import AUTONOMOUS
+
+    store = Store(tmp_path / "ap.db")
+    store.set_touchless(True, "Mia")
+    store.set_touchless_limit(1_000_000, "Mia")
+    old = {**ground_truth, "invoice_number": "OLD-1", "invoice_date": "2025-06-01"}
+    store.approve_invoice(store.add_invoice(tmp_path / "first.pdf", old, {}), old, "jane")
+    key = store.supplier_key_for(ground_truth["vendor_name"], ground_truth["gst_hst_registration_number"])
+    clean = [{"field": f"f{n}", "ai_value": "a", "final_value": "a", "correct": True} for n in range(13)]
+    for i in range(30):
+        store.record_outcomes(key, 1000 + i, clean, display_name=ground_truth["vendor_name"],
+                              at=f"2026-01-01T00:{i // 60:02d}:{i % 60:02d}")  # fmt: skip
+    store.sync_autonomy(key)
+    assert store.get_supplier_profile(key)["state"] == AUTONOMOUS
+    return store
+
+
+def _decision(store, doc, reference, tmp_path):
+    """The touchless decision on ``doc``, read with every header field verified and every check passed."""
+    from ap_coder.capture.types import CaptureResult, FieldResult
+    from ap_coder.capture.workflow import audit_pick, autonomy_decision
+    from ap_coder.pipeline import finalise_coding
+    from ap_coder.schema import InvoiceCoding
+    from ap_coder.validation import ERROR
+
+    _, report = finalise_coding(InvoiceCoding.model_validate(doc), reference, Settings(), store=store)
+    report.issues = [i for i in report.issues if i.severity != ERROR]  # the sample's GL codes: not what is tested
+    path = next(p for n in range(200) if not audit_pick(p := tmp_path / f"inv{n}.pdf", 0.05))
+    fields = {name: FieldResult(name, doc[name], 0.99, "verified") for name in
+              ("vendor_name", "invoice_number", "invoice_date", "grand_total", "subtotal")}  # fmt: skip
+    capture = CaptureResult(fields, checks=[{"code": "TOTALS_ADD_UP", "ok": True, "detail": ""}], page_count=1)
+    key = store.supplier_key_for(doc["vendor_name"], doc["gst_hst_registration_number"])
+    return autonomy_decision(store, key, store.get_supplier_profile(key), capture, report, path, output=doc,
+                             pages_read=1)  # fmt: skip
+
+
+def test_another_vendor_name_on_a_touchless_suppliers_gst_number_needs_a_person(tmp_path, ground_truth, reference):
+    """The supplier's record is kept by its GST/HST business number: an invoice under a vendor name never seen before
+    that prints a touchless supplier's GST/HST number took that supplier's record and was approved without a person
+    (VENDOR_NEW was only worth knowing). A name never approved before always goes to a person."""
+    store = _touchless_supplier(tmp_path, ground_truth)
+    own = _decision(store, {**ground_truth, "invoice_number": "NEW-2"}, reference, tmp_path)
+    assert own["auto"], own  # its own name: touchless
+    other = {**ground_truth, "invoice_number": "NEW-3", "vendor_name": "Northwind Payments Centre"}
+    decision = _decision(store, other, reference, tmp_path)
+    assert not decision["auto"], decision
+    assert decision["reason"] == "always a person: no invoice under this vendor name was approved before"
+    # With a vendor master: the name is not in it, only the GST/HST number is.
+    row = {"vendor_name": ground_truth["vendor_name"], "gst": ground_truth["gst_hst_registration_number"],
+           "status": "active", "status_given": False, "erp_id": "V100", "terms": None, "default_gl": None}  # fmt: skip
+    store.import_vendor_master([row])
+    key = store.supplier_key_for(ground_truth["vendor_name"], ground_truth["gst_hst_registration_number"])
+    clean = [{"field": f"f{n}", "ai_value": "a", "final_value": "a", "correct": True} for n in range(13)]
+    for i in range(30):  # the supplier's record under its vendor master id
+        store.record_outcomes(key, 2000 + i, clean, display_name=ground_truth["vendor_name"],
+                              at=f"2026-01-02T00:{i // 60:02d}:{i % 60:02d}")  # fmt: skip
+    assert _decision(store, {**ground_truth, "invoice_number": "NEW-4"}, reference, tmp_path)["auto"]
+    decision = _decision(store, {**other, "invoice_number": "NEW-5"}, reference, tmp_path)
+    assert not decision["auto"] and "only its GST/HST number" in decision["reason"], decision
+
+
 def test_days_in_a_late_interest_clause_are_not_the_net_days():
     """ "Due on receipt. Interest of 2% per month on accounts over 30 days" (common on Canadian invoices) was read
     as net 30: the due date came out 30 days late. Days in a late-payment clause say when interest starts."""
