@@ -139,7 +139,15 @@ PAGES: list[Page] = [
         "How invoices are read, touchless processing, review behaviour, JD Edwards E1, your data and backups.",
         module="settings",
     ),
-    Page("help", "Help", "/help", "help", S, "How AP Coder works, what each check means and what to do about it."),
+    Page(
+        "help",
+        "Help",
+        "/help",
+        "help",
+        S,
+        "How AP Coder works, what each check means and what to do about it.",
+        module="help",
+    ),
 ]
 
 MORE_MODULES: list[str] = ["invoice"]  # routes without a rail entry: the invoice review screen (/review/{id})

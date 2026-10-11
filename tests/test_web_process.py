@@ -153,7 +153,7 @@ def test_demo_invoices_load_and_remove(client, store):
 
 
 def test_the_reading_banner_shows_on_process_and_review_only(client):
-    banner = "Open Settings → Reading"
+    banner = '<div class="banner warn"'  # the FAQ on Help says "Open Settings → Reading" too
     assert banner in client.get("/process").text  # no LM Studio in tests: OvisOCR2 isn't running
     assert banner in client.get("/review").text
     assert banner not in client.get("/help").text
