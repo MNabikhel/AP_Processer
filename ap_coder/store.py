@@ -276,6 +276,13 @@ class Store:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(supplier_profiles)")}
         if columns and "suspended_at" not in columns:
             conn.execute("ALTER TABLE supplier_profiles ADD COLUMN suspended_at TEXT")
+            # A vendor suspended by an older version: when, from the Activity log (else its last change), so the
+            # clean streak it had before still doesn't count.
+            conn.execute(
+                "UPDATE supplier_profiles SET suspended_at = COALESCE((SELECT MAX(e.created_at) FROM events e "
+                "WHERE e.action = 'autonomy_suspended' AND CASE WHEN json_valid(e.detail) THEN "
+                "json_extract(e.detail, '$.key') END = supplier_profiles.key), updated_at) WHERE state = 'suspended'"
+            )
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
         from .capture.workflow import AUTONOMOUS_REVIEWER

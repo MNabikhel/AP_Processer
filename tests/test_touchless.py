@@ -229,6 +229,26 @@ def test_suspended_at_column_is_added_to_an_older_database(tmp_path):
     assert "suspended_at" in store.get_supplier_profile(KEY)
 
 
+def test_a_vendor_suspended_before_the_column_existed_still_needs_a_fresh_streak(tmp_path):
+    """An older version suspended a vendor (a touchless invoice reopened: no correction recorded) without noting
+    when: the upgrade takes the time from the Activity log, so the clean streak before it doesn't bring it back."""
+    path = tmp_path / "old.db"
+    store = Store(path)
+    _ready(store)
+    with sqlite3.connect(path) as conn:
+        conn.execute("ALTER TABLE supplier_profiles DROP COLUMN suspended_at")
+        conn.execute("UPDATE supplier_profiles SET state = 'suspended', updated_at = '2026-05-02T00:00:00'")
+        conn.execute(
+            "INSERT INTO events (action, actor, detail, created_at) VALUES ('autonomy_suspended', 'Ann', ?, "
+            "'2026-05-01T09:00:00')",
+            (json.dumps({"supplier": "Northwind", "key": KEY, "from": "autonomous", "to": "suspended"}),),
+        )
+    store = Store(path)
+    assert store.get_supplier_profile(KEY)["suspended_at"] == "2026-05-01T09:00:00"
+    store.set_touchless(True, "Mia")
+    assert store.get_supplier_profile(KEY)["state"] == SUSPENDED  # its 30 clean invoices were before it
+
+
 # --- The pure rules ------------------------------------------------------------------------------------------------
 
 
