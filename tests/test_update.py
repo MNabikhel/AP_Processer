@@ -30,10 +30,12 @@ def upgrade():
     return _script("upgrade")
 
 
-def make_install(folder: Path, version: str, built: str = "", files: bool = False, venv: bool = True) -> Path:
-    """An AP Coder folder as an offline bundle unzips it (``built``: its build time), set up (``venv``)."""
+def make_install(folder: Path, version: str, built: str = "", files: bool = False, venv: bool = True,
+                 extra: tuple[str, ...] = ()) -> Path:  # fmt: skip
+    """An AP Coder folder as an offline bundle unzips it (``built``: its build time), set up (``venv``); ``extra``:
+    more files of the bundle (e.g. its wheels)."""
     for rel in ("ap_coder/__init__.py", "scripts/launch.py", "tests/test_a.py", "APProcessor.bat",
-                "APProcessor.command", "private/README.md", "README.md"):  # fmt: skip
+                "APProcessor.command", "private/README.md", "README.md", *extra):  # fmt: skip
         (folder / rel).parent.mkdir(parents=True, exist_ok=True)
         (folder / rel).write_text(f"# {rel} {version}\n")
     (folder / "pyproject.toml").write_text(f'[project]\nname = "ap-coder"\nversion = "{version}"\n')
@@ -117,7 +119,8 @@ def test_a_newer_install_that_is_gone_or_not_newer_is_not_handed_over_to(upgrade
 
 
 def test_files_the_older_version_left_are_removed_when_unzipped_over_it(upgrade, tmp_path):
-    folder = make_install(tmp_path / "AP Coder", "0.2.0", files=True)
+    folder = make_install(tmp_path / "AP Coder", "0.2.0", files=True,
+                          extra=("wheelhouse/numpy-2.3.0-cp312-cp312-win_amd64.whl",))  # fmt: skip
     stale = ["ap_coder/retired_module.py", "tests/test_retired.py", "scripts/old_tool.py", "models/old.onnx",
              "wheelhouse/numpy-1.0-cp311-cp311-win_amd64.whl", "ap_coder/gone/__init__.py"]  # fmt: skip
     for rel in stale:
@@ -144,6 +147,24 @@ def test_nothing_is_pruned_without_a_file_list_or_in_a_checkout(upgrade, tmp_pat
     (checkout / ".git").mkdir()
     (checkout / "ap_coder" / "new_module.py").write_text("work in progress")
     assert upgrade.prune_stale(checkout) == ([], 0) and (checkout / "ap_coder" / "new_module.py").exists()
+
+
+def test_a_wheelhouse_this_bundle_did_not_unzip_here_is_never_pruned(upgrade, tmp_path):
+    """The tester copied an older bundle's wheelhouse next to the new code: the start deleted every wheel in it as
+    "left by the older version", so instead of the one plain message (built for Windows, Python 3.11/3.12) pip
+    failed with a long list of missing packages. A code-only update unzipped over an older folder lost its only
+    wheelhouse the same way."""
+    folder = make_install(tmp_path / "AP Coder", "0.2.0", files=True)  # its manifest lists no wheelhouse or models
+    copied = ["wheelhouse/numpy-2.1.3-cp312-cp312-win_amd64.whl", "wheelhouse/streamlit-1.40.1-py3-none-any.whl"]
+    for rel in copied:
+        (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+        (folder / rel).write_text("a wheel")
+    assert upgrade.prune_stale(folder) == ([], 0) and all((folder / rel).exists() for rel in copied)
+    # Its own wheels listed but not there (the person replaced the folder): the copied one is kept too.
+    listed = json.loads((folder / "bundle_manifest.json").read_text())
+    listed["files"]["wheelhouse/numpy-2.3.0-cp312-cp312-manylinux2014_x86_64.whl"] = "0" * 64
+    (folder / "bundle_manifest.json").write_text(json.dumps(listed))
+    assert upgrade.prune_stale(folder) == ([], 0) and all((folder / rel).exists() for rel in copied)
 
 
 # --- Data kept in a code folder ----------------------------------------------------------------------------------

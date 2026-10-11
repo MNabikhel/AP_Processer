@@ -215,7 +215,10 @@ def previous_versions(root: Path, extra: list[str | Path] = ()) -> list[dict]:
 def prune_stale(root: Path = ROOT) -> tuple[list[str], int]:
     """Remove the files under ap_coder/, scripts/, tests/, wheelhouse/ and models/ that this version's bundle does not
     hold (an older version's, when the new bundle was unzipped over it): only when the manifest lists its files, and
-    never in a git checkout. Python's own caches are left alone. Returns (the files removed, bytes freed)."""
+    never in a git checkout. A folder is pruned only when this bundle's own files for it are there (it was unzipped
+    here): a wheelhouse copied in from another bundle, or the only one when a bundle without one was unzipped over an
+    older folder, is kept (its wheels say what they fit). Python's own caches are left alone. Returns (the files
+    removed, bytes freed)."""
     listed = paths.bundle_manifest(root).get("files")
     if not isinstance(listed, dict) or not listed or (root / ".git").exists():
         return [], 0
@@ -224,7 +227,7 @@ def prune_stale(root: Path = ROOT) -> tuple[list[str], int]:
     freed = 0
     for top in PRUNED:
         base = root / top
-        if not base.is_dir():
+        if not base.is_dir() or not any(n.startswith(f"{top}/") and (root / n).is_file() for n in keep):
             continue
         for folder, dirs, files in os.walk(base, topdown=True):
             dirs[:] = [d for d in dirs if d != "__pycache__" and not d.endswith(".egg-info")]
