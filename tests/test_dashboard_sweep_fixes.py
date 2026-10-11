@@ -207,6 +207,24 @@ def test_counts_of_one_read_as_sentences(db):
     assert "1 invoice cannot go to JD Edwards yet and is left out of the batch" in warned, warned
 
 
+def test_an_activity_search_that_finds_nothing_says_so(db):
+    """Searching the Activity log for something it doesn't hold (or picking a filter with no events, e.g. Backups
+    before any backup) crashed the page: "StreamlitMissingRequiredParameterError: The body parameter is required"
+    (an empty timeline is no HTML). The search is kept for the session, so the page broke on every visit."""
+    store = Store(db)
+    load_sample_setup(store)
+    _clean(store)
+    _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages
+    at = _ok(AppTest.from_string("from ap_coder.webapp.activity import page_activity\npage_activity()",
+                                 default_timeout=TIMEOUT).run())  # fmt: skip
+    at.text_input(key="activity_query").input("nothing like this")
+    _ok(at.run())
+    assert "No events match" in _html(at)
+    at.text_input(key="activity_query").input("")
+    _ok(at.run())
+    _ok(at.button_group(key="activity_group").set_value("Backups").run())
+
+
 def test_getting_started_counts_only_the_steps_that_are_needed(db):
     """The welcome screen's ring counted the optional chat model, so it read 1/6 where the Process page said 1 of 4
     (plus processing the first invoices), and could never be complete without that optional model."""

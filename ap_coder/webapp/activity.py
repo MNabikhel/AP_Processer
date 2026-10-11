@@ -102,7 +102,10 @@ def page_activity() -> None:
     )  # fmt: skip
     timeline, grid = st.tabs(["Timeline", "Table"])
     with timeline, card("activity_timeline"):
-        st.html(history_html(shown[:200], with_invoice=True))
+        if not shown:  # an empty timeline is no HTML at all, which st.html refuses
+            st.html(ui.empty_note("No events match", " Try another search, filter or person.", "search_off"))
+        else:
+            st.html(history_html(shown[:200], with_invoice=True))
         if len(shown) > 200:
             st.caption("Showing the newest 200; use the table or the CSV for everything.")
     with grid:
