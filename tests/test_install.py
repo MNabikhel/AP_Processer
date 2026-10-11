@@ -195,3 +195,15 @@ def _first_run():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_offline_installer_asks_no_cloud_questions(tmp_path, monkeypatch):
+    """The offline build reads every invoice on this computer: the installer makes the settings file, asks nothing."""
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setattr(install, "ROOT", tmp_path)
+    (tmp_path / ".env.example").write_text("AP_REVIEWER=\n", encoding="utf-8")
+    c = install.Console(assume_yes=False)
+    c.ask = lambda *a, **k: pytest.fail(f"asked {a[0]!r}")
+    c.yes = lambda *a, **k: pytest.fail(f"asked {a[0]!r}")
+    env = install.configure_settings(c, tmp_path / "data")
+    assert env == tmp_path / "data" / ".env" and env.exists()
