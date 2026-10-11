@@ -1,13 +1,14 @@
 # Pilot plan: four weeks to a decision
 
 A suggested way to run the AP Coder pilot so that, after a month, you can show your manager real
-numbers from your own invoices. Everything stays on the AP computer; only your organisation's Azure
-resources see the documents.
+numbers from your own invoices. Everything stays on the AP computer: invoices are read on the laptop,
+by OCR and by OvisOCR2 in LM Studio.
 
 ## Before week 1: set up (half a day)
 
-- [ ] Install and connect Azure (GETTING_STARTED.md, steps 1 to 3). *Settings → Azure* has a
-      connection test.
+- [ ] IT installs LM Studio with OvisOCR2 (and, optionally, the chat model); start its server, then
+      install AP Coder (GETTING_STARTED.md, steps 1 to 3). AP Coder finds OvisOCR2 and runs its
+      self-test on its own (10 to 20 minutes the first time): check *Settings → Reading* shows it passed.
 - [ ] Try the demo for 15 minutes (*Load demo invoices*), then *Remove demo invoices*.
 - [ ] **GL accounts & tax:** import your chart of accounts (and cost centers if you code to them);
       check how each sales tax posts (GST/HST and QST recoverable, PST expensed).
@@ -18,7 +19,8 @@ resources see the documents.
 - [ ] **Learning & accuracy → Teach from past coding:** import last year's posted AP lines, so the AI
       knows how each vendor is coded from the first invoice.
 - [ ] **Settings:** your name, the approval limit (if two people approve), the second backup folder
-      (OneDrive), and exchange rates if you are billed in USD or EUR.
+      (OneDrive), and exchange rates if you are billed in USD or EUR. Leave **Settings → Automation**
+      (touchless processing) off for now.
 
 ## Week 1: shadow mode
 
@@ -26,9 +28,11 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
 
 - [ ] 20 to 50 invoices, a representative mix (top vendors, several provinces, a few French invoices,
       credit notes, PO invoices).
-- [ ] Review each one; correct what is wrong and approve (the AI learns from every approval).
+- [ ] Review each one; correct what is wrong and click **Approve & teach** (each correction trains that
+      vendor; the confirmation says how far it is from touchless).
 - [ ] Note anything AP Coder missed or flagged wrongly (Activity keeps the trail).
-- [ ] Friday: **Learning & accuracy** (AI accuracy against the 90% target) and **Insights**.
+- [ ] Friday: **Learning & accuracy** (AI accuracy against the 90% target, and *Supplier learning*:
+      which vendors are getting close to touchless) and **Insights**.
 
 ## Week 2: rules and real exports
 
@@ -45,6 +49,10 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
 - [ ] Turn on the **folder watcher** (`watch`, or Task Scheduler with `--once`) or save invoice emails
       (.eml) into the invoices folder.
 - [ ] Look at **Vendors that make work** and ask the worst offenders for better invoices.
+- [ ] **Touchless, if ready:** when several regular vendors are close to the bar on *Learning & accuracy
+      → Supplier learning* and corrections have settled, a manager turns on touchless processing in
+      **Settings → Automation**. Check *Largest invoice approved without a person* (5,000.00 CAD by
+      default) and use *Keep supervised* for any vendor that should always go to a person.
 
 ## Week 4: close and decide
 
@@ -62,7 +70,8 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
 | AI coding accuracy | Learning & accuracy | at or above 90%, rising week on week |
 | Approved as coded | Insights | most invoices need no change |
 | Minutes per invoice | Insights (assumptions) | well below today's manual time |
-| Azure cost per invoice | Insights | cents, from the real token usage |
+| Touchless rate | Settings → Automation | rising; Ardent Partners puts the average at 32.6%, best in class about 49% |
+| Errors found in touchless invoices | Settings → Automation | none, or very few, in the audited 5% |
 | Duplicates stopped, fraud signals | Insights, Activity | any caught is money kept |
 | Discounts taken in time | Insights → AP operations | more than before |
 | Days to approve | Insights → AP operations | shorter than before |

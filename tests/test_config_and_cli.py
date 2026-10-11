@@ -132,3 +132,11 @@ def test_doctor_skips_the_local_model_when_ai_coding_is_off(reference, monkeypat
     monkeypatch.setattr(doctor, "check_server", never)
     checks = {c.area: c for c in doctor.run_checks(Settings(llm=LocalLLMSettings(provider="off")), lambda: reference)}
     assert checks["local model"].status == doctor.SKIP and "turned off" in checks["local model"].detail
+
+
+def test_commands_use_the_database_the_dashboard_uses(monkeypatch, tmp_path):
+    """AP_DB_PATH picks the dashboard's database; read-pages and the other commands use the same one."""
+    monkeypatch.setenv("AP_DB_PATH", str(tmp_path / "chosen.db"))
+    assert cli.build_parser().parse_args(["read-pages"]).db == str(tmp_path / "chosen.db")
+    monkeypatch.delenv("AP_DB_PATH")
+    assert cli.build_parser().parse_args(["read-pages"]).db.endswith("ap_coder.db")

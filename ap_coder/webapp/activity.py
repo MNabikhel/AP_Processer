@@ -19,7 +19,7 @@ GROUPS = {
               "settings_changed", "rules_changed", "vendor_updated", "vendors_imported", "pos_imported", "po_status",
               "pos_deleted", "export_undone", "erp_register_imported"],
     "Learning": ["lessons_forgotten", "history_imported", "autonomy_on", "autonomy_off", "autonomy_suspended",
-                 "page_reader_tested"],
+                 "autonomy_held", "autonomy_allowed", "touchless_on", "touchless_off", "page_reader_tested"],
     "Backups": ["backup_made", "backup_restored"],
 }  # fmt: skip
 

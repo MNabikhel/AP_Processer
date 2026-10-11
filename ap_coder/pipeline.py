@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .capture.bridge import review_issues
+from .capture.layout import CannotRead
 from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
 from .config import Settings
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
-from .inference import CodingResult, InvoiceCoder
+from .inference import CodingError, CodingResult, InvoiceCoder
 from .memory import compare_with_history, format_examples, select_examples, vendor_key
 from .po import po_findings
 from .reference_data import ReferenceData
@@ -179,6 +180,9 @@ class InvoicePipeline:
             picks = suggest_accounts(
                 self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history
             )
+        except CodingError as exc:  # the chat model isn't running (it is optional): the lines stay for AP
+            log.info("local model could not suggest accounts (%s); left for AP", exc)
+            return
         except Exception as exc:  # the model is an extra here: the invoice is already read and checked
             log.warning("local model could not suggest accounts (%s); left for AP", exc)
             return
@@ -196,25 +200,46 @@ class InvoicePipeline:
         result.model = f"local reader + {model}"
 
     def _reads_locally(self, path: Path) -> bool:
-        """No Document Intelligence endpoint (and no client handed in): read the file on this computer."""
+        """Read the file on this computer: no Document Intelligence client handed in, and its endpoint unset or the
+        internet not allowed (this offline build). Text files are read as they are either way."""
+        from .offline import internet_allowed
+
         ex = self.extractor
         return (
             path.suffix.lower() not in TEXT_EXTENSIONS
             and isinstance(ex, DocumentExtractor)
             and ex._client is None
-            and not ex.settings.endpoint
+            and (not ex.settings.endpoint or not internet_allowed())
         )
+
+    def _images(self, path: Path) -> list[Any] | None:
+        """Page images for a coder that looks at them (Azure OpenAI with AP_VISION, a client handed in): rendered only
+        then, never for the local readers, which read the page's text."""
+        wants_images = getattr(self.coder, "wants_images", lambda: self.settings.engine.vision)
+        if path.suffix.lower() in TEXT_EXTENSIONS or not wants_images():
+            return None
+        try:
+            return render_page_images(path, self.settings.engine.vision_max_pages)
+        except Exception as exc:  # vision is an extra; the text extraction is enough to code
+            log.warning("%s: could not render page images (%s); coding from text only", path.name, exc)
+            return None
 
     def process(
         self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None
     ) -> PipelineResult:
         """Read, code and check one invoice, and save it to the review queue (``save``). ``page_text``: the page
-        reader's reading of each page (a vision model), read as one more independent reader. ``invoice_id``: the
-        invoice is already in the store as this row (read again by the page reader), so the checks against other
-        invoices (duplicate, vendor history, purchase order) leave it out instead of finding it against itself."""
+        reader's reading of each page (OvisOCR2), read as one more independent reader. ``invoice_id``: the invoice is
+        already in the store as this row (read again by the page reader), so the checks against other invoices
+        (duplicate, vendor history, purchase order) leave it out instead of finding it against itself.
+
+        Every file is read the same way: a PDF's text layer where its page has one, local OCR (two engines) for a scan
+        or a photo, a text file as it is; the same readers and checks, then coded from AP's history. A document the
+        page reader hasn't read yet (``page_text`` None) is never approved without a person: it is queued for the
+        page reader, which decides that once it has read it."""
         path = Path(path)
         result = PipelineResult(source=path)
         captured: tuple[Any, str, Any] | None = None  # (capture, supplier key, profile) when read without AI
+        text_file = path.suffix.lower() in TEXT_EXTENSIONS
         try:
             t0 = time.perf_counter()
             layout = None
@@ -228,15 +253,6 @@ class InvoicePipeline:
                 result.extraction = self.extractor.extract(path)
             result.timings["extraction"] = time.perf_counter() - t0
 
-            images = None
-            # Azure: AP_VISION. A local model: when it can see pages (AP_LLM_VISION).
-            wants_images = getattr(self.coder, "wants_images", lambda: self.settings.engine.vision)
-            if path.suffix.lower() not in TEXT_EXTENSIONS and wants_images():
-                try:
-                    images = render_page_images(path, self.settings.engine.vision_max_pages)
-                except Exception as exc:  # vision is an extra; the text extraction is enough to code
-                    log.warning("%s: could not render page images (%s); coding from text only", path.name, exc)
-
             # Reviewer history relevant to this document (immediate learning).
             feedback = self.store.feedback_rows() if self.store is not None else []
             vendor_hint = (result.extraction.invoice_fields.get("VendorName") or {}).get("value")
@@ -246,11 +262,14 @@ class InvoicePipeline:
 
             t1 = time.perf_counter()
             provider = getattr(self.coder, "provider", "")
-            if provider in ("off", "local") and path.suffix.lower() not in TEXT_EXTENSIONS:
-                # No cloud AI: the local reader's header, lines and taxes (it reads invoices better than a small
-                # model), each line coded from what AP approved before; a local model codes the lines left over.
-                from .offline_coder import code_from_capture, read_invoice
+            if provider in ("off", "local"):
+                # The local readers' header, lines and taxes (they read invoices better than a small model), each
+                # line coded from what AP approved before; the chat model suggests the lines left over when it
+                # answers. A text file is read by the same rule reader, its text taken as exact.
+                from .offline_coder import code_from_capture, read_invoice, text_layout
 
+                if layout is None and text_file:
+                    layout = text_layout(result.extraction.content)
                 captured = read_invoice(path, self.store, layout=layout, page_text=page_text)
                 result.coding = code_from_capture(
                     captured[0], self.reference, feedback, self.store, text=result.extraction.content
@@ -258,7 +277,7 @@ class InvoicePipeline:
                 if provider == "local":
                     self._local_accounts(result.coding, history_text)
             else:
-                result.coding = self.coder.code(result.extraction, images, history_text)
+                result.coding = self.coder.code(result.extraction, self._images(path), history_text)
             result.timings["inference"] = time.perf_counter() - t1
             if self.store is not None:  # fixed coding rules set by AP win over the AI
                 coded, result.rules_applied = apply_rules(result.coding.coding, self.store.coding_rules())
@@ -273,6 +292,9 @@ class InvoicePipeline:
                 exclude_invoice_id=invoice_id,
                 feedback=feedback,
             )
+        except CannotRead as exc:  # OCR or the photo add-on isn't installed: said plainly, never an empty reading
+            log.warning("%s: %s", path.name, exc)
+            result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch
             log.exception("Failed to process %s", path)
             result.error = f"{type(exc).__name__}: {exc}"
@@ -291,7 +313,12 @@ class InvoicePipeline:
             if result.capture is not None and result.report is not None:
                 for severity, code, message in review_issues(result.capture):
                     result.report.issues.append(Issue(severity, code, message))
-                result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path)
+                # Not read by the page reader yet: it will be (queued below), and decides then.
+                awaiting = page_text is None and not text_file
+                read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
+                result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
+                                                    output=result.output, awaiting_page_reader=awaiting,
+                                                    pages_read=read)  # fmt: skip
 
         if self.store is not None and save:
             try:
@@ -307,7 +334,7 @@ class InvoicePipeline:
                     self.store.save_capture(result.invoice_id, result.capture.to_dict())
                 if result.autonomy.get("auto") and result.output is not None:
                     self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
-                elif result.output is not None:  # the page reader reads it in the background, when it is set to
+                elif result.output is not None:  # the page reader reads every page of it in the background
                     from .page_worker import queue_new_invoice
 
                     source = result.capture.layout_source if result.capture is not None else ""

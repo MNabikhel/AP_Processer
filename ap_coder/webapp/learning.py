@@ -111,23 +111,42 @@ FIELD_LABELS = {
     "pst_amount": "PST", "qst_amount": "QST", "tax_total": "Tax total", "grand_total": "Total",
     "payment_terms": "Terms",
 }  # fmt: skip
-_STATE_ORDER = {"ready": 0, "suspended": 1, "autonomous": 2, "supervised": 3, "learning": 4}
+_STATE_ORDER = {"suspended": 0, "ready": 1, "autonomous": 2, "supervised": 3, "learning": 4, "held": 5}
+RECENT = 20  # "corrections in the last 20 invoices"
 
 
 def _supplier_learning(store) -> None:
-    from ap_coder.capture.supplier import AUTONOMOUS, READY, SUPERVISED, SUSPENDED, autonomy_status, meets_policy
+    """Training, vendor by vendor: what each vendor's reviewed invoices taught, how often the clerk had to correct a
+    field, and how far it is from going touchless (by itself, once touchless processing is on). A manager can keep a
+    vendor supervised whatever its record."""
+    from ap_coder.capture.supplier import (
+        HELD,
+        SUPERVISED,
+        autonomy_status,
+        clean_invoices_to_go,
+        judged_stats,
+        to_go_text,
+    )
 
     profiles = store.list_supplier_profiles()
     policy = store.autonomy_policy()
+    on = store.touchless_enabled()
+    switch = (
+        "Touchless processing is **on**: a vendor that meets the bar goes touchless by itself, and one correction "
+        "sends it back to review."
+        if on
+        else "Touchless processing is **off** (Settings → Automation): every invoice is reviewed by a person, and "
+        "each approval keeps training its vendor."
+    )
     if not profiles:
         with card("nosuppliers"):
             st.html(
                 ui.empty_state(
                     "No supplier learned yet",
                     "Each approved invoice teaches AP Coder where that supplier prints its invoice number, dates "
-                    "and totals, and records how many it read right. Once a supplier has enough clean invoices in a "
-                    "row, a manager can turn on touchless processing, and every invoice still goes through all the "
-                    "checks.",
+                    "and totals, and records each field the reviewer had to correct. Once a supplier has enough clean "
+                    "invoices in a row, it goes touchless by itself when touchless processing is on (Settings → "
+                    "Automation), and every invoice still goes through all the checks.",
                     ui.LEARNING_SVG,
                 )
             )
@@ -135,62 +154,77 @@ def _supplier_learning(store) -> None:
     rows = []
     for p in profiles:
         stats = store.supplier_stats(p["key"], policy.window)
-        state, progress, why = autonomy_status(stats, policy, p["state"], p["autonomous_since"])
+        stored = p["state"] or SUPERVISED
+        state, progress, why = autonomy_status(stats, policy, stored, p["autonomous_since"], touchless_on=on,
+                                               suspended_at=p.get("suspended_at"))  # fmt: skip
         rows.append((p, stats, state, progress, why))
     rows.sort(key=lambda r: (_STATE_ORDER.get(r[2], 9), -r[1].invoices, (r[0]["display_name"] or "").lower()))
-    st.caption(f"Bar for touchless processing: {policy.describe()}.")
+    st.caption(f"{switch} The bar, the same for every vendor: {policy.describe()}.")
     for p, stats, state, progress, why in rows:
         name = p["display_name"] or p["key"]
         slug = hashlib.sha1(p["key"].encode()).hexdigest()[:10]
-        accuracy = stats.accuracy
-        sub = " · ".join(
-            [
-                f"{stats.invoices} invoice{'s' if stats.invoices != 1 else ''} reviewed",
-                f"field accuracy {accuracy:.1%} (at least {stats.lower_bound(policy.z):.1%})"
-                if accuracy is not None
-                else "no fields checked yet",
-                f"clean streak {stats.clean_streak}",
-            ]
-        )
+        recent = stats.history[:RECENT]
+        corrected = sum(1 for h in recent if h["corrections"])
+        to_go = clean_invoices_to_go(judged_stats(stats, p["state"] or SUPERVISED, p.get("suspended_at")), policy)
+        parts = [
+            ui.plural(stats.invoices, "invoice") + " reviewed",
+            f"{ui.plural(corrected, 'correction')} in the last {len(recent)}" if recent else "no corrections yet",
+            f"accuracy at least {stats.lower_bound(policy.z):.1%}" if stats.n else "no fields checked yet",
+        ]
+        if state not in ("autonomous", "ready", HELD):
+            parts.append(to_go_text(to_go))
         with card(f"supplier_{slug}"):
-            st.html(ui.supplier_row(name, sub, state, progress, why))
+            st.html(ui.supplier_row(name, " · ".join(parts), state, progress, why))
             info, actions = st.columns([3, 2], vertical_alignment="center")
-            with info.expander("Per-field accuracy", icon=":material/table_rows:"):
-                if not stats.fields:
-                    st.caption("No fields checked yet.")
-                else:
-                    table = []
-                    for field, fs in sorted(stats.fields.items(), key=lambda kv: (kv[1].accuracy or 0, kv[0])):
-                        tone = "ok" if fs.correct == fs.n else "warn"
-                        table.append(
-                            [esc(FIELD_LABELS.get(field, field)), f"{fs.n:,}", f"{fs.n - fs.correct:,}",
-                             ui.pill(f"{fs.accuracy:.0%}", tone)]
-                        )  # fmt: skip
-                    st.html(ui.table(["Field", "Checked", "Corrected", "Accuracy"], table, right=[1, 2, 3]))
-                    st.caption(f"Over the last {ui.plural(stats.window_invoices, 'reviewed invoice')}.")
-            can_turn_on = state == READY or (state == SUSPENDED and meets_policy(stats, policy))
-            if can_turn_on:
-                with actions.popover(
-                    "Turn on autonomy…", icon=":material/bolt:", width="stretch", key=f"sup_menu_{slug}"
-                ):
-                    st.markdown(
-                        f"Process **{md(name)}** invoices without a person when every header field is verified and "
-                        f"every check passes. The policy: {policy.describe()}."
+            with info.expander("What the clerk corrected", icon=":material/table_rows:"):
+                _supplier_fields(store, p["key"], stats)
+            if p["state"] == HELD:
+                if actions.button("Allow again", icon=":material/bolt:", key=f"sup_allow_{slug}", width="stretch"):
+                    store.set_supplier_state(
+                        p["key"], SUPERVISED, reviewer(), reason="allowed again on the Learning page"
                     )
-                    if st.button("Yes, turn on autonomy", type="primary", key=f"sup_on_{slug}"):
-                        try:
-                            store.set_supplier_state(p["key"], AUTONOMOUS, reviewer())
-                        except ValueError as exc:
-                            st.error(str(exc))
-                        else:
-                            notify(f"Autonomy is on for {md(name)}.", ":material/bolt:")
-                            st.rerun()
-            if p["state"] in (AUTONOMOUS, SUSPENDED) and actions.button(
-                "Turn off", icon=":material/pan_tool:", key=f"sup_off_{slug}", width="stretch"
-            ):
-                store.set_supplier_state(p["key"], SUPERVISED, reviewer(), reason="turned off on the Learning page")
-                notify(f"{md(name)} is back to supervised: every invoice is reviewed.", ":material/pan_tool:")
-                st.rerun()
+                    notify(f"{md(name)} can go touchless again once it meets the bar.", ":material/bolt:")
+                    st.rerun()
+            else:
+                with actions.popover("Keep supervised…", icon=":material/pan_tool:", width="stretch",
+                                     key=f"sup_menu_{slug}"):  # fmt: skip
+                    st.markdown(
+                        f"Every **{md(name)}** invoice goes to a person, whatever its record, until you allow it "
+                        "again. Recorded in the Activity log with your name."
+                    )
+                    why_hold = st.text_input("Why (optional)", key=f"sup_why_{slug}",
+                                             placeholder="e.g. new contract, prices changing")  # fmt: skip
+                    if st.button("Keep supervised", type="primary", key=f"sup_hold_{slug}"):
+                        reason = why_hold.strip() or "kept supervised on the Learning page"
+                        store.set_supplier_state(p["key"], HELD, reviewer(), reason=reason)
+                        notify(f"{md(name)} is kept supervised: every invoice is reviewed.", ":material/pan_tool:")
+                        st.rerun()
+
+
+def _supplier_fields(store, key: str, stats) -> None:
+    """Per field: how often it was checked and corrected, and the latest corrections (read → approved)."""
+    if not stats.fields:
+        st.caption("No fields checked yet.")
+        return
+    table = []
+    for field, fs in sorted(stats.fields.items(), key=lambda kv: (kv[1].accuracy or 0, kv[0])):
+        tone = "ok" if fs.correct == fs.n else "warn"
+        table.append(
+            [esc(FIELD_LABELS.get(field, field)), f"{fs.n:,}", f"{fs.n - fs.correct:,}",
+             ui.pill(f"{fs.accuracy:.0%}", tone)]
+        )  # fmt: skip
+    st.html(ui.table(["Field", "Checked", "Corrected", "Accuracy"], table, right=[1, 2, 3]))
+    st.caption(f"Over the last {ui.plural(stats.window_invoices, 'reviewed invoice')}.")
+    latest = [r for r in store.supplier_outcomes(key, limit=500) if not r["correct"]][:5]
+    if latest:
+        st.html(
+            ui.table(
+                ["Latest corrections", "Read", "Approved", "When"],
+                [[esc(FIELD_LABELS.get(r["field"], r["field"])), esc(r["ai_value"] if r["ai_value"] is not None
+                  else "(blank)"), esc(r["final_value"] if r["final_value"] is not None else "(blank)"),
+                  esc(str(r["at"])[:10])] for r in latest],
+            )
+        )  # fmt: skip
 
 
 # --- Coding accuracy -----------------------------------------------------------------------------------------

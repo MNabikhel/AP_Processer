@@ -6,9 +6,10 @@ try AP Coder in their browser: **https://ap-coder-demo.streamlit.app**.
 It runs `streamlit_app.py`, which starts the normal dashboard in *public demo mode*:
 
 - **Made-up invoices only.** The ten sample invoices in `samples/` are loaded on the first visit, as
-  if Azure had read and coded them, with the sample GL accounts, purchase orders and vendor list.
-- **No Azure, no secrets.** No `.env` is read and Azure settings are ignored, so nothing is sent
-  anywhere. *Process invoices* and *Settings → Azure* say they are not available in the demo.
+  if AP Coder had read and coded them, with the sample GL accounts, purchase orders and vendor list.
+- **No readers, no secrets.** No `.env` is read and no readers run (no OCR, no LM Studio), so nothing is
+  sent anywhere. *Process invoices* and the touchless switch in *Settings → Automation* say they are not
+  available in the demo; *Settings → Reading* explains how invoices are read.
 - **Nothing is kept.** The database lives in a temporary folder on the server and starts over whenever
   the app restarts. A banner on every page says so and has a **Reset demo** button that starts over
   with the original invoices.

@@ -61,7 +61,8 @@ refuse_foreign_host()  # first, before anything is read or shown: opened through
 
 @st.cache_resource
 def _page_reader_thread():
-    """The page reader's background thread, once per dashboard process (Settings → Page reader)."""
+    """The page reader's background thread, once per dashboard process (Settings → Reading): it runs OvisOCR2's
+    self-test on its own, then reads the queue."""
     from ap_coder.page_worker import start_background
 
     return start_background(get_settings, lambda: Store(DB_PATH), cache_dir=CACHE_DIR)

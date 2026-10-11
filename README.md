@@ -2,8 +2,9 @@
 
 **Invoice capture, GL coding and Canadian sales-tax checks for Accounts Payable, on one laptop.**
 AP Coder reads each invoice, checks every number, proposes the GL split and learns from what AP approves.
-It then exports approved invoices to JD Edwards E1. It runs fully offline. A local model in
-[LM Studio](https://lmstudio.ai/) (Qwen 3.5 9B for the pilot) is optional, and no data leaves the laptop.
+It then exports approved invoices to JD Edwards E1. It runs fully offline: every invoice is read on the
+laptop by OCR and by OvisOCR2, a small page-reading model in [LM Studio](https://lmstudio.ai/). A chat model
+(Qwen 3.5 9B for the pilot) is optional, and no data leaves the laptop.
 
 ![Review queue: today's work, KPIs and the invoices waiting for review](docs/screenshots/review-queue.png)
 
@@ -32,7 +33,7 @@ AP Coder readiness:
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
   [OK] LM Studio: model qwen3.5-9b loaded
-  [OK] Page reader: ath-maas_ovisocr2 linked (reads scans as a second reader, in the background)
+  [OK] Page reader: ath-maas_ovisocr2 found, self-test passed (reads every page of every invoice)
   [OK] Desktop shortcut 'AP Coder' made (once)
   [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR
 ```
@@ -52,13 +53,18 @@ packages are there. `install.bat` / `install.sh` and `start.bat` /
 [docs/PILOT.md](docs/PILOT.md). The step-by-step for real data is
 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
-**Optional: local AI with LM Studio.** IT installs LM Studio (0.4.8 or newer) with the models already in
-it: the chat model (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) and OvisOCR2. Nothing is
-downloaded on the laptop. On the laptop, open LM Studio and go to **Developer → Start server**. If no model
-is loaded, load the chat model with *Context Length 8192* (*Settings → AI model → Models in LM Studio* →
-**Load**). AP Coder finds it on its own; see *Settings → AI model*. Without a model everything still works: lines are coded from what
-AP approved before for that vendor, from fixed rules and from account names. With a model, AP Coder also
-proposes accounts for lines it has not seen yet.
+**LM Studio, with OvisOCR2.** IT installs LM Studio (0.4.8 or newer) with the models already in it. Nothing
+is downloaded on the laptop. On the laptop, open LM Studio and go to **Developer → Start server**. That is
+all:
+
+- **OvisOCR2** (about 1 GB) is part of how every invoice is read. AP Coder finds it on its own and runs its
+  self-test by itself (10 to 20 minutes on a laptop, the first time). *Settings → Reading* shows how it is
+  doing. There is nothing to choose or link. While it isn't running, invoices are still read by OCR, and a
+  banner says they wait for a person.
+- **The chat model** (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) is optional. It only
+  suggests GL accounts for lines nothing was learned for. If it isn't loaded, load it with *Context Length
+  8192* (*Settings → Reading → Models in LM Studio* → **Load**). Without it, lines are coded from what AP
+  approved before for that vendor, from fixed rules and from account names.
 
 ## Screens
 
@@ -66,7 +72,7 @@ proposes accounts for lines it has not seen yet.
 |---|---|
 | ![An invoice in review: the page with every field boxed, checks, the GL split and the approve bar](docs/screenshots/invoice-review.png) | ![Insights: straight-through rate, hours saved and the business case](docs/screenshots/insights.png) |
 | ![Sales tax: GST/HST and QST to claim back](docs/screenshots/sales-tax.png) | ![Activity: the audit trail and the duplicate payment audit](docs/screenshots/activity.png) |
-| ![Exports: approved invoices in batches for the ERP and JD Edwards E1](docs/screenshots/exports.png) | ![Settings → AI model: the LM Studio connection, with the setup steps when no model is running](docs/screenshots/settings-ai.png) |
+| ![Exports: approved invoices in batches for the ERP and JD Edwards E1](docs/screenshots/exports.png) | ![Settings → Reading: how every invoice is read, each reader's state, and OvisOCR2's self-test](docs/screenshots/settings-ai.png) |
 
 **Just want to look around?** Start the dashboard and click *Load demo invoices*. You get ten sample
 invoices from across Canada, with sample POs and a vendor list. A hosted copy is at
@@ -77,8 +83,9 @@ invoices from across Canada, with sample POs and a vendor list. A hosted copy is
 1. **Reads the invoice on the laptop.** AP Coder uses the PDF's text layer, or local OCR (RapidOCR
    PP-OCRv4, with a PP-OCRv5 second read) for scans and photos. It reads the header, every line, and every
    GST, HST, PST and QST line. Each field gets a measured confidence (*verified*, *likely*, *check* or
-   *missing*) and is boxed on the page. Optionally, a **page reader** (OvisOCR2, a small vision model in
-   LM Studio) reads each scan again on its own in the background, as an independent second reader.
+   *missing*) and is boxed on the page. The **page reader** (OvisOCR2, a small page-reading model in LM
+   Studio) reads every page of every invoice again on its own, in the background, as an independent second
+   reader.
 2. **Codes each line** to your GL accounts and cost centers. It tries, in order:
    - fixed rules set by AP;
    - what AP approved before for that vendor;
@@ -98,8 +105,8 @@ invoices from across Canada, with sample POs and a vendor list. A hosted copy is
 4. **Builds the GL distribution.** The posting lines add up to the amount payable to the cent. Recoverable
    GST/HST and QST go to their own accounts; non-recoverable PST is spread over the expense lines.
 5. **Review and learning.** AP reviews, corrects and approves. Every approval is remembered and used for that
-   vendor's next invoice. Once a supplier's own invoices prove at least 99% accurate, a manager can switch
-   it to touchless.
+   vendor's next invoice and trains that vendor's template. With touchless processing turned on, a vendor
+   whose own invoices prove at least 99% accurate is approved without a person (see below).
 6. **The rest of the AP cycle:**
    - ERP export batches, including JD Edwards E1 F0411Z1/F0911Z1 Z-files;
    - *Find an invoice* for vendor calls, and vendor emails drafted for you;
@@ -111,7 +118,7 @@ invoices from across Canada, with sample POs and a vendor list. A hosted copy is
 
 ```
 invoice (PDF, scan, photo, .eml) ─► local reader: text layer or OCR ─► fields + confidence, boxed on the page
-        └─► page reader (vision model, optional, in the background) ─► agrees: verified · differs: check
+        └─► page reader (OvisOCR2, every page, in the background) ─► agrees: verified · differs: check
                                                                      │
    fixed rules · vendor history · vendor master · account names ─────┤  local model (LM Studio),
                                                                      │  only for lines still uncoded
@@ -125,6 +132,56 @@ invoice (PDF, scan, photo, .eml) ─► local reader: text layer or OCR ─► f
 Everything stays in a local data folder outside the code (default `~/APCoder`). The dashboard only listens
 on `127.0.0.1`, and a test fails if any page tries to connect to the internet. Only redacted reports
 (`doctor`, `share-report`) are meant to leave the laptop.
+
+## How every invoice is read
+
+One way for every invoice, with nothing to configure. A digital PDF, a scan and a phone photo (iPhone HEIC
+too) go through the same steps:
+
+- **The page's own words.** A digital PDF's text layer is read as it is; a scan or a photo is read by OCR on
+  the laptop, with two engines.
+- **OvisOCR2 reads every page too**, digital PDFs included, as an independent second reader. It runs in LM
+  Studio, in the background, and is trusted only after its self-test, which runs on its own.
+- **The rule reader, the supplier's template and the business checks** (totals, tax, GST/HST number, vendor
+  master, PO, duplicates, bank account) compare what the readers found. A field they agree on is
+  *verified*; one they read differently is marked *Check*.
+- **Hidden text is checked against the page.** On a digital PDF, the text layer is compared with what
+  OvisOCR2 sees printed (`TEXT_LAYER_MATCHES_PAGE`). A PDF whose hidden text gives another total than its
+  page shows is flagged.
+- **A person decides** whenever a reader or a check is unsure. No invoice is approved without a person
+  before OvisOCR2 has read it.
+
+*Settings → Reading* shows each reader's state, OvisOCR2's self-test (*Run the self-test again*), its queue,
+how often it agrees with the PDF's own figures, and the models in LM Studio.
+
+## Touchless processing
+
+Touchless processing is **off** until a manager turns it on (*Settings → Automation*, with a confirmation,
+recorded in the Activity log). Until then every invoice is approved by a person, and each approval keeps
+training its vendor.
+
+- **One switch, one bar.** With the switch on, a vendor goes touchless by itself once it meets the same
+  fixed bar as every other vendor: at least 20 reviewed invoices, header fields read right at least 99% of
+  the time with 95% confidence over its last 200 invoices, and the last 10 without a correction. With
+  about 13 header fields an invoice, that usually takes about 30 clean invoices.
+- **Checked as it goes.** 5% of touchless invoices still go to a person. One correction, or a touchless
+  invoice reopened, suspends the vendor until it has a fresh clean streak. A manager can *Keep supervised*
+  any vendor (*Learning & accuracy → Supplier learning*).
+- **Always a person**, whatever the vendor's record: a changed bank account or GST/HST number, any sign of
+  a duplicate, an unusual amount, a vendor not in the vendor master or on hold, a credit note, a total
+  above the *Largest invoice approved without a person* (5,000.00 CAD by default) or above the
+  second-approval limit, an invoice OvisOCR2 has not read yet, and any failed check.
+- **Clerks train it.** *Approve & teach* records each corrected field for that vendor and updates its
+  template; the confirmation says what was learned and how far the vendor is from touchless. Bulk
+  approvals nobody opened don't count toward the bar.
+
+This follows how the AP automation industry does it: one pipeline that uses the text layer when there is
+one and OCR otherwise (ABBYY, Google Document AI); agreement between independent readers as the strongest
+confidence signal; calibrated confidence per field, with a document touchless only when every field passes
+(Rossum); business rules that can block (Rossum, Stampli) and invoices that always need a person
+(Stampli); learning per vendor from corrections (ABBYY, Vic.ai); and a random audit sample (AWS Augmented
+AI). The numbers to watch are the touchless rate and the error rate of touchless invoices (*Settings →
+Automation*): Ardent Partners puts the average touchless rate at 32.6%, and best in class at about 49%.
 
 ## Run it by hand (developers)
 
@@ -146,14 +203,13 @@ python scripts/pilot_check.py        # reads the ten samples offline and compare
 
 ### LM Studio settings
 
-`AP_LLM_PROVIDER=auto` (the default) chooses the model in this order:
+Every invoice is coded the same way, with nothing to choose: the header, lines and taxes come from the local
+readers, each line's GL account from what AP approved before and the coding rules, and the chat model in LM
+Studio (found on its own: the chat model loaded, else one downloaded; never OvisOCR2) suggests an account for a
+line nothing was learned for. When LM Studio isn't running, that line is left for AP; nothing else changes.
 
-1. Azure OpenAI, if its endpoint is set;
-2. else the model loaded in LM Studio, if its server answers;
-3. else no AI.
-
-**Settings → AI model** shows what was found (e.g. *Connected to LM Studio · qwen3.5-9b*). It also has
-a **Test connection** button.
+**Settings → Reading** shows what was found: each reader's state (the GL coding model among them, e.g.
+*qwen3.5-9b in LM Studio*), with a **Check again** button, and *Models in LM Studio* with **Load**.
 
 Qwen 3.5 is asked not to think (`reasoning_effort: "none"`, which LM Studio honours from 0.4.8 on). Replies
 are still read when they come wrapped in `<think>` blocks or code fences, or when the answer is left in the
@@ -162,48 +218,44 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](docs/PILO
 
 | Setting | Default | |
 | --- | --- | --- |
-| `AP_LLM_PROVIDER` | `auto` | `local`, `azure` or `off` to choose |
 | `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1` |
-| `AP_LLM_MODEL` | empty | empty = the chat model loaded in LM Studio (never an embedding model) |
-| `AP_LLM_VISION` | `auto` | `on` / `off`: show the model page images |
+| `AP_LLM_MODEL` | empty | empty = the chat model LM Studio has (never an embedding model or OvisOCR2) |
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
 | `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
 
-**Azure stays optional.** With Azure Document Intelligence and Azure OpenAI set in *Settings → Azure*, those
-services do the reading and coding instead. They use strict Structured Outputs, and every check after
+**Azure is for developers only.** This build never connects to the internet: Azure Document Intelligence and
+Azure OpenAI are used only when the internet is allowed (`AP_ALLOW_INTERNET=1`) and they are set in
+*Settings → Reading → Developer: cloud services* (shown only then); those services then do the reading and
+coding instead. The offline installer asks no cloud questions. There is nothing else to choose: the older
+settings `AP_PAGE_READER`, `AP_PAGE_READER_SCOPE`, `AP_LLM_PROVIDER`, `AP_VISION` and `AP_LLM_VISION` are
+no longer needed. They use strict Structured Outputs, and every check after
 coding is the same.
 
-### Page reader: a vision model as a second reader
+### Page reader: OvisOCR2 reads every invoice as a second reader
 
-OCR misreads digits on phone photos and poor scans. The page reader is a small vision model that reads the
-page image on its own and writes out its text and tables. AP Coder reads that with the same rule reader and
-compares it with OCR, field by field:
+OCR misreads digits on phone photos and poor scans. The page reader, OvisOCR2, is a small vision model that
+reads the page image on its own and writes out its text and tables, on every page of every invoice: digital
+PDFs, scans and photos (iPhone HEIC photos too). AP Coder reads that with the same rule reader and compares it
+with the PDF's text or OCR, field by field:
 
 - both read the same value: the field can be *verified* (two independent readers agree, and the checks pass);
 - they read different values: the field is marked *check* for AP;
-- only the page reader found it: *likely* at best.
+- only the page reader found it: *likely* at best;
+- on a digital PDF, the page as printed is checked against the text hidden in the PDF
+  (`TEXT_LAYER_MATCHES_PAGE`): an edited PDF whose text says another total than its page shows is flagged.
 
-**Set it up once:**
-
-1. OvisOCR2 is in LM Studio already (installed by IT with the chat model: the *bartowski* build at **Q8_0**, about
-   1 GB). *Settings → Page reader* shows it, and *Models in LM Studio* lists every model with whether it is
-   loaded. No need to load it: AP Coder has LM Studio load it when there is a page to read. Nothing is
-   downloaded: AP Coder never connects to the internet.
-2. *Settings → Page reader → Test the page reader.* It reads a scan of a sample invoice whose answers are
-   known and shows, field by field, what it read. When it reads it right, the model is **linked**. It reads
-   nothing until then, and another model needs its own test.
+**Nothing to set up.** OvisOCR2 is in LM Studio already (installed by IT with the chat model: the *bartowski*
+build at **Q8_0**, about 1 GB) and AP Coder finds it on its own, on the same LM Studio as the chat model, and
+has LM Studio load it when there is a page to read. Nothing is downloaded: AP Coder never connects to the
+internet. Before it reads any invoice it tests itself on a scan of a sample invoice whose answers are known
+(10 to 20 minutes on a laptop, once per model), on its own, with no button to press; a failed test is tried
+again a day later, or with *Run the self-test again* in *Settings → Reading*. No other model reads pages instead: without OvisOCR2 the invoices are read by the PDF's text and
+OCR alone, they wait for a person, and a banner on the Process and Review pages says so.
 
 It reads in the background while the dashboard is open (or overnight: `python -m ap_coder read-pages
---minutes 240`) and never holds up *Process invoices*. An invoice is in the review queue at once, read by OCR;
-its fields update when the page reader is done, unless AP has started editing it.
-
-| Setting | Default | |
-| --- | --- | --- |
-| `AP_PAGE_READER` | `auto` | `auto` (in the background), `ask` (only when AP clicks *Read with the page reader*), `off` |
-| `AP_PAGE_READER_SCOPE` | `scans` | `scans` (scans and photos) or `all` (digital PDFs too: more fields verified, slower) |
-| `AP_PAGE_READER_MODEL` | empty | empty = OvisOCR2 when LM Studio has it, else the chat model if it can see; or a model key |
-| `AP_PAGE_READER_BASE_URL` | empty | empty = the same LM Studio as the AI model |
-| `AP_PAGE_READER_TIMEOUT_SECONDS`, `AP_PAGE_READER_MAX_PAGES` | `1200`, `5` | a laptop CPU takes minutes a page |
+--minutes 240`) and never holds up *Process invoices*. An invoice is in the review queue at once, read by the
+PDF's text or OCR; its fields update when the page reader is done, unless AP has started editing it. No invoice
+is approved without a person before the page reader has read it.
 
 **Measured** on 9 real scans with known answers ([details](docs/CAPTURE_DESIGN.md#measured-with-ovisocr2)):
 OCR alone read 87 of 91 header fields right and verified 41; with the page reader, 91 of 91 right and 81
@@ -230,11 +282,11 @@ the approved fields) to fine-tune a vision model on them later.
 | Master data | **Vendors** | Import the **vendor master** from the ERP (vendor IDs in exports, unknown vendors flagged, vendor terms, default GL); spend, AI accuracy and controls per vendor (hold, expected GST/HST number, notes); recurring vendors and late invoices. |
 | Master data | **Purchase orders** | Import open POs (one row per line, received quantities optional); what has been invoiced against each; close, reopen, delete. |
 | Master data | **GL accounts & tax** | Import GL accounts (cost codes) from CSV/Excel by choosing the **code**, **description** and **category** columns; edit, categorise, delete. Optional cost centers. Tax treatments and GLs. Coding policy. **Fixed rules** (vendor and/or words → GL account and cost center), with rules suggested from past coding. |
-| Analytics | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). *Teach from past coding* imports last year's AP lines from the ERP. *Readers* scores each reader (OCR, page reader, template, AI) against AP's approvals and exports the training data. |
+| Analytics | **Learning & accuracy** | AI accuracy against the 90% target, weekly trend, per-vendor accuracy, most common corrections, and the memory itself (*Forget* a bad lesson). *Teach from past coding* imports last year's AP lines from the ERP. *Supplier learning* is the per-vendor training view: what each vendor's invoices taught, how often a field was corrected, how far it is from touchless, and *Keep supervised*. *Readers* scores each reader (OCR, page reader, template, AI) against AP's approvals and exports the training data. |
 | Analytics | **Spend** | Spend by month (by GL category), top GL accounts, vendors and cost centers, net of recoverable tax; **all invoice data as Excel** (invoices, lines, GL posting) for pivot tables or Power BI. |
 | Analytics | **Insights** | Straight-through rate, hours saved, cost per invoice, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
 | Analytics | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit; the **duplicate payment audit** (number typos, same bill under two vendor names, same amount days apart, also against the ERP register). |
-| System | **Settings** | AI model (LM Studio found automatically, with a connection test), page reader (the vision model that reads scans a second time, linked by a test on a known invoice), optional Azure connection, your name (per Windows user), review threshold, page images for the AI (vision), only-my-GL-codes, approval limit, default payment days, backups and restore (with an optional second backup folder, e.g. OneDrive). |
+| System | **Settings** | **Reading:** how every invoice is read and each reader's state, OvisOCR2 (found in LM Studio, its self-test, queue, and how often it agrees with digital PDFs' own figures), the models in LM Studio with **Load**. **Automation:** the touchless switch, the largest invoice approved without a person, the bar every vendor must meet, what always goes to a person, touchless rate and errors found. **Review:** your name (per Windows user), review threshold, only-my-GL-codes, approval limit, default payment days, exchange rates. **JD Edwards E1**, **Data & backups** (backups and restore, with an optional second backup folder, e.g. OneDrive), **About**. |
 | System | **Help** | Quick start, every check explained, questions, shortcuts. |
 
 ## Canadian sales tax
@@ -380,8 +432,9 @@ Next to the AI coder, AP Coder reads every invoice itself and shows *where* each
 (design and benchmark: [docs/CAPTURE_DESIGN.md](docs/CAPTURE_DESIGN.md)):
 
 - **Several readers per field:** the PDF's text layer or OCR (RapidOCR, local: `pip install -e .[ocr]`), a rule reader
-  (labels in English and French, header grids, totals blocks), the supplier's learned template, and
-  the AI's and Document Intelligence's answers located back on the page.
+  (labels in English and French, header grids, totals blocks), the supplier's learned template, OvisOCR2's
+  reading of the page image, and the AI's (and, for developers, Document Intelligence's) answers located
+  back on the page.
 - **Checks a misread cannot pass:** subtotal + charges + taxes = total, official tax rates, GST/HST
   check digit, vendor master, due date = invoice date + terms.
 - **A confidence per field, measured on a benchmark** of thousands of random invoices with known
@@ -389,11 +442,12 @@ Next to the AI coder, AP Coder reads every invoice itself and shows *where* each
 - **The review screen** shows the invoice page with every field boxed in its status colour. Click
   a field to find it on the page; *Teach a field* lets AP click the words that hold a value, and
   the supplier's template learns it on approval.
-- **Autonomy per supplier:** once a supplier's own confirmed invoices show at least 99% field
-  accuracy (lower confidence bound, at least 20 invoices, the last 10 clean), a manager can switch it
-  to touchless. Its invoices are then approved without a person only when every printed field is
-  *verified* and every check passes; 5% are still audited, and one correction suspends it
-  (*Learning & accuracy → Supplier learning*).
+- **Autonomy per supplier:** with touchless processing on (*Settings → Automation*), a supplier whose own
+  confirmed invoices show at least 99% field accuracy (lower confidence bound, at least 20 invoices, the
+  last 10 clean) goes touchless by itself. Its invoices are then approved without a person only when every
+  printed field is *verified*, every check passes and nothing on the *Always a person* list applies; 5%
+  are still audited, and one correction suspends it (*Learning & accuracy → Supplier learning*; see
+  [Touchless processing](#touchless-processing)).
 - **JD Edwards EnterpriseOne:** approved invoices export as F0411Z1/F0911Z1 Z-file batches for
   R04110ZA ([docs/JDE_E1.md](docs/JDE_E1.md)).
 
@@ -405,8 +459,9 @@ ap_coder/
   inference.py       Structured Outputs (Azure or local), model profiles, repair loop, account suggestions
   offline_coder.py   coding with no model: rules, vendor history, vendor master, account names
   local_llm.py       LM Studio / Ollama: finding the server and model, reading a small model's JSON
-  page_reader.py     the page reader: a vision model in LM Studio transcribes each page (loop and cut-off
-                     checks, a cache, the linking test);  page_worker.py: its queue and background thread
+  reading.py         how every invoice is read, and each reader's state (Settings → Reading, the doctor, the banner)
+  page_reader.py     the page reader: OvisOCR2 in LM Studio transcribes each page (loop and cut-off checks, a
+                     cache);  page_worker.py: its queue, background thread and automatic self-test
   training_export.py approved invoices as a training set (page images + approved fields), local ZIP
   prompts.py         system prompt (extraction, Canadian tax, GL coding, learning rules)
   schema.py          strict JSON Schema + Pydantic mirror

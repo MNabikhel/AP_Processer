@@ -24,10 +24,48 @@ from .types import Box, DocLayout, Line, PageLayout, Word
 
 log = logging.getLogger(__name__)
 
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+HEIF_EXTENSIONS = {".heic", ".heif"}  # an iPhone's photos
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} | HEIF_EXTENSIONS
 MIN_TEXT_WORDS = 5  # fewer words than this on a page means it is a scan
 OCR_DPI = 200
 OCR_MAX_SIDE = 2400
+NO_OCR = "OCR isn't installed on this computer, so a scan or a photo can't be read: run APProcessor.bat"
+NO_HEIF = ("this iPhone photo (HEIC) can't be opened: the photo add-on (pillow-heif) isn't installed; run "
+           "APProcessor.bat, or save the photo as a JPEG")  # fmt: skip
+
+
+class CannotRead(RuntimeError):
+    """The file can't be read on this computer, for a reason AP can act on (said in plain words): OCR or the photo
+    add-on isn't installed. Never an empty reading: an invoice with nothing read would look like a blank one."""
+
+
+_heif_registered: bool | None = None
+
+
+def register_heif() -> bool:
+    """Let Pillow open HEIC/HEIF photos (pillow-heif), once per process. False when pillow-heif isn't installed."""
+    global _heif_registered
+    if _heif_registered is None:
+        try:
+            from pillow_heif import register_heif_opener
+
+            register_heif_opener()
+            _heif_registered = True
+        except Exception as exc:  # not installed (or a build that can't load here): HEIC photos can't be read
+            log.info("pillow-heif not available (%s): HEIC/HEIF photos can't be opened", exc)
+            _heif_registered = False
+    return _heif_registered
+
+
+def open_image(source: Any, name: str = "") -> Any:
+    """Pillow's ``Image.open`` for a picture (a path or a file object), HEIC/HEIF photos included. Raises
+    ``CannotRead`` for a HEIC photo when pillow-heif isn't installed."""
+    from PIL import Image
+
+    heif = Path(name or str(source)).suffix.lower() in HEIF_EXTENSIONS
+    if not register_heif() and heif:
+        raise CannotRead(NO_HEIF)
+    return Image.open(source)
 
 
 # ---------------------------------------------------------------- lines
@@ -260,7 +298,7 @@ def _image_pngs(path: Path, max_pages: int) -> list[bytes]:
     from PIL import Image, ImageOps, ImageSequence
 
     out = []
-    with Image.open(path) as img:
+    with open_image(path) as img:
         for i, frame in enumerate(ImageSequence.Iterator(img)):
             if i >= max_pages:
                 break
@@ -310,10 +348,22 @@ def layout_from_di(raw: dict[str, Any]) -> DocLayout | None:
 # ---------------------------------------------------------------- entry point
 
 
+def _looks_scanned(page: Any) -> bool:
+    """A PDF page without a text layer that shows a picture over a good part of it: a scan, not a blank page."""
+    area = max(page.rect.width * page.rect.height, 1.0)
+    try:
+        boxes = [info.get("bbox") for info in page.get_image_info()]
+    except Exception:  # an image PyMuPDF can't describe: taken for a scan
+        return True
+    return any(b and (b[2] - b[0]) * (b[3] - b[1]) >= 0.25 * area for b in boxes)
+
+
 def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr: str | bool = "auto",
                  max_pages: int = 20) -> DocLayout:  # fmt: skip
-    """The words of ``path``. ``ocr``: "auto" (scanned pages only, when RapidOCR is installed),
-    True (force OCR on every page), False (never)."""
+    """The words of ``path``. ``ocr``: "auto" (scanned pages only), True (force OCR on every page), False (never).
+
+    With "auto", a photo or a scanned page on a computer without OCR raises ``CannotRead`` ("OCR isn't installed"),
+    and so does an iPhone photo (HEIC) without pillow-heif: nothing read is never passed off as a blank invoice."""
     path = Path(path)
     suffix = path.suffix.lower()
     use_ocr = ocr is True or (ocr == "auto" and ocr_available())
@@ -322,7 +372,11 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
             di = layout_from_di(di_raw)
             if di:
                 return di
+        if suffix in HEIF_EXTENSIONS and not register_heif():
+            raise CannotRead(NO_HEIF)
         if not use_ocr:
+            if ocr == "auto":
+                raise CannotRead(NO_OCR)
             return DocLayout([], "none")
         return DocLayout([ocr_image(png, i) for i, png in enumerate(_image_pngs(path, max_pages), 1)], "ocr")
 
@@ -352,6 +406,8 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 except Exception as exc:  # a page OCR cannot read is reported as empty, never fatal
                     log.warning("%s page %d: OCR failed (%s)", path.name, number, exc)
                     pages.append(text_page)
+            elif ocr == "auto" and _looks_scanned(page):
+                raise CannotRead(NO_OCR)
             else:
                 pages.append(text_page)
                 sources.add("text")

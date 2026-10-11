@@ -1,10 +1,14 @@
-"""The page reader's queue: invoices waiting for the vision model to read their pages.
+"""The page reader's queue: invoices waiting for OvisOCR2 to read their pages.
 
 Reading a page with a vision model takes minutes on a laptop without a graphics card, so it never holds up
-*Process invoices*: an invoice is read and checked at once with OCR, queued, and the page reader reads it in the
-background (a thread of the dashboard, or ``python -m ap_coder read-pages``). Its reading is then folded into the
-invoice as one more independent reader, while AP hasn't touched the invoice yet; once someone has edited or decided
-it, nothing in it is changed.
+*Process invoices*: every invoice (digital PDFs, scans and photos alike) is read and checked at once with the PDF's
+text or OCR, queued, and the page reader reads it in the background (a thread of the dashboard, or
+``python -m ap_coder read-pages``). Its reading is then folded into the invoice as one more independent reader, while
+AP hasn't touched the invoice yet; once someone has edited or decided it, nothing in it is changed. Until it has read
+an invoice, that invoice is never approved without a person.
+
+Before OvisOCR2 reads any invoice it passes a self-test on an invoice whose answers are known (``self_test_if_due``),
+run on its own the first time a model is found, and again a day after a failure (or when a person asks).
 """
 
 from __future__ import annotations
@@ -22,18 +26,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .capture.layout import IMAGE_EXTENSIONS
 from .config import Settings
 from .extraction import TEXT_EXTENSIONS
 
 log = logging.getLogger(__name__)
 
 IDLE_SECONDS = 30.0  # nothing waiting: look again after this long
-OFF_SECONDS = 60.0  # page reader off or not ready: look again after this long
-SCANNED_SOURCES = {"ocr", "mixed", "di"}
-# The tests of the page reader (Settings → Page reader), one per model, as JSON: {"models": {model: test}}. An
-# older AP Coder kept only the last test there, as the test itself: read as that model's.
+OFF_SECONDS = 60.0  # page reader not ready: look again after this long
+# The self-tests of the page reader, one per model, as JSON: {"models": {model: test}}. An older AP Coder kept only
+# the last test there, as the test itself: read as that model's.
 TEST_KEY = "page_reader_test"
+RETEST_HOURS = 24.0  # a model that failed its self-test is tested again on its own after this long
+RETEST_UNREAD_HOURS = 1.0  # ... or after this long when the test read nothing (LM Studio stopped, not enough memory)
+TEST_PAGES = 2  # the test invoice's pages
 TESTING_KEY = "page_reader_testing"  # the test under way, as JSON: model, started, pid, pages done (else "")
 FIGURES_KEY = "page_reader_figures"  # running totals of figures compared: {"digital": [same, figures], "scans": ...}
 MAX_TRIES = 3  # reads cut off by the model server before an invoice leaves the queue as failed
@@ -66,48 +71,119 @@ def saved_test(store: Any, model: str | None = None) -> dict[str, Any] | None:
 
 
 def save_test(store: Any, record: dict[str, Any]) -> None:
-    """Keep a test's result as its model's (the other models' tests are kept: testing one never unlinks another)."""
+    """Keep a test's result as its model's (the other models' tests are kept: testing one never undoes another's)."""
     tests = saved_tests(store)
     tests[str(record.get("model") or "")] = record
     store.set_setting(TEST_KEY, json.dumps({"models": tests}))
 
 
 def confirmed(store: Any, model: str) -> bool:
-    """Whether ``model`` is a page reader AP linked: it passed its test in Settings → Page reader. A model that was
-    never tested (or failed its last test) reads nothing on its own."""
+    """Whether ``model`` is trusted to read invoices: it passed its self-test. A model that was never tested (or
+    failed its last test) reads nothing; its readings are folded into invoices only once it passed."""
     test = saved_test(store, model) if model else None
     return bool(test and test.get("ok"))
+
+
+def _test_age_hours(test: dict[str, Any], now: dt.datetime | None = None) -> float | None:
+    """How long ago the test was run, in hours (None when it doesn't say)."""
+    try:
+        when = dt.datetime.fromisoformat(str(test.get("when") or ""))
+    except ValueError:
+        return None
+    return ((now or dt.datetime.now()) - when).total_seconds() / 3600
+
+
+def self_test_due(store: Any, model: str, now: dt.datetime | None = None) -> bool:
+    """Whether ``model``'s self-test should run on its own now: it was never tested, or it failed its last test a day
+    ago or more (an hour, when that test read nothing: LM Studio was stopped or short of memory). A model that passed
+    is not tested again; a failure is not retried in a loop. A person can run it again at any time (``start_test``)."""
+    if not model:
+        return False
+    test = saved_test(store, model)
+    if test is None:
+        return True
+    if test.get("ok"):
+        return False
+    age = _test_age_hours(test, now)
+    if age is None:
+        return True
+    unread = not test.get("fields_total")
+    return age >= (RETEST_UNREAD_HOURS if unread else RETEST_HOURS)
+
+
+def self_test(store: Any, model: str, now: dt.datetime | None = None) -> tuple[str, str]:
+    """(state, plain-English detail) of ``model``'s self-test: "passed", "failed", "running", "pending" (it runs on
+    its own before the first invoice is read), or "no model" (no ``model``)."""
+    from .page_reader import reader_name
+
+    if not model:
+        return "no model", "OvisOCR2 isn't running in LM Studio, so there is nothing to test."
+    name = reader_name(model)
+    try:
+        testing = test_under_way(store)
+        test = saved_test(store, model)
+    except Exception as exc:  # noqa: BLE001 - a locked database: said so, never raised
+        return "pending", f"Not checked ({type(exc).__name__})."
+    if testing and testing.get("model") == model:
+        done, pages = int(testing.get("done") or 0), int(testing.get("pages") or 0)
+        where = f" (page {done + 1} of {pages})" if pages else ""
+        return "running", f"{name} is reading the test invoice now{where}; invoices are read once it passes."
+    if test is None:
+        return "pending", (f"{name} reads a test invoice whose answers are known before it reads any invoice: the "
+                           "test starts on its own.")  # fmt: skip
+    right, total = int(test.get("fields_right") or 0), int(test.get("fields_total") or 0)
+    when = str(test.get("when") or "")[:16].replace("T", " ")
+    score = f"{right} of {total} fields right" if total else "nothing read"
+    if test.get("ok"):
+        return "passed", f"{name} passed its self-test on {when or 'an earlier day'} ({score})."
+    problem = str(test.get("problem") or "").strip()
+    age = _test_age_hours(test, now)
+    wait = RETEST_UNREAD_HOURS if not total else RETEST_HOURS
+    again = "now" if age is None or age >= wait else f"in about {max(1, round(wait - age))} hour(s)"
+    detail = f"{name} failed its self-test on {when or 'an earlier day'} ({score})"
+    detail += f": {problem.rstrip('.')}." if problem else "."
+    return "failed", f"{detail} It is tested again on its own {again}, or when a person runs it again."
+
+
+def _dashboard_store(db_path: Path | None = None) -> Any:
+    """The database the dashboard uses, opened only when it exists (None otherwise)."""
+    from . import paths
+    from .store import Store
+
+    db = Path(db_path or os.environ.get("AP_DB_PATH") or paths.default_db_path())
+    return Store(db) if db.exists() else None
 
 
 def linked(model: str, db_path: Path | None = None) -> bool:
     """``confirmed`` in the database the dashboard uses, opened only when it exists: for the doctor and the launcher,
     which have no store at hand."""
-    import os
-
-    from . import paths
-    from .store import Store
-
-    db = Path(db_path or os.environ.get("AP_DB_PATH") or paths.default_db_path())
     try:
-        return db.exists() and confirmed(Store(db), model)
-    except Exception:  # a locked or damaged database: say "not linked", the dashboard tells the rest
+        store = _dashboard_store(db_path)
+        return store is not None and confirmed(store, model)
+    except Exception:  # a locked or damaged database: say "not passed", the dashboard tells the rest
         return False
+
+
+def self_test_detail(model: str, db_path: Path | None = None) -> tuple[str, str]:
+    """``self_test`` in the database the dashboard uses (for the doctor and the launcher): "pending" when there is
+    no database yet (the test runs on its own once AP Coder is open). Never raises."""
+    try:
+        store = _dashboard_store(db_path)
+        if store is None:
+            return ("pending", "it runs on its own once AP Coder is open") if model else self_test(None, "")
+        return self_test(store, model)
+    except Exception as exc:  # noqa: BLE001 - a locked or damaged database
+        return "pending", f"not checked ({type(exc).__name__})"
 
 
 def wants_reading(settings: Settings, path: Path, layout_source: str = "") -> bool:
-    """Whether a newly processed invoice goes to the page reader on its own: in the background mode, scans and
-    photos (or every invoice, when the scope says so). Text files never."""
-    reader = settings.page_reader
-    suffix = path.suffix.lower()
-    if reader.mode != "auto" or suffix in TEXT_EXTENSIONS:
-        return False
-    if reader.scope == "all":
-        return True
-    return suffix in IMAGE_EXTENSIONS or layout_source in SCANNED_SOURCES
+    """Whether a newly processed invoice goes to the page reader: every invoice but a text file (.md, .txt), which
+    has no page to look at. Digital PDFs too: the page as printed is checked against the text hidden in the PDF."""
+    return Path(path).suffix.lower() not in TEXT_EXTENSIONS
 
 
 def queue_new_invoice(store: Any, settings: Settings, invoice_id: int | None, path: Path, layout_source: str) -> bool:
-    """Queue a just-processed invoice for the page reader when it wants reading. Never raises."""
+    """Queue a just-processed invoice for the page reader (every invoice but a text file). Never raises."""
     if not invoice_id or store is None or not wants_reading(settings, path, layout_source):
         return False
     try:
@@ -190,14 +266,11 @@ def ready(settings: Settings, store: Any) -> tuple[str, str]:
     """(model, why not): the model that reads pages now, or why nothing can be read yet."""
     from . import page_reader
 
-    if settings.page_reader.mode == "off":
-        return "", "the page reader is off"
     status = page_reader.reader_status(settings)
     if not status.usable:
-        return "", status.note or "no model can read pages"
+        return "", status.note or "OvisOCR2 isn't running in LM Studio"
     if not confirmed(store, status.model):
-        return "", (f"{status.model} hasn't passed its test yet: in the dashboard, Settings → Page reader → Test the "
-                    "page reader links it (or run python -m ap_coder read-pages --test)")  # fmt: skip
+        return "", self_test(store, status.model)[1].rstrip(".")
     if not store.has_reference():
         try:
             reference_data(store)
@@ -316,7 +389,7 @@ def _postpone_or_fail(store: Any, row: dict[str, Any], model: str, pages: int, s
     tries = int(row.get("tries") or 0) + 1
     if tries >= MAX_TRIES:
         message = (f"the model server cut the reading off {tries} times ({problem}); read it again from the invoice "
-                   "(Read with the page reader) once LM Studio is running with the model loaded")  # fmt: skip
+                   "(Add it to OvisOCR2's queue) once LM Studio is running with the model loaded")  # fmt: skip
         store.finish_page_read(iid, "failed", model, pages, seconds, message, tries=tries)
         return ReadOutcome(iid, "failed", model, pages, seconds, message=message)
     message = f"{problem}: read again later (try {tries} of {MAX_TRIES})"
@@ -503,8 +576,9 @@ def release_interrupted(store: Any) -> int:
 
 class BackgroundReader(threading.Thread):
     """Reads waiting invoices one at a time while the dashboard runs. Settings are read again each round, so a
-    change in Settings → Page reader takes effect without a restart. While the page reader is tested it waits:
-    two readings at once would each take twice as long."""
+    change in LM Studio (OvisOCR2 downloaded, loaded) is found without a restart. Before the first invoice it runs
+    OvisOCR2's self-test on its own when that model has none that passed (``self_test_if_due``). While the page
+    reader is tested it waits: two readings at once would each take twice as long."""
 
     def __init__(self, settings_factory: Callable[[], Settings], store_factory: Callable[[], Any],
                  cache_dir: Path | None = None) -> None:  # fmt: skip
@@ -515,6 +589,7 @@ class BackgroundReader(threading.Thread):
         self._halt = threading.Event()
         self.current: int | None = None  # the invoice being read now
         self.last: ReadOutcome | None = None
+        self.last_test: dict[str, Any] | None = None  # the self-test it ran on its own, when it ran one
 
     def stop(self) -> None:
         self._halt.set()
@@ -524,13 +599,15 @@ class BackgroundReader(threading.Thread):
             pause = IDLE_SECONDS
             try:
                 settings = self._settings_factory()
-                if settings.page_reader.mode == "off":  # "ask": reads what AP asked for, nothing else is queued
-                    pause = OFF_SECONDS
+                store = self._store_factory()
+                release_interrupted(store)  # between readings: a mark of this process's is left over too
+                if test_under_way(store):
+                    pause = IDLE_SECONDS
                 else:
-                    store = self._store_factory()
-                    release_interrupted(store)  # between readings: a mark of this process's is left over too
-                    if test_under_way(store):
-                        pause = IDLE_SECONDS
+                    tested = self_test_if_due(settings, store)
+                    if tested is not None:  # the test took the round; reading starts next round when it passed
+                        self.last_test = tested
+                        pause = 0.0 if tested.get("ok") else OFF_SECONDS
                     else:
                         outcome = read_one(settings, store, cache_dir=self._cache_dir, should_stop=self._halt.is_set)
                         if outcome is not None:
@@ -629,6 +706,52 @@ def start_test(settings: Settings, store: Any, model: str) -> bool:
 
 
 start_test.__test__ = False  # type: ignore[attr-defined]  # not a pytest test
+
+
+def self_test_if_due(settings: Settings, store: Any,
+                     on_page: Callable[[int, int], None] | None = None) -> dict[str, Any] | None:  # fmt: skip
+    """Run OvisOCR2's self-test here and now when it is due (``self_test_due``: LM Studio has the model and it has no
+    test that passed, never tested or failed a day ago), and keep the result as its model's. None when no test was
+    run: no model, it passed already, a failure is too recent to try again, or another test is under way."""
+    from . import page_reader
+
+    status = page_reader.reader_status(settings)
+    if not status.usable or not self_test_due(store, status.model):
+        return None
+    log.info("page reader: %s has no self-test that passed; testing it before reading invoices", status.model)
+    return run_test(settings, store, status.model, on_page)
+
+
+def page_seconds(settings: Settings, model: str = "") -> float | None:
+    """How long OvisOCR2 takes a page on this computer (invoices and self-tests read so far), or None before the
+    first page."""
+    from . import page_reader
+
+    return page_reader.page_seconds_estimate(settings, model=model or None)
+
+
+def wait_seconds(settings: Settings, store: Any, model: str = "", invoice_id: int | None = None) -> float | None:
+    """About how long until the page reader has read the whole queue (or, with ``invoice_id``, that invoice): the
+    invoices to read (those ahead of it, and itself) times the pages an invoice has had so far, times the time a page
+    takes on this computer, plus the self-test's pages while it hasn't passed. None before a page time is measured,
+    or when ``invoice_id`` isn't waiting."""
+    seconds = page_seconds(settings, model)
+    if seconds is None:
+        return None
+    try:
+        if invoice_id is not None:
+            read = store.page_read(invoice_id) or {}
+            if read.get("status") not in ("waiting", "reading"):
+                return None
+            invoices = store.page_reads_ahead(invoice_id) + 1
+        else:
+            invoices = store.page_reads_waiting()
+        pages = store.page_read_pages_average() or 1.0
+        test_pages = 0 if not model or confirmed(store, model) else TEST_PAGES
+    except Exception as exc:  # noqa: BLE001 - an estimate is a courtesy
+        log.debug("page reader: no estimate (%s)", exc)
+        return None
+    return round((invoices * pages + test_pages) * seconds, 1)
 
 
 def _mark_test(store: Any, model: str, done: int, pages: int, started: str = "") -> str:

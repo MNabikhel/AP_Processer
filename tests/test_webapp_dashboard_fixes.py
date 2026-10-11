@@ -201,5 +201,7 @@ def test_vendor_names_are_shown_as_text_not_markdown(db, monkeypatch):
         store.record_outcomes("id:V1", invoice_id, outcomes, display_name=name, at=f"2026-01-01T00:00:{n:02d}")
     at = _ok(_page("learning", "page_learning").run())
     assert any("**Price \\$5 & \\$10 \\*Wholesale\\***" in m.value for m in at.markdown)
-    _ok(at.button(key=next(b.key for b in at.button if (b.key or "").startswith("sup_on_"))).click().run())
-    assert [t.value for t in at.toast] == ["Autonomy is on for Price \\$5 & \\$10 \\*Wholesale\\*."]
+    _ok(at.button(key=next(b.key for b in at.button if (b.key or "").startswith("sup_hold_"))).click().run())
+    assert [t.value for t in at.toast] == [
+        "Price \\$5 & \\$10 \\*Wholesale\\* is kept supervised: every invoice is reviewed."
+    ]

@@ -269,6 +269,18 @@ def _iso_or_empty(value: Any) -> str:
         return ""
 
 
+def text_layout(text: str) -> DocLayout:
+    """A text invoice (.md, .txt: an invoice already typed out, tables in markdown or HTML) as a layout the rule
+    reader reads, like a PDF's text layer: its characters are exact. Pages are split where the text marks a page
+    break."""
+    from .capture.transcript import layout_from_transcript
+    from .figures import PAGE_BREAK
+
+    pages = [page for page in (text or "").replace("\f", PAGE_BREAK).split(PAGE_BREAK) if page.strip()] or [""]
+    layout = layout_from_transcript(pages)
+    return DocLayout(layout.pages, "text")
+
+
 def local_extraction(path: str | Path, layout: DocLayout | None = None) -> ExtractionResult:
     """The page text as the local reader saw it (text layer, or OCR for scans), for search and the review page."""
     path = Path(path)

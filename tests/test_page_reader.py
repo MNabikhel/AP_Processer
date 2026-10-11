@@ -151,30 +151,32 @@ def test_page_reader_settings_default(monkeypatch, tmp_path):
     settings = Settings.from_env(tmp_path / "missing.env")
     assert settings.page_reader == PageReaderSettings()
     assert settings.page_reader == Settings().page_reader
-    assert (settings.page_reader.mode, settings.page_reader.scope, settings.page_reader.model) == ("auto", "scans", "")
+    assert (settings.page_reader.mode, settings.page_reader.scope, settings.page_reader.model) == ("auto", "all", "")
     assert (settings.page_reader.timeout_seconds, settings.page_reader.max_pages) == (1200.0, 5)
     assert settings.with_overrides(vision=True).page_reader == settings.page_reader  # kept by CLI overrides
 
 
 def test_page_reader_settings_from_env(monkeypatch, tmp_path):
+    """Only the developer overrides are read: the page reader is always on, for every invoice."""
     _clear_env(monkeypatch)
-    monkeypatch.setenv("AP_PAGE_READER", "ASK")
-    monkeypatch.setenv("AP_PAGE_READER_SCOPE", "all")
+    monkeypatch.setenv("AP_PAGE_READER", "ASK")  # an older AP Coder's setting: ignored
+    monkeypatch.setenv("AP_PAGE_READER_SCOPE", "scans")
     monkeypatch.setenv("AP_PAGE_READER_MODEL", OVIS_KEY)
     monkeypatch.setenv("AP_PAGE_READER_BASE_URL", "127.0.0.1:5678/v1/chat/completions")
     monkeypatch.setenv("AP_PAGE_READER_TIMEOUT_SECONDS", "900,5")
     monkeypatch.setenv("AP_PAGE_READER_MAX_PAGES", "3")
     reader = Settings.from_env(tmp_path / "missing.env").page_reader
-    assert reader == PageReaderSettings("ask", "all", OVIS_KEY, "http://127.0.0.1:5678/v1", 900.5, 3)
+    assert reader == PageReaderSettings(OVIS_KEY, "http://127.0.0.1:5678/v1", 900.5, 3)
+    assert (reader.mode, reader.scope) == ("auto", "all")
 
 
 @pytest.mark.parametrize(
     "env, field, value",
     [
         ({"AP_PAGE_READER": "sometimes"}, "mode", "auto"),
-        ({"AP_PAGE_READER": "false"}, "mode", "off"),
-        ({"AP_PAGE_READER": "Off"}, "mode", "off"),
-        ({"AP_PAGE_READER_SCOPE": "everything"}, "scope", "scans"),
+        ({"AP_PAGE_READER": "false"}, "mode", "auto"),  # it can't be turned off any more
+        ({"AP_PAGE_READER": "Off"}, "mode", "auto"),
+        ({"AP_PAGE_READER_SCOPE": "scans"}, "scope", "all"),  # every invoice is read, digital PDFs too
         ({"AP_PAGE_READER_MODEL": "Automatic"}, "model", ""),
         ({"AP_PAGE_READER_BASE_URL": "  "}, "base_url", ""),
         ({"AP_PAGE_READER_TIMEOUT_SECONDS": "ten minutes"}, "timeout_seconds", 1200.0),
@@ -273,12 +275,14 @@ def test_status_says_a_short_context_is_raised(serve):
 # --- Which model reads pages ------------------------------------------------------------------------------------
 
 
-def test_the_chat_model_reads_pages_when_it_can_see(serve):
+def test_no_general_model_reads_pages_instead_of_ovisocr2(serve):
+    """A chat model that can see used to read pages when OvisOCR2 wasn't there: it misreads figures OvisOCR2 gets
+    right, so the page reader is simply not available then, and the invoices wait for it."""
     serve(lm_studio(v1_model("qwen3.5-9b", loaded=8192), v1_model("qwen2.5-7b-instruct", vision=False)))
     status = page_reader.reader_status(Settings())
-    assert (status.model, status.state, status.document_reader) == ("qwen3.5-9b", "loaded", False)
+    assert (status.model, status.state, status.usable) == ("", "missing", False)
     assert status.candidates == ["qwen3.5-9b"]
-    assert NOT_DOWNLOADED in status.note
+    assert NOT_DOWNLOADED in status.note and "wait for a person" in status.note
 
 
 def test_no_model_reads_pages_when_none_can_see(serve):
@@ -302,14 +306,10 @@ def test_a_named_model_is_used_as_it_is(serve):
     serve(lm_studio(v1_model("qwen2.5-7b-instruct", vision=False)))
     blind = page_reader.reader_status(reader_settings(model="qwen2.5-7b-instruct"))
     assert blind.state == "blind" and not blind.usable  # it would read nothing: not ready, never tested or loaded
-    assert "can't look at pictures: pick a model that can, e.g. OvisOCR2" in blind.note
+    assert "can't look at pictures" in blind.note and "AP_PAGE_READER_MODEL" in blind.note
 
 
-def test_turned_off_and_down(serve):
-    serve({"/v1/models": REAL_IDS, "/api/v1/models": REAL_V1})
-    off = page_reader.reader_status(reader_settings(mode="off"))
-    assert (off.state, off.model, off.usable) == ("off", "", False)
-    assert off.candidates == [OVIS_KEY]  # still listed, for choosing one before turning it on
+def test_down(serve):
     serve({})
     down = page_reader.reader_status(Settings())
     assert (down.reachable, down.state, down.model) == (False, "down", "")
@@ -323,7 +323,10 @@ def test_another_server_is_judged_by_model_names(serve):
     assert (status.model, status.state) == ("", "missing")  # the chat model (qwen2.5:7b) can't see
     serve({"/v1/models": {"data": [{"id": "llava:13b"}]}})
     status = page_reader.reader_status(Settings())
-    assert (status.model, status.state, status.document_reader) == ("llava:13b", "loaded", False)
+    assert (status.model, status.state) == ("", "missing")  # a general model that can see: not OvisOCR2
+    serve({"/v1/models": {"data": [{"id": "llava:13b"}, {"id": "ovisocr2:q8_0"}]}})
+    status = page_reader.reader_status(Settings())
+    assert (status.model, status.state, status.document_reader) == ("ovisocr2:q8_0", "loaded", True)
 
 
 def test_the_page_reader_can_have_its_own_server(serve):
@@ -368,8 +371,8 @@ def test_a_failed_load_is_remembered(serve, posts):
     assert page_reader.reader_load_problem(OVIS_KEY) == problem
     assert page_reader.load_reader(Settings(), OVIS_KEY) == problem
     assert len(posts) == 1  # not asked again for half an hour
-    status = page_reader.reader_status(Settings())  # meanwhile the chat model, which can see, reads pages
-    assert (status.model, status.document_reader) == ("qwen3.5-9b", False)
+    status = page_reader.reader_status(Settings())  # meanwhile nothing reads pages (not the chat model either)
+    assert (status.model, status.state, status.usable) == ("", "missing", False)
     assert problem in status.note and "half an hour" in status.note
     page_reader.forget_reader_failures()  # the settings were saved
     posts.fail = None
@@ -931,18 +934,15 @@ def test_models_in_use(serve, two_ocr_models):
     assert (reader["model"], reader["state"], reader["note"]) == ("OvisOCR2", "on", "")
     assert (
         reader["status"]
-        == "Loaded. Reads each scan and photo in the background. About 3 minutes a page on this computer."
+        == "Loaded. Reads every page of every invoice in the background. About 3 minutes a page on this computer."
     )
     assert (ocr["model"], ocr["state"]) == ("PP-OCRv4 + PP-OCRv5", "on")
-    asked = page_reader.models_in_use(reader_settings(mode="ask", scope="all"))[1]
-    assert asked["status"].startswith("Loaded. Reads pages when AP asks.")
-    assert page_reader.models_in_use(reader_settings(mode="off"))[1]["state"] == "off"
 
 
 def test_models_in_use_with_a_general_model_or_none(serve, two_ocr_models, monkeypatch):
     serve(lm_studio(v1_model("qwen3.5-9b", loaded=8192)))
     reader = page_reader.models_in_use(Settings())[1]
-    assert (reader["model"], reader["state"]) == ("qwen3.5-9b", "fallback") and NOT_DOWNLOADED in reader["note"]
+    assert (reader["model"], reader["state"]) == ("", "off") and NOT_DOWNLOADED in reader["note"]
     serve(lm_studio(v1_model(OVIS_KEY, loaded=20480)))  # OvisOCR2 alone: never taken for the chat model
     coding = page_reader.models_in_use(Settings())[0]
     assert coding["model"] != OVIS_KEY
@@ -955,7 +955,7 @@ def test_models_in_use_with_a_general_model_or_none(serve, two_ocr_models, monke
     assert "Nothing answered" in reader["note"] and "OCR alone" in reader["status"]
     assert "offline bundle" in ocr["note"]
     coding = page_reader.models_in_use(replace(Settings(), llm=replace(Settings().llm, provider="off")))[0]
-    assert coding["state"] == "fallback" and "turned off" in coding["status"]
+    assert coding["state"] == "fallback" and "isn't asked" in coding["status"]
 
 
 # --- What LM Studio has, and loading a model ---------------------------------------------------------------------
@@ -964,7 +964,6 @@ def test_models_in_use_with_a_general_model_or_none(serve, two_ocr_models, monke
 def test_lm_studio_models_says_what_is_loaded_and_what_each_does(serve, monkeypatch):
     serve(lm_studio(v1_model(OVIS_KEY, loaded=20480), v1_model("qwen3.5-9b", loaded=8192),
                     v1_model("gemma-3-4b", vision=True)))  # fmt: skip
-    monkeypatch.setenv("AP_LLM_PROVIDER", "local")
     rows = page_reader.lm_studio_models(Settings.from_env())
     by = {r["model"]: r for r in rows}
     assert by[OVIS_KEY]["loaded"] and by[OVIS_KEY]["context"] == 20480 and by[OVIS_KEY]["document_reader"]
