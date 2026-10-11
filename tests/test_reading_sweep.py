@@ -218,6 +218,44 @@ def test_another_vendor_name_on_a_touchless_suppliers_gst_number_needs_a_person(
     assert not decision["auto"] and "only its GST/HST number" in decision["reason"], decision
 
 
+def _billed(account_lines: list[str], number: str) -> list[str | tuple[float, str]]:
+    return ["Harbour Supply Ltd.", "77 Water St, Halifax, NS B3H 1A1", "HST No. 123456782 RT0001", "", "INVOICE",
+            f"Invoice No: {number}", "Invoice Date: 2026-09-20", "Bill To: Northern Foods Ltd, 1 Main St, Halifax, NS",
+            "", "Description            Qty   Unit Price    Amount",
+            "Pallets                   4       50.00      200.00", "", (300, "Subtotal  200.00"),
+            (300, "HST 14%    28.00"), (300, "Total     228.00"), "",
+            "Remit by EFT within 30 days. Customer account No: 45521", *account_lines]  # fmt: skip
+
+
+def test_a_changed_bank_account_is_found_without_an_ai_model(tmp_path, reference):
+    """The bank account an invoice asks to be paid into was only ever read by the AI coder: offline (the local
+    reader, no model) it was always blank, so VENDOR_BANK_CHANGED, a payment-fraud signal that always needs a person,
+    could never be raised, and a touchless supplier's invoice with new banking details went through untouched."""
+    pipe, store = _offline(tmp_path, reference)
+    usual = ["Banking details for EFT:", "Transit 12345  Institution 004  Account 1234567"]
+    first = pipe.process(_pdf(tmp_path / "a.pdf", [_billed(usual, "HS-1001")]))
+    assert first.ok and "1234567" in first.output["remit_bank_account"]
+    store.approve_invoice(first.invoice_id, first.output, "jane")
+    same = pipe.process(_pdf(tmp_path / "b.pdf", [_billed(usual, "HS-1002")]))
+    assert "VENDOR_BANK_CHANGED" not in {i.code for i in same.report.issues}
+    changed = ["Banking details for EFT:", "Transit 99881  Institution 010  Account 7654321"]
+    fraud = pipe.process(_pdf(tmp_path / "c.pdf", [_billed(changed, "HS-1003")]))
+    assert "VENDOR_BANK_CHANGED" in {i.code for i in fraud.report.issues}
+
+
+def test_bank_details_are_read_only_where_the_page_gives_them():
+    from ap_coder.offline_coder import bank_details
+
+    assert (
+        bank_details("Remit by EFT within 30 days.\nCustomer account No: 45521\n100 Bank Street, Ottawa K1P 5N2") == ""
+    )
+    assert bank_details("Deposit on order 1 500.00 1,500.00\nWire harness 12 45.00 540.00\nEFT fee 1 2.50 2.50") == ""
+    assert bank_details("IBAN: GB29 NWBK 6016 1331 9268 19") == "IBAN: GB29 NWBK 6016 1331 9268 19"
+    assert bank_details("Paiement par virement : transit 12345, institution 815, compte 1234567") == (
+        "virement : transit 12345, institution 815, compte 1234567"
+    )
+
+
 def test_days_in_a_late_interest_clause_are_not_the_net_days():
     """ "Due on receipt. Interest of 2% per month on accounts over 30 days" (common on Canadian invoices) was read
     as net 30: the due date came out 30 days late. Days in a late-payment clause say when interest starts."""

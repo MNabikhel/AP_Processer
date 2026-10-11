@@ -163,6 +163,42 @@ def _tax_lines(values: dict[str, Any], subtotal: float, province: str, on: dt.da
     return out
 
 
+# The supplier's banking details: words only banking details use ("Transit", "Institution", "IBAN", "SWIFT", "bank
+# account", "direct deposit", "virement"...), on a line with an account's digits (amounts don't count: "Deposit
+# 500.00" is a line item). "Remit by EFT within 30 days" has none; "100 Bank Street" is an address.
+_BANKING = re.compile(
+    r"(?i)\b(?:transit|institution|iban|swift|bic|routing|aba|bank\s+(?:account|acct)|banking|banque|bancaires?|"
+    r"direct\s+deposit|d[ée]p[ôo]t\s+direct|virement|wire\s+transfer|eft)\b"
+)
+_BANK_WORDS = re.compile(
+    r"(?i)\b(?:transit|institution|inst\b|iban|swift|bic|routing|aba|bank(?!\s+(?:st|street|ave|avenue|rd|road|"
+    r"blvd)\b)|banque|account|acct|compte|virement|eft|wire|direct)"
+)
+_MONEY = re.compile(r"\d[\d,. ]*[.,]\d{2}(?!\d)")
+
+
+def bank_details(text: str) -> str:
+    """The bank account the invoice asks to be paid into, as printed ("Transit 12345 Institution 004 Account
+    1234567", "IBAN GB29 NWBK 6016 1331 9268 19"), or "". Read so that a change of account from one invoice to the
+    next is found (``vendors.VENDOR_BANK_CHANGED``, a payment-fraud signal that always needs a person): lines that
+    name banking details with at least 5 digits on them, and the account lines under a "Banking details" heading."""
+
+    def digits(s: str) -> int:
+        return sum(c.isdigit() for c in _MONEY.sub(" ", s))
+
+    found: list[str] = []
+    lines = [ln.strip() for ln in (text or "").splitlines()]
+    for i, line in enumerate(lines):
+        if not _BANKING.search(line):
+            continue
+        heading = digits(line) < 5 and (line.endswith(":") or len(line.split()) <= 4)  # "Banking details:"
+        for row in [line] if not heading else lines[i + 1 : i + 4]:  # under a heading: the account lines
+            m = _BANK_WORDS.search(row)
+            if m and digits(row[m.start() :]) >= 5 and row[m.start() :] not in found:
+                found.append(row[m.start() :])
+    return "; ".join(found)[:200]
+
+
 def _unlisted_charge(text: str, amount: float) -> str:
     """The label printed beside an amount outside the line table ("Delivery & handling: $95.00")."""
     figure = f"{abs(amount):,.2f}"
@@ -252,6 +288,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         ship_to_province=ship_to_province,
         gst_hst_registration_number=str(values.get("gst_hst_registration_number") or ""),
         qst_registration_number=str(values.get("qst_registration_number") or ""),
+        remit_bank_account=bank_details(text),
         subtotal=round(subtotal + freight, 2),
         tax_lines=tax_lines,
         tax_total=_amount(values, "tax_total") or round(sum(t.tax_amount for t in tax_lines), 2),
