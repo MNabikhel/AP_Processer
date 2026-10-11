@@ -92,9 +92,14 @@ def audit_pick(path: str | Path, rate: float) -> bool:
     return int(digest[:15], 16) / float(16**15) < rate
 
 
+WAITING_FOR_PAGE_READER = "waiting for OvisOCR2 to read it"
+
+
 def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capture: CaptureResult | None,
-                      report: Any, path: str | Path) -> dict[str, Any]:  # fmt: skip
-    """{"state", "auto": bool, "audit": bool, "reason"} for one processed invoice."""
+                      report: Any, path: str | Path, *, awaiting_page_reader: bool = False) -> dict[str, Any]:  # fmt: skip
+    """{"state", "auto": bool, "audit": bool, "reason"} for one processed invoice. ``awaiting_page_reader``: the
+    page reader (OvisOCR2) has not read this invoice yet, so it is never approved without a person now: every
+    invoice is read by every reader before anything is decided for it."""
     if store is None or not key:
         return {"state": "", "auto": False, "audit": False, "reason": "no supplier"}
     policy = store.autonomy_policy()
@@ -102,6 +107,8 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
     state, _, _ = autonomy_status(store.supplier_stats(key), policy, stored, (profile or {}).get("autonomous_since"))
     if state != AUTONOMOUS:
         return {"state": state, "auto": False, "audit": False, "reason": ""}
+    if awaiting_page_reader:
+        return {"state": state, "auto": False, "audit": False, "reason": WAITING_FOR_PAGE_READER}
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     ok, reason = should_auto_approve(state, capture, checks_ok=not (report and report.errors), issues=issues)
     rate = (profile or {}).get("audit_rate")
