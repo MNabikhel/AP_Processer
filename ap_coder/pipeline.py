@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import azure_check
 from .capture.bridge import review_issues
 from .capture.layout import CannotRead
 from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
@@ -325,6 +326,7 @@ class InvoicePipeline:
             result.error = plain_error(exc, path)
 
         key, profile = "", None
+        azure = azure_check.Plan()
         if result.output is not None:
             t2 = time.perf_counter()
             if captured is not None:  # already read (no AI model): the capture is the proposal itself
@@ -338,6 +340,9 @@ class InvoicePipeline:
             if result.capture is not None and result.report is not None:
                 for severity, code, message in review_issues(result.capture, result.output.get("currency")):
                     result.report.issues.append(Issue(severity, code, message))
+                # The optional Azure check (off unless turned on): a check already done is folded in again (read
+                # again by the page reader); otherwise whether it goes in line, and waits for it.
+                azure = azure_check.prepare(self.store, self.settings, invoice_id, result.capture, result.report, path)
                 # Not read by the page reader yet: it will be (queued below), and decides then.
                 awaiting = page_text is None and not text_file
                 read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
@@ -346,7 +351,10 @@ class InvoicePipeline:
                 result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
                                                     output=result.output, awaiting_page_reader=awaiting,
                                                     pages_read=read)  # fmt: skip
+                result.autonomy = azure_check.hold(result.autonomy, azure)
 
+        if self.store is not None and not save and invoice_id:  # read again (the page reader): same invoice
+            azure_check.queue(self.store, invoice_id, azure)
         if self.store is not None and save:
             try:
                 result.invoice_id = self.store.add_invoice(
@@ -360,6 +368,7 @@ class InvoicePipeline:
                 )
                 if result.capture is not None:
                     self.store.save_capture(result.invoice_id, result.capture.to_dict())
+                azure_check.queue(self.store, result.invoice_id, azure)
                 if result.autonomy.get("auto") and result.output is not None:
                     self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
                 elif result.output is not None:  # the page reader reads every page of it in the background

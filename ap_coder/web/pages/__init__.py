@@ -145,7 +145,9 @@ PAGES: list[Page] = [
     Page("help", "Help", "/help", "help", S, "How AP Coder works, what each check means and what to do about it."),
 ]
 
-MORE_MODULES: list[str] = ["invoice"]  # routes without a rail entry: the invoice review screen (/review/{id})
+# Routes without a rail entry: the invoice review screen (/review/{id}); the Azure check's card on Settings → Reading
+# (/settings/azure-check).
+MORE_MODULES: list[str] = ["invoice", "azure"]
 
 SECTIONS: list[str] = list(dict.fromkeys(p.section for p in PAGES))
 BY_KEY: dict[str, Page] = {p.key: p for p in PAGES}

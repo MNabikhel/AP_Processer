@@ -30,6 +30,9 @@ def no_dashboard_page_reader(monkeypatch):
     from ap_coder import page_worker
 
     monkeypatch.setattr(page_worker, "start_background", lambda *args, **kwargs: None)
+    from ap_coder import azure_check  # the Azure check's thread likewise (it is off unless a test turns it on)
+
+    monkeypatch.setattr(azure_check, "start_background", lambda *args, **kwargs: None)
 
 
 @pytest.fixture(autouse=True)
