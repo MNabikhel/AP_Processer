@@ -78,9 +78,7 @@ def _scrub(message: str, settings: Settings) -> str:
 
 # Packages every install needs, with what stops working without one (shown in the fix).
 _PACKAGES = {
-    "openai": "",
-    "azure-ai-documentintelligence": "",
-    "azure-identity": "",
+    "openai": "",  # the client for LM Studio's local server (Azure's packages are an optional extra, not checked)
     "pydantic": "",
     "openpyxl": "",
     "pymupdf": " (PDFs can't be read)",
@@ -232,9 +230,10 @@ def run_checks(
         add("DI connectivity", SKIP, "not tested: the internet isn't allowed, so invoices are read on this computer")
     elif di.endpoint:
         try:
-            from azure.ai.documentintelligence import DocumentIntelligenceAdministrationClient
+            from .offline import import_azure
 
-            admin = DocumentIntelligenceAdministrationClient(di.endpoint, build_credential(di))
+            admin_client = import_azure("azure.ai.documentintelligence").DocumentIntelligenceAdministrationClient
+            admin = admin_client(di.endpoint, build_credential(di))
             model = admin.get_model(di.model_id)
             api = getattr(model, "api_version", None)
             add("DI connectivity", PASS, f"{di.model_id} available" + (f" (api {api})" if api else ""))

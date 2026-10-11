@@ -68,6 +68,25 @@ def allow_internet() -> None:
     os.environ[INTERNET_ENV] = "1"
 
 
+# Azure (Document Intelligence, Azure OpenAI sign-in) is not part of the offline build yet: its packages are the
+# optional ``azure`` extra (pyproject), never in the default install or the offline bundle. The code stays, dormant
+# behind AP_ALLOW_INTERNET, for later.
+AZURE_NOT_IN_THIS_BUILD = "Azure isn't part of this offline build yet"
+
+
+def import_azure(module: str):
+    """``module`` (e.g. ``azure.identity``), or a plain RuntimeError when the Azure packages are not installed."""
+    import importlib
+
+    try:
+        return importlib.import_module(module)
+    except ImportError:
+        raise RuntimeError(
+            f"{AZURE_NOT_IN_THIS_BUILD}: its packages are not installed ({module}). Invoices are read and coded on "
+            f'this computer. (Developers, online: {INTERNET_ENV}=1 and pip install -e ".[azure]".)'
+        ) from None
+
+
 @dataclass(frozen=True)
 class ModelFile:
     name: str

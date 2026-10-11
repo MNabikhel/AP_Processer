@@ -265,12 +265,20 @@ def test_export_training_says_why_bulk_approvals_are_left_out(tmp_path, capsys, 
 
 
 def _azure_di(monkeypatch) -> list[str]:
-    """Stand-ins for Azure Document Intelligence's clients: each one made is recorded (a call to Azure)."""
-    import azure.ai.documentintelligence as di
+    """Stand-ins for Azure Document Intelligence's packages and clients: each client made is recorded (a call to
+    Azure). Stand-ins whether or not the packages are installed: they are an optional extra (``.[azure]``)."""
+    from types import ModuleType
 
     made: list[str] = []
-    monkeypatch.setattr(di, "DocumentIntelligenceClient", lambda *a, **k: made.append("client"))
-    monkeypatch.setattr(di, "DocumentIntelligenceAdministrationClient", lambda *a, **k: made.append("admin"))
+    modules = {name: ModuleType(name) for name in ("azure", "azure.core", "azure.core.credentials", "azure.identity",
+                                                    "azure.ai", "azure.ai.documentintelligence")}  # fmt: skip
+    modules["azure.core.credentials"].AzureKeyCredential = lambda key: ("key", key)
+    modules["azure.identity"].DefaultAzureCredential = lambda: "entra"
+    di = modules["azure.ai.documentintelligence"]
+    di.DocumentIntelligenceClient = lambda *a, **k: made.append("client")
+    di.DocumentIntelligenceAdministrationClient = lambda *a, **k: made.append("admin")
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
     return made
 
 
