@@ -386,35 +386,39 @@ def test_doctor_local_dry_run(lm_studio, reference, ground_truth):
 # --- Settings page --------------------------------------------------------------------------------------------
 
 
-def test_settings_page_when_lm_studio_is_not_running(db, monkeypatch):  # noqa: F811
+@pytest.fixture
+def no_reading_status(monkeypatch):
+    """Settings → Reading with nothing known yet about the readers (OvisOCR2 not found)."""
+    from ap_coder import reading
+
+    monkeypatch.setattr(reading, "reading_status", lambda settings, store, use_cache=True: reading.ReadingStatus())
+
+
+def test_settings_page_when_lm_studio_is_not_running(db, monkeypatch, no_reading_status):  # noqa: F811
     monkeypatch.setenv("AP_ENV_FILE", str(db.parent / ".env"))
     at = _ok(_page("settings", "page_settings").run())
     page = " ".join(m.value for m in at.markdown)
     assert "IT team installs it" in page and "Start server" in page and "lmstudio.ai" not in page
-    assert any(b.label == "Test connection" for b in at.button)
-    _ok(at.button(key="test_llm").click().run())
+    _ok(at.button(key="rd_check").click().run())
 
 
-def test_settings_page_lists_models_and_saves(db, lm_studio, monkeypatch):  # noqa: F811
+def test_settings_page_lists_the_models_with_nothing_to_choose(db, lm_studio, monkeypatch, no_reading_status):  # noqa: F811
     from ap_coder.envfile import read_env
 
     server = lm_studio(["qwen2.5-7b-instruct", "llama-3.2-3b-instruct", "text-embedding-nomic"], V0_LOADED)
     env = db.parent / ".env"
     monkeypatch.setenv("AP_ENV_FILE", str(env))
     for key in ("AP_LLM_PROVIDER", "AP_LLM_MODEL", "AP_LLM_VISION"):
-        monkeypatch.setenv(key, "")  # restored after the test (the page writes os.environ)
+        monkeypatch.setenv(key, "")  # restored after the test
     monkeypatch.setenv("AP_LLM_BASE_URL", server.base_url)
     at = _ok(_page("settings", "page_settings").run())
     assert "IT team installs it" not in " ".join(m.value for m in at.markdown)
-    model = at.selectbox(key="llm_model")
-    assert model.options[1:] == ["qwen2.5-7b-instruct", "llama-3.2-3b-instruct"]  # no embedding model
-    model.select("llama-3.2-3b-instruct")
-    at.selectbox(key="llm_provider").select("local")
-    submit = next(b for b in at.button if b.proto.is_form_submitter and b.proto.form_id.endswith("ai_model_form"))
-    _ok(submit.click().run())
-    saved = read_env(env)
-    assert saved["AP_LLM_MODEL"] == "llama-3.2-3b-instruct" and saved["AP_LLM_PROVIDER"] == "local"
-    assert "AP_LLM_VISION" not in saved and "AP_LLM_BASE_URL" not in saved  # unchanged values are not written
+    table = next(d.value for d in at.dataframe if "Loaded" in d.value.columns)
+    models = set(table["Model"])  # what LM Studio has (its own listing), the embedding model left out
+    assert {"qwen2.5-7b-instruct", "qwen2.5-vl-7b-instruct"} <= models and not [m for m in models if "embed" in m]
+    keys = {w.key for w in [*at.selectbox, *at.radio, *at.toggle] if w.key}
+    assert not keys & {"llm_provider", "llm_model", "llm_vision", "pr_mode", "pr_scope", "pr_model"}
+    assert not read_env(env)  # looking at Settings writes nothing
 
 
 def test_with_a_local_model_the_reader_reads_and_the_model_codes_the_leftover_lines(lm_studio, reference):

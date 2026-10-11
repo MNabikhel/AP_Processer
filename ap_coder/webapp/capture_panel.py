@@ -13,11 +13,20 @@ from typing import Any
 
 import streamlit as st
 
+from ap_coder import page_reader, ui
 from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.normalize import parse_amount, parse_date
 from ap_coder.capture.types import Box, CaptureResult
 from ap_coder.safe import md
-from ap_coder.webapp.common import esc, forget_drafts, get_settings, get_store, notify, reviewer
+from ap_coder.webapp.common import (
+    esc,
+    forget_drafts,
+    get_settings,
+    get_store,
+    notify,
+    reading_status_or_none,
+    reviewer,
+)
 from ap_coder.webapp.viewer import invoice_viewer, page_words, render_pages
 
 VIEWER_HEIGHT = 760  # px; the page scrolls inside, the field list stays beside it
@@ -122,64 +131,95 @@ def follow_page_reader(invoice_id: int, key: str, meta: dict[str, Any]) -> None:
         return
     forget_drafts(key)  # the fields are drawn again from the new proposal
     st.session_state[f"{key}_page_reader_seen"] = at
-    notify("The page reader has read this invoice: the fields show its reading now.", ":material/visibility:")
+    notify("OvisOCR2 has read this invoice: the fields show its reading now.", ":material/visibility:")
     st.rerun()
+
+
+NOT_TOUCHLESS = "It can't be approved without a person until OvisOCR2 has read it."
+
+
+def _not_running(status: Any) -> str:
+    """Why OvisOCR2 isn't reading now ("" when it is): from the reading status, else from the background reader."""
+    if status is not None:
+        return "" if status.page_reader_ready else "OvisOCR2 isn't running: see Settings → Reading."
+    from ap_coder.page_worker import ready
+
+    try:
+        model, _why = ready(get_settings(), get_store())
+    except Exception:  # noqa: BLE001 - it can't be asked: said as not running
+        model = ""
+    return "" if model else "OvisOCR2 isn't running: see Settings → Reading."
+
+
+def waiting_line(status: Any, ahead: int) -> str:
+    """ "Waiting for OvisOCR2: 2 invoices ahead, about 6 minutes" (the time when a page time has been measured)."""
+    where = f"{ui.plural(ahead, 'invoice')} ahead" if ahead else "it's next"
+    eta = ""
+    if status is not None and status.eta_minutes and status.queue:
+        eta = ", " + page_reader.duration(status.eta_minutes * 60 * min(ahead + 1, status.queue) / status.queue)
+    return f"Waiting for OvisOCR2: {where}{eta}."
 
 
 @st.fragment(run_every=PAGE_READER_POLL_SECONDS)
 def _page_reader_waiting(invoice_id: int) -> None:
-    """While the page reader has this invoice in its queue: where it is, looked up again every few seconds; the
-    whole screen is drawn again once it is done, so the fields show its reading."""
-    from ap_coder.page_worker import ready
-
+    """While OvisOCR2 has this invoice in its queue: where it is, looked up again every few seconds; the whole screen
+    is drawn again once it is done, so the fields show its reading."""
     store = get_store()
     row = store.page_read(invoice_id) or {}
     state = row.get("status", "")
     if state not in ("waiting", "reading"):
         st.rerun()
-    if state == "waiting":
-        model, why = ready(get_settings(), store)
-        if not model:
-            st.caption(f":material/pause_circle: Page reader: waiting, not reading yet ({md(why)}).")
-            return
-    ahead = store.page_reads_ahead(invoice_id) if state == "waiting" else 0  # in line before it, and the one read now
-    note = "reading it now" if state == "reading" else f"waiting to read it ({ahead} ahead)" if ahead else "next"
-    st.caption(f":material/hourglass_top: Page reader: {note}. The fields update when it is done, unless you have "
-               "edited the invoice.")  # fmt: skip
-    if state == "waiting" and row.get("tries") and row.get("error"):  # cut off by the model server last time
+    if state == "reading":
+        st.caption(":material/hourglass_top: OvisOCR2 is reading this invoice now. The fields update when it is "
+                   f"done, unless you have edited the invoice. {NOT_TOUCHLESS}")  # fmt: skip
+        return
+    status = reading_status_or_none()
+    stopped = _not_running(status)
+    if stopped:
+        st.caption(f":material/pause_circle: {stopped} {NOT_TOUCHLESS}")
+        return
+    ahead = store.page_reads_ahead(invoice_id)  # in line before it, and the one read now
+    st.caption(f":material/hourglass_top: {waiting_line(status, ahead)} The fields update when it is done, unless "
+               f"you have edited the invoice. {NOT_TOUCHLESS}")  # fmt: skip
+    if row.get("tries") and row.get("error"):  # cut off by the model server last time
         st.caption(f":material/sync_problem: Last time: {md(row['error'])}")
 
 
+def agreement_line(done: dict[str, Any]) -> str:
+    """ "OvisOCR2 read this invoice: 9 of 11 fields agree" and what else it found."""
+    agree, differ, only = (len(done.get(k) or []) for k in ("agree", "differ", "only"))
+    line = f"OvisOCR2 read this invoice: {agree} of {agree + differ + only} fields agree"
+    extra = []
+    if differ:
+        extra.append(f"{differ} read differently, marked Check")
+    if only:
+        extra.append(f"{only} found only by OvisOCR2")
+    figs = done.get("figures") or {}
+    total = max(figs.get("figures", 0), figs.get("first_figures", 0))
+    if total:
+        extra.append(f"{figs.get('confirmed', 0)} of {total} figures on the page read the same by both")
+    minutes = (done.get("seconds") or 0) / 60
+    return line + (f" ({'; '.join(extra)})" if extra else "") + (f" · {minutes:.1f} min" if minutes else "")
+
+
 def page_reader_line(inv: dict[str, Any], key: str) -> None:
-    """Under the document title: what the page reader made of this invoice, where it is in its queue, or a button
-    to have it read (Settings → Page reader)."""
+    """Under the document title: what OvisOCR2 made of this invoice, where it is in its queue, why it couldn't read
+    it, or that it isn't running. Every invoice is read by it; until it has, a person approves the invoice."""
     from ap_coder.extraction import TEXT_EXTENSIONS
 
     path = Path(inv.get("source_path") or "")
-    settings = get_settings()
-    if path.suffix.lower() in TEXT_EXTENSIONS or settings.page_reader.mode == "off":
+    if path.suffix.lower() in TEXT_EXTENSIONS:  # a text file has no page to read
         return
     store = get_store()
     done = (inv.get("meta") or {}).get("page_reader")
     row = store.page_read(inv["id"]) or {}
     state = row.get("status", "")
     if done:
-        agree, differ, only = (len(done.get(k) or []) for k in ("agree", "differ", "only"))
-        parts = [f"agrees on {agree} {'field' if agree == 1 else 'fields'}"]
-        if differ:
-            parts.append(f"reads {differ} differently (marked Check)")
-        if only:
-            parts.append(f"found {only} OCR missed")
+        st.caption(":material/visibility: " + agreement_line(done))
         figs = done.get("figures") or {}
-        total = max(figs.get("figures", 0), figs.get("first_figures", 0))
-        if total:
-            parts.append(f"{figs.get('confirmed', 0)} of {total} figures on the page read the same by both")
-        minutes = (done.get("seconds") or 0) / 60
-        st.caption(f":material/visibility: Page reader {md(done.get('model', ''))}: " + ", ".join(parts)
-                   + (f" · {minutes:.1f} min" if minutes else ""))  # fmt: skip
         if figs.get("differ"):
             first = "PDF text" if ((inv.get("meta") or {}).get("capture") or {}).get("layout") == "text" else "OCR"
-            pairs = "; ".join(f"{md(a)} (page reader) / {md(b)} ({first})" for a, b in figs["differ"])
+            pairs = "; ".join(f"{md(a)} (OvisOCR2) / {md(b)} ({first})" for a, b in figs["differ"])
             st.caption(f":material/compare_arrows: Read differently: {pairs}")
         if st.session_state.get(f"{key}_page_reader_kept"):
             line = st.container(horizontal=True, vertical_alignment="center")
@@ -193,15 +233,22 @@ def page_reader_line(inv: dict[str, Any], key: str) -> None:
     if state in ("waiting", "reading"):
         _page_reader_waiting(inv["id"])
         return
-    if state == "done" and row.get("error"):
-        st.caption(f":material/visibility: Page reader: {md(row['error'])}")
+    reason = md(row.get("error") or "no reason given").rstrip(".")
+    if state in ("failed", "skipped"):
+        st.caption(f":material/error: OvisOCR2 couldn't read it: {reason}; a person decides.")
         return
-    if state == "failed":
-        st.caption(f":material/error: The page reader couldn't read it: {md(row.get('error', ''))}")
-    if st.button("Read with the page reader", icon=":material/visibility:", key=f"{key}_read_pages",
-                 help="A vision model reads the pages as a second reader, in the background."):  # fmt: skip
-        store.queue_page_read(inv["id"], "asked", requested_by=reviewer())
-        notify("Queued: the page reader reads it in the background.", ":material/visibility:")
+    if state == "done":  # read, but its reading wasn't applied (the invoice was edited or decided meanwhile)
+        st.caption(f":material/visibility: OvisOCR2 read this invoice: {reason}.")
+        return
+    # Not in its queue (processed before every invoice was read by it, or taken out of line): it can be put back.
+    stopped = _not_running(reading_status_or_none())
+    line = st.container(horizontal=True, vertical_alignment="center")
+    line.caption(f":material/visibility_off: OvisOCR2 hasn't read this invoice yet. {stopped} {NOT_TOUCHLESS}"
+                 .replace("  ", " "))  # fmt: skip
+    if line.button("Add it to OvisOCR2's queue", key=f"{key}_read_pages", type="tertiary",
+                   icon=":material/playlist_add:"):  # fmt: skip
+        store.queue_page_read(inv["id"], "not read yet", requested_by=reviewer())
+        notify("Added to OvisOCR2's queue: it reads it in the background.", ":material/visibility:")
         st.rerun()
 
 

@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import streamlit as st
 
-from ap_coder import ui
+from ap_coder import page_reader, ui
 from ap_coder.capture.layout import ocr_available
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS
@@ -31,6 +31,7 @@ from ap_coder.webapp.common import (
     notify,
     open_folder,
     page_head,
+    reading_status_or_none,
     short_path,
     show_toast,
 )
@@ -71,9 +72,24 @@ def _email_note(mail: Unpacked) -> None:
         st.caption("Left out: " + md("; ".join(mail.skipped)))
 
 
+def queued_note(queued: int) -> str:
+    """After processing: the invoices now waiting for OvisOCR2, and when it reads them ("" when none were queued)."""
+    if queued <= 0:
+        return ""
+    them = "it" if queued == 1 else "them"
+    status = reading_status_or_none()
+    if status is not None and not status.page_reader_ready:
+        return (f"{ui.plural(queued, 'invoice')} queued for OvisOCR2, which isn't running: {them} wait for it "
+                "(Settings → Reading).")  # fmt: skip
+    eta = ""
+    if status is not None and status.eta_minutes:
+        eta = f", {page_reader.duration(status.eta_minutes * 60)} for the whole queue"
+    return f"{ui.plural(queued, 'invoice')} queued for OvisOCR2: it reads {them} in the background{eta}."
+
+
 def run_pipeline(store: Store, paths: list[Path]) -> None:
-    if PUBLIC_DEMO:  # no Azure in the public demo
-        not_in_public_demo("Reading invoices with Azure")
+    if PUBLIC_DEMO:  # the public demo reads nothing new: its invoices were read ahead of time
+        not_in_public_demo("Processing new invoices")
         return
     reference = store.reference_data()
     settings = get_settings()
@@ -92,16 +108,10 @@ def run_pipeline(store: Store, paths: list[Path]) -> None:
                 st.error(f"{md(path.name)}: {md(result.error)}", icon=":material/error:")
         status.update(label=f"Processed {ok} of {len(paths)}", state="complete" if ok == len(paths) else "error")
     failed = len(paths) - ok
+    queued = max(0, store.page_reads_waiting() - waiting)
     if ok:
-        notify(f"{ui.plural(ok, 'invoice')} read and coded. They're waiting in the review queue.", ":material/inbox:")
-    queued = store.page_reads_waiting() - waiting
-    if queued > 0:
-        from ap_coder.page_worker import ready
-
-        model, why = ready(settings, store)
-        when = "in the background" if model else f"once it can ({why})"
-        notify(f"{ui.plural(queued, 'invoice')} queued for the page reader: it reads them {when}.",
-               ":material/visibility:")  # fmt: skip
+        notify(f"{ui.plural(ok, 'invoice')} read and coded. They're waiting in the review queue. {queued_note(queued)}",
+               ":material/inbox:")  # fmt: skip
     if failed:
         notify(
             f"{ui.plural(failed, 'file')} could not be processed. See Review queue → Failed / rejected.",
@@ -118,22 +128,24 @@ def tax_types_mapped(store: Store) -> int:
 def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
     mapped = tax_types_mapped(store)
     gl_count = len(store.list_accounts("gl_accounts"))
-    ai = provider_status(settings)  # Azure OpenAI, or LM Studio on this computer
-    if settings.document_intelligence.endpoint:
-        reader = ("ok", "Reading invoices", "Azure Document Intelligence")
-    elif ocr_available():
-        reader = ("ok", "Reading invoices", "on this computer (text + OCR)")
+    ai = provider_status(settings)  # the chat model in LM Studio that suggests GL accounts (optional)
+    if ocr_available():
+        reader = ("ok", "Reading invoices", "PDF text + OCR")
     else:
         reader = ("todo", "Reading invoices", "text PDFs only: scans need OCR (run the launcher again)")
-    return [
+    status = reading_status_or_none(settings, store)
+    if status is None:
+        second = ("todo", "OvisOCR2", "see Settings → Reading")
+    elif status.page_reader_ready:
+        second = ("ok", "OvisOCR2", "reads every invoice in the background")
+    else:
+        second = ("todo", "OvisOCR2", "not running yet: invoices wait for it (Settings → Reading)")
+    return [  # the review page's getting-started card reads the chat model at index 1
         reader,
-        (
-            "ok" if ai.ready else "todo",
-            "AI model" if ai.provider != "azure" else "Azure OpenAI",
-            ai.label if ai.ready else "optional",
-        ),
+        ("ok" if ai.ready else "opt", "Chat model for GL suggestions", ai.label if ai.ready else "optional"),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
+        second,
     ]
 
 
@@ -142,7 +154,8 @@ def page_process() -> None:
     show_toast()
     settings = get_settings()
     steps = setup_steps(store, settings)
-    ready = steps[0][0] != "bad" and steps[2][0] == "ok"  # a reader and GL accounts; the AI model is optional
+    # PDF text / OCR and GL accounts. OvisOCR2 reads them once it runs (they wait for it); the chat model is optional.
+    ready = steps[0][0] != "bad" and steps[2][0] == "ok"
     page_head(
         "process",
         "Process invoices",
@@ -152,15 +165,18 @@ def page_process() -> None:
 
     left, right = st.columns([3, 2], gap="medium")
     with right, card("setup_steps"):
-        done = sum(1 for s, _, _ in steps if s == "ok")
+        needed = [s for s, _, _ in steps if s != "opt"]
+        done = sum(1 for s in needed if s == "ok")
         head, gauge = st.columns([3, 1], vertical_alignment="top")
         head.markdown("#### Setup")
         head.caption("What AP Coder needs before it reads invoices.")
-        progress = ui.pill(f"{done} of {len(steps)} done", "ok" if done == len(steps) else "gray")
+        progress = ui.pill(f"{done} of {len(needed)} done", "ok" if done == len(needed) else "gray")
         gauge.html(f"<div style='text-align:right'>{progress}</div>")
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
-        if any(s != "ok" for s, _, _ in steps[2:]):
+        if any(s != "ok" for s, _, _ in steps[2:4]):
             st.page_link(PAGES["accounts"], label="Finish setup", icon=":material/arrow_forward:")
+        if steps[4][0] != "ok" and "settings" in PAGES:
+            st.page_link(PAGES["settings"], label="Settings → Reading", icon=":material/arrow_forward:")
 
     recent = sorted(store.list_invoices(), key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
     if recent:
@@ -176,11 +192,13 @@ def page_process() -> None:
     if PUBLIC_DEMO:
         with left, card("public_demo"):
             st.markdown("#### Processing new invoices")
-            not_in_public_demo("Reading and coding new invoices with Azure")
+            not_in_public_demo("Reading and coding new invoices")
             st.caption(
-                "In your own copy, AP Coder reads each PDF or scan with Azure Document Intelligence, codes every "
-                "line with Azure OpenAI and sends it to the review queue. The demo invoices went through the same "
-                "checks, coded ahead of time, so you can review, correct and approve them."
+                "In your own copy, AP Coder reads each invoice the same way, whether a digital PDF, a scan or a phone "
+                "photo, all on your computer: the PDF's own text or OCR, OvisOCR2 reading every page as a second "
+                "reader, the supplier's template and the business checks. It then codes every line and sends the "
+                "invoice to the review queue. The demo invoices went through the same checks, read and coded ahead "
+                "of time, so you can review, correct and approve them."
             )
             st.page_link(PAGES["review"], label="Go to the review queue", icon=":material/arrow_forward:")
         return
