@@ -221,7 +221,12 @@ def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
         if current and Path(current) != data and has_data(Path(current)):
             c.warn(f"Switching data folder. The old one stays where it is: {current}")
     elif current:  # (data an older version kept inside its code folder moves out of it first)
-        data = upgrade.settle_data_folder(ROOT, c.info, default=DEFAULT_DATA_DIR)
+        try:
+            data = upgrade.settle_data_folder(ROOT, c.info, default=DEFAULT_DATA_DIR)
+        except upgrade.DataMoveError as exc:  # never set up on half the data: the next run finishes the move
+            c.warn(str(exc))
+            c.info(exc.hint)
+            sys.exit(1)
     else:
         c.info("AP Coder keeps your invoices, its database and its settings in one folder, outside the")
         c.info("code, so new versions of the code use the same data. Do NOT use a OneDrive-synced folder.")

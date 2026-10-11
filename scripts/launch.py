@@ -1288,7 +1288,11 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
         return failed(exc)
     if str(ROOT) not in sys.path:  # ap_coder itself, even when it was only just installed
         sys.path.insert(0, str(ROOT))
-    data = ensure_data_folder()
+    try:
+        data = ensure_data_folder()
+    except upgrade.DataMoveError as exc:  # never started on half the data: the next start finishes the move
+        save_state(state)
+        return failed(SetupError(str(exc), exc.hint))
     notes = settle_settings(data, ident["version"])
     too_new = database_too_new(data, ident["version"])
     if too_new:

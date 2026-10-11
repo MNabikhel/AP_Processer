@@ -245,6 +245,19 @@ def test_an_ap_coder_0_1_folder_whose_data_moved_out_is_still_cleaned_up(launch,
     assert launch.run(*launch.parse(["--check"])) == 0 and cleaned == [[old]]
 
 
+def test_data_that_could_not_all_be_moved_stops_the_start_plainly(launch, monkeypatch, capsys):
+    started, _, _ = _quiet_setup(launch, monkeypatch)
+
+    def stuck():
+        raise launch.upgrade.DataMoveError("Your data could not all be moved from A to B (in use: A/ap_coder.db).",
+                                           "Close the program that has that file open, then start AP Coder again.")
+
+    monkeypatch.setattr(launch, "ensure_data_folder", stuck)
+    assert launch.run(*launch.parse([])) == 1 and not started
+    out = capsys.readouterr().out
+    assert "could not all be moved" in out and "What to do: Close the program" in out
+
+
 def test_a_database_made_by_a_newer_ap_coder_stops_the_start_plainly(launch, monkeypatch, tmp_path, capsys):
     started, _, _ = _quiet_setup(launch, monkeypatch)
     import sqlite3

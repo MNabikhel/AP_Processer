@@ -206,6 +206,41 @@ def test_data_in_a_code_folder_stays_when_the_data_folder_has_other_data(upgrade
     assert "still in" in said[0]
 
 
+def test_an_interrupted_data_move_is_finished_by_the_next_start(upgrade, tmp_path, monkeypatch):
+    """A move stopped halfway (a file in use, the window closed, the computer off): the next start found data in
+    both folders, said "your data is still in <old folder>" and used it, without what had moved already (an empty
+    queue, or no database at all). Now nothing runs on half the data, and the next start finishes the move."""
+    import shutil
+
+    monkeypatch.delenv("AP_PRIVATE_DIR")
+    old = make_install(tmp_path / "AP Coder 0.1", "0.1.0")
+    private = _with_data(old)
+    (private / "outputs").mkdir()
+    (private / "outputs" / "batch.xlsx").write_text("export")
+    paths.write_user_settings(data_dir=str(private))
+    home = tmp_path / "APCoder"
+    real_move, moved = shutil.move, []
+
+    def move(src, dst, *args, **kwargs):
+        if moved:
+            raise PermissionError(32, "The process cannot access the file because it is being used", src)
+        moved.append(src)
+        return real_move(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "move", move)
+    with pytest.raises(upgrade.DataMoveError) as stopped:
+        upgrade.settle_data_folder(tmp_path / "new", lambda m: None, default=home)
+    assert f"still in {private}" in str(stopped.value) and "picks up where it stopped" in stopped.value.hint
+    assert paths.read_user_settings()["data_dir"] == str(private) and len(moved) == 1
+    monkeypatch.setattr(shutil, "move", real_move)  # the file was closed; the next start
+    said: list[str] = []
+    assert upgrade.settle_data_folder(tmp_path / "new", said.append, default=home) == home
+    assert (home / "ap_coder.db").read_text() == "db" and (home / "invoices" / "a.pdf").read_text() == "pdf"
+    assert (home / "outputs" / "batch.xlsx").read_text() == "export" and not upgrade.has_data(private)
+    assert paths.private_dir() == home and "Finished moving your data" in said[0]
+    assert upgrade.settle_data_folder(tmp_path / "new", said.append, default=home) == home and len(said) == 1
+
+
 def test_a_first_start_in_a_folder_with_data_moves_it_out(upgrade, tmp_path, monkeypatch):
     monkeypatch.delenv("AP_PRIVATE_DIR")
     here = make_install(tmp_path / "AP Coder", "0.2.0")

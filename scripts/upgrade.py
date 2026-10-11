@@ -301,15 +301,24 @@ def has_data(folder: Path) -> bool:
     return False
 
 
-def _move_into(items: list[Path], target: Path) -> None:
-    """Move ``items`` into ``target``; a folder already there is merged (its files are never replaced)."""
+class DataMoveError(Exception):
+    """The data could not all be moved to the data folder: ``hint`` is the one line on what to do."""
+
+    def __init__(self, message: str, hint: str) -> None:
+        super().__init__(message)
+        self.hint = hint
+
+
+def _move_into(items: list[Path], target: Path, replace: bool = False) -> None:
+    """Move ``items`` into ``target``; a folder already there is merged (its files are never replaced, unless
+    ``replace``: finishing a move that was interrupted, where what is still in the source is the whole copy)."""
     target.mkdir(parents=True, exist_ok=True)
     for item in items:
         dest = target / item.name
         if dest.is_dir() and item.is_dir():
-            _move_into(list(item.iterdir()), dest)
+            _move_into(list(item.iterdir()), dest, replace)
             shutil.rmtree(item, ignore_errors=True)
-        elif not dest.exists():
+        elif not dest.exists() or (replace and dest.is_file() and item.is_file()):
             shutil.move(str(item), str(dest))
         else:
             aside = target / f"{item.stem}.from-old-install{item.suffix}"
@@ -360,11 +369,19 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
     """The data folder, outside every code folder. Data kept in a code folder's ``private`` folder (AP Coder 0.1:
     recorded as the data folder, or found in this folder with none recorded) is moved to ``~/APCoder`` and recorded
     there, unless ``~/APCoder`` already holds data of its own (then it stays where it is, and that is said). An
-    ``AP_PRIVATE_DIR`` set by hand is used as it is."""
+    ``AP_PRIVATE_DIR`` set by hand is used as it is. A move that was interrupted is finished first; one that can't
+    be finished stops the start (:class:`DataMoveError`): AP Coder never runs on half the data."""
     if chosen := paths.env_path("AP_PRIVATE_DIR"):
         return chosen
+    settings = paths.read_user_settings()
+    pending = settings.get("data_move")
+    if isinstance(pending, dict) and pending.get("from") and pending.get("to"):
+        source, target = Path(pending["from"]), Path(pending["to"])
+        move_data(source, target, resume=True)
+        say(f"Finished moving your data from {source} to {target}: new versions use it from there.")
+        return target
     default = default or paths.default_data_dir()
-    recorded = paths.user_path(str(paths.read_user_settings().get("data_dir") or ""))
+    recorded = paths.user_path(str(settings.get("data_dir") or ""))
     legacy = root / "private"
     if recorded is None:
         recorded = legacy if has_data(legacy) else default
@@ -376,12 +393,32 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
             return recorded
         if not paths.same_folder(recorded.parent, root):
             remember([recorded.parent])  # (found from this data folder only: on the record before it moves)
-        items = [p for p in recorded.iterdir() if p.name not in ("README.md", ".ap_coder_server.json")]
-        _move_into(items, default)
-        paths.write_user_settings(data_dir=str(default))
+        move_data(recorded, default)
         say(f"Moved your data from {recorded} (inside the code folder) to {default}: new versions use it from there.")
         return default
     return recorded
+
+
+def move_data(source: Path, target: Path, resume: bool = False) -> None:
+    """Move the data folder ``source`` into ``target`` and record ``target`` as the data folder once all of it is
+    there. The move is on record while it runs (``data_move``), so one that is interrupted is finished by the next
+    start (``resume``); one that fails raises :class:`DataMoveError` (what is not moved yet stays in ``source``)."""
+    paths.write_user_settings(data_move={"from": str(source), "to": str(target)})
+    try:
+        items = [p for p in source.iterdir() if p.name not in ("README.md", ".ap_coder_server.json")]
+        _move_into(items, target, replace=resume)
+    except OSError as exc:
+        if not source.is_dir():  # gone (moved whole, or deleted by hand): nothing is left to move
+            paths.write_user_settings(data_dir=str(target), data_move=None)
+            return
+        what = f"{exc.strerror or exc}" + (f": {exc.filename}" if exc.filename else "")
+        raise DataMoveError(
+            f"Your data could not all be moved from {source} to {target} ({what}). Nothing was lost: what is not "
+            f"moved yet is still in {source}.",
+            "Close the program that has that file open (an old AP Coder window, Excel), then start AP Coder again: "
+            "the move picks up where it stopped.",
+        ) from exc
+    paths.write_user_settings(data_dir=str(target), data_move=None)
 
 
 # --- Cleaning up after an update --------------------------------------------------------------------------------
