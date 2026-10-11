@@ -260,13 +260,18 @@ its `mmproj`, about 1 GB).
   against OCR's text or the PDF's own. The review screen shows how many figures both read the same and lists
   the ones read two ways ("1,105.00 / 1,150.00"). On a digital PDF the first reading is exact, so the share
   read the same is the page reader's own accuracy, measured on every invoice it reads (Settings → Page reader).
-- **Linked before it is trusted:** *Settings → Page reader → Test the page reader* reads a scan of a sample
-  invoice whose answers are known and shows each field. Until the model in use has passed, the page reader
-  reads nothing; another model needs its own test.
+- **Tested before it is trusted:** before it reads any invoice, OvisOCR2 reads a scan of a sample invoice whose
+  answers are known (``page_worker.self_test_if_due``, on its own: no button to press). Until the model in use
+  has passed, the page reader reads nothing; another model needs its own test, and a failed test is tried again
+  after a day (or when a person runs it again). No general vision model reads pages instead of OvisOCR2.
+- **Every invoice, digital PDFs too:** on a digital PDF the transcription is checked against the PDF's hidden
+  text (``TEXT_LAYER_MATCHES_PAGE``): fewer than 60% of 8 or more figures read the same, or two totals of the
+  text layer missing from a page read well otherwise, fails the check (a person looks; never touchless).
 - **Never in the way:** reading takes minutes a page on a laptop CPU, so it runs in the background (a thread of
   the dashboard, or `python -m ap_coder read-pages` overnight). An invoice is in the queue at once, read by
   OCR; the reading is folded in only while the invoice is untouched (in review, never approved, no edits), and
-  a reviewer's unsaved edits on screen are never replaced.
+  a reviewer's unsaved edits on screen are never replaced. An invoice the page reader hasn't read yet is never
+  approved without a person: touchless approval is decided once it has read it.
 
 ### Measured with OvisOCR2
 

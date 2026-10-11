@@ -32,7 +32,7 @@ AP Coder readiness:
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
   [OK] LM Studio: model qwen3.5-9b loaded
-  [OK] Page reader: ath-maas_ovisocr2 linked (reads scans as a second reader, in the background)
+  [OK] Page reader: ath-maas_ovisocr2 found, self-test passed (reads every page of every invoice)
   [OK] Desktop shortcut 'AP Coder' made (once)
   [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR
 ```
@@ -146,11 +146,10 @@ python scripts/pilot_check.py        # reads the ten samples offline and compare
 
 ### LM Studio settings
 
-`AP_LLM_PROVIDER=auto` (the default) chooses the model in this order:
-
-1. Azure OpenAI, if its endpoint is set;
-2. else the model loaded in LM Studio, if its server answers;
-3. else no AI.
+Every invoice is coded the same way, with nothing to choose: the header, lines and taxes come from the local
+readers, each line's GL account from what AP approved before and the coding rules, and the chat model in LM
+Studio (found on its own: the chat model loaded, else one downloaded; never OvisOCR2) suggests an account for a
+line nothing was learned for. When LM Studio isn't running, that line is left for AP; nothing else changes.
 
 **Settings → AI model** shows what was found (e.g. *Connected to LM Studio · qwen3.5-9b*). It also has
 a **Test connection** button.
@@ -162,48 +161,42 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](docs/PILO
 
 | Setting | Default | |
 | --- | --- | --- |
-| `AP_LLM_PROVIDER` | `auto` | `local`, `azure` or `off` to choose |
 | `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1` |
-| `AP_LLM_MODEL` | empty | empty = the chat model loaded in LM Studio (never an embedding model) |
+| `AP_LLM_MODEL` | empty | empty = the chat model LM Studio has (never an embedding model or OvisOCR2) |
 | `AP_LLM_VISION` | `auto` | `on` / `off`: show the model page images |
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
 | `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
 
-**Azure stays optional.** With Azure Document Intelligence and Azure OpenAI set in *Settings → Azure*, those
-services do the reading and coding instead. They use strict Structured Outputs, and every check after
+**Azure is for developers only.** This build never connects to the internet: Azure Document Intelligence and
+Azure OpenAI are used only when the internet is allowed (`AP_ALLOW_INTERNET=1`) and they are set in
+*Settings → Azure*; those services then do the reading and coding instead. They use strict Structured Outputs, and every check after
 coding is the same.
 
-### Page reader: a vision model as a second reader
+### Page reader: OvisOCR2 reads every invoice as a second reader
 
-OCR misreads digits on phone photos and poor scans. The page reader is a small vision model that reads the
-page image on its own and writes out its text and tables. AP Coder reads that with the same rule reader and
-compares it with OCR, field by field:
+OCR misreads digits on phone photos and poor scans. The page reader, OvisOCR2, is a small vision model that
+reads the page image on its own and writes out its text and tables, on every page of every invoice: digital
+PDFs, scans and photos (iPhone HEIC photos too). AP Coder reads that with the same rule reader and compares it
+with the PDF's text or OCR, field by field:
 
 - both read the same value: the field can be *verified* (two independent readers agree, and the checks pass);
 - they read different values: the field is marked *check* for AP;
-- only the page reader found it: *likely* at best.
+- only the page reader found it: *likely* at best;
+- on a digital PDF, the page as printed is checked against the text hidden in the PDF
+  (`TEXT_LAYER_MATCHES_PAGE`): an edited PDF whose text says another total than its page shows is flagged.
 
-**Set it up once:**
-
-1. OvisOCR2 is in LM Studio already (installed by IT with the chat model: the *bartowski* build at **Q8_0**, about
-   1 GB). *Settings → Page reader* shows it, and *Models in LM Studio* lists every model with whether it is
-   loaded. No need to load it: AP Coder has LM Studio load it when there is a page to read. Nothing is
-   downloaded: AP Coder never connects to the internet.
-2. *Settings → Page reader → Test the page reader.* It reads a scan of a sample invoice whose answers are
-   known and shows, field by field, what it read. When it reads it right, the model is **linked**. It reads
-   nothing until then, and another model needs its own test.
+**Nothing to set up.** OvisOCR2 is in LM Studio already (installed by IT with the chat model: the *bartowski*
+build at **Q8_0**, about 1 GB) and AP Coder finds it on its own, on the same LM Studio as the chat model, and
+has LM Studio load it when there is a page to read. Nothing is downloaded: AP Coder never connects to the
+internet. Before it reads any invoice it tests itself on a scan of a sample invoice whose answers are known
+(10 to 20 minutes on a laptop, once per model); a failed test is tried again a day later, or from *Settings →
+Page reader*. No other model reads pages instead: without OvisOCR2 the invoices are read by the PDF's text and
+OCR alone, and a banner says so.
 
 It reads in the background while the dashboard is open (or overnight: `python -m ap_coder read-pages
---minutes 240`) and never holds up *Process invoices*. An invoice is in the review queue at once, read by OCR;
-its fields update when the page reader is done, unless AP has started editing it.
-
-| Setting | Default | |
-| --- | --- | --- |
-| `AP_PAGE_READER` | `auto` | `auto` (in the background), `ask` (only when AP clicks *Read with the page reader*), `off` |
-| `AP_PAGE_READER_SCOPE` | `scans` | `scans` (scans and photos) or `all` (digital PDFs too: more fields verified, slower) |
-| `AP_PAGE_READER_MODEL` | empty | empty = OvisOCR2 when LM Studio has it, else the chat model if it can see; or a model key |
-| `AP_PAGE_READER_BASE_URL` | empty | empty = the same LM Studio as the AI model |
-| `AP_PAGE_READER_TIMEOUT_SECONDS`, `AP_PAGE_READER_MAX_PAGES` | `1200`, `5` | a laptop CPU takes minutes a page |
+--minutes 240`) and never holds up *Process invoices*. An invoice is in the review queue at once, read by the
+PDF's text or OCR; its fields update when the page reader is done, unless AP has started editing it. No invoice
+is approved without a person before the page reader has read it.
 
 **Measured** on 9 real scans with known answers ([details](docs/CAPTURE_DESIGN.md#measured-with-ovisocr2)):
 OCR alone read 87 of 91 header fields right and verified 41; with the page reader, 91 of 91 right and 81
