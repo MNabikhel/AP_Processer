@@ -1077,6 +1077,8 @@ def self_check() -> tuple[bool, str]:
     summary = next((t for t in text if "sample invoices read right" in t), "")
     count = summary.split(" sample invoices")[0] if summary else "?"
     if out.returncode == 0:
+        if any(t.startswith("SKIP") and "scan" in t for t in text):  # no OCR add-on: said in the summary already
+            return True, f"Self-check OK: {count} sample invoices read right; no scan tried (no OCR) ({seconds} s)"
         return True, f"Self-check OK: {count} sample invoices read right, and a scan with local OCR ({seconds} s)"
     wrong = [t.strip() for t in text if t.startswith("FAIL")] or (out.stderr.strip().splitlines() or ["?"])[-1:]
     return False, f"Self-check FAILED: {'; '.join(wrong[:3])}"

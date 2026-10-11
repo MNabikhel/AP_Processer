@@ -442,6 +442,29 @@ def test_self_check_reads_pilot_checks_verdict(launch, monkeypatch):
     monkeypatch.setattr(launch.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout=bad, stderr=""))
     ok, text = launch.self_check()
     assert not ok and text == "Self-check FAILED: FAIL a.pdf"
+    skipped = "OK   a.pdf\n\n10 of 10 sample invoices read right.\nSKIP read as a scan with local OCR: not installed\n"
+    monkeypatch.setattr(launch.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=skipped,
+                                                                                 stderr=""))  # fmt: skip
+    ok, text = launch.self_check()
+    assert ok and "no scan tried (no OCR)" in text and "a scan with local OCR" not in text
+
+
+def test_pilot_check_passes_without_the_ocr_add_on_and_says_the_scan_was_not_tried(monkeypatch, capsys):
+    """Without the OCR add-on (it can't be installed on every computer), the self-check failed on the scan sample:
+    the launcher already warns that OCR isn't installed, and a failed self-check keeps an older AP Coder's folder
+    on disk for ever. The samples are still checked; the scan is reported as not tried."""
+    from ap_coder.capture import layout
+
+    spec = importlib.util.spec_from_file_location("ap_script_pilot_check", ROOT / "scripts" / "pilot_check.py")
+    pilot = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pilot)
+    monkeypatch.setattr(layout, "ocr_available", lambda: False)
+    monkeypatch.setattr(pilot, "check", lambda pdf, pipe: [])
+    assert pilot.main() == 0
+    out = capsys.readouterr().out
+    assert "SKIP read as a scan with local OCR" in out and "FAIL" not in out
+    monkeypatch.setattr(pilot, "check", lambda pdf, pipe: ["grand_total: 1"])
+    assert pilot.main() == 1  # a sample read wrong still fails
 
 
 def test_lm_studio_is_only_reported(launch, monkeypatch):

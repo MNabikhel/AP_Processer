@@ -88,6 +88,13 @@ def main() -> int:
             print(f"{'OK  ' if not wrong else 'FAIL'} {pdf.name}" + "".join(f"\n       {w}" for w in wrong))
     print(f"\n{len(pdfs) - failed} of {len(pdfs)} sample invoices read right on this computer (no AI model, no Azure).")
     scan = SAMPLES / "northwind_ON_HST_NW-2026-0912.pdf"
+    from ap_coder.capture.layout import ocr_available
+
+    if not ocr_available():
+        # Not a failure: the launcher already says OCR isn't installed (it can't be on some computers, e.g. an Intel
+        # Mac on Python 3.14), and a failed self-check would keep an older AP Coder on disk for ever.
+        print(f"SKIP read as a scan with local OCR: the OCR add-on isn't installed ({scan.name} not tried)")
+        return 1 if failed or not pdfs else 0
     ocr_wrong = check_ocr(scan) if scan.exists() else ["sample missing"]
     print(("OK  " if not ocr_wrong else "FAIL") + f" read as a scan with local OCR: {scan.name}"
           + "".join(f"\n       {w}" for w in ocr_wrong))  # fmt: skip
