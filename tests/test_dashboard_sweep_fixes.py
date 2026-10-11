@@ -153,6 +153,26 @@ def test_tables_inside_a_wrapper_scroll_in_their_card_at_a_narrow_width(db):
         assert re.search(rf"\.{name}\s*\{{[^}}]*overflow-x:\s*auto", css), name
 
 
+def test_insights_charge_no_cloud_cost_for_invoices_read_and_coded_on_this_computer(db, monkeypatch):
+    """The offline build sends nothing to Azure, yet Insights priced the tokens LM Studio (or the demo) recorded at
+    Azure's rates: "Cloud cost / invoice $0.040 · Azure, measured on 10 invoices", and a cloud cost taken off the
+    business case's net benefit."""
+    from ap_coder.demo import load_demo
+    from ap_coder.insights import compute
+
+    store = Store(db)
+    load_demo(store)
+    assert compute(store)["cost_per_invoice_cad"] is None
+    assert compute(store)["projection"]["azure_cost"] == 0
+    _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages
+    at = _ok(AppTest.from_string("from ap_coder.webapp.insights import page_insights\npage_insights()",
+                                 default_timeout=TIMEOUT).run())  # fmt: skip
+    html = _html(at)
+    assert "read and coded on this computer" in html and "Azure, measured" not in html
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # a developer build that may use Azure: its cost is measured
+    assert compute(store)["cost_per_invoice_cad"] > 0
+
+
 def test_getting_started_counts_only_the_steps_that_are_needed(db):
     """The welcome screen's ring counted the optional chat model, so it read 1/6 where the Process page said 1 of 4
     (plus processing the first invoices), and could never be complete without that optional model."""

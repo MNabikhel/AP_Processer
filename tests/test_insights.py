@@ -32,7 +32,8 @@ def test_straight_through_and_time_saved(tmp_path, ground_truth):
     assert s["needs_attention_rate"] == 0.5
 
 
-def test_assumptions_are_saved_and_the_report_has_no_invoice_details(tmp_path):
+def test_assumptions_are_saved_and_the_report_has_no_invoice_details(tmp_path, monkeypatch):
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # a build that may use Azure: the report has its cost too
     store = Store(tmp_path / "ap.db")
     load_demo(store)
     Assumptions(monthly_volume=1200, hourly_cost=50).save(store, actor="jane")
