@@ -425,7 +425,8 @@ def bootstrap(argv: list[str]) -> int:
     if not supported(version) and not VENV_PY.exists():
         say(f"Note: Python {shown} is older than AP Coder needs (3.11 or newer; 3.12 is best).")
     built_for = bundle_pythons()
-    if bundle_pythons(here_only=False) and shown not in built_for and not VENV_PY.exists():
+    # (with wheels to judge by, the second phase says what they fit, once, before installing anything)
+    if bundle_pythons(here_only=False) and shown not in built_for and not VENV_PY.exists() and not _core_wheels():
         has = (f"packages for Python {listed(built_for)}, not for Python {shown} (the Python found on this computer)"
                if built_for else "no packages for this kind of computer")  # fmt: skip
         say(f"Note: this offline bundle has {has}, so the setup may stop. {bundle_advice(shown)}")
@@ -456,7 +457,7 @@ def pip_source() -> list[str] | None:
     """Where pip may install from: the offline bundle's wheelhouse/ folder, with ``--no-index`` (never the
     internet). Without one: PyPI ([]) only with the opt-in (AP_ALLOW_INTERNET=1), else None (nowhere). A wheelhouse
     built for another kind of computer or Python is passed over for PyPI only with the opt-in."""
-    wheelhouse = ROOT / "wheelhouse"
+    wheelhouse = wheelhouse_dir()
     if wheelhouse.is_dir() and not (internet_allowed() and wheelhouse_misfit()):
         return ["--no-index", "--find-links", str(wheelhouse)]
     return [] if internet_allowed() else None
@@ -469,9 +470,48 @@ SYSTEM_NAMES = {"windows": "Windows", "mac": "Macs", "linux": "Linux"}
 THIS_KIND = {"windows": "a Windows computer", "mac": "a Mac", "linux": "a Linux computer"}
 
 
+def _holding_wheels(folder: Path) -> Path | None:
+    """``folder`` when it holds wheels; else the one folder in it that does (a wheelhouse copied over another as a
+    whole lands in wheelhouse/wheelhouse); else None."""
+    try:
+        if not folder.is_dir():
+            return None
+        if any(folder.glob("*.whl")):
+            return folder
+        inner = [d for d in folder.iterdir() if d.is_dir() and any(d.glob("*.whl"))]
+    except OSError:
+        return None
+    return inner[0] if len(inner) == 1 else None
+
+
+NEAR_MISS = re.compile(r"[._\s-]*wheel[\s_-]?house\b.*", re.IGNORECASE)  # .wheelhouse, wheelhouse (1), Wheelhouse-old
+
+
+def wheelhouse_candidates() -> list[Path]:
+    """Folders of wheels under a near-miss name, when wheelhouse/ itself has none: ``.wheelhouse``, ``wheelhouse
+    (1)``, ``Wheelhouse-old``..., and a bundle unzipped into this folder (``<bundle>/wheelhouse``)."""
+    try:
+        children = [d for d in ROOT.iterdir() if d.is_dir() and d.name not in (".venv", "wheelhouse", "__pycache__")]
+    except OSError:
+        return []
+    found = [_holding_wheels(d) for d in children if NEAR_MISS.fullmatch(d.name)]
+    found += [_holding_wheels(d / "wheelhouse") for d in children if not NEAR_MISS.fullmatch(d.name)]
+    return list(dict.fromkeys(f for f in found if f is not None))
+
+
+def wheelhouse_dir() -> Path:
+    """The offline bundle's wheelhouse/ folder (or the one folder of wheels in it); when it holds none, the one folder
+    of wheels under a near-miss name (:func:`wheelhouse_candidates`; several: none is guessed)."""
+    own = _holding_wheels(ROOT / "wheelhouse")
+    if own is not None:
+        return own
+    found = wheelhouse_candidates()
+    return found[0] if len(found) == 1 else ROOT / "wheelhouse"
+
+
 def _core_wheels(folder: Path | None = None) -> dict[str, list[tuple[str, str, str]]]:
     """The (interpreter, abi, platform) tags of the core compiled packages' wheels in the wheelhouse, by package."""
-    folder = folder or ROOT / "wheelhouse"
+    folder = folder or wheelhouse_dir()
     found: dict[str, list[tuple[str, str, str]]] = {}
     try:
         files = [f.name for f in folder.iterdir() if f.name.endswith(".whl")]
@@ -550,7 +590,32 @@ def pip_install(args: list[str]) -> bool:
         text = out.rstrip()
         if text and not text.startswith(QUIET_PIP_LINES):
             say(f"    {text}")
+        if any(sign in text for sign in DISK_FULL):
+            _disk_full.append(text)
     return proc.wait() == 0
+
+
+# How pip says the disk is full (Linux and Mac: errno 28; Windows: error 112, or errno 28 from Python's own code).
+DISK_FULL = ("No space left on device", "[Errno 28]", "[WinError 112]", "not enough space on the disk")
+_disk_full: list[str] = []  # pip's lines saying so, on this start
+
+
+def disk_full_error() -> SetupError:
+    """The disk is full: said as that, with the space the older installs' .venv folders take (each can go)."""
+    older = [Path(e["folder"]) / ".venv" for e in paths.installs() if not paths.same_folder(e["folder"], ROOT)]
+    sizes = [(venv, upgrade.size_of(venv)) for venv in older if venv.is_dir()]
+    free = ""
+    try:
+        free = f" ({upgrade.shown_size(shutil.disk_usage(ROOT).free)} free)"
+    except OSError:
+        pass
+    hint = (f"Free up space on the disk of {ROOT}{free}: AP Coder's packages need about 1.5 GB. Then close any "
+            "other AP Coder window and start AP Coder again.")  # fmt: skip
+    if sizes:
+        listed = ", ".join(f"{venv} ({upgrade.shown_size(size)})" for venv, size in sizes)
+        hint += (f" The older AP Coder's .venv folder can be deleted to make room: {listed} (it holds only "
+                 "packages, never your data; the older version is cleaned up once this one works).")  # fmt: skip
+    return SetupError("Installing the packages stopped: the disk is full.", hint)
 
 
 def missing_packages(extras: tuple[str, ...]) -> tuple[list[str], str]:
@@ -647,7 +712,7 @@ def ensure_azure(state: dict) -> bool:
     """The packages of the optional Azure check (the ``azure`` extra), installed from the offline bundle's wheelhouse
     when it carries them, so switching the check on in the settings needs no download. Never from the internet,
     never a reason to stop (AP Coder runs without them), tried once per version when it fails. True when installed."""
-    wheelhouse = ROOT / "wheelhouse"
+    wheelhouse = wheelhouse_dir()
     core = set(check_deps.requirements())
     wanted = [r for r in check_deps.requirements(extras=("azure",)) if r not in core]
     try:
@@ -690,14 +755,27 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     if not self_problem and all(is_ocr(r) for r in missing) and state.get("ocr_failed") == fingerprint():
         return "warn", "Packages: in place, without the OCR add-on (it could not be installed here)", False
 
+    if _holding_wheels(ROOT / "wheelhouse") is None:  # a package folder under another name?
+        found = wheelhouse_candidates()
+        if len(found) > 1:
+            shown = ", ".join(str(f.relative_to(ROOT)) for f in found)
+            raise SetupError(f"There are several package folders here, none named wheelhouse: {shown}. Nothing was "
+                             "installed.", "Keep the one from the newest offline bundle, rename it to wheelhouse (next "
+                             "to APProcessor), delete the others, then start AP Coder again.")  # fmt: skip
+        if found:
+            say(f"Using the package folder {found[0].relative_to(ROOT)} (AP Coder looks for one named wheelhouse).")
     source = pip_source()
     if source is None:
         return without_wheelhouse(missing, total)
-    misfit = wheelhouse_misfit() if (ROOT / "wheelhouse").is_dir() else ""
+    misfit = wheelhouse_misfit() if wheelhouse_dir().is_dir() else ""
     if misfit and source:  # offline: pip would only fail with a long, unclear error
+        python = re.search(r"this computer has Python [\d.]+: install Python ([\d.]+)", misfit)  # (only Python differs)
         raise SetupError(
             f"{misfit}: nothing was installed.",
-            "Unzip the offline bundle built for this computer (into a new folder, or over this one), then start "
+            f"Install Python {python.group(1)} on this computer (from python.org, or ask IT), then start AP Coder "
+            "again: it is found and used on its own. Or unzip a bundle built for this Python."
+            if python
+            else "Unzip the offline bundle built for this computer (into a new folder, or over this one), then start "
             "AP Coder again.",
         )
     if source:
@@ -723,6 +801,8 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
         if pip_install(pip_args):
             break
     left, self_left = missing_packages(extras)
+    if (self_left or left) and _disk_full:
+        raise disk_full_error()
     if self_left or [r for r in left if not is_ocr(r)]:
         raise SetupError(
             "Installing the packages failed (the messages above say why).",
@@ -753,9 +833,14 @@ def ensure_data_folder() -> Path:
 def settle_settings(data: Path, version: str) -> list[tuple[str, str]]:
     """The settings file: a ``.env`` (or data) left in this code folder moves to the data folder, and settings no
     longer used are commented out, with a note, instead of looking like they still do something."""
+    notes = []
     if not (ROOT / ".git").exists():  # a developer's checkout keeps its own files
-        upgrade.adopt_legacy(ROOT, data, say)
-    return retire_settings(data, version)
+        try:
+            upgrade.adopt_legacy(ROOT, data, say)
+        except OSError as exc:  # in use or read-only: tried again on the next start, never a reason to stop
+            notes.append(("warn", f"The settings or data in {ROOT} can't be changed ({exc.strerror or exc}): not "
+                                  "moved to the data folder yet"))  # fmt: skip
+    return notes + retire_settings(data, version)
 
 
 def retire_settings(data: Path, version: str) -> list[tuple[str, str]]:
@@ -763,7 +848,11 @@ def retire_settings(data: Path, version: str) -> list[tuple[str, str]]:
 
     env = data / ".env"
     short = ".".join(version.split(".")[:2]) or version
-    found = envfile.retire(env, RETIRED_SETTINGS, f"no longer used (AP Coder {short})")
+    try:
+        found = envfile.retire(env, RETIRED_SETTINGS, f"no longer used (AP Coder {short})")
+    except OSError as exc:  # read-only or open: the settings no longer used do nothing either way
+        return [("info", f"Settings file {env} can't be changed ({exc.strerror or exc}): settings no longer used "
+                         "are left in it (they do nothing)")]  # fmt: skip
     if not found:
         return []
     return [("info", f"Settings file: {', '.join(found)} no longer used (commented out in {env})")]
@@ -835,10 +924,8 @@ def desktop() -> Path | None:
         return folder if folder.is_dir() else None
     if not WINDOWS:
         return None
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
-                         capture_output=True, text=True)  # fmt: skip
-    folder = out.stdout.strip()
-    return Path(folder) if out.returncode == 0 and folder else None
+    folder = running.powershell("[Environment]::GetFolderPath('Desktop')", timeout=60)  # (read as UTF-8)
+    return Path(folder) if folder else None
 
 
 def write_shortcut(folder: Path) -> bool:
@@ -908,10 +995,8 @@ def old_shortcut_folder() -> str:
     if folder is None or not (folder / SHORTCUT).exists():
         return ""
     link = str(folder / SHORTCUT).replace("'", "''")
-    script = f"(New-Object -ComObject WScript.Shell).CreateShortcut('{link}').TargetPath"
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
-    target = out.stdout.strip()
-    return str(Path(target).parent) if out.returncode == 0 and target else ""
+    target = running.powershell(f"(New-Object -ComObject WScript.Shell).CreateShortcut('{link}').TargetPath", 60)
+    return str(Path(target).parent) if target else ""
 
 
 def lm_studio_line() -> tuple[str, str]:
@@ -1090,6 +1175,11 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
     port = running_dashboard(argv, load_state())
     if port:
         return open_running(port)
+    blocked = stop_older(argv)
+    if blocked is not None:
+        return blocked
+    if take_lock():
+        return None
     say("AP Coder is being set up or started in another window: waiting for it to open the dashboard...")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -1102,6 +1192,26 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
     say("The other AP Coder window has not opened the dashboard yet: look at that window, or close it and start "
         "AP Coder again.")  # fmt: skip
     return 1
+
+
+def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
+    """The start holding this folder's lock serves an older AP Coder (this folder unzipped over while it ran: its
+    dashboard is never this version's, so waiting for one would last half an hour): it is stopped like any older one,
+    and its start then ends, freeing the lock. Returns an exit code when this start must stop, else None."""
+    version = identity()["version"]
+    ports = candidate_ports(argv, load_state())
+    if not any(running.judge(s, ROOT, version) == "older" for s in running.find(ports, paths.private_dir())):
+        return None
+    verdict, port = running.take_over(ROOT, version, ports, paths.private_dir(), say)
+    if verdict == "blocked":
+        return failed(SetupError(f"An older AP Coder is still running (port {port}): two versions never use the same "
+                                 "data at once.", "Close the old AP Coder window, then start again."))  # fmt: skip
+    if verdict in ("open", "newer"):
+        return open_running(port)
+    deadline = time.monotonic() + wait  # its start ends once its dashboard stopped
+    while not take_lock() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    return None
 
 
 def free_port(start: int = DEFAULT_PORT) -> int:
@@ -1258,6 +1368,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
 
     legacy = legacy_folders()  # (before the shortcut is pointed here: an AP Coder 0.1 shortcut names its folder)
     previous = previous_install(state, ident, legacy)
+    upgrade.remember(upgrade.legacy_installs(ROOT, legacy))  # (what found them changes below: kept on record)
     if previous:
         exact = paths.describe(previous) == paths.describe(ident)  # the same version, rebuilt the same day
         say(f"Updated AP Coder from {paths.describe(previous, exact)} to {paths.describe(ident, exact)}.")
@@ -1272,7 +1383,11 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
         return failed(exc)
     if str(ROOT) not in sys.path:  # ap_coder itself, even when it was only just installed
         sys.path.insert(0, str(ROOT))
-    data = ensure_data_folder()
+    try:
+        data = ensure_data_folder()
+    except upgrade.DataMoveError as exc:  # never started on half the data: the next start finishes the move
+        save_state(state)
+        return failed(SetupError(str(exc), exc.hint))
     notes = settle_settings(data, ident["version"])
     too_new = database_too_new(data, ident["version"])
     if too_new:
@@ -1348,6 +1463,7 @@ def main(argv: list[str] | None = None) -> int:
         newer = upgrade.newer_install(ROOT)
         if newer is not None:
             say(f"A newer AP Coder ({paths.describe(newer)}) is in {newer['folder']}: opening that one.")
+            upgrade.remember([ROOT])  # (an older bundle unzipped again: on record, so the newest cleans it up)
             return upgrade.hand_over(Path(newer["folder"]), argv, LOCK_HELD_ENV)
     if not in_venv():
         return bootstrap(argv)

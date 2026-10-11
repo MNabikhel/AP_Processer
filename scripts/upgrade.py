@@ -24,6 +24,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -38,7 +39,8 @@ from ap_coder import paths  # noqa: E402  (standard library only)
 
 MARKER = ".ap_coder_install.json"  # written into a folder the launcher set up (not a git checkout)
 LOCK_NAME = ".ap_coder_launch.lock"
-PRUNED = ("ap_coder", "scripts", "tests", "wheelhouse", "models")  # what an unzip over an older version may leave
+# What an unzip over an older version may leave (samples/: a sample the self-check would read with no answer).
+PRUNED = ("ap_coder", "scripts", "tests", "samples", "wheelhouse", "models")
 # Made by AP Coder (or Python) inside a code folder: never user data, removed with the folder.
 GENERATED = {".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".cache", MARKER, LOCK_NAME,
              ".env.moved-to-data-folder", ".ap_coder_server.json", ".DS_Store", "launch.out", "launch.err"}  # fmt: skip
@@ -47,6 +49,10 @@ BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static
               ".streamlit", ".github", "APProcessor.bat", "APProcessor.command", "install.bat", "install.sh",
               "start.bat", "start.sh", "terminal.bat", "README.md", "pyproject.toml", "requirements.txt",
               "streamlit_app.py", "bundle_manifest.json", ".env.example", ".gitignore", ".gitattributes"}  # fmt: skip
+# Top-level names of a bundle folder never removed when a newer bundle no longer ships them: data, the person's own
+# notes may be there, the manifest itself (not in its own file list), and what starts AP Coder.
+RETIRED_KEPT = {"private", "data", "docs", "bundle_manifest.json", "pyproject.toml", "APProcessor.bat",
+                "APProcessor.command", "README.md"}  # fmt: skip
 DATA_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3", ".xlsx", ".xlsm", ".xls")
 
 Say = Callable[[str], None]
@@ -78,6 +84,24 @@ def shown_size(size: int) -> str:
     return f"{size / 1e6:,.0f} MB" if size >= 1e6 else f"{size / 1e3:,.0f} KB"
 
 
+def rmtree(path: Path) -> None:
+    """Delete ``path`` and everything in it as far as possible, read-only files too (Windows refuses to delete one
+    until it is made writable). What is in use is left, for a later start."""
+
+    def writable_again(func: Callable, name: str, _exc: object) -> None:
+        try:
+            for target in (os.path.dirname(name), name):
+                os.chmod(target, os.stat(target).st_mode | stat.S_IWRITE | stat.S_IREAD)
+            func(name)
+        except OSError:
+            pass
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=writable_again)
+    else:  # pragma: no cover - Python 3.11
+        shutil.rmtree(path, onerror=writable_again)
+
+
 def remove_folder(folder: Path) -> bool:
     """Remove ``folder`` whole, or not at all as far as possible: it is first renamed (which fails at once while a
     program in it runs, on Windows), then deleted. True when it is gone; a part that could not be deleted is left as
@@ -89,7 +113,7 @@ def remove_folder(folder: Path) -> bool:
         folder.rename(aside)
     except OSError:
         return False
-    shutil.rmtree(aside, ignore_errors=True)
+    rmtree(aside)
     return not aside.exists()
 
 
@@ -201,6 +225,16 @@ def legacy_installs(root: Path, extra: list[str | Path] = ()) -> list[Path]:
     return found
 
 
+def remember(folders: list[Path]) -> None:
+    """Put older AP Coder folders that kept no record of themselves (AP Coder 0.1) on the record, not as the current
+    one. What found them (the data folder they used, the desktop shortcut) is changed by this start, and they are to
+    be cleaned up once the new version passed its self-check: on this start, or a later one."""
+    known = paths.installs()
+    for folder in folders:
+        if is_install(folder) and not any(paths.same_folder(folder, e["folder"]) for e in known):
+            paths.record_install(paths.install_identity(folder), current=False)
+
+
 def previous_versions(root: Path, extra: list[str | Path] = ()) -> list[dict]:
     """The identities of every other install on record (and the unrecorded AP Coder 0.1 ones), oldest first."""
     folders = [Path(e["folder"]) for e in paths.installs() if not paths.same_folder(e["folder"], root)]
@@ -213,9 +247,13 @@ def previous_versions(root: Path, extra: list[str | Path] = ()) -> list[dict]:
 
 
 def prune_stale(root: Path = ROOT) -> tuple[list[str], int]:
-    """Remove the files under ap_coder/, scripts/, tests/, wheelhouse/ and models/ that this version's bundle does not
-    hold (an older version's, when the new bundle was unzipped over it): only when the manifest lists its files, and
-    never in a git checkout. Python's own caches are left alone. Returns (the files removed, bytes freed)."""
+    """Remove the files under ap_coder/, scripts/, tests/, samples/, wheelhouse/ and models/ that this version's bundle
+    does not hold (an older version's, when the new bundle was unzipped over it), and AP Coder's own top-level files it
+    no longer ships (e.g. streamlit_app.py): only when the manifest lists its files, and
+    never in a git checkout. A folder is pruned only when this bundle's own files for it are there (it was unzipped
+    here): a wheelhouse copied in from another bundle, or the only one when a bundle without one was unzipped over an
+    older folder, is kept (its wheels say what they fit). Python's own caches are left alone. Returns (the files
+    removed, bytes freed)."""
     listed = paths.bundle_manifest(root).get("files")
     if not isinstance(listed, dict) or not listed or (root / ".git").exists():
         return [], 0
@@ -224,7 +262,7 @@ def prune_stale(root: Path = ROOT) -> tuple[list[str], int]:
     freed = 0
     for top in PRUNED:
         base = root / top
-        if not base.is_dir():
+        if not base.is_dir() or not any(n.startswith(f"{top}/") and (root / n).is_file() for n in keep):
             continue
         for folder, dirs, files in os.walk(base, topdown=True):
             dirs[:] = [d for d in dirs if d != "__pycache__" and not d.endswith(".egg-info")]
@@ -248,6 +286,22 @@ def prune_stale(root: Path = ROOT) -> tuple[list[str], int]:
                     shutil.rmtree(current, ignore_errors=True)
             except OSError:
                 continue
+    for name in sorted(BUNDLE_TOP - RETIRED_KEPT - set(PRUNED)):  # AP Coder's own top-level files it no longer ships
+        path = root / name
+        if not (path.is_file() or path.is_dir()) or any(n == name or n.startswith(f"{name}/") for n in keep):
+            continue
+        files = [path] if path.is_file() else sorted(p for p in path.rglob("*") if p.is_file())
+        size = sum(size_of(p) for p in files)
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                continue
+        else:
+            rmtree(path)
+        if not path.exists():
+            removed += [p.relative_to(root).as_posix() for p in files]
+            freed += size
     return removed, freed
 
 
@@ -269,15 +323,24 @@ def has_data(folder: Path) -> bool:
     return False
 
 
-def _move_into(items: list[Path], target: Path) -> None:
-    """Move ``items`` into ``target``; a folder already there is merged (its files are never replaced)."""
+class DataMoveError(Exception):
+    """The data could not all be moved to the data folder: ``hint`` is the one line on what to do."""
+
+    def __init__(self, message: str, hint: str) -> None:
+        super().__init__(message)
+        self.hint = hint
+
+
+def _move_into(items: list[Path], target: Path, replace: bool = False) -> None:
+    """Move ``items`` into ``target``; a folder already there is merged (its files are never replaced, unless
+    ``replace``: finishing a move that was interrupted, where what is still in the source is the whole copy)."""
     target.mkdir(parents=True, exist_ok=True)
     for item in items:
         dest = target / item.name
         if dest.is_dir() and item.is_dir():
-            _move_into(list(item.iterdir()), dest)
+            _move_into(list(item.iterdir()), dest, replace)
             shutil.rmtree(item, ignore_errors=True)
-        elif not dest.exists():
+        elif not dest.exists() or (replace and dest.is_file() and item.is_file()):
             shutil.move(str(item), str(dest))
         else:
             aside = target / f"{item.stem}.from-old-install{item.suffix}"
@@ -328,11 +391,19 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
     """The data folder, outside every code folder. Data kept in a code folder's ``private`` folder (AP Coder 0.1:
     recorded as the data folder, or found in this folder with none recorded) is moved to ``~/APCoder`` and recorded
     there, unless ``~/APCoder`` already holds data of its own (then it stays where it is, and that is said). An
-    ``AP_PRIVATE_DIR`` set by hand is used as it is."""
+    ``AP_PRIVATE_DIR`` set by hand is used as it is. A move that was interrupted is finished first; one that can't
+    be finished stops the start (:class:`DataMoveError`): AP Coder never runs on half the data."""
     if chosen := paths.env_path("AP_PRIVATE_DIR"):
         return chosen
+    settings = paths.read_user_settings()
+    pending = settings.get("data_move")
+    if isinstance(pending, dict) and pending.get("from") and pending.get("to"):
+        source, target = Path(pending["from"]), Path(pending["to"])
+        move_data(source, target, resume=True)
+        say(f"Finished moving your data from {source} to {target}: new versions use it from there.")
+        return target
     default = default or paths.default_data_dir()
-    recorded = paths.user_path(str(paths.read_user_settings().get("data_dir") or ""))
+    recorded = paths.user_path(str(settings.get("data_dir") or ""))
     legacy = root / "private"
     if recorded is None:
         recorded = legacy if has_data(legacy) else default
@@ -342,12 +413,34 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
             say(f"Note: your data is still in {recorded}, inside an AP Coder code folder, because {default} already "
                 f"holds other data. Keep that folder until you move one of them.")  # fmt: skip
             return recorded
-        items = [p for p in recorded.iterdir() if p.name not in ("README.md", ".ap_coder_server.json")]
-        _move_into(items, default)
-        paths.write_user_settings(data_dir=str(default))
+        if not paths.same_folder(recorded.parent, root):
+            remember([recorded.parent])  # (found from this data folder only: on the record before it moves)
+        move_data(recorded, default)
         say(f"Moved your data from {recorded} (inside the code folder) to {default}: new versions use it from there.")
         return default
     return recorded
+
+
+def move_data(source: Path, target: Path, resume: bool = False) -> None:
+    """Move the data folder ``source`` into ``target`` and record ``target`` as the data folder once all of it is
+    there. The move is on record while it runs (``data_move``), so one that is interrupted is finished by the next
+    start (``resume``); one that fails raises :class:`DataMoveError` (what is not moved yet stays in ``source``)."""
+    paths.write_user_settings(data_move={"from": str(source), "to": str(target)})
+    try:
+        items = [p for p in source.iterdir() if p.name not in ("README.md", ".ap_coder_server.json")]
+        _move_into(items, target, replace=resume)
+    except OSError as exc:
+        if not source.is_dir():  # gone (moved whole, or deleted by hand): nothing is left to move
+            paths.write_user_settings(data_dir=str(target), data_move=None)
+            return
+        what = f"{exc.strerror or exc}" + (f": {exc.filename}" if exc.filename else "")
+        raise DataMoveError(
+            f"Your data could not all be moved from {source} to {target} ({what}). Nothing was lost: what is not "
+            f"moved yet is still in {source}.",
+            "Close the program that has that file open (an old AP Coder window, Excel), then start AP Coder again: "
+            "the move picks up where it stopped.",
+        ) from exc
+    paths.write_user_settings(data_dir=str(target), data_move=None)
 
 
 # --- Cleaning up after an update --------------------------------------------------------------------------------
@@ -416,7 +509,7 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
         if not folder.exists():
             for rest in removing(folder):  # what an earlier removal left behind
                 size = size_of(rest)
-                shutil.rmtree(rest, ignore_errors=True)
+                rmtree(rest)
                 freed += size - (size_of(rest) if rest.exists() else 0)
             if not removing(folder):
                 paths.forget_install(folder)
@@ -424,8 +517,14 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
         if lock_held(folder):
             say(f"  {folder}: AP Coder is running from it; it is cleaned up on a later start.")
             continue
-        adopt_legacy(folder, data, say)
+        try:
+            adopt_legacy(folder, data, say)
+        except OSError as exc:  # a file of its data in use or read-only: the folder stays, whole, for now
+            say(f"  {folder}: its data could not be moved yet ({exc.strerror or exc}); it is cleaned up on a later "
+                "start.")  # fmt: skip
+            continue
         why = removable(folder, root)
+        later = False  # the whole folder is to go, on a later start: kept on record
         if not why:
             size = size_of(folder)
             if remove_folder(folder):
@@ -433,15 +532,19 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
                 paths.forget_install(folder)
                 say(f"  Removed the older AP Coder folder {folder} ({shown_size(size)}).")
                 continue
-            freed += size - sum(size_of(p) for p in removing(folder))
-            say(f"  {folder}: most of it was removed; the rest is removed on a later start (a file in it is in use).")
-            continue
+            if removing(folder):  # renamed, then partly deleted
+                freed += size - sum(size_of(p) for p in removing(folder))
+                say(f"  {folder}: most of it was removed; the rest is removed on a later start (a file in it is in "
+                    "use).")  # fmt: skip
+                continue
+            # Not even renamed (Windows: an old AP Coder window still has it as its current folder): what can go now.
+            why, later = "a program still has it open (an old AP Coder window?); it is removed on a later start", True
         parts = [p for p in (folder / ".venv", folder / "models") if p.exists()] + removing(folder)
         size = sum(size_of(p) for p in parts)
         left = [p for p in parts if not remove_folder(p)] + removing(folder)
         gone = size - sum(size_of(p) for p in left if p.exists())
         freed += gone
-        if not left:
+        if not left and not later:
             paths.forget_install(folder)
         what = f"removed its .venv and models ({shown_size(gone)}); " if gone else ""
         say(f"  Kept the older AP Coder folder {folder}: {what}the folder itself stays because {why}.")

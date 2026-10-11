@@ -284,6 +284,8 @@ def test_second_start_while_running_only_opens_the_browser(launch, monkeypatch):
 def lock(launch, tmp_path, monkeypatch):
     monkeypatch.setattr(launch, "LOCK", tmp_path / ".ap_coder_launch.lock")
     monkeypatch.setattr(launch, "_held", [])
+    monkeypatch.setattr(launch, "real_stop_older", launch.stop_older, raising=False)
+    monkeypatch.setattr(launch, "stop_older", lambda argv: None)  # (never a real server on this computer)
     yield launch
     launch.release_lock()
 
@@ -317,6 +319,28 @@ def test_a_second_start_waits_for_the_first_ones_dashboard(lock, monkeypatch, ca
     monkeypatch.setattr(launch, "running_dashboard", lambda argv, state: None)
     other.close()
     assert launch.wait_for_other([], every=0) is None and launch._held
+
+
+def test_an_older_version_running_from_this_folder_is_taken_over_not_waited_for(lock, monkeypatch, capsys):
+    """Unzipped over the folder of an AP Coder still running (0.1's dashboard): its start holds this folder's lock
+    and its dashboard is never this version's, so the new start said "being set up in another window: waiting"
+    for half an hour. The older one is stopped (its start then ends and frees the lock) and this one carries on."""
+    launch = lock
+    other = _other_start_holds_the_lock(launch)  # the old version's start, serving its dashboard
+    old = launch.running.Server(8501, legacy=True)
+    stops: list[int] = []
+
+    def take_over(root, version, ports, data, say):
+        stops.append(1)
+        other.close()  # stopped: the old start ends
+        return "clear", None
+
+    monkeypatch.setattr(launch.running, "find", lambda ports, data: [] if stops else [old])
+    monkeypatch.setattr(launch.running, "take_over", take_over)
+    monkeypatch.setattr(launch, "running_dashboard", lambda argv, state: None)
+    monkeypatch.setattr(launch, "stop_older", launch.real_stop_older)
+    assert launch.wait_for_other([], timeout=1, every=0) is None and launch._held and stops == [1]
+    assert "has not opened the dashboard yet" not in capsys.readouterr().out
 
 
 def test_main_waits_instead_of_setting_up_twice(lock, monkeypatch):

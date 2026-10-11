@@ -221,6 +221,45 @@ def test_the_older_install_is_kept_while_the_self_check_fails(launch, monkeypatc
     assert cleaned == [] and f"kept in {old} until the self-check passes" in capsys.readouterr().out
 
 
+def test_an_ap_coder_0_1_folder_whose_data_moved_out_is_still_cleaned_up(launch, monkeypatch, tmp_path, capsys):
+    """AP Coder 0.1 kept no record of itself: it was found only from its data folder (``<folder>/private``). The
+    start moved that data out first, so the older folder (and its 1 GB .venv) was never cleaned up: not on this
+    start, nor on a later one after a failed self-check."""
+    monkeypatch.delenv("AP_PRIVATE_DIR")
+    home = tmp_path / "APCoder"
+    monkeypatch.setattr(launch, "ensure_data_folder",
+                        lambda: launch.upgrade.settle_data_folder(launch.ROOT, launch.say, default=home))  # fmt: skip
+    old = tmp_path / "AP Coder 0.1"
+    (old / "ap_coder").mkdir(parents=True)
+    (old / "scripts").mkdir()
+    (old / "scripts" / "launch.py").write_text("")
+    (old / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    (old / "private").mkdir()
+    (old / "private" / "ap_coder.db").write_text("the data")
+    paths.write_user_settings(data_dir=str(old / "private"))  # all AP Coder 0.1 recorded
+    _, _, cleaned = _quiet_setup(launch, monkeypatch, self_check_ok=False)
+    assert launch.run(*launch.parse(["--venv=created"])) == 0
+    assert (home / "ap_coder.db").read_text() == "the data" and cleaned == []
+    assert f"kept in {old} until the self-check passes" in capsys.readouterr().out
+    _, _, cleaned = _quiet_setup(launch, monkeypatch)
+    assert launch.run(*launch.parse(["--check"])) == 0 and cleaned == [[old]]
+
+
+def test_data_that_could_not_all_be_moved_stops_the_start_plainly(launch, monkeypatch, capsys):
+    started, _, _ = _quiet_setup(launch, monkeypatch)
+
+    def stuck():
+        raise launch.upgrade.DataMoveError(
+            "Your data could not all be moved from A to B (in use: A/ap_coder.db).",
+            "Close the program that has that file open, then start AP Coder again.",
+        )
+
+    monkeypatch.setattr(launch, "ensure_data_folder", stuck)
+    assert launch.run(*launch.parse([])) == 1 and not started
+    out = capsys.readouterr().out
+    assert "could not all be moved" in out and "What to do: Close the program" in out
+
+
 def test_a_database_made_by_a_newer_ap_coder_stops_the_start_plainly(launch, monkeypatch, tmp_path, capsys):
     started, _, _ = _quiet_setup(launch, monkeypatch)
     import sqlite3
@@ -249,6 +288,24 @@ def test_settings_no_longer_used_are_commented_out_and_a_code_folder_env_moves(l
     assert "# no longer used (AP Coder 0.2): AP_LLM_PROVIDER=local" in text
     assert not (launch.ROOT / ".env").exists() and list((data / "backups").glob("from-*/.env"))
     assert "no longer used" in capsys.readouterr().out
+
+
+def test_a_settings_file_that_cannot_be_changed_never_stops_the_start(launch, monkeypatch, tmp_path, capsys):
+    """A read-only (or open) .env with settings no longer used stopped every start with a traceback."""
+    started, _, _ = _quiet_setup(launch, monkeypatch)
+    data = tmp_path / "private"
+    data.mkdir()
+    (data / ".env").write_text("AP_PAGE_READER=on\n")
+    (launch.ROOT / ".env").write_text("AP_REVIEWER=Old\n")
+
+    def refused(*args, **kwargs):
+        raise PermissionError(13, "Access is denied", str(data / ".env"))
+
+    monkeypatch.setattr(launch.envfile, "retire", refused)
+    monkeypatch.setattr(launch.upgrade.shutil, "move", refused)
+    assert launch.run(*launch.parse([])) == 0 and started
+    out = capsys.readouterr().out
+    assert "can't be changed" in out and "Traceback" not in out
 
 
 def test_leftovers_of_an_older_version_unzipped_over_are_removed(launch, monkeypatch, capsys):
@@ -283,6 +340,9 @@ def test_an_older_folder_started_by_mistake_opens_the_newest(launch, monkeypatch
     assert launch.main(["--port", "8502"]) == 0
     assert handed == [(newest, ["--port", "8502"])]
     assert f"A newer AP Coder (0.3.0) is in {newest}: opening that one" in capsys.readouterr().out
+    # This older folder (an older bundle unzipped again by mistake) is on record: the newest cleans it up.
+    assert paths.current_install()["folder"] == str(newest)
+    assert any(paths.same_folder(e["folder"], launch.ROOT) for e in paths.installs())
 
 
 # --- The server -----------------------------------------------------------------------------------------------------
@@ -361,6 +421,12 @@ def test_a_wheelhouse_for_another_python_says_which_to_install(launch, monkeypat
     message = launch.wheelhouse_misfit()
     assert "built for Windows, Python 3.11/3.12; this computer has Python 3.14" in message
     assert "install Python 3.12" in message and "--python 3.14" in message
+    # The tester's case: what to do agrees with it (it said to unzip "the bundle built for this computer", which this
+    # one is: only its Python differs).
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1"], "Missing: ap_coder"))
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert "Install Python 3.12" in exc.value.hint and "bundle built for this computer" not in exc.value.hint
 
 
 def test_a_wheelhouse_that_fits_says_nothing(launch, monkeypatch):
@@ -383,6 +449,105 @@ def test_with_the_internet_allowed_a_misfit_wheelhouse_falls_back_to_pypi(launch
     with pytest.raises(launch.SetupError):  # (pip "installed" nothing: still missing)
         launch.ensure_packages({})
     assert calls and "Installing from the internet (PyPI) instead" in capsys.readouterr().out
+
+
+def test_a_wheelhouse_copied_into_the_wheelhouse_folder_is_used_and_judged(launch, monkeypatch):
+    """An older bundle's wheelhouse copied over the folder lands in wheelhouse/wheelhouse: it was not looked at, so
+    pip found nothing and the start listed every package as missing instead of saying what the wheels fit."""
+    nested = launch.ROOT / "wheelhouse" / "wheelhouse"
+    nested.mkdir(parents=True)
+    for name in WINDOWS_ONLY:
+        (nested / name).write_bytes(b"")
+    _computer(launch, monkeypatch, "windows", (3, 14), ["cp314-cp314-win_amd64", "py3-none-any"])
+    assert "built for Windows, Python 3.11/3.12; this computer has Python 3.14" in launch.wheelhouse_misfit()
+    assert launch.pip_source() == ["--no-index", "--find-links", str(nested)]
+    _computer(launch, monkeypatch, "windows", (3, 12), ["cp312-cp312-win_amd64", "py3-none-any"])
+    assert launch.wheelhouse_misfit() == ""
+
+
+def _wheels_in(folder: Path, names=WINDOWS_ONLY) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (folder / name).write_bytes(b"")
+    return folder
+
+
+@pytest.mark.parametrize("where", [".wheelhouse", "wheelhouse (1)", "Wheelhouse-old", "APProcessor/wheelhouse",
+                                   ".wheelhouse/wheelhouse"])  # fmt: skip
+def test_a_wheelhouse_under_a_near_miss_name_is_found_and_judged(launch, monkeypatch, where, capsys):
+    """The tester had the older bundle's wheels in ".wheelhouse": not seen at all, so the start said "Missing
+    packages: ..." (no wheelhouse here) instead of what the wheels were built for. One folder of wheels under a
+    near-miss name (or one level deeper, after a double unzip) is used, and said once."""
+    found = _wheels_in(launch.ROOT / where)
+    _computer(launch, monkeypatch, "windows", (3, 14), ["cp314-cp314-win_amd64", "py3-none-any"])
+    assert launch.wheelhouse_dir() == found and launch.pip_source() == ["--no-index", "--find-links", str(found)]
+    assert "built for Windows, Python 3.11/3.12; this computer has Python 3.14" in launch.wheelhouse_misfit()
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1"], "Missing: ap_coder"))
+    monkeypatch.setattr(launch, "pip_install", lambda args: pytest.fail("pip ran"))
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert "built for Windows" in str(exc.value) and "Missing packages" not in str(exc.value)
+    assert f"Using the package folder {Path(where)}" in capsys.readouterr().out
+
+
+def test_several_near_miss_wheelhouses_are_named_not_guessed(launch, monkeypatch):
+    _wheels_in(launch.ROOT / ".wheelhouse")
+    _wheels_in(launch.ROOT / "wheelhouse (1)")
+    (launch.ROOT / "wheelhouse").mkdir()  # empty: the bundle's own was deleted
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1"], ""))
+    monkeypatch.setattr(launch, "pip_install", lambda args: pytest.fail("pip ran"))
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert ".wheelhouse" in str(exc.value) and "wheelhouse (1)" in str(exc.value)
+    assert "rename it to wheelhouse" in exc.value.hint
+    _wheels_in(launch.ROOT / "wheelhouse")  # the bundle's own is there: it is the one used, nothing to ask
+    assert launch.wheelhouse_dir() == launch.ROOT / "wheelhouse"
+
+
+def test_a_wheelhouse_that_does_not_fit_is_said_once_not_twice(launch, monkeypatch, capsys):
+    """The first phase said what the manifest claims ("built for Python 3.12"), then the second what the wheels say
+    ("built for Windows, Python 3.11/3.12"): two different messages. The wheels are judged once, in the second."""
+    _wheelhouse(launch, *WINDOWS_ONLY)
+    manifest = {"version": "0.2.0", "built": "2026-10-11T09:00:00", "targets": ["this computer (linux-x86_64, "
+                                                                                 "Python 3.12)"]}  # fmt: skip
+    (launch.ROOT / "bundle_manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(launch, "sys", SimpleNamespace(version_info=(3, 14, 0), version="3.14.0 (main)",
+                                                       executable="/usr/bin/python3.14", platform="linux"))  # fmt: skip
+    monkeypatch.setattr(launch.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(launch, "ensure_venv", lambda python="", rebuild=False: "created")
+    monkeypatch.setattr(launch, "find_python", lambda versions: None)  # only Python 3.14 on this computer
+    monkeypatch.setattr(launch.subprocess, "call", lambda cmd: 1)
+    assert launch.bootstrap([]) == 1
+    assert "Note: this offline bundle" not in capsys.readouterr().out
+    (launch.ROOT / "wheelhouse").rename(launch.ROOT / "elsewhere")  # no wheels to judge by: the manifest's word
+    assert launch.bootstrap([]) == 1
+    assert "Note: this offline bundle has packages for Python 3.12, not for Python 3.14" in capsys.readouterr().out
+
+
+def test_a_full_disk_is_said_plainly_not_as_missing_packages(launch, monkeypatch, tmp_path):
+    """pip stopped on a full disk (the new .venv is made while the older one still takes its 1 GB): the start said
+    the wheelhouse "has no openai, pandas, ... for Python 3.12" and to install Python 3.12, which it was."""
+    _wheelhouse(launch, "openpyxl-3.1.5-py2.py3-none-any.whl")
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1", "openai>=1.68"], ""))
+    lines = ["Processing ./wheelhouse/pandas-3.0.6-cp312-cp312-manylinux_2_28_x86_64.whl\n",
+             "ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device\n"]  # fmt: skip
+
+    class Pip:
+        def __init__(self, *args, **kwargs):
+            self.stdout = iter(lines)
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Pip)
+    old = tmp_path / "AP Coder 0.1"
+    (old / ".venv" / "lib").mkdir(parents=True)
+    (old / ".venv" / "lib" / "big.bin").write_bytes(b"v" * 3_000_000)
+    paths.record_install({"folder": str(old), "version": "0.1.0"}, current=False)
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert "disk is full" in str(exc.value) and "has no" not in exc.value.hint
+    assert f"{old / '.venv'} (3 MB)" in exc.value.hint
 
 
 # --- A .venv on a Python the bundle has no packages for ----------------------------------------------------------
@@ -454,3 +619,20 @@ def test_an_install_set_up_by_install_bat_is_checked_before_the_older_one_is_cle
     launch.save_state({"setup_done": True, "fingerprint": ident["fingerprint"], "version": "0.2.0",
                        "build": ident["build"]})  # fmt: skip
     assert launch.run(*launch.parse([])) == 0 and checks == [1] and cleaned == [[old]]
+
+
+def test_a_desktop_and_shortcut_with_accents_are_read_right_on_windows(launch, monkeypatch):
+    """A desktop in "C:\\Users\\José\\OneDrive - Société\\Bureau" came back mangled from PowerShell (the console's
+    code page, read as ANSI): the shortcut was never made, and an AP Coder 0.1 shortcut's folder never found."""
+    from tests.test_running import fake_windows_powershell
+
+    monkeypatch.setattr(launch, "WINDOWS", True)
+    desk = "C:\\Users\\José\\OneDrive - Société\\Bureau"
+    monkeypatch.setattr(launch.subprocess, "run", fake_windows_powershell(desk))
+    assert str(launch.desktop()) == desk
+    target = "/Users/José/Données/AP Coder 0.1/APProcessor.bat"  # (a path this test's computer can take apart)
+    monkeypatch.setattr(launch.subprocess, "run", fake_windows_powershell(target))
+    paths.write_user_settings(desktop_shortcut=True)
+    monkeypatch.setattr(launch, "desktop", lambda: launch.ROOT)
+    (launch.ROOT / "AP Coder.lnk").write_text("")
+    assert launch.old_shortcut_folder() == "/Users/José/Données/AP Coder 0.1"

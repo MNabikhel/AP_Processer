@@ -258,8 +258,12 @@ That is all. The new version takes over:
 - **One shortcut, one install.** The *AP Coder* desktop shortcut now opens the new version (on a Mac, an
   *AP Coder.command* on the desktop does). Once the self-check passed, the old version's `.venv`, OCR models
   and folder are removed, and the window says how much space that freed. An old folder with files of your
-  own in it is kept, without its `.venv`. Unzipped over the old folder, the files of the old version that
-  the new one no longer has are removed (the bundle lists every file it holds).
+  own in it is kept, without its `.venv`. An old folder still open in a window is emptied of its `.venv` and
+  models, and removed on a later start. Unzipped over the old folder, the files of the old version that the
+  new one no longer has are removed (the bundle lists every file it holds); a `wheelhouse` you copied in
+  yourself is kept.
+- **Stopped halfway?** Closing the window (or a file in use) while the data moves to the data folder never
+  leaves AP Coder on half of it: the next start finishes the move first.
 - **The old folder by mistake?** Starting an older version (an old shortcut, an old folder) opens the
   newest one instead: older code never opens newer data. A database made by a newer AP Coder is refused in
   plain words, and nothing is changed.
@@ -279,6 +283,8 @@ itself (and makes its `.venv` again with it).
 | *Note: this offline bundle has packages for Python ..., not for Python 3.14* | The laptop's Python is newer than the bundle: IT builds a bundle for it (the note gives the `build_offline_bundle.py` command) or installs one of the versions listed. |
 | *AP Coder stopped. The message above says what to do.* | The `What to do:` line above it says it; most often a package could not install. *Missing packages: ...*: the folder has no `wheelhouse/` (unzip the full offline bundle over it). *The offline bundle's wheelhouse folder has no ...*: the bundle was built for another Python version. Developers online (`AP_ALLOW_INTERNET=1`): check the proxy (`set HTTPS_PROXY=http://proxy:8080`). |
 | *This package folder (wheelhouse) was built for ...: nothing was installed* | The bundle was built for another kind of computer or Python: use the bundle built for this one (the message says which, e.g. `--mac`), or install the Python it names. |
+| *Installing the packages stopped: the disk is full* | Free about 1.5 GB on that disk; the message names the older AP Coder's `.venv` folder, which can be deleted (it holds only packages, never your data). Double-click again. |
+| *Your data could not all be moved from ... to ...* | A file of it is open (an old AP Coder window, Excel): close it and double-click again; the move picks up where it stopped. Nothing was lost. |
 | *... is still running: stopping it, so this version takes over* | An older AP Coder was open: the new one stops it and carries on. *Close the old AP Coder window, then start again*: it could not be stopped; close that window (it waits a minute for you). |
 | *A newer AP Coder ... is in ...: opening that one* | An old shortcut or folder was started: the newest version opens instead. Use its folder (the shortcut already does). |
 | *Your database ... was made by a newer AP Coder* | An older version was started on newer data: nothing was changed. Start the newer AP Coder. |

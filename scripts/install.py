@@ -221,7 +221,12 @@ def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
         if current and Path(current) != data and has_data(Path(current)):
             c.warn(f"Switching data folder. The old one stays where it is: {current}")
     elif current:  # (data an older version kept inside its code folder moves out of it first)
-        data = upgrade.settle_data_folder(ROOT, c.info, default=DEFAULT_DATA_DIR)
+        try:
+            data = upgrade.settle_data_folder(ROOT, c.info, default=DEFAULT_DATA_DIR)
+        except upgrade.DataMoveError as exc:  # never set up on half the data: the next run finishes the move
+            c.warn(str(exc))
+            c.info(exc.hint)
+            sys.exit(1)
     else:
         c.info("AP Coder keeps your invoices, its database and its settings in one folder, outside the")
         c.info("code, so new versions of the code use the same data. Do NOT use a OneDrive-synced folder.")
@@ -235,7 +240,10 @@ def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
     (data / "invoices").mkdir(exist_ok=True)
     paths.write_user_settings(data_dir=str(data))
     if not (ROOT / ".git").exists():  # data and a .env left in this code folder move to the data folder
-        upgrade.adopt_legacy(ROOT, data, c.info)
+        try:
+            upgrade.adopt_legacy(ROOT, data, c.info)
+        except OSError as exc:  # in use or read-only: the launcher tries again on every start
+            c.warn(f"The settings or data in {ROOT} can't be moved yet ({exc.strerror or exc}).")
 
     if args.fresh_start:
         fresh_start(c, data)
