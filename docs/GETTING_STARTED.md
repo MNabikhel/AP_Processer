@@ -1,7 +1,8 @@
 # Getting started: running the prototype on your enterprise data
 
-**How we work together.** You run everything on your own computer against your own Azure
-resources. Invoices, GL accounts, reviews and the AI's memory stay in your **data folder**
+**How we work together.** You run everything on your own computer, offline: every invoice is read
+on the laptop (the PDF's text or local OCR, and OvisOCR2 in LM Studio). Invoices, GL accounts, reviews
+and the AI's memory stay in your **data folder**
 (default `C:\Users\<you>\APCoder`, chosen during install), outside the code, so none of it can
 be pushed to GitHub. The dashboard runs at
 `http://localhost` and is not reachable from other machines. You only send back two text
@@ -18,23 +19,22 @@ about `doc-07`, you can look it up there.
 
 ---
 
-## Step 1: Azure resources (one-off, ~30 min)
+## Step 1: LM Studio with OvisOCR2 (IT, one-off)
 
-In the Azure portal, in a Canadian region if invoices must stay in Canada:
+Every invoice is read the same way, with nothing to choose. Part of that is **OvisOCR2**, a small
+page-reading model (about 1 GB) that reads every page of every invoice as a second reader. It runs in
+[LM Studio](https://lmstudio.ai/) on the laptop.
 
-1. **Document Intelligence** resource, tier **S0**. The free F0 tier only reads the first 2 pages
-   of each document, which breaks multi-page invoices.
-2. **Azure OpenAI** resource (or Azure AI Foundry project). Deploy **gpt-4o**, model version
-   `2024-08-06` or later, which is required for Structured Outputs. A `gpt-4o-mini` deployment
-   is useful later for cost comparison.
-   - Deployment type: for data residency use **Standard** (regional) or **Data Zone**, not *Global*.
-   - Give it at least ~50K tokens/minute of quota so a batch does not stall.
-3. **Access:** copy the keys from each resource's *Keys and Endpoint* blade, or (preferred in
-   enterprises) leave the keys empty and grant your user **Cognitive Services User** (Document
-   Intelligence) and **Cognitive Services OpenAI User** (Azure OpenAI), then run `az login`.
+1. **IT installs LM Studio** (0.4.8 or newer) with OvisOCR2 already in it, and optionally a chat model
+   (**Qwen 3.5 9B**, Q4_K_M) that suggests GL accounts for lines nothing was learned for. Nothing is
+   downloaded on the laptop. The files and sizes are in [PILOT.md](PILOT.md#what-you-need).
+2. **Start the server:** open LM Studio, **Developer** tab → **Start server**.
+3. **That's all.** When AP Coder starts, it finds OvisOCR2 on its own and runs its self-test by itself (it
+   reads a sample invoice whose answers are known): 10 to 20 minutes on a laptop the first time.
+   **Settings → Reading** shows its progress. There is no model to pick and nothing to link.
 
-Your compliance team may want to review Azure OpenAI's data, privacy and abuse-monitoring terms
-before real invoices are sent.
+Without LM Studio, AP Coder still works: invoices are read by the PDF's text or OCR, and wait for a
+person. A banner on the Process and Review pages says so.
 
 ## Step 2: Install (~10 min, one double-click)
 
@@ -46,7 +46,7 @@ AP Coder is an offline enterprise build: the laptop never connects to the intern
   to PATH"** ticked on the first screen.
 - **The offline bundle**, a ZIP such as `APProcessor-offline-<version>-<date>.zip` (on a USB stick or a
   share). It holds the code, every package (`wheelhouse/`) and the OCR models (`models/`).
-- **LM Studio** (optional), with the chat model and OvisOCR2 already in it.
+- **LM Studio**, with OvisOCR2 (and, optionally, the chat model) already in it (Step 1).
 
 **Get the code.** Unzip the bundle to a folder that is **not** synced by OneDrive, e.g.
 `C:\APCoder\app`.
@@ -59,13 +59,13 @@ every day after. The first time (a few minutes) it:
 2. installs the packages from the bundle's `wheelhouse/` folder, then on later starts only ones that
    are missing or too old
 3. records the data folder, `C:\Users\<you>\APCoder`: outside the code folder and outside OneDrive.
-   The database, invoices, outputs and your Azure keys live there, so **every future version uses the
+   The database, invoices, outputs and your settings live there, so **every future version uses the
    same data**
 4. copies the OCR models for scanned invoices from the bundle's `models/` folder, and puts one
    **AP Coder** shortcut on the desktop
 5. runs the self-check (the ten sample invoices, about 10 seconds) and prints a readiness summary:
-   Python, packages, OCR, data folder, LM Studio and the page reader (both optional) and the
-   self-check's OK/FAILED
+   Python, packages, OCR, data folder, LM Studio, the page reader (OvisOCR2: found, and its self-test)
+   and the self-check's OK/FAILED
 6. opens the dashboard in your browser
 
 Later double-clicks reuse all of it and start in seconds; double-clicking while AP Coder already runs
@@ -77,20 +77,19 @@ the bundle. Set `AP_ALLOW_INTERNET=1` in a terminal (`set AP_ALLOW_INTERNET=1`),
 `install.bat` updates the checkout with git; with no Python, APProcessor.bat offers to install 3.12
 with `winget`. Never set it on a pilot laptop.
 
-**Azure settings and the other installer options.** The dashboard's **Settings → Azure** page holds
-your Azure details. If you prefer to answer them in the window, or need an option below, use
-**`install.bat`** (macOS/Linux: `./install.sh`): the same setup as `APProcessor.bat` (it runs it) plus
-questions for the data folder, your Azure details (endpoints, keys, deployment name, your name; press
-Enter to keep a value in brackets, leave the keys empty if you use `az login`) and the desktop
-shortcut, then a self-test and the setup check.
+**The other installer options.** **`install.bat`** (macOS/Linux: `./install.sh`) is the same setup as
+`APProcessor.bat` (it runs it), plus a question for the data folder and the desktop shortcut, then a
+self-test and the setup check. It asks nothing about reading invoices or cloud services: the offline
+build has nothing to set up. (Only a developer computer with `AP_ALLOW_INTERNET=1` is asked for Azure
+details.)
 
 **Running either again is always safe.** Both install packages only when something is missing (from
-the bundle), and keep your data folder, Azure settings and shortcut. Nothing is duplicated. Options are typed after the name in **`terminal.bat`** (double-click
+the bundle), and keep your data folder, settings and shortcut. Nothing is duplicated. Options are typed after the name in **`terminal.bat`** (double-click
 it, then type e.g. `install.bat --fresh-start`):
 
 | Option | What it does |
 |---|---|
-| `--fresh-start` | moves the database, invoices and outputs into a dated `backup-…` folder inside the data folder (Azure settings are kept) |
+| `--fresh-start` | moves the database, invoices and outputs into a dated `backup-…` folder inside the data folder (the `.env` settings are kept) |
 | `--yes` | no questions; keeps current answers |
 | `--no-update` | developers online only: don't check GitHub for a newer version (the offline build never does) |
 | `--data-dir <folder>` | use a different data folder |
@@ -103,17 +102,16 @@ it opens a command prompt with everything ready, e.g. `python -m ap_coder doctor
 
 ## Step 3: Check the setup → paste the doctor report
 
-At the end of `install.bat`, answer **y** to *Test the connection to Azure now?*. In the dashboard,
-**Settings → Azure** shows and edits the same settings and has a **Run the test** button. Or, in
-`terminal.bat`:
+In `terminal.bat`:
 
 ```bat
 python -m ap_coder doctor --online
 ```
 
-`--online` makes one real call to each service with a tiny made-up invoice (about the cost of one
-invoice). **Paste the whole output into the chat.** Any FAIL line says why. To fix a setting, run
-`install.bat` again and answer **y** to *Change any Azure settings?*.
+It checks the setup, the reference data and LM Studio: whether OvisOCR2 was found and passed its
+self-test (*page reader*), and, with the chat model loaded, one short test call on a tiny made-up invoice
+(on this laptop; nothing leaves it). **Paste the whole output into the chat.** Any FAIL line says why.
+**Settings → Reading** in the dashboard shows the same, reader by reader.
 
 ## Step 4: Try the dashboard with the sample data (no enterprise data)
 
@@ -121,7 +119,7 @@ Start AP Coder from the **AP Coder** desktop shortcut (or `APProcessor.bat`). It
 keep the black window open while you use it and close it to stop. If another program already uses
 port 8501, AP Coder picks the next free one.
 
-**Fastest: the demo (no Azure needed).** On the welcome screen click **Load demo invoices**. Ten
+**Fastest: the demo.** On the welcome screen click **Load demo invoices**. Ten
 sample invoices from across Canada arrive as if the AI had read them (eight to review, two already
 approved), with a few realistic mistakes to correct, plus sample purchase orders and a vendor list.
 Things to try:
@@ -148,8 +146,8 @@ Things to try:
   exported from them), sample POs and the sample vendor list again. The sample GL accounts and tax
   setup stay (replace them when you import yours: tick *Replace my current list*).
 
-**With Azure:** first click *Remove demo invoices* if you loaded the demo (the same sample files
-would otherwise be recognised as already processed).
+**Reading the samples for real:** first click *Remove demo invoices* if you loaded the demo (the same
+sample files would otherwise be recognised as already processed).
 
 1. **GL accounts & tax** → *Load sample setup* (skip this if you tried the demo: the sample setup is
    already loaded).
@@ -164,7 +162,7 @@ These invoices are synthetic, so screenshots of this step are fine to share.
 
 When you're done, close the AP Coder window, double-click **`terminal.bat`** and type
 **`install.bat --fresh-start`** so your real setup starts clean: the sample database, memory and invoices move to a backup folder, and your
-Azure settings stay.
+settings stay.
 
 ## Step 5: Your setup, in the dashboard
 
@@ -216,7 +214,8 @@ Aim for a representative mix:
 - several provinces: Ontario/Atlantic (HST), Quebec (GST + QST, French invoices), BC/SK/MB
   (GST + PST), Alberta/territories (GST only)
 - out-of-province vendors (these often don't charge PST/QST, which may require self-assessment)
-- multi-page invoices, scans/TIFFs, credit notes, freight lines, discounts
+- multi-page invoices, scans/TIFFs, phone photos (iPhone HEIC too), credit notes, freight lines,
+  discounts
 
 Then click *Process*. Each invoice lands in the **Review queue**.
 
@@ -224,7 +223,8 @@ Then click *Process*. Each invoice lands in the **Review queue**.
 
 For each invoice:
 
-1. Compare the image with the extracted header, lines and tax lines.
+1. Compare the image with the extracted header, lines and tax lines. A field the readers agree on is
+   *verified*; one they read differently is marked *Check* and boxed in amber on the page.
 2. Read **Checks**. Red items are errors, for example:
    - tax math wrong
    - QST charged on a GST-inclusive amount
@@ -237,14 +237,29 @@ For each invoice:
 3. Fix anything wrong in the grids. GL and cost-center cells are dropdowns of your own codes. Lines
    without a GL account get **suggestions**; an invoice quoting a PO shows the **PO match**. When
    the vendor has to fix something, **Ask the vendor** under the checks writes the email.
-4. Click **Approve & teach** (Ctrl+Enter). Invoices nobody needs to look at can be approved together
-   with *Approve N clean…* above the queue.
+4. Click **Approve & teach** (Ctrl+Enter). Each field you corrected is recorded for that vendor and
+   updates its template; the confirmation says what was learned and how far the vendor is from touchless
+   (e.g. *Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about
+   6 more clean invoices to go touchless.*). Invoices nobody needs to look at can be approved together with
+   *Approve N clean…* above the queue; those approvals don't count toward touchless.
 5. Approved invoices wait in **Exports**: export them as a batch for the ERP (Excel, CSV or your
    custom layout), with the **Approved PDFs** to attach if your ERP keeps invoice images.
 
 Every approved line is stored as a lesson: *confirmed* if the AI was right, *corrected* if you
 changed it. The next invoice from that vendor sees those lessons, and **Learning & accuracy**
-tracks how often the AI is right. A mistaken lesson can be removed with *Forget*.
+tracks how often the AI is right. A mistaken lesson can be removed with *Forget*. **Learning &
+accuracy → Supplier learning** is the training view, vendor by vendor: how often each field was corrected
+and how far each vendor is from touchless.
+
+**Touchless processing** (Settings → Automation) is off by default, so every invoice is approved by a
+person. Leave it off for the first weeks and watch *Supplier learning*. When your regular vendors are
+close to the bar, a manager turns it on (with a confirmation, recorded in the Activity log). A vendor then
+goes touchless by itself once it has at least 20 reviewed invoices, header fields read right at least 99%
+of the time with 95% confidence, and the last 10 without a correction: usually about 30 clean invoices.
+5% are still audited, and one correction suspends the vendor. Some invoices always go to a person (a
+changed bank account or GST/HST number, a possible duplicate, a total above *Largest invoice approved
+without a person*, 5,000.00 CAD by default, and others: Settings → Automation lists them). See
+[PILOT.md](PILOT.md#touchless-processing-when-to-turn-it-on).
 
 ## Step 8: Send me the share report
 
@@ -264,7 +279,7 @@ through.
 When there are improvements, IT gives you a new offline bundle. Close AP Coder, unzip the new bundle
 **over** the same folder (replace files), then double-click `APProcessor.bat`. It installs only the
 packages that changed, from the new bundle, and keeps everything else. Your data folder (database,
-memory, GL accounts and Azure settings) is not touched by updates: keep it where it is. We repeat until the AI's coding
+memory, GL accounts and settings) is not touched by updates: keep it where it is. We repeat until the AI's coding
 accuracy on the **Learning & accuracy** page holds at or above **90%**. That is the gate for
 Phase 2.
 
@@ -286,11 +301,12 @@ Run these in `terminal.bat` as `python -m ap_coder <command>`.
 | `dashboard` | the review app (what the desktop shortcut and `APProcessor.bat` start) |
 | `doctor [--online]` | setup check; safe to paste |
 | `share-report [--include-codes]` | redacted summary; safe to paste |
-| `demo [--remove]` | load or remove the demo invoices (no Azure) |
+| `demo [--remove]` | load or remove the demo invoices |
 | `watch [--every 60]` | keep processing new files dropped in the invoices folder; with `--once` it checks once (for Windows Task Scheduler: program `<AP Coder folder>\.venv\Scripts\python.exe`, arguments `-m ap_coder watch --once`, start in the AP Coder folder) |
 | `process <files/folders>` | batch processing without the dashboard; results also appear in the review queue. Files already processed are skipped (`--force` to redo), so it is safe to run again after Ctrl+C |
 | `labels` / `evaluate` | spreadsheet-based labelling and scoring (an alternative to reviewing in the dashboard) |
-| `schema` | the exact JSON Schema sent to Azure OpenAI |
+| `read-pages [--minutes 240]` | have OvisOCR2 read the invoices waiting for it, then stop (Task Scheduler overnight) |
+| `schema` | the exact JSON Schema sent to Azure OpenAI (developers) |
 
 ### Two people approving (second approval)
 

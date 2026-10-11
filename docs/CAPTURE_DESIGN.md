@@ -10,10 +10,12 @@ No single reader is right on every invoice. Accuracy comes from three things tog
    - the PDF's own text layer (exact) or OCR words with their confidence;
    - a rule reader (labels, patterns and positions, English and French);
    - the supplier's learned template, once AP has confirmed a few invoices;
-   - Azure Document Intelligence `prebuilt-invoice` fields, when used;
+   - the **page reader**, OvisOCR2 in LM Studio, which transcribes the page image on its own, on every page
+     of every invoice, digital PDFs included (see
+     [The page reader](#the-page-reader-a-vision-model-as-a-second-reader) below);
    - the AI coder's answer, located back on the page;
-   - the **page reader**, a vision model that transcribes the page image on its own (optional; see
-     [The page reader](#the-page-reader-a-vision-model-as-a-second-reader) below).
+   - Azure Document Intelligence `prebuilt-invoice` fields, only in a developer build with the internet
+     allowed (`AP_ALLOW_INTERNET=1`).
 2. **Checks that cannot be fooled by a misread:**
    - subtotal + taxes = total, and the lines add up to the subtotal;
    - tax = rate × taxable amount, at the official rate for the province;
@@ -32,6 +34,42 @@ through every check; any failed check, or any field below *verified*, sends the 
 person. A random audit sample of autonomous invoices keeps measuring accuracy, and one correction
 demotes the supplier. See [Touchless processing](#touchless-processing-one-switch-one-bar) for the
 company-wide switch and the invoices that always go to a person.
+
+## One way to read every invoice
+
+There is one reading pipeline, with nothing to configure (`ap_coder/reading.py`; Settings → Reading shows
+each reader's state):
+
+1. the PDF's own text layer where the page has one, local OCR (two engines) where it has not (scans,
+   photos, iPhone HEIC);
+2. OvisOCR2 reads every page of every invoice in the background, as an independent second reader, once it
+   has passed its own self-test;
+3. the rule reader, the supplier's template and the business checks compare the readers: a field they
+   agree on can be *verified*, one they read differently is *check*;
+4. on a digital PDF, the hidden text layer is compared with the page as OvisOCR2 sees it printed
+   (`TEXT_LAYER_MATCHES_PAGE`);
+5. no invoice is approved without a person before OvisOCR2 has read it.
+
+The settings that used to choose a reading mode (`AP_PAGE_READER`, `AP_PAGE_READER_SCOPE`,
+`AP_LLM_PROVIDER`, the model pickers) are gone; an older `.env` that still has them is ignored.
+
+### How this compares with the industry
+
+The design follows what the established AP capture products do, rather than inventing a new method:
+
+- **One pipeline, text layer first.** Use the PDF's text when it has one and OCR otherwise, the same steps
+  for every document (ABBYY, Google Document AI).
+- **Agreement between independent readers** is the strongest confidence signal; here OCR or the text
+  layer, OvisOCR2 and the supplier's template are independent readers.
+- **Calibrated confidence per field**, and a document goes touchless only when every field passes
+  (Rossum).
+- **Business rules can block** an invoice whatever its confidence (Rossum, Stampli), and some invoices
+  **always need a person** (Stampli): a changed bank account, a possible duplicate, a large amount.
+- **Learning per vendor from corrections** (ABBYY's online learning, Vic.ai): each correction updates the
+  vendor's template and its record.
+- **A random audit sample** of automated decisions keeps measuring accuracy (AWS Augmented AI).
+- **Two numbers to watch:** the touchless rate, and the error rate of touchless invoices. Ardent Partners
+  reports an average touchless rate of 32.6%, and about 49% for the best in class.
 
 ## Package `ap_coder/capture/`
 
@@ -194,8 +232,9 @@ approves each one, the template learns, the autonomy policy is applied):
 
 No simulated invoice that met the touchless bar (every printed field *verified*, every check passed)
 has had a wrong field, in any run. No scanned-only supplier reaches the 99% bound within 25
-invoices: the policy is doing its job, and those suppliers stay supervised until more confirmed
-invoices, or a second independent reader (Document Intelligence or the AI), close the OCR gap.
+invoices with OCR alone: the policy is doing its job, and those suppliers stay supervised until more
+confirmed invoices, or a second independent reader (OvisOCR2, see
+[Measured with OvisOCR2](#measured-with-ovisocr2)), close the OCR gap.
 
 Every wrong *verified* value the runs turned up while this was built became a fix and a test (a
 thousands comma read as ";" by OCR, a table's "Total" column taken for the invoice total, a
@@ -207,9 +246,9 @@ What this means for "99%":
   no history, 99.9% with nothing wrong left unflagged, 100% once the supplier's template has learned.
 - **Scans** are the gap: local OCR misreads characters (l/I, O/0, accents), drops spaces and
   sometimes misses a word at the edge of the page. 93.5% of scanned invoices are fully right on their
-  own and 97.5% have nothing wrong left unflagged. Document Intelligence's OCR or the AI's reading of
-  the same page is the independent second reader that closes it; until then scanned suppliers stay
-  supervised.
+  own and 97.5% have nothing wrong left unflagged. OvisOCR2's reading of the same page is the
+  independent second reader that closes it (91 of 91 header fields right on 9 real scans, below); until
+  it has read an invoice, that invoice stays with a person.
 - 99% of fields is not 99% of invoices (an invoice has about ten fields), which is why the numbers
   above are per invoice, why routing is per field, and why autonomy is earned per supplier.
 - The benchmark is a tool, not a guarantee: its layouts are varied but invented. The pilot measures
@@ -262,7 +301,12 @@ Automation):
   unusual amount (`AMOUNT_UNUSUAL`: over 3× the vendor's median approved total), a vendor on hold or not in an imported
   vendor master, a credit note, a total over the touchless limit (setting `touchless_limit`, default 5,000.00 CAD; a
   foreign currency is converted at the Settings → Review exchange rates, compared as it is without a rate), a total
-  over the second-approver limit, and an invoice the page reader has not read yet.
+  over the second-approver limit, and an invoice the page reader has not read yet. On top of these, as before,
+  any failed check or any printed header field below *verified* sends the invoice to a person
+  (`should_auto_approve`).
+- **How long it takes**: at about 13 header fields an invoice, a 99% lower bound with no error needs about 380
+  fields read right (n / (n + 1.96²) ≥ 0.99), so a vendor typically reaches the bar after about 30 clean
+  invoices, not 20.
 - **Training, visible**: every approval records, field by field, what the clerk corrected; the review screen says what
   was learned ("Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about 6
   more clean invoices to go touchless."), and the Learning page shows each vendor's progress. A bulk approval (nobody
@@ -295,14 +339,21 @@ its `mmproj`, about 1 GB).
 - **Figure by figure** (`ap_coder/figures.py`, from CloseDesk): every amount in the transcription is counted
   against OCR's text or the PDF's own. The review screen shows how many figures both read the same and lists
   the ones read two ways ("1,105.00 / 1,150.00"). On a digital PDF the first reading is exact, so the share
-  read the same is the page reader's own accuracy, measured on every invoice it reads (Settings → Page reader).
-- **Tested before it is trusted:** before it reads any invoice, OvisOCR2 reads a scan of a sample invoice whose
-  answers are known (``page_worker.self_test_if_due``, on its own: no button to press). Until the model in use
-  has passed, the page reader reads nothing; another model needs its own test, and a failed test is tried again
-  after a day (or when a person runs it again). No general vision model reads pages instead of OvisOCR2.
+  read the same is the page reader's own accuracy, measured on every invoice it reads (Settings → Reading).
+- **Found and tested on its own:** AP Coder finds OvisOCR2 in LM Studio by itself (no model to pick). Before it
+  reads any invoice, OvisOCR2 reads a scan of a sample invoice whose answers are known
+  (``page_worker.self_test_if_due``, on its own: no button to press; 10 to 20 minutes on a laptop the first time).
+  Until the model in use has passed, the page reader reads nothing and invoices wait for a person; another model
+  needs its own test, and a failed test is tried again after a day (or with *Run the self-test again* in Settings
+  → Reading). No general vision model reads pages instead of OvisOCR2. While it isn't ready, a banner on the
+  Process and Review pages says so.
 - **Every invoice, digital PDFs too:** on a digital PDF the transcription is checked against the PDF's hidden
-  text (``TEXT_LAYER_MATCHES_PAGE``): fewer than 60% of 8 or more figures read the same, or two totals of the
-  text layer missing from a page read well otherwise, fails the check (a person looks; never touchless).
+  text (``TEXT_LAYER_MATCHES_PAGE``, `capture/__init__.py`). Editing the hidden text of a PDF is a known way to
+  slip another amount past a system that reads the text alone. The check fails when 8 or more figures were
+  compared and fewer than 60% were read the same, or when two or more of the text layer's totals (subtotal,
+  taxes, total) are nowhere on the page while OvisOCR2 read at least 90% of the other figures the same. The
+  fields of the totals it didn't see are marked *check*; the invoice goes to a person (a warning, never
+  touchless). One total read differently is just that field's disagreement, marked *check* by fusion.
 - **Never in the way:** reading takes minutes a page on a laptop CPU, so it runs in the background (a thread of
   the dashboard, or `python -m ap_coder read-pages` overnight). An invoice is in the queue at once, read by
   OCR; the reading is folded in only while the invoice is untouched (in review, never approved, no edits), and
