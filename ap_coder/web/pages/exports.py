@@ -1,12 +1,12 @@
-"""Exports: approved invoices go to the ERP in batches; each invoice is exported once (``ap_coder/webapp/exports.py``
-in Streamlit), plus the duplicate payment audit.
+"""Exports: approved invoices go to the ERP in batches; each invoice is exported once, plus the
+duplicate payment audit.
 
 * ``GET /exports``: the ready list (``?fmt=`` picks the format; JD Edwards E1 checks every invoice first), the batch
   just made (``?made=<batch>``), the custom CSV layout, the ERP's invoice register, past batches (``?batch=&bfmt=``
   picks one to download again, stamp or undo) and the duplicate audit (``?audit=1``).
 * Downloads (GET): ``/exports/batches/<n>/download?fmt=``, ``/exports/batches/<n>/approved-pdfs.zip``,
   ``/exports/duplicates.csv``. The files are the ones ``exports.build`` / ``jde.build_zip`` / ``stamp.batch_zip`` /
-  ``dupaudit.to_csv`` make, as on the Streamlit page.
+  ``dupaudit.to_csv`` make.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ BLANK_LAYOUT_ROWS = 3  # empty rows under the layout's columns, to add more
 AUDIT_SHOWN = 100
 
 
-# --- What the files are made of (the same calls as the Streamlit page) ------------------------------------------------
+# --- What the files are made of ------------------------------------------------------------------------------------
 
 
 def gl_names(store: Store) -> dict[str, str]:

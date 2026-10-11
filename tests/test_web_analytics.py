@@ -195,7 +195,7 @@ def test_activity_lists_filters_and_searches(client, busy):
 
 
 def test_an_activity_search_that_matches_nothing_says_so(client, busy):
-    """It crashed in the Streamlit page (an empty timeline): here it is a plain "No events match"."""
+    """It crashed in the earlier dashboard (an empty timeline): here it is a plain "No events match"."""
     for params in ({"q": "nothing like this"}, {"q": "nothing like this", "view": "table"},
                    {"group": "Backups", "person": "Nobody"}, {"group": "Not a group", "view": "nonsense"}):  # fmt: skip
         response = client.get("/activity", params=params)

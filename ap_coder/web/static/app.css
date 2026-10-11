@@ -1,8 +1,7 @@
 /* AP Coder dashboard styles ("Ledger"), for the FastAPI dashboard (ap_coder/web).
 
-   The design tokens (--lg-*) and the component classes (.apc-* built by ap_coder/ui.py, .rq-* of the review
-   queue) are the same as the Streamlit dashboard's (ap_coder/assets/style.css and review.css), so both look alike;
-   the shell (rail, cards, buttons, fields, messages) is at the end.
+   The design tokens (--lg-*), then the component classes (.apc-* built by ap_coder/ui.py, .rq-* of the review
+   queue); the shell (rail, cards, buttons, fields, messages) is at the end.
 
    Colour only ever means a status or the accent. Space 4/8/12/16/24/32/40 px; card padding 20px, 16px between
    cards. Radius 6px (pills), 8px (buttons, inputs), 10px (cards). Type: Inter; body 14px / 1.45; page title 24/600;
@@ -347,7 +346,7 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 .apc-timeline .d {font-size: 13px; color: var(--lg-muted); line-height: 1.45; overflow-wrap: anywhere;}
 .apc-timeline .w {font-size: 12px; color: var(--lg-subtle); margin-top: 2px;}
 
-/* ==== Review queue pieces (from assets/review.css) ==== */
+/* ==== Review queue pieces ==== */
 :root {
   --rv-bg: var(--lg-bg, #F7F8FA);
   --rv-surface: var(--lg-surface, #FFFFFF);

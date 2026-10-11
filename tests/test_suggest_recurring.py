@@ -1,10 +1,7 @@
 """GL suggestions for uncoded lines, and recurring-vendor detection."""
 
 import datetime as dt
-import sys
-
-import streamlit as st
-from streamlit.testing.v1 import AppTest
+import re
 
 from ap_coder import recurring
 from ap_coder.demo import load_demo
@@ -12,7 +9,7 @@ from ap_coder.reference_data import UNASSIGNED
 from ap_coder.store import Store
 from ap_coder.suggest import suggest_gl
 
-from .conftest import ROOT
+from .webclient import client_for, draft_form, follow, post
 
 
 def _row(vendor, final_gl, description, outcome="accepted", cc="CC400"):
@@ -80,44 +77,34 @@ def test_late_vendors_are_listed_first():
     assert [r.vendor_key for r in found] == ["late", "fine"]
 
 
-def _fresh_app(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    return Store(path)
+def test_suggestion_button_codes_the_line(tmp_path):
+    from .test_web_invoice import check, form_of
 
-
-def test_suggestion_button_codes_the_line(tmp_path, monkeypatch):
-    store = _fresh_app(tmp_path, monkeypatch)
+    store = Store(tmp_path / "private" / "ap_coder.db")
     load_demo(store)
+    client = client_for(store)
     harbour = next(i for i in store.list_invoices() if i["vendor_name"].startswith("Harbourview"))
-    key = f"inv{harbour['id']}"
-    at = AppTest.from_file(str(ROOT / "ap_coder" / "dashboard.py"), default_timeout=90)
-    at.session_state["open_invoice"] = harbour["id"]
-    at.run()
-    assert not at.exception
-    # The key is <invoice>_sugg_<line>_<position>_<GL>: line 4, account 6800.
-    next(b for b in at.button if (b.key or "").startswith(f"{key}_sugg_4_") and b.key.endswith("_6800")).click().run()
-    at.run()
-    assert not at.exception
-    assert not [b for b in at.button if (b.key or "").startswith(f"{key}_sugg_")]  # line 4 is coded now
-    at.button(key=f"{key}_approve").click().run()
-    assert store.get_invoice(harbour["id"])["final_output"]["line_items"][3]["predicted_gl_code"] == "6800"
+    invoice_id = harbour["id"]
+    data = form_of(store, invoice_id)
+    suggestions = check(client, invoice_id, data)["sections"]["suggest"]
+    found = re.findall(r'data-position="(\d+)" data-gl="([^"]+)"', suggestions)
+    assert ("3", "6800") in found  # line 4 (the fourth row), account 6800
+    answer = post(client, f"/review/{invoice_id}/suggestion", {**data, "position": "3", "gl": "6800"}).json()
+    assert answer["ok"] and "Line 4 coded to GL 6800" in answer["toast"]["text"]
+    coded = draft_form(client, invoice_id)
+    assert 'data-position="3"' not in check(client, invoice_id, coded)["sections"]["suggest"]  # line 4 is coded now
+    follow(client, post(client, f"/review/{invoice_id}/approve", draft_form(client, invoice_id)))
+    assert store.get_invoice(invoice_id)["final_output"]["line_items"][3]["predicted_gl_code"] == "6800"
 
 
-def test_vendors_page_shows_recurring_vendors(tmp_path, monkeypatch):
-    store = _fresh_app(tmp_path, monkeypatch)
+def test_vendors_page_shows_recurring_vendors(tmp_path):
     import json
 
     from .conftest import SAMPLE_STEM, SAMPLES
 
+    store = Store(tmp_path / "private" / "ap_coder.db")
     gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
     for i, day in enumerate(("2026-05-01", "2026-06-01", "2026-07-01", "2026-08-01")):
         store.add_invoice(tmp_path / f"{i}.pdf", {**gt, "invoice_number": f"R-{i}", "invoice_date": day}, {})
-    at = AppTest.from_string("from ap_coder.webapp.vendors import page_vendors\npage_vendors()", default_timeout=90)
-    at.run()
-    assert not at.exception
-    assert "Monthly" in "".join(h.proto.body for h in at.get("html"))
+    response = client_for(store).get("/vendors")
+    assert response.status_code == 200 and "Monthly" in response.text

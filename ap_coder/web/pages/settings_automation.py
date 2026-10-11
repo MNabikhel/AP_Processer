@@ -1,5 +1,4 @@
-"""Settings → Automation: when an invoice may be approved without a person (touchless processing). Ported from
-``ap_coder/webapp/automation_settings.py``.
+"""Settings → Automation: when an invoice may be approved without a person (touchless processing).
 
 One switch for the company and one bar for every vendor: nothing here is set vendor by vendor. With the switch off
 (the default) every invoice is approved by a person, and each approval keeps training its vendor. With it on, a vendor

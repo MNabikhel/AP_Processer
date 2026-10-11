@@ -1,4 +1,4 @@
-"""Find an invoice: where an invoice stands, for a vendor on the phone (``ap_coder/webapp/search.py`` in Streamlit).
+"""Find an invoice: where an invoice stands, for a vendor on the phone.
 
 The search is a GET (``/search?q=...``): words match the vendor, numbers the invoice number, PO or amount. Each hit
 says where the invoice is; an invoice in the queue opens, a parked one can be brought back, and an approved one can be

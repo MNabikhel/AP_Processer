@@ -11,5 +11,5 @@ Unless required by applicable law or agreed to in writing, software distributed 
 on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for
 the specific language governing permissions and limitations under the License.
 
-AP Coder serves it from this folder, so the dashboard's icons never load anything from the internet. It is the same
-file Streamlit ships (streamlit/static/static/media/MaterialSymbols-Rounded.*.woff2).
+AP Coder serves it from this folder (the dashboard's /fonts), so the dashboard's icons never load anything from
+the internet.

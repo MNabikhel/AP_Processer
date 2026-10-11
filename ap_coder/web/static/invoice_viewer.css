@@ -1,6 +1,5 @@
 /* AP Coder invoice viewer (static/js/invoice_viewer.js): the invoice page with a box over every field read from it.
-   Ported from the Streamlit component (ap_coder/webapp/components/invoice_viewer/viewer.css). Colours and type follow
-   the Ledger tokens: Inter, hairline borders, no shadows except popovers, colour only for a status or the accent.
+   Colours and type follow the Ledger tokens: Inter, hairline borders, no shadows except popovers, colour only for a status or the accent.
    The hover card (.iv-tip) lives on <body>, out of the card (whose container query would hold it in). */
 .iv, .iv-tip {
   --ink: #0f172a;

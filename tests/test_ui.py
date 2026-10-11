@@ -35,7 +35,8 @@ def test_all_text_is_escaped():
 
 
 def test_no_inline_svg_reaches_the_page():
-    """Streamlit's sanitiser strips inline <svg>; graphics must be CSS or data-URI images."""
+    """The small graphics of these helpers are CSS or data-URI images, never inline <svg> (the charts are
+    web/charts.py)."""
     html = ui.tile("x", 1, "inbox", spark=[0.1, 0.5, 0.9]) + ui.empty_state("a", "b") + ui.ring(0.5)
     assert "<svg" not in html
     assert "data:image/svg+xml;base64," in html
@@ -106,7 +107,7 @@ def test_document_text_keeps_tables_but_escapes_everything_else():
 
 
 def test_credits_show_in_the_accounting_style_everywhere():
-    from ap_coder.webapp.common import money
+    from ap_coder.web.core import money
 
     assert ui.money(-2316.5) == "(2,316.50)" and ui.money(1234.5) == "1,234.50" and ui.money(-0.001) == "0.00"
-    assert money(-12, "CAD") == "(12.00) CAD" and money(None) == "-"
+    assert money(-12, "CAD") == "(12.00) CAD" and money(None) == "—" and money(None, "CAD") == "—"

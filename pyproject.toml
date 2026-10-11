@@ -16,7 +16,6 @@ dependencies = [
     "pydantic>=2.6",
     "pymupdf>=1.24",
     "python-dotenv>=1.0",
-    "streamlit>=1.62",
     # The dashboard (ap_coder/web): a local web app on 127.0.0.1, like CloseDesk.
     "fastapi>=0.115,<1",
     "uvicorn>=0.30,<1",
@@ -48,8 +47,8 @@ ap-coder = "ap_coder.cli:main"
 include = ["ap_coder*"]
 
 [tool.setuptools.package-data]
-ap_coder = ["assets/*", "static/*", "webapp/components/invoice_viewer/*", "capture/calibration.json",
-            "web/templates/*", "web/templates/partials/*", "web/static/*", "web/static/js/*"]
+ap_coder = ["assets/*", "static/*", "capture/calibration.json", "web/templates/*", "web/templates/partials/*",
+            "web/static/*", "web/static/js/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

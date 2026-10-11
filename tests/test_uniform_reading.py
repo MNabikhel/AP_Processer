@@ -214,9 +214,8 @@ def test_iphone_photos_are_read_like_any_photo(tmp_path, monkeypatch):
 
 
 def test_the_review_screen_shows_an_iphone_photo(tmp_path, monkeypatch):
-    """AP checks the fields against the page: a HEIC invoice is drawn on the review screen like any photo, in the
-    highlighted view (and the plain one it falls back to)."""
-    from ap_coder.webapp import capture_panel, common, viewer
+    """AP checks the fields against the page: a HEIC invoice is drawn on the review screen like any photo."""
+    from ap_coder.web import document
 
     fake = types.ModuleType("pillow_heif")
     fake.register_heif_opener = lambda: None
@@ -224,9 +223,9 @@ def test_the_review_screen_shows_an_iphone_photo(tmp_path, monkeypatch):
     monkeypatch.setattr(layout, "_heif_registered", None)
     photo = tmp_path / "IMG_0003.HEIC"
     photo.write_bytes(_png())  # a PNG stands in for the HEIC photo: Pillow tells a picture by its content
-    assert ".heic" in capture_panel.VIEWABLE and ".heif" in capture_panel.VIEWABLE
-    assert len(viewer.render_pages(photo)) == 1
-    assert len(common.render_pages.__wrapped__(str(photo), photo.stat().st_mtime)) == 1
+    assert ".heic" in document.VIEWABLE and ".heif" in document.VIEWABLE
+    assert len(document.page_sizes(photo)) == 1
+    assert document.page_png(photo, 1).startswith(b"\x89PNG")
 
 
 # --- A digital PDF's hidden text against the page as printed ----------------------------------------------------

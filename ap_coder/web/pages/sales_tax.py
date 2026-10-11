@@ -1,6 +1,6 @@
 """Sales tax: the GST/HST and QST to claim back for a period, the claims to check first, and PST / QST possibly to
-self-assess (``ap_coder/webapp/sales_tax.py`` in Streamlit). ``GET /sales-tax?start=&end=&show=risky|all``; the claims
-and the self-assessment list download as CSVs (``taxreturn.to_csv`` / ``taxreturn.self_assessment_csv``)."""
+self-assess. ``GET /sales-tax?start=&end=&show=risky|all``; the claims and the self-assessment list download as CSVs
+(``taxreturn.to_csv`` / ``taxreturn.self_assessment_csv``)."""
 
 from __future__ import annotations
 

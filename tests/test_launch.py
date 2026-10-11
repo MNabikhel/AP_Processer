@@ -81,7 +81,7 @@ def test_only_the_missing_package_is_installed(launch, monkeypatch):
 
 
 def test_first_install_is_the_editable_folder_with_the_ocr_add_on(launch, monkeypatch):
-    calls = _fake_pip(launch, monkeypatch, ["streamlit>=1.62", "rapidocr>=3.4,<3.5"], "Missing: ap_coder")
+    calls = _fake_pip(launch, monkeypatch, ["fastapi>=0.115,<1", "rapidocr>=3.4,<3.5"], "Missing: ap_coder")
     launch.ensure_packages({})
     assert calls == [["-e", ".[ocr]"]]
 
@@ -137,11 +137,11 @@ def test_a_second_ocr_engine_that_cannot_be_installed_is_said_once(launch, monke
 
 
 def test_a_failed_install_stops_with_what_to_do(launch, monkeypatch):
-    _fake_pip(launch, monkeypatch, ["streamlit>=1.62"], fails={"streamlit>=1.62"})
+    _fake_pip(launch, monkeypatch, ["fastapi>=0.115,<1"], fails={"fastapi>=0.115,<1"})
     with pytest.raises(launch.SetupError) as exc:
         launch.ensure_packages({})
-    assert "wheelhouse folder has no streamlit for Python" in exc.value.hint and "3.12" in exc.value.hint
-    _fake_pip(launch, monkeypatch, ["streamlit>=1.62"], fails={"streamlit>=1.62"}, source=[])  # opted in: PyPI
+    assert "wheelhouse folder has no fastapi for Python" in exc.value.hint and "3.12" in exc.value.hint
+    _fake_pip(launch, monkeypatch, ["fastapi>=0.115,<1"], fails={"fastapi>=0.115,<1"}, source=[])  # opted in: PyPI
     with pytest.raises(launch.SetupError) as exc:
         launch.ensure_packages({})
     assert "HTTPS_PROXY" in exc.value.hint
@@ -178,10 +178,10 @@ def test_offline_pip_never_runs_without_no_index(launch, tmp_path, monkeypatch, 
     """The offline default: pip runs only against the bundle's wheelhouse (``--no-index``), never PyPI."""
     monkeypatch.setattr(launch, "ROOT", tmp_path)
     commands = _record_pip(launch, monkeypatch)
-    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["streamlit>=1.62", "rapidocr>=3.4,<3.5"], "x"))
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["fastapi>=0.115,<1", "rapidocr>=3.4,<3.5"], "x"))
     with pytest.raises(launch.SetupError) as exc:  # no wheelhouse: nothing run, and it says what is missing
         launch.ensure_packages({})
-    assert commands == [] and "streamlit" in str(exc.value) and "offline bundle" in str(exc.value)
+    assert commands == [] and "fastapi" in str(exc.value) and "offline bundle" in str(exc.value)
     assert not launch.pip_install(["openpyxl"]) and commands == []
     (tmp_path / "wheelhouse").mkdir()
     with pytest.raises(launch.SetupError):

@@ -1,5 +1,4 @@
-"""Vendors: every supplier seen on an invoice, its spend and AI accuracy, and AP's controls
-(``ap_coder/webapp/vendors.py`` in Streamlit).
+"""Vendors: every supplier seen on an invoice, its spend and AI accuracy, and AP's controls.
 
 * ``GET /vendors?view=all|hold|new&q=&sort=``: the list; ``&open=<vendor key>`` opens one vendor under it: GL accounts
   used, GST/HST numbers and bank accounts its invoices carried (the history, masked), recent invoices, the terms and

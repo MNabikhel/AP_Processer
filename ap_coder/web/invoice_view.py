@@ -8,8 +8,7 @@
   why these codes, GL suggestions, the PO match, the tax check, the posting preview and the approve bar.
 * The grid actions (split a line, the coding rules, the PO's coding, a suggested GL account) return new grid rows.
 
-Ported from the Streamlit screen (``ap_coder/webapp/review.py`` ``render_invoice`` and ``capture_panel.py``), with
-the same store calls and the same rules for what may be approved and what is learned.
+The store calls and the rules for what may be approved and what is learned are the store's and the pipeline's own.
 """
 
 from __future__ import annotations

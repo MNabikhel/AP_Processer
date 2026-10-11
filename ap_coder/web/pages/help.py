@@ -1,7 +1,7 @@
 """Help: getting started, how every invoice is read, the AP routine, what every check means and what to do about it
-(``ap_coder.help.CHECKS``, searchable by word and area), questions, shortcuts and where the data is. Ported from
-``ap_coder/webapp/help.py``. The search and the area are in the address (``/help?q=duplicate&area=Sales+tax``), so a
-filtered list can be linked to; the page also filters as you type.
+(``ap_coder.help.CHECKS``, searchable by word and area), questions, shortcuts and where the data is. The search and
+the area are in the address (``/help?q=duplicate&area=Sales+tax``), so a filtered list can be linked to; the page also
+filters as you type.
 """
 
 from __future__ import annotations

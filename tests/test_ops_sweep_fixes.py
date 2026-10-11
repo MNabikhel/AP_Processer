@@ -372,7 +372,7 @@ def test_a_bundle_without_packages_for_this_kind_of_computer_says_so(launch, mon
             "win_amd64, Python 3.13")  # fmt: skip
     monkeypatch.setattr(launch, "wheel_platform", lambda: "macosx_15_0_arm64")
     assert launch.bundle_pythons() == []
-    hint = launch.install_hint(["--no-index"], ["streamlit>=1.62"])
+    hint = launch.install_hint(["--no-index"], ["fastapi>=0.115,<1"])
     assert "no packages for this kind of computer (macosx_15_0_arm64)" in hint
     assert "--platform macosx_15_0_arm64" in hint and "install Python 3.12" not in hint
     monkeypatch.setattr(launch, "wheel_platform", lambda: "win_amd64")  # a Windows laptop: those are its versions
@@ -390,5 +390,5 @@ def test_installing_the_advised_python_is_not_undone_by_the_existing_venv(launch
     _bundle(launch, "win_amd64, Python 3.12")
     monkeypatch.setattr(launch, "wheel_platform", lambda: "win_amd64")
     monkeypatch.setattr(launch, "sys", SimpleNamespace(version_info=(3, 14, 0)))
-    hint = launch.install_hint(["--no-index"], ["streamlit>=1.62"])
+    hint = launch.install_hint(["--no-index"], ["fastapi>=0.115,<1"])
     assert "install Python 3.12 on this computer and delete the .venv folder" in hint

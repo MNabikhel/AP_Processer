@@ -1,5 +1,4 @@
-"""Purchase orders: import open POs from the ERP; invoices quoting a PO are matched against it
-(``ap_coder/webapp/purchase_orders.py`` in Streamlit).
+"""Purchase orders: import open POs from the ERP; invoices quoting a PO are matched against it.
 
 * ``GET /purchase-orders?q=&status=open|closed|all&po=<key>``: the list, and one PO's lines with what was ordered,
   received and billed, and the invoices on it.

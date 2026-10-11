@@ -428,7 +428,7 @@ def test_about_tab(client, env_file):
     assert str(env_file) in text and "FastAPI" in text
 
 
-def test_settings_change_from_settings_page_is_the_same_env_as_streamlits(env_file):
+def test_the_settings_page_writes_the_env_ap_coder_reads(env_file):
     """The web page writes the .env AP Coder reads (AP_ENV_FILE, else the data folder's)."""
     assert settings_page.env_path() == env_file
     assert json.dumps(sorted(settings_page.TAB_KEYS)) == json.dumps(sorted(TABS))

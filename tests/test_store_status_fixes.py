@@ -6,13 +6,12 @@ import threading
 import time
 
 import pytest
-from streamlit.testing.v1 import AppTest
 
 import ap_coder.store as store_module
 from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER
 from ap_coder.store import APPROVED, PARKED, PENDING, REJECTED, Store
 
-from .test_dashboard_pages import TIMEOUT, _ok, db  # noqa: F401  (db is a fixture)
+from .webclient import client_for
 
 LINES = [{"line_number": 1, "description": "Widgets", "amount": 100.0, "predicted_gl_code": "6000",
           "predicted_cost_center": ""}]  # fmt: skip
@@ -168,16 +167,13 @@ def test_an_undone_batch_shows_its_totals_per_currency(tmp_path):
     assert store.export_batches()[0]["total"] == 100.0 and store.exported_totals()[single] == {"CAD": 100.0}
 
 
-def test_the_exports_page_shows_an_undone_batch_per_currency(db):  # noqa: F811
-    store = Store(db)
+def test_the_exports_page_shows_an_undone_batch_per_currency(tmp_path):
+    store = Store(tmp_path / "private" / "ap_coder.db")
     ids = []
     for number, total, currency in (("1", 100.0, "CAD"), ("2", 40.0, "USD")):
-        invoice_id, output = _invoice(db.parent, store, number, total, currency)
+        invoice_id, output = _invoice(tmp_path, store, number, total, currency)
         store.approve_invoice(invoice_id, output, "Ann")
         ids.append(invoice_id)
     store.undo_export_batch(store.create_export_batch(ids, "csv"))
-    at = _ok(AppTest.from_string(
-        "from ap_coder.webapp.exports import page_exports\npage_exports()", default_timeout=TIMEOUT
-    ).run())  # fmt: skip
-    html = " ".join(h.proto.body for h in at.get("html"))
-    assert "40.00 <span class='apc-muted'>USD</span>" in html and "140.00" not in html
+    page = client_for(store).get("/exports").text
+    assert '40.00 <span class="muted">USD</span>' in page and "140.00" not in page

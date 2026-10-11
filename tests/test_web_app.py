@@ -59,9 +59,16 @@ def test_every_page_in_the_rail_answers(client):
     assert "Offline · Data stays on this computer" in text
 
 
-def test_rail_order_and_sections_match_the_streamlit_sidebar():
-    from ap_coder.webapp.common import NAV_SECTIONS
+NAV_SECTIONS = {
+    "Work": ["review", "process", "search"],
+    "Close & compliance": ["exports", "month_end", "sales_tax", "statements"],
+    "Master data": ["vendors", "purchase_orders", "accounts"],
+    "Analytics": ["learning", "spend", "insights", "activity"],
+    "System": ["settings", "help"],
+}
 
+
+def test_rail_order_and_sections():
     assert [p.key for p in PAGES] == [k for keys in NAV_SECTIONS.values() for k in keys]
     assert {p.key: p.section for p in PAGES} == {k: s for s, keys in NAV_SECTIONS.items() for k in keys}
 

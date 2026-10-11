@@ -94,8 +94,6 @@ def excluded(rel: Path) -> bool:
         return True  # the launcher's lock file (scripts/launch.py)
     if name == ".env" or (name.startswith(".env.") and name != ".env.example"):
         return True  # settings with keys
-    if rel.as_posix() == ".streamlit/secrets.toml":
-        return True
     lower = name.lower()
     if lower.endswith(DATA_SUFFIXES) or ".db-" in lower or ".sqlite" in lower:
         return True  # a database or a workbook left in the code folder (as .gitignore, also without git)
@@ -129,8 +127,8 @@ PIP_FOR_TARGET = ("import json, sys; from pip._vendor.packaging import markers; 
 def marker_env(platform: str, version: str) -> dict[str, str]:
     """The PEP 508 marker values of a computer with this wheel platform and Python version. pip evaluates the
     markers in requirements for the Python that runs it, even with ``--platform`` and ``--python-version``:
-    built on Linux, a Windows wheelhouse would lack click's ``colorama; platform_system == "Windows"``, and a
-    Mac one would ask for streamlit's ``watchdog; platform_system != "Darwin"`` (no Mac wheel for 3.14)."""
+    built on Linux, a Windows wheelhouse would lack click's ``colorama; platform_system == "Windows"`` (uvicorn
+    needs click), and a Mac one would ask for a package marked ``platform_system != "Darwin"`` that has no Mac wheel."""
     found = re.search(r"(amd64|x86_64|arm64|aarch64|universal2|win32|i686)$", platform)
     machine = found.group(1) if found else ""
     env = {"python_version": version, "python_full_version": f"{version}.0", "implementation_name": "cpython",

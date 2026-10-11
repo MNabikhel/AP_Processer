@@ -1,6 +1,6 @@
-"""Month-end: the accruals schedule, costs incurred by the period end that are not in the ERP yet
-(``ap_coder/webapp/month_end.py`` in Streamlit). ``GET /month-end?end=YYYY-MM-DD``; the schedule downloads as a CSV
-(``GET /month-end/accruals.csv?end=``, ``accruals.to_csv``)."""
+"""Month-end: the accruals schedule, costs incurred by the period end that are not in the ERP yet.
+``GET /month-end?end=YYYY-MM-DD``; the schedule downloads as a CSV (``GET /month-end/accruals.csv?end=``,
+``accruals.to_csv``)."""
 
 from __future__ import annotations
 

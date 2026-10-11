@@ -1,5 +1,4 @@
-"""Vendor statements: reconcile a vendor's statement of account with the invoices AP Coder holds
-(``ap_coder/webapp/statements.py`` in Streamlit).
+"""Vendor statements: reconcile a vendor's statement of account with the invoices AP Coder holds.
 
 The statement is uploaded (``POST /statements/upload``, kept in memory for an hour, never stored), then
 ``GET /statements?vendor=&file=&col_<field>=`` shows its columns and the reconciliation, the email asking the vendor

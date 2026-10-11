@@ -268,8 +268,8 @@ def test_install_hint_names_the_bundles_versions_and_the_build_command(launch, m
     _manifest(launch, "3.11", "3.12", "3.13", current="3.12")
     monkeypatch.setattr(launch, "wheel_platform", lambda: "win_amd64")
     version = f"{sys.version_info[0]}.{sys.version_info[1]}"
-    hint = launch.install_hint(["--no-index"], ["streamlit>=1.62"])
-    assert f"no streamlit for Python {version} on this computer" in hint
+    hint = launch.install_hint(["--no-index"], ["fastapi>=0.115,<1"])
+    assert f"no fastapi for Python {version} on this computer" in hint
     assert "built for Python 3.11, 3.12 and 3.13" in hint
     assert f"build_offline_bundle.py --python {version} --platform win_amd64" in hint
     assert "install Python 3.12" in hint and "start AP Coder again" in hint

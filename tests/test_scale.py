@@ -1,19 +1,16 @@
 """Pages stay light with a big database: batched queries, a paged queue, a capped approved list."""
 
 import json
-import sys
+import re
 
 import pytest
-import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from ap_coder.bulk import clean_candidates
 from ap_coder.demo import load_demo
 from ap_coder.store import APPROVED, REVIEW, Store, load_sample_setup
 
-from .conftest import ROOT, SAMPLE_STEM, SAMPLES
-
-APP = str(ROOT / "ap_coder" / "dashboard.py")
+from .conftest import SAMPLE_STEM, SAMPLES
+from .webclient import client_for
 
 
 def _add(store, tmp_path, n, approve=0):
@@ -58,33 +55,35 @@ def test_clean_candidates_skip_flagged_and_warned(tmp_path):
 
 
 @pytest.fixture
-def app_db(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    store = Store(path)
+def app_db(tmp_path):
+    store = Store(tmp_path / "private" / "ap_coder.db")
     load_sample_setup(store)
     return store
 
 
+def _rows(page: str) -> list[int]:
+    return [int(i) for i in re.findall(r'class="rq-row[^"]*"[^>]*>\s*<a[^>]*href="/review/(\d+)"', page)] or [
+        int(i) for i in dict.fromkeys(re.findall(r'href="/review/(\d+)"', page))
+    ]
+
+
 def test_queue_is_paged(app_db, tmp_path):
     ids = _add(app_db, tmp_path, 120, approve=0)
-    at = AppTest.from_file(APP, default_timeout=120).run()
-    assert not at.exception
-    cards = [b.key for b in at.button if (b.key or "").startswith("qopen_")]
-    assert len(cards) == 50
-    at.button(key="queue_more").click().run()
-    assert len([b for b in at.button if (b.key or "").startswith("qopen_")]) == 100
-    assert len(at.session_state["queue_order"]) == len(ids)  # Previous / Next still cover the whole queue
+    client = client_for(app_db)
+    page = client.get("/review").text
+    assert len(_rows(page)) == 50 and "?limit=100" in page.replace("&amp;", "&")  # Show more
+    assert len(_rows(client.get("/review?limit=100").text)) == 100
+    last = _rows(client.get("/review?limit=200").text)
+    assert sorted(last) == sorted(ids)
+    # Previous / Next still cover the whole queue: the review screen counts all 120.
+    assert f"of {len(ids)}<" in client.get(f"/review/{last[0]}").text.replace("</b> of ", "of ")
 
 
 def test_approved_list_is_capped_but_every_invoice_can_be_opened(app_db, tmp_path):
-    _add(app_db, tmp_path, 105, approve=105)
+    ids = _add(app_db, tmp_path, 105, approve=105)
     assert len(app_db.list_invoices(APPROVED)) == 105
-    at = AppTest.from_file(APP, default_timeout=120).run()
-    assert not at.exception
-    assert len(at.selectbox(key="view_approved").options) == 105
-    assert any("100 most recent of 105" in c.value for c in at.caption)
+    client = client_for(app_db)
+    page = client.get("/review?tab=approved").text
+    assert "The 100 most recent of 105." in page and len(set(_rows(page))) == 100
+    oldest = min(ids, key=lambda i: app_db.get_invoice(i)["reviewed_at"] or "")
+    assert client.get(f"/review/{oldest}").status_code == 200  # every one opens (Find an invoice finds it)

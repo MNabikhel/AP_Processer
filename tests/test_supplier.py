@@ -1,12 +1,11 @@
 """Supplier learning: templates learned from confirmed values, accuracy statistics and the path to autonomy."""
 
+import html
 import json
+import re
 import sqlite3
-import sys
 
 import pytest
-import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from ap_coder.capture.supplier import (
     AUTONOMOUS,
@@ -593,40 +592,28 @@ def test_demo_records_and_removes_supplier_outcomes(tmp_path):
 
 
 @pytest.fixture
-def db(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    return path
+def client(tmp_path, monkeypatch):
+    from .webclient import client_for
 
-
-def _learning_page():
-    return AppTest.from_string(
-        "from ap_coder.webapp.learning import page_learning\npage_learning()", default_timeout=90
-    )
-
-
-def _ok(at):
-    assert not at.exception, [e.value for e in at.exception]
-    return at
-
-
-def _html(at):
-    return " ".join(str(h.proto.body) for h in at.get("html"))
-
-
-def test_learning_page_supplier_tab_empty(db):
-    at = _ok(_learning_page().run())
-    assert [t.label for t in at.tabs] == ["Coding accuracy", "Supplier learning", "Readers"]
-    assert "No supplier learned yet" in _html(at)
-
-
-def test_learning_page_is_a_training_view_with_keep_supervised(db, tmp_path, ground_truth, monkeypatch):
     monkeypatch.setenv("AP_REVIEWER", "Manager Mia")
-    store = Store(db)
+    return client_for(Store(tmp_path / "private" / "ap_coder.db"))
+
+
+def _text(page: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page)))
+
+
+def test_learning_page_supplier_tab_empty(client):
+    page = client.get("/learning?tab=suppliers").text
+    for tab in ("Coding accuracy", "Supplier learning", "Readers"):
+        assert tab in page
+    assert "No supplier learned yet" in page
+
+
+def test_learning_page_is_a_training_view_with_keep_supervised(client, tmp_path, ground_truth):
+    from .webclient import follow, post
+
+    store = client.app.state.store
     ids = _invoice_ids(store, ground_truth, tmp_path, 42)
     for i, invoice_id in enumerate(ids[:30]):
         store.record_outcomes(
@@ -635,25 +622,23 @@ def test_learning_page_is_a_training_view_with_keep_supervised(db, tmp_path, gro
     for i, invoice_id in enumerate(ids[30:]):
         store.record_outcomes("id:V2", invoice_id, _outcomes(bad=i == 7), display_name="Chinook",
                               at=f"2026-01-02T00:00:{i:02d}")  # fmt: skip
-    at = _ok(_learning_page().run())
-    html = _html(at)
-    assert "Northwind" in html and "Ready" in html and "Chinook" in html and "Learning" in html
-    assert "12 of 20 invoices; 6 more clean in a row needed" in html
-    assert "12 invoices reviewed · 1 correction in the last 12" in html
-    assert "about 32 more clean invoices to go touchless" in html  # the accuracy bound needs the most
-    assert "touchless processing is on (Settings → Automation)" in html  # Northwind waits for the switch
-    assert not [b for b in at.button if (b.key or "").startswith(("sup_on_", "sup_off_"))]  # no per-vendor switch
-    assert any("Touchless processing is **off**" in c.value for c in at.caption)
-    hold = next(b.key for b in at.button if (b.key or "").startswith("sup_hold_"))
-    at.text_input(key="sup_why_" + hold[len("sup_hold_") :]).set_value("prices changing")
-    _ok(at.button(key=hold).click().run())
+    page = client.get("/learning?tab=suppliers").text
+    text = _text(page)
+    assert "Northwind" in text and "Ready" in text and "Chinook" in text and "Learning" in text
+    assert "12 of 20 invoices; 6 more clean in a row needed" in text
+    assert "12 invoices reviewed · 1 correction in the last 12" in text
+    assert "about 32 more clean invoices to go touchless" in text  # the accuracy bound needs the most
+    assert "touchless processing is on (Settings → Automation)" in text  # Northwind waits for the switch
+    assert "/learning/suppliers/on" not in page and "/learning/suppliers/off" not in page  # no per-vendor switch
+    assert "Touchless processing is off" in text
+    key = re.search(r'action="/learning/suppliers/hold".*?name="key" value="([^"]+)"', page, re.S).group(1)
+    follow(client, post(client, "/learning/suppliers/hold", {"key": key, "reason": "prices changing"}))
     held = [k for k in ("id:V1", "id:V2") if store.get_supplier_profile(k)["state"] == HELD]
-    assert len(held) == 1
+    assert held == [key]
     event = store.events(actions=["autonomy_held"])[0]
     assert event["actor"] == "Manager Mia" and event["detail"]["reason"] == "prices changing"
-    assert "Kept supervised" in _html(at)
-    allow = next(b.key for b in at.button if (b.key or "").startswith("sup_allow_"))
-    _ok(at.button(key=allow).click().run())
+    assert "Kept supervised" in client.get("/learning?tab=suppliers").text
+    follow(client, post(client, "/learning/suppliers/allow", {"key": key}))
     assert store.get_supplier_profile(held[0])["state"] == SUPERVISED
     assert store.events(actions=["autonomy_allowed"])[0]["actor"] == "Manager Mia"
 

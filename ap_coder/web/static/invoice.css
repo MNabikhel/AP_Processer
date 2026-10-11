@@ -1,6 +1,5 @@
-/* The invoice review screen (/review/<id>, templates/invoice.html). The look of the Streamlit screen
-   (ap_coder/assets/review.css, classes rvw-*), on the dashboard's Ledger tokens (app.css). The page viewer's own
-   styles are in invoice_viewer.css. */
+/* The invoice review screen (/review/<id>, templates/invoice.html): classes rvw-* and inv-*, on the dashboard's
+   Ledger tokens (app.css). The page viewer's own styles are in invoice_viewer.css. */
 /* ---- Top: breadcrumb, then Queue · Reviewing 3 of 9 · Shortcuts · Previous · Next ---------------------------- */
 .inv-top {display: flex; flex-direction: column; gap: 8px;}
 .rvw-nav {display: flex; align-items: center; gap: 8px; flex-wrap: wrap;}

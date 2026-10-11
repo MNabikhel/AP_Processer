@@ -34,7 +34,7 @@ GROUPS = {
                  "autonomy_held", "autonomy_allowed", "touchless_on", "touchless_off", "page_reader_tested"],
     "Backups": ["backup_made", "backup_restored"],
 }  # fmt: skip
-EVENTS_READ = 5000  # the newest events the page works on (as the Streamlit page did)
+EVENTS_READ = 5000  # the newest events the page works on
 TIMELINE_SHOWN = 200
 TABLE_SHOWN = 1000
 AUDIT_SHOWN = 100

@@ -4,12 +4,10 @@ correction, how confidence and weeks are shown, per-reviewer counts, vendor spen
 import datetime as dt
 import io
 import json
-import sys
+import re
 import zipfile
 
 import pytest
-import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from ap_coder import help as help_catalog
 from ap_coder import stamp, taxreturn
@@ -19,10 +17,8 @@ from ap_coder.schema import InvoiceCoding
 from ap_coder.store import APPROVED, PENDING, Store, load_sample_setup
 from ap_coder.tax import check_taxes, gst_check_digit_ok
 
-from .conftest import ROOT, SAMPLE_STEM, SAMPLES
-
-APP = str(ROOT / "ap_coder" / "dashboard.py")
-TIMEOUT = 90
+from .conftest import SAMPLE_STEM, SAMPLES
+from .webclient import client_for, follow, post
 
 
 def _gt(stem=SAMPLE_STEM):
@@ -31,31 +27,10 @@ def _gt(stem=SAMPLE_STEM):
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
     monkeypatch.setenv("AP_REVIEWER", "Sam")
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    store = Store(path)
+    store = Store(tmp_path / "private" / "ap_coder.db")
     load_sample_setup(store)
     return store
-
-
-def _page(module, function):
-    return AppTest.from_string(
-        f"from ap_coder.webapp.{module} import {function}\n{function}()", default_timeout=TIMEOUT
-    )
-
-
-def _ok(at):
-    assert not at.exception, [e.value for e in at.exception]
-    return at
-
-
-def _html(at) -> str:
-    return " ".join(h.proto.body for h in at.get("html"))
 
 
 # --- 1. No APPROVED stamp before the second approval ---------------------------------------------------------------
@@ -81,12 +56,9 @@ def test_find_does_not_offer_the_approved_pdf_while_it_waits(db):
     db.set_setting("approval_limit", "10000")
     invoice_id = db.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", _gt(), {})
     db.approve_invoice(invoice_id, _gt(), "Jane")
-    at = _page("search", "page_search")
-    _ok(at.run())
-    at.text_input(key="search_query").input("northwind")
-    _ok(at.run())
-    assert not [b for b in at.button if b.key == f"search_pdf_make_{invoice_id}"]
-    assert any("once the second approver has approved it" in c.value for c in at.caption)
+    page = client_for(db).get("/search", params={"q": "northwind"}).text
+    assert f"/search/{invoice_id}/approved.pdf" not in page
+    assert "once the second approver has approved it" in page
 
 
 # --- 2. GST/HST check digit ---------------------------------------------------------------------------------------
@@ -152,21 +124,20 @@ def test_only_filling_in_blanks_is_not_a_coding_change(tmp_path):
 
 
 def test_confidence_rounds_like_the_messages_without_misleading():
-    from ap_coder.webapp.review import _confidence, confidence_pct
+    from ap_coder.web.pages.review import confidence_pct
 
     assert confidence_pct(0.837, 0.85) == "84%"  # rounded the usual way, as the bulk approval says it
     assert confidence_pct(0.876, 0.85) == "88%"
     assert confidence_pct(0.849, 0.85) == "84.9%"  # never shown as the threshold it is below
     assert confidence_pct(0.996, 0.85) == "99.6%"  # never shown as certainty
     assert confidence_pct(1.0, 0.85) == "100%"
-    assert "<b>88%</b>" in _confidence(0.876, 0.85)
 
 
 # --- 5. Approved today: this reviewer's -----------------------------------------------------------------------------
 
 
 def test_approved_today_counts_this_reviewers_approvals(db):
-    from ap_coder.webapp.common import approved_today
+    from ap_coder.web.core import approved_today
 
     for n, name in enumerate(("Jane", "Jane", "sam ")):
         invoice_id = db.add_invoice(db.path.parent / f"{n}.pdf", {**_gt(), "invoice_number": f"A-{n}"}, {})
@@ -200,9 +171,8 @@ def test_a_usd_vendor_shows_its_usd_spend_not_zero_cad(db):
     db.approve_invoice(invoice_id, doc, "Jane")
     (row,) = db.vendor_summaries()
     assert row["spend"] == {"USD": pytest.approx(doc["grand_total"])}
-    at = _ok(_page("vendors", "page_vendors").run())
-    page = _html(at)
-    assert "Spend (CAD)" not in page and "USD</span>" in page
+    page = client_for(db).get("/vendors").text
+    assert "Spend (CAD)" not in page and '<span class="muted">USD</span>' in page
 
 
 # --- 8. Download again ------------------------------------------------------------------------------------------------
@@ -212,12 +182,12 @@ def test_download_again_defaults_to_the_batchs_format_and_warns_about_jde_left_o
     invoice_id = db.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", _gt(), {})
     db.approve_invoice(invoice_id, _gt(), "Jane")
     batch = db.create_export_batch([invoice_id], "csv")
-    at = _ok(_page("exports", "page_exports").run())
-    choice = at.selectbox(key=f"export_again_fmt_{batch}")
-    assert choice.value == "csv"
-    assert not [w for w in at.warning if "JD Edwards" in w.value]
-    _ok(choice.select("jde").run())
-    warning = " ".join(w.value for w in at.warning)
+    client = client_for(db)
+    page = client.get("/exports", params={"batch": batch}).text
+    pick = page.split('name="bfmt"', 1)[1].split("</select>", 1)[0]
+    assert '<option value="csv" selected>' in pick
+    assert "cannot go to JD Edwards and" not in page
+    warning = re.sub(r"\s+", " ", client.get("/exports", params={"batch": batch, "bfmt": "jde"}).text)
     assert f"1 of 1 invoice in batch {batch} cannot go to JD Edwards" in warning and "holds no invoice" in warning
 
 
@@ -226,7 +196,7 @@ def test_download_again_defaults_to_the_batchs_format_and_warns_about_jde_left_o
 
 def test_setup_steps_never_claim_the_self_test_passed_before_it_has(tmp_path):
     from ap_coder.reading import ReadingStatus
-    from ap_coder.webapp.reading_settings import setup_steps
+    from ap_coder.web.pages.settings_reading import setup_steps
 
     found = ReadingStatus(page_reader_model="ovis", self_test="pending")
     steps = {label: (state, detail) for state, label, detail in setup_steps(found, True, (False, ""))}
@@ -240,16 +210,15 @@ def test_setup_steps_never_claim_the_self_test_passed_before_it_has(tmp_path):
 # --- 10. Over the limit: first approval, not "Approved" ---------------------------------------------------------------
 
 
-def test_over_the_limit_toast_says_first_approval_recorded(db):
+def test_over_the_limit_message_says_first_approval_recorded(db):
+    from .test_web_invoice import form_of
+
     db.set_setting("approval_limit", "10000")
     invoice_id = db.add_invoice(
         SAMPLES / f"{SAMPLE_STEM}.pdf", _gt(), {"requires_review": False, "adjusted_confidence": 0.95}
     )
-    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
-    at.session_state["open_invoice"] = invoice_id
-    _ok(at.run())
-    _ok(at.button(key=f"inv{invoice_id}_approve").click().run())
+    client = client_for(db)
+    page = follow(client, post(client, f"/review/{invoice_id}/approve", form_of(db, invoice_id)))
     assert db.get_invoice(invoice_id)["status"] == PENDING
-    toasts = [t.value for t in at.toast]
-    assert any(t.startswith("First approval recorded") and "second approver" in t for t in toasts), toasts
-    assert not any(t.startswith("Approved ") for t in toasts), toasts
+    assert "First approval recorded for" in page and "second approver" in page
+    assert "Approved Northwind" not in page

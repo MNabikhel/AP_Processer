@@ -1,7 +1,5 @@
-/* AP Coder invoice viewer: the invoice page with a box over every field read from it (the review screen).
-
-   Ported from the Streamlit component (ap_coder/webapp/components/invoice_viewer/viewer.js): the same viewer, given
-   its data directly instead of through Streamlit's component protocol.
+/* AP Coder invoice viewer: the invoice page with a box over every field read from it (the review screen), given its
+   data directly by the page.
 
      import { InvoiceViewer } from "./invoice_viewer.js";
      const viewer = new InvoiceViewer(root, (event) => ...);
@@ -1100,7 +1098,7 @@ export class InvoiceViewer {
     }
   }
 
-  /** Kept from the Streamlit component (it sized its frame); here the page sizes itself. */
+  /** Called whenever the viewer's height may change: nothing to do, the page sizes itself. */
   reportHeight() {}
 
   /* ----- Called by the page ----- */

@@ -7,7 +7,7 @@ Reject, Delete). Any other invoice opens read-only, with what can be done in its
 sending it back, bringing a parked one back, reopening an approved (for correction) or a rejected one.
 
 Every edit is checked as the reviewer types (``POST /review/<id>/check`` answers the sections again) and kept as a
-draft for this dashboard's lifetime, so moving to another invoice and back keeps it, as the Streamlit screen did.
+draft for this dashboard's lifetime, so moving to another invoice and back keeps it.
 What is worked out lives in ``ap_coder/web/invoice_view.py``; the page script is ``static/js/invoice.js`` with the
 page viewer ``static/js/invoice_viewer.js``.
 

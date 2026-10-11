@@ -112,7 +112,7 @@ def test_doctor_missing_packages_fail_with_the_offline_fix(reference, monkeypatc
     from ap_coder import doctor
     from ap_coder.config import LocalLLMSettings
 
-    gone = {"pymupdf", "streamlit", "pandas", "python-dotenv"}
+    gone = {"pymupdf", "fastapi", "uvicorn", "pandas", "python-dotenv"}
     real = doctor._version
     monkeypatch.setattr(doctor, "_version", lambda pkg: None if pkg in gone else real(pkg))
     checks = {c.area: c for c in doctor.run_checks(Settings(llm=LocalLLMSettings(provider="off")), lambda: reference)}

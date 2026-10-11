@@ -1,15 +1,14 @@
 """Second approval above the approval limit (separation of duties)."""
 
 import json
-import sys
+import re
 
 import pytest
-import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from ap_coder.store import APPROVED, PENDING, REVIEW, Store, load_sample_setup
 
-from .conftest import ROOT, SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES
+from .webclient import client_for, follow, post
 
 
 def _gt():
@@ -78,23 +77,17 @@ def test_waiting_invoices_still_count_for_duplicates_and_pos(store, tmp_path):
 
 
 def test_second_approval_tab(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
     monkeypatch.setenv("AP_REVIEWER", "Sam")
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    store = Store(path)
+    store = Store(tmp_path / "private" / "ap_coder.db")
     load_sample_setup(store)
     store.set_setting("approval_limit", "10000")
     invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
     store.approve_invoice(invoice_id, _gt(), "Jane")
-    at = AppTest.from_file(str(ROOT / "ap_coder" / "dashboard.py"), default_timeout=90).run()
-    assert not at.exception
-    assert not at.button(key=f"second_ok_{invoice_id}").disabled  # Sam did not approve it first
-    at.button(key=f"second_ok_{invoice_id}").click().run()
-    assert not at.exception
+    client = client_for(store)
+    page = client.get("/review?tab=second").text
+    button = re.search(rf'action="/review/{invoice_id}/final-approve">\s*<button[^>]*>', page).group(0)
+    assert "disabled" not in button  # Sam did not approve it first
+    follow(client, post(client, f"/review/{invoice_id}/final-approve"))
     assert store.get_invoice(invoice_id)["status"] == APPROVED
 
 

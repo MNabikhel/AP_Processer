@@ -1,6 +1,6 @@
 """What every page of the dashboard shares: templates, the data, the rail, messages after an action.
 
-A page module uses these and nothing of Streamlit::
+A page module uses these::
 
     store, settings = get_store(request), get_settings(request)
     return render(request, "vendors.html", "vendors", vendors=store.vendor_summaries())
@@ -47,7 +47,7 @@ from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, SECTIONS
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
-FONTS_DIR = WEB_DIR.parent / "static"  # Inter and the Material Symbols icons (shared with the Streamlit dashboard)
+FONTS_DIR = WEB_DIR.parent / "static"  # Inter and the Material Symbols icons
 ASSETS_DIR = WEB_DIR.parent / "assets"  # logo and icon
 
 TARGET_ACCURACY = 0.90

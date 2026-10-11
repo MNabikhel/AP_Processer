@@ -1,6 +1,6 @@
 """Settings → JD Edwards E1: company, batch, amount and account formats, the GL → BU.Object.Subsidiary mapping, the
-province → tax area table, PO-matched vouchers and supplier address numbers. Ported from
-``ap_coder/webapp/jde_settings.py``; saved with ``ap_coder.jde.save`` (logged), checked with ``jde.settings_problems``.
+province → tax area table, PO-matched vouchers and supplier address numbers. Saved with ``ap_coder.jde.save``
+(logged), checked with ``jde.settings_problems``.
 
 The editable tables (GL mapping, address numbers) are rows of inputs posted as lists (``gl_code``, ``bu``... one value
 per row); a row without a GL code (or vendor) is dropped, which is how a row is removed without JavaScript.

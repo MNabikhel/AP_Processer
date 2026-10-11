@@ -282,22 +282,6 @@ def is_loopback(address: str) -> bool:
         return False
 
 
-def streamlit_flags(port: int, address: str | None = None) -> list[str]:
-    """The Streamlit settings ``python -m ap_coder dashboard`` starts with: listen locally, no usage
-    statistics, no e-mail prompt, assets served from the package (nothing loaded from the internet)."""
-    address = address or dashboard_address()
-    browser = "localhost" if address in ("0.0.0.0", "::") else address  # the browser opens this address
-    return [
-        "--server.port", str(port), "--server.address", address, "--browser.serverAddress", browser,
-        "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
-        "--server.enableStaticServing", "true", "--server.showEmailPrompt", "false",
-    ]  # fmt: skip
-
-
-def _flag(flags: list[str], name: str) -> str | None:
-    return flags[flags.index(name) + 1] if name in flags and flags.index(name) + 1 < len(flags) else None
-
-
 # --- doctor -------------------------------------------------------------------------------------------------------
 
 
@@ -340,14 +324,10 @@ def offline_checks() -> list[tuple[str, str, str]]:
         status, detail = FAIL, f"not writable ({type(exc).__name__})"
     out.append(("data folder", status, detail))
 
-    flags = streamlit_flags(8501)
-    address = _flag(flags, "--server.address") or ""
-    stats = _flag(flags, "--browser.gatherUsageStats")
-    if not is_loopback(address):
+    address = dashboard_address()
+    if not is_loopback(address if address not in ("", "localhost") else "127.0.0.1"):
         detail = f"listens on {address} ({ADDRESS_ENV}): others on the network can open it"
         out.append(("dashboard network", WARN, detail))
-    elif stats != "false":
-        out.append(("dashboard network", FAIL, "Streamlit usage statistics are not switched off"))
     else:
         detail = "this computer only; no usage statistics; fonts and icons served locally"
         out.append(("dashboard network", PASS, detail))

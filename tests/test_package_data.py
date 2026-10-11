@@ -17,7 +17,7 @@ def _patterns():
     return data["tool"]["setuptools"]["package-data"]["ap_coder"]
 
 
-@pytest.mark.parametrize("folder", ["web/templates", "web/static"])
+@pytest.mark.parametrize("folder", ["web/templates", "web/static", "static", "assets"])
 def test_every_web_file_is_packaged(folder):
     patterns = _patterns()
     missing = []

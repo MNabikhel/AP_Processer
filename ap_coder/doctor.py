@@ -82,7 +82,10 @@ _PACKAGES = {
     "pydantic": "",
     "openpyxl": "",
     "pymupdf": " (PDFs can't be read)",
-    "streamlit": " (the dashboard can't start)",
+    "fastapi": " (the dashboard can't start)",
+    "uvicorn": " (the dashboard can't start)",
+    "jinja2": " (the dashboard can't start)",
+    "python-multipart": " (invoices can't be uploaded on the dashboard)",
     "pandas": " (the dashboard can't start)",
     "python-dotenv": " (settings can't be read)",
 }

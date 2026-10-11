@@ -1,6 +1,6 @@
 """Per-supplier learning and the path to touchless processing ("autonomy").
 
-Pure logic, no Streamlit and no database (the store keeps what this module computes):
+Pure logic, no web page and no database (the store keeps what this module computes):
 
 * ``supplier_key``: one stable key per supplier (vendor master id, else GST/HST business number, else
   the normalized name).

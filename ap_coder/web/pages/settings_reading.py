@@ -1,5 +1,4 @@
 """Settings → Reading: how AP Coder reads every invoice, the same way each time, and how each reader is doing.
-Ported from ``ap_coder/webapp/reading_settings.py``.
 
 Nothing to choose here. Every invoice goes through the same readers (``ap_coder.reading``); the tab shows each one's
 state, the page reader's (OvisOCR2 in LM Studio) self-test (run again from here, its progress polled from

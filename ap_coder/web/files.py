@@ -2,7 +2,7 @@
 
 Downloads are GET routes answered with ``download(data, name, mime)``: the file with its content type and name.
 
-An import from a spreadsheet takes two steps, as on the Streamlit pages: the clerk uploads the file, then checks
+An import from a spreadsheet takes two steps: the clerk uploads the file, then checks
 which column holds what before anything is imported. The uploaded file waits in memory under a one-off token
 (``keep_upload``) for an hour; the page reads it again with ``read_upload`` (``?file=<token>``) to show its first rows
 and the column choices (``sheet_context``), and the import POST names the token. Nothing is written to disk.

@@ -1,7 +1,7 @@
 """The web dashboard's master-data pages: Vendors, Purchase orders and GL accounts & tax.
 
 Each page draws on an empty and on a busy database; imports go upload → check the columns → import; downloads are
-the files the Streamlit pages gave; destructive actions ask first; text from files and invoices is escaped."""
+the files the earlier dashboard gave; destructive actions ask first; text from files and invoices is escaped."""
 
 from __future__ import annotations
 
@@ -325,7 +325,7 @@ def test_gl_accounts_are_imported_from_excel_edited_and_downloaded(client, store
     )
     assert "Imported: 3 added, 0 updated, 0 skipped" in page.text
     assert "Software &lt;b&gt;" in page.text and "Opex · 2" in page.text
-    # download: the CSV the Streamlit page gave
+    # download: the CSV the earlier dashboard gave
     data = client.get("/accounts/gl_accounts.csv")
     assert (
         data.headers["content-type"].startswith("text/csv") and "gl_accounts.csv" in data.headers["content-disposition"]

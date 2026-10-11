@@ -1,5 +1,5 @@
 """Settings: how invoices are read, touchless processing, review behaviour, JD Edwards E1, the data folder and its
-backups, and about this installation. Ported from the Streamlit dashboard (``ap_coder/webapp/settings.py``).
+backups, and about this installation.
 
 Each tab is a page of its own (``/settings/reading``, ``/settings/automation``...), so a tab can be linked to and
 Back works; ``/settings`` is the Reading tab. The Reading, Automation and JD Edwards tabs are in their own modules

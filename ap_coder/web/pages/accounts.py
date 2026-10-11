@@ -1,5 +1,4 @@
-"""GL accounts & tax: the codes the AI may use, how each sales tax posts, the coding policy and fixed rules
-(``ap_coder/webapp/accounts.py`` in Streamlit).
+"""GL accounts & tax: the codes the AI may use, how each sales tax posts, the coding policy and fixed rules.
 
 ``GET /accounts?tab=gl|cc|tax|policy|rules``. GL accounts and cost centers are imported from a spreadsheet (upload,
 then pick the code / description / category columns: ``?file=``), edited in place and downloaded as CSV
@@ -65,7 +64,7 @@ def table_for(table: str) -> tuple[str, str]:
 
 
 def accounts_csv_bytes(rows: list[dict[str, Any]]) -> bytes:
-    """The list as the Streamlit page downloads it (cells made safe for Excel, UTF-8 with a BOM)."""
+    """The list as a CSV download (cells made safe for Excel, UTF-8 with a BOM)."""
     df = pd.DataFrame(rows, columns=["code", "description", "category"]) if not rows else pd.DataFrame(rows)
     return df.map(csv_cell).to_csv(index=False).encode("utf-8-sig")
 

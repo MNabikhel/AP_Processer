@@ -1,7 +1,8 @@
 """The web dashboard's close & compliance pages: Find an invoice, Exports, Month-end, Sales tax and Vendor statements.
 
 Each page draws on an empty and on a busy database (sample setup + demo invoices); every download is the file the
-Streamlit page gave (the same ``exports`` / ``jde`` / ``stamp`` / ``accruals`` / ``taxreturn`` / ``statements`` calls);
+earlier dashboard gave (the same ``exports`` / ``jde`` / ``stamp`` / ``accruals`` / ``taxreturn`` / ``statements``
+calls);
 uploads go through the column check; destructive actions ask first."""
 
 from __future__ import annotations
