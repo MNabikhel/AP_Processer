@@ -1,0 +1,51 @@
+{# Importing from a spreadsheet (ap_coder/web/files.py): upload it, see its first rows, pick which column is what.
+   ``s`` is files.sheet_context(...). #}
+
+{# The file input: posts the file to ``action``, which answers with the page showing the columns. #}
+{% macro upload_form(action, label, button="Upload") %}
+<form method="post" action="{{ action }}" enctype="multipart/form-data" class="row upload-row" data-busy="Reading…">
+  <input type="file" name="file" accept=".csv,.xlsx,.xls" required aria-label="{{ label }}">
+  <button class="btn" type="submit"><span class="ms" aria-hidden="true">upload_file</span>{{ button }}</button>
+</form>
+{% endmacro %}
+
+{# The uploaded file's name, its sheet (a workbook with several) and its first rows. ``keep``: query values to
+   keep when another sheet is picked. #}
+{% macro preview(s, here, keep={}) %}
+<div class="sheet-file row">
+  <span class="ms" aria-hidden="true">table_view</span><b>{{ s.name }}</b>
+  <span class="muted">· {{ s.count | plural("row") }} found. First rows:</span>
+  {% if s.sheets | length > 1 %}
+  <form method="get" action="{{ here }}" class="row">
+    {% for k, v in keep.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <label class="field inline">Sheet
+      <select name="sheet" data-autosubmit>
+        {% for name in s.sheets %}<option value="{{ name }}"{% if name == s.sheet %} selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select></label>
+    <noscript><button class="btn sm" type="submit">Show</button></noscript>
+  </form>
+  {% endif %}
+</div>
+<div class="table-wrap sheet-preview">
+  <table class="apc-table">
+    <thead><tr>{% for c in s.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for row in s.preview %}<tr>{% for v in row %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{# One "which column" choice per field (inside the caller's form), and the upload's token. #}
+{% macro columns(s) %}
+<input type="hidden" name="file" value="{{ s.token }}">
+<input type="hidden" name="sheet" value="{{ s.sheet }}">
+<div class="map-grid">
+  {% for f in s.fields %}
+  <label class="field">{{ f.label }}
+    <select name="col_{{ f.key }}">
+      <option value="">(none)</option>
+      {% for c in s.columns %}<option value="{{ c }}"{% if c == f.value %} selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endfor %}
+</div>
+{% endmacro %}

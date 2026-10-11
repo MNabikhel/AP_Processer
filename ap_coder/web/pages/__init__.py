@@ -41,6 +41,7 @@ PAGES: list[Page] = [
         "search",
         W,
         "Vendor on the phone? Search by vendor, invoice number, PO or amount: see where it is and when it is due.",
+        module="search",
     ),
     Page(
         "exports",
@@ -49,6 +50,7 @@ PAGES: list[Page] = [
         "ios_share",
         C,
         "Hand approved invoices to the ERP in batches. Each invoice goes out once; any batch can be downloaded again.",
+        module="exports",
     ),
     Page(
         "month_end",
@@ -57,6 +59,7 @@ PAGES: list[Page] = [
         "event_available",
         C,
         "What to accrue: goods received but not invoiced, invoices not in the ERP yet, and regular bills not arrived.",
+        module="month_end",
     ),
     Page(
         "sales_tax",
@@ -65,6 +68,7 @@ PAGES: list[Page] = [
         "percent",
         C,
         "The GST/HST and QST you paid to vendors and can claim back on your return, from approved invoices.",
+        module="sales_tax",
     ),
     Page(
         "statements",
@@ -73,6 +77,7 @@ PAGES: list[Page] = [
         "fact_check",
         C,
         "Compare a vendor's statement with the invoices you hold: find missing invoices and amount differences.",
+        module="statements",
     ),
     Page(
         "vendors",
@@ -81,6 +86,7 @@ PAGES: list[Page] = [
         "storefront",
         M,
         "Everyone who has sent an invoice: spend, how well the AI codes them, and your controls.",
+        module="vendors",
     ),
     Page(
         "purchase_orders",
@@ -89,6 +95,7 @@ PAGES: list[Page] = [
         "shopping_cart",
         M,
         "Invoices that quote a PO are checked against it: price, quantity ordered and received, and coding.",
+        module="purchase_orders",
     ),
     Page(
         "accounts",
@@ -97,6 +104,7 @@ PAGES: list[Page] = [
         "account_tree",
         M,
         "The codes the AI may use, how each sales tax posts, and your rules.",
+        module="accounts",
     ),
     Page(
         "learning",

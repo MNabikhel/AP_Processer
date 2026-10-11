@@ -1,0 +1,6 @@
+{# A row of KPIs from (label, value, hint) triples, as ui.tiles draws them (ui.tile escapes the text). #}
+{% macro tile_row(items) %}
+<div class="apc-tiles{% if items | length < 4 %} n{{ items | length }}{% endif %} apc-anim">
+  {% for label, value, hint in items %}{{ ui.tile(label, value, "", "blue", hint) }}{% endfor %}
+</div>
+{% endmacro %}

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% from "_tiles.html" import tile_row %}
+{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<section class="card">
+  <form method="get" action="/sales-tax" class="row period">
+    <label class="field">From (invoice date) <input type="date" name="start" value="{{ start }}" required></label>
+    <label class="field">To <input type="date" name="end" value="{{ end }}" required></label>
+    <button class="btn" type="submit">Show</button>
+    <p class="muted small grow">Claimed by invoice date. Only taxes set up as <i>recoverable</i> (GL accounts &amp; tax
+      page) count; credit notes reduce the claim.</p>
+  </form>
+</section>
+
+{% if backwards %}
+<div class="flash warn"><span class="ms" aria-hidden="true">event_busy</span><div>The start date is after the end date.</div></div>
+{% else %}
+{{ tile_row(tiles) }}
+{% if report.not_recoverable %}
+<p class="muted small"><span class="ms" aria-hidden="true">info</span> {{ report.not_recoverable | join(", ") }} is set up
+  as not recoverable (expensed), so it is not claimed here. Change it on the <a href="/accounts?tab=tax">GL accounts &amp; tax</a>
+  page if your company claims it.</p>
+{% endif %}
+
+{% if not report.claims %}
+<section class="card">{{ ui.empty_state("Nothing to claim", "No approved invoice dated " ~ start ~ " to " ~ end ~ " has recoverable GST/HST or QST.") }}</section>
+{% else %}
+<section class="card">
+  <h4>By tax and rate</h4>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Tax</th><th>Province</th><th class="r">Rate</th><th class="r">To claim</th></tr></thead>
+      <tbody>{% for t, p, r, cur, total in by_type %}
+        <tr><td>{{ ui.tax_chip(t) }}</td><td>{{ p or "—" }}</td><td class="r">{{ "%g" | format(r * 100) }}%</td>
+          <td class="r">{{ total | money }} <span class="muted">{{ cur }}</span></td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  <p class="muted small">Compare the ITC total with the balance of your GST/HST receivable account in the ERP for the same
+    period; invoices approved but not exported yet explain part of any difference.</p>
+</section>
+
+<section class="card" id="claims">
+  <div class="card-head">
+    <h4>Invoices</h4>
+    <a class="btn" href="/sales-tax/claims.csv?start={{ start }}&end={{ end }}" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+  </div>
+  <div class="segmented" role="group" aria-label="Show">
+    <a href="/sales-tax?start={{ start }}&end={{ end }}&show=risky#claims" class="{{ 'on' if only_risky else '' }}"{% if only_risky %} aria-current="true"{% endif %}>Only the invoices to check ({{ risky }})</a>
+    <a href="/sales-tax?start={{ start }}&end={{ end }}&show=all#claims" class="{{ '' if only_risky else 'on' }}"{% if not only_risky %} aria-current="true"{% endif %}>All</a>
+  </div>
+  {% if shown %}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Vendor</th><th>Date</th><th>Tax</th><th class="r">Amount</th><th>To check</th></tr></thead>
+      <tbody>
+        {% for c in shown %}
+        <tr>
+          <td class="w"><b>{{ c.vendor }}</b><div class="muted">{{ c.invoice_number }}</div></td>
+          <td>{{ c.invoice_date }}</td>
+          <td class="w">{{ ui.tax_chip(c.tax_type) }} {{ c.province }} {{ "%g" | format(c.rate * 100) }}%<div class="muted">{{ c.registration or "no number" }}</div></td>
+          <td class="r">{{ c.amount | money }} <span class="muted">{{ c.currency }}</span></td>
+          <td class="w">{% for i in c.issues %}{{ ui.pill(i, tones.get(i, "gray")) }} {% endfor %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Nothing to check.</p>
+  {% endif %}
+  <p class="muted small">An invoice of $30 or more needs the vendor's GST/HST registration number (QST number for QST) for
+    the tax to be claimed: ask the vendor for a corrected invoice before filing.</p>
+</section>
+{% endif %}
+
+<section class="card" id="self">
+  {% if not self_items %}
+  <h4>PST / QST possibly to self-assess</h4>
+  <p class="muted">None in this period: no approved invoice for a supply in BC, SK, MB or Quebec came without the
+    provincial tax.</p>
+  {% else %}
+  <div class="card-head">
+    <h4>PST / QST possibly to self-assess</h4>
+    <a class="btn" href="/sales-tax/self-assessment.csv?start={{ start }}&end={{ end }}" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+  </div>
+  {{ tile_row(self_tiles) }}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Vendor</th><th>Date</th><th>Tax</th><th class="r">Subtotal</th><th class="r">Estimate</th></tr></thead>
+      <tbody>
+        {% for s in self_items %}
+        <tr>
+          <td class="w"><b>{{ s.vendor }}</b><div class="muted">{{ s.invoice_number }}</div></td>
+          <td>{{ s.invoice_date }}</td>
+          <td>{{ s.tax_type }} {{ s.province }} {{ "%g" | format(s.rate * 100) }}%</td>
+          <td class="r">{{ s.base | money }}</td>
+          <td class="r">{{ s.estimate | money }} <span class="muted">{{ s.currency }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted small">These approved invoices are for a supply in a province with PST or QST, and the vendor charged none
+    (often an out-of-province vendor). Your company may have to self-assess it on its provincial return. The estimate
+    applies the official rate to the whole subtotal: exempt goods and services owe nothing, so check each one.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

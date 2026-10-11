@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% from "_sheet.html" import upload_form, preview, columns %}
+{% from "_tiles.html" import tile_row %}
+{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% macro spend(v) %}{% for cur, t in spend_items(v) %}{{ t | money }} <span class="muted">{{ cur }}</span>{% if not loop.last %} · {% endif %}{% else %}<span class="muted">—</span>{% endfor %}{% endmacro %}
+{% macro accuracy(value) %}{% if value is none %}<span class="muted">—</span>{% else %}<b class="{{ 'ok' if value >= target else 'warn-text' }}">{{ value | pct }}</b>{% endif %}{% endmacro %}
+{% macro status_pills(v) %}{{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("Active", "ok") }}{% if has_master and not v.in_master %} {{ ui.pill("Not in master", "warn", "gpp_maybe") }}{% endif %}{% endmacro %}
+{% block content %}
+<details class="card expander" id="import"{% if master or master_error %} open{% endif %}>
+  <summary><span class="ms" aria-hidden="true">upload</span>Vendor master from the ERP{% if has_master %} (imported){% endif %}</summary>
+  <p class="muted">Import the ERP's vendor list (CSV or Excel). Exports then carry each vendor's ERP ID, invoices from a
+    vendor that is not in the list are flagged, the vendor's payment terms set the due date when the invoice shows none,
+    and its default GL account is offered for uncoded lines. Import again any time: vendors are matched by name.</p>
+  {% if master_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ master_error }}</div></div>{% endif %}
+  {% if master %}
+  {{ preview(master, "/vendors", {"file": master.token}) }}
+  <form method="post" action="/vendors/master/import" class="stack" data-busy="Importing…">
+    {{ columns(master) }}
+    <div class="row">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import vendors</button>
+      <a class="link" href="/vendors">Cancel</a>
+    </div>
+  </form>
+  {% else %}
+  {{ upload_form("/vendors/master/upload", "Vendor list (CSV or Excel)", "Upload the vendor list") }}
+  {% endif %}
+</details>
+
+{% if not vendors %}
+<section class="card">{{ ui.empty_state("No vendors yet", "Vendors appear here once invoices have been processed.") }}</section>
+{% else %}
+{{ tile_row(tiles) }}
+
+<section class="card flush" id="list">
+  <form class="rq-toolbar" method="get" action="/vendors" role="search">
+    <div class="segmented" role="group" aria-label="Show">
+      {% for key, name in views.items() %}
+      <a href="/vendors?view={{ key }}&q={{ q | urlencode }}&sort={{ sort }}" class="{{ 'on' if key == view else '' }}"{% if key == view %} aria-current="true"{% endif %}>{{ name }}</a>
+      {% endfor %}
+    </div>
+    <input type="hidden" name="view" value="{{ view }}">
+    <label class="search"><span class="ms" aria-hidden="true">search</span>
+      <input type="search" name="q" value="{{ q }}" placeholder="Search vendors" aria-label="Search vendors"></label>
+    <select name="sort" aria-label="Sort" data-autosubmit>
+      {% for key, name in sorts.items() %}<option value="{{ key }}"{% if key == sort %} selected{% endif %}>{{ name }}</option>{% endfor %}
+    </select>
+  </form>
+  {% if not shown %}
+  <div class="pad">{{ ui.empty_note("No vendors match", " Try another search or filter.", "search_off") }}</div>
+  {% else %}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Vendor</th><th class="r">Approved / all</th><th class="r">Spend</th><th>Last invoice</th><th class="r">AI accuracy</th><th></th></tr></thead>
+      <tbody>
+        {% for v in shown %}
+        <tr>
+          <td class="w"><a class="vendor-link" href="/vendors?{{ list_query }}&open={{ v.vendor_key | urlencode }}#vendor">{{ ui.avatar(v.vendor_name or "", "sm") }}<b>{{ v.vendor_name }}</b></a></td>
+          <td class="r">{{ v.approved }} / {{ v.invoices }}</td>
+          <td class="r">{{ spend(v) }}</td>
+          <td>{{ v.last_invoice or "—" }}</td>
+          <td class="r">{{ accuracy(v.accuracy) }}</td>
+          <td class="w">{{ status_pills(v) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{% if detail %}{% set v = detail.v %}
+<section class="card" id="vendor">
+  <div class="vendor-head">
+    {{ ui.avatar(v.vendor_name or "") }}
+    <div>
+      <div class="vendor-name">{{ v.vendor_name }} {{ ui.pill("On hold", "warn", "front_hand") if v.status == on_hold else ui.pill("Active", "ok") }}</div>
+      <div class="muted">First invoice {{ v.first_invoice or "—" }} · last {{ v.last_invoice or "—" }} · {{ v.lessons | plural("lesson") }} learned</div>
+      {% if v.in_master %}
+      <div class="muted">{{ ui.pill("In the vendor master", "ok", "verified") }} ERP ID <b>{{ v.erp_id or "—" }}</b>{% if v.terms %} · terms {{ v.terms }}{% endif %}{% if v.default_gl %} · default GL {{ v.default_gl }}{% endif %}</div>
+      {% elif detail.has_master %}
+      <div>{{ ui.pill("Not in the vendor master", "warn", "gpp_maybe") }}</div>
+      {% endif %}
+    </div>
+    <a class="link close" href="/vendors?{{ list_query }}#list"><span class="ms" aria-hidden="true">close</span>Close</a>
+  </div>
+
+  <div class="cols-2">
+    <div class="stack-12">
+      <h5>GL accounts reviewers used</h5>
+      {% if detail.usage %}
+      <div class="table-wrap"><table class="apc-table">
+        <thead><tr><th>GL</th><th>Account</th><th class="r">Lines</th><th class="r">Corrected</th></tr></thead>
+        <tbody>{% for u in detail.usage %}<tr><td><b>{{ u.gl_code }}</b></td><td>{{ u.name }}</td><td class="r">{{ u.lines }}</td><td class="r">{{ u.corrected }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% else %}<p class="muted">Nothing approved yet for this vendor.</p>{% endif %}
+
+      <h5>GST/HST numbers seen</h5>
+      {% if detail.numbers %}
+      <div class="row">{% for n in detail.numbers %}{{ ui.pill(n, "warn" if detail.numbers | length > 1 else "gray", "verified") }}{% endfor %}</div>
+      {% if detail.numbers | length > 1 %}<p class="muted small">More than one number: confirm which is right and record it below.</p>{% endif %}
+      {% else %}<p class="muted">None on file.</p>{% endif %}
+    </div>
+    <div class="stack-12">
+      <h5>Recent invoices</h5>
+      <div class="table-wrap"><table class="apc-table">
+        <thead><tr><th>#</th><th>Invoice</th><th>Date</th><th class="r">Total</th><th>Status</th></tr></thead>
+        <tbody>{% for i in detail.recent %}<tr><td>{{ i.id }}</td><td>{{ i.invoice_number }}</td><td>{{ i.invoice_date }}</td>
+          <td class="r">{{ i.grand_total | money }} <span class="muted">{{ i.currency }}</span></td><td>{{ ui.pill(*i.pill) }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <h5>Bank account and GST/HST number history</h5>
+  <p class="muted small">What this vendor's invoices carried, oldest first. A new bank account or tax number is a common
+    sign of a fake invoice: confirm it by phone, on a number from your vendor file. Only the last 4 digits of a bank
+    account are shown.</p>
+  <div class="cols-2">
+    <div class="table-wrap"><table class="apc-table">
+      <thead><tr><th>Bank account</th><th>First seen</th><th>Last seen</th><th class="r">Invoices</th></tr></thead>
+      <tbody>{% for h in detail.bank_history %}<tr><td><b>{{ h.shown }}</b>{% if loop.length > 1 and loop.last %} {{ ui.pill("Changed", "warn", "sync_problem") }}{% endif %}</td>
+        <td>{{ h.first }}</td><td>{{ h.last }}</td><td class="r">{{ h.invoices }}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted">No bank details printed on its invoices.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <div class="table-wrap"><table class="apc-table">
+      <thead><tr><th>GST/HST number</th><th>First seen</th><th>Last seen</th><th class="r">Invoices</th></tr></thead>
+      <tbody>{% for h in detail.tax_history %}<tr><td><b>{{ h.shown }}</b>{% if loop.length > 1 and loop.last %} {{ ui.pill("Changed", "warn", "sync_problem") }}{% endif %}</td>
+        <td>{{ h.first }}</td><td>{{ h.last }}</td><td class="r">{{ h.invoices }}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted">No GST/HST number on its invoices.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+
+  <h5>Controls</h5>
+  <form method="post" action="/vendors/save" class="stack controls" data-busy="Saving…">
+    <input type="hidden" name="key" value="{{ v.vendor_key }}">
+    <div class="row">
+      <fieldset class="radios"><legend class="muted small">Status</legend>
+        {% for key, label in statuses.items() %}
+        <label class="check"><input type="radio" name="status" value="{{ key }}"{% if v.status == key %} checked{% endif %}> {{ label }}</label>
+        {% endfor %}
+      </fieldset>
+      <label class="field grow">Expected GST/HST number
+        <input type="text" name="expected_gst" value="{{ v.expected_gst }}" placeholder="e.g. 123456789RT0001"
+               title="Invoices showing a different number are flagged (a common sign of a fake invoice)."></label>
+    </div>
+    <p class="muted small">On hold: every new invoice from this vendor gets an error and needs an override to approve.</p>
+    <label class="field full">Notes
+      <textarea name="notes" rows="3" placeholder="e.g. bank details changed 2026-09, verified by phone">{{ v.notes }}</textarea></label>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save vendor</button>
+  </form>
+
+  <h5 id="ask">Ask the vendor</h5>
+  {% if not detail.asks %}
+  <p class="muted">None of this vendor's invoices in the review queue is missing anything the vendor can fix.</p>
+  {% else %}
+  <div class="segmented" role="group" aria-label="Language">
+    {% for key, label in languages.items() %}
+    <a href="/vendors?{{ list_query }}&open={{ v.vendor_key | urlencode }}&lang={{ key }}#ask" class="{{ 'on' if key == detail.lang else '' }}"{% if key == detail.lang %} aria-current="true"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </div>
+  {% for a in detail.asks %}
+  <details class="expander"{% if loop.first %} open{% endif %}>
+    <summary><span class="ms" aria-hidden="true">forward_to_inbox</span>Invoice {{ a.number }}</summary>
+    <span class="muted small">Subject</span>
+    <pre class="code">{{ a.subject }}</pre>
+    <span class="muted small">Message</span>
+    <pre class="code wrap">{{ a.body }}</pre>
+    <div class="row">
+      <a class="btn" href="{{ a.mailto }}"><span class="ms" aria-hidden="true">mail</span>Open in email</a>
+      <a class="link" href="/review/{{ a.id }}">Open the invoice <span class="ms" aria-hidden="true">arrow_forward</span></a>
+    </div>
+  </details>
+  {% endfor %}
+  <p class="muted small">Only what the vendor can fix is asked. Internal checks (bank account or GST/HST number changed,
+    vendor on hold, unusual amount) are never mentioned: confirm those by phone, on a number from your vendor file.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card" id="recurring">
+  <h4>Recurring invoices</h4>
+  {% if not recurring %}
+  {{ ui.empty_note("No regular billers yet", " Vendors who bill on a regular rhythm (weekly to quarterly, at least three times) appear here with their next expected invoice, so a missing one is noticed before it is paid late.", "event_repeat") }}
+  {% else %}
+  {% if late %}<p class="muted small">{{ late | length | plural("expected invoice") }} not received, usually about
+    {{ late_total | money }} in total: chase the vendor, and consider accruing them at <a href="/month-end">month-end</a>.</p>{% endif %}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Vendor</th><th>Bills</th><th>Last invoice</th><th>Next expected</th><th class="r">Usual amount</th><th></th></tr></thead>
+      <tbody>
+        {% for r in recurring %}
+        <tr>
+          <td><b>{{ r.vendor_name }}</b></td><td>{{ r.cadence }}</td><td>{{ r.last_date.isoformat() }}</td><td>{{ r.next_date.isoformat() }}</td>
+          <td class="r">{{ r.typical_total | money }} <span class="muted">{{ r.currency }}</span></td>
+          <td>{% if r.status == recurring_late %}{{ ui.pill(r.days_late ~ " days late", "warn", "schedule") }}{% elif r.status == recurring_soon %}{{ ui.pill("Due soon", "info", "event") }}{% else %}{{ ui.pill("On track", "ok", "check") }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{% if workload %}
+<section class="card" id="workload">
+  <h4>Vendors that make work</h4>
+  <p class="muted">How often a vendor's invoice arrived with something only the vendor can fix, and how often AP corrected
+    the coding. Ask the worst ones for better invoices (<i>Ask the vendor</i> above drafts the email); a fixed coding rule
+    can settle what AP keeps correcting.</p>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Vendor</th><th class="r">Invoices</th><th class="r">With a problem</th><th>Usual problems</th><th class="r">Coding corrected</th></tr></thead>
+      <tbody>
+        {% for w in workload %}
+        <tr>
+          <td class="w"><a href="/vendors?open={{ w.vendor_key | urlencode }}#vendor"><b>{{ w.vendor_name }}</b></a></td>
+          <td class="r">{{ w.invoices }}</td>
+          <td class="r">{{ w.with_problems }} <span class="muted">({{ w.problem_rate | pct }})</span></td>
+          <td class="w">{{ w.problems }}</td>
+          <td class="r">{{ (w.corrected ~ " of " ~ w.approved) if w.approved else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}
