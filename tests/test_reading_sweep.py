@@ -48,3 +48,21 @@ def test_a_currency_assumed_from_a_us_address_is_said_as_assumed_not_as_cad(tmp_
     assert result.output["currency"] == "USD"
     (issue,) = [i for i in result.report.issues if i.code == "CURRENCY_NOT_FOUND"]
     assert issue.severity == "warning" and "USD" in issue.message and "CAD" not in issue.message
+
+
+def test_a_credit_lines_quantity_and_unit_price_are_read_with_the_credits_sign(tmp_path):
+    """A credit note's row "Returned pallets 4 50.00 200.00 CR" was read as 4 at 4.00 (the quantity taken for the
+    unit price too): quantity x price was only ever matched against a positive amount, so a negative line never
+    found its price. The coded line then posted a unit price of 4.00 and the review warned LINE_MATH."""
+    from ap_coder.capture import build_layout
+    from ap_coder.capture.reader import read_line_items
+
+    pdf = _pdf(tmp_path / "credit.pdf", [[
+        "Harbour Supply Ltd.", "CREDIT NOTE", "", "Description            Qty   Unit Price    Amount",
+        "Returned pallets          4       50.00      200.00 CR", "Returned crates           2       25.00      (50.00)",
+        "Damaged drums             3      -10.00      -30.00", "", (300, "Subtotal  280.00 CR"),
+    ]])  # fmt: skip
+    items = [(li.description, li.quantity, li.unit_price, li.amount) for li in read_line_items(build_layout(pdf))]
+    assert items == [("Returned pallets", 4.0, -50.0, -200.0), ("Returned crates", 2.0, -25.0, -50.0),
+                     ("Damaged drums", 3.0, -10.0, -30.0)]  # fmt: skip
+
