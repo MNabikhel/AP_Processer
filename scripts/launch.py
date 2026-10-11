@@ -890,10 +890,8 @@ def desktop() -> Path | None:
         return folder if folder.is_dir() else None
     if not WINDOWS:
         return None
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
-                         capture_output=True, text=True)  # fmt: skip
-    folder = out.stdout.strip()
-    return Path(folder) if out.returncode == 0 and folder else None
+    folder = running.powershell("[Environment]::GetFolderPath('Desktop')", timeout=60)  # (read as UTF-8)
+    return Path(folder) if folder else None
 
 
 def write_shortcut(folder: Path) -> bool:
@@ -963,10 +961,8 @@ def old_shortcut_folder() -> str:
     if folder is None or not (folder / SHORTCUT).exists():
         return ""
     link = str(folder / SHORTCUT).replace("'", "''")
-    script = f"(New-Object -ComObject WScript.Shell).CreateShortcut('{link}').TargetPath"
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
-    target = out.stdout.strip()
-    return str(Path(target).parent) if out.returncode == 0 and target else ""
+    target = running.powershell(f"(New-Object -ComObject WScript.Shell).CreateShortcut('{link}').TargetPath", 60)
+    return str(Path(target).parent) if target else ""
 
 
 def lm_studio_line() -> tuple[str, str]:

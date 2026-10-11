@@ -580,3 +580,20 @@ def test_an_install_set_up_by_install_bat_is_checked_before_the_older_one_is_cle
     launch.save_state({"setup_done": True, "fingerprint": ident["fingerprint"], "version": "0.2.0",
                        "build": ident["build"]})  # fmt: skip
     assert launch.run(*launch.parse([])) == 0 and checks == [1] and cleaned == [[old]]
+
+
+def test_a_desktop_and_shortcut_with_accents_are_read_right_on_windows(launch, monkeypatch):
+    """A desktop in "C:\\Users\\José\\OneDrive - Société\\Bureau" came back mangled from PowerShell (the console's
+    code page, read as ANSI): the shortcut was never made, and an AP Coder 0.1 shortcut's folder never found."""
+    from tests.test_running import fake_windows_powershell
+
+    monkeypatch.setattr(launch, "WINDOWS", True)
+    desk = "C:\\Users\\José\\OneDrive - Société\\Bureau"
+    monkeypatch.setattr(launch.subprocess, "run", fake_windows_powershell(desk))
+    assert str(launch.desktop()) == desk
+    target = "/Users/José/Données/AP Coder 0.1/APProcessor.bat"  # (a path this test's computer can take apart)
+    monkeypatch.setattr(launch.subprocess, "run", fake_windows_powershell(target))
+    paths.write_user_settings(desktop_shortcut=True)
+    monkeypatch.setattr(launch, "desktop", lambda: launch.ROOT)
+    (launch.ROOT / "AP Coder.lnk").write_text("")
+    assert launch.old_shortcut_folder() == "/Users/José/Données/AP Coder 0.1"

@@ -189,6 +189,18 @@ def _run(cmd: list[str], timeout: float = 20) -> str:
     return out.stdout if out.returncode == 0 else ""
 
 
+def powershell(script: str, timeout: float = 20) -> str:
+    """What a Windows PowerShell ``script`` prints ("" when it fails), read as UTF-8: by default it writes in the
+    console's code page and Python reads the ANSI one, so a folder named "Données" came back as "Donn‚es"."""
+    utf8 = "try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}; "
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", utf8 + script], capture_output=True,
+                             encoding="utf-8", errors="replace", timeout=timeout)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return out.stdout.strip().lstrip("﻿") if out.returncode == 0 else ""
+
+
 def _linux_port_owner(port: int) -> int | None:
     """The process listening on ``port``, from /proc (Linux): the socket's inode, then the process holding it."""
     inodes = set()
@@ -221,7 +233,7 @@ def port_owner(port: int) -> int | None:
     if WINDOWS:
         script = (f"(Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction SilentlyContinue | "
                   "Select-Object -First 1).OwningProcess")  # fmt: skip
-        found = _run(["powershell", "-NoProfile", "-Command", script]).strip()
+        found = powershell(script)
         return int(found) if found.isdigit() else None
     if sys.platform.startswith("linux"):
         return _linux_port_owner(port)
@@ -233,7 +245,7 @@ def command_line(pid: int) -> str:
     """The command line of process ``pid`` ("" when it can't be read)."""
     if WINDOWS:
         script = f'(Get-CimInstance Win32_Process -Filter "ProcessId={pid}").CommandLine'
-        return _run(["powershell", "-NoProfile", "-Command", script]).strip()
+        return powershell(script)
     try:
         return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
     except OSError:

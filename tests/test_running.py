@@ -169,3 +169,25 @@ def test_the_listener_of_a_port_is_found(running):
         import os
 
         assert owner == os.getpid()
+
+
+def fake_windows_powershell(answer: str):
+    """subprocess.run as Windows runs ``powershell -Command``: its output is in the console's code page (850) unless
+    the script sets UTF-8, and Python reads it in the ANSI one (cp1252) unless told otherwise."""
+
+    def run(cmd, capture_output=False, text=None, encoding=None, errors=None, timeout=None, **kwargs):
+        script = cmd[-1]
+        raw = answer.encode("utf-8" if "OutputEncoding" in script and "UTF8" in script else "cp850")
+        out = raw.decode(encoding or "cp1252", errors="replace") if (text or encoding) else raw
+        return subprocess.CompletedProcess(cmd, 0, out + "\r\n", "")
+
+    return run
+
+
+def test_a_command_line_with_accents_is_read_right_on_windows(running, monkeypatch):
+    """A folder named "Données" came back as "Donn‚es": the old dashboard's folder wasn't found to be cleaned up."""
+    monkeypatch.setattr(running, "WINDOWS", True)
+    line = 'python -m streamlit run "C:\\Users\\José\\Données\\AP Coder 0.1\\ap_coder\\dashboard.py"'
+    monkeypatch.setattr(running.subprocess, "run", fake_windows_powershell(line))
+    assert running.command_line(1234) == line
+    assert running.folder_in_command(running.command_line(1234)) == "C:\\Users\\José\\Données\\AP Coder 0.1"
