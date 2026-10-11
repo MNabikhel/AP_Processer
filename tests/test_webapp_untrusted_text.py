@@ -81,7 +81,7 @@ def test_process_page_shows_file_and_vendor_names_as_text(db, monkeypatch):
     load_sample_setup(store)
     process = _process_page(monkeypatch)
     process.INVOICE_DIR.mkdir(parents=True, exist_ok=True)
-    named = process.INVOICE_DIR / "![t](http:evil.example)x.pdf"
+    named = process.INVOICE_DIR / "![t](evil.example)x.pdf"  # no ":" (Windows makes it a file stream)
     named.write_bytes(b"%PDF-1.4 one")
     # The progress lines while processing ("Reading and coding …", "<vendor>: ready").
     at = _ok(AppTest.from_string(f"from pathlib import Path\nfrom ap_coder.webapp.common import get_store\n"
@@ -167,7 +167,8 @@ def test_a_crafted_email_in_the_folder_does_not_break_the_process_page(db):
 def test_host_allowed_only_for_this_computer():
     from ap_coder.webapp.common import host_allowed
 
-    for host in ("localhost:8501", "127.0.0.1:8501", "[::1]:8501", "LOCALHOST", "127.0.0.2:8501", "localhost."):
+    this_computer = ("localhost:8501", "127.0.0.1:8501", "[::1]:8501", "LOCALHOST", "127.0.0.2:8501", "localhost.")
+    for host in (*this_computer, "[::ffff:7f00:1]:8501"):
         assert host_allowed(host, "127.0.0.1"), host
     for host in ("evil.example:8501", "localhost.evil.example", "127.0.0.1.nip.io:8501", "", "[::ffff:7f00:1"):
         assert not host_allowed(host, "127.0.0.1"), host

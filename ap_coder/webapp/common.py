@@ -127,7 +127,7 @@ def host_name(host: str) -> str:
     """The name part of a Host header ("localhost:8501" → "localhost", "[::1]:8501" → "::1")."""
     host = host.strip().lower()
     if host.startswith("["):
-        host = host[1 : host.find("]")] if "]" in host else host[1:]
+        host = host[1 : host.find("]")] if "]" in host else ""  # "[::1" without "]" is not an address
     elif host.count(":") == 1:
         host = host.rsplit(":", 1)[0]
     return host.rstrip(".")
@@ -150,8 +150,8 @@ def host_allowed(host: str | None, address: str | None, extra: tuple[str | None,
         ip = ipaddress.ip_address(name)
     except ValueError:
         ip = None
-    if ip is not None and ip.is_loopback:
-        return True
+    if ip is not None and (ip.is_loopback or (getattr(ip, "ipv4_mapped", None) or ip).is_loopback):
+        return True  # also ::ffff:127.0.0.1, as newer Pythons already say
     if host_name(address or "") in WILDCARD_ADDRESSES:
         if ip is not None:
             return True
