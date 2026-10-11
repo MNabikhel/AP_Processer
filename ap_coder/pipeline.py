@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import local_llm
 from .capture.bridge import review_issues
+from .capture.layout import CannotRead
 from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
 from .config import Settings
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
@@ -273,6 +275,9 @@ class InvoicePipeline:
                 exclude_invoice_id=invoice_id,
                 feedback=feedback,
             )
+        except CannotRead as exc:  # OCR or the photo add-on isn't installed: said plainly, never an empty reading
+            log.warning("%s: %s", path.name, exc)
+            result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch
             log.exception("Failed to process %s", path)
             result.error = f"{type(exc).__name__}: {exc}"

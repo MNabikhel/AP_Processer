@@ -578,6 +578,8 @@ def load_reader(settings: Settings, model: str | None = None) -> str:
 _RENDER_LOCK = threading.Lock()
 # A picture records the resolution it was scanned at; a phone photo's 72 is no scan resolution.
 _SCAN_DPI = 100
+# The brands a HEIC/HEIF file names after "ftyp" at its start (an iPhone's photos).
+_HEIF_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1"}
 
 
 def _is_pdf(name: str, data: bytes) -> bool:
@@ -597,9 +599,14 @@ def _page_count(data: bytes, pdf: bool) -> int:
 
 def _open_picture(data: bytes) -> Any:
     """The picture in ``data`` (Pillow), opened lazily. Raises ``PageReaderError`` in plain words for a file that
-    isn't a picture, or one too large to be read safely (Pillow's guard against a decompression bomb)."""
+    isn't a picture, or one too large to be read safely (Pillow's guard against a decompression bomb). An iPhone's
+    HEIC/HEIF photo is opened with pillow-heif; without it, that is said plainly."""
     from PIL import Image
 
+    from .capture.layout import NO_HEIF, register_heif
+
+    if not register_heif() and data[4:8] == b"ftyp" and data[8:12] in _HEIF_BRANDS:
+        raise PageReaderError(NO_HEIF)
     try:
         return Image.open(io.BytesIO(data))
     except Image.DecompressionBombError as exc:

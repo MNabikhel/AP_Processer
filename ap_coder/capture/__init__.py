@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import Any
 
 from .confidence import LABELS, TAX_FIELDS, fuse
-from .layout import build_layout, ocr_available
+from .layout import CannotRead, build_layout, ocr_available
 from .locate import locate
 from .normalize import find_amounts
 from .reader import _table_header_line, read_fields, read_line_items
 from .types import (
     AMOUNT_FIELDS,
+    CHECK,
     EXTRA_FIELDS,
     FIELDS,
     MISSING,
@@ -34,7 +35,7 @@ from .types import (
 
 log = logging.getLogger(__name__)
 
-__all__ = ["LABELS", "analyze", "build_layout", "read_fields", "locate", "CaptureResult"]
+__all__ = ["LABELS", "analyze", "build_layout", "read_fields", "locate", "CaptureResult", "CannotRead"]
 
 # Document Intelligence prebuilt-invoice field -> capture field
 DI_FIELDS = {

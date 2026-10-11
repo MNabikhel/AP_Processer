@@ -81,7 +81,7 @@ QUIET_PIP_LINES = (
     "Stored in",
     " ",
 )
-OCR_PACKAGES = {"rapidocr", "onnxruntime", "rapidocr-onnxruntime"}
+OCR_PACKAGES = {"rapidocr", "onnxruntime", "rapidocr-onnxruntime", "pillow-heif"}  # scans and photos
 
 
 class SetupError(Exception):
