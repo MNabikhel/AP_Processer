@@ -1,0 +1,14 @@
+{# Settings → About (pages/settings.py). #}
+<section class="card narrow">
+  <h4>About this installation</h4>
+  <dl class="apc-kv">
+    {% for label, value, is_path in about %}
+    <dt>{{ label }}</dt><dd>{% if is_path %}<code>{{ value }}</code>{% else %}{{ value }}{% endif %}</dd>
+    {% endfor %}
+  </dl>
+  <div class="st-note">
+    <p><b>Updating:</b> close AP Coder and double-click <code>install.bat</code> again. With git it downloads the new
+      version (without git, extract the new ZIP over the same folder first); your data, settings and shortcut are kept.</p>
+    <p><b>Help:</b> see <a href="/help">Help</a>, and <code>docs/GETTING_STARTED.md</code> in the code folder.</p>
+  </div>
+</section>

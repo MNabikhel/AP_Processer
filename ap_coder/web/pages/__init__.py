@@ -141,8 +141,17 @@ PAGES: list[Page] = [
         "settings",
         S,
         "How invoices are read, touchless processing, review behaviour, JD Edwards E1, your data and backups.",
+        module="settings",
     ),
-    Page("help", "Help", "/help", "help", S, "How AP Coder works, what each check means and what to do about it."),
+    Page(
+        "help",
+        "Help",
+        "/help",
+        "help",
+        S,
+        "How AP Coder works, what each check means and what to do about it.",
+        module="help",
+    ),
 ]
 
 # Routes without a rail entry: the invoice review screen (/review/{id}); the Azure check's card on Settings → Reading
