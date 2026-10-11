@@ -49,7 +49,7 @@ include = ["ap_coder*"]
 
 [tool.setuptools.package-data]
 ap_coder = ["assets/*", "static/*", "webapp/components/invoice_viewer/*", "capture/calibration.json",
-            "web/templates/*", "web/static/*", "web/static/js/*"]
+            "web/templates/*", "web/templates/partials/*", "web/static/*", "web/static/js/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -88,13 +88,15 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.mount("/fonts", StaticFiles(directory=str(core.FONTS_DIR)), name="fonts")
     app.mount("/assets", StaticFiles(directory=str(core.ASSETS_DIR)), name="assets")
 
+    # The extra modules first: their fixed paths (/settings/azure-check) are matched before a page's catch-all
+    # (/settings/{tab}), which would otherwise answer them with "no such tab".
+    for module in MORE_MODULES:
+        app.include_router(importlib.import_module(f"ap_coder.web.pages.{module}").router)
     for page in PAGES:
         if page.module:
             app.include_router(importlib.import_module(f"ap_coder.web.pages.{page.module}").router)
         else:
             app.add_api_route(page.path, _placeholder(page), methods=["GET"], response_class=HTMLResponse)
-    for module in MORE_MODULES:
-        app.include_router(importlib.import_module(f"ap_coder.web.pages.{module}").router)
 
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:

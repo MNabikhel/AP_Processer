@@ -471,3 +471,14 @@ def test_the_card_can_be_included_anywhere_without_context(store):
     html = templates.env.from_string(source).render(request=type("R", (), {"app": client.app, "url": type(
         "U", (), {"path": "/settings"})()})())  # fmt: skip
     assert 'id="azure-check"' in html and "Off — AP Coder works fully offline without it." in html
+
+
+def test_settings_reading_shows_the_azure_card_and_its_own_page_is_not_taken_for_a_tab(store):
+    """Settings → Reading includes the card; /settings/azure-check is the card's page, not "Settings has no such tab"
+    from Settings' /settings/{tab}."""
+    client = _client(store)
+    reading = client.get("/settings/reading")
+    assert reading.status_code == 200 and 'id="azure-check"' in reading.text
+    assert "works fully offline without it" in reading.text
+    page = client.get("/settings/azure-check")
+    assert page.status_code == 200 and 'id="azure-check"' in page.text
