@@ -26,7 +26,17 @@ from ap_coder.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.review import coding_from_inputs, is_blank, split_line
 from ap_coder.safe import md
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
-from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
+from ap_coder.store import (
+    APPROVED,
+    FAILED,
+    PARKED,
+    PENDING,
+    REJECTED,
+    REVIEW,
+    Store,
+    load_sample_setup,
+    suggestion_kept,
+)
 from ap_coder.suggest import suggest_gl
 from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, TAX_TYPES, province_label
 from ap_coder.terms import DUE_SOON_DAYS, payment
@@ -538,7 +548,7 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
                 waiting = sum(1 for i in result["approved"] if (store.get_invoice(i) or {}).get("status") == PENDING)
                 notify(
                     f"Approved {ui.plural(len(result['approved']), 'invoice')}"
-                    + (f"; {waiting} wait for a second approval." if waiting else "."),
+                    + (f"; {waiting} wait{'s' if waiting == 1 else ''} for a second approval." if waiting else "."),
                     ":material/done_all:",
                 )
                 st.rerun()
@@ -664,7 +674,8 @@ def _getting_started(store: Store) -> None:
     invoices = store.list_invoices()
     has_invoices = bool(invoices)
     steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
-    done = sum(1 for s, _, _ in steps if s == "ok")
+    needed = [s for s, _, _ in steps if s != "opt"]  # as the Process page counts: the chat model is optional
+    done = sum(1 for s in needed if s == "ok")
     waiting = sum(1 for i in invoices if i["status"] == REVIEW)
     if waiting and reference_or_none(store) is None:
         # Read and waiting: only the chart of accounts stands between AP and the queue.
@@ -684,7 +695,7 @@ def _getting_started(store: Store) -> None:
         head, gauge = st.columns([5, 1], vertical_alignment="center")
         head.markdown("#### :material/flag: Getting started")
         head.caption("Finish these steps and invoices will start arriving in your review queue.")
-        ring = ui.ring(done / len(steps), size=60, stroke=6, label=f"{done}/{len(steps)}")
+        ring = ui.ring(done / len(needed), size=60, stroke=6, label=f"{done}/{len(needed)}")
         gauge.html(f"<div style='text-align:right'>{ring}</div>")
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
         links = st.container(horizontal=True)
@@ -971,13 +982,15 @@ def _ask_vendor(coding: InvoiceCoding, report: Any, key: str) -> None:
 
 
 def _ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
+    """The lines whose suggested coding the reviewer changed, counted as the approval counts them: a GL account or
+    cost center the AI left blank and the reviewer picked changes nothing; a line still without a GL isn't taught."""
     changed = 0
     for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items)):
-        if (
-            before is None
-            or before.get("predicted_gl_code") != li.predicted_gl_code
-            or (before.get("predicted_cost_center") or "") != (li.predicted_cost_center or "")
-        ):
+        if li.predicted_gl_code == UNASSIGNED:
+            continue
+        s_gl = before.get("predicted_gl_code") if before else None
+        s_cc = before.get("predicted_cost_center", "") if before else None
+        if not suggestion_kept(s_gl, s_cc, li.predicted_gl_code, li.predicted_cost_center):
             changed += 1
     return changed
 
@@ -1318,8 +1331,9 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             )
             if uncoded or no_cc:
                 allow = False  # never post to UNASSIGNED
-                pick = [f"a GL account for line {', '.join(uncoded)}"] if uncoded else []
-                pick += [f"a cost center for line {', '.join(no_cc)}"] if no_cc else []
+                which = lambda numbers: f"line{'s' if len(numbers) > 1 else ''} {', '.join(numbers)}"  # noqa: E731
+                pick = [f"a GL account for {which(uncoded)}"] if uncoded else []
+                pick += [f"a cost center for {which(no_cc)}"] if no_cc else []
                 st.html(_pill(f"Pick {' and '.join(pick)} to approve", "warn"))
             elif errors:
                 # Keyed on the errors: a new error (an edit after the tick) asks again instead of riding along.
@@ -1544,9 +1558,11 @@ def _split_popover(
             ),  # fmt: skip
         }
         if has_cc:
+            cc_labels = cc_label_map(reference)  # "Needs a cost center", as the line grid says it
             config["cc"] = st.column_config.SelectboxColumn(
-                "Cost center", options=[UNASSIGNED, *reference.cost_centers.codes], width=150
-            )
+                "Cost center", options=[UNASSIGNED, *reference.cost_centers.codes],
+                format_func=lambda c: cc_labels.get(c, c), width=150,
+            )  # fmt: skip
         parts = st.data_editor(
             start, column_config=config, column_order=["gl", "cc", "pct"] if has_cc else ["gl", "pct"],
             num_rows="dynamic", hide_index=True, key=f"{key}_split_parts_{number}",

@@ -58,7 +58,9 @@ def _switch_card(store) -> None:
                     "is verified, every check passes and nothing below needs a person. Recorded in the Activity log "
                     "with your name."
                 )
-            sure = st.checkbox("I understand", key="touchless_sure")
+            # One tick per direction: the menu stays open after a switch, and the opposite switch must not find
+            # the "I understand" given for this one (turning touchless back on with no fresh confirmation).
+            sure = st.checkbox("I understand", key="touchless_sure_off" if on else "touchless_sure")
             if st.button("Turn off" if on else "Turn on", type="primary", disabled=not sure, key="touchless_go"):
                 changes = store.set_touchless(not on, reviewer())
                 went = sum(1 for c in changes if c["to"] == "autonomous")

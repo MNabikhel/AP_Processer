@@ -67,6 +67,25 @@ def test_automation_tab_turns_touchless_on_with_a_confirmation(db):
     assert "Vendors touchless" in tiles and "Touchless, last 30 days" in tiles
 
 
+def test_the_touchless_confirmation_is_asked_again_for_the_opposite_switch(db):
+    """Found driving the dashboard: after turning touchless off, the menu showed "Turn on" with "I understand" still
+    ticked from turning it off, so one more click approved invoices without a person with no fresh confirmation."""
+    store = Store(db)
+    at = _ok(_automation().run())
+    _ok(at.checkbox(key="touchless_sure").check().run())
+    _ok(at.button(key="touchless_go").click().run())
+    assert store.touchless_enabled()
+    assert [c.key for c in at.checkbox] == ["touchless_sure_off"]  # a new tick: the browser can't keep the old one
+    assert not at.checkbox(key="touchless_sure_off").value
+    assert at.button(key="touchless_go").disabled  # "Turn off" waits for its own tick
+    _ok(at.checkbox(key="touchless_sure_off").check().run())
+    _ok(at.button(key="touchless_go").click().run())
+    assert not store.touchless_enabled()
+    assert [c.key for c in at.checkbox] == ["touchless_sure"]
+    assert not at.checkbox(key="touchless_sure").value
+    assert at.button(key="touchless_go").disabled  # and "Turn on" again for its own
+
+
 def test_automation_tab_saves_the_limit(db):
     store = Store(db)
     at = _ok(_automation().run())

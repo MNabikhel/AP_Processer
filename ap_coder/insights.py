@@ -98,7 +98,11 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     clean = [e for e in approvals if not _corrected(e)]
     changed = [e for e in approvals if _corrected(e)]
 
-    costs = [invoice_cost_usd(metas.get(r["id"]) or {}, a) for r in processed]
+    # Only a build that may use the internet can send anything to Azure. Offline, the tokens recorded are LM Studio's
+    # (or the demo's) on this computer: no cloud cost, whatever Azure would have charged for them.
+    from .offline import internet_allowed
+
+    costs = [invoice_cost_usd(metas.get(r["id"]) or {}, a) for r in processed] if internet_allowed() else []
     measured = [c for c, recorded in costs if recorded]
     cost_per_invoice_cad = (sum(measured) / len(measured) * a.usd_to_cad) if measured else None
     seconds = [
