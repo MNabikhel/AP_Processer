@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/settings.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Settings">
+  {% for key, label in tabs %}
+  <a href="/settings/{{ key }}" class="{{ 'on' if key == tab else '' }}"{% if key == tab %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+<div class="st-tab" data-tab="{{ tab }}">
+{% include "settings_" ~ tab ~ ".html" %}
+</div>
+{% endblock %}
+{% block scripts %}<script type="module" src="/static/js/settings.js?v={{ static_version }}"></script>{% endblock %}
