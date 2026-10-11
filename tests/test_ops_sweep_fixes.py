@@ -8,6 +8,7 @@ import dataclasses
 import io
 import json
 import os
+import sqlite3
 import sys
 from email.message import EmailMessage
 from pathlib import Path
@@ -254,3 +255,42 @@ def test_extract_never_sends_an_invoice_to_azure_in_the_offline_build(monkeypatc
     assert made == []
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # a developer opted in: then it may
     assert extractor.client is None and made == ["client"]
+
+
+# --- Backups ------------------------------------------------------------------------------------------------------
+
+
+def test_a_backup_is_one_self_contained_file(tmp_path):
+    """Backups were copies in WAL mode: opening one needs -wal / -shm files beside it, which a read-only folder
+    (a network share, a USB stick) cannot hold, so such a backup could not be restored ("damaged")."""
+    store = Store(tmp_path / "data" / "ap_coder.db")
+    store.set_setting("x", "1")
+    made = store.backup_now("manual")
+    assert made.read_bytes()[18:20] == b"\x01\x01"  # file format 1 = rollback journal, not WAL (2)
+
+
+def test_checking_and_restoring_a_backup_writes_nothing_next_to_it(tmp_path):
+    """Checking a backup (and restoring it) opened it in place: SQLite wrote -wal / -shm files next to an older,
+    WAL-format backup; in a read-only folder that failed and the backup was called damaged."""
+    store = Store(tmp_path / "data" / "ap_coder.db")
+    store.set_setting("x", "old")
+    share = tmp_path / "share"
+    share.mkdir()
+    old = share / "ap_coder-20260101-120000.db"
+    with sqlite3.connect(old) as conn:  # a backup made by an older version: WAL format
+        conn.execute("PRAGMA journal_mode=WAL")
+    conn.close()
+    store.backup_to(tmp_path / "plain.db")
+    with sqlite3.connect(old) as target, sqlite3.connect(tmp_path / "plain.db") as source:
+        source.backup(target)
+        target.execute("PRAGMA journal_mode=WAL")
+    target.close()
+    source.close()
+    assert old.read_bytes()[18:20] == b"\x02\x02"
+    before = sorted(p.name for p in share.iterdir())
+    Store.check_backup(old)
+    assert sorted(p.name for p in share.iterdir()) == before
+    store.set_setting("x", "new")
+    store.restore_from(old)
+    assert store.get_setting("x") == "old"
+    assert sorted(p.name for p in share.iterdir()) == before
