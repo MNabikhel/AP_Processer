@@ -384,7 +384,10 @@ def data_tab(store: Store) -> None:
                 "(processed invoices, approvals, lessons, GL changes) is replaced. The current database is "
                 "backed up first, so this can be undone."
             )
-            confirm = st.text_input("Type RESTORE to confirm", key="restore_confirm")
+            # A new field after each restore: the menu stays open, and the RESTORE typed for one restore must not
+            # confirm the next one (a second click, or another backup picked).
+            rounds = st.session_state.get("restore_rounds", 0)
+            confirm = st.text_input("Type RESTORE to confirm", key=f"restore_confirm{rounds or ''}")
             if st.button("Restore", type="primary", disabled=confirm.strip().upper() != "RESTORE", key="restore"):
                 had_copy_dir = bool(store.get_setting("backup_copy_dir").strip())
                 try:
@@ -392,6 +395,7 @@ def data_tab(store: Store) -> None:
                 except ValueError as exc:  # not an AP Coder backup: nothing was changed
                     st.error(f"Not restored: {md(exc)}.", icon=":material/error:")
                 else:
+                    st.session_state["restore_rounds"] = rounds + 1
                     st.session_state.pop("open_invoice", None)
                     forget_all_drafts()  # the invoices they belong to may be gone, their numbers given out again
                     cleared = " The second backup folder was cleared: set it again above." if had_copy_dir else ""

@@ -76,6 +76,28 @@ def test_the_approve_bar_counts_changes_as_the_approval_does(db):
     assert f"{n - 1} of {n} lines coded as suggested" in " ".join(t.value for t in at.toast)
 
 
+def test_a_restore_asks_for_restore_again_before_the_next_one(db):
+    """After a restore the menu stayed open with RESTORE still typed and the button enabled: one more click (or
+    picking another backup, then one click) replaced the database again without a new confirmation."""
+    store = Store(db)
+    load_sample_setup(store)
+    older = store.backup_now("manual")
+    newer = store.backup_now("manual")
+    assert older != newer
+    _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())  # registers the pages
+    at = AppTest.from_string("from ap_coder.webapp.settings import page_settings\npage_settings()",
+                             default_timeout=TIMEOUT)  # fmt: skip
+    _ok(at.run())
+    at.selectbox(key="backup_choice").select(older.name)
+    at.text_input(key="restore_confirm").input("RESTORE")
+    _ok(at.run())
+    _ok(at.button(key="restore").click().run())
+    assert "Restored" in " ".join(t.value for t in at.toast)
+    confirm = next(t for t in at.text_input if (t.key or "").startswith("restore_confirm"))
+    assert confirm.value == ""
+    assert next(b for b in at.button if b.key == "restore").disabled
+
+
 def test_getting_started_counts_only_the_steps_that_are_needed(db):
     """The welcome screen's ring counted the optional chat model, so it read 1/6 where the Process page said 1 of 4
     (plus processing the first invoices), and could never be complete without that optional model."""
