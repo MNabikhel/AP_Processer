@@ -5,10 +5,13 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
 
 ## What you need
 
-- **Windows 10 or 11** (64-bit), or a Mac with macOS 12 or newer.
-- **Python 3.12 (or 3.11).** Nothing to do if the laptop has one: AP Coder uses it as it is and never
-  installs a second Python. The offline bundle has packages for 3.11 and 3.12; 3.13 is used only when neither
-  is installed, and needs a bundle built for it. AP Coder never downloads Python: if the laptop has none, IT
+- **Windows 10 or 11** (64-bit), or a Mac: Apple silicon with macOS 14 or newer, or Intel with macOS 13 or newer.
+- **Python 3.11 or newer** (3.12 recommended). Nothing to do if the laptop has one: AP Coder uses it as it
+  is and never installs a second Python. When several are installed, the ones the offline bundle has
+  packages for come first (3.12, 3.11, 3.13, 3.14, then any newer); a Python the bundle was not built for
+  needs a bundle built for it (the launcher says so, with the command). AP Coder never downloads Python: if
+  the laptop has none, or only an older one (it then says *Python 3.10 is installed, but AP Coder needs
+  Python 3.11 or newer*), IT
   installs Python 3.12 from [python.org](https://www.python.org/downloads/) with **Add python.exe to PATH**
   ticked on the first screen (Mac: the python.org installer).
 - About **2 GB** free disk space.
@@ -89,7 +92,8 @@ by OneDrive (e.g. `C:\APCoder\app`), and double-click **`APProcessor.bat`** (Mac
 the first time, right-click → *Open*). The first run takes a few minutes and sets up only what is
 missing:
 
-- **Python**: uses the Python already installed, 3.12 or 3.11 first (see *What you need*); never downloads one.
+- **Python**: uses the Python already installed, 3.11 or newer, 3.12 first (see *What you need*); never
+  downloads one.
 - **`.venv`**: AP Coder's own environment, made once and reused (made again only if it is broken).
 - **Packages**: installs only the ones that are missing or too old (all of them the first time), from the
   bundle's `wheelhouse/` folder. One that is not in it is named in the summary (it must come from the
@@ -139,17 +143,25 @@ tried again a day later, or at once with *Run the self-test again* in *Settings 
 (the one step that downloads; it opts in to the internet for itself):
 
 ```
-python scripts/build_offline_bundle.py
+python scripts/build_offline_bundle.py          # Windows laptops
+python scripts/build_offline_bundle.py --mac    # Windows laptops and Macs
 ```
 
 It writes `dist/APProcessor-offline-<version>-<date>.zip` with the code, a `wheelhouse/` folder (every
-package, for Windows 64-bit and the computer that built it, Python 3.11 and 3.12) and the OCR models.
-Add `--platform macosx_11_0_arm64` for Apple-silicon Macs; `--dry-run` shows the plan without
-downloading. Copy the ZIP to the laptop (USB stick), unzip it, double-click `APProcessor.bat`. Seeing
-`wheelhouse/`, the launcher installs from it with `pip --no-index` and never goes online.
+package, for Windows 64-bit and the computer that built it, Python 3.11, 3.12, 3.13 and 3.14) and the OCR
+models: about 0.5 GB. **When a tester has a Mac, add `--mac`**: it adds Apple-silicon Macs (macOS 14 or
+later) and Intel Macs (macOS 13 or later), for the same Python versions, and makes the ZIP about 1.5 GB
+(`--platform win_amd64 --platform macosx_14_0_arm64`: Windows and Apple silicon only, about 1 GB). The
+bundle can be built on any of these computers for all the others. `--dry-run` shows the plan without
+downloading. Copy the ZIP to the laptop (USB stick), unzip it, double-click `APProcessor.bat` (Mac:
+`APProcessor.command`). Seeing `wheelhouse/`, the launcher installs from it with `pip --no-index` and never
+goes online.
 
-The laptop's Python must match one the bundle was built for (3.11 or 3.12 by default; add
-`--python 3.13` for a laptop that only has 3.13).
+The laptop's Python must be one the bundle was built for (3.11 to 3.14 by default; `bundle_manifest.json`
+lists them, and the launcher names them when it does not match; `--python 3.12` alone makes a smaller
+bundle). One exception: the OCR engine (onnxruntime) is not published for Intel Macs on Python 3.14, so
+there AP Coder installs without the OCR add-on (text PDFs are read, scans are not; Python 3.13 on that Mac
+has it). The build says so, and `bundle_manifest.json` lists it under `without_ocr`.
 
 **Developers with internet** can set up from a plain checkout instead: `set AP_ALLOW_INTERNET=1` in a
 terminal, then run `APProcessor.bat` from it (see *What is sent over the network*).
@@ -158,7 +170,7 @@ terminal, then run `APProcessor.bat` from it (see *What is sent over the network
 self-check before starting; for every sample's line, run `.venv\Scripts\python.exe scripts\pilot_check.py`
 in the AP Coder folder. The same check runs on a clean Windows machine in CI for every change, from the
 double-click (first start, a second double-click while it runs, a later start) and from the offline
-bundle with the internet cut off.
+bundle with the internet cut off, on Windows and on a Mac that has only Python 3.14.
 
 ## Daily use
 
@@ -227,7 +239,9 @@ never checks the internet for updates). Your data folder is not touched, so noth
 
 | What you see | What to do |
 |---|---|
-| *AP Coder needs Python 3.11, 3.12 or 3.13 (3.12 is best), and it is not installed* | IT installs Python 3.12 from python.org, with *Add python.exe to PATH* ticked; double-click again. |
+| *AP Coder needs Python 3.11 or newer (3.12 is best), and it is not installed* | IT installs Python 3.12 from python.org, with *Add python.exe to PATH* ticked; double-click again. |
+| *Python 3.10 is installed, but AP Coder needs Python 3.11 or newer* | The laptop's Python is too old: IT installs Python 3.12 next to it (the older one is left alone); double-click again. |
+| *Note: this offline bundle has packages for Python ..., not for Python 3.14* | The laptop's Python is newer than the bundle: IT builds a bundle for it (the note gives the `build_offline_bundle.py` command) or installs one of the versions listed. |
 | *AP Coder stopped. The message above says what to do.* | The `What to do:` line above it says it; most often a package could not install. *Missing packages: ...*: the folder has no `wheelhouse/` (unzip the full offline bundle over it). *The offline bundle's wheelhouse folder has no ...*: the bundle was built for another Python version. Developers online (`AP_ALLOW_INTERNET=1`): check the proxy (`set HTTPS_PROXY=http://proxy:8080`). |
 | *AP Coder is being set up or started in another window* | The first double-click is still setting up: it waits, then opens the dashboard. |
 | *Self-check FAILED* in the summary | AP Coder still runs. Run `.venv\Scripts\python.exe scripts\pilot_check.py` in `terminal.bat` and send the output. |

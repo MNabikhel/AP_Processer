@@ -101,8 +101,9 @@ def test_doctor_python_range_matches_the_launcher():
 
     assert _python_check((3, 12, 1))[1] == PASS and _python_check((3, 11, 0))[1] == PASS
     assert _python_check((3, 13, 2))[1] == PASS
+    # No upper bound, like the launchers: a Mac with only Python 3.14 (or newer) is fine.
+    assert _python_check((3, 14, 5))[1] == PASS and _python_check((3, 15, 0))[1] == PASS
     assert _python_check((3, 10, 4))[1] == WARN  # still tested in CI: a warning, not a failure
-    assert _python_check((3, 14, 0))[1] == WARN and "not tested" in _python_check((3, 14, 0))[2]
     assert _python_check((3, 9, 7))[1] == FAIL
 
 

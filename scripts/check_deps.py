@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
+import os
 import re
 import sys
 import urllib.parse
@@ -86,10 +87,10 @@ def file_url_path(url: str) -> Path:
     """The folder a ``file:`` URL names, also on a network share: pip records ``\\\\server\\share\\AP Coder``
     as ``file://server/share/AP%20Coder`` (the server is the URL's host, not part of its path)."""
     parts = urllib.parse.urlparse(url)
-    path = parts.path
-    if parts.netloc and parts.netloc.lower() != "localhost":
-        path = f"//{parts.netloc}{path}"
-    return Path(urllib.request.url2pathname(path))
+    if parts.netloc and parts.netloc.lower() != "localhost":  # built here: Python 3.14's url2pathname refuses it
+        share = f"//{parts.netloc}{urllib.parse.unquote(parts.path)}"
+        return Path(share.replace("/", "\\") if os.name == "nt" else share)
+    return Path(urllib.request.url2pathname(parts.path))
 
 
 def self_problem(root: Path = ROOT) -> str:
