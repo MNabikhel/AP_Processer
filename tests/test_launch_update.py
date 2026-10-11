@@ -385,6 +385,40 @@ def test_with_the_internet_allowed_a_misfit_wheelhouse_falls_back_to_pypi(launch
     assert calls and "Installing from the internet (PyPI) instead" in capsys.readouterr().out
 
 
+def test_a_wheelhouse_copied_into_the_wheelhouse_folder_is_used_and_judged(launch, monkeypatch):
+    """An older bundle's wheelhouse copied over the folder lands in wheelhouse/wheelhouse: it was not looked at, so
+    pip found nothing and the start listed every package as missing instead of saying what the wheels fit."""
+    nested = launch.ROOT / "wheelhouse" / "wheelhouse"
+    nested.mkdir(parents=True)
+    for name in WINDOWS_ONLY:
+        (nested / name).write_bytes(b"")
+    _computer(launch, monkeypatch, "windows", (3, 14), ["cp314-cp314-win_amd64", "py3-none-any"])
+    assert "built for Windows, Python 3.11/3.12; this computer has Python 3.14" in launch.wheelhouse_misfit()
+    assert launch.pip_source() == ["--no-index", "--find-links", str(nested)]
+    _computer(launch, monkeypatch, "windows", (3, 12), ["cp312-cp312-win_amd64", "py3-none-any"])
+    assert launch.wheelhouse_misfit() == ""
+
+
+def test_a_wheelhouse_that_does_not_fit_is_said_once_not_twice(launch, monkeypatch, capsys):
+    """The first phase said what the manifest claims ("built for Python 3.12"), then the second what the wheels say
+    ("built for Windows, Python 3.11/3.12"): two different messages. The wheels are judged once, in the second."""
+    _wheelhouse(launch, *WINDOWS_ONLY)
+    manifest = {"version": "0.2.0", "built": "2026-10-11T09:00:00", "targets": ["this computer (linux-x86_64, "
+                                                                                 "Python 3.12)"]}  # fmt: skip
+    (launch.ROOT / "bundle_manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(launch, "sys", SimpleNamespace(version_info=(3, 14, 0), version="3.14.0 (main)",
+                                                       executable="/usr/bin/python3.14", platform="linux"))  # fmt: skip
+    monkeypatch.setattr(launch.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(launch, "ensure_venv", lambda python="", rebuild=False: "created")
+    monkeypatch.setattr(launch, "find_python", lambda versions: None)  # only Python 3.14 on this computer
+    monkeypatch.setattr(launch.subprocess, "call", lambda cmd: 1)
+    assert launch.bootstrap([]) == 1
+    assert "Note: this offline bundle" not in capsys.readouterr().out
+    (launch.ROOT / "wheelhouse").rename(launch.ROOT / "elsewhere")  # no wheels to judge by: the manifest's word
+    assert launch.bootstrap([]) == 1
+    assert "Note: this offline bundle has packages for Python 3.12, not for Python 3.14" in capsys.readouterr().out
+
+
 # --- A .venv on a Python the bundle has no packages for ----------------------------------------------------------
 
 

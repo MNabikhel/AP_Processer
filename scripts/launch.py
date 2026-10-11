@@ -425,7 +425,8 @@ def bootstrap(argv: list[str]) -> int:
     if not supported(version) and not VENV_PY.exists():
         say(f"Note: Python {shown} is older than AP Coder needs (3.11 or newer; 3.12 is best).")
     built_for = bundle_pythons()
-    if bundle_pythons(here_only=False) and shown not in built_for and not VENV_PY.exists():
+    # (with wheels to judge by, the second phase says what they fit, once, before installing anything)
+    if bundle_pythons(here_only=False) and shown not in built_for and not VENV_PY.exists() and not _core_wheels():
         has = (f"packages for Python {listed(built_for)}, not for Python {shown} (the Python found on this computer)"
                if built_for else "no packages for this kind of computer")  # fmt: skip
         say(f"Note: this offline bundle has {has}, so the setup may stop. {bundle_advice(shown)}")
@@ -456,7 +457,7 @@ def pip_source() -> list[str] | None:
     """Where pip may install from: the offline bundle's wheelhouse/ folder, with ``--no-index`` (never the
     internet). Without one: PyPI ([]) only with the opt-in (AP_ALLOW_INTERNET=1), else None (nowhere). A wheelhouse
     built for another kind of computer or Python is passed over for PyPI only with the opt-in."""
-    wheelhouse = ROOT / "wheelhouse"
+    wheelhouse = wheelhouse_dir()
     if wheelhouse.is_dir() and not (internet_allowed() and wheelhouse_misfit()):
         return ["--no-index", "--find-links", str(wheelhouse)]
     return [] if internet_allowed() else None
@@ -469,9 +470,23 @@ SYSTEM_NAMES = {"windows": "Windows", "mac": "Macs", "linux": "Linux"}
 THIS_KIND = {"windows": "a Windows computer", "mac": "a Mac", "linux": "a Linux computer"}
 
 
+def wheelhouse_dir() -> Path:
+    """The offline bundle's wheelhouse/ folder; when it holds no wheels itself, the one folder in it that does (a
+    wheelhouse copied over the folder as a whole lands in wheelhouse/wheelhouse)."""
+    folder = ROOT / "wheelhouse"
+    try:
+        if folder.is_dir() and not any(folder.glob("*.whl")):
+            inner = [d for d in folder.iterdir() if d.is_dir() and any(d.glob("*.whl"))]
+            if len(inner) == 1:
+                return inner[0]
+    except OSError:
+        pass
+    return folder
+
+
 def _core_wheels(folder: Path | None = None) -> dict[str, list[tuple[str, str, str]]]:
     """The (interpreter, abi, platform) tags of the core compiled packages' wheels in the wheelhouse, by package."""
-    folder = folder or ROOT / "wheelhouse"
+    folder = folder or wheelhouse_dir()
     found: dict[str, list[tuple[str, str, str]]] = {}
     try:
         files = [f.name for f in folder.iterdir() if f.name.endswith(".whl")]
@@ -647,7 +662,7 @@ def ensure_azure(state: dict) -> bool:
     """The packages of the optional Azure check (the ``azure`` extra), installed from the offline bundle's wheelhouse
     when it carries them, so switching the check on in the settings needs no download. Never from the internet,
     never a reason to stop (AP Coder runs without them), tried once per version when it fails. True when installed."""
-    wheelhouse = ROOT / "wheelhouse"
+    wheelhouse = wheelhouse_dir()
     core = set(check_deps.requirements())
     wanted = [r for r in check_deps.requirements(extras=("azure",)) if r not in core]
     try:
@@ -693,7 +708,7 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     source = pip_source()
     if source is None:
         return without_wheelhouse(missing, total)
-    misfit = wheelhouse_misfit() if (ROOT / "wheelhouse").is_dir() else ""
+    misfit = wheelhouse_misfit() if wheelhouse_dir().is_dir() else ""
     if misfit and source:  # offline: pip would only fail with a long, unclear error
         raise SetupError(
             f"{misfit}: nothing was installed.",
