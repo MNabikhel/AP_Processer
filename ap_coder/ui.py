@@ -456,8 +456,9 @@ SUPPLIER_STATE_PILLS = {
     "learning": ("Learning", "gray", "school"),
     "supervised": ("Supervised", "info", "visibility"),
     "ready": ("Ready", "violet", "verified"),
-    "autonomous": ("Autonomous", "ok", "bolt"),
+    "autonomous": ("Touchless", "ok", "bolt"),
     "suspended": ("Suspended", "err", "gpp_maybe"),
+    "held": ("Kept supervised", "warn", "pan_tool"),
 }
 
 
