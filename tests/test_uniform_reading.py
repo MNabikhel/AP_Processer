@@ -53,7 +53,8 @@ def touchless(monkeypatch):
     """Every supplier touchless and every invoice passing the bar: only the page reader's wait holds it back."""
     seen = []
 
-    def decide(store, key, profile, capture, report, path, *, awaiting_page_reader=False, output=None):
+    def decide(store, key, profile, capture, report, path, *, awaiting_page_reader=False, output=None,
+               pages_read=None):  # fmt: skip
         assert output is not None  # the coding an approval would post: its total and currency
         seen.append(awaiting_page_reader)
         if awaiting_page_reader:
@@ -95,6 +96,29 @@ def test_an_edited_invoice_is_never_approved_by_the_page_reader(store, touchless
     outcome = page_worker.read_one(_settings(), store)
     assert outcome.status == "skipped" and not outcome.auto_approved
     assert store.get_invoice(result.invoice_id)["status"] == REVIEW
+
+
+def test_the_decision_knows_how_many_pages_the_page_reader_read(store, monkeypatch, tmp_path):
+    """OvisOCR2 reads at most AP_PAGE_READER_MAX_PAGES pages: the decision is told, so pages it never read keep the
+    invoice with a person (``touchless_gates``)."""
+    import pymupdf
+
+    doc = pymupdf.open(PDF)
+    doc.new_page().insert_text((72, 72), "Terms: net 30.")
+    two = tmp_path / "two_pages.pdf"
+    doc.save(two)
+    seen = {}
+
+    def decide(store, key, profile, capture, report, path, **kw):
+        seen.update(kw, page_count=capture.page_count)
+        return {"state": AUTONOMOUS, "auto": False, "audit": False, "reason": ""}
+
+    monkeypatch.setattr(pipeline, "autonomy_decision", decide)
+    pipe = InvoicePipeline(_settings(), store.reference_data(), store=store)
+    pipe.process(two, page_text=[_transcript()], save=False)
+    assert seen["page_count"] == 2 and seen["pages_read"] == 1 and not seen["awaiting_page_reader"]
+    pipe.process(two, save=False)
+    assert seen["pages_read"] is None and seen["awaiting_page_reader"]
 
 
 def test_a_text_invoice_does_not_wait_for_the_page_reader(store, touchless):
@@ -189,6 +213,22 @@ def test_iphone_photos_are_read_like_any_photo(tmp_path, monkeypatch):
     assert page_worker.wants_reading(Settings(), photo)
 
 
+def test_the_review_screen_shows_an_iphone_photo(tmp_path, monkeypatch):
+    """AP checks the fields against the page: a HEIC invoice is drawn on the review screen like any photo, in the
+    highlighted view (and the plain one it falls back to)."""
+    from ap_coder.webapp import capture_panel, common, viewer
+
+    fake = types.ModuleType("pillow_heif")
+    fake.register_heif_opener = lambda: None
+    monkeypatch.setitem(sys.modules, "pillow_heif", fake)
+    monkeypatch.setattr(layout, "_heif_registered", None)
+    photo = tmp_path / "IMG_0003.HEIC"
+    photo.write_bytes(_png())  # a PNG stands in for the HEIC photo: Pillow tells a picture by its content
+    assert ".heic" in capture_panel.VIEWABLE and ".heif" in capture_panel.VIEWABLE
+    assert len(viewer.render_pages(photo)) == 1
+    assert len(common.render_pages.__wrapped__(str(photo), photo.stat().st_mtime)) == 1
+
+
 # --- A digital PDF's hidden text against the page as printed ----------------------------------------------------
 
 
@@ -244,6 +284,28 @@ def test_a_page_that_shows_other_figures_fails_the_check():
     other = re.sub(r"\d", lambda m: str((int(m.group(0)) + 3) % 10), _transcript())
     check = _check(analyze(PDF, ocr=False, page_text=[other], today=TODAY))
     assert not check["ok"] and "only" in check["detail"] and check["figures"] >= 8
+
+
+def test_text_printed_over_itself_is_no_alarm(tmp_path):
+    """Some PDF writers make bold by drawing the text twice, a hair apart: the PDF's text then has every figure twice
+    though the page shows it once. That is no hidden text."""
+    import pymupdf
+
+    lines = ["INVOICE NW-2026-0042", "Northwind Supplies Ltd.", "Paper A4 12 42.25 507.00", "Toner 4 155.15 620.60",
+             "Desk 2 1,234.56 2,469.12", "Delivery 1 125.00 125.00", "Subtotal 3,721.72", "GST (5%) 186.09",
+             "Total 3,907.81"]  # fmt: skip
+    doc = pymupdf.open()
+    page = doc.new_page()
+    for i, line in enumerate(lines):
+        for dx in (0, 0.3):  # drawn twice
+            page.insert_text((40 + dx, 60 + 18 * i), line, fontsize=9)
+    bold = tmp_path / "bold.pdf"
+    doc.save(bold)
+    check = _check(analyze(bold, ocr=False, page_text=["\n".join(lines)], today=TODAY))
+    assert check["ok"] and check["confirmed"] == check["figures"] >= 8, check
+    tampered = "\n".join(lines).replace("3,721.72", "2,721.72").replace("3,907.81", "2,907.81")
+    check = _check(analyze(bold, ocr=False, page_text=[tampered], today=TODAY))
+    assert not check["ok"] and set(check["fields"]) >= {"subtotal", "grand_total"}, check
 
 
 def test_too_few_figures_are_not_judged(tmp_path):

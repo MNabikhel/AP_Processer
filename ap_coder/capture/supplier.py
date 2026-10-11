@@ -1175,8 +1175,9 @@ def fresh_streak(stats: SupplierStats, since: str | None) -> int:
 
 def judged_stats(stats: SupplierStats, stored_state: str, suspended_at: str | None = None) -> SupplierStats:
     """The record the bar is checked on: a suspended supplier's clean streak counts only invoices reviewed since
-    it was suspended (a reopened touchless invoice suspends it without recording a correction)."""
-    if stored_state != SUSPENDED:
+    it was suspended (a reopened touchless invoice suspends it without recording a correction), also while a
+    manager keeps it supervised and once allowed again (``suspended_at`` is kept until it is touchless again)."""
+    if stored_state != SUSPENDED and not suspended_at:
         return stats
     from dataclasses import replace
 
@@ -1298,22 +1299,26 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("Possible duplicate", "same number, same amount under a new number, already in the ERP, or another vendor name"),
     ("Unusual amount", "far above what this vendor usually bills"),
     ("Over the touchless limit", "a total above the largest amount approved without a person"),
+    ("No exchange rate", "a foreign currency with no rate in Settings → Review, so the limit can't be checked"),
     ("Over the approval limit", "it needs a second approver anyway"),
     ("Credit note", "a credit is always applied by a person"),
     ("Not in the vendor master", "once a vendor master is imported, a vendor that is not in it"),
-    ("Not read by every reader", "the page reader has not read it yet"),
+    ("Not read by every reader", "the page reader has not read it yet, or not every page of it"),
     ("Any failed check", "totals, tax, GST/HST check digit, or any field not verified"),
 ]  # fmt: skip
 
 
 def touchless_gates(
     issues: Iterable[dict[str, Any]] | None = None, *, grand_total: Any = None, over_limit: float | None = None,
-    over_approval_limit: bool = False, awaiting_page_reader: bool = False,
+    over_approval_limit: bool = False, awaiting_page_reader: bool = False, pages_unread: int = 0,
+    no_rate_for: str = "",
 ) -> list[str]:  # fmt: skip
     """Why this invoice must be seen by a person whatever its supplier's record (plain English; empty: none applies).
     ``issues``: the validation findings ({"code", ...}); ``grand_total``: below zero is a credit note;
-    ``over_limit``: the touchless limit its total is over (None: not over); ``over_approval_limit``: it needs a
-    second approver; ``awaiting_page_reader``: not every reader has read it yet."""
+    ``over_limit``: the touchless limit its total is over (None: not over); ``no_rate_for``: its currency, when no
+    exchange rate is set for it (the limit is in CAD, so it can't be checked); ``over_approval_limit``: it needs a
+    second approver; ``awaiting_page_reader``: not every reader has read it yet; ``pages_unread``: pages of it the
+    page reader did not read (it reads at most AP_PAGE_READER_MAX_PAGES pages)."""
     reasons: list[str] = []
     for issue in issues or []:
         reason = ALWAYS_A_PERSON.get(str(issue.get("code") or ""))
@@ -1324,10 +1329,15 @@ def touchless_gates(
         reasons.append("it is a credit note")
     if over_limit is not None:
         reasons.append(f"the total is over the touchless limit of {over_limit:,.2f}")
+    if no_rate_for:
+        reasons.append(f"no exchange rate for {no_rate_for} (Settings → Review) to compare its total with the "
+                       "touchless limit")  # fmt: skip
     if over_approval_limit:
         reasons.append("it is over the approval limit and needs a second approver")
     if awaiting_page_reader:
         reasons.append("the page reader has not read it yet")
+    if pages_unread > 0:
+        reasons.append(f"{pages_unread} of its pages {'was' if pages_unread == 1 else 'were'} not read by OvisOCR2")
     return reasons
 
 

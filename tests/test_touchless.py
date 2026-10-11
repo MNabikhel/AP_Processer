@@ -204,6 +204,22 @@ def test_keep_supervised_overrides_the_bar_until_allowed_again(tmp_path, path):
     assert store.get_supplier_profile(KEY)["state"] == AUTONOMOUS  # it meets the bar: touchless at once
 
 
+def test_keeping_a_suspended_vendor_supervised_then_allowing_it_still_needs_a_fresh_streak(tmp_path):
+    """Kept supervised while suspended, then allowed again: its clean streak from before the suspension still doesn't
+    count (allowing it again is no shortcut past the fresh streak)."""
+    store = Store(tmp_path / "s.db")
+    _ready(store)
+    store.set_touchless(True, "Mia")
+    store.set_supplier_state(KEY, SUSPENDED, "Ann", reason="an invoice approved without review was reopened")
+    store.set_supplier_state(KEY, HELD, "Mia")
+    store.set_supplier_state(KEY, SUPERVISED, "Mia", reason="allowed again")
+    assert store.get_supplier_profile(KEY)["state"] == SUPERVISED
+    for i in range(10):
+        store.record_outcomes(KEY, 4000 + i, _outcomes(), at=_at(i, "2099-01-01"))
+    assert store.get_supplier_profile(KEY)["state"] == AUTONOMOUS
+    assert store.get_supplier_profile(KEY)["suspended_at"] is None  # touchless again: a later one starts afresh
+
+
 def test_a_vendor_made_touchless_by_hand_under_another_bar_goes_back_to_review(tmp_path):
     store = Store(tmp_path / "s.db")
     _ready(store, 5)
@@ -227,6 +243,26 @@ def test_suspended_at_column_is_added_to_an_older_database(tmp_path):
     store = Store(path)
     _ready(store, 1)
     assert "suspended_at" in store.get_supplier_profile(KEY)
+
+
+def test_a_vendor_suspended_before_the_column_existed_still_needs_a_fresh_streak(tmp_path):
+    """An older version suspended a vendor (a touchless invoice reopened: no correction recorded) without noting
+    when: the upgrade takes the time from the Activity log, so the clean streak before it doesn't bring it back."""
+    path = tmp_path / "old.db"
+    store = Store(path)
+    _ready(store)
+    with sqlite3.connect(path) as conn:
+        conn.execute("ALTER TABLE supplier_profiles DROP COLUMN suspended_at")
+        conn.execute("UPDATE supplier_profiles SET state = 'suspended', updated_at = '2026-05-02T00:00:00'")
+        conn.execute(
+            "INSERT INTO events (action, actor, detail, created_at) VALUES ('autonomy_suspended', 'Ann', ?, "
+            "'2026-05-01T09:00:00')",
+            (json.dumps({"supplier": "Northwind", "key": KEY, "from": "autonomous", "to": "suspended"}),),
+        )
+    store = Store(path)
+    assert store.get_supplier_profile(KEY)["suspended_at"] == "2026-05-01T09:00:00"
+    store.set_touchless(True, "Mia")
+    assert store.get_supplier_profile(KEY)["state"] == SUSPENDED  # its 30 clean invoices were before it
 
 
 # --- The pure rules ------------------------------------------------------------------------------------------------
@@ -307,6 +343,18 @@ def test_a_total_over_the_touchless_limit_needs_a_person_in_cad(touchless, path)
     assert _decide(touchless, path, capture=_capture(total=3500.0, currency="USD"))["auto"]  # 4,900 CAD
 
 
+def test_a_foreign_total_without_an_exchange_rate_needs_a_person(touchless, path):
+    """The touchless limit is in CAD: 4,000 USD (about 5,500 CAD) can't be compared with it without a rate."""
+    decision = _decide(touchless, path, capture=_capture(total=4000.0, currency="USD"))
+    assert not decision["auto"]
+    assert decision["reason"] == (
+        "always a person: no exchange rate for USD (Settings → Review) to compare its total with the touchless limit"
+    )
+    touchless.set_setting("fx_rates", "USD=1.30")
+    assert _decide(touchless, path, capture=_capture(total=3500.0, currency="USD"))["auto"]  # 4,550 CAD
+    assert _decide(touchless, path, capture=_capture(total=3500.0, currency="cad"))["auto"]
+
+
 def test_over_the_approval_limit_needs_a_person(touchless, path):
     touchless.set_setting("approval_limit", "1000")
     decision = _decide(touchless, path)
@@ -316,6 +364,16 @@ def test_over_the_approval_limit_needs_a_person(touchless, path):
 def test_not_read_by_the_page_reader_yet_needs_a_person(touchless, path):
     assert _decide(touchless, path, awaiting_page_reader=True)["reason"] == WAITING_FOR_PAGE_READER
     assert touchless_gates(awaiting_page_reader=True) == ["the page reader has not read it yet"]
+
+
+def test_pages_the_page_reader_did_not_read_need_a_person(touchless, path):
+    """OvisOCR2 reads at most AP_PAGE_READER_MAX_PAGES pages: an invoice with more was not read by every reader."""
+    capture = _capture()
+    capture.page_count = 7
+    decision = _decide(touchless, path, capture=capture, pages_read=5)
+    assert not decision["auto"] and decision["reason"] == "always a person: 2 of its pages were not read by OvisOCR2"
+    assert _decide(touchless, path, capture=capture, pages_read=7)["auto"]
+    assert touchless_gates(pages_unread=1) == ["1 of its pages was not read by OvisOCR2"]
 
 
 def test_an_error_still_blocks_and_the_audit_sample_still_applies(touchless, path, tmp_path):

@@ -689,7 +689,7 @@ def _getting_started(store: Store) -> None:
         st.html("".join(ui.step(s, label, state) for s, label, state in steps))
         links = st.container(horizontal=True)
         if steps[1][0] != "ok":
-            links.caption(":material/info: Optional: start LM Studio's server, then check Settings → AI model.")
+            links.caption(":material/info: Optional: start LM Studio's server, then check Settings → Reading.")
         links.page_link(PAGES["accounts"], label="GL accounts & tax", icon=":material/account_tree:")
         links.page_link(PAGES["process"], label="Process invoices", icon=":material/upload_file:")
     demo_card(store, "welcome")

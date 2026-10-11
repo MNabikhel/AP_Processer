@@ -165,6 +165,20 @@ def test_settings_tabs_are_reading_automation_review_erp_data_about(db, status):
     assert "touchless processing" in (_markdown(at) + _captions(at)).lower()  # the Automation tab is drawn
 
 
+def test_every_settings_tab_the_app_names_exists():
+    """No message points AP to a Settings tab that is gone ("Settings → AI model", "Settings → Page reader")."""
+    import re
+
+    named = []
+    for path in [*(ROOT / "ap_coder").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")]:
+        source = re.sub(r"\"\s*\n\s*(f?)\"", "", path.read_text(encoding="utf-8"))  # strings split over lines
+        named += [(path.name, m.group(1)) for m in re.finditer(r"Settings (?:→|->|>) ([A-Za-z&][\w &]*)", source)]
+    assert named
+    wrong = [(name, tab) for name, tab in named if not any(tab.startswith(t) or t.startswith(tab) for t in TABS)
+             and not tab.startswith("JD Edwards")]  # fmt: skip
+    assert not wrong, wrong
+
+
 def test_there_is_nothing_to_choose_about_reading(db, status):
     at = _ok(_settings_page().run())
     keys = {w.key for w in [*at.radio, *at.selectbox, *at.toggle, *at.text_input] if w.key}
@@ -486,6 +500,20 @@ def test_when_ovisocr2_couldnt_read_it_a_person_decides(db, status):
     store.finish_page_read(invoice_id, "failed", MODEL, 1, 3.0, "LM Studio stopped answering.")
     at = _ok(_review(invoice_id).run())
     assert "OvisOCR2 couldn't read it: LM Studio stopped answering; a person decides." in _captions(at)
+
+
+def test_an_invoice_ovisocr2_failed_to_read_can_be_added_again(db, status):
+    """Cut off by the model server MAX_TRIES times, the invoice leaves the queue as failed, and its message says to
+    read it again from the invoice (Add it to OvisOCR2's queue): that button is there."""
+    store, invoice_id, _ = _invoice(db)
+    store.next_page_read(invoice_id)
+    message = ("the model server cut the reading off 3 times (no answer); read it again from the invoice (Add it to "
+               "OvisOCR2's queue) once LM Studio is running with the model loaded")  # fmt: skip
+    store.finish_page_read(invoice_id, "failed", MODEL, 0, 3.0, message, tries=3)
+    at = _ok(_review(invoice_id).run())
+    assert "OvisOCR2 couldn't read it" in _captions(at)
+    _ok(at.button(key=f"inv{invoice_id}_read_pages").click().run())
+    assert store.page_read(invoice_id)["status"] == "waiting" and store.page_read(invoice_id)["tries"] == 0
 
 
 def test_an_invoice_not_in_its_queue_can_be_added(db, status):

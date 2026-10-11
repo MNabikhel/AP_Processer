@@ -276,6 +276,13 @@ class Store:
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(supplier_profiles)")}
         if columns and "suspended_at" not in columns:
             conn.execute("ALTER TABLE supplier_profiles ADD COLUMN suspended_at TEXT")
+            # A vendor suspended by an older version: when, from the Activity log (else its last change), so the
+            # clean streak it had before still doesn't count.
+            conn.execute(
+                "UPDATE supplier_profiles SET suspended_at = COALESCE((SELECT MAX(e.created_at) FROM events e "
+                "WHERE e.action = 'autonomy_suspended' AND CASE WHEN json_valid(e.detail) THEN "
+                "json_extract(e.detail, '$.key') END = supplier_profiles.key), updated_at) WHERE state = 'suspended'"
+            )
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
         from .capture.workflow import AUTONOMOUS_REVIEWER
@@ -1547,7 +1554,8 @@ class Store:
 
     def touchless_limit(self) -> float:
         """The largest invoice total approved without a person (Settings → Automation), in CAD: a foreign-currency
-        total is converted at the exchange rates in Settings → Review (compared as it is, without a rate)."""
+        total is converted at the exchange rates in Settings → Review (without a rate it goes to a person:
+        ``capture.workflow.invoice_gates``)."""
         try:
             value = float(self.get_setting(TOUCHLESS_LIMIT_SETTING) or DEFAULT_TOUCHLESS_LIMIT)
         except ValueError:
@@ -1637,9 +1645,10 @@ class Store:
         if state == AUTONOMOUS and rate is None:
             rate = policy.audit_rate
         # Since when it is touchless (kept while suspended, to show; cleared otherwise), and when it was suspended
-        # (its fresh clean streak counts from then).
+        # (its fresh clean streak counts from then: kept while a manager keeps it supervised and once allowed again,
+        # cleared when it is touchless again).
         since = _now() if state == AUTONOMOUS else profile["autonomous_since"] if state == SUSPENDED else None
-        suspended = _now() if state == SUSPENDED else None
+        suspended = _now() if state == SUSPENDED else None if state == AUTONOMOUS else profile.get("suspended_at")
         conn.execute(
             "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, suspended_at = ?, audit_rate = ?, "
             "updated_at = ?, updated_by = ? WHERE key = ?",

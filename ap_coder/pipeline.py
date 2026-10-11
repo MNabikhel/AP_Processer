@@ -315,8 +315,10 @@ class InvoicePipeline:
                     result.report.issues.append(Issue(severity, code, message))
                 # Not read by the page reader yet: it will be (queued below), and decides then.
                 awaiting = page_text is None and not text_file
+                read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
                 result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
-                                                    output=result.output, awaiting_page_reader=awaiting)  # fmt: skip
+                                                    output=result.output, awaiting_page_reader=awaiting,
+                                                    pages_read=read)  # fmt: skip
 
         if self.store is not None and save:
             try:

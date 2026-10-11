@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from .capture.layout import HEIF_EXTENSIONS
 from .extraction import DOCUMENT_EXTENSIONS
 from .store import APPROVED
 
@@ -69,6 +70,16 @@ def _source_document(path: Path) -> Any:
                 doc.close()
                 return pymupdf.open()
             return doc
+        if path.is_file() and suffix in HEIF_EXTENSIONS:  # PyMuPDF can't open an iPhone photo: pillow-heif can
+            from PIL import ImageOps
+
+            from .capture.layout import open_image
+
+            buf = io.BytesIO()
+            with open_image(path) as photo:
+                ImageOps.exif_transpose(photo).convert("RGB").save(buf, format="PNG")
+            with pymupdf.open("png", buf.getvalue()) as image:
+                return pymupdf.open("pdf", image.convert_to_pdf())
         if path.is_file() and suffix in DOCUMENT_EXTENSIONS:
             with pymupdf.open(path) as image:
                 return pymupdf.open("pdf", image.convert_to_pdf())

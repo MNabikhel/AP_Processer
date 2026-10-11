@@ -31,7 +31,7 @@ from ap_coder.webapp.viewer import invoice_viewer, page_words, render_pages
 
 VIEWER_HEIGHT = 760  # px; the page scrolls inside, the field list stays beside it
 PAGE_READER_POLL_SECONDS = 20  # while the page reader has the open invoice in its queue
-VIEWABLE = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+VIEWABLE = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".heic", ".heif"}
 
 # Capture fields a reviewer can teach: they are fields of the review form (same names).
 TEACHABLE = (
@@ -234,17 +234,19 @@ def page_reader_line(inv: dict[str, Any], key: str) -> None:
         _page_reader_waiting(inv["id"])
         return
     reason = md(row.get("error") or "no reason given").rstrip(".")
-    if state in ("failed", "skipped"):
+    if state == "skipped":
         st.caption(f":material/error: OvisOCR2 couldn't read it: {reason}; a person decides.")
         return
     if state == "done":  # read, but its reading wasn't applied (the invoice was edited or decided meanwhile)
         st.caption(f":material/visibility: OvisOCR2 read this invoice: {reason}.")
         return
-    # Not in its queue (processed before every invoice was read by it, or taken out of line): it can be put back.
-    stopped = _not_running(reading_status_or_none())
     line = st.container(horizontal=True, vertical_alignment="center")
-    line.caption(f":material/visibility_off: OvisOCR2 hasn't read this invoice yet. {stopped} {NOT_TOUCHLESS}"
-                 .replace("  ", " "))  # fmt: skip
+    if state == "failed":  # e.g. cut off by the model server MAX_TRIES times: it can be read again from here
+        line.caption(f":material/error: OvisOCR2 couldn't read it: {reason}; a person decides.")
+    else:  # not in its queue (processed before every invoice was read by it, or taken out of line): put it back
+        stopped = _not_running(reading_status_or_none())
+        line.caption(f":material/visibility_off: OvisOCR2 hasn't read this invoice yet. {stopped} {NOT_TOUCHLESS}"
+                     .replace("  ", " "))  # fmt: skip
     if line.button("Add it to OvisOCR2's queue", key=f"{key}_read_pages", type="tertiary",
                    icon=":material/playlist_add:"):  # fmt: skip
         store.queue_page_read(inv["id"], "not read yet", requested_by=reviewer())
