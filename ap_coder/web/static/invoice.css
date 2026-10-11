@@ -152,6 +152,10 @@
 .inv-grid-table .c-gl {min-width: 200px;} .inv-grid-table .c-cc {min-width: 150px;}
 .inv-grid-table .c-qty, .inv-grid-table .c-price {width: 96px;}
 .inv-grid-table .c-del {width: 36px;}
+/* A cell's width is only a wish in a table: without these, a wide row squeezed 1200.00 down to "12". */
+.inv-grid-table .c-no input {min-width: 52px;}
+.inv-grid-table .c-amt input {min-width: 104px;}
+.inv-grid-table .c-qty input, .inv-grid-table .c-price input {min-width: 80px;}
 .inv-taxes {display: flex; gap: 2px;}
 .inv-taxes label {display: inline-flex; cursor: pointer;}
 .inv-taxes input {position: absolute; opacity: 0; width: 1px; height: 1px;}
