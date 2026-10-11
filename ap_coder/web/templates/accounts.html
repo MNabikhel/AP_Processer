@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% from "_sheet.html" import upload_form, preview, columns %}
+{% from "_tiles.html" import tile_row %}
+{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+{{ tile_row(tiles) }}
+
+{% if not has_gl %}
+<section class="card sample">
+  <div class="card-head">
+    {{ ui.empty_note("Just exploring?", " Use the sample GL accounts, cost centers and tax setup to try the app.", "science") }}
+    <form method="post" action="/accounts/sample" data-busy="Loading…">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">download</span>Use the sample GL accounts</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+
+<nav class="tabs" aria-label="GL accounts and tax">
+  {% for key, label in tabs.items() %}
+  <a href="/accounts?tab={{ key }}" class="{{ 'on' if key == tab else '' }}"{% if key == tab %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+
+{% if tab in ("gl", "cc") %}{% set a = acc %}
+<section class="card">
+  {% if tab == "gl" %}
+  <h4>GL accounts</h4>
+  <p class="muted">The AI may only use the codes listed here. Descriptions matter: the AI matches invoice lines against
+    them. Use the category column to group codes your own way.</p>
+  {% else %}
+  <h4>Cost centers</h4>
+  <p class="muted">Optional. Leave empty if you do not code invoices to cost centers.</p>
+  {% endif %}
+
+  <details class="expander" id="import"{% if not a.rows or a.imp or a.imp_error %} open{% endif %}>
+    <summary><span class="ms" aria-hidden="true">upload</span>Import {{ a.noun }}s from CSV or Excel</summary>
+    {% if a.imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ a.imp_error }}</div></div>{% endif %}
+    {% if a.imp %}
+    {{ preview(a.imp, "/accounts", {"tab": tab, "file": a.imp.token}) }}
+    <form method="post" action="/accounts/{{ a.table }}/import" class="stack" data-busy="Importing…">
+      {{ columns(a.imp) }}
+      <label class="check"><input type="checkbox" name="replace" value="1"> Replace my current list (otherwise new codes are added and existing ones updated)</label>
+      <div class="row">
+        <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import {{ a.noun }}s</button>
+        <a class="link" href="/accounts?tab={{ tab }}">Cancel</a>
+      </div>
+    </form>
+    {% else %}
+    {{ upload_form("/accounts/" ~ a.table ~ "/upload", "A CSV or Excel file exported from your ERP", "Upload a CSV or Excel file") }}
+    {% endif %}
+  </details>
+
+  {% if not a.rows %}
+  {{ ui.empty_note("No " ~ a.noun ~ "s yet", " Import them from a CSV or Excel file above.", "upload_file") }}
+  {% else %}
+  <div class="row">{% for cat, n in a.categories %}{{ ui.pill(cat ~ " · " ~ n, "gray") }}{% endfor %}</div>
+  {% endif %}
+  <form method="post" action="/accounts/{{ a.table }}/save" class="stack" data-busy="Saving…" id="accounts-form"
+        data-noun="{{ a.noun }}">
+    <div class="table-wrap">
+      <table class="apc-table edit">
+        <thead><tr><th>Code</th><th>Description</th><th>Category</th><th>Delete</th></tr></thead>
+        <tbody>
+          {% for r in a.rows %}
+          <tr>
+            <td><input type="text" name="code" value="{{ r.code }}" aria-label="Code" required></td>
+            <td><input type="text" name="description" value="{{ r.description }}" aria-label="Description {{ r.code }}" class="wide"></td>
+            <td><input type="text" name="category" value="{{ r.category }}" aria-label="Category {{ r.code }}"
+                       title="Group codes however you like, e.g. Opex, Capex, Sales Tax"></td>
+            <td><label class="check"><input type="checkbox" name="delete" value="{{ loop.index0 }}" aria-label="Delete {{ r.code }}"></label></td>
+          </tr>
+          {% endfor %}
+          {% for n in range(a.blank) %}
+          <tr class="new">
+            <td><input type="text" name="code" value="" aria-label="New code" placeholder="New code"></td>
+            <td><input type="text" name="description" value="" aria-label="New description" class="wide"></td>
+            <td><input type="text" name="category" value="" aria-label="New category"></td>
+            <td></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save changes</button>
+      {% if a.rows %}<a class="btn" href="/accounts/{{ a.table }}.csv" download><span class="ms" aria-hidden="true">download</span>Download {{ a.noun }}s</a>{% endif %}
+    </div>
+  </form>
+</section>
+
+{% elif tab == "tax" %}
+<section class="card">
+  <h4>How each sales tax posts</h4>
+  <p class="muted">Recoverable taxes (input tax credits / refunds) go to their own GL account. Non-recoverable PST is
+    normally added to the cost of the expense lines it applies to.</p>
+  <form method="post" action="/accounts/tax" class="stack" id="tax-form" data-busy="Saving…">
+    <div class="table-wrap">
+      <table class="apc-table edit">
+        <thead><tr><th>Tax</th><th>Treatment</th><th>GL account</th></tr></thead>
+        <tbody>
+          {% for t in taxes %}
+          <tr>
+            <td>{{ ui.tax_chip(t.type) }} <span class="muted">{{ t.where }}</span></td>
+            <td><select name="treatment_{{ t.type }}" aria-label="{{ t.type }} treatment" data-treatment="{{ t.type }}">
+              {% for key, label in treatments.items() %}<option value="{{ key }}"{% if key == t.treatment %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select></td>
+            <td>
+              <span class="per-line" data-for="{{ t.type }}"{% if t.treatment != expense_to_line %} hidden{% endif %}>{{ ui.pill("Posted with each expense line's GL", "gray", "call_split") }}</span>
+              <select name="gl_{{ t.type }}" aria-label="{{ t.type }} GL account" data-gl="{{ t.type }}"{% if t.treatment == expense_to_line %} hidden{% endif %}>
+                <option value="">(choose an account)</option>
+                {% for code, label in gl_options %}<option value="{{ code }}"{% if code == t.gl %} selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save tax setup</button>
+  </form>
+</section>
+<section class="card">
+  <h4>Rates in force today</h4>
+  <p class="muted small" title="{{ rates_help }}">From {{ rates_source }}.</p>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Tax</th><th>Province</th><th class="r">Rate</th><th>Since</th></tr></thead>
+      <tbody>{% for r in rates %}<tr><td>{{ ui.tax_chip(r.tax_type) }}</td><td>{{ r.province or "All provinces" }}</td>
+        <td class="r"><b>{{ "%.3f" | format(r.rate * 100) }}%</b></td><td>{{ r.effective_from.isoformat() }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+
+{% elif tab == "policy" %}
+<section class="card">
+  <h4>Coding policy</h4>
+  <p class="muted">Plain-English rules the AI follows, one per line (e.g. 'Laptops under $2,500 go to 6010'). Lines starting
+    with # are ignored.</p>
+  <form method="post" action="/accounts/policy" class="stack" data-busy="Saving…">
+    <textarea name="notes" rows="12" class="full" aria-label="Coding policy">{{ policy }}</textarea>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save policy</button>
+  </form>
+</section>
+
+{% elif tab == "rules" %}
+<section class="card">
+  <h4>Fixed rules</h4>
+  <p class="muted">Lines that always go to the same account, whatever the AI thinks: a vendor (e.g. <i>Purolator</i>), words
+    a line contains (e.g. <i>freight</i>), or both. Applied to invoices processed from now on (for one already in the
+    queue, open it and use <i>Apply the coding rules</i>); the review screen says which lines a rule changed. The most
+    specific rule wins. Clear a row to remove the rule.</p>
+  {% if not has_gl %}
+  <div class="flash info"><span class="ms" aria-hidden="true">account_tree</span><div>Import your GL accounts first.</div></div>
+  {% else %}
+  {% if unknown %}
+  <div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>GL account {{ unknown | join(", ") }} is not in your GL list any more: change these rules.</div></div>
+  {% endif %}
+  <form method="post" action="/accounts/rules" class="stack" data-busy="Saving…">
+    <div class="table-wrap">
+      <table class="apc-table edit">
+        <thead><tr><th>Vendor (optional)</th><th>Line contains (optional)</th><th>GL account</th><th>Cost center</th></tr></thead>
+        <tbody>
+          {% for r in rules %}{{ rule_row(r, gl_names, cc_codes) }}{% endfor %}
+          {% for n in range(3) %}{{ rule_row(none, gl_names, cc_codes) }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted small">A rule needs a GL account and a vendor or words, or both; an incomplete row is left out when you save.</p>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save rules</button>
+  </form>
+  {% endif %}
+</section>
+{% if suggestions %}
+<section class="card">
+  <h4>Suggested from past coding</h4>
+  <p class="muted">These vendors were always coded to one GL account. Add a rule to make it certain.</p>
+  {% for s in suggestions %}
+  <div class="suggestion">
+    <div><b>{{ s.rule.vendor }}</b> → {{ s.target }}<div class="muted small">{{ s.lines | plural("line") }}, all coded the same</div></div>
+    <form method="post" action="/accounts/rules/add">
+      <input type="hidden" name="vendor" value="{{ s.rule.vendor }}"><input type="hidden" name="contains" value="{{ s.rule.contains }}">
+      <input type="hidden" name="gl_code" value="{{ s.rule.gl_code }}"><input type="hidden" name="cost_center" value="{{ s.rule.cost_center }}">
+      <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">add</span>Add rule</button>
+    </form>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}
+{% macro rule_row(r, gl_names, cc_codes) %}
+<tr{% if not r %} class="new"{% endif %}>
+  <td><input type="text" name="vendor" value="{{ r.vendor if r else '' }}" aria-label="Vendor" title="Part of the name is enough"></td>
+  <td><input type="text" name="contains" value="{{ r.contains if r else '' }}" aria-label="Line contains" title="Not case-sensitive"></td>
+  <td><select name="gl_code" aria-label="GL account">
+    <option value="">(choose)</option>
+    {% if r and r.gl_code and r.gl_code not in gl_names %}<option value="{{ r.gl_code }}" selected>{{ r.gl_code }} (not in the GL list)</option>{% endif %}
+    {% for code, label in gl_names.items() %}<option value="{{ code }}"{% if r and code == r.gl_code %} selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select></td>
+  <td>{% if cc_codes %}<select name="cost_center" aria-label="Cost center">
+    <option value=""></option>
+    {% for code in cc_codes %}<option value="{{ code }}"{% if r and code == r.cost_center %} selected{% endif %}>{{ code }}</option>{% endfor %}
+  </select>{% else %}<input type="hidden" name="cost_center" value="{{ r.cost_center if r else '' }}"><span class="muted">—</span>{% endif %}</td>
+</tr>
+{% endmacro %}
+{% block scripts %}<script type="module" src="/static/js/accounts.js?v={{ static_version }}"></script>{% endblock %}

@@ -86,6 +86,7 @@ PAGES: list[Page] = [
         "storefront",
         M,
         "Everyone who has sent an invoice: spend, how well the AI codes them, and your controls.",
+        module="vendors",
     ),
     Page(
         "purchase_orders",
@@ -94,6 +95,7 @@ PAGES: list[Page] = [
         "shopping_cart",
         M,
         "Invoices that quote a PO are checked against it: price, quantity ordered and received, and coding.",
+        module="purchase_orders",
     ),
     Page(
         "accounts",
@@ -102,6 +104,7 @@ PAGES: list[Page] = [
         "account_tree",
         M,
         "The codes the AI may use, how each sales tax posts, and your rules.",
+        module="accounts",
     ),
     Page(
         "learning",
