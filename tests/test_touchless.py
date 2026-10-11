@@ -318,6 +318,16 @@ def test_not_read_by_the_page_reader_yet_needs_a_person(touchless, path):
     assert touchless_gates(awaiting_page_reader=True) == ["the page reader has not read it yet"]
 
 
+def test_pages_the_page_reader_did_not_read_need_a_person(touchless, path):
+    """OvisOCR2 reads at most AP_PAGE_READER_MAX_PAGES pages: an invoice with more was not read by every reader."""
+    capture = _capture()
+    capture.page_count = 7
+    decision = _decide(touchless, path, capture=capture, pages_read=5)
+    assert not decision["auto"] and decision["reason"] == "always a person: 2 of its pages were not read by OvisOCR2"
+    assert _decide(touchless, path, capture=capture, pages_read=7)["auto"]
+    assert touchless_gates(pages_unread=1) == ["1 of its pages was not read by OvisOCR2"]
+
+
 def test_an_error_still_blocks_and_the_audit_sample_still_applies(touchless, path, tmp_path):
     assert _decide(touchless, path, report=_report("GL_UNKNOWN", severity=ERROR))["reason"] == "a check failed"
     picked = next(tmp_path / f"p{n}.pdf" for n in range(500) if audit_pick(tmp_path / f"p{n}.pdf", 0.05))

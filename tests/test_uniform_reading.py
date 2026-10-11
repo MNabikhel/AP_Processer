@@ -53,7 +53,8 @@ def touchless(monkeypatch):
     """Every supplier touchless and every invoice passing the bar: only the page reader's wait holds it back."""
     seen = []
 
-    def decide(store, key, profile, capture, report, path, *, awaiting_page_reader=False, output=None):
+    def decide(store, key, profile, capture, report, path, *, awaiting_page_reader=False, output=None,
+               pages_read=None):  # fmt: skip
         assert output is not None  # the coding an approval would post: its total and currency
         seen.append(awaiting_page_reader)
         if awaiting_page_reader:
@@ -95,6 +96,29 @@ def test_an_edited_invoice_is_never_approved_by_the_page_reader(store, touchless
     outcome = page_worker.read_one(_settings(), store)
     assert outcome.status == "skipped" and not outcome.auto_approved
     assert store.get_invoice(result.invoice_id)["status"] == REVIEW
+
+
+def test_the_decision_knows_how_many_pages_the_page_reader_read(store, monkeypatch, tmp_path):
+    """OvisOCR2 reads at most AP_PAGE_READER_MAX_PAGES pages: the decision is told, so pages it never read keep the
+    invoice with a person (``touchless_gates``)."""
+    import pymupdf
+
+    doc = pymupdf.open(PDF)
+    doc.new_page().insert_text((72, 72), "Terms: net 30.")
+    two = tmp_path / "two_pages.pdf"
+    doc.save(two)
+    seen = {}
+
+    def decide(store, key, profile, capture, report, path, **kw):
+        seen.update(kw, page_count=capture.page_count)
+        return {"state": AUTONOMOUS, "auto": False, "audit": False, "reason": ""}
+
+    monkeypatch.setattr(pipeline, "autonomy_decision", decide)
+    pipe = InvoicePipeline(_settings(), store.reference_data(), store=store)
+    pipe.process(two, page_text=[_transcript()], save=False)
+    assert seen["page_count"] == 2 and seen["pages_read"] == 1 and not seen["awaiting_page_reader"]
+    pipe.process(two, save=False)
+    assert seen["pages_read"] is None and seen["awaiting_page_reader"]
 
 
 def test_a_text_invoice_does_not_wait_for_the_page_reader(store, touchless):

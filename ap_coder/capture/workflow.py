@@ -116,25 +116,28 @@ def _amounts(capture: CaptureResult | None, output: dict[str, Any] | None) -> di
 
 
 def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output: dict[str, Any] | None = None, *,
-                  awaiting_page_reader: bool = False) -> list[str]:  # fmt: skip
+                  awaiting_page_reader: bool = False, pages_read: int | None = None) -> list[str]:  # fmt: skip
     """Why this invoice always goes to a person, whatever its supplier's record (``supplier.touchless_gates``):
     its findings, a credit note, a total over the touchless limit (Settings → Automation) or over the approval
-    limit (a second approver), and not yet read by the page reader."""
+    limit (a second approver), and not yet read by the page reader, or not every page of it (``pages_read``: the
+    pages it read, at most AP_PAGE_READER_MAX_PAGES)."""
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     coding = _amounts(capture, output)
     over_limit = store.touchless_limit() if store.over_touchless_limit(coding) else None
+    unread = max(0, capture.page_count - pages_read) if capture is not None and pages_read is not None else 0
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
-                           awaiting_page_reader=awaiting_page_reader)  # fmt: skip
+                           awaiting_page_reader=awaiting_page_reader, pages_unread=unread)  # fmt: skip
 
 
 def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capture: CaptureResult | None,
                       report: Any, path: str | Path, *, awaiting_page_reader: bool = False,
-                      output: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+                      output: dict[str, Any] | None = None, pages_read: int | None = None) -> dict[str, Any]:  # fmt: skip
     """{"state", "auto": bool, "audit": bool, "reason"} for one processed invoice. ``awaiting_page_reader``: the
     page reader (OvisOCR2) has not read this invoice yet, so it is never approved without a person now: every
     invoice is read by every reader before anything is decided for it. ``output``: the coding an approval would
-    post (its total and currency; what capture read otherwise).
+    post (its total and currency; what capture read otherwise). ``pages_read``: the pages the page reader read (it
+    stops at AP_PAGE_READER_MAX_PAGES): an invoice with more pages than that goes to a person.
 
     Nothing is approved without a person while touchless processing is off. With it on, a supplier that meets the
     bar is made touchless first (``Store.sync_autonomy``), then the invoice must pass every gate that always needs
@@ -157,7 +160,7 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
         return {"state": state, "auto": False, "audit": False, "reason": ""}
     if awaiting_page_reader:
         return {"state": state, "auto": False, "audit": False, "reason": WAITING_FOR_PAGE_READER}
-    gates = invoice_gates(store, capture, report, output)
+    gates = invoice_gates(store, capture, report, output, pages_read=pages_read)
     if gates:
         return {"state": state, "auto": False, "audit": False, "reason": "always a person: " + "; ".join(gates)}
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]

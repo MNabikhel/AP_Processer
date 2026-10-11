@@ -1301,19 +1301,20 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("Over the approval limit", "it needs a second approver anyway"),
     ("Credit note", "a credit is always applied by a person"),
     ("Not in the vendor master", "once a vendor master is imported, a vendor that is not in it"),
-    ("Not read by every reader", "the page reader has not read it yet"),
+    ("Not read by every reader", "the page reader has not read it yet, or not every page of it"),
     ("Any failed check", "totals, tax, GST/HST check digit, or any field not verified"),
 ]  # fmt: skip
 
 
 def touchless_gates(
     issues: Iterable[dict[str, Any]] | None = None, *, grand_total: Any = None, over_limit: float | None = None,
-    over_approval_limit: bool = False, awaiting_page_reader: bool = False,
+    over_approval_limit: bool = False, awaiting_page_reader: bool = False, pages_unread: int = 0,
 ) -> list[str]:  # fmt: skip
     """Why this invoice must be seen by a person whatever its supplier's record (plain English; empty: none applies).
     ``issues``: the validation findings ({"code", ...}); ``grand_total``: below zero is a credit note;
     ``over_limit``: the touchless limit its total is over (None: not over); ``over_approval_limit``: it needs a
-    second approver; ``awaiting_page_reader``: not every reader has read it yet."""
+    second approver; ``awaiting_page_reader``: not every reader has read it yet; ``pages_unread``: pages of it the
+    page reader did not read (it reads at most AP_PAGE_READER_MAX_PAGES pages)."""
     reasons: list[str] = []
     for issue in issues or []:
         reason = ALWAYS_A_PERSON.get(str(issue.get("code") or ""))
@@ -1328,6 +1329,8 @@ def touchless_gates(
         reasons.append("it is over the approval limit and needs a second approver")
     if awaiting_page_reader:
         reasons.append("the page reader has not read it yet")
+    if pages_unread > 0:
+        reasons.append(f"{pages_unread} of its pages {'was' if pages_unread == 1 else 'were'} not read by OvisOCR2")
     return reasons
 
 
