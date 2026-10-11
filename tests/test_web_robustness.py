@@ -44,3 +44,13 @@ def test_a_redirect_never_leaves_this_server_through_a_control_character(url):
 
     assert core.local_url(url, "/x") == "/x"
     assert core.local_url("/review?tab=parked&q=a%20b") == "/review?tab=parked&q=a%20b"
+
+
+def test_the_activity_search_finds_what_the_log_shows_in_its_what_column(client, store):
+    """The clerk types the word the log shows for an event ("Approved", "Rejected"): it is found."""
+    from ap_coder.audit import ACTIONS
+
+    store.log_event("settings_changed", actor="Jordan Lee", detail={"keys": ["approval_limit"]})
+    label = ACTIONS["settings_changed"][2]
+    text = client.get("/activity", params={"q": label.lower()}).text
+    assert "1 of 1 event" in text and "No events match" not in text

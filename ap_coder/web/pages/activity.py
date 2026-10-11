@@ -66,7 +66,8 @@ def timeline_items(events: list[dict[str, Any]], with_invoice: bool = True) -> l
 
 def searchable(event: dict[str, Any]) -> str:
     detail = event["detail"] or {}
-    return " ".join([describe(event), str(detail.get("vendor") or ""), str(detail.get("invoice_number") or ""),
+    what = ACTIONS.get(event["action"], ("", "", event["action"]))[2]  # "Approved": the word the log shows
+    return " ".join([what, describe(event), str(detail.get("vendor") or ""), str(detail.get("invoice_number") or ""),
                      str(event["invoice_id"] or ""), invoice_label(event), event["actor"] or ""]).lower()  # fmt: skip
 
 
