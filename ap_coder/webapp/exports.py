@@ -82,10 +82,11 @@ def _show_jde_problems(store: Store, problems: dict[int, list[str]], blocking: l
         st.error(f"{p} Set it in Settings → JD Edwards E1.", icon=":material/settings:")
     if not problems:
         return
+    one = len(problems) == 1
     st.warning(
-        f"{ui.plural(len(problems), 'invoice')} cannot go to JD Edwards yet and are left out of the batch: fix "
-        "them (the mapping in Settings → JD Edwards E1, the vendor master's ERP ID, or the invoice) and export them "
-        "later.",
+        f"{ui.plural(len(problems), 'invoice')} cannot go to JD Edwards yet and {'is' if one else 'are'} left out of "
+        f"the batch: fix {'it' if one else 'them'} (the mapping in Settings → JD Edwards E1, the vendor master's ERP "
+        f"ID, or the invoice) and export {'it' if one else 'them'} later.",
         icon=":material/rule:",
     )
     rows = []

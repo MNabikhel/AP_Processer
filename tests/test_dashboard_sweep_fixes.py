@@ -173,6 +173,40 @@ def test_insights_charge_no_cloud_cost_for_invoices_read_and_coded_on_this_compu
     assert compute(store)["cost_per_invoice_cad"] > 0
 
 
+def _clean(store, stem=SAMPLE_STEM, **changes):
+    doc = {**json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text()), **changes}
+    return store.add_invoice(SAMPLES / f"{stem}.pdf", doc, {"requires_review": False, "adjusted_confidence": 0.97})
+
+
+def test_counts_of_one_read_as_sentences(db):
+    """Seen in the browser: "1 wait for a second approval" after a bulk approval, "Pick a cost center for line 1, 2,
+    3, 4" on the approve bar, "1 invoice cannot go to JD Edwards yet and are left out" on Exports."""
+    store = Store(db)
+    load_sample_setup(store)
+    store.set_setting("approval_limit", "5000.00")
+    _clean(store)  # 18,017.85 CAD: over the limit
+    _clean(store, "laurentides_QC_TPS_TVQ_SIL-4471")  # 2,759.40 CAD
+    at = _ok(AppTest.from_file(APP, default_timeout=TIMEOUT).run())
+    _ok(at.button(key="bulk_approve").click().run())
+    assert "Approved 2 invoices; 1 waits for a second approval." in [t.value for t in at.toast]
+
+    doc = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    for li in doc["line_items"]:
+        li["predicted_cost_center"] = "UNASSIGNED"
+    invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", {**doc, "invoice_number": "NW-2"},
+                                   {"requires_review": True})  # fmt: skip
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = invoice_id
+    numbers = ", ".join(str(li["line_number"]) for li in doc["line_items"])
+    assert f"Pick a cost center for lines {numbers} to approve" in _html(_ok(at.run()))
+
+    at = _ok(AppTest.from_string("from ap_coder.webapp.exports import page_exports\npage_exports()",
+                                 default_timeout=TIMEOUT).run())  # fmt: skip
+    _ok(at.radio(key="export_format").set_value("jde").run())
+    warned = " ".join(w.value for w in at.warning)
+    assert "1 invoice cannot go to JD Edwards yet and is left out of the batch" in warned, warned
+
+
 def test_getting_started_counts_only_the_steps_that_are_needed(db):
     """The welcome screen's ring counted the optional chat model, so it read 1/6 where the Process page said 1 of 4
     (plus processing the first invoices), and could never be complete without that optional model."""

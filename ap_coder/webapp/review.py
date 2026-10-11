@@ -548,7 +548,7 @@ def _bulk_approve_bar(store: Store, reference: ReferenceData) -> None:
                 waiting = sum(1 for i in result["approved"] if (store.get_invoice(i) or {}).get("status") == PENDING)
                 notify(
                     f"Approved {ui.plural(len(result['approved']), 'invoice')}"
-                    + (f"; {waiting} wait for a second approval." if waiting else "."),
+                    + (f"; {waiting} wait{'s' if waiting == 1 else ''} for a second approval." if waiting else "."),
                     ":material/done_all:",
                 )
                 st.rerun()
@@ -1331,8 +1331,9 @@ def render_invoice(store: Store, reference: ReferenceData, invoice_id: int, pend
             )
             if uncoded or no_cc:
                 allow = False  # never post to UNASSIGNED
-                pick = [f"a GL account for line {', '.join(uncoded)}"] if uncoded else []
-                pick += [f"a cost center for line {', '.join(no_cc)}"] if no_cc else []
+                which = lambda numbers: f"line{'s' if len(numbers) > 1 else ''} {', '.join(numbers)}"  # noqa: E731
+                pick = [f"a GL account for {which(uncoded)}"] if uncoded else []
+                pick += [f"a cost center for {which(no_cc)}"] if no_cc else []
                 st.html(_pill(f"Pick {' and '.join(pick)} to approve", "warn"))
             elif errors:
                 # Keyed on the errors: a new error (an edit after the tick) asks again instead of riding along.
