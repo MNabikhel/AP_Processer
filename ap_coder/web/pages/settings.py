@@ -158,6 +158,12 @@ def save_review(
         store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["reviewer"], "reviewer": rename})
         paths.write_user_settings(reviewer=name)
         changed.append("reviewer")
+    elif not name and paths.read_user_settings().get("reviewer"):  # cleared: back to AP_REVIEWER or the login
+        saved = reviewer()
+        paths.write_user_settings(reviewer="")
+        rename = {"from": saved, "to": reviewer()}
+        store.log_event("settings_changed", actor=saved, detail={"keys": ["reviewer"], "reviewer": rename})
+        changed.append("reviewer")
     # Only what differs from the values in effect: a default is not written to the .env as a "change".
     updates = {}
     new_threshold = percent / 100

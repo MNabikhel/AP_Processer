@@ -99,6 +99,21 @@ def test_a_number_cell_that_is_not_a_finite_number_never_breaks_the_review_scree
     assert client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).status_code < 500
 
 
+def test_clearing_your_name_in_settings_goes_back_to_the_default_name(client, store, monkeypatch):
+    """A name saved by mistake on a shared computer could not be removed: clearing the box said "Nothing changed."
+    and the name stayed on every approval."""
+    from ap_coder import paths
+    from ap_coder.web import core
+
+    monkeypatch.delenv("AP_REVIEWER")
+    form = {"threshold": "80", "constrain": "1"}
+    assert client.post("/settings/review", data={**form, "reviewer_name": "Sam Mistake"}, headers=PAGE).json()["ok"]
+    assert core.reviewer() == "Sam Mistake"
+    answer = client.post("/settings/review", data={**form, "reviewer_name": ""}, headers=PAGE).json()
+    assert core.reviewer() == core.login() and not paths.read_user_settings().get("reviewer")
+    assert "Nothing changed" not in client.get(answer["redirect"]).text
+
+
 @pytest.mark.parametrize("typed", ["dollars", "1.37 USD", "US$=1.37", "USD=1.37, EUR"])
 def test_exchange_rates_that_cannot_be_read_are_refused_not_saved(client, store, typed):
     """A rate typed the wrong way round ("1.37 USD") used to be saved as if understood: USD invoices were then
