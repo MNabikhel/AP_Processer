@@ -1141,6 +1141,11 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
     port = running_dashboard(argv, load_state())
     if port:
         return open_running(port)
+    blocked = stop_older(argv)
+    if blocked is not None:
+        return blocked
+    if take_lock():
+        return None
     say("AP Coder is being set up or started in another window: waiting for it to open the dashboard...")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -1153,6 +1158,26 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
     say("The other AP Coder window has not opened the dashboard yet: look at that window, or close it and start "
         "AP Coder again.")  # fmt: skip
     return 1
+
+
+def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
+    """The start holding this folder's lock serves an older AP Coder (this folder unzipped over while it ran: its
+    dashboard is never this version's, so waiting for one would last half an hour): it is stopped like any older one,
+    and its start then ends, freeing the lock. Returns an exit code when this start must stop, else None."""
+    version = identity()["version"]
+    ports = candidate_ports(argv, load_state())
+    if not any(running.judge(s, ROOT, version) == "older" for s in running.find(ports, paths.private_dir())):
+        return None
+    verdict, port = running.take_over(ROOT, version, ports, paths.private_dir(), say)
+    if verdict == "blocked":
+        return failed(SetupError(f"An older AP Coder is still running (port {port}): two versions never use the same "
+                                 "data at once.", "Close the old AP Coder window, then start again."))  # fmt: skip
+    if verdict in ("open", "newer"):
+        return open_running(port)
+    deadline = time.monotonic() + wait  # its start ends once its dashboard stopped
+    while not take_lock() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    return None
 
 
 def free_port(start: int = DEFAULT_PORT) -> int:
