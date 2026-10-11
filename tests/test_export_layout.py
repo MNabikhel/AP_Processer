@@ -48,3 +48,13 @@ def test_default_layout_without_header():
     layout = el.Layout(el.default_columns(), header_row=False)
     text = exports.build("custom", [_invoice()], {}, 1, {}, layout)[0].decode("utf-8-sig")
     assert text.splitlines()[0].startswith(",NW-2026-0912,2026-09-14,2026-10-14,CAD,6010,CC400")
+
+
+def test_yen_amounts_have_no_decimals():
+    """The yen has no cents: an ERP import of 1000.00 JPY reads a value the invoice never had."""
+    inv = _invoice()
+    inv["final_output"]["currency"] = "JPY"
+    layout = el.Layout([el.Column("Amount", "amount"), el.Column("Currency", "currency")])
+    data, _, _ = exports.build("custom", [inv], {}, 3, {}, layout)
+    rows = data.decode("utf-8-sig").splitlines()[1:]
+    assert rows[0].startswith("4350,") and ".00" not in "\n".join(rows)

@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .safe import csv_cell
+from .tax import currency_places
 
 FIXED = "(fixed text)"
 FIELDS: dict[str, str] = {
@@ -92,7 +93,8 @@ def _value(row: dict[str, Any], col: Column, layout: Layout) -> Any:
         except ValueError:
             return value
     if col.field in MONEY_FIELDS:
-        text = f"{float(value):.2f}"
+        places = currency_places(row.get("currency"))  # the yen has no cents
+        text = f"{float(value):.{places}f}"
         return text.replace(".", ",") if layout.decimal_comma else text
     return value
 
