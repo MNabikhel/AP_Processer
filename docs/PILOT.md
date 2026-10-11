@@ -5,7 +5,7 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
 
 ## What you need
 
-- **Windows 10 or 11** (64-bit), or a Mac with macOS 12 or newer.
+- **Windows 10 or 11** (64-bit), or a Mac: Apple silicon with macOS 14 or newer, or Intel with macOS 13 or newer.
 - **Python 3.11 or newer** (3.12 recommended). Nothing to do if the laptop has one: AP Coder uses it as it
   is and never installs a second Python. When several are installed, the ones the offline bundle has
   packages for come first (3.12, 3.11, 3.13, 3.14, then any newer); a Python the bundle was not built for
