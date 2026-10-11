@@ -46,8 +46,9 @@ class MacLauncher:
         return path
 
     def python(self, name: str, version: str, folder: Path | None = None) -> Path:
-        """A stand-in Python: ``-c`` prints its version (what the launcher asks), anything else is a run."""
-        body = (f'if [ "$1" = -c ]; then echo {version}; exit 0; fi\n'
+        """A stand-in Python: ``-c`` prints its version (what the launcher asks), ``launch.py --venv-ok`` (the quick
+        check of .venv) says yes, anything else is a run."""
+        body = (f'if [ "$1" = -c ] || [ "$2" = --venv-ok ]; then echo {version}; exit 0; fi\n'
                 f'echo "{name} $*" >> "{self.ran}"\necho "RAN {name}"')  # fmt: skip
         return self.script(name, body, folder)
 
@@ -235,6 +236,7 @@ def test_a_python_the_bundle_was_not_built_for_is_said_plainly(launch, monkeypat
     monkeypatch.setattr(launch.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(launch.platform, "mac_ver", lambda: ("15.4", ("", "", ""), "arm64"))
     monkeypatch.setattr(launch, "ensure_venv", lambda: "created")
+    monkeypatch.setattr(launch, "find_python", lambda versions: None)  # no Python the bundle has packages for here
     calls = []
     monkeypatch.setattr(launch.subprocess, "call", lambda cmd: calls.append(cmd) or 0)
     assert launch.bootstrap([]) == 0 and calls

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ap-coder"
-version = "0.1.0"
+version = "0.2.0"
 description = "AP invoice coder: reads and codes invoices on this computer (offline), Canadian sales tax, review dashboard"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,9 +21,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
-# Azure Document Intelligence and Azure OpenAI's sign-in: not part of the offline build yet (never in the default
-# install or the offline bundle). The code that uses them is dormant behind AP_ALLOW_INTERNET=1 and says so plainly
-# when they are not installed (ap_coder/offline.py, import_azure).
+# Azure Document Intelligence (an optional check of the local reading, switched on in the settings) and Azure
+# OpenAI's sign-in: never needed to install or start AP Coder. The offline bundle carries these wheels and the
+# launcher installs them from its wheelhouse when it can (never failing when it can't); code switched on to use
+# Azure says so plainly when they are missing (ap_coder/offline.py, import_azure).
 azure = ["azure-ai-documentintelligence>=1.0.0", "azure-identity>=1.17"]
 # Local OCR for scanned invoices and images (capture reads text PDFs without it). RapidOCR 3's PP-OCRv5
 # models come in the offline bundle (scripts/fetch_models.py copies them into place); rapidocr-onnxruntime

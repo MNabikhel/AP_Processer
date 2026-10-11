@@ -68,10 +68,11 @@ def allow_internet() -> None:
     os.environ[INTERNET_ENV] = "1"
 
 
-# Azure (Document Intelligence, Azure OpenAI sign-in) is not part of the offline build yet: its packages are the
-# optional ``azure`` extra (pyproject), never in the default install or the offline bundle. The code stays, dormant
-# behind AP_ALLOW_INTERNET, for later.
-AZURE_NOT_IN_THIS_BUILD = "Azure isn't part of this offline build yet"
+# Azure Document Intelligence (an optional check of the local reading, switched on in the settings) and Azure
+# OpenAI's sign-in: never needed to install or start AP Coder. Their packages are the optional ``azure`` extra
+# (pyproject): the offline bundle carries its wheels and the launcher installs them from there when it can, but a
+# computer without them runs as before. Only code that is switched on to use Azure needs them (import_azure).
+AZURE_UNAVAILABLE = "Azure check is off or its package isn't installed"
 
 
 def import_azure(module: str):
@@ -82,8 +83,8 @@ def import_azure(module: str):
         return importlib.import_module(module)
     except ImportError:
         raise RuntimeError(
-            f"{AZURE_NOT_IN_THIS_BUILD}: its packages are not installed ({module}). Invoices are read and coded on "
-            f'this computer. (Developers, online: {INTERNET_ENV}=1 and pip install -e ".[azure]".)'
+            f"{AZURE_UNAVAILABLE} ({module} is missing). Invoices are still read and coded on this computer; the "
+            "offline bundle's wheelhouse carries the Azure packages (double-click APProcessor to install them)."
         ) from None
 
 

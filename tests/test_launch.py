@@ -7,6 +7,7 @@ import functools
 import http.server
 import importlib.util
 import io
+import json
 import socket
 import subprocess
 import sys
@@ -252,22 +253,25 @@ def web(tmp_path):
 
 
 def test_a_running_ap_coder_is_found_and_another_server_is_not(launch, web, monkeypatch):
+    """This folder's own AP Coder (its version, answering /healthz) is found; anything else on the port is not."""
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")  # never through a proxy
     site, port = web
-    assert not launch.is_ap_coder(port)  # something else answers on that port
-    (site / "app" / "static").mkdir(parents=True)
-    (site / "app" / "static" / "InterVariable.woff2").write_bytes(b"wOF2")
-    assert launch.is_ap_coder(port)
+    assert launch.running_dashboard(["--port", str(port)], {}) is None  # something else answers on that port
+    version = launch.identity()["version"]
+    health = {"ok": True, "app": "ap-coder", "version": version, "folder": str(launch.ROOT), "pid": 1, "port": port}
+    (site / "healthz").write_text(json.dumps(health))
     assert launch.running_dashboard(["--port", str(port)], {}) == port
     assert launch.running_dashboard([], {"port": port}) == port  # the port the last start used
+    (site / "healthz").write_text(json.dumps({**health, "folder": "/another/folder"}))
+    assert launch.running_dashboard([], {"port": port}) is None  # another install's: not this one to open
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         closed = s.getsockname()[1]
-    assert not launch.is_ap_coder(closed)
+    assert launch.running_dashboard(["--port", str(closed)], {}) is None
 
 
 def test_second_start_while_running_only_opens_the_browser(launch, monkeypatch):
-    monkeypatch.setattr(launch, "running_dashboard", lambda rest, state: 8501)
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("open", 8501))
     opened: list[str] = []
     monkeypatch.setattr(launch, "open_browser", opened.append)
     monkeypatch.setattr(launch, "ensure_packages", lambda state: pytest.fail("set up again"))
@@ -365,9 +369,9 @@ def test_browser_none_opens_nothing(launch, monkeypatch):
 
 
 def _quiet_setup(launch, monkeypatch, installed=False):
-    monkeypatch.setattr(launch, "running_dashboard", lambda rest, state: None)
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("clear", None))
     monkeypatch.setattr(launch, "ensure_packages", lambda state: ("ok", "Packages: all 13 in place", installed))
-    monkeypatch.setattr(launch, "ensure_data_folder", lambda: None)
+    monkeypatch.setattr(launch, "ensure_data_folder", lambda: launch.VENV.parent / "data")
     monkeypatch.setattr(launch, "ensure_models", lambda first, state: None)
     started: list[list[str]] = []
     monkeypatch.setattr(launch, "start_dashboard", lambda rest, state: started.append(rest) or 0)

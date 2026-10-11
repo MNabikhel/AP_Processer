@@ -176,8 +176,7 @@ def test_settings_saved_with_a_byte_order_mark_keep_the_data_folder(tmp_path, mo
     settings = paths.user_settings_path()
     settings.write_bytes(json.dumps({"data_dir": str(data)}).encode("utf-8-sig"))
     assert paths.read_user_settings() == {"data_dir": str(data)} and paths.private_dir() == data
-    monkeypatch.setattr(install, "USER_SETTINGS", settings)
-    assert install.read_user_settings()["data_dir"] == str(data)
+    assert install.paths.read_user_settings()["data_dir"] == str(data)  # the installer reads it the same way
     monkeypatch.setattr(first_run, "DEFAULT_DATA_DIR", tmp_path / "APCoder")
     assert first_run.choose_data_dir() == data
     paths.write_user_settings(desktop_shortcut=True)
@@ -207,3 +206,11 @@ def test_offline_installer_asks_no_cloud_questions(tmp_path, monkeypatch):
     c.yes = lambda *a, **k: pytest.fail(f"asked {a[0]!r}")
     env = install.configure_settings(c, tmp_path / "data")
     assert env == tmp_path / "data" / ".env" and env.exists()
+
+
+def test_the_installer_stops_an_older_ap_coder_first_and_never_installs_under_a_newer_one(monkeypatch):
+    verdicts = iter([("clear", None), ("newer", 8501), ("blocked", 8501)])
+    monkeypatch.setattr(install.launch.running, "take_over", lambda *a, **k: next(verdicts))
+    assert install.make_way() == ""
+    assert "A newer AP Coder is running" in install.make_way()
+    assert "close the old AP Coder window" in install.make_way()

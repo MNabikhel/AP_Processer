@@ -119,6 +119,9 @@ def run_checks(
     v = _version("pillow")
     status = PASS if v else (FAIL if settings.engine.vision else WARN)
     add("package pillow", status, v or "not installed (needed only for --vision)")
+    v = _version("azure-ai-documentintelligence")  # optional: only for the Azure check, when it is switched on
+    add("package azure-ai-documentintelligence", PASS if v else SKIP,
+        v or "not installed (optional: only the Azure check needs it, when it is switched on)")  # fmt: skip
 
     # --- Offline readiness (OCR models, data folder, local-only dashboard) ----------------------------
     from .offline import offline_checks
