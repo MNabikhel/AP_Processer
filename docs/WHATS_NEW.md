@@ -8,7 +8,27 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
-## This release: pictures become PDFs, and line items read with a table finder
+## This release: the dashboard is a local web app
+
+**For everyone**
+
+- **The dashboard is AP Coder's own web app now**, hosted the same way as CloseDesk: a small server on this
+  computer (`http://127.0.0.1:8501`) that opens in your usual browser. Every page is there, in the same places:
+  Process, the Review queue and each invoice's review screen, Find an invoice, Exports, Month-end, Sales tax,
+  Vendor statements, Vendors, Purchase orders, GL accounts & tax, Learning & accuracy, Spend, Insights,
+  Activity, Settings (with the optional Azure check card) and Help. Pages open faster, each has its own address
+  (bookmark a page, or open an invoice in a second tab), and nothing is loaded from the internet.
+- **Updates take over by themselves.** Double-clicking a new version stops the running dashboard cleanly (an
+  older AP Coder 0.1 dashboard too), moves your data if it has to, and opens the new one.
+- The Streamlit dashboard and the public web demo built on it are retired: AP Coder no longer installs
+  Streamlit.
+
+**For IT**
+
+- `python -m ap_coder serve` runs the dashboard (`dashboard` is the same command); `GET /healthz` says which AP
+  Coder answers, and the launcher stops it with `POST /shutdown` and a token kept in the data folder.
+
+## Earlier: pictures become PDFs, and line items read with a table finder
 
 **For AP clerks**
 
@@ -112,7 +132,7 @@ backup of the database is made automatically once a day when AP Coder starts (th
 - **Know where you stand:** *Find an invoice*, the *Today* line, spend analysis, the duplicate
   payment audit, the controls report and the business case.
 - **A public demo on the web:** the dashboard with made-up invoices, nothing to install, for anyone
-  with the link (see [DEMO.md](DEMO.md)).
+  with the link (retired with the Streamlit dashboard: load the demo invoices on your own dashboard instead).
 
 ## Safety
 

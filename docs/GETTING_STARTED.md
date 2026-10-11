@@ -4,8 +4,8 @@
 on the laptop (the PDF's text or local OCR, and OvisOCR2 in LM Studio). Invoices, GL accounts, reviews
 and the AI's memory stay in your **data folder**
 (default `C:\Users\<you>\APCoder`, chosen during install), outside the code, so none of it can
-be pushed to GitHub. The dashboard runs at
-`http://localhost` and is not reachable from other machines. You only send back two text
+be pushed to GitHub. The dashboard is a local web app on
+your computer (`http://127.0.0.1:8501`, opened in your browser) and is not reachable from other machines. You only send back two text
 reports, and you can read both before sending:
 
 | You paste back | Produced by | Contains | Never contains |
@@ -116,8 +116,9 @@ self-test (*page reader*), and, with the chat model loaded, one short test call 
 
 ## Step 4: Try the dashboard with the sample data (no enterprise data)
 
-Start AP Coder from the **AP Coder** desktop shortcut (or `APProcessor.bat`). It opens in your browser;
-keep the black window open while you use it and close it to stop. If another program already uses
+Start AP Coder from the **AP Coder** desktop shortcut (or `APProcessor.bat`). The dashboard opens in your
+browser (it is served by AP Coder itself, on this computer only); keep the black window open while you use it
+and close it to stop. If another program already uses
 port 8501, AP Coder picks the next free one.
 
 **Fastest: the demo.** On the welcome screen click **Load demo invoices**. Ten

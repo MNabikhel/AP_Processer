@@ -177,9 +177,12 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
 ## Daily use
 
 1. Double-click **`APProcessor.bat`** (or the *AP Coder* desktop shortcut). A black window opens with
-   the readiness summary, and the dashboard opens in your browser (at `http://127.0.0.1:8501`). Keep
-   the window open while you work; close it to stop AP Coder. Double-clicking again while it runs just
-   brings the running dashboard back up in the browser; it never starts a second copy.
+   the readiness summary, and the dashboard opens in your browser (at `http://127.0.0.1:8501`). The
+   dashboard is a local web app that AP Coder serves itself, on this laptop only (as CloseDesk does):
+   nothing is installed in the browser and nothing goes online. Keep the window open while you work;
+   close it to stop AP Coder. Double-clicking again while it runs just brings the running dashboard back
+   up in the browser; it never starts a second copy. Each page has its own address, so a page or an
+   invoice (`/review/<number>`) can be bookmarked or opened in a second tab.
 2. **Bring in invoices:** drop PDFs, scans or photos in the **invoices folder** (Process invoices →
    *Open folder*), or upload them on the *Process invoices* page.
 3. **Review (the clerk's job):** open each invoice in the *Review queue*, check the fields marked
@@ -300,7 +303,9 @@ itself (and makes its `.venv` again with it).
   installer runs no `git fetch` / `git pull`, and APProcessor.bat never installs Python with `winget`.
 - The dashboard listens only on this laptop (`127.0.0.1`); other computers cannot open it. To share it
   on the office network on purpose, set `AP_DASHBOARD_ADDRESS=0.0.0.0` before starting.
-- Streamlit's usage statistics are switched off; fonts and icons come from the app, not the internet.
+- The dashboard is AP Coder's own small web server (FastAPI): no usage statistics, no outside service;
+  fonts, icons and scripts come from the app, not the internet. It answers only requests addressed to this
+  laptop and changes nothing for a page that is not its own.
 - OCR runs on the laptop with local models; OvisOCR2 and the optional chat model run in LM Studio on the
   laptop too and are reached over `localhost`.
 - A test (`tests/test_offline.py`) reads an invoice, runs every dashboard page and builds a JD Edwards

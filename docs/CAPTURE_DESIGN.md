@@ -523,6 +523,14 @@ The invoice page with a box over every field, coloured by status (green verified
 check, red failed check). Click a field in the panel to jump to it on the page. To teach, click a
 field and then the words on the page that hold it. Each confirmation trains the supplier's template.
 
+It is a page of the local web dashboard, `/review/<id>` (`ap_coder/web/pages/invoice.py`): each page of the
+invoice is served as a picture (`/review/<id>/page/<n>.png`, drawn once and cached, `ap_coder/web/document.py`)
+with its printed size, and `static/js/invoice_viewer.js` draws the boxes over it from the fields' fractions of the
+page. The words to teach from come from `/review/<id>/words`. Every edit is checked as it is made
+(`POST /review/<id>/check`: the checks, the posting preview and the approve bar are drawn again) and kept as a
+draft until the invoice is approved; while OvisOCR2 has the invoice in its queue the screen follows its progress
+(`/review/<id>/reader`) and shows its reading when it arrives, keeping the reviewer's edits.
+
 ## JDE EnterpriseOne
 
 Approved invoices export as F0411Z1 (voucher) and F0911Z1 (G/L distribution) batch rows for the

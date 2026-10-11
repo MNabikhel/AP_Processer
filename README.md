@@ -77,8 +77,7 @@ all:
 | ![Exports: approved invoices in batches for the ERP and JD Edwards E1](docs/screenshots/exports.png) | ![Settings → Reading: how every invoice is read, each reader's state, and OvisOCR2's self-test](docs/screenshots/settings-ai.png) |
 
 **Just want to look around?** Start the dashboard and click *Load demo invoices*. You get ten sample
-invoices from across Canada, with sample POs and a vendor list. A hosted copy is at
-[ap-coder-demo.streamlit.app](https://ap-coder-demo.streamlit.app) ([how it is set up](docs/DEMO.md)).
+invoices from across Canada, with sample POs and a vendor list.
 
 ## What it does
 
@@ -204,7 +203,7 @@ bundle is the one step that downloads). CI's online jobs set it; its offline-bun
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[ocr,dev]"
 python -m ap_coder doctor --online   # setup check; with LM Studio running, a two-line test call
-python -m ap_coder dashboard         # http://127.0.0.1:8501 (or the next free port)
+python -m ap_coder serve             # the dashboard: http://127.0.0.1:8501 (or the next free port)
 python scripts/pilot_check.py        # reads the ten samples offline and compares them with their answers
 ```
 
@@ -277,9 +276,21 @@ the approved fields) to fine-tune a vision model on them later.
 
 ## Dashboard
 
-| Sidebar group | Page | What it does |
+The dashboard is a local web app, hosted the same way as CloseDesk: a small FastAPI server (run by uvicorn) on
+this computer, at `http://127.0.0.1:8501`, opened in your usual browser. Nothing is installed in the browser and
+nothing is served to the network: it listens on `127.0.0.1` only (set `AP_DASHBOARD_ADDRESS=0.0.0.0` to let
+colleagues on the office network open it), refuses requests addressed to any other name, and only its own pages
+can change anything. The launcher starts it (`python -m ap_coder serve`), opens the browser once it answers, and
+on the next double-click finds it through `GET /healthz` and opens it instead of starting a second copy. An update
+stops the running one cleanly (`POST /shutdown`, with a token only this computer's data folder holds) before the new
+version takes over. Fonts, icons and scripts all come from the app; nothing is loaded from the internet.
+
+The left rail groups the pages; each page has its own address, so a page (or an invoice, `/review/<id>`) can be
+bookmarked or opened in a second tab.
+
+| Rail section | Page | What it does |
 |---|---|---|
-| Work | **Review queue** | Invoice image beside the editable header (incl. PO #, payment terms, due date, bank account to pay into); live **Checks**, each with what to do; the line grid (GL account and cost center dropdowns of your codes); tax lines with a tax-check table; the **PO match**; **GL suggestions** for lines the AI could not code; *Split a line* across GL accounts / cost centers; a GL posting preview; **Ask the vendor** drafts the email for what the invoice is missing (English or French). *Approve & teach*, *Reject*, *Delete*. The queue shows due dates and discount deadlines, can be sorted by due date, and clean invoices can be approved in bulk. A **Second approval** tab holds invoices over the approval limit; *Park* sets aside an invoice waiting for information (**Parked** tab); **Notes** keep the team informed. |
+| Work | **Review queue** | Today's work, the queue (filter, search and sort in the address), bulk approval of clean invoices, and the Second approval, Parked, Approved and Failed / rejected tabs. Each invoice opens its **review screen** (`/review/<id>`): the invoice image beside the editable header (incl. PO #, payment terms, due date, bank account to pay into); live **Checks**, each with what to do; the line grid (GL account and cost center dropdowns of your codes); tax lines with a tax-check table; the **PO match**; **GL suggestions** for lines the AI could not code; *Split a line* across GL accounts / cost centers; a GL posting preview; **Ask the vendor** drafts the email for what the invoice is missing (English or French). *Approve & teach*, *Reject*, *Delete*. The queue shows due dates and discount deadlines, can be sorted by due date, and clean invoices can be approved in bulk. A **Second approval** tab holds invoices over the approval limit; *Park* sets aside an invoice waiting for information (**Parked** tab); **Notes** keep the team informed. |
 | Work | **Process invoices** | Upload files or saved emails (`.eml`, attachments taken out), or process new files dropped into the data folder's `invoices/` (or run `watch`). |
 | Work | **Find an invoice** | For a vendor on the phone: search by vendor, invoice or PO number, or amount; see where each invoice is (in review, parked and why, approved by whom, exported in which batch, rejected) and when it is due; the ERP register too. |
 | Close & compliance | **Exports** | Approved invoices go to the ERP in batches (Excel, CSV, or a **custom CSV layout** matching your ERP's import); each invoice once; any batch can be downloaded again or undone; **approved PDFs** (stamp and coding page) per batch. Import the ERP's invoice register to catch bills already entered there. |
@@ -293,7 +304,7 @@ the approved fields) to fine-tune a vision model on them later.
 | Analytics | **Spend** | Spend by month (by GL category), top GL accounts, vendors and cost centers, net of recoverable tax; **all invoice data as Excel** (invoices, lines, GL posting) for pivot tables or Power BI. |
 | Analytics | **Insights** | Straight-through rate, hours saved, cost per invoice, a monthly projection; AP operations (queue ageing, days to approve, discounts approved in time); a one-page business case to download. |
 | Analytics | **Activity** | The audit trail (who did what, with every change to the AI's coding), filterable, CSV; the **controls report** for internal audit; the **duplicate payment audit** (number typos, same bill under two vendor names, same amount days apart, also against the ERP register). |
-| System | **Settings** | **Reading:** how every invoice is read and each reader's state, OvisOCR2 (found in LM Studio, its self-test, queue, and how often it agrees with digital PDFs' own figures), the models in LM Studio with **Load**. **Automation:** the touchless switch, the largest invoice approved without a person, the bar every vendor must meet, what always goes to a person, touchless rate and errors found. **Review:** your name (per Windows user), review threshold, only-my-GL-codes, approval limit, default payment days, exchange rates. **JD Edwards E1**, **Data & backups** (backups and restore, with an optional second backup folder, e.g. OneDrive), **About**. |
+| System | **Settings** | **Reading:** how every invoice is read and each reader's state, OvisOCR2 (found in LM Studio, its self-test, queue, and how often it agrees with digital PDFs' own figures), the models in LM Studio with **Load**. **Automation:** the touchless switch, the largest invoice approved without a person, the bar every vendor must meet, what always goes to a person, touchless rate and errors found. **Review:** your name (per Windows user), review threshold, only-my-GL-codes, approval limit, default payment days, exchange rates. **JD Edwards E1**, **Data & backups** (backups and restore, with an optional second backup folder, e.g. OneDrive), **About**. The optional Azure Document Intelligence check has a card of its own under Reading (off by default). |
 | System | **Help** | Quick start, every check explained, questions, shortcuts. |
 
 ## Canadian sales tax
@@ -339,7 +350,7 @@ This is a memory of your team's decisions. No model is retrained.
 
 | Command | Purpose |
 |---|---|
-| `dashboard [--port]` | The review app (localhost only). |
+| `serve [--port] [--host] [--no-browser]` | The dashboard: a local web app on `127.0.0.1` (default port 8501, or the next free one), opened in the browser. `dashboard` is the same command. |
 | `demo [--remove]` | Load (or remove) the demo invoices and sample POs; no Azure needed. |
 | `watch [folder] [--every 60] [--once]` | Keep processing new files dropped in the invoices folder (scanner, mail rule, Task Scheduler). |
 | `doctor [--online]` | Setup, reference-data, tax-mapping and connectivity check. No secrets or URLs in the output. |
@@ -488,16 +499,19 @@ ap_coder/
   bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation
   jde.py             JD Edwards E1 F0411Z1/F0911Z1 export
   pipeline.py        extract → code → validate → capture → store
-  dashboard.py       Streamlit app shell;  webapp/: one module per page;  review.py: grid edits → InvoiceCoding
+  web/               the dashboard, a local FastAPI web app: app.py (the app, /healthz, /shutdown), server.py
+                     (`serve`), security.py (this computer only), pages/ (one module per page), templates/,
+                     static/;  review.py: grid edits → InvoiceCoding
   doctor.py · share_report.py · labels.py · evaluation.py · reference_data.py · cli.py
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement
 samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
-scripts/             first_run.py, check_deps.py, fetch_models.py (launcher steps), pilot_check.py,
-                     build_offline_bundle.py, sample invoice generator
+scripts/             launch.py (the launcher: set up, start the dashboard, open the running one), running.py (finds
+                     and stops a running AP Coder), upgrade.py (updates over an older install), first_run.py,
+                     check_deps.py, fetch_models.py (launcher steps), pilot_check.py, build_offline_bundle.py,
+                     sample invoice generator
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
 docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md,
-                     DEMO.md (the public web demo), screenshots/
-streamlit_app.py     the public web demo: the dashboard with made-up invoices (.streamlit/ and static/ go with it)
+                     screenshots/
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients and LM Studio mocked)
 ```
