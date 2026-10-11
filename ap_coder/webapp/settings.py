@@ -1,5 +1,6 @@
-"""Settings: AI model (LM Studio or Azure), Azure connection (with a live test), review behaviour, data folder and
-backups, about."""
+"""Settings: how invoices are read (one way for every invoice, nothing to choose), touchless processing, review
+behaviour, JD Edwards E1, data folder and backups, about. Cloud services appear only in a developer build that may use
+the internet (``AP_ALLOW_INTERNET=1``), inside Reading."""
 
 from __future__ import annotations
 
@@ -12,10 +13,8 @@ from pathlib import Path
 import streamlit as st
 
 from ap_coder import __version__, paths, ui
-from ap_coder.config import normalise_base_url
 from ap_coder.doctor import FAIL, PASS, WARN, run_checks
 from ap_coder.envfile import clean_url, read_env, write_env
-from ap_coder.local_llm import LM_STUDIO_STEPS, check_server, forget_status, resolve_provider
 from ap_coder.safe import md
 from ap_coder.store import Store
 from ap_coder.webapp.common import (
@@ -41,6 +40,7 @@ DI_MODELS = {
     "prebuilt-invoice": "prebuilt-invoice · also invoice fields, used as cross-checks",
 }
 STATUS_TONE = {PASS: "ok", WARN: "warn", FAIL: "err"}
+SETTINGS_TABS = ["Reading", "Automation", "Review", "JD Edwards E1", "Data & backups", "About"]
 
 
 def env_path() -> Path:
@@ -173,113 +173,6 @@ def azure_tab(store: Store) -> None:
             st.html(ui.table(["", "Check", "Detail"], rows, wrap=[2]))
 
 
-PROVIDERS = {
-    "auto": "Automatic: Azure OpenAI if it is set up, else the model in LM Studio",
-    "local": "Local model on this computer (LM Studio or Ollama)",
-    "azure": "Azure OpenAI",
-    "off": "Off: no AI coding",
-}
-VISION_CHOICES = {"auto": "Automatic: when the model can see pages", "on": "Yes", "off": "No, text only"}
-
-
-def _model_status_html(settings) -> str:
-    """One line: which AI codes invoices, and whether it is answering."""
-    provider = resolve_provider(settings)
-    if provider == "azure":
-        return (
-            ui.pill("Using Azure OpenAI", "ok", "cloud")
-            + f" <span class='apc-muted'>{esc(settings.openai.deployment)}</span>"
-        )
-    if settings.llm.provider == "off":
-        return ui.pill("Off", "gray", "block") + " <span class='apc-muted'>Invoices are not coded by AI.</span>"
-    status = check_server(settings.llm)
-    if status.active:
-        sees = "can see pages: yes" if status.vision else "can see pages: no"
-        return (
-            ui.pill(f"Connected to {status.server}", "ok", "check_circle")
-            + f" <span class='apc-muted'>{esc(status.model)} · {esc(sees)}</span>"
-        )
-    if status.reachable:
-        return ui.pill("No model loaded", "warn", "warning") + (
-            f" <span class='apc-muted'>{esc(status.server_title)} is running: load a model in it.</span>"
-        )
-    return ui.pill("Not running", "err", "error") + f" <span class='apc-muted'>{esc(status.base_url)}</span>"
-
-
-def ai_model_tab() -> None:
-    if PUBLIC_DEMO:
-        with card("ai_model"):
-            st.markdown("#### AI model")
-            not_in_public_demo("Connecting an AI model")
-        return
-    settings = get_settings()
-    llm = settings.llm
-    with card("ai_model"):
-        head, button = st.columns([3, 1], vertical_alignment="center")
-        head.markdown("#### AI model")
-        head.caption(
-            "The model that codes each invoice. A model in LM Studio runs on this computer: nothing is sent out."
-        )
-        if button.button("Test connection", icon=":material/network_check:", key="test_llm", width="stretch"):
-            forget_status()
-            check_server(llm, use_cache=False)
-            st.session_state["llm_tested"] = dt.datetime.now().strftime("%H:%M")
-        status_line = _model_status_html(settings)
-        tested = st.session_state.get("llm_tested")
-        if tested:
-            status_line += f" <span class='apc-muted'>· tested at {esc(tested)}</span>"
-        st.html(f"<div style='margin:.25rem 0 .5rem'>{status_line}</div>")
-        status = check_server(llm)
-        if resolve_provider(settings) != "azure" and llm.provider != "off" and not status.active:
-            steps = "\n".join(f"{n}. {step}" for n, step in enumerate(LM_STUDIO_STEPS, start=1))
-            with st.container(key="note_lmstudio"):
-                st.markdown(f"**To use a model on this computer**\n\n{steps}\n\nThen press **Test connection**.")
-
-    with card("ai_model_settings"), st.form("ai_model_form", border=False):
-        st.markdown("#### Which model")
-        providers = list(PROVIDERS)
-        provider = st.selectbox(
-            "Use", providers, index=providers.index(llm.provider), format_func=PROVIDERS.get, key="llm_provider"
-        )
-        c1, c2 = st.columns(2)
-        base_url = c1.text_input(
-            "Server address", llm.base_url, key="llm_base_url",
-            help="LM Studio shows it in the Developer tab. Ollama: http://127.0.0.1:11434/v1",
-        )  # fmt: skip
-        models = ["", *status.chat_models]
-        if llm.model and llm.model not in models:
-            models.append(llm.model)
-        model = c2.selectbox(
-            "Model", models, index=models.index(llm.model), key="llm_model",
-            format_func=lambda m: m or "Automatic: the model loaded in LM Studio",
-            help="The list comes from the server. Press Test connection to refresh it.",
-        )  # fmt: skip
-        vision_modes = list(VISION_CHOICES)
-        vision = st.selectbox(
-            "Show the model the page images", vision_modes, index=vision_modes.index(llm.vision),
-            format_func=VISION_CHOICES.get, key="llm_vision",
-            help="Helps with scans when the model can see (a vision model shows an eye icon in LM Studio). Slower.",
-        )  # fmt: skip
-        if st.form_submit_button("Save AI model settings", type="primary", icon=":material/save:"):
-            # Only what differs from the values in effect: a default is not written to the .env as a "change".
-            updates = {}
-            if provider != llm.provider:
-                updates["AP_LLM_PROVIDER"] = provider
-            if normalise_base_url(base_url) != llm.base_url:
-                updates["AP_LLM_BASE_URL"] = normalise_base_url(base_url)
-            if model != llm.model:
-                updates["AP_LLM_MODEL"] = model
-            if vision != llm.vision:
-                updates["AP_LLM_VISION"] = vision
-            changed = save_settings(updates)
-            forget_status()
-            notify(f"Saved {ui.plural(len(changed), 'change')}." if changed else "Nothing changed.", ":material/save:")
-            st.rerun()
-    from ap_coder.webapp.page_reader_settings import lm_studio_models_card
-
-    lm_studio_models_card(settings, "ai")
-
-
 def _reference(store: Store):
     reference = reference_or_none(store)
     if reference is None:
@@ -306,18 +199,13 @@ def review_tab() -> None:
             help="Invoices with any error always need attention. Higher = more invoices get a closer look. Applies "
             "to invoices processed from now on; invoices already in the queue keep their flag.",
         ) / 100  # fmt: skip
-        vision = st.toggle(
-            "Also send page images to the AI (vision models only, e.g. gpt-4o)",
-            value=settings.engine.vision,
-            help="Helps with scans and unusual layouts; costs more tokens per invoice.",
-        )
         constrain = st.toggle(
             "Only allow codes from my GL account list (recommended)",
             value=settings.engine.constrain_codes,
             help="Off only for very large charts of accounts; codes are still checked after the AI answers.",
         )
         if PUBLIC_DEMO:
-            st.caption(":material/science: Fixed in the public demo: these apply to invoices read with Azure.")
+            st.caption(":material/science: Fixed in the public demo: these apply to new invoices when processed.")
         if st.form_submit_button("Save review settings", type="primary", icon=":material/save:", disabled=PUBLIC_DEMO):
             name = reviewer_name.strip()
             renamed = bool(name) and name != reviewer()
@@ -331,8 +219,6 @@ def review_tab() -> None:
             updates = {}
             if round(threshold, 2) != round(float(settings.engine.review_threshold), 2):
                 updates["AP_REVIEW_THRESHOLD"] = f"{threshold:.2f}"
-            if vision != settings.engine.vision:
-                updates["AP_VISION"] = "true" if vision else "false"
             if constrain != settings.engine.constrain_codes:
                 updates["AP_CONSTRAIN_CODES"] = "true" if constrain else "false"
             changed = save_settings(updates)
@@ -554,26 +440,19 @@ def about_tab() -> None:
 def page_settings() -> None:
     store = get_store()
     show_toast()
-    page_head("settings", "Settings", "AI model, page reader, review behaviour, JD Edwards E1, your data and backups.")
-    ai_model, reader, azure, review, erp, data, about = st.tabs(
-        [
-            "AI model",
-            "Page reader",
-            "Azure",
-            "Review",
-            "JD Edwards E1",
-            "Data & backups",
-            "About",
-        ]
-    )
-    with ai_model:
-        ai_model_tab()
-    with reader:
-        from ap_coder.webapp.page_reader_settings import page_reader_tab
+    page_head(
+        "settings", "Settings",
+        "How invoices are read, touchless processing, review behaviour, JD Edwards E1, your data and backups.",
+    )  # fmt: skip
+    reading, automation, review, erp, data, about = st.tabs(SETTINGS_TABS)
+    with reading:
+        from ap_coder.webapp.reading_settings import reading_tab
 
-        page_reader_tab(store)
-    with azure:
-        azure_tab(store)
+        reading_tab(store)
+    with automation:
+        from ap_coder.webapp.automation_settings import automation_tab
+
+        automation_tab(store)
     with review:
         review_tab()
     with erp:

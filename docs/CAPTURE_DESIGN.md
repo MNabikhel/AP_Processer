@@ -30,7 +30,8 @@ A supplier earns **autonomy** when AP has confirmed enough of its invoices with 
 corrections. The bar is a lower confidence bound, not a lucky streak. Autonomous invoices still go
 through every check; any failed check, or any field below *verified*, sends the invoice back to a
 person. A random audit sample of autonomous invoices keeps measuring accuracy, and one correction
-demotes the supplier.
+demotes the supplier. See [Touchless processing](#touchless-processing-one-switch-one-bar) for the
+company-wide switch and the invoices that always go to a person.
 
 ## Package `ap_coder/capture/`
 
@@ -232,10 +233,45 @@ rows keyed by supplier.
 supplier learning: each supplier sends a stream of invoices that look alike (same vendor, layout,
 wording and formats; new number, dates, PO, lines and amounts). They are read in order with the
 supplier's template, AP approves the true values (outcomes recorded, template learned, as on
-approval), and the autonomy policy is applied, switched on as soon as a supplier is ready. The
+approval), and the autonomy policy is applied: with touchless processing on, a supplier goes touchless by itself
+as soon as it meets the bar (`automatic_transition`, as the app applies it). The
 report gives accuracy by invoice position (against the same invoices read without a template), when
 each supplier would reach the policy, and after that the touchless share and its errors.
 `--ignore-check CODE` is a what-if: a failed check with that code does not hold an invoice back.
+
+## Touchless processing: one switch, one bar
+
+The AP clerk trains each vendor by reviewing its invoices; AP Coder takes over a vendor only once that training
+proves it, and the rules are the same for everyone (`capture/supplier.py`, `capture/workflow.py`, Settings →
+Automation):
+
+- **One switch** (setting `touchless_processing`, off by default). Off: nothing is approved without a person, whatever
+  a vendor's record. On: every vendor that meets the bar goes touchless **by itself**, with no per-vendor click
+  (`Store.sync_autonomy`, run when the switch is turned on, after every approval and before every decision). Turning
+  it on or off is recorded in the Activity log with who did it.
+- **One bar**, fixed standard values (`AutonomyPolicy` defaults; an older `autonomy_policy` setting is ignored): at
+  least 20 reviewed invoices, a 99% lower bound (95% confidence) on header-field accuracy over the last 200, the last
+  10 without a correction; 5% of touchless invoices are still audited.
+- **Demotion**: a correction on an audited invoice, or a touchless invoice reopened, suspends the vendor at once. It
+  goes touchless again by itself once it meets the bar with a fresh clean streak of 10 invoices reviewed since the
+  suspension (`supplier_profiles.suspended_at`).
+- **Keep supervised**: a manager can exclude one vendor (Learning & accuracy → Supplier learning; state `held`,
+  recorded with who and why), and allow it again later.
+- **Always a person** (`touchless_gates`), even for a touchless vendor: a changed bank account or GST/HST number, any
+  duplicate signal (`DUPLICATE_INVOICE`, `DUPLICATE_IN_ERP`, `DUPLICATE_OTHER_VENDOR`, `POSSIBLE_DUPLICATE_AMOUNT`), an
+  unusual amount (`AMOUNT_UNUSUAL`: over 3× the vendor's median approved total), a vendor on hold or not in an imported
+  vendor master, a credit note, a total over the touchless limit (setting `touchless_limit`, default 5,000.00 CAD; a
+  foreign currency is converted at the Settings → Review exchange rates, compared as it is without a rate), a total
+  over the second-approver limit, and an invoice the page reader has not read yet.
+- **Training, visible**: every approval records, field by field, what the clerk corrected; the review screen says what
+  was learned ("Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about 6
+  more clean invoices to go touchless."), and the Learning page shows each vendor's progress. A bulk approval (nobody
+  opened the invoice) teaches the template, but only its corrections count towards the bar.
+- **Upgrading**: vendors a manager turned touchless by hand before keep their state but are not touchless while the
+  switch is off. When it is turned on, those that meet the standard bar stay touchless; any that do not go back to
+  review until they do.
+- **The numbers** (Settings → Automation): vendors touchless, ready and learning; the touchless share of invoices
+  processed in the last 30 days; errors a person found in audited touchless invoices, and touchless invoices reopened.
 
 ## The page reader: a vision model as a second reader
 

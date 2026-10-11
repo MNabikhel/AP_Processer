@@ -30,7 +30,18 @@ def test_env_values_are_updated_in_place(tmp_path):
 
 def test_placeholders_count_as_not_filled_in():
     values = install.read_env(ROOT / ".env.example")
-    assert "AZURE_OPENAI_ENDPOINT" not in values and values["AZURE_OPENAI_DEPLOYMENT"] == "gpt-4o"
+    assert "AZURE_OPENAI_ENDPOINT" not in values
+    assert not [k for k in values if k.startswith("AZURE_")]  # developer only: commented out, ignored offline
+
+
+def test_the_example_settings_offer_no_reading_choices():
+    """Every invoice is read the same way: the example .env names no mode, scope, provider or vision switch."""
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    for key in ("AP_PAGE_READER", "AP_LLM_PROVIDER", "AP_VISION", "AP_LLM_VISION"):
+        assert f"{key}=" not in text and f"{key}_" not in text, key
+    azure = text[text.index("Developer only: cloud services") :]
+    assert "AP_ALLOW_INTERNET=1" in azure and "IGNORED by the offline build" in azure
+    assert all(line.startswith("#") for line in text.splitlines() if line.startswith("AZURE") or "AZURE_" in line)
 
 
 def _forget_env_after_test(monkeypatch, text):
@@ -184,3 +195,15 @@ def _first_run():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_offline_installer_asks_no_cloud_questions(tmp_path, monkeypatch):
+    """The offline build reads every invoice on this computer: the installer makes the settings file, asks nothing."""
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setattr(install, "ROOT", tmp_path)
+    (tmp_path / ".env.example").write_text("AP_REVIEWER=\n", encoding="utf-8")
+    c = install.Console(assume_yes=False)
+    c.ask = lambda *a, **k: pytest.fail(f"asked {a[0]!r}")
+    c.yes = lambda *a, **k: pytest.fail(f"asked {a[0]!r}")
+    env = install.configure_settings(c, tmp_path / "data")
+    assert env == tmp_path / "data" / ".env" and env.exists()

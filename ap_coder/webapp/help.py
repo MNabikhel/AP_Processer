@@ -10,6 +10,7 @@ from ap_coder import ui
 from ap_coder.help import AREAS, CHECKS, FAQ, QUICK_START, ROUTINE
 from ap_coder.paths import PROJECT_DIR
 from ap_coder.webapp.common import DB_PATH, PAGES, card, esc, page_head, short_path, show_toast
+from ap_coder.webapp.reading_settings import HOW_IT_READS
 
 STEP_PAGES = ["accounts", "purchase_orders", "process", "review", "exports"]
 SHORTCUTS = [
@@ -72,6 +73,16 @@ def page_help() -> None:
                     PAGES[page], label="Open", icon=":material/arrow_forward:", help=f"Go to {PAGES[page].title}"
                 )
 
+    with card("help_reading"):
+        st.markdown("#### How every invoice is read")
+        st.caption(
+            "One way for every invoice, a digital PDF, a scan or a phone photo, with nothing to set up or choose. "
+            "Settings → Reading shows how each reader is doing."
+        )
+        st.markdown("\n".join(f"{n}. {step}" for n, step in enumerate(HOW_IT_READS, start=1)))
+        if "settings" in PAGES:
+            st.page_link(PAGES["settings"], label="Settings → Reading", icon=":material/arrow_forward:")
+
     with card("help_routine"):
         st.markdown("#### Your AP routine")
         columns = st.columns(len(ROUTINE))
@@ -122,9 +133,9 @@ def page_help() -> None:
                     [
                         ["Database", f"<code>{esc(short_path(DB_PATH))}</code>"],
                         ["Backups", f"<code>{esc(short_path(DB_PATH.parent / 'backups'))}</code>"],
-                        ["Azure keys", "Settings → Azure (kept in <code>.env</code> in the data folder)"],
+                        ["Settings file", "<code>.env</code> in the data folder"],
                     ],
                     wrap=[1],
                 )
             )
-            st.caption("Nothing is sent anywhere except your own Azure resources.")
+            st.caption("Nothing is sent anywhere: invoices are read, coded and kept on this computer.")
