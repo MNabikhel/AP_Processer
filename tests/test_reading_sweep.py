@@ -108,3 +108,17 @@ def test_a_french_pdf_whose_hidden_text_is_not_the_page_fails_the_check(tmp_path
     tampered = analyze(pdf, ocr=False, page_text=[printed], today=today)
     check = next(c for c in tampered.checks if c["code"] == "TEXT_LAYER_MATCHES_PAGE")
     assert not check["ok"] and set(check["fields"]) >= {"subtotal", "grand_total"}, check
+
+
+def test_days_in_a_late_interest_clause_are_not_the_net_days():
+    """ "Due on receipt. Interest of 2% per month on accounts over 30 days" (common on Canadian invoices) was read
+    as net 30: the due date came out 30 days late. Days in a late-payment clause say when interest starts."""
+    from ap_coder.terms import parse_terms, payment
+
+    for printed in ("Payable upon receipt, interest 2% per month after 30 days",
+                    "Due on receipt; 2% per month charged on overdue accounts over 30 days"):  # fmt: skip
+        terms = parse_terms(printed)
+        assert terms.on_receipt and terms.net_days == 0, printed
+        assert str(payment({"payment_terms": printed, "invoice_date": "2026-01-15"}).due) == "2026-01-15"
+    assert parse_terms("Net 30 days, interest 1.5% per month after 60 days").net_days == 30
+    assert parse_terms("Net 30 days upon receipt of invoice").net_days == 30
