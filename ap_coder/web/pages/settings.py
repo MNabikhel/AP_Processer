@@ -13,6 +13,7 @@ data (approval limit, exchange rates, backups...) are kept in the database's set
 from __future__ import annotations
 
 import datetime as dt
+import math
 import os
 import platform
 import subprocess
@@ -184,7 +185,9 @@ def save_approval(
     try:
         limit = round(float(approval_limit or 0), 2)
         days = int(float(terms_days or 0))
-    except ValueError:
+        if not math.isfinite(limit):  # "1e309" or "nan" posted directly
+            raise ValueError(approval_limit)
+    except (ValueError, OverflowError):  # int(float("1e309")) overflows
         return refuse("The approval limit and the days to pay must be numbers.")
     if limit < 0:
         return refuse("The approval limit can't be below 0 (0 = never a second approval).")

@@ -9,6 +9,7 @@ and is recorded in the Activity log with the reviewer's name (``Store.set_touchl
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from fastapi import APIRouter, Form, Request
@@ -91,6 +92,8 @@ def save_limit(request: Request, limit: str = Form("")) -> JSONResponse:
     try:
         amount = round(float(limit.replace(",", "").strip()), 2)
     except ValueError:
+        return refuse("The limit must be an amount in CAD, e.g. 5000.")
+    if not math.isfinite(amount):  # "1e309" or "nan" posted directly: no limit at all
         return refuse("The limit must be an amount in CAD, e.g. 5000.")
     if amount <= 0:
         return refuse("The limit must be above zero.")

@@ -190,3 +190,15 @@ def test_no_file_route_serves_anything_outside_its_own_files(client, store, path
     response = client.get(path)
     assert response.status_code in (400, 404, 422), (path, response.status_code)
     assert b"SQLite format" not in response.content and b"root:" not in response.content
+
+
+@pytest.mark.parametrize("value", ["1e309", "nan", "inf", "-inf"])
+def test_a_limit_that_is_not_a_real_amount_is_refused_not_saved(client, store, value):
+    """Posted directly (a browser's number box can't send them), "1e309" and "nan" were saved as infinity and NaN:
+    no approval limit and no touchless limit at all. The days to pay overflowed into a server error."""
+    before = (store.get_setting("approval_limit"), store.touchless_limit())
+    approval = client.post("/settings/review/approval", data={"approval_limit": value}, headers=PAGE)
+    days = client.post("/settings/review/approval", data={"terms_days": value}, headers=PAGE)
+    touchless = client.post("/settings/automation/limit", data={"limit": value}, headers=PAGE)
+    assert approval.status_code == days.status_code == touchless.status_code == 400
+    assert (store.get_setting("approval_limit"), store.touchless_limit()) == before
