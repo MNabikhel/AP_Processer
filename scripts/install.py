@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import getpass
-import json
 import os
 import shutil
 import subprocess
@@ -38,13 +37,14 @@ sys.path.insert(0, str(ROOT))  # ap_coder/envfile.py is standard-library only, u
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import launch  # noqa: E402  (the one setup: .venv, packages, models, shortcut, readiness)
+import upgrade  # noqa: E402  (data kept in a code folder moves to the data folder)
 
+from ap_coder import paths  # noqa: E402  (the one reader and writer of ~/.ap_coder/settings.json)
 from ap_coder.envfile import PLACEHOLDER, clean_url, read_env, write_env  # noqa: E402
 from ap_coder.offline import internet_allowed  # noqa: E402
 
 WINDOWS = os.name == "nt"
-USER_SETTINGS = Path(os.environ.get("AP_USER_SETTINGS") or Path.home() / ".ap_coder" / "settings.json")
-DEFAULT_DATA_DIR = Path.home() / "APCoder"
+DEFAULT_DATA_DIR = paths.default_data_dir()
 STEPS = 8
 EXTRAS = ("ocr", "dev")  # the installer also installs the self-test's tools (pytest, ruff)
 
@@ -136,7 +136,10 @@ def update_code(c: Console, args: argparse.Namespace) -> int | None:
         return None
     if not internet_allowed():
         c.ok(f"{ROOT} (offline build: no update check; developers: AP_ALLOW_INTERNET=1)")
-        c.info("To update, unzip the new offline bundle over this folder and run its installer; your data is kept.")
+        c.info(
+            "To update, unzip the new offline bundle anywhere (a new folder is fine) and double-click its "
+            "APProcessor: it takes over from this one and cleans up. Your data is kept."
+        )
         return None
     if not (ROOT / ".git").exists() or not shutil.which("git"):
         c.ok(f"{ROOT}")
@@ -170,6 +173,19 @@ def update_code(c: Console, args: argparse.Namespace) -> int | None:
     return None
 
 
+def make_way() -> str:
+    """An older AP Coder still running (another folder's, or this one's before it was unzipped over) is stopped
+    before anything is installed: never two versions on one database. Returns why the installer must stop ("")."""
+    version = launch.identity()["version"]
+    ports = launch.candidate_ports([], launch.load_state())
+    verdict, port = launch.running.take_over(ROOT, version, ports, paths.private_dir(), print)
+    if verdict == "newer":
+        return f"A newer AP Coder is running (port {port}): this older version installs nothing."
+    if verdict == "blocked":
+        return "An older AP Coder is still running: close the old AP Coder window, then run install.bat again."
+    return ""
+
+
 def ensure_venv_and_packages(c: Console, args: argparse.Namespace, venv: str | None) -> None:
     c.step("Virtual environment and packages")
     if venv in ("created", "recreated"):
@@ -193,31 +209,19 @@ def ensure_venv_and_packages(c: Console, args: argparse.Namespace, venv: str | N
     (c.ok if level == "ok" else c.warn)(summary.removeprefix("Packages: "))
 
 
-def read_user_settings() -> dict:
-    try:  # -sig: a settings file saved by Notepad starts with a byte-order mark
-        return json.loads(USER_SETTINGS.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return {}
-
-
-def write_user_settings(**values: object) -> None:
-    USER_SETTINGS.parent.mkdir(parents=True, exist_ok=True)
-    USER_SETTINGS.write_text(json.dumps({**read_user_settings(), **values}, indent=2), encoding="utf-8")
-
-
 def has_data(folder: Path) -> bool:
     return folder.is_dir() and any(p.name != "README.md" for p in folder.iterdir())
 
 
 def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
     c.step("Data folder (database, invoices, outputs, settings)")
-    current = read_user_settings().get("data_dir")
+    current = paths.read_user_settings().get("data_dir")
     if args.data_dir:
         data = Path(args.data_dir).expanduser().resolve()
         if current and Path(current) != data and has_data(Path(current)):
             c.warn(f"Switching data folder. The old one stays where it is: {current}")
-    elif current:
-        data = Path(current)
+    elif current:  # (data an older version kept inside its code folder moves out of it first)
+        data = upgrade.settle_data_folder(ROOT, c.info, default=DEFAULT_DATA_DIR)
     else:
         c.info("AP Coder keeps your invoices, its database and its settings in one folder, outside the")
         c.info("code, so new versions of the code use the same data. Do NOT use a OneDrive-synced folder.")
@@ -229,19 +233,9 @@ def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
             c.info(f"Using {data} instead.")
     data.mkdir(parents=True, exist_ok=True)
     (data / "invoices").mkdir(exist_ok=True)
-    write_user_settings(data_dir=str(data))
-
-    legacy = ROOT / "private"
-    if legacy.resolve() != data.resolve() and has_data(legacy) and not has_data_besides_env(data):
-        for item in legacy.iterdir():
-            if item.name == "README.md":
-                continue
-            target = data / item.name
-            if item.is_dir():
-                shutil.copytree(item, target, dirs_exist_ok=True)
-            elif not target.exists():
-                shutil.copy2(item, target)
-        c.ok(f"copied your existing data from {legacy} (the originals are left in place)")
+    paths.write_user_settings(data_dir=str(data))
+    if not (ROOT / ".git").exists():  # data and a .env left in this code folder move to the data folder
+        upgrade.adopt_legacy(ROOT, data, c.info)
 
     if args.fresh_start:
         fresh_start(c, data)
@@ -357,23 +351,25 @@ def configure_settings(c: Console, data: Path) -> Path:
 
 def create_shortcut(c: Console, args: argparse.Namespace) -> None:
     c.step("Shortcut")
-    if not WINDOWS:
-        c.ok(f"start AP Coder with: {ROOT / 'APProcessor.command'}")
+    start = ROOT / ("APProcessor.bat" if WINDOWS else "APProcessor.command")
+    if not (WINDOWS or launch.MAC):
+        c.ok(f"start AP Coder with: {start}")
         return
-    wanted = read_user_settings().get("desktop_shortcut")
+    wanted = paths.read_user_settings().get("desktop_shortcut")
     if args.no_shortcut:
         wanted = False
     elif wanted is None:
         wanted = c.yes("Put an 'AP Coder' shortcut on your desktop?")
-    write_user_settings(desktop_shortcut=bool(wanted))
     if not wanted:
-        c.ok(f"no desktop shortcut; start AP Coder with {ROOT / 'APProcessor.bat'}")
+        paths.write_user_settings(desktop_shortcut=False, shortcut_target=None)
+        c.ok(f"no desktop shortcut; start AP Coder with {start}")
         return
-    folder = launch.desktop()
-    if folder is not None and launch.write_shortcut(folder):
-        c.ok("desktop shortcut 'AP Coder' (updated in place, never duplicated)")
+    paths.write_user_settings(desktop_shortcut=True, shortcut_target=None)  # asked for: written (over) now
+    result = launch.ensure_shortcut()
+    if result.startswith("Desktop"):
+        c.ok("desktop shortcut 'AP Coder' to this folder (updated in place, never duplicated)")
     else:
-        c.warn(f"Could not create the desktop shortcut; start AP Coder with {ROOT / 'APProcessor.bat'}")
+        c.warn(result)
 
 
 def fetch_models(c: Console) -> None:
@@ -437,6 +433,10 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
         handed_over = update_code(c, args)
         if handed_over is not None:
             return handed_over
+        blocked = make_way()
+        if blocked:
+            c.warn(blocked)
+            return 1
         ensure_venv_and_packages(c, args, venv)
         data = choose_data_dir(c, args)
         env = configure_settings(c, data)
@@ -447,19 +447,22 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
         print("\nStopped. Run the installer again any time; it picks up where it left off.")
         return 130
 
-    start = "the 'AP Coder' desktop shortcut" if WINDOWS and read_user_settings().get("desktop_shortcut") else (
-        "APProcessor.bat in this folder" if WINDOWS else "APProcessor.command in this folder"
+    start = "the 'AP Coder' desktop shortcut" if (WINDOWS or launch.MAC) and paths.read_user_settings().get(
+        "desktop_shortcut") else ("APProcessor.bat in this folder" if WINDOWS else "APProcessor.command in this folder"
     )  # fmt: skip
     state = launch.load_state()
     packages = launch.ensure_packages(state, extras=EXTRAS)[:2]  # all in place by now: nothing installed
-    state.update(setup_done=True, fingerprint=launch.fingerprint())
+    ident = launch.identity()
+    state.update(setup_done=True, fingerprint=ident["fingerprint"], version=ident["version"], build=ident["build"])
     launch.save_state(state)
+    paths.record_install(ident)  # the current install: an older folder started later hands over to this one
+    upgrade.write_marker(ROOT, ident)
     launch.print_summary(launch.readiness(packages))
     print("\nAll set.")
     print(f"  Start AP Coder:   {start}")
     print(f"  Your data:        {data}")
     print(f"  Settings file:    {env}")
-    print("  Update later:     run the installer again (nothing is duplicated)")
+    print("  Update later:     unzip the new bundle anywhere and double-click its APProcessor (nothing is duplicated)")
     interactive = sys.stdin.isatty()  # never start a server when no one is there to stop it
     if not args.no_start and not args.yes and interactive and c.yes("Start AP Coder now?"):
         return launch.start_dashboard([], state)

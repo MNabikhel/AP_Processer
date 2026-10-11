@@ -203,14 +203,62 @@ def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | N
     return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
 
 
+class DatabaseTooNew(RuntimeError):
+    """The database was made by a newer AP Coder: this (older) one never opens it, so it is never downgraded."""
+
+
+def database_schema(path: Path) -> int | None:
+    """The ``schema_version`` a database file records (1 for one older than the setting; None for a missing or
+    empty file, or one with no tables yet: a new database). Only reads."""
+    try:
+        if not path.is_file() or path.stat().st_size == 0:
+            return None
+        conn = sqlite3.connect(path, timeout=30)
+    except (OSError, sqlite3.Error):
+        return None
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if not tables:
+            return None
+        row = (
+            conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
+            if "settings" in tables
+            else None
+        )
+        return int(row[0]) if row and str(row[0]).isdigit() else 1
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
 class Store:
     def __init__(self, path: str | Path | None = None) -> None:
         path = default_db_path() if path is None else path
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._before_migrating()
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
+
+    def _before_migrating(self) -> None:
+        """An update's safety net, before the database is touched: a database made by a newer AP Coder is refused
+        (never opened by this older one, so never downgraded), and one made by an older AP Coder is backed up first
+        (``backups/ap_coder-<date>-before-update-from-schema-<n>.db``), so the update can always be undone."""
+        found = database_schema(self.path)
+        if found is None or found == SCHEMA_VERSION:
+            return
+        if found > SCHEMA_VERSION:
+            from . import __version__
+
+            raise DatabaseTooNew(
+                f"The database {self.path} was made by a newer AP Coder (database version {found}; this AP Coder "
+                f"{__version__} knows up to version {SCHEMA_VERSION}), so this older version does not open it: "
+                "nothing was changed. Start the newer AP Coder instead."
+            )
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.backup_to(self.backup_dir() / f"ap_coder-{stamp}-before-update-from-schema-{found}.db")
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Bring a database made by an older version up to date (recorded as settings.schema_version)."""

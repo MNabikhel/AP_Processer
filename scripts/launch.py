@@ -3,15 +3,25 @@
 The double-click finds a Python 3.11 or newer (3.12 first, then the other versions the offline bundle has
 packages for) and runs this file with it. It then:
 
-1. reuses ``.venv`` (it creates it only the first time, and again only when it is broken);
-2. installs only the packages that are missing or too old (``scripts/check_deps.py``), from the offline
-   bundle's ``wheelhouse/`` folder (``pip --no-index``: never from the internet);
-3. picks the data folder and copies the OCR models from the bundle's ``models/`` folder, only when they
-   are not there yet;
-4. puts one "AP Coder" shortcut on the Windows desktop, once;
-5. prints a short readiness summary (and, the first time, the result of the self-check,
-   ``scripts/pilot_check.py``);
-6. opens the dashboard: the one already running if there is one, else it starts it.
+1. hands over to the newest AP Coder when this folder holds an older one than the current install (an old
+   shortcut or folder started by mistake: the data is never opened by older code; ``scripts/upgrade.py``);
+2. reuses ``.venv`` (it creates it only the first time, and again only when it is broken, or made with a Python
+   the offline bundle has no packages for while one it has is installed);
+3. looks for an AP Coder already running: the same folder and version is only opened in the browser; an older
+   version, or one from another folder, is stopped first (``scripts/running.py``): never two on one database;
+4. says "Updated AP Coder from X to Y" when this folder's version changed, and removes the files an older
+   version unzipped here left behind (the bundle's manifest lists its own);
+5. installs only the packages that are missing or too old (``scripts/check_deps.py``), from the offline
+   bundle's ``wheelhouse/`` folder (``pip --no-index``: never from the internet), after checking that the
+   wheelhouse was built for this kind of computer and Python (one plain message when it was not);
+6. settles the data folder outside the code (data an older version kept in its code folder moves there),
+   comments out settings that are no longer used, refuses a database made by a newer AP Coder, and copies
+   the OCR models from the bundle's ``models/`` folder, only when they are not there yet;
+7. records this folder as the current install and points the desktop shortcut at it (Windows: "AP Coder";
+   Mac: an "AP Coder.command" launcher), rewritten whenever the current install changes;
+8. prints a short readiness summary with the self-check (``scripts/pilot_check.py``) the first time and after
+   every update; once it passed, the older installs' ``.venv``, models and folders are cleaned up;
+9. starts the server (``python -m ap_coder serve``) and opens it in the browser once it is up.
 
 Offline by default: this is an enterprise build, so nothing here connects to the internet. A package that is
 not in the wheelhouse is said plainly to be missing (it must come from the offline bundle); AP Coder still
@@ -35,19 +45,20 @@ Standard library only until the packages are installed: the first run starts wit
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib
+import importlib.metadata
 import importlib.util
 import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -58,10 +69,14 @@ for _folder in (ROOT, SCRIPTS):  # ap_coder/offline.py is standard-library only,
         sys.path.insert(0, str(_folder))
 
 import check_deps  # noqa: E402  (standard library plus pip's packaging)
+import running  # noqa: E402  (standard library only)
+import upgrade  # noqa: E402  (standard library only)
 
+from ap_coder import envfile, paths  # noqa: E402  (standard library only)
 from ap_coder.offline import INTERNET_ENV, internet_allowed  # noqa: E402
 
 WINDOWS = os.name == "nt"
+MAC = sys.platform == "darwin"
 VENV = ROOT / ".venv"
 VENV_PY = VENV / ("Scripts/python.exe" if WINDOWS else "bin/python")
 STATE = VENV / "ap_coder_launcher.json"  # what this .venv has been through (gone with it when it is recreated)
@@ -70,8 +85,10 @@ LOCK_HELD_ENV = "AP_LAUNCH_LOCK_HELD"  # set for the second phase, whose parent 
 WAIT_FOR_OTHER = 1800  # seconds a second double-click waits for the first one's dashboard (a first setup)
 MINIMUM = (3, 11)  # the oldest Python AP Coder runs on; any newer one is used (no upper bound)
 DEFAULT_PORT = 8501
-SIGNATURE = "/app/static/InterVariable.woff2"  # a file only AP Coder's dashboard serves
-SHORTCUT = "AP Coder.lnk"
+SHORTCUT = "AP Coder.lnk"  # on the Windows desktop
+MAC_LAUNCHER = "AP Coder.command"  # on a Mac's desktop: a two-line script that opens the current install
+LAUNCHER_MARK = "# AP Coder: opens the current version"  # the first comment line of that script (ours to rewrite)
+READY = "AP Coder is running at"  # what `python -m ap_coder serve` prints once it answers
 SELF_CHECK_TIMEOUT = 600
 QUIET_PIP_LINES = (
     "Requirement already satisfied",
@@ -151,7 +168,12 @@ def save_state(state: dict) -> None:
 
 
 def fingerprint() -> str:
-    return hashlib.sha256((ROOT / "pyproject.toml").read_bytes()).hexdigest()[:16]
+    return identity()["fingerprint"]
+
+
+def identity() -> dict:
+    """This folder's AP Coder: version, build (the offline bundle's build time) and fingerprint."""
+    return paths.install_identity(ROOT)
 
 
 # --- Phase 1: the virtual environment (any Python) ------------------------------------------------------------
@@ -180,17 +202,19 @@ def venv_works() -> bool:
     return probe.returncode == 0
 
 
-def ensure_venv(python: str = sys.executable) -> str:
-    """``reused``, ``created`` or ``recreated`` (only when the existing one is broken)."""
-    if venv_works():
+def ensure_venv(python: str = sys.executable, rebuild: bool = False) -> str:
+    """``reused``, ``created`` or ``recreated`` (only when the existing one is broken, or ``rebuild``: made with a
+    Python the offline bundle has no packages for)."""
+    if venv_works() and not rebuild:
         return "reused"
     status = "recreated" if VENV.exists() else "created"
     if status == "recreated":
-        say("The .venv folder is broken (its Python does not start): making a new one.")
+        if not rebuild:
+            say("The .venv folder is broken (its Python does not start): making a new one.")
         shutil.rmtree(VENV, ignore_errors=True)
         if VENV.exists():
             raise SetupError(
-                "Could not remove the broken .venv folder.",
+                "Could not remove the .venv folder to make it again.",
                 "Close every AP Coder window, delete the .venv folder, then start AP Coder again.",
             )
     result = subprocess.run([python, "-m", "venv", str(VENV)])
@@ -200,6 +224,108 @@ def ensure_venv(python: str = sys.executable) -> str:
             "Reinstall Python 3.12 from https://www.python.org/downloads/, then start AP Coder again.",
         )
     return status
+
+
+def venv_version() -> str:
+    """The Python version .venv was made with ("3.14"), from its pyvenv.cfg ("" when unknown)."""
+    try:
+        text = (VENV / "pyvenv.cfg").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    found = re.search(r"(?m)^\s*version(?:_info)?\s*=\s*(\d+)\.(\d+)", text)
+    return f"{found.group(1)}.{found.group(2)}" if found else ""
+
+
+def python_candidates(version: str) -> list[list[str]]:
+    """Where a Python ``version`` ("3.12") may be on this computer, as commands to run (never Apple's stand-in)."""
+    if WINDOWS:
+        short = version.replace(".", "")
+        local, program = os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles", "")
+        return [["py", f"-{version}"], [f"{local}\\Programs\\Python\\Python{short}\\python.exe"],
+                [f"{program}\\Python{short}\\python.exe"]]  # fmt: skip
+    found = [shutil.which(f"python{version}") or ""]
+    found += [f"{d}/python{version}" for d in ("/opt/homebrew/bin", "/usr/local/bin")]
+    found.append(f"/Library/Frameworks/Python.framework/Versions/{version}/bin/python{version}")
+    return [[c] for c in dict.fromkeys(found) if c]
+
+
+def python_found(command: list[str], version: str) -> str:
+    """The executable of ``command`` when it starts and is Python ``version`` ("" otherwise)."""
+    if len(command) == 1 and not (command[0].startswith("py") or Path(command[0]).is_file()):
+        return ""
+    env = {**os.environ, "PYTHON_MANAGER_AUTOMATIC_INSTALL": "false"}  # py never downloads a missing version
+    try:
+        ask = "import sys; print('%d.%d' % sys.version_info[:2]); print(sys.executable)"
+        out = subprocess.run([*command, "-c", ask], capture_output=True, text=True, timeout=30, env=env,
+                             stdin=subprocess.DEVNULL)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    lines = out.stdout.split()
+    if out.returncode != 0 or len(lines) < 2 or lines[0] != version:
+        return ""
+    executable = " ".join(lines[1:])
+    try:
+        inside = Path(executable).resolve().is_relative_to(VENV.resolve())
+    except (OSError, ValueError):
+        inside = False
+    return "" if inside else executable
+
+
+def find_python(versions: list[str]) -> tuple[str, str] | None:
+    """A Python installed on this computer in one of ``versions`` (3.12 first): (its executable, its version)."""
+    for version in sorted(versions, key=lambda v: v != "3.12"):  # 3.12 first, then in the order given
+        for command in python_candidates(version):
+            executable = python_found(command, version)
+            if executable:
+                return executable, version
+    return None
+
+
+def fitting_pythons() -> list[str]:
+    """The Python versions the offline bundle's wheelhouse has every core package for, on this kind of computer
+    (from its wheels; from the manifest when there are none to judge by). [] when unknown."""
+    wheels = _core_wheels()
+    if not wheels:
+        return bundle_pythons()
+    system, arch = _computer_kind(wheel_platform())
+    per_package = []
+    for tags in wheels.values():
+        versions: set[str] = set()
+        for interpreter, abi, plat in tags:
+            kind = _computer_kind(plat)
+            if plat != "any" and not (kind[0] == system and (kind[1] == arch or "universal2" in (kind[1], arch))):
+                continue
+            found = re.fullmatch(r"cp3(\d+)", interpreter)
+            if found and abi == "abi3":  # one wheel for this and every later Python
+                versions |= {f"3.{n}" for n in range(int(found.group(1)), 30)}
+            elif found:
+                versions.add(f"3.{found.group(1)}")
+        per_package.append(versions)
+    return sorted(set.intersection(*per_package), key=_version_key) if per_package else []
+
+
+def venv_fits() -> bool:
+    """The double-click's quick check, run with .venv's Python (``--venv-ok``): use .venv as it is? Yes, unless its
+    Python has no packages in the offline bundle, AP Coder's packages are not all in place yet, and a Python the
+    bundle has packages for is installed (then .venv is made again with that one)."""
+    here = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    fitting = fitting_pythons()
+    if not fitting or here in fitting:
+        return True
+    missing, _ = missing_packages(("ocr",))
+    if not [r for r in missing if not is_ocr(r)]:
+        return True
+    return find_python(fitting) is None
+
+
+def venv_fits_probe() -> bool:
+    """:func:`venv_fits`, asked of .venv's own Python."""
+    try:
+        probe = subprocess.run([str(VENV_PY), str(Path(__file__).resolve()), "--venv-ok"], capture_output=True,
+                               timeout=120)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0
 
 
 def _version_key(version: str) -> tuple[int, ...]:
@@ -276,9 +402,26 @@ def bundle_advice(version: str, venv_made: bool = False) -> str:
 
 
 def bootstrap(argv: list[str]) -> int:
-    """Run with a Python found on this computer: make ``.venv``, then carry on inside it."""
+    """Run with a Python found on this computer: make ``.venv``, then carry on inside it. When the offline bundle has
+    no packages for this Python but has them for another one installed here, that one is used instead; a .venv made
+    with a Python the bundle has no packages for (and not set up yet) is made again."""
     version = sys.version_info[:2]
     shown = f"{version[0]}.{version[1]}"
+    fitting = fitting_pythons()
+    if fitting and shown not in fitting and (not VENV_PY.exists() or not venv_fits_probe()):
+        better = find_python(fitting)
+        if better:
+            say(f"Python {shown} has no packages in this offline bundle: using Python {better[1]} ({better[0]}).")
+            try:  # (this process holds the lock: LOCK_HELD_ENV says so to the one it starts)
+                return subprocess.call([better[0], str(Path(__file__).resolve()), *argv])
+            except KeyboardInterrupt:
+                return 0
+    made_with = venv_version()
+    rebuild = bool(VENV_PY.exists() and fitting and made_with and made_with not in fitting and shown in fitting
+                   and not venv_fits_probe())  # fmt: skip
+    if rebuild:
+        say(f".venv was made with Python {made_with}, which this offline bundle has no packages for: making it "
+            f"again with Python {shown}.")  # fmt: skip
     if not supported(version) and not VENV_PY.exists():
         say(f"Note: Python {shown} is older than AP Coder needs (3.11 or newer; 3.12 is best).")
     built_for = bundle_pythons()
@@ -290,7 +433,7 @@ def bootstrap(argv: list[str]) -> int:
         say("First run: setting up AP Coder. This takes a few minutes; later starts take seconds.")
     say(f"Python {sys.version.split()[0]} found on this computer: {sys.executable}")
     try:
-        status = ensure_venv()
+        status = ensure_venv(rebuild=True) if rebuild else ensure_venv()
     except SetupError as exc:
         return failed(exc)
     try:  # (this process holds the lock for both phases: main() says so to the second one, LOCK_HELD_ENV)
@@ -311,11 +454,84 @@ def failed(exc: SetupError) -> int:
 
 def pip_source() -> list[str] | None:
     """Where pip may install from: the offline bundle's wheelhouse/ folder, with ``--no-index`` (never the
-    internet). Without one: PyPI ([]) only with the opt-in (AP_ALLOW_INTERNET=1), else None (nowhere)."""
+    internet). Without one: PyPI ([]) only with the opt-in (AP_ALLOW_INTERNET=1), else None (nowhere). A wheelhouse
+    built for another kind of computer or Python is passed over for PyPI only with the opt-in."""
     wheelhouse = ROOT / "wheelhouse"
-    if wheelhouse.is_dir():
+    if wheelhouse.is_dir() and not (internet_allowed() and wheelhouse_misfit()):
         return ["--no-index", "--find-links", str(wheelhouse)]
     return [] if internet_allowed() else None
+
+
+# The packages with compiled code AP Coder can't run without: their wheels say which computers and Pythons the
+# wheelhouse was built for (the pure-Python ones fit anywhere).
+CORE_BINARY = ("numpy", "pandas", "pyarrow", "pymupdf", "pillow", "pydantic-core")
+SYSTEM_NAMES = {"windows": "Windows", "mac": "Macs", "linux": "Linux"}
+THIS_KIND = {"windows": "a Windows computer", "mac": "a Mac", "linux": "a Linux computer"}
+
+
+def _core_wheels(folder: Path | None = None) -> dict[str, list[tuple[str, str, str]]]:
+    """The (interpreter, abi, platform) tags of the core compiled packages' wheels in the wheelhouse, by package."""
+    folder = folder or ROOT / "wheelhouse"
+    found: dict[str, list[tuple[str, str, str]]] = {}
+    try:
+        files = [f.name for f in folder.iterdir() if f.name.endswith(".whl")]
+    except OSError:
+        return {}
+    for name in files:
+        parts = name[:-4].split("-")
+        package = re.sub(r"[-_.]+", "-", parts[0]).lower()
+        if len(parts) < 5 or package not in CORE_BINARY:
+            continue
+        found.setdefault(package, []).extend(
+            (i, a, p) for i in parts[-3].split(".") for a in parts[-2].split(".") for p in parts[-1].split(".")
+        )
+    return found
+
+
+def here_tags() -> set[str]:
+    """The wheel tags this Python accepts ("cp312-cp312-win_amd64", ...), as pip judges them."""
+    try:
+        from packaging.tags import sys_tags
+    except ImportError:  # pip carries its own copy
+        from pip._vendor.packaging.tags import sys_tags
+    return {str(tag) for tag in sys_tags()}
+
+
+def this_computer() -> str:
+    return "windows" if WINDOWS else "mac" if sys.platform == "darwin" else "linux"
+
+
+def _cpython(interpreter: str, abi: str) -> str:
+    """ "3.12" for a wheel made for CPython 3.12 only ("" for one made for several, abi3)."""
+    found = re.fullmatch(r"cp3(\d+)", interpreter)
+    return f"3.{found.group(1)}" if found and abi != "abi3" else ""
+
+
+def wheelhouse_misfit() -> str:
+    """ "" when the wheelhouse fits this computer and Python (or can't be judged), else one plain sentence on what
+    it was built for, what this computer is, and what to do."""
+    wheels = _core_wheels()
+    here = here_tags()
+    if not wheels or all(any(f"{i}-{a}-{p}" in here for i, a, p in tags) for tags in wheels.values()):
+        return ""
+    tags = [tag for found in wheels.values() for tag in found]
+    systems = [s for s in SYSTEM_NAMES if s in {_computer_kind(p)[0] for _i, _a, p in tags}]
+    pythons = sorted({v for i, a, _p in tags if (v := _cpython(i, a))}, key=_version_key)
+    built = " and ".join(SYSTEM_NAMES[s] for s in systems) or "another kind of computer"
+    built += f", Python {'/'.join(pythons)}" if pythons else ""
+    system, version = this_computer(), f"{sys.version_info[0]}.{sys.version_info[1]}"
+    start = f"This package folder (wheelhouse) was built for {built}"
+    if system not in systems:
+        other = f"Use a bundle built for this computer (build it with --platform {wheel_platform()})"
+        advice = {"mac": "Use the bundle built for Macs (build it with --mac)",
+                  "windows": "Use the bundle built for Windows (the default build)"}.get(system, other)  # fmt: skip
+        return f"{start}; this computer is {THIS_KIND[system]} with Python {version}. {advice}"
+    if pythons and version not in pythons:
+        best = "3.12" if "3.12" in pythons else pythons[-1]
+        return (f"{start}; this computer has Python {version}: install Python {best} (then start AP Coder again), "
+                f"or use a bundle built for Python {version} (build it with --python {version})")  # fmt: skip
+    return (f"{start}; this computer ({wheel_platform()}, Python {version}) can't use it. Use a bundle built for it "
+            f"(build it with --platform {wheel_platform()} --python {version})")  # fmt: skip
 
 
 def pip_install(args: list[str]) -> bool:
@@ -415,13 +631,55 @@ def ensure_second_ocr(state: dict) -> str:
 def ensure_packages(state: dict, extras: tuple[str, ...] = ("ocr",)) -> tuple[str, str, bool]:
     """Install only what is missing or too old: nothing when everything is in place. Offline (the default)
     only from the bundle's wheelhouse/ folder. Returns (level, summary line, whether pip installed something).
-    On Python 3.13 or newer the second OCR engine is added too (``ensure_second_ocr``)."""
+    On Python 3.13 or newer the second OCR engine is added too (``ensure_second_ocr``), and the optional Azure
+    check's packages when the wheelhouse has them (``ensure_azure``: never a reason to stop)."""
     level, summary, installed = _ensure_packages(state, extras)
+    refresh_registration()
     if "ocr" in extras and level != "fail":
         note = ensure_second_ocr(state)
         if note and level == "ok":
             level, summary = "warn", f"{summary}. {note}"
+    ensure_azure(state)
     return level, summary, installed
+
+
+def ensure_azure(state: dict) -> bool:
+    """The packages of the optional Azure check (the ``azure`` extra), installed from the offline bundle's wheelhouse
+    when it carries them, so switching the check on in the settings needs no download. Never from the internet,
+    never a reason to stop (AP Coder runs without them), tried once per version when it fails. True when installed."""
+    wheelhouse = ROOT / "wheelhouse"
+    core = set(check_deps.requirements())
+    wanted = [r for r in check_deps.requirements(extras=("azure",)) if r not in core]
+    try:
+        missing = [r for r in wanted if check_deps.problem(r)]
+        carried = wheelhouse.is_dir() and any(f.name.lower().startswith("azure_ai_documentintelligence")
+                                              for f in wheelhouse.glob("*.whl"))  # fmt: skip
+    except Exception:  # noqa: BLE001 - optional: never stops the start
+        return False
+    if not missing:
+        state.pop("azure_failed", None)
+        return False
+    if not carried or state.get("azure_failed") == fingerprint() or not pip_source():
+        return False  # (pip_source() [] would be the internet: never for an optional package)
+    say("Installing the optional Azure check's packages from the wheelhouse (no internet needed; off until it is "
+        "switched on in the settings).")  # fmt: skip
+    if pip_install(missing):
+        state.pop("azure_failed", None)
+        return True
+    state["azure_failed"] = fingerprint()
+    say("(Not needed: AP Coder runs without them. Not tried again for this version.)")
+    return False
+
+
+def refresh_registration() -> None:
+    """Unzipped over an older version, ap_coder is still registered in .venv with the older version's number (what
+    the running server reports): registered again, without downloading anything. Never stops the start."""
+    version = identity()["version"]
+    registered = check_deps.registered_version(ROOT)
+    if not registered or not version or registered == version or pip_source() is None:
+        return
+    say(f"Registering AP Coder {version} in .venv (it still said {registered}; nothing to download).")
+    pip_install(["--no-deps", *editable(())])
 
 
 def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bool]:
@@ -435,8 +693,17 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     source = pip_source()
     if source is None:
         return without_wheelhouse(missing, total)
+    misfit = wheelhouse_misfit() if (ROOT / "wheelhouse").is_dir() else ""
+    if misfit and source:  # offline: pip would only fail with a long, unclear error
+        raise SetupError(
+            f"{misfit}: nothing was installed.",
+            "Unzip the offline bundle built for this computer (into a new folder, or over this one), then start "
+            "AP Coder again.",
+        )
     if source:
         say("Installing from the wheelhouse folder (no internet needed).")
+    elif misfit:
+        say(f"{misfit}. Installing from the internet (PyPI) instead: {INTERNET_ENV}=1 allows it.")
     else:
         say(f"Installing from the internet (PyPI): {INTERNET_ENV}=1 allows it.")
     plain = tuple(e for e in extras if e != "ocr")
@@ -473,13 +740,51 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
 
 
 def ensure_data_folder() -> Path:
-    """The data folder: the one already recorded, else ``~/APCoder`` (recorded once, never moved)."""
+    """The data folder: the one already recorded, else ``~/APCoder`` (recorded once). Data an older AP Coder kept
+    inside a code folder (``private``) is moved there first (``scripts/upgrade.py``, settle_data_folder)."""
     import first_run
 
     data = first_run.choose_data_dir()
     data.mkdir(parents=True, exist_ok=True)
     (data / "invoices").mkdir(exist_ok=True)
     return data
+
+
+def settle_settings(data: Path, version: str) -> list[tuple[str, str]]:
+    """The settings file: a ``.env`` (or data) left in this code folder moves to the data folder, and settings no
+    longer used are commented out, with a note, instead of looking like they still do something."""
+    if not (ROOT / ".git").exists():  # a developer's checkout keeps its own files
+        upgrade.adopt_legacy(ROOT, data, say)
+    return retire_settings(data, version)
+
+
+def retire_settings(data: Path, version: str) -> list[tuple[str, str]]:
+    from ap_coder.config import RETIRED_SETTINGS
+
+    env = data / ".env"
+    short = ".".join(version.split(".")[:2]) or version
+    found = envfile.retire(env, RETIRED_SETTINGS, f"no longer used (AP Coder {short})")
+    if not found:
+        return []
+    return [("info", f"Settings file: {', '.join(found)} no longer used (commented out in {env})")]
+
+
+def database_too_new(data: Path, version: str) -> SetupError | None:
+    """A database made by a newer AP Coder: this older version never opens it (nothing changed)."""
+    from ap_coder.store import SCHEMA_VERSION, database_schema
+
+    database = paths.env_path("AP_DB_PATH") or data / "ap_coder.db"
+    found = database_schema(database)
+    if not found or found <= SCHEMA_VERSION:
+        return None
+    newest = paths.current_install()
+    where = (f"its folder is {newest['folder']}" if newest and not paths.same_folder(newest["folder"], ROOT)
+             else "unzip the newest offline bundle and double-click its APProcessor")  # fmt: skip
+    return SetupError(
+        f"Your database {database} was made by a newer AP Coder (database version {found}; AP Coder {version} knows "
+        f"up to version {SCHEMA_VERSION}): this older version does not open it, and nothing was changed.",
+        f"Start the newer AP Coder instead ({where}).",
+    )
 
 
 def models_attempt() -> str:
@@ -525,6 +830,9 @@ def ensure_models(first: bool, state: dict) -> None:
 
 
 def desktop() -> Path | None:
+    if MAC:
+        folder = Path.home() / "Desktop"
+        return folder if folder.is_dir() else None
     if not WINDOWS:
         return None
     out = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
@@ -547,23 +855,63 @@ def write_shortcut(folder: Path) -> bool:
     return subprocess.run(cmd, capture_output=True).returncode == 0
 
 
-def ensure_shortcut() -> str:
-    """Windows: one "AP Coder" shortcut on the desktop, made the first time only. Decided once: a shortcut
-    already there (an older installer's) is kept, never a second one, and one the person deleted is not put
-    back. Returns a summary line ("" = nothing done)."""
-    if not WINDOWS:
-        return ""
-    from ap_coder import paths
+def write_mac_launcher(link: Path) -> bool:
+    """A Mac's "AP Coder.command" on the desktop: two lines that open the current install's APProcessor.command
+    (a link would not do: APProcessor.command starts in its own folder). Only ever written over one of ours."""
+    if link.exists() and LAUNCHER_MARK not in link.read_text(encoding="utf-8", errors="replace"):
+        return False  # the person's own file: never replaced
+    target = shlex.quote(str(ROOT / "APProcessor.command"))
+    try:
+        link.write_text(f"#!/bin/bash\n{LAUNCHER_MARK} (rewritten when a newer one takes over).\n"
+                        f'exec {target} "$@"\n', encoding="utf-8")  # fmt: skip
+        link.chmod(0o755)
+    except OSError:
+        return False
+    return True
 
-    if paths.read_user_settings().get("desktop_shortcut") is not None:
+
+def shortcut_target() -> Path:
+    return ROOT / ("APProcessor.bat" if WINDOWS else "APProcessor.command")
+
+
+def ensure_shortcut() -> str:
+    """One "AP Coder" shortcut on the desktop (Windows; a Mac gets an "AP Coder.command" launcher) that always opens
+    the current install: (re)written when this install became the current one, or when an earlier try failed (then
+    it is tried again on the next start). One the person deleted, or declined (install.bat --no-shortcut), is not
+    put back while the current install stays the same. Returns a summary line ("" = nothing to say)."""
+    if not (WINDOWS or MAC):
+        return ""
+    settings = paths.read_user_settings()
+    if settings.get("desktop_shortcut") is False:
+        return ""
+    target = shortcut_target()
+    recorded = settings.get("shortcut_target")
+    if paths.same_folder(recorded, target):
+        return ""  # made for this install already
+    folder = desktop()
+    made = folder is not None and (write_shortcut(folder) if WINDOWS else write_mac_launcher(folder / MAC_LAUNCHER))
+    if not made:
+        name = SHORTCUT.removesuffix(".lnk") if WINDOWS else MAC_LAUNCHER
+        return f"Could not put a shortcut ({name}) on the desktop (tried again next time); start AP Coder with {target}"
+    paths.write_user_settings(desktop_shortcut=True, shortcut_target=str(target))
+    if recorded or settings.get("desktop_shortcut"):
+        return f"Desktop shortcut 'AP Coder' now opens this version ({ROOT})"
+    return "Desktop shortcut 'AP Coder' made"
+
+
+def old_shortcut_folder() -> str:
+    """The folder an AP Coder 0.1 desktop shortcut opens (it recorded only that there is one): an older install."""
+    settings = paths.read_user_settings()
+    if not WINDOWS or not settings.get("desktop_shortcut") or settings.get("shortcut_target"):
         return ""
     folder = desktop()
-    paths.write_user_settings(desktop_shortcut=True)
-    if folder is not None and (folder / SHORTCUT).exists():
+    if folder is None or not (folder / SHORTCUT).exists():
         return ""
-    if folder is None or not write_shortcut(folder):
-        return f"Could not put a shortcut on the desktop; start AP Coder with {ROOT / 'APProcessor.bat'}"
-    return "Desktop shortcut 'AP Coder' made (once)"
+    link = str(folder / SHORTCUT).replace("'", "''")
+    script = f"(New-Object -ComObject WScript.Shell).CreateShortcut('{link}').TargetPath"
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
+    target = out.stdout.strip()
+    return str(Path(target).parent) if out.returncode == 0 and target else ""
 
 
 def lm_studio_line() -> tuple[str, str]:
@@ -669,35 +1017,26 @@ def requested_port(rest: list[str]) -> int | None:
     return None
 
 
-def listening(port: int) -> bool:
-    """Something accepts connections on ``port`` here. A short timeout: on Windows a refused connection to a
-    closed port is retried for about a second, a listening one answers at once."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.3)
+def candidate_ports(rest: list[str], state: dict) -> list[int]:
+    """Where an AP Coder may already run: the port asked for, the one this folder's last start used, the ones the
+    other installs' last starts used, and the default (the server file in the data folder names its own)."""
+    ports = [requested_port(rest), state.get("port")]
+    for entry in paths.installs():
         try:
-            return s.connect_ex(("127.0.0.1", port)) == 0
-        except OSError:
-            return False
-
-
-def is_ap_coder(port: int, timeout: float = 3.0) -> bool:
-    """AP Coder's dashboard answers on ``port`` (not just anything listening there). Never through a proxy."""
-    if not listening(port):
-        return False
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    try:
-        with opener.open(f"http://127.0.0.1:{port}{SIGNATURE}", timeout=timeout) as response:
-            return response.status == 200
-    except OSError:
-        return False
+            other = json.loads((Path(entry["folder"]) / ".venv" / STATE.name).read_text(encoding="utf-8"))
+            ports.append(other.get("port"))
+        except (OSError, ValueError, AttributeError):
+            continue
+    return list(dict.fromkeys(p for p in [*ports, DEFAULT_PORT] if isinstance(p, int) and p > 0))
 
 
 def running_dashboard(rest: list[str], state: dict) -> int | None:
-    """The port of an AP Coder dashboard already running here: the one asked for, else the one the last
-    start used, else the default."""
-    asked = requested_port(rest)
-    ports = [asked] if asked else list(dict.fromkeys(p for p in (state.get("port"), DEFAULT_PORT) if p))
-    return next((p for p in ports if is_ap_coder(p)), None)
+    """The port of this folder's own AP Coder (this version), already running here, else None."""
+    version = identity()["version"]
+    for server in running.find(candidate_ports(rest, state), paths.private_dir()):
+        if running.judge(server, ROOT, version) == "same":
+            return server.port
+    return None
 
 
 def open_running(port: int) -> int:
@@ -793,30 +1132,139 @@ def open_browser(url: str) -> None:
 # --- Start --------------------------------------------------------------------------------------------------------
 
 
+def without_port(rest: list[str]) -> list[str]:
+    out, skip = [], False
+    for i, arg in enumerate(rest):
+        if skip:
+            skip = False
+        elif arg == "--port" and i + 1 < len(rest):
+            skip = True
+        elif not arg.startswith("--port="):
+            out.append(arg)
+    return out
+
+
+def server_command(port: int, rest: list[str]) -> list[str]:
+    """AP Coder's server on ``port``, with the options given (e.g. ``--address``); the launcher opens the browser."""
+    return [sys.executable, "-m", "ap_coder", "serve", "--port", str(port), "--no-browser", *without_port(rest)]
+
+
 def start_dashboard(rest: list[str], state: dict) -> int:
-    """Start the dashboard on the port asked for, else the first free one from 8501 (recorded, so the next
-    double-click finds this one running)."""
-    if requested_port(rest) is None:
-        rest = ["--port", str(free_port()), *rest]
-    state["port"] = requested_port(rest)
+    """Start the server on the port asked for, else the first free one from 8501 (recorded, so the next
+    double-click finds this one running); its output is shown as it comes, and the browser opens once it is up
+    (its "AP Coder is running at" line, or an answer on /healthz). Returns when it stops."""
+    port = requested_port(rest) or free_port()
+    state["port"] = port
     save_state(state)
     say("Starting AP Coder: it opens in your browser. Keep this window open while you use it; close it to stop.")
     try:
-        return subprocess.call([sys.executable, "-m", "ap_coder", "dashboard", *rest], cwd=ROOT)
+        proc = subprocess.Popen(server_command(port, rest), cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", bufsize=1)  # fmt: skip
+    except OSError as exc:
+        return failed(SetupError(f"AP Coder could not start ({exc}).", "Start AP Coder again; if it happens again, "
+                                 "run  python -m ap_coder doctor  in terminal.bat."))  # fmt: skip
+    ready = threading.Event()
+
+    def show_output() -> None:
+        assert proc.stdout is not None
+        for text in proc.stdout:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            if READY in text:
+                ready.set()
+
+    shown = threading.Thread(target=show_output, daemon=True)
+    shown.start()
+    opened = False
+    try:
+        while proc.poll() is None:
+            if opened:
+                proc.wait()
+            elif ready.wait(0.5) or running.health(port, timeout=1.0):
+                open_browser(f"http://localhost:{port}")
+                opened = True
+        shown.join(timeout=5)
+        return proc.returncode
     except KeyboardInterrupt:
+        proc.terminate()
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
         return 0
+
+
+def previous_install(state: dict, ident: dict, legacy: list[str]) -> dict | None:
+    """The AP Coder this start updates (None when it is no update): this folder's own, when its version or packages
+    changed since .venv was set up here (unzipped over it); else, in a new folder, the newest older install."""
+    if state.get("fingerprint"):
+        same = (state["fingerprint"] == ident["fingerprint"] and state.get("version", ident["version"]) ==
+                ident["version"] and state.get("build", ident["build"]) == ident["build"])  # fmt: skip
+        if same:
+            return None
+        return {"version": state.get("version") or registered_version(), "build": state.get("build", "")}
+    older = [i for i in upgrade.previous_versions(ROOT, legacy) if paths.is_older(i, ident)]
+    return older[-1] if older else None
+
+
+def registered_version() -> str:
+    """The version .venv registered for ap_coder when it was installed (an AP Coder 0.1 launcher kept no other)."""
+    try:
+        return importlib.metadata.version("ap-coder")
+    except Exception:  # noqa: BLE001 - only for the message
+        return ""
+
+
+def legacy_folders() -> list[str]:
+    """Older installs that kept no record (AP Coder 0.1): its desktop shortcut's folder, a stopped old dashboard's."""
+    return [f for f in [old_shortcut_folder(), *running.stopped] if f]
+
+
+def older_installs(ident: dict, legacy: list[str]) -> list[Path]:
+    """Every other install this one replaces (on record, or AP Coder 0.1's): never one that is newer."""
+    folders = [Path(e["folder"]) for e in paths.installs() if not paths.same_folder(e["folder"], ROOT)]
+    folders += upgrade.legacy_installs(ROOT, legacy)
+    found: list[Path] = []
+    for folder in folders:
+        if any(paths.same_folder(folder, f) for f in found):
+            continue
+        if upgrade.is_install(folder) and paths.is_older(ident, paths.install_identity(folder)):
+            continue
+        found.append(folder)
+    return found
+
+
+def plural(count: int, word: str) -> str:
+    return f"{count} {word}{'' if count == 1 else 's'}"
 
 
 def run(args: argparse.Namespace, rest: list[str]) -> int:
     state = load_state()
+    ident = identity()
     first = args.venv in ("created", "recreated") or not state.get("setup_done")
     if args.venv in (None, "reused"):
         say(f"Python {sys.version.split()[0]}: reusing .venv")
 
-    port = running_dashboard(rest, state)
-    if port:
+    # An AP Coder already running: this one opened; an older one (or another folder's) stopped first.
+    verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, state), paths.private_dir(), say)
+    if verdict == "open":
         return open_running(port)
+    if verdict == "newer":
+        say("A newer AP Coder is already running: opening it (this older version starts nothing).")
+        return open_running(port)
+    if verdict == "blocked":
+        return failed(SetupError(f"An older AP Coder is still running (port {port}): two versions never use the same "
+                                 "data at once.", "Close the old AP Coder window, then start again."))  # fmt: skip
 
+    legacy = legacy_folders()  # (before the shortcut is pointed here: an AP Coder 0.1 shortcut names its folder)
+    previous = previous_install(state, ident, legacy)
+    if previous:
+        exact = paths.describe(previous) == paths.describe(ident)  # the same version, rebuilt the same day
+        say(f"Updated AP Coder from {paths.describe(previous, exact)} to {paths.describe(ident, exact)}.")
+    removed, freed = upgrade.prune_stale(ROOT)
+    if removed:
+        say(f"Removed {plural(len(removed), 'file')} the older version left in this folder "
+            f"({upgrade.shown_size(freed)}).")  # fmt: skip
     try:
         level, packages, installed = ensure_packages(state)
     except SetupError as exc:
@@ -824,13 +1272,22 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
         return failed(exc)
     if str(ROOT) not in sys.path:  # ap_coder itself, even when it was only just installed
         sys.path.insert(0, str(ROOT))
-    ensure_data_folder()
+    data = ensure_data_folder()
+    notes = settle_settings(data, ident["version"])
+    too_new = database_too_new(data, ident["version"])
+    if too_new:
+        save_state(state)
+        return failed(too_new)
     ensure_models(first, state)
+    paths.record_install(ident)
+    upgrade.write_marker(ROOT, ident)
     shortcut = ensure_shortcut()
-    lines = readiness((level, packages))
+    lines = readiness((level, packages)) + notes
     if shortcut:
         lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
-    if first or installed or args.check:
+    old = older_installs(ident, legacy)
+    unchecked = bool(old) and not state.get("self_check")  # (set up by install.bat: checked before the clean-up)
+    if first or installed or args.check or previous or unchecked:
         ok, result = self_check()
         state["self_check"] = {"ok": ok, "at": time.strftime("%Y-%m-%d %H:%M"), "result": result}
         lines.append(("ok" if ok else "fail", result))
@@ -839,10 +1296,19 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
                                   "in terminal.bat, and send its output to whoever set up the pilot."))  # fmt: skip
     elif state.get("self_check"):
         last = state["self_check"]
-        verdict = "OK" if last.get("ok") else "FAILED"
+        word = "OK" if last.get("ok") else "FAILED"
         lines.append(("ok" if last.get("ok") else "warn",
-                      f"Self-check {verdict} at setup ({last.get('at', '?')}); --check runs it again"))  # fmt: skip
-    state.update(setup_done=True, fingerprint=fingerprint())
+                      f"Self-check {word} at setup ({last.get('at', '?')}); --check runs it again"))  # fmt: skip
+    if old and (state.get("self_check") or {}).get("ok"):
+        say("Cleaning up the older AP Coder:")
+        freed = upgrade.clean_up(ROOT, data, old, say)
+        if freed:
+            lines.append(("ok", f"Cleaned up the older AP Coder: {upgrade.shown_size(freed)} freed"))
+        lines += retire_settings(data, ident["version"])  # (a settings file it moved in)
+    elif old:
+        kept = ", ".join(str(f) for f in old)
+        lines.append(("warn", f"The older AP Coder is kept in {kept} until the self-check passes"))
+    state.update(setup_done=True, fingerprint=ident["fingerprint"], version=ident["version"], build=ident["build"])
     save_state(state)
     print_summary(lines)
     if args.no_start:
@@ -857,6 +1323,7 @@ def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--check", action="store_true", help="run the self-check again")
     parser.add_argument("--no-start", action="store_true", help="set up and check, but don't start the dashboard")
     parser.add_argument("--venv", help=argparse.SUPPRESS)  # what the first phase did with .venv
+    parser.add_argument("--venv-ok", action="store_true", help=argparse.SUPPRESS)  # the double-click's quick check
     return parser.parse_known_args(argv)
 
 
@@ -864,6 +1331,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     setup_console()
     args, rest = parse(argv)  # first: what to do when another start holds the lock depends on it
+    if args.venv_ok:  # APProcessor.bat / .command: may .venv be used as it is?
+        return 0 if importlib.util.find_spec("pip") is not None and venv_fits() else 1
     if not os.environ.get(LOCK_HELD_ENV):  # (set: a parent start holds it, e.g. the first phase for the second)
         if not take_lock():  # another start is setting up or running AP Coder
             if args.installer:
@@ -875,6 +1344,11 @@ def main(argv: list[str] | None = None) -> int:
             if code is not None:
                 return code
         os.environ[LOCK_HELD_ENV] = str(os.getpid())  # for what this start runs: never waits for itself
+    if args.venv is None:  # the first phase: an older folder started by mistake opens the newest instead
+        newer = upgrade.newer_install(ROOT)
+        if newer is not None:
+            say(f"A newer AP Coder ({paths.describe(newer)}) is in {newer['folder']}: opening that one.")
+            return upgrade.hand_over(Path(newer["folder"]), argv, LOCK_HELD_ENV)
     if not in_venv():
         return bootstrap(argv)
     if args.installer:

@@ -114,8 +114,10 @@ find_python() {
   [ -n "$PY" ]
 }
 
-# Set up before: AP Coder's own Python in .venv starts it straight away (whatever Python made it).
-if [ -x .venv/bin/python ] && .venv/bin/python -c 'import encodings, pip' >/dev/null 2>&1; then
+# Set up before: AP Coder's own Python in .venv starts it straight away (whatever Python made it), when it starts,
+# has pip, and launch.py does not ask for .venv to be made again (the offline bundle has no packages for its Python,
+# AP Coder is not set up yet, and a Python the bundle has packages for is installed: that one is found below).
+if [ -x .venv/bin/python ] && .venv/bin/python scripts/launch.py --venv-ok >/dev/null 2>&1; then
   PY=.venv/bin/python
 elif ! find_python; then
   if [ -n "$OLD_PYTHON" ]; then

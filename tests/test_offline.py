@@ -481,8 +481,10 @@ def test_bundle_leaves_out_ocr_only_where_it_has_no_wheel(tmp_path, monkeypatch,
     assert manifest["targets"][1:] == ["win_amd64, Python 3.14", "macosx_14_0_arm64, Python 3.14",
                                        "macosx_13_0_x86_64, Python 3.14"]  # fmt: skip
     # This computer and 2 targets: everything, then rapidocr-onnxruntime ignoring its Requires-Python; the Intel
-    # Mac: everything (failed), then everything but the OCR add-on.
-    assert len(downloads) == 8
+    # Mac: everything (failed), then everything but the OCR add-on; then, for each of the 4, the optional Azure
+    # packages on their own.
+    assert len(downloads) == 12 and sum("azure-identity>=1.17" in cmd for cmd in downloads) == 4
+    assert manifest["without_azure"] == [] and "azure-identity>=1.17" in manifest["optional_requirements"]
     assert sum("--ignore-requires-python" in cmd for cmd in downloads) == 3
     assert not any("--ignore-requires-python" in cmd and "macosx_13_0_x86_64" in cmd for cmd in downloads)
     assert "No matching distribution found for onnxruntime" in capsys.readouterr().out
@@ -546,7 +548,7 @@ def test_windows_launcher():
         assert b"\r\n" in raw and b"\n" not in raw.replace(b"\r\n", b""), name  # CRLF throughout (cmd.exe needs it)
     text = (ROOT / "APProcessor.bat").read_text(encoding="ascii")
     assert "%PY% scripts\\launch.py %*" in text
-    assert '".venv\\Scripts\\python.exe" -c "import encodings, pip"' in text  # set up before: straight in
+    assert '".venv\\Scripts\\python.exe" scripts\\launch.py --venv-ok' in text  # set up before: straight in
     # Any Python 3.11 or newer (no upper bound): 3.12 first, then 3.11, 3.13, 3.14 (the offline bundle's), then
     # any newer through py -3, then python before python3, then the usual folders (newer ones too).
     assert "for %%V in (3.12 3.11 3.13 3.14) do if not defined PY call :try py -%%V" in text
@@ -577,6 +579,7 @@ def test_mac_launcher():
     assert b"\r" not in raw and raw.startswith(b"#!/bin/bash")
     text = raw.decode()
     assert '"$PY" scripts/launch.py "$@"' in text and "PY=.venv/bin/python" in text
+    assert ".venv/bin/python scripts/launch.py --venv-ok" in text  # .venv used as it is, unless it is to be remade
     assert 'PREFERRED="3.12 3.11 3.13 3.14"' in text and "<= (3, 13)" not in text  # no upper bound
     assert 'command -v "$py"' in text and "echo python3\n  echo python\n" in text  # python3 before python
     # Apple's stand-in is run only when the developer tools are there (else it opens an install dialog).

@@ -15,11 +15,19 @@ Data folder, first match wins:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
+import time
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_DATA_DIR_NAME = "APCoder"  # ~/APCoder: the data folder unless another one is recorded
+
+
+def default_data_dir() -> Path:
+    return Path.home() / DEFAULT_DATA_DIR_NAME
 
 
 def user_settings_path() -> Path:
@@ -33,12 +41,122 @@ def read_user_settings() -> dict:
         return {}
 
 
-def write_user_settings(**values: str) -> Path:
+def write_user_settings(**values: object) -> Path:
+    """Set these values, keeping every other one. The one writer of the settings file (the launcher, the installer
+    and the dashboard all use it): written whole to a temporary file first, so it is never left half-written."""
     path = user_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     settings = {**read_user_settings(), **values}
-    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    part = path.with_name(f"{path.name}.{os.getpid()}.part")
+    part.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    os.replace(part, path)
     return path
+
+
+# --- The installs of AP Coder on this computer ----------------------------------------------------------------------
+#
+# The settings file also records every AP Coder folder started on this computer and which one is current, so a newer
+# version unzipped anywhere takes over (its shortcut, its data folder) and cleans up the older ones, and an older one
+# started by mistake hands over to the newest instead of opening the data with older code:
+#
+#     "installs": [{"folder": "C:\\AP Coder 0.2", "version": "0.2.0", "build": "2026-10-11T09:30:00",
+#                   "last_run": "2026-10-11 09:41"}, ...],
+#     "current": "C:\\AP Coder 0.2"
+
+
+def same_folder(a: str | Path | None, b: str | Path | None) -> bool:
+    if not a or not b:
+        return False
+    try:
+        return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
+    except OSError:
+        return os.path.normcase(str(a)) == os.path.normcase(str(b))
+
+
+def project_version(folder: Path = PROJECT_DIR) -> str:
+    """The version in ``folder``'s pyproject.toml ("" when it has none). Read as text: no package needed."""
+    try:
+        text = (folder / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    found = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
+    return found.group(1) if found else ""
+
+
+def bundle_manifest(folder: Path = PROJECT_DIR) -> dict:
+    """``folder``'s bundle_manifest.json (written by scripts/build_offline_bundle.py), or {}."""
+    try:
+        found = json.loads((folder / "bundle_manifest.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def install_identity(folder: Path = PROJECT_DIR) -> dict:
+    """What AP Coder ``folder`` holds: its version (pyproject), its build (the offline bundle's build time, "" for a
+    checkout) and a fingerprint of its pyproject (changes whenever its packages do)."""
+    try:
+        fingerprint = hashlib.sha256((folder / "pyproject.toml").read_bytes()).hexdigest()[:16]
+    except OSError:
+        fingerprint = ""
+    built = str(bundle_manifest(folder).get("built") or "")
+    return {"folder": str(folder), "version": project_version(folder), "build": built, "fingerprint": fingerprint}
+
+
+def version_key(version: str) -> tuple[int, ...]:
+    """``"0.2.0"`` -> (0, 2, 0); the digits of each part only ("0.2.0rc1" -> (0, 2, 0)), "" -> ()."""
+    return tuple(int(re.match(r"\d*", part).group() or 0) for part in version.split(".")) if version else ()
+
+
+def is_older(this: dict, other: dict) -> bool:
+    """``this`` install (an :func:`install_identity`) is older than ``other``: a lower version, or the same version
+    built earlier (both built as offline bundles). The same version and build, or a checkout, is not older."""
+    mine, theirs = version_key(this.get("version", "")), version_key(other.get("version", ""))
+    if mine != theirs:
+        return mine < theirs
+    built, other_built = str(this.get("build") or ""), str(other.get("build") or "")
+    return bool(built and other_built and built < other_built)
+
+
+def describe(identity: dict, exact: bool = False) -> str:
+    """``0.2.0 (2026-10-11)``: the version and the day it was built (when known); ``exact``: and the time."""
+    version = identity.get("version") or "an earlier version"
+    built = str(identity.get("build") or "")[: 16 if exact else 10].replace("T", " ")
+    return f"{version} ({built})" if built else version
+
+
+def installs() -> list[dict]:
+    found = read_user_settings().get("installs")
+    return [e for e in found if isinstance(e, dict) and e.get("folder")] if isinstance(found, list) else []
+
+
+def current_install() -> dict | None:
+    """The install recorded as current (the newest started), or None."""
+    current = read_user_settings().get("current")
+    return next((entry for entry in installs() if same_folder(entry["folder"], current)), None) if current else None
+
+
+def record_install(identity: dict, current: bool = True) -> dict | None:
+    """Record ``identity``'s folder as an install (started now), and as the current one. Returns the install that was
+    current before, when it was another folder (None otherwise)."""
+    before = current_install()
+    entry = {key: identity.get(key, "") for key in ("folder", "version", "build")}
+    entry["last_run"] = time.strftime("%Y-%m-%d %H:%M")
+    entries = [e for e in installs() if not same_folder(e["folder"], entry["folder"])] + [entry]
+    values: dict = {"installs": entries}
+    if current:
+        values["current"] = entry["folder"]
+    write_user_settings(**values)
+    return before if before and not same_folder(before["folder"], entry["folder"]) else None
+
+
+def forget_install(folder: str | Path) -> None:
+    """Remove ``folder`` from the record (it was cleaned up, or is gone)."""
+    settings = read_user_settings()
+    values: dict = {"installs": [e for e in installs() if not same_folder(e["folder"], folder)]}
+    if same_folder(settings.get("current"), folder):
+        values["current"] = None
+    write_user_settings(**values)
 
 
 def user_path(value: str) -> Path | None:

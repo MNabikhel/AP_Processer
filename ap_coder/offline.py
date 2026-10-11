@@ -68,6 +68,26 @@ def allow_internet() -> None:
     os.environ[INTERNET_ENV] = "1"
 
 
+# Azure Document Intelligence (an optional check of the local reading, switched on in the settings) and Azure
+# OpenAI's sign-in: never needed to install or start AP Coder. Their packages are the optional ``azure`` extra
+# (pyproject): the offline bundle carries its wheels and the launcher installs them from there when it can, but a
+# computer without them runs as before. Only code that is switched on to use Azure needs them (import_azure).
+AZURE_UNAVAILABLE = "Azure check is off or its package isn't installed"
+
+
+def import_azure(module: str):
+    """``module`` (e.g. ``azure.identity``), or a plain RuntimeError when the Azure packages are not installed."""
+    import importlib
+
+    try:
+        return importlib.import_module(module)
+    except ImportError:
+        raise RuntimeError(
+            f"{AZURE_UNAVAILABLE} ({module} is missing). Invoices are still read and coded on this computer; the "
+            "offline bundle's wheelhouse carries the Azure packages (double-click APProcessor to install them)."
+        ) from None
+
+
 @dataclass(frozen=True)
 class ModelFile:
     name: str

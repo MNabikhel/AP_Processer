@@ -33,7 +33,8 @@ set "OLDPY="
 set "OLDV="
 rem Asking py for a version that is not installed must never download it (Python install manager).
 set "PYTHON_MANAGER_AUTOMATIC_INSTALL=false"
-rem Set up before: AP Coder's own Python in .venv starts it straight away (whatever Python made it).
+rem Set up before: AP Coder's own Python in .venv starts it straight away (whatever Python made it),
+rem unless scripts\launch.py --venv-ok says to make .venv again (see :venvpython).
 if exist ".venv\Scripts\python.exe" call :venvpython
 if not defined PY call :findpython
 if not defined PY if defined AP_ONLINE call :installpython
@@ -45,7 +46,10 @@ popd
 exit /b 0
 
 :venvpython
-".venv\Scripts\python.exe" -c "import encodings, pip" >nul 2>&1
+rem .venv's Python is used when it starts, has pip, and launch.py does not ask for it to be made again
+rem (the offline bundle has no packages for its Python, AP Coder is not set up yet, and a Python
+rem the bundle has packages for is installed: then that one is found below and .venv is remade).
+".venv\Scripts\python.exe" scripts\launch.py --venv-ok >nul 2>&1
 if not errorlevel 1 set PY=".venv\Scripts\python.exe"
 exit /b 0
 
