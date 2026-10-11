@@ -97,12 +97,13 @@ CHECKS: dict[str, CheckHelp] = {
     "VENDOR_MATCHED_BY_TAX_NUMBER": CheckHelp(
         FRAUD, "Known vendor under another name",
         "The name differs from the vendor master, but the GST/HST number belongs to a vendor in it. "
-        "Information only.",
+        "Information only, but never approved without a person.",
         "Check it is the same company (a trade name or a new legal name).",
     ),
     "VENDOR_NEW": CheckHelp(
         FRAUD, "First invoice from this vendor",
-        "No earlier invoice from this vendor is in AP Coder. Information only.",
+        "No earlier invoice from this vendor is in AP Coder, or none was approved yet. Information only, but never "
+        "approved without a person, even when it prints a touchless vendor's GST/HST number.",
         "Make sure the vendor is set up in the ERP and is a supplier you expect.",
     ),
     # --- Purchase orders ---------------------------------------------------------------------------------

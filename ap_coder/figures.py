@@ -15,7 +15,14 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 _DATE = re.compile(r"\b\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}\b")
-_FIGURE = re.compile(r"(?<![\w.])([-−(]?)\s?[$€£]?\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\)?)(%?)(?![\w])")
+# Thousands with commas ("1,234.56"); with spaces or dots before a decimal comma ("1 234,56", "1.234,56", French and
+# European); with spaces before a decimal point ("1 234.56"). A comma followed by one or two digits is a decimal comma.
+_SPACE = "[   ]"
+_FIGURE = re.compile(
+    r"(?<![\w.])([-−(]?)\s?[$€£]?\s?"
+    rf"(\d{{1,3}}(?:(?:{_SPACE}|\.)\d{{3}})+(?=,\d{{1,2}}(?!\d))|\d{{1,3}}(?:{_SPACE}\d{{3}})+(?=\.\d)|\d{{1,3}}(?:,\d{{3}})+|\d+)"
+    r"(\.\d+|,\d{1,2}(?!\d))?(\)?)(%?)(?![\w])"
+)
 _TAGS = re.compile(r"<[^>]+>")
 PAGE_BREAK = "<!-- PageBreak -->"  # between pages in OCR's text and Document Intelligence's (``extraction``)
 LISTED = 8  # figures listed per kind (read differently, only one reading has them)
@@ -28,12 +35,12 @@ def figures(text: str) -> dict[Decimal, list[str]]:
     plain = _DATE.sub(" ", _TAGS.sub(" ", text or ""))  # the page reader writes tables as HTML
     for match in _FIGURE.finditer(plain):
         sign, whole, decimals, close, percent = match.groups()
-        digits = whole.replace(",", "")
-        if not decimals and not percent and "," not in whole:
+        digits = re.sub(r"\D", "", whole)
+        if not decimals and not percent and digits == whole:
             if len(digits) < 3 or (len(digits) == 4 and 1900 <= int(digits) <= 2100):
                 continue
         try:
-            value = Decimal(digits + (decimals or ""))
+            value = Decimal(digits + (decimals or "").replace(",", "."))
         except InvalidOperation:
             continue
         shown = match.group(0).strip()

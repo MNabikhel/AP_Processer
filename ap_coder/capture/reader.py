@@ -879,13 +879,16 @@ def _qty_times_price(segs: list[Line], nums: list[tuple[Line, list[tuple[float, 
                 second = re.sub(r"[.,]", ".", pair.group(2))
                 options.append((k, float(pair.group(1)), 1))
                 options.append((k + 0.5, float(second), 1))
+    # A credit's line (-200.00, "200.00 CR") prints its price with or without the sign: the price is a credit too.
+    credit = amount < 0
     best = None
     for k1, q, cost1 in options:
         for k2, p, cost2 in options:
-            if k2 <= k1 or q <= 0 or abs(q * p - amount) > 0.011:
+            price = -abs(p) if credit else p
+            if k2 <= k1 or q <= 0 or abs(q * price - amount) > 0.011:
                 continue
             if best is None or cost1 + cost2 < best[0]:
-                best = (cost1 + cost2, q, p)
+                best = (cost1 + cost2, q, price)
     return (best[1], best[2]) if best else None
 
 

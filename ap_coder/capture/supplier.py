@@ -1290,6 +1290,25 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "AMOUNT_UNUSUAL": "the amount is unusual for this vendor",
     "VENDOR_NOT_IN_MASTER": "the vendor is not in the vendor master",
     "VENDOR_ON_HOLD": "the vendor is on hold",
+    # A name never approved before, or not in the vendor master though its GST/HST number is: the supplier's record
+    # (kept by its business number) is not this name's.
+    "VENDOR_NEW": "no invoice under this vendor name was approved before",
+    "VENDOR_MATCHED_BY_TAX_NUMBER": "the vendor name is not in the vendor master, only its GST/HST number",
+    # A purchase-order exception (po.py): the PO isn't known, is closed or another vendor's, or the invoice bills
+    # more, or at a higher price, than was ordered or received.
+    **dict.fromkeys(
+        (
+            "PO_UNKNOWN",
+            "PO_CLOSED",
+            "PO_VENDOR_MISMATCH",
+            "PO_LINE_NOT_ON_PO",
+            "PO_PRICE_OVER",
+            "PO_QTY_OVER",
+            "PO_NOT_RECEIVED",
+            "PO_OVER_BILLED",
+        ),
+        "it does not match its purchase order",
+    ),  # fmt: skip
 }
 # What always goes to a person, in plain English (Settings → Automation).
 ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
@@ -1303,6 +1322,9 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("Over the approval limit", "it needs a second approver anyway"),
     ("Credit note", "a credit is always applied by a person"),
     ("Not in the vendor master", "once a vendor master is imported, a vendor that is not in it"),
+    ("A new vendor name", "no invoice under that name approved yet, even with a touchless vendor's GST/HST number"),
+    ("Purchase order exception", "the PO is unknown, closed or another vendor's, or billed beyond what was ordered or "
+     "received"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it, or it is a text file"),
     ("Any failed check", "totals, tax, GST/HST check digit, or any field not verified"),
 ]  # fmt: skip
