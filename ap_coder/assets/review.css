@@ -339,6 +339,7 @@
 .rvw-split .legend i {width: 8px; height: 8px; border-radius: 2px; display: inline-block;}
 .rvw-split .legend b {color: var(--rv-text); font-weight: 600; font-variant-numeric: tabular-nums;}
 .rvw-split .legend em {font-style: normal; color: var(--rv-subtle); font-variant-numeric: tabular-nums;}
+.rvw-gl {overflow-x: auto;} /* a narrow window: the posting table scrolls in its card, not the whole screen */
 .rvw-gl .gl {font-weight: 500; color: var(--rv-text);}
 .rvw-gl .gl small {display: block; font-size: 12px; font-weight: 400; color: var(--rv-muted);}
 .rvw-gl .gl.todo {color: var(--rv-warning);}

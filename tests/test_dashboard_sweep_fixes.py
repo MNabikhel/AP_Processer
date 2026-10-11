@@ -131,6 +131,28 @@ def test_the_vendor_master_duplicates_warning_is_about_the_last_import(db):
     assert not any("more than once" in w.value for w in at.warning), [w.value for w in at.warning]
 
 
+def test_tables_inside_a_wrapper_scroll_in_their_card_at_a_narrow_width(db):
+    """At a phone's or a narrow window's width the GL posting preview (a table inside <div class='rvw-gl'>) spilled
+    out of its card and the whole review screen scrolled sideways: style.css lets only a table that is the direct
+    child of st.html scroll on its own."""
+    import re
+
+    from ap_coder.webapp.common import ASSETS
+
+    store = Store(db)
+    load_sample_setup(store)
+    invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", json.loads(
+        (SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text()), {"requires_review": True})  # fmt: skip
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.session_state["open_invoice"] = invoice_id
+    html = _html(_ok(at.run()))
+    wrappers = set(re.findall(r"<div class='([\w-]+)'><table class='apc-table'", html))
+    assert "rvw-gl" in wrappers
+    css = (ASSETS / "style.css").read_text(encoding="utf-8") + (ASSETS / "review.css").read_text(encoding="utf-8")
+    for name in wrappers:
+        assert re.search(rf"\.{name}\s*\{{[^}}]*overflow-x:\s*auto", css), name
+
+
 def test_getting_started_counts_only_the_steps_that_are_needed(db):
     """The welcome screen's ring counted the optional chat model, so it read 1/6 where the Process page said 1 of 4
     (plus processing the first invoices), and could never be complete without that optional model."""
