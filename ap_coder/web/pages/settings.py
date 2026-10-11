@@ -276,7 +276,11 @@ def save_backup_copy(request: Request, folder: str = Form("")) -> JSONResponse:
     folder = folder.strip().strip('"')
     if folder == store.get_setting("backup_copy_dir"):
         return done(request, tab_url("data"), "Nothing changed.")
-    if folder and not Path(folder).expanduser().is_dir():
+    try:  # a name the computer refuses (too long, a character it does not allow) is a folder that does not exist
+        exists = Path(folder).expanduser().is_dir() if folder else True
+    except (OSError, ValueError):
+        exists = False
+    if not exists:
         return refuse("That folder does not exist (or is not reachable from this computer).")
     if folder and Path(folder).expanduser().resolve() == store.backup_dir().resolve():
         return refuse("That is the local backups folder: choose a folder on OneDrive or a network drive.")

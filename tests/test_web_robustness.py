@@ -142,3 +142,13 @@ def test_pages_are_never_kept_by_the_browser_so_back_shows_where_things_stand(cl
     for path in ("/review", "/settings/data", "/no-such-page"):
         response = client.get(path, headers={"Accept": "text/html"})
         assert "no-store" in response.headers.get("cache-control", ""), path
+
+
+@pytest.mark.parametrize(
+    "folder", ["é" * 300, "x" * 5000, "C:\\Users\\me\\" + "a" * 400], ids=["accents", "long", "windows"]
+)
+def test_a_backup_folder_name_the_computer_refuses_is_said_plainly(client, store, folder):
+    """A pasted name too long for the computer answered 500 ("That didn't work") instead of saying so."""
+    response = client.post("/settings/data/backup-copy", data={"folder": folder}, headers=PAGE)
+    assert response.status_code == 400 and "does not exist" in response.json()["error"]
+    assert store.get_setting("backup_copy_dir") == ""
