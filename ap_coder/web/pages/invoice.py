@@ -699,10 +699,13 @@ def correct(request: Request, invoice_id: int, reason: str = Form("")) -> JSONRe
     """Reopen an approved invoice (not exported yet) for correction: what its approval taught is withdrawn and
     learned again at the next approval."""
     store = get_store(request)
-    _invoice(store, invoice_id)
+    inv = _invoice(store, invoice_id)
     if not reason.strip():
         return refuse("Say what needs correcting.")
     me = reviewer()
+    if not ((inv["status"] in (APPROVED, PENDING) and not inv.get("export_batch")) or inv["status"] == REJECTED):
+        # (as Store.reopen decides: exported meanwhile, say, its supplier is not suspended over a reopen refused)
+        return changed_meanwhile(request, invoice_id, ValueError("cannot be reopened"))
     on_reopen(store, invoice_id, me, reason.strip())
     try:
         store.reopen(invoice_id, me, reason.strip())

@@ -143,6 +143,48 @@ def test_a_number_too_large_or_not_a_number_is_refused_plainly(demo, url, field,
     assert said in response.json()["error"]
 
 
+def test_correcting_an_exported_touchless_invoice_does_not_suspend_its_supplier(demo):
+    """Reopen for correction on a stale page, for an invoice approved without review and exported meanwhile: the
+    reopen is refused (exported), but the supplier had already been sent back to supervised review."""
+    from ap_coder import exports
+    from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER
+    from ap_coder.store import APPROVED
+    from tests.webclient import PAGE
+
+    store, client = demo
+    inv = next(i for i in store.list_invoices() if i["status"] == APPROVED)
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET reviewer = ? WHERE id = ?", (AUTONOMOUS_REVIEWER, inv["id"]))
+    store.create_export_batch([inv["id"]], next(iter(exports.FORMATS)), actor="Jordan Lee")
+    final = store.get_invoice(inv["id"])["final_output"]
+    key = store.supplier_key_for(final.get("vendor_name") or "", final.get("gst_hst_registration_number"))
+    if store.get_supplier_profile(key) is None:
+        store.save_supplier_profile(key, display_name=final.get("vendor_name"))
+    with store._conn() as conn:  # the supplier is touchless (how its invoice was approved without review)
+        conn.execute("UPDATE supplier_profiles SET state = 'autonomous' WHERE key = ?", (key,))
+    answer = client.post(f"/review/{inv['id']}/correct", data={"reason": "wrong GL"}, headers=PAGE).json()
+    assert "changed meanwhile" in client.get(answer["redirect"]).text
+    assert store.get_supplier_profile(key)["state"] == "autonomous"
+    assert store.get_invoice(inv["id"])["status"] == APPROVED
+
+
+def test_a_second_approval_by_the_first_approver_says_why_it_is_refused(demo):
+    """The first approver's own second approval (a stale page, or the button posted directly) said "someone else
+    changed this invoice meanwhile": nobody had."""
+    from ap_coder.store import PENDING
+    from tests.webclient import PAGE
+
+    store, client = demo
+    inv = next(i for i in store.list_invoices() if i["status"] == "review")
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET status = ?, reviewer = 'Jordan Lee' WHERE id = ?", (PENDING, inv["id"]))
+    answer = client.post(f"/review/{inv['id']}/final-approve", headers=PAGE).json()
+    page = client.get(answer["redirect"]).text
+    assert "someone else changed" not in page
+    assert "the second approval must come from someone other than the first approver" in page
+    assert store.get_invoice(inv["id"])["status"] == PENDING
+
+
 # --- Starting the server by hand: python -m ap_coder serve ------------------------------------------------------------
 
 
