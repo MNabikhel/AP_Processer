@@ -423,7 +423,7 @@ def test_a_free_port_is_found_when_the_next_fifty_are_refused(launch, monkeypatc
                 raise OSError(10013, "forbidden by its access permissions")
             return super().bind(address)
 
-    monkeypatch.setattr(launch.socket, "socket", Probe)
+    monkeypatch.setattr(real, "socket", Probe)
     port = launch.free_port(40000)
     assert port not in refused and port > 0
 

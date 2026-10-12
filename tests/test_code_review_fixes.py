@@ -141,3 +141,48 @@ def test_a_number_too_large_or_not_a_number_is_refused_plainly(demo, url, field,
     response = client.post(url, data={field: value}, headers=PAGE)
     assert response.status_code == 400, response.text
     assert said in response.json()["error"]
+
+
+# --- Starting the server by hand: python -m ap_coder serve ------------------------------------------------------------
+
+
+def test_serve_without_a_port_never_picks_one_the_system_refuses(monkeypatch):
+    """``python -m ap_coder serve`` chose its port by connecting (nothing answers = free), so a port Windows reserves
+    for Hyper-V / WSL (connect refused, bind refused too) was chosen and the server failed to start; the launcher's
+    bind test already passed over those. Both now use the same one (``offline.free_port``)."""
+    import socket as real
+
+    from ap_coder import cli
+    from ap_coder.web import server
+
+    refused = set(range(8501, 8561))  # (the 50 from 8501 and a few more)
+
+    class Probe(real.socket):
+        def bind(self, address):
+            if address[1] in refused:
+                raise OSError(10013, "An attempt was made to access a socket in a way forbidden by its permissions")
+            return super().bind(address)
+
+    monkeypatch.setattr(real, "socket", Probe)
+    chosen = {}
+    monkeypatch.setattr(server, "serve", lambda host, port, **kwargs: chosen.update(port=port) or 0)
+    assert cli.cmd_serve(cli.build_parser().parse_args(["serve", "--no-browser"])) == 0
+    assert chosen["port"] not in refused and chosen["port"] > 0
+
+
+def test_serve_on_a_port_another_ap_coder_answers_on_leaves_its_server_file_alone(tmp_path, capsys):
+    """``python -m ap_coder serve --port N`` while an AP Coder runs on N: it wrote its own server file over the
+    running one's (losing the token the launcher stops it with), then deleted it when its own start failed; and it
+    said "AP Coder is running at" about the other server. Now it says the port is in use and starts nothing."""
+    import socket
+
+    from ap_coder.web import server
+
+    path = server.write_server_file(1, "the running one's token")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        assert server.serve("127.0.0.1", port, open_browser=False) == 1
+    assert json.loads(path.read_text(encoding="utf-8"))["token"] == "the running one's token"
+    assert f"Port {port} is in use" in capsys.readouterr().err

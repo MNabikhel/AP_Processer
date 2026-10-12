@@ -25,7 +25,6 @@ import json
 import os
 import re
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -38,6 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from ap_coder.offline import listening as offline_listening  # noqa: E402  (standard library only)
 from ap_coder.paths import same_folder, version_key  # noqa: E402  (standard library only)
 
 SERVER_FILE = ".ap_coder_server.json"  # in the data folder, written by `python -m ap_coder serve`
@@ -69,14 +69,8 @@ class Server:
 
 
 def listening(port: int) -> bool:
-    """Something accepts connections on ``port`` here. A short timeout: on Windows a refused connection to a closed
-    port is retried for about a second, a listening one answers at once."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.3)
-        try:
-            return s.connect_ex(("127.0.0.1", port)) == 0
-        except OSError:
-            return False
+    """Something accepts connections on ``port`` here (``ap_coder/offline.py:listening``: 0.3 s at most)."""
+    return offline_listening(port)
 
 
 def _open(request: urllib.request.Request | str, timeout: float):
