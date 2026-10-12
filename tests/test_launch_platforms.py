@@ -106,3 +106,61 @@ def test_a_lock_another_start_holds_still_counts(launch, monkeypatch):
     assert launch.take_lock() is False
     launch.LOCK.touch()
     assert launch.upgrade.lock_held(launch.ROOT) is True
+
+
+# --- The browser and the port ----------------------------------------------------------------------------------
+
+
+def test_the_browser_opens_the_address_the_dashboard_listens_on(launch, monkeypatch):
+    """The dashboard listens on 127.0.0.1 only (no firewall prompt). "localhost" is tried as ::1 first by Mac and
+    Windows browsers, where another program may answer (a dev server on [::1]:8501): the browser opens 127.0.0.1."""
+    monkeypatch.delenv("AP_DASHBOARD_ADDRESS", raising=False)
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("open", 8501))
+    opened: list[str] = []
+    monkeypatch.setattr(launch, "open_browser", opened.append)
+    assert launch.run(launch.parse([])[0], []) == 0
+    assert opened == ["http://127.0.0.1:8501"]
+    assert launch.dashboard_url(8502) == "http://127.0.0.1:8502"
+    monkeypatch.setenv("AP_DASHBOARD_ADDRESS", "0.0.0.0")  # every network: this computer's own address still works
+    assert launch.dashboard_url(8502) == "http://127.0.0.1:8502"
+    monkeypatch.setenv("AP_DASHBOARD_ADDRESS", "192.168.1.20")  # one address only: that one
+    assert launch.dashboard_url(8502) == "http://192.168.1.20:8502"
+
+
+@pytest.mark.parametrize("result", [False, OSError("no browser")])
+def test_no_browser_to_open_says_where_to_go(launch, monkeypatch, capsys, result):
+    """Linux without xdg-open, a locked-down laptop: the address is said, nothing stops."""
+    import webbrowser
+
+    monkeypatch.delenv("BROWSER", raising=False)
+
+    def fake_open(url):
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(webbrowser, "open", fake_open)
+    launch.open_browser("http://127.0.0.1:8501")
+    assert "open http://127.0.0.1:8501 in your browser" in capsys.readouterr().out
+
+
+def test_a_port_another_program_answers_on_is_passed_over(launch, monkeypatch):
+    """On a Mac a port another program listens on for every address can still be bound for 127.0.0.1 alone
+    (SO_REUSEADDR): a port something already answers on is not taken."""
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        start = s.getsockname()[1]
+    monkeypatch.setattr(launch.running, "listening", lambda port: port == start)
+    assert launch.free_port(start) != start
+
+
+def test_another_port_is_said_when_8501_is_taken(launch, monkeypatch, capsys):
+    monkeypatch.setattr(launch, "free_port", lambda start=8501: 8502)
+    monkeypatch.setattr(launch, "server_command", lambda port, rest: [sys.executable, "-c", "pass"])
+    monkeypatch.setattr(launch.running, "health", lambda port, timeout=1.0: None)
+    monkeypatch.setattr(launch, "open_browser", lambda url: None)
+    assert launch.start_dashboard([], {}) == 0
+    out = capsys.readouterr().out
+    assert "Port 8501 is in use by another program: AP Coder uses port 8502 (http://127.0.0.1:8502)" in out

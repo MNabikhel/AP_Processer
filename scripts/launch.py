@@ -1127,8 +1127,18 @@ def running_dashboard(rest: list[str], state: dict) -> int | None:
     return None
 
 
+def dashboard_url(port: int) -> str:
+    """The address the browser opens: the one the dashboard listens on (127.0.0.1 by default). Never "localhost": a
+    Mac or Windows browser tries it as ::1 first, where another program may answer."""
+    from ap_coder.offline import dashboard_address
+
+    address = dashboard_address()
+    shown = "127.0.0.1" if address in ("", "0.0.0.0", "::", "localhost") else address
+    return f"http://{f'[{shown}]' if ':' in shown else shown}:{port}"
+
+
 def open_running(port: int) -> int:
-    url = f"http://localhost:{port}"
+    url = dashboard_url(port)
     say(f"AP Coder is already running: opening {url} in your browser.")
     say("Nothing new was started. This window can be closed; the AP Coder window already open runs it.")
     open_browser(url)
@@ -1218,7 +1228,9 @@ def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
 
 
 def free_port(start: int = DEFAULT_PORT) -> int:
-    """The first port from ``start`` this computer can listen on (a bind test: instant, unlike connecting)."""
+    """The first port from ``start`` this computer can listen on (a bind test: instant, unlike connecting) and
+    nothing answers on yet (on a Mac, SO_REUSEADDR lets 127.0.0.1 be bound on a port another program listens on for
+    every address)."""
     from ap_coder.offline import dashboard_address
 
     address = dashboard_address()
@@ -1228,9 +1240,10 @@ def free_port(start: int = DEFAULT_PORT) -> int:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind((address, port))
-                return port
             except OSError:
                 continue
+        if WINDOWS or not running.listening(port):  # (Windows refuses the bind already; connecting is slow there)
+            return port
     return start
 
 
@@ -1239,7 +1252,12 @@ def open_browser(url: str) -> None:
         return
     import webbrowser
 
-    webbrowser.open(url)
+    try:
+        opened = webbrowser.open(url)
+    except Exception:  # noqa: BLE001 - no browser here: the address is said instead
+        opened = False
+    if not opened:
+        say(f"Could not open a web browser here: open {url} in your browser yourself.")
 
 
 # --- Start --------------------------------------------------------------------------------------------------------
@@ -1267,6 +1285,8 @@ def start_dashboard(rest: list[str], state: dict) -> int:
     double-click finds this one running); its output is shown as it comes, and the browser opens once it is up
     (its "AP Coder is running at" line, or an answer on /healthz). Returns when it stops."""
     port = requested_port(rest) or free_port()
+    if port != DEFAULT_PORT and not requested_port(rest):
+        say(f"Port {DEFAULT_PORT} is in use by another program: AP Coder uses port {port} ({dashboard_url(port)}).")
     state["port"] = port
     save_state(state)
     say("Starting AP Coder: it opens in your browser. Keep this window open while you use it; close it to stop.")
@@ -1294,7 +1314,7 @@ def start_dashboard(rest: list[str], state: dict) -> int:
             if opened:
                 proc.wait()
             elif ready.wait(0.5) or running.health(port, timeout=1.0):
-                open_browser(f"http://localhost:{port}")
+                open_browser(dashboard_url(port))
                 opened = True
         shown.join(timeout=5)
         return proc.returncode
