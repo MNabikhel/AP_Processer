@@ -136,6 +136,16 @@ def test_a_printed_discount_is_kept_when_the_net_days_come_from_the_vendor_maste
     assert p.discount_by == dt.date(2026, 9, 11) and p.discount_amount == 2.0
 
 
+@pytest.mark.parametrize("invoice_date", ["9999-12-20", "9999-12-31"])
+def test_a_date_at_the_end_of_the_calendar_has_no_due_date_instead_of_crashing(invoice_date):
+    """An invoice date typed as a placeholder (9999-12-31) made the due date overflow: the review screen's check and
+    the approval raised OverflowError."""
+    for terms in ("", "Net 30", "Net 30 EOM", "2/10 net 30"):
+        coding = {"invoice_date": invoice_date, "payment_terms": terms, "grand_total": 100}
+        assert payment(coding).due is None
+        assert isinstance(payment_findings(coding), list)
+
+
 def test_2_10_eom_counts_the_discount_and_the_net_from_month_end():
     p = payment({"payment_terms": "2/10 EOM", "invoice_date": "2026-09-15", "grand_total": 113.0, "subtotal": 100.0})
     assert p.source == "terms" and p.discount_amount == 2.0

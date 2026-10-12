@@ -156,6 +156,12 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
                 vendor = replace(vendor, discount_pct=terms.discount_pct, discount_days=terms.discount_days)
             terms, from_vendor = vendor, True
     invoice_date = _date(coding.get("invoice_date"))
+    try:
+        if invoice_date:  # a placeholder 9999-12-31: nothing can be counted from it
+            _start(invoice_date, terms) + dt.timedelta(days=max(terms.net_days or 0, terms.discount_days or 0,
+                                                                default_days, 0))  # fmt: skip
+    except OverflowError:
+        invoice_date = None
     printed = _date(coding.get("due_date"))
     if printed:
         due, source = printed, "printed"
