@@ -227,10 +227,12 @@ def setup_console() -> None:
 
 
 def load_state() -> dict:
+    """What this .venv has been through ({} when the file is missing or damaged: everything is checked again)."""
     try:
-        return json.loads(STATE.read_text(encoding="utf-8"))
+        found = json.loads(STATE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    return found if isinstance(found, dict) else {}
 
 
 def save_state(state: dict) -> None:
