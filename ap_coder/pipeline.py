@@ -163,7 +163,19 @@ def plain_error(exc: Exception, path: Path) -> str:
     if name in DAMAGED_PDF:
         return (f"{path.name} can't be opened as a PDF: the file is damaged or incomplete. Ask the vendor for a new "
                 "copy.")  # fmt: skip
+    if path.suffix.lower() == ".pdf" and _needs_password(path):  # PyMuPDF says "document closed or encrypted"
+        return f"{path.name} is protected by a password, so it can't be read. Ask the vendor for a copy without one."
     return f"{name}: {exc}"
+
+
+def _needs_password(path: Path) -> bool:
+    try:
+        import pymupdf
+
+        with pymupdf.open(path) as doc:
+            return bool(doc.needs_pass)
+    except Exception:  # noqa: BLE001 - only asked to word an error: a file that can't be opened says so otherwise
+        return False
 
 
 class InvoicePipeline:
