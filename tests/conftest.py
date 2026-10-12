@@ -52,6 +52,21 @@ def no_local_model(monkeypatch):
 
 
 @pytest.fixture
+def offline_guard():
+    """This computer with no network: any connection or name lookup but 127.0.0.1 / ::1 / localhost is refused and
+    recorded in ``offline_guard.attempts`` (tests/offline_guard.py; ``subprocess_env`` puts it in a subprocess)."""
+    from . import offline_guard as guard
+
+    guard.attempts.clear()
+    guard.install()
+    try:
+        yield guard
+    finally:
+        guard.uninstall()
+        guard.attempts.clear()
+
+
+@pytest.fixture
 def reference():
     return load_reference_data(
         DATA / "chart_of_accounts.csv",
