@@ -57,8 +57,9 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   **Qwen 3.5 9B in LM Studio.** IT puts the chat model in LM Studio next to OvisOCR2 (Qwen 3.5 9B, Q4_K_M:
   5.6 GB, plus its 0.9 GB vision file, `mmproj`, from the lmstudio-community repo; or another 7B–9B
   instruct model at Q4_K_M). If no chat model is loaded, load it: in AP Coder, *Settings → Reading → Models
-  in LM Studio* → **Load** (or in LM Studio itself). Use **Context Length 8192**: the accounts
-  call is short (about 1,300 tokens of chart and lines with the sample chart, and about 60 tokens of answer
+  in LM Studio* → **Load** (or in LM Studio itself). Use **Context Length 16384**, the size CloseDesk
+  loads it with, so a Mac running both apps keeps one copy of it ([LM_STUDIO.md](LM_STUDIO.md)). The accounts
+  call itself is short (about 1,300 tokens of chart and lines with the sample chart, and about 60 tokens of answer
   per line), and Qwen's own advice to keep 128K applies to thinking, which AP Coder turns off.
   - *Thinking.* Qwen 3.5 thinks before it answers unless told not to (LM Studio lists its reasoning
     setting as on/off, default on). On a laptop CPU the thinking alone takes minutes. AP Coder sends

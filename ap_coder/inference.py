@@ -150,8 +150,8 @@ class InvoiceCoder:
         if not model:
             if status.reachable:
                 raise CodingError(
-                    f"{status.server_title} is running but no model is loaded. Load a small instruct model in "
-                    "LM Studio (e.g. Qwen 2.5 7B Instruct), or name one in AP_LLM_MODEL."
+                    f"{status.server_title} is running but no model is loaded. Load Qwen 3.5 9B in "
+                    "LM Studio (docs/LM_STUDIO.md), or name a model in AP_LLM_MODEL."
                 )
             raise CodingError(
                 f"The local model isn't answering at {llm.base_url}. In LM Studio: load a model, then "
@@ -320,7 +320,8 @@ class InvoiceCoder:
             kwargs = self._local_kwargs(model, kind, schema)
             sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
             try:
-                return self.client.chat.completions.create(messages=sent, **kwargs)
+                with local_llm.CHAT_LOCK:  # one request at a time: LM Studio is shared with CloseDesk
+                    return self.client.chat.completions.create(messages=sent, **kwargs)
             except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
                 if "extra_body" in kwargs and local_llm.refuses_extra_fields(exc):
                     if local_llm.refuse_thinking_off(base, model):

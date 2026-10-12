@@ -37,6 +37,7 @@ _lock = threading.Lock()
 
 # Model ids that are not chat models: never picked to code an invoice.
 _NOT_CHAT = ("embed", "rerank", "whisper", "tts", "bge-", "e5-", "ovisocr")  # ovisocr: a page reader, not a chat model
+_NOT_CHAT_SQUASHED = ("embed", "rerank", "ovisocr")  # also with the punctuation taken out: "ovis-ocr2", "Ovis_OCR2"
 # Families that can look at pictures, for servers that don't say (Ollama, llama.cpp). LM Studio says itself.
 _VISION_HINTS = (
     "-vl", "vl-", "_vl", "vision", "llava", "pixtral", "gemma-3", "gemma3", "minicpm-v", "moondream", "internvl",
@@ -133,8 +134,20 @@ def _fetch_json(url: str, api_key: str, timeout: float) -> Any:
 
 
 def is_chat_model(model_id: str) -> bool:
+    """Not an embedding model nor a page reader, however LM Studio spells it ("ovis-ocr2", "Ovis_OCR2@q8_0")."""
     plain = model_id.lower()
-    return not any(word in plain for word in _NOT_CHAT)
+    squashed = re.sub(r"[^a-z0-9]", "", plain)
+    return not any(word in plain for word in _NOT_CHAT) and not any(word in squashed for word in _NOT_CHAT_SQUASHED)
+
+
+# The chat model the team runs in LM Studio, beside CloseDesk (docs/LM_STUDIO.md): Qwen 3.5 9B, by any of the ids LM
+# Studio or Ollama give it ("qwen/qwen3.5-9b", "qwen3.5-9b-mlx", "lmstudio-community/Qwen3.5-9B-GGUF",
+# "qwen3.5-9b@q4_k_m", "qwen3.5:9b").
+_TEAM_CHAT = re.compile(r"qwen3[._-]?5(?![0-9.]).*?(?<![0-9.])9b(?![0-9])")
+
+
+def team_chat_model(model_id: str) -> bool:
+    return bool(_TEAM_CHAT.search(model_id.lower())) and is_chat_model(model_id)
 
 
 def looks_like_vision(model_id: str) -> bool:
@@ -144,13 +157,18 @@ def looks_like_vision(model_id: str) -> bool:
 
 def pick_model(requested: str, ids: list[str], loaded: list[str] | None = None, *, lm_studio: bool = False) -> str:
     """The chat model that suggests GL accounts, found on its own: the one a developer named in AP_LLM_MODEL, else
-    the chat model loaded now, else (LM Studio loads a downloaded model when a request names it) the first chat model
-    it has downloaded. Never OvisOCR2 (it reads pages, it doesn't chat) nor an embedding model."""
+    the chat model loaded now (whichever app loaded it: CloseDesk shares LM Studio), else, with LM Studio (which loads
+    a downloaded model when a request names it), the team's chat model, Qwen 3.5 9B, when it is downloaded; never the
+    first on LM Studio's list, which with just-in-time loading is every model downloaded, of any size (CloseDesk
+    doesn't either). Other servers list only what they serve: their first chat model. Never OvisOCR2 (it reads pages,
+    it doesn't chat) nor an embedding model."""
     if requested:
         return requested
     chat_loaded = [m for m in loaded or [] if is_chat_model(m)]
     if chat_loaded:
         return chat_loaded[0]
+    if lm_studio:
+        return next((m for m in ids if team_chat_model(m)), "")
     return next((m for m in ids if is_chat_model(m)), "")
 
 
@@ -281,6 +299,13 @@ def provider_status(settings: Settings) -> ProviderStatus:
     return ProviderStatus("local", False, "Local model", status.describe())
 
 
+# One chat request at a time from this process, however many invoices are processed at once (``--workers``, the
+# dashboard's jobs): LM Studio on the manager's Mac also answers CloseDesk, and a burst of parallel requests would
+# queue CloseDesk's questions behind AP Coder's. The page reader has its own (page_reader.READ_LOCK): it is another
+# model, which LM Studio runs beside the chat model.
+CHAT_LOCK = threading.Lock()
+
+
 NO_MODEL_MESSAGE = (
     "No AI model answers to code this invoice. Start LM Studio's server with a chat model loaded; invoices are still "
     "read and coded from AP's history without it."
@@ -319,7 +344,9 @@ def build_local_client(llm: LocalLLMSettings) -> Any:
         base_url=llm.base_url,
         api_key=llm.api_key or "lm-studio",
         timeout=llm.timeout_seconds,
-        max_retries=1,  # a local server that failed once is busy or down, not rate limited
+        # Never sent again by the SDK itself: a local server that failed is busy (CloseDesk shares it) or down, not
+        # rate limited, and a request sent again after a ten-minute timeout only doubles the wait (CloseDesk doesn't).
+        max_retries=0,
         **options,
     )
 

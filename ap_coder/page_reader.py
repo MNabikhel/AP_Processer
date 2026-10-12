@@ -699,6 +699,9 @@ RETRY_SAMPLING = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penal
 _EXTRA_SAMPLING = ("top_k", "presence_penalty")  # not OpenAI parameters: sent in the request body as they are
 # A looped reading shorter than this (once the loop is cut) stopped near the top of the page.
 MIN_LOOPED_TEXT = 200
+# One page read at a time from this process (the background reader, a self-test, a person's Read now): CloseDesk
+# reads its scans with the same OvisOCR2 in the same LM Studio, one page at a time too (local_llm.CHAT_LOCK).
+READ_LOCK = threading.Lock()
 
 
 def _attr(obj: Any, name: str) -> Any:
@@ -792,14 +795,17 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
         }
     ]
     client = _client(settings)
-    text, looped = _transcribe_once(settings, client, model, reader, messages, None, should_stop)
-    if not looped:
-        return text
-    log.info("Page reader %s looped on a page; reading it once more with sampling", model)
-    try:
-        again, looped_again = _transcribe_once(settings, client, model, reader, messages, RETRY_SAMPLING, should_stop)
-    except (CutOff, Blank, _NothingWritten):
-        again, looped_again = "", True
+    with READ_LOCK:  # one page at a time: LM Studio is shared with CloseDesk, which reads its scans with OvisOCR2 too
+        text, looped = _transcribe_once(settings, client, model, reader, messages, None, should_stop)
+        if not looped:
+            return text
+        log.info("Page reader %s looped on a page; reading it once more with sampling", model)
+        try:
+            again, looped_again = _transcribe_once(
+                settings, client, model, reader, messages, RETRY_SAMPLING, should_stop
+            )
+        except (CutOff, Blank, _NothingWritten):
+            again, looped_again = "", True
     best = again if not looped_again else max(text, again, key=len)
     if len(best) < MIN_LOOPED_TEXT:
         raise CutOff("the model got stuck repeating itself near the top of the page")
@@ -1516,7 +1522,10 @@ def lm_studio_models(settings: Settings, *, use_cache: bool = True) -> list[dict
     return sorted(rows, key=lambda r: (not r["loaded"], not r["used_for"], r["model"]))
 
 
-CHAT_CONTEXT = 8192  # tokens: the accounts call is short (README: LM Studio settings)
+# Tokens a chat model is loaded with from Settings: the context CloseDesk loads its chat model with (its
+# min_context_tokens), so on a Mac running both apps LM Studio keeps one copy of Qwen 3.5 9B, not a second one loaded
+# with other settings (docs/LM_STUDIO.md). The accounts call itself is short; no more than the model supports.
+CHAT_CONTEXT = 16384
 
 
 def load_model(settings: Settings, model: str) -> str:
@@ -1535,8 +1544,9 @@ def load_model(settings: Settings, model: str) -> str:
     if listing.route != "v1":
         return f"Load {model} in LM Studio (this LM Studio can't load a model when asked)."
     root = local_llm._root(reader_base_url(settings))
+    context = min(CHAT_CONTEXT, found.max_context) if found.max_context else CHAT_CONTEXT
     try:
-        _post_json(root + "/api/v1/models/load", {"model": found.key, "context_length": CHAT_CONTEXT},
+        _post_json(root + "/api/v1/models/load", {"model": found.key, "context_length": context},
                    settings.llm.api_key, LOAD_TIMEOUT)  # fmt: skip
     except PageReaderError as exc:
         return f"LM Studio couldn't load {model} ({exc})."

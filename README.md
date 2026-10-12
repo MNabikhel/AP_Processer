@@ -68,7 +68,8 @@ all:
   banner says they wait for a person.
 - **The chat model** (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) is optional. It only
   suggests GL accounts for lines nothing was learned for. If it isn't loaded, load it with *Context Length
-  8192* (*Settings → Reading → Models in LM Studio* → **Load**). Without it, lines are coded from what AP
+  16384*, as CloseDesk loads it (*Settings → Reading → Models in LM Studio* → **Load**; see
+  [docs/LM_STUDIO.md](docs/LM_STUDIO.md)). Without it, lines are coded from what AP
   approved before for that vendor, from fixed rules and from account names.
 
 ## Screens
@@ -216,7 +217,8 @@ python scripts/pilot_check.py        # reads the ten samples offline and compare
 
 Every invoice is coded the same way, with nothing to choose: the header, lines and taxes come from the local
 readers, each line's GL account from what AP approved before and the coding rules, and the chat model in LM
-Studio (found on its own: the chat model loaded, else one downloaded; never OvisOCR2) suggests an account for a
+Studio (found on its own: the chat model loaded, by AP Coder or CloseDesk, else Qwen 3.5 9B when it is
+downloaded, never just the first model on LM Studio's list; never OvisOCR2 or an embedding model) suggests an account for a
 line nothing was learned for. When LM Studio isn't running, that line is left for AP; nothing else changes.
 
 **Settings → Reading** shows what was found: each reader's state (the GL coding model among them, e.g.

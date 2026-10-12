@@ -136,7 +136,7 @@
   {% if unloaded %}
   <form method="post" action="/settings/reading/load-model" class="row st-load" data-busy="LM Studio is loading the model…">
     <label class="field">Load a model now
-      <select name="model" title="A chat model with an 8,192-token context; OvisOCR2 with the context a page needs.">
+      <select name="model" title="A chat model with a 16,384-token context (as CloseDesk loads it); OvisOCR2 with the context a page needs.">
         {% for m in unloaded %}<option value="{{ m.model }}">{{ m.model }}</option>{% endfor %}
       </select>
     </label>
