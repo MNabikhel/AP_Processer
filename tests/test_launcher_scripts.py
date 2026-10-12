@@ -1,7 +1,8 @@
-"""The double-click files themselves: APProcessor.command (and install.sh / start.sh) must run under the bash 3.2 every
-Mac has as /bin/bash, and the .bat files must survive whatever folder they are unzipped into (spaces, parentheses,
-``&``, accents). Neither can be run here on the real system, so their text is checked: every bash-4-only form is
-refused, ``bash -n`` must parse each script, and every path a .bat expands is inside double quotes."""
+"""The double-click files themselves: APProcessor.command must run under the bash 3.2 every Mac has as /bin/bash,
+and the .bat files (APProcessor.bat, scripts\\terminal.bat) must survive whatever folder they are unzipped into
+(spaces, parentheses, ``&``, accents). Neither can be run here on the real system, so their text is checked: every
+bash-4-only form is refused, ``bash -n`` must parse each script, and every path a .bat expands is inside double
+quotes."""
 
 from __future__ import annotations
 
@@ -14,8 +15,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-SHELL_SCRIPTS = ["APProcessor.command", "install.sh", "start.sh"]
-BAT_FILES = sorted(p.name for p in ROOT.glob("*.bat"))
+SHELL_SCRIPTS = ["APProcessor.command"]
+BAT_FILES = sorted(p.relative_to(ROOT).as_posix() for p in [*ROOT.glob("*.bat"), *ROOT.glob("scripts/*.bat")])
 
 # Forms bash 3.2 (macOS's /bin/bash) does not have: each one is a syntax error or does something else there.
 BASH4_ONLY = {

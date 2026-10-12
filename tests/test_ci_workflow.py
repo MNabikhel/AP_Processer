@@ -1,5 +1,6 @@
 """The CI workflow is one GitHub accepts: a file it rejects runs no job at all, so nothing is tested."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -29,3 +30,32 @@ def test_env_names_are_unique_ignoring_case(workflow):
         lowered = [name.lower() for name in env]
         duplicates = sorted({name for name in lowered if lowered.count(name) > 1})
         assert not duplicates, f"{workflow.name} {where}: {duplicates}"
+
+
+CI = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+# A run of an install / start script the app no longer ships: by path ("$folder/install.sh"), or as the command.
+# A check that one is gone ([ ! -e "$F/install.sh" ]) is not a run.
+RETIRED_RUN = re.compile(r"^(?!.*\[ ! -e ).*(/(install|start|terminal)\.(sh|bat)\b|(cmd\s+/c\s+\"|run:\s*|^\s*)"
+                         r"(install|start|terminal)\.(sh|bat)\b)", re.MULTILINE)  # fmt: skip
+
+
+def test_ci_runs_the_one_launcher_per_computer():
+    """The app folder has one file to open per computer: CI runs the installer as APProcessor.bat --installer /
+    APProcessor.command --installer, never the install / start scripts older versions shipped (only
+    scripts/ci/old_versions.py runs those, inside an old version's own folder)."""
+    text = CI.read_text(encoding="utf-8")
+    assert not RETIRED_RUN.findall(text)
+    assert "APProcessor.bat --installer --yes" in text and 'APProcessor.command" --installer' in text
+    jobs = yaml.safe_load(text)["jobs"]
+    assert "mac-pilot-update" in jobs and jobs["mac-pilot-update"]["name"].startswith("The pilot tester's Mac")
+
+
+def test_the_retired_run_check_catches_what_it_should():
+    for line in ('offline "$folder/install.sh" --yes', "        run: install.bat --yes", 'cmd /c "start.bat"'):
+        assert RETIRED_RUN.search(line), line
+    for line in (
+        "for old in install.sh start.sh; do",
+        'offline "$folder/APProcessor.command" --installer',
+        '[ ! -e "$F/install.sh" ] || fail "still there"',
+    ):
+        assert not RETIRED_RUN.search(line), line

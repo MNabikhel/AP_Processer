@@ -75,20 +75,21 @@ just opens it in the browser again.
 **For developers (online).** On a computer with internet you can work from a git checkout instead of
 the bundle. Set `AP_ALLOW_INTERNET=1` in a terminal (`set AP_ALLOW_INTERNET=1`), then run
 `APProcessor.bat` from it. Packages then come from PyPI and the OCR models are downloaded;
-`install.bat` updates the checkout with git; with no Python, APProcessor.bat offers to install 3.12
+`APProcessor.bat --installer` updates the checkout with git; with no Python, APProcessor.bat offers to install 3.12
 with `winget`. Never set it on a pilot laptop.
 
-**The other installer options.** **`install.bat`** (macOS/Linux: `./install.sh`) is the same setup as
-`APProcessor.bat` (it runs it), plus a question for the data folder and the desktop shortcut, then a
-self-test and the setup check. It asks nothing about reading invoices or cloud services: the offline
+**The installer's questions.** There is one file to open per computer: `APProcessor.bat` (Mac:
+`APProcessor.command`). Most people never need more. Add **`--installer`** to it and it runs the same
+setup, plus a question for the data folder and the desktop shortcut, then a self-test and the setup check. It asks nothing about reading invoices or cloud services: the offline
 build has nothing to set up. (Only a developer computer with `AP_ALLOW_INTERNET=1` is asked for Azure
 details.)
 
-**Running either again is always safe.** Both install packages only when something is missing (from
-the bundle), and keep your data folder, settings and shortcut. Nothing is duplicated. Options are typed after the name in **`terminal.bat`** (double-click
-it, then type e.g. `install.bat --fresh-start`):
+**Running it again is always safe.** It installs packages only when something is missing (from
+the bundle), and keeps your data folder, settings and shortcut. Nothing is duplicated. Options are typed
+after the name in **`scripts\terminal.bat`** (double-click it, then type e.g.
+`APProcessor.bat --installer --fresh-start`; Mac: `./APProcessor.command --installer --fresh-start` in Terminal):
 
-| Option | What it does |
+| Option (after `--installer`) | What it does |
 |---|---|
 | `--fresh-start` | moves the database, invoices and outputs into a dated `backup-…` folder inside the data folder (the `.env` settings are kept) |
 | `--yes` | no questions; keeps current answers |
@@ -99,12 +100,13 @@ it, then type e.g. `install.bat --fresh-start`):
 | `--full-tests` | also run the whole test suite (many minutes; the self-check runs anyway when something changed) |
 | `APProcessor.bat --check` | run the sample-invoice self-check again before starting |
 
-To run AP Coder commands yourself (`doctor`, `share-report`, …), double-click **`terminal.bat`**:
-it opens a command prompt with everything ready, e.g. `python -m ap_coder doctor`.
+To run AP Coder commands yourself (`doctor`, `share-report`, …), double-click **`scripts\terminal.bat`**
+(in the `scripts` folder): it opens a command prompt in AP Coder's folder with everything ready, e.g.
+`python -m ap_coder doctor`.
 
 ## Step 3: Check the setup → paste the doctor report
 
-In `terminal.bat`:
+In `scripts\terminal.bat`:
 
 ```bat
 python -m ap_coder doctor --online
@@ -163,8 +165,8 @@ sample files would otherwise be recognised as already processed).
 
 These invoices are synthetic, so screenshots of this step are fine to share.
 
-When you're done, close the AP Coder window, double-click **`terminal.bat`** and type
-**`install.bat --fresh-start`** so your real setup starts clean: the sample database, memory and invoices move to a backup folder, and your
+When you're done, close the AP Coder window, double-click **`scripts\terminal.bat`** and type
+**`APProcessor.bat --installer --fresh-start`** so your real setup starts clean: the sample database, memory and invoices move to a backup folder, and your
 settings stay.
 
 ## Step 5: Your setup, in the dashboard
@@ -202,7 +204,7 @@ Optional, any time later:
   terms, and exchange rates to CAD if you are billed in other currencies.
 - **Settings → Data & backups:** a **second backup folder** (OneDrive or network) for the daily backups.
 
-Then run `python -m ap_coder doctor` in `terminal.bat` (offline is fine) and **paste the output**. From it I can see
+Then run `python -m ap_coder doctor` in `scripts\terminal.bat` (offline is fine) and **paste the output**. From it I can see
 row counts, whether every tax type is mapped, and the prompt size, but none of your codes or
 names.
 
@@ -256,7 +258,7 @@ and how far each vendor is from touchless.
 
 **Touchless processing** (Settings → Automation) is off by default, so every invoice is approved by a
 person. Leave it off for the first weeks and watch *Supplier learning*. When your regular vendors are
-close to the bar, a manager turns it on (with a confirmation, recorded in the Activity log). A vendor then
+close to the bar, an AP lead turns it on (with a confirmation, recorded in the Activity log). A vendor then
 goes touchless by itself once it has at least 20 reviewed invoices, header fields read right at least 99%
 of the time with 95% confidence, and the last 10 without a correction: usually about 30 clean invoices.
 5% are still audited, and one correction suspends the vendor. Some invoices always go to a person (a
@@ -266,7 +268,7 @@ without a person*, 5,000.00 CAD by default, and others: Settings → Automation 
 
 ## Step 8: Send me the share report
 
-In `terminal.bat`:
+In `scripts\terminal.bat`:
 
 ```bat
 python -m ap_coder share-report --include-codes
@@ -333,7 +335,7 @@ recreate the problem as a synthetic sample in `samples/` and test the fix agains
 
 ### Command cheat sheet
 
-Run these in `terminal.bat` as `python -m ap_coder <command>`.
+Run these in `scripts\terminal.bat` as `python -m ap_coder <command>`.
 
 | Command | What it does |
 |---|---|
@@ -351,8 +353,8 @@ Run these in `terminal.bat` as `python -m ap_coder <command>`.
 
 The second approval needs both people to use the same AP Coder database. The simplest set-up is one
 AP PC that both sign in to with their own Windows accounts: put the code in a folder both can open
-(e.g. `C:\APCoder\app`) and have each person run `install.bat --data-dir C:\APCoder\data` once (in
-`terminal.bat`). Each person sets *Your name* in Settings → Review; it is kept per Windows account.
+(e.g. `C:\APCoder\app`) and have each person run `APProcessor.bat --installer --data-dir C:\APCoder\data`
+once (in `scripts\terminal.bat`). Each person sets *Your name* in Settings → Review; it is kept per Windows account.
 Keep the data folder on a local disk: the database must not live on a network share. To protect it
 against a lost or broken PC, set *Also copy each backup to* in Settings → Data & backups to a OneDrive or
 network folder: the daily backup copies go there (that is safe; only the live database must stay local).

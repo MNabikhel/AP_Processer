@@ -1012,7 +1012,7 @@ QWEN_EMBEDDING = {"type": "embedding", "key": EMBEDDING_KEY, "max_context_length
 
 
 def test_the_embedding_model_closedesk_uses_is_left_alone(serve, posts, two_ocr_models):
-    """The manager's LM Studio has CloseDesk's embedding model (Qwen3 Embedding) loaded beside Qwen 3.5 9B and
+    """The pilot tester's LM Studio has CloseDesk's embedding model (Qwen3 Embedding) loaded beside Qwen 3.5 9B and
     OvisOCR2. AP Coder doesn't use it: it is never taken for the chat model or the page reader, listed in Settings →
     Reading as not used, and never loaded or unloaded."""
     serve(lm_studio(QWEN_EMBEDDING, v1_model("qwen/qwen3.5-9b"), v1_model(OVIS_KEY)))  # nothing else loaded

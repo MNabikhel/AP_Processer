@@ -1,4 +1,4 @@
-"""Bugs found driving the dashboard in a browser as a clerk and a manager would (third sweep), each reproduced here
+"""Bugs found driving the dashboard in a browser as a clerk and an AP lead would (third sweep), each reproduced here
 through the page (ap_coder/web) or the helper it came from, so they are not made again."""
 
 import re
@@ -48,8 +48,8 @@ def test_the_queued_note_reads_as_a_sentence(store, monkeypatch):
 
 
 def test_the_queued_note_does_not_call_a_running_ovisocr2_not_running(store, monkeypatch):
-    """The manager's LM Studio runs OvisOCR2, but it has not passed its self-test yet (or failed it): the toast said
-    "OvisOCR2, which isn't running", and he would look for a problem in LM Studio that isn't there."""
+    """The pilot tester's LM Studio runs OvisOCR2, but it has not passed its self-test yet (or failed it): the toast
+    said "OvisOCR2, which isn't running", and he would look for a problem in LM Studio that isn't there."""
     from ap_coder.web.pages import process
 
     settings = web_settings()

@@ -53,7 +53,7 @@ def office_proxy(monkeypatch):
         yield
 
 
-class socket_closed:  # noqa: N801 - a context manager used like a function
+class socket_closed:  # noqa: N801 - a "with" block used like a function
     """A port nothing listens on."""
 
     def __enter__(self) -> int:

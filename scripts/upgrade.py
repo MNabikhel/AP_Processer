@@ -52,7 +52,9 @@ PRUNED = ("ap_coder", "scripts", "tests", "samples", "wheelhouse", "models")
 # Made by AP Coder (or Python) inside a code folder: never user data, removed with the folder.
 GENERATED = {".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".cache", MARKER, LOCK_NAME,
              ".env.moved-to-data-folder", ".ap_coder_server.json", ".DS_Store", "launch.out", "launch.err"}  # fmt: skip
-# What an AP Coder bundle folder holds (for a folder whose manifest has no file list: AP Coder 0.1).
+# What an AP Coder bundle folder holds (for a folder whose manifest has no file list: AP Coder 0.1). The older
+# versions' install.bat / install.sh / start.bat / start.sh / terminal.bat stay listed: the bundle no longer ships them,
+# so unzipped over an older folder they are removed (prune_stale), and an older folder is still recognised.
 BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static", "wheelhouse", "models", "private",
               ".streamlit", ".github", "APProcessor.bat", "APProcessor.command", "install.bat", "install.sh",
               "start.bat", "start.sh", "terminal.bat", "README.md", "pyproject.toml", "requirements.txt",
@@ -62,7 +64,7 @@ BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static
 RETIRED_KEPT = {"private", "data", "docs", "bundle_manifest.json", "pyproject.toml", "APProcessor.bat",
                 "APProcessor.command", "README.md"}  # fmt: skip
 DATA_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3", ".xlsx", ".xlsm", ".xls")
-# What starts an AP Coder folder: the double-click, and the installer and start scripts of the versions before it.
+# What starts an AP Coder folder: the double-click, and the installer and start scripts of the older versions.
 LAUNCHERS = ("APProcessor.bat", "APProcessor.command", "start.bat", "start.sh", "install.bat", "install.sh")
 
 Say = Callable[[str], None]

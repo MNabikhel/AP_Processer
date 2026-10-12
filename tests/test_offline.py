@@ -492,8 +492,12 @@ def test_bundle_ships_the_code_but_never_data_or_keys():
     bundle = _script("build_offline_bundle")
     files = {p.as_posix() for p in bundle.source_files()}
     for needed in ("APProcessor.bat", "APProcessor.command", "pyproject.toml", "scripts/fetch_models.py",
-                   "ap_coder/static/InterVariable.woff2", "docs/PILOT.md", ".env.example"):  # fmt: skip
+                   "scripts/terminal.bat", "ap_coder/static/InterVariable.woff2", "docs/PILOT.md",
+                   ".env.example"):  # fmt: skip
         assert needed in files, needed
+    # One file to open per computer: the older versions' install / start scripts and terminal.bat are not shipped.
+    for gone in ("install.bat", "install.sh", "start.bat", "start.sh", "terminal.bat"):
+        assert gone not in files, gone
     assert not [f for f in files if f.startswith(("private/", ".venv/", "wheelhouse/", ".git/")) and
                 f != "private/README.md"]  # fmt: skip
     for path, out in (("private/ap_coder.db", True), ("private/README.md", False), (".env", True),
@@ -556,8 +560,9 @@ def test_bundle_zip_built_on_windows_keeps_the_mac_launcher_executable(tmp_path,
 
 def test_windows_launcher():
     """APProcessor.bat only finds (or, with consent, installs) a Python and hands over to scripts/launch.py;
-    install.bat and start.bat run APProcessor.bat, so there is one setup, not three."""
-    for name in ("APProcessor.bat", "install.bat", "start.bat"):
+    it is the one file to open on Windows (``--installer`` runs the installer's questions). scripts\\terminal.bat
+    opens a command prompt in the app folder for AP Coder's own commands."""
+    for name in ("APProcessor.bat", "scripts/terminal.bat"):
         raw = (ROOT / name).read_bytes()
         assert b"\r\n" in raw and b"\n" not in raw.replace(b"\r\n", b""), name  # CRLF throughout (cmd.exe needs it)
     text = (ROOT / "APProcessor.bat").read_text(encoding="ascii")
@@ -583,9 +588,17 @@ def test_windows_launcher():
     assert 'pushd "%~dp0"' in text and 'cd /d "%~dp0"' not in text and "popd" in text
     assert "if not defined AP_YES set /p" in text  # asked once; automated runs (AP_NO_PAUSE, --yes) are not
     assert "https://www.python.org/downloads/" in text and "if not defined AP_NO_PAUSE pause" in text
-    assert 'call "%~dp0APProcessor.bat" --installer %*' in (ROOT / "install.bat").read_text()
-    assert 'call "%~dp0APProcessor.bat" %*' in (ROOT / "start.bat").read_text()
-    assert "APProcessor.bat first" in (ROOT / "terminal.bat").read_text()
+    assert "APProcessor.bat --installer" in text
+    terminal = (ROOT / "scripts" / "terminal.bat").read_text()
+    assert "APProcessor.bat first" in terminal and 'pushd "%~dp0.."' in terminal  # the app folder: above scripts\
+
+
+def test_one_file_to_open_per_computer():
+    """The app folder's top holds exactly one launcher per computer: APProcessor.bat (Windows) and
+    APProcessor.command (Mac, Linux). No install / start scripts beside them to choose from."""
+    runnable = sorted(p.name for p in ROOT.iterdir() if p.is_file() and p.suffix.lower() in
+                      (".bat", ".cmd", ".command", ".sh", ".ps1", ".exe"))  # fmt: skip
+    assert runnable == ["APProcessor.bat", "APProcessor.command"]
 
 
 def test_mac_launcher():
@@ -598,10 +611,9 @@ def test_mac_launcher():
     assert 'command -v "$py"' in text and "echo python3\n  echo python\n" in text  # python3 before python
     # Apple's stand-in is run only when the developer tools are there (else it opens an install dialog).
     assert "APPLE_STUB=/usr/bin/python3" in text and "xcode-select -p" in text
-    assert "--installer" in (ROOT / "install.sh").read_text()
+    assert "./APProcessor.command --installer" in text
     if os.name == "posix":
         assert os.access(ROOT / "APProcessor.command", os.X_OK)
-        assert 'APProcessor.command" "$@"' in (ROOT / "start.sh").read_text()
 
 
 def test_check_deps():

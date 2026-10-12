@@ -1697,7 +1697,7 @@ class Store:
         return AutonomyPolicy()
 
     def touchless_enabled(self) -> bool:
-        """Touchless processing (Settings → Automation), off until a manager turns it on: while it is off, every
+        """Touchless processing (Settings → Automation), off until an AP lead turns it on: while it is off, every
         invoice is approved by a person, whatever its supplier's record."""
         return self.get_setting(TOUCHLESS_SETTING) == "on"
 
@@ -1773,7 +1773,7 @@ class Store:
     def set_supplier_state(
         self, key: str, state: str, by: str | None, reason: str = "", audit_rate: float | None = None
     ) -> None:
-        """Set a supplier's state: ``held`` (a manager keeps it supervised, whatever its record), ``supervised``
+        """Set a supplier's state: ``held`` (an AP lead keeps it supervised, whatever its record), ``supervised``
         (back to the automatic bar, e.g. "Allow again" after ``held``), ``suspended`` (a person found an error in a
         touchless invoice) or ``autonomous`` (only when it meets the bar; touchless processing does this by itself).
         Recorded in the audit trail with who did it and why."""
@@ -1812,7 +1812,7 @@ class Store:
         if state == AUTONOMOUS and rate is None:
             rate = policy.audit_rate
         # Since when it is touchless (kept while suspended, to show; cleared otherwise), and when it was suspended
-        # (its fresh clean streak counts from then: kept while a manager keeps it supervised and once allowed again,
+        # (its fresh clean streak counts from then: kept while an AP lead keeps it supervised and once allowed again,
         # cleared when it is touchless again).
         since = _now() if state == AUTONOMOUS else profile["autonomous_since"] if state == SUSPENDED else None
         suspended = _now() if state == SUSPENDED else None if state == AUTONOMOUS else profile.get("suspended_at")

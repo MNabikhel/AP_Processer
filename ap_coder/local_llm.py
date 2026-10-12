@@ -300,7 +300,7 @@ def provider_status(settings: Settings) -> ProviderStatus:
 
 
 # One chat request at a time from this process, however many invoices are processed at once (``--workers``, the
-# dashboard's jobs): LM Studio on the manager's Mac also answers CloseDesk, and a burst of parallel requests would
+# dashboard's jobs): LM Studio on the pilot tester's Mac also answers CloseDesk, and a burst of parallel requests would
 # queue CloseDesk's questions behind AP Coder's. The page reader has its own (page_reader.READ_LOCK): it is another
 # model, which LM Studio runs beside the chat model.
 CHAT_LOCK = threading.Lock()

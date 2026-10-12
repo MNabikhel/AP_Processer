@@ -38,7 +38,7 @@ jobs:
         run: python -m pytest -q
 
   windows-installer:
-    # The real double-click experience: install.bat on a clean Windows machine, then a second run.
+    # The installer (APProcessor.bat --installer) on a clean Windows machine, then a second run.
     name: Installer on Windows
     runs-on: windows-latest
     env:
@@ -51,7 +51,7 @@ jobs:
           python-version: "3.12"
       - name: First install (non-interactive)
         shell: cmd
-        run: install.bat --yes --no-update --skip-tests --no-start
+        run: APProcessor.bat --installer --yes --no-update --skip-tests --no-start
       - name: Check what the installer set up
         shell: pwsh
         run: |
@@ -71,7 +71,7 @@ jobs:
       - name: Second install reuses everything
         shell: pwsh
         run: |
-          $out = cmd /c "install.bat --yes --no-update --skip-tests --no-start" 2>&1 | Out-String
+          $out = cmd /c "APProcessor.bat --installer --yes --no-update --skip-tests --no-start" 2>&1 | Out-String
           Write-Host $out
           if ($out -notmatch 'reusing \.venv') { throw 'venv was not reused' }
           if ($out -notmatch 'all \d+ in place' -or $out -match 'Collecting|Installing collected') { throw 'packages were reinstalled' }
@@ -104,7 +104,7 @@ jobs:
         run: |
           $data = (Get-Content (Join-Path $env:USERPROFILE '.ap_coder\settings.json') | ConvertFrom-Json).data_dir
           New-Item -ItemType File -Path "$data\ap_coder.db" -Force | Out-Null
-          cmd /c "install.bat --yes --no-update --skip-tests --no-start --fresh-start" | Out-Null
+          cmd /c "APProcessor.bat --installer --yes --no-update --skip-tests --no-start --fresh-start" | Out-Null
           if (-not (Test-Path "$data\.env")) { throw '.env was not kept' }
           if (Test-Path "$data\ap_coder.db") { throw 'database was not moved to the backup' }
           if (-not (Get-ChildItem $data -Directory -Filter 'backup-*')) { throw 'no backup folder' }
@@ -396,15 +396,15 @@ jobs:
           .venv/bin/python -m pip install --no-index --find-links wheelhouse pytest
           .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_offline_guard.py
 
-  mac-manager-update:
-    # The manager's Mac, as it was after PR #8 (e1cf61a): only Python 3.14, GitHub's ZIP of main with an older Windows
+  mac-pilot-update:
+    # The pilot tester's Mac, as it was after PR #8 (e1cf61a): only Python 3.14, GitHub's ZIP of main with an older Windows
     # bundle's wheelhouse copied in as .wheelhouse; the double-click stopped on "Missing packages: azure-ai-...,
     # streamlit". In LM Studio: Qwen 3.5 9B (chat), OvisOCR2 (page reader) and a Qwen embedding model (a stand-in on
     # 127.0.0.1:1234, scripts/ci/fake_lm_studio.py). The update, offline (every proxy at a closed port, no
     # AP_ALLOW_INTERNET), each way in a home of its own: the Mac bundle unzipped into a new folder; unzipped over the
     # old folder; and GitHub's ZIP of this main with the old .wheelhouse copied in again, which must stop with one
     # plain sentence naming the Mac bundle (not a list of packages).
-    name: The manager's Mac (Python 3.14 only) updated from PR 8
+    name: The pilot tester's Mac (Python 3.14 only) updated from PR 8
     runs-on: macos-latest
     timeout-minutes: 25
     env:
@@ -465,7 +465,7 @@ jobs:
           lms_up() { curl -fsS --noproxy '*' --max-time 5 "http://127.0.0.1:$LMS_PORT/v1/models" | grep -q ath-maas_ovisocr2; }
           for _ in $(seq 1 30); do lms_up && break; sleep 1; done
           lms_up || { cat "$T/lms.out"; fail 'the fake LM Studio did not start'; }
-          # The manager's folder after PR 8 in home $1, as he left it: GitHub's ZIP, the old .wheelhouse, one failed start.
+          # The pilot tester's folder after PR 8 in home $1, as he left it: GitHub's ZIP, the old .wheelhouse, one failed start.
           broken() {
             local old="$1/Downloads/AP_Processer-main"
             mkdir -p "$1/Desktop" "$1/Downloads"
@@ -474,7 +474,7 @@ jobs:
             downloaded "$old"
             if HOME="$1" offline "$old/APProcessor.command" > "$1/old.out" 2>&1; then cat "$1/old.out"; fail 'PR 8 started'; fi
             cat "$1/old.out"
-            grep -q 'Missing packages: azure-ai-documentintelligence' "$1/old.out" || fail "not the manager's message"
+            grep -q 'Missing packages: azure-ai-documentintelligence' "$1/old.out" || fail "not the pilot tester's message"
           }
           # The double-click of $2 in home $1 on port $3, its dashboard used, a second double-click, then a later start.
           works() {
@@ -491,7 +491,7 @@ jobs:
             if [ -z "$installed" ]; then
               grep -q 'Installing from the wheelhouse folder' "$home/launch.out" || fail 'not installed from the wheelhouse'
             elif grep -Eq 'First run|Installing|Running the self-check' "$home/launch.out"; then
-              fail 'the double-click set up again what install.sh had set up'
+              fail 'the double-click set up again what the installer had set up'
             fi
             grep -q 'Self-check OK' "$home/launch.out" || fail 'no self-check OK'
             if grep -Eq 'Downloading https?:|Looking in indexes' "$home/launch.out"; then fail 'pip went online'; fi
@@ -539,29 +539,29 @@ jobs:
           print(f"record and desktop launcher: {folder}")
           EOF
           }
-          # install.sh in $2 (home $1) three times, offline: the first (no answers: stdin closed) sets up and checks; the
+          # The installer (APProcessor.command --installer) in $2 (home $1) three times, offline: the first (no answers: stdin closed) sets up and checks; the
           # next two (--yes) say it is up to date and change nothing, in seconds.
           installs() {
             local home="$1" folder="$2" n start took
             for n in 1 2 3; do
               start=$(date +%s)
               if [ "$n" = 1 ]; then set --; else set -- --yes; fi
-              if ! HOME="$home" offline "$folder/install.sh" "$@" < /dev/null > "$home/install$n.out" 2>&1; then
-                cat "$home/install$n.out"; fail "install.sh (run $n) failed"
+              if ! HOME="$home" offline "$folder/APProcessor.command" --installer "$@" < /dev/null > "$home/install$n.out" 2>&1; then
+                cat "$home/install$n.out"; fail "the installer (run $n) failed"
               fi
               took=$(( $(date +%s) - start ))
               cat "$home/install$n.out"
-              echo "install.sh run $n took $took s"
-              grep -q 'All set' "$home/install$n.out" || fail "install.sh (run $n) did not finish"
-              if grep -Eq 'Downloading https?:|Looking in indexes|git (fetch|pull)' "$home/install$n.out"; then fail 'install.sh went online'; fi
+              echo "the installer's run $n took $took s"
+              grep -q 'All set' "$home/install$n.out" || fail "the installer (run $n) did not finish"
+              if grep -Eq 'Downloading https?:|Looking in indexes|git (fetch|pull)' "$home/install$n.out"; then fail 'the installer went online'; fi
               if [ "$n" = 1 ]; then
-                grep -q 'Self-check OK' "$home/install1.out" || fail 'install.sh: no self-check OK'
+                grep -q 'Self-check OK' "$home/install1.out" || fail 'the installer: no self-check OK'
               else
-                grep -q 'Nothing to update' "$home/install$n.out" || fail "install.sh (run $n) did not say it is up to date"
+                grep -q 'Nothing to update' "$home/install$n.out" || fail "the installer (run $n) did not say it is up to date"
                 if grep -Eq 'Installing|Collecting|removed [0-9]+ files? the older|Running the self-check' "$home/install$n.out"; then
-                  fail "install.sh (run $n) set something up again"
+                  fail "the installer (run $n) set something up again"
                 fi
-                [ "$took" -lt 60 ] || fail "install.sh (run $n) took $took s"
+                [ "$took" -lt 60 ] || fail "the installer (run $n) took $took s"
               fi
             done
           }
@@ -575,6 +575,9 @@ jobs:
           ci unzip "$ZIP" "$H/Downloads/AP_Processer-main"; downloaded "$H/Downloads/AP_Processer-main"
           works "$H" "$H/Downloads/AP_Processer-main" 8598
           [ ! -e "$H/Downloads/AP_Processer-main/streamlit_app.py" ] || fail "PR 8's streamlit_app.py is still there"
+          for old in install.sh start.sh install.bat start.bat terminal.bat; do
+            [ ! -e "$H/Downloads/AP_Processer-main/$old" ] || fail "PR 8's $old is still there"
+          done
           # 3. GitHub's ZIP of this main again, the old .wheelhouse copied in: one plain sentence naming the Mac bundle.
           H="$T/github-zip"; broken "$H"
           C="$H/Downloads/AP_Processer-main 2"
@@ -585,24 +588,25 @@ jobs:
           if grep -q 'Missing packages' "$H/zip.out"; then fail 'it listed packages'; fi
           [ "$(grep -cE '✗|\[FAIL\]' "$H/zip.out")" = 1 ] || fail 'more than one problem said'
           # ... and its installer says the same.
-          if HOME="$H" offline "$C/install.sh" --yes < /dev/null > "$H/zip-install.out" 2>&1; then cat "$H/zip-install.out"; fail 'install.sh installed'; fi
+          if HOME="$H" offline "$C/APProcessor.command" --installer --yes < /dev/null > "$H/zip-install.out" 2>&1; then cat "$H/zip-install.out"; fail 'the installer installed'; fi
           cat "$H/zip-install.out"
-          grep -q 'this computer is a Mac with Python 3.14. Use the bundle built for Macs (build it with --mac)' "$H/zip-install.out" || fail 'install.sh: not the plain sentence'
-          if grep -q 'Missing packages' "$H/zip-install.out"; then fail 'install.sh listed packages'; fi
-          # 4. install.sh, run over the old folder, then twice more; then the double-click starts at once.
+          grep -q 'this computer is a Mac with Python 3.14. Use the bundle built for Macs (build it with --mac)' "$H/zip-install.out" || fail 'the installer: not the plain sentence'
+          if grep -q 'Missing packages' "$H/zip-install.out"; then fail 'the installer listed packages'; fi
+          # 4. The installer, run over the old folder, then twice more; then the double-click starts at once.
           H="$T/install-over"; broken "$H"
           F="$H/Downloads/AP_Processer-main"
           ci unzip "$ZIP" "$F"; downloaded "$F"
           installs "$H" "$F"
-          grep -Eq 'removed [0-9]+ files the older version left' "$H/install1.out" || fail "install.sh left PR 8's files"
+          grep -Eq 'removed [0-9]+ files the older version left' "$H/install1.out" || fail "the installer left PR 8's files"
           [ ! -e "$F/streamlit_app.py" ] && [ ! -e "$F/tests/test_dashboard_pages.py" ] || fail "PR 8's files are still there"
+          [ ! -e "$F/install.sh" ] && [ ! -e "$F/start.sh" ] || fail "PR 8's install.sh / start.sh are still there"
           works "$H" "$F" 8599 installed
-          # 5. install.sh in a new folder, PR 8's folder still beside it.
+          # 5. The installer in a new folder, PR 8's folder still beside it.
           H="$T/install-new-folder"; broken "$H"
           F="$H/Downloads/APProcessor"
           ci unzip "$ZIP" "$F"; downloaded "$F"
           installs "$H" "$F"
-          [ ! -e "$H/Downloads/AP_Processer-main/.venv" ] || fail "PR 8's .venv is still there after install.sh"
+          [ ! -e "$H/Downloads/AP_Processer-main/.venv" ] || fail "PR 8's .venv is still there after the installer"
           works "$H" "$F" 8600 installed
       - name: Stop what is still running
         if: always()

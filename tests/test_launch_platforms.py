@@ -299,12 +299,13 @@ def test_the_mark_of_the_web_is_taken_off_the_windows_launchers(launch, monkeypa
     "Do you want to run this file?" on every double-click of APProcessor.bat. Once started, AP Coder takes the mark
     off its own launchers, nothing else. (On Linux "name:stream" is an ordinary file name: it stands in for it.)"""
     monkeypatch.setattr(launch, "WINDOWS", True)
-    for name in ("APProcessor.bat", "install.bat", "README.md"):
+    (launch.ROOT / "scripts").mkdir(exist_ok=True)
+    for name in ("APProcessor.bat", "scripts/terminal.bat", "README.md"):
         (launch.ROOT / name).write_text("x")
         (launch.ROOT / f"{name}:Zone.Identifier").write_text("[ZoneTransfer]\nZoneId=3\n")
     launch.unblock_launchers()
     assert not (launch.ROOT / "APProcessor.bat:Zone.Identifier").exists()
-    assert not (launch.ROOT / "install.bat:Zone.Identifier").exists()
+    assert not (launch.ROOT / "scripts" / "terminal.bat:Zone.Identifier").exists()
     assert (launch.ROOT / "APProcessor.bat").exists()
     assert (launch.ROOT / "README.md:Zone.Identifier").exists()  # only the launchers
     launch.unblock_launchers()  # nothing left to take off: quietly nothing
@@ -312,13 +313,12 @@ def test_the_mark_of_the_web_is_taken_off_the_windows_launchers(launch, monkeypa
 
 def test_gatekeepers_quarantine_is_taken_off_the_mac_launchers(launch, monkeypatch):
     monkeypatch.setattr(launch, "MAC", True)
-    for name in ("APProcessor.command", "install.sh", "README.md"):
+    for name in ("APProcessor.command", "README.md"):
         (launch.ROOT / name).write_text("x")
     calls = []
     monkeypatch.setattr(launch.subprocess, "run", lambda cmd, **k: calls.append(cmd))
     launch.unblock_launchers()
-    assert calls == [["xattr", "-d", "com.apple.quarantine", str(launch.ROOT / "APProcessor.command"),
-                      str(launch.ROOT / "install.sh")]]  # fmt: skip
+    assert calls == [["xattr", "-d", "com.apple.quarantine", str(launch.ROOT / "APProcessor.command")]]
 
     def missing(cmd, **k):
         raise FileNotFoundError("xattr")

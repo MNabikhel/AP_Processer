@@ -308,7 +308,7 @@ def _touchless_vendor(store, output):
 
 @pytest.mark.parametrize("change", ["switch off", "vendor held", "limit lowered"])
 def test_a_held_invoice_is_not_approved_once_touchless_no_longer_applies(store, monkeypatch, change):
-    """Held for a spot-check, then the switch was turned off, a manager kept the vendor supervised or the touchless
+    """Held for a spot-check, then the switch was turned off, an AP lead kept the vendor supervised or the touchless
     limit was lowered below its total: Azure agreeing does not approve it without a person."""
     _turn_on(store, monkeypatch, rate=100)
     monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)

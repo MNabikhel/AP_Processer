@@ -299,7 +299,7 @@ Automation):
 - **Demotion**: a correction on an audited invoice, or a touchless invoice reopened, suspends the vendor at once. It
   goes touchless again by itself once it meets the bar with a fresh clean streak of 10 invoices reviewed since the
   suspension (`supplier_profiles.suspended_at`).
-- **Keep supervised**: a manager can exclude one vendor (Learning & accuracy → Supplier learning; state `held`,
+- **Keep supervised**: an AP lead can exclude one vendor (Learning & accuracy → Supplier learning; state `held`,
   recorded with who and why), and allow it again later.
 - **Always a person** (`touchless_gates`), even for a touchless vendor: a changed bank account or GST/HST number, any
   duplicate signal (`DUPLICATE_INVOICE`, `DUPLICATE_IN_ERP`, `DUPLICATE_OTHER_VENDOR`, `POSSIBLE_DUPLICATE_AMOUNT`), an
@@ -322,7 +322,7 @@ Automation):
   was learned ("Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about 6
   more clean invoices to go touchless."), and the Learning page shows each vendor's progress. A bulk approval (nobody
   opened the invoice) teaches the template, but only its corrections count towards the bar.
-- **Upgrading**: vendors a manager turned touchless by hand before keep their state but are not touchless while the
+- **Upgrading**: vendors an AP lead turned touchless by hand before keep their state but are not touchless while the
   switch is off. When it is turned on, those that meet the standard bar stay touchless; any that do not go back to
   review until they do.
 - **The numbers** (Settings → Automation): vendors touchless, ready and learning; the touchless share of invoices

@@ -381,8 +381,8 @@ def test_main_waits_instead_of_setting_up_twice(lock, monkeypatch):
 
 
 def test_the_installer_refuses_while_ap_coder_is_running(lock, monkeypatch, capsys):
-    """install.bat while AP Coder runs (its start holds the lock) says to close it first and fails: it does not
-    open the browser and report success with the installer's steps skipped, nor reinstall under the running app."""
+    """APProcessor --installer while AP Coder runs (its start holds the lock) says to close it first and fails: it does
+    not open the browser and report success with the installer's steps skipped, nor reinstall under the running app."""
     import install
 
     launch = lock

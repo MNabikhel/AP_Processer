@@ -18,7 +18,7 @@ Pure logic, no web page and no database (the store keeps what this module comput
 
 States: ``learning`` (too few invoices), ``supervised``, ``ready`` (meets the bar; goes touchless as soon
 as touchless processing is on), ``autonomous`` (touchless), ``suspended`` (a person found an error since it
-went touchless: it needs a fresh clean streak to go touchless again) and ``held`` (a manager keeps it
+went touchless: it needs a fresh clean streak to go touchless again) and ``held`` (an AP lead keeps it
 supervised whatever its record). Only ``supervised``, ``autonomous``, ``suspended`` and ``held`` are stored;
 ``learning`` and ``ready`` are computed.
 """
@@ -58,9 +58,9 @@ TAX_ID_FIELDS = ("gst_hst_registration_number", "qst_registration_number")
 REQUIRED_FIELDS = ("vendor_name", "invoice_number", "invoice_date", "grand_total")  # must be found to go touchless
 
 LEARNING, SUPERVISED, READY, AUTONOMOUS, SUSPENDED = "learning", "supervised", "ready", "autonomous", "suspended"
-HELD = "held"  # a manager keeps this supplier supervised, whatever its record
+HELD = "held"  # an AP lead keeps this supplier supervised, whatever its record
 STATES = (LEARNING, SUPERVISED, READY, AUTONOMOUS, SUSPENDED, HELD)
-STORED_STATES = (SUPERVISED, AUTONOMOUS, SUSPENDED, HELD)  # what touchless processing, a manager or a found error sets
+STORED_STATES = (SUPERVISED, AUTONOMOUS, SUSPENDED, HELD)  # what touchless processing, an AP lead or a found error sets
 STATE_LABELS = {
     LEARNING: "Learning", SUPERVISED: "Supervised", READY: "Ready", AUTONOMOUS: "Autonomous", SUSPENDED: "Suspended",
     HELD: "Kept supervised",
@@ -1175,8 +1175,8 @@ def fresh_streak(stats: SupplierStats, since: str | None) -> int:
 
 def judged_stats(stats: SupplierStats, stored_state: str, suspended_at: str | None = None) -> SupplierStats:
     """The record the bar is checked on: a suspended supplier's clean streak counts only invoices reviewed since
-    it was suspended (a reopened touchless invoice suspends it without recording a correction), also while a
-    manager keeps it supervised and once allowed again (``suspended_at`` is kept until it is touchless again)."""
+    it was suspended (a reopened touchless invoice suspends it without recording a correction), also while an
+    AP lead keeps it supervised and once allowed again (``suspended_at`` is kept until it is touchless again)."""
     if stored_state != SUSPENDED and not suspended_at:
         return stats
     from dataclasses import replace
@@ -1210,7 +1210,7 @@ def autonomy_status(
     stats: SupplierStats, policy: AutonomyPolicy | None = None, stored_state: str = SUPERVISED,
     autonomous_since: str | None = None, *, touchless_on: bool = True, suspended_at: str | None = None,
 ) -> tuple[str, float, str]:  # fmt: skip
-    """(state, progress 0..1, one-line explanation). ``stored_state``: what touchless processing, a manager or a
+    """(state, progress 0..1, one-line explanation). ``stored_state``: what touchless processing, an AP lead or a
     found error set (supervised, autonomous, suspended, held). ``touchless_on``: the company-wide switch; while it
     is off a supplier that meets the bar shows as *ready*, and nothing is approved without a person."""
     policy = policy or DEFAULT_POLICY
@@ -1218,7 +1218,7 @@ def autonomy_status(
     if stored_state == HELD:
         gaps, progress = policy_gaps(stats, policy)
         record = "it meets the bar" if not gaps else "; ".join(gaps)
-        return HELD, progress, f"Kept supervised by a manager: every invoice is reviewed ({record})."
+        return HELD, progress, f"Kept supervised by an AP lead: every invoice is reviewed ({record})."
     if stored_state == AUTONOMOUS:
         if not stats.corrections_since(autonomous_since):
             if not touchless_on:
@@ -1257,7 +1257,7 @@ def automatic_transition(
     * a touchless one with a correction since is suspended (``Store.record_outcomes`` does it at once);
     * a touchless one that does not meet the standard bar (turned on by hand under another bar, before the bar was
       the same for everyone) goes back to review;
-    * a supplier a manager keeps supervised (``held``) never moves."""
+    * a supplier an AP lead keeps supervised (``held``) never moves."""
     policy = policy or DEFAULT_POLICY
     if stored_state == HELD:
         return None

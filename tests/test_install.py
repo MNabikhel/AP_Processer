@@ -84,11 +84,14 @@ def test_example_endpoints_left_in_an_older_env_count_as_unset(tmp_path, monkeyp
 
 
 def test_terminal_works_after_the_folder_is_moved():
-    """activate.bat has the folder the .venv was made in written into it: terminal.bat puts .venv\\Scripts on PATH."""
-    raw = (ROOT / "terminal.bat").read_bytes()
+    """activate.bat has the folder the .venv was made in written into it: scripts\\terminal.bat puts .venv\\Scripts on
+    PATH, from the app folder (the one above scripts\\), wherever that folder is now."""
+    raw = (ROOT / "scripts" / "terminal.bat").read_bytes()
     text = raw.decode()
     assert b"\r\n" in raw and b"\n" not in raw.replace(b"\r\n", b"")  # Windows line endings throughout
-    assert 'set "PATH=%~dp0.venv\\Scripts;%PATH%"' in text
+    assert 'pushd "%~dp0.."' in text
+    assert text.index('pushd "%~dp0.."') < text.index('if not exist ".venv\\Scripts\\python.exe"')
+    assert 'set "PATH=%CD%\\.venv\\Scripts;%PATH%"' in text
     assert "Scripts\\activate" not in text
     assert "APProcessor.bat first" in text
 
@@ -229,7 +232,7 @@ def _folder(monkeypatch, tmp_path, state, ident, pruned):
 
 
 def test_run_over_an_older_version_it_removes_what_that_version_left(tmp_path, monkeypatch, capsys):
-    """The manager unzipped the new bundle over PR 8's folder and ran install.sh: PR 8's own tests (they import
+    """The pilot tester unzipped the new bundle over PR 8's folder and ran the installer: PR 8's own tests (they import
     streamlit) stayed in tests/, so the installer's self-test stopped on 6 errors, and its Streamlit files stayed."""
     _folder(monkeypatch, tmp_path, {"fingerprint": "old", "version": "0.1.0"},
             {"version": "0.2.0", "build": "b", "fingerprint": "new"}, ["tests/test_dashboard_pages.py"])  # fmt: skip

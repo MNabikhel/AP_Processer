@@ -141,15 +141,7 @@ def test_launcher_scripts_download_nothing_without_the_opt_in():
     bat = (ROOT / "APProcessor.bat").read_text(encoding="utf-8")
     assert "call :installpython" in bat and re.search(r"if defined AP_ONLINE call :installpython", bat)
     assert bat.count("winget install") == 1  # inside :installpython only
-    for name in (
-        "APProcessor.bat",
-        "APProcessor.command",
-        "install.bat",
-        "install.sh",
-        "start.bat",
-        "start.sh",
-        "terminal.bat",
-    ):
+    for name in ("APProcessor.bat", "APProcessor.command", "scripts/terminal.bat"):
         text = (ROOT / name).read_text(encoding="utf-8")
         for line in text.splitlines():
             plain = line.strip().lower()

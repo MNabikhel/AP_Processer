@@ -98,7 +98,7 @@ def test_a_shortcut_the_person_deleted_or_declined_is_not_put_back(launch, monke
     launch.ensure_shortcut()
     (desk / "AP Coder.lnk").unlink()  # deleted by the person
     assert launch.ensure_shortcut() == "" and len(written) == 1
-    paths.write_user_settings(desktop_shortcut=False, shortcut_target=None)  # install.bat --no-shortcut
+    paths.write_user_settings(desktop_shortcut=False, shortcut_target=None)  # --installer --no-shortcut
     assert launch.ensure_shortcut() == "" and len(written) == 1
 
 
@@ -673,7 +673,8 @@ def test_the_double_click_asks_the_venv_before_using_it():
 
 
 def test_an_install_set_up_by_install_bat_is_checked_before_the_older_one_is_cleaned_up(launch, monkeypatch, tmp_path):
-    """install.bat records the setup but runs no self-check: the clean-up waits for one, run on the next start."""
+    """The installer (install.bat in older versions, --installer now) records the setup but runs no self-check: the
+    clean-up waits for one, run on the next start."""
     _, checks, cleaned = _quiet_setup(launch, monkeypatch)
     old = tmp_path / "AP Coder 0.1"
     (old / "ap_coder").mkdir(parents=True)

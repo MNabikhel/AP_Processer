@@ -85,7 +85,8 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
 ## Install: one button
 
 **`APProcessor.bat`** (Mac: **`APProcessor.command`**) is the only file to click, the first time and
-every time after. `install.bat` and `start.bat` are kept for older shortcuts and do the same thing.
+every time after. There is one such file per computer, and nothing else to choose from. (IT can add
+`--installer` to it for the installer's questions: `APProcessor.bat --installer`, typed in `scripts\terminal.bat`.)
 
 AP Coder is an offline enterprise build: the laptop never connects to the internet, not even to set up.
 Everything comes in the **offline bundle** IT builds (step B). Unzip it to a folder that is **not** synced
@@ -210,7 +211,7 @@ first weeks of the pilot. Let the clerks review, correct and *Approve & teach*, 
 accuracy → Supplier learning**: it shows, vendor by vendor, how often a field was corrected and how far
 each one is from the bar.
 
-When several of your regular vendors are close to the bar and the corrections have settled, a manager
+When several of your regular vendors are close to the bar and the corrections have settled, an AP lead
 turns it on in **Settings → Automation** (with a confirmation; recorded in the Activity log with their
 name). From then on, a vendor that meets the bar goes touchless by itself:
 
@@ -301,7 +302,7 @@ itself (and makes its `.venv` again with it).
 | *Installing the packages stopped: the disk is full* | Free about 1.5 GB on that disk; the message names the older AP Coder's `.venv` folder, which can be deleted (it holds only packages, never your data). Double-click again. |
 | *Installing the packages stopped: the AP Coder folder's path is too long for Windows* | Windows allows 260 characters in a path. Unzip the bundle to a short folder such as `C:\APCoder` (not deep in Downloads) and double-click `APProcessor.bat` there; or IT turns on long paths (`LongPathsEnabled`). |
 | Linux: *Could not create the .venv folder* ... *sudo apt install python3.12-venv* | Debian and Ubuntu keep Python's venv support in a separate package: install the one the message names, delete the `.venv` folder, run `./APProcessor.command` again. |
-| *AP Coder's folder is synced by OneDrive* (or iCloud Drive, Dropbox, Google Drive) / *The data folder is synced by ...* | Files there can be kept online-only, and the laptop is offline. Unzip AP Coder to a folder that is not synced (`C:\APCoder\app`; Mac: a folder in your home folder, not Desktop or Documents when iCloud syncs them) and start it from there; the data folder is chosen with `install.bat`. |
+| *AP Coder's folder is synced by OneDrive* (or iCloud Drive, Dropbox, Google Drive) / *The data folder is synced by ...* | Files there can be kept online-only, and the laptop is offline. Unzip AP Coder to a folder that is not synced (`C:\APCoder\app`; Mac: a folder in your home folder, not Desktop or Documents when iCloud syncs them) and start it from there; the data folder is chosen with `APProcessor.bat --installer`. |
 | Mac: *... is an Intel build running through Rosetta on an Apple silicon Mac* | Install Python 3.12 from python.org (it runs natively), delete the `.venv` folder and open APProcessor.command again. If Terminal is set to *Open using Rosetta* (Finder → Applications → Utilities → Terminal → Get Info), untick it. |
 | *Installing the packages stopped: Windows refused a file in .venv because another program has it in use* | Close every AP Coder window, wait a minute (the antivirus checks new files) and double-click again; it carries on where it stopped. If it keeps happening, IT lets the antivirus allow the `.venv` folder. |
 | *Your data could not all be moved from ... to ...* | A file of it is open (an old AP Coder window, Excel): close it and double-click again; the move picks up where it stopped. Nothing was lost. |
@@ -309,7 +310,7 @@ itself (and makes its `.venv` again with it).
 | *A newer AP Coder ... is in ...: opening that one* | An old shortcut or folder was started: the newest version opens instead. Use its folder (the shortcut already does). |
 | *Your database ... was made by a newer AP Coder* | An older version was started on newer data: nothing was changed. Start the newer AP Coder. |
 | *AP Coder is being set up or started in another window* | The first double-click is still setting up: it waits, then opens the dashboard. |
-| *Self-check FAILED* in the summary | AP Coder still runs. Run `.venv\Scripts\python.exe scripts\pilot_check.py` in `terminal.bat` and send the output. |
+| *Self-check FAILED* in the summary | AP Coder still runs. Run `.venv\Scripts\python.exe scripts\pilot_check.py` in `scripts\terminal.bat` and send the output. |
 | *AP Coder is already running* | It is: the browser opens on it. Use that window, or close it to stop AP Coder. |
 | The browser does not open (*Could not open a web browser here*) | Open `http://127.0.0.1:8501` yourself (the window shows the exact address; it uses the next free port if 8501 is taken). Use `127.0.0.1`, not `localhost`: AP Coder listens on this computer's own address only, so Windows never asks about the firewall. |
 | *Port 8501 is in use by another program: AP Coder uses port 8502* | Nothing to do: another program has port 8501, so AP Coder took the next free one; open the address the window shows. |
@@ -317,7 +318,7 @@ itself (and makes its `.venv` again with it).
 | A banner: *LM Studio isn't running* or *OvisOCR2 isn't running in LM Studio* | Open LM Studio, **Developer** tab → **Start server**; check that OvisOCR2 is in its models (ask IT if not). Invoices are still read by OCR and wait for a person meanwhile. |
 | A banner: *OvisOCR2 is testing itself* | Nothing to do: its self-test runs on its own (10 to 20 minutes the first time). *Settings → Reading* shows its progress. |
 | A banner: *OvisOCR2 failed its self-test* | *Settings → Reading* shows what it read on the test invoice. Check that it is the Q8_0 build from IT, then *Run the self-test again*. |
-| Something else | In `terminal.bat`, run `python -m ap_coder doctor` and send the report: it lists checks only, never keys, file names or invoice data. |
+| Something else | In `scripts\terminal.bat`, run `python -m ap_coder doctor` (Mac: `.venv/bin/python -m ap_coder doctor` in Terminal, in AP Coder's folder) and send the report: it lists checks only, never keys, file names or invoice data. |
 | Start over | Delete the `.venv` folder and double-click `APProcessor.bat` (your data is kept; it is set up again, once). |
 
 ## What is sent over the network
@@ -341,7 +342,7 @@ itself (and makes its `.venv` again with it).
 The only outside connections are the ones someone chooses:
 
 - **`AP_ALLOW_INTERNET=1`**, the one opt-in, for developers and the bundle builder only. With it set in the
-  terminal that runs APProcessor.bat / install.bat, missing packages come from PyPI, the OCR models from
+  terminal that runs APProcessor.bat, missing packages come from PyPI, the OCR models from
   www.modelscope.cn, the installer checks GitHub for updates and APProcessor.bat offers to install
   Python 3.12 with `winget`. `scripts/build_offline_bundle.py` sets it for itself, on IT's computer. Never set
   it on a pilot laptop.

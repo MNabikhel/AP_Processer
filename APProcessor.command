@@ -10,7 +10,8 @@
 # Offline build: nothing is downloaded (developers only: AP_ALLOW_INTERNET=1). Packages come from the
 # wheelhouse/ folder of the offline bundle next to this file.
 #
-# install.sh and start.sh run this same file. The steps themselves are in scripts/launch.py.
+# The installer's questions (data folder, Azure settings): ./APProcessor.command --installer. Older versions'
+# install.sh and start.sh are gone: this file does both. The steps themselves are in scripts/launch.py.
 #
 # Written for the bash every Mac has (/bin/bash 3.2). Started with sh or zsh (sh APProcessor.command), it starts
 # itself again with bash.

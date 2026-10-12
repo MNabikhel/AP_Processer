@@ -185,7 +185,7 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
 def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any]) -> bool:
     """Whether an invoice touchless processing passed earlier but held back (for the Azure check) may still be
     approved without a person now: the switch is still on, its supplier still touchless (not suspended or kept
-    supervised by a manager meanwhile) and its total still within the touchless and approval limits."""
+    supervised by an AP lead meanwhile) and its total still within the touchless and approval limits."""
     if store is None or not store.touchless_enabled():
         return False
     key, _ = supplier_for(store, output)
@@ -316,7 +316,7 @@ def supplier_progress(store: Any, key: str) -> tuple[str, int, str]:
     if state == AUTONOMOUS:
         where = "touchless"
     elif state == HELD:
-        where = "kept supervised by a manager"
+        where = "kept supervised by an AP lead"
     elif state == READY:
         where = "meets the bar to go touchless" + ("" if on else " (touchless processing is off)")
     else:
