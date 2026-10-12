@@ -7,6 +7,7 @@ from __future__ import annotations
 import glob
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -37,6 +38,8 @@ class MacLauncher:
         assert "APPLE_STUB=/usr/bin/python3\n" in text
         (self.code / "APProcessor.command").write_text(text.replace("APPLE_STUB=/usr/bin/python3\n",
                                                                     f"APPLE_STUB={self.apple}\n"))  # fmt: skip
+        (self.code / "scripts").mkdir()
+        (self.code / "scripts" / "launch.py").write_text("# the stand-in Pythons never read it\n")
 
     def script(self, name: str, body: str, folder: Path | None = None) -> Path:
         path = (folder or self.bin) / name
@@ -52,10 +55,10 @@ class MacLauncher:
                 f'echo "{name} $*" >> "{self.ran}"\necho "RAN {name}"')  # fmt: skip
         return self.script(name, body, folder)
 
-    def run(self, *extra_path: Path) -> subprocess.CompletedProcess:
+    def run(self, *extra_path: Path, shell: tuple = ("/bin/bash",), **env: str) -> subprocess.CompletedProcess:
         path = ":".join(str(p) for p in (self.bin, *extra_path))
-        return subprocess.run(["/bin/bash", str(self.code / "APProcessor.command"), "--no-start"],
-                              capture_output=True, text=True, env={"PATH": path, "AP_NO_PAUSE": "1"},
+        return subprocess.run([*shell, str(self.code / "APProcessor.command"), "--no-start"],
+                              capture_output=True, text=True, env={"PATH": path, "AP_NO_PAUSE": "1", **env},
                               timeout=60)  # fmt: skip
 
     def used(self) -> list[str]:
@@ -143,6 +146,64 @@ def test_a_working_venv_is_used_whatever_python_made_it(mac):
     mac.ran.unlink()
     mac.script("python", "exit 1", venv_bin)  # its Python is gone or broken
     assert mac.run().returncode == 0 and mac.used() == ["python3 scripts/launch.py --no-start"]
+
+
+@needs_bash
+@pytest.mark.skipif(not Path("/bin/sh").exists() or Path("/bin/sh").resolve().name == "bash", reason="needs a sh")
+def test_started_with_sh_it_runs_under_bash(mac):
+    """``sh APProcessor.command`` (or zsh, the Mac's default shell): it needs bash, which every Mac has, and starts
+    itself again with it instead of stopping on a syntax error."""
+    mac.python("python3", "3.14")
+    out = mac.run(shell=("/bin/sh",))
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert mac.used() == ["python3 scripts/launch.py --no-start"]
+    assert "Syntax error" not in out.stderr and "not found" not in out.stderr
+    # The Mac's sh is bash 3.2 in POSIX mode (no "< <(...)" there): the same; never in a loop, even when the
+    # environment asks every bash for POSIX mode.
+    mac.ran.unlink()
+    out = mac.run(shell=("/bin/bash", "--posix"), POSIXLY_CORRECT="1")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert mac.used() == ["python3 scripts/launch.py --no-start"]
+
+
+@needs_bash
+def test_a_folder_with_spaces_accents_and_symbols(mac, tmp_path):
+    """Unzipped to "~/Téléchargements/AP Coder (copy) & co $HOME! 100%": the launcher still runs from it."""
+    odd = tmp_path / "Téléchargements" / "AP Coder (copy) & co $HOME! 100%"
+    odd.parent.mkdir()
+    mac.code.rename(odd)
+    mac.code = odd
+    mac.python("python3", "3.14")
+    out = mac.run()
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert mac.used() == ["python3 scripts/launch.py --no-start"]
+
+
+BASH4 = {
+    "associative arrays": r"declare\s+-[a-zA-Z]*A",
+    "mapfile/readarray": r"\b(mapfile|readarray)\b",
+    "case conversion": r"\$\{\w+(,,|\^\^|,|\^)\}",
+    "|& and &>>": r"\|&|&>>",
+    "case fall-through": r";;&|;&",
+    "coproc": r"\bcoproc\b",
+    "globstar": r"globstar",
+    "[[ -v ]]": r"\[\[\s+-v\b",
+    "nameref": r"\b(local|declare)\s+-n\b",
+    "wait -n": r"\bwait\s+-n\b",
+    "negative substring": r"\$\{\w+:\s*-\d",
+    "$EPOCHSECONDS": r"EPOCH(SECONDS|REALTIME)",
+}
+
+
+@pytest.mark.parametrize("name", ["APProcessor.command", "install.sh", "start.sh"])
+def test_the_mac_launchers_need_only_bash_3_2(name):
+    """macOS's own /bin/bash is 3.2 (2007): nothing from bash 4 or newer."""
+    code = "\n".join(line.split(" #")[0] for line in (ROOT / name).read_text().splitlines()
+                     if not line.lstrip().startswith("#"))  # fmt: skip
+    found = [what for what, pattern in BASH4.items() if re.search(pattern, code)]
+    assert not found, f"{name} uses bash 4 syntax: {found}"
+    if sys.platform != "win32":
+        assert subprocess.run(["bash", "-n", str(ROOT / name)]).returncode == 0
 
 
 MAC_PLACES = ("/opt/homebrew/bin/python3*", "/usr/local/bin/python3*", "/Library/Frameworks/Python.framework")

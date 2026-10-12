@@ -11,6 +11,19 @@
 # wheelhouse/ folder of the offline bundle next to this file.
 #
 # install.sh and start.sh run this same file. The steps themselves are in scripts/launch.py.
+#
+# Written for the bash every Mac has (/bin/bash 3.2). Started with sh or zsh (sh APProcessor.command), it starts
+# itself again with bash.
+case "${BASH_VERSION:-}:${SHELLOPTS:-}" in
+  :* | *posix*)
+    if [ -z "${AP_BASH_AGAIN:-}" ]; then
+      unset POSIXLY_CORRECT
+      AP_BASH_AGAIN=1
+      export AP_BASH_AGAIN
+      exec /bin/bash +o posix "$0" "$@"
+    fi
+    ;;
+esac
 cd "$(dirname "$0")" || exit 1
 
 # The Python versions looked for first, best first: the ones the offline bundle has packages for.
