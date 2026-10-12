@@ -160,6 +160,14 @@ def test_an_older_dashboard_still_running_is_stopped_not_opened(launch, monkeypa
     assert 8597 in from_port[0] and 8501 in from_port[0]
 
 
+def test_an_older_dashboard_on_the_next_free_port_is_looked_for_too(launch):
+    """AP Coder 0.1 started its dashboard on the first free port from 8501 (a second double-click of start.bat started
+    a second one on 8502) and recorded none of them: only 8501 was looked at, so one could keep running on the data
+    beside the new version."""
+    assert set(range(8501, 8511)) <= set(launch.candidate_ports([], {}))
+    assert launch.candidate_ports(["--port", "8597"], {"port": 8600})[:2] == [8597, 8600]
+
+
 def test_the_same_version_running_is_only_opened(launch, monkeypatch):
     _quiet_setup(launch, monkeypatch)
     monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("open", 8597))

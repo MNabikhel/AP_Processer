@@ -1107,7 +1107,8 @@ def requested_port(rest: list[str]) -> int | None:
 
 def candidate_ports(rest: list[str], state: dict) -> list[int]:
     """Where an AP Coder may already run: the port asked for, the one this folder's last start used, the ones the
-    other installs' last starts used, and the default (the server file in the data folder names its own)."""
+    other installs' last starts used, and the default and the next ones (the server file in the data folder names its
+    own; AP Coder 0.1 recorded none, and took the first free port from 8501: a second window's was 8502)."""
     ports = [requested_port(rest), state.get("port")]
     for entry in paths.installs():
         try:
@@ -1115,7 +1116,8 @@ def candidate_ports(rest: list[str], state: dict) -> list[int]:
             ports.append(other.get("port"))
         except (OSError, ValueError, AttributeError):
             continue
-    return list(dict.fromkeys(p for p in [*ports, DEFAULT_PORT] if isinstance(p, int) and p > 0))
+    defaults = range(DEFAULT_PORT, DEFAULT_PORT + 10)
+    return list(dict.fromkeys(p for p in [*ports, *defaults] if isinstance(p, int) and p > 0))
 
 
 def running_dashboard(rest: list[str], state: dict) -> int | None:
