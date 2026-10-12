@@ -455,6 +455,14 @@ jobs:
           zips=("$T"/dist/APProcessor-offline-*.zip)
           ci unzip "${zips[0]}" "$B"
           [ "$WHERE" = over ] || echo "left by an older version" > "$B/ap_coder/stale_module.py"
+          # As downloaded: a ZIP from a browser marks every file it unzips to, on a Mac with the quarantine flag
+          # (Archive Utility), on Windows with the Mark of the Web (Explorer's Extract All, Zone 3 = the internet).
+          if [ "$RUNNER_OS" = macOS ]; then
+            find "$B" -type f -exec xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Safari;" {} +
+          elif [ "$RUNNER_OS" = Windows ]; then
+            # shellcheck disable=SC2016  # (PowerShell's $_ and backtick escapes, not the shell's)
+            B_DIR="$(cygpath -w "$B")" powershell -NoProfile -Command 'Get-ChildItem -LiteralPath $env:B_DIR -Recurse -File | ForEach-Object { Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }'
+          fi
           # The double-click, offline: APProcessor.bat on Windows, APProcessor.command elsewhere.
           launch() { if [ "$RUNNER_OS" = Windows ]; then cmd //c "APProcessor.bat $*"; else ./APProcessor.command "$@"; fi; }
           offline() {
@@ -463,6 +471,9 @@ jobs:
             NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost PIP_INDEX_URL=http://127.0.0.1:9/simple "$@"
           }
           cd "$B"
+          # Windows: PowerShell as a locked-down office laptop runs it (Constrained Language Mode, as AppLocker or WDAC
+          # set it): what the launcher asks of PowerShell must still work, or say plainly what it couldn't do.
+          if [ "$RUNNER_OS" = Windows ]; then export __PSLockdownPolicy=4; fi
           offline launch --port 8597 > "$T/launch.out" 2>&1 &
           up=""
           for _ in $(seq 1 180); do
@@ -484,6 +495,15 @@ jobs:
           if [ "$WHERE" = new-folder ]; then
             grep -q 'Removed 1 file the older version left' "$out" || fail 'the leftover file was not removed'
             [ ! -e "$B/ap_coder/stale_module.py" ] || fail 'the leftover file is still there'
+          fi
+          # The marks of the download are gone from the launcher's own scripts (it removes them when it starts).
+          if [ "$RUNNER_OS" = macOS ]; then
+            ! xattr -p com.apple.quarantine "$B/APProcessor.command" 2>/dev/null || fail 'APProcessor.command is still quarantined'
+          elif [ "$RUNNER_OS" = Windows ]; then
+            # shellcheck disable=SC2016
+            motw="$(B_DIR="$(cygpath -w "$B")" powershell -NoProfile -Command '(Get-Item -LiteralPath (Join-Path $env:B_DIR APProcessor.bat) -Stream Zone.Identifier -ErrorAction SilentlyContinue) -ne $null')"
+            echo "APProcessor.bat still marked as downloaded: $motw"
+            [ "$(echo "$motw" | tr -d '\r')" = False ] || fail 'APProcessor.bat still has the Mark of the Web'
           fi
           # A second double-click opens the running one, at once.
           start=$(date +%s)
