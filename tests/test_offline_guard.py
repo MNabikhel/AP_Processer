@@ -114,6 +114,8 @@ TOUCHPOINTS = {
     "scripts/build_offline_bundle.py": "the bundle builder (online by design: it sets AP_ALLOW_INTERNET=1 itself)",
     "scripts/ci/old_versions.py": "the CI and developer test of updating from older versions: installs each OLD "
     "version online (pip, git archive); never run by the launcher, and the new version under test updates offline",
+    "scripts/ci/fake_lm_studio.py": "CI's stand-in for LM Studio: listens on 127.0.0.1 and asks AP Coder's own page "
+    "there (no proxy); never run by the launcher",
 }
 _NETWORK = re.compile(
     r"^\s*(?:import|from)\s+(?:urllib\.request|urllib\.error|http\.client|socket|requests|httpx|webbrowser|aiohttp|"

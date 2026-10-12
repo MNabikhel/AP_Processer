@@ -30,7 +30,7 @@ Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 | --- | --- |
 | `APProcessor.bat` (Windows) | The double-click. Finds a Python, then runs `scripts\launch.py` with it. ASCII, CRLF, every path quoted (`tests/test_launcher_scripts.py`). |
 | `APProcessor.command` (macOS; Linux from a terminal) | The same for bash 3.2 (macOS's `/bin/bash`). |
-| `install.bat` / `install.sh` | `APProcessor --installer`: the same setup plus the installer's questions (`scripts/install.py`). |
+| `install.bat` / `install.sh` | `APProcessor --installer`: the same setup plus the installer's questions (`scripts/install.py`). Run over or beside an older version it does what the double-click does (stale files removed, old settings retired, older installs cleaned up after the self-check); run again with nothing changed it says *Nothing to update* in seconds. |
 | `start.bat` / `start.sh` | Kept for old shortcuts: run `APProcessor` unchanged. |
 | `terminal.bat` | A command prompt with `.venv\Scripts` first on `PATH` (no `activate.bat`, which hard-codes the folder the .venv was made in). |
 | `scripts/launch.py` | Every step after Python is found (standard library only until the packages are installed). |
@@ -256,6 +256,8 @@ moves out, its files are repointed, then the whole folder goes when `removable` 
 free —, holding nothing AP Coder did not put there: `user_files`). It is renamed first (`remove_folder`; fails at
 once on Windows while a window still uses it) to `<name>.removing-<date>`, then deleted; what could not be deleted
 is finished on a later start. A folder that must stay still loses its `.venv` and `models/`. The space freed is said.
+A folder beside this one that was cleaned up that way and kept (nothing left to take: no `.venv`, `models/`, `.env`
+or data) is not found again on later starts (`upgrade.left_to_clean`), so it is said once.
 
 ## 7. Data folder, models, self-check, shortcut
 

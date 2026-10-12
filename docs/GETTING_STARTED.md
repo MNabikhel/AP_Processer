@@ -95,7 +95,8 @@ it, then type e.g. `install.bat --fresh-start`):
 | `--no-update` | developers online only: don't check GitHub for a newer version (the offline build never does) |
 | `--data-dir <folder>` | use a different data folder |
 | `--no-shortcut` / `--no-start` | no desktop shortcut / don't offer to start the dashboard at the end |
-| `--skip-tests` / `--reinstall` | skip the self-test / reinstall AP Coder itself even if unchanged |
+| `--skip-tests` / `--reinstall` | skip the self-check / reinstall AP Coder itself even if unchanged |
+| `--full-tests` | also run the whole test suite (many minutes; the self-check runs anyway when something changed) |
 | `APProcessor.bat --check` | run the sample-invoice self-check again before starting |
 
 To run AP Coder commands yourself (`doctor`, `share-report`, …), double-click **`terminal.bat`**:
