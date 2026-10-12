@@ -368,154 +368,107 @@ jobs:
           .venv/bin/python scripts/pilot_check.py
 
   update-over-older-install:
-    # The update a pilot user does: AP Coder 0.1 is installed in folder A (its data inside it, in private/, a .env
-    # with a setting no longer used, its own .venv) and its dashboard is still running. The new version is unzipped
-    # into folder B (with a file an older version left there) and double-clicked. B must take over: stop the old
-    # dashboard, say it updated, check itself, move the data out of A into ~/APCoder, become the current install,
-    # remove A whole, remove the leftover file, and serve the new version.
-    # Run on all three systems: on Windows through APProcessor.bat (PowerShell finds the old dashboard by its port and
-    # ends it with taskkill), on a Mac through APProcessor.command (lsof).
-    name: Update over an older install (${{ matrix.os }})
+    # The update a user does, from the oldest versions of main and from the last one before the web app, each really
+    # installed the way its README said (scripts/ci/old_versions.py: its commit's files, its packages from PyPI),
+    # used with its own code (demo invoices, one approved with a GL account corrected, a vendor taught, an export
+    # batch, a setting, .env values) and left running. The new version's offline bundle is unzipped (into a new folder,
+    # or over the old one) and double-clicked with the internet cut off (every proxy points at a closed port). It must
+    # stop the old dashboard, keep every invoice (its file and its page picture too), approval, lesson, export, setting
+    # and .env value, clean up the old folder and its .venv, be the only install on record, and open at once when
+    # double-clicked again. On Windows through APProcessor.bat (PowerShell finds the old dashboard by its port and ends
+    # it with taskkill), on a Mac and Linux through APProcessor.command. docs/UPGRADING.md lists every old version;
+    # tests/test_update_from_old_versions.py runs all of them (AP_UPGRADE_TESTS=1).
+    name: Update from ${{ matrix.old.name }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        old:
+          - {name: "the first version, unzipped over", sha: 81f691e, how: cli, where: over}
+          - {name: "PR 1, its data in private", sha: db95511, how: by-hand, where: new-folder}
+          - {name: "PR 8, the last before the web app", sha: e1cf61a, how: launcher, where: new-folder}
     defaults:
       run:
         shell: bash
     env:
       AP_NO_PAUSE: "1"
-      AP_ALLOW_INTERNET: "1"  # B installs its packages from PyPI (no wheelhouse here); the bundle jobs run offline
       BROWSER: none
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # AP Coder 0.1.0's code comes from the history
+          fetch-depth: 0  # the old versions' code comes from the history
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: AP Coder 0.1 in folder A, its data inside it
-        run: |
-          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -u "$RUNNER_TEMP")"; fi  # tar takes D: for a host
-          A="$T/AP Coder 0.1"
-          mkdir -p "$A"
-          old=""
-          for c in $(git log --format=%H -- pyproject.toml); do
-            if git show "$c:pyproject.toml" | grep -q '^version = "0.1.0"'; then old="$c"; break; fi
-          done
-          if [ -z "$old" ]; then echo 'no AP Coder 0.1.0 in the history'; exit 1; fi
-          echo "AP Coder 0.1.0: $old"
-          git archive "$old" | tar -x -C "$A"
-          echo '{"app": "AP Coder", "version": "0.1.0", "built": "2026-09-01T10:00:00"}' > "$A/bundle_manifest.json"
-          python -m venv "$A/.venv"
-          mkdir -p "$A/private/invoices"
-          echo "an invoice" > "$A/private/invoices/a.pdf"
-          cp "$A/samples/pacific_BC_GST_PST_PO-77120.pdf" "$A/private/invoices/b.pdf"
-          # Its database: invoices record their file by absolute path, a demo invoice in A/samples, one in A/private.
-          python - "$A" <<'EOF'
-          import hashlib, sqlite3, sys
-          from pathlib import Path
-          a = Path(sys.argv[1]).resolve()
-          c = sqlite3.connect(a / "private" / "ap_coder.db")
-          c.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
-          c.execute("INSERT INTO settings VALUES ('schema_version', '14')")
-          c.execute("CREATE TABLE invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, source_path TEXT NOT NULL, "
-                    "file_name TEXT NOT NULL, file_sha256 TEXT, status TEXT NOT NULL, vendor_name TEXT, vendor_key TEXT, "
-                    "invoice_number TEXT, invoice_date TEXT, currency TEXT, grand_total REAL, model_confidence REAL, "
-                    "adjusted_confidence REAL, requires_review INTEGER, ai_output TEXT, final_output TEXT, validation TEXT, "
-                    "extraction_md TEXT, meta TEXT, edits TEXT, error TEXT, created_at TEXT NOT NULL, reviewed_at TEXT, "
-                    "reviewer TEXT, export_batch INTEGER, po_key TEXT NOT NULL DEFAULT '', due_date TEXT, "
-                    "second_reviewer TEXT, second_reviewed_at TEXT, parked_reason TEXT, follow_up TEXT)")
-          for path, demo in ((a / "samples" / "northwind_ON_HST_NW-2026-0912.pdf", True), (a / "private" / "invoices" / "b.pdf", False)):
-              sha = hashlib.sha256(path.read_bytes()).hexdigest()
-              meta = '{"demo": true}' if demo else "{}"
-              c.execute("INSERT INTO invoices (source_path, file_name, file_sha256, status, meta, created_at) VALUES "
-                        "(?, ?, ?, 'review', ?, '2026-09-02T10:00:00')", (str(path), path.name, sha, meta))
-          c.commit()
-          EOF
-          printf 'AP_REVIEWER=Ann\nAP_PAGE_READER=on\n' > "$A/.env"
-          # Written by Python: a Windows path's backslashes are not valid in JSON written by printf.
-          python -c "import json, pathlib, sys; h = pathlib.Path.home() / '.ap_coder'; h.mkdir(exist_ok=True); (h / 'settings.json').write_text(json.dumps({'data_dir': str(pathlib.Path(sys.argv[1]).resolve() / 'private'), 'desktop_shortcut': True}))" "$A"
-      - name: The new version unzipped into folder B
-        run: |
-          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -u "$RUNNER_TEMP")"; fi  # tar takes D: for a host
-          B="$T/AP Coder 0.2"
-          mkdir -p "$B"
-          git archive HEAD | tar -x -C "$B"
-          python scripts/build_offline_bundle.py --manifest-for "$B"
-          echo "left by an older version" > "$B/ap_coder/stale_module.py"
+      - name: The new version's offline bundle (built online)
+        run: python scripts/build_offline_bundle.py --python 3.12 --no-models --out "$RUNNER_TEMP/dist"
       # One step from here on: a process started in the background may not outlive its step on Windows.
-      - name: A's dashboard running; double-click B; double-click B again
+      - name: The old version installed, used and running; the new one double-clicked offline, then again
         run: |
-          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -u "$RUNNER_TEMP")"; fi  # tar takes D: for a host
-          A="$T/AP Coder 0.1"
-          B="$T/AP Coder 0.2"
-          # Its Streamlit dashboard: the font only AP Coder 0.1 serves, run as "streamlit run <A>/ap_coder/dashboard.py".
-          mkdir -p "$T/bin"
-          cat > "$T/bin/streamlit" <<'EOF'
-          import http.server, sys
-          class H(http.server.BaseHTTPRequestHandler):
-              def log_message(self, *a): pass
-              def do_GET(self):
-                  self.send_response(200 if self.path == "/app/static/InterVariable.woff2" else 404)
-                  self.end_headers()
-          http.server.HTTPServer(("127.0.0.1", int(sys.argv[-1])), H).serve_forever()
-          EOF
-          nohup python "$T/bin/streamlit" run "$A/ap_coder/dashboard.py" --server.port 8501 > "$T/old.log" 2>&1 &
-          echo $! > "$T/old.pid"
-          for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8501/app/static/InterVariable.woff2 && break; sleep 1; done
-          curl -fsS -o /dev/null http://127.0.0.1:8501/app/static/InterVariable.woff2
-          # The double-click: APProcessor.bat on Windows, APProcessor.command elsewhere.
+          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -m "$RUNNER_TEMP")"; fi
+          ci() { python "$GITHUB_WORKSPACE/scripts/ci/old_versions.py" "$@"; }
+          fail() { echo "FAILED: $*"; exit 1; }
+          HOW="${{ matrix.old.how }}"; WHERE="${{ matrix.old.where }}"
+          A="$T/old/AP Coder old"
+          if [ "$WHERE" = over ]; then B="$A"; else B="$T/AP Coder new/APProcessor"; fi
+          bundle=(); if [ "$HOW" = launcher ]; then bundle=(--bundle); fi  # its offline bundle, else GitHub's ZIP
+          ci extract "${{ matrix.old.sha }}" "$A" "${bundle[@]}"
+          AP_ALLOW_INTERNET=1 ci install "$A" --how "$HOW"
+          old_port=""
+          if [ "$HOW" != cli ]; then
+            AP_ALLOW_INTERNET=1 ci start "$A" --how "$HOW" --log "$T/old.log" | tee "$T/start.out"
+            old_port="$(sed -n 's/.*answers on port \([0-9]*\).*/\1/p' "$T/start.out")"
+          fi
+          ci seed "$A" --how "$HOW" --out "$T/before.json"
+          zips=("$T"/dist/APProcessor-offline-*.zip)
+          ci unzip "${zips[0]}" "$B"
+          [ "$WHERE" = over ] || echo "left by an older version" > "$B/ap_coder/stale_module.py"
+          # The double-click, offline: APProcessor.bat on Windows, APProcessor.command elsewhere.
           launch() { if [ "$RUNNER_OS" = Windows ]; then cmd //c "APProcessor.bat $*"; else ./APProcessor.command "$@"; fi; }
+          offline() {
+            HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 \
+            http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 \
+            NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost PIP_INDEX_URL=http://127.0.0.1:9/simple "$@"
+          }
           cd "$B"
-          launch --port 8597 > "$T/launch.out" 2>&1 &
-          health=""
+          offline launch --port 8597 > "$T/launch.out" 2>&1 &
+          up=""
           for _ in $(seq 1 180); do
             sleep 5
-            if health="$(curl -fsS --max-time 5 http://127.0.0.1:8597/healthz)"; then break; fi
-            health=""
+            if curl -fsS --noproxy '*' --max-time 5 -o /dev/null http://127.0.0.1:8597/healthz; then up=1; break; fi
           done
           cat "$T/launch.out"
-          if [ -z "$health" ]; then echo 'the new version did not start'; exit 1; fi
-          echo "healthz: $health"
-          curl -fsS -o /dev/null http://127.0.0.1:8597/  # opens the database (backed up before it is brought up to date)
-          fail() { echo "FAILED: $*"; exit 1; }
+          [ -n "$up" ] || fail 'the new version did not start'
+          args=(--new "$B" --port 8597 --launch-log "$T/launch.out")
+          [ -z "$old_port" ] || args+=(--old-port "$old_port")
+          if [ -n "$old_port" ] && [ "$RUNNER_OS" != Windows ]; then args+=(--old-pid "$(cat "$T/old.log.pid")"); fi
+          if [ "$WHERE" = new-folder ]; then args+=(--old-gone); fi
+          ci check "$T/before.json" "${args[@]}" || fail 'the update lost or left something (the lines above say what)'
           out="$T/launch.out"
-          grep -q 'Updated AP Coder from 0.1.0' "$out" || fail 'it did not say it updated from 0.1.0'
-          grep -q 'Self-check OK' "$out" || fail 'the self-check did not run (or failed)'
-          grep -q 'stopping it, so this version takes over' "$out" || fail 'the old dashboard was not noticed'
-          grep -q 'Removed the older AP Coder folder' "$out" || fail 'the old folder was not removed'
-          grep -q 'Removed 1 file the older version left' "$out" || fail 'the leftover file was not removed'
-          if kill -0 "$(cat "$T/old.pid")" 2>/dev/null; then fail 'the old dashboard still runs'; fi
-          if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:8501/app/static/InterVariable.woff2; then fail 'port 8501 still serves the old dashboard'; fi
-          [ ! -e "$A" ] || fail "the old folder is still there: $(ls -a "$A")"
-          [ ! -e "$B/ap_coder/stale_module.py" ] || fail 'the leftover file is still there'
-          test -f ~/APCoder/ap_coder.db || fail 'the database was not moved to ~/APCoder'
-          test -f ~/APCoder/invoices/a.pdf || fail 'the invoices were not moved to ~/APCoder'
-          grep -q '^# no longer used (AP Coder 0.2): AP_PAGE_READER=on' ~/APCoder/.env || fail 'the retired setting was not commented out'
-          grep -q '^AP_REVIEWER=Ann' ~/APCoder/.env || fail 'the settings file was not kept'
-          ls ~/APCoder/backups/ap_coder-*-before-update-from-schema-14.db || fail 'the database was not backed up before the update'
-          # Every invoice still has its file (they pointed into the old folder, now deleted), and its page shows.
-          python -c "import sqlite3, pathlib as p; rows = sqlite3.connect(p.Path.home() / 'APCoder' / 'ap_coder.db').execute('SELECT id, source_path FROM invoices').fetchall(); print(rows); assert len(rows) == 2 and all(p.Path(f).is_file() for _, f in rows), rows" || fail 'an invoice has no file after the update'
-          for id in 1 2; do
-            type="$(curl -fsS -o /dev/null -w '%{content_type}' "http://127.0.0.1:8597/review/$id/page/1.png")" || fail "invoice $id: its page picture is not served"
-            [ "$type" = "image/png" ] || fail "invoice $id: its page picture is $type, not image/png"
-          done
-          python - "$B" "$health" <<'EOF'
-          import json, os, sys
-          from pathlib import Path
-          folder, health = Path(sys.argv[1]).resolve(), json.loads(sys.argv[2])
-          settings = json.loads((Path.home() / ".ap_coder" / "settings.json").read_text())
-          assert Path(settings["current"]).resolve() == folder, settings
-          assert [Path(e["folder"]).resolve() for e in settings["installs"]] == [folder], settings
-          assert Path(settings["data_dir"]).resolve() == (Path.home() / "APCoder").resolve(), settings
-          assert health["version"] == "0.2.0" and Path(health["folder"]).resolve() == folder, health
-          print("record and server: OK")
-          EOF
-          # A second double-click opens the running one.
-          out="$(launch --port 8597 2>&1)"
-          echo "$out"
-          echo "$out" | grep -q 'already running' || { echo 'it did not open the running one'; exit 1; }
-          if echo "$out" | grep -Eq 'stopping it|Updated AP Coder'; then echo 'it stopped or updated itself'; exit 1; fi
-          pkill -f 'ap_coder|launch\.py' || true
+          if [ "$HOW" != cli ]; then
+            grep -q 'Updated AP Coder from 0.1.0' "$out" || fail 'it did not say it updated from 0.1.0'
+            grep -q 'stopping it, so this version takes over' "$out" || fail 'the old dashboard was not noticed'
+          fi
+          if [ "$WHERE" = new-folder ]; then
+            grep -q 'Removed 1 file the older version left' "$out" || fail 'the leftover file was not removed'
+            [ ! -e "$B/ap_coder/stale_module.py" ] || fail 'the leftover file is still there'
+          fi
+          # A second double-click opens the running one, at once.
+          start=$(date +%s)
+          second="$(offline launch --port 8597 2>&1)"
+          echo "$second"
+          echo "$second" | grep -q 'already running' || fail 'it did not open the running one'
+          if echo "$second" | grep -Eq 'stopping it|Updated AP Coder|Installing'; then fail 'it set up or stopped itself again'; fi
+          [ $(( $(date +%s) - start )) -lt 60 ] || fail 'the second double-click took a minute or more'
+      - name: Stop what is still running
+        if: always()
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            # shellcheck disable=SC2016  # (PowerShell's $_, not the shell's)
+            powershell -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match "ap_coder|launch\.py|streamlit" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'
+          else
+            pkill -f 'ap_coder|launch\.py|streamlit' || true
+          fi
