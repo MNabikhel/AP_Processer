@@ -613,7 +613,7 @@ def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str,
     """Fold the check into the invoice: still open, its capture, review issue and notes (and, held only for this
     check and Azure agreeing, it is approved as touchless processing would have); approved already, Azure's reading
     is scored against what AP approved. Returns (fields read differently, approved now)."""
-    from .capture.workflow import AUTONOMOUS_REVIEWER
+    from .capture.workflow import AUTONOMOUS_REVIEWER, still_touchless
     from .store import APPROVED, PARKED, PENDING, REVIEW
 
     iid = int(inv["id"])
@@ -632,7 +632,10 @@ def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str,
             notes["reason"] = "" if not differ else f"{NAME} read {len(differ)} field(s) differently"
         store.update_after_azure_check(iid, capture.to_dict(), dataclasses.asdict(found) if found else None,
                                        ISSUE_CODE, {"azure_check": note, "capture": notes})  # fmt: skip
-        if held and untouched and not differ and inv.get("ai_output"):
+        # Held at the touchless decision, maybe days ago: the switch, the supplier's state and the limits are
+        # checked again, as they stand now.
+        output = inv.get("ai_output")
+        if held and untouched and not differ and output and still_touchless(store, capture, output):
             try:
                 store.approve_invoice(iid, inv["ai_output"], AUTONOMOUS_REVIEWER, login="ap-coder")
                 approved = True

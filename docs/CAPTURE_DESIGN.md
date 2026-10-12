@@ -508,7 +508,8 @@ Processing never waits for Azure. Agreement is recorded ("Azure agrees on 11 of 
 differently is marked *Check* ("Azure Document Intelligence read X"), the invoice gets the review issue
 `AZURE_DI_DISAGREES` and can't go touchless; the check is folded in again whenever the page reader reads the invoice
 again. An invoice picked for a spot-check is held from touchless approval until Azure has checked it, and approved
-then if Azure agrees and nobody touched it. Azure's reading becomes reader `di` among each field's sources, so
+then if Azure agrees, nobody touched it and touchless processing still applies (the switch on, the vendor still
+touchless, the total within the limits: `workflow.still_touchless`). Azure's reading becomes reader `di` among each field's sources, so
 approvals score it on *Learning → Readers* (an invoice already approved is scored at once).
 
 Only the configured endpoint's host is contacted, over HTTPS: a request hook on the Azure client refuses any other

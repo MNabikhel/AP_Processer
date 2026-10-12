@@ -177,6 +177,24 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
     return {"state": state, "auto": ok and not audit, "audit": audit, "reason": reason}
 
 
+def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any]) -> bool:
+    """Whether an invoice touchless processing passed earlier but held back (for the Azure check) may still be
+    approved without a person now: the switch is still on, its supplier still touchless (not suspended or kept
+    supervised by a manager meanwhile) and its total still within the touchless and approval limits."""
+    if store is None or not store.touchless_enabled():
+        return False
+    key, _ = supplier_for(store, output)
+    if not key:
+        return False
+    store.sync_autonomy(key)
+    profile = store.get_supplier_profile(key) or {}
+    policy = store.autonomy_policy()
+    state, _, _ = autonomy_status(store.supplier_stats(key, policy.window), policy, profile.get("state") or SUPERVISED,
+                                  profile.get("autonomous_since"), touchless_on=True,
+                                  suspended_at=profile.get("suspended_at"))  # fmt: skip
+    return state == AUTONOMOUS and not invoice_gates(store, capture, None, output)
+
+
 NOT_READERS = ("computed", "vendor master")  # a field's sources that did not read the page
 
 
