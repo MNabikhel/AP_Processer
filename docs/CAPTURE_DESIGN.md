@@ -311,8 +311,8 @@ Automation):
   foreign currency is converted at the Settings → Review exchange rates; with no rate for it, it goes to a person), a
   total over the second-approver limit, an invoice the page reader has not read yet (or not every page of it), and a
   text file (.md, .txt), which the page reader cannot look at. On top of these, as before,
-  any failed check or any printed header field below *verified* sends the invoice to a person
-  (`should_auto_approve`).
+  any failed check, any printed header field below *verified*, or a line with no GL account or cost center yet (which
+  a person could not approve either) sends the invoice to a person (`should_auto_approve`).
 - **How long it takes**: at about 13 header fields an invoice, a 99% lower bound with no error needs about 380
   fields read right (n / (n + 1.96²) ≥ 0.99), so a vendor typically reaches the bar after about 30 clean
   invoices, not 20.

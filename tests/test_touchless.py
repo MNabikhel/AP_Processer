@@ -393,6 +393,15 @@ def test_an_error_still_blocks_and_the_audit_sample_still_applies(touchless, pat
     assert decision["audit"] and not decision["auto"] and decision["reason"] == "picked for the audit sample"
 
 
+@pytest.mark.parametrize("code", ["GL_UNASSIGNED", "CC_UNASSIGNED"])
+def test_a_line_without_an_account_is_never_approved_without_a_person(touchless, path, code):
+    """The review screen never lets a person post a line to UNASSIGNED (the approve bar asks for an account first);
+    touchless processing must not either. The finding is only a warning, so it was approved."""
+    decision = _decide(touchless, path, report=_report(code))
+    assert not decision["auto"] and not decision["audit"]
+    assert "GL account" in decision["reason"] or "cost center" in decision["reason"]
+
+
 def test_several_gates_are_all_named():
     gates = touchless_gates([{"code": "VENDOR_BANK_CHANGED"}, {"code": "DUPLICATE_INVOICE"},
                              {"code": "POSSIBLE_DUPLICATE_AMOUNT"}], grand_total=-5, over_limit=5000.0)  # fmt: skip

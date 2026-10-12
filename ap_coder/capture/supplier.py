@@ -1398,6 +1398,12 @@ def should_auto_approve(
     errors = [i.get("code") or "error" for i in issues or [] if str(i.get("severity", "")).lower() == "error"]
     if errors:
         return False, f"validation error: {', '.join(errors)}"
+    # Only warnings, but a person can't approve them either (the review screen's approve bar asks for the account).
+    codes = {str(i.get("code") or "") for i in issues}
+    if "GL_UNASSIGNED" in codes:
+        return False, "a line has no GL account yet"
+    if "CC_UNASSIGNED" in codes:
+        return False, "a line has no cost center yet"
     if not capture.fields:
         return False, "no header fields were read"
     for name in REQUIRED_FIELDS:
