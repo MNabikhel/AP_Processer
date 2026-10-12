@@ -123,10 +123,10 @@ def test_upgrade_fills_in_due_dates(tmp_path):
 
 
 def test_queue_sorts_by_due_date_with_unknown_last():
-    from ap_coder.webapp.review import sort_queue  # imported here: the page modules read AP_DB_PATH on import
+    from ap_coder.web.pages.review import sort_queue
 
     rows = [{"id": 1, "due_date": "2026-11-01"}, {"id": 2, "due_date": None}, {"id": 3, "due_date": "2026-10-01"}]
-    assert [r["id"] for r in sort_queue(rows, "Due date: soonest")] == [3, 1, 2]
+    assert [r["id"] for r in sort_queue(rows, "due")] == [3, 1, 2]
 
 
 def test_a_printed_discount_is_kept_when_the_net_days_come_from_the_vendor_master():

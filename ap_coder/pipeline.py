@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import azure_check
 from .capture.bridge import review_issues
 from .capture.layout import CannotRead
 from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
@@ -48,6 +49,7 @@ class PipelineResult:
     rules_applied: list[dict[str, Any]] = field(default_factory=list)  # lines a fixed coding rule changed
     capture: Any = None  # capture.CaptureResult: every header field located, with its confidence
     autonomy: dict[str, Any] = field(default_factory=dict)  # supplier state and whether it went touchless
+    original: dict[str, Any] | None = None  # the picture this PDF was made from (intake.py): name, kept, sha256
 
     @property
     def ok(self) -> bool:
@@ -146,6 +148,24 @@ def finalise_coding(
     return output, report
 
 
+DAMAGED_PICTURE = ("UnidentifiedImageError", "DecompressionBombError")
+DAMAGED_PDF = ("FileDataError", "EmptyFileError")
+
+
+def plain_error(exc: Exception, path: Path) -> str:
+    """What AP reads when an invoice can't be processed: a damaged picture or PDF said plainly with what to do (the
+    technical detail is in the log), anything else as the error it is."""
+    name = type(exc).__name__
+    kind = path.suffix.lstrip(".").upper() or "picture"
+    if name in DAMAGED_PICTURE or (name == "OSError" and "image file" in str(exc)):
+        return (f"{path.name} can't be opened as a picture: the file is damaged or not really a {kind}. Ask the "
+                "vendor for a new copy, or scan it again.")  # fmt: skip
+    if name in DAMAGED_PDF:
+        return (f"{path.name} can't be opened as a PDF: the file is damaged or incomplete. Ask the vendor for a new "
+                "copy.")  # fmt: skip
+    return f"{name}: {exc}"
+
+
 class InvoicePipeline:
     def __init__(
         self,
@@ -225,12 +245,15 @@ class InvoicePipeline:
             return None
 
     def process(
-        self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None
-    ) -> PipelineResult:
+        self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None,
+        pages_read: int | None = None,
+    ) -> PipelineResult:  # fmt: skip
         """Read, code and check one invoice, and save it to the review queue (``save``). ``page_text``: the page
         reader's reading of each page (OvisOCR2), read as one more independent reader. ``invoice_id``: the invoice is
         already in the store as this row (read again by the page reader), so the checks against other invoices
         (duplicate, vendor history, purchase order) leave it out instead of finding it against itself.
+        ``pages_read``: the pages the page reader really read (a page it wrote nothing real for is in ``page_text``,
+        blank, but was not read); all of ``page_text`` when not given.
 
         Every file is read the same way: a PDF's text layer where its page has one, local OCR (two engines) for a scan
         or a photo, a text file as it is; the same readers and checks, then coded from AP's history. A document the
@@ -241,6 +264,9 @@ class InvoicePipeline:
         captured: tuple[Any, str, Any] | None = None  # (capture, supplier key, profile) when read without AI
         text_file = path.suffix.lower() in TEXT_EXTENSIONS
         try:
+            # A photo or a scanned picture coming in is made a PDF first; one stored as a picture by an older version
+            # (read again by the page reader) stays where the database has it.
+            path = result.source = _as_pdf(path, result, convert=invoice_id is None)
             t0 = time.perf_counter()
             layout = None
             if self._reads_locally(path):  # offline: the page's text layer, or local OCR for a scan
@@ -297,9 +323,10 @@ class InvoicePipeline:
             result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch
             log.exception("Failed to process %s", path)
-            result.error = f"{type(exc).__name__}: {exc}"
+            result.error = plain_error(exc, path)
 
         key, profile = "", None
+        azure = azure_check.Plan()
         if result.output is not None:
             t2 = time.perf_counter()
             if captured is not None:  # already read (no AI model): the capture is the proposal itself
@@ -311,15 +338,23 @@ class InvoicePipeline:
                 )  # fmt: skip
             result.timings["capture"] = time.perf_counter() - t2
             if result.capture is not None and result.report is not None:
-                for severity, code, message in review_issues(result.capture):
+                for severity, code, message in review_issues(result.capture, result.output.get("currency")):
                     result.report.issues.append(Issue(severity, code, message))
+                # The optional Azure check (off unless turned on): a check already done is folded in again (read
+                # again by the page reader); otherwise whether it goes in line, and waits for it.
+                azure = azure_check.prepare(self.store, self.settings, invoice_id, result.capture, result.report, path)
                 # Not read by the page reader yet: it will be (queued below), and decides then.
                 awaiting = page_text is None and not text_file
                 read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
+                if read is not None and pages_read is not None:
+                    read = min(read, pages_read)
                 result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
                                                     output=result.output, awaiting_page_reader=awaiting,
                                                     pages_read=read)  # fmt: skip
+                result.autonomy = azure_check.hold(result.autonomy, azure)
 
+        if self.store is not None and not save and invoice_id:  # read again (the page reader): same invoice
+            azure_check.queue(self.store, invoice_id, azure)
         if self.store is not None and save:
             try:
                 result.invoice_id = self.store.add_invoice(
@@ -329,9 +364,11 @@ class InvoicePipeline:
                     extraction_md=result.extraction.content if result.extraction else "",
                     meta=_meta(result),
                     error=result.error,
+                    original_sha256=(result.original or {}).get("sha256"),
                 )
                 if result.capture is not None:
                     self.store.save_capture(result.invoice_id, result.capture.to_dict())
+                azure_check.queue(self.store, result.invoice_id, azure)
                 if result.autonomy.get("auto") and result.output is not None:
                     self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
                 elif result.output is not None:  # the page reader reads every page of it in the background
@@ -376,6 +413,25 @@ class InvoicePipeline:
             raise
         pool.shutdown()
         return [r for r in results if r is not None]
+
+
+def _as_pdf(path: Path, result: PipelineResult, convert: bool = True) -> Path:
+    """The PDF to read: a picture (JPEG, PNG, HEIC, TIFF, BMP) is made into one first (``convert``), the picture kept
+    in ``originals/`` (``intake.to_pdf``); a PDF made from a picture before says which (``result.original``)."""
+    from . import intake
+
+    if intake.is_image(path) and convert:
+        converted = intake.to_pdf(path)
+        result.original = {"file": path.name, "kept": str(converted.original), "sha256": converted.sha256,
+                           "pages": converted.pages}  # fmt: skip
+        log.info("%s: made into %s (the picture is kept in %s)", path.name, converted.pdf.name, converted.original)
+        return converted.pdf
+    if path.suffix.lower() == ".pdf":
+        note = intake.original_of(path)
+        if note:
+            kept = path.parent / str(note.get("kept") or "")
+            result.original = {"file": note.get("original"), "kept": str(kept), "sha256": note.get("sha256")}
+    return path
 
 
 def output_stems(paths: list[Path]) -> list[str]:
@@ -453,6 +509,8 @@ def _meta(result: PipelineResult) -> dict[str, Any]:
             "usage": result.coding.usage,
         }
     meta["history_examples"] = result.history_examples
+    if result.original:
+        meta["original"] = result.original
     if result.capture is not None:
         meta["capture"] = {
             "status_counts": result.capture.status_counts(),

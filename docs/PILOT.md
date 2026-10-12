@@ -94,12 +94,14 @@ missing:
 
 - **Python**: uses the Python already installed, 3.11 or newer, 3.12 first (see *What you need*); never
   downloads one.
-- **`.venv`**: AP Coder's own environment, made once and reused (made again only if it is broken).
+- **`.venv`**: AP Coder's own environment, made once and reused (made again only if it is broken, or
+  made with a Python the bundle has no packages for while one it has is installed).
 - **Packages**: installs only the ones that are missing or too old (all of them the first time), from the
   bundle's `wheelhouse/` folder. One that is not in it is named in the summary (it must come from the
   bundle); AP Coder still starts when its core packages are there (without the OCR add-on scans can't be read).
 - **Data folder** (`C:\Users\<you>\APCoder`) and the **OCR models** (copied from the bundle's `models/`): once.
-- **Desktop shortcut** *AP Coder*: once, never a second copy (deleted? it is not put back).
+- **Desktop shortcut** *AP Coder* (Mac: *AP Coder.command* on the desktop): one, never a second copy, and it
+  always opens the current version (an update points it at the new one; deleted? it is not put back).
 
 A second double-click while the first one is still setting up waits for it and then opens its dashboard;
 it never runs a second setup.
@@ -175,9 +177,12 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
 ## Daily use
 
 1. Double-click **`APProcessor.bat`** (or the *AP Coder* desktop shortcut). A black window opens with
-   the readiness summary, and the dashboard opens in your browser (at `http://127.0.0.1:8501`). Keep
-   the window open while you work; close it to stop AP Coder. Double-clicking again while it runs just
-   brings the running dashboard back up in the browser; it never starts a second copy.
+   the readiness summary, and the dashboard opens in your browser (at `http://127.0.0.1:8501`). The
+   dashboard is a local web app that AP Coder serves itself, on this laptop only (as CloseDesk does):
+   nothing is installed in the browser and nothing goes online. Keep the window open while you work;
+   close it to stop AP Coder. Double-clicking again while it runs just brings the running dashboard back
+   up in the browser; it never starts a second copy. Each page has its own address, so a page or an
+   invoice (`/review/<number>`) can be bookmarked or opened in a second tab.
 2. **Bring in invoices:** drop PDFs, scans or photos in the **invoices folder** (Process invoices →
    *Open folder*), or upload them on the *Process invoices* page.
 3. **Review (the clerk's job):** open each invoice in the *Review queue*, check the fields marked
@@ -229,11 +234,45 @@ laptop, set **Settings → Data & backups → Also copy each backup to** to a On
 backup copies are safe to sync (only the live database must stay local). To back up by hand, close AP Coder
 and copy the whole data folder.
 
-## Update
+## Updating AP Coder
 
-Close AP Coder. Unzip the new version **over** the old folder (or into a new folder), then double-click
-`APProcessor.bat`. It sees what changed and installs only that (from the new bundle's `wheelhouse/`; it
-never checks the internet for updates). Your data folder is not touched, so nothing is lost or duplicated.
+When IT gives you a new offline bundle:
+
+1. Unzip it **anywhere**: a new folder (e.g. `C:\APCoder\app-0.2`) is fine, and so is unzipping it over
+   the old folder. AP Coder may still be open.
+2. Double-click **`APProcessor.bat`** in the new folder (Mac: `APProcessor.command`).
+
+That is all. The new version takes over:
+
+- **The old one stops.** An AP Coder still running (from the old folder, or the old version in this one) is
+  stopped first, so two versions never use your data at once. If it can't be stopped, the window says
+  *Close the old AP Coder window, then start again* and waits up to a minute for you to do it.
+- **It says what changed**: *Updated AP Coder from 0.1.0 (2026-09-01) to 0.2.0 (2026-10-11)*. It sets up
+  only what is new (from the new bundle's `wheelhouse/`, never the internet) and runs the self-check.
+- **Your data is kept.** The data folder (`C:\Users\<you>\APCoder`) is never replaced. Before the new version
+  brings the database up to date, it copies it to the `backups` folder
+  (`ap_coder-<date>-before-update-from-schema-<n>.db`). Data an older version kept inside its own folder
+  (`private\`) and a `.env` left there move into the data folder (when the data folder already has data of
+  its own, they go, whole, to `backups\from-<folder>-<date>`: nothing is merged). Settings that are no longer
+  used are commented out in the `.env`, with the note *# no longer used (AP Coder 0.2)*.
+- **One shortcut, one install.** The *AP Coder* desktop shortcut now opens the new version (on a Mac, an
+  *AP Coder.command* on the desktop does). Once the self-check passed, the old version's `.venv`, OCR models
+  and folder are removed, and the window says how much space that freed. An old folder with files of your
+  own in it is kept, without its `.venv`. An old folder still open in a window is emptied of its `.venv` and
+  models, and removed on a later start. Unzipped over the old folder, the files of the old version that the
+  new one no longer has are removed (the bundle lists every file it holds); a `wheelhouse` you copied in
+  yourself is kept.
+- **Stopped halfway?** Closing the window (or a file in use) while the data moves to the data folder never
+  leaves AP Coder on half of it: the next start finishes the move first.
+- **The old folder by mistake?** Starting an older version (an old shortcut, an old folder) opens the
+  newest one instead: older code never opens newer data. A database made by a newer AP Coder is refused in
+  plain words, and nothing is changed.
+
+If the new bundle doesn't fit the computer, it stops before installing anything and says which bundle to
+use, e.g. *This package folder (wheelhouse) was built for Windows, Python 3.11/3.12; this computer is a Mac
+with Python 3.14. Use the bundle built for Macs (build it with --mac): nothing was installed.* When the
+bundle has packages for another Python that is installed on the computer, AP Coder uses that Python by
+itself (and makes its `.venv` again with it).
 
 ## Troubleshooting
 
@@ -243,6 +282,12 @@ never checks the internet for updates). Your data folder is not touched, so noth
 | *Python 3.10 is installed, but AP Coder needs Python 3.11 or newer* | The laptop's Python is too old: IT installs Python 3.12 next to it (the older one is left alone); double-click again. |
 | *Note: this offline bundle has packages for Python ..., not for Python 3.14* | The laptop's Python is newer than the bundle: IT builds a bundle for it (the note gives the `build_offline_bundle.py` command) or installs one of the versions listed. |
 | *AP Coder stopped. The message above says what to do.* | The `What to do:` line above it says it; most often a package could not install. *Missing packages: ...*: the folder has no `wheelhouse/` (unzip the full offline bundle over it). *The offline bundle's wheelhouse folder has no ...*: the bundle was built for another Python version. Developers online (`AP_ALLOW_INTERNET=1`): check the proxy (`set HTTPS_PROXY=http://proxy:8080`). |
+| *This package folder (wheelhouse) was built for ...: nothing was installed* | The bundle was built for another kind of computer or Python: use the bundle built for this one (the message says which, e.g. `--mac`), or install the Python it names. |
+| *Installing the packages stopped: the disk is full* | Free about 1.5 GB on that disk; the message names the older AP Coder's `.venv` folder, which can be deleted (it holds only packages, never your data). Double-click again. |
+| *Your data could not all be moved from ... to ...* | A file of it is open (an old AP Coder window, Excel): close it and double-click again; the move picks up where it stopped. Nothing was lost. |
+| *... is still running: stopping it, so this version takes over* | An older AP Coder was open: the new one stops it and carries on. *Close the old AP Coder window, then start again*: it could not be stopped; close that window (it waits a minute for you). |
+| *A newer AP Coder ... is in ...: opening that one* | An old shortcut or folder was started: the newest version opens instead. Use its folder (the shortcut already does). |
+| *Your database ... was made by a newer AP Coder* | An older version was started on newer data: nothing was changed. Start the newer AP Coder. |
 | *AP Coder is being set up or started in another window* | The first double-click is still setting up: it waits, then opens the dashboard. |
 | *Self-check FAILED* in the summary | AP Coder still runs. Run `.venv\Scripts\python.exe scripts\pilot_check.py` in `terminal.bat` and send the output. |
 | *AP Coder is already running* | It is: the browser opens on it. Use that window, or close it to stop AP Coder. |
@@ -264,7 +309,9 @@ never checks the internet for updates). Your data folder is not touched, so noth
   installer runs no `git fetch` / `git pull`, and APProcessor.bat never installs Python with `winget`.
 - The dashboard listens only on this laptop (`127.0.0.1`); other computers cannot open it. To share it
   on the office network on purpose, set `AP_DASHBOARD_ADDRESS=0.0.0.0` before starting.
-- Streamlit's usage statistics are switched off; fonts and icons come from the app, not the internet.
+- The dashboard is AP Coder's own small web server (FastAPI): no usage statistics, no outside service;
+  fonts, icons and scripts come from the app, not the internet. It answers only requests addressed to this
+  laptop and changes nothing for a page that is not its own.
 - OCR runs on the laptop with local models; OvisOCR2 and the optional chat model run in LM Studio on the
   laptop too and are reached over `localhost`.
 - A test (`tests/test_offline.py`) reads an invoice, runs every dashboard page and builds a JD Edwards

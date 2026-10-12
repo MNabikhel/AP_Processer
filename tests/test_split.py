@@ -1,19 +1,17 @@
 """Splitting a line across GL accounts / cost centers."""
 
 import json
-import sys
 
 import pandas as pd
 import pytest
-import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from ap_coder.config import Settings
 from ap_coder.pipeline import finalise_coding
 from ap_coder.review import coding_from_inputs, split_line
 from ap_coder.store import Store, load_sample_setup
 
-from .conftest import ROOT, SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES
+from .webclient import client_for, draft_form, follow, post
 
 
 def _gt():
@@ -52,25 +50,19 @@ def test_bad_splits_are_refused(parts):
         split_line(pd.DataFrame(_gt()["line_items"]), 99, [("6000", "", 100)])
 
 
-def test_split_from_the_review_screen(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    store = Store(path)
+def test_split_from_the_review_screen(tmp_path):
+    from .test_web_invoice import form_of
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
     load_sample_setup(store)
     invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", _gt(), {"requires_review": False})
-    key = f"inv{invoice_id}"
-    at = AppTest.from_file(str(ROOT / "ap_coder" / "dashboard.py"), default_timeout=90)
-    at.session_state["open_invoice"] = invoice_id
-    at.run()
-    at.selectbox(key=f"{key}_split_line").select(2).run()
-    at.button(key=f"{key}_split_go").click().run()
-    at.run()
-    assert not at.exception
-    at.button(key=f"{key}_approve").click().run()
+    client = client_for(store)
+    line = _gt()["line_items"][1]
+    data = {**form_of(store, invoice_id), "split_line": "2", "part_gl": [line["predicted_gl_code"]] * 2,
+            "part_cc": [line["predicted_cost_center"]] * 2, "part_pct": ["50", "50"]}  # fmt: skip
+    answer = post(client, f"/review/{invoice_id}/split", data).json()
+    assert answer["ok"] and "Line 2 split in 2" in answer["toast"]["text"]
+    follow(client, post(client, f"/review/{invoice_id}/approve", draft_form(client, invoice_id)))
     final = store.get_invoice(invoice_id)["final_output"]
     servers = [li for li in final["line_items"] if li["description"].startswith("Dell PowerEdge")]
     assert [li["amount"] for li in servers] == [4450.0, 4450.0] and len(final["line_items"]) == 6

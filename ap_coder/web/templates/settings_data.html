@@ -1,0 +1,75 @@
+{# Settings → Data & backups (pages/settings.py). #}
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h4>Data folder</h4>
+      <p class="muted">Everything AP Coder keeps (database, invoices, exports, backups and settings) is in one folder on this
+        computer: <code>{{ data_path }}</code></p>
+    </div>
+    <form method="post" action="/settings/data/open-folder">
+      <button class="btn" type="submit" title="{{ data_path }}"><span class="ms" aria-hidden="true">folder_open</span>Open folder</button>
+    </form>
+  </div>
+  {{ ui.tiles([
+    ui.tile("Database", db_size, "database", "blue", "ap_coder.db"),
+    ui.tile("Invoices", invoice_count, "receipt_long", "green", file_count | plural("file") ~ " in invoices/"),
+    ui.tile("Lessons", lesson_count, "psychology", "violet", "reviewer decisions"),
+    ui.tile("Backups", backups | length, "backup", "amber", "kept in backups/"),
+  ]) }}
+</section>
+
+<section class="card" id="backups">
+  <div class="card-head">
+    <div>
+      <h4>Backups</h4>
+      <p class="muted">A copy of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
+        Make one yourself before big changes, e.g. importing a new chart of accounts.</p>
+    </div>
+    <form method="post" action="/settings/data/backup" data-busy="Backing up…">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">backup</span>Back up now</button>
+    </form>
+  </div>
+
+  <form method="post" action="/settings/data/backup-copy" class="row st-end" data-busy="Saving…">
+    <label class="field st-grow">Also copy each backup to (optional)
+      <input type="text" name="folder" value="{{ copy_dir }}" placeholder="e.g. C:\Users\you\OneDrive - Company\AP Coder backups"
+             title="A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database. Only the backup copies go there; the database itself stays on this computer."></label>
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
+  </form>
+  <p class="muted">A OneDrive, SharePoint-synced or network folder, so a lost or broken computer does not lose the database.
+    Only the backup copies go there; the database itself stays on this computer.</p>
+  {% if copy_status %}
+  <p class="muted">{% if copy_status.ok %}<span class="ms ok-ico" aria-hidden="true">check_circle</span> Last copied {{ copy_status.when }}: {{ copy_status.what }}
+    {% else %}<span class="ms err-ico" aria-hidden="true">error</span> Copying failed {{ copy_status.when }}: {{ copy_status.what }}. The local backups are fine.{% endif %}</p>
+  {% endif %}
+
+  {% if not backups %}
+  {{ ui.empty_note("No backups yet", " Press Back up now to make the first one.", "backup") }}
+  {% else %}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Backup</th><th>Made</th><th class="r">Size</th><th></th></tr></thead>
+      <tbody>
+        {% for b in backups[:10] %}
+        <tr><td>{{ b.name }}</td><td>{{ b.made }}</td><td class="r">{{ b.size }}</td>
+          <td class="r"><a class="link" href="/settings/data/backups/{{ b.name | urlencode }}" download><span class="ms" aria-hidden="true">download</span>Download</a></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if backups | length > 10 %}<p class="muted">The newest 10 of {{ backups | length }} are listed; every one can be restored below.</p>{% endif %}
+
+  <details class="st-details st-danger" id="restore">
+    <summary><span class="ms" aria-hidden="true">settings_backup_restore</span>Restore a backup…</summary>
+    <form method="post" action="/settings/data/restore" class="stack" data-busy="Restoring…" data-restore>
+      <label class="field">Backup to restore
+        <select name="name" required>{% for b in backups %}<option value="{{ b.name }}">{{ b.name }} · {{ b.made }}</option>{% endfor %}</select></label>
+      <p>Replace the current database with this backup? Everything done since that backup (processed invoices, approvals,
+        lessons, GL changes) is replaced. The current database is backed up first, so this can be undone.</p>
+      <label class="field">Type {{ restore_word }} to confirm
+        <input type="text" name="confirm" autocomplete="off" required pattern="\s*[Rr][Ee][Ss][Tt][Oo][Rr][Ee]\s*" data-word="{{ restore_word }}"></label>
+      <button class="btn danger" type="submit" disabled><span class="ms" aria-hidden="true">restore</span>Restore</button>
+    </form>
+  </details>
+  {% endif %}
+</section>

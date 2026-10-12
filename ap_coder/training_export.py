@@ -175,7 +175,7 @@ def export_training_set(
     chat_rows: list[str] = []
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         for inv in picked["invoices"]:
-            path = Path(inv["source_path"] or "")
+            path = store.invoice_file(inv) or Path(inv["source_path"] or "")  # (a file an update moved: found)
             if not inv["source_path"] or not path.is_file():
                 counts["missing_files"] += 1
                 continue

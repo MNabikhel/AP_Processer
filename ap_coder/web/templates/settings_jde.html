@@ -1,0 +1,142 @@
+{# Settings → JD Edwards E1 (pages/settings_jde.py). #}
+{% macro text_field(name, label, maxlen, help) -%}
+<label class="field">{{ label }}
+  <input type="text" name="{{ name }}" value="{{ js[name] }}" maxlength="{{ maxlen }}"{% if help %} title="{{ help }}"{% endif %}>
+  {% if help %}<small class="muted">{{ help }}</small>{% endif %}</label>
+{%- endmacro %}
+<section class="card" id="general">
+  <h4>JD Edwards E1 vouchers</h4>
+  <p class="muted">Exports → <i>JD Edwards E1</i> writes F0411Z1 (pay items) and F0911Z1 (G/L lines) files for the Voucher
+    Batch Processor R04110ZA. See <code>docs/JDE_E1.md</code>.</p>
+  <form method="post" action="/settings/jde" class="stack" data-busy="Saving…">
+    {{ ui.subhead("Voucher header", first=True) }}
+    <div class="st-grid three">
+      {% for name, label, maxlen, help in header_fields %}{{ text_field(name, label, maxlen, help) }}{% endfor %}
+      <label class="field">Currencies set up in E1
+        <input type="text" name="currencies" value="{{ currencies }}" title="Invoices in other currencies are not exported.">
+        <small class="muted">Invoices in other currencies are not exported.</small></label>
+    </div>
+
+    {{ ui.subhead("Formats") }}
+    <div class="st-grid">
+      {% for name, label, options, help in choices %}
+      <fieldset class="st-radios"><legend>{{ label }}</legend>
+        {% for key, text in options.items() %}
+        <label class="check"><input type="radio" name="{{ name }}" value="{{ key }}"{% if js[name] == key %} checked{% endif %}> {{ text }}</label>
+        {% endfor %}
+        {% if help %}<small class="muted">{{ help }}</small>{% endif %}
+      </fieldset>
+      {% endfor %}
+    </div>
+    <label class="check"><input type="checkbox" name="po_matched" value="1"{% if js.po_matched %} checked{% endif %}>
+      PO-matched vouchers: invoices with a PO number get no G/L lines, to be matched to receipts in E1</label>
+
+    {{ ui.subhead("Default account rule", "when the GL code is not in the mapping below") }}
+    <div class="st-grid three st-end">
+      <label class="check" title="Object = the GL code, Subsidiary blank."><input type="checkbox" name="use_default_rule" value="1"{% if js.use_default_rule %} checked{% endif %}> Use the default rule</label>
+      <label class="check"><input type="checkbox" name="bu_from_cost_center" value="1"{% if js.bu_from_cost_center %} checked{% endif %}> BU = the line's cost center</label>
+      {{ text_field("default_bu", "Default BU", 12, "When a line has no cost center.") }}
+    </div>
+
+    <details class="st-details">
+      <summary>More fields</summary>
+      <div class="st-grid three">
+        {% for name, label, maxlen, help in more_fields %}{{ text_field(name, label, maxlen, help) }}{% endfor %}
+        <label class="field">G/L date (VLDGJ)
+          <select name="gl_date">{% for key, text in gl_dates.items() %}<option value="{{ key }}"{% if js.gl_date == key %} selected{% endif %}>{{ text }}</option>{% endfor %}</select></label>
+      </div>
+      <div class="stack">
+        <label class="check"><input type="checkbox" name="send_due_date" value="1"{% if js.send_due_date %} checked{% endif %}> Send the due date (VLDDJ)</label>
+        <label class="check"><input type="checkbox" name="send_po_reference" value="1"{% if js.send_po_reference %} checked{% endif %}> Send the PO number as a reference on other vouchers (VLPO)</label>
+        <label class="check"><input type="checkbox" name="dist_tax_columns" value="1"{% if js.dist_tax_columns %} checked{% endif %}> Repeat the tax area and code on each G/L line (VNTXA1, VNEXR1)</label>
+      </div>
+      <label class="field">Extra columns on PO-matched vouchers · unconfirmed
+        <input type="text" name="extras" value="{{ extras }}"
+               title="COLUMN=value pairs added to F0411Z1 in PO-matched mode (e.g. the automation flags). Ask your JDE team which columns their match process needs.">
+        <small class="muted">COLUMN=value pairs added to F0411Z1 in PO-matched mode (e.g. the automation flags). Ask your JDE
+          team which columns their match process needs.</small></label>
+    </details>
+    <div><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save JD Edwards settings</button></div>
+  </form>
+</section>
+
+<section class="card" id="gl-map">
+  <h4>GL accounts → BU.Object.Subsidiary</h4>
+  <p class="muted">One row per AP Coder GL code (and cost center, blank = any). A blank BU or object is filled by the default
+    rule above. Lines without a mapping (and no default rule) are left out of the export. A row with no GL code is removed
+    when you save.</p>
+  <form method="post" action="/settings/jde/gl-map" class="stack" data-busy="Saving…">
+    <div class="table-wrap">
+      <table class="apc-table st-edit" data-rows>
+        <thead><tr>{% for name, label, maxlen in gl_columns %}<th>{{ label }}</th>{% endfor %}<th><span class="sr">Remove</span></th></tr></thead>
+        <tbody>
+          {% for row in gl_rows + [{}] %}
+          <tr>{% for name, label, maxlen in gl_columns %}<td><input type="text" name="{{ name }}" value="{{ row.get(name, '') }}" aria-label="{{ label }}"{% if maxlen %} maxlength="{{ maxlen }}"{% endif %}></td>{% endfor %}
+            <td><button class="btn sm icon" type="button" data-remove-row title="Remove this row" aria-label="Remove this row"><span class="ms" aria-hidden="true">close</span></button></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button class="btn" type="button" data-add-row><span class="ms" aria-hidden="true">add</span>Add a row</button>
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the mapping</button>
+    </div>
+  </form>
+  <form method="post" action="/settings/jde/gl-map/import" enctype="multipart/form-data" class="row st-end st-sep" data-busy="Importing…">
+    <label class="field st-grow">Import a mapping (CSV or Excel: GL code, Cost center, BU, Object, Subsidiary)
+      <input type="file" name="file" accept=".csv,.xlsx,.xls" required></label>
+    <label class="check"><input type="checkbox" name="replace" value="1"> Replace the current mapping</label>
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">upload</span>Import</button>
+  </form>
+</section>
+
+<section class="card" id="tax-map">
+  <h4>Province → tax area and explanation code</h4>
+  <p class="muted">The tax area names are placeholders: use your E1 tax areas (F4008). Codes: V = GST/HST/QST recoverable,
+    C = GST + seller-charged PST (PST in the distribution), B = self-assessed PST, E = exempt. Invoices with no tax charged
+    use the exempt code; PST provinces without PST charged use the self-assessed code.</p>
+  <form method="post" action="/settings/jde/tax-map" class="stack" data-busy="Saving…">
+    <div class="table-wrap">
+      <table class="apc-table st-edit">
+        <thead><tr><th>Province</th><th>Name</th><th>Tax area (VLTXA1)</th><th>Code (VLEXR1)</th></tr></thead>
+        <tbody>
+          {% for r in tax_rows %}
+          <tr><td><input type="hidden" name="province" value="{{ r.province }}">{{ r.province }}</td><td>{{ r.name }}</td>
+            <td><input type="text" name="tax_area" value="{{ r.tax_area }}" maxlength="10" aria-label="Tax area for {{ r.name }}"></td>
+            <td><select name="code" aria-label="Code for {{ r.name }}">{% for c in tax_codes %}<option value="{{ c }}"{% if r.code == c %} selected{% endif %}>{{ c or "—" }}</option>{% endfor %}</select></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the tax areas</button></div>
+  </form>
+</section>
+
+<section class="card" id="an8">
+  <h4>Supplier address numbers (AN8)</h4>
+  <p class="muted">Taken from the vendor master's ERP ID (Vendors page). Add a vendor here only when its ERP ID is not its JDE
+    address number. A row with no vendor or no number is removed when you save.</p>
+  <form method="post" action="/settings/jde/an8" class="stack" data-busy="Saving…">
+    <div class="table-wrap">
+      <table class="apc-table st-edit" data-rows>
+        <thead><tr><th>Vendor name</th><th>Address number</th><th><span class="sr">Remove</span></th></tr></thead>
+        <tbody>
+          {% for row in an8_rows + [{}] %}
+          <tr><td><input type="text" name="vendor" value="{{ row.get('vendor', '') }}" aria-label="Vendor name"></td>
+            <td><input type="text" name="an8" value="{{ row.get('an8', '') }}" maxlength="8" aria-label="Address number"></td>
+            <td><button class="btn sm icon" type="button" data-remove-row title="Remove this row" aria-label="Remove this row"><span class="ms" aria-hidden="true">close</span></button></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button class="btn" type="button" data-add-row><span class="ms" aria-hidden="true">add</span>Add a row</button>
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save the address numbers</button>
+    </div>
+  </form>
+</section>
+
+<section class="card st-md">
+  <h4>Before the first live load</h4>
+  {{ checklist }}
+</section>

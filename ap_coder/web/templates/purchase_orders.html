@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% from "_sheet.html" import upload_form, preview, columns %}
+{% from "_tiles.html" import tile_row %}
+{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<details class="card expander" id="import"{% if not pos or imp or imp_error %} open{% endif %}>
+  <summary><span class="ms" aria-hidden="true">upload</span>Import purchase orders from CSV or Excel</summary>
+  <p class="muted">One row per PO line, as exported from your ERP. Re-importing a PO replaces its lines, so a fresh export
+    also updates the quantities received. Columns are recognised automatically; check them below.</p>
+  {% if imp_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ imp_error }}</div></div>{% endif %}
+  {% if imp %}
+  {{ preview(imp, "/purchase-orders", {"file": imp.token}) }}
+  <form method="post" action="/purchase-orders/import" class="stack" data-busy="Importing…">
+    {{ columns(imp) }}
+    <label class="check"><input type="checkbox" name="replace" value="1"> Replace all my purchase orders with this file</label>
+    {% if missing %}<div class="flash warn"><span class="ms" aria-hidden="true">warning</span><div>Pick the column for: {{ missing | join(", ") }}</div></div>{% endif %}
+    <div class="row">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import purchase orders</button>
+      <a class="link" href="/purchase-orders">Cancel</a>
+    </div>
+  </form>
+  {% else %}
+  <div class="row">
+    {{ upload_form("/purchase-orders/upload", "PO lines (CSV or Excel)", "Upload PO lines") }}
+    <a class="btn" href="/purchase-orders/template.csv" download><span class="ms" aria-hidden="true">download</span>Template</a>
+  </div>
+  {% endif %}
+  {% if not pos %}
+  <hr>
+  <p class="muted small">Just trying it out? Load the sample POs that go with the sample invoices.</p>
+  <form method="post" action="/purchase-orders/sample">
+    <button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Load sample purchase orders</button>
+  </form>
+  {% endif %}
+</details>
+
+{% if not pos %}
+<section class="card">{{ ui.empty_state("No purchase orders yet", "Import your open POs to check invoices against what was ordered and received.") }}</section>
+{% else %}
+{{ tile_row(tiles) }}
+
+<section class="card flush" id="list">
+  <form class="rq-toolbar" method="get" action="/purchase-orders" role="search">
+    <label class="search"><span class="ms" aria-hidden="true">search</span>
+      <input type="search" name="q" value="{{ q }}" placeholder="PO number or vendor" aria-label="PO number or vendor"></label>
+    <input type="hidden" name="status" value="{{ status }}">
+    <div class="segmented" role="group" aria-label="Status">
+      {% for key, name in statuses.items() %}
+      <a href="/purchase-orders?q={{ q | urlencode }}&status={{ key }}" class="{{ 'on' if key == status else '' }}"{% if key == status %} aria-current="true"{% endif %}>{{ name }}</a>
+      {% endfor %}
+    </div>
+  </form>
+  {% if not shown %}
+  <div class="pad">{{ ui.empty_note("No purchase orders match", " Try another search or status.", "search_off") }}</div>
+  {% else %}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>PO</th><th>Vendor</th><th class="r">Lines</th><th class="r">Total</th><th class="r">Invoiced</th><th></th><th class="r">Remaining</th><th></th></tr></thead>
+      <tbody>
+        {% for p in shown %}
+        <tr>
+          <td><a href="/purchase-orders?{{ list_query }}&po={{ p.po_key | urlencode }}#po"><b>{{ p.po_number }}</b></a></td>
+          <td class="w">{{ p.vendor_name }}</td>
+          <td class="r">{{ p.lines }}</td>
+          <td class="r">{{ p.total | money }}</td>
+          <td class="r">{{ p.billed | money }}</td>
+          <td>{% if p.fraction is not none %}<div class="minibar{% if p.fraction > 1.02 %} over{% elif p.fraction >= 0.98 %} full{% endif %}" aria-hidden="true"><i style="width: {{ p.bar }}%"></i></div>{% endif %}</td>
+          <td class="r">{{ p.remaining | money }}</td>
+          <td>{{ ui.pill(*p.pill) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if in_review %}<p class="muted small pad">Invoiced amounts include invoices still in the review queue.</p>{% endif %}
+  {% endif %}
+</section>
+
+{% if detail %}{% set p = detail.po %}
+<section class="card" id="po">
+  <div class="vendor-head">
+    {{ ui.avatar(p.vendor_name or p.po_number) }}
+    <div>
+      <div><b>{{ p.po_number }}</b> {{ ui.pill(*detail.pill) }}</div>
+      <div class="muted">{{ p.vendor_name }} · updated {{ p.updated_at | time_ago }}</div>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>#</th><th>Description</th><th class="r">Ordered</th><th class="r">Received</th><th class="r">Billed</th><th class="r">Unit price</th><th class="r">Amount</th><th>Coding</th><th></th></tr></thead>
+      <tbody>
+        {% for li in detail.lines %}
+        <tr>
+          <td>{{ li.n }}</td><td class="w">{{ li.description }}</td><td class="r">{{ li.ordered }}</td><td class="r">{{ li.received }}</td>
+          <td class="r"><b>{{ li.billed }}</b></td><td class="r">{{ li.unit_price }}</td><td class="r">{{ li.amount | money }}</td>
+          <td>{{ li.coding }}</td><td>{% if li.flag %}{{ ui.pill(*li.flag) }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr><td></td><td>Total</td><td></td><td></td><td></td><td></td><td class="r">{{ detail.total | money }}</td><td></td><td></td></tr></tfoot>
+    </table>
+  </div>
+  {% if detail.invoices %}
+  {{ ui.subhead("Invoices on this PO", detail.invoices | length | plural("invoice")) }}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Invoice #</th><th>Date</th><th>Status</th><th class="r">Subtotal</th></tr></thead>
+      <tbody>{% for i in detail.invoices %}<tr><td><a href="/review/{{ i.id }}">{{ i.invoice_number or "" }}</a></td><td>{{ i.invoice_date or "" }}</td>
+        <td>{{ ui.pill(*i.pill) }}</td><td class="r">{{ i.subtotal | money }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No invoices have quoted this PO yet.</p>
+  {% endif %}
+  <div class="row">
+    <form method="post" action="/purchase-orders/status">
+      <input type="hidden" name="key" value="{{ p.po_key }}">
+      <button class="btn" type="submit"><span class="ms" aria-hidden="true">{{ 'lock_open' if detail.closed else 'lock' }}</span>{{ "Reopen PO" if detail.closed else "Close PO" }}</button>
+    </form>
+    <form method="post" action="/purchase-orders/delete" data-confirm="Delete {{ p.po_number }} from the list? Invoices are not affected.">
+      <input type="hidden" name="key" value="{{ p.po_key }}">
+      <button class="btn" type="submit"><span class="ms" aria-hidden="true">delete</span>Delete PO</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

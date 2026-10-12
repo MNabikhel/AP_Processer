@@ -29,11 +29,21 @@ def parse_value(value: str) -> str:
     return re.sub(r"\s+#.*", "", value).strip()  # before stripping, so a space after "=" counts
 
 
+def read_text(path: Path) -> str:
+    """The file's text: UTF-8 (with or without Notepad's byte-order mark), else Windows-1252 (what older Notepad
+    saves as "ANSI"), so one accented letter never stops AP Coder."""
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
 def read_env(path: Path) -> dict[str, str]:
     """``KEY=value`` pairs that are set (commented lines and example placeholders are skipped)."""
     values = {}
     if path.exists():
-        for line in path.read_text(encoding="utf-8-sig").splitlines():  # -sig: Notepad's byte-order mark
+        for line in read_text(path).splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -47,7 +57,7 @@ def read_env(path: Path) -> dict[str, str]:
 
 def write_env(path: Path, updates: dict[str, str]) -> None:
     """Set values in place (uncommenting ``# KEY=`` lines), keeping every other line as it is."""
-    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else []
+    lines = read_text(path).splitlines() if path.exists() else []
     for key, value in updates.items():
         if re.search(r"[\s#'\"]", value):
             value = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -60,6 +70,23 @@ def write_env(path: Path, updates: dict[str, str]) -> None:
             lines.append(f"{key}={value}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def retire(path: Path, keys: tuple[str, ...] | list[str], note: str) -> list[str]:
+    """Comment out the settings ``keys`` (no longer read) in place, each behind ``# <note>: ``, so the file says so
+    instead of looking like it still does something; every other line is kept as it is. Returns the keys found."""
+    if not path.is_file():
+        return []
+    lines = read_text(path).splitlines()
+    found: list[str] = []
+    for i, line in enumerate(lines):
+        match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
+        if match and match.group(1) in keys:
+            lines[i] = f"# {note}: {line.strip()}"
+            found.append(match.group(1))
+    if found:
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return list(dict.fromkeys(found))
 
 
 def clean_url(value: str) -> str:

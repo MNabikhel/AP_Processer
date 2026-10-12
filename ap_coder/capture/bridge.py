@@ -59,10 +59,10 @@ def vendor_record(store: Any, vendor_name: str | None) -> dict[str, Any] | None:
             "erp_id": rec.get("erp_id") or ""}  # fmt: skip
 
 
-def review_issues(capture: CaptureResult) -> list[tuple[str, str, str]]:
+def review_issues(capture: CaptureResult, assumed_currency: str | None = None) -> list[tuple[str, str, str]]:
     """(severity, code, message) for the review screen: header fields the readers could not confirm, totals that
     don't add up as printed, a PDF whose hidden text is not what its page shows, and a currency the page does not
-    show (the coding's is then assumed)."""
+    show (the coding's is then assumed: ``assumed_currency``, e.g. USD for a supplier with a US address)."""
     from ..validation import INFO, WARNING, currency_not_found
     from .confidence import LABELS
 
@@ -74,12 +74,14 @@ def review_issues(capture: CaptureResult) -> list[tuple[str, str, str]]:
     for c in capture.checks:  # the PDF's hidden text is not what its page shows (capture.text_layer_check)
         if c.get("code") == "TEXT_LAYER_MATCHES_PAGE" and not c.get("ok", True):
             out.append((WARNING, "TEXT_LAYER_MATCHES_PAGE", str(c.get("detail") or "")))
+        if c.get("code") == "LINE_ITEMS_AGREE" and not c.get("ok", True):  # OvisOCR2 and the table read differently
+            out.append((WARNING, "LINE_ITEMS_AGREE", f"line items read differently: {c.get('detail') or ''}"))
     if unsure:
         names = ", ".join(LABELS.get(f.field, f.field) for f in unsure)
         out.append((INFO, "CAPTURE_CHECK_FIELDS", f"check on the page: {names} (highlighted in amber)"))
     currency = capture.fields.get("currency")
     if currency is not None and not currency_read(currency):
-        issue = currency_not_found(str(currency.value or ""))
+        issue = currency_not_found(str(assumed_currency or currency.value or ""))
         out.append((issue.severity, issue.code, issue.message))
     return out
 

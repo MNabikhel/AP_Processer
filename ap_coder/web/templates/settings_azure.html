@@ -1,0 +1,56 @@
+{# Developer build only (AP_ALLOW_INTERNET=1): the Azure connection and its test. The offline build ignores these. #}
+<details class="card st-dev" id="azure"{% if azure.doctor.state != "idle" %} open{% endif %}>
+  <summary><span class="ms" aria-hidden="true">cloud</span>Developer: cloud services</summary>
+  <p class="muted">Used only in a developer build that may use the internet (AP_ALLOW_INTERNET=1). The offline build ignores
+    these settings. Saved on this computer, in <code>{{ azure.env_file }}</code>. Keys show only their last 4 characters:
+    leave a key field empty to keep it.</p>
+  <form method="post" action="/settings/reading/azure" class="stack" data-busy="Saving…">
+    <div class="st-grid">
+      <label class="field">Document Intelligence endpoint
+        <input type="text" name="di_endpoint" value="{{ azure.env.get('AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', '') }}" placeholder="https://<name>.cognitiveservices.azure.com/"></label>
+      <label class="field">Azure OpenAI endpoint
+        <input type="text" name="aoai_endpoint" value="{{ azure.env.get('AZURE_OPENAI_ENDPOINT', '') }}" placeholder="https://<name>.openai.azure.com/"></label>
+      <label class="field">Document Intelligence key
+        <input type="password" name="di_key" autocomplete="off" placeholder="{{ azure.di_key_hint }}"></label>
+      <label class="field">Azure OpenAI key
+        <input type="password" name="aoai_key" autocomplete="off" placeholder="{{ azure.aoai_key_hint }}"></label>
+      <label class="field">Document Intelligence model
+        <select name="di_model">{% for key, label in azure.di_models.items() %}<option value="{{ key }}"{% if key == azure.di_model %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="field">Azure OpenAI deployment name
+        <input type="text" name="deployment" value="{{ azure.env.get('AZURE_OPENAI_DEPLOYMENT', '') }}"></label>
+      <label class="field">Model behind the deployment
+        <input type="text" name="model_name" value="{{ azure.env.get('AZURE_OPENAI_MODEL_NAME', '') }}" placeholder="e.g. gpt-4o or gpt-4o-mini" title="Used to know whether the model can read images."></label>
+      <label class="field">API version
+        <input type="text" name="api_version" value="{{ azure.env.get('AZURE_OPENAI_API_VERSION', '') }}" title="Structured Outputs needs 2024-08-01-preview or later."></label>
+    </div>
+    <label class="check"><input type="checkbox" name="clear_keys" value="1"> Sign in with az login instead of keys (removes both keys)</label>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save Azure settings</button>
+  </form>
+
+  <div class="card-head st-sep">
+    <div>
+      <h4>Test the connection</h4>
+      <p class="muted">Sends one tiny made-up invoice to each service (a fraction of a cent) and checks everything else AP
+        Coder needs. Nothing from your invoices is sent.</p>
+    </div>
+    <form method="post" action="/settings/reading/azure-test" data-busy="Talking to Azure…">
+      <button class="btn" type="submit"{% if azure.doctor.state == "running" %} disabled{% endif %}><span class="ms" aria-hidden="true">play_arrow</span>Run the test</button>
+    </form>
+  </div>
+  {% set d = azure.doctor %}
+  {% if d.state == "running" %}<p class="muted">{{ d.note or "Talking to Azure…" }}</p>
+  {% elif d.state == "error" %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ d.error }}</div></div>
+  {% elif d.state == "done" and d.result %}
+  <div class="row">
+    {% if d.result.fails %}{{ ui.pill(d.result.fails | plural("problem"), "err", "error") }}{% else %}{{ ui.pill("Everything works", "ok", "check_circle") }}{% endif %}
+    {% if d.result.warns %}{{ ui.pill(d.result.warns ~ " to look at", "warn", "warning") }}{% endif %}
+    <span class="muted">tested at {{ d.result.when }}</span>
+  </div>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th></th><th>Check</th><th>Detail</th></tr></thead>
+      <tbody>{% for c in d.result.checks %}<tr><td>{{ ui.pill(c.status, c.tone) }}</td><td>{{ c.area }}</td><td class="w">{{ c.detail }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% endif %}
+</details>

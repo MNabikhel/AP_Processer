@@ -1,5 +1,3 @@
-azure-ai-documentintelligence>=1.0.0
-azure-identity>=1.17
 openpyxl>=3.1
 openai>=1.68
 pandas>=2.1
@@ -8,4 +6,7 @@ pillow-heif>=0.18  # an iPhone's HEIC/HEIF photos (pyproject: the ocr extra, wit
 pydantic>=2.6
 pymupdf>=1.24
 python-dotenv>=1.0
-streamlit>=1.62
+fastapi>=0.115,<1  # the dashboard (ap_coder/web), served on 127.0.0.1
+uvicorn>=0.30,<1
+jinja2>=3.1,<4
+python-multipart>=0.0.9,<1  # file uploads on Process invoices

@@ -28,7 +28,7 @@ def test_batch_totals_keep_currencies_apart(tmp_path):
 
 
 def test_by_currency_text():
-    from ap_coder.webapp.common import by_currency
+    from ap_coder.web.core import by_currency
 
     text = by_currency([{"currency": "USD", "grand_total": 10}, {"currency": "CAD", "grand_total": 5},
                         {"currency": "", "grand_total": 1}])  # fmt: skip
@@ -37,7 +37,7 @@ def test_by_currency_text():
 
 def test_every_recorded_action_has_an_activity_filter():
     from ap_coder.audit import ACTIONS
-    from ap_coder.webapp.activity import GROUPS
+    from ap_coder.web.pages.activity import GROUPS
 
     assert set(ACTIONS) <= {a for actions in GROUPS.values() for a in actions}
 

@@ -32,8 +32,8 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Lint
         run: |
-          ruff check ap_coder tests scripts streamlit_app.py
-          ruff format --check ap_coder tests scripts streamlit_app.py
+          ruff check ap_coder tests scripts
+          ruff format --check ap_coder tests scripts
       - name: Tests
         run: python -m pytest -q
 
@@ -80,24 +80,25 @@ jobs:
       - name: Self-test inside the installed environment
         shell: cmd
         run: .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
-      - name: Dashboard starts and serves the app
+      - name: The server starts and says who it is
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath '.venv\Scripts\python.exe' -ArgumentList '-m','ap_coder','dashboard','--port','8599' -PassThru -RedirectStandardOutput dash.out -RedirectStandardError dash.err
-          $ok = $false
+          $p = Start-Process -FilePath '.venv\Scripts\python.exe' -ArgumentList '-m','ap_coder','serve','--port','8599','--no-browser' -PassThru -RedirectStandardOutput dash.out -RedirectStandardError dash.err
+          $health = $null
           foreach ($i in 1..40) {
             Start-Sleep -Seconds 2
             try {
-              $r = Invoke-WebRequest -Uri 'http://localhost:8599/' -UseBasicParsing -TimeoutSec 5
-              if ($r.StatusCode -eq 200) { $ok = $true; break }
+              $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8599/healthz' -TimeoutSec 5
+              if ($health.app -eq 'ap-coder') { break }
             } catch { }
           }
-          Get-Content dash.err -ErrorAction SilentlyContinue | Select-Object -Last 20
-          $font = Invoke-WebRequest -Uri 'http://localhost:8599/app/static/InterVariable.woff2' -UseBasicParsing -TimeoutSec 10
+          Get-Content dash.out, dash.err -ErrorAction SilentlyContinue | Select-Object -Last 20
+          $page = Invoke-WebRequest -Uri 'http://127.0.0.1:8599/' -UseBasicParsing -TimeoutSec 10
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*streamlit*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-          if (-not $ok) { throw 'dashboard did not start' }
-          if ($font.StatusCode -ne 200) { throw 'static font not served' }
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*serve*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          if (-not $health -or $health.app -ne 'ap-coder') { throw 'the server did not answer /healthz' }
+          Write-Host "healthz: version $($health.version), folder $($health.folder)"
+          if ($page.StatusCode -ne 200) { throw 'the app page was not served' }
       - name: Fresh start keeps settings
         shell: pwsh
         run: |
@@ -169,7 +170,7 @@ jobs:
             $servers | Format-Table LocalAddress, LocalPort, OwningProcess | Out-String | Write-Host
             if (@($servers | Select-Object -ExpandProperty LocalPort -Unique).Count -ne 1) { throw "expected 1 dashboard server, found ports: $($servers.LocalPort -join ', ')" }
           } finally {
-            Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' -or $_.CommandLine -like '*launch.py*' } |
+            Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*launch.py*' } |
               ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
           }
       - name: One desktop shortcut, to APProcessor.bat
@@ -208,7 +209,7 @@ jobs:
           $out = Get-Content launch3.out -Raw -ErrorAction SilentlyContinue
           Write-Host $out
           Get-Content launch3.err -Tail 20 -ErrorAction SilentlyContinue
-          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' -or $_.CommandLine -like '*launch.py*' } |
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*launch.py*' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
           Write-Host "dashboard served after $seconds s"
           if (-not $ok) { throw 'the later start did not serve the dashboard within a minute' }
@@ -266,7 +267,7 @@ jobs:
           $out = Get-Content launch.out -Raw -ErrorAction SilentlyContinue
           Write-Host $out
           Get-Content launch.err -Tail 40 -ErrorAction SilentlyContinue
-          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' -or $_.CommandLine -like '*streamlit*' } |
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ap_coder*' } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
           if ($out -notmatch 'wheelhouse') { throw 'did not install from the wheelhouse' }
           if (-not $ok) { throw 'the offline install did not bring the dashboard up' }
@@ -331,13 +332,11 @@ jobs:
           HTTP_PROXY: http://127.0.0.1:9
           HTTPS_PROXY: http://127.0.0.1:9
           ALL_PROXY: http://127.0.0.1:9
-          http_proxy: http://127.0.0.1:9
-          https_proxy: http://127.0.0.1:9
-          all_proxy: http://127.0.0.1:9
           PIP_INDEX_URL: http://127.0.0.1:9/simple
           NO_PROXY: 127.0.0.1,localhost
-          no_proxy: 127.0.0.1,localhost
         run: |
+          # GitHub's env names are case-insensitive, so the lower-case copies (read by curl and some tools) are set here.
+          export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" all_proxy="$ALL_PROXY" no_proxy="$NO_PROXY"
           ./APProcessor.command --port 8596 > launch.out 2> launch.err &
           pid=$!
           ok=""
@@ -348,7 +347,7 @@ jobs:
           done
           cat launch.out
           tail -n 40 launch.err || true
-          pkill -f 'ap_coder|streamlit|launch\.py' || true
+          pkill -f 'ap_coder|launch\.py' || true
           if ! grep -q 'wheelhouse' launch.out; then echo 'did not install from the wheelhouse'; exit 1; fi
           if [ -z "$ok" ]; then echo 'the offline install did not bring the dashboard up'; exit 1; fi
           if ! grep -q 'Self-check OK' launch.out; then echo 'the readiness summary did not show the self-check OK'; exit 1; fi
@@ -361,11 +360,162 @@ jobs:
           HTTP_PROXY: http://127.0.0.1:9
           HTTPS_PROXY: http://127.0.0.1:9
           ALL_PROXY: http://127.0.0.1:9
-          http_proxy: http://127.0.0.1:9
-          https_proxy: http://127.0.0.1:9
-          all_proxy: http://127.0.0.1:9
           NO_PROXY: 127.0.0.1,localhost
-          no_proxy: 127.0.0.1,localhost
         run: |
+          # GitHub's env names are case-insensitive, so the lower-case copies (read by curl and some tools) are set here.
+          export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY" all_proxy="$ALL_PROXY" no_proxy="$NO_PROXY"
           .venv/bin/python scripts/fetch_models.py --check
           .venv/bin/python scripts/pilot_check.py
+
+  update-over-older-install:
+    # The update a pilot user does: AP Coder 0.1 is installed in folder A (its data inside it, in private/, a .env
+    # with a setting no longer used, its own .venv) and its dashboard is still running. The new version is unzipped
+    # into folder B (with a file an older version left there) and double-clicked. B must take over: stop the old
+    # dashboard, say it updated, check itself, move the data out of A into ~/APCoder, become the current install,
+    # remove A whole, remove the leftover file, and serve the new version.
+    # Run on all three systems: on Windows through APProcessor.bat (PowerShell finds the old dashboard by its port and
+    # ends it with taskkill), on a Mac through APProcessor.command (lsof).
+    name: Update over an older install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      AP_NO_PAUSE: "1"
+      AP_ALLOW_INTERNET: "1"  # B installs its packages from PyPI (no wheelhouse here); the bundle jobs run offline
+      BROWSER: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # AP Coder 0.1.0's code comes from the history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: AP Coder 0.1 in folder A, its data inside it
+        run: |
+          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -u "$RUNNER_TEMP")"; fi  # tar takes D: for a host
+          A="$T/AP Coder 0.1"
+          mkdir -p "$A"
+          old=""
+          for c in $(git log --format=%H -- pyproject.toml); do
+            if git show "$c:pyproject.toml" | grep -q '^version = "0.1.0"'; then old="$c"; break; fi
+          done
+          if [ -z "$old" ]; then echo 'no AP Coder 0.1.0 in the history'; exit 1; fi
+          echo "AP Coder 0.1.0: $old"
+          git archive "$old" | tar -x -C "$A"
+          echo '{"app": "AP Coder", "version": "0.1.0", "built": "2026-09-01T10:00:00"}' > "$A/bundle_manifest.json"
+          python -m venv "$A/.venv"
+          mkdir -p "$A/private/invoices"
+          echo "an invoice" > "$A/private/invoices/a.pdf"
+          cp "$A/samples/pacific_BC_GST_PST_PO-77120.pdf" "$A/private/invoices/b.pdf"
+          # Its database: invoices record their file by absolute path, a demo invoice in A/samples, one in A/private.
+          python - "$A" <<'EOF'
+          import hashlib, sqlite3, sys
+          from pathlib import Path
+          a = Path(sys.argv[1]).resolve()
+          c = sqlite3.connect(a / "private" / "ap_coder.db")
+          c.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+          c.execute("INSERT INTO settings VALUES ('schema_version', '14')")
+          c.execute("CREATE TABLE invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, source_path TEXT NOT NULL, "
+                    "file_name TEXT NOT NULL, file_sha256 TEXT, status TEXT NOT NULL, vendor_name TEXT, vendor_key TEXT, "
+                    "invoice_number TEXT, invoice_date TEXT, currency TEXT, grand_total REAL, model_confidence REAL, "
+                    "adjusted_confidence REAL, requires_review INTEGER, ai_output TEXT, final_output TEXT, validation TEXT, "
+                    "extraction_md TEXT, meta TEXT, edits TEXT, error TEXT, created_at TEXT NOT NULL, reviewed_at TEXT, "
+                    "reviewer TEXT, export_batch INTEGER, po_key TEXT NOT NULL DEFAULT '', due_date TEXT, "
+                    "second_reviewer TEXT, second_reviewed_at TEXT, parked_reason TEXT, follow_up TEXT)")
+          for path, demo in ((a / "samples" / "northwind_ON_HST_NW-2026-0912.pdf", True), (a / "private" / "invoices" / "b.pdf", False)):
+              sha = hashlib.sha256(path.read_bytes()).hexdigest()
+              meta = '{"demo": true}' if demo else "{}"
+              c.execute("INSERT INTO invoices (source_path, file_name, file_sha256, status, meta, created_at) VALUES "
+                        "(?, ?, ?, 'review', ?, '2026-09-02T10:00:00')", (str(path), path.name, sha, meta))
+          c.commit()
+          EOF
+          printf 'AP_REVIEWER=Ann\nAP_PAGE_READER=on\n' > "$A/.env"
+          # Written by Python: a Windows path's backslashes are not valid in JSON written by printf.
+          python -c "import json, pathlib, sys; h = pathlib.Path.home() / '.ap_coder'; h.mkdir(exist_ok=True); (h / 'settings.json').write_text(json.dumps({'data_dir': str(pathlib.Path(sys.argv[1]).resolve() / 'private'), 'desktop_shortcut': True}))" "$A"
+      - name: The new version unzipped into folder B
+        run: |
+          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -u "$RUNNER_TEMP")"; fi  # tar takes D: for a host
+          B="$T/AP Coder 0.2"
+          mkdir -p "$B"
+          git archive HEAD | tar -x -C "$B"
+          python scripts/build_offline_bundle.py --manifest-for "$B"
+          echo "left by an older version" > "$B/ap_coder/stale_module.py"
+      # One step from here on: a process started in the background may not outlive its step on Windows.
+      - name: A's dashboard running; double-click B; double-click B again
+        run: |
+          T="$RUNNER_TEMP"; if [ "$RUNNER_OS" = Windows ]; then T="$(cygpath -u "$RUNNER_TEMP")"; fi  # tar takes D: for a host
+          A="$T/AP Coder 0.1"
+          B="$T/AP Coder 0.2"
+          # Its Streamlit dashboard: the font only AP Coder 0.1 serves, run as "streamlit run <A>/ap_coder/dashboard.py".
+          mkdir -p "$T/bin"
+          cat > "$T/bin/streamlit" <<'EOF'
+          import http.server, sys
+          class H(http.server.BaseHTTPRequestHandler):
+              def log_message(self, *a): pass
+              def do_GET(self):
+                  self.send_response(200 if self.path == "/app/static/InterVariable.woff2" else 404)
+                  self.end_headers()
+          http.server.HTTPServer(("127.0.0.1", int(sys.argv[-1])), H).serve_forever()
+          EOF
+          nohup python "$T/bin/streamlit" run "$A/ap_coder/dashboard.py" --server.port 8501 > "$T/old.log" 2>&1 &
+          echo $! > "$T/old.pid"
+          for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8501/app/static/InterVariable.woff2 && break; sleep 1; done
+          curl -fsS -o /dev/null http://127.0.0.1:8501/app/static/InterVariable.woff2
+          # The double-click: APProcessor.bat on Windows, APProcessor.command elsewhere.
+          launch() { if [ "$RUNNER_OS" = Windows ]; then cmd //c "APProcessor.bat $*"; else ./APProcessor.command "$@"; fi; }
+          cd "$B"
+          launch --port 8597 > "$T/launch.out" 2>&1 &
+          health=""
+          for _ in $(seq 1 180); do
+            sleep 5
+            if health="$(curl -fsS --max-time 5 http://127.0.0.1:8597/healthz)"; then break; fi
+            health=""
+          done
+          cat "$T/launch.out"
+          if [ -z "$health" ]; then echo 'the new version did not start'; exit 1; fi
+          echo "healthz: $health"
+          curl -fsS -o /dev/null http://127.0.0.1:8597/  # opens the database (backed up before it is brought up to date)
+          fail() { echo "FAILED: $*"; exit 1; }
+          out="$T/launch.out"
+          grep -q 'Updated AP Coder from 0.1.0' "$out" || fail 'it did not say it updated from 0.1.0'
+          grep -q 'Self-check OK' "$out" || fail 'the self-check did not run (or failed)'
+          grep -q 'stopping it, so this version takes over' "$out" || fail 'the old dashboard was not noticed'
+          grep -q 'Removed the older AP Coder folder' "$out" || fail 'the old folder was not removed'
+          grep -q 'Removed 1 file the older version left' "$out" || fail 'the leftover file was not removed'
+          if kill -0 "$(cat "$T/old.pid")" 2>/dev/null; then fail 'the old dashboard still runs'; fi
+          if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:8501/app/static/InterVariable.woff2; then fail 'port 8501 still serves the old dashboard'; fi
+          [ ! -e "$A" ] || fail "the old folder is still there: $(ls -a "$A")"
+          [ ! -e "$B/ap_coder/stale_module.py" ] || fail 'the leftover file is still there'
+          test -f ~/APCoder/ap_coder.db || fail 'the database was not moved to ~/APCoder'
+          test -f ~/APCoder/invoices/a.pdf || fail 'the invoices were not moved to ~/APCoder'
+          grep -q '^# no longer used (AP Coder 0.2): AP_PAGE_READER=on' ~/APCoder/.env || fail 'the retired setting was not commented out'
+          grep -q '^AP_REVIEWER=Ann' ~/APCoder/.env || fail 'the settings file was not kept'
+          ls ~/APCoder/backups/ap_coder-*-before-update-from-schema-14.db || fail 'the database was not backed up before the update'
+          # Every invoice still has its file (they pointed into the old folder, now deleted), and its page shows.
+          python -c "import sqlite3, pathlib as p; rows = sqlite3.connect(p.Path.home() / 'APCoder' / 'ap_coder.db').execute('SELECT id, source_path FROM invoices').fetchall(); print(rows); assert len(rows) == 2 and all(p.Path(f).is_file() for _, f in rows), rows" || fail 'an invoice has no file after the update'
+          for id in 1 2; do
+            type="$(curl -fsS -o /dev/null -w '%{content_type}' "http://127.0.0.1:8597/review/$id/page/1.png")" || fail "invoice $id: its page picture is not served"
+            [ "$type" = "image/png" ] || fail "invoice $id: its page picture is $type, not image/png"
+          done
+          python - "$B" "$health" <<'EOF'
+          import json, os, sys
+          from pathlib import Path
+          folder, health = Path(sys.argv[1]).resolve(), json.loads(sys.argv[2])
+          settings = json.loads((Path.home() / ".ap_coder" / "settings.json").read_text())
+          assert Path(settings["current"]).resolve() == folder, settings
+          assert [Path(e["folder"]).resolve() for e in settings["installs"]] == [folder], settings
+          assert Path(settings["data_dir"]).resolve() == (Path.home() / "APCoder").resolve(), settings
+          assert health["version"] == "0.2.0" and Path(health["folder"]).resolve() == folder, health
+          print("record and server: OK")
+          EOF
+          # A second double-click opens the running one.
+          out="$(launch --port 8597 2>&1)"
+          echo "$out"
+          echo "$out" | grep -q 'already running' || { echo 'it did not open the running one'; exit 1; }
+          if echo "$out" | grep -Eq 'stopping it|Updated AP Coder'; then echo 'it stopped or updated itself'; exit 1; fi
+          pkill -f 'ap_coder|launch\.py' || true

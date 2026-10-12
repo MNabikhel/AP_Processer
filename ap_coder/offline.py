@@ -42,6 +42,13 @@ _PPOCRV5_FALLBACK = (
 )  # fmt: skip
 _FALLBACK_BASE = "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.4.0/"
 
+# The table finder (capture/table_finder.py): RapidAI's YOLOv8n "general6" page layout model (RapidLayout, Apache-2.0),
+# 12 MB. Like the OCR models it comes in the offline bundle's models/ folder and is never downloaded by the app.
+TABLE_FINDER_NAME = "yolov8n_layout_general6.onnx"
+TABLE_FINDER_URL = "https://www.modelscope.cn/models/RapidAI/RapidLayout/resolve/v1.2.0/onnx/360/" + TABLE_FINDER_NAME
+TABLE_FINDER_SHA256 = "927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95"
+TABLE_FINDER_ENV = "AP_TABLE_FINDER_MODEL"  # a path to the model file elsewhere (still checked against its SHA-256)
+
 # The one opt-in to the internet, for developers and the bundle builder (scripts/build_offline_bundle.py):
 # AP_ALLOW_INTERNET=1 lets the setup download packages from PyPI, the OCR models, git updates and Python.
 INTERNET_ENV = "AP_ALLOW_INTERNET"
@@ -59,6 +66,26 @@ def internet_allowed() -> bool:
 def allow_internet() -> None:
     """Opt in for this process and the ones it starts (the bundle builder, scripts/build_offline_bundle.py)."""
     os.environ[INTERNET_ENV] = "1"
+
+
+# Azure Document Intelligence (an optional check of the local reading, switched on in the settings) and Azure
+# OpenAI's sign-in: never needed to install or start AP Coder. Their packages are the optional ``azure`` extra
+# (pyproject): the offline bundle carries its wheels and the launcher installs them from there when it can, but a
+# computer without them runs as before. Only code that is switched on to use Azure needs them (import_azure).
+AZURE_UNAVAILABLE = "Azure check is off or its package isn't installed"
+
+
+def import_azure(module: str):
+    """``module`` (e.g. ``azure.identity``), or a plain RuntimeError when the Azure packages are not installed."""
+    import importlib
+
+    try:
+        return importlib.import_module(module)
+    except ImportError:
+        raise RuntimeError(
+            f"{AZURE_UNAVAILABLE} ({module} is missing). Invoices are still read and coded on this computer; the "
+            "offline bundle's wheelhouse carries the Azure packages (double-click APProcessor to install them)."
+        ) from None
 
 
 @dataclass(frozen=True)
@@ -196,6 +223,47 @@ def ppocrv5_ready() -> bool:
     return not missing
 
 
+# --- The table finder's model ------------------------------------------------------------------------------------
+
+
+def table_finder_file() -> ModelFile:
+    return ModelFile(TABLE_FINDER_NAME, TABLE_FINDER_URL, TABLE_FINDER_SHA256)
+
+
+def bundle_models() -> tuple[ModelFile, ...]:
+    """Every model file the offline bundle carries in its models/ folder: the OCR models and the table finder."""
+    return (*ppocrv5_files(), table_finder_file())
+
+
+def table_finder_dirs() -> list[Path]:
+    """Where the table finder's model is looked for: the offline bundle's models/ folder (unzipped with the app), then
+    the data folder's models/ folder."""
+    from .paths import PROJECT_DIR, private_dir
+
+    return [PROJECT_DIR / "models", private_dir() / "models"]
+
+
+def table_finder_path() -> Path | None:
+    """The table finder's model on this computer, intact (its SHA-256 checked once per file version), or None: the
+    path in ``AP_TABLE_FINDER_MODEL``, else the first of :func:`table_finder_dirs` that has it. Never downloaded."""
+    from .paths import env_path
+
+    chosen = env_path(TABLE_FINDER_ENV)
+    candidates = [chosen] if chosen else [folder / TABLE_FINDER_NAME for folder in table_finder_dirs()]
+    for path in candidates:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if path.is_file() and stat.st_size and _sha256_once(path, stat) == TABLE_FINDER_SHA256:
+            return path
+    return None
+
+
+def onnxruntime_installed() -> bool:
+    return _package_dir("onnxruntime") is not None and _package_dir("numpy") is not None
+
+
 # --- Dashboard network settings ---------------------------------------------------------------------------------
 
 
@@ -212,22 +280,6 @@ def is_loopback(address: str) -> bool:
         return ipaddress.ip_address(address).is_loopback
     except ValueError:
         return False
-
-
-def streamlit_flags(port: int, address: str | None = None) -> list[str]:
-    """The Streamlit settings ``python -m ap_coder dashboard`` starts with: listen locally, no usage
-    statistics, no e-mail prompt, assets served from the package (nothing loaded from the internet)."""
-    address = address or dashboard_address()
-    browser = "localhost" if address in ("0.0.0.0", "::") else address  # the browser opens this address
-    return [
-        "--server.port", str(port), "--server.address", address, "--browser.serverAddress", browser,
-        "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
-        "--server.enableStaticServing", "true", "--server.showEmailPrompt", "false",
-    ]  # fmt: skip
-
-
-def _flag(flags: list[str], name: str) -> str | None:
-    return flags[flags.index(name) + 1] if name in flags and flags.index(name) + 1 < len(flags) else None
 
 
 # --- doctor -------------------------------------------------------------------------------------------------------
@@ -251,6 +303,12 @@ def offline_checks() -> list[tuple[str, str, str]]:
                     "copy them from the offline bundle: python scripts/fetch_models.py"))  # fmt: skip
     if not v4 and not v5:
         out.append(("OCR", WARN, "no local OCR: scanned invoices and photos can't be read here (text PDFs can)"))
+    if table_finder_path() is not None and onnxruntime_installed():
+        out.append(("table finder", PASS, f"{TABLE_FINDER_NAME} present"))
+    else:
+        why = "ONNX Runtime not installed" if not onnxruntime_installed() else f"{TABLE_FINDER_NAME} missing"
+        out.append(("table finder", WARN, f"{why}: line items are read without it; it comes with the offline "
+                                          "bundle's models folder"))  # fmt: skip
 
     from .paths import private_dir
 
@@ -266,14 +324,10 @@ def offline_checks() -> list[tuple[str, str, str]]:
         status, detail = FAIL, f"not writable ({type(exc).__name__})"
     out.append(("data folder", status, detail))
 
-    flags = streamlit_flags(8501)
-    address = _flag(flags, "--server.address") or ""
-    stats = _flag(flags, "--browser.gatherUsageStats")
-    if not is_loopback(address):
+    address = dashboard_address()
+    if not is_loopback(address if address not in ("", "localhost") else "127.0.0.1"):
         detail = f"listens on {address} ({ADDRESS_ENV}): others on the network can open it"
         out.append(("dashboard network", WARN, detail))
-    elif stats != "false":
-        out.append(("dashboard network", FAIL, "Streamlit usage statistics are not switched off"))
     else:
         detail = "this computer only; no usage statistics; fonts and icons served locally"
         out.append(("dashboard network", PASS, detail))

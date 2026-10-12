@@ -117,6 +117,19 @@ def self_problem(root: Path = ROOT) -> str:
     return found
 
 
+def registered_version(root: Path = ROOT) -> str:
+    """The version pip recorded for ap_coder installed (editable) from ``root`` ("" when it is not). After a newer
+    version is unzipped over the folder it still says the older one until ap_coder is registered again."""
+    for dist in importlib.metadata.distributions(name="ap-coder"):
+        try:
+            url = json.loads(dist.read_text("direct_url.json") or "{}").get("url", "")
+            if url.startswith("file:") and file_url_path(url).resolve() == root.resolve():
+                return dist.version or ""
+        except (ValueError, OSError):
+            continue
+    return ""
+
+
 def problems(extras: tuple[str, ...] | list[str] = ()) -> list[str]:
     found = [p for p in (problem(r) for r in requirements(extras=extras)) if p]
     return found + [p for p in (self_problem(),) if p]

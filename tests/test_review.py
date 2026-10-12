@@ -1,4 +1,4 @@
-"""Dashboard edit -> InvoiceCoding conversion (the Streamlit grids hand back DataFrames)."""
+"""Review screen edits -> InvoiceCoding conversion (the grids are read as DataFrames)."""
 
 import math
 

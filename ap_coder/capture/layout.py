@@ -257,7 +257,28 @@ def ocr_image(png_bytes: bytes, number: int, engine: str | None = None) -> PageL
         ys = [p[1] for p in quad]
         x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
         words.extend(_split_ocr_line(str(text), x0, y0, x1, y1, float(score), width, height, number))
-    return PageLayout(number, float(width), float(height), words, group_lines(words, number))
+    page = PageLayout(number, float(width), float(height), words, group_lines(words, number))
+    page.skew = _skew(result or [], width, height)
+    return page
+
+
+def _skew(result: Any, width: float, height: float) -> float:
+    """The page's tilt from the OCR's text lines (each a four-cornered box along its text): the median slope of the
+    long ones' top edges, as fractions of the page (down per across); 0 when there are too few to tell."""
+    slopes = []
+    for quad, text, _score in result:
+        try:
+            (ax, ay), (bx, by) = quad[0][:2], quad[1][:2]
+        except (TypeError, ValueError, IndexError):
+            continue
+        run = float(bx) - float(ax)
+        tall = max(float(p[1]) for p in quad) - min(float(p[1]) for p in quad)
+        if run > 0 and len(str(text)) >= 6 and run >= 4 * max(tall, 1.0):
+            slopes.append((float(by) - float(ay)) / run)
+    if len(slopes) < 5:
+        return 0.0
+    slope = statistics.median(slopes)
+    return slope * width / max(height, 1.0) if abs(slope) <= 0.07 else 0.0  # within 4 degrees: a tilt, not a turn
 
 
 def _split_ocr_line(text: str, x0: float, y0: float, x1: float, y1: float, score: float, width: float,
@@ -293,23 +314,43 @@ def _image_pngs(path: Path, max_pages: int) -> list[bytes]:
     resolution it was scanned at (at most ``OCR_MAX_SIDE``), turned upright as its EXIF says."""
     if path.suffix.lower() == ".png":
         return [path.read_bytes()]
-    import io
-
-    from PIL import Image, ImageOps, ImageSequence
+    from PIL import ImageOps, ImageSequence
 
     out = []
     with open_image(path) as img:
         for i, frame in enumerate(ImageSequence.Iterator(img)):
             if i >= max_pages:
                 break
-            pic = _on_paper(ImageOps.exif_transpose(frame.copy()))
-            scale = OCR_MAX_SIDE / max(pic.width, pic.height, 1)
-            if scale < 1:
-                pic = pic.resize((max(1, round(pic.width * scale)), max(1, round(pic.height * scale))), Image.LANCZOS)
-            buf = io.BytesIO()
-            pic.save(buf, "PNG")
-            out.append(buf.getvalue())
+            out.append(_picture_png(ImageOps.exif_transpose(frame.copy())))
     return out
+
+
+def _picture_png(picture: Any) -> bytes:
+    """A page's picture (upright) as OCR reads it: on white paper, its long side at most ``OCR_MAX_SIDE``, PNG."""
+    import io
+
+    from PIL import Image
+
+    pic = _on_paper(picture)
+    scale = OCR_MAX_SIDE / max(pic.width, pic.height, 1)
+    if scale < 1:
+        pic = pic.resize((max(1, round(pic.width * scale)), max(1, round(pic.height * scale))), Image.LANCZOS)
+    buf = io.BytesIO()
+    pic.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _scan_png(doc: Any, page: Any) -> bytes:
+    """The image OCR reads for a PDF page without text: for a PDF AP Coder made from a photo or a scan
+    (``intake.py``), that picture's own pixels, as OCR read the picture before it was converted; any other page
+    rendered at ``OCR_DPI``."""
+    from ..intake import made_from_picture, page_picture
+
+    if made_from_picture(doc):
+        picture = page_picture(doc, page)
+        if picture is not None:
+            return _picture_png(picture)
+    return _page_png(page)
 
 
 def _page_png(page: Any, dpi: int = OCR_DPI) -> bytes:
@@ -401,7 +442,7 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 sources.add("di")
             elif use_ocr:
                 try:
-                    pages.append(ocr_image(_page_png(page), number))
+                    pages.append(ocr_image(_scan_png(doc, page), number))
                     sources.add("ocr")
                 except Exception as exc:  # a page OCR cannot read is reported as empty, never fatal
                     log.warning("%s page %d: OCR failed (%s)", path.name, number, exc)
@@ -480,5 +521,5 @@ def second_read_layout(path: str | Path, max_pages: int = 20) -> DocLayout | Non
                     break
                 if len(_text_layer_page(page, i + 1).words) >= MIN_TEXT_WORDS:
                     return None  # a text PDF: the text layer is exact
-                pages.append(ocr_image(_second_image(_page_png(page)), i + 1, second_engine_name()))
+                pages.append(ocr_image(_second_image(_scan_png(doc, page)), i + 1, second_engine_name()))
     return DocLayout(pages, "ocr")

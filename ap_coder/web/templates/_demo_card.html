@@ -1,0 +1,25 @@
+{# Load or remove the demo invoices (the bundled samples, already read and coded).
+   Needs: demo_available, demo_count, where (the page to come back to: "/process" or "/review"). #}
+{% if demo_available %}
+<section class="card">
+  <h4>Demo invoices</h4>
+  {% if not demo_count %}
+  <p class="muted">Look around first: ten sample invoices from across Canada (including a US vendor and a credit note)
+    are added already read and coded, including a few realistic mistakes to correct, plus sample purchase orders and a
+    sample vendor list. Uses the sample GL accounts if you haven't imported yours.</p>
+  <form method="post" action="/demo/load" data-busy="Loading the demo invoices…">
+    <input type="hidden" name="back" value="{{ where }}">
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Load demo invoices</button>
+  </form>
+  {% else %}
+  <p class="muted">{{ demo_count | plural("demo invoice") }} loaded. Removing them also forgets what the AI learned from
+    them, and removes the sample purchase orders and vendor list loaded with them; your own invoices, POs, vendors and
+    settings are untouched.</p>
+  <form method="post" action="/demo/remove" class="stack">
+    <input type="hidden" name="back" value="{{ where }}">
+    <label class="check"><input type="checkbox" name="sure" value="1" required data-enables> Yes, remove the demo invoices</label>
+    <div><button class="btn" type="submit" disabled><span class="ms" aria-hidden="true">delete_sweep</span>Remove demo invoices</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endif %}

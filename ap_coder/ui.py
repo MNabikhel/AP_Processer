@@ -1,7 +1,7 @@
-"""HTML building blocks for the dashboard (styled by assets/style.css).
+"""HTML building blocks for the dashboard (styled by web/static/app.css; templates call them as ``ui.*``).
 
 Pure functions returning HTML strings, so they can be unit-tested. Every piece of data is
-escaped; icons use the Material Symbols font that Streamlit already loads.
+escaped; icons use the Material Symbols font the dashboard serves from ap_coder/static.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Any
 
 # Categorical palette (dataviz reference palette, fixed order).
 SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")
-# Status colours (style.css --lg-success / --lg-warning / --lg-danger / --lg-accent; BRAND = theme.toml primaryColor).
+# Status colours (web/static/app.css --lg-success / --lg-warning / --lg-danger / --lg-accent; BRAND is the accent).
 OK, WARN, ERR, BRAND = "#15803d", "#b45309", "#b91c1c", "#2563eb"
 INK = "#0f172a"
 TRACK = "#eef0f3"  # the empty part of a bar or gauge (--lg-hairline)
@@ -84,7 +84,7 @@ def confidence_color(value: float, threshold: float = 0.85) -> str:
 
 def ring(value: float, size: int = 64, stroke: int = 7, color: str = BRAND, track: str = TRACK,
          text_color: str = INK, label: str | None = None) -> str:  # fmt: skip
-    """Donut gauge for a single 0..1 value (pure CSS: inline SVG is stripped by Streamlit's sanitiser)."""
+    """Donut gauge for a single 0..1 value (pure CSS, no SVG)."""
     value = max(0.0, min(1.0, value or 0.0))
     text = label if label is not None else f"{value:.0%}"
     style = (
@@ -95,7 +95,7 @@ def ring(value: float, size: int = 64, stroke: int = 7, color: str = BRAND, trac
 
 
 def svg_img(svg: str, width: int, height: int, alt: str = "") -> str:
-    """Embed SVG as an image (Streamlit strips inline <svg>)."""
+    """Embed SVG as an image (a data URI: the markup around it stays plain HTML)."""
     data = base64.b64encode(svg.strip().encode("utf-8")).decode("ascii")
     hidden = "" if alt else " aria-hidden='true'"
     return (

@@ -1,8 +1,8 @@
-"""Make untrusted text safe for the places it ends up: spreadsheets and Markdown.
+"""Make untrusted text safe for the places it ends up: spreadsheets (and amounts read from them).
 
 Vendor names, descriptions and invoice numbers come from documents and uploaded files. In a CSV or
 Excel file, a cell starting with ``=``, ``+``, ``-``, ``@`` (or a tab / carriage return) can run as a
-formula when opened in Excel; in Streamlit Markdown, ``[text](url)`` becomes a clickable link.
+formula when opened in Excel. (On the dashboard, every text is HTML-escaped by its templates.)
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from typing import Any
 
 FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 _NUMBER = re.compile(r"^[+-]?(\d[\d,]*)?(\.\d+)?$")
-_MARKDOWN = re.compile(r"([\\`*_{}\[\]()#+!|<>~:$-])")
 
 
 def csv_cell(value: Any) -> Any:
@@ -44,11 +43,6 @@ def neutralise_sheet(ws: Any) -> None:
             if isinstance(cell.value, str) and cell.value.startswith(FORMULA_START):
                 cell.data_type = "s"
                 cell.quotePrefix = True
-
-
-def md(text: Any) -> str:
-    """Text shown through st.markdown / st.caption / toasts, with Markdown syntax made literal."""
-    return _MARKDOWN.sub(r"\\\1", str(text if text is not None else ""))
 
 
 _CURRENCY = re.compile(r"(?i)(cad|usd|eur|\$|€|£)")

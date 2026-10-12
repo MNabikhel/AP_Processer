@@ -15,7 +15,8 @@ No single reader is right on every invoice. Accuracy comes from three things tog
      [The page reader](#the-page-reader-a-vision-model-as-a-second-reader) below);
    - the AI coder's answer, located back on the page;
    - Azure Document Intelligence `prebuilt-invoice` fields, only in a developer build with the internet
-     allowed (`AP_ALLOW_INTERNET=1`).
+     allowed (`AP_ALLOW_INTERNET=1`), or afterwards as the optional
+     [Azure check](#the-azure-check-an-optional-second-opinion) (off by default).
 2. **Checks that cannot be fooled by a misread:**
    - subtotal + taxes = total, and the lines add up to the subtotal;
    - tax = rate × taxable amount, at the official rate for the province;
@@ -40,15 +41,19 @@ company-wide switch and the invoices that always go to a person.
 There is one reading pipeline, with nothing to configure (`ap_coder/reading.py`; Settings → Reading shows
 each reader's state):
 
-1. the PDF's own text layer where the page has one, local OCR (two engines) where it has not (scans,
-   photos, iPhone HEIC);
+1. every invoice is a PDF: a photo or a scanned picture is made into one when it comes in (see
+   [Pictures become PDFs](#pictures-become-pdfs-and-line-items-read-with-the-table-finder)); the PDF's own text
+   layer where the page has one, local OCR (two engines) where it has not (scans, photos, iPhone HEIC); the
+   table finder finds the line table on each page;
 2. OvisOCR2 reads every page of every invoice in the background, as an independent second reader, once it
    has passed its own self-test;
 3. the rule reader, the supplier's template and the business checks compare the readers: a field they
    agree on can be *verified*, one they read differently is *check*;
 4. on a digital PDF, the hidden text layer is compared with the page as OvisOCR2 sees it printed
    (`TEXT_LAYER_MATCHES_PAGE`);
-5. no invoice is approved without a person before OvisOCR2 has read it.
+5. the line items read from the page are compared row by row with OvisOCR2's reading of the same table
+   (`LINE_ITEMS_AGREE`);
+6. no invoice is approved without a person before OvisOCR2 has read it.
 
 The settings that used to choose a reading mode (`AP_PAGE_READER`, `AP_PAGE_READER_SCOPE`,
 `AP_LLM_PROVIDER`, the model pickers) are gone; an older `.env` that still has them is ignored.
@@ -299,7 +304,10 @@ Automation):
 - **Always a person** (`touchless_gates`), even for a touchless vendor: a changed bank account or GST/HST number, any
   duplicate signal (`DUPLICATE_INVOICE`, `DUPLICATE_IN_ERP`, `DUPLICATE_OTHER_VENDOR`, `POSSIBLE_DUPLICATE_AMOUNT`), an
   unusual amount (`AMOUNT_UNUSUAL`: over 3× the vendor's median approved total), a vendor on hold or not in an imported
-  vendor master, a credit note, a total over the touchless limit (setting `touchless_limit`, default 5,000.00 CAD; a
+  vendor master, a vendor name with no approved invoice yet (`VENDOR_NEW`) or not in the vendor master though its
+  GST/HST number is (`VENDOR_MATCHED_BY_TAX_NUMBER`): a supplier's record is kept by its business number, so another
+  name printing it does not inherit it, a purchase-order exception (`PO_UNKNOWN`, `PO_CLOSED`, `PO_VENDOR_MISMATCH`,
+  `PO_LINE_NOT_ON_PO`, `PO_PRICE_OVER`, `PO_QTY_OVER`, `PO_NOT_RECEIVED`, `PO_OVER_BILLED`), a credit note, a total over the touchless limit (setting `touchless_limit`, default 5,000.00 CAD; a
   foreign currency is converted at the Settings → Review exchange rates; with no rate for it, it goes to a person), a
   total over the second-approver limit, an invoice the page reader has not read yet (or not every page of it), and a
   text file (.md, .txt), which the page reader cannot look at. On top of these, as before,
@@ -396,6 +404,77 @@ A digital sample PDF (2 pages, 18 minutes): OvisOCR2 read all 24 of its figures 
 were read the same by both, and a field they read differently is marked *Check*. Both stayed in review: touchless
 processing is off, and neither vendor has a record yet.
 
+## Pictures become PDFs, and line items read with the table finder
+
+**Every invoice is a PDF** (`ap_coder/intake.py`). A JPEG, PNG, iPhone HEIC/HEIF, TIFF (every frame) or BMP that
+comes in (upload, invoices folder, email attachment, `process`/`watch`) is made into a PDF first
+(`InvoicePipeline.process`): one page a picture, upright as its EXIF says, at its resolution (a believable DPI gives
+the page its size, else a letter-sized page). A JPEG goes in as it is, turned by the page's `/Rotate`; PNG, TIFF and
+BMP losslessly; HEIC (which a PDF can't hold) as a quality-95 JPEG. The invoice is stored, read, shown and stamped as
+the PDF; the picture moves to `originals/` beside it, and the PDF's metadata records its name, SHA-256 and where it
+was kept (`intake.original_of`). `invoices.original_sha256` keeps the picture's hash, so `Store.find_by_hash` finds
+the same photo sent twice (upload, folder or `watch`). OCR of a converted page reads the picture's own pixels
+(`layout._scan_png`), not a re-rendering: the text read is the same as before the conversion. A picture stored by an
+older version and read again by the page reader stays where it is.
+
+**The table finder** (`capture/table_finder.py`) is RapidAI's YOLOv8n "general6" layout model, as CloseDesk uses
+it (12 MB ONNX, Apache-2.0, SHA-256 `927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95`). It ships in
+the offline bundle's `models/` folder (`offline.bundle_models`, `scripts/build_offline_bundle.py`), is looked for
+there or in the data folder's `models/`, checked against its SHA-256, and never downloaded by the app. It looks at
+every page (digital PDFs rendered too) and returns the tables on it (score ≥ 0.25, overlapping finds merged).
+Without it, line items are read as before and Settings → Reading shows its row as missing.
+
+**Line items, read three ways from the page** (`capture/__init__._page_lines`), best first:
+1. the words inside the tables found (`reader.inside_tables`): a note or remittance box beside the rows is left out;
+2. the words under the column headings across the page (the reading as before);
+3. on a digital PDF, the PDF's own table (`capture/tables.py`, the essentials of CloseDesk's `pdf_layout.py`):
+   columns from the lines drawn down the table, or the strips no row writes across, named by their headings; a line
+   without an amount under a line item is the rest of its description.
+
+The first that adds up to the subtotal is kept. All of them read the rows on the page straightened: a scan's tilt
+is measured from the OCR's own text lines (`PageLayout.skew`), and at 1.4° a row's description sits a whole row
+away from its amount. A found table whose headings OCR can't read (bilingual headings run together) is read by its
+amount column (`reader._headerless_rows`). Sentences under a table that reach the amount column ("subject to GST 5%")
+and a total row whose label OCR lost are no longer read as lines.
+
+Camelot (CloseDesk's other table reader) is not used: it installs from wheels for Python 3.11-3.14 on Windows and
+macOS, but it needs `opencv-python-headless`, which can't sit beside the `opencv-python` the OCR engines need (both
+are the `cv2` module), and adds about 45 MB a platform to the bundle.
+
+**In tandem with OvisOCR2** (`capture/line_items.py`). Once OvisOCR2 has read the invoice, its table is compared row
+by row with the page's readings: the same amount, the same quantity when both read one, and descriptions at least
+60% alike (letters, or one's words all in the other: OCR runs words together, a code may be in one only). The first
+reading of the page that agrees marks every line *agreed* (`LineReading.agreed`, with `source` saying whose row it
+is); none agreeing fails `LINE_ITEMS_AGREE` with the first line read differently. A failed `LINE_ITEMS_AGREE` is a
+failed check like any other: the invoice is not approved without a person (`should_auto_approve`; it is not one of
+`HEADER_PROVEN_SOFT`). When only one side read line items there is nothing to compare and no check. The review
+screen says where the lines came from and whether two readers agree.
+
+**Measured.** The benchmark (no page reader, so the readers of the page alone), on the same invoices before and after,
+with the table finder:
+
+| test set | header-field accuracy | verified coverage | invoices fully right | line items found (recall) | line items returned that are right (precision) |
+| --- | --- | --- | --- | --- | --- |
+| 100 scans (seed 41) | 99.7% → 99.7% | 47.0% → **50.1%** | 96.0% → 96.0% | 89.9% → **98.3%** | 89.3% → **99.3%** |
+| 300 digital PDFs (seed 211) | 99.9% → 99.9% | 55.6% → 55.8% | 98.7% → 98.7% | 98.2% → **99.7%** | 96.8% → **99.8%** |
+
+No header field read worse, field by field; *verified* values stayed 100% right (more of them, as lines that add up
+confirm the subtotal). The benchmark's line matcher counts a line with no description (which OCR often gave a tilted
+scan's rows) as found, so the lines were also scored strictly, amount and description (at least 60% alike) both
+right:
+
+| test set | before | after, without the table finder | after, with it | invoices with every line right, no extra line |
+| --- | --- | --- | --- | --- |
+| 100 scans (seed 41) | 29.1% | 95.2% | **98.3%** | 22 → 89 → **91** |
+| 300 digital PDFs (seed 211) | 98.2% | 98.2% | **99.7%** | 219 → 287 → **295** |
+
+Most of the gain on scans is the straightening; the table finder adds the tables whose headings can't be read and
+keeps text beside the table out. On the 9 real OvisOCR2 readings above, OCR's own line items went from 31 to 55 of 56 lines
+(the benchmark's matcher; it also counts a line with no description, which OCR often gave before); with OvisOCR2,
+56 of 56 as before, and `LINE_ITEMS_AGREE` passed on 8 of the 9: on the ninth OCR missed one line's amount (a
+misread "9.61"), and the check sent it to a person. The 10 sample invoices, with their text copies standing in for
+OvisOCR2, agree on every line. The table finder takes about half a second a page on the (busy) 4-core test machine.
+
 ## Learning from approvals: each reader's record, local calibration, training data
 
 Every approval is the ground truth for that invoice. When it is approved, each reader's raw value for each
@@ -410,11 +489,47 @@ field is scored against what AP approved (`reader_outcomes`), along with the fus
   approved invoices: page images, the approved header fields, tax lines and line items, which readers agreed,
   and the same as chat fine-tuning rows. It is the data set to fine-tune a vision model on your own invoices.
 
+## The Azure check: an optional second opinion
+
+`ap_coder/azure_check.py`, Settings → Reading → *Azure check*. **Off by default**, never needed: AP Coder reads every
+invoice on this computer. Turned on, with a Document Intelligence endpoint and key, a background thread of the
+dashboard sends some invoices to Azure (`prebuilt-invoice`, read with `extraction.DocumentExtractor`, its fields
+with capture's DI reader) and compares Azure's fields with the values AP Coder settled on:
+
+- **low-confidence**: every invoice with a header field read but not *verified*, a field needed to go touchless not
+  found, or a failed check;
+- **spot-check**: a share of the others (5% by default), picked by the file's content like the touchless audit
+  sample (salted, so not the same invoices);
+- at most the **daily cap** of pages (200 by default) a day; the rest wait for tomorrow.
+
+Invoices are put in line when they are processed (`azure_checks`), and checked after OvisOCR2 has read them when it
+is running; a low-confidence invoice that OvisOCR2's reading made fully verified becomes a spot-check candidate.
+Processing never waits for Azure. Agreement is recorded ("Azure agrees on 11 of 11 fields"). A field Azure reads
+differently is marked *Check* ("Azure Document Intelligence read X"), the invoice gets the review issue
+`AZURE_DI_DISAGREES` and can't go touchless; the check is folded in again whenever the page reader reads the invoice
+again. An invoice picked for a spot-check is held from touchless approval until Azure has checked it, and approved
+then if Azure agrees and nobody touched it. Azure's reading becomes reader `di` among each field's sources, so
+approvals score it on *Learning → Readers* (an invoice already approved is scored at once).
+
+Only the configured endpoint's host is contacted, over HTTPS: a request hook on the Azure client refuses any other
+host (polling and redirects included). `AP_ALLOW_INTERNET` stays off. The key is kept in the .env
+(`AZURE_DOCUMENT_INTELLIGENCE_KEY`), shown only as its last four characters, and scrubbed from errors. Without the
+optional `azure` extra, an endpoint or a key, nothing is queued or sent, and the card says why. *Test connection*
+reads the made-up sample invoice and shows the comparison.
+
 ## Review screen
 
 The invoice page with a box over every field, coloured by status (green verified, blue likely, amber
 check, red failed check). Click a field in the panel to jump to it on the page. To teach, click a
 field and then the words on the page that hold it. Each confirmation trains the supplier's template.
+
+It is a page of the local web dashboard, `/review/<id>` (`ap_coder/web/pages/invoice.py`): each page of the
+invoice is served as a picture (`/review/<id>/page/<n>.png`, drawn once and cached, `ap_coder/web/document.py`)
+with its printed size, and `static/js/invoice_viewer.js` draws the boxes over it from the fields' fractions of the
+page. The words to teach from come from `/review/<id>/words`. Every edit is checked as it is made
+(`POST /review/<id>/check`: the checks, the posting preview and the approve bar are drawn again) and kept as a
+draft until the invoice is approved; while OvisOCR2 has the invoice in its queue the screen follows its progress
+(`/review/<id>/reader`) and shows its reading when it arrives, keeping the reviewer's edits.
 
 ## JDE EnterpriseOne
 

@@ -1,4 +1,5 @@
-"""Put the PP-OCRv5 OCR models where RapidOCR 3 looks for them, so scans are read with two OCR engines.
+"""Put the PP-OCRv5 OCR models where RapidOCR 3 looks for them, so scans are read with two OCR engines, and check
+the table finder's model (``capture/table_finder.py``), which AP Coder reads from the bundle's ``models/`` folder.
 
 AP Coder is an offline build: this copies the models from the ``models/`` folder of the offline bundle and
 never downloads them. RapidOCR 3 itself is never allowed to download them either (``ap_coder/offline.py``).
@@ -7,6 +8,7 @@ Safe to run again: files already there (and intact) are kept.
     python scripts/fetch_models.py            # copy what is missing from the bundle's models/ folder
     python scripts/fetch_models.py --check    # only report; exit 1 if something is missing
     python scripts/fetch_models.py --to DIR   # put them in DIR instead (the offline bundle uses this)
+    python scripts/fetch_models.py --table-finder  # developers online: also the table finder, into models/
 
 Downloading from the internet (www.modelscope.cn) happens only with the developers' / bundle builder's
 opt-in, ``AP_ALLOW_INTERNET=1`` (scripts/build_offline_bundle.py sets it itself).
@@ -61,14 +63,15 @@ def download(url: str, dest: Path) -> None:
 
 
 def fetch(target: Path, source: Path | None = None, *, online: bool | None = None,
-          get: Callable[[str, Path], None] = download, say: Callable[[str], None] = print) -> Result:  # fmt: skip
-    """Make ``target`` hold every PP-OCRv5 model file, intact: keep what is there, copy from ``source``
-    (a folder of model files) what it has, and download the rest only when ``online`` (default: only with
-    the ``AP_ALLOW_INTERNET=1`` opt-in)."""
+          get: Callable[[str, Path], None] = download, say: Callable[[str], None] = print,
+          models: tuple[offline.ModelFile, ...] | None = None) -> Result:  # fmt: skip
+    """Make ``target`` hold every model file of ``models`` (default: the PP-OCRv5 ones), intact: keep what is there,
+    copy from ``source`` (a folder of model files) what it has, and download the rest only when ``online`` (default:
+    only with the ``AP_ALLOW_INTERNET=1`` opt-in)."""
     online = offline.internet_allowed() if online is None else online
     result = Result()
     target.mkdir(parents=True, exist_ok=True)
-    for model in offline.ppocrv5_files():
+    for model in offline.ppocrv5_files() if models is None else models:
         dest = target / model.name
         if intact(dest, model):
             result.kept.append(model.name)
@@ -103,8 +106,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--to", help="put the models in this folder (default: RapidOCR's own models folder)")
     parser.add_argument("--from", dest="source", help=f"copy from this folder (default: {BUNDLE_MODELS})")
     parser.add_argument("--offline", action="store_true", help="never download, even with AP_ALLOW_INTERNET=1")
+    parser.add_argument("--table-finder", action="store_true",
+                        help="developers: also download the table finder (with AP_ALLOW_INTERNET=1)")  # fmt: skip
     args = parser.parse_args(argv)
 
+    table_finder(args)  # reported only: without it line items are read as before
     target = Path(args.to) if args.to else offline.model_dir()
     if target is None:
         print("RapidOCR 3 is not installed: no OCR models to put in place (scans use rapidocr-onnxruntime if present).")
@@ -136,6 +142,25 @@ def main(argv: list[str] | None = None) -> int:
         print("Scans are still read, by one OCR engine. Unzip the full offline bundle over this folder, then run this "
               f"again (developers online: {offline.INTERNET_ENV}=1 downloads them).")  # fmt: skip
     return 1
+
+
+def table_finder(args: argparse.Namespace) -> bool:
+    """The table finder's model: AP Coder reads it from the bundle's models/ folder (or the data folder's), so there
+    is nothing to copy: it is reported, and downloaded into models/ only when a developer asks (``--table-finder``,
+    online with the opt-in). True when it is in place, intact."""
+    name = offline.TABLE_FINDER_NAME
+    if offline.table_finder_path() is not None:
+        print(f"Table finder: {name} present.")
+        return True
+    online = args.table_finder and offline.internet_allowed() and not args.offline and not args.check
+    if online:
+        result = fetch(BUNDLE_MODELS, None, online=True, models=(offline.table_finder_file(),))
+        if result.ok:
+            print(f"Table finder: {name} downloaded into {BUNDLE_MODELS}.")
+            return True
+    print(f"Table finder: {name} missing (it comes with the offline bundle's models folder): line items are read "
+          "without it.")  # fmt: skip
+    return False
 
 
 if __name__ == "__main__":

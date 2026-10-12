@@ -69,11 +69,12 @@ def build_openai_client(settings: Settings) -> Any:
     if oai.api_key:
         auth = {"api_key": oai.api_key}
     else:
-        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        from .offline import import_azure  # Azure's packages are an optional extra: a plain message without them
 
+        identity = import_azure("azure.identity")
         auth = {
-            "azure_ad_token_provider": get_bearer_token_provider(
-                DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+            "azure_ad_token_provider": identity.get_bearer_token_provider(
+                identity.DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
             )
         }
     return AzureOpenAI(

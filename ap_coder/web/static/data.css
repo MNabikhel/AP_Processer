@@ -1,0 +1,94 @@
+/* The finance and master-data pages (Find an invoice, Exports, Month-end, Sales tax, Vendor statements, Vendors,
+   Purchase orders, GL accounts & tax): what app.css does not have yet. Same tokens as app.css. */
+
+.muted.small, .small {font-size: 12.5px;}
+.grow {flex: 1 1 260px; min-width: 0;}
+.full {width: 100%; box-sizing: border-box;}
+hr {border: 0; border-top: 1px solid var(--lg-hairline); margin: 14px 0;}
+h5 {margin: 18px 0 8px; font-size: 13px; font-weight: 600; color: var(--lg-text);}
+.stack-12 {display: flex; flex-direction: column; gap: 8px; min-width: 0;}
+.stack-12 > h5:first-child {margin-top: 0;}
+.ok {color: var(--lg-success);}
+.warn-text {color: var(--lg-warning);}
+.bad {color: var(--lg-danger);}
+
+/* Two columns that become one on a narrow window */
+.cols-2 {display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start;}
+.cols-1 {display: block;}
+@media (max-width: 1000px) {.cols-2 {grid-template-columns: minmax(0, 1fr);}}
+
+/* A period or search line: fields side by side, aligned on their bottoms */
+form.period, .upload-row {align-items: flex-end;}
+.field.inline {flex-direction: row; align-items: center; gap: 8px;}
+.map-grid {display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 14px; align-items: end;
+  width: 100%;}
+.map-grid select {width: 100%;}
+.upload-row input[type="file"] {font: 13.5px Inter, system-ui, sans-serif; max-width: 100%;}
+.sheet-file {font-size: 13.5px;}
+.sheet-file .ms {color: var(--lg-subtle);}
+.sheet-preview {max-height: 260px; overflow: auto; border: 1px solid var(--lg-hairline); border-radius: var(--lg-r);}
+.sheet-preview .apc-table th:first-child, .sheet-preview .apc-table th:last-child {border-radius: 0;}
+
+/* A card that opens and closes (<details class="card expander">) */
+details.expander > summary {display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none;
+  font-weight: 600; font-size: 14px; color: var(--lg-text);}
+details.expander > summary::-webkit-details-marker {display: none;}
+details.expander > summary::after {content: "expand_more"; font-family: "Material Symbols Rounded"; margin-left: auto;
+  font-weight: 400; font-size: 20px; color: var(--lg-subtle); transition: transform .15s ease; font-feature-settings: "liga";}
+details.expander[open] > summary::after {transform: rotate(180deg);}
+details.expander > summary .ms {color: var(--lg-subtle);}
+details.expander:not(.card) {border: 1px solid var(--lg-hairline); border-radius: var(--lg-r); padding: 10px 14px;}
+details.expander:not(.card) > * + * {margin-top: 10px;}
+details.expander[open] > summary {margin-bottom: 4px;}
+
+/* Code-like text: an email draft, a CSV preview */
+pre.code {margin: 0; padding: 10px 12px; background: var(--lg-head); border: 1px solid var(--lg-hairline);
+  border-radius: var(--lg-r); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-x: auto; white-space: pre; color: var(--lg-text); max-width: 100%;}
+pre.code.wrap {white-space: pre-wrap; word-break: break-word;}
+
+/* Tables with fields in their cells (layout, GL accounts, rules) */
+.apc-table.edit td {padding: 4px 6px; height: auto;}
+.apc-table.edit input[type="text"], .apc-table.edit select {width: 100%; min-width: 120px; box-sizing: border-box;}
+.apc-table.edit input.wide {min-width: 240px;}
+.apc-table.edit tr.new input {background: var(--lg-head);}
+.apc-table tr.dim td {color: var(--lg-subtle);}
+
+/* Find an invoice */
+.search-box {display: flex; gap: 8px; align-items: center;}
+.search-field {flex: 1; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px;
+  border: 1px solid var(--lg-border); border-radius: var(--lg-r); background: var(--lg-surface);}
+.search-field:focus-within {border-color: var(--lg-accent); box-shadow: var(--lg-focus);}
+.search-field .ms {color: var(--lg-subtle);}
+.search-field input {flex: 1; border: 0; height: 34px; padding: 0; box-shadow: none; outline: none; background: transparent;}
+.search-field input:focus {box-shadow: none;}
+section.card.hit {display: flex; gap: 16px; align-items: center; justify-content: space-between;}
+section.card.hit > * + * {margin-top: 0;}
+.hit-body {display: flex; flex-direction: column; gap: 4px; min-width: 0;}
+.hit-actions {flex: 0 0 auto; max-width: 220px; text-align: right;}
+
+/* Vendors and purchase orders */
+.vendor-link {display: inline-flex; align-items: center; gap: 10px; color: var(--lg-text);}
+.vendor-link:hover b {text-decoration: underline;}
+.vendor-head {display: flex; gap: 14px; align-items: center;}
+.vendor-head .vendor-name {font-weight: 700; font-size: 17px;}
+.vendor-head .close {margin-left: auto; align-self: flex-start;}
+fieldset.radios {border: 0; margin: 0; padding: 0; display: flex; gap: 14px; align-items: center;}
+fieldset.radios legend {float: left; margin-right: 6px; padding: 0;}
+.controls textarea {width: 100%; box-sizing: border-box;}
+.minibar {min-width: 56px; height: 4px; background: var(--lg-hairline); border-radius: 2px; overflow: hidden;}
+.minibar i {display: block; height: 4px; background: var(--lg-accent); border-radius: 2px;}
+.minibar.full i {background: var(--lg-success);}
+.minibar.over i {background: var(--lg-danger);}
+.flash.info {border-color: var(--lg-accent-line);}
+
+/* GL accounts & tax */
+.suggestion {display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0;
+  border-bottom: 1px solid var(--lg-hairline);}
+.suggestion:last-child {border-bottom: 0;}
+section.card.sample .card-head {align-items: center;}
+section.card.sample .apc-empty-sm {flex: 1;}
+.batch-pick {align-items: center;}
+
+/* Space between a form's table and its buttons */
+.card form:not(.stack):not(.row) > * + * {margin-top: 12px;}

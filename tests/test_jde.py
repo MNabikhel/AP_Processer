@@ -4,12 +4,10 @@ import csv
 import datetime as dt
 import io
 import json
-import sys
+import re
 import zipfile
 
 import pytest
-import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from ap_coder import jde
 from ap_coder.memory import vendor_key
@@ -427,57 +425,41 @@ def test_zip_has_the_files_and_a_readme():
 
 # --- Dashboard ------------------------------------------------------------------------------------------------------
 
-TIMEOUT = 90
-
 
 @pytest.fixture
-def db(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    return path
-
-
-def _page(module, function):
-    return AppTest.from_string(
-        f"from ap_coder.webapp.{module} import {function}\n{function}()", default_timeout=TIMEOUT
-    )
-
-
-def _ok(at):
-    assert not at.exception, [e.value for e in at.exception]
-    return at
+def db(tmp_path):
+    return tmp_path / "private" / "ap_coder.db"
 
 
 def test_exports_page_jde_flow(db):
     from ap_coder.demo import load_demo
+    from ap_coder.web.pages.exports import batch_file
+
+    from .webclient import client_for, follow, post
 
     store = Store(db)
     load_demo(store)
+    client = client_for(store)
     ready = {i["vendor_name"]: i["id"] for i in store.unexported_approved()}
     northwind = next(i for n, i in ready.items() if n.startswith("Northwind"))
     chinook = next(i for n, i in ready.items() if n.startswith("Chinook"))
-    at = _ok(_page("exports", "page_exports").run())
-    _ok(at.radio(key="export_format").set_value(jde.FORMAT).run())
+    page = client.get("/exports", params={"fmt": jde.FORMAT}).text
     # The demo vendor master's ERP IDs (V10023, …) are not JDE address numbers: nothing can go out yet.
-    assert at.button(key="export_create").proto.disabled
-    assert any("cannot go to JD Edwards yet" in w.value for w in at.warning)
+    assert re.search(r'<button[^>]*id="export-go"[^>]*disabled', page)
+    assert "cannot go to JD Edwards yet" in page
     settings = jde.load(store)
     settings.an8_overrides = {vendor_key(store.get_invoice(northwind)["vendor_name"]): "10023"}
     jde.save(store, settings)
-    _ok(at.run())
-    assert at.button(key="export_create").label == "Export 1 invoice"
-    _ok(at.button(key="export_create").click().run())
+    page = client.get("/exports", params={"fmt": jde.FORMAT}).text
+    assert "Export 1 invoice<" in page
+    follow(client, post(client, "/exports/create", {"fmt": jde.FORMAT, "ids": list(ready.values())}))
     (batch,) = store.export_batches()
     assert batch["format"] == jde.FORMAT and store.batch_invoice_ids(batch["id"]) == [northwind]
     assert [i["id"] for i in store.unexported_approved()] == [chinook]  # left out, still ready
-    from ap_coder.webapp.exports import _batch_file
-
-    data, name, mime = _batch_file(store, batch["id"], jde.FORMAT)
+    data, name, mime = batch_file(store, batch["id"], jde.FORMAT)
     assert name == f"ap_coder_jde_batch_{batch['id']}.zip" and mime == "application/zip"
+    download = client.get(f"/exports/batches/{batch['id']}/download")
+    assert download.status_code == 200 and download.content[:2] == b"PK"
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         (head,) = _csv(zf.read(jde.HEADER_FILE))
         assert (head["VLEDBT"], head["VLAN8"], head["VLEDTN"]) == (f"APC{batch['id']}", "10023", f"APC{northwind}")
@@ -492,20 +474,24 @@ def test_exports_page_jde_flow(db):
     store.undo_export_batch(batch["id"], actor="jane")
     assert jde.validate([store.get_invoice(northwind)], jde.load(store), store.vendor_ids(),
                         jde.prior_records(store)) == {}  # fmt: skip
-    at = _ok(_page("exports", "page_exports").run())  # the undone batch is listed, nothing breaks
+    assert client.get("/exports").status_code == 200  # the undone batch is listed, nothing breaks
 
 
 def test_settings_page_jde_tab(db):
+    from .test_web_settings import general_form
+    from .webclient import client_for, follow, post
+
     store = Store(db)
-    at = _ok(_page("settings", "page_settings").run())
-    company = next(t for t in at.text_input if t.label == "Company (VLCO)")
-    company.input("42")
-    submit = next(b for b in at.button if b.proto.is_form_submitter and b.proto.form_id.endswith("jde_form"))
-    _ok(submit.click().run())
+    client = client_for(store)
+    follow(client, post(client, "/settings/jde", general_form(company="42")))
     assert jde.load(store).company_code == "00042"
-    _ok(at.button(key="jde_tax_save").click().run())
+    tax_map = jde.load(store).tax_map
+    provinces = list(tax_map)
+    table = {"province": provinces, "tax_area": [tax_map[p].tax_area for p in provinces],
+             "code": [tax_map[p].code for p in provinces]}  # fmt: skip
+    follow(client, post(client, "/settings/jde/tax-map", table))
     assert jde.load(store).tax_map["ON"] == jde.TaxArea("ON-HST", "V")
-    assert any("Confirm with your JDE team" in m.value for m in at.markdown)
+    assert "Confirm with your JDE team" in client.get("/settings/jde").text
 
 
 def test_docs_exist():

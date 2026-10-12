@@ -9,7 +9,6 @@ import importlib.util
 import ipaddress
 import json
 import os
-import pkgutil
 import re
 import socket
 import subprocess
@@ -18,16 +17,12 @@ import zipfile
 from pathlib import Path
 
 import pytest
-import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from ap_coder import cli, offline
 from ap_coder.capture import analyze, layout
 from ap_coder.store import APPROVED, Store
 
 from .conftest import ROOT, SAMPLE_STEM, SAMPLES
-
-TIMEOUT = 90
 
 
 def _script(name: str):
@@ -122,14 +117,8 @@ def test_missing_ppocrv5_models_mean_one_engine_not_a_download(no_network, monke
 
 
 @pytest.fixture
-def demo_db(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    return path
+def demo_db(tmp_path):
+    return tmp_path / "private" / "ap_coder.db"
 
 
 def test_demo_review_and_jde_export_offline(no_network, demo_db):
@@ -148,21 +137,21 @@ def test_demo_review_and_jde_export_offline(no_network, demo_db):
 
 
 def test_every_dashboard_page_runs_offline(no_network, demo_db):
+    """Every page of the dashboard and the review screen of each demo invoice, with nothing reachable."""
     from ap_coder.demo import load_demo
+    from ap_coder.web.pages import PAGES
 
-    from .test_dashboard_pages import PAGES
+    from .webclient import client_for
 
-    load_demo(Store(demo_db))
-    import ap_coder.webapp as webapp
-
-    for info in pkgutil.walk_packages(webapp.__path__, "ap_coder.webapp."):
-        importlib.import_module(info.name)
-    at = AppTest.from_file(str(ROOT / "ap_coder" / "dashboard.py"), default_timeout=TIMEOUT).run()
-    assert not at.exception, [e.value for e in at.exception]
-    for module, function in PAGES:
-        at = AppTest.from_string(f"from ap_coder.webapp.{module} import {function}\n{function}()",
-                                 default_timeout=TIMEOUT).run()  # fmt: skip
-        assert not at.exception, (module, [e.value for e in at.exception])
+    store = Store(demo_db)
+    load_demo(store)
+    client = client_for(store)
+    for page in PAGES:
+        assert client.get(page.path).status_code == 200, page.path
+    for tab in ("reading", "automation", "review", "jde", "data", "about"):
+        assert client.get(f"/settings/{tab}").status_code == 200, tab
+    for inv in store.list_invoices():
+        assert client.get(f"/review/{inv['id']}").status_code == 200, inv["id"]
     assert no_network == []
 
 
@@ -178,45 +167,38 @@ def test_doctor_offline_checks_need_no_network(no_network):
 # --- The dashboard listens locally and loads nothing from the internet ------------------------------------------
 
 
-def _dashboard_cmd(monkeypatch, *argv) -> list[str]:
-    import subprocess
+def _serve_call(monkeypatch, *argv, command="dashboard") -> dict:
+    """What ``python -m ap_coder dashboard`` (an alias of serve) would run the web server with."""
+    from ap_coder.web import server
 
     seen = {}
-    monkeypatch.setattr(subprocess, "call", lambda cmd, env=None: seen.setdefault("cmd", cmd) and 0)
-    assert cli.main(["dashboard", "--port", "8599", *argv]) == 0
-    return seen["cmd"]
 
+    def fake_serve(host, port, open_browser=True, store=None):
+        seen.update(host=host, port=port, open_browser=open_browser, store=store)
+        return 0
 
-def _opt(cmd: list[str], name: str) -> str:
-    return cmd[cmd.index(name) + 1]
+    monkeypatch.setattr(server, "serve", fake_serve)
+    assert cli.main([command, "--port", "8599", *argv]) == 0
+    return seen
 
 
 def test_dashboard_is_local_only_by_default(monkeypatch):
     monkeypatch.delenv(offline.ADDRESS_ENV, raising=False)
-    cmd = _dashboard_cmd(monkeypatch)
-    assert _opt(cmd, "--server.address") == "127.0.0.1"
-    assert _opt(cmd, "--browser.gatherUsageStats") == "false"
-    assert _opt(cmd, "--server.showEmailPrompt") == "false"
-    assert _opt(cmd, "--server.enableStaticServing") == "true"
+    seen = _serve_call(monkeypatch)
+    assert seen["host"] == "127.0.0.1" and seen["port"] == 8599 and seen["open_browser"] is True
+    assert _serve_call(monkeypatch, "--no-browser", command="serve")["open_browser"] is False
 
 
 def test_lan_access_is_opt_in(monkeypatch, capsys):
     monkeypatch.setenv(offline.ADDRESS_ENV, "0.0.0.0")
-    cmd = _dashboard_cmd(monkeypatch)
-    assert _opt(cmd, "--server.address") == "0.0.0.0" and _opt(cmd, "--browser.serverAddress") == "localhost"
+    assert _serve_call(monkeypatch)["host"] == "0.0.0.0"
     assert "other computers on the network" in capsys.readouterr().err
     checks = {area: status for area, status, _ in offline.offline_checks()}
     assert checks["dashboard network"] == offline.WARN
     monkeypatch.delenv(offline.ADDRESS_ENV)
-    assert _opt(_dashboard_cmd(monkeypatch, "--address", "127.0.0.1"), "--server.address") == "127.0.0.1"
-
-
-def test_streamlit_config_sends_no_usage_statistics():
-    """``.streamlit/config.toml`` (read by ``streamlit run`` from this folder, e.g. the public demo)."""
-    tomllib = _script("check_deps").tomllib
-    config = tomllib.loads((ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
-    assert config["browser"]["gatherUsageStats"] is False
-    assert config["server"]["showEmailPrompt"] is False
+    assert _serve_call(monkeypatch, "--address", "127.0.0.1")["host"] == "127.0.0.1"
+    assert _serve_call(monkeypatch, "--host", "127.0.0.1", command="serve")["host"] == "127.0.0.1"
+    assert "other computers" not in capsys.readouterr().err
 
 
 ALLOWED_HOSTS = {
@@ -380,19 +362,23 @@ def test_bundle_dry_run_plans_without_writing(tmp_path, capsys, no_network):
     assert bundle.main(["--dry-run", "--out", str(out)]) == 0
     plan = json.loads(capsys.readouterr().out)
     assert not out.exists()  # nothing downloaded or written
-    assert {"rapidocr>=3.4,<3.5", "streamlit>=1.62", "setuptools>=68", "pip"} <= set(plan["requirements"])
+    assert {"rapidocr>=3.4,<3.5", "fastapi>=0.115,<1", "setuptools>=68", "pip"} <= set(plan["requirements"])
     cross = [s for s in plan["pip_commands"] if "--platform" in s["cmd"]]
     pythons = ("3.11", "3.12", "3.13", "3.14")
     assert [s["target"] for s in cross] == [f"win_amd64, Python {v}" for v in pythons]
     assert all("--only-binary=:all:" in s["cmd"] for s in cross)
     # Without the OCR add-on when a package of it has no wheel there: the same command, minus its packages.
     assert all("onnxruntime>=1.17" in s["cmd"] and "onnxruntime>=1.17" not in s["fallback"] for s in cross)
-    assert all("streamlit>=1.62" in s["fallback"] for s in cross)
+    assert all("fastapi>=0.115,<1" in s["fallback"] for s in cross)
     # The second OCR engine says Python < 3.13 but works there: downloaded for every version, ignoring that.
     assert all(s["also"][-2:] == ["--ignore-requires-python", "rapidocr-onnxruntime>=1.3"] for s in cross)
     assert not any("rapidocr-onnxruntime" in arg for s in cross for arg in s["cmd"] + s["fallback"])
     assert cross[-1]["also"][:-2] == cross[-1]["cmd"][: len(cross[-1]["also"]) - 2]  # same target, same pip
-    assert len(plan["models"]) == 3
+    assert len(plan["models"]) == 4  # the three PP-OCRv5 models and the table finder
+    assert plan["models"][-1] == {
+        "name": "yolov8n_layout_general6.onnx",
+        "sha256": "927b6edcb268e896e6a170f7d78980591b408e04b3908f54d58eb69efd018c95",
+    }
     # --mac: one download per platform and Python version, Macs included.
     assert bundle.main(["--dry-run", "--no-models", "--mac", "--out", str(out)]) == 0
     plan = json.loads(capsys.readouterr().out)
@@ -430,20 +416,20 @@ def _wheel(folder: Path, name: str, requires: tuple[str, ...] = ()) -> None:
 
 @pytest.mark.parametrize(
     ("platform", "expected"),
-    [("win_amd64", {"app", "colorama", "watchdog"}), ("macosx_14_0_arm64", {"app"}),
-     ("manylinux_2_28_x86_64", {"app", "watchdog"})],
+    [("win_amd64", {"app", "colorama", "notmac"}), ("macosx_14_0_arm64", {"app"}),
+     ("manylinux_2_28_x86_64", {"app", "notmac"})],
 )  # fmt: skip
 def test_bundle_downloads_what_the_target_computer_needs(tmp_path, platform, expected):
     """pip judges the markers in requirements by the Python running it, even for another platform: the builder's
     pip judges them as the target computer, so a bundle built on any computer has what Windows needs (click's
-    colorama) and no package a Mac must not get (streamlit's watchdog has no Mac wheel for Python 3.14).
+    colorama) and no package a Mac must not get (one with no Mac wheel, marked platform_system != "Darwin").
     Offline: the packages come from a local folder."""
     bundle = _script("build_offline_bundle")
     src, dest = tmp_path / "src", tmp_path / "dest"
     src.mkdir()
-    _wheel(src, "app", ('colorama; platform_system == "Windows"', 'watchdog; platform_system != "Darwin"',
+    _wheel(src, "app", ('colorama; platform_system == "Windows"', 'notmac; platform_system != "Darwin"',
                         'old; python_version < "3.13"'))  # fmt: skip
-    for name in ("colorama", "watchdog", "old"):
+    for name in ("colorama", "notmac", "old"):
         _wheel(src, name)
     cmd = bundle.pip_commands(["app"], dest, [platform], ["3.14"], current=False)[0]["cmd"]
     at = cmd.index("download") + 1
@@ -476,8 +462,10 @@ def test_bundle_leaves_out_ocr_only_where_it_has_no_wheel(tmp_path, monkeypatch,
     assert manifest["targets"][1:] == ["win_amd64, Python 3.14", "macosx_14_0_arm64, Python 3.14",
                                        "macosx_13_0_x86_64, Python 3.14"]  # fmt: skip
     # This computer and 2 targets: everything, then rapidocr-onnxruntime ignoring its Requires-Python; the Intel
-    # Mac: everything (failed), then everything but the OCR add-on.
-    assert len(downloads) == 8
+    # Mac: everything (failed), then everything but the OCR add-on; then, for each of the 4, the optional Azure
+    # packages on their own.
+    assert len(downloads) == 12 and sum("azure-identity>=1.17" in cmd for cmd in downloads) == 4
+    assert manifest["without_azure"] == [] and "azure-identity>=1.17" in manifest["optional_requirements"]
     assert sum("--ignore-requires-python" in cmd for cmd in downloads) == 3
     assert not any("--ignore-requires-python" in cmd and "macosx_13_0_x86_64" in cmd for cmd in downloads)
     assert "No matching distribution found for onnxruntime" in capsys.readouterr().out
@@ -500,11 +488,11 @@ def test_bundle_ships_the_code_but_never_data_or_keys():
 
 def test_bundle_never_ships_databases_spreadsheets_or_invoices_left_in_the_code_folder(tmp_path, monkeypatch):
     """A copy of the code without git (e.g. an unzipped download) lists every file: a database, a labels workbook,
-    an invoice PDF or the Streamlit secrets left in it are data, never code. A database is not git-ignored, so
+    an invoice PDF or a .env left in it are data, never code. A database is not git-ignored, so
     even a git checkout would list it as a new file."""
     bundle = _script("build_offline_bundle")
-    code = ("ap_coder/cli.py", "samples/a.pdf", "data/chart_of_accounts.csv", ".streamlit/config.toml")
-    data = ("ap_coder.db", "old/ap_coder.db-wal", "labels.xlsx", "Invoice 1.pdf", "scan.TIF", ".streamlit/secrets.toml")
+    code = ("ap_coder/cli.py", "samples/a.pdf", "data/chart_of_accounts.csv", "ap_coder/web/static/app.css")
+    data = ("ap_coder.db", "old/ap_coder.db-wal", "labels.xlsx", "Invoice 1.pdf", "scan.TIF", "private/.env")
     for rel in code + data:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("x")
@@ -541,7 +529,7 @@ def test_windows_launcher():
         assert b"\r\n" in raw and b"\n" not in raw.replace(b"\r\n", b""), name  # CRLF throughout (cmd.exe needs it)
     text = (ROOT / "APProcessor.bat").read_text(encoding="ascii")
     assert "%PY% scripts\\launch.py %*" in text
-    assert '".venv\\Scripts\\python.exe" -c "import encodings, pip"' in text  # set up before: straight in
+    assert '".venv\\Scripts\\python.exe" scripts\\launch.py --venv-ok' in text  # set up before: straight in
     # Any Python 3.11 or newer (no upper bound): 3.12 first, then 3.11, 3.13, 3.14 (the offline bundle's), then
     # any newer through py -3, then python before python3, then the usual folders (newer ones too).
     assert "for %%V in (3.12 3.11 3.13 3.14) do if not defined PY call :try py -%%V" in text
@@ -572,6 +560,7 @@ def test_mac_launcher():
     assert b"\r" not in raw and raw.startswith(b"#!/bin/bash")
     text = raw.decode()
     assert '"$PY" scripts/launch.py "$@"' in text and "PY=.venv/bin/python" in text
+    assert ".venv/bin/python scripts/launch.py --venv-ok" in text  # .venv used as it is, unless it is to be remade
     assert 'PREFERRED="3.12 3.11 3.13 3.14"' in text and "<= (3, 13)" not in text  # no upper bound
     assert 'command -v "$py"' in text and "echo python3\n  echo python\n" in text  # python3 before python
     # Apple's stand-in is run only when the developer tools are there (else it opens an install dialog).
@@ -588,7 +577,7 @@ def test_check_deps():
     assert check_deps.problem("pip>=9999").startswith("Outdated")
     assert check_deps.problem("pip>=1") == ""
     assert check_deps.problem("pip>=9999; sys_platform == 'no-such-os'") == ""
-    assert "streamlit>=1.62" in check_deps.requirements()
+    assert "fastapi>=0.115,<1" in check_deps.requirements()
     assert "rapidocr>=3.4,<3.5" not in check_deps.requirements()
     assert {"rapidocr>=3.4,<3.5", "pytest>=8"} <= set(check_deps.requirements(extras=("ocr", "dev")))
     assert check_deps.requirement_name("Rapidocr_ONNXRuntime>=1.3; sys_platform == 'win32'") == "rapidocr-onnxruntime"

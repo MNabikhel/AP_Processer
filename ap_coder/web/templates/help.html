@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/settings.css?v={{ static_version }}">{% endblock %}
+{% block aside %}<a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>{% endblock %}
+{% block content %}
+{% if news %}
+<details class="card st-dev st-md" id="whats-new">
+  <summary><span class="ms" aria-hidden="true">new_releases</span>What's new in AP Coder</summary>
+  {{ news }}
+</details>
+{% endif %}
+
+<div class="grid-3-2">
+  <section class="card">
+    <h4>Getting started</h4>
+    <ol class="hp-start">
+      {% for title, text, page in quick_start %}
+      <li>
+        <span class="no" aria-hidden="true">{{ loop.index }}</span>
+        <div><b>{{ title }}</b><div class="muted">{{ text }}</div></div>
+        {% if page %}<a class="link" href="{{ page.path }}" title="Go to {{ page.title }}">Open <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+
+  <section class="card">
+    <h4>How every invoice is read</h4>
+    <p class="muted">One way for every invoice, a digital PDF, a scan or a phone photo, with nothing to set up or choose.
+      Settings → Reading shows how each reader is doing.</p>
+    <ol class="st-steps">{% for bold, rest in how_it_reads %}<li><b>{{ bold }}</b>{{ rest }}</li>{% endfor %}</ol>
+    <a class="link" href="/settings/reading">Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>
+  </section>
+</div>
+
+<section class="card">
+  <h4>Your AP routine</h4>
+  <div class="hp-routine">
+    {% for when, tasks in routine %}
+    <div>
+      <b>{{ when }}</b>
+      <ul>
+        {% for task, page in tasks %}
+        <li>{% if page %}<a href="{{ page.path }}"><span class="ms" aria-hidden="true">arrow_right</span>{{ task }}</a>{% else %}{{ task }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card" id="checks">
+  <h4>What the checks mean</h4>
+  <p class="muted">Every invoice is checked before you see it. Errors must be fixed (or overridden), warnings deserve a look,
+    and 'good to know' notes never block anything.</p>
+  <form method="get" action="/help#checks" class="row hp-filter" role="search">
+    <span class="hp-search"><span class="ms" aria-hidden="true">search</span>
+      <input type="search" name="q" value="{{ q }}" placeholder="Search, e.g. duplicate, QST, PO" aria-label="Search the checks" id="check-search"></span>
+    {% if area %}<input type="hidden" name="area" value="{{ area }}">{% endif %}
+  </form>
+  <nav class="segmented hp-areas" aria-label="Area">
+    <a href="/help?{{ {'q': q} | urlencode if q else '' }}#checks" class="{{ 'on' if not area else '' }}">All</a>
+    {% for a in areas %}
+    <a href="/help?{{ {'q': q, 'area': a} | urlencode if q else {'area': a} | urlencode }}#checks" class="{{ 'on' if a == area else '' }}">{{ a }}</a>
+    {% endfor %}
+  </nav>
+  <div class="table-wrap">
+    <table class="apc-table" id="check-table">
+      <thead><tr><th>Check</th><th>What it means</th><th>What to do</th></tr></thead>
+      <tbody>
+        {% for code, about in checks %}
+        <tr data-text="{{ (code ~ ' ' ~ about.title ~ ' ' ~ about.meaning ~ ' ' ~ about.action) | lower }}" id="check-{{ code }}">
+          <td class="w"><b>{{ about.title }}</b><div class="hp-code">{{ code }}</div></td>
+          <td class="w">{{ about.meaning }}</td>
+          <td class="w">{{ about.action }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted" id="check-none"{% if checks %} hidden{% endif %}>No check matches. Try another word.</p>
+  <p class="muted" id="check-count">{{ checks | length }} of {{ check_total }} checks</p>
+</section>
+
+<div class="grid-3-2">
+  <section class="card">
+    <h4>Questions</h4>
+    <div class="hp-faq">
+      {% for question, answer in faq %}
+      <details><summary>{{ question }}</summary><p>{{ answer }}</p></details>
+      {% endfor %}
+    </div>
+  </section>
+  <div class="col">
+    <section class="card">
+      <h4>Shortcuts</h4>
+      <table class="apc-table">
+        <tbody>
+          {% for keys, what in shortcuts %}
+          <tr><td>{% for k in keys %}{{ ui.kbd(k) }}{% if not loop.last %} + {% endif %}{% endfor %}</td><td class="w">{{ what }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    <section class="card">
+      <h4>Where your data is</h4>
+      <dl class="apc-kv">{% for label, value in where %}<dt>{{ label }}</dt><dd><code>{{ value }}</code></dd>{% endfor %}</dl>
+      <p class="muted">Nothing is sent anywhere: invoices are read, coded and kept on this computer.</p>
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script type="module" src="/static/js/help.js?v={{ static_version }}"></script>{% endblock %}

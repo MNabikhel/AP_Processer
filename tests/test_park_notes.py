@@ -2,17 +2,15 @@
 
 import datetime as dt
 import json
-import sys
 
 import pytest
-import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from ap_coder import accruals
 from ap_coder.audit import describe
 from ap_coder.store import PARKED, REVIEW, Store, load_sample_setup
 
-from .conftest import ROOT, SAMPLE_STEM, SAMPLES
+from .conftest import SAMPLE_STEM, SAMPLES
+from .webclient import client_for, follow, post
 
 
 def _gt(**changes):
@@ -56,27 +54,15 @@ def test_notes(tmp_path):
     assert len(notes) == 1 and describe(notes[0]) == "asked Sam about the PO"
 
 
-def test_park_from_the_review_screen_and_bring_back(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    store = Store(path)
+def test_park_from_the_review_screen_and_bring_back(tmp_path):
+    store = Store(tmp_path / "private" / "ap_coder.db")
     load_sample_setup(store)
     invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", _gt(), {"requires_review": True})
-    key = f"inv{invoice_id}"
-    at = AppTest.from_file(str(ROOT / "ap_coder" / "dashboard.py"), default_timeout=90)
-    at.session_state["open_invoice"] = invoice_id
-    at.run()
-    at.text_input(key=f"{key}_note").input("checking with Sam")
-    next(b for b in at.button if b.label == "Add note").click().run()
+    client = client_for(store)
+    follow(client, post(client, f"/review/{invoice_id}/note", {"text": "checking with Sam"}))
     assert any(e["action"] == "note" for e in store.events(invoice_id))
-    at.text_input(key=f"{key}_park_reason").input("buyer to confirm").run()
-    at.button(key=f"{key}_park").click().run()
-    assert not at.exception and store.get_invoice(invoice_id)["status"] == PARKED
-    at = AppTest.from_file(str(ROOT / "ap_coder" / "dashboard.py"), default_timeout=90).run()
-    assert not at.exception
-    at.button(key=f"unpark_{invoice_id}").click().run()
+    follow(client, post(client, f"/review/{invoice_id}/park", {"reason": "buyer to confirm"}))
+    assert store.get_invoice(invoice_id)["status"] == PARKED
+    assert "buyer to confirm" in client.get("/review?tab=parked").text
+    follow(client, post(client, f"/review/{invoice_id}/unpark"))
     assert store.get_invoice(invoice_id)["status"] == REVIEW

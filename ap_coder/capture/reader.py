@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import statistics
 import unicodedata
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -27,7 +28,7 @@ from .normalize import (
     norm_id,
     parse_dates,
 )
-from .types import AMOUNT_FIELDS, Box, DocLayout, Line, LineReading, Reading, Word, union_all
+from .types import AMOUNT_FIELDS, Box, DocLayout, Line, LineReading, PageLayout, Reading, Word, union_all
 
 
 def plain(text: str) -> str:
@@ -879,18 +880,133 @@ def _qty_times_price(segs: list[Line], nums: list[tuple[Line, list[tuple[float, 
                 second = re.sub(r"[.,]", ".", pair.group(2))
                 options.append((k, float(pair.group(1)), 1))
                 options.append((k + 0.5, float(second), 1))
+    # A credit's line (-200.00, "200.00 CR") prints its price with or without the sign: the price is a credit too.
+    credit = amount < 0
     best = None
     for k1, q, cost1 in options:
         for k2, p, cost2 in options:
-            if k2 <= k1 or q <= 0 or abs(q * p - amount) > 0.011:
+            price = -abs(p) if credit else p
+            if k2 <= k1 or q <= 0 or abs(q * price - amount) > 0.011:
                 continue
             if best is None or cost1 + cost2 < best[0]:
-                best = (cost1 + cost2, q, p)
+                best = (cost1 + cost2, q, price)
     return (best[1], best[2]) if best else None
 
 
-def read_line_items(layout: DocLayout) -> list[LineReading]:
-    items = _read_line_items(layout)
+# How far around a table the table finder found its words are still taken: its box can sit a hair inside the first and
+# last column, or just under the column headings (fractions of the page).
+TABLE_MARGIN_X = 0.03
+TABLE_MARGIN_TOP = 0.02
+TABLE_MARGIN_BOTTOM = 0.01
+
+
+def inside_tables(layout: DocLayout, tables: dict[int, list[Box]]) -> DocLayout:
+    """``layout`` with, on each page where the table finder found tables, only the words inside them (their middle
+    within ``TABLE_MARGIN_*`` of a table), put back into lines: text printed beside or between the rows is left out.
+    A page where it found none keeps all its words."""
+    from .layout import group_lines
+    from .types import PageLayout
+
+    pages = []
+    for page in layout.pages:
+        boxes = tables.get(page.number) or []
+        if not boxes:
+            pages.append(page)
+            continue
+
+        words = [w for w in page.words if _in_table(w, boxes)]
+        pages.append(PageLayout(page.number, page.width, page.height, words, group_lines(words, page.number),
+                                page.rotation, page.skew))  # fmt: skip
+    return DocLayout(pages, layout.source)
+
+
+def _in_table(w: Word, boxes: list[Box]) -> bool:
+    return any(b.x0 - TABLE_MARGIN_X <= w.box.cx <= b.x1 + TABLE_MARGIN_X
+               and b.y0 - TABLE_MARGIN_TOP <= w.box.cy <= b.y1 + TABLE_MARGIN_BOTTOM for b in boxes)  # fmt: skip
+
+
+STRAIGHTEN_FROM = 0.002  # a scan tilted more than this (down per across: about a tenth of a degree) is straightened
+
+
+def straightened(layout: DocLayout) -> DocLayout:
+    """``layout`` with each tilted scan's words moved up or down to where they would be on a straight page
+    (``PageLayout.skew``), then put back into lines: on a page scanned at 1.4 degrees, a row's description sits a
+    whole row higher or lower than its amount at the other end of the table. Pages that aren't tilted are kept."""
+    from .layout import group_lines
+    from .types import PageLayout
+
+    pages = []
+    for page in layout.pages:
+        if abs(page.skew) < STRAIGHTEN_FROM:
+            pages.append(page)
+            continue
+        words = []
+        for w in page.words:
+            dy = -page.skew * (w.box.cx - 0.5)
+            words.append(Word(w.text, Box(w.box.page, w.box.x0, w.box.y0 + dy, w.box.x1, w.box.y1 + dy), w.conf,
+                              w.source))  # fmt: skip
+        pages.append(PageLayout(page.number, page.width, page.height, words, group_lines(words, page.number),
+                                page.rotation, page.skew))  # fmt: skip
+    return DocLayout(pages, layout.source)
+
+
+def _on_tilted_page(box: Box, skew: float) -> Box:
+    """A box on the straightened page, back on the tilted one: the box around where it is printed."""
+    a, b = skew * (box.x0 - 0.5), skew * (box.x1 - 0.5)
+    return Box(box.page, box.x0, box.y0 + min(a, b), box.x1, box.y1 + max(a, b))
+
+
+AMOUNT_COLUMN = 0.04  # a row's amount ends this close to the amount column's right edge (fraction of the page)
+
+
+def _headerless_rows(page: PageLayout) -> list[LineReading]:
+    """The rows of one table the table finder found whose column headings can't be read (OCR runs bilingual headings
+    together): each row whose last cell is an amount, in the column where most rows end, down to the subtotal. The
+    numbers before it are the quantity and unit price when they make the amount; the words are the description."""
+    rows: dict[float, list[Line]] = {}
+    for line in page.lines:
+        key = next((k for k in rows if abs(k - line.box.cy) < 0.006), line.box.cy)
+        rows.setdefault(key, []).append(line)
+    ordered = [sorted(segs, key=lambda s: s.box.x0) for _, segs in sorted(rows.items())]
+
+    def money(seg: Line) -> list[tuple[float, int, int]]:  # amounts printed as money: "1,250.00", "$12"
+        return [(v, a, b) for v, a, b in _amounts_in(seg.text) if looks_like_money(seg.text[a:b])]
+
+    ends = [segs[-1].box.x1 for segs in ordered if len(segs) >= 2 and money(segs[-1])]
+    if len(ends) < 2:
+        return []
+    right = statistics.median(ends)
+    items: list[LineReading] = []
+    for segs in ordered:
+        p = plain(" ".join(s.text for s in segs))
+        if items and any(rx.match(plain(s.text)) for s in segs for f in ("subtotal", "grand_total", "tax_total")
+                         for rx, _ in _LABELS[f]):  # fmt: skip
+            break  # the table's totals: its rows end above
+        last = segs[-1]
+        found = money(last)
+        if not found or abs(last.box.x1 - right) > AMOUNT_COLUMN or len(segs) < 2 or _CARRIED.match(p.strip()):
+            continue
+        amount = found[-1][0]
+        desc = " ".join(s.text for s in segs if s is not last and not _NUMBER_CELL.match(s.text)).strip()
+        if not desc:
+            continue
+        fit = _qty_times_price(segs, [(s, _amounts_in(s.text)) for s in segs], last, amount)
+        qty, price = fit if fit else (None, None)
+        row_box = union_all([s.box for s in segs])
+        items.append(LineReading(desc, qty, price, amount, [row_box] if row_box else [], 0.6))
+    return items if len(items) >= 2 else []
+
+
+def read_line_items(layout: DocLayout, tables: dict[int, list[Box]] | None = None) -> list[LineReading]:
+    """The line items under the line table's column headings, read on the page straightened (``straightened``).
+    ``tables``: the tables the table finder found on each page (``table_finder.find_tables``); the rows are then read
+    from the words inside them only (``inside_tables``)."""
+    skews = {page.number: page.skew for page in layout.pages if abs(page.skew) >= STRAIGHTEN_FROM}
+    one_table = {n: [straightened(inside_tables(layout, {n: [box]})) for box in boxes]
+                 for n, boxes in (tables or {}).items() if boxes}  # fmt: skip
+    items = _read_line_items(straightened(inside_tables(layout, tables) if tables else layout), one_table)
+    for li in items if skews else []:
+        li.boxes = [_on_tilted_page(b, skews[b.page]) if b.page in skews else b for b in li.boxes]
     if items and credit_printed_positive(layout):
         for li in items:
             li.amount = -li.amount if li.amount else li.amount
@@ -898,8 +1014,12 @@ def read_line_items(layout: DocLayout) -> list[LineReading]:
     return items
 
 
-def _read_line_items(layout: DocLayout) -> list[LineReading]:
+def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | None = None) -> list[LineReading]:
+    """``one_table``: for each page where the table finder found tables, the words of each table on its own; on a
+    page whose column headings can't be read, the table whose rows read best by their amounts is read
+    (``_headerless_rows``)."""
     items: list[LineReading] = []
+    money: list[bool] = []  # each line's amount is printed as money ("1,450.00", "$12"), not "5%" or "12"
     for page in layout.pages:
         header = None
         for line in page.lines:
@@ -912,6 +1032,10 @@ def _read_line_items(layout: DocLayout) -> list[LineReading]:
                 header = (line.box.y1, cols)
                 break
         if header is None:
+            tables = [t.pages[page.number - 1] for t in (one_table or {}).get(page.number, [])]
+            rows_read = max((_headerless_rows(t) for t in tables), key=len, default=[])
+            items += rows_read
+            money += [True] * len(rows_read)
             continue
         y_top, cols = header
         rows: dict[float, list[Line]] = {}
@@ -934,9 +1058,11 @@ def _read_line_items(layout: DocLayout) -> list[LineReading]:
             nums = [(s, _amounts_in(s.text)) for s in segs]
             amount = None
             amt_seg = None
+            amt_token = ""
             for s, found in nums:
                 if found and abs(s.box.x1 - cols["amount"].x1) < 0.08 or (found and abs(s.box.cx - amount_x) < 0.08):
                     amount, amt_seg = found[-1][0], s
+                    amt_token = s.text[found[-1][1] : found[-1][2]]
             if amount is None:
                 continue
             # A number cell (qty, price, amount, row number) is not part of the description; a description
@@ -962,6 +1088,17 @@ def _read_line_items(layout: DocLayout) -> list[LineReading]:
             row_box = union_all([s.box for s in segs])
             score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
             items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score))
+            money.append(looks_like_money(amt_token))
+    # Where the lines' amounts are printed as money, a "line" whose amount isn't is a sentence under the table ("All
+    # services subject to GST 5%", "4 of 12 hours cancelled") that reaches the amount column.
+    if sum(money) >= 2 and not all(money):
+        items = [li for li, m in zip(items, money, strict=True) if m]
+    # A last row with no words of its own whose amount is the sum of the rows above: the table's total row, its label
+    # read as no label (OCR runs "Total before tax" together).
+    if len(items) >= 3 and not items[-1].description.strip() and items[-1].amount is not None:
+        above = [li.amount for li in items[:-1] if li.amount is not None]
+        if abs(round(sum(above), 2) - items[-1].amount) <= 0.011:
+            items.pop()
     # A "#" column read into the description: "1 Observability…", "2 Premium…". Only when every row starts
     # with its own number, so "6 Dell monitors" on its own is left alone.
     numbered = [re.match(rf"^{i}\s+(?=\S)", li.description) for i, li in enumerate(items, 1)]

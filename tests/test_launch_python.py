@@ -46,8 +46,9 @@ class MacLauncher:
         return path
 
     def python(self, name: str, version: str, folder: Path | None = None) -> Path:
-        """A stand-in Python: ``-c`` prints its version (what the launcher asks), anything else is a run."""
-        body = (f'if [ "$1" = -c ]; then echo {version}; exit 0; fi\n'
+        """A stand-in Python: ``-c`` prints its version (what the launcher asks), ``launch.py --venv-ok`` (the quick
+        check of .venv) says yes, anything else is a run."""
+        body = (f'if [ "$1" = -c ] || [ "$2" = --venv-ok ]; then echo {version}; exit 0; fi\n'
                 f'echo "{name} $*" >> "{self.ran}"\necho "RAN {name}"')  # fmt: skip
         return self.script(name, body, folder)
 
@@ -197,8 +198,12 @@ def launch(tmp_path, monkeypatch):
     return module
 
 
-def _manifest(launch, *versions: str, current: str = "") -> None:
-    targets = [f"win_amd64, Python {v}" for v in versions]
+def _manifest(launch, *versions: str, current: str = "", platform: str = "win_amd64", here: bool = True) -> None:
+    """A bundle for ``platform`` (and for the Linux computer that built it, ``current``). ``here``: the computer the
+    launcher runs on is a ``platform`` one (else it is what launch.wheel_platform() works out)."""
+    if here:
+        launch.wheel_platform = lambda: platform
+    targets = [f"{platform}, Python {v}" for v in versions]
     if current:
         targets.insert(0, f"this computer (linux-x86_64, Python {current})")
     (launch.ROOT / "bundle_manifest.json").write_text(json.dumps({"targets": targets}), encoding="utf-8")
@@ -226,11 +231,12 @@ def test_bundle_pythons_are_read_from_the_manifest_in_version_order(launch):
 
 def test_a_python_the_bundle_was_not_built_for_is_said_plainly(launch, monkeypatch, capsys):
     """Found: Python 3.14; the bundle has 3.11 and 3.12. It says which, and what IT can do; it still goes on."""
-    _manifest(launch, "3.11", "3.12")
+    _manifest(launch, "3.11", "3.12", platform="macosx_14_0_arm64", here=False)  # this Mac: macOS 15.4, arm64
     monkeypatch.setattr(launch, "sys", _found((3, 14, 5), "/usr/local/bin/python3", "darwin"))
     monkeypatch.setattr(launch.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(launch.platform, "mac_ver", lambda: ("15.4", ("", "", ""), "arm64"))
     monkeypatch.setattr(launch, "ensure_venv", lambda: "created")
+    monkeypatch.setattr(launch, "find_python", lambda versions: None)  # no Python the bundle has packages for here
     calls = []
     monkeypatch.setattr(launch.subprocess, "call", lambda cmd: calls.append(cmd) or 0)
     assert launch.bootstrap([]) == 0 and calls
@@ -242,7 +248,7 @@ def test_a_python_the_bundle_was_not_built_for_is_said_plainly(launch, monkeypat
 
 
 def test_a_python_the_bundle_has_gets_no_note(launch, monkeypatch, capsys):
-    _manifest(launch, "3.11", "3.12", "3.13", "3.14")
+    _manifest(launch, "3.11", "3.12", "3.13", "3.14", platform="macosx_14_0_arm64")
     monkeypatch.setattr(launch, "sys", _found((3, 14, 5), "/usr/local/bin/python3", "darwin"))
     monkeypatch.setattr(launch, "ensure_venv", lambda: "created")
     monkeypatch.setattr(launch.subprocess, "call", lambda cmd: 0)
@@ -262,8 +268,8 @@ def test_install_hint_names_the_bundles_versions_and_the_build_command(launch, m
     _manifest(launch, "3.11", "3.12", "3.13", current="3.12")
     monkeypatch.setattr(launch, "wheel_platform", lambda: "win_amd64")
     version = f"{sys.version_info[0]}.{sys.version_info[1]}"
-    hint = launch.install_hint(["--no-index"], ["streamlit>=1.62"])
-    assert f"no streamlit for Python {version} on this computer" in hint
+    hint = launch.install_hint(["--no-index"], ["fastapi>=0.115,<1"])
+    assert f"no fastapi for Python {version} on this computer" in hint
     assert "built for Python 3.11, 3.12 and 3.13" in hint
     assert f"build_offline_bundle.py --python {version} --platform win_amd64" in hint
     assert "install Python 3.12" in hint and "start AP Coder again" in hint

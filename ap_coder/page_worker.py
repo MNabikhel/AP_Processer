@@ -150,7 +150,7 @@ def _dashboard_store(db_path: Path | None = None) -> Any:
     from . import paths
     from .store import Store
 
-    db = Path(db_path or os.environ.get("AP_DB_PATH") or paths.default_db_path())
+    db = Path(db_path or paths.env_path("AP_DB_PATH") or paths.default_db_path())
     return Store(db) if db.exists() else None
 
 
@@ -446,7 +446,8 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
         store.finish_page_read(iid, "waiting", model, len(reading.pages), seconds, message)
         return ReadOutcome(iid, "postponed", model, len(reading.pages), seconds, message=message)
     # A page OCR found blank, or one the model wrote only a page number or a pangram for, is read as blank: nothing
-    # on it is taken from the page reader alone.
+    # on it is taken from the page reader alone. One OCR found words on was not read by the page reader at all.
+    not_read = sum(1 for number, text in enumerate(reading.pages, start=1) if number not in blank and made_up(text))
     reading.pages = ["" if number in blank or made_up(text) else text
                      for number, text in enumerate(reading.pages, start=1)]  # fmt: skip
     if reading.error and reading.temporary:  # LM Studio stopped, the model unloaded: read again later
@@ -462,7 +463,8 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
 
     pipeline = InvoicePipeline(settings, reference_data(store), cache_dir=cache_dir, store=store)
     # The invoice is in the store already: its own row isn't a duplicate of it, nor counted in its vendor's history.
-    result = pipeline.process(path, page_text=reading.pages, save=False, invoice_id=iid)
+    result = pipeline.process(path, page_text=reading.pages, save=False, invoice_id=iid,
+                              pages_read=len(reading.pages) - not_read)  # fmt: skip
     if result.error or result.output is None or result.report is None:
         message = result.error or "the invoice could not be read again"
         store.finish_page_read(iid, "failed", model, len(reading.pages), seconds, message)

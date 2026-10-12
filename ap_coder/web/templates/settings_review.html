@@ -1,0 +1,39 @@
+{# Settings → Review (pages/settings.py): the reviewer's name, the AI's threshold, approval and payment. #}
+<div class="st-2">
+  <section class="card">
+    <h4>Review and AI behaviour</h4>
+    <form method="post" action="/settings/review" class="stack" data-busy="Saving…">
+      <label class="field">Your name
+        <input type="text" name="reviewer_name" value="{{ reviewer_name }}" placeholder="shown on the invoices you approve"
+               title="Saved for your Windows account: two people sharing one AP Coder each keep their own name."></label>
+      <label class="field st-wide">Send to <i>Needs attention</i> when the AI's confidence is below
+        <span class="st-range"><input type="range" name="threshold" min="50" max="99" step="1" value="{{ threshold }}"
+          data-output="threshold-out"><output id="threshold-out">{{ threshold }}%</output></span></label>
+      <p class="muted">Invoices with any error always need attention. Higher = more invoices get a closer look. Applies to
+        invoices processed from now on; invoices already in the queue keep their flag.</p>
+      <label class="check"><input type="checkbox" name="constrain" value="1"{% if constrain %} checked{% endif %}>
+        Only allow codes from my GL account list (recommended)</label>
+      <p class="muted">Off only for very large charts of accounts; codes are still checked after the AI answers.</p>
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save review settings</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h4>Approval and payment</h4>
+    <form method="post" action="/settings/review/approval" class="stack" data-busy="Saving…">
+      <label class="field">Second approval for invoices over, in CAD (0 = never)
+        <input type="number" name="approval_limit" min="0" step="0.01" value="{{ '%.2f' | format(approval_limit) }}"
+               title="Above this amount, an approved invoice waits for a second, different approver before export."></label>
+      <p class="muted">Above this amount, an approved invoice waits for a second, different approver before export. A
+        foreign-currency invoice is converted to CAD at the exchange rates below (as it is, without a rate).</p>
+      <label class="field">Days to pay when an invoice prints no due date and no terms
+        <input type="number" name="terms_days" min="0" max="180" step="1" value="{{ terms_days }}"
+               title="Used to show when an invoice is due, to sort the queue by due date and in exports."></label>
+      <label class="field">Exchange rates to CAD (optional)
+        <input type="text" name="fx_rates" value="{{ fx_rates }}" placeholder="e.g. USD=1.37, EUR=1.50"></label>
+      <p class="muted">CAD per unit of each foreign currency you are billed in. Used for estimates in CAD (Spend, Sales tax);
+        invoices and exports keep their own currency.</p>
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save approval settings</button>
+    </form>
+  </section>
+</div>

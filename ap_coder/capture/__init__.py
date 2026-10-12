@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .confidence import LABELS, TAX_FIELDS, fuse
-from .layout import CannotRead, build_layout, ocr_available
+from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available
 from .locate import locate
 from .normalize import find_amounts
 from .reader import _table_header_line, read_fields, read_line_items
@@ -154,9 +154,43 @@ def _choose_lines(layout: DocLayout, fields: dict[str, FieldResult], own: list[L
         for a, b in zip(own, vlm, strict=True)
     )
     if same and layout.source in ("ocr", "mixed"):
-        return [LineReading(b.description, b.quantity, b.unit_price, b.amount, list(a.boxes), max(a.score, b.score))
+        return [LineReading(b.description, b.quantity, b.unit_price, b.amount, list(a.boxes), max(a.score, b.score),
+                            "vlm", sorted({a.source, *a.agreed} - {"", "vlm"}))
                 for a, b in zip(own, vlm, strict=True)]  # fmt: skip
     return own
+
+
+def _labelled(items: list[LineReading], source: str) -> list[LineReading]:
+    for li in items:
+        li.source = li.source or source
+    return items
+
+
+def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], words: list[LineReading],
+                tables: Any) -> tuple[list[LineReading], list[list[LineReading]]]:  # fmt: skip
+    """The line items read from the page itself, and every reading of them, best first: the words inside the tables
+    the table finder found (``tables``: True finds them now, a {page: boxes} dict found before, None/False: not
+    looked for), the words under the column headings across the page (``words``, the reading as before) and the
+    PDF's table from its text layer. The first reading that adds up to the subtotal is kept, else the first one
+    found inside a table, else the words across the page. The PDF's table is last: it is a second reading of the
+    same text, there to be compared with OvisOCR2's when the others read the lines differently from it."""
+    from .tables import text_table_items
+
+    if tables is True:
+        from .table_finder import find_tables
+
+        tables = find_tables(path, max_pages=len(layout.pages) or 1)
+    found = tables if isinstance(tables, dict) else None
+    in_tables = _labelled(read_line_items(layout, found), "table") if found else []
+    text_table: list[LineReading] = []
+    if layout.source == "text":
+        text_table = _labelled(text_table_items(path, layout, found), "text table")
+    readings = [r for r in (in_tables, words, text_table) if r]
+    targets = _line_targets(fields)
+    adds = [r for r in readings if targets and _adds_up(r, targets)]
+    if adds:
+        return adds[0], [adds[0], *[r for r in readings if r is not adds[0]]]
+    return (in_tables or words), readings
 
 
 def _boxed_rows(layout: DocLayout, items: list[LineReading]) -> list[LineReading]:
@@ -181,7 +215,8 @@ def _boxed_rows(layout: DocLayout, items: list[LineReading]) -> list[LineReading
             page = next((p for p in layout.pages if p.number == spot.page), None)
             boxes = [union_all([ln.box for ln in page.lines if _same_row(ln.box, spot)] if page else []) or spot]
             after = (spot.page, max(first.cy, spot.cy) + 0.006)
-        out.append(LineReading(li.description, li.quantity, li.unit_price, li.amount, boxes, li.score))
+        out.append(LineReading(li.description, li.quantity, li.unit_price, li.amount, boxes, li.score, "vlm",
+                               list(li.agreed)))  # fmt: skip
     return out
 
 
@@ -306,10 +341,11 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
             template: Any = None, vendor: dict[str, Any] | None = None, ocr: str | bool = "auto",
             cross_read: bool = False, layout: DocLayout | None = None, second_read: bool = True,
             today: dt.date | None = None, page_text: list[str] | None = None,
-            local_evidence: dict[str, tuple[int, int]] | None = None) -> CaptureResult:  # fmt: skip
+            local_evidence: dict[str, tuple[int, int]] | None = None, tables: Any = True) -> CaptureResult:  # fmt: skip
     """``page_text``: the page reader's transcription of each page (a vision model's markdown), read as one more
     independent reader ("vlm"). ``local_evidence``: {evidence: (cases, right)} from what AP approved on this
-    computer, for the calibration of confidence."""
+    computer, for the calibration of confidence. ``tables``: look for the tables on each page with the table finder
+    (True, when its model is on this computer), the tables found already ({page: boxes}), or not (False)."""
     path = Path(path)
     layout = layout or build_layout(path, di_raw=di_raw, ocr=ocr)
     sources: dict[str, dict[str, list[Reading]]] = {"rules": read_fields(layout, received=today)}
@@ -346,18 +382,34 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
             sources["vlm"], vlm_items = _page_reader(layout, page_text, today)
         except Exception as exc:  # an extra reader: never fatal
             log.warning("%s: page reader's transcription not read (%s)", path.name, exc)
-    items = read_line_items(layout)
+    words = _labelled(read_line_items(layout), "words")
 
     def fused(lines: list[LineReading]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         return fuse(sources, lines, vendor=vendor, today=today, layout_source=layout.source,
                     fields=FIELDS + EXTRA_FIELDS, local_evidence=local_evidence)  # fmt: skip
 
-    fields, checks = fused(items)
+    fields, checks = fused(words)
+    items, readings = words, [words] if words else []
+    if tables is not False and (path.suffix.lower() == ".pdf" or path.suffix.lower() in IMAGE_EXTENSIONS):
+        try:  # a page to look at (a text file has none)
+            items, readings = _page_lines(path, layout, fields, words, tables)
+        except Exception as exc:  # the table readers are extras: the words under the headings stay
+            log.warning("%s: tables not read (%s)", path.name, exc)
+    agreement = None
     if vlm_items:
-        chosen = _choose_lines(layout, fields, items, vlm_items)
-        if chosen is not items:
-            items = chosen
-            fields, checks = fused(items)  # the lines-add-up check on the lines kept
+        from .line_items import agree, agreement_check, mark_agreed
+
+        _labelled(vlm_items, "vlm")
+        agreeing = next((r for r in readings if agree(r, vlm_items)), None)
+        if agreeing is not None:
+            items = mark_agreed(agreeing, "vlm")
+            mark_agreed(vlm_items, agreeing[0].source)
+        items = _choose_lines(layout, fields, items, vlm_items)
+        agreement = agreement_check(readings, vlm_items, agreeing[0].source if agreeing else None)
+    if items is not words:
+        fields, checks = fused(items)  # the lines-add-up check on the lines kept
+    if agreement is not None:
+        checks.append(agreement)
     if "vlm" in sources and layout.source == "text":
         checks.append(text_layer_check(layout, page_text or [], fields, sources["rules"]))
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,

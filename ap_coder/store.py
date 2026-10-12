@@ -21,6 +21,7 @@ import json
 import re
 import shutil
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -28,7 +29,7 @@ from typing import Any
 
 from .audit import diff_coding
 from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
-from .paths import default_db_path, private_dir  # noqa: F401  (re-exported)
+from .paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from .po import OPEN, po_key
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
 from .rules import Rule
@@ -46,6 +47,11 @@ PENDING = "pending_approval"  # approved once, over the approval limit: waiting 
 PARKED = "parked"  # out of the queue while waiting for information (a buyer, a credit note...)
 ACTIVE_STATUSES = (REVIEW, PARKED, PENDING, APPROVED)  # invoices that count (for POs, recurring vendors...)
 _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
+
+# An invoice file looked for and not found (``Store.invoice_file``) is looked for again after this long, not on every
+# page picture the review screen asks for.
+_LOOK_AGAIN_SECONDS = 30.0
+_NOT_FOUND: dict[tuple[str, int, str], float] = {}
 
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
 # the largest invoice total approved without a person, in CAD.
@@ -129,6 +135,11 @@ CREATE TABLE IF NOT EXISTS page_reads (
     error TEXT NOT NULL DEFAULT '', requested_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL, reader TEXT NOT NULL DEFAULT '', tries INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS page_reads_status ON page_reads (status, created_at);
+CREATE TABLE IF NOT EXISTS azure_checks (
+    invoice_id INTEGER PRIMARY KEY, reason TEXT NOT NULL, status TEXT NOT NULL, pages INTEGER NOT NULL DEFAULT 0,
+    compared INTEGER NOT NULL DEFAULT 0, agreed INTEGER NOT NULL DEFAULT 0, result_json TEXT,
+    error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, compared_at TEXT);
+CREATE INDEX IF NOT EXISTS azure_checks_status ON azure_checks (status, created_at);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
@@ -139,6 +150,14 @@ PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED = "waiting", "r
 PAGE_READ_STATUSES = (PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED)
 STALE_READING_HOURS = 2
 _IN_LINE = "(status = 'waiting' OR (status = 'reading' AND updated_at < ?))"  # ? = _stale_before()
+
+# The Azure check's queue (``azure_checks.status``, ``ap_coder/azure_check.py``): off unless AP turns it on in
+# Settings → Reading. A check still "checking" after STALE_READING_HOURS was interrupted: it waits in line again.
+AZURE_WAITING, AZURE_CHECKING, AZURE_DONE = "waiting", "checking", "done"
+AZURE_FAILED, AZURE_SKIPPED = "failed", "skipped"
+_AZURE_IN_LINE = (  # ? = _stale_before()
+    "(azure_checks.status = 'waiting' OR (azure_checks.status = 'checking' AND azure_checks.updated_at < ?))"
+)
 
 # Fields compared when deciding whether a reviewer edited an invoice header.
 _HEADER_FIELDS = (
@@ -159,14 +178,22 @@ def _stale_before() -> str:
     return (dt.datetime.now() - dt.timedelta(hours=STALE_READING_HOURS)).isoformat(timespec="seconds")
 
 
+_FX_RATE = re.compile(r"([A-Za-z]{3})\s*[=:]?\s*([0-9]+(?:[.,][0-9]+)?)")
+
+
 def parse_fx_rates(text: str) -> dict[str, float]:
     """ "USD=1.37, EUR 1,50; GBP: 1.85" -> {"USD": 1.37, "EUR": 1.5, "GBP": 1.85} (CAD is always 1)."""
     rates = {"CAD": 1.0}
-    for code, value in re.findall(r"([A-Za-z]{3})\s*[=:]?\s*([0-9]+(?:[.,][0-9]+)?)", text or ""):
+    for code, value in _FX_RATE.findall(text or ""):
         rate = float(value.replace(",", "."))
         if rate > 0:
             rates[code.upper()] = rate
     return rates
+
+
+def unread_fx_text(text: str) -> str:
+    """What of ``text`` is not a rate ``parse_fx_rates`` reads ("" when all of it is): "1.37 USD" -> "1.37 USD"."""
+    return re.sub(r"[\s,;]+", " ", _FX_RATE.sub(" ", text or "")).strip()
 
 
 def _clean_code(value: Any) -> str:
@@ -192,14 +219,73 @@ def _norm_number(value: str) -> str:
     return norm_invoice_number(value)
 
 
+def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | None) -> bool:
+    """Whether the reviewer kept the GL account and cost center proposed for a line (``s_gl`` None: no line was
+    proposed). A GL or cost center left blank ("UNASSIGNED", or a cost center still to pick) was not proposed:
+    filling it in confirms the rest, it corrects nothing. A line with nothing proposed at all (or added by the
+    reviewer) is the reviewer's own coding. The approval's lessons and the review screen's count both use this."""
+    gl_blank, cc_blank = s_gl in (None, "", UNASSIGNED), (s_cc or "") in ("", UNASSIGNED)
+    if s_gl is None or (gl_blank and cc_blank):
+        return False
+    return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+
+
+class DatabaseTooNew(RuntimeError):
+    """The database was made by a newer AP Coder: this (older) one never opens it, so it is never downgraded."""
+
+
+def database_schema(path: Path) -> int | None:
+    """The ``schema_version`` a database file records (1 for one older than the setting; None for a missing or
+    empty file, or one with no tables yet: a new database). Only reads."""
+    try:
+        if not path.is_file() or path.stat().st_size == 0:
+            return None
+        conn = sqlite3.connect(path, timeout=30)
+    except (OSError, sqlite3.Error):
+        return None
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if not tables:
+            return None
+        row = (
+            conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
+            if "settings" in tables
+            else None
+        )
+        return int(row[0]) if row and str(row[0]).isdigit() else 1
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
 class Store:
     def __init__(self, path: str | Path | None = None) -> None:
         path = default_db_path() if path is None else path
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._before_migrating()
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
+
+    def _before_migrating(self) -> None:
+        """An update's safety net, before the database is touched: a database made by a newer AP Coder is refused
+        (never opened by this older one, so never downgraded), and one made by an older AP Coder is backed up first
+        (``backups/ap_coder-<date>-before-update-from-schema-<n>.db``), so the update can always be undone."""
+        found = database_schema(self.path)
+        if found is None or found == SCHEMA_VERSION:
+            return
+        if found > SCHEMA_VERSION:
+            from . import __version__
+
+            raise DatabaseTooNew(
+                f"The database {self.path} was made by a newer AP Coder (database version {found}; this AP Coder "
+                f"{__version__} knows up to version {SCHEMA_VERSION}), so this older version does not open it: "
+                "nothing was changed. Start the newer AP Coder instead."
+            )
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.backup_to(self.backup_dir() / f"ap_coder-{stamp}-before-update-from-schema-{found}.db")
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         """Bring a database made by an older version up to date (recorded as settings.schema_version)."""
@@ -283,6 +369,12 @@ class Store:
                 "WHERE e.action = 'autonomy_suspended' AND CASE WHEN json_valid(e.detail) THEN "
                 "json_extract(e.detail, '$.key') END = supplier_profiles.key), updated_at) WHERE state = 'suspended'"
             )
+        # An invoice made from a picture remembers the picture's SHA-256 (intake.py), so the same photo sent again is
+        # found (looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
+        if "original_sha256" not in columns:
+            conn.execute("ALTER TABLE invoices ADD COLUMN original_sha256 TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS invoices_original_sha ON invoices (original_sha256)")
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
         from .capture.workflow import AUTONOMOUS_REVIEWER
@@ -506,7 +598,10 @@ class Store:
         extraction_md: str = "",
         meta: dict[str, Any] | None = None,
         error: str | None = None,
+        original_sha256: str | None = None,
     ) -> int:
+        """``original_sha256``: the SHA-256 of the picture this PDF was made from (``intake.py``), so the same photo
+        sent again is found as this invoice (``find_by_hash``)."""
         source_path = Path(source_path)
         sha = hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.exists() else None
         out = output or {}
@@ -546,6 +641,11 @@ class Store:
                 ),
             )
             invoice_id = int(cur.lastrowid)
+            if original_sha256:
+                # Earlier failed attempts at the same picture (before or after it was made a PDF) are replaced too.
+                conn.execute("DELETE FROM invoices WHERE (original_sha256 = ? OR file_sha256 = ?) AND status = ? "
+                             "AND id != ?", (original_sha256, original_sha256, FAILED, invoice_id))  # fmt: skip
+                conn.execute("UPDATE invoices SET original_sha256 = ? WHERE id = ?", (original_sha256, invoice_id))
             if error:
                 self._log(conn, "failed", invoice_id, detail={"file": source_path.name, "error": error})
             else:
@@ -559,13 +659,14 @@ class Store:
             return invoice_id
 
     def find_by_hash(self, path: str | Path, include_failed: bool = False) -> dict[str, Any] | None:
-        """The latest invoice made from this exact file (failed attempts only if ``include_failed``)."""
+        """The latest invoice made from this exact file, or from this exact picture made into a PDF (failed attempts
+        only if ``include_failed``)."""
         sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        sql = "SELECT id, status FROM invoices WHERE file_sha256 = ?"
+        sql = "SELECT id, status FROM invoices WHERE (file_sha256 = ? OR original_sha256 = ?)"
         if not include_failed:
             sql += f" AND status != '{FAILED}'"
         with self._conn() as conn:
-            row = conn.execute(sql + " ORDER BY id DESC", (sha,)).fetchone()
+            row = conn.execute(sql + " ORDER BY id DESC", (sha, sha)).fetchone()
         return dict(row) if row else None
 
     def find_duplicates(
@@ -725,7 +826,58 @@ class Store:
         inv = dict(row)
         for key in ("ai_output", "final_output", "validation", "meta", "edits"):
             inv[key] = json.loads(inv[key]) if inv[key] else None
+        if inv["source_path"] and not Path(inv["source_path"]).exists():
+            self.invoice_file(inv)  # moved (an update): found again, and ``inv`` points there
         return inv
+
+    def invoice_file(self, inv: dict[str, Any]) -> Path | None:
+        """The file of invoice ``inv`` (a row with ``id``, ``source_path``...), or None when it is nowhere. A file no
+        longer where it was recorded (an update moved the data folder or deleted the old install's folder) is looked
+        for by its name and SHA-256 in the data folder (``invoices/``, data an update kept aside in ``backups/``) and
+        this install's ``samples/`` (a demo invoice); found, the invoice points there from then on (``inv`` too)."""
+        stored = str(inv.get("source_path") or "")
+        if not stored:
+            return None
+        if Path(stored).exists():
+            return Path(stored)
+        key = (str(self.path), int(inv.get("id") or 0), stored)
+        if time.monotonic() - _NOT_FOUND.get(key, -_LOOK_AGAIN_SECONDS) < _LOOK_AGAIN_SECONDS:
+            return None  # looked for a moment ago: not again on every page picture
+        data = self.path.parent
+        sha = inv.get("file_sha256")
+        if sha is None and "file_sha256" not in inv:
+            with self._conn() as conn:
+                row = conn.execute("SELECT file_sha256 FROM invoices WHERE id = ?", (inv.get("id"),)).fetchone()
+            sha = row["file_sha256"] if row else None
+        backups = data / "backups"
+        aside = sorted((p for p in backups.glob("from-*") if p.is_dir()), reverse=True) if backups.is_dir() else []
+        meta = inv.get("meta")
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except ValueError:
+                meta = {}
+        demo = isinstance(meta, dict) and bool(meta.get("demo"))  # only a demo invoice's file is one of the samples
+        places = [data / "invoices", *aside, *([PROJECT_DIR / "samples"] if demo else [])]
+        found = find_moved_file(stored, sha, places, name=str(inv.get("file_name") or ""), data=data)
+        if found is None:
+            _NOT_FOUND[key] = time.monotonic()
+            return None
+        new = str(found.resolve())
+        with self._conn() as conn:
+            row = conn.execute("SELECT meta FROM invoices WHERE id = ? AND source_path = ?",
+                               (inv.get("id"), stored)).fetchone()  # fmt: skip
+            if row is not None:
+                meta = json.loads(row["meta"]) if row["meta"] else {}
+                if isinstance(meta, dict) and meta.get("source") == stored:
+                    meta["source"] = new
+                conn.execute("UPDATE invoices SET source_path = ?, meta = ? WHERE id = ?",
+                             (new, json.dumps(meta, default=str) if meta else row["meta"], inv.get("id")))  # fmt: skip
+                self._log(conn, "file_found", inv.get("id"), detail={"from": stored, "to": new})
+        inv["source_path"] = new
+        if isinstance(inv.get("meta"), dict) and inv["meta"].get("source") == stored:
+            inv["meta"]["source"] = new
+        return found
 
     def park_invoice(self, invoice_id: int, actor: str, reason: str, follow_up: str | None = None) -> None:
         """Take an invoice out of the queue while waiting for information; ``follow_up``: YYYY-MM-DD."""
@@ -799,7 +951,7 @@ class Store:
             # What capture read, and the supplier accuracy measured on it, go with the invoice: a deleted
             # invoice (a duplicate upload, a demo) must not count towards a supplier's autonomy, a reader's
             # record or the confidence calibration, and is no longer waiting for the page reader.
-            for table in ("invoice_capture", "supplier_outcomes", "reader_outcomes", "page_reads"):
+            for table in ("invoice_capture", "supplier_outcomes", "reader_outcomes", "page_reads", "azure_checks"):
                 conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
             if row is not None:
                 self._log(conn, "deleted", invoice_id, actor, {
@@ -903,14 +1055,7 @@ class Store:
         by_rule = {c["line_number"]: c for c in (inv.get("meta") or {}).get("rules_applied") or []}
         feedback_rows = []
 
-        def kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str) -> bool:
-            """Whether the reviewer kept what was proposed. A GL or cost center left blank ("UNASSIGNED", or a
-            cost center still to pick) was not proposed: filling it in confirms the rest, it corrects nothing.
-            A line with nothing proposed at all (or added by the reviewer) is the reviewer's own coding."""
-            gl_blank, cc_blank = s_gl in (None, "", UNASSIGNED), (s_cc or "") in ("", UNASSIGNED)
-            if s_gl is None or (gl_blank and cc_blank):
-                return False
-            return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+        kept = suggestion_kept
 
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
             s_gl = suggestion.get("predicted_gl_code") if suggestion else None
@@ -1793,12 +1938,17 @@ class Store:
 
     # --- Each reader against what AP approved; the page reader's queue -------------------------------------------
 
-    def record_reader_outcomes(self, invoice_id: int, rows: list[dict[str, Any]], at: str | None = None) -> int:
+    def record_reader_outcomes(
+        self, invoice_id: int, rows: list[dict[str, Any]], at: str | None = None, reader: str | None = None
+    ) -> int:
         """What each capture reader read on an approved invoice, against what AP approved
         (``capture.workflow.reader_outcome_rows``): one row per reader and field; reader "fused" is the value
         AP saw, with its evidence key and status. Recording an invoice again replaces its rows (an invoice
-        approved again after a reopen). Returns how many rows were kept."""
+        approved again after a reopen). ``reader``: only that reader's rows are replaced (the Azure check, run on an
+        invoice already approved, adds reader "di" beside the others). Returns how many rows were kept."""
         at = at or _now()
+        if reader:
+            rows = [r for r in rows if r.get("reader") == reader]
 
         def text(value: Any) -> str | None:
             return None if value is None else str(value)
@@ -1811,7 +1961,10 @@ class Store:
             if r.get("reader") and r.get("field")
         ]  # fmt: skip
         with self._conn() as conn:
-            conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ?", (invoice_id,))
+            if reader:
+                conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ? AND reader = ?", (invoice_id, reader))
+            else:
+                conn.execute("DELETE FROM reader_outcomes WHERE invoice_id = ?", (invoice_id,))
             conn.executemany(
                 """INSERT INTO reader_outcomes (invoice_id, reader, field, read_value, final_value, correct, evidence,
                    layout_source, status, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -2022,6 +2175,151 @@ class Store:
                 (invoice_id, stale, stale, me[0], me[0], invoice_id),
             ).fetchone()
         return int(row[0])
+
+    # --- The Azure check's queue (ap_coder/azure_check.py) -----------------------------------------------------
+
+    def queue_azure_check(self, invoice_id: int, reason: str) -> bool:
+        """Put an invoice in line for the Azure check (``reason``: "low-confidence" or "spot-check"). One already in
+        line or checked stays as it is, except that a low-confidence reason replaces a spot-check still waiting, and
+        one skipped before is put back in line. False when nothing changed."""
+        now = _now()
+        with self._conn() as conn:
+            cur = conn.execute(
+                """INSERT INTO azure_checks (invoice_id, reason, status, created_at, updated_at)
+                   VALUES (?, ?, 'waiting', ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET reason = excluded.reason,
+                   status = 'waiting', error = '', updated_at = excluded.updated_at
+                   WHERE azure_checks.status = 'skipped' OR (azure_checks.status = 'waiting'
+                   AND azure_checks.reason != excluded.reason AND excluded.reason = 'low-confidence')""",
+                (invoice_id, reason, now, now),
+            )
+            return cur.rowcount > 0
+
+    def next_azure_check(self, *, after_page_reader: bool = False) -> dict[str, Any] | None:
+        """The invoice the Azure check takes next (the one waiting longest), marked as being checked; None when
+        nothing waits. ``after_page_reader``: leave invoices still waiting for the page reader (OvisOCR2 is running
+        and will read them): they are checked once it has, on the invoice as it then stands."""
+        now, stale = _now(), _stale_before()
+        later = (
+            " AND NOT EXISTS (SELECT 1 FROM page_reads p WHERE p.invoice_id = azure_checks.invoice_id "
+            "AND p.status IN ('waiting', 'reading'))"
+            if after_page_reader
+            else ""
+        )
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                f"SELECT invoice_id FROM azure_checks WHERE {_AZURE_IN_LINE}{later} "
+                "ORDER BY created_at, invoice_id LIMIT 1",
+                (stale,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE azure_checks SET status = 'checking', error = '', updated_at = ? WHERE invoice_id = ?",
+                (now, row[0]),
+            )
+            taken = conn.execute("SELECT * FROM azure_checks WHERE invoice_id = ?", (row[0],)).fetchone()
+        return dict(taken)
+
+    def finish_azure_check(
+        self, invoice_id: int, status: str, *, result: dict[str, Any] | None = None, pages: int = 0,
+        compared: int = 0, agreed: int = 0, error: str = "", reason: str | None = None,
+    ) -> bool:  # fmt: skip
+        """How a check ended: ``done`` (``result``: Azure's values and the comparison), ``failed`` (``error``),
+        ``skipped`` (nothing to check), or ``waiting`` (back in line, e.g. the day's page cap is reached)."""
+        if status not in (AZURE_WAITING, AZURE_DONE, AZURE_FAILED, AZURE_SKIPPED):
+            raise ValueError(f"unknown Azure check status {status!r}")
+        now = _now()
+        with self._conn() as conn:
+            cur = conn.execute(
+                """UPDATE azure_checks SET status = ?, result_json = COALESCE(?, result_json), pages = ?,
+                   compared = ?, agreed = ?, error = ?, updated_at = ?, reason = COALESCE(?, reason),
+                   compared_at = CASE WHEN ? = 'done' THEN ? ELSE compared_at END WHERE invoice_id = ?""",
+                (status, json.dumps(result, default=str) if result is not None else None, int(pages or 0),
+                 int(compared or 0), int(agreed or 0), (error or "")[:2000], now, reason, status, now, invoice_id),
+            )  # fmt: skip
+            return cur.rowcount > 0
+
+    def azure_check(self, invoice_id: int) -> dict[str, Any] | None:
+        """The invoice's Azure check: {invoice_id, reason, status, pages, compared, agreed, result (dict or None),
+        error, created_at, updated_at, compared_at}, or None when it was never put in line."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM azure_checks WHERE invoice_id = ?", (invoice_id,)).fetchone()
+        if row is None:
+            return None
+        check = dict(row)
+        check["result"] = json.loads(check.pop("result_json") or "null")
+        if check["status"] == AZURE_CHECKING and check["updated_at"] < _stale_before():
+            check["status"] = AZURE_WAITING
+        return check
+
+    def azure_pages_on(self, day: str | None = None) -> int:
+        """The pages sent to Azure on ``day`` (YYYY-MM-DD, default today): what the daily cap counts."""
+        day = day or dt.date.today().isoformat()
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(pages), 0) FROM azure_checks WHERE status = 'done' "
+                "AND substr(compared_at, 1, 10) = ?",
+                (day,),
+            ).fetchone()
+        return int(row[0] or 0)
+
+    def azure_checks_since(self, since_iso: str) -> list[dict[str, Any]]:
+        """Every check done since ``since_iso``, newest first, with the invoice's vendor, number and status:
+        {invoice_id, reason, pages, compared, agreed, result, compared_at, vendor_name, invoice_number,
+        invoice_status}."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT a.invoice_id, a.reason, a.pages, a.compared, a.agreed, a.result_json, a.compared_at,
+                   i.vendor_name, i.invoice_number, i.status invoice_status FROM azure_checks a
+                   LEFT JOIN invoices i ON i.id = a.invoice_id WHERE a.status = 'done' AND a.compared_at >= ?
+                   ORDER BY a.compared_at DESC, a.invoice_id DESC""",
+                (since_iso,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["result"] = json.loads(item.pop("result_json") or "null")
+            out.append(item)
+        return out
+
+    def azure_check_counts(self) -> dict[str, int]:
+        """How many checks are in each state: {waiting, checking, done, failed, skipped}."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT status, COUNT(*) n FROM azure_checks GROUP BY status").fetchall()
+        counts = dict.fromkeys((AZURE_WAITING, AZURE_CHECKING, AZURE_DONE, AZURE_FAILED, AZURE_SKIPPED), 0)
+        counts.update({r["status"]: int(r["n"]) for r in rows})
+        return counts
+
+    def update_after_azure_check(
+        self, invoice_id: int, capture: dict[str, Any] | None, issue: dict[str, Any] | None, code: str,
+        meta: dict[str, Any] | None = None,
+    ) -> bool:  # fmt: skip
+        """Fold an Azure check into an invoice still open (in review or parked): the capture (fields Azure read
+        differently marked Check), the review issue ``code`` replaced by ``issue`` (None removes it) and ``meta``
+        merged into the processing notes. Nothing changes on an invoice approved, rejected or deleted (False)."""
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status, validation, meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+            if row is None or row["status"] not in (REVIEW, PARKED):
+                return False
+            validation = json.loads(row["validation"] or "null") or {}
+            issues = [i for i in validation.get("issues") or [] if i.get("code") != code]
+            if issue:
+                issues.append(issue)
+                validation["requires_review"] = True
+            if validation:
+                validation["issues"] = issues
+            merged = {**(json.loads(row["meta"] or "null") or {}), **(meta or {})}
+            conn.execute(
+                "UPDATE invoices SET validation = ?, meta = ?, requires_review = CASE WHEN ? THEN 1 "
+                "ELSE requires_review END WHERE id = ?",
+                (json.dumps(validation) if validation else None, json.dumps(merged, default=str), int(bool(issue)),
+                 invoice_id),
+            )  # fmt: skip
+            if capture is not None:
+                self._save_capture(conn, invoice_id, capture)
+        return True
 
     def replace_proposal(
         self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
@@ -2312,6 +2610,9 @@ class Store:
         target = sqlite3.connect(dest)
         try:
             source.backup(target)
+            # One self-contained file (not WAL, which needs -wal / -shm files beside it): it opens and restores from
+            # anywhere, also a read-only network share or USB stick.
+            target.execute("PRAGMA journal_mode=DELETE")
         finally:
             target.close()
             source.close()
@@ -2376,15 +2677,38 @@ class Store:
         return made
 
     @staticmethod
+    @contextmanager
+    def _local_copy(backup: str | Path) -> Iterator[Path]:
+        """A copy of ``backup`` in a temporary folder on this computer, to open: nothing is ever written next to the
+        backup itself (SQLite would, for a WAL-format one), which may be on a read-only share or a UNC path."""
+        import tempfile
+
+        path = Path(backup)
+        with tempfile.TemporaryDirectory(prefix="ap_coder-backup-", ignore_cleanup_errors=True) as folder:
+            copy = Path(folder) / "backup.db"
+            try:
+                shutil.copyfile(path, copy)
+                wal = path.with_name(path.name + "-wal")  # a database still open elsewhere: its latest changes
+                if wal.is_file():
+                    shutil.copyfile(wal, copy.with_name(copy.name + "-wal"))
+            except OSError as exc:
+                raise ValueError(f"{path.name} could not be opened ({exc.strerror or exc})") from None
+            yield copy
+
+    @staticmethod
     def check_backup(backup: str | Path) -> None:
         """Raise ValueError (in plain words) unless ``backup`` is an AP Coder database this version can open:
         a ``schema_version`` setting no newer than this version's, and no triggers or views (AP Coder makes
         none; one in a planted file would run on every later change)."""
-        path = Path(backup)
+        with Store._local_copy(backup) as copy:
+            Store._check_backup_file(copy, Path(backup).name)
+
+    @staticmethod
+    def _check_backup_file(path: Path, name: str) -> None:
         try:
             conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         except sqlite3.Error as exc:
-            raise ValueError(f"{path.name} could not be opened ({exc})") from None
+            raise ValueError(f"{name} could not be opened ({exc})") from None
         try:
             kinds = {r[0] for r in conn.execute("SELECT type FROM sqlite_master WHERE type IN ('trigger', 'view')")}
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -2394,35 +2718,36 @@ class Store:
                 else None
             )
         except sqlite3.DatabaseError:
-            raise ValueError(f"{path.name} is not an AP Coder database (or it is damaged)") from None
+            raise ValueError(f"{name} is not an AP Coder database (or it is damaged)") from None
         finally:
             conn.close()
         if kinds:
-            raise ValueError(f"{path.name} contains {' and '.join(sorted(kinds))}s, which AP Coder never makes")
+            raise ValueError(f"{name} contains {' and '.join(sorted(kinds))}s, which AP Coder never makes")
         if row is None or not {"invoices", "feedback"} <= tables:
-            raise ValueError(f"{path.name} is not an AP Coder database")
+            raise ValueError(f"{name} is not an AP Coder database")
         try:
             version = int(row[0])
         except (TypeError, ValueError):
-            raise ValueError(f"{path.name} is not an AP Coder database") from None
+            raise ValueError(f"{name} is not an AP Coder database") from None
         if version > SCHEMA_VERSION:
-            raise ValueError(f"{path.name} was made by a newer version of AP Coder: update AP Coder first")
+            raise ValueError(f"{name} was made by a newer version of AP Coder: update AP Coder first")
 
     def restore_from(self, backup: str | Path) -> Path:
         """Replace the database with a backup. The current one is backed up first (returned).
         Raises ValueError, with nothing changed, when the file is not an AP Coder backup (``check_backup``).
         The second backup folder is cleared after a restore: a backup file must not choose where later
         backups are copied (set it again in Settings)."""
-        self.check_backup(backup)
-        copy_dir = self.get_setting("backup_copy_dir").strip()
-        safety = self.backup_now("before-restore")
-        source = sqlite3.connect(Path(backup))
-        target = sqlite3.connect(self.path)
-        try:
-            source.backup(target)
-        finally:
-            target.close()
-            source.close()
+        with self._local_copy(backup) as copy:  # read from this computer, never written next to the backup
+            self._check_backup_file(copy, Path(backup).name)
+            copy_dir = self.get_setting("backup_copy_dir").strip()
+            safety = self.backup_now("before-restore")
+            source = sqlite3.connect(copy)
+            target = sqlite3.connect(self.path)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+                source.close()
         with self._conn() as conn:
             conn.executescript(_SCHEMA)  # an older backup may lack newer tables...
             self._migrate(conn)  # ...and columns

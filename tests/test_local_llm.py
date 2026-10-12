@@ -4,6 +4,7 @@ A tiny OpenAI-compatible server runs in a thread on 127.0.0.1 (no real network, 
 """
 
 import json
+import re
 import tempfile
 import threading
 import time
@@ -28,7 +29,6 @@ from ap_coder.local_llm import (
 )
 
 from .conftest import FakeOpenAI, make_completion
-from .test_dashboard_pages import _ok, _page, db  # noqa: F401 - db: a fresh dashboard database (fixture)
 
 REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every other test
 
@@ -409,30 +409,52 @@ def no_reading_status(monkeypatch):
     monkeypatch.setattr(reading, "reading_status", lambda settings, store, use_cache=True: reading.ReadingStatus())
 
 
-def test_settings_page_when_lm_studio_is_not_running(db, monkeypatch, no_reading_status):  # noqa: F811
-    monkeypatch.setenv("AP_ENV_FILE", str(db.parent / ".env"))
-    at = _ok(_page("settings", "page_settings").run())
-    page = " ".join(m.value for m in at.markdown)
-    assert "IT team installs it" in page and "Start server" in page and "lmstudio.ai" not in page
-    _ok(at.button(key="rd_check").click().run())
+@pytest.fixture
+def settings_client(tmp_path, monkeypatch):
+    """The dashboard reading its settings from a .env of the test's own (as it does for every page)."""
+    from fastapi.testclient import TestClient
+
+    from ap_coder.store import Store
+    from ap_coder.web.app import create_app
+
+    env = tmp_path / "private" / ".env"
+    monkeypatch.setenv("AP_ENV_FILE", str(env))
+    app = create_app(None, Store(tmp_path / "private" / "ap_coder.db"), start_reader=False)
+    return TestClient(app, base_url="http://localhost"), env
 
 
-def test_settings_page_lists_the_models_with_nothing_to_choose(db, lm_studio, monkeypatch, no_reading_status):  # noqa: F811
+def _words(page: str) -> str:
+    import html
+    import re
+
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page)))
+
+
+def test_settings_page_when_lm_studio_is_not_running(settings_client, no_reading_status):
+    client, _ = settings_client
+    text = _words(client.get("/settings/reading").text)
+    assert "IT team installs it" in text and "Start server" in text and "lmstudio.ai" not in text
+    response = client.post("/settings/reading/check", headers={"X-AP-Coder": "1"})
+    assert response.status_code == 200 and response.json()["ok"]
+
+
+def test_settings_page_lists_the_models_with_nothing_to_choose(settings_client, lm_studio, monkeypatch,
+                                                               no_reading_status):  # fmt: skip
     from ap_coder.envfile import read_env
 
+    client, env = settings_client
     server = lm_studio(["qwen2.5-7b-instruct", "llama-3.2-3b-instruct", "text-embedding-nomic"], V0_LOADED)
-    env = db.parent / ".env"
-    monkeypatch.setenv("AP_ENV_FILE", str(env))
     for key in ("AP_LLM_PROVIDER", "AP_LLM_MODEL", "AP_LLM_VISION"):
         monkeypatch.setenv(key, "")  # restored after the test
     monkeypatch.setenv("AP_LLM_BASE_URL", server.base_url)
-    at = _ok(_page("settings", "page_settings").run())
-    assert "IT team installs it" not in " ".join(m.value for m in at.markdown)
-    table = next(d.value for d in at.dataframe if "Loaded" in d.value.columns)
-    models = set(table["Model"])  # what LM Studio has (its own listing), the embedding model left out
+    page = client.get("/settings/reading").text
+    assert "IT team installs it" not in _words(page)
+    table = page.split("Models in LM Studio", 1)[1].split("</table>", 1)[0]
+    models = set(re.findall(r"<td[^>]*>\s*(?:<[^>]+>\s*)*([\w.-]+-instruct|[\w.-]*embed[\w.-]*)", table))
+    # what LM Studio has (its own listing), the embedding model left out
     assert {"qwen2.5-7b-instruct", "qwen2.5-vl-7b-instruct"} <= models and not [m for m in models if "embed" in m]
-    keys = {w.key for w in [*at.selectbox, *at.radio, *at.toggle] if w.key}
-    assert not keys & {"llm_provider", "llm_model", "llm_vision", "pr_mode", "pr_scope", "pr_model"}
+    for gone in ("llm_provider", "llm_model", "llm_vision", "pr_mode", "pr_scope", "pr_model"):
+        assert f'name="{gone}"' not in page
     assert not read_env(env)  # looking at Settings writes nothing
 
 

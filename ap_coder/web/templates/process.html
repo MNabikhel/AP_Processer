@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block aside %}{{ ui.status("Ready to read invoices", "ok") if ready else ui.status("Setup not finished", "warn") }}{% endblock %}
+{% block content %}
+<div class="grid-3-2">
+  <div class="col">
+    {# Progress of the reading job: drawn here when it runs or ran, kept up to date by static/js/process.js #}
+    <section class="card job{% if job.state == 'idle' %} hidden{% endif %}" id="job" data-state="{{ job.state }}"
+             data-status-url="/process/status" aria-live="polite">
+      <div class="card-head">
+        <h4 id="job-title">{% if job.state == 'running' %}Processing…{% elif job.state == 'error' %}Processing stopped{% else %}{{ (job.result or {}).label or "Processed" }}{% endif %}</h4>
+        <span class="muted" id="job-when">{% if job.finished_at %}{{ job.finished_at | time_ago }}{% endif %}</span>
+      </div>
+      <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="{{ job.total }}" aria-valuenow="{{ job.done }}">
+        <div id="job-bar" style="width: {{ (100 * job.done / job.total) | round | int if job.total else (100 if job.state == 'done' else 0) }}%"></div>
+      </div>
+      <div class="muted" id="job-note">{% if job.state == 'running' %}{{ job.note }}{% elif job.error %}{{ job.error }}{% endif %}</div>
+      <ul class="lines" id="job-lines">
+        {% for line in job.lines %}
+        <li class="{{ line.tone }}"><span class="ms" aria-hidden="true">{{ line.icon or "chevron_right" }}</span><span>{{ line.text }}</span></li>
+        {% endfor %}
+      </ul>
+      <div class="job-messages" id="job-messages">
+        {% for f in (job.result or {}).messages or [] %}
+        <div class="flash {{ f.tone }}"><span class="ms" aria-hidden="true">{{ f.icon }}</span><div><div>{{ f.text }}</div>
+          {% if f.details %}<ul>{% for d in f.details %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}</div></div>
+        {% endfor %}
+      </div>
+      <div class="row" id="job-actions"{% if job.state == 'running' %} hidden{% endif %}>
+        <a class="btn" href="/review"><span class="ms" aria-hidden="true">arrow_forward</span>Go to the review queue</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h4>Upload invoices</h4>
+      <p class="muted">Each file is saved to the invoices folder on this computer, then read, coded and checked. A photo or
+        a scanned picture is made into a PDF first; the picture is kept in the <code>originals</code> folder there.</p>
+      <form id="upload-form" method="post" action="/process/upload" enctype="multipart/form-data" data-upload>
+        <label class="dropzone" id="dropzone">
+          <input type="file" name="files" id="upload-files" multiple accept="{{ accept }}">
+          <span class="ms" aria-hidden="true">upload_file</span>
+          <span><b>Choose files</b> or drag them here</span>
+          <small>PDFs, scans or photos (TIFF, PNG, JPG), or saved emails (.eml) with invoices attached</small>
+        </label>
+        <ul class="picked" id="picked" hidden></ul>
+        <div class="row">
+          <button class="btn primary" type="submit" id="upload-go" disabled data-ready="{{ 'yes' if ready else 'no' }}">
+            <span class="ms" aria-hidden="true">play_arrow</span><span id="upload-label">Process uploaded invoices</span>
+          </button>
+          {% if not ready %}<span class="muted">Finish the setup first (GL accounts).</span>{% endif %}
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h4>Invoices folder</h4>
+        <form method="post" action="/process/open-folder">
+          <button class="btn" type="submit" title="{{ folder }}&#10;&#10;To process new files automatically (e.g. overnight), whoever runs AP Coder can start the folder watcher: python -m ap_coder watch">
+            <span class="ms" aria-hidden="true">folder_open</span>Open folder</button>
+        </form>
+      </div>
+      <p class="muted">Copy invoices into this folder, or have a scanner or mail rule save them there. New files are listed
+        here, ready to process.</p>
+      {% if not files %}
+      {{ ui.empty_note("No new files", "Everything in the folder has been processed.", "done_all") }}
+      {% else %}
+      <div class="table-wrap">
+        <table class="apc-table">
+          <thead><tr><th>File</th><th class="r">Size</th></tr></thead>
+          <tbody>
+            {% for f in files %}
+            <tr><td><span class="ms file-ico{% if f.email %} mail{% endif %}" aria-hidden="true">{{ f.icon }}</span> {{ f.name }}
+              {% if f.email %}<span class="muted">· its attachments are read</span>{% endif %}</td><td class="r">{{ f.kb }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <form method="post" action="/process/folder" data-job="/process/status" class="row">
+        <button class="btn primary" type="submit"{% if not ready %} disabled{% endif %}>
+          <span class="ms" aria-hidden="true">play_arrow</span>Process {{ files | length | plural("file") }}</button>
+      </form>
+      {% endif %}
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card">
+      <div class="card-head">
+        <div><h4>Setup</h4><p class="muted">What AP Coder needs before it reads invoices.</p></div>
+        {{ ui.pill(steps_done ~ " of " ~ steps_needed ~ " done", "ok" if steps_done == steps_needed else "gray") }}
+      </div>
+      <div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail) }}{% endfor %}</div>
+      <div class="row">
+        {% if steps[2][0] != "ok" or steps[3][0] != "ok" %}<a class="link" href="/accounts">Finish setup <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
+        {% if steps[4][0] != "ok" %}<a class="link" href="/settings#reading">Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
+      </div>
+    </section>
+
+    {% if recent %}
+    <section class="card">
+      <h4>Recently processed</h4>
+      <div>{% for inv in recent %}{{ ui.recent_row(inv) }}{% endfor %}</div>
+      {% if recent_waiting %}<a class="link" href="/review">Go to the review queue <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
+    </section>
+    {% endif %}
+
+    {% include "_demo_card.html" %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script type="module" src="/static/js/process.js?v={{ static_version }}"></script>{% endblock %}

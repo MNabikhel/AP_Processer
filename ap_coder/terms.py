@@ -64,11 +64,15 @@ _NET = [
 ]
 
 
-def _net_days(text: str) -> int | None:
+def _net_days(text: str, *, outside_interest: bool = False) -> int | None:
+    """``outside_interest``: days in a late-payment clause ("2% per month on accounts over 30 days") are left out:
+    they say when interest starts, which is the net days only when nothing else says when it is due."""
     for pattern in _NET:
-        m = pattern.search(text)
-        if m and 0 <= int(m.group(1)) <= 180:
-            return int(m.group(1))
+        for m in pattern.finditer(text):
+            if outside_interest and pattern is _NET[1] and _INTEREST.search(_clause(text, m.start(), m.end())):
+                continue
+            if 0 <= int(m.group(1)) <= 180:
+                return int(m.group(1))
     return None
 
 
@@ -114,12 +118,15 @@ def parse_terms(text: str | None) -> Terms:
                 net = days + EOM_NET_AFTER_DISCOUNT
             if 0 < pct < 20 and 0 < days <= 60:
                 return Terms(net_days=net, discount_pct=pct, discount_days=days, eom=eom)
-    net = _net_days(text)  # before "on receipt": "Net 30 days upon receipt of invoice" is net 30
+    # Before "on receipt": "Net 30 days upon receipt of invoice" is net 30. "Due on receipt, 2% per month on accounts
+    # over 30 days" is due on receipt: the days of an interest clause count only when nothing else gives the terms.
+    net = _net_days(text, outside_interest=True)
     if net is not None:
         return Terms(net_days=net, eom=eom)
     if _RECEIPT.search(text):
         return Terms(net_days=0, on_receipt=True)
-    return Terms(eom=eom)
+    net = _net_days(text)
+    return Terms(net_days=net, eom=eom) if net is not None else Terms(eom=eom)
 
 
 def _date(value: Any) -> dt.date | None:

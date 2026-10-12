@@ -1,109 +1,95 @@
-"""Touchless processing on the dashboard: Settings → Automation, the Learning page as a training view, and what the
-Review page says an approval taught."""
+"""Touchless processing on the dashboard (ap_coder/web): Settings → Automation, the Learning page as a training view,
+and what the review screen says an approval taught."""
 
-import json
-import sys
+import html
+import re
 
 import pytest
-import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from ap_coder.store import Store, load_sample_setup
 
-from .conftest import ROOT, SAMPLE_STEM, SAMPLES
 from .test_touchless import _ready
-
-# --- The dashboard -------------------------------------------------------------------------------------------------
+from .test_web_invoice import form_of
+from .webclient import add_clean, client_for, follow, post
 
 
 @pytest.fixture
-def db(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
+def store(tmp_path, monkeypatch):
     monkeypatch.setenv("AP_REVIEWER", "Manager Mia")
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    return path
+    return Store(tmp_path / "private" / "ap_coder.db")
 
 
-def _ok(at):
-    assert not at.exception, [e.value for e in at.exception]
-    return at
+@pytest.fixture
+def client(store):
+    return client_for(store)
 
 
-def _html(at) -> str:
-    return " ".join(str(h.proto.body) for h in at.get("html"))
+def _switch(page: str) -> str:
+    """The form that turns touchless processing on or off."""
+    return page.split('action="/settings/automation/touchless"', 1)[1].split("</form>", 1)[0]
 
 
-def _automation():
-    return AppTest.from_string(
-        "from ap_coder.webapp.automation_settings import automation_tab\n"
-        "from ap_coder.webapp.common import get_store, show_toast\n"
-        "show_toast()\nautomation_tab(get_store())",
-        default_timeout=90,
-    )
-
-
-def test_automation_tab_turns_touchless_on_with_a_confirmation(db):
-    store = Store(db)
+def test_automation_tab_turns_touchless_on_with_a_confirmation(client, store):
     _ready(store, name="Price $5 *Wholesale*")
     _ready(store, 12, key="id:V2", name="Chinook")
-    at = _ok(_automation().run())
-    html = _html(at)
-    assert "Off: every invoice is reviewed by a person" in html
-    assert "at least 20" in html and "the last 10, with no correction at all" in html and "5% of touchless" in html
-    assert "Bank account changed" in html and "Possible duplicate" in html and "5,000.00 CAD" in html
-    assert "Credit note" in html and "Not in the vendor master" in html and "Over the approval limit" in html
-    assert at.button(key="touchless_go").disabled  # needs "I understand"
-    _ok(at.checkbox(key="touchless_sure").check().run())
-    _ok(at.button(key="touchless_go").click().run())
+    page = html.unescape(client.get("/settings/automation").text)
+    assert "Off: every invoice is reviewed by a person" in page
+    assert "at least 20" in page and "the last 10, with no correction at all" in page and "5% of touchless" in page
+    assert "Bank account changed" in page and "Possible duplicate" in page and "5,000.00 CAD" in page
+    assert "Credit note" in page and "Not in the vendor master" in page and "Over the approval limit" in page
+    assert re.search(r'<button[^>]*type="submit"[^>]*disabled', _switch(page))  # needs "I understand"
+    response = post(client, "/settings/automation/touchless", {"turn": "on"})
+    assert response.status_code == 400 and not store.touchless_enabled()
+    page = follow(client, post(client, "/settings/automation/touchless", {"turn": "on", "sure": "1"}))
     assert store.touchless_enabled()
     assert store.events(actions=["touchless_on"])[0]["actor"] == "Manager Mia"
-    assert [t.value for t in at.toast] == ["Touchless processing is on: 1 vendor touchless now."]
-    assert "On: a vendor that meets the bar" in _html(at)
-    tiles = _html(at)
-    assert "Vendors touchless" in tiles and "Touchless, last 30 days" in tiles
+    assert "Touchless processing is on: 1 vendor touchless now." in page
+    assert "On: a vendor that meets the bar" in page
+    assert "Vendors touchless" in page and "Touchless, last 30 days" in page
 
 
-def test_automation_tab_saves_the_limit(db):
-    store = Store(db)
-    at = _ok(_automation().run())
-    at.number_input[0].set_value(2500.0)
-    _ok(next(b for b in at.button if b.label == "Save the limit").click().run())
-    assert store.touchless_limit() == 2500.0
+def test_the_touchless_confirmation_is_asked_again_for_the_opposite_switch(client, store):
+    """Found driving the dashboard: after turning touchless off, the menu showed "Turn on" with "I understand" still
+    ticked from turning it off, so one more click approved invoices without a person with no fresh confirmation."""
+    page = follow(client, post(client, "/settings/automation/touchless", {"turn": "on", "sure": "1"}))
+    assert store.touchless_enabled()
+    form = _switch(page)
+    assert 'name="turn" value="off"' in form  # the form now turns it off...
+    assert re.search(r'<input type="checkbox" name="sure"[^>]*>', form).group(0).count("checked") == 0  # unticked
+    assert re.search(r'<button[^>]*type="submit"[^>]*disabled', form)  # ... and "Turn off" waits for its own tick
+    response = post(client, "/settings/automation/touchless", {"turn": "off"})
+    assert response.status_code == 400 and store.touchless_enabled()
+    # The same "Turn on" sent again (a second click, an old tab) does not turn it off.
+    again = follow(client, post(client, "/settings/automation/touchless", {"turn": "on", "sure": "1"}))
+    assert store.touchless_enabled() and "already on" in again
+    page = follow(client, post(client, "/settings/automation/touchless", {"turn": "off", "sure": "1"}))
+    assert not store.touchless_enabled()
+    form = _switch(page)
+    assert 'name="turn" value="on"' in form and "checked" not in form
+    assert re.search(r'<button[^>]*type="submit"[^>]*disabled', form)  # and "Turn on" again for its own
+
+
+def test_automation_tab_saves_the_limit(client, store):
+    page = follow(client, post(client, "/settings/automation/limit", {"limit": "2500"}))
+    assert store.touchless_limit() == 2500.0 and "Saved: 2,500.00 CAD." in page
     assert store.events(actions=["settings_changed"])[0]["actor"] == "Manager Mia"
 
 
-def test_learning_tab_has_no_per_vendor_turn_on_button(db):
-    store = Store(db)
+def test_learning_tab_has_no_per_vendor_turn_on_button(client, store):
     _ready(store)
     store.set_touchless(True, "Mia")
-    at = _ok(AppTest.from_string("from ap_coder.webapp.learning import page_learning\npage_learning()",
-                                 default_timeout=90).run())  # fmt: skip
-    html = _html(at)
-    assert "Touchless" in html and "Touchless since" in html
-    assert not any("Turn on autonomy" in str(b.proto) for b in at.get("button"))
-    assert any((b.key or "").startswith("sup_hold_") for b in at.button)
+    page = client.get("/learning?tab=suppliers").text
+    assert "Touchless" in page and "Touchless since" in page
+    assert "Turn on autonomy" not in page and "/learning/suppliers/on" not in page
+    assert "/learning/suppliers/hold" in page  # keeping a vendor supervised is the one per-vendor control
 
 
-def test_approving_says_what_the_vendor_learned(db):
-    store = Store(db)
+def test_approving_says_what_the_vendor_learned(client, store):
     load_sample_setup(store)
-    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
-    invoice_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", gt, {"requires_review": False,
-                                                                         "adjusted_confidence": 0.95})  # fmt: skip
-    at = AppTest.from_file(str(ROOT / "ap_coder" / "dashboard.py"), default_timeout=90)
-    at.session_state["open_invoice"] = invoice_id
-    _ok(at.run())
-    _ok(at.button(key=f"inv{invoice_id}_approve").click().run())
-    toasts = [t.value for t in at.toast]
-    assert any(
-        t.startswith("Approved ")
-        and "Every header field was read right." in t
-        and ": 1 invoice reviewed, about " in t
-        and "more clean invoices to go touchless." in t
-        and "coded as suggested." in t
-        for t in toasts
-    ), toasts
+    invoice_id = add_clean(store)
+    page = follow(client, post(client, f"/review/{invoice_id}/approve", form_of(store, invoice_id)))
+    found = re.search(r"Approved [^<]*coded as suggested\.", html.unescape(page))
+    assert found, page
+    text = found.group(0)
+    assert "Every header field was read right." in text and ": 1 invoice reviewed, about " in text
+    assert "more clean invoices to go touchless." in text

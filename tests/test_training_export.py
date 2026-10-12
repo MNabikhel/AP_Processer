@@ -2,18 +2,17 @@
 command, and the Learning page's Readers tab (the scorecard, field by field, the export card)."""
 
 import copy
+import html
 import io
 import json
+import re
 import shutil
 import sqlite3
-import sys
 import zipfile
 
 import pymupdf
 import pytest
-import streamlit as st
 from PIL import Image
-from streamlit.testing.v1 import AppTest
 
 from ap_coder import cli
 from ap_coder.capture.confidence import MIN_EVIDENCE
@@ -170,60 +169,45 @@ def test_cli_export_training(tmp_path, ground_truth, capsys):
 
 
 @pytest.fixture
-def db(tmp_path, monkeypatch):
-    path = tmp_path / "private" / "ap_coder.db"
-    monkeypatch.setenv("AP_DB_PATH", str(path))
-    for name in [m for m in sys.modules if m.startswith(("ap_coder.webapp", "ap_coder.dashboard"))]:
-        monkeypatch.delitem(sys.modules, name)
-    st.cache_resource.clear()
-    st.cache_data.clear()
-    return path
+def store(tmp_path):
+    return Store(tmp_path / "private" / "ap_coder.db")
 
 
-def _learning_page():
-    return AppTest.from_string(
-        "from ap_coder.webapp.learning import page_learning\npage_learning()", default_timeout=90
-    )
+@pytest.fixture
+def client(store):
+    from .webclient import client_for
+
+    return client_for(store)
 
 
-def _ok(at):
-    assert not at.exception, [e.value for e in at.exception]
-    return at
+def _readers(client, **params) -> str:
+    """The Readers tab as its words read."""
+    page = client.get("/learning", params={"tab": "readers", **params}).text
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page)))
 
 
-def _html(at):
-    return " ".join(str(h.proto.body) for h in at.get("html"))
+def test_readers_tab_before_any_approval(client):
+    text = _readers(client)
+    for tab in ("Coding accuracy", "Supplier learning", "Readers"):
+        assert tab in text
+    assert "No reader compared with AP yet" in text and "Nothing approved yet" in text
+    assert "Download training data (ZIP)" not in text
 
 
-def _captions(at):
-    return " ".join(c.value for c in at.caption)
-
-
-def test_readers_tab_before_any_approval(db):
-    at = _ok(_learning_page().run())
-    assert [t.label for t in at.tabs] == ["Coding accuracy", "Supplier learning", "Readers"]
-    assert "No reader compared with AP yet" in _html(at)
-    assert "Nothing approved yet" in _captions(at)
-    assert "training_zip_make" not in {b.key for b in at.button}
-
-
-def test_training_card_when_every_approval_was_a_bulk_approval(db, ground_truth):
+def test_training_card_when_every_approval_was_a_bulk_approval(client, store, ground_truth):
     """Bulk approvals are approvals: the card says why they are left out instead of "Nothing approved yet"."""
-    store = Store(db)
     _approve(store, PDF, ground_truth, bulk=True)
     _approve(store, PDF, ground_truth | {"invoice_number": "NW-2026-0913"}, bulk=True)
-    at = _ok(_learning_page().run())
-    captions = _captions(at)
-    assert "Nothing approved yet" not in captions
-    assert "2 bulk-approved invoices are left out: nobody opened them." in captions
-    assert "training_zip_make" not in {b.key for b in at.button}
+    text = _readers(client)
+    assert "Nothing approved yet" not in text
+    assert "2 bulk-approved invoices are left out: nobody opened them." in text
+    assert "Download training data (ZIP)" not in text
     _approve(store, PDF, ground_truth | {"invoice_number": "NW-2026-0914"})  # one a person approved
-    at = _ok(_learning_page().run())
-    assert "1 approved invoice" in _captions(at) and "2 bulk-approved invoices are left out" in _captions(at)
+    text = _readers(client)
+    assert "1 approved invoice" in text and "2 bulk-approved invoices are left out" in text
 
 
-def test_readers_tab_with_approvals(db, ground_truth):
-    store = Store(db)
+def test_readers_tab_with_approvals(client, store, ground_truth):
     box = [Box(1, 0.6, 0.1, 0.8, 0.12)]
     capture = CaptureResult({
         "invoice_number": FieldResult("invoice_number", "NW-2026-0912", 0.99, "verified", box,
@@ -243,23 +227,23 @@ def test_readers_tab_with_approvals(db, ground_truth):
     for n in range(MIN_EVIDENCE):  # one pattern seen often enough to set its own confidence
         store.record_reader_outcomes(1000 + n, [{"reader": "fused", "field": "grand_total", "correct": True,
                                                  "evidence": "grand_total|rules|label-right|scan|"}])  # fmt: skip
-    at = _ok(_learning_page().run())
-    html = _html(at)
+    page = client.get("/learning", params={"tab": "readers"}).text
+    text = _readers(client)
     for label in ("Combined (what AP saw)", "OCR + rules", "OCR (second engine)", "Page reader", "Supplier template"):
-        assert label in html, label
-    assert html.count("OCR (second engine)") == 1  # the ocr and ocr2 reads are one reader here
-    assert "Verified values right" in html and "2 values shown as verified" in html
-    assert "1 evidence pattern now has enough approvals to set its own confidence" in _captions(at)
-    pick = at.selectbox(key="readers_pick")
-    assert pick.options[0] == "Combined (what AP saw)" and "Page reader" in pick.options
-    _ok(pick.select("Page reader").run())
-    assert "read NW-2026-0812 · AP approved NW-2026-0912" in _html(at)  # its latest disagreement with AP
-    _ok(at.selectbox(key="readers_pick").select("OCR (second engine)").run())
-    html = _html(at)
-    assert "Invoice #" in html and "Subtotal" in html  # both kinds of second read, field by field
+        assert label in text, label
+    scorecard = text.split("Scorecard", 1)[1].split("Field by field", 1)[0]
+    assert scorecard.count("OCR (second engine)") == 1  # the ocr and ocr2 reads are one reader here
+    assert "Verified values right" in text and "2 values shown as verified" in text
+    assert "1 evidence pattern now has enough approvals to set its own confidence" in text
+    options = re.findall(r"<option[^>]*>([^<]+)</option>", page.split('name="reader"', 1)[1].split("</select>", 1)[0])
+    assert html.unescape(options[0]) == "Combined (what AP saw)" and "Page reader" in options
+    assert "read NW-2026-0812 · AP approved NW-2026-0912" in _readers(client, reader="Page reader")  # its latest
+    text = _readers(client, reader="OCR (second engine)")
+    assert "Invoice #" in text and "Subtotal" in text  # both kinds of second read, field by field
 
-    assert "2 approved invoices" in _captions(at)
-    _ok(at.button(key="training_zip_make").click().run())
-    _, data, counts = at.session_state["training_zip"]
-    assert data.startswith(b"PK") and counts["invoices"] == 2
-    assert any("training_zip_download" in (b.proto.id or "") for b in at.get("download_button"))
+    assert "2 approved invoices" in text
+    response = client.get("/learning/training.zip")
+    assert response.status_code == 200 and response.content.startswith(b"PK")
+    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        fields = [json.loads(line) for line in z.read("fields.jsonl").decode().splitlines() if line.strip()]
+    assert len({f["invoice_id"] for f in fields}) == 2  # one row per approved invoice

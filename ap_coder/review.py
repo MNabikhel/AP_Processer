@@ -1,6 +1,6 @@
 """Turning the dashboard's edited header fields and grids back into an ``InvoiceCoding``.
 
-Kept free of Streamlit so it can be unit-tested.
+Kept free of the web app so it can be unit-tested.
 """
 
 from __future__ import annotations

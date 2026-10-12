@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "_tiles.html" import tile_row %}
+{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% macro gl(g) %}<div class="gl{% if g.todo %} todo{% endif %}">{{ g.code }}<small>{{ g.name }}</small></div>{% endmacro %}
+{% block content %}
+<section class="card">
+  <form method="get" action="/month-end" class="row period">
+    <label class="field">Period end <input type="date" name="end" value="{{ end }}" required></label>
+    <button class="btn" type="submit">Show</button>
+    <p class="muted small grow">Amounts are net of recoverable sales tax, in each invoice's currency. Expected recurring
+      invoices are estimates at the usual amount.</p>
+  </form>
+</section>
+
+{{ tile_row(tiles) }}
+{% if old_period %}
+<p class="muted small"><span class="ms" aria-hidden="true">info</span> Received quantities come from the latest
+  purchase-order import (they have no receipt date), so <i>Received, not invoiced</i> reflects what has been received by
+  today, not by the period end.</p>
+{% endif %}
+
+{% if not items %}
+<section class="card">{{ ui.empty_state("Nothing to accrue", "Everything incurred by " ~ end ~ " is already in the ERP.", inbox_art) }}</section>
+{% else %}
+<section class="card">
+  <h4>By GL account</h4>
+  <div class="cols-{{ gl_columns | length }}">
+    {% for chunk in gl_columns %}
+    <div class="table-wrap">
+      <table class="apc-table">
+        <thead><tr><th>GL account</th><th class="r">Accrue</th></tr></thead>
+        <tbody>{% for r in chunk %}<tr><td>{{ gl(r.gl) }}</td><td class="r">{{ r.total | money }} <span class="muted">{{ r.currency }}</span></td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="muted small">Reverse these entries on the first day of the next period, as usual.</p>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h4>Accruals schedule</h4>
+    <a class="btn" href="/month-end/accruals.csv?end={{ end }}" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+  </div>
+  {% for g in groups %}
+  {{ ui.subhead(g.title, g.rows | length | plural("line"), first=loop.first) }}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Vendor</th><th>What</th><th>GL account</th><th class="r">Amount</th></tr></thead>
+      <tbody>
+        {% for a in g.rows %}
+        <tr>
+          <td class="w"><b>{{ a.vendor }}</b><div class="muted">{{ a.reference }}</div></td>
+          <td class="w">{{ a.description }}</td>
+          <td class="w">{{ gl(a.gl) }}{% if a.cost_center %}<small class="muted">{{ a.cost_center }}</small>{% endif %}</td>
+          <td class="r">{{ a.amount | money }} <span class="muted">{{ a.currency }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+{% endblock %}

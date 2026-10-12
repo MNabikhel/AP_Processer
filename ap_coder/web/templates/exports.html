@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% from "_sheet.html" import upload_form, preview, columns %}
+{% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+{{ ui.tiles([
+  ui.tile("Ready to export", ready | length, "outbox", "blue", (ready_total ~ " total") if ready else "nothing waiting"),
+  ui.tile("Batches", live | length, "inventory_2", "violet", (exported_count | plural("invoice")) ~ " exported"),
+  ui.tile("Last export", live[0].created_at[:10] if live else "—", "event", "green",
+          ("batch " ~ live[0].id ~ " by " ~ (live[0].actor or "?")) if live else "nothing yet", text=True),
+]) }}
+
+<section class="card" id="ready">
+  <h4>Ready to export</h4>
+  {% if not ready %}
+  {{ ui.empty_state("Nothing waiting", "Approved invoices appear here until they are exported.", empty_art) }}
+  {% else %}
+  <div class="row">
+    <span class="muted">ERP format</span>
+    <div class="segmented" role="group" aria-label="ERP format">
+      {% for key, label in formats.items() %}
+      <a href="/exports?fmt={{ key }}#ready" class="{{ 'on' if key == fmt else '' }}" title="{{ format_help[key] }}"
+         {% if key == fmt %}aria-current="true"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  <p class="muted small">{{ format_help[fmt] }}</p>
+  {% for p in blocking %}
+  <div class="flash err"><span class="ms" aria-hidden="true">settings</span><div>{{ p }} Set it in <a href="/settings#jde">Settings → JD Edwards E1</a>.</div></div>
+  {% endfor %}
+  <form method="post" action="/exports/create" id="export-form" data-busy="Exporting…">
+    <input type="hidden" name="fmt" value="{{ fmt }}">
+    <div class="table-wrap">
+      <table class="apc-table">
+        <thead><tr><th><input type="checkbox" id="export-all" checked aria-label="Export all"{% if not selectable %} disabled{% endif %}></th>
+          <th>Vendor</th><th>Invoice #</th><th>Date</th><th>Cur.</th><th class="r">Total</th><th>Approved by</th></tr></thead>
+        <tbody>
+          {% for r in ready %}
+          <tr{% if r.blocked %} class="dim"{% endif %}>
+            <td><input type="checkbox" name="ids" value="{{ r.id }}" class="export-pick" aria-label="Export {{ r.vendor_name }} {{ r.invoice_number }}"
+                       {% if r.blocked %}disabled{% else %}checked{% endif %}></td>
+            <td class="w">{{ r.vendor_name }}</td><td>{{ r.invoice_number }}</td><td>{{ r.invoice_date }}</td>
+            <td>{{ r.currency }}</td><td class="r">{{ r.grand_total | money }}</td><td>{{ r.reviewer }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="row end">
+      <button class="btn primary" type="submit" id="export-go"{% if not selectable %} disabled{% endif %}>
+        <span class="ms" aria-hidden="true">ios_share</span><span id="export-label">Export {{ selectable | plural("invoice") }}</span></button>
+    </div>
+  </form>
+  {% if problems %}
+  <div class="flash warn"><span class="ms" aria-hidden="true">rule</span><div>
+    {% set one = problems | length == 1 %}
+    {{ problems | length | plural("invoice") }} cannot go to JD Edwards yet and {{ "is" if one else "are" }} left out of the
+    batch: fix {{ "it" if one else "them" }} (the mapping in Settings → JD Edwards E1, the vendor master's ERP ID, or the
+    invoice) and export {{ "it" if one else "them" }} later.</div></div>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>#</th><th>Vendor</th><th>Invoice #</th><th>Why not</th></tr></thead>
+      <tbody>{% for p in problems %}<tr><td><b>{{ p.id }}</b></td><td>{{ p.vendor }}</td><td>{{ p.number }}</td>
+        <td class="w">{% for reason in p.reasons %}<div>{{ reason }}</div>{% endfor %}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% if just %}
+<section class="card" id="made">
+  <h4>Batch {{ just.id }} is ready</h4>
+  {% if just.format == jde_format %}
+  <p class="muted">Load F0411Z1.csv and F0911Z1.csv into the Z-tables, then run R04110ZA in proof mode first, then final
+    (see README.txt in the ZIP). If the load fails, undo the batch below and export again.</p>
+  {% else %}
+  <p class="muted">Import this file into your ERP. If the import fails, undo the batch below and export again.</p>
+  {% endif %}
+  <a class="btn primary" href="/exports/batches/{{ just.id }}/download?fmt={{ just.format }}" download>
+    <span class="ms" aria-hidden="true">download</span>Download batch {{ just.id }}</a>
+</section>
+{% endif %}
+
+<details class="card expander" id="layout"{% if fmt == "custom" %} open{% endif %}>
+  <summary><span class="ms" aria-hidden="true">view_column</span>Custom layout for your ERP</summary>
+  <p class="muted">One row per GL posting line. Pick the columns your ERP's import expects, in order, with its headers; a
+    column can also be fixed text (a company code, a journal name). Then export with <i>Custom CSV</i>. Clear a row's
+    header and value to remove it.</p>
+  <form method="post" action="/exports/layout" id="layout-form" class="stack" data-busy="Saving…">
+    <div class="table-wrap">
+      <table class="apc-table edit">
+        <thead><tr><th>Header</th><th>Value</th><th>Fixed text</th></tr></thead>
+        <tbody>
+          {% for c in layout_rows %}
+          <tr>
+            <td><input type="text" name="header" value="{{ c.header }}" aria-label="Header {{ loop.index }}"></td>
+            <td><select name="field" aria-label="Value {{ loop.index }}">
+              <option value="">(choose)</option>
+              {% for key, label in layout_fields.items() %}<option value="{{ key }}"{% if key == c.field %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select></td>
+            <td><input type="text" name="text" value="{{ c.text }}" aria-label="Fixed text {{ loop.index }}" title="Used when the value is 'Fixed text…'"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="map-grid">
+      <label class="field">Dates
+        <select name="date_format">{% for d in date_formats %}<option{% if d == layout.date_format %} selected{% endif %}>{{ d }}</option>{% endfor %}</select></label>
+      <label class="field">Separator
+        <select name="delimiter">{% for key, label in delimiters.items() %}<option value="{{ key }}"{% if key == layout.delimiter %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="check"><input type="checkbox" name="decimal_comma" value="1"{% if layout.decimal_comma %} checked{% endif %}> Decimal comma (12,50)</label>
+      <label class="check"><input type="checkbox" name="header_row" value="1"{% if layout.header_row %} checked{% endif %}> Header row</label>
+    </div>
+    <div id="layout-warnings" class="stack"></div>
+    <div class="stack full" id="layout-preview-box"{% if not csv_preview %} hidden{% endif %}>
+      <span class="muted small">Preview</span>
+      <pre class="code" id="layout-preview">{{ csv_preview }}</pre>
+    </div>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save layout</button>
+  </form>
+</details>
+
+<details class="card expander" id="register"{% if reg or reg_error %} open{% endif %}>
+  <summary><span class="ms" aria-hidden="true">receipt_long</span>Invoices already in the ERP{% if register_count %} ({{ register_count | num }} known){% endif %}</summary>
+  <p class="muted">Import the ERP's AP invoice list (vendor, invoice number, date, total), e.g. the last 18 months.
+    Invoices processed in AP Coder are then also checked against bills already entered or paid in the ERP.</p>
+  {% if reg_error %}<div class="flash err"><span class="ms" aria-hidden="true">error</span><div>{{ reg_error }}</div></div>{% endif %}
+  {% if reg %}
+  {{ preview(reg, "/exports", {"register": reg.token}) }}
+  <form method="post" action="/exports/register/import" class="stack" data-busy="Importing…">
+    {{ columns(reg) }}
+    <label class="check"><input type="checkbox" name="replace" value="1"> Replace the invoices already imported</label>
+    <div class="row">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload</span>Import</button>
+      <a class="link" href="/exports#register">Cancel</a>
+    </div>
+  </form>
+  {% else %}
+  {{ upload_form("/exports/register/upload", "ERP invoice list (CSV or Excel)", "Upload the ERP invoice list") }}
+  {% endif %}
+  {% if register_count %}
+  <form method="post" action="/exports/register/clear" data-confirm="Clear the list of {{ register_count | num }} ERP invoices? Invoices are then no longer checked against it.">
+    <button class="btn sm" type="submit"><span class="ms" aria-hidden="true">delete_sweep</span>Clear the list</button>
+  </form>
+  {% endif %}
+</details>
+
+<section class="card" id="batches">
+  <h4>Past batches</h4>
+  {% if not batches %}
+  {{ ui.empty_note("No exports yet", " Each export appears here and can be downloaded again.", "history") }}
+  {% else %}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Batch</th><th>When</th><th>By</th><th class="r">Invoices</th><th class="r">Total</th><th>Format</th><th></th></tr></thead>
+      <tbody>
+        {% for b in batches %}
+        <tr>
+          <td><b>{{ b.id }}</b></td><td>{{ b.when }}</td><td>{{ b.actor or "" }}</td><td class="r">{{ b.invoices }}</td>
+          <td class="r">{% for cur, t in b.amounts %}{{ t | money }} <span class="muted">{{ cur }}</span>{% if not loop.last %} · {% endif %}{% else %}—{% endfor %}</td>
+          <td>{{ b.format_label }}</td>
+          <td>{{ ui.pill("Undone", "gray", "undo") if b.undone_at else ui.pill("Exported", "ok", "check") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if chosen %}
+  <form method="get" action="/exports" class="row batch-pick">
+    <input type="hidden" name="fmt" value="{{ fmt }}">
+    <label class="field inline">Batch
+      <select name="batch" data-autosubmit>
+        {% for b in live %}<option value="{{ b.id }}"{% if b.id == chosen.id %} selected{% endif %}>Batch {{ b.id }} · {{ b.created_at[:10] }} · {{ b.invoices | plural("invoice") }}</option>{% endfor %}
+      </select></label>
+    <label class="field inline">Format
+      <select name="bfmt" data-autosubmit>
+        {% for key, label in again_formats.items() %}<option value="{{ key }}"{% if key == again_fmt %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></label>
+    <noscript><button class="btn sm" type="submit">Show</button></noscript>
+  </form>
+  {% if left_out[0] %}
+  <div class="flash warn"><span class="ms" aria-hidden="true">rule</span><div>
+    {{ left_out[0] }} of {{ left_out[1] | plural("invoice") }} in batch {{ chosen.id }} cannot go to JD Edwards and
+    {{ "are" if left_out[0] > 1 else "is" }} left out of this file{% if left_out[0] == left_out[1] %}, so it holds no invoice{% endif %}
+    (e.g. no supplier number in the vendor master). The reasons are listed in README.txt in the ZIP.</div></div>
+  {% endif %}
+  <div class="row">
+    <a class="btn primary" href="/exports/batches/{{ chosen.id }}/download?fmt={{ again_fmt }}" download>
+      <span class="ms" aria-hidden="true">download</span>Download again</a>
+    <a class="btn" href="/exports/batches/{{ chosen.id }}/approved-pdfs.zip" download
+       title="Each invoice of the batch with an APPROVED stamp and its coding page: to attach in the ERP.">
+      <span class="ms" aria-hidden="true">approval</span>Approved PDFs (ZIP)</a>
+    <details class="pop">
+      <summary class="btn"><span class="ms" aria-hidden="true">undo</span>Undo this batch…</summary>
+      <div class="pop-body">
+        <p>Put the invoices of batch {{ chosen.id }} back in <i>Ready to export</i> (e.g. the ERP import failed). The batch
+          stays in this list, marked as undone.</p>
+        <form method="post" action="/exports/batches/{{ chosen.id }}/undo" data-confirm="Undo batch {{ chosen.id }}? Its invoices go back to Ready to export.">
+          <button class="btn primary" type="submit">Undo batch</button>
+        </form>
+      </div>
+    </details>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+
+<section class="card" id="audit">
+  <div class="card-head">
+    <div><h4>Duplicate payment audit</h4>
+      <p class="muted">Bills that may have been approved, or posted in the ERP, twice: number typos, the same bill under two
+        vendor names, the same amount days apart. Includes the ERP invoice register when imported (above).</p></div>
+    <a class="btn" href="/exports?audit=1&fmt={{ fmt }}#audit"><span class="ms" aria-hidden="true">search</span>Run the audit</a>
+  </div>
+  {% if pairs is not none %}
+  <p class="muted small">Results of {{ audit_at }}: run it again after approving or importing more.</p>
+  {% if not pairs %}
+  {{ ui.pill("No likely duplicates found", "ok", "check") }}
+  {% else %}
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Why</th><th>Bill</th><th>Possible duplicate</th><th class="r">Amount</th></tr></thead>
+      <tbody>
+        {% for p in pairs %}
+        <tr>
+          <td>{{ ui.pill(reasons[p.reason], "err" if p.reason == exact else "warn") }}</td>
+          <td class="w"><b>{{ p.first.vendor_name }}</b><div class="muted">{{ p.first.label }}</div></td>
+          <td class="w"><b>{{ p.second.vendor_name }}</b><div class="muted">{{ p.second.label }}</div></td>
+          <td class="r">{{ "{:,.2f}".format(p.amount) }} <span class="muted">{{ p.first.currency or p.second.currency }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if pair_count > pairs | length %}<p class="muted small">The first {{ pairs | length }} of {{ pair_count }}: download the CSV for all.</p>{% endif %}
+  <a class="btn" href="/exports/duplicates.csv" download><span class="ms" aria-hidden="true">download</span>Download (CSV)</a>
+  <p class="muted small">Check each pair against the documents: a real duplicate that was paid is recovered from the vendor
+    as a credit or refund.</p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="/static/js/exports.js?v={{ static_version }}"></script>{% endblock %}

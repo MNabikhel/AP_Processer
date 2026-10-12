@@ -1,4 +1,4 @@
-"""Untrusted text is made safe for spreadsheets, Markdown and file names."""
+"""Untrusted text is made safe for spreadsheets and file names."""
 
 import io
 import json
@@ -6,7 +6,7 @@ import json
 from openpyxl import load_workbook
 
 from ap_coder import exports
-from ap_coder.safe import csv_cell, md
+from ap_coder.safe import csv_cell
 from ap_coder.statements import Line, Reconciliation, to_csv
 
 from .conftest import SAMPLE_STEM, SAMPLES
@@ -43,13 +43,8 @@ def test_csv_downloads_neutralise_formulas_but_keep_numbers():
     assert csv_cell("-12.50") == "-12.50" and csv_cell(-3) == -3 and csv_cell("plain") == "plain"
 
 
-def test_markdown_is_literal():
-    assert md("Acme [Pay](https://evil.example)") == r"Acme \[Pay\]\(https\://evil.example\)"
-    assert md(None) == ""
-
-
 def test_upload_names_cannot_leave_the_folder():
-    from ap_coder.webapp.process import safe_file_name
+    from ap_coder.web.pages.process import safe_file_name
 
     assert safe_file_name("../../../../etc/cron.d/x.pdf") == "x.pdf"
     assert safe_file_name("/etc/x.pdf") == "x.pdf"

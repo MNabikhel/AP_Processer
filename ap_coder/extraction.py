@@ -166,13 +166,11 @@ def result_from_text(path: str | Path) -> ExtractionResult:
 
 def build_credential(settings: DocumentIntelligenceSettings) -> Any:
     """API key when configured, otherwise Entra ID via DefaultAzureCredential."""
+    from .offline import import_azure  # Azure's packages are an optional extra: a plain message without them
+
     if settings.api_key:
-        from azure.core.credentials import AzureKeyCredential
-
-        return AzureKeyCredential(settings.api_key)
-    from azure.identity import DefaultAzureCredential
-
-    return DefaultAzureCredential()
+        return import_azure("azure.core.credentials").AzureKeyCredential(settings.api_key)
+    return import_azure("azure.identity").DefaultAzureCredential()
 
 
 class DocumentExtractor:
@@ -199,13 +197,19 @@ class DocumentExtractor:
         return self._client
 
     def _build_client(self) -> Any:
-        from azure.ai.documentintelligence import DocumentIntelligenceClient
-
         if not self.settings.endpoint:
             raise RuntimeError(
                 "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT is not set (pass a .md/.txt file to skip extraction)"
             )
-        return DocumentIntelligenceClient(endpoint=self.settings.endpoint, credential=build_credential(self.settings))
+        from .offline import INTERNET_ENV, import_azure, internet_allowed
+
+        if not internet_allowed():  # the offline build: an invoice never leaves this computer
+            raise RuntimeError(
+                f"Azure Document Intelligence is not used in this offline build (developers: {INTERNET_ENV}=1); "
+                "`process` reads invoices on this computer"
+            )
+        client = import_azure("azure.ai.documentintelligence").DocumentIntelligenceClient
+        return client(endpoint=self.settings.endpoint, credential=build_credential(self.settings))
 
     def _cache_path(self, data: bytes) -> Path | None:
         if not self.cache_dir:
@@ -236,15 +240,21 @@ class DocumentExtractor:
         return result_from_raw(path, raw)
 
     def _analyze(self, data: bytes) -> dict[str, Any]:
-        from azure.ai.documentintelligence.models import DocumentContentFormat
+        client = self.client  # first: without an endpoint, offline or without Azure's packages it says so plainly
+        try:
+            from azure.ai.documentintelligence.models import DocumentContentFormat
+
+            markdown: Any = DocumentContentFormat.MARKDOWN
+        except ImportError:  # a client handed in (tests): the format's plain value
+            markdown = "markdown"
 
         log.info("Analyzing document with %s", self.settings.model_id)
-        kwargs: dict[str, Any] = {"output_content_format": DocumentContentFormat.MARKDOWN}
+        kwargs: dict[str, Any] = {"output_content_format": markdown}
         if self.settings.locale:
             kwargs["locale"] = self.settings.locale
         if self.settings.pages:
             kwargs["pages"] = self.settings.pages
-        poller = self.client.begin_analyze_document(
+        poller = client.begin_analyze_document(
             self.settings.model_id,
             body=data,
             content_type="application/octet-stream",

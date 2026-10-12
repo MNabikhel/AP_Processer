@@ -7,6 +7,7 @@ import functools
 import http.server
 import importlib.util
 import io
+import json
 import socket
 import subprocess
 import sys
@@ -80,7 +81,7 @@ def test_only_the_missing_package_is_installed(launch, monkeypatch):
 
 
 def test_first_install_is_the_editable_folder_with_the_ocr_add_on(launch, monkeypatch):
-    calls = _fake_pip(launch, monkeypatch, ["streamlit>=1.62", "rapidocr>=3.4,<3.5"], "Missing: ap_coder")
+    calls = _fake_pip(launch, monkeypatch, ["fastapi>=0.115,<1", "rapidocr>=3.4,<3.5"], "Missing: ap_coder")
     launch.ensure_packages({})
     assert calls == [["-e", ".[ocr]"]]
 
@@ -136,11 +137,11 @@ def test_a_second_ocr_engine_that_cannot_be_installed_is_said_once(launch, monke
 
 
 def test_a_failed_install_stops_with_what_to_do(launch, monkeypatch):
-    _fake_pip(launch, monkeypatch, ["streamlit>=1.62"], fails={"streamlit>=1.62"})
+    _fake_pip(launch, monkeypatch, ["fastapi>=0.115,<1"], fails={"fastapi>=0.115,<1"})
     with pytest.raises(launch.SetupError) as exc:
         launch.ensure_packages({})
-    assert "wheelhouse folder has no streamlit for Python" in exc.value.hint and "3.12" in exc.value.hint
-    _fake_pip(launch, monkeypatch, ["streamlit>=1.62"], fails={"streamlit>=1.62"}, source=[])  # opted in: PyPI
+    assert "wheelhouse folder has no fastapi for Python" in exc.value.hint and "3.12" in exc.value.hint
+    _fake_pip(launch, monkeypatch, ["fastapi>=0.115,<1"], fails={"fastapi>=0.115,<1"}, source=[])  # opted in: PyPI
     with pytest.raises(launch.SetupError) as exc:
         launch.ensure_packages({})
     assert "HTTPS_PROXY" in exc.value.hint
@@ -177,10 +178,10 @@ def test_offline_pip_never_runs_without_no_index(launch, tmp_path, monkeypatch, 
     """The offline default: pip runs only against the bundle's wheelhouse (``--no-index``), never PyPI."""
     monkeypatch.setattr(launch, "ROOT", tmp_path)
     commands = _record_pip(launch, monkeypatch)
-    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["streamlit>=1.62", "rapidocr>=3.4,<3.5"], "x"))
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["fastapi>=0.115,<1", "rapidocr>=3.4,<3.5"], "x"))
     with pytest.raises(launch.SetupError) as exc:  # no wheelhouse: nothing run, and it says what is missing
         launch.ensure_packages({})
-    assert commands == [] and "streamlit" in str(exc.value) and "offline bundle" in str(exc.value)
+    assert commands == [] and "fastapi" in str(exc.value) and "offline bundle" in str(exc.value)
     assert not launch.pip_install(["openpyxl"]) and commands == []
     (tmp_path / "wheelhouse").mkdir()
     with pytest.raises(launch.SetupError):
@@ -252,22 +253,25 @@ def web(tmp_path):
 
 
 def test_a_running_ap_coder_is_found_and_another_server_is_not(launch, web, monkeypatch):
+    """This folder's own AP Coder (its version, answering /healthz) is found; anything else on the port is not."""
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")  # never through a proxy
     site, port = web
-    assert not launch.is_ap_coder(port)  # something else answers on that port
-    (site / "app" / "static").mkdir(parents=True)
-    (site / "app" / "static" / "InterVariable.woff2").write_bytes(b"wOF2")
-    assert launch.is_ap_coder(port)
+    assert launch.running_dashboard(["--port", str(port)], {}) is None  # something else answers on that port
+    version = launch.identity()["version"]
+    health = {"ok": True, "app": "ap-coder", "version": version, "folder": str(launch.ROOT), "pid": 1, "port": port}
+    (site / "healthz").write_text(json.dumps(health))
     assert launch.running_dashboard(["--port", str(port)], {}) == port
     assert launch.running_dashboard([], {"port": port}) == port  # the port the last start used
+    (site / "healthz").write_text(json.dumps({**health, "folder": "/another/folder"}))
+    assert launch.running_dashboard([], {"port": port}) is None  # another install's: not this one to open
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         closed = s.getsockname()[1]
-    assert not launch.is_ap_coder(closed)
+    assert launch.running_dashboard(["--port", str(closed)], {}) is None
 
 
 def test_second_start_while_running_only_opens_the_browser(launch, monkeypatch):
-    monkeypatch.setattr(launch, "running_dashboard", lambda rest, state: 8501)
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("open", 8501))
     opened: list[str] = []
     monkeypatch.setattr(launch, "open_browser", opened.append)
     monkeypatch.setattr(launch, "ensure_packages", lambda state: pytest.fail("set up again"))
@@ -280,6 +284,8 @@ def test_second_start_while_running_only_opens_the_browser(launch, monkeypatch):
 def lock(launch, tmp_path, monkeypatch):
     monkeypatch.setattr(launch, "LOCK", tmp_path / ".ap_coder_launch.lock")
     monkeypatch.setattr(launch, "_held", [])
+    monkeypatch.setattr(launch, "real_stop_older", launch.stop_older, raising=False)
+    monkeypatch.setattr(launch, "stop_older", lambda argv: None)  # (never a real server on this computer)
     yield launch
     launch.release_lock()
 
@@ -313,6 +319,28 @@ def test_a_second_start_waits_for_the_first_ones_dashboard(lock, monkeypatch, ca
     monkeypatch.setattr(launch, "running_dashboard", lambda argv, state: None)
     other.close()
     assert launch.wait_for_other([], every=0) is None and launch._held
+
+
+def test_an_older_version_running_from_this_folder_is_taken_over_not_waited_for(lock, monkeypatch, capsys):
+    """Unzipped over the folder of an AP Coder still running (0.1's dashboard): its start holds this folder's lock
+    and its dashboard is never this version's, so the new start said "being set up in another window: waiting"
+    for half an hour. The older one is stopped (its start then ends and frees the lock) and this one carries on."""
+    launch = lock
+    other = _other_start_holds_the_lock(launch)  # the old version's start, serving its dashboard
+    old = launch.running.Server(8501, legacy=True)
+    stops: list[int] = []
+
+    def take_over(root, version, ports, data, say):
+        stops.append(1)
+        other.close()  # stopped: the old start ends
+        return "clear", None
+
+    monkeypatch.setattr(launch.running, "find", lambda ports, data: [] if stops else [old])
+    monkeypatch.setattr(launch.running, "take_over", take_over)
+    monkeypatch.setattr(launch, "running_dashboard", lambda argv, state: None)
+    monkeypatch.setattr(launch, "stop_older", launch.real_stop_older)
+    assert launch.wait_for_other([], timeout=1, every=0) is None and launch._held and stops == [1]
+    assert "has not opened the dashboard yet" not in capsys.readouterr().out
 
 
 def test_main_waits_instead_of_setting_up_twice(lock, monkeypatch):
@@ -365,9 +393,9 @@ def test_browser_none_opens_nothing(launch, monkeypatch):
 
 
 def _quiet_setup(launch, monkeypatch, installed=False):
-    monkeypatch.setattr(launch, "running_dashboard", lambda rest, state: None)
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("clear", None))
     monkeypatch.setattr(launch, "ensure_packages", lambda state: ("ok", "Packages: all 13 in place", installed))
-    monkeypatch.setattr(launch, "ensure_data_folder", lambda: None)
+    monkeypatch.setattr(launch, "ensure_data_folder", lambda: launch.VENV.parent / "data")
     monkeypatch.setattr(launch, "ensure_models", lambda first, state: None)
     started: list[list[str]] = []
     monkeypatch.setattr(launch, "start_dashboard", lambda rest, state: started.append(rest) or 0)
@@ -414,6 +442,29 @@ def test_self_check_reads_pilot_checks_verdict(launch, monkeypatch):
     monkeypatch.setattr(launch.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout=bad, stderr=""))
     ok, text = launch.self_check()
     assert not ok and text == "Self-check FAILED: FAIL a.pdf"
+    skipped = "OK   a.pdf\n\n10 of 10 sample invoices read right.\nSKIP read as a scan with local OCR: not installed\n"
+    monkeypatch.setattr(launch.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=skipped,
+                                                                                 stderr=""))  # fmt: skip
+    ok, text = launch.self_check()
+    assert ok and "no scan tried (no OCR)" in text and "a scan with local OCR" not in text
+
+
+def test_pilot_check_passes_without_the_ocr_add_on_and_says_the_scan_was_not_tried(monkeypatch, capsys):
+    """Without the OCR add-on (it can't be installed on every computer), the self-check failed on the scan sample:
+    the launcher already warns that OCR isn't installed, and a failed self-check keeps an older AP Coder's folder
+    on disk for ever. The samples are still checked; the scan is reported as not tried."""
+    from ap_coder.capture import layout
+
+    spec = importlib.util.spec_from_file_location("ap_script_pilot_check", ROOT / "scripts" / "pilot_check.py")
+    pilot = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pilot)
+    monkeypatch.setattr(layout, "ocr_available", lambda: False)
+    monkeypatch.setattr(pilot, "check", lambda pdf, pipe: [])
+    assert pilot.main() == 0
+    out = capsys.readouterr().out
+    assert "SKIP read as a scan with local OCR" in out and "FAIL" not in out
+    monkeypatch.setattr(pilot, "check", lambda pdf, pipe: ["grand_total: 1"])
+    assert pilot.main() == 1  # a sample read wrong still fails
 
 
 def test_lm_studio_is_only_reported(launch, monkeypatch):
