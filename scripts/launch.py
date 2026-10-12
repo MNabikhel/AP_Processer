@@ -1317,7 +1317,13 @@ def previous_install(state: dict, ident: dict, legacy: list[str]) -> dict | None
             return None
         return {"version": state.get("version") or registered_version(), "build": state.get("build", "")}
     older = [i for i in upgrade.previous_versions(ROOT, legacy) if paths.is_older(i, ident)]
-    return older[-1] if older else None
+    if older:
+        return older[-1]
+    # Unzipped over an AP Coder from before this launcher (install.bat, or by hand): only its .venv says which.
+    registered = registered_version()
+    if registered and paths.version_key(registered) < paths.version_key(ident["version"]):
+        return {"version": registered, "build": ""}
+    return None
 
 
 def registered_version() -> str:

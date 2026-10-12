@@ -28,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -60,6 +61,8 @@ BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static
 RETIRED_KEPT = {"private", "data", "docs", "bundle_manifest.json", "pyproject.toml", "APProcessor.bat",
                 "APProcessor.command", "README.md"}  # fmt: skip
 DATA_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3", ".xlsx", ".xlsm", ".xls")
+# What starts an AP Coder folder: the double-click, and the installer and start scripts of the versions before it.
+LAUNCHERS = ("APProcessor.bat", "APProcessor.command", "start.bat", "start.sh", "install.bat", "install.sh")
 
 Say = Callable[[str], None]
 
@@ -167,8 +170,22 @@ def lock_held(folder: Path) -> bool:
 
 
 def is_install(folder: Path) -> bool:
-    """``folder`` holds an AP Coder that can be started (its launcher and its code)."""
-    return (folder / "scripts" / "launch.py").is_file() and (folder / "ap_coder").is_dir()
+    """``folder`` holds AP Coder's code: its ``ap_coder`` package and its launcher (``scripts/launch.py``), or, for
+    the versions before the launcher (install.bat / start.bat, or by hand: ``python -m ap_coder dashboard``), a
+    pyproject.toml naming the project ``ap-coder``."""
+    if not (folder / "ap_coder").is_dir():
+        return False
+    return (folder / "scripts" / "launch.py").is_file() or project_name(folder) == "ap-coder"
+
+
+def project_name(folder: Path) -> str:
+    """The project name in ``folder``'s pyproject.toml ("" when none)."""
+    try:
+        text = (folder / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    found = re.search(r'(?m)^name\s*=\s*"([^"]+)"', text)
+    return found.group(1) if found else ""
 
 
 def newer_install(root: Path = ROOT) -> dict | None:
@@ -178,7 +195,7 @@ def newer_install(root: Path = ROOT) -> dict | None:
     if current is None or paths.same_folder(current["folder"], root):
         return None
     folder = Path(current["folder"])
-    if not is_install(folder):
+    if not is_install(folder) or not (folder / "scripts" / "launch.py").is_file():  # (it is started through it)
         return None
     theirs = paths.install_identity(folder)
     return theirs if paths.is_older(paths.install_identity(root), theirs) else None
@@ -412,7 +429,11 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
     recorded = paths.user_path(str(settings.get("data_dir") or ""))
     legacy = root / "private"
     if recorded is None:
-        recorded = legacy if has_data(legacy) else default
+        # Nothing recorded: an AP Coder run by hand kept its data in its own private/ folder (this one's, unzipped
+        # over it, or an older install's found by its running dashboard or its shortcut: on the record by now).
+        others = [Path(e["folder"]) / "private" for e in reversed(paths.installs())
+                  if not paths.same_folder(e["folder"], root)]  # fmt: skip
+        recorded = next((p for p in [legacy, *others] if has_data(p) and is_install(p.parent)), default)
         paths.write_user_settings(data_dir=str(recorded))
     if recorded.name == "private" and is_install(recorded.parent) and has_data(recorded):
         if has_data(default) and not paths.same_folder(default, recorded):
@@ -721,8 +742,11 @@ def removable(folder: Path, root: Path) -> str:
         return "it holds this AP Coder"
     if (folder / ".git").exists():
         return "it is a git checkout"
-    launcher = (folder / "APProcessor.bat").is_file() or (folder / "APProcessor.command").is_file()
-    marked = (folder / "bundle_manifest.json").is_file() or (folder / MARKER).is_file()
+    launcher = any((folder / name).is_file() for name in LAUNCHERS)
+    # Unzipped from a bundle, set up by the launcher, or an AP Coder from before both (GitHub's ZIP, installed with
+    # install.bat or by hand): its pyproject names the project.
+    marked = (folder / "bundle_manifest.json").is_file() or (folder / MARKER).is_file() or project_name(folder) == (
+        "ap-coder")  # fmt: skip
     if not (launcher and marked and (folder / "ap_coder").is_dir()):
         return "it doesn't look like a folder AP Coder was installed in"
     if lock_held(folder):
