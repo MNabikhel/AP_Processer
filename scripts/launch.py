@@ -1445,12 +1445,26 @@ def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     return parser.parse_known_args(argv)
 
 
+ZIP_VIEW = re.compile(r"Temp\d+_.+\.zip", re.IGNORECASE)  # where Explorer unpacks a ZIP opened without Extract All
+
+
+def inside_zip_view() -> bool:
+    """Started from Explorer's view of the ZIP: Windows unpacked it to a temporary folder (``%TEMP%\\Temp1_<name>.zip``)
+    that it deletes later, with the .venv and the desktop shortcut pointing into it."""
+    return WINDOWS and any(ZIP_VIEW.fullmatch(part) for part in ROOT.parts)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     setup_console()
     args, rest = parse(argv)  # first: what to do when another start holds the lock depends on it
     if args.venv_ok:  # APProcessor.bat / .command: may .venv be used as it is?
         return 0 if importlib.util.find_spec("pip") is not None and venv_fits() else 1
+    if inside_zip_view():
+        return failed(SetupError(f"AP Coder was started from inside its ZIP: Windows unpacked it to a temporary folder "
+                                 f"({ROOT}) that it deletes later.", "Close this window, right-click the ZIP, choose "
+                                 "Extract All (e.g. to C:\\APCoder), then double-click APProcessor.bat in the "
+                                 "extracted folder."))  # fmt: skip
     if not os.environ.get(LOCK_HELD_ENV):  # (set: a parent start holds it, e.g. the first phase for the second)
         if not take_lock():  # another start is setting up or running AP Coder
             if args.installer:

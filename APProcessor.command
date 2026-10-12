@@ -45,6 +45,19 @@ mac() {
   [ -n "$MAC" ]
 }
 
+# This file on its own (copied to the desktop), or a folder macOS does not let Terminal read: one plain message.
+if [ ! -r scripts/launch.py ]; then
+  echo "AP Coder can't find its files next to this launcher: there is no scripts/launch.py in $PWD."
+  echo "What to do: open APProcessor.command inside the unzipped AP Coder folder (a copy of it on its own does"
+  echo "not work; the 'AP Coder' launcher on the desktop opens the right one)."
+  if mac; then
+    echo "If macOS asked whether Terminal may access files in your Downloads, Desktop or Documents folder, allow it"
+    echo "(System Settings > Privacy & Security > Files and Folders > Terminal), or move the AP Coder folder to"
+    echo "your home folder, then open APProcessor.command again."
+  fi
+  stop
+fi
+
 # Apple's /usr/bin/python3 is a real Python only when the developer tools (Command Line Tools or Xcode) are
 # installed: xcode-select says where, and asking it never opens a dialog. When unsure, it is not run.
 apple_python_ok() {

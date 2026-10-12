@@ -179,6 +179,18 @@ def test_a_folder_with_spaces_accents_and_symbols(mac, tmp_path):
     assert mac.used() == ["python3 scripts/launch.py --no-start"]
 
 
+@needs_bash
+def test_the_launcher_copied_out_of_its_folder_says_so(mac):
+    """APProcessor.command copied on its own to the desktop (or a folder Terminal may not read): no Python error,
+    one plain message, and nothing is run."""
+    (mac.code / "scripts" / "launch.py").unlink()
+    mac.python("python3", "3.14")
+    out = mac.run()
+    assert out.returncode == 1 and mac.used() == []
+    assert "AP Coder can't find its files next to this launcher" in out.stdout
+    assert "What to do: open APProcessor.command inside the unzipped AP Coder folder" in out.stdout
+
+
 BASH4 = {
     "associative arrays": r"declare\s+-[a-zA-Z]*A",
     "mapfile/readarray": r"\b(mapfile|readarray)\b",

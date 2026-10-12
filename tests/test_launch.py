@@ -570,6 +570,8 @@ def test_mac_launcher_explains_a_missing_python(tmp_path):
     code = tmp_path / "code"
     code.mkdir()
     (code / "APProcessor.command").write_bytes((ROOT / "APProcessor.command").read_bytes())
+    (code / "scripts").mkdir()
+    (code / "scripts" / "launch.py").write_text("")
     out = subprocess.run(["/bin/bash", str(code / "APProcessor.command")], capture_output=True, text=True,
                          env={"PATH": str(bindir), "AP_NO_PAUSE": "1"}, timeout=60)  # fmt: skip
     assert out.returncode == 1
