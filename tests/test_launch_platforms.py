@@ -233,6 +233,36 @@ def test_a_path_too_long_for_windows_is_said_plainly(launch, monkeypatch):
     assert "C:\\APCoder" in exc.value.hint and "has no" not in exc.value.hint
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        "[WinError 5] Access is denied: 'C:\\\\APCoder\\\\app\\\\.venv\\\\Lib\\\\site-packages\\\\numpy\\\\x.pyd'",
+        "[WinError 32] The process cannot access the file because it is being used by another process: 'x.pyd'",
+    ],
+)
+def test_a_package_file_in_use_is_said_plainly(launch, monkeypatch, error):
+    """The antivirus scanning a new .pyd, or an AP Coder window still open, holds a file pip must replace: the start
+    said the wheelhouse "has no numpy for Python 3.12"."""
+    (launch.ROOT / "wheelhouse").mkdir()
+    (launch.ROOT / "wheelhouse" / "openpyxl-3.1.5-py2.py3-none-any.whl").write_bytes(b"")
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["numpy>=1.26"], ""))
+    lines = [f"ERROR: Could not install packages due to an OSError: {error}\n",
+             "Consider using the `--user` option or check the permissions.\n"]  # fmt: skip
+
+    class Pip:
+        def __init__(self, *args, **kwargs):
+            self.stdout = iter(lines)
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Pip)
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert "in use" in str(exc.value) and "has no" not in exc.value.hint and "--user" not in exc.value.hint
+    assert "Close every AP Coder window" in exc.value.hint
+
+
 # --- Linux: Debian and Ubuntu's Python without venv ----------------------------------------------------------------
 
 

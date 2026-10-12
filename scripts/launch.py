@@ -625,7 +625,25 @@ def pip_install(args: list[str]) -> bool:
             _disk_full.append(text)
         if any(sign in text for sign in PATH_TOO_LONG):
             _path_too_long.append(text)
+        if any(sign in text for sign in FILE_IN_USE):
+            _file_in_use.append(text)
     return proc.wait() == 0
+
+
+# How pip says Windows refused a file it must write or replace: open in another program (an AP Coder window still
+# running from this .venv) or held by the antivirus while it scans a new .pyd.
+FILE_IN_USE = ("[WinError 5]", "[WinError 32]")
+_file_in_use: list[str] = []
+
+
+def file_in_use_error() -> SetupError:
+    return SetupError(
+        "Installing the packages stopped: Windows refused a file in .venv because another program has it in use (an "
+        "AP Coder window that is still open, or the antivirus checking a new file).",
+        "Close every AP Coder window, wait a minute for the antivirus to finish, then double-click APProcessor.bat "
+        "again: it picks up where it stopped. If it happens again, ask IT to let the antivirus allow the "
+        f"{VENV} folder.",
+    )
 
 
 # How pip says a file's path passed Windows' 260 characters (its own hint, or Windows' error 206).
@@ -855,6 +873,8 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
         raise disk_full_error()
     if (self_left or left) and _path_too_long:
         raise path_too_long_error()
+    if (self_left or left) and _file_in_use:
+        raise file_in_use_error()
     if self_left or [r for r in left if not is_ocr(r)]:
         raise SetupError(
             "Installing the packages failed (the messages above say why).",
