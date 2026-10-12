@@ -35,6 +35,10 @@ LM Studio: it only says whether a model is loaded. Safe to run again at any time
 once: an exclusive lock file (``.ap_coder_launch.lock``) is held while one sets up and runs AP Coder, and a
 second double-click waits for its dashboard and opens it in the browser.
 
+Everything a start says (pip's lines and the dashboard's output too) is also written to ``~/.ap_coder/logs/
+launch.log`` (kept once as ``launch.previous.log`` past 1 MB), for IT after the window is closed. A step that fails
+says what to do; an error no step expected is said in one line, its traceback in that log.
+
 ``--installer`` runs the installer's extra steps instead (``scripts/install.py``: data folder and Azure
 questions, self-test); ``install.bat`` / ``install.sh`` pass it. Other options: ``--check`` (run the
 self-check again), ``--no-start``, ``--yes``. Anything else (e.g. ``--port 8502``) goes to the dashboard.
@@ -138,6 +142,68 @@ def mark(level: str) -> str:
 
 def say(message: str = "") -> None:
     print(message, flush=True)
+    log(message)
+
+
+# --- The log: what each start said, for IT after the window is closed ---------------------------------------------
+
+LOG_NAME = "launch.log"
+LOG_LIMIT = 1_000_000  # bytes: a longer log is kept once as launch.previous.log when a start begins
+_log: dict[str, Any] = {"path": None, "handle": None}
+_STARTS_HERE = not os.environ.get(LOCK_HELD_ENV)  # the first process of a start (not .venv's phase, nor the installer)
+
+
+def log_path() -> Path:
+    """``~/.ap_coder/logs/launch.log``: beside the record of installs, so it is there before the data folder is settled
+    and survives an update (the code folder is replaced, the .venv remade)."""
+    return paths.user_settings_path().parent / "logs" / LOG_NAME
+
+
+def _open_log(path: Path) -> Any:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if _STARTS_HERE and path.is_file() and path.stat().st_size > LOG_LIMIT:
+            try:  # (never under a phase of this start that writes to it; Windows refuses while another start does)
+                os.replace(path, path.with_name("launch.previous.log"))
+            except OSError:
+                pass
+        gap = "\n" if path.is_file() and path.stat().st_size else ""  # a blank line between starts
+        handle = open(path, "a", encoding="utf-8", errors="replace")  # open for the whole start
+        options = " ".join(getattr(sys, "argv", [])[1:])
+        python = f"{str(getattr(sys, 'version', '?')).split()[0]} ({getattr(sys, 'executable', '?')})"
+        handle.write(f"{gap}=== {time.strftime('%Y-%m-%d %H:%M:%S')} launch.py {options} | Python {python} | pid "
+                     f"{os.getpid()} | {ROOT} ===\n")  # fmt: skip
+        return handle
+    except OSError:
+        return None
+
+
+def log(text: str) -> bool:
+    """Add ``text`` to the log; True when it was written. Never a reason to stop: a log that can't be written is
+    skipped (the console still shows everything)."""
+    path = log_path()
+    if _log["path"] != path:
+        close_log()
+        _log.update(path=path, handle=_open_log(path))
+    handle = _log["handle"]
+    if handle is None:
+        return False
+    try:
+        handle.write(text if text.endswith("\n") else text + "\n")
+        handle.flush()
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def close_log() -> None:
+    handle = _log["handle"]
+    _log.update(path=None, handle=None)
+    if handle is not None:
+        try:
+            handle.close()
+        except OSError:
+            pass
 
 
 def line(level: str, message: str) -> None:
@@ -447,6 +513,26 @@ def failed(exc: SetupError) -> int:
     say()
     line("fail", str(exc))
     say(f"  What to do: {exc.hint}")
+    if log(""):
+        say(f"  (Everything this start said is also in {log_path()}.)")
+    return 1
+
+
+def unexpected(exc: BaseException) -> int:
+    """An error no step expected: one plain line, and the details (the traceback) in the log for IT, instead of a
+    traceback under "The message above says what to do". Without a log the traceback is shown after all."""
+    import traceback
+
+    details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    logged = log(details)
+    say()
+    line("fail", f"AP Coder stopped on an unexpected error ({type(exc).__name__}: {exc}).")
+    if logged:
+        say(f"  What to do: start AP Coder again. If it happens again, send IT the log {log_path()} (it has the "
+            "details).")  # fmt: skip
+    else:
+        sys.stderr.write(details)
+        say("  What to do: start AP Coder again. If it happens again, send IT the message above.")
     return 1
 
 
@@ -1283,6 +1369,7 @@ def start_dashboard(rest: list[str], state: dict) -> int:
         for text in proc.stdout:
             sys.stdout.write(text)
             sys.stdout.flush()
+            log(text)
             if READY in text:
                 ready.set()
 
@@ -1446,6 +1533,17 @@ def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        return 0
+    except Exception as exc:  # noqa: BLE001 - said plainly, the details in the log
+        return unexpected(exc)
+    finally:
+        close_log()
+
+
+def _main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     setup_console()
     args, rest = parse(argv)  # first: what to do when another start holds the lock depends on it
@@ -1475,10 +1573,7 @@ def main(argv: list[str] | None = None) -> int:
 
         forwarded = [a for a in argv if a != "--installer" and not a.startswith("--venv")]
         return install.main(forwarded, venv=args.venv)
-    try:
-        return run(args, rest)
-    except KeyboardInterrupt:
-        return 0
+    return run(args, rest)
 
 
 if __name__ == "__main__":
