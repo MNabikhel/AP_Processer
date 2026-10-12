@@ -518,6 +518,23 @@ def test_bundle_zip_keeps_the_mac_launcher_executable(tmp_path):
     assert not (infos["APProcessor/README.md"].external_attr >> 16) & 0o111
 
 
+def test_bundle_zip_built_on_windows_keeps_the_mac_launcher_executable(tmp_path, monkeypatch):
+    """IT often builds the bundle on Windows: zipfile then marks each entry as made on MS-DOS, and the Mac's Archive
+    Utility (and unzip) ignore the Unix permissions of such an entry, so APProcessor.command lost its executable bit
+    ("could not be executed because you do not have appropriate access privileges")."""
+    bundle = _script("build_offline_bundle")
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "APProcessor.command").write_text("#!/bin/bash\n")
+    monkeypatch.setattr(sys, "platform", "win32")  # what zipfile.ZipInfo reads to set create_system
+    bundle._zip(stage, tmp_path / "b.zip")
+    monkeypatch.undo()
+    with zipfile.ZipFile(tmp_path / "b.zip") as zf:
+        info = zf.getinfo("APProcessor/APProcessor.command")
+    assert info.create_system == 3  # Unix: the permissions in external_attr count
+    assert (info.external_attr >> 16) & 0o111
+
+
 # --- Launchers -------------------------------------------------------------------------------------------------
 
 

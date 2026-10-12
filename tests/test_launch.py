@@ -301,7 +301,7 @@ def test_second_start_while_running_only_opens_the_browser(launch, monkeypatch):
     monkeypatch.setattr(launch, "ensure_packages", lambda state: pytest.fail("set up again"))
     monkeypatch.setattr(launch, "start_dashboard", lambda rest, state: pytest.fail("a second copy started"))
     assert launch.run(launch.parse([])[0], []) == 0
-    assert opened == ["http://localhost:8501"]
+    assert opened == ["http://127.0.0.1:8501"]
 
 
 @pytest.fixture
@@ -336,7 +336,7 @@ def test_a_second_start_waits_for_the_first_ones_dashboard(lock, monkeypatch, ca
     opened: list[str] = []
     monkeypatch.setattr(launch, "open_browser", opened.append)
     assert launch.wait_for_other(["--port", "8597"], every=0) == 0
-    assert opened == ["http://localhost:8597"]
+    assert opened == ["http://127.0.0.1:8597"]
     out = capsys.readouterr().out
     assert "being set up or started in another window" in out and "already running" in out
     # The first start ended without a dashboard (e.g. --no-start): this one takes over the setup.
@@ -594,6 +594,8 @@ def test_mac_launcher_explains_a_missing_python(tmp_path):
     code = tmp_path / "code"
     code.mkdir()
     (code / "APProcessor.command").write_bytes((ROOT / "APProcessor.command").read_bytes())
+    (code / "scripts").mkdir()
+    (code / "scripts" / "launch.py").write_text("")
     out = subprocess.run(["/bin/bash", str(code / "APProcessor.command")], capture_output=True, text=True,
                          env={"PATH": str(bindir), "AP_NO_PAUSE": "1"}, timeout=60)  # fmt: skip
     assert out.returncode == 1

@@ -1,6 +1,6 @@
 #!/bin/bash
-# AP Coder - DOUBLE-CLICK THIS FILE (macOS; the first time: right-click > Open), or run ./APProcessor.command
-# (Linux). It is the only one you need.
+# AP Coder - DOUBLE-CLICK THIS FILE (macOS; the first time: right-click > Open; macOS 15 or newer: System Settings >
+# Privacy & Security > Open Anyway), or run ./APProcessor.command (Linux). It is the only one you need.
 #
 # The first time it sets up whatever is missing (a few minutes), checks that everything works and opens the
 # dashboard in your browser. After that it starts in seconds. Keep this window open while you use AP Coder;
@@ -11,6 +11,19 @@
 # wheelhouse/ folder of the offline bundle next to this file.
 #
 # install.sh and start.sh run this same file. The steps themselves are in scripts/launch.py.
+#
+# Written for the bash every Mac has (/bin/bash 3.2). Started with sh or zsh (sh APProcessor.command), it starts
+# itself again with bash.
+case "${BASH_VERSION:-}:${SHELLOPTS:-}" in
+  :* | *posix*)
+    if [ -z "${AP_BASH_AGAIN:-}" ]; then
+      unset POSIXLY_CORRECT
+      AP_BASH_AGAIN=1
+      export AP_BASH_AGAIN
+      exec /bin/bash +o posix "$0" "$@"
+    fi
+    ;;
+esac
 cd "$(dirname "$0")" || exit 1
 
 # The Python versions looked for first, best first: the ones the offline bundle has packages for.
@@ -31,6 +44,19 @@ MAC=""
 mac() {
   [ -n "$MAC" ]
 }
+
+# This file on its own (copied to the desktop), or a folder macOS does not let Terminal read: one plain message.
+if [ ! -r scripts/launch.py ]; then
+  echo "AP Coder can't find its files next to this launcher: there is no scripts/launch.py in $PWD."
+  echo "What to do: open APProcessor.command inside the unzipped AP Coder folder (a copy of it on its own does"
+  echo "not work; the 'AP Coder' launcher on the desktop opens the right one)."
+  if mac; then
+    echo "If macOS asked whether Terminal may access files in your Downloads, Desktop or Documents folder, allow it"
+    echo "(System Settings > Privacy & Security > Files and Folders > Terminal), or move the AP Coder folder to"
+    echo "your home folder, then open APProcessor.command again."
+  fi
+  stop
+fi
 
 # Apple's /usr/bin/python3 is a real Python only when the developer tools (Command Line Tools or Xcode) are
 # installed: xcode-select says where, and asking it never opens a dialog. When unsure, it is not run.

@@ -166,7 +166,7 @@ def test_the_same_version_running_is_only_opened(launch, monkeypatch):
     monkeypatch.setattr(launch, "ensure_packages", lambda state: pytest.fail("set up again"))
     opened: list[str] = []
     monkeypatch.setattr(launch, "open_browser", opened.append)
-    assert launch.run(*launch.parse([])) == 0 and opened == ["http://localhost:8597"]
+    assert launch.run(*launch.parse([])) == 0 and opened == ["http://127.0.0.1:8597"]
 
 
 def test_an_older_version_that_cannot_be_stopped_stops_this_start(launch, monkeypatch, capsys):
@@ -359,7 +359,7 @@ def test_the_server_is_started_with_serve_and_opened_once_it_is_up(launch, monke
     opened: list[str] = []
     monkeypatch.setattr(launch, "open_browser", opened.append)
     assert launch.start_dashboard(["--port", "8597"], {}) == 0
-    assert opened == ["http://localhost:8597"]
+    assert opened == ["http://127.0.0.1:8597"]
     out = capsys.readouterr().out
     assert out.index("AP Coder is running at") < out.index("bye")  # its output is shown as it comes
 
@@ -370,7 +370,7 @@ def test_a_server_that_answers_its_health_check_is_opened_without_the_line(launc
     monkeypatch.setattr(launch.running, "health", lambda port, timeout=1.0: {"app": "ap-coder"})
     opened: list[str] = []
     monkeypatch.setattr(launch, "open_browser", opened.append)
-    assert launch.start_dashboard(["--port", "8597"], {}) == 0 and opened == ["http://localhost:8597"]
+    assert launch.start_dashboard(["--port", "8597"], {}) == 0 and opened == ["http://127.0.0.1:8597"]
 
 
 def test_a_server_that_stops_at_once_opens_nothing(launch, monkeypatch):

@@ -20,6 +20,8 @@ rem ============================================================================
 setlocal
 rem pushd, not cd: from a network share (\\server\share\AP Coder) it maps a drive letter first.
 pushd "%~dp0" || goto :nofolder
+rem Opened inside the ZIP (Windows unpacks only this file) or copied out of its folder: one plain message.
+if not exist "scripts\launch.py" goto :notunzipped
 
 rem --yes, or AP_NO_PAUSE=1 as in automated runs: no questions.
 set "AP_YES="
@@ -116,6 +118,14 @@ goto :fail
 :nofolder
 echo.
 echo AP Coder could not open its own folder: "%~dp0"
+goto :fail
+
+:notunzipped
+echo.
+echo AP Coder can't find its files next to APProcessor.bat: there is no scripts\launch.py in "%CD%".
+echo What to do: the ZIP was opened without unzipping it, or APProcessor.bat was copied out of its folder.
+echo Right-click the ZIP, choose Extract All, then double-click APProcessor.bat in the extracted folder
+echo (or use the AP Coder shortcut on the desktop).
 goto :fail
 
 :fail

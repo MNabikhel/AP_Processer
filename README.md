@@ -11,7 +11,9 @@ laptop by OCR and by OvisOCR2, a small page-reading model in [LM Studio](https:/
 ## Set up: one double-click
 
 1. **Unzip AP Coder** to a folder that OneDrive does not sync (e.g. `C:\APCoder\app`).
-2. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`; the first time, right-click → *Open*).
+2. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`; the first time, right-click → *Open*; on macOS 15
+   or newer, System Settings → Privacy & Security → *Open Anyway*. See [PILOT.md](docs/PILOT.md#install-one-button)
+   for a ZIP downloaded from the internet).
 
 That's it, the first time and every day after. The launcher looks at what is already on the computer and adds
 only what is missing:
