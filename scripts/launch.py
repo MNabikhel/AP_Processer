@@ -579,8 +579,30 @@ def wheelhouse_misfit() -> str:
         best = "3.12" if "3.12" in pythons else pythons[-1]
         return (f"{start}; this computer has Python {version}: install Python {best} (then start AP Coder again), "
                 f"or use a bundle built for Python {version} (build it with --python {version})")  # fmt: skip
+    if system == "mac" and under_rosetta():
+        return (f"{start}; this Python ({sys.executable}) is an Intel build running through Rosetta on an Apple "
+                "silicon Mac, so it can't use the Apple silicon packages")  # fmt: skip
     return (f"{start}; this computer ({wheel_platform()}, Python {version}) can't use it. Use a bundle built for it "
             f"(build it with --platform {wheel_platform()} --python {version})")  # fmt: skip
+
+
+ROSETTA_HINT = (
+    "Install Python 3.12 from https://www.python.org/downloads/ (its macOS installer runs natively on Apple silicon), "
+    "delete the .venv folder in {root}, then open APProcessor.command again. If Terminal is set to Open using "
+    "Rosetta (Finder > Applications > Utilities > Terminal > Get Info), untick it."
+)
+
+
+def under_rosetta() -> bool:
+    """An Intel (x86_64) Python on an Apple silicon Mac, through Rosetta: an Intel Homebrew in /usr/local, or Terminal
+    set to open using Rosetta. Asked of the system (sysctl), never through a dialog."""
+    if sys.platform != "darwin" or platform.machine() != "x86_64":
+        return False
+    try:
+        out = subprocess.run(["sysctl", "-n", "sysctl.proc_translated"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.stdout.strip() == "1"
 
 
 def pip_install(args: list[str]) -> bool:
@@ -795,14 +817,17 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     misfit = wheelhouse_misfit() if wheelhouse_dir().is_dir() else ""
     if misfit and source:  # offline: pip would only fail with a long, unclear error
         python = re.search(r"this computer has Python [\d.]+: install Python ([\d.]+)", misfit)  # (only Python differs)
-        raise SetupError(
-            f"{misfit}: nothing was installed.",
-            f"Install Python {python.group(1)} on this computer (from python.org, or ask IT), then start AP Coder "
-            "again: it is found and used on its own. Or unzip a bundle built for this Python."
-            if python
-            else "Unzip the offline bundle built for this computer (into a new folder, or over this one), then start "
-            "AP Coder again.",
-        )
+        if python:
+            hint = (
+                f"Install Python {python.group(1)} on this computer (from python.org, or ask IT), then start AP Coder "
+                "again: it is found and used on its own. Or unzip a bundle built for this Python."
+            )
+        elif "through Rosetta" in misfit:
+            hint = ROSETTA_HINT.format(root=ROOT)
+        else:
+            hint = ("Unzip the offline bundle built for this computer (into a new folder, or over this one), then "
+                    "start AP Coder again.")  # fmt: skip
+        raise SetupError(f"{misfit}: nothing was installed.", hint)
     if source:
         say("Installing from the wheelhouse folder (no internet needed).")
     elif misfit:

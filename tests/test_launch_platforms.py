@@ -338,3 +338,45 @@ def test_a_folder_a_mac_syncs_is_warned_about(launch, tmp_path, monkeypatch, fol
     assert len(notes) == 1 and f"synced by {service}" in notes[0][1]
     monkeypatch.setattr(launch, "ROOT", tmp_path / "APCoder" / "app")
     assert launch.sync_notes(tmp_path / "APCoder") == []
+
+
+# --- Apple silicon: an Intel Python through Rosetta ------------------------------------------------------------
+
+
+MAC_ARM = ("numpy-2.3.0-cp312-cp312-macosx_14_0_arm64.whl", "pandas-2.3.0-cp312-cp312-macosx_14_0_arm64.whl",
+           "openpyxl-3.1.5-py2.py3-none-any.whl")  # fmt: skip
+
+
+def test_an_intel_python_through_rosetta_is_told_to_use_a_native_one(launch, monkeypatch):
+    """An Apple silicon Mac whose Python is an Intel build (Intel Homebrew in /usr/local, or Terminal set to open
+    using Rosetta): the Apple silicon bundle doesn't fit it, and the message said to build a bundle for Intel Macs."""
+    wheelhouse = launch.ROOT / "wheelhouse"
+    wheelhouse.mkdir()
+    for name in MAC_ARM:
+        (wheelhouse / name).write_bytes(b"")
+    monkeypatch.setattr(launch, "this_computer", lambda: "mac")
+    monkeypatch.setattr(launch.sys, "version_info", (3, 12, 0, "final", 0))
+    monkeypatch.setattr(launch, "here_tags", lambda: {"cp312-cp312-macosx_14_0_x86_64", "py3-none-any"})
+    monkeypatch.setattr(launch, "wheel_platform", lambda: "macosx_14_0_x86_64")
+    monkeypatch.setattr(launch, "under_rosetta", lambda: True)
+    message = launch.wheelhouse_misfit()
+    assert "Intel" in message and "Rosetta" in message
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1"], "Missing: ap_coder"))
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert "python.org" in exc.value.hint and "Open using Rosetta" in exc.value.hint and ".venv" in exc.value.hint
+
+
+def test_rosetta_is_asked_of_the_mac_without_a_dialog(launch, monkeypatch):
+    monkeypatch.setattr(launch.sys, "platform", "darwin")
+    monkeypatch.setattr(launch.platform, "machine", lambda: "x86_64")
+    seen = []
+
+    def sysctl(cmd, **kwargs):
+        seen.append(cmd)
+        return launch.subprocess.CompletedProcess(cmd, 0, "1\n", "")
+
+    monkeypatch.setattr(launch.subprocess, "run", sysctl)
+    assert launch.under_rosetta() is True and seen == [["sysctl", "-n", "sysctl.proc_translated"]]
+    monkeypatch.setattr(launch.platform, "machine", lambda: "arm64")
+    assert launch.under_rosetta() is False
