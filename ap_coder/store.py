@@ -1613,18 +1613,9 @@ class Store:
     def supplier_key_for(self, vendor_name: str, gst_number: str | None = None) -> str:
         """The supplier key for an invoice, with the vendor master's ERP id when the master knows it."""
         from .capture.supplier import supplier_key
-        from .vendors import norm_tax_number
+        from .vendors import master_vendor_id
 
-        ids = self.vendor_ids()
-        vendor_id = ids.get(vendor_key(vendor_name or ""))
-        if not vendor_id and gst_number:
-            number = norm_tax_number(gst_number)
-            bn = number[:9] if number[:9].isdigit() else ""
-            # The same registration however much of it either side keeps (vendors.same_tax_number): the master's
-            # 9-digit Business Number for the invoice's full account, or the master's full account for 9 digits.
-            vendor_id = ids.get(f"gst:{number}") or (bn and (ids.get(f"bn:{bn}") or (
-                ids.get(f"bnx:{bn}") if len(number) == 9 else None)))  # fmt: skip
-        return supplier_key(vendor_name, gst_number, vendor_id)
+        return supplier_key(vendor_name, gst_number, master_vendor_id(self.vendor_ids(), vendor_name, gst_number))
 
     @staticmethod
     def _profile(row: sqlite3.Row | None) -> dict[str, Any] | None:

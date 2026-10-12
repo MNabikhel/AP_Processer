@@ -74,6 +74,23 @@ def same_tax_number(a: Any, b: Any) -> bool:
     return bn_a.group(1) == bn_b.group(1)
 
 
+def master_vendor_id(ids: dict[str, str], vendor_name: str | None, gst_number: Any = None) -> str:
+    """The vendor master's ERP vendor ID for an invoice (``ids``: ``Store.vendor_ids()``): by name, else by its
+    GST/HST number however much of it either side keeps (``same_tax_number``): the master's 9-digit Business Number
+    for the invoice's full account, or the master's full account for 9 digits. "" when the master doesn't know it.
+    The supplier key (``Store.supplier_key_for``) and the export files both use this, so they agree."""
+    found = ids.get(vendor_key(vendor_name or ""))
+    if found or not gst_number:
+        return found or ""
+    number = norm_tax_number(gst_number)
+    bn = number[:9] if number[:9].isdigit() else ""
+    return (
+        ids.get(f"gst:{number}")
+        or (bn and (ids.get(f"bn:{bn}") or (ids.get(f"bnx:{bn}") if len(number) == 9 else None)))
+        or ""
+    )
+
+
 _ACCOUNT_LABEL = re.compile(r"(?i)\b(?:account|acct|acc|a/c|compte|cpte)\b\D{0,12}?(\d[\d\s-]*\d|\d)")
 
 

@@ -86,6 +86,24 @@ def test_exports_carry_the_vendor_id(tmp_path):
     assert rows[0]["vendor_id"] == "V10023"
 
 
+def test_exports_find_the_vendor_id_as_supplier_learning_does(tmp_path):
+    """A master that keeps only the 9-digit Business Number, an invoice under another name printing the full
+    account (or the other way round): the exports find the ERP vendor ID the same way the supplier key does
+    (``Store.supplier_key_for``), not only on an exact match of the whole number."""
+    store = Store(tmp_path / "a.db")
+    rows = master_rows(
+        [{"Supplier ID": "S1", "Supplier Name": "Acme Ltd.", "Business Number": "123456789"},
+         {"Supplier ID": "S2", "Supplier Name": "Beta Inc.", "Business Number": "987654321RT0001"}],
+        master_columns(["Supplier ID", "Supplier Name", "Business Number"]),
+    )  # fmt: skip
+    store.import_vendor_master(rows)
+    ids = store.vendor_ids()
+    for name, number, want in (("Acme Holdings", "123456789 RT0001", "S1"), ("Beta Group", "987654321", "S2")):
+        final = {"vendor_name": name, "gst_hst_registration_number": number, "gl_distribution": []}
+        assert exports.invoice_rows([{"id": 1, "final_output": final}], 1, ids)[0]["vendor_id"] == want
+        assert store.supplier_key_for(name, number) == f"id:{want}"
+
+
 def test_default_gl_is_suggested(reference):
     out = suggest_gl("Miscellaneous charge", "Acme", [], reference, default_gl="6800")
     assert out[0].gl_code == "6800" and "vendor master" in out[0].reasons[0]
