@@ -1484,6 +1484,8 @@ def free_port(start: int = DEFAULT_PORT) -> int:
         with socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET, socket.SOCK_STREAM) as s:
             if not WINDOWS:  # like the dashboard's server: a port left in TIME_WAIT is free
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            elif hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # Windows lets 127.0.0.1 be bound on a port in use without it
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             try:
                 s.bind((address, port))
             except OSError:

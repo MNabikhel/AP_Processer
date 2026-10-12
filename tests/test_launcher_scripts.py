@@ -5,6 +5,7 @@ refused, ``bash -n`` must parse each script, and every path a .bat expands is in
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -75,6 +76,7 @@ def test_the_bash_4_check_catches_what_it_should():
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="no bash here")
+@pytest.mark.skipif(os.name == "nt", reason="Windows' bash is WSL's stub; checked on Linux and macOS")
 @pytest.mark.parametrize("name", SHELL_SCRIPTS)
 def test_shell_scripts_parse(name):
     out = subprocess.run(["bash", "-n", str(ROOT / name)], capture_output=True, text=True)
