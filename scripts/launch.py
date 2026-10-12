@@ -226,10 +226,12 @@ def ensure_venv(python: str = sys.executable, rebuild: bool = False) -> str:
             )
     result = subprocess.run([python, "-m", "venv", str(VENV)])
     if result.returncode != 0 or not venv_works():
-        raise SetupError(
-            "Could not create the .venv folder (AP Coder's own Python environment).",
-            "Reinstall Python 3.12 from https://www.python.org/downloads/, then start AP Coder again.",
-        )
+        hint = "Reinstall Python 3.12 from https://www.python.org/downloads/, then start AP Coder again."
+        if not (WINDOWS or MAC) and python == sys.executable and importlib.util.find_spec("ensurepip") is None:
+            version = f"{sys.version_info[0]}.{sys.version_info[1]}"  # Debian / Ubuntu: venv's pip is a package
+            hint = (f"Install Python's venv package (Debian / Ubuntu: sudo apt install python{version}-venv), delete "
+                    "the .venv folder, then start AP Coder again.")  # fmt: skip
+        raise SetupError("Could not create the .venv folder (AP Coder's own Python environment).", hint)
     return status
 
 

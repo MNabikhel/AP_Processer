@@ -231,3 +231,26 @@ def test_a_path_too_long_for_windows_is_said_plainly(launch, monkeypatch):
         launch.ensure_packages({})
     assert "too long for Windows" in str(exc.value) and str(launch.ROOT) in str(exc.value)
     assert "C:\\APCoder" in exc.value.hint and "has no" not in exc.value.hint
+
+
+# --- Linux: Debian and Ubuntu's Python without venv ----------------------------------------------------------------
+
+
+def test_a_python_without_venv_support_says_which_package(launch, monkeypatch):
+    """Debian and Ubuntu ship venv's pip (ensurepip) in a separate package, python3.X-venv: without it .venv can't be
+    made, and the start said to reinstall Python from python.org."""
+    import shutil
+
+    shutil.rmtree(launch.VENV)
+    monkeypatch.setattr(launch.subprocess, "run", lambda *a, **k: launch.subprocess.CompletedProcess(a, 1))
+    real = launch.importlib.util.find_spec
+    monkeypatch.setattr(launch.importlib.util, "find_spec", lambda name: None if name == "ensurepip" else real(name))
+    version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_venv()
+    assert f"sudo apt install python{version}-venv" in exc.value.hint
+    assert "python.org" not in exc.value.hint
+    monkeypatch.setattr(launch.importlib.util, "find_spec", real)  # venv itself is there: the usual advice
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_venv()
+    assert "python.org" in exc.value.hint
