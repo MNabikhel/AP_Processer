@@ -164,3 +164,38 @@ def test_another_port_is_said_when_8501_is_taken(launch, monkeypatch, capsys):
     assert launch.start_dashboard([], {}) == 0
     out = capsys.readouterr().out
     assert "Port 8501 is in use by another program: AP Coder uses port 8502 (http://127.0.0.1:8502)" in out
+
+
+# --- Accents in what AP Coder's own processes print ------------------------------------------------------------
+
+
+def test_the_self_check_and_the_server_print_accents_on_windows(launch, tmp_path, monkeypatch, capsys):
+    """On Windows a Python whose output goes to a pipe writes in the ANSI code page (cp1252): "Łukasz" (a user name,
+    a vendor) can't be written there and the self-check or the server stopped with UnicodeEncodeError. Their output
+    is UTF-8 now, read as UTF-8. (PYTHONIOENCODING=cp1252 stands in for Windows' code page here.)"""
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "pilot_check.py").write_text("print('FAIL Łukasz – Société Générale')\nraise SystemExit(1)\n",
+                                            encoding="utf-8")  # fmt: skip
+    monkeypatch.setattr(launch, "SCRIPTS", scripts)
+    ok, result = launch.self_check()
+    assert not ok and result == "Self-check FAILED: FAIL Łukasz – Société Générale"
+    script = "print('Data folder: C:/Users/Łukasz/APCoder', flush=True)"
+    monkeypatch.setattr(launch, "server_command", lambda port, rest: [sys.executable, "-c", script])
+    monkeypatch.setattr(launch.running, "health", lambda port, timeout=1.0: None)
+    monkeypatch.setattr(launch, "open_browser", lambda url: None)
+    assert launch.start_dashboard(["--port", "8597"], {}) == 0
+    assert "Data folder: C:/Users/Łukasz/APCoder" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(os.name == "nt", reason="makes a symbolic link to this Python")
+def test_a_python_under_a_user_name_with_accents_is_found(launch, tmp_path, monkeypatch):
+    """C:\\Users\\Łukasz\\AppData\\Local\\Programs\\Python\\Python312\\python.exe: asked where it is, that Python
+    printed its path in the ANSI code page and stopped, so the Python the bundle has packages for was "not there"."""
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    home = tmp_path / "Users" / "Łukasz"
+    home.mkdir(parents=True)
+    (home / "python3").symlink_to(sys.executable)
+    version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    assert "Łukasz" in launch.python_found([str(home / "python3")], version)

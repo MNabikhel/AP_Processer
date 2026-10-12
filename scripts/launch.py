@@ -144,6 +144,13 @@ def line(level: str, message: str) -> None:
     say(f"  {mark(level)} {message}")
 
 
+def child_env() -> dict[str, str]:
+    """The environment of the Python processes whose output the launcher reads (pip, the self-check, the server): they
+    write UTF-8. Without it a Windows Python writing to a pipe uses the ANSI code page and stops with
+    UnicodeEncodeError on "Łukasz"; read back with ``encoding="utf-8"``."""
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+
 def setup_console() -> None:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -253,11 +260,11 @@ def python_found(command: list[str], version: str) -> str:
     """The executable of ``command`` when it starts and is Python ``version`` ("" otherwise)."""
     if len(command) == 1 and not (command[0].startswith("py") or Path(command[0]).is_file()):
         return ""
-    env = {**os.environ, "PYTHON_MANAGER_AUTOMATIC_INSTALL": "false"}  # py never downloads a missing version
+    env = {**child_env(), "PYTHON_MANAGER_AUTOMATIC_INSTALL": "false"}  # py never downloads a missing version
     try:
         ask = "import sys; print('%d.%d' % sys.version_info[:2]); print(sys.executable)"
-        out = subprocess.run([*command, "-c", ask], capture_output=True, text=True, timeout=30, env=env,
-                             stdin=subprocess.DEVNULL)  # fmt: skip
+        out = subprocess.run([*command, "-c", ask], capture_output=True, encoding="utf-8", errors="replace",
+                             timeout=30, env=env, stdin=subprocess.DEVNULL)  # fmt: skip
     except (OSError, subprocess.TimeoutExpired):
         return ""
     lines = out.stdout.split()
@@ -583,8 +590,8 @@ def pip_install(args: list[str]) -> bool:
         return False
     cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off",
            *source, *args]  # fmt: skip
-    proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                            errors="replace")  # fmt: skip
+    proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
+                            errors="replace", env=child_env())  # fmt: skip
     assert proc.stdout is not None
     for out in proc.stdout:
         text = out.rstrip()
@@ -1070,7 +1077,8 @@ def self_check() -> tuple[bool, str]:
     started = time.monotonic()
     try:
         out = subprocess.run([sys.executable, str(SCRIPTS / "pilot_check.py")], cwd=ROOT, capture_output=True,
-                             text=True, errors="replace", timeout=SELF_CHECK_TIMEOUT)  # fmt: skip
+                             encoding="utf-8", errors="replace", timeout=SELF_CHECK_TIMEOUT,
+                             env=child_env())  # fmt: skip
     except subprocess.TimeoutExpired:
         return False, "Self-check FAILED: it did not finish in 10 minutes"
     text = out.stdout.splitlines()
@@ -1292,7 +1300,7 @@ def start_dashboard(rest: list[str], state: dict) -> int:
     say("Starting AP Coder: it opens in your browser. Keep this window open while you use it; close it to stop.")
     try:
         proc = subprocess.Popen(server_command(port, rest), cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace", bufsize=1)  # fmt: skip
+                                encoding="utf-8", errors="replace", bufsize=1, env=child_env())  # fmt: skip
     except OSError as exc:
         return failed(SetupError(f"AP Coder could not start ({exc}).", "Start AP Coder again; if it happens again, "
                                  "run  python -m ap_coder doctor  in terminal.bat."))  # fmt: skip
