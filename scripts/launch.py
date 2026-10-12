@@ -1490,7 +1490,7 @@ def free_port(start: int = DEFAULT_PORT) -> int:
                 s.bind((address, port))
             except OSError:
                 continue
-        if WINDOWS or not running.listening(port):  # (Windows refuses the bind already; connecting is slow there)
+        if not running.listening(port):  # something answering there is never picked (0.3 s at most on Windows)
             return port
     return start
 

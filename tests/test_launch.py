@@ -8,6 +8,7 @@ import http.server
 import importlib.util
 import io
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -394,7 +395,10 @@ def test_the_installer_refuses_while_ap_coder_is_running(lock, monkeypatch, caps
     other.close()
 
 
-def test_ports(launch):
+def test_ports(launch, monkeypatch):
+    # this computer's own rules for binding: on Windows SO_REUSEADDR would let a port in use be bound again (the
+    # fixture's WINDOWS=False made the Windows runner test the Mac/Linux path), so the Windows path is the one tested
+    monkeypatch.setattr(launch, "WINDOWS", os.name == "nt")
     assert launch.requested_port(["--port", "8597"]) == 8597
     assert launch.requested_port(["--port=8502"]) == 8502
     assert launch.requested_port(["--address", "0.0.0.0"]) is None
