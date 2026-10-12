@@ -228,3 +228,29 @@ def test_serve_on_a_port_another_ap_coder_answers_on_leaves_its_server_file_alon
         assert server.serve("127.0.0.1", port, open_browser=False) == 1
     assert json.loads(path.read_text(encoding="utf-8"))["token"] == "the running one's token"
     assert f"Port {port} is in use" in capsys.readouterr().err
+
+
+# --- A number larger than SQLite keeps -------------------------------------------------------------------------------
+
+HUGE = "99999999999999999999"  # beyond 2**63: SQLite refuses it with OverflowError
+
+
+@pytest.mark.parametrize(
+    "url", [f"/review/{HUGE}", f"/review/{HUGE}/page/1.png", f"/review/{HUGE}/words", f"/search/{HUGE}/approved.pdf"]
+)
+def test_an_invoice_number_too_large_to_exist_is_not_found(demo, url):
+    """An address typed or pasted with a long number (a document number instead of the invoice's): the page answered
+    500 Internal Server Error instead of "not found"."""
+    _, client = demo
+    response = client.get(url, headers={"Accept": "text/html"})
+    assert response.status_code == 404
+    assert "Internal Server Error" not in response.text
+
+
+@pytest.mark.parametrize("url", ["/review/bulk-approve", "/learning/memory/forget", f"/review/{HUGE}/delete"])
+def test_a_posted_number_too_large_to_exist_is_refused_plainly(demo, url):
+    from tests.webclient import post
+
+    _, client = demo
+    response = post(client, url, {"ids": HUGE})
+    assert response.status_code == 404 and response.json()["ok"] is False
