@@ -225,6 +225,30 @@ def test_venv_is_made_once_and_remade_only_when_broken(launch, tmp_path, monkeyp
     assert launch.ensure_venv("python") == "recreated" and len(made) == 2
 
 
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+def test_a_python_without_venv_support_is_said_as_that_on_linux(launch, monkeypatch, platform):
+    """Debian and Ubuntu ship their Python without what ``python -m venv`` needs (ensurepip) unless the
+    python3.X-venv package is installed: reinstalling Python from python.org is not the fix there."""
+    ran: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        ran.append(cmd)
+        return SimpleNamespace(returncode=1, stdout="", stderr="")  # neither venv nor ensurepip works
+
+    monkeypatch.setattr(launch.subprocess, "run", run)
+    monkeypatch.setattr(launch.sys, "platform", platform)
+    monkeypatch.setattr(launch, "venv_works", lambda: False)
+    launch.VENV.rmdir()
+    with pytest.raises(launch.SetupError) as failed:
+        launch.ensure_venv("python3")
+    version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    if platform == "linux":
+        assert f"python{version}-venv" in failed.value.hint and "apt" in failed.value.hint
+        assert ["python3", "-m", "ensurepip", "--version"] in ran
+    else:
+        assert "python.org" in failed.value.hint and "-venv" not in failed.value.hint
+
+
 def test_a_venv_whose_python_does_not_start_is_broken(launch):
     assert not launch.venv_works()  # no python in it at all
     launch.VENV_PY = Path(sys.executable)

@@ -285,11 +285,23 @@ def ensure_venv(python: str = sys.executable, rebuild: bool = False) -> str:
             )
     result = subprocess.run([python, "-m", "venv", str(VENV)])
     if result.returncode != 0 or not venv_works():
-        raise SetupError(
-            "Could not create the .venv folder (AP Coder's own Python environment).",
-            "Reinstall Python 3.12 from https://www.python.org/downloads/, then start AP Coder again.",
-        )
+        hint = "Reinstall Python 3.12 from https://www.python.org/downloads/, then start AP Coder again."
+        if sys.platform.startswith("linux") and not ensurepip_works(python):
+            # Debian, Ubuntu: the distribution's Python makes a .venv only with its separate python3.X-venv package.
+            version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+            hint = (f"This Linux's Python {version} can't make one without its venv package: ask IT to install it "
+                    f"(Debian, Ubuntu: sudo apt install python{version}-venv), then start AP Coder again.")  # fmt: skip
+        raise SetupError("Could not create the .venv folder (AP Coder's own Python environment).", hint)
     return status
+
+
+def ensurepip_works(python: str) -> bool:
+    """``python`` has what ``-m venv`` needs to put pip in a .venv (Debian and Ubuntu leave it out of their Python)."""
+    try:
+        probe = subprocess.run([python, "-m", "ensurepip", "--version"], capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0
 
 
 def venv_version() -> str:
