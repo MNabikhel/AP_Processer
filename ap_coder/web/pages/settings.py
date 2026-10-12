@@ -148,7 +148,7 @@ def save_review(
     settings, store = get_settings(request), get_store(request)
     try:
         percent = int(float(threshold))
-    except ValueError:
+    except (ValueError, OverflowError):  # int(float("1e309")) overflows
         return refuse("The confidence threshold must be a number from 50 to 99.")
     if not 50 <= percent <= 99:
         return refuse("The confidence threshold must be from 50% to 99%.")

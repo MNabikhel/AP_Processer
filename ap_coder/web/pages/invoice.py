@@ -52,6 +52,7 @@ from ap_coder.web.core import (
     reviewer,
     templates,
 )
+from ap_coder.web.files import download
 from ap_coder.web.pages.review import filter_queue, sort_queue
 
 router = APIRouter()
@@ -415,9 +416,8 @@ def approved_pdf(request: Request, invoice_id: int) -> Response:
         pdf = stamp.stamped_pdf(inv, names)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    name = stamp.file_name(inv)
-    return Response(pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+    # (files.download: a vendor named "Bœuf" is not Latin-1, the only characters a plain filename= header takes)
+    return download(pdf, stamp.file_name(inv), "application/pdf")
 
 
 # --- Checking the edits ---------------------------------------------------------------------------------------------
@@ -700,7 +700,7 @@ def correct(request: Request, invoice_id: int, reason: str = Form("")) -> JSONRe
     """Reopen an approved invoice (not exported yet) for correction: what its approval taught is withdrawn and
     learned again at the next approval."""
     store = get_store(request)
-    _invoice(store, invoice_id)
+    _invoice(store, invoice_id)  # no such invoice: not found
     if not reason.strip():
         return refuse("Say what needs correcting.")
     me = reviewer()

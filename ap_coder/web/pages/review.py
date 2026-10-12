@@ -430,7 +430,9 @@ def review_final_approve(request: Request, invoice_id: int) -> JSONResponse:
     inv = store.get_invoice(invoice_id) or {}
     try:
         store.final_approve(invoice_id, reviewer(), login=login())
-    except (ValueError, PermissionError) as exc:
+    except PermissionError as exc:  # the first approver (or their login): nobody changed anything meanwhile
+        return done(request, "/review?tab=second", f"Not done: {exc}.", tone="warn")
+    except ValueError as exc:
         return changed_meanwhile(request, exc, "/review?tab=second")
     return done(request, "/review?tab=second",
                 flash_message(f"{inv.get('vendor_name') or 'The invoice'} approved. It is ready to export.", "ok",

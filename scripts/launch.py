@@ -58,7 +58,6 @@ import platform
 import re
 import shlex
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -227,10 +226,12 @@ def setup_console() -> None:
 
 
 def load_state() -> dict:
+    """What this .venv has been through ({} when the file is missing or damaged: everything is checked again)."""
     try:
-        return json.loads(STATE.read_text(encoding="utf-8"))
+        found = json.loads(STATE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    return found if isinstance(found, dict) else {}
 
 
 def save_state(state: dict) -> None:
@@ -1474,29 +1475,12 @@ def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
 
 
 def free_port(start: int = DEFAULT_PORT) -> int:
-    """The first port from ``start`` this computer can listen on (a bind test: instant, unlike connecting) and
-    nothing answers on yet (on a Mac, SO_REUSEADDR lets 127.0.0.1 be bound on a port another program listens on for
-    every address)."""
+    """The first port from ``start`` the dashboard can listen on and nothing answers on yet
+    (``ap_coder/offline.py:free_port``, which ``python -m ap_coder serve`` uses too)."""
     from ap_coder.offline import dashboard_address
+    from ap_coder.offline import free_port as first_free
 
-    address = dashboard_address()
-    for port in range(start, start + 50):
-        with socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET, socket.SOCK_STREAM) as s:
-            if not WINDOWS:  # like the dashboard's server: a port left in TIME_WAIT is free
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            elif hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # Windows lets 127.0.0.1 be bound on a port in use without it
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            try:
-                s.bind((address, port))
-            except OSError:
-                continue
-        if not running.listening(port):  # something answering there is never picked (0.3 s at most on Windows)
-            return port
-    # None of the 50 (Windows reserves whole blocks of ports for Hyper-V and WSL: binding there is refused): one the
-    # system says is free, never the busy one asked for
-    with socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((address, 0))
-        return s.getsockname()[1]
+    return first_free(start, dashboard_address(), windows=WINDOWS, answers=running.listening)
 
 
 def open_browser(url: str) -> None:

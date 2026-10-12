@@ -211,12 +211,25 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
 # --- The page ------------------------------------------------------------------------------------------------------
 
 
+def not_processed(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
+    """(the files never processed, the files that can't be read now): a file still being written by a scanner, open
+    in another program or a cloud placeholder not downloaded is left for the next pick-up, never a broken page."""
+    new, unreadable = [], []
+    for path in files:
+        try:
+            if store.find_by_hash(path, include_failed=True) is None:
+                new.append(path)
+        except OSError:
+            unreadable.append(path)
+    return new, unreadable
+
+
 def folder_files(store: Store) -> list[dict[str, Any]]:
     """The files in the invoices folder not processed yet (saved emails too: their attachments are read)."""
     folder = invoice_dir(store)
     if not folder.exists():
         return []
-    files = [p for p in invoice_files(folder) if store.find_by_hash(p, include_failed=True) is None]
+    files, _ = not_processed(store, invoice_files(folder))
     rows = []
     for p in [*files, *emails_in(folder)]:
         try:
@@ -307,10 +320,12 @@ def process_folder(request: Request) -> JSONResponse:
     if not ready_to_read(setup_steps(store, settings)):
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
-    files = invoice_files(folder) if folder.exists() else []
-    files = [p for p in files if store.find_by_hash(p, include_failed=True) is None]
+    files, unreadable = not_processed(store, invoice_files(folder) if folder.exists() else [])
     todo, already = split_new(store, files)
-    return _start(request, process_files(store, settings, todo, already=already, folder_emails=True), len(todo))
+    notes = [flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, or open in "
+                           "another program): picked up next time.", "warn", [p.name for p in unreadable])]  # fmt: skip
+    work = process_files(store, settings, todo, already=already, folder_emails=True, notes=notes if unreadable else [])
+    return _start(request, work, len(todo))
 
 
 @router.get("/process/status")
