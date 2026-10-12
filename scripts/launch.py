@@ -574,6 +574,18 @@ def wheelhouse_misfit() -> str:
             f"(build it with --platform {wheel_platform()} --python {version})")  # fmt: skip
 
 
+def pip_env(source: list[str]) -> dict[str, str]:
+    """pip's environment. From the wheelhouse (``--no-index``) pip reads no settings of this computer: a PIP_FIND_LINKS
+    or a pip.conf ``find-links`` (an office's package server, say) would still be fetched next to the wheelhouse, so
+    every PIP_* variable is left out and no configuration file is read (``PIP_CONFIG_FILE=os.devnull``)."""
+    env = dict(os.environ)
+    if "--no-index" in source:
+        env = {k: v for k, v in env.items() if not k.upper().startswith("PIP_")}
+        env["PIP_CONFIG_FILE"] = os.devnull
+        env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+    return env
+
+
 def pip_install(args: list[str]) -> bool:
     """``pip install`` with its progress lines (not the long "already satisfied" list). Offline without a
     wheelhouse it runs nothing: there is nowhere to install from."""
@@ -584,7 +596,7 @@ def pip_install(args: list[str]) -> bool:
     cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off",
            *source, *args]  # fmt: skip
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                            errors="replace")  # fmt: skip
+                            errors="replace", env=pip_env(source))  # fmt: skip
     assert proc.stdout is not None
     for out in proc.stdout:
         text = out.rstrip()
