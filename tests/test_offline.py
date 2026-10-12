@@ -224,6 +224,22 @@ def test_no_assets_are_loaded_from_the_internet():
 # --- OCR models: fetched once, idempotent -----------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("before", [None, "0"])
+def test_onnx_runtime_never_reports_to_microsoft(before):
+    """ONNX Runtime (the OCR and table-finder engine) uploads usage events to Microsoft from its own native threads,
+    out of reach of the Python socket guard above, unless ORT_DISABLE_TELEMETRY=1 is set before it starts: found by
+    tracing every connection of the update from an old version. Set by ap_coder itself, so every process of AP Coder
+    (the launcher, the self-check, the server, its page workers) inherits it, whatever the computer had set."""
+    env = {k: v for k, v in os.environ.items() if k != "ORT_DISABLE_TELEMETRY"}
+    if before is not None:
+        env["ORT_DISABLE_TELEMETRY"] = before
+    child = "import os; print(os.environ.get('ORT_DISABLE_TELEMETRY'))"
+    run_child = f"subprocess.run([sys.executable, '-c', {child!r}], capture_output=True, text=True)"
+    code = f"import os, subprocess, sys, ap_coder; {child}; print({run_child}.stdout.strip())"
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, check=True)
+    assert out.stdout.split() == ["1", "1"]
+
+
 def test_ppocrv5_settings_match_the_capture_engine(monkeypatch):
     rapidocr = pytest.importorskip("rapidocr")
     seen = {}

@@ -4,8 +4,15 @@ Canadian sales tax and a review dashboard. Offline by default.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
+
+# Libraries that report to their maker over the internet unless told not to before they start. ONNX Runtime (the OCR
+# and table-finder engine) uploads usage events to Microsoft (mobile.events.data.microsoft.com) from its own native
+# threads on Linux, Macs and Windows. Set here, first, so every process of AP Coder and every one it starts (the
+# self-check, the server, its page workers) inherits it: an offline build sends nothing, whatever was set before.
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
 
 
 def _version() -> str:
