@@ -22,6 +22,7 @@ import importlib.util
 import ipaddress
 import logging
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -271,6 +272,17 @@ def dashboard_address() -> str:
     """The address the dashboard listens on: this computer only, unless ``AP_DASHBOARD_ADDRESS`` says
     otherwise (e.g. ``0.0.0.0`` to let colleagues on the office network open it)."""
     return (os.environ.get(ADDRESS_ENV) or "").strip() or LOCAL_ADDRESS
+
+
+def browser_wanted() -> bool:
+    """Whether to open the dashboard in a browser: not with ``BROWSER=none``, nor on a Linux computer with no desktop
+    (over SSH, a server: Python's webbrowser would start a text browser such as lynx in the very window AP Coder
+    runs in, and wait for it). Windows and Macs always have a desktop."""
+    if (os.environ.get("BROWSER") or "").strip().lower() == "none":
+        return False
+    if sys.platform.startswith("linux"):
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    return True
 
 
 def is_loopback(address: str) -> bool:

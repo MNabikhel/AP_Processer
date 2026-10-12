@@ -77,7 +77,7 @@ import running  # noqa: E402  (standard library only)
 import upgrade  # noqa: E402  (standard library only)
 
 from ap_coder import envfile, paths  # noqa: E402  (standard library only)
-from ap_coder.offline import INTERNET_ENV, internet_allowed  # noqa: E402
+from ap_coder.offline import INTERNET_ENV, browser_wanted, internet_allowed  # noqa: E402
 
 WINDOWS = os.name == "nt"
 MAC = sys.platform == "darwin"
@@ -1321,7 +1321,10 @@ def free_port(start: int = DEFAULT_PORT) -> int:
 
 
 def open_browser(url: str) -> None:
-    if (os.environ.get("BROWSER") or "").strip().lower() == "none":
+    """``url`` in the browser, unless BROWSER=none or there is no desktop here (``offline.browser_wanted``)."""
+    if not browser_wanted():
+        if (os.environ.get("BROWSER") or "").strip().lower() != "none":
+            say(f"No desktop on this computer, so no browser was opened: open {url} in a browser here.")
         return
     import webbrowser
 

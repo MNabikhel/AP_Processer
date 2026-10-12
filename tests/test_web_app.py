@@ -293,6 +293,7 @@ def test_announce_prints_the_address_once_it_answers(monkeypatch, capsys):
     monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: Direct())
     monkeypatch.setattr(webbrowser, "open", opened.append)
     monkeypatch.delenv("BROWSER", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")  # a desktop (a Linux one without: no browser, tests/test_browser_open.py)
     server._announce_when_up("http://127.0.0.1:8613", open_browser=True)
     assert capsys.readouterr().out.strip() == "AP Coder is running at http://127.0.0.1:8613"
     assert opened == ["http://127.0.0.1:8613"]
