@@ -291,6 +291,31 @@ def test_an_approved_invoice_can_be_reopened_for_correction_and_its_pdf_download
     assert "Reopened by Jordan Lee" in client.get(f"/review/{inv_id}").text
 
 
+@pytest.mark.parametrize("exported", [True, False])
+def test_correcting_a_touchless_invoice_suspends_its_vendor_only_when_it_is_reopened(client, store, exported):
+    """Reopen for correction on a touchless invoice suspends its vendor. When the reopen is refused (exported
+    meanwhile, from a screen opened before), nothing was reopened: the vendor stays touchless."""
+    from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER
+
+    inv_id = clean_invoice(client, store)
+    client.post(f"/review/{inv_id}/approve", data=form_of(store, inv_id), headers=PAGE)
+    final = store.get_invoice(inv_id)["final_output"]
+    key = store.supplier_key_for(final["vendor_name"], final.get("gst_hst_registration_number"))
+    store.save_supplier_profile(key, display_name=final["vendor_name"])
+    with store._conn() as conn:  # as if touchless processing had approved it, its vendor touchless
+        conn.execute("UPDATE invoices SET reviewer = ? WHERE id = ?", (AUTONOMOUS_REVIEWER, inv_id))
+        conn.execute("UPDATE supplier_profiles SET state = 'autonomous' WHERE key = ?", (key,))
+    if exported:
+        store.create_export_batch([inv_id], "csv", actor="Sam")
+    client.post(f"/review/{inv_id}/correct", data={"reason": "wrong GL"}, headers=PAGE)
+    state = store.get_supplier_profile(key)["state"]
+    if exported:
+        assert store.get_invoice(inv_id)["status"] == APPROVED and state == "autonomous"
+        assert not store.events(actions=["autonomy_suspended"])
+    else:
+        assert store.get_invoice(inv_id)["status"] == REVIEW and state == "suspended"
+
+
 # --- Park, reject, delete, notes ----------------------------------------------------------------------------------
 
 
