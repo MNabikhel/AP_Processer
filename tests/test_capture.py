@@ -43,6 +43,12 @@ TODAY = dt.date(2026, 10, 9)
         ("2 759,40 $", 2759.40),
         ("45", 45.0),
         ("no amount", None),
+        # Thousands separators and a decimal point both printed: the last separator is the decimal point, whatever
+        # the decimals (a unit price to three or four): "1,234.567" was read as 1,234,567.
+        ("1,234.567", 1234.567),
+        ("1,234,567.891", 1234567.891),
+        ("1.234,567", 1234.567),
+        ("1,234", 1234.0),  # one kind of separator only: still thousands
     ],
 )
 def test_parse_amount(text, value):

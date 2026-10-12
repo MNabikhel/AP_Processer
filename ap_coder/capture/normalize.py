@@ -77,7 +77,11 @@ def _number(num: str) -> float | None:
     if re.fullmatch(r"0[.,]\d{3,4}", num):
         return float("0." + num[2:])  # a unit price to three or four decimals ("0.125"), not thousands
     last_sep = max(num.rfind("."), num.rfind(","))
-    if last_sep >= 0 and len(num) - last_sep - 1 in (1, 2):
+    # The last separator is the decimal point when it has one or two digits after it, or when the separators
+    # before it are all the other kind ("1,234.567": a unit price to three decimals, not 1,234,567).
+    other = "," if last_sep >= 0 and num[last_sep] == "." else "."
+    mixed = last_sep >= 0 and other in num[:last_sep] and num[last_sep] not in num[:last_sep]
+    if last_sep >= 0 and (len(num) - last_sep - 1 in (1, 2) or mixed):
         whole, frac = num[:last_sep], num[last_sep + 1 :]
     else:
         whole, frac = num, ""
