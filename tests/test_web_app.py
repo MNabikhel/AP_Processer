@@ -285,8 +285,21 @@ def test_announce_prints_the_address_once_it_answers(monkeypatch, capsys):
         def __exit__(self, *exc):
             return False
 
+    class Opener:
+        def __init__(self, *handlers):
+            self.handlers = handlers
+
+        def open(self, url, timeout):
+            assert url == "http://127.0.0.1:8613/healthz"
+            return Answer()
+
+    def build_opener(*handlers):
+        # its own server is asked directly, never through a proxy (HTTP_PROXY would get the request)
+        assert any(isinstance(h, urllib.request.ProxyHandler) and h.proxies == {} for h in handlers)
+        return Opener(*handlers)
+
     opened = []
-    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: Answer())
+    monkeypatch.setattr(urllib.request, "build_opener", build_opener)
     monkeypatch.setattr(webbrowser, "open", opened.append)
     monkeypatch.delenv("BROWSER", raising=False)
     server._announce_when_up("http://127.0.0.1:8613", open_browser=True)

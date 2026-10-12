@@ -64,11 +64,13 @@ def remove_server_file(token: str) -> None:
 
 
 def _announce_when_up(url: str, open_browser: bool, timeout: float = 60.0) -> None:
-    """Wait until the server answers /healthz, then say where it is and open the browser."""
+    """Wait until the server answers /healthz, then say where it is and open the browser. Asked directly, never through
+    a proxy: an office proxy (HTTP_PROXY) would be sent the address, and could not reach this computer's server."""
     deadline = time.monotonic() + timeout
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url + "/healthz", timeout=2) as response:  # noqa: S310 - our own server
+            with opener.open(url + "/healthz", timeout=2) as response:  # our own server, on this computer
                 if response.status == 200:
                     break
         except OSError:
