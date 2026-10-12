@@ -1492,7 +1492,11 @@ def free_port(start: int = DEFAULT_PORT) -> int:
                 continue
         if not running.listening(port):  # something answering there is never picked (0.3 s at most on Windows)
             return port
-    return start
+    # None of the 50 (Windows reserves whole blocks of ports for Hyper-V and WSL: binding there is refused): one the
+    # system says is free, never the busy one asked for
+    with socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((address, 0))
+        return s.getsockname()[1]
 
 
 def open_browser(url: str) -> None:

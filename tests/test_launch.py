@@ -406,7 +406,26 @@ def test_ports(launch, monkeypatch):
         s.bind(("127.0.0.1", 0))
         s.listen()
         taken = s.getsockname()[1]
-        assert launch.free_port(taken) != taken
+        found = launch.free_port(taken)
+        assert found != taken, f"listening({taken}) said {launch.running.listening(taken)}"
+
+
+def test_a_free_port_is_found_when_the_next_fifty_are_refused(launch, monkeypatch):
+    """Windows reserves blocks of ports (Hyper-V, WSL): when none of the 50 after the one asked for can be bound,
+    the port asked for (in use) was given back; now one the system says is free."""
+    import socket as real
+
+    refused = set(range(40000, 40050))
+
+    class Probe(real.socket):
+        def bind(self, address):
+            if address[1] in refused:
+                raise OSError(10013, "forbidden by its access permissions")
+            return super().bind(address)
+
+    monkeypatch.setattr(launch.socket, "socket", Probe)
+    port = launch.free_port(40000)
+    assert port not in refused and port > 0
 
 
 def test_browser_none_opens_nothing(launch, monkeypatch):
