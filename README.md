@@ -216,7 +216,8 @@ python scripts/pilot_check.py        # reads the ten samples offline and compare
 
 Every invoice is coded the same way, with nothing to choose: the header, lines and taxes come from the local
 readers, each line's GL account from what AP approved before and the coding rules, and the chat model in LM
-Studio (found on its own: the chat model loaded, else one downloaded; never OvisOCR2) suggests an account for a
+Studio (found on its own: the chat model loaded, by AP Coder or CloseDesk, else Qwen 3.5 9B when it is
+downloaded, never just the first model on LM Studio's list; never OvisOCR2 or an embedding model) suggests an account for a
 line nothing was learned for. When LM Studio isn't running, that line is left for AP; nothing else changes.
 
 **Settings → Reading** shows what was found: each reader's state (the GL coding model among them, e.g.

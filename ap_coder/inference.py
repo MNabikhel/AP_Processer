@@ -147,8 +147,8 @@ class InvoiceCoder:
         if not model:
             if status.reachable:
                 raise CodingError(
-                    f"{status.server_title} is running but no model is loaded. Load a small instruct model in "
-                    "LM Studio (e.g. Qwen 2.5 7B Instruct), or name one in AP_LLM_MODEL."
+                    f"{status.server_title} is running but no chat model is loaded. Load Qwen 3.5 9B in "
+                    "LM Studio (docs/LM_STUDIO.md), or name a model in AP_LLM_MODEL."
                 )
             raise CodingError(
                 f"The local model isn't answering at {llm.base_url}. In LM Studio: load a model, then "

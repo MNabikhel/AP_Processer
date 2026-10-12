@@ -180,9 +180,12 @@ def test_lm_studio_vision_model_and_nothing_loaded(lm_studio):
     server = lm_studio(["qwen2.5-vl-7b-instruct"], v0)
     assert check_server(LocalLLMSettings(base_url=server.base_url)).vision is True
 
-    idle = lm_studio(["qwen2.5-7b-instruct", "llama-3.2-3b-instruct"], [{**V0_LOADED[2], "state": "not-loaded"}])
+    idle = lm_studio(["gemma-3-27b-it", "qwen/qwen3.5-9b"], [{"id": "qwen/qwen3.5-9b", "type": "vlm", "state": "x"}])
     status = check_server(LocalLLMSettings(base_url=idle.base_url))
-    assert status.active and status.model == "qwen2.5-7b-instruct"  # downloaded: LM Studio loads it when asked
+    assert status.active and status.model == "qwen/qwen3.5-9b"  # the team's chat model: LM Studio loads it when asked
+    other = lm_studio(["qwen2.5-7b-instruct", "llama-3.2-3b-instruct"], [{**V0_LOADED[2], "state": "not-loaded"}])
+    status = check_server(LocalLLMSettings(base_url=other.base_url))
+    assert status.reachable and not status.active  # never the first on the list: it could be any size (CloseDesk)
     reader_only = lm_studio(["ath-maas_ovisocr2", "text-embedding-nomic-embed-text-v1.5"], [])
     status = check_server(LocalLLMSettings(base_url=reader_only.base_url))
     assert status.reachable and not status.active  # OvisOCR2 reads pages, it never suggests accounts
@@ -206,13 +209,54 @@ def test_detection_when_nothing_answers_is_quick_and_cached(real_fetch, monkeypa
         ("my-model", ["a", "b"], [], False, "my-model"),  # AP_LLM_MODEL wins
         ("", ["nomic-embed-text", "llama3.1:8b"], [], False, "llama3.1:8b"),  # Ollama: no embedding model
         ("", ["a", "b"], ["text-embedding-x", "b"], True, "b"),
-        ("", ["a", "b"], [], True, "a"),  # LM Studio with nothing loaded: a downloaded chat model, loaded when asked
+        # LM Studio with nothing loaded (just-in-time loading lists every downloaded model, and asking for one loads
+        # it): only the team's chat model, Qwen 3.5 9B, as CloseDesk asks for it; never the first on the list.
+        ("", ["a", "b"], [], True, ""),
+        ("", ["gemma-3-27b-it", "qwen/qwen3.5-9b", "b"], [], True, "qwen/qwen3.5-9b"),
         ("", ["ath-maas_ovisocr2", "text-embedding-x"], [], True, ""),  # never OvisOCR2 or an embedding model
+        ("", ["text-embedding-qwen3-embedding-0.6b", "ovis-ocr2", "qwen3.5-9b-mlx"], [], True, "qwen3.5-9b-mlx"),
+        ("", ["qwen3.5-27b", "qwen3.5-4b"], [], True, ""),  # another size is not the one the team runs
+        ("", ["Ovis_OCR2-GGUF"], ["Ovis_OCR2-GGUF"], True, ""),  # a page reader, however it is spelled
         ("", [], [], False, ""),
     ],
 )
 def test_pick_model(requested, ids, loaded, lm, expected):
     assert pick_model(requested, ids, loaded, lm_studio=lm) == expected
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "qwen/qwen3.5-9b", "qwen3.5-9b", "qwen3.5-9b-mlx", "qwen3.5-9b@q4_k_m", "lmstudio-community/Qwen3.5-9B-GGUF",
+        "mlx-community/Qwen3.5-9B-4bit", "Qwen3.5-9B-Instruct-Q4_K_M.gguf", "qwen3_5-9b", "qwen3.5:9b",
+    ],
+)  # fmt: skip
+def test_recognises_the_team_chat_model_in_every_build(model_id):
+    """The ids LM Studio gives Qwen 3.5 9B: by publisher, MLX or GGUF, with a quantization; Ollama's tag."""
+    assert local_llm.team_chat_model(model_id) and local_llm.is_chat_model(model_id)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "qwen3.5-4b", "qwen3.5-27b", "qwen3-8b", "qwen2.5-7b-instruct", "text-embedding-qwen3-embedding-0.6b",
+        "Qwen3-Embedding-4B-GGUF", "ath-maas_ovisocr2", "qwen3.5-19b",
+    ],
+)  # fmt: skip
+def test_other_models_are_not_the_team_chat_model(model_id):
+    assert not local_llm.team_chat_model(model_id)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "ath-maas_ovisocr2", "OvisOCR2-GGUF", "ovis-ocr2", "Ovis_OCR2@q8_0", "mlx-community/OvisOCR2-8bit",
+        "text-embedding-qwen3-embedding-0.6b", "qwen3-embedding-0.6b-mlx", "Qwen/Qwen3-Embedding-8B",
+        "nomic-embed-text",
+    ],
+)  # fmt: skip
+def test_page_readers_and_embedding_models_never_chat(model_id):
+    assert not local_llm.is_chat_model(model_id)
 
 
 def test_other_servers_guess_vision_from_the_name(lm_studio):
