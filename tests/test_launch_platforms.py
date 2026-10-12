@@ -4,7 +4,9 @@ subprocess, sockets) as in test_launch.py; the batch file is checked as text (th
 
 from __future__ import annotations
 
+import errno
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -31,6 +33,9 @@ def launch(tmp_path, monkeypatch):
     monkeypatch.delenv(module.LOCK_HELD_ENV, raising=False)  # (main() sets it: gone again after the test)
     yield module
     module.release_lock()
+
+
+posix_only = pytest.mark.skipif(os.name == "nt", reason="stands in for the Mac's and Linux's flock")
 
 
 def bat() -> str:
@@ -67,3 +72,37 @@ def test_started_inside_explorers_view_of_the_zip_stops_with_what_to_do(launch, 
     monkeypatch.setattr(launch, "bootstrap", lambda argv: 0)
     monkeypatch.setattr(launch.upgrade, "newer_install", lambda root: None)
     assert launch.main(["--no-start"]) == 0
+
+
+# --- A folder on a network drive or NAS --------------------------------------------------------------------------
+
+
+def _flock_fails(monkeypatch, code: int) -> None:
+    import fcntl
+
+    def flock(fd, operation):
+        if operation & fcntl.LOCK_UN:
+            return None
+        raise OSError(code, os.strerror(code))
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+
+
+@posix_only
+@pytest.mark.parametrize("code", [errno.ENOLCK, errno.EOPNOTSUPP, errno.EINVAL])
+def test_a_folder_without_file_locks_is_not_another_start(launch, monkeypatch, code):
+    """AP Coder on a NAS or network volume that has no file locks (NFS without its lock service, some SMB servers):
+    the lock can't be taken at all. That is not "another window is setting up": waiting for one would last half an
+    hour. It carries on, as in a read-only folder."""
+    _flock_fails(monkeypatch, code)
+    assert launch.take_lock() is True
+    launch.LOCK.touch()
+    assert launch.upgrade.lock_held(launch.ROOT) is False  # an older install there is not "running" forever
+
+
+@posix_only
+def test_a_lock_another_start_holds_still_counts(launch, monkeypatch):
+    _flock_fails(monkeypatch, errno.EWOULDBLOCK)
+    assert launch.take_lock() is False
+    launch.LOCK.touch()
+    assert launch.upgrade.lock_held(launch.ROOT) is True

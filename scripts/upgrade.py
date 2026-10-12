@@ -26,6 +26,7 @@ The data folder's contents are never touched, except to move legacy data into it
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import json
 import os
 import shutil
@@ -134,6 +135,16 @@ def removing(folder: Path) -> list[Path]:
     return found
 
 
+# How the operating system says another process holds a lock (flock: EWOULDBLOCK; msvcrt: EACCES or EDEADLK). Any
+# other error (ENOLCK, EOPNOTSUPP...) means the file system has no locks at all: a NAS or network volume.
+LOCK_BUSY = {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK, None}
+
+
+def lock_busy(exc: OSError) -> bool:
+    """Taking a lock failed with ``exc`` because another process holds it (not because locks can't be had here)."""
+    return exc.errno in LOCK_BUSY
+
+
 def lock_held(folder: Path) -> bool:
     """Another start holds ``folder``'s launch lock: AP Coder runs (or is being set up) from it right now."""
     lock = folder / LOCK_NAME
@@ -156,8 +167,8 @@ def lock_held(folder: Path) -> bool:
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    except OSError:
-        return True
+    except OSError as exc:
+        return lock_busy(exc)
     finally:
         handle.close()
     return False

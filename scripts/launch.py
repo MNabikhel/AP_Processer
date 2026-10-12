@@ -1143,7 +1143,7 @@ _held: list[Any] = []  # the open lock file: the lock lasts as long as this proc
 def take_lock() -> bool:
     """An exclusive lock on ``LOCK`` for this start (setup and the dashboard), released when this process ends.
     False when another start holds it. True also when no lock file can be made here (a read-only folder: then
-    there is no .venv to set up either)."""
+    there is no .venv to set up either), or the folder's file system has no locks (a NAS or network volume)."""
     if _held:
         return True
     try:
@@ -1160,9 +1160,9 @@ def take_lock() -> bool:
             import fcntl
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except OSError as exc:
         handle.close()
-        return False
+        return not upgrade.lock_busy(exc)
     _held.append(handle)
     return True
 
