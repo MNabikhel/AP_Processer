@@ -688,7 +688,7 @@ def resume(request: Request, invoice_id: int) -> JSONResponse:
 def restore(request: Request, invoice_id: int) -> JSONResponse:
     """A rejected invoice back in the review queue (e.g. rejected by mistake)."""
     try:
-        get_store(request).reopen(invoice_id, reviewer())
+        get_store(request).reopen(invoice_id, reviewer(), only_rejected=True)
     except ValueError as exc:
         return changed_meanwhile(request, invoice_id, exc)
     return done(request, f"/review/{invoice_id}", flash_message("Back in the review queue.", "ok", icon="undo"))

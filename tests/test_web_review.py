@@ -105,6 +105,28 @@ def test_approved_and_failed_lists(client, demo):
     assert "Nothing here" in client.get("/review?tab=other").text
 
 
+def test_a_stale_page_never_deletes_or_reopens_an_approved_invoice(client, demo):
+    """Delete and Reopen on the Failed / rejected list (or on a review screen) were offered while the invoice was
+    rejected or in review; someone approved it since. The click must not delete a finished approval (perhaps already
+    exported), nor reopen it without a reason, withdrawing what it taught."""
+    first, second = demo.list_invoices(REVIEW)[:2]
+    # A review screen offers Delete; meanwhile a colleague approved the invoice and exported it.
+    demo.approve_invoice(first["id"], demo.get_invoice(first["id"])["ai_output"], "Bob")
+    batch = demo.create_export_batch([first["id"]], "csv", actor="Bob")
+    response = client.post(f"/review/{first['id']}/delete", data={"back": "/review?tab=other"}, headers=PAGE)
+    assert "Not done" in client.get(response.json()["redirect"]).text
+    assert demo.get_invoice(first["id"])["export_batch"] == batch
+    # The Failed / rejected list offers Reopen on a rejected invoice; meanwhile it was reopened and approved.
+    demo.reject_invoice(second["id"], "Jane", "not ours")
+    demo.reopen(second["id"], "Bob", "it is ours")
+    demo.approve_invoice(second["id"], demo.get_invoice(second["id"])["ai_output"], "Bob")
+    for url in (f"/review/{second['id']}/reopen", f"/review/{second['id']}/restore"):
+        client.post(url, headers=PAGE)
+        assert demo.get_invoice(second["id"])["status"] in (APPROVED, PENDING)
+    response = client.post(f"/review/{second['id']}/delete", data={"back": "/review?tab=other"}, headers=PAGE)
+    assert demo.get_invoice(second["id"])["status"] in (APPROVED, PENDING)
+
+
 def test_reject_reopen_delete_and_unpark(client, demo):
     first, second = demo.list_invoices(REVIEW)[:2]
     demo.reject_invoice(first["id"], "Jane", "duplicate")

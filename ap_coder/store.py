@@ -941,12 +941,20 @@ class Store:
         for table in ("feedback", "supplier_outcomes", "reader_outcomes"):
             conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
 
-    def delete_invoice(self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None) -> None:
-        """Delete an invoice; with ``forget_lessons`` also what was learned when it was approved."""
+    def delete_invoice(
+        self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None, *, keep_approved: bool = False
+    ) -> None:
+        """Delete an invoice; with ``forget_lessons`` also what was learned when it was approved. ``keep_approved``:
+        refuse (ValueError, nothing deleted) an invoice approved or waiting for its second approval, e.g. approved
+        and exported by someone else since a Delete button was shown for it (reopen it first)."""
         with self._conn() as conn:
+            if keep_approved:
+                conn.execute("BEGIN IMMEDIATE")  # checked and deleted in one go: an approval cannot slip in between
             row = conn.execute(
                 "SELECT file_name, vendor_name, invoice_number, status FROM invoices WHERE id = ?", (invoice_id,)
             ).fetchone()
+            if keep_approved and row is not None and row["status"] in (APPROVED, PENDING):
+                raise ValueError(f"invoice {invoice_id} was approved meanwhile: reopen it before deleting it")
             conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
             # What capture read, and the supplier accuracy measured on it, go with the invoice: a deleted
             # invoice (a duplicate upload, a demo) must not count towards a supplier's autonomy, a reader's
@@ -1214,16 +1222,18 @@ class Store:
             )
             return cur.rowcount > 0
 
-    def reopen(self, invoice_id: int, actor: str, reason: str = "") -> None:
+    def reopen(self, invoice_id: int, actor: str, reason: str = "", *, only_rejected: bool = False) -> None:
         """Put an approved invoice that is not exported yet, or a rejected one, back in the review queue to be
         corrected. What its approval taught is withdrawn (learned again at the next approval); the reviewer's
-        coding is kept as the starting point. An exported invoice is reopened by undoing its batch first."""
+        coding is kept as the starting point. An exported invoice is reopened by undoing its batch first.
+        ``only_rejected``: a rejected invoice only (a Reopen button shown on a rejected invoice that someone has
+        reopened and approved since must not reopen that approval)."""
+        approved = "" if only_rejected else f"status IN ('{APPROVED}', '{PENDING}') AND export_batch IS NULL OR "
         with self._conn() as conn:
             cur = conn.execute(
-                """UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL, second_reviewer = NULL,
-                   second_reviewed_at = NULL, error = NULL
-                   WHERE id = ? AND (status IN (?, ?) AND export_batch IS NULL OR status = ?)""",
-                (REVIEW, invoice_id, APPROVED, PENDING, REJECTED),
+                f"""UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL, second_reviewer = NULL,
+                   second_reviewed_at = NULL, error = NULL WHERE id = ? AND ({approved}status = ?)""",
+                (REVIEW, invoice_id, REJECTED),
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")

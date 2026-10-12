@@ -357,7 +357,7 @@ def delete_invoice(store: Store, invoice_id: int) -> None:
     """Delete an invoice; if its file is in the invoices folder, move it to ``invoices/deleted`` so the folder
     pick-up doesn't offer it again."""
     inv = store.get_invoice(invoice_id) or {}
-    store.delete_invoice(invoice_id, actor=reviewer())
+    store.delete_invoice(invoice_id, actor=reviewer(), keep_approved=True)
     folder = invoice_dir(store)
     path = Path(inv.get("source_path") or "")
     try:
@@ -380,7 +380,10 @@ def review_delete(request: Request, invoice_id: int, back: str = Form("/review?t
         return refuse("That invoice is no longer in AP Coder.", 404)
     from ap_coder.web.pages.invoice import forget_draft
 
-    delete_invoice(store, invoice_id)
+    try:
+        delete_invoice(store, invoice_id)
+    except ValueError as exc:  # approved by someone else since this Delete button was shown
+        return changed_meanwhile(request, exc, back)
     forget_draft(request, invoice_id)
     return done(request, back, flash_message("Deleted. The file moved to invoices/deleted.", "ok", icon="delete"))
 
@@ -388,7 +391,7 @@ def review_delete(request: Request, invoice_id: int, back: str = Form("/review?t
 @router.post("/review/{invoice_id}/reopen")
 def review_reopen(request: Request, invoice_id: int) -> JSONResponse:
     try:
-        get_store(request).reopen(invoice_id, reviewer())
+        get_store(request).reopen(invoice_id, reviewer(), only_rejected=True)
     except ValueError as exc:
         return changed_meanwhile(request, exc, "/review?tab=other")
     return done(request, "/review?tab=other", flash_message("Back in the review queue.", "ok", icon="undo"))
