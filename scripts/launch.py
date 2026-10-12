@@ -1047,6 +1047,49 @@ def old_shortcut_folder() -> str:
     return str(Path(target).parent) if target else ""
 
 
+CLOUD_NAMES = {"onedrive": "OneDrive", "dropbox": "Dropbox", "googledrive": "Google Drive", "box": "Box"}
+
+
+def synced_by(folder: Path) -> str:
+    """The service that syncs ``folder`` ("OneDrive", "iCloud Drive", ...; "" when none is known): its files can be
+    kept online-only, and with no internet they can't be read."""
+
+    def inside(parent: str | Path) -> bool:
+        try:
+            return Path(os.path.normcase(str(folder))).is_relative_to(os.path.normcase(str(parent)))
+        except (OSError, ValueError):
+            return False
+
+    if WINDOWS:
+        roots = [os.environ.get(v) for v in ("OneDriveCommercial", "OneDriveConsumer", "OneDrive")]
+        return "OneDrive" if any(root and inside(root) for root in roots) else ""
+    if MAC:
+        library = Path.home() / "Library"
+        if inside(library / "Mobile Documents"):
+            return "iCloud Drive"
+        if inside(library / "CloudStorage"):
+            provider = folder.relative_to(library / "CloudStorage").parts[0].split("-")[0]
+            return CLOUD_NAMES.get(provider.lower(), provider)
+    return ""
+
+
+def sync_notes(data: Path) -> list[tuple[str, str]]:
+    """A warning for AP Coder's folder, and for its data folder, when a cloud service syncs it."""
+    notes = []
+    place = "C:\\APCoder\\app" if WINDOWS else "a folder in your home folder (e.g. ~/APCoder/app)"
+    service = synced_by(ROOT)
+    if service:
+        notes.append(("warn", f"AP Coder's folder is synced by {service} ({ROOT}): a file it keeps online-only can't "
+                              f"be read without the internet. Unzip AP Coder to a folder that is not synced, e.g. "
+                              f"{place}"))  # fmt: skip
+    service = synced_by(data)
+    if service:
+        notes.append(("warn", f"The data folder is synced by {service} ({data}): the database can be damaged while "
+                              "it is synced, and an online-only invoice can't be opened offline. Choose a data folder "
+                              "that is not synced (install.bat asks for one)"))  # fmt: skip
+    return notes
+
+
 def lm_studio_line() -> tuple[str, str]:
     """LM Studio is optional: say whether a model is loaded, never install or start it."""
     try:
@@ -1469,7 +1512,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     paths.record_install(ident)
     upgrade.write_marker(ROOT, ident)
     shortcut = ensure_shortcut()
-    lines = readiness((level, packages)) + notes
+    lines = readiness((level, packages)) + notes + sync_notes(data)
     if shortcut:
         lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
     old = older_installs(ident, legacy)

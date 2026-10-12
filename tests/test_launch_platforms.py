@@ -298,3 +298,43 @@ def test_the_unblocking_runs_on_every_start(launch, monkeypatch):
     monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("open", 8501))
     monkeypatch.setattr(launch, "open_browser", lambda url: None)
     assert launch.run(launch.parse([])[0], []) == 0 and calls == [1]
+
+
+# --- A folder synced by OneDrive, iCloud Drive or Dropbox -------------------------------------------------------
+
+
+def test_a_folder_onedrive_syncs_is_warned_about(launch, tmp_path, monkeypatch):
+    """Unzipped in a OneDrive folder (often the Desktop or Documents, redirected), the wheelhouse, the models and the
+    database can be "online-only": with no internet they can't be read, and a database being synced is at risk."""
+    monkeypatch.setattr(launch, "WINDOWS", True)
+    onedrive = tmp_path / "OneDrive - Contoso"
+    monkeypatch.setenv("OneDriveCommercial", str(onedrive))
+    monkeypatch.delenv("OneDrive", raising=False)
+    monkeypatch.delenv("OneDriveConsumer", raising=False)
+    monkeypatch.setattr(launch, "ROOT", onedrive / "Desktop" / "APProcessor")
+    notes = launch.sync_notes(tmp_path / "APCoder")
+    assert len(notes) == 1 and notes[0][0] == "warn"
+    assert "synced by OneDrive" in notes[0][1] and "C:\\APCoder" in notes[0][1]
+    notes = launch.sync_notes(onedrive / "Documents" / "APCoder")  # the data folder too
+    assert len(notes) == 2 and "data folder" in notes[1][1]
+    monkeypatch.setattr(launch, "ROOT", tmp_path / "APCoder" / "app")
+    assert launch.sync_notes(tmp_path / "APCoder") == []
+
+
+@pytest.mark.parametrize(
+    ("folder", "service"),
+    [
+        ("Library/Mobile Documents/com~apple~CloudDocs/AP Coder", "iCloud Drive"),
+        ("Library/CloudStorage/OneDrive-Contoso/AP Coder", "OneDrive"),
+        ("Library/CloudStorage/Dropbox/AP Coder", "Dropbox"),
+        ("Library/CloudStorage/GoogleDrive-me@example.com/My Drive/AP Coder", "Google Drive"),
+    ],
+)
+def test_a_folder_a_mac_syncs_is_warned_about(launch, tmp_path, monkeypatch, folder, service):
+    monkeypatch.setattr(launch, "MAC", True)
+    monkeypatch.setattr(launch.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(launch, "ROOT", tmp_path / folder)
+    notes = launch.sync_notes(tmp_path / "APCoder")
+    assert len(notes) == 1 and f"synced by {service}" in notes[0][1]
+    monkeypatch.setattr(launch, "ROOT", tmp_path / "APCoder" / "app")
+    assert launch.sync_notes(tmp_path / "APCoder") == []
