@@ -222,6 +222,7 @@ def _zip(stage: Path, dest: Path) -> None:
             info = zipfile.ZipInfo.from_file(path, arc.as_posix())
             mode = 0o755 if path.suffix in EXECUTABLE else 0o644
             info.external_attr = (0o100000 | mode) << 16  # keeps the launchers executable on macOS
+            info.create_system = 3  # Unix, also when built on Windows: else the Mac ignores those permissions
             info.compress_type = zipfile.ZIP_STORED if path.suffix in (".whl", ".onnx") else zipfile.ZIP_DEFLATED
             with open(path, "rb") as f:
                 zf.writestr(info, f.read())
