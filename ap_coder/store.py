@@ -1053,7 +1053,8 @@ class Store:
         if inv["status"] != REVIEW:  # a failed read has nothing checked to approve
             raise ValueError(f"invoice {invoice_id} is not in the review queue ({inv['status']})")
         ai = inv["ai_output"] or {"line_items": []}
-        needs_second = self.over_approval_limit(final_output)
+        second_reason = self.second_approval_reason(final_output)
+        needs_second = bool(second_reason)
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
@@ -1137,7 +1138,8 @@ class Store:
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
-                **({"bulk": True} if bulk else {}), **({"needs_second": True} if needs_second else {}),
+                **({"bulk": True} if bulk else {}),
+                **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
                 **({"open_issues": open_issues} if open_issues else {}), **({"login": login} if login else {}),
             })  # fmt: skip
             conn.executemany(
@@ -1161,15 +1163,27 @@ class Store:
         except ValueError:
             return 0.0
 
-    def over_approval_limit(self, coding: dict[str, Any], limit: float | None = None) -> bool:
-        """Is this invoice's total over the approval limit? The limit is in CAD: a foreign-currency total is
-        converted at the rate set in Settings (compared as it is when no rate is set)."""
+    def second_approval_reason(self, coding: dict[str, Any], limit: float | None = None, *,
+                               unknown_rate: bool = True) -> str:  # fmt: skip
+        """Why this invoice needs a second approver ("" when it doesn't). The limit is in CAD: a foreign-currency total
+        is converted at the rate set in Settings. Without a rate it is never taken as CAD (9,000 EUR is about 13,000
+        CAD): it needs the second approver, whatever its total (``unknown_rate``; False: left out, for a caller that
+        deals with a missing rate itself, like the touchless gates)."""
         limit = self.approval_limit() if limit is None else limit
         if not limit:
-            return False
+            return ""
         currency = str(coding.get("currency") or "CAD").strip().upper()
-        rate = self.fx_rates().get(currency, 1.0)
-        return abs(float(coding.get("grand_total") or 0)) * rate > limit
+        rate = self.fx_rates().get(currency)
+        if rate is None:
+            return f"no CAD rate for {currency}: a second approval is needed" if unknown_rate else ""
+        if abs(float(coding.get("grand_total") or 0)) * rate > limit:
+            return f"over the approval limit of {limit:,.2f} CAD"
+        return ""
+
+    def over_approval_limit(self, coding: dict[str, Any], limit: float | None = None, *,
+                            unknown_rate: bool = True) -> bool:  # fmt: skip
+        """Does this invoice need a second approver (``second_approval_reason``)?"""
+        return bool(self.second_approval_reason(coding, limit, unknown_rate=unknown_rate))
 
     def final_approve(self, invoice_id: int, approver: str, login: str = "") -> None:
         """The second approval: by someone other than the first approver (another name and, when the
@@ -1723,7 +1737,8 @@ class Store:
 
     def over_touchless_limit(self, coding: dict[str, Any]) -> bool:
         """Is this invoice's total above the largest amount approved without a person?"""
-        return self.over_approval_limit(coding, limit=self.touchless_limit())
+        # A currency with no rate is its own touchless gate (``capture.workflow.invoice_gates``), said as such.
+        return self.over_approval_limit(coding, limit=self.touchless_limit(), unknown_rate=False)
 
     def sync_autonomy(self, key: str | None = None) -> list[dict[str, Any]]:
         """With touchless processing on, move each supplier (or the one ``key``) to the state its record earns

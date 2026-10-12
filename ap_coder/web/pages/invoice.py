@@ -472,8 +472,9 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
     messages = []
     if waits:  # not approved yet: never "Approved <vendor>" for it
-        messages.append(flash_message(f"First approval recorded for {vendor}: over the approval limit, it waits for "
-                                      "a second approver.", "info", icon="how_to_reg"))  # fmt: skip
+        why = store.second_approval_reason(analysis.output) or "over the approval limit"
+        messages.append(flash_message(f"First approval recorded for {vendor}: {why}; it waits for a second "
+                                      "approver.", "info", icon="how_to_reg"))  # fmt: skip
     total = sum(counts.values())
     taught = taught_message(store, learned)
     lines = f"{counts[ACCEPTED]} of {ui.plural(total, 'line')} coded as suggested."
