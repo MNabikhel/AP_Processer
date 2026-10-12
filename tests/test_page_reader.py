@@ -604,6 +604,37 @@ def test_a_page_that_loops_twice(client):
     assert kept == long_page + "\n| Item | 1 | 10.00 |"  # the longer reading, the repeated row kept once
 
 
+def test_pages_are_read_one_at_a_time(client):
+    """The background reader and a self-test (or a person's Read now) never ask LM Studio for two pages at once: it is
+    shared with CloseDesk, which reads its own scans with the same OvisOCR2."""
+    import time
+
+    lock = threading.Lock()
+    running, most = [0], [0]
+
+    class SlowStream(FakeStream):
+        def __iter__(self):
+            with lock:
+                running[0] += 1
+                most[0] = max(most[0], running[0])
+            time.sleep(0.15)
+            yield from super().__iter__()
+            with lock:
+                running[0] -= 1
+
+    page = "\n".join(f"Line {n}: services rendered in September" for n in range(8))
+    client(*[SlowStream([chunk(page), chunk(None, "stop")]) for _ in range(3)])
+    threads = [
+        threading.Thread(target=page_reader.transcribe, args=(Settings(), b"png"), kwargs={"model": OVIS_KEY})
+        for _ in range(3)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert most[0] == 1
+
+
 def test_html_row_loop_is_cut(client):
     """OvisOCR2 writes a table on one line: its loop is the same empty row over and over on that line."""
     row = "<tr><td></td><td></td><td></td></tr>"

@@ -699,6 +699,9 @@ RETRY_SAMPLING = {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penal
 _EXTRA_SAMPLING = ("top_k", "presence_penalty")  # not OpenAI parameters: sent in the request body as they are
 # A looped reading shorter than this (once the loop is cut) stopped near the top of the page.
 MIN_LOOPED_TEXT = 200
+# One page read at a time from this process (the background reader, a self-test, a person's Read now): CloseDesk
+# reads its scans with the same OvisOCR2 in the same LM Studio, one page at a time too (local_llm.CHAT_LOCK).
+READ_LOCK = threading.Lock()
 
 
 def _attr(obj: Any, name: str) -> Any:
@@ -792,14 +795,17 @@ def transcribe(settings: Settings, png: bytes, *, model: str | None = None,
         }
     ]
     client = _client(settings)
-    text, looped = _transcribe_once(settings, client, model, reader, messages, None, should_stop)
-    if not looped:
-        return text
-    log.info("Page reader %s looped on a page; reading it once more with sampling", model)
-    try:
-        again, looped_again = _transcribe_once(settings, client, model, reader, messages, RETRY_SAMPLING, should_stop)
-    except (CutOff, Blank, _NothingWritten):
-        again, looped_again = "", True
+    with READ_LOCK:  # one page at a time: LM Studio is shared with CloseDesk, which reads its scans with OvisOCR2 too
+        text, looped = _transcribe_once(settings, client, model, reader, messages, None, should_stop)
+        if not looped:
+            return text
+        log.info("Page reader %s looped on a page; reading it once more with sampling", model)
+        try:
+            again, looped_again = _transcribe_once(
+                settings, client, model, reader, messages, RETRY_SAMPLING, should_stop
+            )
+        except (CutOff, Blank, _NothingWritten):
+            again, looped_again = "", True
     best = again if not looped_again else max(text, again, key=len)
     if len(best) < MIN_LOOPED_TEXT:
         raise CutOff("the model got stuck repeating itself near the top of the page")

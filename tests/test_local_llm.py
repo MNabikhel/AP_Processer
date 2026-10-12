@@ -708,3 +708,38 @@ def test_qwen35_can_see_pages():
 
     assert looks_like_vision("qwen3.5-9b") and looks_like_vision("qwen3.5:9b") and looks_like_vision("Qwen3.5-2B")
     assert not looks_like_vision("qwen3-8b")
+
+
+# --- A good neighbour to CloseDesk (docs/LM_STUDIO.md) --------------------------------------------------------------
+# CloseDesk uses the same LM Studio on the same Mac: AP Coder sends the chat model one request at a time, however many
+# invoices are processed at once, and never sends the same request again by itself after a timeout or a failure.
+
+
+def test_chat_requests_are_sent_one_at_a_time(lm_studio, reference):
+    lock = threading.Lock()
+    running, most = [0], [0]
+
+    def reply(body):
+        with lock:
+            running[0] += 1
+            most[0] = max(most[0], running[0])
+        time.sleep(0.15)
+        with lock:
+            running[0] -= 1
+        return chat_reply(json.dumps(PICKS), model="qwen3.5-9b")
+
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=reply)
+    threads = [threading.Thread(target=ask_accounts, args=(server, reference)) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(server.chats) == 4 and most[0] == 1
+
+
+def test_a_failed_chat_request_is_not_sent_again_by_itself(lm_studio, reference):
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: (503, {"error": "busy"}))
+    with pytest.raises(CodingError):
+        ask_accounts(server, reference)
+    assert len(server.chats) == 1  # the OpenAI SDK's own retry would have sent it twice
+    assert local_llm.build_local_client(LocalLLMSettings()).max_retries == 0

@@ -317,7 +317,8 @@ class InvoiceCoder:
             kwargs = self._local_kwargs(model, kind, schema)
             sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
             try:
-                return self.client.chat.completions.create(messages=sent, **kwargs)
+                with local_llm.CHAT_LOCK:  # one request at a time: LM Studio is shared with CloseDesk
+                    return self.client.chat.completions.create(messages=sent, **kwargs)
             except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
                 if "extra_body" in kwargs and local_llm.refuses_extra_fields(exc):
                     if local_llm.refuse_thinking_off(base, model):

@@ -299,6 +299,13 @@ def provider_status(settings: Settings) -> ProviderStatus:
     return ProviderStatus("local", False, "Local model", status.describe())
 
 
+# One chat request at a time from this process, however many invoices are processed at once (``--workers``, the
+# dashboard's jobs): LM Studio on the manager's Mac also answers CloseDesk, and a burst of parallel requests would
+# queue CloseDesk's questions behind AP Coder's. The page reader has its own (page_reader.READ_LOCK): it is another
+# model, which LM Studio runs beside the chat model.
+CHAT_LOCK = threading.Lock()
+
+
 NO_MODEL_MESSAGE = (
     "No AI model answers to code this invoice. Start LM Studio's server with a chat model loaded; invoices are still "
     "read and coded from AP's history without it."
@@ -337,7 +344,9 @@ def build_local_client(llm: LocalLLMSettings) -> Any:
         base_url=llm.base_url,
         api_key=llm.api_key or "lm-studio",
         timeout=llm.timeout_seconds,
-        max_retries=1,  # a local server that failed once is busy or down, not rate limited
+        # Never sent again by the SDK itself: a local server that failed is busy (CloseDesk shares it) or down, not
+        # rate limited, and a request sent again after a ten-minute timeout only doubles the wait (CloseDesk doesn't).
+        max_retries=0,
         **options,
     )
 
