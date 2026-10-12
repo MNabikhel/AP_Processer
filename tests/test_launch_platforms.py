@@ -42,6 +42,33 @@ def bat() -> str:
     return (ROOT / "APProcessor.bat").read_bytes().decode("ascii").replace("\r\n", "\n")
 
 
+# --- Pythons that are not there ------------------------------------------------------------------------------------
+
+
+def test_the_windows_store_stand_in_and_a_missing_py_are_passed_over():
+    """WindowsApps\\python.exe (the Microsoft Store's stand-in) exits 9009 when asked a question (it opens the Store
+    only when run without arguments); an absent ``py`` is 9009 from cmd; the classic py launcher without that version
+    exits 103. Each is skipped (only a code 311-399 is a Python's version), and py never downloads one."""
+    text = bat()
+    tried = text[text.index(":try\n") : text.index(":tryfolder\n")]
+    assert '-c "import sys; sys.exit(sys.version_info[0] * 100 + sys.version_info[1])" <nul >nul 2>&1' in tried
+    assert "if %PYV% LSS 200 exit /b 0" in tried and "if %PYV% GEQ 400 exit /b 0" in tried
+    assert 'set "PYTHON_MANAGER_AUTOMATIC_INSTALL=false"' in text
+
+
+def test_no_lsof_on_the_mac_is_not_a_reason_to_stop(launch, monkeypatch):
+    running = launch.running
+    monkeypatch.setattr(running, "WINDOWS", False)
+    monkeypatch.setattr(running.sys, "platform", "darwin")
+
+    def missing(cmd, **kwargs):
+        raise FileNotFoundError(cmd[0])
+
+    monkeypatch.setattr(running.subprocess, "run", missing)
+    assert running.port_owner(8501) is None
+    assert running.command_line(999999) == ""
+
+
 # --- Started from the wrong place --------------------------------------------------------------------------------
 
 
