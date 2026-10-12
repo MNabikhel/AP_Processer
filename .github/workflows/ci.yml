@@ -497,7 +497,8 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Windows ]; then
             # shellcheck disable=SC2016  # (PowerShell's $_, not the shell's)
-            powershell -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match "ap_coder|launch\.py|streamlit" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'
+            # Not itself: this PowerShell's own command line holds the pattern (it ended itself, and failed the step).
+            powershell -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match "ap_coder|launch\.py|streamlit" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' || true
           else
             pkill -f 'ap_coder|launch\.py|streamlit' || true
           fi
