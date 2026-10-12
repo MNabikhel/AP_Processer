@@ -327,6 +327,42 @@ def test_a_held_invoice_is_not_approved_once_touchless_no_longer_applies(store, 
     assert store.get_invoice(result.invoice_id)["status"] == REVIEW
 
 
+def test_a_check_under_way_when_ap_restores_is_dropped_and_none_starts_meanwhile(store, monkeypatch, tmp_path):
+    """Azure read invoice #1 while AP restored a backup in which #1 is another invoice: its fields must not be
+    folded into that one. While the restore runs, no check starts."""
+    _turn_on(store, monkeypatch, rate=100)
+    result = _process(store)
+    _process(store, SAMPLES / "harbourview_NS_HST_HPS-2026-0347.pdf")  # waits in line behind it
+    other = Store(tmp_path / "other" / "ap.db")
+    load_sample_setup(other)
+    assert _process(other, SAMPLES / "harbourview_NS_HST_HPS-2026-0347.pdf").invoice_id == result.invoice_id
+    backup = other.backup_to(tmp_path / "other-backup.db")
+    raw = _raw_from(result.capture, invoice_number="OTHER-1")  # Azure disagrees: it would mark a field Check
+
+    seen = {}
+    check = Store._check_backup_file
+
+    def probe(path, name):
+        seen["restoring"] = store.restoring()
+        seen["started"] = azure_check.check_one(_settings(), store, client=NeverCalled())
+        check(path, name)
+
+    monkeypatch.setattr(Store, "_check_backup_file", staticmethod(probe))
+
+    class Client(FakeClient):
+        def begin_analyze_document(self, *args, **kwargs):
+            store.restore_from(backup)
+            return super().begin_analyze_document(*args, **kwargs)
+
+    outcome = azure_check.check_one(_settings(), store, client=Client(raw))
+    assert seen == {"restoring": True, "started": None}
+    assert outcome.status == "skipped" and not outcome.approved
+    inv = store.get_invoice(result.invoice_id)
+    assert inv["vendor_name"].startswith("Harbourview")
+    assert not any(i["code"] == azure_check.ISSUE_CODE for i in inv["validation"]["issues"])
+    assert "azure_check" not in inv["meta"]
+
+
 def test_a_held_invoice_azure_disagrees_with_stays_for_a_person(store, monkeypatch):
     _turn_on(store, monkeypatch, rate=100)
     monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)

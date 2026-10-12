@@ -21,6 +21,7 @@ import json
 import re
 import shutil
 import sqlite3
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -52,6 +53,11 @@ _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
 # page picture the review screen asks for.
 _LOOK_AGAIN_SECONDS = 30.0
 _NOT_FOUND: dict[tuple[str, int, str], float] = {}
+
+# Databases being restored in this process (``Store.restore_from``): the background workers (page reader, Azure
+# check) start nothing on them meanwhile (``Store.restoring``).
+_RESTORING: set[str] = set()
+_RESTORING_LOCK = threading.Lock()
 
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
 # the largest invoice total approved without a person, in CAD.
@@ -2309,15 +2315,17 @@ class Store:
 
     def update_after_azure_check(
         self, invoice_id: int, capture: dict[str, Any] | None, issue: dict[str, Any] | None, code: str,
-        meta: dict[str, Any] | None = None,
+        meta: dict[str, Any] | None = None, *, expect: tuple[Any, ...] | None = None,
     ) -> bool:  # fmt: skip
         """Fold an Azure check into an invoice still open (in review or parked): the capture (fields Azure read
         differently marked Check), the review issue ``code`` replaced by ``issue`` (None removes it) and ``meta``
-        merged into the processing notes. Nothing changes on an invoice approved, rejected or deleted (False)."""
+        merged into the processing notes. Nothing changes on an invoice approved, rejected or deleted (False), nor
+        on one that is no longer ``expect`` (``row_identity``: a backup was restored meanwhile)."""
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT status, validation, meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
-            if row is None or row["status"] not in (REVIEW, PARKED):
+            row = conn.execute("SELECT status, validation, meta, file_sha256, created_at FROM invoices WHERE id = ?",
+                               (invoice_id,)).fetchone()  # fmt: skip
+            if row is None or row["status"] not in (REVIEW, PARKED) or not _same_row(row, expect):
                 return False
             validation = json.loads(row["validation"] or "null") or {}
             issues = [i for i in validation.get("issues") or [] if i.get("code") != code]
@@ -2339,7 +2347,7 @@ class Store:
 
     def replace_proposal(
         self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
-        actor: str = "AP Coder",
+        actor: str = "AP Coder", *, expect: tuple[Any, ...] | None = None,
     ) -> bool:  # fmt: skip
         """Replace what AP Coder proposes for an invoice nobody has worked on yet (the page reader read it after
         it was processed): the coding, its checks and confidence, the columns the queue shows, the capture
@@ -2347,7 +2355,9 @@ class Store:
         notes. ``report``: the ``ValidationReport`` or its dict.
 
         Only while the invoice waits in the review queue untouched: no edits recorded and never approved (a
-        reopened invoice keeps the reviewer's coding). Otherwise nothing changes and it returns False."""
+        reopened invoice keeps the reviewer's coding), and still ``expect`` (``row_identity``, taken before the page
+        reader read it: a backup restored meanwhile may hold another invoice under the same number). Otherwise
+        nothing changes and it returns False."""
         if not output:
             return False
         validation = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
@@ -2358,11 +2368,12 @@ class Store:
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # checked and changed in one go: an approval cannot slip in between
             row = conn.execute(
-                "SELECT status, edits, final_output, reviewer, ai_output, meta FROM invoices WHERE id = ?",
+                "SELECT status, edits, final_output, reviewer, ai_output, meta, file_sha256, created_at FROM invoices "
+                "WHERE id = ?",
                 (invoice_id,),
             ).fetchone()
             if (row is None or row["status"] != REVIEW or row["final_output"] or row["reviewer"]
-                    or json.loads(row["edits"] or "null")):  # fmt: skip
+                    or json.loads(row["edits"] or "null") or not _same_row(row, expect)):  # fmt: skip
                 return False
             merged = {**(json.loads(row["meta"] or "null") or {}), **(meta or {})}
             conn.execute(
@@ -2748,7 +2759,31 @@ class Store:
         if version > SCHEMA_VERSION:
             raise ValueError(f"{name} was made by a newer version of AP Coder: update AP Coder first")
 
+    def row_identity(self, invoice_id: int) -> tuple[Any, ...] | None:
+        """What tells this invoice from another one under the same number (its file's SHA-256 and when it came in), or
+        None when there is none: a background worker takes it before its long work and writes its result only onto
+        the same invoice (``expect``), not onto whatever a restored backup holds under that number."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT file_sha256, created_at FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+        return (row["file_sha256"], row["created_at"]) if row else None
+
+    def restoring(self) -> bool:
+        """A backup is being restored into this database (in this process): the background workers wait."""
+        with _RESTORING_LOCK:
+            return str(self.path.resolve()) in _RESTORING
+
     def restore_from(self, backup: str | Path) -> Path:
+        """``_restore_from`` with the background workers paused meanwhile (``restoring``)."""
+        key = str(self.path.resolve())
+        with _RESTORING_LOCK:
+            _RESTORING.add(key)
+        try:
+            return self._restore_from(backup)
+        finally:
+            with _RESTORING_LOCK:
+                _RESTORING.discard(key)
+
+    def _restore_from(self, backup: str | Path) -> Path:
         """Replace the database with a backup. The current one is backed up first (returned).
         Raises ValueError, with nothing changed, when the file is not an AP Coder backup (``check_backup``).
         The second backup folder is cleared after a restore: a backup file must not choose where later
@@ -2893,6 +2928,11 @@ class Store:
             "by_vendor": [dict(r) for r in by_vendor],
             "top_corrections": [dict(r) for r in corrections],
         }
+
+
+def _same_row(row: sqlite3.Row, expect: tuple[Any, ...] | None) -> bool:
+    """``row`` (with ``file_sha256`` and ``created_at``) is the invoice ``expect`` names (``Store.row_identity``)."""
+    return expect is None or (row["file_sha256"], row["created_at"]) == tuple(expect)
 
 
 def _iso_week(day: str | None) -> str:

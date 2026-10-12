@@ -358,6 +358,8 @@ def read_one(settings: Settings, store: Any, *, cache_dir: Path | None = None, i
     A reading cut off by the model server (LM Studio stopped, the model unloaded, no answer in time) is the server's
     trouble, not the invoice's: it waits in line again ("postponed"), and only after MAX_TRIES such reads does it
     leave the queue as failed. Interrupted (Ctrl+C, the app closing), the invoice goes back in line at once."""
+    if store.restoring():  # AP is restoring a backup: nothing is taken from a database being replaced
+        return None
     model, why = ready(settings, store)
     if not model:
         log.debug("page reader idle: %s", why)
@@ -409,6 +411,7 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
 
     iid = int(row["invoice_id"])
     inv = store.get_invoice(iid)
+    identity = store.row_identity(iid)  # its reading is written onto this invoice only (a restore may come between)
     path = Path((inv or {}).get("source_path") or "")
     if inv is None or not path.exists():
         store.finish_page_read(iid, "skipped", model, 0, 0.0, "the invoice or its file is gone")
@@ -461,6 +464,8 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
         store.finish_page_read(iid, "failed", model, len(reading.pages), seconds, message)
         return ReadOutcome(iid, "failed", model, len(reading.pages), seconds, message=message)
 
+    if store.restoring() or store.row_identity(iid) != identity:
+        return _restored(iid, model)
     pipeline = InvoicePipeline(settings, reference_data(store), cache_dir=cache_dir, store=store)
     # The invoice is in the store already: its own row isn't a duplicate of it, nor counted in its vendor's history.
     result = pipeline.process(path, page_text=reading.pages, save=False, invoice_id=iid,
@@ -469,6 +474,8 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
         message = result.error or "the invoice could not be read again"
         store.finish_page_read(iid, "failed", model, len(reading.pages), seconds, message)
         return ReadOutcome(iid, "failed", model, len(reading.pages), seconds, message=message)
+    if store.restoring() or store.row_identity(iid) != identity:
+        return _restored(iid, model)
     summary = agreement(result.capture)
     # Only the pages the page reader read (at most AP_PAGE_READER_MAX_PAGES) are compared with OCR's.
     first = first_pages(result.extraction.content if result.extraction else "", len(reading.pages))
@@ -481,7 +488,7 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
                            "cached": reading.cached, "at": dt.datetime.now().isoformat(timespec="seconds"),
                            "figures": figures.to_dict(), **{k: sorted(v) for k, v in summary.items()}}  # fmt: skip
     capture = result.capture.to_dict() if result.capture is not None else None
-    updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, meta)
+    updated = store.replace_proposal(iid, result.output, result.report.to_dict(), capture, meta, expect=identity)
     outcome = ReadOutcome(iid, "done", model, len(reading.pages), seconds, updated, summary=summary)
     if updated and result.autonomy.get("auto"):
         try:
@@ -496,6 +503,14 @@ def _read_taken(settings: Settings, store: Any, row: dict[str, Any], model: str,
     )
     store.finish_page_read(iid, "done", model, len(reading.pages), seconds, "" if updated else outcome.message)
     return outcome
+
+
+def _restored(iid: int, model: str) -> ReadOutcome:
+    """The database was restored while the invoice was read: the reading is dropped and the queue left as the backup
+    has it (an invoice waiting there is read again)."""
+    message = "not applied: a backup was restored while it was read"
+    log.info("page reader: invoice %s %s", iid, message)
+    return ReadOutcome(iid, "skipped", model, message=message)
 
 
 def run_queue(settings: Settings, store: Any, *, minutes: float = 30.0, cache_dir: Path | None = None,
