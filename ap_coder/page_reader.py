@@ -1522,7 +1522,10 @@ def lm_studio_models(settings: Settings, *, use_cache: bool = True) -> list[dict
     return sorted(rows, key=lambda r: (not r["loaded"], not r["used_for"], r["model"]))
 
 
-CHAT_CONTEXT = 8192  # tokens: the accounts call is short (README: LM Studio settings)
+# Tokens a chat model is loaded with from Settings: the context CloseDesk loads its chat model with (its
+# min_context_tokens), so on a Mac running both apps LM Studio keeps one copy of Qwen 3.5 9B, not a second one loaded
+# with other settings (docs/LM_STUDIO.md). The accounts call itself is short; no more than the model supports.
+CHAT_CONTEXT = 16384
 
 
 def load_model(settings: Settings, model: str) -> str:
@@ -1541,8 +1544,9 @@ def load_model(settings: Settings, model: str) -> str:
     if listing.route != "v1":
         return f"Load {model} in LM Studio (this LM Studio can't load a model when asked)."
     root = local_llm._root(reader_base_url(settings))
+    context = min(CHAT_CONTEXT, found.max_context) if found.max_context else CHAT_CONTEXT
     try:
-        _post_json(root + "/api/v1/models/load", {"model": found.key, "context_length": CHAT_CONTEXT},
+        _post_json(root + "/api/v1/models/load", {"model": found.key, "context_length": context},
                    settings.llm.api_key, LOAD_TIMEOUT)  # fmt: skip
     except PageReaderError as exc:
         return f"LM Studio couldn't load {model} ({exc})."

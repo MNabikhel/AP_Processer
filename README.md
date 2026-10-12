@@ -68,7 +68,8 @@ all:
   banner says they wait for a person.
 - **The chat model** (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) is optional. It only
   suggests GL accounts for lines nothing was learned for. If it isn't loaded, load it with *Context Length
-  8192* (*Settings → Reading → Models in LM Studio* → **Load**). Without it, lines are coded from what AP
+  16384*, as CloseDesk loads it (*Settings → Reading → Models in LM Studio* → **Load**; see
+  [docs/LM_STUDIO.md](docs/LM_STUDIO.md)). Without it, lines are coded from what AP
   approved before for that vendor, from fixed rules and from account names.
 
 ## Screens

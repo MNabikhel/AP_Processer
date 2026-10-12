@@ -1006,13 +1006,46 @@ def test_lm_studio_models_says_what_is_loaded_and_what_each_does(serve, monkeypa
     assert page_reader.lm_studio_models(Settings()) is None  # LM Studio not answering
 
 
+EMBEDDING_KEY = "text-embedding-qwen3-embedding-0.6b"
+QWEN_EMBEDDING = {"type": "embedding", "key": EMBEDDING_KEY, "max_context_length": 32768,
+                  "loaded_instances": [{"id": EMBEDDING_KEY, "config": {"context_length": 8192}}]}  # fmt: skip
+
+
+def test_the_embedding_model_closedesk_uses_is_left_alone(serve, posts, two_ocr_models):
+    """The manager's LM Studio has CloseDesk's embedding model (Qwen3 Embedding) loaded beside Qwen 3.5 9B and
+    OvisOCR2. AP Coder doesn't use it: it is never taken for the chat model or the page reader, never listed in
+    Settings → Reading, and never loaded or unloaded."""
+    serve(lm_studio(QWEN_EMBEDDING, v1_model("qwen/qwen3.5-9b"), v1_model(OVIS_KEY)))  # nothing else loaded
+    coding, reader, _ocr = page_reader.models_in_use(Settings())
+    assert coding["model"] == "qwen/qwen3.5-9b" and reader["model"] == "OvisOCR2"
+    assert page_reader.reader_status(Settings()).candidates == [OVIS_KEY, "qwen/qwen3.5-9b"]
+    rows = page_reader.lm_studio_models(Settings())
+    assert [r["model"] for r in rows] == [OVIS_KEY, "qwen/qwen3.5-9b"]  # the embedding model isn't listed
+    assert "doesn't have" in page_reader.load_model(Settings(), QWEN_EMBEDDING["key"])
+    assert all("embedding" not in str(body) for _path, body in posts)
+
+
 def test_load_a_chat_model_from_settings(serve, posts):
     serve(lm_studio(v1_model("qwen2.5-7b-instruct", vision=False), v1_model(OVIS_KEY)))
     assert page_reader.load_model(Settings(), "qwen2.5-7b-instruct") == ""
-    assert posts[-1] == ("/api/v1/models/load", {"model": "qwen2.5-7b-instruct", "context_length": 8192})
+    # The context CloseDesk loads its chat model with (min_context_tokens, 16,384): the two apps share one copy in
+    # memory, never two loaded with different settings.
+    assert posts[-1] == ("/api/v1/models/load", {"model": "qwen2.5-7b-instruct", "context_length": 16384})
     assert page_reader.load_model(Settings(), OVIS_KEY) == ""  # the page reader: with the context a page needs
     assert posts[-1] == ("/api/v1/models/load", {"model": OVIS_KEY, "context_length": 20480})
     assert "doesn't have" in page_reader.load_model(Settings(), "missing-model")
+
+
+def test_a_chat_model_is_loaded_with_no_more_context_than_it_supports(serve, posts):
+    serve(lm_studio(v1_model("small-chat-model", vision=False, max_context=8192)))
+    assert page_reader.load_model(Settings(), "small-chat-model") == ""
+    assert posts[-1] == ("/api/v1/models/load", {"model": "small-chat-model", "context_length": 8192})
+
+
+def test_a_chat_model_already_loaded_is_left_as_it_is(serve, posts):
+    """CloseDesk loaded Qwen 3.5 9B (with its own context): AP Coder neither reloads nor unloads it."""
+    serve(lm_studio(v1_model("qwen/qwen3.5-9b", loaded=16384)))
+    assert page_reader.load_model(Settings(), "qwen/qwen3.5-9b") == "" and posts == []
 
 
 # --- The second review's findings (page reader read for real on a laptop) -----------------------------------------
