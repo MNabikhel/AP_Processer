@@ -285,8 +285,12 @@ def test_announce_prints_the_address_once_it_answers(monkeypatch, capsys):
         def __exit__(self, *exc):
             return False
 
+    class Direct:  # the opener without a proxy (tests/test_network_gates.py: never through an office proxy)
+        def open(self, url, timeout):
+            return Answer()
+
     opened = []
-    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: Answer())
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: Direct())
     monkeypatch.setattr(webbrowser, "open", opened.append)
     monkeypatch.delenv("BROWSER", raising=False)
     server._announce_when_up("http://127.0.0.1:8613", open_browser=True)
