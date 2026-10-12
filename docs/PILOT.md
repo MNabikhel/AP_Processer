@@ -90,7 +90,15 @@ AP Coder is an offline enterprise build: the laptop never connects to the intern
 Everything comes in the **offline bundle** IT builds (step B). Unzip it to a folder that is **not** synced
 by OneDrive (e.g. `C:\APCoder\app`), and double-click **`APProcessor.bat`** (Mac: `APProcessor.command`;
 the first time, right-click → *Open*). The first run takes a few minutes and sets up only what is
-missing:
+missing.
+
+*A ZIP downloaded from the internet* (a browser, Teams, Outlook) is marked as such. Windows: right-click the ZIP →
+*Properties* → tick **Unblock** before *Extract All*; otherwise Windows asks *Do you want to run this file?* (or
+SmartScreen says *Windows protected your PC*: *More info* → *Run anyway*) until AP Coder has started once, which
+takes the mark off its own launchers. Mac: *"APProcessor.command" can't be opened* (or *Apple could not verify*):
+right-click it → *Open* → *Open*; on macOS 15 or newer, click *Done*, then **System Settings → Privacy & Security →
+Open Anyway**. Or, in Terminal: `xattr -dr com.apple.quarantine ` followed by the AP Coder folder dragged into the
+window, then Return. Once started, AP Coder takes the quarantine off its own launchers. What the first run sets up:
 
 - **Python**: uses the Python already installed, 3.11 or newer, 3.12 first (see *What you need*); never
   downloads one.
@@ -281,6 +289,9 @@ itself (and makes its `.venv` again with it).
 | *AP Coder needs Python 3.11 or newer (3.12 is best), and it is not installed* | IT installs Python 3.12 from python.org, with *Add python.exe to PATH* ticked; double-click again. |
 | *Python 3.10 is installed, but AP Coder needs Python 3.11 or newer* | The laptop's Python is too old: IT installs Python 3.12 next to it (the older one is left alone); double-click again. |
 | *Note: this offline bundle has packages for Python ..., not for Python 3.14* | The laptop's Python is newer than the bundle: IT builds a bundle for it (the note gives the `build_offline_bundle.py` command) or installs one of the versions listed. |
+| Windows: *Do you want to run this file?* or *Windows protected your PC* on every double-click | The ZIP came from the internet. Click *Run* (SmartScreen: *More info* → *Run anyway*) once: AP Coder takes the mark off its own launchers when it starts. Next time, right-click the ZIP → *Properties* → *Unblock* before unzipping. |
+| Mac: *"APProcessor.command" can't be opened* / *Apple could not verify ...* / *unidentified developer* | Right-click it → *Open* → *Open*. macOS 15 or newer: click *Done*, then System Settings → Privacy & Security → *Open Anyway*. Or in Terminal: `xattr -dr com.apple.quarantine` and the AP Coder folder (drag it into the window). |
+| Mac: *could not be executed because you do not have appropriate access privileges* | The bundle lost the launcher's executable bit (unzipped with another tool, or an older bundle built on Windows). In Terminal: `chmod +x` and drag `APProcessor.command` into the window; or run `bash` followed by the file. |
 | *AP Coder can't find its files next to APProcessor.bat* (Mac: *next to this launcher*), or *AP Coder was started from inside its ZIP* | The ZIP was opened without unzipping it, or the launcher was copied out of its folder. Right-click the ZIP → *Extract All* (Mac: double-click the ZIP), then open APProcessor in the extracted folder; use the *AP Coder* shortcut on the desktop rather than a copy of the launcher. Mac: if macOS asked whether Terminal may access Downloads, Desktop or Documents, allow it (System Settings → Privacy & Security → Files and Folders → Terminal). |
 | *AP Coder stopped. The message above says what to do.* | The `What to do:` line above it says it; most often a package could not install. *Missing packages: ...*: the folder has no `wheelhouse/` (unzip the full offline bundle over it). *The offline bundle's wheelhouse folder has no ...*: the bundle was built for another Python version. Developers online (`AP_ALLOW_INTERNET=1`): check the proxy (`set HTTPS_PROXY=http://proxy:8080`). |
 | *This package folder (wheelhouse) was built for ...: nothing was installed* | The bundle was built for another kind of computer or Python: use the bundle built for this one (the message says which, e.g. `--mac`), or install the Python it names. |

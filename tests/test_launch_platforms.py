@@ -254,3 +254,47 @@ def test_a_python_without_venv_support_says_which_package(launch, monkeypatch):
     with pytest.raises(launch.SetupError) as exc:
         launch.ensure_venv()
     assert "python.org" in exc.value.hint
+
+
+# --- Downloaded from the internet: Mark of the Web, Gatekeeper's quarantine ------------------------------------------
+
+
+def test_the_mark_of_the_web_is_taken_off_the_windows_launchers(launch, monkeypatch):
+    """A ZIP from a browser, Teams or Outlook marks every file it unzips (a Zone.Identifier stream): Windows then asks
+    "Do you want to run this file?" on every double-click of APProcessor.bat. Once started, AP Coder takes the mark
+    off its own launchers, nothing else. (On Linux "name:stream" is an ordinary file name: it stands in for it.)"""
+    monkeypatch.setattr(launch, "WINDOWS", True)
+    for name in ("APProcessor.bat", "install.bat", "README.md"):
+        (launch.ROOT / name).write_text("x")
+        (launch.ROOT / f"{name}:Zone.Identifier").write_text("[ZoneTransfer]\nZoneId=3\n")
+    launch.unblock_launchers()
+    assert not (launch.ROOT / "APProcessor.bat:Zone.Identifier").exists()
+    assert not (launch.ROOT / "install.bat:Zone.Identifier").exists()
+    assert (launch.ROOT / "APProcessor.bat").exists()
+    assert (launch.ROOT / "README.md:Zone.Identifier").exists()  # only the launchers
+    launch.unblock_launchers()  # nothing left to take off: quietly nothing
+
+
+def test_gatekeepers_quarantine_is_taken_off_the_mac_launchers(launch, monkeypatch):
+    monkeypatch.setattr(launch, "MAC", True)
+    for name in ("APProcessor.command", "install.sh", "README.md"):
+        (launch.ROOT / name).write_text("x")
+    calls = []
+    monkeypatch.setattr(launch.subprocess, "run", lambda cmd, **k: calls.append(cmd))
+    launch.unblock_launchers()
+    assert calls == [["xattr", "-d", "com.apple.quarantine", str(launch.ROOT / "APProcessor.command"),
+                      str(launch.ROOT / "install.sh")]]  # fmt: skip
+
+    def missing(cmd, **k):
+        raise FileNotFoundError("xattr")
+
+    monkeypatch.setattr(launch.subprocess, "run", missing)
+    launch.unblock_launchers()  # no xattr: never a reason to stop
+
+
+def test_the_unblocking_runs_on_every_start(launch, monkeypatch):
+    calls = []
+    monkeypatch.setattr(launch, "unblock_launchers", lambda: calls.append(1))
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("open", 8501))
+    monkeypatch.setattr(launch, "open_browser", lambda url: None)
+    assert launch.run(launch.parse([])[0], []) == 0 and calls == [1]

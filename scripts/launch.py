@@ -985,6 +985,26 @@ def write_mac_launcher(link: Path) -> bool:
     return True
 
 
+def unblock_launchers() -> None:
+    """A ZIP downloaded from the internet (a browser, Teams, Outlook) marks what it unzips: Windows asks "Do you want
+    to run this file?" on every double-click of APProcessor.bat (and of the shortcut to it), and a Mac keeps the
+    .command in Gatekeeper's quarantine. AP Coder was started from this folder on purpose: the mark is taken off its
+    own launchers (nothing else). Never a reason to stop."""
+    if WINDOWS:
+        for launcher in [*ROOT.glob("*.bat"), *ROOT.glob("*.cmd")]:
+            try:
+                os.remove(f"{launcher}:Zone.Identifier")  # the Mark of the Web: an NTFS stream of the file
+            except OSError:
+                pass
+    elif MAC:
+        found = [str(p) for p in [*ROOT.glob("*.command"), *ROOT.glob("*.sh")]]
+        if found:
+            try:
+                subprocess.run(["xattr", "-d", "com.apple.quarantine", *found], capture_output=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+
 def shortcut_target() -> Path:
     return ROOT / ("APProcessor.bat" if WINDOWS else "APProcessor.command")
 
@@ -1405,6 +1425,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     first = args.venv in ("created", "recreated") or not state.get("setup_done")
     if args.venv in (None, "reused"):
         say(f"Python {sys.version.split()[0]}: reusing .venv")
+    unblock_launchers()
 
     # An AP Coder already running: this one opened; an older one (or another folder's) stopped first.
     verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, state), paths.private_dir(), say)

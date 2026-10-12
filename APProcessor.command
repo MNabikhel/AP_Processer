@@ -1,6 +1,6 @@
 #!/bin/bash
-# AP Coder - DOUBLE-CLICK THIS FILE (macOS; the first time: right-click > Open), or run ./APProcessor.command
-# (Linux). It is the only one you need.
+# AP Coder - DOUBLE-CLICK THIS FILE (macOS; the first time: right-click > Open; macOS 15 or newer: System Settings >
+# Privacy & Security > Open Anyway), or run ./APProcessor.command (Linux). It is the only one you need.
 #
 # The first time it sets up whatever is missing (a few minutes), checks that everything works and opens the
 # dashboard in your browser. After that it starts in seconds. Keep this window open while you use AP Coder;
