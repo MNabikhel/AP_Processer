@@ -13,8 +13,8 @@ code, misleading names and duplicated logic that has drifted apart.
 transition is a guarded `UPDATE ... WHERE status = ?`, or a `BEGIN IMMEDIATE` around a read and a write). Money is
 rounded the way an ERP expects. Every background worker re-checks the invoice before it changes it. The bugs found
 were all at edges: a stale button, a check made at one moment and acted on later, or two copies of the same logic
-that had drifted apart. Nine are fixed (listed below). What is left is listed per module, with the reason it was
-left.
+that had drifted apart. Nine were fixed in the review. Three more items it left open were then fixed with the safe
+default (#10 to #12). All twelve are listed below. What is left is listed per module, with the reason it was left.
 
 ## Bugs fixed
 
@@ -29,6 +29,9 @@ left.
 | 7 | `capture/supplier.py` | Touchless processing approved an invoice with a line posted to `UNASSIGNED`. `GL_UNASSIGNED` and `CC_UNASSIGNED` are only warnings, and `should_auto_approve` blocks only errors. The review screen's approve bar never lets a person do this. | `should_auto_approve` refuses them | `test_touchless.py::test_a_line_without_an_account_is_never_approved_without_a_person` |
 | 8 | `capture/normalize.py` | With thousands separators and a decimal point both printed, a decimal point followed by three digits was read as a thousands separator: "1,234.567" (a unit price) became 1,234,567. | When the earlier separators are all the other kind, the last one is the decimal point | `test_capture.py::test_parse_amount` (new cases) |
 | 9 | `capture/workflow.py`, `inference.py` | A line that neither AP's approvals nor a coding rule could code gets the local chat model's account. The pipeline's own note says that is right on 11 of 41 sample lines. A valid account raises no finding, and the touchless bar measures header fields only, so the guess was posted without a person. | `invoice_gates` counts lines marked `inference.MODEL_SUGGESTED` | `test_touchless.py::test_a_line_only_the_local_model_coded_is_never_approved_without_a_person` |
+| 10 | `store.py` | A foreign-currency total with no exchange rate was compared with the CAD approval limit as if it were CAD. For example, 9,000 EUR (about 13,000 CAD) under a 10,000 CAD limit was approved by one person. | The second approver is required, and the approval says why: "no CAD rate for EUR: a second approval is needed" (`Store.second_approval_reason`). Touchless processing already sent such an invoice to a person. | `test_data_layer_fixes.py::test_the_approval_limit_applies_in_cad_to_a_foreign_currency_invoice` |
+| 11 | `web/pages/invoice.py`, `capture/workflow.py` | **Reopen for correction** suspended a touchless vendor *before* reopening the invoice, so a refused reopen (exported meanwhile) still suspended the vendor. | Reopen first; suspend only on success (`on_reopen(before=...)`) | `test_web_invoice.py::test_correcting_a_touchless_invoice_suspends_its_vendor_only_when_it_is_reopened` |
+| 12 | `store.py`, `page_worker.py`, `azure_check.py` | A restore replaced the database under the running page reader and Azure check. A reading under way was then written onto whatever untouched invoice the backup holds under the same number. | `Store.restoring()` pauses both workers during the restore. Each worker takes `Store.row_identity` (file SHA-256 and arrival time) before its long work, and writes nothing unless the row is still that invoice; this is checked again inside the write's transaction (`expect=`). | `test_page_worker.py::test_a_reading_under_way_when_ap_restores_is_dropped`, `::test_a_restore_pauses_the_page_reader`, `test_azure_check.py::test_a_check_under_way_when_ap_restores_is_dropped_and_none_starts_meanwhile` |
 
 ## Per module
 
@@ -91,15 +94,47 @@ One company-wide switch and one bar. A vendor's invoice is approved without a pe
 approved without a person (checked again at every decision). The audit sample is deterministic, and a correction
 suspends the vendor at once.
 
-- *Left (design question):* apart from the always-a-person findings, warnings do not block touchless approval.
-  Examples are `TAX_REGIME_MISMATCH`, `GST_HST_NUMBER_MISSING` (the input tax credit cannot be claimed),
-  `TAX_RATE_NONSTANDARD`, `HISTORY_CONFLICT` (the line coding contradicts AP's history) and `LINE_MATH`. The
-  documented rule is "any failed check", and several of these are checks a reviewer would want to see. Deciding
-  which warnings should block needs AP's input, so it was not changed here.
-- *Left:* `invoice.py`'s **Correct** endpoint calls `on_reopen` (which suspends a touchless vendor) *before*
-  `Store.reopen`. If the reopen is refused (the invoice was exported meanwhile), the vendor is still suspended.
-  Arguably that is right, since a person did find an error, but the activity log then shows a suspension with no
-  reopen.
+- *Fixed:* #11 (Reopen for correction suspended the vendor even when the reopen was refused).
+- *Left (needs AP's input): which warnings should block touchless approval.* Today an invoice goes touchless as long
+  as it has no error-level finding, none of the always-a-person findings (`supplier.ALWAYS_A_PERSON`), no failed
+  capture check, and no `GL_UNASSIGNED` / `CC_UNASSIGNED` (#7). The documented rule is "any failed check".
+
+  Some warnings are already blocked another way: the failed capture checks behind `CAPTURE_TOTALS`,
+  `TEXT_LAYER_MATCHES_PAGE` and `LINE_ITEMS_AGREE`; the PO, bank and duplicate findings; and credit notes. The
+  warnings below can still go through touchless today.
+
+  The ones a reviewer would most likely want to see (proposed blockers):
+
+  - **GST/HST and QST registration**
+    - `GST_HST_NUMBER_MISSING`, `GST_HST_NUMBER_FORMAT`, `GST_NUMBER_CHECK_DIGIT`: the input tax credit can't be
+      claimed, or the number is not real. `GST_NUMBER_CHECK_DIGIT` is usually also caught because the field is not
+      *verified*.
+    - `QST_NUMBER_MISSING`, `QST_NUMBER_FORMAT`: the same for the QST input tax refund.
+  - **Tax charged**
+    - `TAX_REGIME_MISMATCH`: a tax charged that the province of supply does not levy.
+    - `PROVINCIAL_TAX_NOT_CHARGED`: PST or QST may have to be self-assessed.
+    - `TAX_RATE_NONSTANDARD`: a rate that is not the official one.
+    - `TAX_CALC_MISMATCH`, as a warning: the tax is off by more than a cent, within per-line rounding.
+    - `TAX_PROVINCE_DIFFERS`.
+  - **Coding**
+    - `HISTORY_CONFLICT`: the line coding contradicts AP's own approvals for this vendor.
+  - **Header**
+    - `CURRENCY_NOT_FOUND`, as a warning: a non-CAD currency assumed, not read.
+    - `DUE_BEFORE_INVOICE`.
+
+  Probably fine to leave as they are (informational, or caught by the totals checks):
+
+  - `NO_TAX_CHARGED` (an exempt supply)
+  - `TAX_PROVINCE_UNKNOWN`, `PROVINCE_UNKNOWN`
+  - `TAX_BASE_MISMATCH`, `TAX_NOT_ALLOCATED`
+  - `TAX_NON_CANADIAN`
+  - `LINE_MATH`, `LINE_NUMBERING`
+  - `CURRENCY_FORMAT`
+  - `LOW_OCR_CONFIDENCE` (the fields' own status already reflects it)
+  - `CREDIT_EXCEEDS_INVOICE` (a credit note never goes touchless)
+  - `DI_*` (the developer-only Azure reading)
+
+  The change would be one set of codes checked in `should_auto_approve`, next to the `GL_UNASSIGNED` check.
 
 ### `inference.py`, `local_llm.py` (coding side), `offline_coder.py`
 
@@ -150,19 +185,15 @@ approvals teach nothing. A bulk approval counts towards the touchless bar only t
 - Migrations are idempotent and run after a backup. A database from a newer version is refused.
 - A restore first checks the file (no triggers or views; no newer schema) and makes a safety copy.
 
-- *Fixed:* #2, #3.
-- *Left (approval limit, needs a decision):* `over_approval_limit` compares a foreign-currency total *as if it were
-  CAD* when no exchange rate is set. This is documented. However, 9,000 EUR (about 13,000 CAD) under a 10,000 CAD
-  limit needs no second approver, which weakens a segregation-of-duties control. The touchless limit already sends a
-  currency with no rate to a person; the approval limit could do the same.
+- *Fixed:* #2, #3, #10 (approval limit with no exchange rate), #12 (restore under the workers).
 - *Left:* the background workers build a new `Store` every round (every 30 s per worker). Each `Store()` runs
   `executescript(_SCHEMA)` and `_migrate` (no-ops on a current database, plus one `DELETE` on `feedback`). This is
   cheap, but it writes on every round. Reusing the dashboard's `Store` would do.
-- *Left:* `restore_from` replaces the database under running background workers. A page read or Azure check that
-  was under way when AP restored can write its result (`replace_proposal`, `update_after_azure_check`) into the
-  restored database, onto the row with the same id. Both re-check the row first (status *review*, untouched), so the
-  damage is limited to a proposal written onto an untouched invoice that may be a different one. A cleaner design
-  would pause the workers during a restore (a flag they check between rounds).
+- *Left:* the pause during a restore (#12) covers the workers of the dashboard's own process.
+  `python -m ap_coder read-pages`, run in a separate process at the same time, is not paused. Its results are still
+  dropped by the row-identity check. While a page reading is dropped this way, the pipeline's re-read may still
+  queue an Azure check for that invoice number in the restored database. That check then compares the restored
+  invoice with its own reading, which is harmless.
 - *Left (naming):* `_norm_number` is a one-line alias of `vendors.norm_invoice_number`. `undo_export_batch` on a
   batch already undone logs a second `export_undone` event for 0 invoices.
 
@@ -176,7 +207,7 @@ range. Spreadsheet cells are neutralised against formula injection.
 
 ### `azure_check.py`
 
-**Verdict: sound after #4.** Only the configured host can be contacted (the request hook covers redirects and
+**Verdict: sound after #4 and #12.** Only the configured host can be contacted (the request hook covers redirects and
 polling), and the key is scrubbed from error messages. The daily page cap is enforced, and the queue is claimed under
 `BEGIN IMMEDIATE`.
 
@@ -191,5 +222,6 @@ polling), and the key is scrubbed from error messages. The daily page cap is enf
 - The page reader's reading is folded in only while nobody has touched the invoice, and the touchless decision is
   made fresh at that moment.
 
+- *Fixed:* #12 (the reader pauses during a restore, and drops a reading of an invoice whose row changed).
 - *Left (dead parameters):* `wants_reading(settings, path, layout_source)` no longer uses `settings` or
   `layout_source`.
