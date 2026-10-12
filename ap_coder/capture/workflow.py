@@ -122,17 +122,22 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     its findings, a credit note, a total over the touchless limit (Settings → Automation) or over the approval
     limit (a second approver), a foreign currency with no exchange rate to check the limit with, and not yet read
     by the page reader, or not every page of it (``pages_read``: the pages it read, at most
-    AP_PAGE_READER_MAX_PAGES), or a text file the page reader cannot look at (``no_page``)."""
+    AP_PAGE_READER_MAX_PAGES), a text file the page reader cannot look at (``no_page``), or a line of ``output``
+    whose account only the local chat model chose (``inference.MODEL_SUGGESTED``)."""
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     coding = _amounts(capture, output)
     over_limit = store.touchless_limit() if store.over_touchless_limit(coding) else None
     unread = max(0, capture.page_count - pages_read) if capture is not None and pages_read is not None else 0
     currency = str(coding["currency"]).strip().upper()
     no_rate = "" if currency in store.fx_rates() else currency  # the limit is in CAD: unknown without a rate
+    from ..inference import MODEL_SUGGESTED
+
+    guessed = sum(1 for li in (output or {}).get("line_items") or []
+                  if str(li.get("reasoning_justification") or "").startswith(MODEL_SUGGESTED))  # fmt: skip
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
                            awaiting_page_reader=awaiting_page_reader, pages_unread=unread,
-                           no_rate_for=no_rate, no_page=no_page)  # fmt: skip
+                           no_rate_for=no_rate, no_page=no_page, model_coded_lines=guessed)  # fmt: skip
 
 
 def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capture: CaptureResult | None,

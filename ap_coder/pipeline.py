@@ -18,7 +18,7 @@ from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_in
 from .config import Settings
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
-from .inference import CodingError, CodingResult, InvoiceCoder
+from .inference import MODEL_SUGGESTED, CodingError, CodingResult, InvoiceCoder
 from .memory import compare_with_history, format_examples, select_examples, vendor_key
 from .po import po_findings
 from .reference_data import ReferenceData
@@ -225,9 +225,7 @@ class InvoicePipeline:
             li.predicted_gl_code = gl
             if cc:
                 li.predicted_cost_center = cc
-            li.reasoning_justification = (
-                f"Suggested by the local model: {reason}" if reason else "Suggested by the local model"
-            )
+            li.reasoning_justification = f"{MODEL_SUGGESTED}: {reason}" if reason else MODEL_SUGGESTED
         model = getattr(self.coder, "_local_model", "") or "local model"
         result.model = f"local reader + {model}"
 

@@ -402,6 +402,19 @@ def test_a_line_without_an_account_is_never_approved_without_a_person(touchless,
     assert "GL account" in decision["reason"] or "cost center" in decision["reason"]
 
 
+def test_a_line_only_the_local_model_coded_is_never_approved_without_a_person(touchless, path):
+    """A line neither AP's history nor a coding rule could code gets the local chat model's guess (right on 11 of
+    41 sample lines): a valid account, so no finding, and the touchless bar measures header fields only."""
+    from ap_coder.pipeline import MODEL_SUGGESTED
+
+    line = {"line_number": 1, "predicted_gl_code": "6010", "reasoning_justification": f"{MODEL_SUGGESTED}: hardware"}
+    output = {"grand_total": 1050.0, "currency": "CAD", "line_items": [line]}
+    decision = _decide(touchless, path, output=output)
+    assert not decision["auto"] and "local model" in decision["reason"]
+    line["reasoning_justification"] = "Approved 4 times for this vendor"
+    assert _decide(touchless, path, output=output)["auto"]
+
+
 def test_several_gates_are_all_named():
     gates = touchless_gates([{"code": "VENDOR_BANK_CHANGED"}, {"code": "DUPLICATE_INVOICE"},
                              {"code": "POSSIBLE_DUPLICATE_AMOUNT"}], grand_total=-5, over_limit=5000.0)  # fmt: skip

@@ -23,6 +23,9 @@ from .schema import SCHEMA_NAME, InvoiceCoding, build_json_schema, response_form
 
 log = logging.getLogger(__name__)
 
+# How a line coded by the local chat model alone says so (``pipeline.InvoicePipeline._local_accounts``): a person
+# checks it, it is never approved by touchless processing (``capture.workflow.invoice_gates``).
+MODEL_SUGGESTED = "Suggested by the local model"
 _REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5")
 _TEXT_ONLY_PREFIXES = ("o1-mini", "o3-mini", "gpt-35", "gpt-3.5")
 
