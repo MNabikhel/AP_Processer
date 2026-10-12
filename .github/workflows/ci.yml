@@ -454,7 +454,17 @@ jobs:
           downloaded() { find "$1" -type f -exec xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Safari;" {} +; }
           zips=("$T"/dist/APProcessor-offline-*.zip)
           ZIP="${zips[0]}"
-          lms serve --log "$T/lms.log" > "$T/lms.out" 2>&1 &
+          # LM Studio's own port (1234) when it is free on this runner, else another (AP Coder is told where).
+          LMS_PORT=1234
+          if lsof -nP -iTCP:1234 -sTCP:LISTEN; then
+            LMS_PORT="$(python -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+            echo "Port 1234 is taken on this runner (above): the fake LM Studio uses $LMS_PORT"
+            export AP_LLM_BASE_URL="http://127.0.0.1:$LMS_PORT/v1"
+          fi
+          lms serve --port "$LMS_PORT" --log "$T/lms.log" > "$T/lms.out" 2>&1 &
+          lms_up() { curl -fsS --noproxy '*' --max-time 5 "http://127.0.0.1:$LMS_PORT/v1/models" | grep -q ath-maas_ovisocr2; }
+          for _ in $(seq 1 30); do lms_up && break; sleep 1; done
+          lms_up || { cat "$T/lms.out"; fail 'the fake LM Studio did not start'; }
           # The manager's folder after PR 8 in home $1, as he left it: GitHub's ZIP, the old .wheelhouse, one failed start.
           broken() {
             local old="$1/Downloads/AP_Processer-main"
@@ -494,6 +504,7 @@ jobs:
             case "$answer" in *'"ok":true'*) ;; *) fail "the demo invoices did not load: $answer" ;; esac
             answer="$(curl -fsS --noproxy '*' "http://127.0.0.1:$port/review")"
             case "$answer" in *'href="/review/'[0-9]*) ;; *) fail 'no invoice to review' ;; esac
+            lms_up || { cat "$T/lms.out"; fail 'the fake LM Studio stopped answering'; }
             lms check --app "http://127.0.0.1:$port" --log "$T/lms.log" || fail 'the wrong model for a job'
             second="$(HOME="$home" offline "$folder/APProcessor.command" --port "$port" 2>&1)"
             echo "$second" | grep -q 'already running' || fail 'a second double-click did not open the running one'
