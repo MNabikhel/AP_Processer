@@ -512,6 +512,24 @@ def test_an_older_install_next_to_this_one_is_found(upgrade, tmp_path):
     assert upgrade.nearby_installs(wrapped) == [zipped_old] and same.exists()
 
 
+def test_an_older_folder_beside_already_cleaned_up_and_kept_is_not_taken_over_again(upgrade, tmp_path):
+    """The manager's GitHub ZIP beside the new bundle, with an old Windows .wheelhouse he copied in: the first start
+    removes its .venv and keeps the folder (files AP Coder didn't put there). It was found again on every later start
+    and said "Kept the older AP Coder folder ..." each time, with nothing left to clean."""
+    downloads = tmp_path / "Downloads"
+    old = make_pre_launcher_install(downloads / "AP_Processer-main")
+    (old / ".wheelhouse").mkdir()
+    (old / ".wheelhouse" / "numpy-2.1.3-cp312-cp312-win_amd64.whl").write_bytes(b"w")
+    new = make_install(downloads / "APProcessor", "0.2.0")
+    assert upgrade.nearby_installs(new) == [old]
+    said: list[str] = []
+    assert upgrade.clean_up(new, tmp_path / "data", [old], said.append) == 5000
+    assert "Kept the older AP Coder folder" in said[0] and ".wheelhouse" in said[0] and not (old / ".venv").exists()
+    assert upgrade.nearby_installs(new) == []  # nothing left to clean up: never said again
+    (old / ".venv").mkdir()  # started again by mistake: found again
+    assert upgrade.nearby_installs(new) == [old]
+
+
 # --- The bundle says what it holds; the version is real --------------------------------------------------------
 
 
