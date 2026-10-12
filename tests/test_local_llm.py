@@ -208,6 +208,9 @@ def test_detection_when_nothing_answers_is_quick_and_cached(real_fetch, monkeypa
         ("", ["a", "b"], ["text-embedding-x", "b"], True, "b"),
         ("", ["a", "b"], [], True, "a"),  # LM Studio with nothing loaded: a downloaded chat model, loaded when asked
         ("", ["ath-maas_ovisocr2", "text-embedding-x"], [], True, ""),  # never OvisOCR2 or an embedding model
+        # OvisOCR2 under any name the page reader knows it by (an MLX build, separators): never the chat model
+        ("", ["ovis-ocr2", "qwen/qwen3.5-9b"], ["ovis-ocr2"], True, "qwen/qwen3.5-9b"),
+        ("", ["ovis_ocr2-mlx", "qwen3.5-9b-mlx"], ["ovis_ocr2-mlx"], True, "qwen3.5-9b-mlx"),
         ("", [], [], False, ""),
     ],
 )

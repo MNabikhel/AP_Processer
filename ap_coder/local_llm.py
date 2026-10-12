@@ -134,7 +134,8 @@ def _fetch_json(url: str, api_key: str, timeout: float) -> Any:
 
 def is_chat_model(model_id: str) -> bool:
     plain = model_id.lower()
-    return not any(word in plain for word in _NOT_CHAT)
+    letters = re.sub(r"[^a-z0-9]", "", plain)  # "ovis-ocr2", "ovis_ocr2-mlx": OvisOCR2 as the page reader finds it
+    return not any(word in plain for word in _NOT_CHAT) and "ovisocr" not in letters
 
 
 def looks_like_vision(model_id: str) -> bool:
