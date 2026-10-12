@@ -14,10 +14,12 @@ The ZIP (in ``dist/``) holds one ``APProcessor/`` folder:
   optional Azure check, installed by the launcher when it can), as wheels for each platform and Python version
   asked for, plus pip, setuptools and wheel (where a package of the OCR add-on has no wheel, that target gets the
   rest without it: the launcher runs AP Coder without OCR; one without the Azure packages simply lacks them)
-* ``models/``: the PP-OCRv5 OCR models (``scripts/fetch_models.py`` copies them into place)
+* ``models/``: the PP-OCRv5 OCR models (``scripts/fetch_models.py`` copies them into place) and the table finder's
+  model (read where it is)
 * ``bundle_manifest.json``: what is inside: the version, when it was built, and every file with its SHA-256
   (``files``). Unzipped over an older version, the launcher removes the files under ap_coder/, scripts/, tests/,
-  wheelhouse/ and models/ that this list does not name (the older version's), and a newer bundle unzipped
+  samples/, wheelhouse/ and models/ that this list does not name (the older version's), and AP Coder's own
+  top-level files it no longer ships (scripts/upgrade.py, prune_stale); a newer bundle unzipped
   anywhere knows from ``version`` and ``built`` that it is newer (scripts/upgrade.py)
 
 On the offline computer: unzip, double-click ``APProcessor.bat`` (or ``APProcessor.command``). Seeing
@@ -222,6 +224,7 @@ def _zip(stage: Path, dest: Path) -> None:
             info = zipfile.ZipInfo.from_file(path, arc.as_posix())
             mode = 0o755 if path.suffix in EXECUTABLE else 0o644
             info.external_attr = (0o100000 | mode) << 16  # keeps the launchers executable on macOS
+            info.create_system = 3  # Unix, also when built on Windows: else the Mac ignores those permissions
             info.compress_type = zipfile.ZIP_STORED if path.suffix in (".whl", ".onnx") else zipfile.ZIP_DEFLATED
             with open(path, "rb") as f:
                 zf.writestr(info, f.read())

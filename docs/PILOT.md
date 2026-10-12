@@ -90,7 +90,15 @@ AP Coder is an offline enterprise build: the laptop never connects to the intern
 Everything comes in the **offline bundle** IT builds (step B). Unzip it to a folder that is **not** synced
 by OneDrive (e.g. `C:\APCoder\app`), and double-click **`APProcessor.bat`** (Mac: `APProcessor.command`;
 the first time, right-click → *Open*). The first run takes a few minutes and sets up only what is
-missing:
+missing.
+
+*A ZIP downloaded from the internet* (a browser, Teams, Outlook) is marked as such. Windows: right-click the ZIP →
+*Properties* → tick **Unblock** before *Extract All*; otherwise Windows asks *Do you want to run this file?* (or
+SmartScreen says *Windows protected your PC*: *More info* → *Run anyway*) until AP Coder has started once, which
+takes the mark off its own launchers. Mac: *"APProcessor.command" can't be opened* (or *Apple could not verify*):
+right-click it → *Open* → *Open*; on macOS 15 or newer, click *Done*, then **System Settings → Privacy & Security →
+Open Anyway**. Or, in Terminal: `xattr -dr com.apple.quarantine ` followed by the AP Coder folder dragged into the
+window, then Return. Once started, AP Coder takes the quarantine off its own launchers. What the first run sets up:
 
 - **Python**: uses the Python already installed, 3.11 or newer, 3.12 first (see *What you need*); never
   downloads one.
@@ -265,7 +273,9 @@ That is all. The new version takes over:
 - **Stopped halfway?** Closing the window (or a file in use) while the data moves to the data folder never
   leaves AP Coder on half of it: the next start finishes the move first.
 - **The old folder by mistake?** Starting an older version (an old shortcut, an old folder) opens the
-  newest one instead: older code never opens newer data. A database made by a newer AP Coder is refused in
+  newest one instead: older code never opens newer data. (A version from before the web app, 0.1, can't do
+  that: the update removes its folder once it found it. [UPGRADING.md](UPGRADING.md) says, for every older
+  version, how it was installed, what the update finds and what it does.) A database made by a newer AP Coder is refused in
   plain words, and nothing is changed.
 
 If the new bundle doesn't fit the computer, it stops before installing anything and says which bundle to
@@ -281,9 +291,18 @@ itself (and makes its `.venv` again with it).
 | *AP Coder needs Python 3.11 or newer (3.12 is best), and it is not installed* | IT installs Python 3.12 from python.org, with *Add python.exe to PATH* ticked; double-click again. |
 | *Python 3.10 is installed, but AP Coder needs Python 3.11 or newer* | The laptop's Python is too old: IT installs Python 3.12 next to it (the older one is left alone); double-click again. |
 | *Note: this offline bundle has packages for Python ..., not for Python 3.14* | The laptop's Python is newer than the bundle: IT builds a bundle for it (the note gives the `build_offline_bundle.py` command) or installs one of the versions listed. |
+| Windows: *Do you want to run this file?* or *Windows protected your PC* on every double-click | The ZIP came from the internet. Click *Run* (SmartScreen: *More info* → *Run anyway*) once: AP Coder takes the mark off its own launchers when it starts. Next time, right-click the ZIP → *Properties* → *Unblock* before unzipping. |
+| Mac: *"APProcessor.command" can't be opened* / *Apple could not verify ...* / *unidentified developer* | Right-click it → *Open* → *Open*. macOS 15 or newer: click *Done*, then System Settings → Privacy & Security → *Open Anyway*. Or in Terminal: `xattr -dr com.apple.quarantine` and the AP Coder folder (drag it into the window). |
+| Mac: *could not be executed because you do not have appropriate access privileges* | The bundle lost the launcher's executable bit (unzipped with another tool, or an older bundle built on Windows). In Terminal: `chmod +x` and drag `APProcessor.command` into the window; or run `bash` followed by the file. |
+| *AP Coder can't find its files next to APProcessor.bat* (Mac: *next to this launcher*), or *AP Coder was started from inside its ZIP* | The ZIP was opened without unzipping it, or the launcher was copied out of its folder. Right-click the ZIP → *Extract All* (Mac: double-click the ZIP), then open APProcessor in the extracted folder; use the *AP Coder* shortcut on the desktop rather than a copy of the launcher. Mac: if macOS asked whether Terminal may access Downloads, Desktop or Documents, allow it (System Settings → Privacy & Security → Files and Folders → Terminal). |
 | *AP Coder stopped. The message above says what to do.* | The `What to do:` line above it says it; most often a package could not install. *Missing packages: ...*: the folder has no `wheelhouse/` (unzip the full offline bundle over it). *The offline bundle's wheelhouse folder has no ...*: the bundle was built for another Python version. Developers online (`AP_ALLOW_INTERNET=1`): check the proxy (`set HTTPS_PROXY=http://proxy:8080`). |
 | *This package folder (wheelhouse) was built for ...: nothing was installed* | The bundle was built for another kind of computer or Python: use the bundle built for this one (the message says which, e.g. `--mac`), or install the Python it names. |
 | *Installing the packages stopped: the disk is full* | Free about 1.5 GB on that disk; the message names the older AP Coder's `.venv` folder, which can be deleted (it holds only packages, never your data). Double-click again. |
+| *Installing the packages stopped: the AP Coder folder's path is too long for Windows* | Windows allows 260 characters in a path. Unzip the bundle to a short folder such as `C:\APCoder` (not deep in Downloads) and double-click `APProcessor.bat` there; or IT turns on long paths (`LongPathsEnabled`). |
+| Linux: *Could not create the .venv folder* ... *sudo apt install python3.12-venv* | Debian and Ubuntu keep Python's venv support in a separate package: install the one the message names, delete the `.venv` folder, run `./APProcessor.command` again. |
+| *AP Coder's folder is synced by OneDrive* (or iCloud Drive, Dropbox, Google Drive) / *The data folder is synced by ...* | Files there can be kept online-only, and the laptop is offline. Unzip AP Coder to a folder that is not synced (`C:\APCoder\app`; Mac: a folder in your home folder, not Desktop or Documents when iCloud syncs them) and start it from there; the data folder is chosen with `install.bat`. |
+| Mac: *... is an Intel build running through Rosetta on an Apple silicon Mac* | Install Python 3.12 from python.org (it runs natively), delete the `.venv` folder and open APProcessor.command again. If Terminal is set to *Open using Rosetta* (Finder → Applications → Utilities → Terminal → Get Info), untick it. |
+| *Installing the packages stopped: Windows refused a file in .venv because another program has it in use* | Close every AP Coder window, wait a minute (the antivirus checks new files) and double-click again; it carries on where it stopped. If it keeps happening, IT lets the antivirus allow the `.venv` folder. |
 | *Your data could not all be moved from ... to ...* | A file of it is open (an old AP Coder window, Excel): close it and double-click again; the move picks up where it stopped. Nothing was lost. |
 | *... is still running: stopping it, so this version takes over* | An older AP Coder was open: the new one stops it and carries on. *Close the old AP Coder window, then start again*: it could not be stopped; close that window (it waits a minute for you). |
 | *A newer AP Coder ... is in ...: opening that one* | An old shortcut or folder was started: the newest version opens instead. Use its folder (the shortcut already does). |
@@ -291,7 +310,8 @@ itself (and makes its `.venv` again with it).
 | *AP Coder is being set up or started in another window* | The first double-click is still setting up: it waits, then opens the dashboard. |
 | *Self-check FAILED* in the summary | AP Coder still runs. Run `.venv\Scripts\python.exe scripts\pilot_check.py` in `terminal.bat` and send the output. |
 | *AP Coder is already running* | It is: the browser opens on it. Use that window, or close it to stop AP Coder. |
-| The browser does not open | Open `http://127.0.0.1:8501` yourself (the window shows the exact address; it uses the next free port if 8501 is taken). |
+| The browser does not open (*Could not open a web browser here*) | Open `http://127.0.0.1:8501` yourself (the window shows the exact address; it uses the next free port if 8501 is taken). Use `127.0.0.1`, not `localhost`: AP Coder listens on this computer's own address only, so Windows never asks about the firewall. |
+| *Port 8501 is in use by another program: AP Coder uses port 8502* | Nothing to do: another program has port 8501, so AP Coder took the next free one; open the address the window shows. |
 | Scans are read, but with a note about one OCR engine | The PP-OCRv5 models are missing or damaged. Unzip the full offline bundle (with its `models/` folder) over the AP Coder folder and double-click again, or run `.venv\Scripts\python.exe scripts\fetch_models.py` (Mac: `.venv/bin/python scripts/fetch_models.py`): it copies them from `models/`. |
 | A banner: *LM Studio isn't running* or *OvisOCR2 isn't running in LM Studio* | Open LM Studio, **Developer** tab → **Start server**; check that OvisOCR2 is in its models (ask IT if not). Invoices are still read by OCR and wait for a person meanwhile. |
 | A banner: *OvisOCR2 is testing itself* | Nothing to do: its self-test runs on its own (10 to 20 minutes the first time). *Settings → Reading* shows its progress. |

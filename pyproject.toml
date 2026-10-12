@@ -52,6 +52,10 @@ ap_coder = ["assets/*", "static/*", "capture/calibration.json", "web/templates/*
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: takes minutes (skipped unless asked for)",
+    "upgrade: the real update over each older version (AP_UPGRADE_TESTS=1, tests/test_update_from_old_versions.py)",
+]
 
 [tool.ruff]
 line-length = 120

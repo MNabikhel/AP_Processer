@@ -35,6 +35,10 @@ LM Studio: it only says whether a model is loaded. Safe to run again at any time
 once: an exclusive lock file (``.ap_coder_launch.lock``) is held while one sets up and runs AP Coder, and a
 second double-click waits for its dashboard and opens it in the browser.
 
+Everything a start says (pip's lines and the dashboard's output too) is also written to ``~/.ap_coder/logs/
+launch.log`` (kept once as ``launch.previous.log`` past 1 MB), for IT after the window is closed. A step that fails
+says what to do; an error no step expected is said in one line, its traceback in that log.
+
 ``--installer`` runs the installer's extra steps instead (``scripts/install.py``: data folder and Azure
 questions, self-test); ``install.bat`` / ``install.sh`` pass it. Other options: ``--check`` (run the
 self-check again), ``--no-start``, ``--yes``. Anything else (e.g. ``--port 8502``) goes to the dashboard.
@@ -73,7 +77,7 @@ import running  # noqa: E402  (standard library only)
 import upgrade  # noqa: E402  (standard library only)
 
 from ap_coder import envfile, paths  # noqa: E402  (standard library only)
-from ap_coder.offline import INTERNET_ENV, internet_allowed  # noqa: E402
+from ap_coder.offline import INTERNET_ENV, browser_wanted, internet_allowed  # noqa: E402
 
 WINDOWS = os.name == "nt"
 MAC = sys.platform == "darwin"
@@ -138,10 +142,79 @@ def mark(level: str) -> str:
 
 def say(message: str = "") -> None:
     print(message, flush=True)
+    log(message)
+
+
+# --- The log: what each start said, for IT after the window is closed ---------------------------------------------
+
+LOG_NAME = "launch.log"
+LOG_LIMIT = 1_000_000  # bytes: a longer log is kept once as launch.previous.log when a start begins
+_log: dict[str, Any] = {"path": None, "handle": None}
+_STARTS_HERE = not os.environ.get(LOCK_HELD_ENV)  # the first process of a start (not .venv's phase, nor the installer)
+
+
+def log_path() -> Path:
+    """``~/.ap_coder/logs/launch.log``: beside the record of installs, so it is there before the data folder is settled
+    and survives an update (the code folder is replaced, the .venv remade)."""
+    return paths.user_settings_path().parent / "logs" / LOG_NAME
+
+
+def _open_log(path: Path) -> Any:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if _STARTS_HERE and path.is_file() and path.stat().st_size > LOG_LIMIT:
+            try:  # (never under a phase of this start that writes to it; Windows refuses while another start does)
+                os.replace(path, path.with_name("launch.previous.log"))
+            except OSError:
+                pass
+        gap = "\n" if path.is_file() and path.stat().st_size else ""  # a blank line between starts
+        handle = open(path, "a", encoding="utf-8", errors="replace")  # open for the whole start
+        options = " ".join(getattr(sys, "argv", [])[1:])
+        python = f"{str(getattr(sys, 'version', '?')).split()[0]} ({getattr(sys, 'executable', '?')})"
+        handle.write(f"{gap}=== {time.strftime('%Y-%m-%d %H:%M:%S')} launch.py {options} | Python {python} | pid "
+                     f"{os.getpid()} | {ROOT} ===\n")  # fmt: skip
+        return handle
+    except OSError:
+        return None
+
+
+def log(text: str) -> bool:
+    """Add ``text`` to the log; True when it was written. Never a reason to stop: a log that can't be written is
+    skipped (the console still shows everything)."""
+    path = log_path()
+    if _log["path"] != path:
+        close_log()
+        _log.update(path=path, handle=_open_log(path))
+    handle = _log["handle"]
+    if handle is None:
+        return False
+    try:
+        handle.write(text if text.endswith("\n") else text + "\n")
+        handle.flush()
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def close_log() -> None:
+    handle = _log["handle"]
+    _log.update(path=None, handle=None)
+    if handle is not None:
+        try:
+            handle.close()
+        except OSError:
+            pass
 
 
 def line(level: str, message: str) -> None:
     say(f"  {mark(level)} {message}")
+
+
+def child_env() -> dict[str, str]:
+    """The environment of the Python processes whose output the launcher reads (pip, the self-check, the server): they
+    write UTF-8. Without it a Windows Python writing to a pipe uses the ANSI code page and stops with
+    UnicodeEncodeError on "Łukasz"; read back with ``encoding="utf-8"``."""
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
 
 def setup_console() -> None:
@@ -219,11 +292,23 @@ def ensure_venv(python: str = sys.executable, rebuild: bool = False) -> str:
             )
     result = subprocess.run([python, "-m", "venv", str(VENV)])
     if result.returncode != 0 or not venv_works():
-        raise SetupError(
-            "Could not create the .venv folder (AP Coder's own Python environment).",
-            "Reinstall Python 3.12 from https://www.python.org/downloads/, then start AP Coder again.",
-        )
+        hint = "Reinstall Python 3.12 from https://www.python.org/downloads/, then start AP Coder again."
+        if sys.platform.startswith("linux") and not ensurepip_works(python):
+            # Debian, Ubuntu: the distribution's Python makes a .venv only with its separate python3.X-venv package.
+            version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+            hint = (f"This Linux's Python {version} can't make one without its venv package: ask IT to install it "
+                    f"(Debian, Ubuntu: sudo apt install python{version}-venv), then start AP Coder again.")  # fmt: skip
+        raise SetupError("Could not create the .venv folder (AP Coder's own Python environment).", hint)
     return status
+
+
+def ensurepip_works(python: str) -> bool:
+    """``python`` has what ``-m venv`` needs to put pip in a .venv (Debian and Ubuntu leave it out of their Python)."""
+    try:
+        probe = subprocess.run([python, "-m", "ensurepip", "--version"], capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0
 
 
 def venv_version() -> str:
@@ -253,11 +338,11 @@ def python_found(command: list[str], version: str) -> str:
     """The executable of ``command`` when it starts and is Python ``version`` ("" otherwise)."""
     if len(command) == 1 and not (command[0].startswith("py") or Path(command[0]).is_file()):
         return ""
-    env = {**os.environ, "PYTHON_MANAGER_AUTOMATIC_INSTALL": "false"}  # py never downloads a missing version
+    env = {**child_env(), "PYTHON_MANAGER_AUTOMATIC_INSTALL": "false"}  # py never downloads a missing version
     try:
         ask = "import sys; print('%d.%d' % sys.version_info[:2]); print(sys.executable)"
-        out = subprocess.run([*command, "-c", ask], capture_output=True, text=True, timeout=30, env=env,
-                             stdin=subprocess.DEVNULL)  # fmt: skip
+        out = subprocess.run([*command, "-c", ask], capture_output=True, encoding="utf-8", errors="replace",
+                             timeout=30, env=env, stdin=subprocess.DEVNULL)  # fmt: skip
     except (OSError, subprocess.TimeoutExpired):
         return ""
     lines = out.stdout.split()
@@ -447,6 +532,26 @@ def failed(exc: SetupError) -> int:
     say()
     line("fail", str(exc))
     say(f"  What to do: {exc.hint}")
+    if log(""):
+        say(f"  (Everything this start said is also in {log_path()}.)")
+    return 1
+
+
+def unexpected(exc: BaseException) -> int:
+    """An error no step expected: one plain line, and the details (the traceback) in the log for IT, instead of a
+    traceback under "The message above says what to do". Without a log the traceback is shown after all."""
+    import traceback
+
+    details = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    logged = log(details)
+    say()
+    line("fail", f"AP Coder stopped on an unexpected error ({type(exc).__name__}: {exc}).")
+    if logged:
+        say(f"  What to do: start AP Coder again. If it happens again, send IT the log {log_path()} (it has the "
+            "details).")  # fmt: skip
+    else:
+        sys.stderr.write(details)
+        say("  What to do: start AP Coder again. If it happens again, send IT the message above.")
     return 1
 
 
@@ -570,8 +675,42 @@ def wheelhouse_misfit() -> str:
         best = "3.12" if "3.12" in pythons else pythons[-1]
         return (f"{start}; this computer has Python {version}: install Python {best} (then start AP Coder again), "
                 f"or use a bundle built for Python {version} (build it with --python {version})")  # fmt: skip
+    if system == "mac" and under_rosetta():
+        return (f"{start}; this Python ({sys.executable}) is an Intel build running through Rosetta on an Apple "
+                "silicon Mac, so it can't use the Apple silicon packages")  # fmt: skip
     return (f"{start}; this computer ({wheel_platform()}, Python {version}) can't use it. Use a bundle built for it "
             f"(build it with --platform {wheel_platform()} --python {version})")  # fmt: skip
+
+
+ROSETTA_HINT = (
+    "Install Python 3.12 from https://www.python.org/downloads/ (its macOS installer runs natively on Apple silicon), "
+    "delete the .venv folder in {root}, then open APProcessor.command again. If Terminal is set to Open using "
+    "Rosetta (Finder > Applications > Utilities > Terminal > Get Info), untick it."
+)
+
+
+def under_rosetta() -> bool:
+    """An Intel (x86_64) Python on an Apple silicon Mac, through Rosetta: an Intel Homebrew in /usr/local, or Terminal
+    set to open using Rosetta. Asked of the system (sysctl), never through a dialog."""
+    if sys.platform != "darwin" or platform.machine() != "x86_64":
+        return False
+    try:
+        out = subprocess.run(["sysctl", "-n", "sysctl.proc_translated"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.stdout.strip() == "1"
+
+
+def pip_env(source: list[str]) -> dict[str, str]:
+    """pip's environment. From the wheelhouse (``--no-index``) pip reads no settings of this computer: a PIP_FIND_LINKS
+    or a pip.conf ``find-links`` (an office's package server, say) would still be fetched next to the wheelhouse, so
+    every PIP_* variable is left out and no configuration file is read (``PIP_CONFIG_FILE=os.devnull``)."""
+    env = child_env()  # UTF-8 output, read back as UTF-8
+    if "--no-index" in source:
+        env = {k: v for k, v in env.items() if not k.upper().startswith("PIP_")}
+        env["PIP_CONFIG_FILE"] = os.devnull
+        env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+    return env
 
 
 def pip_install(args: list[str]) -> bool:
@@ -583,8 +722,8 @@ def pip_install(args: list[str]) -> bool:
         return False
     cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off",
            *source, *args]  # fmt: skip
-    proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                            errors="replace")  # fmt: skip
+    proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
+                            errors="replace", env=pip_env(source))  # fmt: skip
     assert proc.stdout is not None
     for out in proc.stdout:
         text = out.rstrip()
@@ -592,7 +731,41 @@ def pip_install(args: list[str]) -> bool:
             say(f"    {text}")
         if any(sign in text for sign in DISK_FULL):
             _disk_full.append(text)
+        if any(sign in text for sign in PATH_TOO_LONG):
+            _path_too_long.append(text)
+        if any(sign in text for sign in FILE_IN_USE):
+            _file_in_use.append(text)
     return proc.wait() == 0
+
+
+# How pip says Windows refused a file it must write or replace: open in another program (an AP Coder window still
+# running from this .venv) or held by the antivirus while it scans a new .pyd.
+FILE_IN_USE = ("[WinError 5]", "[WinError 32]")
+_file_in_use: list[str] = []
+
+
+def file_in_use_error() -> SetupError:
+    return SetupError(
+        "Installing the packages stopped: Windows refused a file in .venv because another program has it in use (an "
+        "AP Coder window that is still open, or the antivirus checking a new file).",
+        "Close every AP Coder window, wait a minute for the antivirus to finish, then double-click APProcessor.bat "
+        "again: it picks up where it stopped. If it happens again, ask IT to let the antivirus allow the "
+        f"{VENV} folder.",
+    )
+
+
+# How pip says a file's path passed Windows' 260 characters (its own hint, or Windows' error 206).
+PATH_TOO_LONG = ("Long Path support", "enable-long-paths", "[WinError 206]")
+_path_too_long: list[str] = []
+
+
+def path_too_long_error() -> SetupError:
+    return SetupError(
+        f"Installing the packages stopped: the AP Coder folder's path is too long for Windows ({len(str(ROOT))} "
+        f"characters: {ROOT}), so a package file's full path passes the 260 characters Windows allows.",
+        "Unzip the offline bundle to a short folder such as C:\\APCoder (or move this folder there), then "
+        "double-click APProcessor.bat in it. (Or IT turns on Windows' long paths: LongPathsEnabled.)",
+    )
 
 
 # How pip says the disk is full (Linux and Mac: errno 28; Windows: error 112, or errno 28 from Python's own code).
@@ -770,14 +943,17 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     misfit = wheelhouse_misfit() if wheelhouse_dir().is_dir() else ""
     if misfit and source:  # offline: pip would only fail with a long, unclear error
         python = re.search(r"this computer has Python [\d.]+: install Python ([\d.]+)", misfit)  # (only Python differs)
-        raise SetupError(
-            f"{misfit}: nothing was installed.",
-            f"Install Python {python.group(1)} on this computer (from python.org, or ask IT), then start AP Coder "
-            "again: it is found and used on its own. Or unzip a bundle built for this Python."
-            if python
-            else "Unzip the offline bundle built for this computer (into a new folder, or over this one), then start "
-            "AP Coder again.",
-        )
+        if python:
+            hint = (
+                f"Install Python {python.group(1)} on this computer (from python.org, or ask IT), then start AP Coder "
+                "again: it is found and used on its own. Or unzip a bundle built for this Python."
+            )
+        elif "through Rosetta" in misfit:
+            hint = ROSETTA_HINT.format(root=ROOT)
+        else:
+            hint = ("Unzip the offline bundle built for this computer (into a new folder, or over this one), then "
+                    "start AP Coder again.")  # fmt: skip
+        raise SetupError(f"{misfit}: nothing was installed.", hint)
     if source:
         say("Installing from the wheelhouse folder (no internet needed).")
     elif misfit:
@@ -803,6 +979,10 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     left, self_left = missing_packages(extras)
     if (self_left or left) and _disk_full:
         raise disk_full_error()
+    if (self_left or left) and _path_too_long:
+        raise path_too_long_error()
+    if (self_left or left) and _file_in_use:
+        raise file_in_use_error()
     if self_left or [r for r in left if not is_ocr(r)]:
         raise SetupError(
             "Installing the packages failed (the messages above say why).",
@@ -958,6 +1138,26 @@ def write_mac_launcher(link: Path) -> bool:
     return True
 
 
+def unblock_launchers() -> None:
+    """A ZIP downloaded from the internet (a browser, Teams, Outlook) marks what it unzips: Windows asks "Do you want
+    to run this file?" on every double-click of APProcessor.bat (and of the shortcut to it), and a Mac keeps the
+    .command in Gatekeeper's quarantine. AP Coder was started from this folder on purpose: the mark is taken off its
+    own launchers (nothing else). Never a reason to stop."""
+    if WINDOWS:
+        for launcher in [*ROOT.glob("*.bat"), *ROOT.glob("*.cmd")]:
+            try:
+                os.remove(f"{launcher}:Zone.Identifier")  # the Mark of the Web: an NTFS stream of the file
+            except OSError:
+                pass
+    elif MAC:
+        found = [str(p) for p in [*ROOT.glob("*.command"), *ROOT.glob("*.sh")]]
+        if found:
+            try:
+                subprocess.run(["xattr", "-d", "com.apple.quarantine", *found], capture_output=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+
 def shortcut_target() -> Path:
     return ROOT / ("APProcessor.bat" if WINDOWS else "APProcessor.command")
 
@@ -998,6 +1198,49 @@ def old_shortcut_folder() -> str:
     link = str(folder / SHORTCUT).replace("'", "''")
     target = running.powershell(f"(New-Object -ComObject WScript.Shell).CreateShortcut('{link}').TargetPath", 60)
     return str(Path(target).parent) if target else ""
+
+
+CLOUD_NAMES = {"onedrive": "OneDrive", "dropbox": "Dropbox", "googledrive": "Google Drive", "box": "Box"}
+
+
+def synced_by(folder: Path) -> str:
+    """The service that syncs ``folder`` ("OneDrive", "iCloud Drive", ...; "" when none is known): its files can be
+    kept online-only, and with no internet they can't be read."""
+
+    def inside(parent: str | Path) -> bool:
+        try:
+            return Path(os.path.normcase(str(folder))).is_relative_to(os.path.normcase(str(parent)))
+        except (OSError, ValueError):
+            return False
+
+    if WINDOWS:
+        roots = [os.environ.get(v) for v in ("OneDriveCommercial", "OneDriveConsumer", "OneDrive")]
+        return "OneDrive" if any(root and inside(root) for root in roots) else ""
+    if MAC:
+        library = Path.home() / "Library"
+        if inside(library / "Mobile Documents"):
+            return "iCloud Drive"
+        if inside(library / "CloudStorage"):
+            provider = folder.relative_to(library / "CloudStorage").parts[0].split("-")[0]
+            return CLOUD_NAMES.get(provider.lower(), provider)
+    return ""
+
+
+def sync_notes(data: Path) -> list[tuple[str, str]]:
+    """A warning for AP Coder's folder, and for its data folder, when a cloud service syncs it."""
+    notes = []
+    place = "C:\\APCoder\\app" if WINDOWS else "a folder in your home folder (e.g. ~/APCoder/app)"
+    service = synced_by(ROOT)
+    if service:
+        notes.append(("warn", f"AP Coder's folder is synced by {service} ({ROOT}): a file it keeps online-only can't "
+                              f"be read without the internet. Unzip AP Coder to a folder that is not synced, e.g. "
+                              f"{place}"))  # fmt: skip
+    service = synced_by(data)
+    if service:
+        notes.append(("warn", f"The data folder is synced by {service} ({data}): the database can be damaged while "
+                              "it is synced, and an online-only invoice can't be opened offline. Choose a data folder "
+                              "that is not synced (install.bat asks for one)"))  # fmt: skip
+    return notes
 
 
 def lm_studio_line() -> tuple[str, str]:
@@ -1070,7 +1313,8 @@ def self_check() -> tuple[bool, str]:
     started = time.monotonic()
     try:
         out = subprocess.run([sys.executable, str(SCRIPTS / "pilot_check.py")], cwd=ROOT, capture_output=True,
-                             text=True, errors="replace", timeout=SELF_CHECK_TIMEOUT)  # fmt: skip
+                             encoding="utf-8", errors="replace", timeout=SELF_CHECK_TIMEOUT,
+                             env=child_env())  # fmt: skip
     except subprocess.TimeoutExpired:
         return False, "Self-check FAILED: it did not finish in 10 minutes"
     text = out.stdout.splitlines()
@@ -1107,7 +1351,8 @@ def requested_port(rest: list[str]) -> int | None:
 
 def candidate_ports(rest: list[str], state: dict) -> list[int]:
     """Where an AP Coder may already run: the port asked for, the one this folder's last start used, the ones the
-    other installs' last starts used, and the default (the server file in the data folder names its own)."""
+    other installs' last starts used, and the default and the next ones (the server file in the data folder names its
+    own; AP Coder 0.1 recorded none, and took the first free port from 8501: a second window's was 8502)."""
     ports = [requested_port(rest), state.get("port")]
     for entry in paths.installs():
         try:
@@ -1115,7 +1360,8 @@ def candidate_ports(rest: list[str], state: dict) -> list[int]:
             ports.append(other.get("port"))
         except (OSError, ValueError, AttributeError):
             continue
-    return list(dict.fromkeys(p for p in [*ports, DEFAULT_PORT] if isinstance(p, int) and p > 0))
+    defaults = range(DEFAULT_PORT, DEFAULT_PORT + 10)
+    return list(dict.fromkeys(p for p in [*ports, *defaults] if isinstance(p, int) and p > 0))
 
 
 def running_dashboard(rest: list[str], state: dict) -> int | None:
@@ -1127,8 +1373,18 @@ def running_dashboard(rest: list[str], state: dict) -> int | None:
     return None
 
 
+def dashboard_url(port: int) -> str:
+    """The address the browser opens: the one the dashboard listens on (127.0.0.1 by default). Never "localhost": a
+    Mac or Windows browser tries it as ::1 first, where another program may answer."""
+    from ap_coder.offline import dashboard_address
+
+    address = dashboard_address()
+    shown = "127.0.0.1" if address in ("", "0.0.0.0", "::", "localhost") else address
+    return f"http://{f'[{shown}]' if ':' in shown else shown}:{port}"
+
+
 def open_running(port: int) -> int:
-    url = f"http://localhost:{port}"
+    url = dashboard_url(port)
     say(f"AP Coder is already running: opening {url} in your browser.")
     say("Nothing new was started. This window can be closed; the AP Coder window already open runs it.")
     open_browser(url)
@@ -1143,7 +1399,7 @@ _held: list[Any] = []  # the open lock file: the lock lasts as long as this proc
 def take_lock() -> bool:
     """An exclusive lock on ``LOCK`` for this start (setup and the dashboard), released when this process ends.
     False when another start holds it. True also when no lock file can be made here (a read-only folder: then
-    there is no .venv to set up either)."""
+    there is no .venv to set up either), or the folder's file system has no locks (a NAS or network volume)."""
     if _held:
         return True
     try:
@@ -1160,9 +1416,9 @@ def take_lock() -> bool:
             import fcntl
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except OSError as exc:
         handle.close()
-        return False
+        return not upgrade.lock_busy(exc)
     _held.append(handle)
     return True
 
@@ -1218,7 +1474,9 @@ def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
 
 
 def free_port(start: int = DEFAULT_PORT) -> int:
-    """The first port from ``start`` this computer can listen on (a bind test: instant, unlike connecting)."""
+    """The first port from ``start`` this computer can listen on (a bind test: instant, unlike connecting) and
+    nothing answers on yet (on a Mac, SO_REUSEADDR lets 127.0.0.1 be bound on a port another program listens on for
+    every address)."""
     from ap_coder.offline import dashboard_address
 
     address = dashboard_address()
@@ -1226,20 +1484,35 @@ def free_port(start: int = DEFAULT_PORT) -> int:
         with socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET, socket.SOCK_STREAM) as s:
             if not WINDOWS:  # like the dashboard's server: a port left in TIME_WAIT is free
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            elif hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # Windows lets 127.0.0.1 be bound on a port in use without it
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             try:
                 s.bind((address, port))
-                return port
             except OSError:
                 continue
-    return start
+        if not running.listening(port):  # something answering there is never picked (0.3 s at most on Windows)
+            return port
+    # None of the 50 (Windows reserves whole blocks of ports for Hyper-V and WSL: binding there is refused): one the
+    # system says is free, never the busy one asked for
+    with socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((address, 0))
+        return s.getsockname()[1]
 
 
 def open_browser(url: str) -> None:
-    if (os.environ.get("BROWSER") or "").strip().lower() == "none":
+    """``url`` in the browser, unless BROWSER=none or there is no desktop here (``offline.browser_wanted``)."""
+    if not browser_wanted():
+        if (os.environ.get("BROWSER") or "").strip().lower() != "none":
+            say(f"No desktop on this computer, so no browser was opened: open {url} in a browser here.")
         return
     import webbrowser
 
-    webbrowser.open(url)
+    try:
+        opened = webbrowser.open(url)
+    except Exception:  # noqa: BLE001 - no browser here: the address is said instead
+        opened = False
+    if not opened:
+        say(f"Could not open a web browser here: open {url} in your browser yourself.")
 
 
 # --- Start --------------------------------------------------------------------------------------------------------
@@ -1267,12 +1540,14 @@ def start_dashboard(rest: list[str], state: dict) -> int:
     double-click finds this one running); its output is shown as it comes, and the browser opens once it is up
     (its "AP Coder is running at" line, or an answer on /healthz). Returns when it stops."""
     port = requested_port(rest) or free_port()
+    if port != DEFAULT_PORT and not requested_port(rest):
+        say(f"Port {DEFAULT_PORT} is in use by another program: AP Coder uses port {port} ({dashboard_url(port)}).")
     state["port"] = port
     save_state(state)
     say("Starting AP Coder: it opens in your browser. Keep this window open while you use it; close it to stop.")
     try:
         proc = subprocess.Popen(server_command(port, rest), cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace", bufsize=1)  # fmt: skip
+                                encoding="utf-8", errors="replace", bufsize=1, env=child_env())  # fmt: skip
     except OSError as exc:
         return failed(SetupError(f"AP Coder could not start ({exc}).", "Start AP Coder again; if it happens again, "
                                  "run  python -m ap_coder doctor  in terminal.bat."))  # fmt: skip
@@ -1283,6 +1558,7 @@ def start_dashboard(rest: list[str], state: dict) -> int:
         for text in proc.stdout:
             sys.stdout.write(text)
             sys.stdout.flush()
+            log(text)
             if READY in text:
                 ready.set()
 
@@ -1294,7 +1570,7 @@ def start_dashboard(rest: list[str], state: dict) -> int:
             if opened:
                 proc.wait()
             elif ready.wait(0.5) or running.health(port, timeout=1.0):
-                open_browser(f"http://localhost:{port}")
+                open_browser(dashboard_url(port))
                 opened = True
         shown.join(timeout=5)
         return proc.returncode
@@ -1317,7 +1593,13 @@ def previous_install(state: dict, ident: dict, legacy: list[str]) -> dict | None
             return None
         return {"version": state.get("version") or registered_version(), "build": state.get("build", "")}
     older = [i for i in upgrade.previous_versions(ROOT, legacy) if paths.is_older(i, ident)]
-    return older[-1] if older else None
+    if older:
+        return older[-1]
+    # Unzipped over an AP Coder from before this launcher (install.bat, or by hand): only its .venv says which.
+    registered = registered_version()
+    if registered and paths.version_key(registered) < paths.version_key(ident["version"]):
+        return {"version": registered, "build": ""}
+    return None
 
 
 def registered_version() -> str:
@@ -1329,8 +1611,9 @@ def registered_version() -> str:
 
 
 def legacy_folders() -> list[str]:
-    """Older installs that kept no record (AP Coder 0.1): its desktop shortcut's folder, a stopped old dashboard's."""
-    return [f for f in [old_shortcut_folder(), *running.stopped] if f]
+    """Older installs that kept no record (AP Coder 0.1): its desktop shortcut's folder, a stopped old dashboard's, and
+    the older ones next to this folder (closed before the update)."""
+    return [str(f) for f in [old_shortcut_folder(), *running.stopped, *upgrade.nearby_installs(ROOT)] if f]
 
 
 def older_installs(ident: dict, legacy: list[str]) -> list[Path]:
@@ -1357,6 +1640,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     first = args.venv in ("created", "recreated") or not state.get("setup_done")
     if args.venv in (None, "reused"):
         say(f"Python {sys.version.split()[0]}: reusing .venv")
+    unblock_launchers()
 
     # An AP Coder already running: this one opened; an older one (or another folder's) stopped first.
     verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, state), paths.private_dir(), say)
@@ -1400,7 +1684,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     paths.record_install(ident)
     upgrade.write_marker(ROOT, ident)
     shortcut = ensure_shortcut()
-    lines = readiness((level, packages)) + notes
+    lines = readiness((level, packages)) + notes + sync_notes(data)
     if shortcut:
         lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
     old = older_installs(ident, legacy)
@@ -1445,12 +1729,37 @@ def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     return parser.parse_known_args(argv)
 
 
+ZIP_VIEW = re.compile(r"Temp\d+_.+\.zip", re.IGNORECASE)  # where Explorer unpacks a ZIP opened without Extract All
+
+
+def inside_zip_view() -> bool:
+    """Started from Explorer's view of the ZIP: Windows unpacked it to a temporary folder (``%TEMP%\\Temp1_<name>.zip``)
+    that it deletes later, with the .venv and the desktop shortcut pointing into it."""
+    return WINDOWS and any(ZIP_VIEW.fullmatch(part) for part in ROOT.parts)
+
+
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        return 0
+    except Exception as exc:  # noqa: BLE001 - said plainly, the details in the log
+        return unexpected(exc)
+    finally:
+        close_log()
+
+
+def _main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     setup_console()
     args, rest = parse(argv)  # first: what to do when another start holds the lock depends on it
     if args.venv_ok:  # APProcessor.bat / .command: may .venv be used as it is?
         return 0 if importlib.util.find_spec("pip") is not None and venv_fits() else 1
+    if inside_zip_view():
+        return failed(SetupError(f"AP Coder was started from inside its ZIP: Windows unpacked it to a temporary folder "
+                                 f"({ROOT}) that it deletes later.", "Close this window, right-click the ZIP, choose "
+                                 "Extract All (e.g. to C:\\APCoder), then double-click APProcessor.bat in the "
+                                 "extracted folder."))  # fmt: skip
     if not os.environ.get(LOCK_HELD_ENV):  # (set: a parent start holds it, e.g. the first phase for the second)
         if not take_lock():  # another start is setting up or running AP Coder
             if args.installer:
@@ -1475,10 +1784,7 @@ def main(argv: list[str] | None = None) -> int:
 
         forwarded = [a for a in argv if a != "--installer" and not a.startswith("--venv")]
         return install.main(forwarded, venv=args.venv)
-    try:
-        return run(args, rest)
-    except KeyboardInterrupt:
-        return 0
+    return run(args, rest)
 
 
 if __name__ == "__main__":

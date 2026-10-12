@@ -2,6 +2,8 @@
 rem Opens a command prompt ready for AP Coder commands, e.g.  python -m ap_coder doctor --online
 rem The .venv's Scripts folder goes first on PATH. Not activate.bat: it keeps the folder the .venv was made in,
 rem so after this folder is moved or copied, "python" would be the system Python.
+rem setlocal: run from an open prompt, PATH and the folder are as they were once this prompt is closed.
+setlocal
 pushd "%~dp0"
 if not exist ".venv\Scripts\python.exe" (
   echo AP Coder is not installed yet: double-click APProcessor.bat first.

@@ -129,6 +129,11 @@ def find(ports: list[int], data: Path | None) -> list[Server]:
     """Every AP Coder running on one of ``ports`` (or on the port its server file names), newest kind first."""
     record = server_record(data)
     candidates = list(dict.fromkeys(p for p in [_port(record.get("port")), *ports] if p))
+    if len(candidates) > 1:  # all at once: a closed port takes up to 0.3 s to tell on Windows
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(len(candidates), 16)) as pool:
+            candidates = [p for p, up in zip(candidates, pool.map(listening, candidates), strict=True) if up]
     found = []
     for port in candidates:
         info = health(port)

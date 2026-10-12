@@ -62,6 +62,9 @@ def _model() -> Any:
         if _session is None or _session_path != path:
             import onnxruntime
 
+            from ..offline import quiet_onnxruntime
+
+            quiet_onnxruntime()
             options = onnxruntime.SessionOptions()
             options.log_severity_level = 3
             options.intra_op_num_threads = 1  # pages are read in parallel workers; one thread each is fastest

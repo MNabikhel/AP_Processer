@@ -1,8 +1,8 @@
 """Run the dashboard: ``python -m ap_coder serve [--host 127.0.0.1] [--port 8501] [--no-browser]``.
 
 The server runs in this process (uvicorn). Once it answers, it prints ``AP Coder is running at http://127.0.0.1:N``
-(the launcher waits for that line, or for ``GET /healthz``) and opens the browser, unless ``--no-browser`` or
-``BROWSER=none``.
+(the launcher waits for that line, or for ``GET /healthz``) and opens the browser, unless ``--no-browser``,
+``BROWSER=none`` or a Linux computer with no desktop (``offline.browser_wanted``).
 
 While it runs, ``<data folder>/.ap_coder_server.json`` says which server this is: {"pid", "port", "folder",
 "version", "token", "started"}. The launcher stops it with ``POST /shutdown`` and the header
@@ -22,6 +22,7 @@ import webbrowser
 from pathlib import Path
 
 from ap_coder import __version__, paths
+from ap_coder.offline import browser_wanted
 from ap_coder.store import Store
 from ap_coder.web.app import CODE_FOLDER, create_app
 
@@ -64,11 +65,13 @@ def remove_server_file(token: str) -> None:
 
 
 def _announce_when_up(url: str, open_browser: bool, timeout: float = 60.0) -> None:
-    """Wait until the server answers /healthz, then say where it is and open the browser."""
+    """Wait until the server answers /healthz, then say where it is and open the browser. Asked directly, never
+    through an office proxy (HTTP_PROXY, or Windows' own setting): a proxy can't reach this computer's 127.0.0.1."""
     deadline = time.monotonic() + timeout
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url + "/healthz", timeout=2) as response:  # noqa: S310 - our own server
+            with direct.open(url + "/healthz", timeout=2) as response:  # our own server
                 if response.status == 200:
                     break
         except OSError:
@@ -76,7 +79,7 @@ def _announce_when_up(url: str, open_browser: bool, timeout: float = 60.0) -> No
     else:
         return
     print(f"AP Coder is running at {url}", flush=True)
-    if open_browser and (os.environ.get("BROWSER") or "").strip().lower() != "none":
+    if open_browser and browser_wanted():  # (not BROWSER=none, nor a Linux computer with no desktop)
         try:
             webbrowser.open(url)
         except Exception:  # noqa: BLE001 - no browser: the address is printed above

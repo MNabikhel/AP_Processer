@@ -193,6 +193,9 @@ def _engine(name: str | None = None) -> Any:
     """A callable: RGB image array -> [(quad, text, score), ...]."""
     name = name or _engine_name()
     if name not in _ENGINES:
+        from ..offline import quiet_onnxruntime
+
+        quiet_onnxruntime()  # both engines run on ONNX Runtime: its usage events off
         if name == "ppocrv5":
             from rapidocr import RapidOCR
 

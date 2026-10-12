@@ -77,7 +77,7 @@ def save_azure_check(
 def test_azure_check(request: Request) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     cfg = azure_check.load_settings(store, settings)
-    state, why = azure_check.status(cfg, need_enabled=False)
+    state, why = azure_check.status(cfg)
     if state != azure_check.READY:
         return refuse(why)
 

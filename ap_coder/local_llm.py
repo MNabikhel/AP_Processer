@@ -94,8 +94,36 @@ def _root(base_url: str) -> str:
     return base[: -len("/v1")] if base.endswith("/v1") else base
 
 
+def refused_address(url: str) -> str:
+    """Why this offline build does not contact the model server at ``url`` ("" when it may): one on this computer or
+    the office network always may; one on the internet only with the opt-in (AP_ALLOW_INTERNET=1), like every other
+    way out (ap_coder/offline.py). Invoices are never sent to an address in the .env by mistake."""
+    from .offline import INTERNET_ENV, internet_allowed
+
+    host = urlparse(url).netloc
+    if _on_this_network(host) or internet_allowed():
+        return ""
+    name = host.rsplit("@", 1)[-1]
+    return (f"{name} is not on this computer or the office network: this offline build does not contact it "
+            f"({INTERNET_ENV}=1 allows it)")  # fmt: skip
+
+
+def refuse_internet(url: str) -> bool:
+    """Whether ``url`` is a server on this computer or network (True: asked directly, never through a proxy), or on
+    the internet and allowed by the opt-in (False). Refused otherwise (:func:`refused_address`), with
+    ``ConnectionRefusedError`` before a byte is sent."""
+    refused = refused_address(url)
+    if refused:
+        raise ConnectionRefusedError(refused)
+    return _on_this_network(urlparse(url).netloc)
+
+
 def _fetch_json(url: str, api_key: str, timeout: float) -> Any:
-    """GET a JSON document (raises OSError / ValueError when the server is down or answers something else)."""
+    """GET a JSON document (raises OSError / ValueError when the server is down or answers something else, and
+    PermissionError, an OSError, for a server on the internet in the offline build: :func:`refused_address`)."""
+    refused = refused_address(url)
+    if refused:
+        raise PermissionError(refused)
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key or 'lm-studio'}"})
     # A server on this computer or network: no proxy (an office proxy would answer for 127.0.0.1, or hang).
     local = _on_this_network(urlparse(url).netloc)
@@ -262,11 +290,29 @@ NO_MODEL_MESSAGE = (
 # --- Talking to it --------------------------------------------------------------------------------------------
 
 
+def _refusing_transport(client_class: type, reason: str) -> Any:
+    """A transport for the OpenAI SDK's HTTP client (httpx, or httpx2 under newer SDKs: the one ``client_class`` is
+    built on) whose every request fails as a connection error, before anything is sent."""
+    import importlib
+
+    base = next(c for c in client_class.__mro__ if c.__name__ == "Client" and c.__module__ != client_class.__module__)
+    http = importlib.import_module(base.__module__.split(".")[0])
+
+    class Refused(http.BaseTransport):
+        def handle_request(self, request: Any) -> Any:
+            raise http.ConnectError(reason, request=request)
+
+    return Refused()
+
+
 def build_local_client(llm: LocalLLMSettings) -> Any:
     from openai import DefaultHttpxClient, OpenAI
 
     options: dict[str, Any] = {}
-    if _on_this_network(urlparse(llm.base_url).netloc):
+    refused = refused_address(llm.base_url)
+    if refused:  # every request fails like a server that is not running (APIConnectionError): nothing is sent
+        options["http_client"] = DefaultHttpxClient(transport=_refusing_transport(DefaultHttpxClient, refused))
+    elif _on_this_network(urlparse(llm.base_url).netloc):
         # A server on this computer or network: never through an office proxy (it would answer for 127.0.0.1).
         options["http_client"] = DefaultHttpxClient(trust_env=False)
     return OpenAI(

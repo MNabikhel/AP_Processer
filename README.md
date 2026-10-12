@@ -11,7 +11,9 @@ laptop by OCR and by OvisOCR2, a small page-reading model in [LM Studio](https:/
 ## Set up: one double-click
 
 1. **Unzip AP Coder** to a folder that OneDrive does not sync (e.g. `C:\APCoder\app`).
-2. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`; the first time, right-click → *Open*).
+2. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`; the first time, right-click → *Open*; on macOS 15
+   or newer, System Settings → Privacy & Security → *Open Anyway*. See [PILOT.md](docs/PILOT.md#install-one-button)
+   for a ZIP downloaded from the internet).
 
 That's it, the first time and every day after. The launcher looks at what is already on the computer and adds
 only what is missing:
@@ -53,7 +55,8 @@ folder. A package or model missing from the bundle is said plainly, and AP Coder
 packages are there. `install.bat` / `install.sh` and `start.bat` /
 `start.sh` still work for older shortcuts; they run the same setup. The full pilot guide is
 [docs/PILOT.md](docs/PILOT.md). The step-by-step for real data is
-[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Updating from an older version (each one since the first
+commit): [docs/UPGRADING.md](docs/UPGRADING.md).
 
 **LM Studio, with OvisOCR2.** IT installs LM Studio (0.4.8 or newer) with the models already in it. Nothing
 is downloaded on the laptop. On the laptop, open LM Studio and go to **Developer → Start server**. That is
@@ -130,9 +133,11 @@ invoice (PDF, scan, photo, .eml) ─► local reader: text layer or OCR ─► f
             GL distribution ─► review dashboard ─► approve ─► learning memory ─► ERP / JDE E1 export
 ```
 
-Everything stays in a local data folder outside the code (default `~/APCoder`). The dashboard only listens
-on `127.0.0.1`, and a test fails if any page tries to connect to the internet. Only redacted reports
-(`doctor`, `share-report`) are meant to leave the laptop.
+Everything stays in a local data folder outside the code (default `~/APCoder`). The dashboard listens only
+on `127.0.0.1` (unless IT sets `AP_DASHBOARD_ADDRESS`), and a test fails if any page tries to connect to the
+internet. Only redacted reports (`doctor`, `share-report`) are meant to leave the laptop. How the launcher, the
+update and the server work, what is written where, and every place the network could be touched:
+[docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS.md).
 
 ## How every invoice is read
 
@@ -224,7 +229,7 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](docs/PILO
 
 | Setting | Default | |
 | --- | --- | --- |
-| `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1` |
+| `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1`. On this computer or the office network only: a server on the internet is never asked (developers: `AP_ALLOW_INTERNET=1`) |
 | `AP_LLM_MODEL` | empty | empty = the chat model LM Studio has (never an embedding model or OvisOCR2) |
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
 | `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
@@ -508,9 +513,12 @@ samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a cr
 scripts/             launch.py (the launcher: set up, start the dashboard, open the running one), running.py (finds
                      and stops a running AP Coder), upgrade.py (updates over an older install), first_run.py,
                      check_deps.py, fetch_models.py (launcher steps), pilot_check.py, build_offline_bundle.py,
-                     sample invoice generator
+                     sample invoice generator; ci/old_versions.py (installs each older version and checks the
+                     update over it)
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
-docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md,
+docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), HOW_IT_RUNS.md
+                     (launcher, update, server, files, network), UPGRADING.md (from each older version),
+                     WHATS_NEW.md, PILOT_PLAN.md,
                      screenshots/
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients and LM Studio mocked)

@@ -2,7 +2,10 @@
 
 AP Coder is an offline build: nothing it runs connects to the internet unless a developer or the bundle
 builder opts in with ``AP_ALLOW_INTERNET=1`` (:func:`internet_allowed`). The setup scripts check it before
-any package, model, git or Python download.
+any package, model, git or Python download, and the model server's address (``local_llm.refuse_internet``): LM
+Studio on this computer or the office network, never a server on the internet. The one exception is the optional
+Azure check (``azure_check``), which contacts its configured endpoint only once AP has switched it on in Settings.
+``tests/test_offline_guard.py`` proves it: every flow runs with any connection but to this computer refused.
 
 RapidOCR 3 (the PP-OCRv5 reader) would download its model files into its own package folder the first time
 it is used. AP Coder never lets it: ``scripts/fetch_models.py`` copies them from the ``models/`` folder of
@@ -22,6 +25,7 @@ import importlib.util
 import ipaddress
 import logging
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -264,6 +268,18 @@ def onnxruntime_installed() -> bool:
     return _package_dir("onnxruntime") is not None and _package_dir("numpy") is not None
 
 
+def quiet_onnxruntime() -> None:
+    """Switch off ONNX Runtime's usage events (on Windows it writes them to the system's event tracing, which Windows
+    may send to Microsoft with its diagnostic data) before the OCR engines and the table finder make their sessions.
+    It never connects anywhere itself; this keeps the OCR's usage on this computer too. Never fails."""
+    try:
+        import onnxruntime
+
+        onnxruntime.disable_telemetry_events()
+    except Exception:  # noqa: BLE001 - not installed, or an ONNX Runtime without the switch
+        pass
+
+
 # --- Dashboard network settings ---------------------------------------------------------------------------------
 
 
@@ -271,6 +287,17 @@ def dashboard_address() -> str:
     """The address the dashboard listens on: this computer only, unless ``AP_DASHBOARD_ADDRESS`` says
     otherwise (e.g. ``0.0.0.0`` to let colleagues on the office network open it)."""
     return (os.environ.get(ADDRESS_ENV) or "").strip() or LOCAL_ADDRESS
+
+
+def browser_wanted() -> bool:
+    """Whether to open the dashboard in a browser: not with ``BROWSER=none``, nor on a Linux computer with no desktop
+    (over SSH, a server: Python's webbrowser would start a text browser such as lynx in the very window AP Coder
+    runs in, and wait for it). Windows and Macs always have a desktop."""
+    if (os.environ.get("BROWSER") or "").strip().lower() == "none":
+        return False
+    if sys.platform.startswith("linux"):
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    return True
 
 
 def is_loopback(address: str) -> bool:

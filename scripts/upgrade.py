@@ -26,8 +26,10 @@ The data folder's contents are never touched, except to move legacy data into it
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import json
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -60,6 +62,8 @@ BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static
 RETIRED_KEPT = {"private", "data", "docs", "bundle_manifest.json", "pyproject.toml", "APProcessor.bat",
                 "APProcessor.command", "README.md"}  # fmt: skip
 DATA_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3", ".xlsx", ".xlsm", ".xls")
+# What starts an AP Coder folder: the double-click, and the installer and start scripts of the versions before it.
+LAUNCHERS = ("APProcessor.bat", "APProcessor.command", "start.bat", "start.sh", "install.bat", "install.sh")
 
 Say = Callable[[str], None]
 
@@ -134,6 +138,16 @@ def removing(folder: Path) -> list[Path]:
     return found
 
 
+# How the operating system says another process holds a lock (flock: EWOULDBLOCK; msvcrt: EACCES or EDEADLK). Any
+# other error (ENOLCK, EOPNOTSUPP...) means the file system has no locks at all: a NAS or network volume.
+LOCK_BUSY = {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK, None}
+
+
+def lock_busy(exc: OSError) -> bool:
+    """Taking a lock failed with ``exc`` because another process holds it (not because locks can't be had here)."""
+    return exc.errno in LOCK_BUSY
+
+
 def lock_held(folder: Path) -> bool:
     """Another start holds ``folder``'s launch lock: AP Coder runs (or is being set up) from it right now."""
     lock = folder / LOCK_NAME
@@ -156,8 +170,8 @@ def lock_held(folder: Path) -> bool:
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    except OSError:
-        return True
+    except OSError as exc:
+        return lock_busy(exc)
     finally:
         handle.close()
     return False
@@ -167,8 +181,22 @@ def lock_held(folder: Path) -> bool:
 
 
 def is_install(folder: Path) -> bool:
-    """``folder`` holds an AP Coder that can be started (its launcher and its code)."""
-    return (folder / "scripts" / "launch.py").is_file() and (folder / "ap_coder").is_dir()
+    """``folder`` holds AP Coder's code: its ``ap_coder`` package and its launcher (``scripts/launch.py``), or, for
+    the versions before the launcher (install.bat / start.bat, or by hand: ``python -m ap_coder dashboard``), a
+    pyproject.toml naming the project ``ap-coder``."""
+    if not (folder / "ap_coder").is_dir():
+        return False
+    return (folder / "scripts" / "launch.py").is_file() or project_name(folder) == "ap-coder"
+
+
+def project_name(folder: Path) -> str:
+    """The project name in ``folder``'s pyproject.toml ("" when none)."""
+    try:
+        text = (folder / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    found = re.search(r'(?m)^name\s*=\s*"([^"]+)"', text)
+    return found.group(1) if found else ""
 
 
 def newer_install(root: Path = ROOT) -> dict | None:
@@ -178,7 +206,7 @@ def newer_install(root: Path = ROOT) -> dict | None:
     if current is None or paths.same_folder(current["folder"], root):
         return None
     folder = Path(current["folder"])
-    if not is_install(folder):
+    if not is_install(folder) or not (folder / "scripts" / "launch.py").is_file():  # (it is started through it)
         return None
     theirs = paths.install_identity(folder)
     return theirs if paths.is_older(paths.install_identity(root), theirs) else None
@@ -225,6 +253,30 @@ def legacy_installs(root: Path, extra: list[str | Path] = ()) -> list[Path]:
     for folder in [*candidates, *(Path(e) for e in extra if e)]:
         if is_install(folder) and not paths.same_folder(folder, root) and not any(paths.same_folder(folder, f)
                                                                                     for f in found):  # fmt: skip
+            found.append(folder)
+    return found
+
+
+def nearby_installs(root: Path) -> list[Path]:
+    """Older AP Coder folders next to ``root``, found though nothing points to them (closed before the update, no
+    desktop shortcut on a Mac or Linux, AP Coder 0.1 kept no record): the folders beside it (a Mac unzips the new
+    bundle as "APProcessor 2" beside "APProcessor"), and the bundle folder in each folder beside its parent
+    (Windows' Extract All makes "APProcessor-offline-<version>-<date>\\APProcessor"). Only an older version than
+    ``root``'s, never a git checkout."""
+    mine = paths.install_identity(root)
+    places: list[Path] = []
+    for parent, depth in ((root.parent, 0), (root.parent.parent, 1)):
+        try:
+            children = sorted(p for p in parent.iterdir() if p.is_dir())
+        except OSError:
+            continue
+        places += children if depth == 0 else [c / root.name for c in children]
+    found: list[Path] = []
+    for folder in places:
+        if paths.same_folder(folder, root) or (folder / ".git").exists() or not is_install(folder):
+            continue
+        known = any(paths.same_folder(folder, f) for f in found)
+        if not known and paths.is_older(paths.install_identity(folder), mine):
             found.append(folder)
     return found
 
@@ -412,7 +464,11 @@ def settle_data_folder(root: Path = ROOT, say: Say = print, default: Path | None
     recorded = paths.user_path(str(settings.get("data_dir") or ""))
     legacy = root / "private"
     if recorded is None:
-        recorded = legacy if has_data(legacy) else default
+        # Nothing recorded: an AP Coder run by hand kept its data in its own private/ folder (this one's, unzipped
+        # over it, or an older install's found by its running dashboard or its shortcut: on the record by now).
+        others = [Path(e["folder"]) / "private" for e in reversed(paths.installs())
+                  if not paths.same_folder(e["folder"], root)]  # fmt: skip
+        recorded = next((p for p in [legacy, *others] if has_data(p) and is_install(p.parent)), default)
         paths.write_user_settings(data_dir=str(recorded))
     if recorded.name == "private" and is_install(recorded.parent) and has_data(recorded):
         if has_data(default) and not paths.same_folder(default, recorded):
@@ -721,8 +777,11 @@ def removable(folder: Path, root: Path) -> str:
         return "it holds this AP Coder"
     if (folder / ".git").exists():
         return "it is a git checkout"
-    launcher = (folder / "APProcessor.bat").is_file() or (folder / "APProcessor.command").is_file()
-    marked = (folder / "bundle_manifest.json").is_file() or (folder / MARKER).is_file()
+    launcher = any((folder / name).is_file() for name in LAUNCHERS)
+    # Unzipped from a bundle, set up by the launcher, or an AP Coder from before both (GitHub's ZIP, installed with
+    # install.bat or by hand): its pyproject names the project.
+    marked = (folder / "bundle_manifest.json").is_file() or (folder / MARKER).is_file() or project_name(folder) == (
+        "ap-coder")  # fmt: skip
     if not (launcher and marked and (folder / "ap_coder").is_dir()):
         return "it doesn't look like a folder AP Coder was installed in"
     if lock_held(folder):

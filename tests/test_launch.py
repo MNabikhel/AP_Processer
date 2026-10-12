@@ -8,6 +8,7 @@ import http.server
 import importlib.util
 import io
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -225,6 +226,30 @@ def test_venv_is_made_once_and_remade_only_when_broken(launch, tmp_path, monkeyp
     assert launch.ensure_venv("python") == "recreated" and len(made) == 2
 
 
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+def test_a_python_without_venv_support_is_said_as_that_on_linux(launch, monkeypatch, platform):
+    """Debian and Ubuntu ship their Python without what ``python -m venv`` needs (ensurepip) unless the
+    python3.X-venv package is installed: reinstalling Python from python.org is not the fix there."""
+    ran: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        ran.append(cmd)
+        return SimpleNamespace(returncode=1, stdout="", stderr="")  # neither venv nor ensurepip works
+
+    monkeypatch.setattr(launch.subprocess, "run", run)
+    monkeypatch.setattr(launch.sys, "platform", platform)
+    monkeypatch.setattr(launch, "venv_works", lambda: False)
+    launch.VENV.rmdir()
+    with pytest.raises(launch.SetupError) as failed:
+        launch.ensure_venv("python3")
+    version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    if platform == "linux":
+        assert f"python{version}-venv" in failed.value.hint and "apt" in failed.value.hint
+        assert ["python3", "-m", "ensurepip", "--version"] in ran
+    else:
+        assert "python.org" in failed.value.hint and "-venv" not in failed.value.hint
+
+
 def test_a_venv_whose_python_does_not_start_is_broken(launch):
     assert not launch.venv_works()  # no python in it at all
     launch.VENV_PY = Path(sys.executable)
@@ -277,7 +302,7 @@ def test_second_start_while_running_only_opens_the_browser(launch, monkeypatch):
     monkeypatch.setattr(launch, "ensure_packages", lambda state: pytest.fail("set up again"))
     monkeypatch.setattr(launch, "start_dashboard", lambda rest, state: pytest.fail("a second copy started"))
     assert launch.run(launch.parse([])[0], []) == 0
-    assert opened == ["http://localhost:8501"]
+    assert opened == ["http://127.0.0.1:8501"]
 
 
 @pytest.fixture
@@ -312,7 +337,7 @@ def test_a_second_start_waits_for_the_first_ones_dashboard(lock, monkeypatch, ca
     opened: list[str] = []
     monkeypatch.setattr(launch, "open_browser", opened.append)
     assert launch.wait_for_other(["--port", "8597"], every=0) == 0
-    assert opened == ["http://localhost:8597"]
+    assert opened == ["http://127.0.0.1:8597"]
     out = capsys.readouterr().out
     assert "being set up or started in another window" in out and "already running" in out
     # The first start ended without a dashboard (e.g. --no-start): this one takes over the setup.
@@ -370,7 +395,10 @@ def test_the_installer_refuses_while_ap_coder_is_running(lock, monkeypatch, caps
     other.close()
 
 
-def test_ports(launch):
+def test_ports(launch, monkeypatch):
+    # this computer's own rules for binding: on Windows SO_REUSEADDR would let a port in use be bound again (the
+    # fixture's WINDOWS=False made the Windows runner test the Mac/Linux path), so the Windows path is the one tested
+    monkeypatch.setattr(launch, "WINDOWS", os.name == "nt")
     assert launch.requested_port(["--port", "8597"]) == 8597
     assert launch.requested_port(["--port=8502"]) == 8502
     assert launch.requested_port(["--address", "0.0.0.0"]) is None
@@ -378,7 +406,26 @@ def test_ports(launch):
         s.bind(("127.0.0.1", 0))
         s.listen()
         taken = s.getsockname()[1]
-        assert launch.free_port(taken) != taken
+        found = launch.free_port(taken)
+        assert found != taken, f"listening({taken}) said {launch.running.listening(taken)}"
+
+
+def test_a_free_port_is_found_when_the_next_fifty_are_refused(launch, monkeypatch):
+    """Windows reserves blocks of ports (Hyper-V, WSL): when none of the 50 after the one asked for can be bound,
+    the port asked for (in use) was given back; now one the system says is free."""
+    import socket as real
+
+    refused = set(range(40000, 40050))
+
+    class Probe(real.socket):
+        def bind(self, address):
+            if address[1] in refused:
+                raise OSError(10013, "forbidden by its access permissions")
+            return super().bind(address)
+
+    monkeypatch.setattr(launch.socket, "socket", Probe)
+    port = launch.free_port(40000)
+    assert port not in refused and port > 0
 
 
 def test_browser_none_opens_nothing(launch, monkeypatch):
@@ -570,6 +617,8 @@ def test_mac_launcher_explains_a_missing_python(tmp_path):
     code = tmp_path / "code"
     code.mkdir()
     (code / "APProcessor.command").write_bytes((ROOT / "APProcessor.command").read_bytes())
+    (code / "scripts").mkdir()
+    (code / "scripts" / "launch.py").write_text("")
     out = subprocess.run(["/bin/bash", str(code / "APProcessor.command")], capture_output=True, text=True,
                          env={"PATH": str(bindir), "AP_NO_PAUSE": "1"}, timeout=60)  # fmt: skip
     assert out.returncode == 1

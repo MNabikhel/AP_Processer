@@ -205,11 +205,11 @@ def packages_installed() -> bool:
 OFF, NO_PACKAGE, NO_ENDPOINT, NO_KEY, READY = "off", "no package", "no endpoint", "no key", "ready"
 
 
-def status(cfg: AzureCheckSettings, *, need_enabled: bool = True) -> tuple[str, str]:
-    """(state, plain-English why): "ready", or why nothing is checked. ``need_enabled``: False for "Test
-    connection", which a person may run before turning the check on."""
-    if need_enabled and not cfg.enabled:
-        return OFF, "Off — AP Coder works fully offline without it."
+def status(cfg: AzureCheckSettings) -> tuple[str, str]:
+    """(state, plain-English why): "ready", or why nothing is checked or tested. Off, nothing is sent at all, "Test
+    connection" included: this computer contacts Azure only once AP has switched the check on."""
+    if not cfg.enabled:
+        return OFF, "Off — AP Coder works fully offline without it. Switch it on (and save) to test the connection."
     if not packages_installed():
         return NO_PACKAGE, (f"{NAME}'s packages aren't installed on this computer (the optional 'azure' extra): "
                             "nothing is sent. AP Coder works fully offline without them.")  # fmt: skip
@@ -490,7 +490,7 @@ def only_host(host: str) -> Callable[[Any], None]:
 
 def make_client(cfg: AzureCheckSettings) -> Any:
     """The Document Intelligence client for the endpoint configured, its key, and nothing else."""
-    state, why = status(cfg, need_enabled=False)
+    state, why = status(cfg)
     if state != READY:
         raise AzureUnavailable(why)
     module = importlib.import_module("azure.ai.documentintelligence")
@@ -707,7 +707,7 @@ def connection_test(store: Any, settings: Settings | None = None, *, client: Any
     when = dt.datetime.now().isoformat(timespec="seconds")
     record: dict[str, Any]
     try:
-        state, why = status(cfg, need_enabled=False)
+        state, why = status(cfg)
         if state != READY:
             raise AzureUnavailable(why)
         t0 = time.perf_counter()
@@ -757,7 +757,7 @@ def overview(store: Any, settings: Settings | None = None, days: int = 30) -> di
         "enabled": cfg.enabled, "endpoint": cfg.endpoint, "host": cfg.host, "key_hint": cfg.key_hint,
         "model": cfg.model, "spot_percent": f"{cfg.spot_rate * 100:g}", "daily_pages": cfg.daily_pages,
         "state": state, "note": note, "ready": state == READY, "packages": packages_installed(),
-        "can_test": status(cfg, need_enabled=False)[0] == READY, "days": days, "checked": len(checks),
+        "can_test": status(cfg)[0] == READY, "days": days, "checked": len(checks),
         "agreed": agreed, "agreed_rate": agreed / len(checks) if checks else None,
         "fields_compared": sum(int(c["compared"] or 0) for c in checks),
         "fields_agreed": sum(int(c["agreed"] or 0) for c in checks),
