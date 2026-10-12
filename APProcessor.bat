@@ -115,7 +115,7 @@ goto :fail
 
 :nofolder
 echo.
-echo AP Coder could not open its own folder: %~dp0
+echo AP Coder could not open its own folder: "%~dp0"
 goto :fail
 
 :fail
