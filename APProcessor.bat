@@ -14,7 +14,8 @@ rem
 rem  Developers only: set AP_ALLOW_INTERNET=1 in this window first to let it download packages,
 rem  the OCR models, and - when no Python is found - offer to install Python 3.12 with winget.
 rem
-rem  install.bat and start.bat run this same file; they are kept for older shortcuts.
+rem  The installer's questions (data folder, Azure settings, shortcut): APProcessor.bat --installer,
+rem  typed in scripts\terminal.bat. Older versions' install.bat and start.bat are gone: this file does both.
 rem  The steps themselves are in scripts\launch.py.
 rem ===========================================================================================
 setlocal

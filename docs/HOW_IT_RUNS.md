@@ -30,9 +30,8 @@ Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 | --- | --- |
 | `APProcessor.bat` (Windows) | The double-click. Finds a Python, then runs `scripts\launch.py` with it. ASCII, CRLF, every path quoted (`tests/test_launcher_scripts.py`). |
 | `APProcessor.command` (macOS; Linux from a terminal) | The same for bash 3.2 (macOS's `/bin/bash`). |
-| `install.bat` / `install.sh` | `APProcessor --installer`: the same setup plus the installer's questions (`scripts/install.py`). Run over or beside an older version it does what the double-click does (stale files removed, old settings retired, older installs cleaned up after the self-check); run again with nothing changed it says *Nothing to update* in seconds. |
-| `start.bat` / `start.sh` | Kept for old shortcuts: run `APProcessor` unchanged. |
-| `terminal.bat` | A command prompt with `.venv\Scripts` first on `PATH` (no `activate.bat`, which hard-codes the folder the .venv was made in). |
+| `APProcessor.bat --installer` / `./APProcessor.command --installer` | The same setup plus the installer's questions (`scripts/install.py`; its options after `--installer`). Run over or beside an older version it does what the double-click does (stale files removed, old settings retired, older installs cleaned up after the self-check); run again with nothing changed it says *Nothing to update* in seconds. |
+| `scripts\terminal.bat` (Windows) | A command prompt in AP Coder's folder (the one above `scripts\`) with `.venv\Scripts` first on `PATH` (no `activate.bat`, which hard-codes the folder the .venv was made in). |
 | `scripts/launch.py` | Every step after Python is found (standard library only until the packages are installed). |
 | `scripts/running.py` | Finds an AP Coder already running and stops an older one. |
 | `scripts/upgrade.py` | Taking over from older installs: record, data move, file paths, stale files, clean-up. |
@@ -42,6 +41,10 @@ Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 | `scripts/pilot_check.py` | The self-check: reads the ten sample invoices with no AI model and no Azure. |
 | `scripts/build_offline_bundle.py` | IT, on a computer with internet: builds the offline ZIP (code, `wheelhouse/`, `models/`, `bundle_manifest.json`). |
 | `ap_coder/cli.py:cmd_serve` → `ap_coder/web/server.py:serve` | The dashboard server (`python -m ap_coder serve`). |
+
+One file to open per computer: older versions also shipped `install.bat` / `install.sh`, `start.bat` / `start.sh`
+and a top-level `terminal.bat`. Unzipped over such a folder, the new version removes them (`scripts/upgrade.py:prune_stale`),
+and `scripts/upgrade.py:LAUNCHERS` still recognises a folder that has only them.
 
 ## 2. The launcher at a glance
 
@@ -134,7 +137,7 @@ launchers never pick one older than 3.11. Python is never installed by the offli
 6. None: says what to install (`brew install python@3.12` or python.org) and `stop`s (pause unless `AP_NO_PAUSE`).
 
 The script is bash 3.2 (no associative arrays, `mapfile`, `${var,,}`, `&>>`…): `tests/test_launcher_scripts.py`
-refuses every bash-4-only form and runs `bash -n` on it, `install.sh` and `start.sh`.
+refuses every bash-4-only form and runs `bash -n` on it.
 
 ### Inside launch.py: a better Python than the one found
 
@@ -277,7 +280,7 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **Desktop shortcut** (`scripts/launch.py:ensure_shortcut`): Windows, `AP Coder.lnk` to `APProcessor.bat` (written
   by PowerShell's `WScript.Shell`); Mac, `~/Desktop/AP Coder.command`, a two-line script that `exec`s the current
   install's `APProcessor.command` (only ever written over one of its own: `LAUNCHER_MARK`). Rewritten when the
-  current install changes; one deleted or declined (`install.bat --no-shortcut`) is not put back. Linux: none.
+  current install changes; one deleted or declined (`--installer --no-shortcut`) is not put back. Linux: none.
 * **Self-check** (`scripts/launch.py:self_check` → `scripts/pilot_check.py`): on the first run, after packages were
   installed, after an update, with `--check`, or when older installs wait to be cleaned up and no self-check has run here yet. Reads the ten samples
   (no AI model, no Azure) and one as a scan with local OCR. A failure is said; AP Coder still starts; older installs
@@ -315,7 +318,7 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **One at a time** (`take_lock`): `.ap_coder_launch.lock` in the code folder, an OS lock (`msvcrt.locking` on
   Windows, `flock` elsewhere), held by the start for as long as its dashboard runs and released by the OS if it
   crashes. A second double-click opens the running dashboard (`running_dashboard`), waits for one being set up (up
-  to 30 minutes, `wait_for_other`), or stops an older one (`stop_older`). `install.bat` refuses while AP Coder runs.
+  to 30 minutes, `wait_for_other`), or stops an older one (`stop_older`). `--installer` refuses while AP Coder runs.
 
 ## 9. The data folder and everything AP Coder writes
 
@@ -384,16 +387,16 @@ Tests: `tests/test_offline*.py`, `tests/test_network_gates.py`, and a web test t
 
 **Windows.** Any folder name works (spaces, `( )`, `&`, accents): every path in the .bat files is quoted, and they
 are ASCII with CRLF (`.gitattributes: *.bat -text` keeps them so in a ZIP). A UNC share works through `pushd`.
-`terminal.bat` gives a prompt where `python` is .venv's. Closing the window ends AP Coder (the server file may stay;
+`scripts\terminal.bat` gives a prompt where `python` is .venv's. Closing the window ends AP Coder (the server file may stay;
 the next start ignores a server file whose port does not answer). PowerShell is used for the desktop folder, the
 shortcut and finding an old dashboard's process; where it is blocked, the shortcut is "tried again next time" and an
 old dashboard must be closed by hand.
 
 **macOS.** The first time: right-click → *Open* (Gatekeeper; the bundle ZIP keeps the executable bit:
-`build_offline_bundle` writes mode 755 for `.command` and `.sh`). Python from python.org or Homebrew; Apple's
+`build_offline_bundle` writes mode 755 for `.command`). Python from python.org or Homebrew; Apple's
 `/usr/bin/python3` only with the developer tools. The desktop launcher is a `.command` script, not an alias.
 
-**Linux.** Run `./APProcessor.command` (or `./install.sh`) from a terminal; file managers do not run `.command`
+**Linux.** Run `./APProcessor.command` from a terminal; file managers do not run `.command`
 files. No desktop shortcut. Debian/Ubuntu need `python3.X-venv`. Without a desktop (SSH), no browser is opened: the
 address is printed; forward the port (`ssh -L 8501:127.0.0.1:8501`) to use it from another computer.
 
@@ -419,7 +422,7 @@ uvicorn on port 8765 in the same process).
 | Step | CloseDesk | AP Coder | Verdict |
 | --- | --- | --- | --- |
 | Launcher logic | in the .bat / .command | thin .bat / .command, steps in `scripts/launch.py` | **Keep**: one tested implementation for three OSes |
-| Python on Windows | `where py` → `py -3`, else `python`; version not checked | version-checked list, 3.12 first, Store alias and py-manager safe, "too old" said | **Keep** |
+| Python on Windows | `where py` → `py -3`, else `python`; version not checked | version-checked list, 3.12 first, Store alias and py install manager safe, "too old" said | **Keep** |
 | Python on Mac/Linux | `python3 \|\| python` | ranked versions, Homebrew and python.org folders, Apple stub never run | **Keep** |
 | Folder | `cd /d "%~dp0"` | `pushd "%~dp0"` (network shares) | **Keep** |
 | .venv | made once if missing, never repaired | reused; remade when broken or for a Python the bundle lacks | **Keep** |

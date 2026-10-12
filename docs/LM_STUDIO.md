@@ -1,11 +1,11 @@
 # LM Studio: the models AP Coder uses, and sharing them with CloseDesk
 
 AP Coder is offline: every model it uses runs in LM Studio on this computer. CloseDesk (the inbox app, same team)
-uses the **same LM Studio** on the manager's Mac, often at the same time. This page says what AP Coder uses each
+uses the **same LM Studio** on the pilot tester's Mac, often at the same time. This page says what AP Coder uses each
 model for, the limits it keeps (the same as CloseDesk's, so the two apps share one copy of each model), and what to
 do when something is wrong.
 
-## The setup on the manager's Mac
+## The setup on the pilot tester's Mac
 
 | Model in LM Studio | AP Coder uses it for | CloseDesk uses it for |
 | --- | --- | --- |

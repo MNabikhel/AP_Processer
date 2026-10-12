@@ -124,7 +124,7 @@ def test_switch_off_never_approves_without_a_person(tmp_path, path):
     assert store.get_supplier_profile(KEY)["state"] == SUPERVISED  # nothing promoted while off
     decision = _decide(store, path)
     assert decision == {"state": READY, "auto": False, "audit": False, "reason": TOUCHLESS_OFF}
-    # A vendor a manager turned touchless before the switch existed is not touchless either.
+    # A vendor an AP lead turned touchless before the switch existed is not touchless either.
     store.set_supplier_state(KEY, AUTONOMOUS, "Mia")
     assert _decide(store, path)["auto"] is False and _decide(store, path)["state"] == READY
 

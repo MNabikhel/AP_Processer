@@ -159,6 +159,26 @@ def test_retired_samples_and_top_level_files_of_an_older_version_are_removed(upg
     assert (folder / "private" / "README.md").exists() and (folder / ".venv").exists()
 
 
+def test_the_older_versions_install_and_start_files_are_removed_when_unzipped_over_them(upgrade, tmp_path):
+    """Older versions shipped install.bat / install.sh / start.bat / start.sh / terminal.bat beside the launcher. The
+    new bundle has one file to open per computer (and scripts/terminal.bat): unzipped over an older folder, the old
+    files go, the launchers stay, and the older folder is still recognised as AP Coder by them."""
+    old = make_install(tmp_path / "old", "0.1.0", venv=False, extra=("install.bat", "start.sh"))
+    (old / "APProcessor.bat").unlink()
+    (old / "APProcessor.command").unlink()
+    assert upgrade.is_install(old) and upgrade.removable(old, tmp_path / "elsewhere") == ""
+    folder = make_install(tmp_path / "AP Coder", "0.3.0", files=True, extra=("scripts/terminal.bat",))
+    retired = ["install.bat", "install.sh", "start.bat", "start.sh", "terminal.bat"]
+    for name in retired:
+        (folder / name).write_text("call APProcessor.bat\n")
+    removed, freed = upgrade.prune_stale(folder)
+    assert sorted(removed) == sorted(retired) and freed > 0
+    assert not any((folder / name).exists() for name in retired)
+    for kept in ("APProcessor.bat", "APProcessor.command", "scripts/terminal.bat", "README.md"):
+        assert (folder / kept).exists(), kept
+    assert upgrade.prune_stale(folder) == ([], 0)
+
+
 def test_nothing_is_pruned_without_a_file_list_or_in_a_checkout(upgrade, tmp_path):
     folder = make_install(tmp_path / "old bundle", "0.1.0")  # an AP Coder 0.1 manifest: no file list
     (folder / "ap_coder" / "extra.py").write_text("x")
@@ -513,9 +533,9 @@ def test_an_older_install_next_to_this_one_is_found(upgrade, tmp_path):
 
 
 def test_an_older_folder_beside_already_cleaned_up_and_kept_is_not_taken_over_again(upgrade, tmp_path):
-    """The manager's GitHub ZIP beside the new bundle, with an old Windows .wheelhouse he copied in: the first start
-    removes its .venv and keeps the folder (files AP Coder didn't put there). It was found again on every later start
-    and said "Kept the older AP Coder folder ..." each time, with nothing left to clean."""
+    """The pilot tester's GitHub ZIP beside the new bundle, with an old Windows .wheelhouse he copied in: the first
+    start removes its .venv and keeps the folder (files AP Coder didn't put there). It was found again on every later
+    start and said "Kept the older AP Coder folder ..." each time, with nothing left to clean."""
     downloads = tmp_path / "Downloads"
     old = make_pre_launcher_install(downloads / "AP_Processer-main")
     (old / ".wheelhouse").mkdir()

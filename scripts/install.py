@@ -3,8 +3,8 @@
 Most people just double-click ``APProcessor.bat`` (Windows) or ``APProcessor.command`` (Mac): that sets
 up whatever is missing and starts AP Coder. This installer is the same setup (``scripts/launch.py``: one
 ``.venv``, only missing packages installed, OCR models copied once, one desktop shortcut) with the
-questions on top. ``install.bat`` / ``install.sh`` run it (through APProcessor, so Python is found the
-same way). It is safe to run again at any time: each run updates what changed and keeps everything else.
+questions on top. ``APProcessor.bat --installer`` / ``./APProcessor.command --installer`` run it (so Python is
+found the same way). It is safe to run again at any time: each run updates what changed and keeps everything else.
 
 * offline by default (an enterprise build): packages only from the offline bundle's ``wheelhouse/``, the
   OCR models only from its ``models/``, and no git update. Developers opt in to the internet (PyPI, the
@@ -202,7 +202,7 @@ def make_way() -> str:
     if verdict == "newer":
         return f"A newer AP Coder is running (port {port}): this older version installs nothing."
     if verdict == "blocked":
-        return "An older AP Coder is still running: close the old AP Coder window, then run install.bat again."
+        return f"An older AP Coder is still running: close the old AP Coder window, then run {launch.INSTALLER} again."
     return ""
 
 
@@ -427,8 +427,8 @@ def run_checks(c: Console, args: argparse.Namespace, env: Path, changed: bool = 
         launch.save_state(state)
         (c.ok if ok else c.warn)(result)
         if not ok:
-            c.info("For the details run  python scripts/pilot_check.py  (in terminal.bat, or .venv/bin/python on a "
-                   "Mac), and send its output to whoever set up the pilot.")  # fmt: skip
+            c.info(f"For the details run  python scripts/pilot_check.py  {launch.IN_TERMINAL}, and send its output to "
+                   "whoever set up the pilot.")  # fmt: skip
     else:
         c.ok(f"up to date: self-check OK on {last.get('at', '?')}, nothing changed since")
     if getattr(args, "full_tests", False):
@@ -451,7 +451,9 @@ def run_checks(c: Console, args: argparse.Namespace, env: Path, changed: bool = 
 
 def main(argv: list[str] | None = None, venv: str | None = None) -> int:
     """The installer's steps, inside ``.venv`` (``launch.py --installer`` makes it first; ``venv`` says how)."""
-    parser = argparse.ArgumentParser(description="Install or update AP Coder (safe to run again).")
+    parser = argparse.ArgumentParser(
+        prog=launch.INSTALLER, description="Install or update AP Coder (safe to run again)."
+    )
     parser.add_argument("--yes", action="store_true", help="no questions: keep current answers / defaults")
     parser.add_argument("--no-update", action="store_true", help="don't check GitHub for a newer version")
     parser.add_argument("--skip-tests", action="store_true", help="skip the self-check")
@@ -527,5 +529,5 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":  # the same as install.bat / install.sh: .venv first, then the steps above
+if __name__ == "__main__":  # the same as APProcessor --installer: .venv first, then the steps above
     sys.exit(launch.main(["--installer", *sys.argv[1:]]))

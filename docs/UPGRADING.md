@@ -12,6 +12,12 @@ the new offline bundle anywhere (a new folder, or over the old one), then double
 Linux: `APProcessor.command`). Leaving the old AP Coder open is fine, and even helps: the new version finds an old
 one that runs, stops it and cleans its folder up.
 
+The new version has one file to open per computer: `APProcessor.bat` (Windows) or `APProcessor.command` (Mac,
+Linux). Older folders also had `install.bat`, `install.sh`, `start.bat`, `start.sh` and `terminal.bat`. When the new
+bundle is unzipped over such a folder, those files are removed on its first start. Nothing to do by hand. The
+command prompt for AP Coder's commands is now `scripts\terminal.bat`, and the installer's questions are
+`APProcessor.bat --installer`.
+
 ## The older versions
 
 | Version (main after) | How its README installed and started it | Data, `.env`, record | Database |
@@ -89,8 +95,8 @@ traced (`strace`): none may leave the computer.
 - CI's *Update from ...* job runs the first version (unzipped over), PR #1 (run by hand, data in `private/`) and
   PR #8 on Windows, macOS and Linux, through `APProcessor.bat` / `APProcessor.command`, with every proxy pointing
   at a closed port.
-- CI's *The manager's Mac* job is one real case: a Mac with only Python 3.14, GitHub's ZIP of PR #8 with an older
-  Windows bundle's wheelhouse copied in as `.wheelhouse` (`old_versions.py old-wheelhouse`), whose double-click
+- CI's *The pilot tester's Mac* job is one real case: a Mac with only Python 3.14, GitHub's ZIP of PR #8 with an
+  older Windows bundle's wheelhouse copied in as `.wheelhouse` (`old_versions.py old-wheelhouse`), whose double-click
   stopped on *Missing packages: azure-ai-documentintelligence, ..., streamlit*. The Mac bundle is then unzipped into
   a new folder and over the old one, offline, with LM Studio's three models standing in on port 1234
   (`scripts/ci/fake_lm_studio.py`: Qwen 3.5 9B, OvisOCR2, a Qwen embedding model): it must start, serve every page,
@@ -98,10 +104,11 @@ traced (`strace`): none may leave the computer.
   OvisOCR2, open the running one on a second double-click and start again in seconds, with one install on record
   and one desktop launcher. GitHub's ZIP of the new main with the old `.wheelhouse` must stop with the one sentence
   *This package folder (wheelhouse) was built for Windows, Python 3.11/3.12; this computer is a Mac with Python
-  3.14. Use the bundle built for Macs (build it with --mac)*, not a list of packages; its `install.sh` too. And
-  `install.sh`, run over the old folder and in a new folder beside it (no answers given, then `--yes`), three times
-  each: the first brings everything up to date (PR #8's leftover files removed, its `.venv` cleaned up, the self-check
-  run), the next two say *Nothing to update* in seconds; the double-click then starts without setting anything up.
+  3.14. Use the bundle built for Macs (build it with --mac)*, not a list of packages; its installer too
+  (`./APProcessor.command --installer`). And the installer, run over the old folder and in a new folder beside it
+  (no answers given, then `--yes`), three times each: the first brings everything up to date (PR #8's leftover
+  files removed, its `install.sh` and `start.sh` too, its `.venv` cleaned up, the self-check run), the next two
+  say *Nothing to update* in seconds; the double-click then starts without setting anything up.
 
 Last run on Linux (Python 3.12, the 0.2.0 offline bundle built for it, 2026-10-12): all 24 cases of the first
 table (each version, each way it was installed, unzipped into a new folder and over it) passed, and so did the

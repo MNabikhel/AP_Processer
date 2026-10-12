@@ -40,8 +40,9 @@ launch.log`` (kept once as ``launch.previous.log`` past 1 MB), for IT after the 
 says what to do; an error no step expected is said in one line, its traceback in that log.
 
 ``--installer`` runs the installer's extra steps instead (``scripts/install.py``: data folder and Azure
-questions, self-test); ``install.bat`` / ``install.sh`` pass it. Other options: ``--check`` (run the
-self-check again), ``--no-start``, ``--yes``. Anything else (e.g. ``--port 8502``) goes to the dashboard.
+questions, self-test): ``APProcessor.bat --installer`` / ``./APProcessor.command --installer``. Other options:
+``--check`` (run the self-check again), ``--no-start``, ``--yes``. Anything else (e.g. ``--port 8502``) goes to the
+dashboard.
 
 Standard library only until the packages are installed: the first run starts with no packages at all.
 """
@@ -80,6 +81,11 @@ from ap_coder.offline import INTERNET_ENV, browser_wanted, internet_allowed  # n
 
 WINDOWS = os.name == "nt"
 MAC = sys.platform == "darwin"
+# The installer's steps and questions: the one launcher with --installer (typed in a command prompt or Terminal).
+INSTALLER = "APProcessor.bat --installer" if WINDOWS else "./APProcessor.command --installer"
+# Where AP Coder's own commands are typed: scripts\terminal.bat (a command prompt with .venv first on PATH), or
+# Terminal in AP Coder's folder with .venv's Python.
+IN_TERMINAL = "in scripts\\terminal.bat" if WINDOWS else "in Terminal, in AP Coder's folder, with .venv/bin/python"
 VENV = ROOT / ".venv"
 VENV_PY = VENV / ("Scripts/python.exe" if WINDOWS else "bin/python")
 STATE = VENV / "ap_coder_launcher.json"  # what this .venv has been through (gone with it when it is recreated)
@@ -1145,7 +1151,7 @@ def unblock_launchers() -> None:
     .command in Gatekeeper's quarantine. AP Coder was started from this folder on purpose: the mark is taken off its
     own launchers (nothing else). Never a reason to stop."""
     if WINDOWS:
-        for launcher in [*ROOT.glob("*.bat"), *ROOT.glob("*.cmd")]:
+        for launcher in [*ROOT.glob("*.bat"), *ROOT.glob("*.cmd"), *(ROOT / "scripts").glob("*.bat")]:
             try:
                 os.remove(f"{launcher}:Zone.Identifier")  # the Mark of the Web: an NTFS stream of the file
             except OSError:
@@ -1166,7 +1172,7 @@ def shortcut_target() -> Path:
 def ensure_shortcut() -> str:
     """One "AP Coder" shortcut on the desktop (Windows; a Mac gets an "AP Coder.command" launcher) that always opens
     the current install: (re)written when this install became the current one, or when an earlier try failed (then
-    it is tried again on the next start). One the person deleted, or declined (install.bat --no-shortcut), is not
+    it is tried again on the next start). One the person deleted, or declined (--installer --no-shortcut), is not
     put back while the current install stays the same. Returns a summary line ("" = nothing to say)."""
     if not (WINDOWS or MAC):
         return ""
@@ -1240,7 +1246,7 @@ def sync_notes(data: Path) -> list[tuple[str, str]]:
     if service:
         notes.append(("warn", f"The data folder is synced by {service} ({data}): the database can be damaged while "
                               "it is synced, and an online-only invoice can't be opened offline. Choose a data folder "
-                              "that is not synced (install.bat asks for one)"))  # fmt: skip
+                              f"that is not synced ({INSTALLER} asks for one)"))  # fmt: skip
     return notes
 
 
@@ -1534,7 +1540,7 @@ def start_dashboard(rest: list[str], state: dict) -> int:
                                 encoding="utf-8", errors="replace", bufsize=1, env=child_env())  # fmt: skip
     except OSError as exc:
         return failed(SetupError(f"AP Coder could not start ({exc}).", "Start AP Coder again; if it happens again, "
-                                 "run  python -m ap_coder doctor  in terminal.bat."))  # fmt: skip
+                                 f"run  python -m ap_coder doctor  {IN_TERMINAL}."))  # fmt: skip
     ready = threading.Event()
 
     def show_output() -> None:
@@ -1579,7 +1585,7 @@ def previous_install(state: dict, ident: dict, legacy: list[str]) -> dict | None
     older = [i for i in upgrade.previous_versions(ROOT, legacy) if paths.is_older(i, ident)]
     if older:
         return older[-1]
-    # Unzipped over an AP Coder from before this launcher (install.bat, or by hand): only its .venv says which.
+    # Unzipped over an AP Coder from before this launcher (its install.bat, or by hand): only its .venv says which.
     registered = registered_version()
     if registered and paths.version_key(registered) < paths.version_key(ident["version"]):
         return {"version": registered, "build": ""}
@@ -1672,14 +1678,14 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     if shortcut:
         lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
     old = older_installs(ident, legacy)
-    unchecked = bool(old) and not state.get("self_check")  # (set up by install.bat: checked before the clean-up)
+    unchecked = bool(old) and not state.get("self_check")  # (set up by --installer: checked before the clean-up)
     if first or installed or args.check or previous or unchecked:
         ok, result = self_check()
         state["self_check"] = {"ok": ok, "at": time.strftime("%Y-%m-%d %H:%M"), "result": result}
         lines.append(("ok" if ok else "fail", result))
         if not ok:
             lines.append(("info", "AP Coder still starts. For the details run  python scripts/pilot_check.py  "
-                                  "in terminal.bat, and send its output to whoever set up the pilot."))  # fmt: skip
+                                  f"{IN_TERMINAL}, and send its output to whoever set up the pilot."))  # fmt: skip
     elif state.get("self_check"):
         last = state["self_check"]
         word = "OK" if last.get("ok") else "FAILED"
@@ -1703,8 +1709,13 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
 
 
 def parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
-    parser = argparse.ArgumentParser(description="Set up what is missing, check it, and start AP Coder.")
-    parser.add_argument("--installer", action="store_true", help="the installer's steps (install.bat)")
+    parser = argparse.ArgumentParser(
+        prog="APProcessor.bat" if WINDOWS else "./APProcessor.command",
+        description="Set up what is missing, check it, and start AP Coder.",
+        epilog="The installer's own options (with --installer): --yes, --no-update, --skip-tests, --full-tests, "
+        "--no-start, --fresh-start, --data-dir PATH, --no-shortcut, --reinstall.",
+    )
+    parser.add_argument("--installer", action="store_true", help="the installer's questions too")
     parser.add_argument("--yes", action="store_true", help="no questions (automated runs)")
     parser.add_argument("--check", action="store_true", help="run the self-check again")
     parser.add_argument("--no-start", action="store_true", help="set up and check, but don't start the dashboard")
@@ -1749,7 +1760,7 @@ def _main(argv: list[str] | None = None) -> int:
             if args.installer:
                 # The installer may reinstall packages into the .venv the running AP Coder uses: never under it.
                 line("fail", "AP Coder is open (or being set up) in another window: close AP Coder first, then run "
-                             "install.bat again. Nothing was installed.")  # fmt: skip
+                             f"{INSTALLER} again. Nothing was installed.")  # fmt: skip
                 return 1
             code = wait_for_other(argv)
             if code is not None:

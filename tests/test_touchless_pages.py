@@ -15,7 +15,7 @@ from .webclient import add_clean, client_for, follow, post
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    monkeypatch.setenv("AP_REVIEWER", "Manager Mia")
+    monkeypatch.setenv("AP_REVIEWER", "Lead Lee")
     return Store(tmp_path / "private" / "ap_coder.db")
 
 
@@ -42,7 +42,7 @@ def test_automation_tab_turns_touchless_on_with_a_confirmation(client, store):
     assert response.status_code == 400 and not store.touchless_enabled()
     page = follow(client, post(client, "/settings/automation/touchless", {"turn": "on", "sure": "1"}))
     assert store.touchless_enabled()
-    assert store.events(actions=["touchless_on"])[0]["actor"] == "Manager Mia"
+    assert store.events(actions=["touchless_on"])[0]["actor"] == "Lead Lee"
     assert "Touchless processing is on: 1 vendor touchless now." in page
     assert "On: a vendor that meets the bar" in page
     assert "Vendors touchless" in page and "Touchless, last 30 days" in page
@@ -72,7 +72,7 @@ def test_the_touchless_confirmation_is_asked_again_for_the_opposite_switch(clien
 def test_automation_tab_saves_the_limit(client, store):
     page = follow(client, post(client, "/settings/automation/limit", {"limit": "2500"}))
     assert store.touchless_limit() == 2500.0 and "Saved: 2,500.00 CAD." in page
-    assert store.events(actions=["settings_changed"])[0]["actor"] == "Manager Mia"
+    assert store.events(actions=["settings_changed"])[0]["actor"] == "Lead Lee"
 
 
 def test_learning_tab_has_no_per_vendor_turn_on_button(client, store):

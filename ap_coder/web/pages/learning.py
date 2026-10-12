@@ -4,7 +4,7 @@
   most common corrections, the memory (every lesson, with the option to forget some) and teaching from past coding
   (an ERP export of AP lines: upload, match the columns, teach).
 * Supplier learning: what each vendor's reviewed invoices taught, the fields the clerk corrected, how far it is from
-  going touchless, and a manager's "Keep supervised" / "Allow again" (recorded in the Activity log with their name).
+  going touchless, and an AP lead's "Keep supervised" / "Allow again" (recorded in the Activity log with their name).
 * Readers: each capture reader against what AP approved (scorecard, field by field) and the training data export
   (a ZIP of page images and approved values, a GET download made on this computer).
 

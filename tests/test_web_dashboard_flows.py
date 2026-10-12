@@ -1,4 +1,4 @@
-"""Clerk and manager flows through the dashboard's pages (ap_coder/web), each one a behaviour the earlier dashboard's
+"""Clerk and AP lead flows through the dashboard's pages (ap_coder/web), each one a behaviour the earlier dashboard's
 page tests covered: what is approved is what was on screen, the review screen's grid actions and messages, edits that
 must not outlive their invoice, actions on an invoice someone else just changed, uploads and saved emails that must
 not stop the Process page, and the pages that offer what an approval taught."""

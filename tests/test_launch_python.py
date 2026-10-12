@@ -207,7 +207,7 @@ BASH4 = {
 }
 
 
-@pytest.mark.parametrize("name", ["APProcessor.command", "install.sh", "start.sh"])
+@pytest.mark.parametrize("name", ["APProcessor.command"])
 def test_the_mac_launchers_need_only_bash_3_2(name):
     """macOS's own /bin/bash is 3.2 (2007): nothing from bash 4 or newer."""
     code = "\n".join(line.split(" #")[0] for line in (ROOT / name).read_text().splitlines()
@@ -290,9 +290,9 @@ def finder(tmp_path):
 
 
 @needs_bash
-def test_the_managers_mac_python_org_314_from_a_finder_double_click(finder):
-    """The manager's Mac: only python.org's Python 3.14.5, no developer tools (Apple's /usr/bin/python3 only opens an
-    install dialog), and Finder's short PATH, without /usr/local/bin: python.org's own folder is used."""
+def test_the_pilot_testers_mac_python_org_314_from_a_finder_double_click(finder):
+    """The pilot tester's Mac: only python.org's Python 3.14.5, no developer tools (Apple's /usr/bin/python3 only opens
+    an install dialog), and Finder's short PATH, without /usr/local/bin: python.org's own folder is used."""
     finder.python("python3", "3.9", finder.apple.parent)  # would open a dialog: never run
     finder.script("xcode-select", "echo 'xcode-select: error: unable to get active developer directory' >&2; exit 2")
     python = finder.at(PYTHON_ORG_314, "python3.14", "3.14")

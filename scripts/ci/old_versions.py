@@ -107,7 +107,7 @@ def extract(sha: str, folder: Path, bundle: bool = False) -> None:
 
 
 # An older Windows bundle's wheelhouse (Python 3.11 and 3.12, win_amd64), as someone copies it next to GitHub's ZIP
-# (the manager: as ".wheelhouse", on a Mac with Python 3.14). Its compiled wheels stand in by name only: none fits
+# (the pilot tester: as ".wheelhouse", on a Mac with Python 3.14). Its compiled wheels stand in by name only: none fits
 # a Mac or Linux, and AP Coder must say so in one sentence instead of installing anything or listing packages.
 OLD_WINDOWS_WHEELS = [
     "numpy-2.1.3-{t}-{t}-win_amd64.whl", "pandas-2.2.3-{t}-{t}-win_amd64.whl", "pyarrow-18.1.0-{t}-{t}-win_amd64.whl",

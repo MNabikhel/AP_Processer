@@ -595,7 +595,7 @@ def test_demo_records_and_removes_supplier_outcomes(tmp_path):
 def client(tmp_path, monkeypatch):
     from .webclient import client_for
 
-    monkeypatch.setenv("AP_REVIEWER", "Manager Mia")
+    monkeypatch.setenv("AP_REVIEWER", "Lead Lee")
     return client_for(Store(tmp_path / "private" / "ap_coder.db"))
 
 
@@ -636,11 +636,11 @@ def test_learning_page_is_a_training_view_with_keep_supervised(client, tmp_path,
     held = [k for k in ("id:V1", "id:V2") if store.get_supplier_profile(k)["state"] == HELD]
     assert held == [key]
     event = store.events(actions=["autonomy_held"])[0]
-    assert event["actor"] == "Manager Mia" and event["detail"]["reason"] == "prices changing"
+    assert event["actor"] == "Lead Lee" and event["detail"]["reason"] == "prices changing"
     assert "Kept supervised" in client.get("/learning?tab=suppliers").text
     follow(client, post(client, "/learning/suppliers/allow", {"key": key}))
     assert store.get_supplier_profile(held[0])["state"] == SUPERVISED
-    assert store.events(actions=["autonomy_allowed"])[0]["actor"] == "Manager Mia"
+    assert store.events(actions=["autonomy_allowed"])[0]["actor"] == "Lead Lee"
 
 
 def test_template_learns_the_whole_name_with_its_legal_suffix(tmp_path):

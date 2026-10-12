@@ -52,8 +52,9 @@ This is an offline enterprise build: the laptop never connects to the internet. 
 once, online (`python scripts/build_offline_bundle.py`: Windows, Python 3.11 to 3.14; add `--mac` for Macs),
 and the double-click installs from its `wheelhouse/`
 folder. A package or model missing from the bundle is said plainly, and AP Coder still starts when its core
-packages are there. `install.bat` / `install.sh` and `start.bat` /
-`start.sh` still work for older shortcuts; they run the same setup. The full pilot guide is
+packages are there. There is one file to open per computer: `APProcessor.bat` on Windows, `APProcessor.command`
+on a Mac. IT can add `--installer` to ask for the data folder and the Azure settings
+(`APProcessor.bat --installer`, typed in `scripts\terminal.bat`). The full pilot guide is
 [docs/PILOT.md](docs/PILOT.md). The step-by-step for real data is
 [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Updating from an older version (each one since the first
 commit): [docs/UPGRADING.md](docs/UPGRADING.md).
@@ -168,7 +169,7 @@ how often it agrees with the PDF's own figures, and the models in LM Studio.
 
 ## Touchless processing
 
-Touchless processing is **off** until a manager turns it on (*Settings → Automation*, with a confirmation,
+Touchless processing is **off** until an AP lead turns it on (*Settings → Automation*, with a confirmation,
 recorded in the Activity log). Until then every invoice is approved by a person, and each approval keeps
 training its vendor.
 
@@ -177,7 +178,7 @@ training its vendor.
   the time with 95% confidence over its last 200 invoices, and the last 10 without a correction. With
   about 13 header fields an invoice, that usually takes about 30 clean invoices.
 - **Checked as it goes.** 5% of touchless invoices still go to a person. One correction, or a touchless
-  invoice reopened, suspends the vendor until it has a fresh clean streak. A manager can *Keep supervised*
+  invoice reopened, suspends the vendor until it has a fresh clean streak. An AP lead can *Keep supervised*
   any vendor (*Learning & accuracy → Supplier learning*).
 - **Always a person**, whatever the vendor's record: a changed bank account or GST/HST number, any sign of
   a duplicate, an unusual amount, a vendor not in the vendor master or on hold, a credit note, a total
@@ -201,7 +202,7 @@ The launcher, the installer and `scripts/fetch_models.py` are offline by default
 bundle's `wheelhouse/` (`pip --no-index`), OCR models only from its `models/`, no `git` update, no `winget`
 Python. On a developer machine with internet, opt in with one environment variable, **`AP_ALLOW_INTERNET=1`**
 (`set AP_ALLOW_INTERNET=1` in cmd, `export AP_ALLOW_INTERNET=1` in bash): then missing packages come from
-PyPI, the PP-OCRv5 models from www.modelscope.cn, `install.bat` checks GitHub for updates and APProcessor.bat
+PyPI, the PP-OCRv5 models from www.modelscope.cn, `APProcessor.bat --installer` updates a git checkout and APProcessor.bat
 offers to install Python 3.12 with `winget`. `scripts/build_offline_bundle.py` sets it for itself (building the
 bundle is the one step that downloads). CI's online jobs set it; its offline-bundle job runs without it.
 

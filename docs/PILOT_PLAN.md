@@ -1,6 +1,6 @@
 # Pilot plan: four weeks to a decision
 
-A suggested way to run the AP Coder pilot so that, after a month, you can show your manager real
+A suggested way to run the AP Coder pilot so that, after a month, you can show leadership real
 numbers from your own invoices. Everything stays on the AP computer: invoices are read on the laptop,
 by OCR and by OvisOCR2 in LM Studio.
 
@@ -50,7 +50,7 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
       (.eml) into the invoices folder.
 - [ ] Look at **Vendors that make work** and ask the worst offenders for better invoices.
 - [ ] **Touchless, if ready:** when several regular vendors are close to the bar on *Learning & accuracy
-      → Supplier learning* and corrections have settled, a manager turns on touchless processing in
+      → Supplier learning* and corrections have settled, an AP lead turns on touchless processing in
       **Settings → Automation**. Check *Largest invoice approved without a person* (5,000.00 CAD by
       default) and use *Keep supervised* for any vendor that should always go to a person.
 

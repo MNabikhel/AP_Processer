@@ -10,8 +10,8 @@ Run it on a computer with internet (any OS):
 The ZIP (in ``dist/``) holds one ``APProcessor/`` folder:
 
 * the code (the files git tracks, never ``private/`` data or a ``.env``)
-* ``wheelhouse/``: every package for ``pip install -e ".[ocr]"`` (and ``.[dev]`` for install.bat, ``.[azure]`` for the
-  optional Azure check, installed by the launcher when it can), as wheels for each platform and Python version
+* ``wheelhouse/``: every package for ``pip install -e ".[ocr]"`` (and ``.[dev]`` for ``--installer``, ``.[azure]`` for
+  the optional Azure check, installed by the launcher when it can), as wheels for each platform and Python version
   asked for, plus pip, setuptools and wheel (where a package of the OCR add-on has no wheel, that target gets the
   rest without it: the launcher runs AP Coder without OCR; one without the Azure packages simply lacks them)
 * ``models/``: the PP-OCRv5 OCR models (``scripts/fetch_models.py`` copies them into place) and the table finder's

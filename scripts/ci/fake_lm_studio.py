@@ -1,4 +1,4 @@
-"""A stand-in for LM Studio with the manager's three models, and a check of which one AP Coder uses for what.
+"""A stand-in for LM Studio with the pilot tester's three models, and a check of which one AP Coder uses for what.
 
     python scripts/ci/fake_lm_studio.py serve [--port 1234] [--chat ID] [--reader ID] [--embed ID] [--api v0|v1|both]
                                               [--log FILE]

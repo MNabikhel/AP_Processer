@@ -16,4 +16,5 @@ private/
   reference/               # optional: CSV files for command-line use instead of the dashboard
 ```
 
-To start over, close the dashboard and run `install.bat --fresh-start` (or delete `ap_coder.db`).
+To start over, close the dashboard and run `APProcessor.bat --installer --fresh-start`
+in `scripts\terminal.bat` (Mac: `./APProcessor.command --installer --fresh-start`), or delete `ap_coder.db`.

@@ -22,11 +22,17 @@ backup of the database is made automatically once a day when AP Coder starts (th
   older AP Coder 0.1 dashboard too), moves your data if it has to, and opens the new one.
 - The Streamlit dashboard and the public web demo built on it are retired: AP Coder no longer installs
   Streamlit.
+- **One file to open per computer:** `APProcessor.bat` on Windows, `APProcessor.command` on a Mac. The old
+  `install.bat`, `install.sh`, `start.bat` and `start.sh` are gone, and so is the top-level `terminal.bat`.
+  An update removes them from an older folder by itself.
 
 **For IT**
 
 - `python -m ap_coder serve` runs the dashboard (`dashboard` is the same command); `GET /healthz` says which AP
   Coder answers, and the launcher stops it with `POST /shutdown` and a token kept in the data folder.
+- The installer's questions (data folder, Azure settings, shortcut) are `APProcessor.bat --installer` (Mac:
+  `./APProcessor.command --installer`), with the same options as before (`--yes`, `--fresh-start`, ...). The
+  command prompt for AP Coder's commands is `scripts\terminal.bat`.
 
 ## Earlier: pictures become PDFs, and line items read with a table finder
 
@@ -71,7 +77,7 @@ backup of the database is made automatically once a day when AP Coder starts (th
   date). Acme Ltd: 14 invoices reviewed, about 6 more clean invoices to go touchless.* Each corrected
   field is recorded for that vendor and updates its template.
 
-**For AP managers**
+**For AP leads**
 
 - **Touchless processing: one switch** in the new *Settings → Automation* tab, off by default, turned on
   with a confirmation (recorded in the Activity log). With it on, a vendor goes touchless by itself once it
@@ -262,5 +268,5 @@ folder.
   and an `.env` that still has them (`<your-resource>`) is read as "no Azure", so nothing tries to reach
   Azure. The doctor checks every package the app needs (without `pymupdf` no PDF can be read), says to
   run `APProcessor.bat` (the offline bundle) instead of `pip install`, shows the Python range the launcher
-  uses (3.11 to 3.13), and skips the local model when AI coding is turned off. `terminal.bat` still works
-  after the AP Coder folder is moved. The setup steps now say that IT installs LM Studio and its models.
+  uses (3.11 to 3.13), and skips the local model when AI coding is turned off. `terminal.bat` (now
+  `scripts\terminal.bat`) still works after the AP Coder folder is moved. The setup steps now say that IT installs LM Studio and its models.
