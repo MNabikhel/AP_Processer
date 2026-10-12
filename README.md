@@ -130,9 +130,11 @@ invoice (PDF, scan, photo, .eml) ─► local reader: text layer or OCR ─► f
             GL distribution ─► review dashboard ─► approve ─► learning memory ─► ERP / JDE E1 export
 ```
 
-Everything stays in a local data folder outside the code (default `~/APCoder`). The dashboard only listens
-on `127.0.0.1`, and a test fails if any page tries to connect to the internet. Only redacted reports
-(`doctor`, `share-report`) are meant to leave the laptop.
+Everything stays in a local data folder outside the code (default `~/APCoder`). The dashboard listens only
+on `127.0.0.1` (unless IT sets `AP_DASHBOARD_ADDRESS`), and a test fails if any page tries to connect to the
+internet. Only redacted reports (`doctor`, `share-report`) are meant to leave the laptop. How the launcher, the
+update and the server work, what is written where, and every place the network could be touched:
+[docs/HOW_IT_RUNS.md](docs/HOW_IT_RUNS.md).
 
 ## How every invoice is read
 
@@ -224,7 +226,7 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](docs/PILO
 
 | Setting | Default | |
 | --- | --- | --- |
-| `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1` |
+| `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows on this computer or the office network; Ollama: `http://127.0.0.1:11434/v1` (an internet address only with `AP_ALLOW_INTERNET=1`) |
 | `AP_LLM_MODEL` | empty | empty = the chat model LM Studio has (never an embedding model or OvisOCR2) |
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
 | `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |
@@ -510,7 +512,8 @@ scripts/             launch.py (the launcher: set up, start the dashboard, open 
                      check_deps.py, fetch_models.py (launcher steps), pilot_check.py, build_offline_bundle.py,
                      sample invoice generator
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
-docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md,
+docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), HOW_IT_RUNS.md
+                     (launcher, update, server, files, network), WHATS_NEW.md, PILOT_PLAN.md,
                      screenshots/
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients and LM Studio mocked)
