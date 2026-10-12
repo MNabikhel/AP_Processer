@@ -229,28 +229,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     """Run the dashboard in this process (ap_coder/web/server.py) until Ctrl+C or the launcher stops it."""
     if args.env_file:  # the settings the dashboard reads again for every page
         os.environ["AP_ENV_FILE"] = str(Path(args.env_file).resolve())
-    from .offline import dashboard_address, is_loopback
+    from .offline import dashboard_address, free_port, is_loopback
     from .store import Store
     from .web.server import browser_url, serve
 
-    port = args.port or free_port(8501)
     host = args.host or dashboard_address()
+    port = args.port or free_port(address=host)  # (the launcher's own choice: 8501, else the next free one)
     print(f"Dashboard: {browser_url(host, port)}  (it opens in your browser; Ctrl+C here to stop)", file=sys.stderr)
     if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
         print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
               "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
     return serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)))
-
-
-def free_port(start: int) -> int:
-    """The first port from ``start`` that nothing on this computer is listening on."""
-    import socket
-
-    for port in range(start, start + 50):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
-                return port
-    return start
 
 
 def _inputs(paths: list[str]) -> list[Path] | None:

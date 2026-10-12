@@ -178,8 +178,9 @@ def test_a_reopened_touchless_invoice_suspends_until_a_fresh_streak(tmp_path, gr
     store.import_vendor_master([{"vendor_name": ground_truth["vendor_name"], "erp_id": "V1"}])
     invoice_id = store.add_invoice(tmp_path / "a.pdf", ground_truth, {"requires_review": False})
     store.approve_invoice(invoice_id, ground_truth, AUTONOMOUS_REVIEWER, login="ap-coder")
-    on_reopen(store, invoice_id, "Ann", "wrong PO")  # what the review screen does, then it reopens it
+    before = store.get_invoice(invoice_id)  # what the review screen does: reopen it, then suspend its vendor
     store.reopen(invoice_id, "Ann", "wrong PO")
+    on_reopen(store, invoice_id, "Ann", "wrong PO", before=before)
     assert "reopened" in store.events(actions=["autonomy_suspended"])[0]["detail"]["reason"]
     profile = store.get_supplier_profile(KEY)
     assert profile["state"] == SUSPENDED and profile["suspended_at"]
@@ -391,6 +392,28 @@ def test_an_error_still_blocks_and_the_audit_sample_still_applies(touchless, pat
     picked = next(tmp_path / f"p{n}.pdf" for n in range(500) if audit_pick(tmp_path / f"p{n}.pdf", 0.05))
     decision = _decide(touchless, picked)
     assert decision["audit"] and not decision["auto"] and decision["reason"] == "picked for the audit sample"
+
+
+@pytest.mark.parametrize("code", ["GL_UNASSIGNED", "CC_UNASSIGNED"])
+def test_a_line_without_an_account_is_never_approved_without_a_person(touchless, path, code):
+    """The review screen never lets a person post a line to UNASSIGNED (the approve bar asks for an account first);
+    touchless processing must not either. The finding is only a warning, so it was approved."""
+    decision = _decide(touchless, path, report=_report(code))
+    assert not decision["auto"] and not decision["audit"]
+    assert "GL account" in decision["reason"] or "cost center" in decision["reason"]
+
+
+def test_a_line_only_the_local_model_coded_is_never_approved_without_a_person(touchless, path):
+    """A line neither AP's history nor a coding rule could code gets the local chat model's guess (right on 11 of
+    41 sample lines): a valid account, so no finding, and the touchless bar measures header fields only."""
+    from ap_coder.pipeline import MODEL_SUGGESTED
+
+    line = {"line_number": 1, "predicted_gl_code": "6010", "reasoning_justification": f"{MODEL_SUGGESTED}: hardware"}
+    output = {"grand_total": 1050.0, "currency": "CAD", "line_items": [line]}
+    decision = _decide(touchless, path, output=output)
+    assert not decision["auto"] and "local model" in decision["reason"]
+    line["reasoning_justification"] = "Approved 4 times for this vendor"
+    assert _decide(touchless, path, output=output)["auto"]
 
 
 def test_several_gates_are_all_named():

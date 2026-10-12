@@ -180,9 +180,12 @@ def test_lm_studio_vision_model_and_nothing_loaded(lm_studio):
     server = lm_studio(["qwen2.5-vl-7b-instruct"], v0)
     assert check_server(LocalLLMSettings(base_url=server.base_url)).vision is True
 
-    idle = lm_studio(["qwen2.5-7b-instruct", "llama-3.2-3b-instruct"], [{**V0_LOADED[2], "state": "not-loaded"}])
+    idle = lm_studio(["gemma-3-27b-it", "qwen/qwen3.5-9b"], [{"id": "qwen/qwen3.5-9b", "type": "vlm", "state": "x"}])
     status = check_server(LocalLLMSettings(base_url=idle.base_url))
-    assert status.active and status.model == "qwen2.5-7b-instruct"  # downloaded: LM Studio loads it when asked
+    assert status.active and status.model == "qwen/qwen3.5-9b"  # the team's chat model: LM Studio loads it when asked
+    other = lm_studio(["qwen2.5-7b-instruct", "llama-3.2-3b-instruct"], [{**V0_LOADED[2], "state": "not-loaded"}])
+    status = check_server(LocalLLMSettings(base_url=other.base_url))
+    assert status.reachable and not status.active  # never the first on the list: it could be any size (CloseDesk)
     reader_only = lm_studio(["ath-maas_ovisocr2", "text-embedding-nomic-embed-text-v1.5"], [])
     status = check_server(LocalLLMSettings(base_url=reader_only.base_url))
     assert status.reachable and not status.active  # OvisOCR2 reads pages, it never suggests accounts
@@ -206,13 +209,57 @@ def test_detection_when_nothing_answers_is_quick_and_cached(real_fetch, monkeypa
         ("my-model", ["a", "b"], [], False, "my-model"),  # AP_LLM_MODEL wins
         ("", ["nomic-embed-text", "llama3.1:8b"], [], False, "llama3.1:8b"),  # Ollama: no embedding model
         ("", ["a", "b"], ["text-embedding-x", "b"], True, "b"),
-        ("", ["a", "b"], [], True, "a"),  # LM Studio with nothing loaded: a downloaded chat model, loaded when asked
+        # LM Studio with nothing loaded (just-in-time loading lists every downloaded model, and asking for one loads
+        # it): only the team's chat model, Qwen 3.5 9B, as CloseDesk asks for it; never the first on the list.
+        ("", ["a", "b"], [], True, ""),
+        ("", ["gemma-3-27b-it", "qwen/qwen3.5-9b", "b"], [], True, "qwen/qwen3.5-9b"),
         ("", ["ath-maas_ovisocr2", "text-embedding-x"], [], True, ""),  # never OvisOCR2 or an embedding model
+        ("", ["text-embedding-qwen3-embedding-0.6b", "ovis-ocr2", "qwen3.5-9b-mlx"], [], True, "qwen3.5-9b-mlx"),
+        ("", ["qwen3.5-27b", "qwen3.5-4b"], [], True, ""),  # another size is not the one the team runs
+        ("", ["Ovis_OCR2-GGUF"], ["Ovis_OCR2-GGUF"], True, ""),  # a page reader, however it is spelled
+        # OvisOCR2 under any name the page reader knows it by (an MLX build, separators): never the chat model
+        ("", ["ovis-ocr2", "qwen/qwen3.5-9b"], ["ovis-ocr2"], True, "qwen/qwen3.5-9b"),
+        ("", ["ovis_ocr2-mlx", "qwen3.5-9b-mlx"], ["ovis_ocr2-mlx"], True, "qwen3.5-9b-mlx"),
         ("", [], [], False, ""),
     ],
 )
 def test_pick_model(requested, ids, loaded, lm, expected):
     assert pick_model(requested, ids, loaded, lm_studio=lm) == expected
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "qwen/qwen3.5-9b", "qwen3.5-9b", "qwen3.5-9b-mlx", "qwen3.5-9b@q4_k_m", "lmstudio-community/Qwen3.5-9B-GGUF",
+        "mlx-community/Qwen3.5-9B-4bit", "Qwen3.5-9B-Instruct-Q4_K_M.gguf", "qwen3_5-9b", "qwen3.5:9b",
+    ],
+)  # fmt: skip
+def test_recognises_the_team_chat_model_in_every_build(model_id):
+    """The ids LM Studio gives Qwen 3.5 9B: by publisher, MLX or GGUF, with a quantization; Ollama's tag."""
+    assert local_llm.team_chat_model(model_id) and local_llm.is_chat_model(model_id)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "qwen3.5-4b", "qwen3.5-27b", "qwen3-8b", "qwen2.5-7b-instruct", "text-embedding-qwen3-embedding-0.6b",
+        "Qwen3-Embedding-4B-GGUF", "ath-maas_ovisocr2", "qwen3.5-19b",
+    ],
+)  # fmt: skip
+def test_other_models_are_not_the_team_chat_model(model_id):
+    assert not local_llm.team_chat_model(model_id)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "ath-maas_ovisocr2", "OvisOCR2-GGUF", "ovis-ocr2", "Ovis_OCR2@q8_0", "mlx-community/OvisOCR2-8bit",
+        "text-embedding-qwen3-embedding-0.6b", "qwen3-embedding-0.6b-mlx", "Qwen/Qwen3-Embedding-8B",
+        "nomic-embed-text",
+    ],
+)  # fmt: skip
+def test_page_readers_and_embedding_models_never_chat(model_id):
+    assert not local_llm.is_chat_model(model_id)
 
 
 def test_other_servers_guess_vision_from_the_name(lm_studio):
@@ -451,8 +498,10 @@ def test_settings_page_lists_the_models_with_nothing_to_choose(settings_client, 
     assert "IT team installs it" not in _words(page)
     table = page.split("Models in LM Studio", 1)[1].split("</table>", 1)[0]
     models = set(re.findall(r"<td[^>]*>\s*(?:<[^>]+>\s*)*([\w.-]+-instruct|[\w.-]*embed[\w.-]*)", table))
-    # what LM Studio has (its own listing), the embedding model left out
-    assert {"qwen2.5-7b-instruct", "qwen2.5-vl-7b-instruct"} <= models and not [m for m in models if "embed" in m]
+    # what LM Studio has (its own listing); the embedding model only as one AP Coder doesn't use
+    assert {"qwen2.5-7b-instruct", "qwen2.5-vl-7b-instruct"} <= models
+    for embedding in [m for m in models if "embed" in m]:
+        assert "not used (an embedding model)" in table.split(embedding, 1)[1].split("</tr>", 1)[0]
     for gone in ("llm_provider", "llm_model", "llm_vision", "pr_mode", "pr_scope", "pr_model"):
         assert f'name="{gone}"' not in page
     assert not read_env(env)  # looking at Settings writes nothing
@@ -664,3 +713,38 @@ def test_qwen35_can_see_pages():
 
     assert looks_like_vision("qwen3.5-9b") and looks_like_vision("qwen3.5:9b") and looks_like_vision("Qwen3.5-2B")
     assert not looks_like_vision("qwen3-8b")
+
+
+# --- A good neighbour to CloseDesk (docs/LM_STUDIO.md) --------------------------------------------------------------
+# CloseDesk uses the same LM Studio on the same Mac: AP Coder sends the chat model one request at a time, however many
+# invoices are processed at once, and never sends the same request again by itself after a timeout or a failure.
+
+
+def test_chat_requests_are_sent_one_at_a_time(lm_studio, reference):
+    lock = threading.Lock()
+    running, most = [0], [0]
+
+    def reply(body):
+        with lock:
+            running[0] += 1
+            most[0] = max(most[0], running[0])
+        time.sleep(0.15)
+        with lock:
+            running[0] -= 1
+        return chat_reply(json.dumps(PICKS), model="qwen3.5-9b")
+
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=reply)
+    threads = [threading.Thread(target=ask_accounts, args=(server, reference)) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(server.chats) == 4 and most[0] == 1
+
+
+def test_a_failed_chat_request_is_not_sent_again_by_itself(lm_studio, reference):
+    server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: (503, {"error": "busy"}))
+    with pytest.raises(CodingError):
+        ask_accounts(server, reference)
+    assert len(server.chats) == 1  # the OpenAI SDK's own retry would have sent it twice
+    assert local_llm.build_local_client(LocalLLMSettings()).max_retries == 0

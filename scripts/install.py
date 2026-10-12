@@ -173,6 +173,26 @@ def update_code(c: Console, args: argparse.Namespace) -> int | None:
     return None
 
 
+def bring_up_to_date(c: Console) -> bool:
+    """Run over (or beside) an older version, as the double-click does: say which version this updates, and remove
+    the files that version left in this folder (its tests, its Streamlit dashboard): with them, the self-check and
+    the app may load old code. Returns whether anything changed since this folder was last set up."""
+    state, ident = launch.load_state(), launch.identity()
+    legacy = launch.legacy_folders()
+    previous = launch.previous_install(state, ident, legacy)
+    upgrade.remember(upgrade.legacy_installs(ROOT, legacy))  # (older installs: cleaned up after the check)
+    if previous:
+        exact = paths.describe(previous) == paths.describe(ident)
+        c.ok(f"updating AP Coder from {paths.describe(previous, exact)} to {paths.describe(ident, exact)}")
+    removed, freed = upgrade.prune_stale(ROOT)
+    if removed:
+        files = f"{len(removed)} file{'' if len(removed) == 1 else 's'}"
+        c.ok(f"removed {files} the older version left in this folder ({upgrade.shown_size(freed)})")
+    if not previous and not removed and state.get("setup_done"):
+        c.ok(f"AP Coder {paths.describe(ident)} is up to date in this folder")
+    return bool(previous or removed or not state.get("setup_done"))
+
+
 def make_way() -> str:
     """An older AP Coder still running (another folder's, or this one's before it was unzipped over) is stopped
     before anything is installed: never two versions on one database. Returns why the installer must stop ("")."""
@@ -186,7 +206,8 @@ def make_way() -> str:
     return ""
 
 
-def ensure_venv_and_packages(c: Console, args: argparse.Namespace, venv: str | None) -> None:
+def ensure_venv_and_packages(c: Console, args: argparse.Namespace, venv: str | None) -> bool:
+    """.venv and the packages; True when something was made or installed."""
     c.step("Virtual environment and packages")
     if venv in ("created", "recreated"):
         c.ok(f"{venv} .venv (Python {sys.version.split()[0]})")
@@ -200,13 +221,14 @@ def ensure_venv_and_packages(c: Console, args: argparse.Namespace, venv: str | N
         if not launch.pip_install(["--force-reinstall", "--no-deps", *launch.editable(())]):
             c.warn("Reinstalling failed (see the messages above).")
     try:
-        level, summary, _ = launch.ensure_packages(state, extras=EXTRAS)
+        level, summary, installed = launch.ensure_packages(state, extras=EXTRAS)
     except launch.SetupError as exc:
         c.warn(str(exc))
         c.info(exc.hint)
         sys.exit(1)
     launch.save_state(state)
     (c.ok if level == "ok" else c.warn)(summary.removeprefix("Packages: "))
+    return bool(installed) or venv in ("created", "recreated")
 
 
 def has_data(folder: Path) -> bool:
@@ -391,18 +413,28 @@ def fetch_models(c: Console) -> None:
         c.ok("in place (copied from the offline bundle only when missing)")
 
 
-def run_checks(c: Console, args: argparse.Namespace, env: Path) -> None:
+def run_checks(c: Console, args: argparse.Namespace, env: Path, changed: bool = True) -> None:
+    """The launcher's self-check (the sample invoices read with no AI model: seconds) when something changed or none
+    passed yet, else its last result; the whole test suite only when asked (--full-tests: many minutes)."""
     c.step("Checks")
+    state = launch.load_state()
+    last = state.get("self_check") or {}
     if args.skip_tests:
-        c.ok("tests skipped (--skip-tests)")
+        c.ok("self-check skipped (--skip-tests)")
+    elif changed or not last.get("ok"):
+        ok, result = launch.self_check()
+        state["self_check"] = {"ok": ok, "at": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "result": result}
+        launch.save_state(state)
+        (c.ok if ok else c.warn)(result)
+        if not ok:
+            c.info("For the details run  python scripts/pilot_check.py  (in terminal.bat, or .venv/bin/python on a "
+                   "Mac), and send its output to whoever set up the pilot.")  # fmt: skip
     else:
+        c.ok(f"up to date: self-check OK on {last.get('at', '?')}, nothing changed since")
+    if getattr(args, "full_tests", False):
         result = quiet([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"])
         summary = (result.stdout.strip().splitlines() or ["(no output)"])[-1]
-        if result.returncode == 0:
-            c.ok(f"self-test: {summary}")
-        else:
-            c.warn(f"self-test: {summary}")
-            c.info("Please paste the full output of 'python -m pytest -q' (in terminal.bat) into the chat.")
+        (c.ok if result.returncode == 0 else c.warn)(f"test suite: {summary}")
     print()
     run([sys.executable, "-m", "ap_coder", "doctor"])
     values = read_env(env)
@@ -422,7 +454,8 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install or update AP Coder (safe to run again).")
     parser.add_argument("--yes", action="store_true", help="no questions: keep current answers / defaults")
     parser.add_argument("--no-update", action="store_true", help="don't check GitHub for a newer version")
-    parser.add_argument("--skip-tests", action="store_true", help="skip the self-test")
+    parser.add_argument("--skip-tests", action="store_true", help="skip the self-check")
+    parser.add_argument("--full-tests", action="store_true", help="also run the whole test suite (many minutes)")
     parser.add_argument("--data-dir", help=f"data folder (default {DEFAULT_DATA_DIR})")
     parser.add_argument("--reinstall", action="store_true", help="reinstall packages even if unchanged")
     parser.add_argument("--no-shortcut", action="store_true", help="no desktop shortcut")
@@ -445,12 +478,20 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
         if blocked:
             c.warn(blocked)
             return 1
-        ensure_venv_and_packages(c, args, venv)
+        changed = bring_up_to_date(c)
+        changed = ensure_venv_and_packages(c, args, venv) or changed
         data = choose_data_dir(c, args)
+        too_new = launch.database_too_new(data, launch.identity()["version"])
+        if too_new:
+            c.warn(str(too_new))
+            c.info(too_new.hint)
+            return 1
         env = configure_settings(c, data)
+        for _level, note in launch.settle_settings(data, launch.identity()["version"]):
+            c.info(note)
         create_shortcut(c, args)
         fetch_models(c)
-        run_checks(c, args, env)
+        run_checks(c, args, env, changed)
     except KeyboardInterrupt:
         print("\nStopped. Run the installer again any time; it picks up where it left off.")
         return 130
@@ -465,7 +506,16 @@ def main(argv: list[str] | None = None, venv: str | None = None) -> int:
     launch.save_state(state)
     paths.record_install(ident)  # the current install: an older folder started later hands over to this one
     upgrade.write_marker(ROOT, ident)
-    launch.print_summary(launch.readiness(packages))
+    old = launch.older_installs(ident, launch.legacy_folders())
+    if old and (state.get("self_check") or {}).get("ok"):  # as the double-click: only once this one checked out
+        print("\nCleaning up the older AP Coder:")
+        upgrade.clean_up(ROOT, data, old, print)
+    lines = launch.readiness(packages)
+    if (state.get("self_check") or {}).get("result"):
+        lines.append(("ok" if state["self_check"].get("ok") else "warn", state["self_check"]["result"]))
+    launch.print_summary(lines)
+    if not changed:
+        print(f"Nothing to update: AP Coder {paths.describe(ident)} is installed and up to date.")
     print("\nAll set.")
     print(f"  Start AP Coder:   {start}")
     print(f"  Your data:        {data}")

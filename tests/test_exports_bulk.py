@@ -91,3 +91,16 @@ def test_bulk_approve_skips_an_invoice_a_colleague_parks_meanwhile(demo_store, m
     assert [i for i, _ in result["skipped"]] == [ids[1]] and "no longer in the queue" in result["skipped"][0][1]
     assert sorted(result["approved"]) == sorted(i for i in ids if i != ids[1])
     assert store.get_invoice(ids[1])["status"] != APPROVED
+
+
+def test_bulk_approve_skips_an_invoice_flagged_after_the_page_listed_it(demo_store):
+    """The Azure check (or the page reader) flags an invoice after the queue page listed it as clean: a warning only
+    the stored checks hold (finalise_coding does not raise it again). Bulk approval leaves it for a person."""
+    store = demo_store
+    ids = [c["id"] for c in clean_candidates(store)]
+    victim = ids[0]
+    issue = {"severity": "warning", "code": "AZURE_DI_DISAGREES", "message": "Azure read the total as 1,234.00"}
+    assert store.update_after_azure_check(victim, None, issue, "AZURE_DI_DISAGREES")
+    result = bulk_approve(store, store.reference_data(), Settings(), ids, "jane")
+    assert [i for i, _ in result["skipped"]] == [victim] and "AZURE_DI_DISAGREES" in result["skipped"][0][1]
+    assert store.get_invoice(victim)["status"] == REVIEW

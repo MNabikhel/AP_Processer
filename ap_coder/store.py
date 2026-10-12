@@ -21,6 +21,7 @@ import json
 import re
 import shutil
 import sqlite3
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -52,6 +53,11 @@ _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
 # page picture the review screen asks for.
 _LOOK_AGAIN_SECONDS = 30.0
 _NOT_FOUND: dict[tuple[str, int, str], float] = {}
+
+# Databases being restored in this process (``Store.restore_from``): the background workers (page reader, Azure
+# check) start nothing on them meanwhile (``Store.restoring``).
+_RESTORING: set[str] = set()
+_RESTORING_LOCK = threading.Lock()
 
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
 # the largest invoice total approved without a person, in CAD.
@@ -941,12 +947,20 @@ class Store:
         for table in ("feedback", "supplier_outcomes", "reader_outcomes"):
             conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
 
-    def delete_invoice(self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None) -> None:
-        """Delete an invoice; with ``forget_lessons`` also what was learned when it was approved."""
+    def delete_invoice(
+        self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None, *, keep_approved: bool = False
+    ) -> None:
+        """Delete an invoice; with ``forget_lessons`` also what was learned when it was approved. ``keep_approved``:
+        refuse (ValueError, nothing deleted) an invoice approved or waiting for its second approval, e.g. approved
+        and exported by someone else since a Delete button was shown for it (reopen it first)."""
         with self._conn() as conn:
+            if keep_approved:
+                conn.execute("BEGIN IMMEDIATE")  # checked and deleted in one go: an approval cannot slip in between
             row = conn.execute(
                 "SELECT file_name, vendor_name, invoice_number, status FROM invoices WHERE id = ?", (invoice_id,)
             ).fetchone()
+            if keep_approved and row is not None and row["status"] in (APPROVED, PENDING):
+                raise ValueError(f"invoice {invoice_id} was approved meanwhile: reopen it before deleting it")
             conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
             # What capture read, and the supplier accuracy measured on it, go with the invoice: a deleted
             # invoice (a duplicate upload, a demo) must not count towards a supplier's autonomy, a reader's
@@ -1045,7 +1059,8 @@ class Store:
         if inv["status"] != REVIEW:  # a failed read has nothing checked to approve
             raise ValueError(f"invoice {invoice_id} is not in the review queue ({inv['status']})")
         ai = inv["ai_output"] or {"line_items": []}
-        needs_second = self.over_approval_limit(final_output)
+        second_reason = self.second_approval_reason(final_output)
+        needs_second = bool(second_reason)
         vendor_name = final_output.get("vendor_name", "")
         key = vendor_key(vendor_name)
         now = _now()
@@ -1129,7 +1144,8 @@ class Store:
             self._log(conn, "approved", invoice_id, reviewer, {
                 "lines": len(final_output.get("line_items", [])), "corrected": counts[CORRECTED],
                 "total": final_output.get("grand_total"), "changes": diff_coding(ai, final_output),
-                **({"bulk": True} if bulk else {}), **({"needs_second": True} if needs_second else {}),
+                **({"bulk": True} if bulk else {}),
+                **({"needs_second": True, "second_reason": second_reason} if needs_second else {}),
                 **({"open_issues": open_issues} if open_issues else {}), **({"login": login} if login else {}),
             })  # fmt: skip
             conn.executemany(
@@ -1153,15 +1169,27 @@ class Store:
         except ValueError:
             return 0.0
 
-    def over_approval_limit(self, coding: dict[str, Any], limit: float | None = None) -> bool:
-        """Is this invoice's total over the approval limit? The limit is in CAD: a foreign-currency total is
-        converted at the rate set in Settings (compared as it is when no rate is set)."""
+    def second_approval_reason(self, coding: dict[str, Any], limit: float | None = None, *,
+                               unknown_rate: bool = True) -> str:  # fmt: skip
+        """Why this invoice needs a second approver ("" when it doesn't). The limit is in CAD: a foreign-currency total
+        is converted at the rate set in Settings. Without a rate it is never taken as CAD (9,000 EUR is about 13,000
+        CAD): it needs the second approver, whatever its total (``unknown_rate``; False: left out, for a caller that
+        deals with a missing rate itself, like the touchless gates)."""
         limit = self.approval_limit() if limit is None else limit
         if not limit:
-            return False
+            return ""
         currency = str(coding.get("currency") or "CAD").strip().upper()
-        rate = self.fx_rates().get(currency, 1.0)
-        return abs(float(coding.get("grand_total") or 0)) * rate > limit
+        rate = self.fx_rates().get(currency)
+        if rate is None:
+            return f"no CAD rate for {currency}: a second approval is needed" if unknown_rate else ""
+        if abs(float(coding.get("grand_total") or 0)) * rate > limit:
+            return f"over the approval limit of {limit:,.2f} CAD"
+        return ""
+
+    def over_approval_limit(self, coding: dict[str, Any], limit: float | None = None, *,
+                            unknown_rate: bool = True) -> bool:  # fmt: skip
+        """Does this invoice need a second approver (``second_approval_reason``)?"""
+        return bool(self.second_approval_reason(coding, limit, unknown_rate=unknown_rate))
 
     def final_approve(self, invoice_id: int, approver: str, login: str = "") -> None:
         """The second approval: by someone other than the first approver (another name and, when the
@@ -1214,16 +1242,18 @@ class Store:
             )
             return cur.rowcount > 0
 
-    def reopen(self, invoice_id: int, actor: str, reason: str = "") -> None:
+    def reopen(self, invoice_id: int, actor: str, reason: str = "", *, only_rejected: bool = False) -> None:
         """Put an approved invoice that is not exported yet, or a rejected one, back in the review queue to be
         corrected. What its approval taught is withdrawn (learned again at the next approval); the reviewer's
-        coding is kept as the starting point. An exported invoice is reopened by undoing its batch first."""
+        coding is kept as the starting point. An exported invoice is reopened by undoing its batch first.
+        ``only_rejected``: a rejected invoice only (a Reopen button shown on a rejected invoice that someone has
+        reopened and approved since must not reopen that approval)."""
+        approved = "" if only_rejected else f"status IN ('{APPROVED}', '{PENDING}') AND export_batch IS NULL OR "
         with self._conn() as conn:
             cur = conn.execute(
-                """UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL, second_reviewer = NULL,
-                   second_reviewed_at = NULL, error = NULL
-                   WHERE id = ? AND (status IN (?, ?) AND export_batch IS NULL OR status = ?)""",
-                (REVIEW, invoice_id, APPROVED, PENDING, REJECTED),
+                f"""UPDATE invoices SET status = ?, reviewer = NULL, reviewed_at = NULL, second_reviewer = NULL,
+                   second_reviewed_at = NULL, error = NULL WHERE id = ? AND ({approved}status = ?)""",
+                (REVIEW, invoice_id, REJECTED),
             )
             if cur.rowcount == 0:
                 raise ValueError(f"invoice {invoice_id} cannot be reopened (exported, or not approved or rejected)")
@@ -1603,18 +1633,9 @@ class Store:
     def supplier_key_for(self, vendor_name: str, gst_number: str | None = None) -> str:
         """The supplier key for an invoice, with the vendor master's ERP id when the master knows it."""
         from .capture.supplier import supplier_key
-        from .vendors import norm_tax_number
+        from .vendors import master_vendor_id
 
-        ids = self.vendor_ids()
-        vendor_id = ids.get(vendor_key(vendor_name or ""))
-        if not vendor_id and gst_number:
-            number = norm_tax_number(gst_number)
-            bn = number[:9] if number[:9].isdigit() else ""
-            # The same registration however much of it either side keeps (vendors.same_tax_number): the master's
-            # 9-digit Business Number for the invoice's full account, or the master's full account for 9 digits.
-            vendor_id = ids.get(f"gst:{number}") or (bn and (ids.get(f"bn:{bn}") or (
-                ids.get(f"bnx:{bn}") if len(number) == 9 else None)))  # fmt: skip
-        return supplier_key(vendor_name, gst_number, vendor_id)
+        return supplier_key(vendor_name, gst_number, master_vendor_id(self.vendor_ids(), vendor_name, gst_number))
 
     @staticmethod
     def _profile(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -1722,7 +1743,8 @@ class Store:
 
     def over_touchless_limit(self, coding: dict[str, Any]) -> bool:
         """Is this invoice's total above the largest amount approved without a person?"""
-        return self.over_approval_limit(coding, limit=self.touchless_limit())
+        # A currency with no rate is its own touchless gate (``capture.workflow.invoice_gates``), said as such.
+        return self.over_approval_limit(coding, limit=self.touchless_limit(), unknown_rate=False)
 
     def sync_autonomy(self, key: str | None = None) -> list[dict[str, Any]]:
         """With touchless processing on, move each supplier (or the one ``key``) to the state its record earns
@@ -2293,15 +2315,17 @@ class Store:
 
     def update_after_azure_check(
         self, invoice_id: int, capture: dict[str, Any] | None, issue: dict[str, Any] | None, code: str,
-        meta: dict[str, Any] | None = None,
+        meta: dict[str, Any] | None = None, *, expect: tuple[Any, ...] | None = None,
     ) -> bool:  # fmt: skip
         """Fold an Azure check into an invoice still open (in review or parked): the capture (fields Azure read
         differently marked Check), the review issue ``code`` replaced by ``issue`` (None removes it) and ``meta``
-        merged into the processing notes. Nothing changes on an invoice approved, rejected or deleted (False)."""
+        merged into the processing notes. Nothing changes on an invoice approved, rejected or deleted (False), nor
+        on one that is no longer ``expect`` (``row_identity``: a backup was restored meanwhile)."""
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT status, validation, meta FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
-            if row is None or row["status"] not in (REVIEW, PARKED):
+            row = conn.execute("SELECT status, validation, meta, file_sha256, created_at FROM invoices WHERE id = ?",
+                               (invoice_id,)).fetchone()  # fmt: skip
+            if row is None or row["status"] not in (REVIEW, PARKED) or not _same_row(row, expect):
                 return False
             validation = json.loads(row["validation"] or "null") or {}
             issues = [i for i in validation.get("issues") or [] if i.get("code") != code]
@@ -2323,7 +2347,7 @@ class Store:
 
     def replace_proposal(
         self, invoice_id: int, output: dict[str, Any], report: Any, capture: Any, meta: dict[str, Any] | None = None,
-        actor: str = "AP Coder",
+        actor: str = "AP Coder", *, expect: tuple[Any, ...] | None = None,
     ) -> bool:  # fmt: skip
         """Replace what AP Coder proposes for an invoice nobody has worked on yet (the page reader read it after
         it was processed): the coding, its checks and confidence, the columns the queue shows, the capture
@@ -2331,7 +2355,9 @@ class Store:
         notes. ``report``: the ``ValidationReport`` or its dict.
 
         Only while the invoice waits in the review queue untouched: no edits recorded and never approved (a
-        reopened invoice keeps the reviewer's coding). Otherwise nothing changes and it returns False."""
+        reopened invoice keeps the reviewer's coding), and still ``expect`` (``row_identity``, taken before the page
+        reader read it: a backup restored meanwhile may hold another invoice under the same number). Otherwise
+        nothing changes and it returns False."""
         if not output:
             return False
         validation = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
@@ -2342,11 +2368,12 @@ class Store:
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # checked and changed in one go: an approval cannot slip in between
             row = conn.execute(
-                "SELECT status, edits, final_output, reviewer, ai_output, meta FROM invoices WHERE id = ?",
+                "SELECT status, edits, final_output, reviewer, ai_output, meta, file_sha256, created_at FROM invoices "
+                "WHERE id = ?",
                 (invoice_id,),
             ).fetchone()
             if (row is None or row["status"] != REVIEW or row["final_output"] or row["reviewer"]
-                    or json.loads(row["edits"] or "null")):  # fmt: skip
+                    or json.loads(row["edits"] or "null") or not _same_row(row, expect)):  # fmt: skip
                 return False
             merged = {**(json.loads(row["meta"] or "null") or {}), **(meta or {})}
             conn.execute(
@@ -2732,7 +2759,31 @@ class Store:
         if version > SCHEMA_VERSION:
             raise ValueError(f"{name} was made by a newer version of AP Coder: update AP Coder first")
 
+    def row_identity(self, invoice_id: int) -> tuple[Any, ...] | None:
+        """What tells this invoice from another one under the same number (its file's SHA-256 and when it came in), or
+        None when there is none: a background worker takes it before its long work and writes its result only onto
+        the same invoice (``expect``), not onto whatever a restored backup holds under that number."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT file_sha256, created_at FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+        return (row["file_sha256"], row["created_at"]) if row else None
+
+    def restoring(self) -> bool:
+        """A backup is being restored into this database (in this process): the background workers wait."""
+        with _RESTORING_LOCK:
+            return str(self.path.resolve()) in _RESTORING
+
     def restore_from(self, backup: str | Path) -> Path:
+        """``_restore_from`` with the background workers paused meanwhile (``restoring``)."""
+        key = str(self.path.resolve())
+        with _RESTORING_LOCK:
+            _RESTORING.add(key)
+        try:
+            return self._restore_from(backup)
+        finally:
+            with _RESTORING_LOCK:
+                _RESTORING.discard(key)
+
+    def _restore_from(self, backup: str | Path) -> Path:
         """Replace the database with a backup. The current one is backed up first (returned).
         Raises ValueError, with nothing changed, when the file is not an AP Coder backup (``check_backup``).
         The second backup folder is cleared after a restore: a backup file must not choose where later
@@ -2877,6 +2928,11 @@ class Store:
             "by_vendor": [dict(r) for r in by_vendor],
             "top_corrections": [dict(r) for r in corrections],
         }
+
+
+def _same_row(row: sqlite3.Row, expect: tuple[Any, ...] | None) -> bool:
+    """``row`` (with ``file_sha256`` and ``created_at``) is the invoice ``expect`` names (``Store.row_identity``)."""
+    return expect is None or (row["file_sha256"], row["created_at"]) == tuple(expect)
 
 
 def _iso_week(day: str | None) -> str:

@@ -15,6 +15,7 @@ import datetime as dt
 import json
 import os
 import secrets
+import sys
 import threading
 import time
 import urllib.request
@@ -22,7 +23,7 @@ import webbrowser
 from pathlib import Path
 
 from ap_coder import __version__, paths
-from ap_coder.offline import browser_wanted
+from ap_coder.offline import browser_wanted, listening
 from ap_coder.store import Store
 from ap_coder.web.app import CODE_FOLDER, create_app
 
@@ -87,9 +88,16 @@ def _announce_when_up(url: str, open_browser: bool, timeout: float = 60.0) -> No
 
 
 def serve(host: str = "127.0.0.1", port: int = 8501, open_browser: bool = True, store: Store | None = None) -> int:
-    """Run the dashboard until Ctrl+C or ``POST /shutdown``."""
+    """Run the dashboard until Ctrl+C or ``POST /shutdown``. 1 when it could not start (the port is in use)."""
     import uvicorn
 
+    # A port something answers on (an AP Coder started earlier): writing the server file would replace the running
+    # one's (and its token, which the launcher stops it with), and "is it up?" would be answered by the other one.
+    probe = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "localhost": "127.0.0.1", "::": "::1"}.get(host, host)
+    if listening(port, probe):
+        print(f"Port {port} is in use by another program (an AP Coder started earlier?): nothing was started. Open "
+              f"{browser_url(host, port)}, or start with another --port.", file=sys.stderr)  # fmt: skip
+        return 1
     app = create_app(store=store, address=host)
     token = secrets.token_urlsafe(24)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False, lifespan="on")

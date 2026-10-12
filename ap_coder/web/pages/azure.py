@@ -13,6 +13,7 @@ offline without it (see ``ap_coder/azure_check.py``).
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from fastapi import APIRouter, Form, Request
@@ -46,9 +47,12 @@ def azure_check_page(request: Request) -> HTMLResponse:
 
 def _number(text: str, what: str) -> float:
     try:
-        return float(str(text or "0").replace(",", ".").replace("%", "").strip() or 0)
+        number = float(str(text or "0").replace(",", ".").replace("%", "").strip() or 0)
     except ValueError:
-        raise ValueError(f"The {what} must be a number.") from None
+        number = math.nan
+    if not math.isfinite(number):  # ("1e309", "inf" or "nan" posted directly: int() of it would raise)
+        raise ValueError(f"The {what} must be a number.")
+    return number
 
 
 @router.post(HOME)

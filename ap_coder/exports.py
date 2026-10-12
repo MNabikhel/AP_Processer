@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import csv
 import io
-import re
 from collections import defaultdict
 from typing import Any
 
@@ -25,8 +24,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .memory import vendor_key
 from .safe import csv_row, neutralise_sheet, xlsx_row
+from .vendors import master_vendor_id
 
 FORMATS = {
     "xlsx": "Excel workbook: invoices, GL lines and a GL summary",
@@ -57,12 +56,8 @@ MONEY_HEADERS = {"Subtotal", "Tax", "Total", "Net", "Non-recoverable tax", "Amou
 
 
 def _vendor_id(final: dict[str, Any], vendor_ids: dict[str, str]) -> str:
-    """The ERP vendor ID: by vendor name, else by GST/HST number (see ``Store.vendor_ids``)."""
-    found = vendor_ids.get(vendor_key(final.get("vendor_name") or ""))
-    if found:
-        return found
-    number = re.sub(r"[^0-9a-z]", "", str(final.get("gst_hst_registration_number") or "").lower())
-    return vendor_ids.get(f"gst:{number}", "") if number else ""
+    """The ERP vendor ID: by vendor name, else by GST/HST number (``vendors.master_vendor_id``)."""
+    return master_vendor_id(vendor_ids, final.get("vendor_name"), final.get("gst_hst_registration_number"))
 
 
 def invoice_rows(

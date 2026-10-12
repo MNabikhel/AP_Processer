@@ -35,10 +35,13 @@ def user_settings_path() -> Path:
 
 
 def read_user_settings() -> dict:
+    """The settings file's values ({} when it is missing, unreadable, or not a JSON object: a damaged file is never
+    a reason for the launcher or a page to stop)."""
     try:  # -sig: a settings file saved by Notepad starts with a byte-order mark (it is not an empty file)
-        return json.loads(user_settings_path().read_text(encoding="utf-8-sig"))
+        found = json.loads(user_settings_path().read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
+    return found if isinstance(found, dict) else {}
 
 
 def write_user_settings(**values: object) -> Path:
@@ -69,7 +72,7 @@ def same_folder(a: str | Path | None, b: str | Path | None) -> bool:
         return False
     try:
         return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
-    except OSError:
+    except (OSError, TypeError):  # (TypeError: a damaged settings file names a folder as a number)
         return os.path.normcase(str(a)) == os.path.normcase(str(b))
 
 
@@ -127,7 +130,9 @@ def describe(identity: dict, exact: bool = False) -> str:
 
 def installs() -> list[dict]:
     found = read_user_settings().get("installs")
-    return [e for e in found if isinstance(e, dict) and e.get("folder")] if isinstance(found, list) else []
+    if not isinstance(found, list):
+        return []
+    return [e for e in found if isinstance(e, dict) and e.get("folder") and isinstance(e["folder"], str)]
 
 
 def current_install() -> dict | None:

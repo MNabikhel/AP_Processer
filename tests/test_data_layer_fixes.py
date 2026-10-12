@@ -81,11 +81,22 @@ def test_the_approval_limit_applies_in_cad_to_a_foreign_currency_invoice(tmp_pat
     invoice_id = store.add_invoice(tmp_path / "a.pdf", usd, {})
     store.approve_invoice(invoice_id, usd, "Jane")
     assert store.get_invoice(invoice_id)["status"] == PENDING
-    # Without a rate for the currency, the amount is compared as it is.
+    # Without a rate for the currency, the total can't be compared with a CAD limit: it is never taken as CAD (9,000
+    # EUR is about 13,000 CAD), a second approver is needed, and the approval says why.
     eur = {**_gt(), "invoice_number": "E-1", "currency": "EUR", "grand_total": 9000.0}
+    assert store.second_approval_reason(eur) == "no CAD rate for EUR: a second approval is needed"
     other = store.add_invoice(tmp_path / "b.pdf", eur, {})
     store.approve_invoice(other, eur, "Jane")
-    assert store.get_invoice(other)["status"] == APPROVED
+    assert store.get_invoice(other)["status"] == PENDING
+    approved = next(e for e in store.events(other) if e["action"] == "approved")
+    assert approved["detail"]["needs_second"] is True
+    assert approved["detail"]["second_reason"] == "no CAD rate for EUR: a second approval is needed"
+    store.send_back(other, "Sam", "")
+    # A tiny foreign total still has no rate, and no limit set means no second approval at all.
+    assert store.over_approval_limit({**eur, "grand_total": 5.0})
+    store.set_setting("approval_limit", "0")
+    assert store.second_approval_reason(eur) == "" and not store.over_approval_limit(eur)
+    store.set_setting("approval_limit", "10000")
     # The controls report sees the USD invoice over the limit too (had it been approved by one person).
     store.final_approve(invoice_id, "Sam")
     with store._conn() as conn:

@@ -122,17 +122,22 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     its findings, a credit note, a total over the touchless limit (Settings → Automation) or over the approval
     limit (a second approver), a foreign currency with no exchange rate to check the limit with, and not yet read
     by the page reader, or not every page of it (``pages_read``: the pages it read, at most
-    AP_PAGE_READER_MAX_PAGES), or a text file the page reader cannot look at (``no_page``)."""
+    AP_PAGE_READER_MAX_PAGES), a text file the page reader cannot look at (``no_page``), or a line of ``output``
+    whose account only the local chat model chose (``inference.MODEL_SUGGESTED``)."""
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     coding = _amounts(capture, output)
     over_limit = store.touchless_limit() if store.over_touchless_limit(coding) else None
     unread = max(0, capture.page_count - pages_read) if capture is not None and pages_read is not None else 0
     currency = str(coding["currency"]).strip().upper()
     no_rate = "" if currency in store.fx_rates() else currency  # the limit is in CAD: unknown without a rate
+    from ..inference import MODEL_SUGGESTED
+
+    guessed = sum(1 for li in (output or {}).get("line_items") or []
+                  if str(li.get("reasoning_justification") or "").startswith(MODEL_SUGGESTED))  # fmt: skip
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
                            awaiting_page_reader=awaiting_page_reader, pages_unread=unread,
-                           no_rate_for=no_rate, no_page=no_page)  # fmt: skip
+                           no_rate_for=no_rate, no_page=no_page, model_coded_lines=guessed)  # fmt: skip
 
 
 def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capture: CaptureResult | None,
@@ -175,6 +180,24 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
     if audit:
         reason = "picked for the audit sample"
     return {"state": state, "auto": ok and not audit, "audit": audit, "reason": reason}
+
+
+def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any]) -> bool:
+    """Whether an invoice touchless processing passed earlier but held back (for the Azure check) may still be
+    approved without a person now: the switch is still on, its supplier still touchless (not suspended or kept
+    supervised by a manager meanwhile) and its total still within the touchless and approval limits."""
+    if store is None or not store.touchless_enabled():
+        return False
+    key, _ = supplier_for(store, output)
+    if not key:
+        return False
+    store.sync_autonomy(key)
+    profile = store.get_supplier_profile(key) or {}
+    policy = store.autonomy_policy()
+    state, _, _ = autonomy_status(store.supplier_stats(key, policy.window), policy, profile.get("state") or SUPERVISED,
+                                  profile.get("autonomous_since"), touchless_on=True,
+                                  suspended_at=profile.get("suspended_at"))  # fmt: skip
+    return state == AUTONOMOUS and not invoice_gates(store, capture, None, output)
 
 
 NOT_READERS = ("computed", "vendor master")  # a field's sources that did not read the page
@@ -328,10 +351,12 @@ def taught_message(store: Any, learned: dict[str, Any]) -> str:
     return f"{head} {name}: {plural(invoices, 'invoice')} reviewed, {where}.".strip()
 
 
-def on_reopen(store: Any, invoice_id: int, actor: str, reason: str = "") -> None:
+def on_reopen(store: Any, invoice_id: int, actor: str, reason: str = "", *,
+              before: dict[str, Any] | None = None) -> None:  # fmt: skip
     """Reopening an invoice approved without a person means the autonomous run got something wrong:
-    the supplier goes back to supervised review."""
-    inv = store.get_invoice(invoice_id)
+    the supplier goes back to supervised review. ``before``: the invoice as it was before it was reopened (the
+    reopen clears who approved it); called once the reopen succeeded, so a refused reopen suspends nobody."""
+    inv = before if before is not None else store.get_invoice(invoice_id)
     if not inv or inv.get("reviewer") != AUTONOMOUS_REVIEWER:
         return
     final = inv.get("final_output") or {}

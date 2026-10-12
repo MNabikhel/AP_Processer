@@ -217,7 +217,8 @@ def model_rows(settings: Settings) -> list[dict[str, Any]] | None:
             "is_loaded": bool(r.get("loaded")),
             "reads": "document reader" if r.get("document_reader") else ("can see" if r.get("vision") else "no"),
             "document_reader": bool(r.get("document_reader")),
-            "used_for": r.get("used_for") or "—",
+            "embedding": bool(r.get("embedding")),
+            "used_for": r.get("used_for") or ("not used (an embedding model)" if r.get("embedding") else "—"),
         }
         for r in rows
     ]

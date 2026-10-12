@@ -255,6 +255,96 @@ def test_apples_python_counts_when_the_developer_tools_are_there(darwin):
     assert darwin.used() == ["python3 scripts/launch.py --no-start"]
 
 
+class MacPlaces(MacLauncher):
+    """A Mac double-clicked from Finder: launchd's short PATH (only ``bin/`` and the folder of Apple's stand-in), and
+    Homebrew's and python.org's fixed folders moved under ``tmp`` (the launcher's copy names them there)."""
+
+    PLACES = ("/opt/homebrew/bin", "/usr/local/bin", "/Library/Frameworks/Python.framework")
+
+    def __init__(self, tmp_path: Path) -> None:
+        super().__init__(tmp_path, darwin=True)
+        script = self.code / "APProcessor.command"
+        text = script.read_text()
+        for place in self.PLACES:
+            assert place in text
+            text = text.replace(place, str(tmp_path / place.lstrip("/")))
+        script.write_text(text)
+
+    def at(self, place: str, name: str, version: str) -> Path:
+        """A stand-in Python in a fixed place ("/opt/homebrew/bin", ...): a run writes its full path."""
+        folder = self.tmp / place.lstrip("/")
+        body = (f'if [ "$1" = -c ] || [ "$2" = --venv-ok ]; then echo {version}; exit 0; fi\n'
+                f'echo "$0 $*" >> "{self.ran}"')  # fmt: skip
+        return self.script(name, body, folder)
+
+    def finder(self) -> subprocess.CompletedProcess:
+        return self.run(self.apple.parent)
+
+
+PYTHON_ORG_314 = "/Library/Frameworks/Python.framework/Versions/3.14/bin"
+
+
+@pytest.fixture
+def finder(tmp_path):
+    return MacPlaces(tmp_path)
+
+
+@needs_bash
+def test_the_managers_mac_python_org_314_from_a_finder_double_click(finder):
+    """The manager's Mac: only python.org's Python 3.14.5, no developer tools (Apple's /usr/bin/python3 only opens an
+    install dialog), and Finder's short PATH, without /usr/local/bin: python.org's own folder is used."""
+    finder.python("python3", "3.9", finder.apple.parent)  # would open a dialog: never run
+    finder.script("xcode-select", "echo 'xcode-select: error: unable to get active developer directory' >&2; exit 2")
+    python = finder.at(PYTHON_ORG_314, "python3.14", "3.14")
+    finder.at(PYTHON_ORG_314, "python3", "3.14")
+    out = finder.finder()
+    assert out.returncode == 0, out.stdout
+    assert finder.used() == [f"{python} scripts/launch.py --no-start"]
+    # python.org's links in /usr/local/bin (its installer's default) are the same Python: used, not run twice.
+    link = finder.tmp / "usr/local/bin/python3.14"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(python)
+    finder.ran.unlink()
+    assert finder.finder().returncode == 0 and finder.used() == [f"{link} scripts/launch.py --no-start"]
+
+
+@needs_bash
+def test_homebrews_314_on_apple_silicon_and_the_xcode_python(finder):
+    """Homebrew's python3.14 in /opt/homebrew/bin (not on Finder's PATH) is found; Apple's /usr/bin/python3 3.9 from
+    the developer tools only makes the message say "too old" when nothing newer is there."""
+    tools = finder.tmp / "CommandLineTools"
+    finder.python("python3", "3.9", tools / "usr" / "bin")
+    finder.script("xcode-select", f"echo {tools}")
+    finder.python("python3", "3.9", finder.apple.parent)
+    out = finder.finder()
+    assert out.returncode == 1 and "Python 3.9 is installed, but AP Coder needs Python 3.11 or newer" in out.stdout
+    brew = finder.at("/opt/homebrew/bin", "python3.14", "3.14")
+    assert finder.finder().returncode == 0 and finder.used() == [f"{brew} scripts/launch.py --no-start"]
+    # Intel Homebrew (/usr/local/bin) and python.org both 3.14: one is used, once.
+    (finder.tmp / "opt").rename(finder.tmp / "opt-gone")
+    finder.ran.unlink()
+    intel = finder.at("/usr/local/bin", "python3.14", "3.14")
+    finder.at(PYTHON_ORG_314, "python3.14", "3.14")
+    assert finder.finder().returncode == 0 and finder.used() == [f"{intel} scripts/launch.py --no-start"]
+
+
+def test_launch_py_looks_where_python_org_and_homebrew_put_314(tmp_path, monkeypatch):
+    """bootstrap's search for a Python the bundle fits (not only what is on PATH)."""
+    spec = importlib.util.spec_from_file_location("ap_script_launch_places", ROOT / "scripts" / "launch.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "WINDOWS", False)
+    monkeypatch.setattr(module.shutil, "which", lambda name: None)  # Finder's PATH: no python3.14 on it
+    found = [c[0] for c in module.python_candidates("3.14")]
+    assert found == ["/opt/homebrew/bin/python3.14", "/usr/local/bin/python3.14", f"{PYTHON_ORG_314}/python3.14"]
+    asked = []
+    monkeypatch.setattr(module, "python_found", lambda command, version: asked.append(command[0]) or (
+        command[0] if command[0].startswith("/Library") else ""))  # fmt: skip
+    assert module.find_python(["3.14"]) == (f"{PYTHON_ORG_314}/python3.14", "3.14")
+    assert "/usr/bin/python3" not in asked  # never Apple's stand-in
+
+
 # --- scripts/launch.py ------------------------------------------------------------------------------------------
 
 

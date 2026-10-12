@@ -52,6 +52,7 @@ from ap_coder.web.core import (
     reviewer,
     templates,
 )
+from ap_coder.web.files import download
 from ap_coder.web.pages.review import filter_queue, sort_queue
 
 router = APIRouter()
@@ -415,9 +416,8 @@ def approved_pdf(request: Request, invoice_id: int) -> Response:
         pdf = stamp.stamped_pdf(inv, names)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    name = stamp.file_name(inv)
-    return Response(pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+    # (files.download: a vendor named "Bœuf" is not Latin-1, the only characters a plain filename= header takes)
+    return download(pdf, stamp.file_name(inv), "application/pdf")
 
 
 # --- Checking the edits ---------------------------------------------------------------------------------------------
@@ -472,8 +472,9 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
     messages = []
     if waits:  # not approved yet: never "Approved <vendor>" for it
-        messages.append(flash_message(f"First approval recorded for {vendor}: over the approval limit, it waits for "
-                                      "a second approver.", "info", icon="how_to_reg"))  # fmt: skip
+        why = store.second_approval_reason(analysis.output) or "over the approval limit"
+        messages.append(flash_message(f"First approval recorded for {vendor}: {why}; it waits for a second "
+                                      "approver.", "info", icon="how_to_reg"))  # fmt: skip
     total = sum(counts.values())
     taught = taught_message(store, learned)
     lines = f"{counts[ACCEPTED]} of {ui.plural(total, 'line')} coded as suggested."
@@ -688,7 +689,7 @@ def resume(request: Request, invoice_id: int) -> JSONResponse:
 def restore(request: Request, invoice_id: int) -> JSONResponse:
     """A rejected invoice back in the review queue (e.g. rejected by mistake)."""
     try:
-        get_store(request).reopen(invoice_id, reviewer())
+        get_store(request).reopen(invoice_id, reviewer(), only_rejected=True)
     except ValueError as exc:
         return changed_meanwhile(request, invoice_id, exc)
     return done(request, f"/review/{invoice_id}", flash_message("Back in the review queue.", "ok", icon="undo"))
@@ -699,15 +700,16 @@ def correct(request: Request, invoice_id: int, reason: str = Form("")) -> JSONRe
     """Reopen an approved invoice (not exported yet) for correction: what its approval taught is withdrawn and
     learned again at the next approval."""
     store = get_store(request)
-    _invoice(store, invoice_id)
+    _invoice(store, invoice_id)  # no such invoice: not found
     if not reason.strip():
         return refuse("Say what needs correcting.")
     me = reviewer()
-    on_reopen(store, invoice_id, me, reason.strip())
+    before = store.get_invoice(invoice_id)  # who approved it: the reopen clears it
     try:
         store.reopen(invoice_id, me, reason.strip())
-    except ValueError as exc:
+    except ValueError as exc:  # exported meanwhile, say: nothing reopened, no vendor suspended
         return changed_meanwhile(request, invoice_id, exc)
+    on_reopen(store, invoice_id, me, reason.strip(), before=before)
     forget_draft(request, invoice_id)
     return done(request, f"/review/{invoice_id}", flash_message("Reopened: correct it and approve it again.", "ok",
                                                                 icon="undo"))  # fmt: skip

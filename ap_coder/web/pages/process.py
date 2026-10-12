@@ -141,6 +141,11 @@ def queued_note(settings: Settings, store: Store, queued: int) -> str:
     status = reading_status_or_none(settings, store)
     if status is not None and not status.page_reader_ready:
         wait = "it waits" if queued == 1 else "they wait"
+        test = getattr(status, "self_test", "")
+        if getattr(status, "page_reader_model", "") and test in ("failed", "pending", "running"):
+            why = "it failed its self-test" if test == "failed" else "its self-test hasn't passed yet"
+            return (f"{ui.plural(queued, 'invoice')} queued for OvisOCR2, which runs in LM Studio but isn't trusted "
+                    f"yet ({why}): {wait} for it (Settings → Reading).")  # fmt: skip
         return (f"{ui.plural(queued, 'invoice')} queued for OvisOCR2, which isn't running: {wait} for it "
                 "(Settings → Reading).")  # fmt: skip
     eta = ""
@@ -211,12 +216,25 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
 # --- The page ------------------------------------------------------------------------------------------------------
 
 
+def not_processed(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
+    """(the files never processed, the files that can't be read now): a file still being written by a scanner, open
+    in another program or a cloud placeholder not downloaded is left for the next pick-up, never a broken page."""
+    new, unreadable = [], []
+    for path in files:
+        try:
+            if store.find_by_hash(path, include_failed=True) is None:
+                new.append(path)
+        except OSError:
+            unreadable.append(path)
+    return new, unreadable
+
+
 def folder_files(store: Store) -> list[dict[str, Any]]:
     """The files in the invoices folder not processed yet (saved emails too: their attachments are read)."""
     folder = invoice_dir(store)
     if not folder.exists():
         return []
-    files = [p for p in invoice_files(folder) if store.find_by_hash(p, include_failed=True) is None]
+    files, _ = not_processed(store, invoice_files(folder))
     rows = []
     for p in [*files, *emails_in(folder)]:
         try:
@@ -307,10 +325,12 @@ def process_folder(request: Request) -> JSONResponse:
     if not ready_to_read(setup_steps(store, settings)):
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
-    files = invoice_files(folder) if folder.exists() else []
-    files = [p for p in files if store.find_by_hash(p, include_failed=True) is None]
+    files, unreadable = not_processed(store, invoice_files(folder) if folder.exists() else [])
     todo, already = split_new(store, files)
-    return _start(request, process_files(store, settings, todo, already=already, folder_emails=True), len(todo))
+    notes = [flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, or open in "
+                           "another program): picked up next time.", "warn", [p.name for p in unreadable])]  # fmt: skip
+    work = process_files(store, settings, todo, already=already, folder_emails=True, notes=notes if unreadable else [])
+    return _start(request, work, len(todo))
 
 
 @router.get("/process/status")

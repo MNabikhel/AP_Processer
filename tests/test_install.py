@@ -214,3 +214,55 @@ def test_the_installer_stops_an_older_ap_coder_first_and_never_installs_under_a_
     assert install.make_way() == ""
     assert "A newer AP Coder is running" in install.make_way()
     assert "close the old AP Coder window" in install.make_way()
+
+
+# --- Run over an older version, and run again: up to date every time ----------------------------------------------
+
+
+def _folder(monkeypatch, tmp_path, state, ident, pruned):
+    monkeypatch.setattr(install, "ROOT", tmp_path)
+    monkeypatch.setattr(install.launch, "load_state", lambda: dict(state))
+    monkeypatch.setattr(install.launch, "identity", lambda: dict(ident))
+    monkeypatch.setattr(install.launch, "legacy_folders", lambda: [])
+    monkeypatch.setattr(install.upgrade, "remember", lambda folders: None)
+    monkeypatch.setattr(install.upgrade, "prune_stale", lambda root: (pruned, 2048 if pruned else 0))
+
+
+def test_run_over_an_older_version_it_removes_what_that_version_left(tmp_path, monkeypatch, capsys):
+    """The manager unzipped the new bundle over PR 8's folder and ran install.sh: PR 8's own tests (they import
+    streamlit) stayed in tests/, so the installer's self-test stopped on 6 errors, and its Streamlit files stayed."""
+    _folder(monkeypatch, tmp_path, {"fingerprint": "old", "version": "0.1.0"},
+            {"version": "0.2.0", "build": "b", "fingerprint": "new"}, ["tests/test_dashboard_pages.py"])  # fmt: skip
+    assert install.bring_up_to_date(install.Console(assume_yes=True))
+    out = capsys.readouterr().out
+    assert "updating AP Coder from 0.1.0 to 0.2.0" in out
+    assert "removed 1 file the older version left in this folder" in out
+
+
+def test_run_again_it_says_it_is_up_to_date_and_changes_nothing(tmp_path, monkeypatch, capsys):
+    ident = {"version": "0.2.0", "build": "b", "fingerprint": "same"}
+    _folder(monkeypatch, tmp_path, {**ident, "setup_done": True}, ident, [])
+    assert not install.bring_up_to_date(install.Console(assume_yes=True))
+    assert "up to date" in capsys.readouterr().out
+
+
+def test_the_check_runs_when_something_changed_else_its_result_is_said(monkeypatch, capsys):
+    """The installer ran the whole test suite on every run (18 minutes on a laptop, and again on a second run with
+    nothing changed). It runs the launcher's self-check (the sample invoices, seconds) when something changed, or
+    when none passed yet; else it says the last result."""
+    state = {"self_check": {"ok": True, "at": "2026-10-12 09:00", "result": "Self-check OK: 10 of 10"}}
+    monkeypatch.setattr(install.launch, "load_state", lambda: state)
+    monkeypatch.setattr(install.launch, "save_state", lambda s: None)
+    monkeypatch.setattr(install, "quiet", lambda cmd: pytest.fail(f"ran {cmd}"))
+    monkeypatch.setattr(install, "run", lambda cmd, **kw: None)  # the doctor
+    ran = []
+    monkeypatch.setattr(install.launch, "self_check", lambda: ran.append(1) or (True, "Self-check OK: 10 of 10 (9 s)"))
+    args = install.argparse.Namespace(skip_tests=False, full_tests=False)
+    c = install.Console(assume_yes=True)
+    install.run_checks(c, args, Path("nowhere/.env"), changed=False)
+    assert not ran and "up to date" in capsys.readouterr().out
+    install.run_checks(c, args, Path("nowhere/.env"), changed=True)
+    assert ran == [1] and state["self_check"]["ok"]
+    state["self_check"] = {"ok": False, "at": "x", "result": "FAILED"}
+    install.run_checks(c, args, Path("nowhere/.env"), changed=False)
+    assert ran == [1, 1]  # not passed yet: run again

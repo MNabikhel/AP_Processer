@@ -311,8 +311,10 @@ Automation):
   foreign currency is converted at the Settings → Review exchange rates; with no rate for it, it goes to a person), a
   total over the second-approver limit, an invoice the page reader has not read yet (or not every page of it), and a
   text file (.md, .txt), which the page reader cannot look at. On top of these, as before,
-  any failed check or any printed header field below *verified* sends the invoice to a person
-  (`should_auto_approve`).
+  any failed check, any printed header field below *verified*, a line with no GL account or cost center yet (which
+  a person could not approve either), or a line whose account only the local chat model chose (the touchless bar
+  measures the header fields, not line coding) sends the invoice to a person (`should_auto_approve`,
+  `invoice_gates`).
 - **How long it takes**: at about 13 header fields an invoice, a 99% lower bound with no error needs about 380
   fields read right (n / (n + 1.96²) ≥ 0.99), so a vendor typically reaches the bar after about 30 clean
   invoices, not 20.
@@ -508,7 +510,8 @@ Processing never waits for Azure. Agreement is recorded ("Azure agrees on 11 of 
 differently is marked *Check* ("Azure Document Intelligence read X"), the invoice gets the review issue
 `AZURE_DI_DISAGREES` and can't go touchless; the check is folded in again whenever the page reader reads the invoice
 again. An invoice picked for a spot-check is held from touchless approval until Azure has checked it, and approved
-then if Azure agrees and nobody touched it. Azure's reading becomes reader `di` among each field's sources, so
+then if Azure agrees, nobody touched it and touchless processing still applies (the switch on, the vendor still
+touchless, the total within the limits: `workflow.still_touchless`). Azure's reading becomes reader `di` among each field's sources, so
 approvals score it on *Learning → Readers* (an invoice already approved is scored at once).
 
 Only the configured endpoint's host is contacted, over HTTPS: a request hook on the Azure client refuses any other

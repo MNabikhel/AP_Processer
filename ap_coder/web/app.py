@@ -142,6 +142,13 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         return core.render(request, "error.html", "", status_code=exc.status_code, title="Not found",
                            code=exc.status_code, detail=str(exc.detail))  # fmt: skip
 
+    @app.exception_handler(OverflowError)
+    async def too_large(request: Request, exc: OverflowError) -> Any:
+        # A number from the address or a form beyond what SQLite keeps (2**63): no invoice or lesson has it.
+        if "SQLite" not in str(exc):
+            raise exc
+        return await http_error(request, StarletteHTTPException(404, "Nothing in AP Coder has that number."))
+
     return app
 
 

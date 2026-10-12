@@ -18,7 +18,7 @@ from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_in
 from .config import Settings
 from .extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS, DocumentExtractor, ExtractionResult
 from .imaging import render_page_images
-from .inference import CodingError, CodingResult, InvoiceCoder
+from .inference import MODEL_SUGGESTED, CodingError, CodingResult, InvoiceCoder
 from .memory import compare_with_history, format_examples, select_examples, vendor_key
 from .po import po_findings
 from .reference_data import ReferenceData
@@ -163,7 +163,19 @@ def plain_error(exc: Exception, path: Path) -> str:
     if name in DAMAGED_PDF:
         return (f"{path.name} can't be opened as a PDF: the file is damaged or incomplete. Ask the vendor for a new "
                 "copy.")  # fmt: skip
+    if path.suffix.lower() == ".pdf" and _needs_password(path):  # PyMuPDF says "document closed or encrypted"
+        return f"{path.name} is protected by a password, so it can't be read. Ask the vendor for a copy without one."
     return f"{name}: {exc}"
+
+
+def _needs_password(path: Path) -> bool:
+    try:
+        import pymupdf
+
+        with pymupdf.open(path) as doc:
+            return bool(doc.needs_pass)
+    except Exception:  # noqa: BLE001 - only asked to word an error: a file that can't be opened says so otherwise
+        return False
 
 
 class InvoicePipeline:
@@ -213,9 +225,7 @@ class InvoicePipeline:
             li.predicted_gl_code = gl
             if cc:
                 li.predicted_cost_center = cc
-            li.reasoning_justification = (
-                f"Suggested by the local model: {reason}" if reason else "Suggested by the local model"
-            )
+            li.reasoning_justification = f"{MODEL_SUGGESTED}: {reason}" if reason else MODEL_SUGGESTED
         model = getattr(self.coder, "_local_model", "") or "local model"
         result.model = f"local reader + {model}"
 

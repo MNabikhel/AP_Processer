@@ -140,3 +140,13 @@ def test_a_damaged_file_is_said_plainly_not_as_a_python_error(tmp_path, settings
         error = pipeline.process(tmp_path / name).error
         assert error and "damaged" in error and "new copy" in error, (name, error)
         assert "Error:" not in error and "0x" not in error and "<_io" not in error, (name, error)
+
+
+def test_a_password_protected_pdf_is_said_plainly(tmp_path, settings, reference):
+    """A PDF that needs a password to open showed "ValueError: document closed or encrypted"."""
+    import pymupdf
+
+    with pymupdf.open(SAMPLES / f"{SAMPLE_STEM}.pdf") as doc:
+        doc.save(str(tmp_path / "locked.pdf"), encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="u", owner_pw="o")
+    error = InvoicePipeline(settings, reference).process(tmp_path / "locked.pdf").error
+    assert error and "password" in error and "ValueError" not in error, error

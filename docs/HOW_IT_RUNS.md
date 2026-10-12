@@ -30,7 +30,7 @@ Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 | --- | --- |
 | `APProcessor.bat` (Windows) | The double-click. Finds a Python, then runs `scripts\launch.py` with it. ASCII, CRLF, every path quoted (`tests/test_launcher_scripts.py`). |
 | `APProcessor.command` (macOS; Linux from a terminal) | The same for bash 3.2 (macOS's `/bin/bash`). |
-| `install.bat` / `install.sh` | `APProcessor --installer`: the same setup plus the installer's questions (`scripts/install.py`). |
+| `install.bat` / `install.sh` | `APProcessor --installer`: the same setup plus the installer's questions (`scripts/install.py`). Run over or beside an older version it does what the double-click does (stale files removed, old settings retired, older installs cleaned up after the self-check); run again with nothing changed it says *Nothing to update* in seconds. |
 | `start.bat` / `start.sh` | Kept for old shortcuts: run `APProcessor` unchanged. |
 | `terminal.bat` | A command prompt with `.venv\Scripts` first on `PATH` (no `activate.bat`, which hard-codes the folder the .venv was made in). |
 | `scripts/launch.py` | Every step after Python is found (standard library only until the packages are installed). |
@@ -256,6 +256,8 @@ moves out, its files are repointed, then the whole folder goes when `removable` 
 free —, holding nothing AP Coder did not put there: `user_files`). It is renamed first (`remove_folder`; fails at
 once on Windows while a window still uses it) to `<name>.removing-<date>`, then deleted; what could not be deleted
 is finished on a later start. A folder that must stay still loses its `.venv` and `models/`. The space freed is said.
+A folder beside this one that was cleaned up that way and kept (nothing left to take: no `.venv`, `models/`, `.env`
+or data) is not found again on later starts (`upgrade.left_to_clean`), so it is said once.
 
 ## 7. Data folder, models, self-check, shortcut
 
@@ -287,9 +289,11 @@ is finished on a later start. A folder that must stay still loses its `.venv` an
 
 `scripts/launch.py:start_dashboard` starts `python -m ap_coder serve --port N --no-browser [options]` as a child:
 
-* **Port**: `--port` when given, else the first from **8501** this computer can bind (`free_port`: a bind test on
-  the dashboard address, 50 tries; on Windows without `SO_REUSEADDR`, which would let it take a port in use). The
-  port is recorded in `.venv/ap_coder_launcher.json` so the next double-click finds it.
+* **Port**: `--port` when given, else the first from **8501** this computer can bind (`ap_coder/offline.py:free_port`,
+  which `python -m ap_coder serve` uses too: a bind test on the dashboard address, 50 tries, then one the system
+  picks; on Windows without `SO_REUSEADDR`, which would let it take a port in use). The port is recorded in
+  `.venv/ap_coder_launcher.json` so the next double-click finds it. `serve` on a port something already answers on
+  says so and starts nothing (it never writes over a running server's file).
 * **Address** (`ap_coder/offline.py:dashboard_address`): `127.0.0.1`, unless `AP_DASHBOARD_ADDRESS` (or
   `--address`) says otherwise; listening beyond this computer prints a warning (there is no login).
 * **Server** (`ap_coder/web/server.py:serve`): uvicorn in that process; a random token; the server file
@@ -446,8 +450,6 @@ unexpected error (`tests/test_launch_log.py`).
 * A scheduled, unattended reading run like CloseDesk's `overnight.bat`/`.sh` (a wrapper for Task Scheduler / cron
   around `watch --once`, logging to the data folder). It needs a lock shared with the dashboard's own reading so two
   never process the same invoice.
-* One port-finding function: `ap_coder/cli.py:free_port` (connect test) and `scripts/launch.py:free_port` (bind test)
-  differ; the bind test is right and could serve both.
 * A Linux `.desktop` launcher, and finding Python from pyenv / conda locations on macOS.
 * `scripts/running.py` checks `127.0.0.1` only: a dashboard bound to one specific LAN address
   (`AP_DASHBOARD_ADDRESS=192.168.1.20`) is not found by a second double-click, which then waits for it. Use

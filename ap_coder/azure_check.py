@@ -546,6 +546,8 @@ def _page_reader_running(settings: Settings | None, store: Any) -> bool:
 
 def check_one(settings: Settings | None, store: Any, *, client: Any = None) -> CheckOutcome | None:
     """Check the next invoice in line. None when the check is off or not usable, or nothing waits."""
+    if store.restoring():  # AP is restoring a backup: nothing is taken from a database being replaced
+        return None
     cfg = load_settings(store, settings)
     if not usable(cfg):
         return None
@@ -565,6 +567,7 @@ def check_one(settings: Settings | None, store: Any, *, client: Any = None) -> C
 def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any) -> CheckOutcome:
     iid, reason = int(row["invoice_id"]), str(row["reason"])
     inv = store.get_invoice(iid)
+    identity = store.row_identity(iid)  # Azure's reading is folded into this invoice only (a restore may come between)
     path = Path((inv or {}).get("source_path") or "")
     if inv is None or not path.is_file():
         return _skip(store, iid, "the invoice or its file is gone")
@@ -586,6 +589,9 @@ def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any
         return CheckOutcome(iid, "postponed", message)
 
     raw = read(cfg, path, client)
+    if store.restoring() or store.row_identity(iid) != identity:
+        # A backup was restored while Azure read it: nothing is written, the queue stays as the backup has it.
+        return CheckOutcome(iid, "skipped", "not applied: a backup was restored while Azure read it")
     values = azure_values(raw)
     rows = compare(capture, values)
     billed = len(raw.get("pages") or []) or pages
@@ -596,7 +602,7 @@ def _check(cfg: AzureCheckSettings, store: Any, row: dict[str, Any], client: Any
     store.finish_azure_check(iid, "done", result=result, pages=billed, compared=len(rows), agreed=agreed,
                              reason=reason)  # fmt: skip
     outcome = CheckOutcome(iid, "done", result["summary"])
-    outcome.differ, outcome.approved = _fold_in(store, inv, capture, rows, reason, now)
+    outcome.differ, outcome.approved = _fold_in(store, inv, capture, rows, reason, now, expect=identity)
     store.log_event("azure_checked", iid, actor="AP Coder", detail={
         "reason": reason, "compared": len(rows), "agreed": agreed, "differ": outcome.differ, "pages": billed,
     })  # fmt: skip
@@ -609,11 +615,12 @@ def _skip(store: Any, iid: int, why: str) -> CheckOutcome:
 
 
 def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str, Any]], reason: str,
-             now: str) -> tuple[list[str], bool]:  # fmt: skip
+             now: str, *, expect: tuple[Any, ...] | None = None) -> tuple[list[str], bool]:  # fmt: skip
     """Fold the check into the invoice: still open, its capture, review issue and notes (and, held only for this
     check and Azure agreeing, it is approved as touchless processing would have); approved already, Azure's reading
-    is scored against what AP approved. Returns (fields read differently, approved now)."""
-    from .capture.workflow import AUTONOMOUS_REVIEWER
+    is scored against what AP approved. ``expect``: the invoice's ``Store.row_identity`` when the check started (a
+    restore may have put another invoice under its number). Returns (fields read differently, approved now)."""
+    from .capture.workflow import AUTONOMOUS_REVIEWER, still_touchless
     from .store import APPROVED, PARKED, PENDING, REVIEW
 
     iid = int(inv["id"])
@@ -630,9 +637,13 @@ def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str,
         if held:
             notes = {k: v for k, v in notes.items() if k != "azure_hold"}
             notes["reason"] = "" if not differ else f"{NAME} read {len(differ)} field(s) differently"
-        store.update_after_azure_check(iid, capture.to_dict(), dataclasses.asdict(found) if found else None,
-                                       ISSUE_CODE, {"azure_check": note, "capture": notes})  # fmt: skip
-        if held and untouched and not differ and inv.get("ai_output"):
+        folded = store.update_after_azure_check(iid, capture.to_dict(), dataclasses.asdict(found) if found else None,
+                                                ISSUE_CODE, {"azure_check": note, "capture": notes},
+                                                expect=expect)  # fmt: skip
+        # Held at the touchless decision, maybe days ago: the switch, the supplier's state and the limits are
+        # checked again, as they stand now.
+        output = inv.get("ai_output")
+        if folded and held and untouched and not differ and output and still_touchless(store, capture, output):
             try:
                 store.approve_invoice(iid, inv["ai_output"], AUTONOMOUS_REVIEWER, login="ap-coder")
                 approved = True

@@ -44,6 +44,14 @@ def bulk_approve(
         if inv is None or inv["status"] != REVIEW or not inv.get("ai_output"):
             skipped.append((invoice_id, "no longer in the queue"))
             continue
+        # What was found after processing and is kept only with the invoice (the Azure check's disagreement, the page
+        # reader's line items or text layer read differently): finalise_coding below does not raise it again.
+        stored = [
+            i for i in (inv.get("validation") or {}).get("issues") or [] if i.get("severity") in ("error", "warning")
+        ]
+        if stored:
+            skipped.append((invoice_id, f"{stored[0].get('code')}: {stored[0].get('message')}"))
+            continue
         coded = inv.get("final_output") or inv["ai_output"]
         coded = {k: v for k, v in coded.items() if k != "gl_distribution"}
         try:

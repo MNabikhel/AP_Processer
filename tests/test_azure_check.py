@@ -283,6 +283,7 @@ def test_a_spot_checked_invoice_waits_for_azure_then_goes_touchless(store, monke
     assert azure_check.hold({"auto": False, "reason": "x"}, plan) == {"auto": False, "reason": "x"}
     result = _process(store)
     assert store.azure_check(result.invoice_id)["reason"] == azure_check.SPOT
+    _touchless_vendor(store, result.output)
     # As if touchless processing had approved it but for the spot-check (the page reader's decision).
     store.update_after_azure_check(result.invoice_id, None, None, azure_check.ISSUE_CODE,
                                    {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
@@ -290,6 +291,76 @@ def test_a_spot_checked_invoice_waits_for_azure_then_goes_touchless(store, monke
     assert outcome.approved is True
     inv = store.get_invoice(result.invoice_id)
     assert inv["status"] == APPROVED and inv["reviewer"] == AUTONOMOUS_REVIEWER
+
+
+def _touchless_vendor(store, output):
+    """Touchless processing on, with a limit above the sample's total, and the invoice's vendor touchless (30 clean
+    reviewed invoices)."""
+    store.set_touchless_limit(100_000, "Mia")
+    key = store.supplier_key_for(output["vendor_name"], output.get("gst_hst_registration_number"))
+    rows = [{"field": f"f{n}", "ai_value": "a", "final_value": "a", "correct": True} for n in range(13)]
+    for i in range(30):
+        store.record_outcomes(key, 10_000 + i, rows, display_name=output["vendor_name"], at=f"2026-01-01T00:00:{i:02d}")
+    store.set_touchless(True, "Mia")
+    assert store.get_supplier_profile(key)["state"] == AUTONOMOUS
+    return key
+
+
+@pytest.mark.parametrize("change", ["switch off", "vendor held", "limit lowered"])
+def test_a_held_invoice_is_not_approved_once_touchless_no_longer_applies(store, monkeypatch, change):
+    """Held for a spot-check, then the switch was turned off, a manager kept the vendor supervised or the touchless
+    limit was lowered below its total: Azure agreeing does not approve it without a person."""
+    _turn_on(store, monkeypatch, rate=100)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
+    result = _process(store)
+    key = _touchless_vendor(store, result.output)
+    store.update_after_azure_check(result.invoice_id, None, None, azure_check.ISSUE_CODE,
+                                   {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
+    if change == "switch off":
+        store.set_touchless(False, "Bob")
+    elif change == "vendor held":
+        store.set_supplier_state(key, "held", "Bob", "new contract")
+    else:
+        store.set_touchless_limit(float(result.output["grand_total"]) / 2, "Bob")
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture)))
+    assert outcome.status == "done" and outcome.approved is False
+    assert store.get_invoice(result.invoice_id)["status"] == REVIEW
+
+
+def test_a_check_under_way_when_ap_restores_is_dropped_and_none_starts_meanwhile(store, monkeypatch, tmp_path):
+    """Azure read invoice #1 while AP restored a backup in which #1 is another invoice: its fields must not be
+    folded into that one. While the restore runs, no check starts."""
+    _turn_on(store, monkeypatch, rate=100)
+    result = _process(store)
+    _process(store, SAMPLES / "harbourview_NS_HST_HPS-2026-0347.pdf")  # waits in line behind it
+    other = Store(tmp_path / "other" / "ap.db")
+    load_sample_setup(other)
+    assert _process(other, SAMPLES / "harbourview_NS_HST_HPS-2026-0347.pdf").invoice_id == result.invoice_id
+    backup = other.backup_to(tmp_path / "other-backup.db")
+    raw = _raw_from(result.capture, invoice_number="OTHER-1")  # Azure disagrees: it would mark a field Check
+
+    seen = {}
+    check = Store._check_backup_file
+
+    def probe(path, name):
+        seen["restoring"] = store.restoring()
+        seen["started"] = azure_check.check_one(_settings(), store, client=NeverCalled())
+        check(path, name)
+
+    monkeypatch.setattr(Store, "_check_backup_file", staticmethod(probe))
+
+    class Client(FakeClient):
+        def begin_analyze_document(self, *args, **kwargs):
+            store.restore_from(backup)
+            return super().begin_analyze_document(*args, **kwargs)
+
+    outcome = azure_check.check_one(_settings(), store, client=Client(raw))
+    assert seen == {"restoring": True, "started": None}
+    assert outcome.status == "skipped" and not outcome.approved
+    inv = store.get_invoice(result.invoice_id)
+    assert inv["vendor_name"].startswith("Harbourview")
+    assert not any(i["code"] == azure_check.ISSUE_CODE for i in inv["validation"]["issues"])
+    assert "azure_check" not in inv["meta"]
 
 
 def test_a_held_invoice_azure_disagrees_with_stays_for_a_person(store, monkeypatch):

@@ -25,8 +25,10 @@ import importlib.util
 import ipaddress
 import logging
 import os
+import socket
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -287,6 +289,49 @@ def dashboard_address() -> str:
     """The address the dashboard listens on: this computer only, unless ``AP_DASHBOARD_ADDRESS`` says
     otherwise (e.g. ``0.0.0.0`` to let colleagues on the office network open it)."""
     return (os.environ.get(ADDRESS_ENV) or "").strip() or LOCAL_ADDRESS
+
+
+DEFAULT_PORT = 8501
+
+
+def listening(port: int, host: str = "127.0.0.1") -> bool:
+    """Something accepts connections on ``port`` here. A short timeout: on Windows a refused connection to a closed
+    port is retried for about a second, a listening one answers at once."""
+    with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.3)
+        try:
+            return s.connect_ex((host, port)) == 0
+        except OSError:
+            return False
+
+
+def free_port(start: int = DEFAULT_PORT, address: str | None = None, *, windows: bool | None = None,
+              answers: Callable[[int], bool] | None = None) -> int:  # fmt: skip
+    """The first port from ``start`` the dashboard can listen on at ``address`` (default ``dashboard_address``): a
+    bind test, as the server binds (instant, unlike connecting), then nothing must answer there yet (``answers``,
+    default ``listening``: on a Mac SO_REUSEADDR lets 127.0.0.1 be bound on a port another program listens on for
+    every address). When none of the 50 from ``start`` can be bound (Windows reserves whole blocks of ports for
+    Hyper-V and WSL), one the system says is free: never the busy one asked for. Used by the launcher
+    (``scripts/launch.py``) and by ``python -m ap_coder serve``."""
+    address = address or dashboard_address()
+    windows = os.name == "nt" if windows is None else windows
+    answers = answers or listening
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    for port in range(start, start + 50):
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            if not windows:  # like the dashboard's server: a port left in TIME_WAIT is free
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            elif hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # Windows lets 127.0.0.1 be bound on a port in use without it
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            try:
+                s.bind((address, port))
+            except OSError:
+                continue
+        if not answers(port):  # something answering there is never picked (0.3 s at most on Windows)
+            return port
+    with socket.socket(family, socket.SOCK_STREAM) as s:
+        s.bind((address, 0))
+        return s.getsockname()[1]
 
 
 def browser_wanted() -> bool:

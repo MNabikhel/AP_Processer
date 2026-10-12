@@ -396,6 +396,218 @@ jobs:
           .venv/bin/python -m pip install --no-index --find-links wheelhouse pytest
           .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_offline_guard.py
 
+  mac-manager-update:
+    # The manager's Mac, as it was after PR #8 (e1cf61a): only Python 3.14, GitHub's ZIP of main with an older Windows
+    # bundle's wheelhouse copied in as .wheelhouse; the double-click stopped on "Missing packages: azure-ai-...,
+    # streamlit". In LM Studio: Qwen 3.5 9B (chat), OvisOCR2 (page reader) and a Qwen embedding model (a stand-in on
+    # 127.0.0.1:1234, scripts/ci/fake_lm_studio.py). The update, offline (every proxy at a closed port, no
+    # AP_ALLOW_INTERNET), each way in a home of its own: the Mac bundle unzipped into a new folder; unzipped over the
+    # old folder; and GitHub's ZIP of this main with the old .wheelhouse copied in again, which must stop with one
+    # plain sentence naming the Mac bundle (not a list of packages).
+    name: The manager's Mac (Python 3.14 only) updated from PR 8
+    runs-on: macos-latest
+    timeout-minutes: 25
+    env:
+      AP_NO_PAUSE: "1"
+      BROWSER: none
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # PR 8's code comes from the history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: The Mac bundle (built online, elsewhere than this Mac's own Python; OCR and the Azure check included)
+        run: |
+          python scripts/build_offline_bundle.py --python 3.14 --platform macosx_14_0_arm64 --no-current --out "$RUNNER_TEMP/dist"
+          unzip -l "$RUNNER_TEMP"/dist/APProcessor-offline-*.zip > "$RUNNER_TEMP/bundle.txt"
+          for wheel in 'azure_ai_documentintelligence-' 'onnxruntime-.*cp314-cp314-macosx_14_0_arm64' 'rapidocr-' 'pandas-.*cp314-cp314-macosx'; do
+            grep -Eq "wheelhouse/$wheel" "$RUNNER_TEMP/bundle.txt" || { echo "the bundle has no $wheel wheel"; exit 1; }
+          done
+          grep -q 'models/' "$RUNNER_TEMP/bundle.txt" || { echo 'the bundle has no OCR models'; exit 1; }
+      - name: Leave Python 3.14 as the only Python (Homebrew's and python.org's others hidden)
+        run: |
+          version() { "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null; }
+          for f in /opt/homebrew/bin/python* /usr/local/bin/python*; do
+            case "$f" in *-config) continue ;; esac
+            if [ -x "$f" ] && [ "$(version "$f")" != 3.14 ]; then sudo mv "$f" "$f.hidden"; echo "hid $f"; fi
+          done
+          for d in /Library/Frameworks/Python.framework/Versions/3.*; do
+            if [ -d "$d" ] && [ "${d##*/}" != 3.14 ]; then sudo mv "$d" "$d.hidden"; echo "hid $d"; fi
+          done
+          for v in 3.10 3.11 3.12 3.13; do
+            if command -v "python$v"; then echo "python$v is still on PATH"; exit 1; fi
+          done
+          echo "python3 on PATH: $(command -v python3) ($(version python3)); /usr/bin/python3: $(version /usr/bin/python3 || echo none)"
+      - name: PR 8's GitHub ZIP with the old .wheelhouse fails; the Mac bundle, into a new folder and over it, works offline
+        run: |
+          T="$RUNNER_TEMP"
+          ci() { python "$GITHUB_WORKSPACE/scripts/ci/old_versions.py" "$@"; }
+          lms() { python "$GITHUB_WORKSPACE/scripts/ci/fake_lm_studio.py" "$@"; }
+          fail() { echo "FAILED: $*"; exit 1; }
+          offline() {
+            HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 \
+            http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 \
+            NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost PIP_INDEX_URL=http://127.0.0.1:9/simple "$@"
+          }
+          downloaded() { find "$1" -type f -exec xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Safari;" {} +; }
+          zips=("$T"/dist/APProcessor-offline-*.zip)
+          ZIP="${zips[0]}"
+          # LM Studio's own port (1234) when it is free on this runner, else another (AP Coder is told where).
+          LMS_PORT=1234
+          if lsof -nP -iTCP:1234 -sTCP:LISTEN; then
+            LMS_PORT="$(python -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+            echo "Port 1234 is taken on this runner (above): the fake LM Studio uses $LMS_PORT"
+            export AP_LLM_BASE_URL="http://127.0.0.1:$LMS_PORT/v1"
+          fi
+          lms serve --port "$LMS_PORT" --log "$T/lms.log" > "$T/lms.out" 2>&1 &
+          lms_up() { curl -fsS --noproxy '*' --max-time 5 "http://127.0.0.1:$LMS_PORT/v1/models" | grep -q ath-maas_ovisocr2; }
+          for _ in $(seq 1 30); do lms_up && break; sleep 1; done
+          lms_up || { cat "$T/lms.out"; fail 'the fake LM Studio did not start'; }
+          # The manager's folder after PR 8 in home $1, as he left it: GitHub's ZIP, the old .wheelhouse, one failed start.
+          broken() {
+            local old="$1/Downloads/AP_Processer-main"
+            mkdir -p "$1/Desktop" "$1/Downloads"
+            ci extract e1cf61a "$old"
+            ci old-wheelhouse "$old/.wheelhouse"
+            downloaded "$old"
+            if HOME="$1" offline "$old/APProcessor.command" > "$1/old.out" 2>&1; then cat "$1/old.out"; fail 'PR 8 started'; fi
+            cat "$1/old.out"
+            grep -q 'Missing packages: azure-ai-documentintelligence' "$1/old.out" || fail "not the manager's message"
+          }
+          # The double-click of $2 in home $1 on port $3, its dashboard used, a second double-click, then a later start.
+          works() {
+            local home="$1" folder="$2" port="$3" installed="${4:-}" up="" page code pid answer
+            HOME="$home" offline "$folder/APProcessor.command" --port "$port" > "$home/launch.out" 2>&1 &
+            pid=$!
+            for _ in $(seq 1 150); do
+              sleep 5
+              if curl -fs --noproxy '*' --max-time 5 -o /dev/null "http://127.0.0.1:$port/healthz"; then up=1; break; fi
+            done
+            cat "$home/launch.out"
+            [ -n "$up" ] || fail "$folder did not start"
+            grep -q 'Python 3\.14' "$home/launch.out" || fail 'not Python 3.14'
+            if [ -z "$installed" ]; then
+              grep -q 'Installing from the wheelhouse folder' "$home/launch.out" || fail 'not installed from the wheelhouse'
+            elif grep -Eq 'First run|Installing|Running the self-check' "$home/launch.out"; then
+              fail 'the double-click set up again what install.sh had set up'
+            fi
+            grep -q 'Self-check OK' "$home/launch.out" || fail 'no self-check OK'
+            if grep -Eq 'Downloading https?:|Looking in indexes' "$home/launch.out"; then fail 'pip went online'; fi
+            for page in / /process /review /learning /exports /vendors /accounts /activity /search /settings /settings/reading /help; do
+              code="$(curl -sSL --noproxy '*' -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port$page")"
+              [ "$code" = 200 ] || fail "$page answered $code"
+            done
+            answer="$(curl -fsS --noproxy '*' -H 'X-AP-Coder: 1' -H "Origin: http://127.0.0.1:$port" -d back=/process \
+              "http://127.0.0.1:$port/demo/load")"
+            case "$answer" in *'"ok":true'*) ;; *) fail "the demo invoices did not load: $answer" ;; esac
+            answer="$(curl -fsS --noproxy '*' "http://127.0.0.1:$port/review")"
+            case "$answer" in *'href="/review/'[0-9]*) ;; *) fail 'no invoice to review' ;; esac
+            lms_up || { cat "$T/lms.out"; fail 'the fake LM Studio stopped answering'; }
+            lms check --app "http://127.0.0.1:$port" --log "$T/lms.log" || fail 'the wrong model for a job'
+            second="$(HOME="$home" offline "$folder/APProcessor.command" --port "$port" 2>&1)"
+            echo "$second" | grep -q 'already running' || fail 'a second double-click did not open the running one'
+            token="$(python -c 'import json, sys; print(json.load(open(sys.argv[1]))["token"])' "$home/APCoder/.ap_coder_server.json")"
+            curl -fsS --noproxy '*' -X POST -H "X-AP-Coder-Token: $token" "http://127.0.0.1:$port/shutdown" > /dev/null
+            wait "$pid" || true
+            start=$(date +%s); up=""
+            HOME="$home" offline "$folder/APProcessor.command" --port "$port" > "$home/again.out" 2>&1 &
+            pid=$!
+            for _ in $(seq 1 60); do
+              sleep 1
+              if curl -fs --noproxy '*' --max-time 2 -o /dev/null "http://127.0.0.1:$port/healthz"; then up=1; break; fi
+            done
+            cat "$home/again.out"
+            echo "started again in $(( $(date +%s) - start )) s"
+            [ -n "$up" ] || fail 'the later start took a minute or more'
+            if grep -Eq 'First run|Installing|Running the self-check|Kept the older' "$home/again.out"; then fail 'it set something up again'; fi
+            token="$(python -c 'import json, sys; print(json.load(open(sys.argv[1]))["token"])' "$home/APCoder/.ap_coder_server.json")"
+            curl -fsS --noproxy '*' -X POST -H "X-AP-Coder-Token: $token" "http://127.0.0.1:$port/shutdown" > /dev/null
+            wait "$pid" || true
+            # One install on record (this one), one desktop launcher, opening it.
+            python - "$home" "$folder" <<'EOF'
+          import json, sys
+          from pathlib import Path
+          home, folder = Path(sys.argv[1]), Path(sys.argv[2]).resolve()
+          record = json.loads((home / ".ap_coder" / "settings.json").read_text())
+          installs = [Path(e["folder"]).resolve() for e in record.get("installs", [])]
+          assert installs == [folder] and Path(record["current"]).resolve() == folder, record
+          launchers = sorted((home / "Desktop").glob("AP Coder*"))
+          assert [p.name for p in launchers] == ["AP Coder.command"], launchers
+          assert str(folder) in launchers[0].read_text(), launchers[0].read_text()
+          print(f"record and desktop launcher: {folder}")
+          EOF
+          }
+          # install.sh in $2 (home $1) three times, offline: the first (no answers: stdin closed) sets up and checks; the
+          # next two (--yes) say it is up to date and change nothing, in seconds.
+          installs() {
+            local home="$1" folder="$2" n start took
+            for n in 1 2 3; do
+              start=$(date +%s)
+              if [ "$n" = 1 ]; then set --; else set -- --yes; fi
+              if ! HOME="$home" offline "$folder/install.sh" "$@" < /dev/null > "$home/install$n.out" 2>&1; then
+                cat "$home/install$n.out"; fail "install.sh (run $n) failed"
+              fi
+              took=$(( $(date +%s) - start ))
+              cat "$home/install$n.out"
+              echo "install.sh run $n took $took s"
+              grep -q 'All set' "$home/install$n.out" || fail "install.sh (run $n) did not finish"
+              if grep -Eq 'Downloading https?:|Looking in indexes|git (fetch|pull)' "$home/install$n.out"; then fail 'install.sh went online'; fi
+              if [ "$n" = 1 ]; then
+                grep -q 'Self-check OK' "$home/install1.out" || fail 'install.sh: no self-check OK'
+              else
+                grep -q 'Nothing to update' "$home/install$n.out" || fail "install.sh (run $n) did not say it is up to date"
+                if grep -Eq 'Installing|Collecting|removed [0-9]+ files? the older|Running the self-check' "$home/install$n.out"; then
+                  fail "install.sh (run $n) set something up again"
+                fi
+                [ "$took" -lt 60 ] || fail "install.sh (run $n) took $took s"
+              fi
+            done
+          }
+          # 1. The Mac bundle unzipped into a new folder (Archive Utility: ~/Downloads/APProcessor).
+          H="$T/new-folder"; broken "$H"
+          ci unzip "$ZIP" "$H/Downloads/APProcessor"; downloaded "$H/Downloads/APProcessor"
+          works "$H" "$H/Downloads/APProcessor" 8597
+          [ ! -e "$H/Downloads/AP_Processer-main/.venv" ] || fail "PR 8's .venv is still there"
+          # 2. Unzipped over the old folder.
+          H="$T/over"; broken "$H"
+          ci unzip "$ZIP" "$H/Downloads/AP_Processer-main"; downloaded "$H/Downloads/AP_Processer-main"
+          works "$H" "$H/Downloads/AP_Processer-main" 8598
+          [ ! -e "$H/Downloads/AP_Processer-main/streamlit_app.py" ] || fail "PR 8's streamlit_app.py is still there"
+          # 3. GitHub's ZIP of this main again, the old .wheelhouse copied in: one plain sentence naming the Mac bundle.
+          H="$T/github-zip"; broken "$H"
+          C="$H/Downloads/AP_Processer-main 2"
+          ci extract HEAD "$C"; ci old-wheelhouse "$C/.wheelhouse"; downloaded "$C"
+          if HOME="$H" offline "$C/APProcessor.command" > "$H/zip.out" 2>&1; then cat "$H/zip.out"; fail 'it started'; fi
+          cat "$H/zip.out"
+          grep -q 'built for Windows, Python 3.11/3.12; this computer is a Mac with Python 3.14. Use the bundle built for Macs (build it with --mac)' "$H/zip.out" || fail 'not the plain sentence'
+          if grep -q 'Missing packages' "$H/zip.out"; then fail 'it listed packages'; fi
+          [ "$(grep -cE '✗|\[FAIL\]' "$H/zip.out")" = 1 ] || fail 'more than one problem said'
+          # ... and its installer says the same.
+          if HOME="$H" offline "$C/install.sh" --yes < /dev/null > "$H/zip-install.out" 2>&1; then cat "$H/zip-install.out"; fail 'install.sh installed'; fi
+          cat "$H/zip-install.out"
+          grep -q 'this computer is a Mac with Python 3.14. Use the bundle built for Macs (build it with --mac)' "$H/zip-install.out" || fail 'install.sh: not the plain sentence'
+          if grep -q 'Missing packages' "$H/zip-install.out"; then fail 'install.sh listed packages'; fi
+          # 4. install.sh, run over the old folder, then twice more; then the double-click starts at once.
+          H="$T/install-over"; broken "$H"
+          F="$H/Downloads/AP_Processer-main"
+          ci unzip "$ZIP" "$F"; downloaded "$F"
+          installs "$H" "$F"
+          grep -Eq 'removed [0-9]+ files the older version left' "$H/install1.out" || fail "install.sh left PR 8's files"
+          [ ! -e "$F/streamlit_app.py" ] && [ ! -e "$F/tests/test_dashboard_pages.py" ] || fail "PR 8's files are still there"
+          works "$H" "$F" 8599 installed
+          # 5. install.sh in a new folder, PR 8's folder still beside it.
+          H="$T/install-new-folder"; broken "$H"
+          F="$H/Downloads/APProcessor"
+          ci unzip "$ZIP" "$F"; downloaded "$F"
+          installs "$H" "$F"
+          [ ! -e "$H/Downloads/AP_Processer-main/.venv" ] || fail "PR 8's .venv is still there after install.sh"
+          works "$H" "$F" 8600 installed
+      - name: Stop what is still running
+        if: always()
+        run: pkill -f 'ap_coder|launch\.py|fake_lm_studio' || true
+
   update-over-older-install:
     # The update a user does, from the oldest versions of main and from the last one before the web app, each really
     # installed the way its README said (scripts/ci/old_versions.py: its commit's files, its packages from PyPI),
