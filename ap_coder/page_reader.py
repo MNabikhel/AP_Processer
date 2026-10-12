@@ -187,6 +187,7 @@ class LMListing:
 
     route: str
     models: tuple[LMModel, ...]
+    embeddings: tuple[tuple[str, bool], ...] = ()  # embedding models (key, loaded): listed in Settings, never used
 
     def find(self, name: str) -> LMModel | None:
         return next((model for model in self.models if model.named(name)), None)
@@ -206,8 +207,11 @@ def parse_lm_studio_listing(data: Any) -> LMListing | None:
     if not isinstance(data, dict):
         return None
     models: list[LMModel] = []
+    embeddings: list[tuple[str, bool]] = []
     if isinstance(data.get("models"), list):
         for item in data["models"]:
+            if isinstance(item, dict) and item.get("type") == "embedding" and item.get("key"):
+                embeddings.append((str(item["key"]), bool(item.get("loaded_instances"))))
             if not isinstance(item, dict) or item.get("type") not in {"llm", "vlm"} or not item.get("key"):
                 continue
             caps = item.get("capabilities") if isinstance(item.get("capabilities"), dict) else {}
@@ -227,10 +231,12 @@ def parse_lm_studio_listing(data: Any) -> LMListing | None:
                     reasoning=tuple(str(option) for option in options),
                 )  # fmt: skip
             )
-        return LMListing("v1", tuple(models))
+        return LMListing("v1", tuple(models), tuple(embeddings))
     items = data.get("data")
     if isinstance(items, list) and any(isinstance(item, dict) and "state" in item for item in items):
         for item in items:
+            if isinstance(item, dict) and item.get("type") == "embeddings" and item.get("id"):
+                embeddings.append((str(item["id"]), item.get("state") == "loaded"))
             if not isinstance(item, dict) or not item.get("id") or item.get("type") not in {"llm", "vlm"}:
                 continue
             loaded = item.get("state") == "loaded"
@@ -243,7 +249,7 @@ def parse_lm_studio_listing(data: Any) -> LMListing | None:
                     max_context=_int(item.get("max_context_length")),
                 )  # fmt: skip
             )
-        return LMListing("v0", tuple(models))
+        return LMListing("v0", tuple(models), tuple(embeddings))
     return None
 
 
@@ -1498,10 +1504,10 @@ def _ocr_row() -> dict[str, str]:
 
 
 def lm_studio_models(settings: Settings, *, use_cache: bool = True) -> list[dict[str, Any]] | None:
-    """Every chat and vision model LM Studio has downloaded, for Settings: ``model``, ``loaded`` (with ``context``,
-    the tokens it is loaded with; 0 when LM Studio doesn't say), ``vision``, ``document_reader`` and ``used_for``
-    (what AP Coder uses it for, "" when nothing). Loaded ones first. None when LM Studio isn't answering (or the
-    server isn't LM Studio, which doesn't say what it has)."""
+    """Every model LM Studio has downloaded, for Settings: ``model``, ``loaded`` (with ``context``, the tokens it is
+    loaded with; 0 when LM Studio doesn't say), ``vision``, ``document_reader``, ``used_for`` (what AP Coder uses it
+    for, "" when nothing) and ``embedding`` (an embedding model: listed last, never used). Loaded ones first. None when
+    LM Studio isn't answering (or the server isn't LM Studio, which doesn't say what it has)."""
     listing = lm_studio_listing(settings, use_cache=use_cache)
     if listing is None:
         return None
@@ -1519,7 +1525,9 @@ def lm_studio_models(settings: Settings, *, use_cache: bool = True) -> list[dict
             "model": model.key, "loaded": bool(model.instances), "context": model.loaded_context,
             "vision": model.vision, "document_reader": document_reader(model.key), "used_for": ", ".join(jobs),
         })  # fmt: skip
-    return sorted(rows, key=lambda r: (not r["loaded"], not r["used_for"], r["model"]))
+    rows.sort(key=lambda r: (not r["loaded"], not r["used_for"], r["model"]))
+    return rows + [{"model": key, "loaded": loaded, "context": 0, "vision": False, "document_reader": False,
+                    "used_for": "", "embedding": True} for key, loaded in listing.embeddings]  # fmt: skip
 
 
 # Tokens a chat model is loaded with from Settings: the context CloseDesk loads its chat model with (its

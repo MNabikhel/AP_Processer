@@ -1013,16 +1013,31 @@ QWEN_EMBEDDING = {"type": "embedding", "key": EMBEDDING_KEY, "max_context_length
 
 def test_the_embedding_model_closedesk_uses_is_left_alone(serve, posts, two_ocr_models):
     """The manager's LM Studio has CloseDesk's embedding model (Qwen3 Embedding) loaded beside Qwen 3.5 9B and
-    OvisOCR2. AP Coder doesn't use it: it is never taken for the chat model or the page reader, never listed in
-    Settings → Reading, and never loaded or unloaded."""
+    OvisOCR2. AP Coder doesn't use it: it is never taken for the chat model or the page reader, listed in Settings →
+    Reading as not used, and never loaded or unloaded."""
     serve(lm_studio(QWEN_EMBEDDING, v1_model("qwen/qwen3.5-9b"), v1_model(OVIS_KEY)))  # nothing else loaded
     coding, reader, _ocr = page_reader.models_in_use(Settings())
     assert coding["model"] == "qwen/qwen3.5-9b" and reader["model"] == "OvisOCR2"
     assert page_reader.reader_status(Settings()).candidates == [OVIS_KEY, "qwen/qwen3.5-9b"]
     rows = page_reader.lm_studio_models(Settings())
-    assert [r["model"] for r in rows] == [OVIS_KEY, "qwen/qwen3.5-9b"]  # the embedding model isn't listed
+    assert [r["model"] for r in rows] == [OVIS_KEY, "qwen/qwen3.5-9b", EMBEDDING_KEY]  # listed last, as not used
+    assert rows[-1]["embedding"] and rows[-1]["used_for"] == ""
     assert "doesn't have" in page_reader.load_model(Settings(), QWEN_EMBEDDING["key"])
     assert all("embedding" not in str(body) for _path, body in posts)
+
+
+@pytest.mark.parametrize("listing", [REAL_V1, REAL_V0], ids=["0.4", "0.3"])
+def test_lm_studio_models_shows_an_embedding_model_as_not_used(serve, listing):
+    """An embedding model (Qwen3 Embedding next to Qwen 3.5 and OvisOCR2) is listed, said to be unused, never picked."""
+    serve({"/v1/models": REAL_IDS, "/api/v1/models" if "models" in listing else "/api/v0/models": listing})
+    parsed = page_reader.parse_lm_studio_listing(listing)
+    assert parsed.embeddings == (("text-embedding-nomic-embed-text-v1.5", False),)
+    assert [m.key for m in parsed.models] == [OVIS_KEY, "qwen2.5-7b-instruct"]  # never a chat or vision model
+    rows = page_reader.lm_studio_models(Settings())
+    embedding = next(r for r in rows if r["model"] == "text-embedding-nomic-embed-text-v1.5")
+    assert embedding["embedding"] and not embedding["vision"] and not embedding["document_reader"]
+    assert embedding["used_for"] == "" and not embedding["loaded"]
+    assert rows[-1] is embedding  # after the models AP Coder uses
 
 
 def test_load_a_chat_model_from_settings(serve, posts):

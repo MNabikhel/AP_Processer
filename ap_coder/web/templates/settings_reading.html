@@ -132,7 +132,7 @@
       </tbody>
     </table>
   </div>
-  {% set unloaded = models | rejectattr("is_loaded") | sort(attribute="document_reader", reverse=true) | list %}
+  {% set unloaded = models | rejectattr("is_loaded") | rejectattr("embedding") | sort(attribute="document_reader", reverse=true) | list %}
   {% if unloaded %}
   <form method="post" action="/settings/reading/load-model" class="row st-load" data-busy="LM Studio is loading the model…">
     <label class="field">Load a model now

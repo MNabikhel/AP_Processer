@@ -138,6 +138,8 @@ def test_a_second_ocr_engine_that_cannot_be_installed_is_said_once(launch, monke
 
 
 def test_a_failed_install_stops_with_what_to_do(launch, monkeypatch):
+    # (no bundle's manifest: run in an offline bundle's folder, the test read that bundle's and failed there)
+    monkeypatch.setattr(launch, "bundle_pythons", lambda here_only=True: [])
     _fake_pip(launch, monkeypatch, ["fastapi>=0.115,<1"], fails={"fastapi>=0.115,<1"})
     with pytest.raises(launch.SetupError) as exc:
         launch.ensure_packages({})

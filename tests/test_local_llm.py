@@ -217,6 +217,9 @@ def test_detection_when_nothing_answers_is_quick_and_cached(real_fetch, monkeypa
         ("", ["text-embedding-qwen3-embedding-0.6b", "ovis-ocr2", "qwen3.5-9b-mlx"], [], True, "qwen3.5-9b-mlx"),
         ("", ["qwen3.5-27b", "qwen3.5-4b"], [], True, ""),  # another size is not the one the team runs
         ("", ["Ovis_OCR2-GGUF"], ["Ovis_OCR2-GGUF"], True, ""),  # a page reader, however it is spelled
+        # OvisOCR2 under any name the page reader knows it by (an MLX build, separators): never the chat model
+        ("", ["ovis-ocr2", "qwen/qwen3.5-9b"], ["ovis-ocr2"], True, "qwen/qwen3.5-9b"),
+        ("", ["ovis_ocr2-mlx", "qwen3.5-9b-mlx"], ["ovis_ocr2-mlx"], True, "qwen3.5-9b-mlx"),
         ("", [], [], False, ""),
     ],
 )
@@ -495,8 +498,10 @@ def test_settings_page_lists_the_models_with_nothing_to_choose(settings_client, 
     assert "IT team installs it" not in _words(page)
     table = page.split("Models in LM Studio", 1)[1].split("</table>", 1)[0]
     models = set(re.findall(r"<td[^>]*>\s*(?:<[^>]+>\s*)*([\w.-]+-instruct|[\w.-]*embed[\w.-]*)", table))
-    # what LM Studio has (its own listing), the embedding model left out
-    assert {"qwen2.5-7b-instruct", "qwen2.5-vl-7b-instruct"} <= models and not [m for m in models if "embed" in m]
+    # what LM Studio has (its own listing); the embedding model only as one AP Coder doesn't use
+    assert {"qwen2.5-7b-instruct", "qwen2.5-vl-7b-instruct"} <= models
+    for embedding in [m for m in models if "embed" in m]:
+        assert "not used (an embedding model)" in table.split(embedding, 1)[1].split("</tr>", 1)[0]
     for gone in ("llm_provider", "llm_model", "llm_vision", "pr_mode", "pr_scope", "pr_model"):
         assert f'name="{gone}"' not in page
     assert not read_env(env)  # looking at Settings writes nothing

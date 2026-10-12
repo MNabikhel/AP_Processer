@@ -141,6 +141,11 @@ def queued_note(settings: Settings, store: Store, queued: int) -> str:
     status = reading_status_or_none(settings, store)
     if status is not None and not status.page_reader_ready:
         wait = "it waits" if queued == 1 else "they wait"
+        test = getattr(status, "self_test", "")
+        if getattr(status, "page_reader_model", "") and test in ("failed", "pending", "running"):
+            why = "it failed its self-test" if test == "failed" else "its self-test hasn't passed yet"
+            return (f"{ui.plural(queued, 'invoice')} queued for OvisOCR2, which runs in LM Studio but isn't trusted "
+                    f"yet ({why}): {wait} for it (Settings → Reading).")  # fmt: skip
         return (f"{ui.plural(queued, 'invoice')} queued for OvisOCR2, which isn't running: {wait} for it "
                 "(Settings → Reading).")  # fmt: skip
     eta = ""

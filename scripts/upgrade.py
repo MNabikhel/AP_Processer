@@ -275,10 +275,26 @@ def nearby_installs(root: Path) -> list[Path]:
     for folder in places:
         if paths.same_folder(folder, root) or (folder / ".git").exists() or not is_install(folder):
             continue
+        if not left_to_clean(folder) and removable(folder, root):
+            continue  # cleaned up by an earlier start and kept (files AP Coder didn't put there): nothing to do
         known = any(paths.same_folder(folder, f) for f in found)
         if not known and paths.is_older(paths.install_identity(folder), mine):
             found.append(folder)
     return found
+
+
+def left_to_clean(folder: Path) -> bool:
+    """An older folder still holds something the clean-up takes: its .venv, models, settings or data (``private/``),
+    or the rest of a removal."""
+    try:
+        data = (
+            [p for p in (folder / "private").iterdir() if p.name != "README.md"]
+            if (folder / "private").is_dir()
+            else []
+        )
+    except OSError:
+        data = [folder]
+    return bool(data or removing(folder)) or any((folder / name).exists() for name in (".venv", "models", ".env"))
 
 
 def remember(folders: list[Path]) -> None:

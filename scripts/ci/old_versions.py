@@ -5,6 +5,7 @@ each was installed and what the update does with it). This tool sets one up for 
 
     python scripts/ci/old_versions.py list
     python scripts/ci/old_versions.py extract SHA FOLDER            # its code (git archive), as its ZIP held it
+    python scripts/ci/old_versions.py old-wheelhouse FOLDER         # an older Windows bundle's wheelhouse, copied in
     python scripts/ci/old_versions.py install FOLDER --how HOW      # as its README said (downloads from PyPI)
     python scripts/ci/old_versions.py start FOLDER --how HOW --log FILE [--port N]   # its dashboard, left running
     python scripts/ci/old_versions.py seed FOLDER --how HOW --out BEFORE.json        # use it: see below
@@ -103,6 +104,35 @@ def extract(sha: str, folder: Path, bundle: bool = False) -> None:
         built = subprocess.run(["git", "log", "-1", "--format=%cI", sha], cwd=ROOT, capture_output=True, text=True)
         manifest = {"app": "AP Coder", "version": "0.1.0", "built": built.stdout.strip()[:19]}
         (folder / "bundle_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+# An older Windows bundle's wheelhouse (Python 3.11 and 3.12, win_amd64), as someone copies it next to GitHub's ZIP
+# (the manager: as ".wheelhouse", on a Mac with Python 3.14). Its compiled wheels stand in by name only: none fits
+# a Mac or Linux, and AP Coder must say so in one sentence instead of installing anything or listing packages.
+OLD_WINDOWS_WHEELS = [
+    "numpy-2.1.3-{t}-{t}-win_amd64.whl", "pandas-2.2.3-{t}-{t}-win_amd64.whl", "pyarrow-18.1.0-{t}-{t}-win_amd64.whl",
+    "pillow-11.0.0-{t}-{t}-win_amd64.whl", "pydantic_core-2.27.1-{t}-{t}-win_amd64.whl",
+    "onnxruntime-1.20.1-{t}-{t}-win_amd64.whl", "pymupdf-1.24.14-cp39-abi3-win_amd64.whl",
+    "streamlit-1.40.2-py2.py3-none-any.whl", "python_dotenv-1.0.1-py3-none-any.whl",
+    "colorama-0.4.6-py2.py3-none-any.whl",
+]  # fmt: skip
+
+
+def old_wheelhouse(folder: Path) -> None:
+    """``folder`` as an older Windows bundle's wheelhouse (each wheel a valid, empty one)."""
+    import zipfile
+
+    folder.mkdir(parents=True, exist_ok=True)
+    for pattern in OLD_WINDOWS_WHEELS:
+        for tag in ("cp311", "cp312"):
+            name = pattern.format(t=tag)
+            project, version = name.split("-")[:2]
+            with zipfile.ZipFile(folder / name, "w") as wheel:
+                info = f"{project}-{version}.dist-info"
+                wheel.writestr(f"{info}/METADATA", f"Metadata-Version: 2.1\nName: {project}\nVersion: {version}\n")
+                wheel.writestr(f"{info}/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: false\n")
+                wheel.writestr(f"{info}/RECORD", "")
+    say(f"An older Windows bundle's wheelhouse: {len(list(folder.glob('*.whl')))} wheels in {folder}")
 
 
 # --- Installed as its README said ---------------------------------------------------------------------------------
@@ -691,6 +721,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("sha")
     p.add_argument("folder", type=Path)
     p.add_argument("--bundle", action="store_true", help="as its offline bundle held it (with its manifest)")
+    p = sub.add_parser("old-wheelhouse", help="an older Windows bundle's wheelhouse (cp311/cp312 win_amd64) as FOLDER")
+    p.add_argument("folder", type=Path)
     for name in ("install", "start", "seed", "seed-inside"):
         p = sub.add_parser(name)
         p.add_argument("folder", type=Path)
@@ -733,6 +765,8 @@ def main(argv: list[str] | None = None) -> int:
         unzip(args.bundle, args.folder)
     elif args.command == "extract":
         extract(args.sha, args.folder, args.bundle)
+    elif args.command == "old-wheelhouse":
+        old_wheelhouse(args.folder)
     elif args.command == "install":
         install(args.folder.resolve(), args.how)
     elif args.command == "start":
