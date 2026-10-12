@@ -94,11 +94,28 @@ def _root(base_url: str) -> str:
     return base[: -len("/v1")] if base.endswith("/v1") else base
 
 
+def refuse_internet(url: str) -> bool:
+    """Whether ``url`` is a server on this computer or network (True), or on the internet and allowed by the
+    developers' opt-in AP_ALLOW_INTERNET=1 (False). Anything else raises ``ConnectionRefusedError`` before a byte is
+    sent: an AP_LLM_BASE_URL or AP_PAGE_READER_BASE_URL naming a hosted service would get the invoices' text."""
+    from .offline import INTERNET_ENV, internet_allowed
+
+    host = urlparse(url).netloc
+    if _on_this_network(host):
+        return True
+    if internet_allowed():
+        return False
+    raise ConnectionRefusedError(
+        f"{urlparse(url).hostname or host} is on the internet: this offline build only uses a model server on this "
+        f"computer or network (developers: {INTERNET_ENV}=1)"
+    )
+
+
 def _fetch_json(url: str, api_key: str, timeout: float) -> Any:
     """GET a JSON document (raises OSError / ValueError when the server is down or answers something else)."""
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key or 'lm-studio'}"})
     # A server on this computer or network: no proxy (an office proxy would answer for 127.0.0.1, or hang).
-    local = _on_this_network(urlparse(url).netloc)
+    local = refuse_internet(url)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if local else urllib.request.build_opener()
     with opener.open(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8", "replace"))
@@ -266,7 +283,7 @@ def build_local_client(llm: LocalLLMSettings) -> Any:
     from openai import DefaultHttpxClient, OpenAI
 
     options: dict[str, Any] = {}
-    if _on_this_network(urlparse(llm.base_url).netloc):
+    if refuse_internet(llm.base_url):
         # A server on this computer or network: never through an office proxy (it would answer for 127.0.0.1).
         options["http_client"] = DefaultHttpxClient(trust_env=False)
     return OpenAI(
