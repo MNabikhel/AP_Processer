@@ -285,12 +285,21 @@ def test_announce_prints_the_address_once_it_answers(monkeypatch, capsys):
         def __exit__(self, *exc):
             return False
 
-    class Direct:  # the opener without a proxy (tests/test_network_gates.py: never through an office proxy)
+    class Opener:
+        def __init__(self, *handlers):
+            self.handlers = handlers
+
         def open(self, url, timeout):
+            assert url == "http://127.0.0.1:8613/healthz"
             return Answer()
 
+    def build_opener(*handlers):
+        # its own server is asked directly, never through a proxy (HTTP_PROXY would get the request)
+        assert any(isinstance(h, urllib.request.ProxyHandler) and h.proxies == {} for h in handlers)
+        return Opener(*handlers)
+
     opened = []
-    monkeypatch.setattr(urllib.request, "build_opener", lambda *handlers: Direct())
+    monkeypatch.setattr(urllib.request, "build_opener", build_opener)
     monkeypatch.setattr(webbrowser, "open", opened.append)
     monkeypatch.delenv("BROWSER", raising=False)
     monkeypatch.setenv("DISPLAY", ":0")  # a desktop (a Linux one without: no browser, tests/test_browser_open.py)

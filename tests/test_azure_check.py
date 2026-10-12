@@ -117,7 +117,10 @@ def test_off_by_default_nothing_is_queued_or_sent(store, monkeypatch):
     cfg = azure_check.load_settings(store)
     assert cfg.enabled is False and cfg.model == "prebuilt-invoice" and cfg.spot_rate == 0.05
     assert cfg.daily_pages == 200
-    assert azure_check.status(cfg) == (azure_check.OFF, "Off — AP Coder works fully offline without it.")
+    assert azure_check.status(cfg) == (
+        azure_check.OFF,
+        "Off — AP Coder works fully offline without it. Switch it on (and save) to test the connection.",
+    )
     result = _process(store)
     assert store.azure_check(result.invoice_id) is None
     assert azure_check.check_one(_settings(), store, client=NeverCalled()) is None
@@ -443,12 +446,16 @@ def test_test_connection_reads_the_sample_and_shows_the_comparison(store, monkey
     monkeypatch.setattr(azure_check, "packages_installed", lambda: True)
     client = _client(store)
     assert client.post("/settings/azure-check/test", headers=PAGE).json()["ok"] is False  # no endpoint yet
-    azure_check.save_settings(store, enabled=False, endpoint=ENDPOINT, api_key=KEY)  # testing before turning on
+    azure_check.save_settings(store, enabled=False, endpoint=ENDPOINT, api_key=KEY)
     ours = azure_check.connection_test  # the real comparison, Azure faked
     from ap_coder.capture import analyze
 
     fake = FakeClient(_raw_from(analyze(azure_check.SAMPLE_INVOICE)))
     monkeypatch.setattr(azure_check, "make_client", lambda cfg: fake)
+    refused = client.post("/settings/azure-check/test", headers=PAGE).json()  # off: nothing is sent, not even a test
+    assert refused["ok"] is False and "Switch it on" in refused["error"] and fake.calls == []
+    assert "nothing is sent to Azure while it is off" in client.get("/settings/azure-check").text
+    azure_check.save_settings(store, enabled=True, endpoint=ENDPOINT, api_key=KEY)
     answer = client.post("/settings/azure-check/test", headers=PAGE).json()
     assert answer == {"ok": True, "job": "azure-test", "status": "/jobs/azure-test"}
     app_jobs = client.app.state.jobs

@@ -40,10 +40,8 @@ from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
 
 from . import local_llm, paths
-from .config import _on_this_network
 
 if TYPE_CHECKING:
     from .config import LocalLLMSettings, Settings
@@ -449,7 +447,10 @@ def _post_json(url: str, body: dict[str, Any], api_key: str, timeout: float) -> 
         url, data=json.dumps(body).encode("utf-8"), method="POST",
         headers={"Authorization": f"Bearer {api_key or 'lm-studio'}", "Content-Type": "application/json"},
     )  # fmt: skip
-    local = _on_this_network(urlparse(url).netloc)
+    try:
+        local = local_llm.refuse_internet(url)
+    except ConnectionRefusedError as exc:
+        raise PageReaderError(str(exc)) from exc
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if local else urllib.request.build_opener()
     try:
         with opener.open(request, timeout=timeout) as response:

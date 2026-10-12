@@ -228,7 +228,7 @@ coding nothing silently. Speed and model advice are in [docs/PILOT.md](docs/PILO
 
 | Setting | Default | |
 | --- | --- | --- |
-| `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows on this computer or the office network; Ollama: `http://127.0.0.1:11434/v1` (an internet address only with `AP_ALLOW_INTERNET=1`) |
+| `AP_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` | any address LM Studio shows; Ollama: `http://127.0.0.1:11434/v1`. On this computer or the office network only: a server on the internet is never asked (developers: `AP_ALLOW_INTERNET=1`) |
 | `AP_LLM_MODEL` | empty | empty = the chat model LM Studio has (never an embedding model or OvisOCR2) |
 | `AP_LLM_MAX_PROMPT_CHARS` | `24000` | invoice text sent; a longer one keeps its start and end |
 | `AP_LLM_TIMEOUT_SECONDS`, `AP_LLM_MAX_TOKENS` | `600`, `4096` | a laptop without a graphics card is slow |

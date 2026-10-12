@@ -108,6 +108,16 @@ def refused_address(url: str) -> str:
             f"({INTERNET_ENV}=1 allows it)")  # fmt: skip
 
 
+def refuse_internet(url: str) -> bool:
+    """Whether ``url`` is a server on this computer or network (True: asked directly, never through a proxy), or on
+    the internet and allowed by the opt-in (False). Refused otherwise (:func:`refused_address`), with
+    ``ConnectionRefusedError`` before a byte is sent."""
+    refused = refused_address(url)
+    if refused:
+        raise ConnectionRefusedError(refused)
+    return _on_this_network(urlparse(url).netloc)
+
+
 def _fetch_json(url: str, api_key: str, timeout: float) -> Any:
     """GET a JSON document (raises OSError / ValueError when the server is down or answers something else, and
     PermissionError, an OSError, for a server on the internet in the offline build: :func:`refused_address`)."""

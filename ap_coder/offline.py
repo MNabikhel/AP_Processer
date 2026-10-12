@@ -2,7 +2,10 @@
 
 AP Coder is an offline build: nothing it runs connects to the internet unless a developer or the bundle
 builder opts in with ``AP_ALLOW_INTERNET=1`` (:func:`internet_allowed`). The setup scripts check it before
-any package, model, git or Python download.
+any package, model, git or Python download, and the model server's address (``local_llm.refuse_internet``): LM
+Studio on this computer or the office network, never a server on the internet. The one exception is the optional
+Azure check (``azure_check``), which contacts its configured endpoint only once AP has switched it on in Settings.
+``tests/test_offline_guard.py`` proves it: every flow runs with any connection but to this computer refused.
 
 RapidOCR 3 (the PP-OCRv5 reader) would download its model files into its own package folder the first time
 it is used. AP Coder never lets it: ``scripts/fetch_models.py`` copies them from the ``models/`` folder of
@@ -263,6 +266,18 @@ def table_finder_path() -> Path | None:
 
 def onnxruntime_installed() -> bool:
     return _package_dir("onnxruntime") is not None and _package_dir("numpy") is not None
+
+
+def quiet_onnxruntime() -> None:
+    """Switch off ONNX Runtime's usage events (on Windows it writes them to the system's event tracing, which Windows
+    may send to Microsoft with its diagnostic data) before the OCR engines and the table finder make their sessions.
+    It never connects anywhere itself; this keeps the OCR's usage on this computer too. Never fails."""
+    try:
+        import onnxruntime
+
+        onnxruntime.disable_telemetry_events()
+    except Exception:  # noqa: BLE001 - not installed, or an ONNX Runtime without the switch
+        pass
 
 
 # --- Dashboard network settings ---------------------------------------------------------------------------------
