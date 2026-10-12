@@ -975,3 +975,55 @@ def test_read_pages_test_option(store, tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "about 10–20 minutes on a laptop without a graphics card" in err and "passed" in err
     assert page_worker.confirmed(store, MODEL)
+
+
+# --- A restore under the page reader ----------------------------------------------------------------------------
+
+
+def _other_database_backup(tmp_path, settings):
+    """A backup whose invoice #1 is another invoice (Northwind, not Harbourview)."""
+    other = Store(tmp_path / "other" / "ap.db")
+    load_sample_setup(other)
+    other.set_setting(page_worker.TEST_KEY, json.dumps({"model": MODEL, "ok": True}))
+    assert _process(other, settings, SAMPLES / "northwind_ON_HST_NW-2026-0912.pdf").invoice_id == 1
+    return other.backup_to(tmp_path / "other-backup.db")
+
+
+def test_a_reading_under_way_when_ap_restores_is_dropped(store, fake_reader, tmp_path, monkeypatch):
+    """The page reader read Harbourview (#1) while AP restored a backup in which #1 is another invoice, nobody has
+    touched it either: the reading must not be written onto it."""
+    settings = _settings()
+    assert _process(store, settings).invoice_id == 1
+    backup = _other_database_backup(tmp_path, settings)
+    real = page_reader.read_document
+
+    def read_while_restored(*args, **kwargs):
+        reading = real(*args, **kwargs)
+        store.restore_from(backup)
+        return reading
+
+    monkeypatch.setattr(page_reader, "read_document", read_while_restored)
+    outcome = page_worker.read_one(settings, store)
+    assert outcome is not None and not outcome.updated and not outcome.auto_approved
+    inv = store.get_invoice(1)
+    assert inv["vendor_name"].startswith("Northwind") and inv["ai_output"]["vendor_name"].startswith("Northwind")
+    assert not store.events(1, actions=["proposal_updated"])
+    assert store.page_read(1)["status"] == "waiting"  # as the backup has it: read again
+
+
+def test_a_restore_pauses_the_page_reader(store, fake_reader, tmp_path, monkeypatch):
+    settings = _settings()
+    _process(store, settings)
+    backup = store.backup_now("manual")
+    seen = {}
+    check = Store._check_backup_file
+
+    def probe(path, name):
+        seen["restoring"] = store.restoring()
+        seen["read"] = page_worker.read_one(settings, store)
+        check(path, name)
+
+    monkeypatch.setattr(Store, "_check_backup_file", staticmethod(probe))
+    store.restore_from(backup)
+    assert seen == {"restoring": True, "read": None} and fake_reader["read"] == 0
+    assert not store.restoring() and page_worker.read_one(settings, store).status == "done"  # going again after it

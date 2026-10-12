@@ -178,8 +178,9 @@ def test_a_reopened_touchless_invoice_suspends_until_a_fresh_streak(tmp_path, gr
     store.import_vendor_master([{"vendor_name": ground_truth["vendor_name"], "erp_id": "V1"}])
     invoice_id = store.add_invoice(tmp_path / "a.pdf", ground_truth, {"requires_review": False})
     store.approve_invoice(invoice_id, ground_truth, AUTONOMOUS_REVIEWER, login="ap-coder")
-    on_reopen(store, invoice_id, "Ann", "wrong PO")  # what the review screen does, then it reopens it
+    before = store.get_invoice(invoice_id)  # what the review screen does: reopen it, then suspend its vendor
     store.reopen(invoice_id, "Ann", "wrong PO")
+    on_reopen(store, invoice_id, "Ann", "wrong PO", before=before)
     assert "reopened" in store.events(actions=["autonomy_suspended"])[0]["detail"]["reason"]
     profile = store.get_supplier_profile(KEY)
     assert profile["state"] == SUSPENDED and profile["suspended_at"]

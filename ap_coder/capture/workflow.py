@@ -351,10 +351,12 @@ def taught_message(store: Any, learned: dict[str, Any]) -> str:
     return f"{head} {name}: {plural(invoices, 'invoice')} reviewed, {where}.".strip()
 
 
-def on_reopen(store: Any, invoice_id: int, actor: str, reason: str = "") -> None:
+def on_reopen(store: Any, invoice_id: int, actor: str, reason: str = "", *,
+              before: dict[str, Any] | None = None) -> None:  # fmt: skip
     """Reopening an invoice approved without a person means the autonomous run got something wrong:
-    the supplier goes back to supervised review."""
-    inv = store.get_invoice(invoice_id)
+    the supplier goes back to supervised review. ``before``: the invoice as it was before it was reopened (the
+    reopen clears who approved it); called once the reopen succeeded, so a refused reopen suspends nobody."""
+    inv = before if before is not None else store.get_invoice(invoice_id)
     if not inv or inv.get("reviewer") != AUTONOMOUS_REVIEWER:
         return
     final = inv.get("final_output") or {}

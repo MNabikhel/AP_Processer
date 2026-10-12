@@ -472,8 +472,9 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
     messages = []
     if waits:  # not approved yet: never "Approved <vendor>" for it
-        messages.append(flash_message(f"First approval recorded for {vendor}: over the approval limit, it waits for "
-                                      "a second approver.", "info", icon="how_to_reg"))  # fmt: skip
+        why = store.second_approval_reason(analysis.output) or "over the approval limit"
+        messages.append(flash_message(f"First approval recorded for {vendor}: {why}; it waits for a second "
+                                      "approver.", "info", icon="how_to_reg"))  # fmt: skip
     total = sum(counts.values())
     taught = taught_message(store, learned)
     lines = f"{counts[ACCEPTED]} of {ui.plural(total, 'line')} coded as suggested."
@@ -703,11 +704,12 @@ def correct(request: Request, invoice_id: int, reason: str = Form("")) -> JSONRe
     if not reason.strip():
         return refuse("Say what needs correcting.")
     me = reviewer()
-    on_reopen(store, invoice_id, me, reason.strip())
+    before = store.get_invoice(invoice_id)  # who approved it: the reopen clears it
     try:
         store.reopen(invoice_id, me, reason.strip())
-    except ValueError as exc:
+    except ValueError as exc:  # exported meanwhile, say: nothing reopened, no vendor suspended
         return changed_meanwhile(request, invoice_id, exc)
+    on_reopen(store, invoice_id, me, reason.strip(), before=before)
     forget_draft(request, invoice_id)
     return done(request, f"/review/{invoice_id}", flash_message("Reopened: correct it and approve it again.", "ok",
                                                                 icon="undo"))  # fmt: skip
