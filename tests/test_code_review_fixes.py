@@ -121,3 +121,23 @@ def test_a_file_in_the_invoices_folder_that_cant_be_opened_never_breaks_process_
     assert job.wait(60)
     texts = [m["text"] for m in job.snapshot()["result"]["messages"]]
     assert any("1 file could not be opened" in t for t in texts), texts
+
+
+@pytest.mark.parametrize(
+    ("url", "field", "said"),
+    [
+        ("/settings/review", "threshold", "The confidence threshold must be a number"),
+        ("/settings/azure-check", "daily_pages", "The daily cap must be a number"),
+        ("/settings/azure-check", "spot_percent", "The spot-check share must be a number"),
+    ],
+)
+@pytest.mark.parametrize("value", ["1e309", "inf", "nan"])
+def test_a_number_too_large_or_not_a_number_is_refused_plainly(demo, url, field, said, value):
+    """Posted directly (the form's number inputs never send it): "1e309" answered 500 (OverflowError) on the review
+    threshold and the Azure check's daily cap, and "nan" said "cannot convert float NaN to integer"."""
+    from tests.webclient import PAGE
+
+    _, client = demo
+    response = client.post(url, data={field: value}, headers=PAGE)
+    assert response.status_code == 400, response.text
+    assert said in response.json()["error"]
