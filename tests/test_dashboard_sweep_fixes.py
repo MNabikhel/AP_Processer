@@ -47,6 +47,22 @@ def test_the_queued_note_reads_as_a_sentence(store, monkeypatch):
     assert process.queued_note(settings, store, 0) == ""
 
 
+def test_the_queued_note_does_not_call_a_running_ovisocr2_not_running(store, monkeypatch):
+    """The manager's LM Studio runs OvisOCR2, but it has not passed its self-test yet (or failed it): the toast said
+    "OvisOCR2, which isn't running", and he would look for a problem in LM Studio that isn't there."""
+    from ap_coder.web.pages import process
+
+    settings = web_settings()
+    for state, why in (("failed", "it failed its self-test"), ("pending", "its self-test hasn't passed yet"),
+                       ("running", "its self-test hasn't passed yet")):  # fmt: skip
+        status = SimpleNamespace(page_reader_ready=False, page_reader_model="ath-maas_ovisocr2", self_test=state)
+        monkeypatch.setattr(process, "reading_status_or_none", lambda *a, s=status: s)
+        assert process.queued_note(settings, store, 2) == (
+            f"2 invoices queued for OvisOCR2, which runs in LM Studio but isn't trusted yet ({why}): they wait for "
+            "it (Settings → Reading)."
+        )
+
+
 def test_the_split_menu_names_cost_centers_as_the_line_grid_does(client, store):
     """The "Split a line…" menu showed a line without a cost center as the stored code UNASSIGNED (and CC400 without
     its name), where the line grid beside it says "Needs a cost center"."""
