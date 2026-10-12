@@ -60,3 +60,35 @@ def test_a_launcher_state_that_is_not_a_json_object_is_read_as_empty(launch, tex
     launch.STATE.write_text(text, encoding="utf-8")
     assert launch.load_state() == {}
     assert launch.candidate_ports([], launch.load_state())[0] == launch.DEFAULT_PORT
+
+
+# --- The dashboard ---------------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def demo(tmp_path, monkeypatch):
+    """The dashboard on a database with the demo invoices loaded."""
+    from ap_coder.config import Settings
+    from ap_coder.demo import load_demo
+    from ap_coder.store import Store
+    from tests.webclient import client_for
+
+    monkeypatch.setenv("AP_REVIEWER", "Jordan Lee")
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_demo(store, Settings())
+    return store, client_for(store)
+
+
+def test_the_approved_pdf_of_a_vendor_named_beyond_latin_1_downloads(demo):
+    """"Bœuf Œuvre Ltée" (œ is not in Latin-1, which HTTP headers are written in): the stamped PDF's download
+    answered 500."""
+    from ap_coder.store import APPROVED
+
+    store, client = demo
+    inv = next(i for i in store.list_invoices() if i["status"] == APPROVED)
+    final = {**store.get_invoice(inv["id"])["final_output"], "vendor_name": "Bœuf Œuvre Ltée"}
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET final_output = ? WHERE id = ?", (json.dumps(final), inv["id"]))
+    response = client.get(f"/review/{inv['id']}/approved.pdf")
+    assert response.status_code == 200 and response.content.startswith(b"%PDF")
+    assert "filename*=UTF-8''B%C5%93uf%20%C5%92uvre%20Lt%C3%A9e" in response.headers["content-disposition"]
