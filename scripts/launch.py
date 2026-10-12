@@ -599,7 +599,23 @@ def pip_install(args: list[str]) -> bool:
             say(f"    {text}")
         if any(sign in text for sign in DISK_FULL):
             _disk_full.append(text)
+        if any(sign in text for sign in PATH_TOO_LONG):
+            _path_too_long.append(text)
     return proc.wait() == 0
+
+
+# How pip says a file's path passed Windows' 260 characters (its own hint, or Windows' error 206).
+PATH_TOO_LONG = ("Long Path support", "enable-long-paths", "[WinError 206]")
+_path_too_long: list[str] = []
+
+
+def path_too_long_error() -> SetupError:
+    return SetupError(
+        f"Installing the packages stopped: the AP Coder folder's path is too long for Windows ({len(str(ROOT))} "
+        f"characters: {ROOT}), so a package file's full path passes the 260 characters Windows allows.",
+        "Unzip the offline bundle to a short folder such as C:\\APCoder (or move this folder there), then "
+        "double-click APProcessor.bat in it. (Or IT turns on Windows' long paths: LongPathsEnabled.)",
+    )
 
 
 # How pip says the disk is full (Linux and Mac: errno 28; Windows: error 112, or errno 28 from Python's own code).
@@ -810,6 +826,8 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     left, self_left = missing_packages(extras)
     if (self_left or left) and _disk_full:
         raise disk_full_error()
+    if (self_left or left) and _path_too_long:
+        raise path_too_long_error()
     if self_left or [r for r in left if not is_ocr(r)]:
         raise SetupError(
             "Installing the packages failed (the messages above say why).",

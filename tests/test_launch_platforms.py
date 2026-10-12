@@ -199,3 +199,35 @@ def test_a_python_under_a_user_name_with_accents_is_found(launch, tmp_path, monk
     (home / "python3").symlink_to(sys.executable)
     version = f"{sys.version_info[0]}.{sys.version_info[1]}"
     assert "Łukasz" in launch.python_found([str(home / "python3")], version)
+
+
+# --- Windows' 260-character paths --------------------------------------------------------------------------------
+
+
+def test_a_path_too_long_for_windows_is_said_plainly(launch, monkeypatch):
+    """Unzipped deep (C:\\Users\\<long name>\\Downloads\\APProcessor-offline-...\\APProcessor\\), a package file's path
+    passes 260 characters and pip stops: the start said the wheelhouse "has no pandas for Python 3.12"."""
+    wheelhouse = launch.ROOT / "wheelhouse"
+    wheelhouse.mkdir()
+    (wheelhouse / "openpyxl-3.1.5-py2.py3-none-any.whl").write_bytes(b"")
+    monkeypatch.setattr(launch, "missing_packages", lambda extras: (["pandas>=2.1"], ""))
+    lines = [
+        "Processing c:\\users\\someone\\downloads\\approcessor\\wheelhouse\\pandas-3.0.6-cp312-cp312-win_amd64.whl\n",
+        "ERROR: Could not install packages due to an OSError: [Errno 2] No such file or directory: 'C:\\\\Users"
+        "\\\\someone\\\\...\\\\pandas\\\\tests\\\\io\\\\data\\\\a_very_long_name.xlsx'\n",
+        "HINT: This error might have occurred since this system does not have Windows Long Path support enabled. "
+        "You can find information on how to enable this at https://pip.pypa.io/warnings/enable-long-paths\n",
+    ]
+
+    class Pip:
+        def __init__(self, *args, **kwargs):
+            self.stdout = iter(lines)
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Pip)
+    with pytest.raises(launch.SetupError) as exc:
+        launch.ensure_packages({})
+    assert "too long for Windows" in str(exc.value) and str(launch.ROOT) in str(exc.value)
+    assert "C:\\APCoder" in exc.value.hint and "has no" not in exc.value.hint
