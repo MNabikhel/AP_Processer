@@ -515,7 +515,8 @@ Only the configured endpoint's host is contacted, over HTTPS: a request hook on 
 host (polling and redirects included). `AP_ALLOW_INTERNET` stays off. The key is kept in the .env
 (`AZURE_DOCUMENT_INTELLIGENCE_KEY`), shown only as its last four characters, and scrubbed from errors. Without the
 optional `azure` extra, an endpoint or a key, nothing is queued or sent, and the card says why. *Test connection*
-reads the made-up sample invoice and shows the comparison.
+reads the made-up sample invoice and shows the comparison; like the check itself, it sends nothing until the check
+is switched on.
 
 ## Review screen
 

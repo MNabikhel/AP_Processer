@@ -83,7 +83,7 @@
   <p>{{ ui.pill("Didn't work", "err", "error") }} {{ az.test.error }} <span class="muted">{{ az.test.when | time_ago }}</span></p>
   {% endif %}
   {% elif not az.can_test %}
-  <p class="muted">Add the endpoint and key to test the connection.</p>
+  <p class="muted">Switch the check on and add the endpoint and key (then Save) to test the connection: nothing is sent to Azure while it is off.</p>
   {% endif %}
 
   {% if az.enabled or az.checked %}
