@@ -1337,8 +1337,9 @@ def registered_version() -> str:
 
 
 def legacy_folders() -> list[str]:
-    """Older installs that kept no record (AP Coder 0.1): its desktop shortcut's folder, a stopped old dashboard's."""
-    return [f for f in [old_shortcut_folder(), *running.stopped] if f]
+    """Older installs that kept no record (AP Coder 0.1): its desktop shortcut's folder, a stopped old dashboard's, and
+    the older ones next to this folder (closed before the update)."""
+    return [str(f) for f in [old_shortcut_folder(), *running.stopped, *upgrade.nearby_installs(ROOT)] if f]
 
 
 def older_installs(ident: dict, legacy: list[str]) -> list[Path]:

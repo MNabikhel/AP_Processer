@@ -246,6 +246,30 @@ def legacy_installs(root: Path, extra: list[str | Path] = ()) -> list[Path]:
     return found
 
 
+def nearby_installs(root: Path) -> list[Path]:
+    """Older AP Coder folders next to ``root``, found though nothing points to them (closed before the update, no
+    desktop shortcut on a Mac or Linux, AP Coder 0.1 kept no record): the folders beside it (a Mac unzips the new
+    bundle as "APProcessor 2" beside "APProcessor"), and the bundle folder in each folder beside its parent
+    (Windows' Extract All makes "APProcessor-offline-<version>-<date>\\APProcessor"). Only an older version than
+    ``root``'s, never a git checkout."""
+    mine = paths.install_identity(root)
+    places: list[Path] = []
+    for parent, depth in ((root.parent, 0), (root.parent.parent, 1)):
+        try:
+            children = sorted(p for p in parent.iterdir() if p.is_dir())
+        except OSError:
+            continue
+        places += children if depth == 0 else [c / root.name for c in children]
+    found: list[Path] = []
+    for folder in places:
+        if paths.same_folder(folder, root) or (folder / ".git").exists() or not is_install(folder):
+            continue
+        known = any(paths.same_folder(folder, f) for f in found)
+        if not known and paths.is_older(paths.install_identity(folder), mine):
+            found.append(folder)
+    return found
+
+
 def remember(folders: list[Path]) -> None:
     """Put older AP Coder folders that kept no record of themselves (AP Coder 0.1) on the record, not as the current
     one. What found them (the data folder they used, the desktop shortcut) is changed by this start, and they are to

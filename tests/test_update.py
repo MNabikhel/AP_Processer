@@ -495,6 +495,23 @@ def test_data_kept_in_an_older_folder_found_running_moves_out_before_the_start(u
     assert paths.read_user_settings()["data_dir"] == str(home) and "Moved your data" in said[0]
 
 
+def test_an_older_install_next_to_this_one_is_found(upgrade, tmp_path):
+    """An older AP Coder that is neither running nor on record (Mac and Linux had no desktop shortcut; 0.1 kept no
+    record) stayed with its 1 GB .venv, and could be started by mistake on the updated data. A Mac unzips the new
+    bundle beside the old one ("APProcessor 2"); Windows' Extract All into a folder named after each ZIP."""
+    downloads = tmp_path / "Downloads"
+    old = make_pre_launcher_install(downloads / "APProcessor")
+    new = make_install(downloads / "APProcessor 2", "0.2.0")
+    same = make_install(downloads / "APProcessor copy", "0.2.0")  # the same version: not older, left alone
+    checkout = make_install(downloads / "AP_Processer", "0.1.0")
+    (checkout / ".git").mkdir()  # a developer's checkout: never taken over
+    (downloads / "notes").mkdir()
+    assert upgrade.nearby_installs(new) == [old]
+    wrapped = make_install(tmp_path / "x" / "APProcessor-offline-0.2.0" / "APProcessor", "0.2.0")
+    zipped_old = make_install(tmp_path / "x" / "APProcessor-offline-0.1.0" / "APProcessor", "0.1.0")
+    assert upgrade.nearby_installs(wrapped) == [zipped_old] and same.exists()
+
+
 # --- The bundle says what it holds; the version is real --------------------------------------------------------
 
 
