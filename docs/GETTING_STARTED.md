@@ -310,7 +310,9 @@ That is all. The new version takes over:
   own in it is kept, without its `.venv`. Unzipped over the old folder, the files of the old version that
   the new one no longer has are removed (the bundle lists every file it holds).
 - **The old folder by mistake?** Starting an older version (an old shortcut, an old folder) opens the
-  newest one instead: older code never opens newer data. A database made by a newer AP Coder is refused in
+  newest one instead: older code never opens newer data. (A version from before the web app, 0.1, can't do
+  that: the update removes its folder once it found it. [UPGRADING.md](UPGRADING.md) says, for every older
+  version, how it was installed, what the update finds and what it does.) A database made by a newer AP Coder is refused in
   plain words, and nothing is changed.
 
 If the new bundle doesn't fit the computer, it stops before installing anything and says which bundle to

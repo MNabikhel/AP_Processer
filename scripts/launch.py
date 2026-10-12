@@ -1351,7 +1351,8 @@ def requested_port(rest: list[str]) -> int | None:
 
 def candidate_ports(rest: list[str], state: dict) -> list[int]:
     """Where an AP Coder may already run: the port asked for, the one this folder's last start used, the ones the
-    other installs' last starts used, and the default (the server file in the data folder names its own)."""
+    other installs' last starts used, and the default and the next ones (the server file in the data folder names its
+    own; AP Coder 0.1 recorded none, and took the first free port from 8501: a second window's was 8502)."""
     ports = [requested_port(rest), state.get("port")]
     for entry in paths.installs():
         try:
@@ -1359,7 +1360,8 @@ def candidate_ports(rest: list[str], state: dict) -> list[int]:
             ports.append(other.get("port"))
         except (OSError, ValueError, AttributeError):
             continue
-    return list(dict.fromkeys(p for p in [*ports, DEFAULT_PORT] if isinstance(p, int) and p > 0))
+    defaults = range(DEFAULT_PORT, DEFAULT_PORT + 10)
+    return list(dict.fromkeys(p for p in [*ports, *defaults] if isinstance(p, int) and p > 0))
 
 
 def running_dashboard(rest: list[str], state: dict) -> int | None:
@@ -1585,7 +1587,13 @@ def previous_install(state: dict, ident: dict, legacy: list[str]) -> dict | None
             return None
         return {"version": state.get("version") or registered_version(), "build": state.get("build", "")}
     older = [i for i in upgrade.previous_versions(ROOT, legacy) if paths.is_older(i, ident)]
-    return older[-1] if older else None
+    if older:
+        return older[-1]
+    # Unzipped over an AP Coder from before this launcher (install.bat, or by hand): only its .venv says which.
+    registered = registered_version()
+    if registered and paths.version_key(registered) < paths.version_key(ident["version"]):
+        return {"version": registered, "build": ""}
+    return None
 
 
 def registered_version() -> str:
@@ -1597,8 +1605,9 @@ def registered_version() -> str:
 
 
 def legacy_folders() -> list[str]:
-    """Older installs that kept no record (AP Coder 0.1): its desktop shortcut's folder, a stopped old dashboard's."""
-    return [f for f in [old_shortcut_folder(), *running.stopped] if f]
+    """Older installs that kept no record (AP Coder 0.1): its desktop shortcut's folder, a stopped old dashboard's, and
+    the older ones next to this folder (closed before the update)."""
+    return [str(f) for f in [old_shortcut_folder(), *running.stopped, *upgrade.nearby_installs(ROOT)] if f]
 
 
 def older_installs(ident: dict, legacy: list[str]) -> list[Path]:

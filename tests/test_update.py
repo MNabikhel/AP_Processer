@@ -447,6 +447,71 @@ def test_legacy_installs_are_found_from_the_data_folder_they_used(upgrade, tmp_p
     assert [i["version"] for i in upgrade.previous_versions(tmp_path / "new", [shortcut])] == ["0.1.0", "0.1.0"]
 
 
+def make_pre_launcher_install(folder: Path) -> Path:
+    """AP Coder as main had it before the double-click launcher (PR #1 to #3): GitHub's ZIP, set up with install.bat /
+    install.sh (or by hand, its data in ``private/``) and started with start.bat / start.sh: no scripts/launch.py, no
+    bundle manifest."""
+    for rel in ("ap_coder/__init__.py", "ap_coder/dashboard.py", "scripts/install.py", "install.bat", "install.sh",
+                "start.bat", "start.sh", "README.md", "private/README.md", ".env.example"):  # fmt: skip
+        (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+        (folder / rel).write_text(f"# {rel}\n")
+    (folder / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.1.0"\n')
+    (folder / ".venv" / "lib").mkdir(parents=True)
+    (folder / ".venv" / "lib" / "big.bin").write_bytes(b"v" * 5000)
+    return folder
+
+
+def test_an_ap_coder_from_before_the_launcher_is_an_older_install(upgrade, tmp_path):
+    """Found by its running dashboard (or its desktop shortcut), an AP Coder from before scripts/launch.py was not taken
+    for an install at all: its data in private/ stayed behind, its 1 GB .venv too (found by updating over each old
+    version of main for real: scripts/ci/old_versions.py)."""
+    old = make_pre_launcher_install(tmp_path / "AP_Processer-main")
+    new = make_install(tmp_path / "APProcessor", "0.2.0")
+    assert upgrade.is_install(old)
+    assert upgrade.legacy_installs(new, [old]) == [old]
+    assert upgrade.removable(old, new) == ""
+    paths.record_install(paths.install_identity(old), current=False)
+    paths.record_install(paths.install_identity(new))
+    assert upgrade.newer_install(old) is not None  # the old one started by mistake: the newest opens
+    paths.record_install(paths.install_identity(old))
+    assert upgrade.newer_install(new) is None  # never handed over to a folder without the launcher
+    stranger = tmp_path / "Projects"
+    (stranger / "ap_coder").mkdir(parents=True)
+    (stranger / "pyproject.toml").write_text('[project]\nname = "something-else"\n')
+    assert not upgrade.is_install(stranger)
+
+
+def test_data_kept_in_an_older_folder_found_running_moves_out_before_the_start(upgrade, tmp_path, monkeypatch):
+    """Run by hand (``python -m ap_coder dashboard``), an older AP Coder kept its data in its own private/ folder and
+    recorded nothing: the new version unzipped elsewhere started on an empty database while the data stayed behind."""
+    monkeypatch.delenv("AP_PRIVATE_DIR")
+    old = make_pre_launcher_install(tmp_path / "AP_Processer-main")
+    _with_data(old)
+    upgrade.remember([old])  # found: its dashboard was running, or its desktop shortcut
+    home = tmp_path / "APCoder"
+    said: list[str] = []
+    assert upgrade.settle_data_folder(tmp_path / "APProcessor", said.append, default=home) == home
+    assert (home / "ap_coder.db").read_text() == "db" and (home / "invoices" / "a.pdf").exists()
+    assert paths.read_user_settings()["data_dir"] == str(home) and "Moved your data" in said[0]
+
+
+def test_an_older_install_next_to_this_one_is_found(upgrade, tmp_path):
+    """An older AP Coder that is neither running nor on record (Mac and Linux had no desktop shortcut; 0.1 kept no
+    record) stayed with its 1 GB .venv, and could be started by mistake on the updated data. A Mac unzips the new
+    bundle beside the old one ("APProcessor 2"); Windows' Extract All into a folder named after each ZIP."""
+    downloads = tmp_path / "Downloads"
+    old = make_pre_launcher_install(downloads / "APProcessor")
+    new = make_install(downloads / "APProcessor 2", "0.2.0")
+    same = make_install(downloads / "APProcessor copy", "0.2.0")  # the same version: not older, left alone
+    checkout = make_install(downloads / "AP_Processer", "0.1.0")
+    (checkout / ".git").mkdir()  # a developer's checkout: never taken over
+    (downloads / "notes").mkdir()
+    assert upgrade.nearby_installs(new) == [old]
+    wrapped = make_install(tmp_path / "x" / "APProcessor-offline-0.2.0" / "APProcessor", "0.2.0")
+    zipped_old = make_install(tmp_path / "x" / "APProcessor-offline-0.1.0" / "APProcessor", "0.1.0")
+    assert upgrade.nearby_installs(wrapped) == [zipped_old] and same.exists()
+
+
 # --- The bundle says what it holds; the version is real --------------------------------------------------------
 
 

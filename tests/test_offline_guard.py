@@ -112,6 +112,8 @@ TOUCHPOINTS = {
     "scripts/check_deps.py": "urllib.request.url2pathname only (a file: URL), no connection",
     "scripts/install.py": "git fetch/pull only with AP_ALLOW_INTERNET=1",
     "scripts/build_offline_bundle.py": "the bundle builder (online by design: it sets AP_ALLOW_INTERNET=1 itself)",
+    "scripts/ci/old_versions.py": "the CI and developer test of updating from older versions: installs each OLD "
+    "version online (pip, git archive); never run by the launcher, and the new version under test updates offline",
 }
 _NETWORK = re.compile(
     r"^\s*(?:import|from)\s+(?:urllib\.request|urllib\.error|http\.client|socket|requests|httpx|webbrowser|aiohttp|"

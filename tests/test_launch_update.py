@@ -160,6 +160,14 @@ def test_an_older_dashboard_still_running_is_stopped_not_opened(launch, monkeypa
     assert 8597 in from_port[0] and 8501 in from_port[0]
 
 
+def test_an_older_dashboard_on_the_next_free_port_is_looked_for_too(launch):
+    """AP Coder 0.1 started its dashboard on the first free port from 8501 (a second double-click of start.bat started
+    a second one on 8502) and recorded none of them: only 8501 was looked at, so one could keep running on the data
+    beside the new version."""
+    assert set(range(8501, 8511)) <= set(launch.candidate_ports([], {}))
+    assert launch.candidate_ports(["--port", "8597"], {"port": 8600})[:2] == [8597, 8600]
+
+
 def test_the_same_version_running_is_only_opened(launch, monkeypatch):
     _quiet_setup(launch, monkeypatch)
     monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("open", 8597))
@@ -190,6 +198,17 @@ def test_an_update_in_the_same_folder_is_said_and_checked(launch, monkeypatch, c
     state = launch.load_state()
     assert state["version"] == "0.2.0" and state["fingerprint"] == launch.fingerprint()
     assert launch.run(*launch.parse([])) == 0 and checks == [1]  # the next start: nothing new
+
+
+def test_an_update_unzipped_over_an_ap_coder_from_before_the_launcher_is_said(launch, monkeypatch, capsys):
+    """An AP Coder from before scripts/launch.py (install.bat, or by hand) kept no launcher state: only its .venv says
+    which version it was. Unzipped over it, the update was never said."""
+    _quiet_setup(launch, monkeypatch)
+    monkeypatch.setattr(launch, "registered_version", lambda: "0.1.0")
+    assert launch.run(*launch.parse(["--venv=reused"])) == 0
+    assert "Updated AP Coder from 0.1.0 to 0.2.0 (2026-10-11)" in capsys.readouterr().out
+    monkeypatch.setattr(launch, "registered_version", lambda: "0.2.0")  # registered again: the next start
+    assert launch.run(*launch.parse(["--venv=reused"])) == 0 and "Updated" not in capsys.readouterr().out
 
 
 def test_an_update_from_another_folder_takes_over_and_cleans_up_after_its_self_check(launch, monkeypatch, tmp_path,
@@ -244,6 +263,50 @@ def test_an_ap_coder_0_1_folder_whose_data_moved_out_is_still_cleaned_up(launch,
     assert f"kept in {old} until the self-check passes" in capsys.readouterr().out
     _, _, cleaned = _quiet_setup(launch, monkeypatch)
     assert launch.run(*launch.parse(["--check"])) == 0 and cleaned == [[old]]
+
+
+def test_an_older_ap_coder_run_by_hand_and_stopped_by_this_start_brings_its_data(launch, monkeypatch, tmp_path, capsys):
+    """AP Coder before the launcher, run by hand (``python -m ap_coder dashboard``): its data in its own private/,
+    nothing recorded. Its dashboard was stopped by this start, yet the new version started on an empty database and
+    left the older folder, data and .venv as they were (found by updating over PR #1's main for real)."""
+    monkeypatch.delenv("AP_PRIVATE_DIR")
+    home = tmp_path / "APCoder"
+    monkeypatch.setattr(launch, "ensure_data_folder",
+                        lambda: launch.upgrade.settle_data_folder(launch.ROOT, launch.say, default=home))  # fmt: skip
+    old = tmp_path / "AP_Processer-main"
+    (old / "ap_coder").mkdir(parents=True)
+    (old / "start.sh").write_text("")
+    (old / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.1.0"\n')
+    (old / "private").mkdir()
+    (old / "private" / "ap_coder.db").write_text("the data")
+    _, _, cleaned = _quiet_setup(launch, monkeypatch, self_check_ok=False)
+    monkeypatch.setattr(launch.running, "stopped", [str(old)])  # its dashboard, stopped by this start
+    assert launch.run(*launch.parse(["--venv=created"])) == 0
+    out = capsys.readouterr().out
+    assert (home / "ap_coder.db").read_text() == "the data"  # before the dashboard starts, self-check or not
+    assert "Updated AP Coder from 0.1.0" in out and cleaned == []
+    _, _, cleaned = _quiet_setup(launch, monkeypatch)
+    assert launch.run(*launch.parse(["--check"])) == 0 and cleaned == [[old]]
+
+
+def test_an_older_ap_coder_closed_before_the_update_next_to_this_one_is_taken_over(launch, monkeypatch, tmp_path,
+                                                                                   capsys):  # fmt: skip
+    """Not running, not on record, no desktop shortcut (a Mac, Linux): the older folder next to this one kept its data
+    (run by hand: in its private/) and its .venv, and could be started by mistake on the updated data."""
+    monkeypatch.delenv("AP_PRIVATE_DIR")
+    home = tmp_path / "APCoder"
+    monkeypatch.setattr(launch, "ensure_data_folder",
+                        lambda: launch.upgrade.settle_data_folder(launch.ROOT, launch.say, default=home))  # fmt: skip
+    old = tmp_path / "APProcessor"
+    (old / "ap_coder").mkdir(parents=True)
+    (old / "APProcessor.command").write_text("")
+    (old / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.1.0"\n')
+    (old / "private").mkdir()
+    (old / "private" / "ap_coder.db").write_text("the data")
+    _, _, cleaned = _quiet_setup(launch, monkeypatch)
+    assert launch.run(*launch.parse(["--venv=created"])) == 0
+    assert (home / "ap_coder.db").read_text() == "the data" and cleaned == [[old]]
+    assert "Updated AP Coder from 0.1.0" in capsys.readouterr().out
 
 
 def test_data_that_could_not_all_be_moved_stops_the_start_plainly(launch, monkeypatch, capsys):
