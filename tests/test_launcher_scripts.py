@@ -146,3 +146,15 @@ def test_bat_files_never_cd_without_d(name):
     text = (ROOT / name).read_text(encoding="ascii")
     lines = [line for line in text.splitlines() if not re.match(r"(?i)\s*rem\b", line)]
     assert not [line for line in lines if re.search(r"(?i)(^|[\s&|(])cd\s+(?!/d)", line)]
+
+
+@pytest.mark.parametrize("name", BAT_FILES)
+def test_bat_files_keep_their_settings_to_themselves(name):
+    """A .bat run from an open command prompt must not leave its variables (PATH, AP_YES...) or folder behind:
+    ``setlocal`` before the first ``set`` or ``pushd``; run twice, terminal.bat would otherwise put .venv on PATH twice
+    in the prompt that ran it."""
+    lines = [line.strip().lower() for line in (ROOT / name).read_text(encoding="ascii").splitlines()]
+    code = [line for line in lines if line and not line.startswith(("rem ", "rem\t", "::")) and line != "rem"]
+    changes = [i for i, line in enumerate(code) if re.match(r"(set|pushd)\b", line)]
+    if changes:
+        assert "setlocal" in code[: changes[0]], f"{name}: setlocal must come before {code[changes[0]]!r}"
