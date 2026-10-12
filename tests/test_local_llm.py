@@ -454,8 +454,10 @@ def test_settings_page_lists_the_models_with_nothing_to_choose(settings_client, 
     assert "IT team installs it" not in _words(page)
     table = page.split("Models in LM Studio", 1)[1].split("</table>", 1)[0]
     models = set(re.findall(r"<td[^>]*>\s*(?:<[^>]+>\s*)*([\w.-]+-instruct|[\w.-]*embed[\w.-]*)", table))
-    # what LM Studio has (its own listing), the embedding model left out
-    assert {"qwen2.5-7b-instruct", "qwen2.5-vl-7b-instruct"} <= models and not [m for m in models if "embed" in m]
+    # what LM Studio has (its own listing); the embedding model only as one AP Coder doesn't use
+    assert {"qwen2.5-7b-instruct", "qwen2.5-vl-7b-instruct"} <= models
+    for embedding in [m for m in models if "embed" in m]:
+        assert "not used (an embedding model)" in table.split(embedding, 1)[1].split("</tr>", 1)[0]
     for gone in ("llm_provider", "llm_model", "llm_vision", "pr_mode", "pr_scope", "pr_model"):
         assert f'name="{gone}"' not in page
     assert not read_env(env)  # looking at Settings writes nothing

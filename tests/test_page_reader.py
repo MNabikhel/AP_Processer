@@ -975,6 +975,20 @@ def test_lm_studio_models_says_what_is_loaded_and_what_each_does(serve, monkeypa
     assert page_reader.lm_studio_models(Settings()) is None  # LM Studio not answering
 
 
+@pytest.mark.parametrize("listing", [REAL_V1, REAL_V0], ids=["0.4", "0.3"])
+def test_lm_studio_models_shows_an_embedding_model_as_not_used(serve, listing):
+    """An embedding model (Qwen3 Embedding next to Qwen 3.5 and OvisOCR2) is listed, said to be unused, never picked."""
+    serve({"/v1/models": REAL_IDS, "/api/v1/models" if "models" in listing else "/api/v0/models": listing})
+    parsed = page_reader.parse_lm_studio_listing(listing)
+    assert parsed.embeddings == (("text-embedding-nomic-embed-text-v1.5", False),)
+    assert [m.key for m in parsed.models] == [OVIS_KEY, "qwen2.5-7b-instruct"]  # never a chat or vision model
+    rows = page_reader.lm_studio_models(Settings())
+    embedding = next(r for r in rows if r["model"] == "text-embedding-nomic-embed-text-v1.5")
+    assert embedding["embedding"] and not embedding["vision"] and not embedding["document_reader"]
+    assert embedding["used_for"] == "" and not embedding["loaded"]
+    assert rows[-1] is embedding  # after the models AP Coder uses
+
+
 def test_load_a_chat_model_from_settings(serve, posts):
     serve(lm_studio(v1_model("qwen2.5-7b-instruct", vision=False), v1_model(OVIS_KEY)))
     assert page_reader.load_model(Settings(), "qwen2.5-7b-instruct") == ""

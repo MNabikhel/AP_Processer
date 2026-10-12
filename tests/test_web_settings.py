@@ -91,6 +91,8 @@ def ovis_found(monkeypatch):
          "used_for": "GL suggestions"},
         {"model": MODEL, "loaded": False, "context": 0, "vision": True, "document_reader": True,
          "used_for": "Reads every page <second reader>"},
+        {"model": "text-embedding-qwen3-embedding-0.6b", "loaded": False, "context": 0, "vision": False,
+         "document_reader": False, "used_for": "", "embedding": True},
     ]  # fmt: skip
     monkeypatch.setattr(page_reader, "lm_studio_models", lambda settings, use_cache=True: models)
 
@@ -133,6 +135,10 @@ def test_reading_tab_with_ovisocr2_found(client, ovis_found):
     assert "qwen3.5-9b" in text and "yes, 8,192 tokens" in text and "document reader" in text
     load = text.split('action="/settings/reading/load-model"', 1)[1].split("</form>", 1)[0]
     assert f'<option value="{MODEL}">' in load and "qwen3.5-9b" not in load
+    # The embedding model is listed as one AP Coder doesn't use, and never offered to load.
+    row = text.split("<b>text-embedding-qwen3-embedding-0.6b</b>", 1)[1].split("</tr>", 1)[0]
+    assert "not used (an embedding model)" in row
+    assert "embedding" not in load
     # Text from LM Studio and the readers is escaped.
     assert "&lt;b&gt;run the launcher&lt;/b&gt;" in text and "<b>run the launcher</b>" not in text
     assert "&lt;second reader&gt;" in text
