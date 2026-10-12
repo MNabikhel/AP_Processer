@@ -53,7 +53,8 @@ folder. A package or model missing from the bundle is said plainly, and AP Coder
 packages are there. `install.bat` / `install.sh` and `start.bat` /
 `start.sh` still work for older shortcuts; they run the same setup. The full pilot guide is
 [docs/PILOT.md](docs/PILOT.md). The step-by-step for real data is
-[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Updating from an older version (each one since the first
+commit): [docs/UPGRADING.md](docs/UPGRADING.md).
 
 **LM Studio, with OvisOCR2.** IT installs LM Studio (0.4.8 or newer) with the models already in it. Nothing
 is downloaded on the laptop. On the laptop, open LM Studio and go to **Developer → Start server**. That is
@@ -508,9 +509,11 @@ samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a cr
 scripts/             launch.py (the launcher: set up, start the dashboard, open the running one), running.py (finds
                      and stops a running AP Coder), upgrade.py (updates over an older install), first_run.py,
                      check_deps.py, fetch_models.py (launcher steps), pilot_check.py, build_offline_bundle.py,
-                     sample invoice generator
+                     sample invoice generator; ci/old_versions.py (installs each older version and checks the
+                     update over it)
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
-docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), WHATS_NEW.md, PILOT_PLAN.md,
+docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), UPGRADING.md
+                     (from each older version), WHATS_NEW.md, PILOT_PLAN.md,
                      screenshots/
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients and LM Studio mocked)
