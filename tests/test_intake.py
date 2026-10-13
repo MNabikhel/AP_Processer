@@ -276,3 +276,25 @@ def test_an_old_database_gets_the_column_for_the_photo(tmp_path):
 
 def test_converted_is_a_plain_record():
     assert {f.name for f in dataclasses.fields(intake.Converted)} == {"pdf", "original", "sha256", "pages"}
+
+
+@pytest.mark.parametrize("mode", ["RGB", "L", "1", "P"])
+def test_a_lossless_picture_is_read_from_its_pixels_exactly_as_extracting_it_would(tmp_path, mode):
+    # The fast path (no PNG made and read back, about a second a page) gives OCR the very same image.
+    src = tmp_path / f"scan-{mode}.png"
+    _picture((500, 700), mode=mode).save(src)
+    pdf = tmp_path / "scan.pdf"
+    intake.image_to_pdf(src, pdf)
+    with pymupdf.open(pdf) as doc:
+        xref = doc[0].get_images(full=True)[0][0]
+        extracted = Image.open(io.BytesIO(doc.extract_image(xref)["image"]))
+        assert intake._stored_pixels(doc, xref) is not None
+        assert _scan_png(doc, doc[0]) == layout._picture_png(extracted)
+
+
+def test_a_jpeg_is_extracted_as_it_is_stored(tmp_path):
+    pdf = tmp_path / "photo.pdf"
+    intake.image_to_pdf(_jpeg(tmp_path / "photo.jpg"), pdf)
+    with pymupdf.open(pdf) as doc:
+        assert intake._stored_pixels(doc, doc[0].get_images(full=True)[0][0]) is None
+        assert intake.page_picture(doc, doc[0]).size == (600, 800)

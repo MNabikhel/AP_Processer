@@ -210,6 +210,21 @@ def made_from_picture(doc: Any) -> bool:
         return False
 
 
+def _stored_pixels(doc: Any, xref: int) -> Any | None:
+    """A picture stored losslessly (as ``image_to_pdf`` stores a PNG: grey or colour, no transparency), straight from
+    its pixels: the same image ``extract_image`` gives, without making a PNG of it and reading that back (about a
+    second a page). None for any other kind (a JPEG is extracted as it is stored)."""
+    import pymupdf
+    from PIL import Image
+
+    if doc.xref_get_key(xref, "Filter") != ("name", "/FlateDecode") or doc.xref_get_key(xref, "SMask")[0] != "null":
+        return None
+    pix = pymupdf.Pixmap(doc, xref)
+    if pix.alpha or pix.n not in (1, 3) or pix.colorspace is None or pix.colorspace.n != pix.n:
+        return None
+    return Image.frombytes("L" if pix.n == 1 else "RGB", (pix.width, pix.height), pix.samples)
+
+
 def page_picture(doc: Any, page: Any) -> Any | None:
     """The picture on a page of a PDF made from a picture, as a Pillow image the way the page shows it (its
     rotation applied); None when the page isn't one picture."""
@@ -220,9 +235,10 @@ def page_picture(doc: Any, page: Any) -> Any | None:
         return None
     xref = images[0][0]
     try:
-        extracted = doc.extract_image(xref)
-        picture = Image.open(io.BytesIO(extracted["image"]))
-        picture.load()
+        picture = _stored_pixels(doc, xref)
+        if picture is None:
+            picture = Image.open(io.BytesIO(doc.extract_image(xref)["image"]))
+            picture.load()
     except Exception:  # noqa: BLE001 - an image PyMuPDF stores another way: rendered instead
         return None
     turn = page.rotation % 360
