@@ -250,3 +250,23 @@ def test_a_registration_number_line_never_labels_a_tax_amount(tmp_path):
     ]  # fmt: skip
     fields = analyze(_pdf(tmp_path, lines), today=TODAY).fields
     assert fields["hst_amount"].value is None and fields["gst_amount"].value == 50.0
+
+
+def test_month_names_and_years_as_ocr_misreads_them():
+    from ap_coder.capture.normalize import parse_dates
+
+    # Fresh scan seed 9702: each left the date unread.
+    for text, iso in (("28Apr 2.025", "2025-04-28"), ("15Eeb.2025", "2025-02-15"), ("Apri1 15,2026", "2026-04-15")):
+        assert [d.isoformat() for d, *_ in parse_dates(text)] == [iso], text
+    assert parse_dates("Total 2.025") == []  # a number, not a year
+
+
+def test_a_total_label_with_ocrs_1_for_its_l_is_still_the_total(tmp_path):
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (380, 75, "Invoice No."), (470, 75, "FA97024"), (380, 90, "Date"), (470, 90, "2026-04-10"),
+        (60, 300, "Description"), (480, 300, "Amount"), (60, 316, "Technician on site"), (480, 316, "1,000.00"),
+        (380, 500, "Total before tax"), (480, 500, "1,000.00"), (380, 515, "HST 13%"), (480, 515, "130.00"),
+        (420, 530, "Tota1CAD1,130.00"),
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines), today=TODAY).fields["grand_total"].value == 1130.0

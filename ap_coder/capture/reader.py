@@ -181,13 +181,14 @@ _DISTRACT = {f: [re.compile(rx) for rx in pats] for f, pats in DISTRACTORS.items
 
 
 _OCR_LABEL_GAP = re.compile(r"(?<=[a-z]{2})[.·_-](?=[a-z]{2})")
+_OCR_LABEL_ONE = re.compile(r"(?<=[a-z]{3})1(?![\d.,])")  # a 1 OCR read for the l ending a word: "tota1", "subtota1"
 _OCR_WORD_SPECK = re.compile(r"(?<=[a-z]{2})[.·]\s+(?=[a-z]{2})")
 
 
 def _label_hits(line: Line) -> list[_LabelHit]:
     """Labels that start a line or follow a separator inside it ("... | Date: ...")."""
     # OCR puts dots, dashes or middots between label words ("Total.before tax", "Bon·de commande").
-    text = _OCR_LABEL_GAP.sub(" ", plain(line.text))
+    text = _OCR_LABEL_ONE.sub("l", _OCR_LABEL_GAP.sub(" ", plain(line.text)))  # OCR's "Tota1" (same length)
     starts = [0] + [m.end() for m in re.finditer(r"(?:\s{2,}|\s\|\s|[,;]\s)", text)]
     first = list(starts)
     hits = _hits_at(line, text, starts)

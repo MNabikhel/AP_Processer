@@ -181,6 +181,9 @@ _OCR_MONTHS = [
     (re.compile(r"n0v"), "nov"),
     (re.compile(r"(?<![a-z])1an"), "jan"),
     (re.compile(r"ap1"), "apr"),
+    (re.compile(r"apri1"), "april"),
+    (re.compile(r"ju1y"), "july"),
+    (re.compile(r"(?<![a-z])eeb(?=[\s.,]*\d)"), "feb"),  # OCR's E for F: "15Eeb.2025"
     # French "1er" (the first) as OCR reads it, "ler" or "ier": "ler octobre 2026" (same length, so offsets hold)
     (re.compile(r"(?<![a-z\d])[li]er(?=\s+(?:janv|fevr|mars|avr|mai|juin|juil|aout|sept|oct|nov|dec))"), "1er"),
 ]
@@ -191,10 +194,13 @@ def _ocr_date_text(s: str) -> str:
         s = rx.sub(fixed, s)
     # a speck read as a point inside the day: "0.1/08/2026" (same length, so offsets hold)
     s = _SPECK_IN_DAY.sub(r" \1\2", s)
+    # ... or inside the year after a month: "28 Apr 2.025"
+    s = _SPECK_IN_YEAR.sub(r"\1\2\3 ", s)
     # ... or beside a separator: "2025/12/.07" -> "2025/12/07 "
     return _SPECK_BY_SEP.sub(lambda m: re.sub(r"[.,]", "", m.group()) + " " * len(re.findall(r"[.,]", m.group())), s)
 
 
+_SPECK_IN_YEAR = re.compile(r"([a-z]{3,9}\.?,?\s*)(2)[.,](0\d{2})\b")
 _SPECK_IN_DAY = re.compile(r"(?<![\d.,])(\d)[.,](\d)(?=[/-]\d{1,2}[/-]\d{2,4}\b)")
 _SPECK_BY_SEP = re.compile(
     r"(?<![\d.,])\d{1,4}(?=[.,]?[/-][.,]?\d)(?:[.,][/-]|[/-][.,]|[/-])\d{1,2}(?:[.,][/-]|[/-][.,]|[/-])\d{2,4}\b"
