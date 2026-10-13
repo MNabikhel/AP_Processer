@@ -288,7 +288,9 @@ for IN83379, a 0.00 HST taken from a registration-number line, terms that lost t
 comma); every set above now has no silent error. "Never looked at" figures are from before that. The misses seed 9702
 showed afterwards (OCR's "Apri1", "Eeb", "2.025" and "Tota1") were fixed too: it now reads 97.3% fully right. On
 seed 9901, a utility bill's "Payments received" shown as its supplier (logo initials "PH" had been taken for "Ph:", a
-phone line) and a PO read from "Unit 7" were fixed after that run.
+phone line) and a PO read from "Unit 7" were fixed after that run. The misses seeds 9811 and 9921 showed (OCR's
+"（9,9758）" rate read as an amount, a logo initial after "LP", a label after a fax number) were fixed after theirs:
+they now read 96.7% and 100% fully right.
 
 Supplier learning (`bench learn`, 30 suppliers × 40 invoices, seeds 77, 78 and 79): once a supplier met the
 autonomy policy, 226 of its 345 later invoices went without a person before this round and **295 of 345** after
