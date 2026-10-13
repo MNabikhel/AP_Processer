@@ -372,8 +372,9 @@ class InvoicePipeline:
                 model_values = self._model_reading(path) if page_text is not None and provider == "local" else None
                 captured = read_invoice(path, self.store, layout=layout, page_text=page_text, ai_values=model_values)
                 result.coding = code_from_capture(
-                    captured[0], self.reference, feedback, self.store, text=result.extraction.content
-                )
+                    captured[0], self.reference, feedback, self.store, text=result.extraction.content,
+                    assign_weak=provider == "local",
+                )  # fmt: skip
                 if provider == "local":
                     self._local_accounts(result.coding, history_text)
             else:

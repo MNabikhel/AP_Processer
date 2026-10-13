@@ -287,6 +287,9 @@ report gives accuracy by invoice position (against the same invoices read withou
 each supplier would reach the policy, and after that the touchless share and its errors.
 `--ignore-check CODE` is a what-if: a failed check with that code does not hold an invoice back.
 
+GL coding without an AI model has its own benchmark, `python -m ap_coder.bench coding`: see
+[CODING.md](CODING.md).
+
 ## Touchless processing: one switch, one bar
 
 The AP clerk trains each vendor by reviewing its invoices; AP Coder takes over a vendor only once that training

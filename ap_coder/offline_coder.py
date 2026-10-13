@@ -4,7 +4,8 @@ When neither LM Studio nor Azure OpenAI is available, an invoice still gets a fu
 field and line as the local reader found them (capture, with its own confidence), each line's GL account
 from what AP approved before for this vendor and these words (``suggest.suggest_gl``), the vendor master's
 default account, and fixed coding rules (applied later by the pipeline). Nothing is guessed: a line with
-no history is left UNASSIGNED and a field the reader could not find stays empty, so review asks for it.
+no history, or only a weak match, is left UNASSIGNED (the review screen suggests accounts for it) and a field
+the reader could not find stays empty, so review asks for it.
 """
 
 from __future__ import annotations
@@ -213,9 +214,17 @@ def _unlisted_charge(text: str, amount: float) -> str:
     return "Charges not in the line table"
 
 
+def not_sure(top: Any) -> str:
+    """Why a line with a suggestion was left without an account."""
+    return f"Not sure enough to code it (maybe {top.gl_code}: {'; '.join(top.reasons[:2])}): pick the account."
+
+
 def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback: list[dict[str, Any]],
-                      store: Any = None, text: str = "") -> CodingResult:  # fmt: skip
-    """``text``: the page text (labels a charge printed outside the line table)."""
+                      store: Any = None, text: str = "", assign_weak: bool = False) -> CodingResult:  # fmt: skip
+    """``text``: the page text (labels a charge printed outside the line table). A line gets an account only when
+    the evidence is strong enough (``Suggestion.auto``); the others stay UNASSIGNED and the review screen suggests
+    accounts for them. ``assign_weak``: code those with the best suggestion anyway (the local chat model is asked
+    only about lines with no suggestion at all: an account name match beat a small model on the samples)."""
     values = _values(capture)
     vendor = str(values.get("vendor_name") or "")
     readings = [li for li in capture.line_items if li.amount is not None]
@@ -255,7 +264,10 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         readings_data.append((_unlisted_charge(text, short), 1.0, short, short))
     lines = []
     for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
-        best = next(iter(suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl)), None)
+        top = next(iter(suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl)), None)
+        # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
+        best = top if top is not None and (top.auto or assign_weak) else None
+        why = "; ".join(best.reasons) if best else not_sure(top) if top is not None else NO_HISTORY
         lines.append(
             LineItem(
                 line_number=number,
@@ -267,7 +279,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
                 predicted_cost_center=(best.cost_center if best else "")
                 or (UNASSIGNED if reference.cost_centers is not None else ""),
                 taxes_applied=taxes,
-                reasoning_justification="; ".join(best.reasons) if best else NO_HISTORY,
+                reasoning_justification=why,
             )
         )
 

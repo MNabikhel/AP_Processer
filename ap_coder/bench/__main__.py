@@ -1,7 +1,8 @@
 """python -m ap_coder.bench run --n 300 --seed 1 --scanned 0.3 [--out bench_out] [--workers 4]
 python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
 python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]
-python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]"""
+python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]
+python -m ap_coder.bench coding --vendors 30 --invoices 30 --seed 1 [--out bench_coding]"""
 
 from __future__ import annotations
 
@@ -60,6 +61,11 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--scanned", type=float, default=0.5, help="share of invoices made as scans (default 0.5)")
     sp.add_argument("--history", type=int, default=0, help="approved lines taught to the learning memory first")
     sp.add_argument("--out", default="bench_speed", help="output folder (default bench_speed)")
+    cp = sub.add_parser("coding", help="GL coding with no AI model: lines coded from AP's approvals as they come in")
+    cp.add_argument("--vendors", type=int, default=30, help="number of vendors (default 30)")
+    cp.add_argument("--invoices", type=int, default=30, help="invoices per vendor (default 30)")
+    cp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same company")
+    cp.add_argument("--out", default="bench_coding", help="output folder (default bench_coding)")
     a = p.parse_args(argv)
 
     if a.cmd == "speed":
@@ -71,6 +77,25 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{kind}: {steps['arrival']['median']:.2f} s per invoice on arrival (median), "
                       f"{steps['page_reader']['median'] or 0:.2f} s in the page reader's pass")  # fmt: skip
         print(f"report: {Path(a.out) / 'speed.md'}")
+        return 0
+
+    if a.cmd == "coding":
+        from ap_coder.bench.coding import run_coding
+
+        report = run_coding(a.vendors, a.invoices, a.seed, a.out)
+        s = report["summary"]
+        o, first = s["overall"], s["first_or_later"]
+
+        def pc(v: float | None) -> str:
+            return "-" if v is None else f"{100 * v:.1f}%"
+
+        print(
+            f"{a.vendors} vendors x {a.invoices} invoices, {o['lines']} lines: accuracy {pc(o['accuracy'])}, "
+            f"precision {pc(o['precision'])} ({o['wrong']} wrong), coverage {pc(o['coverage'])}; first invoice "
+            f"from a vendor {pc(first.get('first invoice', {}).get('accuracy'))}, later "
+            f"{pc(first.get('later invoices', {}).get('accuracy'))}"
+        )
+        print(f"report: {Path(a.out) / 'report.md'}")
         return 0
 
     if a.cmd == "calibrate":
