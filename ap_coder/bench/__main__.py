@@ -66,7 +66,22 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--invoices", type=int, default=30, help="invoices per vendor (default 30)")
     cp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same company")
     cp.add_argument("--out", default="bench_coding", help="output folder (default bench_coding)")
+    tp = sub.add_parser("triage", help="email triage: made-up emails of every kind sorted as the dashboard does")
+    tp.add_argument("--n", type=int, default=300, help="number of emails (default 300)")
+    tp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same emails")
+    tp.add_argument("--msg-share", type=float, default=0.4, help="share saved as Outlook .msg (default 0.4)")
+    tp.add_argument("--out", default="bench_triage", help="output folder (default bench_triage)")
     a = p.parse_args(argv)
+
+    if a.cmd == "triage":
+        from ap_coder.bench.emails import run_triage
+
+        o = run_triage(a.n, a.seed, a.out, a.msg_share)["summary"]["overall"]
+        print(f"{o['emails']} emails: invoices lost {o['invoices_lost']}, kind right {100 * o['kind_right']:.1f}%, "
+              f"routes right {100 * (o['routes_right'] or 0):.1f}%, bank changes flagged {o['fraud_flagged']}, "
+              f"non-invoices into the queue {o['into_queue_wrongly']}")  # fmt: skip
+        print(f"report: {Path(a.out) / 'report.md'}")
+        return 0
 
     if a.cmd == "speed":
         from ap_coder.bench.speed import run_speed

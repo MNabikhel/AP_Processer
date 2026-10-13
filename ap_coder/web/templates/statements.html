@@ -3,6 +3,27 @@
 {% from "_tiles.html" import tile_row %}
 {% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
 {% block content %}
+{% if emailed %}
+<section class="card" id="emailed">
+  <div class="card-head">
+    <div><h4>Statements received by email</h4>
+      <p class="muted">Sorted out of the invoices folder by triage, so they never reach the review queue. A spreadsheet
+        is reconciled here; a PDF statement opens for a person to compare.</p></div>
+    {{ ui.pill(emailed | length | plural("statement"), "info") }}
+  </div>
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Statement</th><th>From</th><th>Received</th><th></th></tr></thead>
+    <tbody>{% for st in emailed %}
+      <tr><td>{{ st.name }}</td><td>{{ st.sender }}</td><td>{{ st.at }}</td>
+        <td class="r row">
+          {% if st.sheet and names %}<form method="post" action="/statements/emailed/{{ st.id }}/{{ st.n }}"><input type="hidden" name="vendor" value="{{ vendor }}"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">fact_check</span>Reconcile</button></form>{% endif %}
+          <a class="btn" href="/process/inbox/{{ st.id }}/file/{{ st.n }}"><span class="ms" aria-hidden="true">open_in_new</span>Open</a>
+          <form method="post" action="/process/inbox/{{ st.id }}/done"><button class="btn" type="submit" title="Remove from this list"><span class="ms" aria-hidden="true">done_all</span>Done</button></form>
+        </td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
 {% if not names %}
 <section class="card">{{ ui.empty_state("No vendors yet", "Process a few invoices first; then reconcile their statements.") }}</section>
 {% else %}

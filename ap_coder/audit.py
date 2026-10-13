@@ -29,6 +29,10 @@ LINE_LABELS = {
 # action -> (Material icon, tone, label)
 ACTIONS = {
     "processed": ("document_scanner", "info", "Processed"),
+    "email_sorted": ("mark_email_read", "info", "Email sorted"),
+    "email_bank_change": ("gpp_maybe", "err", "Bank-detail change (possible fraud)"),
+    "email_triage_done": ("done_all", "ok", "Email dealt with"),
+    "email_attachment_to_queue": ("move_to_inbox", "info", "Email attachment sent to the queue"),
     "failed": ("error", "err", "Could not be processed"),
     "approved": ("task_alt", "ok", "Approved"),
     "rejected": ("block", "gray", "Rejected"),
@@ -157,6 +161,15 @@ def describe(event: dict[str, Any]) -> str:
         return f"{d.get('file', '')} read and coded{conf_text} ({flag})" + (" · demo" if d.get("demo") else "")
     if action == "failed":
         return f"{d.get('file', '')}: {str(d.get('error', ''))[:160]}"
+    if action in ("email_sorted", "email_bank_change"):
+        parts = [f'{d.get("label", "")}: "{d.get("subject", "")}"']
+        parts += [f"{d[k]} {w}" for k, w in (("to_queue", "to the review queue"), ("statements", "to Statements"),
+                                             ("set_aside", "set aside for a person")) if d.get(k)]  # fmt: skip
+        return " · ".join(parts) + (f" ({'; '.join(d.get('reasons') or [])})" if action == "email_bank_change" else "")
+    if action == "email_triage_done":
+        return f'"{d.get("subject", "")}" ({d.get("kind", "")})'
+    if action == "email_attachment_to_queue":
+        return f"{d.get('file', '')} moved to the invoices folder to be read"
     if action == "approved":
         overridden = [i["code"] for i in d.get("open_issues") or [] if i.get("severity") == "error"]
         prefix = f"approved despite {', '.join(overridden)}; " if overridden else ""

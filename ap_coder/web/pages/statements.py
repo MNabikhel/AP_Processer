@@ -14,11 +14,20 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from ap_coder import inbox, vendor_mail
 from ap_coder import statements as stm
-from ap_coder import vendor_mail
 from ap_coder.store import Store
-from ap_coder.web.core import done, get_store, money, refuse, render, reviewer
-from ap_coder.web.files import SheetError, download, picked_columns, read_upload, receive_sheet, sheet_context
+from ap_coder.web.core import done, get_store, invoice_dir, money, refuse, render, reviewer
+from ap_coder.web.files import (
+    SheetError,
+    download,
+    keep_upload,
+    picked_columns,
+    read_sheet,
+    read_upload,
+    receive_sheet,
+    sheet_context,
+)
 
 router = APIRouter()
 
@@ -67,7 +76,8 @@ def statements_page(
     vendors = sorted(store.vendor_summaries(), key=lambda v: v["vendor_name"] or "")
     names = {v["vendor_key"]: v["vendor_name"] for v in vendors}
     vendor = vendor if vendor in names else (next(iter(names)) if names else "")
-    context: dict[str, Any] = {"names": names, "vendor": vendor, "s": None, "error": "", "rec": None}
+    context: dict[str, Any] = {"names": names, "vendor": vendor, "s": None, "error": "", "rec": None,
+                               "emailed": inbox.statements(store, invoice_dir(store))}  # fmt: skip
     if file and names:
         try:
             upload, df, sheets = read_upload(file, sheet or None)
@@ -124,6 +134,20 @@ async def statements_upload(request: Request, vendor: str = Form(""), file: Uplo
     if problem:
         return refuse(problem)
     return done(request, "/statements?" + urlencode({"vendor": vendor, "file": token}))
+
+
+@router.post("/statements/emailed/{entry_id}/{n}")
+def statements_emailed(request: Request, entry_id: str, n: int, vendor: str = Form("")) -> JSONResponse:
+    """Reconcile a statement spreadsheet that arrived by email (triage put it in ``statements/``)."""
+    path = inbox.file_of(invoice_dir(get_store(request)), entry_id, n)
+    if path is None:
+        return refuse("That statement is no longer in the invoices folder.")
+    content = path.read_bytes()
+    try:
+        read_sheet(path.name, content)
+    except SheetError as exc:
+        return refuse(str(exc))
+    return done(request, "/statements?" + urlencode({"vendor": vendor, "file": keep_upload(path.name, content)}))
 
 
 @router.get("/statements/reconciliation.csv")

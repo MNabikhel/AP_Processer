@@ -11,6 +11,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from .config import Settings
 from .doctor import exit_code, format_checks, run_checks
@@ -263,7 +264,7 @@ def _inputs(paths: list[str]) -> list[Path] | None:
         if mail.error:
             print(f"{mail.email}: {mail.error}; moved to emails/could not read", file=sys.stderr)
         else:
-            print(f"{mail.email}: {len(mail.saved)} attachment(s) to process", file=sys.stderr)
+            print(f"{mail.email}: {_sorted_line(mail)}", file=sys.stderr)
             files += mail.saved
     unique: dict[str, Path] = {}
     for path in files:
@@ -348,15 +349,30 @@ def new_files(folder: Path, store: Store, now: float | None = None) -> list[Path
     return found
 
 
+def _sorted_line(mail: Any) -> str:
+    """What triage made of an email, in one line: its kind, where its attachments went, why it needs a person."""
+    t = mail.triage
+    parts = [t.label if t else "email", f"{len(mail.saved)} invoice(s) to process"]
+    if mail.statements:
+        parts.append(f"{len(mail.statements)} statement(s) to statements/")
+    if mail.held:
+        parts.append(f"{len(mail.held)} attachment(s) set aside in emails/needs a person")
+    if t and t.needs_person:
+        parts.append("NEEDS A PERSON: " + "; ".join(t.reasons[:2]))
+    return ", ".join(parts)
+
+
 def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folder: Path) -> tuple[int, int]:
     """One check of the watched folder: (invoices processed, of which failed)."""
-    for mail in unpack_folder(folder):  # invoices attached to saved emails (.eml); a bad one is filed away
+    from .inbox import log_sorted
+
+    for mail in unpack_folder(folder):  # saved emails (.eml, .msg), sorted by triage; a bad one is filed away
         if mail.error:
             print(f"{time.strftime('%H:%M:%S')} {mail.email}: {mail.error}; moved to emails/could not read",
                   file=sys.stderr)  # fmt: skip
             continue
-        print(f"{time.strftime('%H:%M:%S')} {mail.email}: {len(mail.saved)} attachment(s) to process",
-              file=sys.stderr)  # fmt: skip
+        print(f"{time.strftime('%H:%M:%S')} {mail.email}: {_sorted_line(mail)}", file=sys.stderr)
+        log_sorted(store, mail)
     files = new_files(folder, store)
     if not files:
         return 0, 0
