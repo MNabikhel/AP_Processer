@@ -29,6 +29,18 @@ backup of the database is made automatically once a day when AP Coder starts (th
   the vendor master's default) is shown under *Suggested GL accounts* instead. On the new benchmark more lines
   get an account and 99.5% of them are right (95-98% before). Coding stays fast with years of ERP history.
   Details: [CODING.md](CODING.md).
+- **The math is proven on every invoice.** Subtotal (or, when none is printed, the lines) plus charges and taxes
+  must make the total, and the tax rates are checked; approval without a person now also needs the totals proven.
+- **Qwen checks the page too.** When the chat model in LM Studio can see pages (Qwen 3.5), it reads each
+  invoice's header from the page image in the page reader's pass, as one more independent reader: a field it
+  reads differently goes to a person. Still offline, once per file, in the background.
+- **More invoice lines found** (100% on the benchmark's new digital invoices and scans, from 96-98%): column
+  headings in two languages or run together, amounts as OCR reads them, and where the table ends.
+- **Scans read better**: a partnership's name ("... LP"), "ltée", a PO in a grid of boxed fields, specks OCR
+  reads as periods, and payment terms such as "Payable on receipt".
+- **Faster**: a digital PDF is read, checked and coded in under half the time, a scan is read again in
+  about 2 s instead of 13 s when the page reader's text arrives (its OCR is kept in the data folder), and
+  coding stays quick with years of ERP history.
 - **One file to open per computer:** `APProcessor.bat` on Windows, `APProcessor.command` on a Mac. The old
   `install.bat`, `install.sh`, `start.bat` and `start.sh` are gone, and so is the top-level `terminal.bat`.
   An update removes them from an older folder by itself.

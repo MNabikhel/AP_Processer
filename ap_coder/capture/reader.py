@@ -166,6 +166,7 @@ class _LabelHit:
     strength: float
     end: int  # character offset in the line text where the value may start
     label_text: str
+    start: int = 0  # where the label's box starts: a label after another label on the line starts there
 
 
 def _compile() -> dict[str, list[tuple[re.Pattern[str], float]]]:
@@ -185,8 +186,31 @@ def _label_hits(line: Line) -> list[_LabelHit]:
     """Labels that start a line or follow a separator inside it ("... | Date: ...")."""
     # OCR puts dots, dashes or middots between label words ("Total.before tax", "Bon·de commande").
     text = _OCR_LABEL_GAP.sub(" ", plain(line.text))
-    hits: list[_LabelHit] = []
     starts = [0] + [m.end() for m in re.finditer(r"(?:\s{2,}|\s\|\s|[,;]\s)", text)]
+    first = list(starts)
+    hits = _hits_at(line, text, starts)
+    # A header row of bilingual labels set one space apart ("Date of issue / Date de facturation Payment Terms /
+    # Conditions"): a label may also start where such a label ends, when no value follows it on the line. (Only after
+    # a bilingual label: "Delivery Date" is one label, not "Delivery" and a "Date".)
+    for _ in range(3):
+        more = set()
+        for hit in hits:
+            m = _NEXT_WORD.match(text, hit.end)
+            if (m and "/" in hit.label_text and m.end() not in starts
+                    and not _value_reading(hit.field, line, hit.end, 1.0, "x")):  # fmt: skip
+                more.add(m.end())
+        if not more:
+            break
+        starts += sorted(more)
+        hits = _hits_at(line, text, starts, chained=set(starts) - set(first))
+    return hits
+
+
+_NEXT_WORD = re.compile(r"\s+(?=[a-z])")
+
+
+def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None = None) -> list[_LabelHit]:
+    hits: list[_LabelHit] = []
     for field, pats in _LABELS.items():
         for rx, strength in pats:
             for st in starts:
@@ -215,13 +239,14 @@ def _label_hits(line: Line) -> list[_LabelHit]:
                         break
                     end = nxt.end()
                 label_text = text[st:end]
+                box_start = st if chained and st in chained else 0
                 if _distracted(field, text[st:]):
                     continue
                 if field == "hst_amount" and "/" in label_text:
                     for hit_field in _combined_tax_fields(text):
-                        hits.append(_LabelHit(hit_field, line, strength, end, label_text))
+                        hits.append(_LabelHit(hit_field, line, strength, end, label_text, box_start))
                 else:
-                    hits.append(_LabelHit(field, line, strength, end, label_text))
+                    hits.append(_LabelHit(field, line, strength, end, label_text, box_start))
                 break
             else:
                 continue
@@ -509,7 +534,7 @@ def _under_another_label(lines: list[Line], value: Line, label: Line) -> bool:
 
 
 def _label_box(hit: _LabelHit) -> Box:
-    words = _span_words(hit.line, 0, hit.end)
+    words = _span_words(hit.line, hit.start, hit.end)
     return union_all([w.box for w in words]) or hit.line.box
 
 

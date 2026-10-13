@@ -94,3 +94,35 @@ def test_terms_with_a_speck_between_the_words_are_still_read():
     assert _terms("Payable on.receipt") == "Due on receipt"  # fresh scan seed 9301: was missing
     assert _terms("Due upon. receipt") == "Due on receipt"
     assert _terms("Payable à.réception") == "Due on receipt"
+
+
+def _x_of(prefix: str, x: float = 60, size: float = 10) -> float:
+    """Where a word starts in a line printed at ``x``: after ``prefix``."""
+    return x + pymupdf.get_text_length(prefix, fontsize=size)
+
+
+def test_bilingual_labels_set_one_space_apart_each_find_their_value(tmp_path):
+    # A header grid whose labels the PDF's own text joins into one line (fresh seed 9301): the second label was lost.
+    head = "Invoice No. / N° de facture "
+    row = head + "PO / Votre commande "
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (60, 130, row + "Terms of Payment / Conditions"),
+        (60, 145, "INV-97361"), (_x_of(head), 145, "PO-47389"), (_x_of(row), 145, "NET 15"),
+        (380, 90, "Date"), (470, 90, "2026-04-10"),
+        *_TOTALS,
+    ]  # fmt: skip
+    fields = analyze(_pdf(tmp_path, lines), today=TODAY).fields
+    assert fields["invoice_number"].value == "INV-97361"
+    assert fields["po_number"].value == "PO-47389"
+    assert fields["payment_terms"].value == "Net 15"
+
+
+def test_delivery_date_stays_one_label_not_a_delivery_and_a_date(tmp_path):
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "TAX INVOICE"),
+        (380, 75, "Invoice #"), (470, 75, "006534"), (380, 90, "Date"), (470, 90, "12-Apr-2026"),
+        (380, 105, "Delivery Date:"), (470, 105, "07-Apr-2026"),
+        *_TOTALS,
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines), today=TODAY).fields["invoice_date"].value == "2026-04-12"
