@@ -133,14 +133,15 @@ DISTRACTORS: dict[str, list[str]] = {
                      r"date\s*de\s*commande", r"date\s*d'?\s*expedition", r"date\s*de\s*livraison", r"echeance",
                      r"service\s*(?:date|period)", r"period", r"periode", r"date\s*limite", r"payment\s*due",
                      r"date\s*de\s*la\s*commande", r"quote\s*date", r"date\s*de\s*soumission", r"printed", r"imprime"],
-    "invoice_number": [r"invoice\s*date", r"invoice\s*total", r"invoice\s*amount", r"customer\s*(?:no|#|number|id)",
+    "invoice_number": [r"inv\s?-\s?\d",  # "INV -4471": OCR's space in the number "INV-4471", not a label
+                       r"invoice\s*date", r"invoice\s*total", r"invoice\s*amount", r"customer\s*(?:no|#|number|id)",
                        r"account\s*(?:no|#|number)", r"no\s*de\s*client", r"no\s*de\s*compte", r"client\s*(?:no|#)",
                        r"quote", r"soumission", r"order", r"commande", r"p\.?o\.?\b", r"phone", r"tel", r"fax",
                        r"date",
                        # A credit note's reference to the invoice it credits is not its own number.
                        r"facture\s*(?:originale|d'?\s*origine)", r"original\s*invoice", r"applies\s*to", r"against\s*invoice",
                        r"re(?:f\.?|:)?\s*invoice", r"ref\.?\s*(?:de\s*(?:la\s*)?)?facture"],
-    "po_number": [r"p\.?\s?o\.?\s*box", r"p\.?\s?o\.?\s*date", r"date\s*(?:du\s*)?(?:b\.?\s?c\.?|bon)", r"our\s*(?:order|ref)", r"notre\s*(?:commande|reference)", r"packing\s*slip", r"bon\s*de\s*livraison", r"c\.?\s?p\.?\s*\d", r"case\s*postale", r"sales\s*order", r"order\s*date",
+    "po_number": [r"po\s?-\s?\d", r"p\.?\s?o\.?\s*box", r"p\.?\s?o\.?\s*date", r"date\s*(?:du\s*)?(?:b\.?\s?c\.?|bon)", r"our\s*(?:order|ref)", r"notre\s*(?:commande|reference)", r"packing\s*slip", r"bon\s*de\s*livraison", r"c\.?\s?p\.?\s*\d", r"case\s*postale", r"sales\s*order", r"order\s*date",
                   r"date\s*de\s*commande"],
     "grand_total": [r"sub\s*-?\s*total", r"sous\s*-?\s*total", r"total\s*(?:tax|taxes|des\s*taxes)", r"previous",
                     r"solde\s*(?:precedent|anterieur)", r"payments?\s*(?:received|recu)", r"paiements?\s*recus?",
@@ -312,15 +313,19 @@ def _id_from(text: str, offset: int) -> tuple[str, int, int] | None:
         return None
     first = tokens[0]
     value, a, b = first.group(0), first.start(), first.end()
+    end = None
     if not any(c.isdigit() for c in value) and len(tokens) > 1:
         nxt = tokens[1]
         gap = rest[b : nxt.start()]
         if len(gap) <= 1 and any(c.isdigit() for c in nxt.group(0)) and len(value) <= 4:
             value, b = rest[a : nxt.end()], nxt.end()
+        elif re.fullmatch(r" ?- ?", gap) and nxt.group(0)[:1].isdigit() and len(value) <= 4 and value.isupper():
+            # OCR's space beside the hyphen of "PO-20203": "PO -20203" is the one number.
+            value, end = value + "-" + nxt.group(0), nxt.end()
     if not any(c.isdigit() for c in value):
         return None
     value = value.strip(".-/")
-    return value, offset + pos + a, offset + pos + a + len(value)
+    return value, offset + pos + a, offset + pos + (end if end is not None else a + len(value))
 
 
 # A label OCR glued to the number after it: "No.066", "Inv321", "N°factureFA2627633", "INVOICEA-2026-1".

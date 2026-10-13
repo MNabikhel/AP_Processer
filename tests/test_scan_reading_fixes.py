@@ -209,3 +209,14 @@ def test_one_pound_sign_among_dollar_amounts_is_not_the_currency():
     assert currency_evidence("Subtotal $100.00\nTax $5.00\nTotal $105.00\nFreight £66") is None  # OCR's "$66"
     assert currency_evidence("Subtotal £1,000.00\nTotal £1,200.00") == ("GBP", 0.8)
     assert currency_evidence("Montant 1.000,00 €") == ("EUR", 0.8)
+
+
+def test_a_prefixed_number_with_ocrs_space_before_the_hyphen_is_one_number():
+    from ap_coder.capture.reader import _distracted, _id_from
+
+    # Fresh scan seed 9601: "PO -20203" under "Your PO No." was read as a "PO" label and the value "20203".
+    assert _id_from("PO -20203", 0)[0] == "PO-20203"
+    assert _id_from("INV- 4471", 0)[0] == "INV-4471"
+    assert _distracted("po_number", "po -20203") and not _distracted("po_number", "po # 20203")
+    assert _distracted("invoice_number", "inv -4471")
+    assert _id_from("Net -30", 0) is None  # not a capitalised prefix: left alone
