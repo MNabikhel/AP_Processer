@@ -261,11 +261,109 @@ What this means for "99%":
   supplier only goes touchless once *its* corrections over its recent invoices show >= 99% with
   confidence (lower bound, not a streak).
 
+### Before and after one round of fixes (October 2026)
+
+The code before this round (`33b57d8`) and after it, on the same invoices. Seeds 9101 and 9102 were used to find what
+to fix, 9301 and 9701 for later fixes; 9501, 9601, 9702, 9801, 9811, 9821, 9901, 9921 and 9931 had not been looked at
+before the runs shown. Scans use OCR only (no page reader); *no silent error* means nothing wrong is shown as *verified* or
+*likely*.
+
+| set | invoices | fully right | no silent error |
+|---|---:|---:|---:|
+| digital, seed 9101 | 300 | 99.7% → 99.7% | 100% → 100% |
+| digital, seed 9301 | 300 | 99.0% → **100%** | 100% → 100% |
+| digital, seed 9701 | 1,000 | 99.7% → **99.9%** | 99.9% → **100%** |
+| digital, seed 9801 (never looked at) | 1,000 | 99.4% → **99.8%** | 100% → 100% |
+| digital, seed 9901 (never looked at) | 1,000 | 99.7% → 99.7%, then **99.9%*** | 99.9% → 99.9%, then **100%*** |
+| digital, seed 9921 (never looked at, final code) | 1,000 | 99.4% → **99.9%** | 100% → 100% |
+| digital, seed 9931 (never looked at, final code) | 2,000 | 99.5% → **99.9%**, then **100%*** | 99.9% → 99.9%, then **100%*** |
+| scans, seed 9102 | 100 | 89% → **97%** | 98% → **100%** |
+| scans, seed 9301 | 100 | 95% → **99%** | 100% → 100% |
+| scans, seed 9501 (never looked at) | 100 | 97% → **98%** | 99% → 99%, then 100%* |
+| scans, seed 9601 (never looked at) | 150 | 96.0% → **97.3%** | 99.3% → **100%** |
+| scans, seed 9702 (never looked at) | 150 | 92.0% → **94.0%** | 98.0% → 98.7%, then 100%* |
+| scans, seed 9811 (never looked at, final code) | 150 | 92.7% → **95.3%** | 98.7% → **100%** |
+| scans, seed 9821 (never looked at, final code) | 150 | 95.3% → **96.0%**, then **97.3%*** | 98.0% → 98.0%, then **100%*** |
+
+\* The wrong values shown as likely on seeds 9501 and 9702 were looked at after those runs and fixed (OCR's "IN833.79"
+for IN83379, a 0.00 HST taken from a registration-number line, terms that lost their discount to OCR's full-width
+comma); every set above now has no silent error. "Never looked at" figures are from before that. The misses seed 9702
+showed afterwards (OCR's "Apri1", "Eeb", "2.025" and "Tota1") were fixed too: it now reads 97.3% fully right. On
+seed 9901, a utility bill's "Payments received" shown as its supplier (logo initials "PH" had been taken for "Ph:", a
+phone line) and a PO read from "Unit 7" were fixed after that run. The misses seeds 9811 and 9921 showed (OCR's
+"（9,9758）" rate read as an amount, a logo initial after "LP", a label after a fax number) were fixed after theirs:
+they now read 96.7% and 100% fully right. Seeds 9821 and 9931 were run on the code as pushed, before and after this
+round; on the old code one scan had a wrong invoice number shown as *verified*, on the new one none. Their wrong values
+still shown as likely were then fixed: a date that reads both ways taken as three days after the invoice arrived ("2
+March" for 3 February, on both), "2%10,.Net45" losing its discount, a street number under a logo's initials "PO" read as
+the PO, and "No. 46" read "4.6" by both OCR engines (now sent to a person). The "then" figures are after those fixes.
+
+Supplier learning (`bench learn`, 30 suppliers × 40 invoices, seeds 77, 78 and 79): once a supplier met the
+autonomy policy, 226 of its 345 later invoices went without a person before this round and **295 of 345** after
+(66% → 86%), with no wrong field on any of them. The gain is from agreeing readers counting their best-measured
+evidence (a value the template read first was only *likely* on fewer measured cases) and from templates no longer
+anchoring a field to part of a value printed above it.
+
+Line items found: 97.9% → 100% on new digital invoices, 96.3% → 100% on new scans
+([line items](#pictures-become-pdfs-and-line-items-read-with-the-table-finder)). GL accounts filled in with no AI model
+that were right: 96.6% → 99.5% ([CODING.md](CODING.md)).
+
+Seconds per invoice through the app's pipeline (median, measured as `bench speed` does on a 4-core test machine with
+nothing else running): a digital PDF 0.06 → 0.03 s; one with 30,000 past approvals 3.2 → 0.13 s; a scan's first read
+11.3 → 7.0 s (each page's image made once for both OCR engines); a scan read again when the page reader's text arrives 8.1 → 2.2 s.
+
+### Harder pictures than the benchmark's scans (stress test, October 2026)
+
+The benchmark's scans are gentle: 150 to 200 dpi, tilted at most 1.5°. A stress test made the same 36 one-page
+invoices (seed 9961) into harder pictures and read them with OCR only (values scored, not boxes):
+
+| picture | values right | invoices fully right | no silent error |
+|---|---:|---:|---:|
+| phone photo: page on a desk, tilted up to 6°, taken at an angle, uneven light | 90.9% → **100%** | 63.9% → **100%** | 88.9% → **100%** |
+| page scanned sideways | 21.4% → **98.1%** | 0% → **86.1%** | 47.2% → **94.4%** |
+| page scanned upside down | 23.1% → **98.4%** | 0% → **86.1%** | 36.1% → **97.2%** |
+| fax, fine (200 dpi, black and white) | 99.5% | 94.4% | 100% |
+| fax, standard (200 × 100 dpi) | 93.7% | 61.1% | 88.9% → 91.7% |
+| fax at 100 dpi | 67.0% | 8.3% | 75.0% → **100%** |
+
+- **Phone photos** (`layout.flatten_photo`): a photo of a page on a darker desk is flattened as a scanner app does it.
+  The page is found (OpenCV, which comes with the OCR), cut out of the desk and squared up, which undoes its tilt
+  and the keystone of a photo taken at an angle. It happens when the photo is made a PDF (`intake.py`), so the page
+  is read, shown and highlighted flattened; the photo as taken is kept in `originals/`. The desk must show on all
+  four sides: a scan (it fills its picture, even one with a dark band across its header), a fax and a page on a
+  white desk are left as they are, and a scanner's dark bed keeps the resolution it was scanned at. On the
+  benchmark's 600 scans and faxes, none was flattened. A photo reads in about 6 s against 5 s for a scan (it is a
+  larger picture).
+- **Pages scanned turned** (`layout._upright_turn`): OCR reads each line's words right on a turned page (it turns
+  a line to read it), but the lines lie where the turned page has them, so labels and amounts no longer line up.
+  When most long lines run down the page, the page was scanned sideways: the OCR's lines are turned a quarter turn,
+  whichever way puts the amounts right of their labels (when each label shares a line with its amount, whichever
+  puts the totals below the invoice's title and dates). When the lines run across but the amounts stand left of
+  their labels, it was scanned upside down. On the benchmark's 1,300 OCR reads of upright scans, no upright page
+  scored below 0 (amounts right of labels count up, left count down); a page is turned at −2. The words are read on
+  the upright page, at no extra OCR cost. The app then shows the PDF upright (`intake.turn_upright`): only the
+  page's rotation changes, never what it prints. The scan as it came is kept in `originals/`, its note naming it
+  as a picture's does, so the same scan sent again is found; the copy is marked as turned (not as made from a
+  picture), so OCR still reads its pages as shown. A PDF AP Coder made is its own and is turned where it is.
+- **Pages scanned too coarsely** (`analyze`, `COARSE_DPI`): the readings' confidence was measured on scans of
+  150 dpi and up. On a page scanned under 140 dpi (the picture filling a PDF page says its resolution, the
+  coarser way: a standard fax TIFF of 204 × 98 dpi is 98, and its rows are stretched to the page's shape for OCR,
+  as a fax viewer shows them; an image file says it, or its long side is taken as a letter page's), every value
+  is read but none is shown as verified or likely: a person checks them. A label OCR misread ("INVO1CE" for
+  INVOICE) is never taken for a value.
+- **Left as it is**: a standard fax (100 dpi down the page) still read 3 of 36 invoices with a wrong value shown
+  as *likely*. On two, the customer's name was taken for the supplier's where the fax garbled "Bill to"; on the
+  other, a GST number. No value was shown as *verified* wrongly.
+
 ### Scale
 
-Text-layer capture takes about 20 ms per invoice on one CPU core. A scanned page takes two local
+Text-layer capture takes about 20 ms per invoice on one CPU core, and a digital PDF goes through the whole
+pipeline (read, checked, coded, stored) in about 0.13 s: each file is opened, read and searched for tables once per
+invoice, and the database is opened once per invoice (`Store.session`). A scanned page takes two local
 OCR reads, several seconds per page per core (about 30 s per scanned invoice per worker on the
-4-core test machine with all cores busy); at volume, scans should go to Document Intelligence or a
+4-core test machine with all cores busy). The OCR is kept in the data folder (`.cache/ocr/`, by image hash and engine
+version, at most 4,000 files), so when the page reader's text arrives the invoice is read again in about 2 s instead of
+13 s. `python -m ap_coder.bench speed` measures both passes. At volume, scans should go to Document Intelligence or a
 GPU OCR service. A million invoices a month is ~23 per minute in a working month: one core for digital
 PDFs, a handful of OCR workers (or Document Intelligence) for scans. Capture is stateless per
 invoice, so it runs in parallel workers behind a queue; supplier templates and statistics are small
@@ -282,6 +380,9 @@ as soon as it meets the bar (`automatic_transition`, as the app applies it). The
 report gives accuracy by invoice position (against the same invoices read without a template), when
 each supplier would reach the policy, and after that the touchless share and its errors.
 `--ignore-check CODE` is a what-if: a failed check with that code does not hold an invoice back.
+
+GL coding without an AI model has its own benchmark, `python -m ap_coder.bench coding`: see
+[CODING.md](CODING.md).
 
 ## Touchless processing: one switch, one bar
 
@@ -439,6 +540,27 @@ away from its amount. A found table whose headings OCR can't read (bilingual hea
 amount column (`reader._headerless_rows`). Sentences under a table that reach the amount column ("subject to GST 5%")
 and a total row whose label OCR lost are no longer read as lines.
 
+**Column headings as invoices print them** (`reader._heading_cells`, `reader.heading_row`):
+- a heading printed in two languages is one heading ("Prix unitaire / Unit Price"); two of them set close together are
+  two columns ("Price / Taux Ext. Price / Prix total"). Headings OCR runs together are read apart at the "/" and where
+  a capital starts a word ("Hr/Qty/QuantitePriceEach/PrixunitaireLineTotal/Montant");
+- the longest heading names the column: "Unit Cost" is the price, not a quantity ("Unit"); "Prix total" and "Total
+  Price" are the amount;
+- words after a heading are more of it ("Price Each", "Qty Shipped"); a second heading for a column already named is
+  another column, without a name ("Quantity / Unit / Unit Cost": the unit of measure between the quantity and the
+  price);
+- a segment with a number in it is no heading ("Unit 9", an address printed level with "Amount Due" at the top of a
+  bill), nor is a sentence that starts with a heading's word; of several rows of headings, the one naming the most
+  columns is the table's.
+
+**Amounts and rows as OCR reads them.** "1530:00" (the point read as a colon) and "342.18CR" (a credit's mark run into
+the amount) are amounts printed as money: such lines were dropped as sentences under the table. "392.99.CR" is a credit,
+and a unit price to four decimals ("1.3023" a cubic metre) is 1.3023, never 1,302 and a 3. When OCR loses the quantity's
+heading or a digit, the quantity is the number that, times the price, makes the amount; a returned quantity keeps its
+sign ("-4 × 45.13 = -180.52"). A subtotal's amount set a hair higher than its label ends the table, and a reading that
+ran on into the totals (labels OCR runs together: "Totalbefore.tax", "SalesTaxTotal") is cut at the first row that prints
+the sum of the rows above it, when those add up to the subtotal (`capture._to_subtotal`).
+
 Camelot (CloseDesk's other table reader) is not used: it installs from wheels for Python 3.11-3.14 on Windows and
 macOS, but it needs `opencv-python-headless`, which can't sit beside the `opencv-python` the OCR engines need (both
 are the `cv2` module), and adds about 45 MB a platform to the bundle.
@@ -476,6 +598,32 @@ keeps text beside the table out. On the 9 real OvisOCR2 readings above, OCR's ow
 56 of 56 as before, and `LINE_ITEMS_AGREE` passed on 8 of the 9: on the ninth OCR missed one line's amount (a
 misread "9.61"), and the check sent it to a person. The 10 sample invoices, with their text copies standing in for
 OvisOCR2, agree on every line. The table finder takes about half a second a page on the (busy) 4-core test machine.
+
+**Headings, amounts and the table's end, measured.** The benchmark as `bench run` runs it (no page reader; the table
+finder's model isn't in a development checkout), the same invoices before and after the rules above. The lines missed
+on the tuning seeds were sorted by cause to find the rules; the fresh seeds were read only once the rules were done:
+
+| test set | line items found (recall) | lines returned that are right (precision) | header-field accuracy | invoices fully right |
+| --- | --- | --- | --- | --- |
+| 300 digital PDFs (seed 9101, tuning) | 98.5% → **100.0%** | 99.95% → **100.0%** | 99.97% → 99.97% | 99.7% → 99.7% |
+| 300 digital PDFs (seed 9102, tuning) | 97.2% → **100.0%** | 99.8% → **100.0%** | 99.9% → 99.9% | 99.0% → 99.0% |
+| 40 scans (seed 9201, tuning) | 93.0% → **99.0%** | 97.2% → **99.3%** | 99.7% → 99.7% | 97.5% → 97.5% |
+| 40 scans (seed 9202, tuning) | 94.8% → **99.7%** | 100.0% → 99.7% | 100.0% → 100.0% | 97.5% → 97.5% |
+| 300 digital PDFs (seed 9301, fresh) | 97.9% → **100.0%** | 99.8% → **100.0%** | 99.93% → 99.93% | 99.0% → 99.0% |
+| 40 scans (seed 9401, fresh) | 96.3% → **100.0%** | 100.0% → 100.0% | 100.0% → 100.0% | 100% → 100% |
+
+What was missed, by cause: bilingual headings ("Price / Taux Ext. Price / Prix total", "Product / Service /
+Désignation") left whole tables unread, 31 of the 32 lines missed on seed 9101; an address's "Unit 9" beside "Amount
+Due" taken for the heading row of a utility bill; on scans, amounts OCR reads "342.18CR" or "1530:00" dropped as
+sentences, and headings OCR runs together. No header field read differently; on scans the subtotal is *verified* more
+often, since the lines now add up to it. With the table finder the lines found went from 99.95% to 100% (digital, both
+seeds 9101 and 9301; precision 99.8% to 100%) and from 94.0% to 99.0% (scans, seed 9201; 99.7% to 100% on seed 9401).
+
+The quantity and unit price of the lines found are now as printed on every digital line (before, about 1 line in 40
+had one missing or wrong), but for a credit note's unit price, which is given with the credit's sign (-45.13 for a
+line of -180.52), as before. Still missed on scans: a description OCR misreads beyond recognition ("Safety gasss,clear,
+NSI7"; the line is read, with its amount, but the benchmark matches descriptions), an amount OCR doesn't see at the foot
+of a page, and a quantity of 1 OCR doesn't see (left blank, read as 1 when the line is posted).
 
 ## Learning from approvals: each reader's record, local calibration, training data
 

@@ -416,6 +416,23 @@ def test_a_line_only_the_local_model_coded_is_never_approved_without_a_person(to
     assert _decide(touchless, path, output=output)["auto"]
 
 
+def test_a_line_coded_from_a_weak_match_is_never_approved_without_a_person(touchless, path, tmp_path):
+    """Sweep: with the chat model loaded, a weak match (an account's name, the vendor's default) codes the line
+    (``assign_weak``) and nothing held the invoice back: looser than with no model at all."""
+    from ap_coder.capture.types import LineReading
+    from ap_coder.offline_coder import WEAK_MATCH, code_from_capture
+    from ap_coder.store import load_sample_setup
+
+    store = Store(tmp_path / "w.db")
+    load_sample_setup(store)
+    capture = CaptureResult(fields={}, line_items=[LineReading("Copy paper", 1.0, 1000.0, 1000.0)])
+    (line,) = code_from_capture(capture, store.reference_data(), [], store, assign_weak=True).coding.line_items
+    assert line.predicted_gl_code == "6000" and line.reasoning_justification.startswith(WEAK_MATCH)
+    output = {"grand_total": 1050.0, "currency": "CAD", "line_items": [line.model_dump()]}
+    decision = _decide(touchless, path, output=output)
+    assert not decision["auto"] and "weak match" in decision["reason"]
+
+
 def test_several_gates_are_all_named():
     gates = touchless_gates([{"code": "VENDOR_BANK_CHANGED"}, {"code": "DUPLICATE_INVOICE"},
                              {"code": "POSSIBLE_DUPLICATE_AMOUNT"}], grand_total=-5, over_limit=5000.0)  # fmt: skip

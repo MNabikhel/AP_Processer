@@ -17,16 +17,18 @@ _CURRENCY_WORDS = re.compile(r"\b(CAD|USD|EUR|GBP|CDN|CA\$|US\$|C\$)\b", re.I)
 # after it ("Total - $113.00", "Amount Due – $1,234.56") or a run of dashes ("Total ------ 113.00") is a
 # separator. Thousands: commas, dots, apostrophes or spaces ("1,234.56", "1.234,56", "1 234,56", "1 234.56",
 # "1 234 567"). One space group may also be a quantity set close to its price ("10 100.00" in a line item):
-# ``find_amounts`` tells them apart. "0.125" is a unit price with three decimals, never thousands.
+# ``find_amounts`` tells them apart. "0.125" is a unit price with three decimals, never thousands, and "1.3023" one
+# with four. A credit's "CR" may follow a stray point on a scan ("392.99.CR").
 _AMOUNT = re.compile(
     r"""(?P<neg1>\((?=\s*(?:[$€£]\s*)?\d)|(?<![-−–])[-−–](?=(?:[$€£]\s*)?\d))?
         \s*(?:[$€£]\s*)?
-        (?P<num>(?!0[,.']\d)\d{1,3}(?:[,.']\d{3})+(?:[.,]\d{1,2})?
+        (?P<num>\d{1,3}[.,]\d{4}(?!\d)(?![.,']\d)
+          |(?!0[,.']\d)\d{1,3}(?:[,.']\d{3})+(?:[.,]\d{1,2})?
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+,\d{1,2}(?!\d)
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:\.\d{1,2})?(?![.,]?\d)
           |0[.,]\d{1,4}
           |\d+(?:[.,]\d{1,2})?)
-        \s*(?:[$€£])?\s*(?P<neg2>\)|-(?!\s*\w)|(?i:cr)\b)?""",
+        \s*(?:[$€£])?\s*(?P<neg2>\)|-(?!\s*\w)|\.?(?i:cr)\b)?""",
     re.X,
 )
 # One space group ("1 050.00", "1 234"): 1,050.00, or a quantity 1 set close to a price 50.00.
@@ -42,14 +44,17 @@ _TOTALS_LABEL = re.compile(
 _OCR_THOUSANDS = re.compile(r"(?<=\d)[;:](?=\d{3}(?!\d))")
 _OCR_DECIMAL = re.compile(r"(?<=\d)[;:](?=\d{2}(?!\d))")
 _OCR_ONE = re.compile(r"(?<![A-Za-z\d])[Il](?=[,.]?\d{3}[.,]\d{2}(?!\d))")
+# A speck a scanner left after a number, read as a period: "9,975.%" (a rate), "$442.91.CR" (a credit).
+_OCR_SPECK = re.compile(r"(?<=\d)\.(?=\s?(?:%|(?i:cr)\b))")
 
 
 def _ocr_amount_text(s: str) -> str:
     """OCR slips in amounts, fixed in place (same length, so spans stay valid): the thousands comma or
-    decimal point printed as ";" or ":" ("1;864.71", "2447:70"), and the digit 1 as "I" or "l"
-    ("I,396.35")."""
+    decimal point printed as ";" or ":" ("1;864.71", "2447:70"), the digit 1 as "I" or "l" ("I,396.35"), and a
+    speck read as a period before a percent sign or "CR" ("9,975.%", "442.91.CR")."""
     s = _OCR_THOUSANDS.sub(",", s)
     s = _OCR_DECIMAL.sub(".", s)
+    s = _OCR_SPECK.sub(" ", s)
     return _OCR_ONE.sub("1", s)
 
 
@@ -76,6 +81,8 @@ def _number(num: str) -> float | None:
     num = num.replace(" ", " ").replace(" ", " ").replace("'", " ")
     if re.fullmatch(r"0[.,]\d{3,4}", num):
         return float("0." + num[2:])  # a unit price to three or four decimals ("0.125"), not thousands
+    if re.fullmatch(r"\d{1,3}[.,]\d{4}", num):
+        return float(re.sub(r"[.,]", ".", num))  # four decimals ("1.3023" a cubic metre): never thousands
     last_sep = max(num.rfind("."), num.rfind(","))
     # The last separator is the decimal point when it has one or two digits after it, or when the separators
     # before it are all the other kind ("1,234.567": a unit price to three decimals, not 1,234,567).
@@ -164,8 +171,9 @@ def _plain(text: str) -> str:
 _ISO = re.compile(r"\b(20\d{2}|19\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b")
 _NUMERIC = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b")
 # Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
-_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?[,.]?\s*(\d{4})\b")
-_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*([a-z]{3,9})\.?,?\s*(\d{4})\b")
+# Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026".
+_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?(?:\s*[,.]){0,2}\s*(\d{4})\b")
+_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*([a-z]{3,9})(?:\s*[,.]){0,2}\s*(\d{4})\b")
 # OCR reads letters of a month as digits ("0ct", "Ju1", "N0v"); fixed in place, same length.
 _OCR_MONTHS = [
     (re.compile(r"0ct"), "oct"),
@@ -173,6 +181,11 @@ _OCR_MONTHS = [
     (re.compile(r"n0v"), "nov"),
     (re.compile(r"(?<![a-z])1an"), "jan"),
     (re.compile(r"ap1"), "apr"),
+    (re.compile(r"apri1"), "april"),
+    (re.compile(r"ju1y"), "july"),
+    (re.compile(r"(?<![a-z])eeb(?=[\s.,]*\d)"), "feb"),  # OCR's E for F: "15Eeb.2025"
+    # French "1er" (the first) as OCR reads it, "ler" or "ier": "ler octobre 2026" (same length, so offsets hold)
+    (re.compile(r"(?<![a-z\d])[li]er(?=\s+(?:janv|fevr|mars|avr|mai|juin|juil|aout|sept|oct|nov|dec))"), "1er"),
 ]
 
 
@@ -181,10 +194,13 @@ def _ocr_date_text(s: str) -> str:
         s = rx.sub(fixed, s)
     # a speck read as a point inside the day: "0.1/08/2026" (same length, so offsets hold)
     s = _SPECK_IN_DAY.sub(r" \1\2", s)
+    # ... or inside the year after a month: "28 Apr 2.025"
+    s = _SPECK_IN_YEAR.sub(r"\1\2\3 ", s)
     # ... or beside a separator: "2025/12/.07" -> "2025/12/07 "
     return _SPECK_BY_SEP.sub(lambda m: re.sub(r"[.,]", "", m.group()) + " " * len(re.findall(r"[.,]", m.group())), s)
 
 
+_SPECK_IN_YEAR = re.compile(r"([a-z]{3,9}\.?,?\s*)(2)[.,](0\d{2})\b")
 _SPECK_IN_DAY = re.compile(r"(?<![\d.,])(\d)[.,](\d)(?=[/-]\d{1,2}[/-]\d{2,4}\b)")
 _SPECK_BY_SEP = re.compile(
     r"(?<![\d.,])\d{1,4}(?=[.,]?[/-][.,]?\d)(?:[.,][/-]|[/-][.,]|[/-])\d{1,2}(?:[.,][/-]|[/-][.,]|[/-])\d{2,4}\b"
@@ -306,7 +322,8 @@ def luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
-_BN = re.compile(r"(?<![\d-])(\d(?:[ -]?\d){8})[\s.:-]*(RT|R\s?T)[\s.:-]*(\d{4})(?!\d)", re.I)
+# The nine digits may be grouped by spaces or dashes, or a period where a scan left a speck ("57165.3898 RT 0001").
+_BN = re.compile(r"(?<![\d-])(\d(?:[ .-]?\d){8})[\s.:-]*(RT|R\s?T)[\s.:-]*(\d{4})(?!\d)", re.I)
 _BN9 = re.compile(r"(?<!\d)(\d{3}\s?\d{3}\s?\d{3})(?!\d)")
 _QST = re.compile(r"(?<!\d)(\d{10})[\s.:-]*(TQ|T\s?Q)[\s.:-]*(\d{4})(?!\d)", re.I)
 
@@ -316,7 +333,7 @@ def find_gst_numbers(text: str) -> list[tuple[str, int, int, bool]]:
     s = unicodedata.normalize("NFKC", text)
     out = []
     for m in _BN.finditer(s):
-        digits = re.sub(r"[\s-]", "", m.group(1))
+        digits = re.sub(r"[\s.-]", "", m.group(1))
         out.append((f"{digits}RT{m.group(3)}", m.start(), m.end(), luhn_ok(digits)))
     return out
 
@@ -413,11 +430,11 @@ def currency_evidence(text: str) -> tuple[str, float] | None:
         return "USD", 0.8
     if re.search(r"\bC\$|\bCDN\b|CANADIAN", s):
         return "CAD", 0.8
-    # A euro or pound sign is that currency (a plain "$" is not: Canadian or US dollars).
-    if "€" in s:
-        return "EUR", 0.8
-    if "£" in s:
-        return "GBP", 0.8
+    # A euro or pound sign is that currency (a plain "$" is not: Canadian or US dollars), unless dollar signs
+    # outnumber it: one "£66" among a scan's dollar amounts is OCR's reading of a "$".
+    for sign, code in (("€", "EUR"), ("£", "GBP")):
+        if sign in s and s.count(sign) >= s.count("$"):
+            return code, 0.8
     return None
 
 

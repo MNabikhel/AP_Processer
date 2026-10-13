@@ -157,6 +157,19 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
         extra = f" + charges {charges:,.2f}" if charges is not None else ""
         checks.append({"code": "TOTALS_ADD_UP", "ok": ok, "fields": fields,
                        "detail": f"subtotal {sub:,.2f}{extra} + tax {tax_sum:,.2f} {'=' if ok else '≠'} total {total:,.2f}"})  # fmt: skip
+    elif sub is None and total is not None and line_items:
+        # No subtotal printed: lines (+ charges + taxes) that make the total prove the money. Lines that don't prove
+        # nothing either way (a line missed or read wrong is common: LINES_ADD_UP is soft), so the header's total
+        # and taxes are not failed for it; with nothing proven the invoice still goes to a person.
+        amounts = [li.amount for li in line_items if li.amount is not None]
+        if amounts:
+            tax_sum = sum(taxes.values()) if taxes else (tax_total or 0.0)
+            line_sum = round(sum(amounts), 2)
+            if amounts_equal(round(line_sum + (charges or 0.0) + tax_sum, 2), total, 0.011):
+                fields = ["grand_total", *taxes] if taxes else ["grand_total"]
+                extra = f" + charges {charges:,.2f}" if charges is not None else ""
+                checks.append({"code": "TOTALS_ADD_UP", "ok": True, "fields": fields,
+                               "detail": f"lines {line_sum:,.2f}{extra} + tax {tax_sum:,.2f} = total {total:,.2f}"})  # fmt: skip
     if taxes and tax_total is not None:
         ok = amounts_equal(round(sum(taxes.values()), 2), tax_total, 0.011)
         checks.append({"code": "TAXES_ADD_UP", "ok": ok, "fields": ["tax_total", *taxes],
@@ -326,6 +339,21 @@ def _page_reader_differs(
     return None
 
 
+def _whole_first_word(groups: list[_Group]) -> None:
+    """One OCR engine missed the start of the name ("ipements Saint-Laurent" for "Équipements Saint-Laurent", an
+    accented capital it could not see): the reading that has the whole first word goes first. The two still
+    disagree, so the name stays for a person to check."""
+    if len(groups) < 2:
+        return
+    top = " ".join(str(groups[0].value).split())
+    for i, other in enumerate(groups[1:], 1):
+        whole = " ".join(str(other.value).split())
+        cut = whole[: len(whole) - len(top)]
+        if len(whole) > len(top) and whole.endswith(top) and re.fullmatch(r"[^\W\d_]{1,4}", cut) and top[:1].islower():
+            groups.insert(0, groups.pop(i))
+            return
+
+
 def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineReading],
          vendor: dict[str, Any] | None = None, fields: tuple[str, ...] = FIELDS,
          today: dt.date | None = None, layout_source: str = "text",
@@ -338,6 +366,8 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     for field in fields:
         per_source = {s: cands.get(field, []) for s, cands in by_source.items() if cands.get(field)}
         groups = _groups(field, per_source)
+        if field == "vendor_name":
+            _whole_first_word(groups)
         all_groups[field] = groups
         chosen[field] = groups[0] if groups else None
         if len(groups) > 1:
@@ -401,6 +431,15 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                                    contested=contest.get(field, 0.0) > 0.25,
                                    confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
             conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), without, local_evidence))
+        if len(sources) > 1:
+            # Readers that agree each describe the same evidence their own way (the supplier template's "template",
+            # the rule reader's "label-right+adds-up"); which reading ranks first is chance, so the description
+            # with the better measured record counts.
+            for method in {r.method for _, r in g.readings} - {best.method}:
+                alt = evidence_key(field, sources, method, layout_source=layout_source,
+                                   contested=contest.get(field, 0.0) > 0.25,
+                                   confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
+                conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), alt, local_evidence))
         # A lone reader is never verified on its own measured record (the benchmark is synthetic):
         # verified also needs a second reader or a check to agree. The second OCR read of a scan
         # shares the first one's blind spots (a word OCR never saw), so with the rule reader it
@@ -413,6 +452,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                 "readers differ on the exact name: " + " / ".join(sorted({str(r.value) for _, r in g.readings}))
             )
         forms = {"".join(str(r.value).split()).upper() for s, r in g.readings if s != "ai"}  # how the page prints it
+        speck = False
         if field in ("invoice_number", "po_number") and len(forms) > 1:
             # "BC-15.332" / "BC-15332": the same number to compare, but which is printed is not agreed. OCR adds
             # specks as dots and commas far more often than it drops printed ones: the plainer form is shown.
@@ -423,6 +463,15 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             )
             values[field] = g.value
             reasons.append("readers write it differently: " + " / ".join(sorted(forms)))
+            # "IN833.79" / "IN833.7.9" (printed IN83379): even the plainer form keeps a dot between digits that the
+            # readers do not agree on, so it may be a speck too. A person looks.
+            speck = bool(re.search(r"\d[.,]\d", plain))
+        if field in ("invoice_number", "po_number") and layout_source != "text" and len(forms) == 1:
+            # "No.4.6" (printed No. 46), read so by both OCR reads: on a scan, a number that reads like a decimal
+            # may hold a speck the readers share. A person looks.
+            speck = bool(re.fullmatch(r"\d{1,4}[.,]\d{1,2}", next(iter(forms))))
+            if speck:
+                reasons.append("a dot between its digits may be a speck on the scan")
         if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
@@ -446,7 +495,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if readers_differ:
             vlm_reading, other, other_reading = readers_differ
             reasons.append(f"the page reader read {vlm_reading.value}, {other} read {other_reading.value}")
-        if field in failed or coding_differs or readers_differ:
+        if field in failed or coding_differs or readers_differ or speck:
             status = CHECK
         elif conf >= VERIFIED_AT and best.boxes:
             status = VERIFIED

@@ -177,8 +177,11 @@ def _gl_model(settings: Any, use_cache: bool, out: ReadingStatus) -> ReaderLine:
     out.lm_studio = out.lm_studio or status.reachable
     if status.active:
         out.gl_model = status.model
-        return ReaderLine(GL_MODEL, OK, f"{status.model} in {status.server}: suggests accounts for lines AP's history "
-                                        "and rules don't cover.")  # fmt: skip
+        detail = f"{status.model} in {status.server}: suggests accounts for lines AP's history and rules don't cover."
+        if {"on": True, "off": False}.get(settings.llm.vision, status.vision):
+            detail += (" It can see pages, so it also reads each invoice's header from the page images (after the page "
+                       "reader, in the background) as one more reader.")  # fmt: skip
+        return ReaderLine(GL_MODEL, OK, detail)
     return ReaderLine(GL_MODEL, OFF, "Optional, not running: GL accounts come from AP's history and coding rules; "
                                      "a line nothing was learned for is left for AP to code.")  # fmt: skip
 

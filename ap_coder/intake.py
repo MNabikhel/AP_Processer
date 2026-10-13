@@ -8,7 +8,9 @@ read, shown and stamped as that PDF.
 
 Nothing is recompressed that need not be: a JPEG goes into the PDF as it is (a photo taken sideways is turned
 by the page's rotation, not by re-encoding it), a PNG, TIFF or BMP losslessly. Only an iPhone photo, which a
-PDF can't hold as it is, is re-encoded, as a high-quality JPEG.
+PDF can't hold as it is, is re-encoded, as a high-quality JPEG; and a phone photo of a page lying on a desk,
+which is flattened as a scanner app would (the page cut out of the desk and squared up: ``flatten_photo``), so
+it is read, shown and highlighted as the page it is.
 
 The picture itself is kept for the audit trail, in an ``originals`` folder next to the PDF (moved there, so
 the invoices folder doesn't offer it again). The PDF records the picture's name, SHA-256 and where it was kept
@@ -21,6 +23,7 @@ same as before the conversion, never a re-rendering of the page.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -36,11 +39,13 @@ log = logging.getLogger(__name__)
 
 ORIGINALS_FOLDER = "originals"
 CREATOR = "AP Coder image to PDF"  # in the PDF's metadata: a page that is a picture AP Coder put there
+TURNED = "AP Coder turned upright"  # a scanned PDF from elsewhere that AP Coder showed upright (its pages as they were)
 MAX_FRAMES = 200  # pages taken from one multi-page TIFF
 PAGE_LONG_SIDE = 11 * 72  # a picture without a believable resolution becomes a letter-sized page (points)
 MIN_DPI, MAX_DPI = 50, 1200  # a resolution outside these is not believed
 MAX_PAGE_INCHES = 17  # nor one that makes a page longer than this (a phone's "72 dpi")
 HEIF_QUALITY = 95  # an iPhone photo has to be re-encoded: as a JPEG this good
+FLAT_QUALITY = 95  # a photo's page, flattened: a JPEG this good (a PNG when the picture was lossless)
 _ROTATION = {3: 180, 6: 90, 8: 270}  # EXIF orientation -> clockwise turn of the page
 
 
@@ -106,23 +111,37 @@ def _flat(picture: Any) -> Any:
     return _on_paper(picture)
 
 
-def _encoded(frame: Any, source: Path, raw: bytes, single: bool) -> tuple[bytes, int]:
-    """(the image data for the page, the page's clockwise turn). A JPEG is kept as it is, turned by the page; a
-    mirrored photo, a picture with transparency or any other kind is upright and lossless (PNG); an iPhone photo
-    a high-quality JPEG."""
+def _encoded(frame: Any, source: Path, raw: bytes, single: bool) -> tuple[bytes, int, Any]:
+    """(the image data for the page, the page's clockwise turn, the picture whose size and resolution the page
+    takes). A photo of a page on a desk is flattened; else a JPEG is kept as it is, turned by the page; a mirrored
+    photo, a picture with transparency or any other kind is upright and lossless (PNG); an iPhone photo a
+    high-quality JPEG."""
     from PIL import ImageOps
+
+    from .capture.layout import flatten_photo
 
     orientation = _orientation(frame)
     jpeg = frame.format == "JPEG" or (single and raw[:3] == b"\xff\xd8\xff")
+    lossy = jpeg or source.suffix.lower() in HEIF_EXTENSIONS
+    flat = flatten_photo(ImageOps.exif_transpose(frame.copy()) if orientation != 1 else frame) if single else None
+    if flat is not None:
+        if frame.info.get("dpi"):
+            flat.info["dpi"] = frame.info["dpi"]  # a scanner's dark bed: still the resolution it was scanned at
+        buf = io.BytesIO()
+        if lossy:
+            flat.save(buf, "JPEG", quality=FLAT_QUALITY, subsampling=0)
+        else:
+            flat.save(buf, "PNG")
+        return buf.getvalue(), 0, flat  # a phone's photo states no believable resolution: a letter-sized page
     if single and jpeg and frame.mode in ("RGB", "L") and orientation in (1, *_ROTATION):
-        return raw, _ROTATION.get(orientation, 0)
+        return raw, _ROTATION.get(orientation, 0), frame
     picture = _flat(ImageOps.exif_transpose(frame.copy()) if orientation != 1 else frame.copy())
     buf = io.BytesIO()
     if source.suffix.lower() in HEIF_EXTENSIONS:
         picture.convert("RGB").save(buf, "JPEG", quality=HEIF_QUALITY, subsampling=0)
     else:
         picture.save(buf, "PNG")
-    return buf.getvalue(), 0
+    return buf.getvalue(), 0, frame
 
 
 def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any] | None = None) -> int:
@@ -142,11 +161,11 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
                 if i >= MAX_FRAMES:
                     break
                 frame.load()
-                data, turn = _encoded(frame, source, raw, frames == 1)
-                width, height = frame.size
-                w, h = _page_size(frame, width, height)
+                data, turn, shown = _encoded(frame, source, raw, frames == 1)
+                width, height = shown.size
+                w, h = _page_size(shown, width, height)
                 page = doc.new_page(width=w, height=h)
-                page.insert_image(page.rect, stream=data)
+                page.insert_image(page.rect, stream=data, keep_proportion=False)  # a fax's 204 x 98 dpi: page-sized
                 if turn:
                     page.set_rotation(turn)
         if not doc.page_count:
@@ -186,15 +205,65 @@ def to_pdf(path: str | Path) -> Converted:
     return Converted(pdf, kept, sha, pages)
 
 
+def turn_upright(pdf: str | Path, turns: dict[int, int]) -> Converted | None:
+    """Show upright the pages OCR found scanned turned (``turns``: page number -> the clockwise quarter turn that
+    sets it upright), so the review screen highlights each value where the page shows it. Only the pages' rotation
+    changes, never what is printed on them. A PDF AP Coder made (from a picture, or turned before) is its own and is
+    turned where it is (None); any other is kept in ``originals/`` as it came and the turned copy takes its place, its
+    note naming the original as for a picture (returned, as :func:`to_pdf` returns a picture's). Nothing is left
+    behind when the file can't be written: the PDF stays as it was."""
+    import pymupdf
+
+    pdf = Path(pdf)
+    raw = pdf.read_bytes()
+    part = pdf.with_name(pdf.name + ".part")
+    kept: Path | None = None
+    made_copy = made_folder = False
+    try:
+        with pymupdf.open(stream=raw, filetype="pdf") as doc:
+            ours = (doc.metadata or {}).get("creator") in (CREATOR, TURNED)
+            for number, turn in turns.items():
+                if 1 <= number <= doc.page_count and turn % 360:
+                    page = doc[number - 1]
+                    page.set_rotation((page.rotation + turn) % 360)
+            note = None
+            if not ours:
+                sha = hashlib.sha256(raw).hexdigest()
+                kept = _free_name(pdf.parent / ORIGINALS_FOLDER, pdf.name, raw)
+                note = {"original": pdf.name, "sha256": sha, "kept": f"{ORIGINALS_FOLDER}/{kept.name}"}
+                meta = doc.metadata or {}
+                doc.set_metadata({**{k: v for k, v in meta.items() if v and k != "format" and k != "encryption"},
+                                  "creator": TURNED, "keywords": json.dumps(note, ensure_ascii=True)})  # fmt: skip
+            doc.save(part, garbage=3, deflate=True)
+            pages = doc.page_count
+        if kept is not None and not kept.exists():
+            made_folder = not kept.parent.exists()
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            kept.write_bytes(raw)
+            made_copy = True
+        os.replace(part, pdf)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        if made_copy and kept is not None:
+            kept.unlink(missing_ok=True)
+            if made_folder:
+                with contextlib.suppress(OSError):
+                    kept.parent.rmdir()
+        raise
+    if note is None or kept is None:
+        return None
+    return Converted(pdf, kept, note["sha256"], pages)
+
+
 def original_of(pdf: str | Path) -> dict[str, Any] | None:
-    """For a PDF AP Coder made from a picture: {"original": its name, "sha256", "kept": where it is, relative to the
-    PDF's folder}; None for any other PDF (or a file that isn't one)."""
+    """For a PDF AP Coder made from a picture, or a scan it turned upright: {"original": its name, "sha256", "kept":
+    where it is, relative to the PDF's folder}; None for any other PDF (or a file that isn't one)."""
     try:
         import pymupdf
 
         with pymupdf.open(pdf) as doc:
             meta = doc.metadata or {}
-            if meta.get("creator") != CREATOR:
+            if meta.get("creator") not in (CREATOR, TURNED):
                 return None
             note = json.loads(meta.get("keywords") or "{}")
     except Exception:  # noqa: BLE001 - not a PDF, damaged, or no note: not one of ours
@@ -210,6 +279,21 @@ def made_from_picture(doc: Any) -> bool:
         return False
 
 
+def _stored_pixels(doc: Any, xref: int) -> Any | None:
+    """A picture stored losslessly (as ``image_to_pdf`` stores a PNG: grey or colour, no transparency), straight from
+    its pixels: the same image ``extract_image`` gives, without making a PNG of it and reading that back (about a
+    second a page). None for any other kind (a JPEG is extracted as it is stored)."""
+    import pymupdf
+    from PIL import Image
+
+    if doc.xref_get_key(xref, "Filter") != ("name", "/FlateDecode") or doc.xref_get_key(xref, "SMask")[0] != "null":
+        return None
+    pix = pymupdf.Pixmap(doc, xref)
+    if pix.alpha or pix.n not in (1, 3) or pix.colorspace is None or pix.colorspace.n != pix.n:
+        return None
+    return Image.frombytes("L" if pix.n == 1 else "RGB", (pix.width, pix.height), pix.samples)
+
+
 def page_picture(doc: Any, page: Any) -> Any | None:
     """The picture on a page of a PDF made from a picture, as a Pillow image the way the page shows it (its
     rotation applied); None when the page isn't one picture."""
@@ -220,11 +304,21 @@ def page_picture(doc: Any, page: Any) -> Any | None:
         return None
     xref = images[0][0]
     try:
-        extracted = doc.extract_image(xref)
-        picture = Image.open(io.BytesIO(extracted["image"]))
-        picture.load()
+        picture = _stored_pixels(doc, xref)
+        if picture is None:
+            picture = Image.open(io.BytesIO(doc.extract_image(xref)["image"]))
+            picture.load()
     except Exception:  # noqa: BLE001 - an image PyMuPDF stores another way: rendered instead
         return None
+    # A picture with taller pixels than wide (a standard fax: 204 dpi across, 98 down) is shown at the page's
+    # shape: its rows stretched, as a fax viewer shows it, or OCR would read squashed letters.
+    across, down = page.cropbox.width, page.cropbox.height
+    if across > 0 and down > 0 and picture.width and picture.height:
+        stretch = (down / across) / (picture.height / picture.width)
+        if stretch > 1.25:
+            picture = picture.resize((picture.width, round(picture.height * stretch)))
+        elif stretch < 0.8:
+            picture = picture.resize((round(picture.width / stretch), picture.height))
     turn = page.rotation % 360
     if turn:
         picture = picture.rotate(-turn, expand=True)  # Pillow turns counter-clockwise; the page turns clockwise

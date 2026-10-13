@@ -697,3 +697,21 @@ def test_supplier_key_for_matches_a_business_number_only_master(tmp_path):
     assert store.supplier_key_for("Northwind (renamed)", "123456789 RT0001") == "id:V1001"
     assert store.supplier_key_for("Pacific (renamed)", "555555555") == "id:V2002"
     assert store.supplier_key_for("Pacific (renamed)", "555555555RT0002") != "id:V2002"  # another account
+
+
+def _po_under_a_date(po: str, day: str, month: str) -> DocLayout:
+    """A PO printed with no label of its own, right under the invoice date (learning benchmark, seed 77)."""
+    items = [("Polaris", 0.06, 0.05), ("Fasteners", 0.15, 0.05), ("Date", 0.6, 0.12), (day, 0.87, 0.12),
+             (month, 0.885, 0.12), ("2026", 0.91, 0.12), (po, 0.87, 0.135),
+             ("Total", 0.6, 0.84), ("1,130.00", 0.8, 0.84)]  # fmt: skip
+    return DocLayout([_page(items)], "text")
+
+
+def test_a_field_is_never_anchored_to_part_of_a_value_above_it():
+    # The month of the date above ("22 Jan") was the PO's anchor: it changes every invoice, so the template never
+    # found the PO again.
+    template = learn(None, _po_under_a_date("BC-10674", "22", "Jan"), {"po_number": ("BC-10674", None)})
+    variant = template.fields["po_number"][0]
+    assert variant.anchor is None or not any(c.isdigit() for c in variant.anchor.text)
+    readings = apply_template(template, _po_under_a_date("BC-3902", "20", "Apr"))
+    assert _top(readings, "po_number").value == "BC-3902"

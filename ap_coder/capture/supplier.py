@@ -558,6 +558,10 @@ def _find_anchor_words(rows: list[list[Word]], value: list[Word]) -> tuple[list[
             i0 -= 1
             over.insert(0, r[i0])
         phrase = r[i0 : i1 + 1][:4]
+        after = r[i1 + 1] if i1 + 1 < len(r) else None
+        glued_after = after is not None and after.box.x0 - r[i1].box.x1 < max(r[i1].box.height, 0.004)
+        if any(c.isdigit() for w in phrase for c in w.text) or (glued_after and any(c.isdigit() for c in after.text)):
+            continue  # part of a value above ("22 Jan 2026", the month of a date): it changes every invoice
         dist = vbox.y0 - rb.y1
         candidates.append(((0.9 if _looks_like_label(_join(phrase)) else 0.2) - 2 * dist, phrase, "above"))
     if not candidates:
@@ -1343,7 +1347,7 @@ def touchless_gates(
     second approver; ``awaiting_page_reader``: not every reader has read it yet; ``pages_unread``: pages of it the
     page reader did not read (it reads at most AP_PAGE_READER_MAX_PAGES pages); ``no_page``: a text file (.md, .txt),
     which the page reader cannot look at, so only one reader has read it; ``model_coded_lines``: lines whose account
-    only the local chat model chose (neither AP's approvals nor a coding rule)."""
+    only the local chat model chose, or a weak match (neither AP's approvals nor a coding rule)."""
     reasons: list[str] = []
     for issue in issues or []:
         reason = ALWAYS_A_PERSON.get(str(issue.get("code") or ""))
@@ -1367,7 +1371,8 @@ def touchless_gates(
         reasons.append(f"{pages_unread} of its pages {'was' if pages_unread == 1 else 'were'} not read by OvisOCR2")
     if model_coded_lines > 0:
         n = model_coded_lines
-        reasons.append(f"{n} line{'' if n == 1 else 's'} coded only by the local model, not from AP's approvals")
+        reasons.append(f"{n} line{'' if n == 1 else 's'} coded by the local model or from a weak match, not from "
+                       "AP's approvals")  # fmt: skip
     return reasons
 
 
@@ -1376,8 +1381,9 @@ def should_auto_approve(
     issues: Iterable[dict[str, Any]] | None = None,
 ) -> tuple[bool, str]:  # fmt: skip
     """Approve without a person only for an ``autonomous`` supplier, every printed header field
-    ``verified``, no failed check, no error-level validation issue and none of the findings that always need a
-    person (``touchless_gates``). Otherwise the reason it goes to review."""
+    ``verified``, the totals proven (subtotal, or the lines, + charges + tax = total), no failed check, no error-level
+    validation issue and none of the findings that always need a person (``touchless_gates``). Otherwise the reason it
+    goes to review."""
     if state != AUTONOMOUS:
         return False, f"supplier is {STATE_LABELS.get(state, state).lower()}, not autonomous"
     if capture is None:
@@ -1393,6 +1399,8 @@ def should_auto_approve(
         return False, "a check failed"
     failed = [c.get("code") or "check" for c in capture.checks if not c.get("ok", True)]
     totals_ok = any(c.get("code") == "TOTALS_ADD_UP" and c.get("ok") for c in capture.checks)
+    if not totals_ok and not failed:  # nothing failed, but nothing proved the money either
+        return False, "the totals could not be checked: subtotal (or the lines) + tax = total"
     if totals_ok:
         # Line items that do not sum to the subtotal (a line the reader could not separate) do not
         # make the header wrong once subtotal + charges + taxes = total: the voucher is the header.

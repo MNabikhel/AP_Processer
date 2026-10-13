@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -229,6 +230,49 @@ class InvoicePipeline:
         model = getattr(self.coder, "_local_model", "") or "local model"
         result.model = f"local reader + {model}"
 
+    def _model_reading(self, path: Path) -> dict[str, Any] | None:
+        """The chat model's own reading of the header from the page images (``inference.read_header``), when the model
+        loaded in LM Studio can see pages (Qwen 3.5 can). Asked once per file and model: kept in the data folder
+        (``.cache/model_reading``). Never fatal: without it the invoice is read as before."""
+        import hashlib
+        import re
+
+        from .inference import read_header
+        from .paths import private_dir
+
+        try:
+            model = self.coder._prepare_local()
+            if not self.coder.profile.supports_vision:
+                return None
+        except Exception as exc:  # the chat model is optional: not answering, the invoice is read without it
+            log.info("%s: the chat model can't read the page (%s)", path.name, exc)
+            return None
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+        slug = re.sub(r"[^a-z0-9._-]+", "-", model.lower()).strip("-")[:60]
+        kept = private_dir() / ".cache" / "model_reading" / f"{digest}-{slug}-v1.json"
+        try:
+            values = json.loads(kept.read_text(encoding="utf-8"))
+            if isinstance(values, dict):
+                return values
+        except (OSError, ValueError):
+            pass
+        try:
+            values = read_header(self.coder, render_page_images(path, 2))  # the header, and the totals on page 2
+        except Exception as exc:  # an extra reader: never fatal
+            log.warning("%s: the chat model could not read the header (%s)", path.name, exc)
+            return None
+        try:
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            part = kept.with_suffix(".part")
+            part.write_text(json.dumps(values), encoding="utf-8")
+            part.replace(kept)
+        except OSError:
+            pass
+        return values
+
     def _reads_locally(self, path: Path) -> bool:
         """Read the file on this computer: no Document Intelligence client handed in, and its endpoint unset or the
         internet not allowed (this offline build). Text files are read as they are either way."""
@@ -258,6 +302,23 @@ class InvoicePipeline:
         self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None,
         pages_read: int | None = None,
     ) -> PipelineResult:  # fmt: skip
+        """``_process``, with each scanned page's OCR kept in the data folder (``.cache/ocr``) for an app pipeline (one
+        with a store): an invoice is read on arrival, with its supplier's template, and again once the page reader has
+        read it, and its pages are OCR'd once. Its fifty-odd calls on the database share one connection."""
+        from .capture.layout import ocr_cache
+
+        folder = None
+        if self.store is not None:
+            from .paths import private_dir
+
+            folder = private_dir() / ".cache" / "ocr"
+        with ocr_cache(folder), self.store.session() if self.store is not None else contextlib.nullcontext():
+            return self._process(path, page_text, save, invoice_id, pages_read)
+
+    def _process(
+        self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None,
+        pages_read: int | None = None,
+    ) -> PipelineResult:  # fmt: skip
         """Read, code and check one invoice, and save it to the review queue (``save``). ``page_text``: the page
         reader's reading of each page (OvisOCR2), read as one more independent reader. ``invoice_id``: the invoice is
         already in the store as this row (read again by the page reader), so the checks against other invoices
@@ -284,6 +345,8 @@ class InvoicePipeline:
                 from .offline_coder import local_extraction
 
                 layout = build_layout(path)
+                if invoice_id is None and any(page.turn for page in layout.pages):
+                    path = result.source = _upright(path, layout, result)
                 result.extraction = local_extraction(path, layout)
             else:
                 result.extraction = self.extractor.extract(path)
@@ -306,10 +369,14 @@ class InvoicePipeline:
 
                 if layout is None and text_file:
                     layout = text_layout(result.extraction.content)
-                captured = read_invoice(path, self.store, layout=layout, page_text=page_text)
+                # Once the page reader has read the pages (in the background), the chat model reads the header from the
+                # page images too, when it can see pages: one more independent reader of every field.
+                model_values = self._model_reading(path) if page_text is not None and provider == "local" else None
+                captured = read_invoice(path, self.store, layout=layout, page_text=page_text, ai_values=model_values)
                 result.coding = code_from_capture(
-                    captured[0], self.reference, feedback, self.store, text=result.extraction.content
-                )
+                    captured[0], self.reference, feedback, self.store, text=result.extraction.content,
+                    assign_weak=provider == "local",
+                )  # fmt: skip
                 if provider == "local":
                     self._local_accounts(result.coding, history_text)
             else:
@@ -441,6 +508,26 @@ def _as_pdf(path: Path, result: PipelineResult, convert: bool = True) -> Path:
         if note:
             kept = path.parent / str(note.get("kept") or "")
             result.original = {"file": note.get("original"), "kept": str(kept), "sha256": note.get("sha256")}
+    return path
+
+
+def _upright(path: Path, layout: Any, result: PipelineResult) -> Path:
+    """A PDF with pages scanned sideways or upside down, shown upright (``intake.turn_upright``): the words OCR read
+    on the upright pages are where the review screen shows them. Left as it is when it can't be written."""
+    from . import intake
+
+    turns = {page.number: page.turn for page in layout.pages if page.turn}
+    try:
+        turned = intake.turn_upright(path, turns)
+    except Exception as exc:  # a locked or damaged file: read all the same, shown as it was scanned
+        log.warning("%s: pages scanned turned not set upright (%s)", path.name, exc)
+        return path
+    for page in layout.pages:
+        page.turn = 0  # the page now shows as it was read
+    if turned is not None:
+        result.original = {"file": path.name, "kept": str(turned.original), "sha256": turned.sha256,
+                           "pages": turned.pages}  # fmt: skip
+    log.info("%s: pages %s were scanned turned and are now shown upright", path.name, sorted(turns))
     return path
 
 

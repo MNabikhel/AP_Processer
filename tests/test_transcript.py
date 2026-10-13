@@ -346,6 +346,20 @@ def test_a_number_readers_write_differently_is_not_verified_and_shows_the_plain_
     assert fuse(same, [], fields=("po_number",))[0]["po_number"].value == "BC-15332"
 
 
+def test_a_dot_between_digits_the_readers_do_not_agree_on_goes_to_a_person():
+    """Fresh scan seed 9501: the two OCR engines read the printed "IN83379" as "IN833.79" and "IN833.7.9". The plainer
+    form still keeps a dot between digits, so it may be a speck too: never shown as likely."""
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import CHECK, Box, Reading
+
+    box = [Box(1, 0.8, 0.2, 0.9, 0.22)]
+    by_source = {
+        "rules": {"invoice_number": [Reading("invoice_number", "IN833.79", "IN833.79", box, 1.0, "label-right")]},
+        "ocr2": {"invoice_number": [Reading("invoice_number", "IN833.7.9", "IN833.7.9", box, 1.0, "label-right")]},
+    }
+    assert fuse(by_source, [], fields=("invoice_number",))[0]["invoice_number"].status == CHECK
+
+
 @pytest.mark.parametrize(
     ("text", "blank"),
     [
@@ -366,3 +380,46 @@ def test_a_made_up_transcription_of_a_blank_page_is_left_out(text, blank):
     if blank:  # nothing taken from it: the pangram is never a supplier
         assert _top(fields, "vendor_name") != "The quick brown fox jumps over the lazy dog."
         assert not layout_from_transcript([text]).pages[0].words
+
+
+def test_a_name_whose_first_letters_one_ocr_engine_missed_is_shown_whole():
+    """Fresh scan seed 9301: one engine read "ipements Saint-Laurent S.E.N.C." (it could not see the "Équ"), the
+    other the whole name. The whole one is shown; the two still disagree, so a person checks it."""
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import CHECK, Box, Reading
+
+    box = [Box(1, 0.06, 0.05, 0.4, 0.07)]
+
+    def read(name, score):
+        return {"vendor_name": [Reading("vendor_name", name, name, box, score, "top-of-page")]}
+
+    by_source = {
+        "rules": read("ipements Saint-Laurent S.E.N.C.", 1.0),
+        "ocr2": read("Équipements Saint-Laurent S.E.N.C.", 0.9),
+    }
+    name = fuse(by_source, [], fields=("vendor_name",))[0]["vendor_name"]
+    assert name.value == "Équipements Saint-Laurent S.E.N.C." and name.status == CHECK
+    # A shorter name that is a whole word is not taken for a cut one ("Saint-Laurent" in "Équipements Saint-Laurent").
+    other = {"rules": read("Saint-Laurent Inc.", 1.0), "ocr2": read("Groupe Saint-Laurent Inc.", 0.9)}
+    assert fuse(other, [], fields=("vendor_name",))[0]["vendor_name"].value == "Saint-Laurent Inc."
+
+
+def test_agreeing_readers_count_the_best_measured_description_of_their_evidence():
+    """Learning benchmark (seed 77): once a supplier's template read the HST first, the value agreed by the rule reader
+    and confirmed by the totals was only likely, measured on fewer template cases. Which reading ranks first is chance:
+    the better-measured description counts."""
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import VERIFIED, Box, Reading
+
+    box = [Box(1, 0.35, 0.49, 0.39, 0.5)]
+
+    def read(field, value, method, score):
+        return [Reading(field, value, str(value), box, score, method)]
+
+    rules = {"subtotal": read("subtotal", 145.46, "label-right+adds-up", 1.0),
+             "hst_amount": read("hst_amount", 18.91, "label-right+adds-up", 0.9),
+             "grand_total": read("grand_total", 164.37, "label-right+adds-up", 1.0)}  # fmt: skip
+    template = {name: read(name, rs[0].value, "template", 1.0) for name, rs in rules.items()}
+    fields = ("subtotal", "hst_amount", "grand_total")
+    hst = fuse({"rules": rules, "template": template}, [], fields=fields)[0]["hst_amount"]
+    assert hst.status == VERIFIED, (hst.confidence, hst.evidence)

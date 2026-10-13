@@ -276,3 +276,105 @@ def test_an_old_database_gets_the_column_for_the_photo(tmp_path):
 
 def test_converted_is_a_plain_record():
     assert {f.name for f in dataclasses.fields(intake.Converted)} == {"pdf", "original", "sha256", "pages"}
+
+
+@pytest.mark.parametrize("mode", ["RGB", "L", "1", "P"])
+def test_a_lossless_picture_is_read_from_its_pixels_exactly_as_extracting_it_would(tmp_path, mode):
+    # The fast path (no PNG made and read back, about a second a page) gives OCR the very same image.
+    src = tmp_path / f"scan-{mode}.png"
+    _picture((500, 700), mode=mode).save(src)
+    pdf = tmp_path / "scan.pdf"
+    intake.image_to_pdf(src, pdf)
+    with pymupdf.open(pdf) as doc:
+        xref = doc[0].get_images(full=True)[0][0]
+        extracted = Image.open(io.BytesIO(doc.extract_image(xref)["image"]))
+        assert intake._stored_pixels(doc, xref) is not None
+        assert _scan_png(doc, doc[0]) == layout._picture_png(extracted)
+
+
+def test_a_jpeg_is_extracted_as_it_is_stored(tmp_path):
+    pdf = tmp_path / "photo.pdf"
+    intake.image_to_pdf(_jpeg(tmp_path / "photo.jpg"), pdf)
+    with pymupdf.open(pdf) as doc:
+        assert intake._stored_pixels(doc, doc[0].get_images(full=True)[0][0]) is None
+        assert intake.page_picture(doc, doc[0]).size == (600, 800)
+
+
+# --- a phone photo of a page on a desk --------------------------------------------------------------------------------
+
+
+def _desk_photo(path, desk=(70, 60, 55), tilt=5.0):
+    """A white page (600 x 800, a dark mark at its top left) photographed on a desk: tilted, the top edge narrower
+    than the bottom (taken at an angle)."""
+    import numpy as np
+
+    page = _picture((600, 800))
+    canvas = Image.new("RGB", (900, 1100), desk)
+    canvas.paste(page, (150, 150))
+    src = [(150, 150), (750, 150), (750, 950), (150, 950)]
+    dst = [(180, 165), (720, 135), (750, 950), (150, 950)]  # where each corner goes
+    rows = []
+    for (x, y), (u, v) in zip(dst, src, strict=True):
+        rows += [[x, y, 1, 0, 0, 0, -u * x, -u * y], [0, 0, 0, x, y, 1, -v * x, -v * y]]
+    coeffs = np.linalg.solve(np.array(rows, float), np.array([c for p in src for c in p], float)).tolist()
+    photo = canvas.transform(canvas.size, Image.PERSPECTIVE, coeffs, Image.BICUBIC, fillcolor=desk)
+    photo.rotate(tilt, resample=Image.BICUBIC, fillcolor=desk).save(path, "JPEG", quality=90)
+    return path
+
+
+def test_a_photo_of_a_page_on_a_desk_is_flattened_and_a_scan_is_not():
+    pytest.importorskip("cv2")
+    flat = layout.flatten_photo(Image.open(_desk_photo(io.BytesIO())))
+    assert flat is not None and abs(flat.width / flat.height - 600 / 800) < 0.04  # the page's own shape
+    corners = [
+        flat.getpixel(p) for p in ((3, 3), (flat.width - 4, 3), (3, flat.height - 4), (flat.width - 4, flat.height - 4))
+    ]
+    assert all(min(c) > 200 for c in corners)  # paper to its corners: no desk left
+    mark = flat.getpixel((round(150 / 600 * flat.width), round(90 / 800 * flat.height)))
+    assert max(mark) < 90  # the page's mark is where the page has it (upright, not turned or mirrored)
+    assert layout.flatten_photo(_picture((600, 800))) is None  # a scan fills its picture
+    # Nor is a scan with a dark band across its top (a header printed white on navy): its white part below the band is
+    # not a page lying on a desk (sweep: its header was cut off for good).
+    banded = Image.new("RGB", (1700, 2200), "white")
+    ImageDraw.Draw(banded).rectangle([0, 0, 1700, 130], fill=(20, 30, 80))
+    ImageDraw.Draw(banded).rectangle([100, 300, 900, 360], fill="black")
+    assert layout.flatten_photo(banded) is None
+    assert layout.flatten_photo(Image.open(_desk_photo(io.BytesIO(), desk=(235, 235, 235)))) is None  # a white desk
+
+
+def test_a_scan_on_a_dark_bed_keeps_the_resolution_it_was_scanned_at(tmp_path):
+    pytest.importorskip("cv2")
+    scan = tmp_path / "a5.png"
+    Image.open(_desk_photo(io.BytesIO(), tilt=0.0)).save(scan, dpi=(150, 150))  # the page on a scanner's dark bed
+    with pymupdf.open(intake.to_pdf(scan).pdf) as doc:
+        assert layout._native_dpi(doc[0]) == pytest.approx(150, abs=1)  # not taken for a coarse scan
+
+
+def test_a_desk_photo_becomes_a_pdf_of_the_flattened_page_and_the_photo_is_kept_as_taken(tmp_path):
+    pytest.importorskip("cv2")
+    photo = _desk_photo(tmp_path / "IMG_3001.jpg")
+    raw = photo.read_bytes()
+    converted = intake.to_pdf(photo)
+    assert converted.original.read_bytes() == raw  # the photo as taken, for the audit trail
+    with pymupdf.open(converted.pdf) as doc:
+        page = doc[0]
+        picture = intake.page_picture(doc, page).convert("RGB")
+        assert page.rect.height > page.rect.width and min(picture.getpixel((3, 3))) > 200  # the page, no desk
+        # OCR reads the page as it reads the photo itself (both flattened).
+        got = _pixels(_scan_png(doc, page))
+        want = _pixels(_image_pngs(converted.original, 1)[0])
+        assert got.size == want.size
+
+
+def test_a_desk_photo_read_where_it_is_is_shown_as_it_is_read(tmp_path):
+    """Sweep: a photo stored as a picture by an older version is read flattened but was shown as taken, so the
+    highlights fell beside the words."""
+    pytest.importorskip("cv2")
+    from ap_coder.web import document
+
+    photo = _desk_photo(tmp_path / "old.jpg")
+    read = _pixels(_image_pngs(photo, 1)[0])
+    ((w_pt, h_pt, png),) = document._image_pages(str(photo))
+    shown = _pixels(png)
+    assert abs(w_pt / h_pt - read.width / read.height) < 0.01
+    assert abs(shown.width / shown.height - read.width / read.height) < 0.01

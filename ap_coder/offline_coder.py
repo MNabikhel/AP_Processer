@@ -4,7 +4,8 @@ When neither LM Studio nor Azure OpenAI is available, an invoice still gets a fu
 field and line as the local reader found them (capture, with its own confidence), each line's GL account
 from what AP approved before for this vendor and these words (``suggest.suggest_gl``), the vendor master's
 default account, and fixed coding rules (applied later by the pipeline). Nothing is guessed: a line with
-no history is left UNASSIGNED and a field the reader could not find stays empty, so review asks for it.
+no history, or only a weak match, is left UNASSIGNED (the review screen suggests accounts for it) and a field
+the reader could not find stays empty, so review asks for it.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ log = logging.getLogger(__name__)
 
 MODEL_NAME = "local reader (no AI model)"
 NO_HISTORY = "No earlier approval to learn from: pick the account."
+WEAK_MATCH = "A weak match, for a person to confirm"  # a line ``assign_weak`` coded: never approved without a person
 _TAXES = (("gst_amount", "GST"), ("hst_amount", "HST"), ("pst_amount", "PST"), ("qst_amount", "QST"))
 # The rates a Canadian invoice charges (a rate worked out from rounded amounts snaps to the nearest one), and
 # the province a rate names when only one has it (HST 13% Ontario, 14% Nova Scotia from April 2025; PST 6% SK).
@@ -52,23 +54,26 @@ _CUSTOMER_LABEL = re.compile(
 
 
 def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None = None,
-                 page_text: list[str] | None = None) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
+                 page_text: list[str] | None = None, ai_values: dict[str, Any] | None = None,
+                 ) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
     """(capture, supplier key, supplier profile): a first read, then again with the supplier's template
     and vendor-master record once the first read says who the supplier is. ``layout``: the page, already
     read (a scan is OCR'd once). ``page_text``: the page reader's transcription of each page, when it has
-    read them (one more independent reader). What AP approved on this computer calibrates the confidence."""
+    read them (one more independent reader). ``ai_values``: the chat model's own reading of the header from the page
+    images (another one). What AP approved on this computer calibrates the confidence."""
     path = Path(path)
     today = dt.date.today()
     layout = layout or build_layout(path)
     local = local_evidence(store)
-    capture = analyze(path, layout=layout, today=today, page_text=page_text, local_evidence=local)
+    capture = analyze(path, layout=layout, today=today, page_text=page_text, local_evidence=local,
+                      ai_values=ai_values or None)  # fmt: skip
     first = _values(capture)
     key, profile = supplier_for(store, first)
     template = (profile or {}).get("template") or None
     vendor = vendor_record(store, first.get("vendor_name"))
     if template or vendor:
         capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today, page_text=page_text,
-                          local_evidence=local)  # fmt: skip
+                          local_evidence=local, ai_values=ai_values or None)  # fmt: skip
     return capture, key, profile
 
 
@@ -210,9 +215,17 @@ def _unlisted_charge(text: str, amount: float) -> str:
     return "Charges not in the line table"
 
 
+def not_sure(top: Any) -> str:
+    """Why a line with a suggestion was left without an account."""
+    return f"Not sure enough to code it (maybe {top.gl_code}: {'; '.join(top.reasons[:2])}): pick the account."
+
+
 def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback: list[dict[str, Any]],
-                      store: Any = None, text: str = "") -> CodingResult:  # fmt: skip
-    """``text``: the page text (labels a charge printed outside the line table)."""
+                      store: Any = None, text: str = "", assign_weak: bool = False) -> CodingResult:  # fmt: skip
+    """``text``: the page text (labels a charge printed outside the line table). A line gets an account only when
+    the evidence is strong enough (``Suggestion.auto``); the others stay UNASSIGNED and the review screen suggests
+    accounts for them. ``assign_weak``: code those with the best suggestion anyway (the local chat model is asked
+    only about lines with no suggestion at all: an account name match beat a small model on the samples)."""
     values = _values(capture)
     vendor = str(values.get("vendor_name") or "")
     readings = [li for li in capture.line_items if li.amount is not None]
@@ -252,7 +265,12 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         readings_data.append((_unlisted_charge(text, short), 1.0, short, short))
     lines = []
     for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
-        best = next(iter(suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl)), None)
+        top = next(iter(suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl)), None)
+        # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
+        best = top if top is not None and (top.auto or assign_weak) else None
+        why = "; ".join(best.reasons) if best else not_sure(top) if top is not None else NO_HISTORY
+        if best is not None and not best.auto:
+            why = f"{WEAK_MATCH}: {why}" if why else WEAK_MATCH
         lines.append(
             LineItem(
                 line_number=number,
@@ -264,7 +282,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
                 predicted_cost_center=(best.cost_center if best else "")
                 or (UNASSIGNED if reference.cost_centers is not None else ""),
                 taxes_applied=taxes,
-                reasoning_justification="; ".join(best.reasons) if best else NO_HISTORY,
+                reasoning_justification=why,
             )
         )
 

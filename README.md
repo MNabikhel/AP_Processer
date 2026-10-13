@@ -67,11 +67,13 @@ all:
   self-test by itself (10 to 20 minutes on a laptop, the first time). *Settings → Reading* shows how it is
   doing. There is nothing to choose or link. While it isn't running, invoices are still read by OCR, and a
   banner says they wait for a person.
-- **The chat model** (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) is optional. It only
-  suggests GL accounts for lines nothing was learned for. If it isn't loaded, load it with *Context Length
+- **The chat model** (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) is optional. It
+  suggests GL accounts for lines nothing was learned for and, as Qwen 3.5 can see pages, reads each invoice's header
+  from the page images (after OvisOCR2, in the background) as one more independent reader. If it isn't loaded, load it with *Context Length
   16384*, as CloseDesk loads it (*Settings → Reading → Models in LM Studio* → **Load**; see
   [docs/LM_STUDIO.md](docs/LM_STUDIO.md)). Without it, lines are coded from what AP
-  approved before for that vendor, from fixed rules and from account names.
+  approved before and from fixed rules; account names and the vendor master's default account are offered as
+  suggestions ([docs/CODING.md](docs/CODING.md)).
 
 ## Screens
 
@@ -94,12 +96,14 @@ invoices from across Canada, with sample POs and a vendor list.
    reader.
 2. **Codes each line** to your GL accounts and cost centers. It tries, in order:
    - fixed rules set by AP;
-   - what AP approved before for that vendor;
-   - the vendor master's default account;
-   - account names;
+   - what AP approved before for that vendor (shortened words, plurals, French or English allowed for);
+   - what AP approved for the same item from other vendors, when they agree;
+   - the vendor's usual account, once all of its lines went to one account;
    - the local model, only for what is left.
 
-   It can only pick codes from your chart, never invent one.
+   It can only pick codes from your chart, never invent one. A weak match (the vendor master's default account,
+   an account's name) is offered on the review screen, not used on its own. Measured without any AI model in
+   [docs/CODING.md](docs/CODING.md): 99.5% of the accounts it fills in are right.
 3. **Checks everything in code, not by AI:**
    - totals reconcile;
    - tax = taxable amount × the official rate for the province and date, the right regime, and the QST base;
@@ -498,13 +502,15 @@ ap_coder/
   vendors.py         vendor master, fraud and duplicate signals
   po.py              purchase orders: import, 2- and 3-way matching
   terms.py           payment terms, due dates, early-payment discounts
-  suggest.py         GL suggestions for uncoded lines;  recurring.py: recurring vendors
+  suggest.py         GL suggestions, and when one is strong enough to code a line;  recurring.py: recurring vendors
+  line_match.py      how alike two line descriptions are (shortened words, plurals, accents, word order)
   statements.py      vendor statement reconciliation;  accruals.py: month-end accruals
   exports.py · bulk.py · insights.py · controls.py · audit.py · help.py · demo.py
   capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
                      templates and autonomy, calibration.json (measured confidence), transcript.py (reads
                      the page reader's transcription as one more reader)
-  bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation
+  bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation,
+                     GL coding without an AI model (bench coding)
   jde.py             JD Edwards E1 F0411Z1/F0911Z1 export
   pipeline.py        extract → code → validate → capture → store
   web/               the dashboard, a local FastAPI web app: app.py (the app, /healthz, /shutdown), server.py
@@ -521,7 +527,7 @@ scripts/             launch.py (the launcher: set up, start the dashboard, open 
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
 docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), HOW_IT_RUNS.md
                      (launcher, update, server, files, network), UPGRADING.md (from each older version),
-                     WHATS_NEW.md, PILOT_PLAN.md,
+                     WHATS_NEW.md, PILOT_PLAN.md, CODING.md (GL coding without an AI model),
                      screenshots/
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients and LM Studio mocked)

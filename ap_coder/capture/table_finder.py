@@ -131,13 +131,14 @@ def page_pictures(path: str | Path, max_pages: int = MAX_PAGES) -> list[bytes]:
     if path.suffix.lower() in IMAGE_EXTENSIONS:
         from PIL import Image, ImageOps, ImageSequence
 
-        from .layout import _on_paper, open_image
+        from .layout import _on_paper, flatten_photo, open_image
 
         with open_image(path) as img:
             for i, frame in enumerate(ImageSequence.Iterator(img)):
                 if i >= max_pages:
                     break
-                pic = _on_paper(ImageOps.exif_transpose(frame.copy()))
+                upright = ImageOps.exif_transpose(frame.copy())
+                pic = _on_paper(flatten_photo(upright) or upright)  # the page as OCR read it
                 pic.thumbnail((PICTURE_SIDE, PICTURE_SIDE), Image.BILINEAR)
                 buf = io.BytesIO()
                 pic.save(buf, "PNG")
@@ -154,11 +155,40 @@ def page_pictures(path: str | Path, max_pages: int = MAX_PAGES) -> list[bytes]:
     return out
 
 
+_found: dict[tuple[str, int, str], dict[int, list[Box]]] = {}  # (file's SHA-256, pages, model): tables, latest few
+_found_lock = threading.Lock()
+FOUND_KEPT = 32
+
+
 def find_tables(path: str | Path, max_pages: int = MAX_PAGES) -> dict[int, list[Box]] | None:
     """The tables on each page of the invoice at ``path``: {page number: boxes}, a page with none left out; None when
-    the table finder isn't available or the file can't be looked at (line items are then read from whole pages)."""
+    the table finder isn't available or the file can't be looked at (line items are then read from whole pages).
+    The same file is looked at once: an invoice read again (with its supplier's template, or once the page reader has
+    read it) gets the tables found the first time."""
     if not available():
         return None
+    import hashlib
+
+    from ..offline import table_finder_path
+
+    try:
+        key = (hashlib.sha256(Path(path).read_bytes()).hexdigest(), max_pages, str(table_finder_path()))
+    except OSError:
+        key = None
+    if key is not None:
+        with _found_lock:
+            if key in _found:
+                return {page: list(boxes) for page, boxes in _found[key].items()}
+    out = _find_tables(path, max_pages)
+    if key is not None and out is not None:
+        with _found_lock:
+            _found[key] = out
+            while len(_found) > FOUND_KEPT:
+                _found.pop(next(iter(_found)))
+    return None if out is None else {page: list(boxes) for page, boxes in out.items()}
+
+
+def _find_tables(path: str | Path, max_pages: int) -> dict[int, list[Box]] | None:
     try:
         pictures = page_pictures(path, max_pages)
     except Exception as exc:  # noqa: BLE001 - an extra: never fatal

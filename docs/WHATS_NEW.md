@@ -22,6 +22,42 @@ backup of the database is made automatically once a day when AP Coder starts (th
   older AP Coder 0.1 dashboard too), moves your data if it has to, and opens the new one.
 - The Streamlit dashboard and the public web demo built on it are retired: AP Coder no longer installs
   Streamlit.
+- **Better GL coding with no chat model.** A line is matched with what AP approved before even when it is worded
+  differently (shortened words, plurals, word order, French or English), other vendors' lines for the same item
+  count when they agree, a vendor's usual account is learned, and the latest decision wins when AP changes how it
+  codes something. An account is filled in only when the evidence is strong; a weak match (an account's name,
+  the vendor master's default) is shown under *Suggested GL accounts* instead (with the chat model loaded it is
+  filled in, but such an invoice is never approved without a person). On the new benchmark more lines
+  get an account and 99.5% of them are right (95-98% before). Coding stays fast with years of ERP history.
+  Details: [CODING.md](CODING.md).
+- **The math is proven on every invoice.** Subtotal (or, when none is printed, the lines) plus charges and taxes
+  must make the total, and the tax rates are checked; approval without a person now also needs the totals proven.
+- **Qwen checks the page too.** When the chat model in LM Studio can see pages (Qwen 3.5), it reads each
+  invoice's header from the page image in the page reader's pass, as one more independent reader: a field it
+  reads differently goes to a person. Still offline, once per file, in the background.
+- **More invoice lines found** (100% on the benchmark's new digital invoices and scans, from 96-98%): column
+  headings in two languages or run together, amounts as OCR reads them, and where the table ends.
+- **More invoices go through without a person** once their supplier has earned it: on the benchmark, 86% of
+  those suppliers' later invoices instead of 66%, still with no wrong field. Nothing changes about who qualifies.
+- **Scans and PDFs read better**: a partnership's name ("... LP"), "ltée", labels in header grids (also two
+  bilingual labels printed as one line), specks OCR reads as periods, "Payable on receipt", French "1er octobre",
+  "PO -20203" and "GST/HST @58" as OCR prints them, and a name whose accented first letter one OCR engine missed;
+  also a product called "Shipping cartons" (no longer taken for the freight), "2%10,.Net45", "Net·30", OCR's 号 for
+  a percent sign, a street number after a logo's initials "PO", and a date that reads both ways no longer taken as
+  dated after the day it arrived.
+- **Phone photos of an invoice read like scans.** A photo of a page lying on a desk is flattened the way a scanner
+  app does it (the page cut out and squared up, its tilt and the angle it was taken at undone) when it comes in; the
+  photo as taken is kept in `originals/`. On a stress test, every value of 36 photographed invoices was read right
+  (91% of the values before, with some wrong ones shown as likely).
+- **Pages scanned sideways or upside down are read upright and shown upright.** Before, almost nothing on such a
+  page was read right (about a fifth of the values), and some wrong totals were shown as verified; now 98% are.
+  The scan as it came is kept in `originals/`.
+- **A page scanned too coarsely is checked by a person.** Below about 140 dpi (an old fax at 100 dpi), nothing is
+  shown as verified or likely: every value is read and waits for a person to confirm it. A fax at 200 dpi reads
+  like a scan.
+- **Faster**: a digital PDF is read, checked and coded in about half the time, a scan in about 7 s instead of
+  11 s and again in about 2 s instead of 8 s when the page reader's text arrives (its OCR is kept in the data
+  folder), and coding stays quick with years of ERP history (0.13 s instead of 3.2 s with 30,000 past lines).
 - **One file to open per computer:** `APProcessor.bat` on Windows, `APProcessor.command` on a Mac. The old
   `install.bat`, `install.sh`, `start.bat` and `start.sh` are gone, and so is the top-level `terminal.bat`.
   An update removes them from an older folder by itself.
