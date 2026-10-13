@@ -41,9 +41,9 @@ backup of the database is made automatically once a day when AP Coder starts (th
 - **Scans and PDFs read better**: a partnership's name ("... LP"), "ltée", labels in header grids (also two
   bilingual labels printed as one line), specks OCR reads as periods, "Payable on receipt", French "1er octobre",
   "PO -20203" and "GST/HST @58" as OCR prints them, and a name whose accented first letter one OCR engine missed.
-- **Faster**: a digital PDF is read, checked and coded in under half the time, a scan is read again in
-  about 2 s instead of 13 s when the page reader's text arrives (its OCR is kept in the data folder), and
-  coding stays quick with years of ERP history.
+- **Faster**: a digital PDF is read, checked and coded in about half the time, a scan in about 7 s instead of
+  11 s and again in about 2 s instead of 8 s when the page reader's text arrives (its OCR is kept in the data
+  folder), and coding stays quick with years of ERP history (0.13 s instead of 3.2 s with 30,000 past lines).
 - **One file to open per computer:** `APProcessor.bat` on Windows, `APProcessor.command` on a Mac. The old
   `install.bat`, `install.sh`, `start.bat` and `start.sh` are gone, and so is the top-level `terminal.bat`.
   An update removes them from an older folder by itself.

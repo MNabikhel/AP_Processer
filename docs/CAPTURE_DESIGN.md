@@ -295,7 +295,7 @@ that were right: 96.6% → 99.5% ([CODING.md](CODING.md)).
 
 Seconds per invoice through the app's pipeline (median, measured as `bench speed` does on a 4-core test machine with
 nothing else running): a digital PDF 0.06 → 0.03 s; one with 30,000 past approvals 3.2 → 0.13 s; a scan's first read
-11.3 → 9.3 s; a scan read again when the page reader's text arrives 8.1 → 2.2 s.
+11.3 → 7.0 s (each page's image made once for both OCR engines); a scan read again when the page reader's text arrives 8.1 → 2.2 s.
 
 ### Scale
 
