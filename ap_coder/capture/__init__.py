@@ -160,6 +160,22 @@ def _choose_lines(layout: DocLayout, fields: dict[str, FieldResult], own: list[L
     return own
 
 
+def _to_subtotal(items: list[LineReading], targets: list[float]) -> list[LineReading]:
+    """``items`` without the rows read past the end of the table: when the lines don't add up to the subtotal, but the
+    rows above the first row that prints their sum do (that row is the subtotal, its label misread, as OCR's
+    "Totalbefore.tax"), it and the rows after it (the taxes, the total) are no lines. A row with a quantity is a line."""
+    if not targets or _adds_up(items, targets):
+        return items
+    above = 0.0
+    for k, li in enumerate(items):
+        if li.amount is None:
+            continue
+        if k and li.quantity is None and abs(round(above, 2) - li.amount) <= 0.011 and _adds_up(items[:k], targets):
+            return items[:k]
+        above += li.amount
+    return items
+
+
 def _labelled(items: list[LineReading], source: str) -> list[LineReading]:
     for li in items:
         li.source = li.source or source
@@ -173,7 +189,8 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
     looked for), the words under the column headings across the page (``words``, the reading as before) and the
     PDF's table from its text layer. The first reading that adds up to the subtotal is kept, else the first one
     found inside a table, else the words across the page. The PDF's table is last: it is a second reading of the
-    same text, there to be compared with OvisOCR2's when the others read the lines differently from it."""
+    same text, there to be compared with OvisOCR2's when the others read the lines differently from it. A reading
+    that ran on into the totals under the table is cut at its subtotal row first (``_to_subtotal``)."""
     from .tables import text_table_items
 
     if tables is True:
@@ -185,8 +202,9 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
     text_table: list[LineReading] = []
     if layout.source == "text":
         text_table = _labelled(text_table_items(path, layout, found), "text table")
-    readings = [r for r in (in_tables, words, text_table) if r]
     targets = _line_targets(fields)
+    in_tables, words, text_table = (_to_subtotal(r, targets) for r in (in_tables, words, text_table))
+    readings = [r for r in (in_tables, words, text_table) if r]
     adds = [r for r in readings if targets and _adds_up(r, targets)]
     if adds:
         return adds[0], [adds[0], *[r for r in readings if r is not adds[0]]]

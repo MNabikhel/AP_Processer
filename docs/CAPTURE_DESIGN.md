@@ -439,6 +439,27 @@ away from its amount. A found table whose headings OCR can't read (bilingual hea
 amount column (`reader._headerless_rows`). Sentences under a table that reach the amount column ("subject to GST 5%")
 and a total row whose label OCR lost are no longer read as lines.
 
+**Column headings as invoices print them** (`reader._heading_cells`, `reader.heading_row`):
+- a heading printed in two languages is one heading ("Prix unitaire / Unit Price"); two of them set close together are
+  two columns ("Price / Taux Ext. Price / Prix total"). Headings OCR runs together are read apart at the "/" and where
+  a capital starts a word ("Hr/Qty/QuantitePriceEach/PrixunitaireLineTotal/Montant");
+- the longest heading names the column: "Unit Cost" is the price, not a quantity ("Unit"); "Prix total" and "Total
+  Price" are the amount;
+- words after a heading are more of it ("Price Each", "Qty Shipped"); a second heading for a column already named is
+  another column, without a name ("Quantity / Unit / Unit Cost": the unit of measure between the quantity and the
+  price);
+- a segment with a number in it is no heading ("Unit 9", an address printed level with "Amount Due" at the top of a
+  bill), nor is a sentence that starts with a heading's word; of several rows of headings, the one naming the most
+  columns is the table's.
+
+**Amounts and rows as OCR reads them.** "1530:00" (the point read as a colon) and "342.18CR" (a credit's mark run into
+the amount) are amounts printed as money: such lines were dropped as sentences under the table. "392.99.CR" is a credit,
+and a unit price to four decimals ("1.3023" a cubic metre) is 1.3023, never 1,302 and a 3. When OCR loses the quantity's
+heading or a digit, the quantity is the number that, times the price, makes the amount; a returned quantity keeps its
+sign ("-4 × 45.13 = -180.52"). A subtotal's amount set a hair higher than its label ends the table, and a reading that
+ran on into the totals (labels OCR runs together: "Totalbefore.tax", "SalesTaxTotal") is cut at the first row that prints
+the sum of the rows above it, when those add up to the subtotal (`capture._to_subtotal`).
+
 Camelot (CloseDesk's other table reader) is not used: it installs from wheels for Python 3.11-3.14 on Windows and
 macOS, but it needs `opencv-python-headless`, which can't sit beside the `opencv-python` the OCR engines need (both
 are the `cv2` module), and adds about 45 MB a platform to the bundle.
@@ -476,6 +497,32 @@ keeps text beside the table out. On the 9 real OvisOCR2 readings above, OCR's ow
 56 of 56 as before, and `LINE_ITEMS_AGREE` passed on 8 of the 9: on the ninth OCR missed one line's amount (a
 misread "9.61"), and the check sent it to a person. The 10 sample invoices, with their text copies standing in for
 OvisOCR2, agree on every line. The table finder takes about half a second a page on the (busy) 4-core test machine.
+
+**Headings, amounts and the table's end, measured.** The benchmark as `bench run` runs it (no page reader; the table
+finder's model isn't in a development checkout), the same invoices before and after the rules above. The lines missed
+on the tuning seeds were sorted by cause to find the rules; the fresh seeds were read only once the rules were done:
+
+| test set | line items found (recall) | lines returned that are right (precision) | header-field accuracy | invoices fully right |
+| --- | --- | --- | --- | --- |
+| 300 digital PDFs (seed 9101, tuning) | 98.5% → **100.0%** | 99.95% → **100.0%** | 99.97% → 99.97% | 99.7% → 99.7% |
+| 300 digital PDFs (seed 9102, tuning) | 97.2% → **100.0%** | 99.8% → **100.0%** | 99.9% → 99.9% | 99.0% → 99.0% |
+| 40 scans (seed 9201, tuning) | 93.0% → **99.0%** | 97.2% → **99.3%** | 99.7% → 99.7% | 97.5% → 97.5% |
+| 40 scans (seed 9202, tuning) | 94.8% → **99.7%** | 100.0% → 99.7% | 100.0% → 100.0% | 97.5% → 97.5% |
+| 300 digital PDFs (seed 9301, fresh) | 97.9% → **100.0%** | 99.8% → **100.0%** | 99.93% → 99.93% | 99.0% → 99.0% |
+| 40 scans (seed 9401, fresh) | 96.3% → **100.0%** | 100.0% → 100.0% | 100.0% → 100.0% | 100% → 100% |
+
+What was missed, by cause: bilingual headings ("Price / Taux Ext. Price / Prix total", "Product / Service /
+Désignation") left whole tables unread, 31 of the 32 lines missed on seed 9101; an address's "Unit 9" beside "Amount
+Due" taken for the heading row of a utility bill; on scans, amounts OCR reads "342.18CR" or "1530:00" dropped as
+sentences, and headings OCR runs together. No header field read differently; on scans the subtotal is *verified* more
+often, since the lines now add up to it. With the table finder the lines found went from 99.95% to 100% (digital, both
+seeds 9101 and 9301; precision 99.8% to 100%) and from 94.0% to 99.0% (scans, seed 9201; 99.7% to 100% on seed 9401).
+
+The quantity and unit price of the lines found are now as printed on every digital line (before, about 1 line in 40
+had one missing or wrong), but for a credit note's unit price, which is given with the credit's sign (-45.13 for a
+line of -180.52), as before. Still missed on scans: a description OCR misreads beyond recognition ("Safety gasss,clear,
+NSI7"; the line is read, with its amount, but the benchmark matches descriptions), an amount OCR doesn't see at the foot
+of a page, and a quantity of 1 OCR doesn't see (left blank, read as 1 when the line is posted).
 
 ## Learning from approvals: each reader's record, local calibration, training data
 

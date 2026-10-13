@@ -17,16 +17,18 @@ _CURRENCY_WORDS = re.compile(r"\b(CAD|USD|EUR|GBP|CDN|CA\$|US\$|C\$)\b", re.I)
 # after it ("Total - $113.00", "Amount Due – $1,234.56") or a run of dashes ("Total ------ 113.00") is a
 # separator. Thousands: commas, dots, apostrophes or spaces ("1,234.56", "1.234,56", "1 234,56", "1 234.56",
 # "1 234 567"). One space group may also be a quantity set close to its price ("10 100.00" in a line item):
-# ``find_amounts`` tells them apart. "0.125" is a unit price with three decimals, never thousands.
+# ``find_amounts`` tells them apart. "0.125" is a unit price with three decimals, never thousands, and "1.3023" one
+# with four. A credit's "CR" may follow a stray point on a scan ("392.99.CR").
 _AMOUNT = re.compile(
     r"""(?P<neg1>\((?=\s*(?:[$€£]\s*)?\d)|(?<![-−–])[-−–](?=(?:[$€£]\s*)?\d))?
         \s*(?:[$€£]\s*)?
-        (?P<num>(?!0[,.']\d)\d{1,3}(?:[,.']\d{3})+(?:[.,]\d{1,2})?
+        (?P<num>\d{1,3}[.,]\d{4}(?!\d)(?![.,']\d)
+          |(?!0[,.']\d)\d{1,3}(?:[,.']\d{3})+(?:[.,]\d{1,2})?
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+,\d{1,2}(?!\d)
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:\.\d{1,2})?(?![.,]?\d)
           |0[.,]\d{1,4}
           |\d+(?:[.,]\d{1,2})?)
-        \s*(?:[$€£])?\s*(?P<neg2>\)|-(?!\s*\w)|(?i:cr)\b)?""",
+        \s*(?:[$€£])?\s*(?P<neg2>\)|-(?!\s*\w)|\.?(?i:cr)\b)?""",
     re.X,
 )
 # One space group ("1 050.00", "1 234"): 1,050.00, or a quantity 1 set close to a price 50.00.
@@ -79,6 +81,8 @@ def _number(num: str) -> float | None:
     num = num.replace(" ", " ").replace(" ", " ").replace("'", " ")
     if re.fullmatch(r"0[.,]\d{3,4}", num):
         return float("0." + num[2:])  # a unit price to three or four decimals ("0.125"), not thousands
+    if re.fullmatch(r"\d{1,3}[.,]\d{4}", num):
+        return float(re.sub(r"[.,]", ".", num))  # four decimals ("1.3023" a cubic metre): never thousands
     last_sep = max(num.rfind("."), num.rfind(","))
     # The last separator is the decimal point when it has one or two digits after it, or when the separators
     # before it are all the other kind ("1,234.567": a unit price to three decimals, not 1,234,567).
