@@ -220,3 +220,12 @@ def test_a_prefixed_number_with_ocrs_space_before_the_hyphen_is_one_number():
     assert _distracted("po_number", "po -20203") and not _distracted("po_number", "po # 20203")
     assert _distracted("invoice_number", "inv -4471")
     assert _id_from("Net -30", 0) is None  # not a capitalised prefix: left alone
+
+
+def test_a_gst_hst_rate_whose_percent_sign_ocr_read_as_an_8():
+    from ap_coder.capture.reader import _combined_tax_fields
+
+    # Fresh scan seed 9601: "GST/HST @58" (5%) was taken for HST, the other engine's "@5%" for GST: the tax doubled.
+    assert _combined_tax_fields("gst/hst@58") == ("gst_amount",)
+    assert _combined_tax_fields("gst/hst (138)") == ("hst_amount",)
+    assert _combined_tax_fields("gst/hst@5%") == ("gst_amount",)

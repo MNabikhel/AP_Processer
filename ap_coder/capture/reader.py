@@ -261,9 +261,10 @@ def _combined_tax_fields(text: str) -> tuple[str, ...]:
     both are proposed and the totals solver picks the one whose rate fits the subtotal."""
     m = _PERCENT.search(text)
     if m:
-        rate = float(re.search(r"\d+(?:[.,]\d+)?", m.group(0)).group(0).replace(",", "."))
-        if rate >= 100 and str(rate).startswith(("58", "138", "148", "158")):
-            rate = rate // 10  # OCR's "58" / "138" for 5% / 13%
+        num = re.search(r"\d+(?:[.,]\d+)?", m.group(0)).group(0)
+        if "%" not in m.group(0) and num in ("58", "138", "148", "158"):
+            num = num[:-1]  # OCR's "8" for the percent sign: "@58" / "(138)" for 5% / 13%
+        rate = float(num.replace(",", "."))
         return ("gst_amount",) if abs(rate - 5.0) < 0.01 else ("hst_amount",)
     return ("hst_amount", "gst_amount")
 
