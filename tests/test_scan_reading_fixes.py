@@ -323,6 +323,7 @@ def test_ocrs_full_width_qst_rate_with_an_8_for_its_percent_sign_is_not_an_amoun
 
     # Fresh scan seed 9811: "QST/TVQ（9,9758）" was read as the amount -9.98.
     assert _PERCENT.search("QST/TVQ（9,9758）") and _PERCENT.search("TVQ (9,975 %)")
+    assert not _PERCENT.search("(37.98)")  # a credit's amount, not a rate
 
 
 def test_a_logo_initial_after_the_legal_form_is_not_part_of_the_name():
