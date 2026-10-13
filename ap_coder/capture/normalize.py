@@ -171,8 +171,9 @@ def _plain(text: str) -> str:
 _ISO = re.compile(r"\b(20\d{2}|19\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b")
 _NUMERIC = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b")
 # Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
-_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?[,.]?\s*(\d{4})\b")
-_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*([a-z]{3,9})\.?,?\s*(\d{4})\b")
+# Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026".
+_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?(?:\s*[,.]){0,2}\s*(\d{4})\b")
+_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*([a-z]{3,9})(?:\s*[,.]){0,2}\s*(\d{4})\b")
 # OCR reads letters of a month as digits ("0ct", "Ju1", "N0v"); fixed in place, same length.
 _OCR_MONTHS = [
     (re.compile(r"0ct"), "oct"),

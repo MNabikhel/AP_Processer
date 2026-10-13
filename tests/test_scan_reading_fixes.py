@@ -190,6 +190,10 @@ def test_french_first_of_the_month_as_ocr_reads_it():
     assert [d.isoformat() for d, *_ in parse_dates("ler octobre 2026")] == ["2026-10-01"]
     assert [d.isoformat() for d, *_ in parse_dates("Ier mai 2026")] == ["2026-05-01"]
     assert parse_dates("Atelier 3") == []
+    # Seed 9102: a comma and a speck between the day and the year.
+    assert [d.isoformat() for d, *_ in parse_dates("October 23，.2026")] == ["2026-10-23"]
+    assert [d.isoformat() for d, *_ in parse_dates("October 23, . 2026")] == ["2026-10-23"]
+    assert parse_dates("Total Oct 23 1,234.56") == []
 
 
 def test_a_due_date_label_with_a_speck_is_still_not_the_invoice_date():
