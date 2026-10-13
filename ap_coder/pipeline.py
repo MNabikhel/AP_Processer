@@ -258,6 +258,23 @@ class InvoicePipeline:
         self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None,
         pages_read: int | None = None,
     ) -> PipelineResult:  # fmt: skip
+        """``_process``, with each scanned page's OCR kept in the data folder (``.cache/ocr``) for an app pipeline (one
+        with a store): an invoice is read on arrival, with its supplier's template, and again once the page reader has
+        read it, and its pages are OCR'd once."""
+        from .capture.layout import ocr_cache
+
+        folder = None
+        if self.store is not None:
+            from .paths import private_dir
+
+            folder = private_dir() / ".cache" / "ocr"
+        with ocr_cache(folder):
+            return self._process(path, page_text, save, invoice_id, pages_read)
+
+    def _process(
+        self, path: str | Path, page_text: list[str] | None = None, save: bool = True, invoice_id: int | None = None,
+        pages_read: int | None = None,
+    ) -> PipelineResult:  # fmt: skip
         """Read, code and check one invoice, and save it to the review queue (``save``). ``page_text``: the page
         reader's reading of each page (OvisOCR2), read as one more independent reader. ``invoice_id``: the invoice is
         already in the store as this row (read again by the page reader), so the checks against other invoices

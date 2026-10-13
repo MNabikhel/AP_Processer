@@ -23,6 +23,17 @@ def isolated_private_dir(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def fresh_reading_memory():
+    """The tables found per file are remembered for the life of the process: each test starts with none."""
+    from ap_coder.capture import layout, table_finder
+
+    table_finder._found.clear()
+    layout._pruned.clear()
+    yield
+    table_finder._found.clear()
+
+
+@pytest.fixture(autouse=True)
 def no_dashboard_page_reader(monkeypatch):
     """The dashboard's own page-reader thread runs for the life of the process: started by a test that opens the
     dashboard, it would run on in later tests and act on their fakes (a self-test counted twice). Tests that need a

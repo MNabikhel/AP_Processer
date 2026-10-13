@@ -13,10 +13,14 @@ the same row are two lines, which is what label/value matching needs.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import functools
 import logging
 import os
 import statistics
 import unicodedata
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -218,18 +222,68 @@ def _engine(name: str | None = None) -> Any:
     return _ENGINES[name]
 
 
+_ocr_cache_folder: contextvars.ContextVar[Path | None] = contextvars.ContextVar("ocr_cache_folder", default=None)
+OCR_CACHE_MAX_FILES = 4000  # about 60 MB of page readings; the oldest go first
+_pruned: dict[Path, float] = {}
+
+
+@contextlib.contextmanager
+def ocr_cache(folder: str | Path | None) -> Iterator[None]:
+    """Keep each page's OCR result in ``folder`` while inside: the same page image is OCR'd once by each engine, however
+    often the invoice is read (on arrival, again with its supplier's template, again once the page reader has read
+    it). The pipeline turns it on in the data folder (``.cache/ocr``); None turns it off."""
+    token = _ocr_cache_folder.set(Path(folder) if folder else None)
+    try:
+        yield
+    finally:
+        _ocr_cache_folder.reset(token)
+
+
+@functools.cache
+def _engine_signature(engine: str) -> str:
+    """The engine and its package's version: a reading kept by another version of the OCR is not reused."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    package = "rapidocr" if engine == "ppocrv5" else "rapidocr_onnxruntime"
+    try:
+        return f"{engine}-{version(package)}"
+    except PackageNotFoundError:
+        return engine
+
+
+def _prune(folder: Path) -> None:
+    """At most ``OCR_CACHE_MAX_FILES`` readings, the oldest removed first; looked at once an hour."""
+    import time
+
+    now = time.monotonic()
+    if now - _pruned.get(folder, -1e9) < 3600:
+        return
+    _pruned[folder] = now
+    try:
+        files = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return
+    for path in files[: max(0, len(files) - OCR_CACHE_MAX_FILES)]:
+        path.unlink(missing_ok=True)
+
+
 def _ocr_cached(png_bytes: bytes, run: Any, engine: str | None = None) -> Any:
-    """The OCR engine's raw result, kept on disk by image hash when ``AP_OCR_CACHE`` names a folder
-    (for benchmark iterations: the reader changes, the scans do not)."""
-    folder = os.environ.get("AP_OCR_CACHE")
-    if not folder:
+    """The OCR engine's raw result, kept on disk by image hash: in ``AP_OCR_CACHE`` when it names a folder (for
+    benchmark iterations: the reader changes, the scans do not), else in the folder ``ocr_cache`` set, if any."""
+    env = os.environ.get("AP_OCR_CACHE")
+    folder = Path(env) if env else _ocr_cache_folder.get()
+    if folder is None:
         return run()
     import hashlib
     import json
 
     engine = engine or _engine_name()
-    tag = "" if engine == "rapidocr" else f"-{engine}"
-    path = Path(folder) / f"{hashlib.sha256(png_bytes).hexdigest()}{tag}.json"
+    if env:  # the benchmark's own cache, as it always was
+        tag = "" if engine == "rapidocr" else f"-{engine}"
+    else:
+        tag = f"-{_engine_signature(engine)}"
+        _prune(folder)
+    path = folder / f"{hashlib.sha256(png_bytes).hexdigest()}{tag}.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -237,8 +291,10 @@ def _ocr_cached(png_bytes: bytes, run: Any, engine: str | None = None) -> Any:
     result = run()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps([[[list(map(float, p)) for p in q], t, float(c)] for q, t, c in result or []]),
+        part = path.with_suffix(".part")
+        part.write_text(json.dumps([[[list(map(float, p)) for p in q], t, float(c)] for q, t, c in result or []]),
                         encoding="utf-8")  # fmt: skip
+        part.replace(path)  # whole or not at all: a reading cut short is never read back
     except OSError:
         pass
     return result
