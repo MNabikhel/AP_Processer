@@ -273,12 +273,20 @@ reader); *no silent error* means nothing wrong is shown as *verified* or *likely
 | digital, seed 9301 | 300 | 99.0% → **100%** | 100% → 100% |
 | digital, seed 9701 | 1,000 | 99.7% → **99.9%** | 99.9% → **100%** |
 | digital, seed 9801 (never looked at) | 1,000 | 99.4% → **99.8%** | 100% → 100% |
-| scans, seed 9102 | 100 | 89% → **95%** | 98% → **100%** |
-| scans, seed 9301 | 100 | 95% → **98%** | 100% → 100% |
+| scans, seed 9102 | 100 | 89% → **96%** | 98% → **100%** |
+| scans, seed 9301 | 100 | 95% → **99%** | 100% → 100% |
 | scans, seed 9501 (never looked at) | 100 | 97% → **98%** | 99% → 99%, then 100%* |
+| scans, seed 9601 (never looked at) | 150 | 96.0% → **97.3%** | 99.3% → **100%** |
+| scans, seed 9702 (never looked at) | 150 | SCANS_9702 |
 
 \* The one wrong value both versions showed as likely on seed 9501 (OCR's "IN833.79" for IN83379) was looked at after
 that run and fixed: a number the readers write differently that still has a dot between digits goes to a person.
+
+Supplier learning (`bench learn`, 30 suppliers × 40 invoices, seeds 77, 78 and 79): once a supplier met the
+autonomy policy, 226 of its 345 later invoices went without a person before this round and **295 of 345** after
+(66% → 86%), with no wrong field on any of them. The gain is from agreeing readers counting their best-measured
+evidence (a value the template read first was only *likely* on fewer measured cases) and from templates no longer
+anchoring a field to part of a value printed above it.
 
 Line items found: 97.9% → 100% on new digital invoices, 96.3% → 100% on new scans
 ([line items](#pictures-become-pdfs-and-line-items-read-with-the-table-finder)). GL accounts filled in with no AI model

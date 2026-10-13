@@ -36,8 +36,11 @@ backup of the database is made automatically once a day when AP Coder starts (th
   reads differently goes to a person. Still offline, once per file, in the background.
 - **More invoice lines found** (100% on the benchmark's new digital invoices and scans, from 96-98%): column
   headings in two languages or run together, amounts as OCR reads them, and where the table ends.
-- **Scans read better**: a partnership's name ("... LP"), "ltée", a PO in a grid of boxed fields, specks OCR
-  reads as periods, and payment terms such as "Payable on receipt".
+- **More invoices go through without a person** once their supplier has earned it: on the benchmark, 86% of
+  those suppliers' later invoices instead of 66%, still with no wrong field. Nothing changes about who qualifies.
+- **Scans and PDFs read better**: a partnership's name ("... LP"), "ltée", labels in header grids (also two
+  bilingual labels printed as one line), specks OCR reads as periods, "Payable on receipt", French "1er octobre",
+  "PO -20203" and "GST/HST @58" as OCR prints them, and a name whose accented first letter one OCR engine missed.
 - **Faster**: a digital PDF is read, checked and coded in under half the time, a scan is read again in
   about 2 s instead of 13 s when the page reader's text arrives (its OCR is kept in the data folder), and
   coding stays quick with years of ERP history.
