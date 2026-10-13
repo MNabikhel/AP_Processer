@@ -482,6 +482,7 @@ _TERMS = [
 
 
 def _terms(text: str) -> str | None:
+    text = unicodedata.normalize("NFKC", text)  # OCR's full-width comma: "2%10，Net30"
     for rx, fmt in _TERMS:
         m = rx.search(text)
         if m:
@@ -548,6 +549,13 @@ def _label_box(hit: _LabelHit) -> Box:
     return union_all([w.box for w in words]) or hit.line.box
 
 
+def _registration_line(line: Line, hit: _LabelHit) -> bool:
+    from .normalize import find_gst_numbers, find_qst_numbers
+
+    after = line.text[hit.end :]
+    return bool(_REG_WORDS.search(plain(after[:12])) or find_gst_numbers(after) or find_qst_numbers(after))
+
+
 def _own_label(line: Line, field: str) -> bool:
     return any(h.field == field for h in _label_hits(line))
 
@@ -562,6 +570,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
         if inline:
             out.append(inline)
             continue
+        if field in AMOUNT_FIELDS and _registration_line(line, hit):
+            continue  # "GST/HST Reg. No.: 988130969 RT0003": the number's label, not the tax amount's
         got = None
         for other in _right_of(lines, line)[:2]:
             if _own_label(other, field):

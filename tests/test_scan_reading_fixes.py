@@ -229,3 +229,24 @@ def test_a_gst_hst_rate_whose_percent_sign_ocr_read_as_an_8():
     assert _combined_tax_fields("gst/hst@58") == ("gst_amount",)
     assert _combined_tax_fields("gst/hst (138)") == ("hst_amount",)
     assert _combined_tax_fields("gst/hst@5%") == ("gst_amount",)
+
+
+def test_terms_with_ocrs_full_width_comma_keep_their_discount():
+    from ap_coder.capture.reader import _terms
+
+    # Fresh scan seed 9702: "2%10，Net30" lost its early-payment discount ("Net 30", shown as likely).
+    assert _terms("2%10，Net30") == "2% 10 Net 30"
+
+
+def test_a_registration_number_line_never_labels_a_tax_amount(tmp_path):
+    # Fresh scan seed 9702: "GST/HST Reg. No.: ... RT0003" took a stray "0" further down the page as the HST (0.00).
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (380, 75, "Invoice No."), (470, 75, "FA97024"), (380, 90, "Date"), (470, 90, "2026-04-10"),
+        (60, 300, "Description"), (480, 300, "Amount"), (60, 316, "Technician on site"), (480, 316, "1,000.00"),
+        (380, 500, "Subtotal"), (480, 500, "1,000.00"), (380, 515, "GST 5%"), (480, 515, "50.00"),
+        (380, 530, "Total"), (480, 530, "1,050.00"),
+        (60, 600, "GST/HST Reg. No.: 988130969 RT0003"), (75, 616, "0"),
+    ]  # fmt: skip
+    fields = analyze(_pdf(tmp_path, lines), today=TODAY).fields
+    assert fields["hst_amount"].value is None and fields["gst_amount"].value == 50.0
