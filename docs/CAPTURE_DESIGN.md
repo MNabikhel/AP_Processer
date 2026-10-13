@@ -264,7 +264,7 @@ What this means for "99%":
 ### Before and after one round of fixes (October 2026)
 
 The code before this round (`33b57d8`) and after it, on the same invoices. Seeds 9101 and 9102 were used to find what
-to fix, 9301 and 9701 for later fixes; 9501, 9601, 9702 and 9801 had not been looked at before the runs shown. Scans
+to fix, 9301 and 9701 for later fixes; 9501, 9601, 9702, 9801 and 9901 had not been looked at before the runs shown. Scans
 use OCR only (no page reader); *no silent error* means nothing wrong is shown as *verified* or *likely*.
 
 | set | invoices | fully right | no silent error |
@@ -273,6 +273,7 @@ use OCR only (no page reader); *no silent error* means nothing wrong is shown as
 | digital, seed 9301 | 300 | 99.0% → **100%** | 100% → 100% |
 | digital, seed 9701 | 1,000 | 99.7% → **99.9%** | 99.9% → **100%** |
 | digital, seed 9801 (never looked at) | 1,000 | 99.4% → **99.8%** | 100% → 100% |
+| digital, seed 9901 (never looked at) | 1,000 | 99.7% → 99.7%, then **99.9%*** | 99.9% → 99.9%, then **100%*** |
 | scans, seed 9102 | 100 | 89% → **97%** | 98% → **100%** |
 | scans, seed 9301 | 100 | 95% → **99%** | 100% → 100% |
 | scans, seed 9501 (never looked at) | 100 | 97% → **98%** | 99% → 99%, then 100%* |
@@ -282,7 +283,9 @@ use OCR only (no page reader); *no silent error* means nothing wrong is shown as
 \* The wrong values shown as likely on seeds 9501 and 9702 were looked at after those runs and fixed (OCR's "IN833.79"
 for IN83379, a 0.00 HST taken from a registration-number line, terms that lost their discount to OCR's full-width
 comma); every set above now has no silent error. "Never looked at" figures are from before that. The misses seed 9702
-showed afterwards (OCR's "Apri1", "Eeb", "2.025" and "Tota1") were fixed too: it now reads 97.3% fully right.
+showed afterwards (OCR's "Apri1", "Eeb", "2.025" and "Tota1") were fixed too: it now reads 97.3% fully right. On
+seed 9901, a utility bill's "Payments received" shown as its supplier (logo initials "PH" had been taken for "Ph:", a
+phone line) and a PO read from "Unit 7" were fixed after that run.
 
 Supplier learning (`bench learn`, 30 suppliers × 40 invoices, seeds 77, 78 and 79): once a supplier met the
 autonomy policy, 226 of its 345 later invoices went without a person before this round and **295 of 345** after
