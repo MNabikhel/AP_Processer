@@ -59,6 +59,10 @@ _NOT_FOUND: dict[tuple[str, int, str], float] = {}
 _RESTORING: set[str] = set()
 _RESTORING_LOCK = threading.Lock()
 
+# The learning memory as last read, per database: (highest lesson id and count, rows) (``Store.feedback_rows``).
+_FEEDBACK: dict[tuple[str, int, str | None], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
+_FEEDBACK_LOCK = threading.Lock()
+
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
 # the largest invoice total approved without a person, in CAD.
 TOUCHLESS_SETTING, TOUCHLESS_LIMIT_SETTING = "touchless_processing", "touchless_limit"
@@ -265,6 +269,25 @@ def database_schema(path: Path) -> int | None:
         conn.close()
 
 
+class _Held:
+    """A connection ``Store.session`` holds open, and how deep in ``_conn`` blocks the thread is on it."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+        self.depth = 0
+
+
+_sessions = threading.local()
+
+
+def _held_connections() -> dict[str, _Held]:
+    """This thread's held connections, by database path."""
+    held = getattr(_sessions, "held", None)
+    if held is None:
+        held = _sessions.held = {}
+    return held
+
+
 class Store:
     def __init__(self, path: str | Path | None = None) -> None:
         path = default_db_path() if path is None else path
@@ -394,7 +417,26 @@ class Store:
             )
 
     @contextmanager
-    def _conn(self) -> Iterator[sqlite3.Connection]:
+    def session(self) -> Iterator[None]:
+        """Every call on this database inside, in this thread, shares one connection: each still commits on its own as
+        before (one inside another joins its transaction), and the connection is closed at the end. Opening and
+        closing a connection per call costs more than the work itself on a laptop (closing the last one writes the
+        write-ahead log into the database, on disk, every time): an invoice read and checked is about fifty calls."""
+        held = _held_connections()
+        key = str(self.path)
+        if key in held:
+            yield
+            return
+        conn = self._open()
+        held[key] = _Held(conn)
+        try:
+            yield
+        finally:
+            if held.get(key) is not None and held[key].conn is conn:
+                del held[key]
+            conn.close()
+
+    def _open(self) -> sqlite3.Connection:
         fresh = not self.path.exists()  # e.g. the file was deleted while the dashboard was running
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=30)
@@ -403,6 +445,30 @@ class Store:
         if fresh:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
+        return conn
+
+    @contextmanager
+    def _conn(self) -> Iterator[sqlite3.Connection]:
+        held = _held_connections().get(str(self.path))
+        if held is not None and not self.path.exists():  # the file was deleted meanwhile: on with a fresh one
+            _held_connections().pop(str(self.path), None)
+            held.conn.close()
+            held = None
+        if held is not None:
+            outer = held.depth == 0
+            held.depth += 1
+            try:
+                yield held.conn
+                if outer:
+                    held.conn.commit()
+            except BaseException:
+                if outer:
+                    held.conn.rollback()
+                raise
+            finally:
+                held.depth -= 1
+            return
+        conn = self._open()
         try:
             yield conn
             conn.commit()
@@ -2813,15 +2879,31 @@ class Store:
     # --- Learning memory ------------------------------------------------------------------------------
 
     def feedback_rows(self, limit: int = 50_000, vendor_name: str | None = None) -> list[dict[str, Any]]:
-        """Recorded reviewer decisions, newest first (only one vendor's when ``vendor_name`` is given)."""
+        """Recorded reviewer decisions, newest first (only one vendor's when ``vendor_name`` is given). Read once and
+        kept until a lesson is added or removed: every invoice read asks for them, and years of imported ERP history
+        take a third of a second to load on a laptop. The list is shared: read it, don't change it."""
         sql, args = "SELECT * FROM feedback", ()
         if vendor_name is not None:
             sql, args = sql + " WHERE vendor_key = ?", (vendor_key(vendor_name),)
         with self._conn() as conn:
+            # Lessons are only ever added (ids never reused) or deleted, never changed: the highest id and the count
+            # tell whether the ones kept are still the ones in the database.
+            stamp = tuple(conn.execute("SELECT MAX(id), COUNT(*) FROM feedback").fetchone())
+            key = (str(self.path.resolve()), limit, vendor_name)
+            with _FEEDBACK_LOCK:
+                kept = _FEEDBACK.get(key)
+                if kept is not None and kept[0] == stamp:
+                    return kept[1]
             # Reviewer decisions first, then imported history: a big history import never pushes them out.
-            return [
+            rows = [
                 dict(r) for r in conn.execute(sql + " ORDER BY outcome = 'history', id DESC LIMIT ?", (*args, limit))
             ]
+        if vendor_name is None:  # one vendor's lessons are quick to read: only the whole memory is kept
+            with _FEEDBACK_LOCK:
+                _FEEDBACK[key] = (stamp, rows)
+                while len(_FEEDBACK) > 8:
+                    _FEEDBACK.pop(next(iter(_FEEDBACK)))
+        return rows
 
     def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
         """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.

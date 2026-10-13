@@ -11,6 +11,7 @@ amounts). Totals are chosen together: the subtotal, taxes and total that add up 
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import re
 import statistics
 import unicodedata
@@ -32,6 +33,15 @@ from .types import AMOUNT_FIELDS, Box, DocLayout, Line, LineReading, PageLayout,
 
 
 def plain(text: str) -> str:
+    """Lowercase, accents off, OCR's "·" a space. Called thousands of times per invoice on the same few hundred lines:
+    plain ASCII (most of an invoice) is only lowercased, the rest remembered."""
+    if text.isascii():
+        return text.lower()
+    return _plain(text)
+
+
+@functools.lru_cache(maxsize=16384)
+def _plain(text: str) -> str:
     decomposed = unicodedata.normalize("NFKD", text).replace("·", " ")  # OCR reads a space as "·"
     return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
 

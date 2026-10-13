@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -260,7 +261,7 @@ class InvoicePipeline:
     ) -> PipelineResult:  # fmt: skip
         """``_process``, with each scanned page's OCR kept in the data folder (``.cache/ocr``) for an app pipeline (one
         with a store): an invoice is read on arrival, with its supplier's template, and again once the page reader has
-        read it, and its pages are OCR'd once."""
+        read it, and its pages are OCR'd once. Its fifty-odd calls on the database share one connection."""
         from .capture.layout import ocr_cache
 
         folder = None
@@ -268,7 +269,7 @@ class InvoicePipeline:
             from .paths import private_dir
 
             folder = private_dir() / ".cache" / "ocr"
-        with ocr_cache(folder):
+        with ocr_cache(folder), self.store.session() if self.store is not None else contextlib.nullcontext():
             return self._process(path, page_text, save, invoice_id, pages_read)
 
     def _process(

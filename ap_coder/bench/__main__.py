@@ -1,6 +1,7 @@
 """python -m ap_coder.bench run --n 300 --seed 1 --scanned 0.3 [--out bench_out] [--workers 4]
 python -m ap_coder.bench calibrate RUN_DIR [RUN_DIR ...]
-python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]"""
+python -m ap_coder.bench learn --suppliers 30 --invoices 40 [--scanned 0.0]
+python -m ap_coder.bench speed --n 20 --scanned 0.5 [--history 30000]"""
 
 from __future__ import annotations
 
@@ -53,7 +54,24 @@ def main(argv: list[str] | None = None) -> int:
         metavar="CODE",
         help="what-if: a failed check with this code (e.g. LINES_ADD_UP) does not hold an invoice back",
     )
+    sp = sub.add_parser("speed", help="seconds per invoice through the app's pipeline on this computer")
+    sp.add_argument("--n", type=int, default=20, help="number of invoices (default 20)")
+    sp.add_argument("--seed", type=int, default=1, help="random seed; the same seed gives the same invoices")
+    sp.add_argument("--scanned", type=float, default=0.5, help="share of invoices made as scans (default 0.5)")
+    sp.add_argument("--history", type=int, default=0, help="approved lines taught to the learning memory first")
+    sp.add_argument("--out", default="bench_speed", help="output folder (default bench_speed)")
     a = p.parse_args(argv)
+
+    if a.cmd == "speed":
+        from ap_coder.bench.speed import run_speed
+
+        report = run_speed(a.n, a.seed, a.scanned, a.out, a.history)
+        for kind, steps in report["seconds"].items():
+            if steps["arrival"]["n"]:
+                print(f"{kind}: {steps['arrival']['median']:.2f} s per invoice on arrival (median), "
+                      f"{steps['page_reader']['median'] or 0:.2f} s in the page reader's pass")  # fmt: skip
+        print(f"report: {Path(a.out) / 'speed.md'}")
+        return 0
 
     if a.cmd == "calibrate":
         from ap_coder.bench.harness import fit_calibration
