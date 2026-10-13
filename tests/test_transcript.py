@@ -346,6 +346,20 @@ def test_a_number_readers_write_differently_is_not_verified_and_shows_the_plain_
     assert fuse(same, [], fields=("po_number",))[0]["po_number"].value == "BC-15332"
 
 
+def test_a_dot_between_digits_the_readers_do_not_agree_on_goes_to_a_person():
+    """Fresh scan seed 9501: the two OCR engines read the printed "IN83379" as "IN833.79" and "IN833.7.9". The plainer
+    form still keeps a dot between digits, so it may be a speck too: never shown as likely."""
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import CHECK, Box, Reading
+
+    box = [Box(1, 0.8, 0.2, 0.9, 0.22)]
+    by_source = {
+        "rules": {"invoice_number": [Reading("invoice_number", "IN833.79", "IN833.79", box, 1.0, "label-right")]},
+        "ocr2": {"invoice_number": [Reading("invoice_number", "IN833.7.9", "IN833.7.9", box, 1.0, "label-right")]},
+    }
+    assert fuse(by_source, [], fields=("invoice_number",))[0]["invoice_number"].status == CHECK
+
+
 @pytest.mark.parametrize(
     ("text", "blank"),
     [

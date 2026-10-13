@@ -425,6 +425,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                 "readers differ on the exact name: " + " / ".join(sorted({str(r.value) for _, r in g.readings}))
             )
         forms = {"".join(str(r.value).split()).upper() for s, r in g.readings if s != "ai"}  # how the page prints it
+        speck = False
         if field in ("invoice_number", "po_number") and len(forms) > 1:
             # "BC-15.332" / "BC-15332": the same number to compare, but which is printed is not agreed. OCR adds
             # specks as dots and commas far more often than it drops printed ones: the plainer form is shown.
@@ -435,6 +436,9 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             )
             values[field] = g.value
             reasons.append("readers write it differently: " + " / ".join(sorted(forms)))
+            # "IN833.79" / "IN833.7.9" (printed IN83379): even the plainer form keeps a dot between digits that the
+            # readers do not agree on, so it may be a speck too. A person looks.
+            speck = bool(re.search(r"\d[.,]\d", plain))
         if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
@@ -458,7 +462,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if readers_differ:
             vlm_reading, other, other_reading = readers_differ
             reasons.append(f"the page reader read {vlm_reading.value}, {other} read {other_reading.value}")
-        if field in failed or coding_differs or readers_differ:
+        if field in failed or coding_differs or readers_differ or speck:
             status = CHECK
         elif conf >= VERIFIED_AT and best.boxes:
             status = VERIFIED

@@ -261,6 +261,33 @@ What this means for "99%":
   supplier only goes touchless once *its* corrections over its recent invoices show >= 99% with
   confidence (lower bound, not a streak).
 
+### Before and after one round of fixes (October 2026)
+
+The code before this round (`33b57d8`) and after it, on the same invoices. Seeds 9101 and 9102 were used to find what
+to fix, 9301 and 9701 for the last fixes; 9501 and 9801 were never looked at while fixing. Scans use OCR only (no page
+reader); *no silent error* means nothing wrong is shown as *verified* or *likely*.
+
+| set | invoices | fully right | no silent error |
+|---|---:|---:|---:|
+| digital, seed 9101 | 300 | 99.7% → 99.7% | 100% → 100% |
+| digital, seed 9301 | 300 | 99.0% → **100%** | 100% → 100% |
+| digital, seed 9701 | 1,000 | 99.7% → **99.9%** | 99.9% → **100%** |
+| digital, seed 9801 (never looked at) | 1,000 | 99.4% → **99.8%** | 100% → 100% |
+| scans, seed 9102 | 100 | 89% → **95%** | 98% → **100%** |
+| scans, seed 9301 | 100 | 95% → **98%** | 100% → 100% |
+| scans, seed 9501 (never looked at) | 100 | 97% → **98%** | 99% → 99%, then 100%* |
+
+\* The one wrong value both versions showed as likely on seed 9501 (OCR's "IN833.79" for IN83379) was looked at after
+that run and fixed: a number the readers write differently that still has a dot between digits goes to a person.
+
+Line items found: 97.9% → 100% on new digital invoices, 96.3% → 100% on new scans
+([line items](#pictures-become-pdfs-and-line-items-read-with-the-table-finder)). GL accounts filled in with no AI model
+that were right: 96.6% → 99.5% ([CODING.md](CODING.md)).
+
+Seconds per invoice through the app's pipeline (median, measured as `bench speed` does on a 4-core test machine with
+nothing else running): a digital PDF 0.06 → 0.03 s; one with 30,000 past approvals 3.2 → 0.13 s; a scan's first read
+11.3 → 9.3 s; a scan read again when the page reader's text arrives 8.1 → 2.2 s.
+
 ### Scale
 
 Text-layer capture takes about 20 ms per invoice on one CPU core, and a digital PDF goes through the whole
