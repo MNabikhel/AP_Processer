@@ -67,8 +67,9 @@ all:
   self-test by itself (10 to 20 minutes on a laptop, the first time). *Settings → Reading* shows how it is
   doing. There is nothing to choose or link. While it isn't running, invoices are still read by OCR, and a
   banner says they wait for a person.
-- **The chat model** (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) is optional. It only
-  suggests GL accounts for lines nothing was learned for. If it isn't loaded, load it with *Context Length
+- **The chat model** (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) is optional. It
+  suggests GL accounts for lines nothing was learned for and, as Qwen 3.5 can see pages, reads each invoice's header
+  from the page images (after OvisOCR2, in the background) as one more independent reader. If it isn't loaded, load it with *Context Length
   16384*, as CloseDesk loads it (*Settings → Reading → Models in LM Studio* → **Load**; see
   [docs/LM_STUDIO.md](docs/LM_STUDIO.md)). Without it, lines are coded from what AP
   approved before for that vendor, from fixed rules and from account names.

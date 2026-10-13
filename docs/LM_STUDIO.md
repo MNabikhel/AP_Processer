@@ -9,7 +9,7 @@ do when something is wrong.
 
 | Model in LM Studio | AP Coder uses it for | CloseDesk uses it for |
 | --- | --- | --- |
-| **Qwen 3.5 9B** (chat, can see) | Suggests a GL account for an invoice line nothing was learned for. Optional: without it those lines are left for AP. | Files mail, answers questions, reads scans when OvisOCR2 can't. |
+| **Qwen 3.5 9B** (chat, can see) | Suggests a GL account for an invoice line nothing was learned for, and reads each invoice's header from the page images (after OvisOCR2, in the background) as one more independent reader. Optional: without it those lines are left for AP, and the other readers read the header. | Files mail, answers questions, reads scans when OvisOCR2 can't. |
 | **OvisOCR2** (0.85B document reader, `ATH-MaaS_OvisOCR2-GGUF` Q8_0, about 1 GB) | The page reader: reads every page of every invoice in the background (`ap_coder/page_reader.py`). | Reads scanned pages. |
 | **Qwen embedding model** | **Not used by AP Coder.** It is never picked as the chat model or page reader, not listed in *Settings → Reading*, and never loaded or unloaded. | Search by meaning. |
 
