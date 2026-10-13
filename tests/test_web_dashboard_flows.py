@@ -348,7 +348,7 @@ def test_saved_emails_in_the_invoices_folder_are_unpacked(client, store, monkeyp
     post(client, "/process/folder")
     snap = _finished(client)
     assert (folder / "vendor mail - INV-9.pdf").exists() and (folder / "emails" / "vendor mail.eml").exists()
-    assert any("attachment taken out" in line["text"] for line in snap["lines"])
+    assert any("Invoice; 1 invoice to the review queue" in line["text"] for line in snap["lines"])
     assert snap["result"]["ok"] == 1
 
 

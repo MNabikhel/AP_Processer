@@ -17,13 +17,27 @@ The code is in `ap_coder/jde.py` (pure logic), the settings in `ap_coder/web/pag
 1. **Settings → JD Edwards E1**: company, user ID, batch prefix, document type, the amount and account
    formats, the GL → BU.Object.Subsidiary mapping (a table, or import a CSV / Excel file), the province →
    tax area table and, if used, PO-matched vouchers. Go through the *Confirm with your JDE team* checklist.
+
+   Quicker: **Download the worksheet** there and send it to the JDE team (`jde_worksheet.py`). It is one Excel
+   file with every question below, what AP Coder uses now and a yellow column for each answer, plus sheets for
+   the tax areas, the account mapping (every GL account already listed) and each vendor's address number.
+   **Import the JDE team's answers** back on the same page: AP Coder applies them, lists what changed, and lists
+   any answer it could not use (a value of the wrong form is reported, never guessed). Answers to questions that
+   are not settings (the P0400047 version, the duplicate edit, how the AAIs post tax ...) are kept with the
+   settings and shown on the page.
 2. **Supplier numbers**: each vendor's JDE address number (AN8) comes from the vendor master's ERP ID
    (Vendors page → import the vendor master from E1). A vendor whose ERP ID is not its address number can
    be given one in Settings → JD Edwards E1 → *Supplier address numbers*.
 3. **Exports**: pick the invoices, choose *JD Edwards E1*, and export. Invoices that fail the checks
    (below) are listed with the reasons and are **left out of the batch**; they stay in *Ready to export*.
-4. Download the ZIP: `F0411Z1.csv`, `F0911Z1.csv` (and `F0411Z1T.csv` for PO-matched vouchers) and a
-   `README.txt` with the batch number, counts, totals and the loading steps:
+   Before exporting, **Dry run** (on Exports, with *JD Edwards E1* chosen) downloads exactly what a batch of
+   the ready invoices would load, without making one (`jde.dry_run`): for each voucher its supplier (AN8), tax
+   area and code, each F0411Z1 pay item (document type, gross and tax, the Julian dates), each F0911Z1 line
+   (account, amount, text) and the proof that it balances (distribution = gross - the tax E1 posts); for each
+   invoice held back, every reason. Send it to the JDE team with the first test batch.
+4. Download the ZIP: `F0411Z1.csv`, `F0911Z1.csv` (and `F0411Z1T.csv` for PO-matched vouchers), a
+   `README.txt` with the batch number, counts, totals and the loading steps, and `DRY_RUN.txt` (the dry run of
+   that batch: what each row is, and what was left out and why):
    1. Load each CSV into its Z-table (database import tool, or a table conversion). The header row holds
       the table's column names.
    2. Run **R04110ZA in proof mode** for the batch (VLEDBT) and user (VLEDUS); read the report and the
@@ -235,6 +249,9 @@ does not know the item number), DSC1 (description), UORG (quantity) and PRRC (un
 decimal point, AEXP (amount, in the amount format) and CRCD (currency).
 
 ## Open questions for the JDE team
+
+Every question here is in the worksheet (Settings → JD Edwards E1 → *Download the worksheet*); a test checks that
+each one stays covered.
 
 * Company numbers, the business units for the header (VLMCU) and lines, and the PO company.
 * Document type for imported vouchers (PV or a custom one), credit notes, and the **P0400047 version** run by

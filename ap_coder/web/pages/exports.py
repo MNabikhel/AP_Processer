@@ -313,6 +313,17 @@ async def create_batch(request: Request) -> JSONResponse:
     )
 
 
+@router.get("/exports/jde/dry-run.txt")
+def jde_dry_run(request: Request) -> Response:
+    """What a JD Edwards batch of the invoices ready to export would load, row by row, and why any invoice is held
+    back. Nothing is exported and no batch is made."""
+    store = get_store(request)
+    invoices = [i for i in (store.get_invoice(r["id"]) for r in store.unexported_approved()) if i]
+    report = jde.dry_run(invoices, jde.load(store), store.vendor_ids(), prior=jde.prior_records(store),
+                         batch="(next)", fx_rates=store.fx_rates())  # fmt: skip
+    return download(jde.dry_run_text(report).encode("utf-8"), "ap_coder_jde_dry_run.txt", "text/plain; charset=utf-8")
+
+
 @router.get("/exports/batches/{batch:int}/download")
 def download_batch(request: Request, batch: int, fmt: str = "") -> Response:
     """Batch ``batch`` as a file again: in ``fmt``, else in the format it went out in."""

@@ -186,6 +186,7 @@ class JdeSettings:
     exempt_code: str = "E"
     dist_tax_columns: bool = False
     an8_overrides: dict[str, str] = field(default_factory=dict)  # vendor key → address number
+    answers: dict[str, str] = field(default_factory=dict)  # the JDE team's answers that are not settings (worksheet)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)
@@ -213,6 +214,11 @@ class JdeSettings:
             if isinstance(row, dict):
                 tax_map[prov] = TaxArea(str(row.get("tax_area") or ""), str(row.get("code") or ""))
         out.tax_map = tax_map
+        if not isinstance(out.answers, dict):
+            out.answers = {}
+        out.answers = {str(k): str(v) for k, v in out.answers.items()}
+        if not isinstance(out.an8_overrides, dict):
+            out.an8_overrides = {}
         if out.amount_mode not in AMOUNT_MODES:
             out.amount_mode = AMOUNT_GROSS
         if out.decimals not in DECIMAL_MODES:
@@ -501,8 +507,11 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     for e in dist:
         if _is_recoverable_entry(e):
             continue  # E1 posts recoverable tax itself (tax AAIs)
-        account = account_for(e.get("gl_code") or "", e.get("cost_center") or "", settings)
         where = f"GL {e.get('gl_code') or '(none)'}" + (f" / {e['cost_center']}" if e.get("cost_center") else "")
+        if str(e.get("gl_code") or "").strip().upper() in ("", "UNASSIGNED"):
+            add(f"a line has no GL account ({e.get('description') or 'no description'}): code it in the review screen")
+            continue
+        account = account_for(e.get("gl_code") or "", e.get("cost_center") or "", settings)
         if account is None:
             add(f"{where} has no JDE account (BU.Object.Subsidiary): add it to the account mapping")
         elif len(account.bu) > 12 or len(account.obj) > 6 or len(account.sub) > 8:
@@ -879,8 +888,163 @@ def build_zip(
         for name, data in files.items():
             zf.writestr(name, data)
         zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out))
+        report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
+        report["held"] += [
+            {"id": i, "vendor": "", "number": "", "date": "", "reasons": r} for i, r in (left_out or {}).items()
+        ]
+        zf.writestr("DRY_RUN.txt", dry_run_text(report))
     name = f"ap_coder_jde_batch_{batch}.zip" if batch != "" else "ap_coder_jde.zip"
     return buf.getvalue(), name, "application/zip"
+
+
+# --- Dry run ---------------------------------------------------------------------------------------------------
+
+
+def _shown(value: Any, settings: JdeSettings, decimals: int) -> str:
+    """An amount as a person reads it, from what the files hold (implied decimals or a decimal point)."""
+    if value in ("", None):
+        return ""
+    try:
+        number = Decimal(str(value))
+    except ArithmeticError:
+        return str(value)
+    if settings.decimals == IMPLIED:
+        number /= Decimal(10) ** decimals
+    return f"{number:,.{decimals}f}"
+
+
+def dry_run(
+    invoices: list[dict[str, Any]],
+    settings: JdeSettings,
+    vendor_lookup: VendorLookup = None,
+    *,
+    prior: Mapping[str, list[dict[str, Any]]] | None = None,
+    batch: int | str = "",
+    fx_rates: Mapping[str, float] | None = None,
+    on: dt.date | None = None,
+) -> dict[str, Any]:
+    """Exactly what a batch of these invoices would load, row by row, and why any invoice is held back, without
+    making a batch. {"blocking": [...], "vouchers": [...], "held": [...], "files": {file: rows}, "totals": {...}}."""
+    blocking = settings_problems(settings)
+    problems = validate(invoices, settings, vendor_lookup, prior)
+    out: dict[str, Any] = {
+        "batch": f"{settings.batch_prefix.strip()}{batch}"[:15],
+        "user": settings.user.strip(),
+        "company": settings.company_code,
+        "blocking": blocking,
+        "vouchers": [],
+        "held": [],
+        "files": {HEADER_FILE: 0, DIST_FILE: 0, MATCH_FILE: 0},
+        "totals": {},
+    }
+    for inv in invoices:
+        final = inv.get("final_output") or {}
+        inv_id = int(inv.get("id") or 0)
+        who = {
+            "id": inv_id,
+            "vendor": final.get("vendor_name") or "",
+            "number": final.get("invoice_number") or "",
+            "date": final.get("invoice_date") or "",
+            "currency": _norm(final.get("currency")) or settings.domestic_currency,
+            "total": final.get("grand_total"),
+        }
+        if inv_id in problems or blocking:
+            out["held"].append(
+                {**who, "reasons": problems.get(inv_id, []) + (["the JD Edwards settings above"] if blocking else [])}
+            )
+            continue
+        an8 = resolve_an8(final, vendor_lookup, settings)
+        v = _prepare(inv, settings, an8)
+        headers, dists, matches = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on)
+        gross_col, aa_col = ("VLACR", "VNACR") if v.foreign else ("VLAG", "VNAA")
+        dist_total = sum(Decimal(str(d.get(aa_col) or 0)) for d in dists)
+        posted = Decimal(v.gross - sum(e["cents"] for e in v.entries)) / 100
+        out["vouchers"].append(
+            {
+                **who,
+                "an8": an8,
+                "tax_area": v.tax_area,
+                "tax_code": v.tax_code,
+                "po_matched": v.po_matched,
+                "pay_items": [
+                    {
+                        "line": h.get("VLEDLN"),
+                        "gross": _shown(h.get(gross_col, h.get("VLATXN")), settings, v.decimals),
+                        "tax": _shown(h.get("VLSTAM", h.get("VLCTAM", "")), settings, v.decimals),
+                        "dates": f"invoice {h['VLDIVJ']}, G/L {h['VLDGJ']}"
+                        + (f", due {h['VLDDJ']}" if h.get("VLDDJ") else ""),
+                        "doc_type": h.get("VLDCT"),
+                        "po": h.get("VLPO", ""),
+                    }
+                    for h in headers
+                ],
+                "lines": [
+                    {
+                        "line": d.get("VNEDLN"),
+                        "account": d.get("VNANI")
+                        or ".".join(x for x in (d.get("VNMCU"), d.get("VNOBJ"), d.get("VNSUB")) if x),
+                        "amount": _shown(d.get(aa_col), settings, v.decimals),
+                        "text": d.get("VNEXA", ""),
+                    }
+                    for d in dists
+                ],
+                "matches": len(matches),
+                "balance": (
+                    f"distribution {_shown(dist_total, settings, v.decimals)} = gross {v.gross / 100:,.2f} "
+                    f"- tax E1 posts {posted:,.2f} (code {v.tax_code or 'none'})"
+                )
+                if dists
+                else "PO-matched: E1 distributes from the receipts",
+            }
+        )
+        out["files"][HEADER_FILE] += len(headers)
+        out["files"][DIST_FILE] += len(dists)
+        out["files"][MATCH_FILE] += len(matches)
+        cur = who["currency"]
+        out["totals"][cur] = round(out["totals"].get(cur, 0.0) + float(final.get("grand_total") or 0), 2)
+    return out
+
+
+def dry_run_text(report: dict[str, Any]) -> str:
+    """The dry run as plain text: for the JDE team, and kept in each batch's ZIP as DRY_RUN.txt."""
+    lines = [
+        f"AP Coder: JD Edwards E1 dry run of batch {report['batch']} "
+        f"(user {report['user']}, company {report['company']})",
+        "=" * 78,
+        "",
+    ]
+    if report["blocking"]:
+        lines += ["NOTHING CAN LOAD until these JD Edwards settings are fixed (Settings -> JD Edwards E1):"]
+        lines += [f"  - {p}" for p in report["blocking"]] + [""]
+    money = ", ".join(f"{c} {t:,.2f}" for c, t in sorted(report["totals"].items())) or "-"
+    lines += [
+        f"Will load: {len(report['vouchers'])} voucher(s), {money}. Held back: {len(report['held'])}.",
+        "Rows: " + ", ".join(f"{f} {n}" for f, n in report["files"].items() if n or f != MATCH_FILE),
+        "",
+    ]
+    for v in report["vouchers"]:
+        lines.append(
+            f"WILL LOAD  AP Coder #{v['id']}  {v['vendor']}  invoice {v['number']}  {v['date']}  "
+            f"{v['currency']} {float(v['total'] or 0):,.2f}"
+        )
+        lines.append(f"  supplier AN8 {v['an8']}; tax area {v['tax_area'] or '-'}, code {v['tax_code'] or '-'}")
+        for p in v["pay_items"]:
+            lines.append(
+                f"  F0411Z1 pay item {p['line']}: {p['doc_type']} gross {p['gross']}"
+                + (f", tax {p['tax']}" if p["tax"] else "")
+                + f"; {p['dates']}"
+                + (f"; PO {p['po']}" if p["po"] else "")
+            )
+        for d in v["lines"]:
+            lines.append(f"  F0911Z1 line {d['line']}: {d['account']}  {d['amount']}  {d['text']}")
+        if v["matches"]:
+            lines.append(f"  F0411Z1T: {v['matches']} PO match line(s)")
+        lines.append(f"  {v['balance']}")
+        lines.append("")
+    for h in report["held"]:
+        lines.append(f"HELD BACK  AP Coder #{h['id']}  {h['vendor']}  invoice {h['number']}  {h['date']}")
+        lines += [f"  - {r}" for r in h["reasons"]] + [""]
+    return "\n".join(lines) + "\n"
 
 
 # --- Mapping import ----------------------------------------------------------------------------------------------

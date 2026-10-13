@@ -12,10 +12,10 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from ap_coder import page_reader, ui
+from ap_coder import inbox, page_reader, ui
 from ap_coder.capture.layout import ocr_available
 from ap_coder.config import Settings
 from ap_coder.extraction import SUPPORTED_EXTENSIONS
@@ -38,6 +38,7 @@ from ap_coder.web.core import (
     reading_status_or_none,
     refuse,
     render,
+    reviewer,
     short_path,
 )
 from ap_coder.web.jobs import Job
@@ -85,13 +86,25 @@ def split_new(store: Store, files: list[Path]) -> tuple[list[Path], list[Path]]:
 
 
 def email_line(mail: Unpacked) -> tuple[str, str]:
-    """(text, tone) about a saved email: what was taken out of it, what was left out and why."""
+    """(text, tone) about a saved email: what it was, where its attachments went, what was left out and why."""
     if mail.error:
         return (f"{mail.email} {mail.error}. It was moved to the emails/could not read subfolder; ask the sender to "
                 "send the invoice again."), "err"  # fmt: skip
-    took = f"{ui.plural(len(mail.saved), 'attachment')} taken out" if mail.saved else "no invoice attached"
-    left = f" Left out: {'; '.join(mail.skipped)}" if mail.skipped else ""
-    return f"{mail.email}: {took}; the email is in the emails subfolder.{left}", "info"
+    t = mail.triage
+    went = []
+    if mail.saved:
+        went.append(f"{ui.plural(len(mail.saved), 'invoice')} to the review queue")
+    if mail.statements:
+        went.append(f"{ui.plural(len(mail.statements), 'statement')} to Statements")
+    if mail.held:
+        went.append(f"{ui.plural(len(mail.held), 'attachment')} set aside for a person")
+    kind = t.label if t else "Email"
+    text = f"{mail.email}: {kind}" + (f"; {', '.join(went)}" if went else "")
+    if t and t.needs_person:
+        text += f". Needs a person: {'; '.join(t.reasons[:2])}"
+    if mail.skipped:
+        text += f". Left out: {'; '.join(mail.skipped)}"
+    return text, "err" if t and t.possible_fraud else "warn" if t and t.needs_person else "info"
 
 
 # --- Setup ---------------------------------------------------------------------------------------------------------
@@ -174,7 +187,8 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
             skipped += dup
         for mail in mails:
             text, tone = email_line(mail)
-            job.log(text, tone, "mail")
+            job.log(text, tone, "gpp_maybe" if tone == "err" and mail.triage else "mail")
+            inbox.log_sorted(store, mail)
         job.step(0, len(todo), "Starting")
         ok = 0
         waiting = store.page_reads_waiting()
@@ -264,6 +278,7 @@ def process_page(request: Request) -> HTMLResponse:
         recent=recent,
         recent_waiting=any(i["status"] == REVIEW for i in recent),
         files=folder_files(store),
+        set_aside=inbox.needs_person(store, invoice_dir(store)),
         folder=short_path(invoice_dir(store)),
         accept=",".join(ACCEPT),
         accept_text=", ".join(e.lstrip(".").upper() for e in ACCEPT),
@@ -298,7 +313,7 @@ def _save_and_start(request: Request, received: list[tuple[str, bytes]]) -> JSON
     for name, content in received:
         if Path(name).suffix.lower() not in ACCEPT:
             notes.append(flash_message(f"{name} was not read: AP Coder reads PDFs, scans, photos and saved emails "
-                                       "(.eml).", "warn"))  # fmt: skip
+                                       "(.eml, .msg).", "warn"))  # fmt: skip
             continue
         try:  # one file that cannot be saved (a name Windows refuses, disk full) is said and skipped
             target = save_upload(folder, name, content)
@@ -345,6 +360,38 @@ def process_open_folder(request: Request) -> JSONResponse:
     if open_folder(folder):
         return message("Opened the invoices folder.", "info")
     return message(f"Open this folder yourself: {folder}", "info")
+
+
+# --- Emails set aside by triage ------------------------------------------------------------------------------------
+
+
+@router.get("/process/inbox/{entry_id}/file/{n}")
+def inbox_file(request: Request, entry_id: str, n: int) -> FileResponse:
+    """An attachment of an email set aside (``n`` = -1: the email itself), to open."""
+    from fastapi import HTTPException
+
+    path = inbox.file_of(invoice_dir(get_store(request)), entry_id, n)
+    if path is None:
+        raise HTTPException(status_code=404, detail="That file is no longer in the invoices folder.")
+    return FileResponse(path, filename=path.name)
+
+
+@router.post("/process/inbox/{entry_id}/to-queue/{n}")
+def inbox_to_queue(request: Request, entry_id: str, n: int) -> JSONResponse:
+    store = get_store(request)
+    moved = inbox.to_queue(store, invoice_dir(store), entry_id, n, reviewer())
+    if moved is None:
+        return refuse("That file is no longer where AP Coder put it.")
+    text = f"{moved.name} is in the invoices folder: process the folder to read it into the review queue."
+    return done(request, "/process", flash_message(text, "ok", icon="move_to_inbox"))
+
+
+@router.post("/process/inbox/{entry_id}/done")
+def inbox_done(request: Request, entry_id: str) -> JSONResponse:
+    store = get_store(request)
+    if not inbox.mark_done(store, invoice_dir(store), entry_id, reviewer()):
+        return refuse("That email is no longer in the list.")
+    return done(request, "/process", flash_message("Marked as dealt with.", "ok", icon="done_all"))
 
 
 # --- Demo invoices -------------------------------------------------------------------------------------------------

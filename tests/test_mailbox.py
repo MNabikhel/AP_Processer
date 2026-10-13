@@ -72,8 +72,9 @@ def test_an_email_without_invoices(tmp_path):
     m.set_content("no attachment")
     path = tmp_path / "hello.eml"
     path.write_bytes(m.as_bytes())
-    result = unpack(path)
-    assert result.saved == [] and (tmp_path / "emails" / "hello.eml").exists()
+    result = unpack(path)  # nothing for AP in it: it waits for a person, with the reason
+    assert result.saved == [] and (tmp_path / "emails" / "needs a person" / "hello.eml").exists()
+    assert result.triage.kind == "not_for_ap" and result.triage.needs_person
 
 
 def test_attachment_types_by_content_not_only_by_name():
@@ -121,7 +122,7 @@ def test_an_email_that_cannot_be_read_is_filed_away_and_the_others_unpacked(tmp_
 
 def test_any_other_error_in_one_email_is_filed_away_too(tmp_path):
     (tmp_path / "odd.eml").write_bytes(_email().as_bytes())
-    with patch("ap_coder.mailbox.attachments", side_effect=LookupError("unknown encoding")):
+    with patch("ap_coder.mailbox.read_eml", side_effect=LookupError("unknown encoding")):
         (odd,) = unpack_folder(tmp_path, now=time.time() + 60)
     assert odd.error == "could not be read: it is damaged (LookupError)"
     assert (tmp_path / "emails" / "could not read" / "odd.eml").exists()

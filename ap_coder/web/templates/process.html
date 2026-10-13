@@ -30,6 +30,34 @@
       </div>
     </section>
 
+    {% if set_aside %}
+    <section class="card" id="set-aside">
+      <div class="card-head">
+        <div><h4>Emails that need a person</h4>
+          <p class="muted">Sorted out of the invoices folder: not invoices, or something to check first. Nothing here is
+            in the review queue.</p></div>
+        {{ ui.pill(set_aside | length | plural("email"), "warn") }}
+      </div>
+      {% for e in set_aside %}
+      <div class="flash {{ 'err' if e.possible_fraud else 'warn' }} triage-row">
+        <span class="ms" aria-hidden="true">{{ 'gpp_maybe' if e.possible_fraud else 'mark_email_unread' }}</span>
+        <div>
+          <div><b>{{ e.label }}</b> · {{ e.subject or "(no subject)" }} <span class="muted">· {{ e.sender }} · {{ e.at }}</span></div>
+          <ul>{% for r in e.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+          <div class="row">
+            {% if e.email_there %}<a class="btn" href="/process/inbox/{{ e.id }}/file/-1"><span class="ms" aria-hidden="true">mail</span>Open the email</a>{% endif %}
+            {% for d in e.docs %}{% if d.there %}
+            <a class="btn" href="/process/inbox/{{ e.id }}/file/{{ d.n }}"><span class="ms" aria-hidden="true">attach_file</span>{{ d.name }}</a>
+            <form method="post" action="/process/inbox/{{ e.id }}/to-queue/{{ d.n }}"><button class="btn" type="submit" title="It is an invoice after all: read it into the review queue"><span class="ms" aria-hidden="true">move_to_inbox</span>Read as invoice</button></form>
+            {% endif %}{% endfor %}
+            <form method="post" action="/process/inbox/{{ e.id }}/done"><button class="btn" type="submit"><span class="ms" aria-hidden="true">done_all</span>Dealt with</button></form>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
     <section class="card">
       <h4>Upload invoices</h4>
       <p class="muted">Each file is saved to the invoices folder on this computer, then read, coded and checked. A photo or
@@ -39,7 +67,7 @@
           <input type="file" name="files" id="upload-files" multiple accept="{{ accept }}">
           <span class="ms" aria-hidden="true">upload_file</span>
           <span><b>Choose files</b> or drag them here</span>
-          <small>PDFs, scans or photos (TIFF, PNG, JPG), or saved emails (.eml) with invoices attached</small>
+          <small>PDFs, scans or photos (TIFF, PNG, JPG), or saved emails (.eml, or .msg from Outlook): each email is sorted, its invoices read</small>
         </label>
         <ul class="picked" id="picked" hidden></ul>
         <div class="row">

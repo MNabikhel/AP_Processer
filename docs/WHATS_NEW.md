@@ -8,7 +8,48 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
-## This release: the dashboard is a local web app
+## This release: ready for the AP mailbox and JD Edwards
+
+**For AP**
+
+- **Emails from classic Outlook.** An email dragged from classic desktop Outlook into the invoices folder (a
+  `.msg` file) is read like a saved `.eml`: its invoices are taken out, signature logos left out, and emails
+  forwarded inside it opened too. Nothing new to install.
+- **Every email is sorted.** Each email is now one of: invoice, credit note, statement, payment reminder,
+  bank-detail change, or not for AP (a quote, a purchase order, a packing slip, remittance advice, an
+  out-of-office reply, a newsletter, an email that only links to an invoice online), in English or French.
+  Only invoices and credit notes reach the review queue. Statements go to **Statements → Statements received by
+  email** (a spreadsheet is reconciled in one click). Everything else waits under **Process invoices → Emails
+  that need a person**, with the reason, a button to open the email and each attachment, *Read as invoice* if it
+  is one after all, and *Dealt with*.
+- **Bank-detail changes are flagged as possible fraud**, in red at the top of that list and in the Activity log,
+  whether the change is in the email, in an attached letter, or in the footer of an invoice (which is still read).
+- **No invoice is held back by the sorting.** A document is kept out of the review queue only when it says
+  plainly what else it is and does not call itself an invoice; a scan or a photo with nothing to read, or a bill
+  that calls itself a "statement", goes to the queue. On 2,000 made-up emails (five seeds, half of them `.msg`):
+  **0 invoices lost**, every bank-detail change flagged, no quote or statement in the queue
+  (`python -m ap_coder.bench triage`). The emails are made up by the same team as the rules, so the tests also
+  include hand-written traps; real mail will find new cases, which go to the review queue or to a person.
+
+**For IT**
+
+- **[MAILBOX_SETUP.md](MAILBOX_SETUP.md)**: getting the AP mailbox's emails into AP Coder's folder (Power Automate,
+  a mail-saving tool PCL already has, or AP staff dragging emails) while AP Coder itself never connects to the
+  mailbox or the internet.
+
+**For the JDE team**
+
+- **A worksheet with every question AP Coder needs answered** before the first load: Settings → JD Edwards E1 →
+  *Download the worksheet*. Company, document types, R04110ZA's version and its duplicate edit, amounts, line
+  numbering, dates, the PO path, currencies, the tax areas, the account mapping (every GL account listed) and each
+  vendor's address number, with what AP Coder uses now. *Import the JDE team's answers* applies them and lists what
+  changed and anything it could not use.
+- **Dry run**: Exports → *Dry run* (with JD Edwards E1 chosen) shows exactly what a batch of the ready invoices
+  would load, row by row, with the proof that each voucher balances, and every reason an invoice is held back.
+  Every JD Edwards ZIP now carries the same report as `DRY_RUN.txt`. A line nobody coded is held back with
+  "a line has no GL account: code it in the review screen".
+
+## Earlier: the dashboard is a local web app
 
 **For everyone**
 

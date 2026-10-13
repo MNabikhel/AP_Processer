@@ -32,6 +32,7 @@ GROUPS = {
               "pos_deleted", "export_undone", "erp_register_imported", "files_moved", "file_found"],
     "Learning": ["lessons_forgotten", "history_imported", "autonomy_on", "autonomy_off", "autonomy_suspended",
                  "autonomy_held", "autonomy_allowed", "touchless_on", "touchless_off", "page_reader_tested"],
+    "Emails": ["email_sorted", "email_bank_change", "email_triage_done", "email_attachment_to_queue"],
     "Backups": ["backup_made", "backup_restored"],
 }  # fmt: skip
 EVENTS_READ = 5000  # the newest events the page works on
