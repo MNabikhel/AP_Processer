@@ -281,7 +281,8 @@ use OCR only (no page reader); *no silent error* means nothing wrong is shown as
 
 \* The wrong values shown as likely on seeds 9501 and 9702 were looked at after those runs and fixed (OCR's "IN833.79"
 for IN83379, a 0.00 HST taken from a registration-number line, terms that lost their discount to OCR's full-width
-comma); every set above now has no silent error. "Never looked at" figures are from before that.
+comma); every set above now has no silent error. "Never looked at" figures are from before that. The misses seed 9702
+showed afterwards (OCR's "Apri1", "Eeb", "2.025" and "Tota1") were fixed too: it now reads 97.3% fully right.
 
 Supplier learning (`bench learn`, 30 suppliers × 40 invoices, seeds 77, 78 and 79): once a supplier met the
 autonomy policy, 226 of its 345 later invoices went without a person before this round and **295 of 345** after
