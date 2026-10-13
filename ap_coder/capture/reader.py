@@ -315,8 +315,8 @@ def _ocr_id_fix(value: str) -> str:
     return re.sub(r"^([A-Za-z]+)0([A-Za-z]*)(?=-)", lambda m: m.group(1) + "O" + m.group(2), value)
 
 
-_OCR_NAME_WORDS = {"itee": "ltée", "ltee": "ltée", "itée": "ltée", "lnc": "Inc", "lnc.": "Inc.", "ine": "Inc", "ine.": "Inc.", "ltd": "Ltd",
-                   "ltd.": "Ltd.", "limitee": "limitée"}  # fmt: skip
+_OCR_NAME_WORDS = {"itee": "ltée", "ltee": "ltée", "itée": "ltée", "ltée": "ltée", "lnc": "Inc", "lnc.": "Inc.", "ine": "Inc",
+                   "ine.": "Inc.", "ltd": "Ltd", "ltd.": "Ltd.", "limitee": "limitée"}  # fmt: skip
 
 
 def _ocr_name_fix(name: str) -> str:
@@ -326,9 +326,10 @@ def _ocr_name_fix(name: str) -> str:
     name = re.sub(r"\.{2,}$", ".", name)  # a speck after the suffix: "Ltd.."  # "ServicesLP" -> "Services LP"
     name = re.sub(r"(?<!\bMc)(?<!\bMac)(?<=[a-z])(?=[A-Z][a-z])", " ", name)  # "TrueNorth" -> "True North"
     for word in name.split():
-        fixed = _OCR_NAME_WORDS.get(word.lower())
-        if fixed and word.lower() not in ("ltd", "ltd."):
-            word = fixed
+        key = word.lower()
+        if key in _OCR_NAME_WORDS:  # a known word (spelled right or as OCR slips): never "repaired" below
+            if key not in ("ltd", "ltd."):
+                word = _OCR_NAME_WORDS[key]
         elif re.match(r"^l[bcdfghjkmnpqrstvwxz]", word):  # English words do not start "lr", "ln", ...
             word = "I" + word[1:]
         out.append(word)
@@ -485,6 +486,28 @@ def _below(lines: list[Line], line: Line, label_box: Box) -> list[Line]:
     return sorted(out, key=lambda ln: ln.box.y0)
 
 
+def _under_another_label(lines: list[Line], value: Line, label: Line) -> bool:
+    """``value`` sits right under a label of its own (a header grid: a row of labels over a row of values), not
+    ``label``: on a scan, where the rows are a little off, it can look level with the label on its left."""
+    h = max(value.box.height, 0.008)
+    for other in lines:
+        if other is value or other is label or other.box.page != value.box.page:
+            continue
+        gap = value.box.y0 - other.box.y1
+        if not -0.3 * h <= gap <= 1.2 * h or other.box.cy >= value.box.cy:
+            continue
+        # In the same row of labels as ``label``, printed as small (a title or a heading higher up is not a grid's
+        # label)...
+        if abs(other.box.cy - label.box.cy) > 0.8 * label.box.height or other.box.height > 1.5 * label.box.height:
+            continue
+        # ...and over the value, as a grid prints them: left edges or centres lined up.
+        if abs(other.box.x0 - value.box.x0) >= 0.03 and abs(other.box.cx - value.box.cx) >= 0.04:
+            continue
+        if _label_hits(other) or _LABEL_SHAPE.search(plain(other.text).strip()):
+            return True
+    return False
+
+
 def _label_box(hit: _LabelHit) -> Box:
     words = _span_words(hit.line, 0, hit.end)
     return union_all([w.box for w in words]) or hit.line.box
@@ -502,8 +525,12 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
             continue
         got = None
         for other in _right_of(lines, line)[:2]:
-            if _label_hits(other) and not _value_reading(field, other, 0, 1.0, "x"):
-                break  # the next thing to the right is another label: look below instead
+            if (_label_hits(other) or _LABEL_SHAPE.search(plain(other.text).strip())) and not _value_reading(
+                field, other, 0, 1.0, "x"
+            ):
+                break  # the next thing to the right is another label ("Ship Date"): look below instead
+            if _under_another_label(lines, other, line):
+                break  # a header grid's value, under its own label ("Order No." over "SO-28797"): look below
             got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
             if got:
                 got.score *= 1.0 - min(other.box.x0 - line.box.x1, 0.4) * 0.5
@@ -588,7 +615,8 @@ def _in_bill_to(layout: DocLayout, line: Line) -> bool:
     return False
 
 
-_COMPANY = re.compile(r"\b(inc|lnc|ltd|ltee|itee|limited|limitee|llc|llp|corp|corporation|co\.|company|cie|enr|s\.?e\.?n\.?c|"
+_COMPANY = re.compile(r"\b(inc|lnc|ltd|ltee|itee|limited|limitee|llc|llp|lp|l\.p|ulc|plc|corp|corporation|co\.|company|cie|enr|"
+                      r"s\.?e\.?n\.?c|products|"
                       r"group|groupe|services|solutions|supply|supplies|industries|technologies|consulting|"
                       r"distribution|holdings|partners|associates|enterprises|entreprises)\b\.?", re.I)  # fmt: skip
 _NOT_NAME = re.compile(r"^(invoice|facture|credit\s*memo|debit\s*(?:note|memo)|avis\s*de\s*credit|(?:sales|tax|commercial|proforma|pro\s*forma)\s*invoice|please\s*pay|your\b|votre\b|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
