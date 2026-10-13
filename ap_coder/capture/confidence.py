@@ -338,6 +338,21 @@ def _page_reader_differs(
     return None
 
 
+def _whole_first_word(groups: list[_Group]) -> None:
+    """One OCR engine missed the start of the name ("ipements Saint-Laurent" for "Équipements Saint-Laurent", an
+    accented capital it could not see): the reading that has the whole first word goes first. The two still
+    disagree, so the name stays for a person to check."""
+    if len(groups) < 2:
+        return
+    top = " ".join(str(groups[0].value).split())
+    for i, other in enumerate(groups[1:], 1):
+        whole = " ".join(str(other.value).split())
+        cut = whole[: len(whole) - len(top)]
+        if len(whole) > len(top) and whole.endswith(top) and re.fullmatch(r"[^\W\d_]{1,4}", cut) and top[:1].islower():
+            groups.insert(0, groups.pop(i))
+            return
+
+
 def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineReading],
          vendor: dict[str, Any] | None = None, fields: tuple[str, ...] = FIELDS,
          today: dt.date | None = None, layout_source: str = "text",
@@ -350,6 +365,8 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     for field in fields:
         per_source = {s: cands.get(field, []) for s, cands in by_source.items() if cands.get(field)}
         groups = _groups(field, per_source)
+        if field == "vendor_name":
+            _whole_first_word(groups)
         all_groups[field] = groups
         chosen[field] = groups[0] if groups else None
         if len(groups) > 1:

@@ -180,6 +180,8 @@ _OCR_MONTHS = [
     (re.compile(r"n0v"), "nov"),
     (re.compile(r"(?<![a-z])1an"), "jan"),
     (re.compile(r"ap1"), "apr"),
+    # French "1er" (the first) as OCR reads it, "ler" or "ier": "ler octobre 2026" (same length, so offsets hold)
+    (re.compile(r"(?<![a-z\d])[li]er(?=\s+(?:janv|fevr|mars|avr|mai|juin|juil|aout|sept|oct|nov|dec))"), "1er"),
 ]
 
 
@@ -421,11 +423,11 @@ def currency_evidence(text: str) -> tuple[str, float] | None:
         return "USD", 0.8
     if re.search(r"\bC\$|\bCDN\b|CANADIAN", s):
         return "CAD", 0.8
-    # A euro or pound sign is that currency (a plain "$" is not: Canadian or US dollars).
-    if "€" in s:
-        return "EUR", 0.8
-    if "£" in s:
-        return "GBP", 0.8
+    # A euro or pound sign is that currency (a plain "$" is not: Canadian or US dollars), unless dollar signs
+    # outnumber it: one "£66" among a scan's dollar amounts is OCR's reading of a "$".
+    for sign, code in (("€", "EUR"), ("£", "GBP")):
+        if sign in s and s.count(sign) >= s.count("$"):
+            return code, 0.8
     return None
 
 

@@ -380,3 +380,25 @@ def test_a_made_up_transcription_of_a_blank_page_is_left_out(text, blank):
     if blank:  # nothing taken from it: the pangram is never a supplier
         assert _top(fields, "vendor_name") != "The quick brown fox jumps over the lazy dog."
         assert not layout_from_transcript([text]).pages[0].words
+
+
+def test_a_name_whose_first_letters_one_ocr_engine_missed_is_shown_whole():
+    """Fresh scan seed 9301: one engine read "ipements Saint-Laurent S.E.N.C." (it could not see the "Équ"), the
+    other the whole name. The whole one is shown; the two still disagree, so a person checks it."""
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import CHECK, Box, Reading
+
+    box = [Box(1, 0.06, 0.05, 0.4, 0.07)]
+
+    def read(name, score):
+        return {"vendor_name": [Reading("vendor_name", name, name, box, score, "top-of-page")]}
+
+    by_source = {
+        "rules": read("ipements Saint-Laurent S.E.N.C.", 1.0),
+        "ocr2": read("Équipements Saint-Laurent S.E.N.C.", 0.9),
+    }
+    name = fuse(by_source, [], fields=("vendor_name",))[0]["vendor_name"]
+    assert name.value == "Équipements Saint-Laurent S.E.N.C." and name.status == CHECK
+    # A shorter name that is a whole word is not taken for a cut one ("Saint-Laurent" in "Équipements Saint-Laurent").
+    other = {"rules": read("Saint-Laurent Inc.", 1.0), "ocr2": read("Groupe Saint-Laurent Inc.", 0.9)}
+    assert fuse(other, [], fields=("vendor_name",))[0]["vendor_name"].value == "Saint-Laurent Inc."

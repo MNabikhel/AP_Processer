@@ -181,3 +181,27 @@ def test_the_day_of_a_date_is_not_an_invoice_number(tmp_path):
     ]  # fmt: skip
     number = analyze(_titled(tmp_path, lines, "INVOICE / FACTURE", (373, 45)), today=TODAY).fields["invoice_number"]
     assert number.value == "34-90735"
+
+
+def test_french_first_of_the_month_as_ocr_reads_it():
+    from ap_coder.capture.normalize import parse_dates
+
+    # Fresh scan seed 9501: OCR read "1er octobre 2026" as "ler octobre 2026" (and "Ier" happens too).
+    assert [d.isoformat() for d, *_ in parse_dates("ler octobre 2026")] == ["2026-10-01"]
+    assert [d.isoformat() for d, *_ in parse_dates("Ier mai 2026")] == ["2026-05-01"]
+    assert parse_dates("Atelier 3") == []
+
+
+def test_a_due_date_label_with_a_speck_is_still_not_the_invoice_date():
+    from ap_coder.capture.reader import _distracted
+
+    assert _distracted("invoice_date", "date. limite de paiement")  # OCR's "Date. limite de paiement"
+    assert not _distracted("invoice_date", "date")
+
+
+def test_one_pound_sign_among_dollar_amounts_is_not_the_currency():
+    from ap_coder.capture.normalize import currency_evidence
+
+    assert currency_evidence("Subtotal $100.00\nTax $5.00\nTotal $105.00\nFreight £66") is None  # OCR's "$66"
+    assert currency_evidence("Subtotal £1,000.00\nTotal £1,200.00") == ("GBP", 0.8)
+    assert currency_evidence("Montant 1.000,00 €") == ("EUR", 0.8)

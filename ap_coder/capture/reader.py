@@ -180,6 +180,7 @@ _DISTRACT = {f: [re.compile(rx) for rx in pats] for f, pats in DISTRACTORS.items
 
 
 _OCR_LABEL_GAP = re.compile(r"(?<=[a-z]{2})[.·_-](?=[a-z]{2})")
+_OCR_WORD_SPECK = re.compile(r"(?<=[a-z]{2})[.·]\s+(?=[a-z]{2})")
 
 
 def _label_hits(line: Line) -> list[_LabelHit]:
@@ -267,6 +268,7 @@ def _combined_tax_fields(text: str) -> tuple[str, ...]:
 
 
 def _distracted(field: str, text_from_label: str) -> bool:
+    text_from_label = _OCR_WORD_SPECK.sub(" ", text_from_label)  # OCR's "Date. limite de paiement"
     for rx in _DISTRACT.get(field, []):
         if rx.match(text_from_label):
             return True
