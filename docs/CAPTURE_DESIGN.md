@@ -264,8 +264,8 @@ What this means for "99%":
 ### Before and after one round of fixes (October 2026)
 
 The code before this round (`33b57d8`) and after it, on the same invoices. Seeds 9101 and 9102 were used to find what
-to fix, 9301 and 9701 for later fixes; 9501, 9601, 9702, 9801, 9811, 9901 and 9921 had not been looked at before the
-runs shown. Scans use OCR only (no page reader); *no silent error* means nothing wrong is shown as *verified* or
+to fix, 9301 and 9701 for later fixes; 9501, 9601, 9702, 9801, 9811, 9821, 9901, 9921 and 9931 had not been looked at
+before the runs shown. Scans use OCR only (no page reader); *no silent error* means nothing wrong is shown as *verified* or
 *likely*.
 
 | set | invoices | fully right | no silent error |
@@ -276,12 +276,14 @@ runs shown. Scans use OCR only (no page reader); *no silent error* means nothing
 | digital, seed 9801 (never looked at) | 1,000 | 99.4% → **99.8%** | 100% → 100% |
 | digital, seed 9901 (never looked at) | 1,000 | 99.7% → 99.7%, then **99.9%*** | 99.9% → 99.9%, then **100%*** |
 | digital, seed 9921 (never looked at, final code) | 1,000 | 99.4% → **99.9%** | 100% → 100% |
+| digital, seed 9931 (never looked at, final code) | 2,000 | 99.5% → **99.9%**, then **100%*** | 99.9% → 99.9%, then **100%*** |
 | scans, seed 9102 | 100 | 89% → **97%** | 98% → **100%** |
 | scans, seed 9301 | 100 | 95% → **99%** | 100% → 100% |
 | scans, seed 9501 (never looked at) | 100 | 97% → **98%** | 99% → 99%, then 100%* |
 | scans, seed 9601 (never looked at) | 150 | 96.0% → **97.3%** | 99.3% → **100%** |
 | scans, seed 9702 (never looked at) | 150 | 92.0% → **94.0%** | 98.0% → 98.7%, then 100%* |
 | scans, seed 9811 (never looked at, final code) | 150 | 92.7% → **95.3%** | 98.7% → **100%** |
+| scans, seed 9821 (never looked at, final code) | 150 | 95.3% → **96.0%**, then **97.3%*** | 98.0% → 98.0%, then **100%*** |
 
 \* The wrong values shown as likely on seeds 9501 and 9702 were looked at after those runs and fixed (OCR's "IN833.79"
 for IN83379, a 0.00 HST taken from a registration-number line, terms that lost their discount to OCR's full-width
@@ -290,7 +292,11 @@ showed afterwards (OCR's "Apri1", "Eeb", "2.025" and "Tota1") were fixed too: it
 seed 9901, a utility bill's "Payments received" shown as its supplier (logo initials "PH" had been taken for "Ph:", a
 phone line) and a PO read from "Unit 7" were fixed after that run. The misses seeds 9811 and 9921 showed (OCR's
 "（9,9758）" rate read as an amount, a logo initial after "LP", a label after a fax number) were fixed after theirs:
-they now read 96.7% and 100% fully right.
+they now read 96.7% and 100% fully right. Seeds 9821 and 9931 were run on the code as pushed, before and after this
+round; on the old code one scan had a wrong invoice number shown as *verified*, on the new one none. Their wrong values
+still shown as likely were then fixed: a date that reads both ways taken as three days after the invoice arrived ("2
+March" for 3 February, on both), "2%10,.Net45" losing its discount, a street number under a logo's initials "PO" read as
+the PO, and "No. 46" read "4.6" by both OCR engines (now sent to a person). The "then" figures are after those fixes.
 
 Supplier learning (`bench learn`, 30 suppliers × 40 invoices, seeds 77, 78 and 79): once a supplier met the
 autonomy policy, 226 of its 345 later invoices went without a person before this round and **295 of 345** after
@@ -305,6 +311,44 @@ that were right: 96.6% → 99.5% ([CODING.md](CODING.md)).
 Seconds per invoice through the app's pipeline (median, measured as `bench speed` does on a 4-core test machine with
 nothing else running): a digital PDF 0.06 → 0.03 s; one with 30,000 past approvals 3.2 → 0.13 s; a scan's first read
 11.3 → 7.0 s (each page's image made once for both OCR engines); a scan read again when the page reader's text arrives 8.1 → 2.2 s.
+
+### Harder pictures than the benchmark's scans (stress test, October 2026)
+
+The benchmark's scans are gentle: 150 to 200 dpi, tilted at most 1.5°. A stress test made the same 36 one-page
+invoices (seed 9961) into harder pictures and read them with OCR only (values scored, not boxes):
+
+| picture | values right | invoices fully right | no silent error |
+|---|---:|---:|---:|
+| phone photo: page on a desk, tilted up to 6°, taken at an angle, uneven light | 90.9% → **100%** | 63.9% → **100%** | 88.9% → **100%** |
+| page scanned sideways | 21.4% → **98.1%** | 0% → **86.1%** | 47.2% → **94.4%** |
+| page scanned upside down | 23.1% → **98.1%** | 0% → **83.3%** | 36.1% → **97.2%** |
+| fax, fine (200 dpi, black and white) | 99.5% | 94.4% | 100% |
+| fax, standard (200 × 100 dpi) | 93.7% | 61.1% | 88.9% → 91.7% |
+| fax at 100 dpi | 67.0% | 8.3% | 75.0% → **100%** |
+
+- **Phone photos** (`layout.flatten_photo`): a photo of a page on a darker desk is flattened as a scanner app does it.
+  The page is found (OpenCV, which comes with the OCR), cut out of the desk and squared up, which undoes its tilt
+  and the keystone of a photo taken at an angle. It happens when the photo is made a PDF (`intake.py`), so the page
+  is read, shown and highlighted flattened; the photo as taken is kept in `originals/`. A scan (it fills its
+  picture), a fax and a page on a white desk are left as they are: on the benchmark's 600 scans and faxes, none
+  was flattened. A photo reads in about 6 s against 5 s for a scan (it is a larger picture).
+- **Pages scanned turned** (`layout._upright_turn`): OCR reads each line's words right on a turned page (it turns
+  a line to read it), but the lines lie where the turned page has them, so labels and amounts no longer line up.
+  When most long lines run down the page, the page was scanned sideways: the OCR's lines are turned a quarter turn,
+  whichever way puts the amounts right of their labels. When the lines run across but the amounts stand left of
+  their labels, it was scanned upside down. On the benchmark's 1,300 OCR reads of upright scans, no upright page
+  scored below 0 (amounts right of labels count up, left count down); a page is turned at −2. The words are read on
+  the upright page, at no extra OCR cost. The app then shows the PDF upright (`intake.turn_upright`): only the
+  page's rotation changes, never what it prints. The scan as it came is kept in `originals/`, its note naming it
+  as a picture's does, so the same scan sent again is found. A PDF AP Coder made from a picture is its own and is
+  turned where it is.
+- **Pages scanned too coarsely** (`analyze`, `COARSE_DPI`): the readings' confidence was measured on scans of
+  150 dpi and up. On a page scanned under 140 dpi (the picture filling a PDF page says its resolution; an image
+  file says it, or its long side is taken as a letter page's), every value is read but none is shown as verified
+  or likely: a person checks them. A label OCR misread ("INVO1CE" for INVOICE) is never taken for a value.
+- **Left as it is**: a standard fax (100 dpi down the page) still read 3 of 36 invoices with a wrong value shown
+  as *likely*. On two, the customer's name was taken for the supplier's where the fax garbled "Bill to"; on the
+  other, a GST number. No value was shown as *verified* wrongly.
 
 ### Scale
 

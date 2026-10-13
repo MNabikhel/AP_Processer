@@ -111,6 +111,12 @@ class PageLayout:
     # A scan's tilt: how far the text runs down the page per unit across (both as fractions of the page), from the
     # OCR's own text lines; 0 for a PDF's text. The line items' rows are read straightened (reader.straightened).
     skew: float = 0.0
+    # A page scanned turned (sideways, upside down): the clockwise quarter turn (90, 180, 270) that brought the OCR's
+    # lines upright. The words are read on the upright page; 0 when it was upright already.
+    turn: int = 0
+    # A scan's resolution (pixels per inch, the coarser way): from the picture filling a PDF page, else the picture's
+    # size taken as a letter page's long side; 0 for a PDF's text or when unknown.
+    dpi: float = 0.0
 
 
 @dataclass

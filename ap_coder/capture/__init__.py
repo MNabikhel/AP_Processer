@@ -35,6 +35,10 @@ from .types import (
 
 log = logging.getLogger(__name__)
 
+# The readings' confidence was measured on scans of 150 dpi and up. On a coarser page (a fax at 100 dpi: two thirds of
+# its values right in the October 2026 stress test, some wrong ones shown as verified) a person checks every value.
+COARSE_DPI = 140
+
 __all__ = ["LABELS", "analyze", "build_layout", "read_fields", "locate", "CaptureResult", "CannotRead"]
 
 # Document Intelligence prebuilt-invoice field -> capture field
@@ -408,7 +412,9 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
 
     fields, checks = fused(words)
     items, readings = words, [words] if words else []
-    if tables is not False and (path.suffix.lower() == ".pdf" or path.suffix.lower() in IMAGE_EXTENSIONS):
+    # A page read upright from a picture shown turned: the table finder would look at the page as shown.
+    pictured = path.suffix.lower() == ".pdf" or path.suffix.lower() in IMAGE_EXTENSIONS
+    if tables is not False and pictured and not any(page.turn for page in layout.pages):
         try:  # a page to look at (a text file has none)
             items, readings = _page_lines(path, layout, fields, words, tables)
         except Exception as exc:  # the table readers are extras: the words under the headings stay
@@ -430,5 +436,12 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
         checks.append(agreement)
     if "vlm" in sources and layout.source == "text":
         checks.append(text_layer_check(layout, page_text or [], fields, sources["rules"]))
+    coarse = min((page.dpi for page in layout.pages if page.dpi), default=0.0)
+    if layout.source != "text" and 0 < coarse < COARSE_DPI:
+        for fr in fields.values():
+            if fr.status not in (CHECK, MISSING):
+                fr.status, fr.confidence = CHECK, min(fr.confidence, 0.6)
+                fr.reasons.append(f"scanned at about {coarse:.0f} dpi, coarser than the scans its reading was measured "
+                                  "on (150 dpi and up): a person checks it")  # fmt: skip
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
                          page_count=len(layout.pages))  # fmt: skip

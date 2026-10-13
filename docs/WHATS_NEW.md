@@ -40,7 +40,20 @@ backup of the database is made automatically once a day when AP Coder starts (th
   those suppliers' later invoices instead of 66%, still with no wrong field. Nothing changes about who qualifies.
 - **Scans and PDFs read better**: a partnership's name ("... LP"), "ltée", labels in header grids (also two
   bilingual labels printed as one line), specks OCR reads as periods, "Payable on receipt", French "1er octobre",
-  "PO -20203" and "GST/HST @58" as OCR prints them, and a name whose accented first letter one OCR engine missed.
+  "PO -20203" and "GST/HST @58" as OCR prints them, and a name whose accented first letter one OCR engine missed;
+  also a product called "Shipping cartons" (no longer taken for the freight), "2%10,.Net45", "Net·30", OCR's 号 for
+  a percent sign, a street number after a logo's initials "PO", and a date that reads both ways no longer taken as
+  dated after the day it arrived.
+- **Phone photos of an invoice read like scans.** A photo of a page lying on a desk is flattened the way a scanner
+  app does it (the page cut out and squared up, its tilt and the angle it was taken at undone) when it comes in; the
+  photo as taken is kept in `originals/`. On a stress test, every value of 36 photographed invoices was read right
+  (91% of the values before, with some wrong ones shown as likely).
+- **Pages scanned sideways or upside down are read upright and shown upright.** Before, almost nothing on such a
+  page was read right (about a fifth of the values), and some wrong totals were shown as verified; now 98% are.
+  The scan as it came is kept in `originals/`.
+- **A page scanned too coarsely is checked by a person.** Below about 140 dpi (an old fax at 100 dpi), nothing is
+  shown as verified or likely: every value is read and waits for a person to confirm it. A fax at 200 dpi reads
+  like a scan.
 - **Faster**: a digital PDF is read, checked and coded in about half the time, a scan in about 7 s instead of
   11 s and again in about 2 s instead of 8 s when the page reader's text arrives (its OCR is kept in the data
   folder), and coding stays quick with years of ERP history (0.13 s instead of 3.2 s with 30,000 past lines).

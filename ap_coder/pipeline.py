@@ -345,6 +345,8 @@ class InvoicePipeline:
                 from .offline_coder import local_extraction
 
                 layout = build_layout(path)
+                if invoice_id is None and any(page.turn for page in layout.pages):
+                    path = result.source = _upright(path, layout, result)
                 result.extraction = local_extraction(path, layout)
             else:
                 result.extraction = self.extractor.extract(path)
@@ -506,6 +508,26 @@ def _as_pdf(path: Path, result: PipelineResult, convert: bool = True) -> Path:
         if note:
             kept = path.parent / str(note.get("kept") or "")
             result.original = {"file": note.get("original"), "kept": str(kept), "sha256": note.get("sha256")}
+    return path
+
+
+def _upright(path: Path, layout: Any, result: PipelineResult) -> Path:
+    """A PDF with pages scanned sideways or upside down, shown upright (``intake.turn_upright``): the words OCR read
+    on the upright pages are where the review screen shows them. Left as it is when it can't be written."""
+    from . import intake
+
+    turns = {page.number: page.turn for page in layout.pages if page.turn}
+    try:
+        turned = intake.turn_upright(path, turns)
+    except Exception as exc:  # a locked or damaged file: read all the same, shown as it was scanned
+        log.warning("%s: pages scanned turned not set upright (%s)", path.name, exc)
+        return path
+    for page in layout.pages:
+        page.turn = 0  # the page now shows as it was read
+    if turned is not None:
+        result.original = {"file": path.name, "kept": str(turned.original), "sha256": turned.sha256,
+                           "pages": turned.pages}  # fmt: skip
+    log.info("%s: pages %s were scanned turned and are now shown upright", path.name, sorted(turns))
     return path
 
 

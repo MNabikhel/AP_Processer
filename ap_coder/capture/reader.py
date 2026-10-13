@@ -395,10 +395,15 @@ _DAY_FIRST: ContextVar[bool | None] = ContextVar("day_first", default=None)
 
 
 _STREET = re.compile(
-    r"^\s*(?:[A-Za-zÀ-ÿ'.-]+\s+){0,3}?(?:st|street|ave?|avenue|rd|road|blvd|boulevard|dr|drive|way|cres|crescent|"
+    r"^\s*,?\s*(?:[A-Za-zÀ-ÿ'.-]+\s+){0,3}?(?:st|street|ave?|avenue|rd|road|blvd|boulevard|dr|drive|way|cres|crescent|"
     r"hwy|highway|pkwy|ln|lane|ct|court|pl|place|rue|ch|chemin|boul|route)\b\.?(?:\s|,|$)",
     re.I,
 )
+
+
+_DIGIT_LOOKALIKES = str.maketrans("01358", "OISSB")  # OCR's digits for letters
+_LABEL_WORDS = {"invoice", "facture", "number", "numero", "date", "total", "amount", "page", "order", "bill",
+                "account", "customer", "client", "reference", "receipt", "statement", "credit"}  # fmt: skip
 
 
 def _value_reading(field: str, line: Line, start: int, base: float, method: str) -> Reading | None:
@@ -415,9 +420,11 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         if any(da <= a - start < db for _d, da, db, _amb in parse_dates(rest)):
             return None  # the day of a date ("30 Jun 2025"), not a number
         if value.isdigit() and _STREET.search(text[b:]):
-            return None  # a street number ("4833 Barrington St", "2565 av. du Parc"), not an invoice or PO number
+            return None  # a street number ("4833 Barrington St", "9777, boul. des Laurentides"), not an ID
         if re.fullmatch(r"(?i)(?:unit|suite|ste|bureau|apt|room|local|piece|box)\s*#?\s*\d+[a-z]?", value):
             return None  # part of an address ("Unit 7")
+        if value.translate(_DIGIT_LOOKALIKES).strip("#:.-").casefold() in _LABEL_WORDS:
+            return None  # a label OCR misread ("INVO1CE"), not its value
         if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
             base *= 0.5  # "PO-636.19": a dot OCR put inside the number, or a price; not to be trusted alone
         if field == "po_number" and (
@@ -492,7 +499,7 @@ def _amounts_in(text: str) -> list[tuple[float, int, int]]:
 
 
 _TERMS = [
-    (re.compile(r"(\d{1,2})\s*%?[\s.]*(\d{1,2})\s*[,.;]?\s*net[\s.:]*(\d{1,3})(?!\d)", re.I), "{0}% {1} Net {2}"),
+    (re.compile(r"(\d{1,2})\s*%?[\s.]*(\d{1,2})[\s,.;]*net[\s.:]*(\d{1,3})(?!\d)", re.I), "{0}% {1} Net {2}"),
     (re.compile(r"\bnet[\s.:]*(\d{1,3})(?!\d)", re.I), "Net {0}"),
     (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
     (re.compile(r"(?<!\d)(\d{1,3})\s*(?:days|jours|j\b)", re.I), "Net {0}"),
@@ -501,7 +508,8 @@ _TERMS = [
 
 
 def _terms(text: str) -> str | None:
-    text = unicodedata.normalize("NFKC", text)  # OCR's full-width comma: "2%10，Net30"
+    # OCR's full-width comma ("2%10，Net30") and a speck read as a middle dot ("Net·30")
+    text = unicodedata.normalize("NFKC", text).replace("·", " ")
     for rx, fmt in _TERMS:
         m = rx.search(text)
         if m:
@@ -573,6 +581,19 @@ def _registration_line(line: Line, hit: _LabelHit) -> bool:
     return bool(_REG_WORDS.search(plain(after[:12])) or find_gst_numbers(after) or find_qst_numbers(after))
 
 
+def _table_row(lines: list[Line], line: Line) -> bool:
+    """A line items row: two or more numbers to its right (quantity, price, amount), where a charge in the totals
+    prints one."""
+    numbers = 0
+    for other in lines:
+        if other is line or other.box.page != line.box.page or other.box.x0 < line.box.x1 - 0.002:
+            continue
+        overlap = min(line.box.y1, other.box.y1) - max(line.box.y0, other.box.y0)
+        if overlap > 0.5 * min(line.box.height, other.box.height) and _value_reading("subtotal", other, 0, 1.0, "x"):
+            numbers += 1
+    return numbers >= 2
+
+
 def _own_label(line: Line, field: str) -> bool:
     return any(h.field == field for h in _label_hits(line))
 
@@ -589,6 +610,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
             continue
         if field in AMOUNT_FIELDS and _registration_line(line, hit):
             continue  # "GST/HST Reg. No.: 988130969 RT0003": the number's label, not the tax amount's
+        if field == "other_charges" and _table_row(lines, line):
+            continue  # "Shipping cartons 18x12x12 | 100 | 47.04 | 4,704.00": a product, not the freight
         got = None
         for other in _right_of(lines, line)[:2]:
             if _own_label(other, field):
@@ -1368,7 +1391,9 @@ def _received_fit(cands: dict[str, list[Reading]], received: dt.date) -> float:
     days = (received - dt.date.fromisoformat(inv[0].value)).days
     if days < -3:
         return -1.0
-    return max(0.0, 1.0 - max(days, 0) / 120)
+    if days < 0:
+        return 0.01  # dated a day or three after it came in: possible (a clock, a post-dated invoice), never preferred
+    return max(0.0, 1.0 - days / 120)
 
 
 def _read_with_order(layout: DocLayout, order: bool | None) -> dict[str, list[Reading]]:

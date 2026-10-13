@@ -18,6 +18,7 @@ import contextvars
 import functools
 import logging
 import os
+import re
 import statistics
 import threading
 import unicodedata
@@ -35,6 +36,8 @@ MIN_TEXT_WORDS = 5  # fewer words than this on a page means it is a scan
 OCR_DPI = 200
 OCR_MAX_SIDE = 2400
 NO_OCR = "OCR isn't installed on this computer, so a scan or a photo can't be read: run APProcessor.bat"
+# The OCR model also reads Chinese, and now and then prints a percent sign as 号 ("GST@5号", "(9,975号)").
+_OCR_PERCENT = re.compile(r"(?<=\d)号%?")
 NO_HEIF = ("this iPhone photo (HEIC) can't be opened: the photo add-on (pillow-heif) isn't installed; run "
            "APProcessor.bat, or save the photo as a JPEG")  # fmt: skip
 
@@ -71,6 +74,64 @@ def open_image(source: Any, name: str = "") -> Any:
     if not register_heif() and heif:
         raise CannotRead(NO_HEIF)
     return Image.open(source)
+
+
+# ---------------------------------------------------------------- photos
+
+PHOTO_PAGE_SHARE = (0.2, 0.95)  # a photographed page covers this much of the photo; a scan fills its picture
+PHOTO_DESK_CONTRAST = 40  # the paper is at least this much lighter than the desk around it (0..255)
+
+
+def flatten_photo(picture: Any) -> Any | None:
+    """A phone photo of a page, as a scanner app makes it: the page cut out of the desk around it and squared up
+    (its tilt and the keystone of a photo taken at an angle undone). None when the picture isn't one: a scan fills
+    its picture, a page on a white desk shows no edge, a crumpled page no four corners (or OpenCV isn't installed:
+    it comes with the OCR)."""
+    try:
+        import cv2
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        return None
+    rgb = np.asarray(picture.convert("RGB"))
+    height, width = rgb.shape[:2]
+    scale = min(1.0, 800 / max(height, width, 1))
+    small = cv2.resize(rgb, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
+    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY), (5, 5), 0)
+    _, paper = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))  # the print inside is paper too
+    contours, _ = cv2.findContours(paper, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    page = max(contours, key=cv2.contourArea)
+    if not PHOTO_PAGE_SHARE[0] <= cv2.contourArea(page) / gray.size <= PHOTO_PAGE_SHARE[1]:
+        return None
+    hull = cv2.convexHull(page)
+    quad = None
+    for loose in (0.02, 0.03, 0.05):
+        approx = cv2.approxPolyDP(hull, loose * cv2.arcLength(hull, True), True)
+        if len(approx) == 4:
+            quad = approx.reshape(4, 2).astype(np.float32)
+            break
+    if quad is None:
+        return None
+    inside = np.zeros_like(gray)
+    cv2.fillConvexPoly(inside, quad.astype(np.int32), 255)
+    desk = gray[inside == 0]
+    if desk.size < 0.03 * gray.size or np.median(gray[inside > 0]) - np.median(desk) < PHOTO_DESK_CONTRAST:
+        return None
+    by_sum, by_diff = quad.sum(axis=1), np.diff(quad, axis=1).ravel()
+    corners = np.array([quad[by_sum.argmin()], quad[by_diff.argmin()], quad[by_sum.argmax()], quad[by_diff.argmax()]],
+                       dtype=np.float32) / scale  # fmt: skip  # top left, top right, bottom right, bottom left
+    across = round(max(np.linalg.norm(corners[1] - corners[0]), np.linalg.norm(corners[2] - corners[3])))
+    down = round(max(np.linalg.norm(corners[3] - corners[0]), np.linalg.norm(corners[2] - corners[1])))
+    if min(across, down) < 200:
+        return None
+    square = np.array([[0, 0], [across - 1, 0], [across - 1, down - 1], [0, down - 1]], dtype=np.float32)
+    flat = cv2.warpPerspective(rgb, cv2.getPerspectiveTransform(corners, square), (across, down),
+                               flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)  # fmt: skip
+    out = Image.fromarray(flat)
+    return out.convert("L") if picture.mode in ("1", "L") else out
 
 
 # ---------------------------------------------------------------- lines
@@ -308,18 +369,121 @@ def ocr_image(png_bytes: bytes, number: int, engine: str | None = None) -> PageL
     import numpy as np
     from PIL import Image
 
-    img = _on_paper(Image.open(io.BytesIO(png_bytes)))
+    picture = Image.open(io.BytesIO(png_bytes))
+    stated = _stated_dpi(picture)
+    img = _on_paper(picture)
     width, height = img.size
     result = _ocr_cached(png_bytes, lambda: _engine(engine)(np.asarray(img)), engine)
+    turn = _upright_turn(result or [], width, height)
+    if turn:
+        result = _turned(result, turn, width, height)
+        if turn != 180:
+            width, height = height, width
     words: list[Word] = []
     for quad, text, score in result or []:
         xs = [p[0] for p in quad]
         ys = [p[1] for p in quad]
         x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
-        words.extend(_split_ocr_line(str(text), x0, y0, x1, y1, float(score), width, height, number))
+        text = _OCR_PERCENT.sub("%", str(text))
+        words.extend(_split_ocr_line(text, x0, y0, x1, y1, float(score), width, height, number))
     page = PageLayout(number, float(width), float(height), words, group_lines(words, number))
     page.skew = _skew(result or [], width, height)
+    page.turn = turn
+    page.dpi = stated or round(max(width, height) / 11, 1)  # else a letter page's long side
     return page
+
+
+def _stated_dpi(picture: Any) -> float:
+    """The resolution a picture states (pixels per inch, the coarser way), when believable: 0 for none, or one that
+    makes the page smaller than a business card or longer than 17 inches (a phone's "72 dpi")."""
+    try:
+        dx, dy = (float(v) for v in picture.info["dpi"])
+    except (KeyError, TypeError, ValueError):
+        return 0.0
+    if not (50 <= dx <= 1200 and 50 <= dy <= 1200):
+        return 0.0
+    inches = (picture.width / dx, picture.height / dy)
+    return round(min(dx, dy), 1) if 2 <= max(inches) <= 17 else 0.0
+
+
+def _native_dpi(page: Any) -> float:
+    """The resolution of the picture filling a scanned PDF page (pixels per inch, the coarser way, whichever way the
+    picture lies on the page); 0 when the page shows no picture that large."""
+    try:
+        infos = page.get_image_info()
+    except Exception:  # an image PyMuPDF can't describe
+        return 0.0
+    area = page.rect.width * page.rect.height
+    best = 0.0
+    for info in infos:
+        x0, y0, x1, y1 = info.get("bbox") or (0.0, 0.0, 0.0, 0.0)
+        across, down = abs(x1 - x0) / 72, abs(y1 - y0) / 72
+        px = sorted((float(info.get("width") or 0), float(info.get("height") or 0)))
+        inches = sorted((across, down))
+        if inches[0] <= 0 or across * down * 72 * 72 < 0.25 * area:
+            continue
+        best = max(best, min(px[0] / inches[0], px[1] / inches[1]))
+    return round(best, 1)
+
+
+# A label on an invoice and an amount: on a page read upright, the amount is to the label's right.
+_ROW_LABEL = re.compile(r"(?i)\b(?:sub\s*-?\s*total|total|tax(?:es)?|gst|hst|pst|qst|tps|tvq|tvh|amount|montant|"
+                        r"balance|due|freight|shipping|discount|net)\b")  # fmt: skip
+_ROW_AMOUNT = re.compile(r"^[^\w]*[A-Z]{0,3}\s*[$€£]?\s*-?\(?\d[\d,. ]*[.,]\d{2}\)?\s*\$?\s*(?:CAD|USD)?$")
+
+
+def _turned(result: Any, turn: int, width: float, height: float) -> list[Any]:
+    """The OCR's lines as on the page turned clockwise by ``turn`` (90, 180, 270): each four-cornered box carried over,
+    its corners again in order (top left, top right, bottom right, bottom left of the upright line)."""
+
+    def move(x: float, y: float) -> tuple[float, float]:
+        if turn == 90:
+            return height - y, x
+        if turn == 180:
+            return width - x, height - y
+        return y, width - x
+
+    out = []
+    for quad, text, score in result:
+        pts = sorted((move(float(p[0]), float(p[1])) for p in quad), key=lambda p: (p[1], p[0]))
+        top, bottom = sorted(pts[:2]), sorted(pts[2:])
+        out.append([[list(top[0]), list(top[1]), list(bottom[1]), list(bottom[0])], text, score])
+    return out
+
+
+def _label_side(result: Any) -> int:
+    """Rows where an amount stands right of a label ("Total ... 105.00") less those where it stands left of one."""
+    lines = []
+    for quad, text, _score in result:
+        xs, ys = [float(p[0]) for p in quad], [float(p[1]) for p in quad]
+        lines.append((str(text).strip(), min(xs), max(xs), min(ys), max(ys)))
+    side = 0
+    for text, x0, x1, y0, y1 in lines:
+        if not _ROW_LABEL.search(text) or any(ch.isdigit() for ch in text[-4:]):
+            continue
+        for other, a0, a1, b0, b1 in lines:
+            overlap = min(y1, b1) - max(y0, b0)
+            if overlap > 0.5 * min(y1 - y0, b1 - b0) and _ROW_AMOUNT.match(other) and (a0 >= x1 or a1 <= x0):
+                side += 1 if a0 >= x1 else -1
+    return side
+
+
+def _upright_turn(result: Any, width: float, height: float) -> int:
+    """The clockwise quarter turn that sets a page scanned turned upright: 90 or 270 when most of its long lines run
+    down the page (whichever puts the amounts right of their labels), 180 when they run across but the amounts
+    stand left of their labels; else 0. The OCR reads each line's words right (it turns the line to read it):
+    only where the lines are on the page is turned."""
+    long = [q for q, t, _s in result if len(str(t).strip()) >= 4]
+    if len(long) < 6:
+        return 0
+    tall = sum(
+        (max(p[1] for p in q) - min(p[1] for p in q)) > 1.5 * (max(p[0] for p in q) - min(p[0] for p in q))
+        for q in long
+    )
+    if tall > 0.6 * len(long):
+        sides = {t: _label_side(_turned(result, t, width, height)) for t in (90, 270)}
+        return max(sides, key=lambda t: sides[t])
+    return 180 if _label_side(result) <= -2 else 0  # an upright page never scores below 0 (1,300 benchmark scans)
 
 
 def _skew(result: Any, width: float, height: float) -> float:
@@ -381,7 +545,8 @@ def _image_pngs(path: Path, max_pages: int) -> list[bytes]:
         for i, frame in enumerate(ImageSequence.Iterator(img)):
             if i >= max_pages:
                 break
-            out.append(_picture_png(ImageOps.exif_transpose(frame.copy())))
+            upright = ImageOps.exif_transpose(frame.copy())
+            out.append(_picture_png(flatten_photo(upright) or upright))
     return out
 
 
@@ -525,7 +690,9 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 sources.add("di")
             elif use_ocr:
                 try:
-                    pages.append(ocr_image(_scan_png(doc, page), number))
+                    scanned = ocr_image(_scan_png(doc, page), number)
+                    scanned.dpi = _native_dpi(page) or scanned.dpi  # the page is rendered finer than it was scanned
+                    pages.append(scanned)
                     sources.add("ocr")
                 except Exception as exc:  # a page OCR cannot read is reported as empty, never fatal
                     log.warning("%s page %d: OCR failed (%s)", path.name, number, exc)

@@ -465,6 +465,12 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # "IN833.79" / "IN833.7.9" (printed IN83379): even the plainer form keeps a dot between digits that the
             # readers do not agree on, so it may be a speck too. A person looks.
             speck = bool(re.search(r"\d[.,]\d", plain))
+        if field in ("invoice_number", "po_number") and layout_source != "text" and len(forms) == 1:
+            # "No.4.6" (printed No. 46), read so by both OCR reads: on a scan, a number that reads like a decimal
+            # may hold a speck the readers share. A person looks.
+            speck = bool(re.fullmatch(r"\d{1,4}[.,]\d{1,2}", next(iter(forms))))
+            if speck:
+                reasons.append("a dot between its digits may be a speck on the scan")
         if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the

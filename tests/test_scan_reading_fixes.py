@@ -236,6 +236,7 @@ def test_terms_with_ocrs_full_width_comma_keep_their_discount():
 
     # Fresh scan seed 9702: "2%10，Net30" lost its early-payment discount ("Net 30", shown as likely).
     assert _terms("2%10，Net30") == "2% 10 Net 30"
+    assert _terms("Net·30") == _terms("Net ·30") == "Net 30"  # scan seed 9102: a speck read as a middle dot
 
 
 def test_a_registration_number_line_never_labels_a_tax_amount(tmp_path):
@@ -346,3 +347,82 @@ def test_a_bilingual_label_after_a_fax_number_on_the_same_line(tmp_path):
         *_TOTALS,
     ]  # fmt: skip
     assert analyze(_pdf(tmp_path, lines, size=8), today=TODAY).fields["invoice_date"].value == "2026-04-10"
+
+
+def test_a_product_named_shipping_cartons_is_not_the_freight(tmp_path):
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.capture.reader import read_fields
+
+    # Scan seed 9811: "Shipping cartons 18x12x12" took the quantity beside it (100, read "1.00") as the freight.
+    lines = [
+        (60, 300, "Description"), (330, 300, "Qty"), (400, 300, "Unit price"), (480, 300, "Amount"),
+        (60, 316, "Shipping cartons 18x12x12"), (330, 316, "100"), (400, 316, "47.04"), (480, 316, "4,704.00"),
+        (380, 500, "Shipping"), (480, 500, "25.00"),
+    ]  # fmt: skip
+    charges = read_fields(build_layout(_pdf(tmp_path, lines), ocr=False))["other_charges"]
+    assert [r.value for r in charges] == [25.0]  # the freight in the totals is still read
+
+
+def test_a_percent_sign_ocr_read_as_hao_is_a_percent_sign(monkeypatch):
+    import io
+
+    from PIL import Image
+
+    from ap_coder.capture import layout
+
+    # Scan seed 9811: "QST/ TVQ (9,975号)" made the rate 9,975.00 the QST.
+    quad = [[10, 10], [200, 10], [200, 30], [10, 30]]
+    found = [(quad, "QST/ TVQ (9,975号)", 0.9), (quad, "(19.56号% per annum)", 0.9)]
+    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: found)
+    png = io.BytesIO()
+    Image.new("RGB", (400, 400), "white").save(png, format="PNG")
+    page = layout.ocr_image(png.getvalue(), 1)
+    assert " ".join(w.text for w in page.words) == "QST/ TVQ (9,975%) (19.56% per annum)"
+
+
+def test_a_date_that_reads_both_ways_is_not_taken_as_after_the_day_it_arrived(tmp_path):
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.capture.reader import read_fields
+
+    # Fresh seeds 9821 and 9931: "03/02/2026" arrived on 27 Feb; 2 March (three days after it came in) was preferred
+    # to 3 February (24 days before) and shown as likely.
+    lines = [(60, 55, "Lakeshore Plumbing Ltd."), (380, 55, "INVOICE"), (380, 75, "Invoice No."), (470, 75, "FA97024"),
+             (380, 90, "Date"), (470, 90, "03/02/2026"), *_TOTALS]  # fmt: skip
+    layout = build_layout(_pdf(tmp_path, lines), ocr=False)
+    assert read_fields(layout, received=dt.date(2026, 2, 27))["invoice_date"][0].value == "2026-02-03"
+    assert read_fields(layout, received=dt.date(2026, 3, 3))["invoice_date"][0].value == "2026-03-02"
+
+
+def test_terms_with_two_specks_before_net_keep_their_discount():
+    from ap_coder.capture.reader import _terms
+
+    # Fresh scan seed 9821: "2%10,.Net45" lost its early-payment discount, shown as likely "Net 45".
+    assert _terms("Terms of Payment:2%10,.Net45") == _terms("2% 10,. Net 45") == "2% 10 Net 45"
+
+
+def test_a_street_number_with_a_comma_under_logo_initials_is_not_a_po(tmp_path):
+    from ap_coder.capture.layout import build_layout
+    from ap_coder.capture.reader import read_fields
+
+    # Fresh seed 9931: the logo's initials "PO" (Plomberie Outaouais) over "9777, boul. des Laurentides" made 9777 a
+    # purchase order number, shown as likely.
+    lines = [(290, 50, "PO"), (210, 75, "Plomberie Outaouais S.E.N.C."), (250, 92, "9777, boul. des Laurentides"),
+             (250, 106, "Montréal (QC) H4V 0L7"), (380, 140, "Facture"), (380, 160, "No."), (470, 160, "FA-6926"),
+             *_TOTALS]  # fmt: skip
+    assert not read_fields(build_layout(_pdf(tmp_path, lines), ocr=False))["po_number"]
+
+
+def test_an_invoice_number_both_ocr_reads_print_like_a_decimal_goes_to_a_person():
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import CHECK, Box, Reading
+
+    # Fresh scan seed 9821: "No. 46" read "No.4.6" by both OCR engines, shown as likely.
+    box = [Box(1, 0.8, 0.08, 0.9, 0.1)]
+    both = {s: {"invoice_number": [Reading("invoice_number", "4.6", "4.6", box, 1.0, "label-inline")]}
+            for s in ("rules", "ocr2")}  # fmt: skip
+    assert fuse(both, [], fields=("invoice_number",), layout_source="ocr")[0]["invoice_number"].status == CHECK
+    # A text PDF prints what it prints; a longer number with a dot is a format ("2025.0142"), not a speck.
+    assert fuse(both, [], fields=("invoice_number",), layout_source="text")[0]["invoice_number"].status != CHECK
+    dotted = {s: {"invoice_number": [Reading("invoice_number", "2025.0142", "2025.0142", box, 1.0, "label-inline")]}
+              for s in ("rules", "ocr2")}  # fmt: skip
+    assert fuse(dotted, [], fields=("invoice_number",), layout_source="ocr")[0]["invoice_number"].status != CHECK
