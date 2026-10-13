@@ -569,8 +569,6 @@ def _label_box(hit: _LabelHit) -> Box:
 
 
 def _registration_line(line: Line, hit: _LabelHit) -> bool:
-    from .normalize import find_gst_numbers, find_qst_numbers
-
     after = line.text[hit.end :]
     return bool(_REG_WORDS.search(plain(after[:12])) or find_gst_numbers(after) or find_qst_numbers(after))
 
