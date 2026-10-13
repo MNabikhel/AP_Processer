@@ -126,3 +126,31 @@ def test_delivery_date_stays_one_label_not_a_delivery_and_a_date(tmp_path):
         *_TOTALS,
     ]  # fmt: skip
     assert analyze(_pdf(tmp_path, lines), today=TODAY).fields["invoice_date"].value == "2026-04-12"
+
+
+def test_inv_date_is_not_an_invoice_number_label_and_a_title_reads_no_value_under_another_label(tmp_path):
+    # Fresh seed 9301: "Inv. Date" was taken for the invoice number's label, and the big "INVOICE" title took the
+    # account number printed under "Account #" below it.
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"),
+        (60, 279, "Invoice"), (190, 279, "Inv. Date"), (257, 279, "Account #"), (390, 279, "PO Date"),
+        (60, 291, "63-18513"), (185, 291, "06/20/2025"), (257, 291, "C-97134"), (385, 291, "06/02/2025"),
+        *_TOTALS,
+    ]  # fmt: skip
+    path = _pdf(tmp_path, lines)
+    with pymupdf.open(path) as doc:
+        doc[0].insert_text((257, 190), "INVOICE", fontsize=26)
+        doc.saveIncr()
+    assert analyze(path, today=TODAY).fields["invoice_number"].value == "63-18513"
+
+
+def test_due_on_receipt_is_the_terms_not_a_due_date_label(tmp_path):
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "SALES INVOICE"),
+        (60, 219, "Inv #"), (160, 219, "Date of issue"), (257, 219, "Terms"), (459, 219, "Ship Date"),
+        (60, 233, "8306705"), (160, 233, "2025-10-07"), (257, 233, "Due on receipt"), (459, 233, "2025-10-06"),
+        *_TOTALS,
+    ]  # fmt: skip
+    fields = analyze(_pdf(tmp_path, lines), today=TODAY).fields
+    assert fields["due_date"].value is None  # was the ship date, right of "Due on receipt"
+    assert fields["payment_terms"].value == "Due on receipt"

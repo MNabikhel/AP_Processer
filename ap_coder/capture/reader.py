@@ -66,7 +66,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
         (rf"invoice\s*{_NO}", 1.0), (r"invoice\s*id\b", 0.95), (rf"inv\.?\s*{_NO}", 0.95),
         (rf"facture\s*{_NO}", 1.0), (r"(?:no|n\s?°|nº|numero|n)\.?\s*(?:de\s*)?(?:la\s*)?facture", 1.0),
         (rf"bill\s*{_NO}", 0.9), (rf"document\s*{_NO}", 0.85), (r"invoice\s*ref(?:erence)?\b", 0.85),
-(rf"credit\s*(?:note|memo)?\s*{_NO}", 0.95), (r"(?:sales|tax|commercial)\s*invoice\b", 0.6), (r"inv(?![a-z])\.?(?![-\d])(?!\s*(?:date|total|amount))", 0.55), (rf"note\s*de\s*credit\s*{_NO}", 0.95),
+(rf"credit\s*(?:note|memo)?\s*{_NO}", 0.95), (r"(?:sales|tax|commercial)\s*invoice\b", 0.6), (r"inv(?![a-z])(?![.\s]*(?:date|total|amount))\.?(?![-\d])", 0.55), (rf"note\s*de\s*credit\s*{_NO}", 0.95),
         (rf"statement\s*{_NO}", 0.6), (r"invoice\s*:", 0.7), (r"facture\s*:", 0.7), (r"invoice\b(?!\s*(?:date|total|amount|to\b|period))", 0.45),
         (r"facture\b(?!\s*(?:a\s*:?\s*[a-z]|date|de\s*la|totale))", 0.45),
         (r"(?:no|n\s?°|nº|n|numero)\.?\s*(?:de\s*)?(?:la\s*)?note\s*de\s*credit", 1.0), (r"credit\s*(?:note|memo)\b(?!\s*(?:date|total))", 0.6), (rf"ref(?:erence)?\.?\s*{_NO}?", 0.3), (r"(?:no\b\.?|n\s?°|nº|#)(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35),
@@ -88,7 +88,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
     ],
     "due_date": [
         (r"due\s*date", 1.0), (r"date\s*due", 0.95), (r"payment\s*due(?:\s*date)?", 0.9), (r"pay(?:able)?\s*by", 0.8),
-        (r"(?:date\s*d'?\s*)?echeance", 1.0), (r"date\s*limite(?:\s*de\s*paiement)?", 0.9), (r"due\s*on\b", 0.8),
+        (r"(?:date\s*d'?\s*)?echeance", 1.0), (r"date\s*limite(?:\s*de\s*paiement)?", 0.9), (r"due\s*on\b(?!\s*(?:receipt|demand))", 0.8),
         (r"a\s*payer\s*avant\s*le", 0.85), (r"payer\s*avant", 0.8), (r"please\s*pay\s*by", 0.95),
         (r"payable\s*avant(?:\s*le)?", 0.9), (r"due\b(?!\s*(?:to|from|upon|on\s*receipt))", 0.7),
     ],
@@ -566,8 +566,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
                 got = _value_reading(field, other, 0, 0.85 * hit.strength, "label-below")
                 if got:
                     break
-                if _label_hits(other):
-                    break  # the next row down is another label row: this label has no value under it
+                if _label_hits(other) or _LABEL_SHAPE.search(plain(other.text).strip()):
+                    break  # the next row down is another label ("Account #"): this label has no value under it
         if got is not None:
             out.append(got)
     return out
