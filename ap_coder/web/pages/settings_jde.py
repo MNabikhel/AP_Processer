@@ -13,9 +13,9 @@ from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
-from ap_coder import jde, ui
+from ap_coder import jde, jde_worksheet, ui
 from ap_coder.memory import vendor_key
 from ap_coder.store import Store
 from ap_coder.tax import OUTSIDE_CANADA, PROVINCES, province_label
@@ -101,6 +101,7 @@ def jde_context(store: Store) -> dict[str, Any]:
         "tax_codes": TAX_CODES,
         "an8_rows": [{"vendor": names.get(k, k), "an8": a} for k, a in js.an8_overrides.items()],
         "checklist": minimd.render(CHECKLIST),
+        "worksheet_labels": {q.id: q.question for q in jde_worksheet.QUESTIONS},
     }
 
 
@@ -244,3 +245,43 @@ async def save_an8(request: Request) -> JSONResponse:
     new.an8_overrides = {vendor_key(v): a[:8] for v, a in zip(vendors, numbers, strict=True) if vendor_key(v) and a}
     changed = jde.save(store, new, actor=reviewer())
     return done(request, URL + "#an8", "Address numbers saved." if changed else "Nothing changed.")
+
+
+# --- The worksheet for the JDE team -----------------------------------------------------------------------------
+
+
+@router.get("/settings/jde/worksheet.xlsx")
+def jde_worksheet_download(request: Request) -> Response:
+    """Every question AP Coder needs the JDE team to answer, what it uses now, and a column for the answers."""
+    store = get_store(request)
+    js, lookup = jde.load(store), store.vendor_ids()
+    data = jde_worksheet.build(
+        js, store.list_accounts("gl_accounts"), store.vendor_summaries(),
+        lambda name: jde.resolve_an8({"vendor_name": name}, lookup, js),
+    )  # fmt: skip
+    name = "AP Coder - questions for the JDE team.xlsx"
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})  # fmt: skip
+
+
+@router.post("/settings/jde/worksheet")
+async def jde_worksheet_import(request: Request, file: UploadFile = File(...)) -> JSONResponse:  # noqa: B008
+    """Apply the JDE team's answers; say what changed and what could not be used."""
+    store = get_store(request)
+    content = await file.read(10_000_001)
+    if len(content) > 10_000_000:
+        return refuse("This file is larger than 10 MB: it is not AP Coder's worksheet.")
+    result = jde_worksheet.read(content, jde.load(store))
+    if not result.changes and result.problems:
+        return refuse(" ".join(result.problems[:5]))
+    if result.changes:
+        jde.save(store, result.settings, reviewer())
+    from ap_coder.web.core import flash_message
+
+    head = (f"{ui.plural(len(result.changes), 'answer')} applied from the JDE team's worksheet." if result.changes
+            else "Nothing new in the worksheet.")  # fmt: skip
+    messages = [flash_message(head, "ok", result.changes[:40])]
+    if result.problems:
+        messages.append(flash_message("Not used (fix them in the worksheet and import it again):", "warn",
+                                      result.problems[:40]))  # fmt: skip
+    return done(request, URL, *messages)

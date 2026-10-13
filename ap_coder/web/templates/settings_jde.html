@@ -4,6 +4,27 @@
   <input type="text" name="{{ name }}" value="{{ js[name] }}" maxlength="{{ maxlen }}"{% if help %} title="{{ help }}"{% endif %}>
   {% if help %}<small class="muted">{{ help }}</small>{% endif %}</label>
 {%- endmacro %}
+<section class="card" id="worksheet">
+  <div class="card-head">
+    <div><h4>Questions for the JDE team</h4>
+      <p class="muted">One Excel file with every question AP Coder needs answered before the first load (company,
+        document types, R04110ZA's version and edits, amounts, tax areas, account mapping, supplier numbers), what it
+        uses now, and a column for each answer. Import it back here: AP Coder lists what changed.</p></div>
+  </div>
+  <div class="row">
+    <a class="btn" href="/settings/jde/worksheet.xlsx"><span class="ms" aria-hidden="true">download</span>Download the worksheet</a>
+    <form method="post" action="/settings/jde/worksheet" enctype="multipart/form-data" class="row" data-busy="Importing…">
+      <input type="file" name="file" accept=".xlsx" required aria-label="The JDE team's worksheet">
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">upload_file</span>Import the JDE team's answers</button>
+    </form>
+  </div>
+  {% if js.answers %}
+  <details class="st-sep"><summary>Answers kept from the worksheet ({{ js.answers | length }})</summary>
+    <ul>{% for k, v in js.answers.items() %}<li><b>{{ worksheet_labels.get(k, k) }}</b> {{ v }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+</section>
+
 <section class="card" id="general">
   <h4>JD Edwards E1 vouchers</h4>
   <p class="muted">Exports → <i>JD Edwards E1</i> writes F0411Z1 (pay items) and F0911Z1 (G/L lines) files for the Voucher

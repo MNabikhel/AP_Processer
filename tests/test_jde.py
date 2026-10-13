@@ -417,8 +417,10 @@ def test_zip_has_the_files_and_a_readme():
     )
     assert (name, mime) == ("ap_coder_jde_batch_12.zip", "application/zip")
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        assert sorted(zf.namelist()) == ["F0411Z1.csv", "F0911Z1.csv", "README.txt"]
+        assert sorted(zf.namelist()) == ["DRY_RUN.txt", "F0411Z1.csv", "F0911Z1.csv", "README.txt"]
         text = zf.read("README.txt").decode()
+        dry = zf.read("DRY_RUN.txt").decode()
+    assert "Will load: 1 voucher(s)" in dry and "HELD BACK  AP Coder #2" in dry and "no JDE supplier number" in dry
     assert "R04110ZA (or R04110Z) in PROOF mode" in text and "R04110ZA in FINAL mode" in text and "APC12" in text
     assert "F0911Z1.csv  5 row(s)" in text and "AP Coder #2: no JDE supplier number" in text
 

@@ -46,6 +46,9 @@
       </table>
     </div>
     <div class="row end">
+      {% if fmt == jde_format and ready %}
+      <a class="btn" href="/exports/jde/dry-run.txt" title="Exactly what a batch of these invoices would load into F0411Z1 / F0911Z1, row by row, and why any is held back. Nothing is exported."><span class="ms" aria-hidden="true">fact_check</span>Dry run</a>
+      {% endif %}
       <button class="btn primary" type="submit" id="export-go"{% if not selectable %} disabled{% endif %}>
         <span class="ms" aria-hidden="true">ios_share</span><span id="export-label">Export {{ selectable | plural("invoice") }}</span></button>
     </div>
