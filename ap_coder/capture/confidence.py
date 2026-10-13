@@ -430,6 +430,15 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                                    contested=contest.get(field, 0.0) > 0.25,
                                    confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
             conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), without, local_evidence))
+        if len(sources) > 1:
+            # Readers that agree each describe the same evidence their own way (the supplier template's "template",
+            # the rule reader's "label-right+adds-up"); which reading ranks first is chance, so the description
+            # with the better measured record counts.
+            for method in {r.method for _, r in g.readings} - {best.method}:
+                alt = evidence_key(field, sources, method, layout_source=layout_source,
+                                   contested=contest.get(field, 0.0) > 0.25,
+                                   confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
+                conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), alt, local_evidence))
         # A lone reader is never verified on its own measured record (the benchmark is synthetic):
         # verified also needs a second reader or a check to agree. The second OCR read of a scan
         # shares the first one's blind spots (a word OCR never saw), so with the rule reader it

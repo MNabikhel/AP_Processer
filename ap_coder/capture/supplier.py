@@ -558,6 +558,10 @@ def _find_anchor_words(rows: list[list[Word]], value: list[Word]) -> tuple[list[
             i0 -= 1
             over.insert(0, r[i0])
         phrase = r[i0 : i1 + 1][:4]
+        after = r[i1 + 1] if i1 + 1 < len(r) else None
+        glued_after = after is not None and after.box.x0 - r[i1].box.x1 < max(r[i1].box.height, 0.004)
+        if any(c.isdigit() for w in phrase for c in w.text) or (glued_after and any(c.isdigit() for c in after.text)):
+            continue  # part of a value above ("22 Jan 2026", the month of a date): it changes every invoice
         dist = vbox.y0 - rb.y1
         candidates.append(((0.9 if _looks_like_label(_join(phrase)) else 0.2) - 2 * dist, phrase, "above"))
     if not candidates:

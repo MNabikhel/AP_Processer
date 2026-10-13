@@ -402,3 +402,24 @@ def test_a_name_whose_first_letters_one_ocr_engine_missed_is_shown_whole():
     # A shorter name that is a whole word is not taken for a cut one ("Saint-Laurent" in "Équipements Saint-Laurent").
     other = {"rules": read("Saint-Laurent Inc.", 1.0), "ocr2": read("Groupe Saint-Laurent Inc.", 0.9)}
     assert fuse(other, [], fields=("vendor_name",))[0]["vendor_name"].value == "Saint-Laurent Inc."
+
+
+def test_agreeing_readers_count_the_best_measured_description_of_their_evidence():
+    """Learning benchmark (seed 77): once a supplier's template read the HST first, the value agreed by the rule reader
+    and confirmed by the totals was only likely, measured on fewer template cases. Which reading ranks first is chance:
+    the better-measured description counts."""
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import VERIFIED, Box, Reading
+
+    box = [Box(1, 0.35, 0.49, 0.39, 0.5)]
+
+    def read(field, value, method, score):
+        return [Reading(field, value, str(value), box, score, method)]
+
+    rules = {"subtotal": read("subtotal", 145.46, "label-right+adds-up", 1.0),
+             "hst_amount": read("hst_amount", 18.91, "label-right+adds-up", 0.9),
+             "grand_total": read("grand_total", 164.37, "label-right+adds-up", 1.0)}  # fmt: skip
+    template = {name: read(name, rs[0].value, "template", 1.0) for name, rs in rules.items()}
+    fields = ("subtotal", "hst_amount", "grand_total")
+    hst = fuse({"rules": rules, "template": template}, [], fields=fields)[0]["hst_amount"]
+    assert hst.status == VERIFIED, (hst.confidence, hst.evidence)
