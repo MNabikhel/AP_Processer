@@ -155,8 +155,8 @@ DISTRACTORS: dict[str, list[str]] = {
 _REG_WORDS = re.compile(r"\b(reg|registration|regist|no|number|num|#|n\s?°|nº|inscription|bn|business)\b|#", re.I)
 _SPLIT_BN = re.compile(r"\d{3,}[\d\s.-]*\s*R\s*[TP]\b", re.I)
 _PERCENT = re.compile(
-    r"\d+(?:[.,]\d+)?\s*%|@\s*\d{1,2}(?:[.,]\d{1,3})?\s*[%8]?(?![\d.,])|\(\s*\d{1,2}(?:\s*%|8|[.,]\d{1,3}\s*%)\s*\)"
-)  # 13%, @ 13%, (13%), and OCR's "@138" / "(138)"
+    r"\d+(?:[.,]\d+)?\.?\s*%|@\s*\d{1,2}(?:[.,]\d{1,3})?\s*[%8]?(?![\d.,])|\(\s*\d{1,2}(?:\s*%|8|[.,]\d{1,3}\s*%)\s*\)"
+)  # 13%, @ 13%, (13%), OCR's "@138" / "(138)", and a speck read as a period before the sign ("9,975.%")
 
 
 @dataclass

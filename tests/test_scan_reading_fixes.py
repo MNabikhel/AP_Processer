@@ -63,3 +63,26 @@ def test_a_po_in_a_header_grid_is_read_under_its_label_not_beside_it(tmp_path):
     ]  # fmt: skip
     result = analyze(_pdf(tmp_path, lines), today=TODAY)
     assert result.fields["po_number"].value == "P70-7926"
+
+
+def test_a_speck_read_as_a_period_before_cr_or_a_percent_sign_or_in_a_gst_number():
+    from ap_coder.capture.normalize import find_amounts, find_gst_numbers, parse_amount
+
+    assert parse_amount("$442.91.CR") == -442.91  # still a credit
+    assert (-442.91, 13, 24) in find_amounts("GST/HST(14%): $442.91.CR")
+    assert [g[0] for g in find_gst_numbers("Business Number 57165.3898 RT 0001")] == ["571653898RT0001"]
+
+
+def test_a_qst_rate_with_a_speck_before_its_percent_sign_is_not_the_qst(tmp_path):
+    lines = [
+        (60, 55, "Plomberie Gagnon ltée"), (60, 70, "1200 rue Principale, Laval (QC) H7N 1A1"),
+        (60, 85, "TPS/TVH: 226689644RT0001"), (60, 100, "TVQ: 1627777827TQ0001"),
+        (380, 55, "FACTURE"), (380, 75, "Facture n°"), (470, 75, "F-20417"), (380, 90, "Date"), (470, 90, "2026-05-02"),
+        (60, 300, "Description"), (480, 300, "Montant"), (60, 316, "Calibration of pressure gauges"),
+        (480, 316, "4 055,93 $"),
+        (380, 500, "Sous-total:"), (480, 500, "4 055,93 $"), (380, 515, "T.P.S. (5 %):"), (480, 515, "202,80 $"),
+        (380, 530, "T.V.Q. (9,975.%):"), (480, 530, "404,58 $"), (380, 545, "TOTAL:"), (480, 545, "4 663,31 $"),
+    ]  # fmt: skip
+    result = analyze(_pdf(tmp_path, lines), today=TODAY)
+    assert result.fields["qst_amount"].value == 404.58
+    assert result.fields["grand_total"].value == 4663.31

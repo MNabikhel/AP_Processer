@@ -42,14 +42,17 @@ _TOTALS_LABEL = re.compile(
 _OCR_THOUSANDS = re.compile(r"(?<=\d)[;:](?=\d{3}(?!\d))")
 _OCR_DECIMAL = re.compile(r"(?<=\d)[;:](?=\d{2}(?!\d))")
 _OCR_ONE = re.compile(r"(?<![A-Za-z\d])[Il](?=[,.]?\d{3}[.,]\d{2}(?!\d))")
+# A speck a scanner left after a number, read as a period: "9,975.%" (a rate), "$442.91.CR" (a credit).
+_OCR_SPECK = re.compile(r"(?<=\d)\.(?=\s?(?:%|(?i:cr)\b))")
 
 
 def _ocr_amount_text(s: str) -> str:
     """OCR slips in amounts, fixed in place (same length, so spans stay valid): the thousands comma or
-    decimal point printed as ";" or ":" ("1;864.71", "2447:70"), and the digit 1 as "I" or "l"
-    ("I,396.35")."""
+    decimal point printed as ";" or ":" ("1;864.71", "2447:70"), the digit 1 as "I" or "l" ("I,396.35"), and a
+    speck read as a period before a percent sign or "CR" ("9,975.%", "442.91.CR")."""
     s = _OCR_THOUSANDS.sub(",", s)
     s = _OCR_DECIMAL.sub(".", s)
+    s = _OCR_SPECK.sub(" ", s)
     return _OCR_ONE.sub("1", s)
 
 
@@ -306,7 +309,8 @@ def luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
-_BN = re.compile(r"(?<![\d-])(\d(?:[ -]?\d){8})[\s.:-]*(RT|R\s?T)[\s.:-]*(\d{4})(?!\d)", re.I)
+# The nine digits may be grouped by spaces or dashes, or a period where a scan left a speck ("57165.3898 RT 0001").
+_BN = re.compile(r"(?<![\d-])(\d(?:[ .-]?\d){8})[\s.:-]*(RT|R\s?T)[\s.:-]*(\d{4})(?!\d)", re.I)
 _BN9 = re.compile(r"(?<!\d)(\d{3}\s?\d{3}\s?\d{3})(?!\d)")
 _QST = re.compile(r"(?<!\d)(\d{10})[\s.:-]*(TQ|T\s?Q)[\s.:-]*(\d{4})(?!\d)", re.I)
 
@@ -316,7 +320,7 @@ def find_gst_numbers(text: str) -> list[tuple[str, int, int, bool]]:
     s = unicodedata.normalize("NFKC", text)
     out = []
     for m in _BN.finditer(s):
-        digits = re.sub(r"[\s-]", "", m.group(1))
+        digits = re.sub(r"[\s.-]", "", m.group(1))
         out.append((f"{digits}RT{m.group(3)}", m.start(), m.end(), luhn_ok(digits)))
     return out
 
