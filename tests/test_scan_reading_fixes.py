@@ -270,3 +270,29 @@ def test_a_total_label_with_ocrs_1_for_its_l_is_still_the_total(tmp_path):
         (420, 530, "Tota1CAD1,130.00"),
     ]  # fmt: skip
     assert analyze(_pdf(tmp_path, lines), today=TODAY).fields["grand_total"].value == 1130.0
+
+
+def test_a_street_number_under_the_invoice_title_is_not_the_invoice_number(tmp_path):
+    # Fresh digital seed 9801: the "Invoice" title read "2565 av. du Parc" below it as the invoice number.
+    lines = [
+        (60, 120, "Bill To"), (60, 160, "2565 av. du Parc"), (60, 175, "Montreal (QC) H2V 4H6"),
+        (180, 200, "Invoice"), (180, 213, "IN-2026-39513"), (380, 200, "Date"), (380, 213, "2026-04-10"),
+        *_TOTALS,
+    ]  # fmt: skip
+    path = _pdf(tmp_path, lines)
+    with pymupdf.open(path) as doc:
+        doc[0].insert_text((50, 60), "Invoice", fontsize=40)
+        doc.saveIncr()
+    assert analyze(path, today=TODAY).fields["invoice_number"].value == "IN-2026-39513"
+
+
+def test_a_bilingual_label_after_another_labels_colon_finds_its_value(tmp_path):
+    # Digital seed 9101: "... livraison: Payment Terms / Conditions de paiement:" left the terms for a person.
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (380, 75, "Invoice No."), (470, 75, "FA97024"), (380, 90, "Date"), (470, 90, "2026-04-10"),
+        (60, 122, "Service Address / Adresse de livraison: Payment Terms / Conditions de paiement:"),
+        (500, 122, "30 days"),
+        *_TOTALS,
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines, size=8), today=TODAY).fields["payment_terms"].value == "Net 30"

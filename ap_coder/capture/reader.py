@@ -206,6 +206,13 @@ def _label_hits(line: Line) -> list[_LabelHit]:
             break
         starts += sorted(more)
         hits = _hits_at(line, text, starts, chained=set(starts) - set(first))
+    # "Service Address / Adresse de livraison: Payment Terms / Conditions de paiement:": a bilingual label may also
+    # start after another label's colon.
+    after_colon = [m.end() for m in re.finditer(r":\s+(?=[a-z])", text) if m.end() not in starts]
+    if after_colon:
+        seen = {h.field for h in hits}
+        hits += [h for h in _hits_at(line, text, after_colon, chained=set(after_colon))
+                 if "/" in h.label_text and h.field not in seen]  # fmt: skip
     return hits
 
 
@@ -387,6 +394,13 @@ _MONTH_DAY = re.compile(
 _DAY_FIRST: ContextVar[bool | None] = ContextVar("day_first", default=None)
 
 
+_STREET = re.compile(
+    r"^\s*(?:[A-Za-zÀ-ÿ'.-]+\s+){0,3}?(?:st|street|ave?|avenue|rd|road|blvd|boulevard|dr|drive|way|cres|crescent|"
+    r"hwy|highway|pkwy|ln|lane|ct|court|pl|place|rue|ch|chemin|boul|route)\b\.?(?:\s|,|$)",
+    re.I,
+)
+
+
 def _value_reading(field: str, line: Line, start: int, base: float, method: str) -> Reading | None:
     """Read ``field`` from ``line.text[start:]``."""
     text = line.text
@@ -400,6 +414,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None
         if any(da <= a - start < db for _d, da, db, _amb in parse_dates(rest)):
             return None  # the day of a date ("30 Jun 2025"), not a number
+        if value.isdigit() and _STREET.search(text[b:]):
+            return None  # a street number ("4833 Barrington St", "2565 av. du Parc"), not an invoice or PO number
         if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
             base *= 0.5  # "PO-636.19": a dot OCR put inside the number, or a price; not to be trusted alone
         if field == "po_number" and (
