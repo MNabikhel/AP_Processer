@@ -31,6 +31,7 @@ def fresh_reading_memory():
 
     table_finder._found.clear()
     layout._pruned.clear()
+    layout._SCAN_PNGS.clear()
     store._FEEDBACK.clear()
     yield
     table_finder._found.clear()

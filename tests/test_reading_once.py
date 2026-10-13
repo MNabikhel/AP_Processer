@@ -136,3 +136,17 @@ def test_a_files_tables_are_looked_for_once(monkeypatch, tmp_path):
     other.write_bytes(b"%PDF another invoice")
     table_finder.find_tables(other)
     assert seen == [1, 2, 1, 2]
+
+
+def test_a_pages_image_is_made_once_for_both_engines(engine, tmp_path, monkeypatch):
+    monkeypatch.setattr(layout, "ocr_available", lambda: True)
+    made = []
+    real = layout._make_scan_png
+    monkeypatch.setattr(layout, "_make_scan_png", lambda doc, page: made.append(page.number) or real(doc, page))
+    scan = _scan(tmp_path / "scan.pdf")
+    layout.build_layout(scan)
+    layout.second_read_layout(scan)
+    assert made == [0]  # about a second a page, saved for the second engine
+    scan.write_bytes(scan.read_bytes() + b"\n")  # the file changed: its page is made again
+    layout.build_layout(scan)
+    assert made == [0, 0]

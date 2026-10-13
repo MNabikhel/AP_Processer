@@ -19,6 +19,7 @@ import functools
 import logging
 import os
 import statistics
+import threading
 import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
@@ -399,10 +400,33 @@ def _picture_png(picture: Any) -> bytes:
     return buf.getvalue()
 
 
+_SCAN_PNGS: dict[tuple[Any, ...], bytes] = {}  # the last few pages' images: both OCR engines read the same one
+_SCAN_PNGS_KEPT = 4
+_SCAN_PNGS_LOCK = threading.Lock()  # the dashboard's page reader reads in a thread of its own
+
+
 def _scan_png(doc: Any, page: Any) -> bytes:
     """The image OCR reads for a PDF page without text: for a PDF AP Coder made from a photo or a scan
     (``intake.py``), that picture's own pixels, as OCR read the picture before it was converted; any other page
-    rendered at ``OCR_DPI``."""
+    rendered at ``OCR_DPI``. Made once for both OCR engines (a page's PNG takes about a second)."""
+    try:
+        st = os.stat(doc.name)
+        key: tuple[Any, ...] | None = (doc.name, st.st_mtime_ns, st.st_size, page.number, page.rotation)
+    except (OSError, TypeError, AttributeError):  # a document only in memory: made each time
+        key = None
+    with _SCAN_PNGS_LOCK:
+        png = _SCAN_PNGS.get(key) if key else None
+    if png is None:
+        png = _make_scan_png(doc, page)
+        if key:
+            with _SCAN_PNGS_LOCK:
+                _SCAN_PNGS[key] = png
+                while len(_SCAN_PNGS) > _SCAN_PNGS_KEPT:
+                    _SCAN_PNGS.pop(next(iter(_SCAN_PNGS)))
+    return png
+
+
+def _make_scan_png(doc: Any, page: Any) -> bytes:
     from ..intake import made_from_picture, page_picture
 
     if made_from_picture(doc):
