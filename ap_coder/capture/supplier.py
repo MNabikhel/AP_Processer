@@ -1376,8 +1376,9 @@ def should_auto_approve(
     issues: Iterable[dict[str, Any]] | None = None,
 ) -> tuple[bool, str]:  # fmt: skip
     """Approve without a person only for an ``autonomous`` supplier, every printed header field
-    ``verified``, no failed check, no error-level validation issue and none of the findings that always need a
-    person (``touchless_gates``). Otherwise the reason it goes to review."""
+    ``verified``, the totals proven (subtotal, or the lines, + charges + tax = total), no failed check, no error-level
+    validation issue and none of the findings that always need a person (``touchless_gates``). Otherwise the reason it
+    goes to review."""
     if state != AUTONOMOUS:
         return False, f"supplier is {STATE_LABELS.get(state, state).lower()}, not autonomous"
     if capture is None:
@@ -1393,6 +1394,8 @@ def should_auto_approve(
         return False, "a check failed"
     failed = [c.get("code") or "check" for c in capture.checks if not c.get("ok", True)]
     totals_ok = any(c.get("code") == "TOTALS_ADD_UP" and c.get("ok") for c in capture.checks)
+    if not totals_ok and not failed:  # nothing failed, but nothing proved the money either
+        return False, "the totals could not be checked: subtotal (or the lines) + tax = total"
     if totals_ok:
         # Line items that do not sum to the subtotal (a line the reader could not separate) do not
         # make the header wrong once subtotal + charges + taxes = total: the voucher is the header.
