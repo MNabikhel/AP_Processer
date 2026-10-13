@@ -416,6 +416,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None  # the day of a date ("30 Jun 2025"), not a number
         if value.isdigit() and _STREET.search(text[b:]):
             return None  # a street number ("4833 Barrington St", "2565 av. du Parc"), not an invoice or PO number
+        if re.fullmatch(r"(?i)(?:unit|suite|ste|bureau|apt|room|local|piece|box)\s*#?\s*\d+[a-z]?", value):
+            return None  # part of an address ("Unit 7")
         if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
             base *= 0.5  # "PO-636.19": a dot OCR put inside the number, or a price; not to be trusted alone
         if field == "po_number" and (
@@ -729,8 +731,8 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
 
 _CONTACT = re.compile(
     r"@|www|https?:|\.(?:com|ca|net|org|qc\.ca)\b|^(?:bureau|suite|unit|local|apt|room|piece)\s*\d|"
-    r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph|p\.?\s?o\.?\s*date|podate|payment|echeance|"
-    r"modalites|reference|ref|c/o|attn|attention)\b|"
+    r"^(?:issued|dated?|due|terms|conditions|page|tel|phone|fax|ph(?=\s*[.:#(\d])|p\.?\s?o\.?\s*date|podate|payment|"
+    r"echeance|modalites|reference|ref|c/o|attn|attention|payments?\s+received|balance\s+(?:forward|due|brought))\b|"
     r":\s*$|^\d+(?:\s*,\s*|\s+)(?:[a-z]+\.?\s+)*(?:rue|boul|blvd|ave|av|st|rd|road|street|chemin|ch|route|hwy|dr|way|cres|pkwy)\b|"
     r"\s-\s(?:jan|feb|fev|mar|apr|avr|may|mai|jun|juin|jul|juil|aug|aou|sep|oct|nov|dec)"  # "Consulting services - September": a line item
 )

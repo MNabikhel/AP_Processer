@@ -296,3 +296,23 @@ def test_a_bilingual_label_after_another_labels_colon_finds_its_value(tmp_path):
         *_TOTALS,
     ]  # fmt: skip
     assert analyze(_pdf(tmp_path, lines, size=8), today=TODAY).fields["payment_terms"].value == "Net 30"
+
+
+def test_logo_initials_ph_are_not_a_phone_line_and_account_headings_are_not_the_supplier(tmp_path):
+    # Fresh digital seed 9901 (a utility bill): "PH Pinecrest Hydro" was skipped as a phone line ("Ph:") and the
+    # account heading "Payments received" was shown as the supplier, likely.
+    lines = [
+        (60, 55, "PH Pinecrest Hydro"), (60, 85, "2118 King St W"), (60, 97, "Barrie, ON L4T 5G7"),
+        (430, 50, "Billing Statement"), (360, 160, "Bill Number:"), (520, 160, "46839-B"),
+        (60, 245, "Payments received"), (300, 245, "-1,315.69"), (60, 260, "Balance Forward"), (300, 260, "0.00"),
+        *_TOTALS,
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines), today=TODAY).fields["vendor_name"].value == "Pinecrest Hydro"
+
+
+def test_an_address_unit_is_never_an_invoice_or_po_number():
+    from ap_coder.capture.reader import _value_reading
+    from ap_coder.capture.types import Box, Line, Word
+
+    w = Word("Unit 7", Box(1, 0.06, 0.1, 0.12, 0.11))
+    assert _value_reading("po_number", Line([w], w.box, w.text), 0, 1.0, "label-below") is None
