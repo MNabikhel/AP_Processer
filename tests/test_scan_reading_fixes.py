@@ -154,3 +154,30 @@ def test_due_on_receipt_is_the_terms_not_a_due_date_label(tmp_path):
     fields = analyze(_pdf(tmp_path, lines), today=TODAY).fields
     assert fields["due_date"].value is None  # was the ship date, right of "Due on receipt"
     assert fields["payment_terms"].value == "Due on receipt"
+
+
+def _titled(tmp_path, lines, title: str, at: tuple[float, float]):
+    path = _pdf(tmp_path, lines)
+    with pymupdf.open(path) as doc:
+        doc[0].insert_text(at, title, fontsize=22)
+        doc.saveIncr()
+    return path
+
+
+def test_a_title_never_reads_a_line_with_its_own_label_as_the_number(tmp_path):
+    # Fresh seed 9701: the "INVOICE" title read "Inv 7" under it as the invoice number, shown as likely.
+    lines = [(60, 55, "Courier Express Ltd."), (60, 70, "9 Dock Rd, Halifax, NS B3H 1A1"), (526, 79, "Inv 7"),
+             (380, 110, "Date"), (470, 110, "2026-04-10"), *_TOTALS]  # fmt: skip
+    number = analyze(_titled(tmp_path, lines, "INVOICE", (490, 55)), today=TODAY).fields["invoice_number"]
+    assert number.value != "Inv 7"
+
+
+def test_the_day_of_a_date_is_not_an_invoice_number(tmp_path):
+    # Fresh seed 9701: "30" of "30 Jun 2025" under a bilingual title was taken for the invoice number.
+    lines = [
+        (60, 55, "Northwind Fournitures inc."), (60, 70, "1200 rue Principale, Laval (QC) H7N 1A1"),
+        (520, 74, "30 Jun 2025"), (337, 89, "Invoice / Numéro de facture:"), (532, 89, "34-90735"),
+        *_TOTALS,
+    ]  # fmt: skip
+    number = analyze(_titled(tmp_path, lines, "INVOICE / FACTURE", (373, 45)), today=TODAY).fields["invoice_number"]
+    assert number.value == "34-90735"

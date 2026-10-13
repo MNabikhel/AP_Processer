@@ -389,6 +389,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         value, a, b = got
         if _looks_like_phone_or_postal(value) or parse_dates(value) or _MONTH_DAY.match(plain(value)):
             return None
+        if any(da <= a - start < db for _d, da, db, _amb in parse_dates(rest)):
+            return None  # the day of a date ("30 Jun 2025"), not a number
         if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
             base *= 0.5  # "PO-636.19": a dot OCR put inside the number, or a price; not to be trusted alone
         if field == "po_number" and (
@@ -538,6 +540,10 @@ def _label_box(hit: _LabelHit) -> Box:
     return union_all([w.box for w in words]) or hit.line.box
 
 
+def _own_label(line: Line, field: str) -> bool:
+    return any(h.field == field for h in _label_hits(line))
+
+
 def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
     """For each label: the value after it on the same line, else just right of it, else just below it
     (header grids print a row of labels over a row of values)."""
@@ -550,6 +556,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
             continue
         got = None
         for other in _right_of(lines, line)[:2]:
+            if _own_label(other, field):
+                break  # "Inv 7" beside or under a title: that line's own label reads its value
             if (_label_hits(other) or _LABEL_SHAPE.search(plain(other.text).strip())) and not _value_reading(
                 field, other, 0, 1.0, "x"
             ):
@@ -563,6 +571,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
         if got is None:
             lb = _label_box(hit)
             for other in _below(lines, line, lb)[:3]:
+                if _own_label(other, field):
+                    break
                 got = _value_reading(field, other, 0, 0.85 * hit.strength, "label-below")
                 if got:
                     break
