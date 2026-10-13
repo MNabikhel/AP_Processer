@@ -23,6 +23,7 @@ same as before the conversion, never a re-rendering of the page.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -38,6 +39,7 @@ log = logging.getLogger(__name__)
 
 ORIGINALS_FOLDER = "originals"
 CREATOR = "AP Coder image to PDF"  # in the PDF's metadata: a page that is a picture AP Coder put there
+TURNED = "AP Coder turned upright"  # a scanned PDF from elsewhere that AP Coder showed upright (its pages as they were)
 MAX_FRAMES = 200  # pages taken from one multi-page TIFF
 PAGE_LONG_SIDE = 11 * 72  # a picture without a believable resolution becomes a letter-sized page (points)
 MIN_DPI, MAX_DPI = 50, 1200  # a resolution outside these is not believed
@@ -123,12 +125,14 @@ def _encoded(frame: Any, source: Path, raw: bytes, single: bool) -> tuple[bytes,
     lossy = jpeg or source.suffix.lower() in HEIF_EXTENSIONS
     flat = flatten_photo(ImageOps.exif_transpose(frame.copy()) if orientation != 1 else frame) if single else None
     if flat is not None:
+        if frame.info.get("dpi"):
+            flat.info["dpi"] = frame.info["dpi"]  # a scanner's dark bed: still the resolution it was scanned at
         buf = io.BytesIO()
         if lossy:
             flat.save(buf, "JPEG", quality=FLAT_QUALITY, subsampling=0)
         else:
             flat.save(buf, "PNG")
-        return buf.getvalue(), 0, flat  # no believable resolution: a letter-sized page
+        return buf.getvalue(), 0, flat  # a phone's photo states no believable resolution: a letter-sized page
     if single and jpeg and frame.mode in ("RGB", "L") and orientation in (1, *_ROTATION):
         return raw, _ROTATION.get(orientation, 0), frame
     picture = _flat(ImageOps.exif_transpose(frame.copy()) if orientation != 1 else frame.copy())
@@ -161,7 +165,7 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
                 width, height = shown.size
                 w, h = _page_size(shown, width, height)
                 page = doc.new_page(width=w, height=h)
-                page.insert_image(page.rect, stream=data)
+                page.insert_image(page.rect, stream=data, keep_proportion=False)  # a fax's 204 x 98 dpi: page-sized
                 if turn:
                     page.set_rotation(turn)
         if not doc.page_count:
@@ -204,50 +208,62 @@ def to_pdf(path: str | Path) -> Converted:
 def turn_upright(pdf: str | Path, turns: dict[int, int]) -> Converted | None:
     """Show upright the pages OCR found scanned turned (``turns``: page number -> the clockwise quarter turn that
     sets it upright), so the review screen highlights each value where the page shows it. Only the pages' rotation
-    changes, never what is printed on them. A PDF AP Coder made from a picture is its own and is turned where it is
-    (None); any other is kept in ``originals/`` as it came and the turned copy takes its place, its note naming the
-    original as for a picture (returned, as :func:`to_pdf` returns a picture's)."""
+    changes, never what is printed on them. A PDF AP Coder made (from a picture, or turned before) is its own and is
+    turned where it is (None); any other is kept in ``originals/`` as it came and the turned copy takes its place, its
+    note naming the original as for a picture (returned, as :func:`to_pdf` returns a picture's). Nothing is left
+    behind when the file can't be written: the PDF stays as it was."""
     import pymupdf
 
     pdf = Path(pdf)
     raw = pdf.read_bytes()
-    with pymupdf.open(stream=raw, filetype="pdf") as doc:
-        ours = made_from_picture(doc)
-        for number, turn in turns.items():
-            if 1 <= number <= doc.page_count and turn % 360:
-                page = doc[number - 1]
-                page.set_rotation((page.rotation + turn) % 360)
-        if ours:
+    part = pdf.with_name(pdf.name + ".part")
+    kept: Path | None = None
+    made_copy = made_folder = False
+    try:
+        with pymupdf.open(stream=raw, filetype="pdf") as doc:
+            ours = (doc.metadata or {}).get("creator") in (CREATOR, TURNED)
+            for number, turn in turns.items():
+                if 1 <= number <= doc.page_count and turn % 360:
+                    page = doc[number - 1]
+                    page.set_rotation((page.rotation + turn) % 360)
             note = None
-        else:
-            sha = hashlib.sha256(raw).hexdigest()
-            kept = _free_name(pdf.parent / ORIGINALS_FOLDER, pdf.name, raw)
-            note = {"original": pdf.name, "sha256": sha, "kept": f"{ORIGINALS_FOLDER}/{kept.name}"}
-            meta = doc.metadata or {}
-            doc.set_metadata({**{k: v for k, v in meta.items() if v and k != "format" and k != "encryption"},
-                              "creator": CREATOR, "keywords": json.dumps(note, ensure_ascii=True)})  # fmt: skip
-        part = pdf.with_name(pdf.name + ".part")
-        doc.save(part, garbage=3, deflate=True)
-        pages = doc.page_count
-    if note is None:
+            if not ours:
+                sha = hashlib.sha256(raw).hexdigest()
+                kept = _free_name(pdf.parent / ORIGINALS_FOLDER, pdf.name, raw)
+                note = {"original": pdf.name, "sha256": sha, "kept": f"{ORIGINALS_FOLDER}/{kept.name}"}
+                meta = doc.metadata or {}
+                doc.set_metadata({**{k: v for k, v in meta.items() if v and k != "format" and k != "encryption"},
+                                  "creator": TURNED, "keywords": json.dumps(note, ensure_ascii=True)})  # fmt: skip
+            doc.save(part, garbage=3, deflate=True)
+            pages = doc.page_count
+        if kept is not None and not kept.exists():
+            made_folder = not kept.parent.exists()
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            kept.write_bytes(raw)
+            made_copy = True
         os.replace(part, pdf)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        if made_copy and kept is not None:
+            kept.unlink(missing_ok=True)
+            if made_folder:
+                with contextlib.suppress(OSError):
+                    kept.parent.rmdir()
+        raise
+    if note is None or kept is None:
         return None
-    kept.parent.mkdir(parents=True, exist_ok=True)
-    if not kept.exists():
-        kept.write_bytes(raw)
-    os.replace(part, pdf)
     return Converted(pdf, kept, note["sha256"], pages)
 
 
 def original_of(pdf: str | Path) -> dict[str, Any] | None:
-    """For a PDF AP Coder made from a picture: {"original": its name, "sha256", "kept": where it is, relative to the
-    PDF's folder}; None for any other PDF (or a file that isn't one)."""
+    """For a PDF AP Coder made from a picture, or a scan it turned upright: {"original": its name, "sha256", "kept":
+    where it is, relative to the PDF's folder}; None for any other PDF (or a file that isn't one)."""
     try:
         import pymupdf
 
         with pymupdf.open(pdf) as doc:
             meta = doc.metadata or {}
-            if meta.get("creator") != CREATOR:
+            if meta.get("creator") not in (CREATOR, TURNED):
                 return None
             note = json.loads(meta.get("keywords") or "{}")
     except Exception:  # noqa: BLE001 - not a PDF, damaged, or no note: not one of ours
@@ -294,6 +310,15 @@ def page_picture(doc: Any, page: Any) -> Any | None:
             picture.load()
     except Exception:  # noqa: BLE001 - an image PyMuPDF stores another way: rendered instead
         return None
+    # A picture with taller pixels than wide (a standard fax: 204 dpi across, 98 down) is shown at the page's
+    # shape: its rows stretched, as a fax viewer shows it, or OCR would read squashed letters.
+    across, down = page.cropbox.width, page.cropbox.height
+    if across > 0 and down > 0 and picture.width and picture.height:
+        stretch = (down / across) / (picture.height / picture.width)
+        if stretch > 1.25:
+            picture = picture.resize((picture.width, round(picture.height * stretch)))
+        elif stretch < 0.8:
+            picture = picture.resize((round(picture.width / stretch), picture.height))
     turn = page.rotation % 360
     if turn:
         picture = picture.rotate(-turn, expand=True)  # Pillow turns counter-clockwise; the page turns clockwise

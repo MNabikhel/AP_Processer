@@ -26,7 +26,8 @@ backup of the database is made automatically once a day when AP Coder starts (th
   differently (shortened words, plurals, word order, French or English), other vendors' lines for the same item
   count when they agree, a vendor's usual account is learned, and the latest decision wins when AP changes how it
   codes something. An account is filled in only when the evidence is strong; a weak match (an account's name,
-  the vendor master's default) is shown under *Suggested GL accounts* instead. On the new benchmark more lines
+  the vendor master's default) is shown under *Suggested GL accounts* instead (with the chat model loaded it is
+  filled in, but such an invoice is never approved without a person). On the new benchmark more lines
   get an account and 99.5% of them are right (95-98% before). Coding stays fast with years of ERP history.
   Details: [CODING.md](CODING.md).
 - **The math is proven on every invoice.** Subtotal (or, when none is printed, the lines) plus charges and taxes

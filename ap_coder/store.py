@@ -2874,6 +2874,10 @@ class Store:
             if copy_dir or (restored_dir and str(restored_dir[0]).strip()):
                 detail["note"] = "second backup folder cleared: set it again in Settings (Data & backups)"
             self._log(conn, "backup_restored", detail=detail)
+        mine = str(self.path.resolve())
+        with _FEEDBACK_LOCK:  # the lessons kept for the database as it was
+            for key in [k for k in _FEEDBACK if k[0] == mine]:
+                _FEEDBACK.pop(key, None)
         return safety
 
     # --- Learning memory ------------------------------------------------------------------------------
@@ -2886,9 +2890,15 @@ class Store:
         if vendor_name is not None:
             sql, args = sql + " WHERE vendor_key = ?", (vendor_key(vendor_name),)
         with self._conn() as conn:
-            # Lessons are only ever added (ids never reused) or deleted, never changed: the highest id and the count
-            # tell whether the ones kept are still the ones in the database.
-            stamp = tuple(conn.execute("SELECT MAX(id), COUNT(*) FROM feedback").fetchone())
+            # Lessons are only ever added or deleted, never changed: the highest id, the count and the newest lesson
+            # itself tell whether the ones kept are still the ones in the database. (The id alone is not enough: a
+            # database restored from a backup, or made again where one was deleted, gives its next lesson an id a
+            # lesson it no longer has once had.)
+            stamp = tuple(conn.execute(
+                "SELECT MAX(id), COUNT(*), (SELECT created_at || '|' || COALESCE(vendor_key, '') || '|' || "
+                "COALESCE(description, '') || '|' || COALESCE(final_gl, '') FROM feedback ORDER BY id DESC LIMIT 1) "
+                "FROM feedback"
+            ).fetchone())  # fmt: skip
             key = (str(self.path.resolve()), limit, vendor_name)
             with _FEEDBACK_LOCK:
                 kept = _FEEDBACK.get(key)

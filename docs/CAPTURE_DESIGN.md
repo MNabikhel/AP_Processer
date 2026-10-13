@@ -321,7 +321,7 @@ invoices (seed 9961) into harder pictures and read them with OCR only (values sc
 |---|---:|---:|---:|
 | phone photo: page on a desk, tilted up to 6°, taken at an angle, uneven light | 90.9% → **100%** | 63.9% → **100%** | 88.9% → **100%** |
 | page scanned sideways | 21.4% → **98.1%** | 0% → **86.1%** | 47.2% → **94.4%** |
-| page scanned upside down | 23.1% → **98.1%** | 0% → **83.3%** | 36.1% → **97.2%** |
+| page scanned upside down | 23.1% → **98.4%** | 0% → **86.1%** | 36.1% → **97.2%** |
 | fax, fine (200 dpi, black and white) | 99.5% | 94.4% | 100% |
 | fax, standard (200 × 100 dpi) | 93.7% | 61.1% | 88.9% → 91.7% |
 | fax at 100 dpi | 67.0% | 8.3% | 75.0% → **100%** |
@@ -329,23 +329,28 @@ invoices (seed 9961) into harder pictures and read them with OCR only (values sc
 - **Phone photos** (`layout.flatten_photo`): a photo of a page on a darker desk is flattened as a scanner app does it.
   The page is found (OpenCV, which comes with the OCR), cut out of the desk and squared up, which undoes its tilt
   and the keystone of a photo taken at an angle. It happens when the photo is made a PDF (`intake.py`), so the page
-  is read, shown and highlighted flattened; the photo as taken is kept in `originals/`. A scan (it fills its
-  picture), a fax and a page on a white desk are left as they are: on the benchmark's 600 scans and faxes, none
-  was flattened. A photo reads in about 6 s against 5 s for a scan (it is a larger picture).
+  is read, shown and highlighted flattened; the photo as taken is kept in `originals/`. The desk must show on all
+  four sides: a scan (it fills its picture, even one with a dark band across its header), a fax and a page on a
+  white desk are left as they are, and a scanner's dark bed keeps the resolution it was scanned at. On the
+  benchmark's 600 scans and faxes, none was flattened. A photo reads in about 6 s against 5 s for a scan (it is a
+  larger picture).
 - **Pages scanned turned** (`layout._upright_turn`): OCR reads each line's words right on a turned page (it turns
   a line to read it), but the lines lie where the turned page has them, so labels and amounts no longer line up.
   When most long lines run down the page, the page was scanned sideways: the OCR's lines are turned a quarter turn,
-  whichever way puts the amounts right of their labels. When the lines run across but the amounts stand left of
+  whichever way puts the amounts right of their labels (when each label shares a line with its amount, whichever
+  puts the totals below the invoice's title and dates). When the lines run across but the amounts stand left of
   their labels, it was scanned upside down. On the benchmark's 1,300 OCR reads of upright scans, no upright page
   scored below 0 (amounts right of labels count up, left count down); a page is turned at −2. The words are read on
   the upright page, at no extra OCR cost. The app then shows the PDF upright (`intake.turn_upright`): only the
   page's rotation changes, never what it prints. The scan as it came is kept in `originals/`, its note naming it
-  as a picture's does, so the same scan sent again is found. A PDF AP Coder made from a picture is its own and is
-  turned where it is.
+  as a picture's does, so the same scan sent again is found; the copy is marked as turned (not as made from a
+  picture), so OCR still reads its pages as shown. A PDF AP Coder made is its own and is turned where it is.
 - **Pages scanned too coarsely** (`analyze`, `COARSE_DPI`): the readings' confidence was measured on scans of
-  150 dpi and up. On a page scanned under 140 dpi (the picture filling a PDF page says its resolution; an image
-  file says it, or its long side is taken as a letter page's), every value is read but none is shown as verified
-  or likely: a person checks them. A label OCR misread ("INVO1CE" for INVOICE) is never taken for a value.
+  150 dpi and up. On a page scanned under 140 dpi (the picture filling a PDF page says its resolution, the
+  coarser way: a standard fax TIFF of 204 × 98 dpi is 98, and its rows are stretched to the page's shape for OCR,
+  as a fax viewer shows them; an image file says it, or its long side is taken as a letter page's), every value
+  is read but none is shown as verified or likely: a person checks them. A label OCR misread ("INVO1CE" for
+  INVOICE) is never taken for a value.
 - **Left as it is**: a standard fax (100 dpi down the page) still read 3 of 36 invoices with a wrong value shown
   as *likely*. On two, the customer's name was taken for the supplier's where the fax garbled "Bill to"; on the
   other, a GST number. No value was shown as *verified* wrongly.

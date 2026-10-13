@@ -122,3 +122,10 @@ def test_the_models_answer_is_kept_to_the_header_as_capture_reads_it():
         "vendor_name": "Montroyal Inc.", "invoice_number": "ACMR-1187", "invoice_date": "2026-09-14",
         "currency": "CAD", "grand_total": 21578.51, "subtotal": 18768.0, "hst_amount": -130.0, "gst_amount": -938.4,
     }  # fmt: skip
+
+
+def test_amounts_the_model_writes_as_text_are_read_as_printed():
+    # Sweep: "1 234,56" became 123456.00, "1.234,56" 1.23, "-12.50 CR" +12.50, and "nan" / "Infinity" were kept.
+    got = clean_header({"grand_total": "1 234,56 $", "subtotal": "1.234,56", "gst_amount": "-12.50 CR",
+                        "hst_amount": "nan", "qst_amount": "Infinity", "pst_amount": float("inf")})  # fmt: skip
+    assert got == {"grand_total": 1234.56, "subtotal": 1234.56, "gst_amount": -12.5}

@@ -29,7 +29,9 @@ its usual account, which wins over other vendors' lines; at the same level, a pe
 still apply after this, as before.
 
 With the local chat model loaded, a weak suggestion is still used, as before (on the sample invoices an account
-name match beat a small model), and the model is asked only about lines with no suggestion at all.
+name match beat a small model), and the model is asked only about lines with no suggestion at all. A line coded
+this way says so ("A weak match, for a person to confirm") and, like a line the model coded, never lets its
+invoice be approved without a person, however trusted its supplier.
 
 ### Lines worded differently
 

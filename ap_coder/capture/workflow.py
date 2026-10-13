@@ -123,7 +123,8 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     limit (a second approver), a foreign currency with no exchange rate to check the limit with, and not yet read
     by the page reader, or not every page of it (``pages_read``: the pages it read, at most
     AP_PAGE_READER_MAX_PAGES), a text file the page reader cannot look at (``no_page``), or a line of ``output``
-    whose account only the local chat model chose (``inference.MODEL_SUGGESTED``)."""
+    whose account only the local chat model chose (``inference.MODEL_SUGGESTED``) or a weak match coded
+    (``offline_coder.WEAK_MATCH``: an account's name, the vendor's default, an account AP moved away from)."""
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     coding = _amounts(capture, output)
     over_limit = store.touchless_limit() if store.over_touchless_limit(coding) else None
@@ -131,9 +132,10 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     currency = str(coding["currency"]).strip().upper()
     no_rate = "" if currency in store.fx_rates() else currency  # the limit is in CAD: unknown without a rate
     from ..inference import MODEL_SUGGESTED
+    from ..offline_coder import WEAK_MATCH
 
     guessed = sum(1 for li in (output or {}).get("line_items") or []
-                  if str(li.get("reasoning_justification") or "").startswith(MODEL_SUGGESTED))  # fmt: skip
+                  if str(li.get("reasoning_justification") or "").startswith((MODEL_SUGGESTED, WEAK_MATCH)))  # fmt: skip
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
                            awaiting_page_reader=awaiting_page_reader, pages_unread=unread,

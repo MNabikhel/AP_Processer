@@ -85,8 +85,8 @@ PHOTO_DESK_CONTRAST = 40  # the paper is at least this much lighter than the des
 def flatten_photo(picture: Any) -> Any | None:
     """A phone photo of a page, as a scanner app makes it: the page cut out of the desk around it and squared up
     (its tilt and the keystone of a photo taken at an angle undone). None when the picture isn't one: a scan fills
-    its picture, a page on a white desk shows no edge, a crumpled page no four corners (or OpenCV isn't installed:
-    it comes with the OCR)."""
+    its picture, a page on a white desk shows no edge, a crumpled page no four corners, a page that runs off the
+    picture is not one lying on a desk (or OpenCV isn't installed: it comes with the OCR)."""
     try:
         import cv2
         import numpy as np
@@ -115,6 +115,9 @@ def flatten_photo(picture: Any) -> Any | None:
             break
     if quad is None:
         return None
+    sh, sw = gray.shape
+    if any(x < 0.01 * sw or x > 0.99 * sw or y < 0.01 * sh or y > 0.99 * sh for x, y in quad):
+        return None  # the "page" runs off the picture: a scan with a dark band (a header), not a page on a desk
     inside = np.zeros_like(gray)
     cv2.fillConvexPoly(inside, quad.astype(np.int32), 255)
     desk = gray[inside == 0]
@@ -418,11 +421,13 @@ def _native_dpi(page: Any) -> float:
     for info in infos:
         x0, y0, x1, y1 = info.get("bbox") or (0.0, 0.0, 0.0, 0.0)
         across, down = abs(x1 - x0) / 72, abs(y1 - y0) / 72
-        px = sorted((float(info.get("width") or 0), float(info.get("height") or 0)))
-        inches = sorted((across, down))
-        if inches[0] <= 0 or across * down * 72 * 72 < 0.25 * area:
-            continue
-        best = max(best, min(px[0] / inches[0], px[1] / inches[1]))
+        wide, high = float(info.get("width") or 0), float(info.get("height") or 0)
+        if min(wide, high) < 300 or across <= 0 or down <= 0 or across * down * 72 * 72 < 0.25 * area:
+            continue  # a small picture (a stretched background), not the scan
+        a, b = (list(info.get("transform") or (1, 0)) + [0, 0])[:2]
+        if abs(b) > abs(a):  # placed turned a quarter: its width runs down the page
+            wide, high = high, wide
+        best = max(best, min(wide / across, high / down))
     return round(best, 1)
 
 
@@ -445,9 +450,12 @@ def _turned(result: Any, turn: int, width: float, height: float) -> list[Any]:
 
     out = []
     for quad, text, score in result:
-        pts = sorted((move(float(p[0]), float(p[1])) for p in quad), key=lambda p: (p[1], p[0]))
-        top, bottom = sorted(pts[:2]), sorted(pts[2:])
-        out.append([[list(top[0]), list(top[1]), list(bottom[1]), list(bottom[0])], text, score])
+        pts = [move(float(p[0]), float(p[1])) for p in quad]
+        # The corners by where they lie, as a slightly tilted line keeps them: top left has the smallest x + y,
+        # bottom right the largest, top right the smallest y - x, bottom left the largest.
+        corners = (min(pts, key=lambda p: p[0] + p[1]), min(pts, key=lambda p: p[1] - p[0]),
+                   max(pts, key=lambda p: p[0] + p[1]), max(pts, key=lambda p: p[1] - p[0]))  # fmt: skip
+        out.append([[list(c) for c in corners], text, score])
     return out
 
 
@@ -468,6 +476,25 @@ def _label_side(result: Any) -> int:
     return side
 
 
+_HEAD_WORD = re.compile(r"(?i)\b(?:invoice|facture|bill\s*to|sold\s*to|factur[ée]\s*a|date)\b")
+_TOTAL_WORD = re.compile(r"(?i)\b(?:sub\s*-?\s*total|total|balance\s*due|amount\s*due|montant)\b")
+
+
+def _top_down(result: Any) -> float:
+    """How far below the invoice's title and dates its totals stand (positive on a page read upright); 0 when the
+    page has not both."""
+    heads, totals = [], []
+    for quad, text, _score in result:
+        cy = sum(float(p[1]) for p in quad) / max(len(quad), 1)
+        if _TOTAL_WORD.search(str(text)):
+            totals.append(cy)
+        elif _HEAD_WORD.search(str(text)):
+            heads.append(cy)
+    if not heads or not totals:
+        return 0.0
+    return statistics.mean(totals) - statistics.mean(heads)
+
+
 def _upright_turn(result: Any, width: float, height: float) -> int:
     """The clockwise quarter turn that sets a page scanned turned upright: 90 or 270 when most of its long lines run
     down the page (whichever puts the amounts right of their labels), 180 when they run across but the amounts
@@ -481,8 +508,10 @@ def _upright_turn(result: Any, width: float, height: float) -> int:
         for q in long
     )
     if tall > 0.6 * len(long):
-        sides = {t: _label_side(_turned(result, t, width, height)) for t in (90, 270)}
-        return max(sides, key=lambda t: sides[t])
+        turned = {t: _turned(result, t, width, height) for t in (90, 270)}
+        # The amounts beside their labels; when they say nothing (each label on one line with its amount), the
+        # totals below the invoice's title and dates.
+        return max(turned, key=lambda t: (_label_side(turned[t]), _top_down(turned[t])))
     return 180 if _label_side(result) <= -2 else 0  # an upright page never scores below 0 (1,300 benchmark scans)
 
 

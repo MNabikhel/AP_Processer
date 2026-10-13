@@ -14,11 +14,12 @@ def _totals(checks: list[dict]) -> list[dict]:
     return [c for c in checks if c["code"] == "TOTALS_ADD_UP"]
 
 
-def test_without_a_subtotal_the_lines_and_taxes_must_make_the_total():
+def test_without_a_subtotal_lines_and_taxes_that_make_the_total_prove_it():
     (ok,) = _totals(run_checks({"grand_total": 1130.0, "hst_amount": 130.0}, _lines(600.0, 400.0)))
     assert ok["ok"] and ok["detail"] == "lines 1,000.00 + tax 130.00 = total 1,130.00"
-    (wrong,) = _totals(run_checks({"grand_total": 1130.0, "hst_amount": 130.0}, _lines(600.0, 300.0)))
-    assert not wrong["ok"]
+    # Lines that miss the total prove nothing either way (a line missed or misread is common): the header's total
+    # and tax are not failed for it, and with nothing proven the invoice goes to a person (below).
+    assert _totals(run_checks({"grand_total": 1130.0, "hst_amount": 130.0}, _lines(600.0, 300.0))) == []
 
 
 def test_with_neither_a_subtotal_nor_lines_the_totals_cannot_be_checked():
@@ -40,3 +41,18 @@ def test_an_invoice_whose_totals_were_not_checked_is_never_approved_without_a_pe
     assert not ok and "totals could not be checked" in reason
     proven = CaptureResult(fields, checks=[{"code": "TOTALS_ADD_UP", "ok": True, "detail": ""}])
     assert should_auto_approve(AUTONOMOUS, proven, checks_ok=True)[0]
+
+
+def test_a_line_missed_never_marks_a_right_total_as_failed():
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import Box, Reading
+
+    # Sweep: a total of 113.00 and HST 13.00 read by two readers, one of the two lines missed: the new no-subtotal
+    # check failed them both ("lines 60.00 + tax 13.00 != total 113.00") and sent them to a person as wrong.
+    box = [Box(1, 0.7, 0.8, 0.8, 0.82)]
+    by_source = {s: {"grand_total": [Reading("grand_total", 113.0, "113.00", box, 1.0, "label-right")],
+                     "hst_amount": [Reading("hst_amount", 13.0, "13.00", box, 1.0, "label-right")]}
+                 for s in ("rules", "ocr2")}  # fmt: skip
+    fields, checks = fuse(by_source, _lines(60.0), fields=("grand_total", "hst_amount"))
+    assert not any(c["code"] == "TOTALS_ADD_UP" and not c["ok"] for c in checks)
+    assert not any("check failed" in r for f in fields.values() for r in f.reasons)

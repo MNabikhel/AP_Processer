@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 
 MODEL_NAME = "local reader (no AI model)"
 NO_HISTORY = "No earlier approval to learn from: pick the account."
+WEAK_MATCH = "A weak match, for a person to confirm"  # a line ``assign_weak`` coded: never approved without a person
 _TAXES = (("gst_amount", "GST"), ("hst_amount", "HST"), ("pst_amount", "PST"), ("qst_amount", "QST"))
 # The rates a Canadian invoice charges (a rate worked out from rounded amounts snaps to the nearest one), and
 # the province a rate names when only one has it (HST 13% Ontario, 14% Nova Scotia from April 2025; PST 6% SK).
@@ -268,6 +269,8 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
         best = top if top is not None and (top.auto or assign_weak) else None
         why = "; ".join(best.reasons) if best else not_sure(top) if top is not None else NO_HISTORY
+        if best is not None and not best.auto:
+            why = f"{WEAK_MATCH}: {why}" if why else WEAK_MATCH
         lines.append(
             LineItem(
                 line_number=number,

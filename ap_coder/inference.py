@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -505,15 +506,11 @@ def clean_header(data: dict[str, Any]) -> dict[str, Any]:
         if value is None or (isinstance(value, str) and not value.strip()):
             continue
         if name in _HEADER_AMOUNTS:
-            if isinstance(value, str):
-                text = value.strip().replace("$", "").replace(" ", "")
-                negative = text.startswith("(") and text.endswith(")") or text.upper().endswith("CR")
-                text = re.sub(r"(?i)cr$|[()]", "", text).replace(",", "")
-                try:
-                    value = float(text) * (-1 if negative else 1)
-                except ValueError:
-                    continue
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if isinstance(value, str):  # as printed: "1 234,56 $", "(12.00)", "12.50 CR", read as the page reads it
+                from .capture.normalize import parse_amount
+
+                value = parse_amount(value)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 continue
             out[name] = round(float(value), 2)
         elif name in ("invoice_date", "due_date"):

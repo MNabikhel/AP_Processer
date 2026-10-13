@@ -426,3 +426,39 @@ def test_an_invoice_number_both_ocr_reads_print_like_a_decimal_goes_to_a_person(
     dotted = {s: {"invoice_number": [Reading("invoice_number", "2025.0142", "2025.0142", box, 1.0, "label-inline")]}
               for s in ("rules", "ocr2")}  # fmt: skip
     assert fuse(dotted, [], fields=("invoice_number",), layout_source="ocr")[0]["invoice_number"].status != CHECK
+
+
+def test_a_logo_mark_ocr_read_as_a_character_is_not_part_of_the_name():
+    from ap_coder.capture.reader import _without_logo_initials
+    from ap_coder.capture.types import Box, Word
+
+    def words(*texts: str) -> list[Word]:
+        return [Word(t, Box(1, 0.1 + 0.1 * i, 0.05, 0.18 + 0.1 * i, 0.07), 0.9, "ocr") for i, t in enumerate(texts)]
+
+    def name(*texts: str) -> str:
+        return " ".join(w.text for w in _without_logo_initials(words(*texts)))
+
+    # End-to-end sweep: a phone photo's diamond logo became "■ Birchmount Logistics Limited".
+    assert name("■", "Birchmount", "Logistics", "Limited") == "Birchmount Logistics Limited"
+    assert name("•Acme", "Supply", "Ltd.") == "Acme Supply Ltd."
+    assert name("Smith", "&", "Sons", "Ltd.", "|") == "Smith & Sons Ltd."  # "&" inside the name stays
+
+
+def test_a_number_before_words_that_only_look_like_a_street_is_still_read():
+    from ap_coder.capture.reader import _STREET, _value_reading
+    from ap_coder.capture.types import Box, Line, Word
+
+    def line(text: str) -> Line:
+        words = [Word(t, Box(1, 0.5 + 0.05 * i, 0.1, 0.54 + 0.05 * i, 0.12), 0.95, "ocr")
+                 for i, t in enumerate(text.split())]  # fmt: skip
+        return Line(words, Box(1, 0.5, 0.1, 0.5 + 0.05 * len(words), 0.12), text)
+
+    # Sweep: "Dr." or "Ct" right after a number is not a street ("30125 Dr. Patel"); a street's kind follows its name
+    # in English and comes first in French and for highways.
+    for street in (" Barrington St", " Main Street, Toronto", ", boul. des Laurentides", " av. du Parc",
+                   " rue Sainte-Catherine O", " Hwy 7 S"):  # fmt: skip
+        assert _STREET.search(street), street
+    for value_line in ("30125 Dr. Patel", "556677 Ct 4"):
+        got = _value_reading("invoice_number", line(value_line), 0, 1.0, "label-right")
+        assert got is not None and got.value == value_line.split()[0], value_line
+    assert _value_reading("invoice_number", line("Page - 1"), 0, 1.0, "label-right") is None

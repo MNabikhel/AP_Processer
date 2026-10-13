@@ -484,3 +484,18 @@ def test_bulk_approve_leaves_an_invoice_with_open_edits_for_its_review_screen(cl
     answer = client.post("/review/bulk-approve", data={"ids": [edited, *others]}, headers=PAGE).json()
     assert store.get_invoice(edited)["status"] == REVIEW
     assert "edits open on its review screen" in flash_text(client, answer)
+
+
+@pytest.mark.parametrize(("name", "said"), [("IMG_2001.jpg", "Made into a PDF from the picture"),
+                                            ("scan.pdf", "Shown upright: the scan")])  # fmt: skip
+def test_the_review_screen_says_where_the_file_as_it_came_in_is_kept(client, store, name, said):
+    import json
+    import sqlite3
+
+    inv = store.list_invoices(REVIEW)[0]
+    meta = {**(store.get_invoice(inv["id"]).get("meta") or {}),
+            "original": {"file": name, "kept": f"/x/originals/{name}", "sha256": "0" * 64}}  # fmt: skip
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("UPDATE invoices SET meta = ? WHERE id = ?", (json.dumps(meta), inv["id"]))
+    text = client.get(f"/review/{inv['id']}").text
+    assert said in text and f"<b>{name}</b>" in text and "<code>originals</code>" in text

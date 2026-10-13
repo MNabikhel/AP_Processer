@@ -104,7 +104,7 @@ def _image_pages(path: str, sizes_only: bool = False) -> list[tuple[float, float
     """(width pt, height pt, PNG) per frame of a picture (a TIFF can hold several pages)."""
     from PIL import Image, ImageOps, ImageSequence
 
-    from ap_coder.capture.layout import open_image
+    from ap_coder.capture.layout import flatten_photo, open_image
 
     out = []
     with open_image(path) as img:  # an iPhone's HEIC/HEIF photo too, with pillow-heif
@@ -113,6 +113,7 @@ def _image_pages(path: str, sizes_only: bool = False) -> list[tuple[float, float
                 break
             source_dpi = _image_dpi(frame)
             pic = ImageOps.exif_transpose(frame.copy())
+            pic = flatten_photo(pic) or pic  # the page as OCR read it (a photo of a page on a desk: flattened)
             width_pt, height_pt = round(pic.width * 72 / source_dpi, 2), round(pic.height * 72 / source_dpi, 2)
             if sizes_only:
                 out.append((width_pt, height_pt, b""))

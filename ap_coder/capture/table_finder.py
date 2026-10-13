@@ -131,13 +131,14 @@ def page_pictures(path: str | Path, max_pages: int = MAX_PAGES) -> list[bytes]:
     if path.suffix.lower() in IMAGE_EXTENSIONS:
         from PIL import Image, ImageOps, ImageSequence
 
-        from .layout import _on_paper, open_image
+        from .layout import _on_paper, flatten_photo, open_image
 
         with open_image(path) as img:
             for i, frame in enumerate(ImageSequence.Iterator(img)):
                 if i >= max_pages:
                     break
-                pic = _on_paper(ImageOps.exif_transpose(frame.copy()))
+                upright = ImageOps.exif_transpose(frame.copy())
+                pic = _on_paper(flatten_photo(upright) or upright)  # the page as OCR read it
                 pic.thumbnail((PICTURE_SIDE, PICTURE_SIDE), Image.BILINEAR)
                 buf = io.BytesIO()
                 pic.save(buf, "PNG")

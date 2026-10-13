@@ -89,3 +89,17 @@ def test_the_learning_memory_is_read_again_only_when_it_changes(tmp_path, connec
     store.forget_history()
     assert store.feedback_rows() == []
     assert store.feedback_rows(vendor_name="Northwind Supplies") == []
+
+
+def test_the_learning_memory_kept_is_never_another_databases(tmp_path):
+    """Sweep: a database made again where one was deleted (or restored from a backup) gives its next lesson an id a
+    lesson it no longer has once had: the highest id and the count matched, and the old lessons were returned."""
+    path = tmp_path / "data" / "ap.db"
+    first = Store(path)
+    first.import_history([_lesson(1)])
+    assert [r["description"] for r in first.feedback_rows()] == ["Copy paper case 1"]
+    for suffix in ("", "-wal", "-shm"):
+        path.with_name(path.name + suffix).unlink(missing_ok=True)
+    again = Store(path)
+    again.import_history([_lesson(2)])
+    assert [r["description"] for r in again.feedback_rows()] == ["Copy paper case 2"]

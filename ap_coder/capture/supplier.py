@@ -1347,7 +1347,7 @@ def touchless_gates(
     second approver; ``awaiting_page_reader``: not every reader has read it yet; ``pages_unread``: pages of it the
     page reader did not read (it reads at most AP_PAGE_READER_MAX_PAGES pages); ``no_page``: a text file (.md, .txt),
     which the page reader cannot look at, so only one reader has read it; ``model_coded_lines``: lines whose account
-    only the local chat model chose (neither AP's approvals nor a coding rule)."""
+    only the local chat model chose, or a weak match (neither AP's approvals nor a coding rule)."""
     reasons: list[str] = []
     for issue in issues or []:
         reason = ALWAYS_A_PERSON.get(str(issue.get("code") or ""))
@@ -1371,7 +1371,8 @@ def touchless_gates(
         reasons.append(f"{pages_unread} of its pages {'was' if pages_unread == 1 else 'were'} not read by OvisOCR2")
     if model_coded_lines > 0:
         n = model_coded_lines
-        reasons.append(f"{n} line{'' if n == 1 else 's'} coded only by the local model, not from AP's approvals")
+        reasons.append(f"{n} line{'' if n == 1 else 's'} coded by the local model or from a weak match, not from "
+                       "AP's approvals")  # fmt: skip
     return reasons
 
 

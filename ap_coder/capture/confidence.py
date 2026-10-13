@@ -158,17 +158,18 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
         checks.append({"code": "TOTALS_ADD_UP", "ok": ok, "fields": fields,
                        "detail": f"subtotal {sub:,.2f}{extra} + tax {tax_sum:,.2f} {'=' if ok else '≠'} total {total:,.2f}"})  # fmt: skip
     elif sub is None and total is not None and line_items:
-        # No subtotal printed: the lines (+ charges + taxes) must still make the total, or nothing proves the money.
+        # No subtotal printed: lines (+ charges + taxes) that make the total prove the money. Lines that don't prove
+        # nothing either way (a line missed or read wrong is common: LINES_ADD_UP is soft), so the header's total
+        # and taxes are not failed for it; with nothing proven the invoice still goes to a person.
         amounts = [li.amount for li in line_items if li.amount is not None]
         if amounts:
             tax_sum = sum(taxes.values()) if taxes else (tax_total or 0.0)
             line_sum = round(sum(amounts), 2)
-            ok = amounts_equal(round(line_sum + (charges or 0.0) + tax_sum, 2), total, 0.011)
-            fields = ["grand_total", *taxes] if taxes else ["grand_total"]
-            extra = f" + charges {charges:,.2f}" if charges is not None else ""
-            checks.append({"code": "TOTALS_ADD_UP", "ok": ok, "fields": fields,
-                           "detail": f"lines {line_sum:,.2f}{extra} + tax {tax_sum:,.2f} {'=' if ok else '≠'} total "
-                                     f"{total:,.2f}"})  # fmt: skip
+            if amounts_equal(round(line_sum + (charges or 0.0) + tax_sum, 2), total, 0.011):
+                fields = ["grand_total", *taxes] if taxes else ["grand_total"]
+                extra = f" + charges {charges:,.2f}" if charges is not None else ""
+                checks.append({"code": "TOTALS_ADD_UP", "ok": True, "fields": fields,
+                               "detail": f"lines {line_sum:,.2f}{extra} + tax {tax_sum:,.2f} = total {total:,.2f}"})  # fmt: skip
     if taxes and tax_total is not None:
         ok = amounts_equal(round(sum(taxes.values()), 2), tax_total, 0.011)
         checks.append({"code": "TAXES_ADD_UP", "ok": ok, "fields": ["tax_total", *taxes],

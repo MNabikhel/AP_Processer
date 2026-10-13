@@ -8,6 +8,7 @@ import io
 from pathlib import Path
 
 import pymupdf
+import pytest
 from PIL import Image
 
 from ap_coder.capture import analyze, layout
@@ -78,3 +79,30 @@ def test_a_label_ocr_misread_is_not_the_invoice_number(tmp_path):
              (470, 75, "Date"), (470, 90, "2026-04-10"), (380, 500, "Total"), (480, 500, "1,130.00")]  # fmt: skip
     got = read_fields(build_layout(_pdf(tmp_path, lines), ocr=False))["invoice_number"]
     assert "INVO1CE" not in [r.value for r in got]
+
+
+def test_a_standard_fax_is_a_full_page_measured_by_its_coarser_rows(tmp_path):
+    from ap_coder import intake
+
+    # A fax-to-email TIFF in standard mode: 204 dpi across, 98 down. Sweep: it was letterboxed into its page, measured
+    # at 204 dpi (so the coarse-scan guard missed it), and OCR read it squashed to half its height.
+    fax = tmp_path / "fax.tif"
+    Image.new("L", (1728, 1078), 255).save(fax, dpi=(204, 98))
+    with pymupdf.open(intake.to_pdf(fax).pdf) as doc:
+        page = doc[0]
+        assert page.rect.width == pytest.approx(1728 / 204 * 72, rel=0.01)
+        assert page.rect.height == pytest.approx(1078 / 98 * 72, rel=0.01)
+        assert layout._native_dpi(page) == pytest.approx(98, abs=1)
+        assert intake.page_picture(doc, page).size == (1728, 2244)  # rows stretched 204/98, as a fax viewer shows them
+
+
+def test_a_small_stretched_background_is_not_the_scan(tmp_path):
+    pdf = tmp_path / "outlined.pdf"
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=612, height=792)
+        png = io.BytesIO()
+        Image.new("L", (2, 256), 230).save(png, format="PNG")
+        page.insert_image(page.rect, stream=png.getvalue(), keep_proportion=False)
+        doc.save(pdf)
+    with pymupdf.open(pdf) as doc:
+        assert layout._native_dpi(doc[0]) == 0.0  # unknown, not "scanned at 0 dpi"

@@ -395,9 +395,11 @@ _DAY_FIRST: ContextVar[bool | None] = ContextVar("day_first", default=None)
 
 
 _STREET = re.compile(
-    r"^\s*,?\s*(?:[A-Za-zÀ-ÿ'.-]+\s+){0,3}?(?:st|street|ave?|avenue|rd|road|blvd|boulevard|dr|drive|way|cres|crescent|"
-    r"hwy|highway|pkwy|ln|lane|ct|court|pl|place|rue|ch|chemin|boul|route)\b\.?(?:\s|,|$)",
-    re.I,
+    # "4833 Barrington St", "12 Main Street": a street's name, then its kind (English);
+    r"^\s*,?\s*(?:[A-ZÀ-Ý0-9][\w'.-]*\s+){1,3}(?i:st|street|ave?|avenue|rd|road|blvd|boulevard|dr|drive|way|cres|"
+    r"crescent|hwy|highway|pkwy|ln|lane|ct|court|pl|place)\b\.?(?:\s|,|$)|"
+    # "2565 av. du Parc", "9777, boul. des Laurentides", "1234 rue Sainte-Catherine", "4099 Hwy 7": its kind first.
+    r"^\s*,?\s*(?i:rue|boul(?:evard)?|av(?:enue)?|ch(?:emin)?|route|rang|mont[ée]e|hwy|highway)\b\.?\s+\S",
 )
 
 
@@ -425,6 +427,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None  # part of an address ("Unit 7")
         if value.translate(_DIGIT_LOOKALIKES).strip("#:.-").casefold() in _LABEL_WORDS:
             return None  # a label OCR misread ("INVO1CE"), not its value
+        if re.fullmatch(r"(?i)page-?\d{1,3}", value):
+            return None  # "Page - 1" (OCR's spaces beside the hyphen joined), not a number
         if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
             base *= 0.5  # "PO-636.19": a dot OCR put inside the number, or a price; not to be trusted alone
         if field == "po_number" and (
@@ -724,8 +728,19 @@ _REMIT = re.compile(r"(?:make\s*(?:all\s*)?cheques?\s*payable\s*to|payable\s*(?:
 _LEGAL_FORMS = {"LP", "LLP", "LLC", "INC", "LTD", "CO", "PLC", "SA", "SAS", "ULC", "SRL"}
 
 
+_LOGO_MARKS = "■□▪▫◆◇◊●○•·►▶★☆|*~"  # a logo's mark as OCR reads it, at the start of the name's line
+
+
 def _without_logo_initials(words: list[Word]) -> list[Word]:
-    """Drop a logo's initials printed on the name's line: "BT Bluewater Telecom" -> "Bluewater Telecom"."""
+    """Drop a logo's initials printed on the name's line: "BT Bluewater Telecom" -> "Bluewater Telecom"; and a mark
+    with no letter or digit in it, OCR's reading of a logo: "■ Birchmount Logistics Limited", "•Acme Supply"."""
+    words = list(words)
+    while words and not any(ch.isalnum() for ch in words[0].text):
+        words.pop(0)
+    while words and not any(ch.isalnum() for ch in words[-1].text):
+        words.pop()
+    if words and words[0].text[0] in _LOGO_MARKS:
+        words[0] = Word(words[0].text.lstrip(_LOGO_MARKS + " "), words[0].box, words[0].conf, words[0].source)
 
     def initials_of(ws: list[Word], n: int) -> str:
         # Word starts, and capitals inside words OCR glued together ("BirchmountHydraulics").
@@ -823,7 +838,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
         if plain(text) in customer_names:
             score *= 0.3
         words = _without_logo_initials(line.words)
-        if len(words) != len(line.words):
+        if words != line.words:
             text = " ".join(w.text for w in words)
         if any(w.source not in _AS_PRINTED for w in words):
             text = _ocr_name_fix(text)
