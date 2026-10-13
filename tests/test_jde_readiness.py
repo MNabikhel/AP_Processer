@@ -37,7 +37,8 @@ def test_the_worksheet_asks_every_open_question_of_the_jde_doc():
     """Each bullet under "Open questions for the JDE team" in docs/JDE_E1.md has a question in the worksheet."""
     doc = (ROOT / "docs" / "JDE_E1.md").read_text(encoding="utf-8")
     section = doc.split("## Open questions for the JDE team", 1)[1].split("\n## ", 1)[0]
-    bullets = [b for b in re.split(r"\n\* ", section) if b.strip()]
+    bullets = [b for b in re.split(r"\n\* ", section)[1:] if b.strip()]  # the text before the first bullet is not one
+    assert len(bullets) == 8
     asked = " ".join(f"{q.question} {q.jde_field}" for q in jde_worksheet.QUESTIONS).lower()
     needles = {  # one word or field of each bullet that its question must cover
         "company numbers": "company", "document type": "document type", "tax areas": "aais",

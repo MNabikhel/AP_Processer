@@ -79,19 +79,9 @@ _STATEMENT_TITLE = _any(
     r"releve mensuel",
     r"releve",
 )
-_AGING = _any(
-    r"aging",
-    r"ageing",
-    r"1-30",
-    r"31-60",
-    r"61-90",
-    r"over 90",
-    r"90\+(?: days)?",
-    r"> ?90",
-    r"plus de 90",
-    r"31 a 60",
-    r"61 a 90",
-    r"anciennete",
+_AGING = re.compile(  # aged-balance columns; numbers only where they stand alone (not inside a phone number)
+    r"(?<![\w-])(?:aging|ageing|1-30|31-60|61-90|over 90|90\+(?: days)?|> ?90|plus de 90|31 a 60|61 a 90|anciennete)"
+    r"(?![\w-])"
 )
 _UTILITY = _any(
     r"billing period",
@@ -277,7 +267,7 @@ def classify_document(doc: Document, email_text: str = "") -> Decision:
     listed = sum(
         1 for line in fold(doc.text[:MAX_TEXT].replace("\n", "\x00")).split("\x00") if _INVOICE_REF.search(line)
     )
-    if statement and (_find(_AGING, text) or listed >= 3) and not _find(_UTILITY, text):
+    if statement and (listed >= 3 or (listed >= 2 and _find(_AGING, text))) and not _find(_UTILITY, text):
         return Decision(STATEMENT, f'it says "{statement}" and lists {listed or "aged"} invoices')
     if invoice:
         return Decision(INVOICE, f'it says "{invoice}"')

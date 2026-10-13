@@ -211,8 +211,11 @@ names.
 ## Step 6: Process a test set
 
 Put **20–50 real invoices** in your invoices folder (**Process invoices** → *Open folder*), or
-upload them on **Process invoices**. Invoices that came by email: save the email as `.eml` (Outlook
-on the web or new Outlook: *Download*) into the folder, or save the PDF attachment itself.
+upload them on **Process invoices**. Invoices that came by email: save the email itself into the folder
+(classic Outlook: drag it there, a `.msg`; Outlook on the web or new Outlook: *Download*, a `.eml`). Each email
+is sorted: invoices to the review queue, statements to *Statements*, the rest (a reminder, a quote, a bank-detail
+change) under *Emails that need a person* on **Process invoices**. To have the AP mailbox do it, see
+[MAILBOX_SETUP.md](MAILBOX_SETUP.md).
 Aim for a representative mix:
 
 - your top vendors by volume, and the ones AP often recodes

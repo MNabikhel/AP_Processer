@@ -127,7 +127,7 @@ invoices from across Canada, with sample POs and a vendor list.
    - the business case, built from the pilot's own numbers.
 
 ```
-invoice (PDF, scan, photo, .eml) ─► local reader: text layer or OCR ─► fields + confidence, boxed on the page
+invoice (PDF, scan, photo, .eml/.msg) ─► local reader: text layer or OCR ─► fields + confidence, boxed on the page
         └─► page reader (OvisOCR2, every page, in the background) ─► agrees: verified · differs: check
                                                                      │
    fixed rules · vendor history · vendor master · account names ─────┤  local model (LM Studio),
@@ -303,7 +303,7 @@ bookmarked or opened in a second tab.
 | Rail section | Page | What it does |
 |---|---|---|
 | Work | **Review queue** | Today's work, the queue (filter, search and sort in the address), bulk approval of clean invoices, and the Second approval, Parked, Approved and Failed / rejected tabs. Each invoice opens its **review screen** (`/review/<id>`): the invoice image beside the editable header (incl. PO #, payment terms, due date, bank account to pay into); live **Checks**, each with what to do; the line grid (GL account and cost center dropdowns of your codes); tax lines with a tax-check table; the **PO match**; **GL suggestions** for lines the AI could not code; *Split a line* across GL accounts / cost centers; a GL posting preview; **Ask the vendor** drafts the email for what the invoice is missing (English or French). *Approve & teach*, *Reject*, *Delete*. The queue shows due dates and discount deadlines, can be sorted by due date, and clean invoices can be approved in bulk. A **Second approval** tab holds invoices over the approval limit; *Park* sets aside an invoice waiting for information (**Parked** tab); **Notes** keep the team informed. |
-| Work | **Process invoices** | Upload files or saved emails (`.eml`, attachments taken out), or process new files dropped into the data folder's `invoices/` (or run `watch`). |
+| Work | **Process invoices** | Upload files or saved emails (`.eml`, or `.msg` from classic Outlook), or process new files dropped into the data folder's `invoices/` (or run `watch`). Each email is **sorted** (invoice, credit note, statement, payment reminder, bank-detail change, not for AP): only invoices and credit notes reach the review queue, and *Emails that need a person* lists the rest, bank-detail changes first as possible fraud. Getting the AP mailbox's emails there: [docs/MAILBOX_SETUP.md](docs/MAILBOX_SETUP.md). |
 | Work | **Find an invoice** | For a vendor on the phone: search by vendor, invoice or PO number, or amount; see where each invoice is (in review, parked and why, approved by whom, exported in which batch, rejected) and when it is due; the ERP register too. |
 | Close & compliance | **Exports** | Approved invoices go to the ERP in batches (Excel, CSV, or a **custom CSV layout** matching your ERP's import); each invoice once; any batch can be downloaded again or undone; **approved PDFs** (stamp and coding page) per batch. Import the ERP's invoice register to catch bills already entered there. |
 | Close & compliance | **Month-end** | The accruals schedule: received not invoiced (from POs), invoices not in the ERP yet, expected recurring invoices; by GL; CSV. |
