@@ -442,7 +442,7 @@ _TERMS = [
     (re.compile(r"\bnet[\s.:]*(\d{1,3})(?!\d)", re.I), "Net {0}"),
     (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
     (re.compile(r"(?<!\d)(\d{1,3})\s*(?:days|jours|j\b)", re.I), "Net {0}"),
-    (re.compile(r"\bdue\s*(?:up)?on\s*receipt\b|payable\s*(?:a|à|sur|des|dès)\s*(?:la\s*)?r[ée]ception|on\s*receipt", re.I), "Due on receipt"),
+    (re.compile(r"\bdue[\s.]*(?:up)?on[\s.]*receipt\b|payable[\s.]*(?:a|à|sur|des|dès)[\s.]*(?:la[\s.]*)?r[ée]ception|on[\s.]*receipt", re.I), "Due on receipt"),  # a speck between words: "on.receipt"
 ]  # fmt: skip
 
 

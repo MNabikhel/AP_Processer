@@ -86,3 +86,11 @@ def test_a_qst_rate_with_a_speck_before_its_percent_sign_is_not_the_qst(tmp_path
     result = analyze(_pdf(tmp_path, lines), today=TODAY)
     assert result.fields["qst_amount"].value == 404.58
     assert result.fields["grand_total"].value == 4663.31
+
+
+def test_terms_with_a_speck_between_the_words_are_still_read():
+    from ap_coder.capture.reader import _terms
+
+    assert _terms("Payable on.receipt") == "Due on receipt"  # fresh scan seed 9301: was missing
+    assert _terms("Due upon. receipt") == "Due on receipt"
+    assert _terms("Payable à.réception") == "Due on receipt"
