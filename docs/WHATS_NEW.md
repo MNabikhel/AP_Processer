@@ -22,6 +22,13 @@ backup of the database is made automatically once a day when AP Coder starts (th
   older AP Coder 0.1 dashboard too), moves your data if it has to, and opens the new one.
 - The Streamlit dashboard and the public web demo built on it are retired: AP Coder no longer installs
   Streamlit.
+- **Better GL coding with no chat model.** A line is matched with what AP approved before even when it is worded
+  differently (shortened words, plurals, word order, French or English), other vendors' lines for the same item
+  count when they agree, a vendor's usual account is learned, and the latest decision wins when AP changes how it
+  codes something. An account is filled in only when the evidence is strong; a weak match (an account's name,
+  the vendor master's default) is shown under *Suggested GL accounts* instead. On the new benchmark more lines
+  get an account and 99.5% of them are right (95-98% before). Coding stays fast with years of ERP history.
+  Details: [CODING.md](CODING.md).
 - **One file to open per computer:** `APProcessor.bat` on Windows, `APProcessor.command` on a Mac. The old
   `install.bat`, `install.sh`, `start.bat` and `start.sh` are gone, and so is the top-level `terminal.bat`.
   An update removes them from an older folder by itself.

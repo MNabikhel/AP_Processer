@@ -20,11 +20,13 @@ stronger over time; a reviewer can delete any bad record.
 
 from __future__ import annotations
 
+import operator
 import re
 import unicodedata
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from typing import Any
 
 ACCEPTED, CORRECTED = "accepted", "corrected"
@@ -54,8 +56,19 @@ def _fold(text: str) -> str:
     return "".join(c for c in text if not unicodedata.combining(c)).lower()
 
 
-def _normalise(text: str) -> str:
+_CACHED_LENGTH = 300  # line descriptions and names come back on every invoice; a page's whole text does not
+
+
+def _normalise_text(text: str) -> str:
     return " ".join(re.sub(r"[^0-9a-z]+", " ", _fold(text)).split())
+
+
+_normalise_short = lru_cache(maxsize=131072)(_normalise_text)
+
+
+def _normalise(text: str) -> str:
+    """Lower case, no accents, letters and digits only, single spaces: "Câble Cat6, 1000'" -> "cable cat6 1000"."""
+    return _normalise_short(text) if len(text or "") <= _CACHED_LENGTH else _normalise_text(text)
 
 
 @lru_cache(maxsize=16384)  # called for every invoice on many pages; the same names come back
@@ -71,8 +84,16 @@ def vendor_key(name: str) -> str:
     return " ".join(words)
 
 
+def _token_set(text: str) -> frozenset[str]:
+    return frozenset(w for w in _normalise(text).split() if len(w) >= 3 and not w.isdigit() and w not in _STOP_WORDS)
+
+
+_token_set_short = lru_cache(maxsize=131072)(_token_set)
+
+
 def tokens(text: str) -> set[str]:
-    return {w for w in _normalise(text).split() if len(w) >= 3 and not w.isdigit() and w not in _STOP_WORDS}
+    """The words of a description that count for matching (3 letters or more, no plain numbers, no stop words)."""
+    return set(_token_set_short(text) if len(text or "") <= _CACHED_LENGTH else _token_set(text))
 
 
 def similarity(a: set[str], b: set[str]) -> float:
@@ -98,12 +119,54 @@ class Pattern:
     def decisions(self) -> int:
         return self.approvals + self.corrections
 
-    @property
-    def tokens(self) -> set[str]:
-        return tokens(self.description)
+    @cached_property
+    def tokens(self) -> frozenset[str]:
+        """Worked out once per pattern: matching reads them for every line of every invoice."""
+        return frozenset(tokens(self.description))
+
+
+_ROW_FIELDS = ("id", "vendor_key", "description", "final_gl", "final_cc", "outcome")
+
+
+def _fingerprint(rows: list[dict[str, Any]]) -> int:
+    """What a list of feedback rows says, in one number: the same rows read again give the same one."""
+    return hash(tuple(tuple(r.get(f) for f in _ROW_FIELDS) for r in rows))
+
+
+class RowsCache:
+    """One value worked out from a list of feedback rows, kept while the same rows come back: the lines of an
+    invoice, its checks and its review screen all read the same history. The same row objects are recognised at
+    once; rows read again from the database by what they say (a few milliseconds for tens of thousands). Rows
+    are read, never changed in place."""
+
+    def __init__(self) -> None:
+        self._slot: tuple[list[dict[str, Any]], int, Any, Any] | None = None
+
+    def get(self, rows: list[dict[str, Any]], extra: Any, build: Callable[[], Any]) -> Any:
+        slot = self._slot  # one read: another thread may replace it meanwhile
+        fingerprint = None
+        if slot is not None and slot[2] == extra and len(slot[0]) == len(rows):
+            if all(map(operator.is_, slot[0], rows)):  # the same rows (in the same order), in any list
+                return slot[3]
+            fingerprint = _fingerprint(rows)
+            if fingerprint == slot[1]:
+                self._slot = (list(rows), fingerprint, extra, slot[3])
+                return slot[3]
+        value = build()
+        self._slot = (list(rows), _fingerprint(rows) if fingerprint is None else fingerprint, extra, value)
+        return value
+
+
+_AGGREGATED = RowsCache()
 
 
 def aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
+    """The decisions in ``rows`` grouped by vendor, description and coding. Worked out once for the same rows
+    (the result is shared: read it, don't change it)."""
+    return _AGGREGATED.get(rows, None, lambda: _aggregate(rows))
+
+
+def _aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
     groups: dict[tuple[str, str, str, str], Pattern] = {}
     for r in rows:
         key = (r["vendor_key"], _normalise(r["description"]), r["final_gl"], r.get("final_cc") or "")
@@ -123,7 +186,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[Pattern]:
 def detect_vendors(patterns: list[Pattern], document_text: str, vendor_hint: str | None = None) -> set[str]:
     """Known vendors whose (normalised) name appears in the document."""
     doc = f" {_normalise(document_text)} "
-    found = {p.vendor_key for p in patterns if len(p.vendor_key) >= 4 and f" {p.vendor_key} " in doc}
+    found = {k for k in {p.vendor_key for p in patterns} if len(k) >= 4 and f" {k} " in doc}
     if vendor_hint:
         found.add(vendor_key(vendor_hint))
     return found

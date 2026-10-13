@@ -308,8 +308,9 @@ class InvoicePipeline:
                     layout = text_layout(result.extraction.content)
                 captured = read_invoice(path, self.store, layout=layout, page_text=page_text)
                 result.coding = code_from_capture(
-                    captured[0], self.reference, feedback, self.store, text=result.extraction.content
-                )
+                    captured[0], self.reference, feedback, self.store, text=result.extraction.content,
+                    assign_weak=provider == "local",
+                )  # fmt: skip
                 if provider == "local":
                     self._local_accounts(result.coding, history_text)
             else:
