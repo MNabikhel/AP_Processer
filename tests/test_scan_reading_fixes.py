@@ -316,3 +316,32 @@ def test_an_address_unit_is_never_an_invoice_or_po_number():
 
     w = Word("Unit 7", Box(1, 0.06, 0.1, 0.12, 0.11))
     assert _value_reading("po_number", Line([w], w.box, w.text), 0, 1.0, "label-below") is None
+
+
+def test_ocrs_full_width_qst_rate_with_an_8_for_its_percent_sign_is_not_an_amount():
+    from ap_coder.capture.reader import _PERCENT
+
+    # Fresh scan seed 9811: "QST/TVQ（9,9758）" was read as the amount -9.98.
+    assert _PERCENT.search("QST/TVQ（9,9758）") and _PERCENT.search("TVQ (9,975 %)")
+
+
+def test_a_logo_initial_after_the_legal_form_is_not_part_of_the_name():
+    from ap_coder.capture.reader import _without_logo_initials
+    from ap_coder.capture.types import Box, Word
+
+    words = [
+        Word(t, Box(1, 0.1 * i, 0.05, 0.1 * i + 0.08, 0.06))
+        for i, t in enumerate(["Prairie", "Landscaping", "LP", "P"])
+    ]
+    assert [w.text for w in _without_logo_initials(words)] == ["Prairie", "Landscaping", "LP"]
+
+
+def test_a_bilingual_label_after_a_fax_number_on_the_same_line(tmp_path):
+    # Digital seed 9921: "Fax / Téléc.: 905.555.2439 Issued / Date de facturation:" left the invoice date unread.
+    lines = [
+        (60, 55, "Lakeshore Plumbing Ltd."), (60, 70, "12 Main St, Toronto, ON M5V 1A1"), (380, 55, "INVOICE"),
+        (380, 75, "Invoice No."), (470, 75, "FA97024"),
+        (190, 100, "Fax / Téléc.: 905.555.2439 Issued / Date de facturation:"), (510, 100, "2026-04-10"),
+        *_TOTALS,
+    ]  # fmt: skip
+    assert analyze(_pdf(tmp_path, lines, size=8), today=TODAY).fields["invoice_date"].value == "2026-04-10"

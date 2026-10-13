@@ -156,7 +156,7 @@ DISTRACTORS: dict[str, list[str]] = {
 _REG_WORDS = re.compile(r"\b(reg|registration|regist|no|number|num|#|n\s?°|nº|inscription|bn|business)\b|#", re.I)
 _SPLIT_BN = re.compile(r"\d{3,}[\d\s.-]*\s*R\s*[TP]\b", re.I)
 _PERCENT = re.compile(
-    r"\d+(?:[.,]\d+)?\.?\s*%|@\s*\d{1,2}(?:[.,]\d{1,3})?\s*[%8]?(?![\d.,])|\(\s*\d{1,2}(?:\s*%|8|[.,]\d{1,3}\s*%)\s*\)"
+    r"\d+(?:[.,]\d+)?\.?\s*%|@\s*\d{1,2}(?:[.,]\d{1,3})?\s*[%8]?(?![\d.,])|[(（]\s*\d{1,2}(?:\s*%|8|[.,]\d{1,3}\s*[%8])\s*[)）]"
 )  # 13%, @ 13%, (13%), OCR's "@138" / "(138)", and a speck read as a period before the sign ("9,975.%")
 
 
@@ -206,9 +206,9 @@ def _label_hits(line: Line) -> list[_LabelHit]:
             break
         starts += sorted(more)
         hits = _hits_at(line, text, starts, chained=set(starts) - set(first))
-    # "Service Address / Adresse de livraison: Payment Terms / Conditions de paiement:": a bilingual label may also
-    # start after another label's colon.
-    after_colon = [m.end() for m in re.finditer(r":\s+(?=[a-z])", text) if m.end() not in starts]
+    # "Service Address / Adresse de livraison: Payment Terms / Conditions de paiement:" and "Fax / Téléc.: 905.555.2439
+    # Issued / Date de facturation:": a bilingual label may also start after another label's colon or value.
+    after_colon = [m.end() for m in re.finditer(r"(?::|\d)\s+(?=[a-z])", text) if m.end() not in starts]
     if after_colon:
         seen = {h.field for h in hits}
         hits += [h for h in _hits_at(line, text, after_colon, chained=set(after_colon))
@@ -715,6 +715,8 @@ def _without_logo_initials(words: list[Word]) -> list[Word]:
         return "".join(caps[:n]).upper()
 
     out = list(words)
+    if len(out) > 2 and re.fullmatch(r"[A-Z]", out[-1].text) and out[-2].text.strip(".,").upper() in _LEGAL_FORMS:
+        out = out[:-1]  # a logo's initial OCR read after the legal form: "Prairie Landscaping LP P"
     for i in (0, -1):
         if len(out) < 2:
             break
