@@ -783,15 +783,27 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
 
 _HEAD = {
     "description": re.compile(r"^(description|desc\.?|item|article|details|designation|produit|service|libelle|particulars)"),
-    "quantity": re.compile(r"^(qty|quantity|qte|quantite|qte\.|units?|hrs|hours|heures)\b"),
-    "unit_price": re.compile(r"^(unit\s*price|price|rate|unit\s*cost|prix(\s*unitaire)?|taux|p\.?u\.?|cost)\b"),
-    "amount": re.compile(r"^(amount|total|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|value|valeur|prix\s*total|fees|honoraires|frais)\b"),
+    "quantity": re.compile(r"^(qty|quantity|qte|quantite|qte\.|units?|hrs?|hours|heures)\b"),
+    "unit_price": re.compile(r"^(unit\s*price|price|rate|unit\s*cost|prix(\s*unit(?:aire|\.)?)?|taux|p\.?u\.?|cost)(?![a-z0-9])"),
+    "amount": re.compile(r"^(amount|total(?:\s*price)?|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|value|valeur|prix\s*total|fees|honoraires|frais)\b"),
 }  # fmt: skip
+_TOTAL_LABELS = ("subtotal", "grand_total", "tax_total")  # the line table ends at these
+_FIGURE = re.compile(r"[#(]?[\d.,:/-]*\d[\d.,:/-]*[)%]?")  # a word that is a number: "9", "(2)", "5%", "2026-01"
 
 
 _NUMBER_CELL = re.compile(r"^[\s$€£¢()+\-–.,'%x×@#]*\d[\d\s$€£¢()+\-–.,'%x×@]*(?:[a-z]{1,3}\.?)?\s*$", re.I)
 _CARRIED = re.compile(r"^(a\s*reporter|report\b|reporte|carried\s*forward|brought\s*forward|balance\s*forward|"
                       r"continued|suite|sub\s*-?\s*total|sous\s*-?\s*total|page\s*total)")  # fmt: skip
+_CREDIT_MARK = re.compile(r"\d[.,]\d{2}cr", re.I)  # "342.18CR": a credit's mark run into its amount
+
+
+def _printed_as_money(token: str) -> bool:
+    """A line's amount printed as money, as OCR reads it too: "1530:00" (the point read as a colon) and "342.18CR"
+    (a credit's mark run into it) are money; "5%" and "12" are not."""
+    from .normalize import _ocr_amount_text
+
+    fixed = _ocr_amount_text(token)
+    return looks_like_money(fixed) or bool(_CREDIT_MARK.search(fixed))
 
 
 _CREDIT_TITLE = re.compile(r"^(?:credit\s*(?:memo|note)|note\s*de\s*credit|avis\s*de\s*credit)(?![a-z])")
@@ -812,38 +824,109 @@ def credit_printed_positive(layout: DocLayout) -> bool:
     return True
 
 
+def _heading_name(text: str) -> str | None:
+    """The column a heading names, by the longest heading it starts with ("Unit Cost" is the unit price, not a
+    quantity in "Unit"; "Prix total" the amount, not a price); a heading printed in two languages ("Product /
+    Service / Désignation") by its parts, when they name one column. None when it names none, or two."""
+    longest = {name: m.end() for name, rx in _HEAD.items() if (m := rx.match(text))}
+    if longest:
+        top = max(longest.values())
+        named = [name for name, end in longest.items() if end == top]
+        return named[0] if len(named) == 1 else None
+    if "/" not in text or any(rx.match(text) for f in _TOTAL_LABELS for rx, _ in _LABELS[f]):
+        return None  # "Balance Due / Total à payer" is the invoice's total, not a column
+    parts = {_heading_name(part.strip()) for part in text.split("/") if part.strip()} - {None}
+    return parts.pop() if len(parts) == 1 else None
+
+
 def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
     """The column headings a line segment holds, each with its box. Headings set close together read as one
     segment ("Qty Unit Price"): when the segment is nothing but two or more different headings, each gets the
-    box of its own words, so a column's values are looked for under its heading and not the segment's middle."""
+    box of its own words, so a column's values are looked for under its heading and not the segment's middle. A
+    heading printed in two languages is one heading ("Price / Taux Ext. Price / Prix total": the unit price, then
+    the amount); words after a heading are more of it ("Price Each"); a second heading naming a column already named
+    is another column without a name ("Quantity Unit Unit Cost": the unit of measure between the quantity and the
+    price). A segment with a number in it is no heading ("Unit 9" is an address; "Rate per m3" can be)."""
     p = plain(line.text).strip()
-    whole = [(name, line.box) for name, rx in _HEAD.items() if name not in taken and rx.match(p)]
-    words = [plain(w.text) for w in line.words]
-    if len(words) < 2 or len(words) > 6:
+    if any(_FIGURE.fullmatch(word) for word in p.split()):
+        return []
+    name = _heading_name(p)
+    whole = [(name, line.box)] if name and name not in taken else []
+    # (word or "/", its box): "Hrs/Qty" is "hrs", "/", "qty"; "UnitéRate" (two headings a PDF's text or OCR runs
+    # together) "unite", "rate", each with its share of the word's box.
+    tokens: list[tuple[str, Box]] = []
+    for w in line.words:
+        at = 0
+        for piece in re.split(r"(?<=[a-zà-ÿ])(?=[A-Z])", w.text):
+            share = w.box.width / max(len(w.text), 1)  # a piece's box: its share of the word's
+            box = Box(w.box.page, w.box.x0 + at * share, w.box.y0, w.box.x0 + (at + len(piece)) * share, w.box.y1)
+            tokens += [(part, box) for part in re.split(r"(/)", plain(piece)) if part.strip()]
+            at += len(piece)
+    words = [t for t, _ in tokens]
+    if not 2 <= sum(t != "/" for t in words) <= 16 or "/" in (words[0], words[-1]):
         return whole
-    cells: list[tuple[str, int, int]] = []  # (heading, first word, last word + 1)
+    cells: list[tuple[str, int, int]] = []  # (heading, first token, last token + 1); "" another column's heading
+    extra = 0  # words of the last heading that are no heading themselves, not counting its other language's
+    noise = 0  # such words, and headings naming a column already named, in the whole segment
     i = 0
     while i < len(words):
+        joined = words[i] == "/"  # a heading's other language follows
+        i += joined
         rest = " ".join(words[i:])
         ends = [len(" ".join(words[i : j + 1])) for j in range(i, len(words))]
         best = None
-        for name, rx in _HEAD.items():
+        for heading, rx in _HEAD.items():
             m = rx.match(rest)
             if m and m.end() in ends and (best is None or m.end() > best[1]):
-                best = (name, m.end())  # the longest heading here: "Unit Price", not "Unit"
+                best = (heading, m.end())  # the longest heading here: "Unit Price", not "Unit"
+        if best is None and cells:  # more words of the heading before: "Price Each", "Qty Shipped"
+            extra += not joined
+            noise += not joined
+            if extra > 2:
+                return whole  # a sentence that starts with a heading's word, not a run of headings
+            cells[-1] = (cells[-1][0], cells[-1][1], i + 1)
+            i += 1
+            continue
         if best is None:
-            return whole  # a word that is no heading: not a run of headings
+            return whole  # a segment that starts with no heading
+        extra = 0
         n = ends.index(best[1]) + 1
-        cells.append((best[0], i, i + n))
+        seen = any(c[0] == best[0] for c in cells)
+        if joined and (cells[-1][0] == best[0] or (cells[-1][0] == "" and seen)):  # the other language
+            cells[-1] = (cells[-1][0], cells[-1][1], i + n)
+        else:  # (after a "/", another column: OCR runs "Qty/Qté Price Each/Taux" together)
+            cells.append(("" if seen else best[0], i, i + n))
+            noise += seen
         i += n
-    if len(cells) < 2 or len({c[0] for c in cells}) < len(cells):
+    columns = sum(1 for c in cells if c[0])
+    if columns < 2 or noise > columns:  # (more words that are no heading than headings: a sentence)
         return whole
     out = []
-    for name, a, b in cells:
-        box = union_all([w.box for w in line.words[a:b]])
-        if name not in taken and box is not None:
-            out.append((name, box))
+    for heading, a, b in cells:
+        box = union_all([box for _, box in tokens[a:b]])
+        if heading and heading not in taken and box is not None:
+            out.append((heading, box))
     return out
+
+
+def heading_row(page: PageLayout) -> tuple[Line, list[Line], dict[str, Box]] | None:
+    """The line table's column headings on the page: (the first line of their row, the row's lines, {column: heading
+    box}). A row of headings names the amount and the description or the quantity; of several, the one naming the
+    most columns (an address's "Unit 9" set level with "Amount Due" at the top of a bill names two). None when there
+    is none."""
+    named = {id(line) for line in page.lines if _heading_cells(line, {})}  # the lines that hold a heading at all
+    best = None
+    for line in page.lines:
+        row = [other for other in page.lines if abs(other.box.cy - line.box.cy) < 0.006]
+        cols: dict[str, Box] = {}
+        for other in row:
+            if id(other) in named:
+                for name, box in _heading_cells(other, cols):
+                    cols[name] = box
+        if "amount" in cols and len(cols) >= 2 and ("description" in cols or "quantity" in cols):
+            if best is None or len(cols) > len(best[2]):
+                best = (line, row, cols)
+    return best
 
 
 _THREE_PLACES = re.compile(r"-?\d{1,3}([.,])\d{3}")  # "1.459": a price to three decimals, or 1,459
@@ -880,16 +963,18 @@ def _qty_times_price(segs: list[Line], nums: list[tuple[Line, list[tuple[float, 
                 second = re.sub(r"[.,]", ".", pair.group(2))
                 options.append((k, float(pair.group(1)), 1))
                 options.append((k + 0.5, float(second), 1))
-    # A credit's line (-200.00, "200.00 CR") prints its price with or without the sign: the price is a credit too.
+    # A credit's line (-200.00, "200.00 CR") prints its price with or without the sign: the price is a credit too,
+    # unless the quantity carries the sign (-4 returned at 45.13).
     credit = amount < 0
     best = None
     for k1, q, cost1 in options:
         for k2, p, cost2 in options:
-            price = -abs(p) if credit else p
-            if k2 <= k1 or q <= 0 or abs(q * price - amount) > 0.011:
+            signed = credit and q < 0 < p  # (a "-2" in "6205-2RS" is no quantity: a reading without one first)
+            price = p if signed else -abs(p) if credit else p
+            if k2 <= k1 or (q <= 0 and not signed) or abs(q * price - amount) > 0.011:
                 continue
-            if best is None or cost1 + cost2 < best[0]:
-                best = (cost1 + cost2, q, price)
+            if best is None or cost1 + cost2 + signed < best[0]:
+                best = (cost1 + cost2 + signed, q, price)
     return (best[1], best[2]) if best else None
 
 
@@ -970,7 +1055,7 @@ def _headerless_rows(page: PageLayout) -> list[LineReading]:
     ordered = [sorted(segs, key=lambda s: s.box.x0) for _, segs in sorted(rows.items())]
 
     def money(seg: Line) -> list[tuple[float, int, int]]:  # amounts printed as money: "1,250.00", "$12"
-        return [(v, a, b) for v, a, b in _amounts_in(seg.text) if looks_like_money(seg.text[a:b])]
+        return [(v, a, b) for v, a, b in _amounts_in(seg.text) if _printed_as_money(seg.text[a:b])]
 
     ends = [segs[-1].box.x1 for segs in ordered if len(segs) >= 2 and money(segs[-1])]
     if len(ends) < 2:
@@ -1021,16 +1106,8 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
     items: list[LineReading] = []
     money: list[bool] = []  # each line's amount is printed as money ("1,450.00", "$12"), not "5%" or "12"
     for page in layout.pages:
-        header = None
-        for line in page.lines:
-            cols: dict[str, Box] = {}
-            for other in page.lines:
-                if abs(other.box.cy - line.box.cy) < 0.006:
-                    for name, box in _heading_cells(other, cols):
-                        cols[name] = box
-            if "amount" in cols and len(cols) >= 2 and ("description" in cols or "quantity" in cols):
-                header = (line.box.y1, cols)
-                break
+        found = heading_row(page)
+        header = (found[0].box.y1, found[2]) if found else None
         if header is None:
             tables = [t.pages[page.number - 1] for t in (one_table or {}).get(page.number, [])]
             rows_read = max((_headerless_rows(t) for t in tables), key=len, default=[])
@@ -1039,15 +1116,16 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             continue
         y_top, cols = header
         rows: dict[float, list[Line]] = {}
-        stop_y = 1.0
+        stop_y = stop_cy = 1.0
         for line in page.lines:
             if line.box.y0 <= y_top:
                 continue
             p = plain(line.text)
-            if any(rx.match(p) for f in ("subtotal", "grand_total", "tax_total") for rx, _ in _LABELS[f]):
-                stop_y = min(stop_y, line.box.y0)
+            if any(rx.match(p) for f in _TOTAL_LABELS for rx, _ in _LABELS[f]):
+                stop_y, stop_cy = min(stop_y, line.box.y0), min(stop_cy, line.box.cy)
         for line in page.lines:
-            if not (y_top < line.box.y0 < stop_y):
+            # The table ends at its subtotal or total: its amount, printed a hair higher than its label, too.
+            if not (y_top < line.box.y0 < stop_y) or line.box.cy > stop_cy - 0.006:
                 continue
             key = next((k for k in rows if abs(k - line.box.cy) < 0.006), line.box.cy)
             rows.setdefault(key, []).append(line)
@@ -1079,7 +1157,9 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
                     None,
                 )
                 price = u[-1][0] if u else None
-            if {"quantity", "unit_price"} <= cols.keys() and not (
+            # The quantity or the price not read under its heading (OCR lost a heading, or a digit): the two numbers
+            # left of the amount whose product it is, when the table has a quantity or a price column.
+            if {"quantity", "unit_price"} & cols.keys() and not (
                 qty is not None and price is not None and abs(qty * price - amount) <= 0.011
             ):
                 fit = _qty_times_price(segs, nums, amt_seg, amount)
@@ -1088,7 +1168,7 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             row_box = union_all([s.box for s in segs])
             score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
             items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score))
-            money.append(looks_like_money(amt_token))
+            money.append(_printed_as_money(amt_token))
     # Where the lines' amounts are printed as money, a "line" whose amount isn't is a sentence under the table ("All
     # services subject to GST 5%", "4 of 12 hours cancelled") that reaches the amount column.
     if sum(money) >= 2 and not all(money):

@@ -112,17 +112,10 @@ def vertical_rules(page: Any) -> list[tuple[float, float, float]]:
 
 def _header(page: PageLayout) -> tuple[float, dict[str, Box]] | None:
     """The line table's column headings on the page: (their bottom, {column: heading box})."""
-    from .reader import _heading_cells
+    from .reader import heading_row
 
-    for line in page.lines:
-        cols: dict[str, Box] = {}
-        row = [other for other in page.lines if abs(other.box.cy - line.box.cy) < 0.006]
-        for other in row:
-            for name, box in _heading_cells(other, cols):
-                cols[name] = box
-        if "amount" in cols and len(cols) >= 2 and ("description" in cols or "quantity" in cols):
-            return max(other.box.y1 for other in row), cols
-    return None
+    found = heading_row(page)
+    return (max(other.box.y1 for other in found[1]), found[2]) if found else None
 
 
 def _rows(words: list[Word]) -> list[list[Word]]:

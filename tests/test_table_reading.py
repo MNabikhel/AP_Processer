@@ -97,12 +97,19 @@ def test_the_tilt_comes_from_the_ocr_text_lines():
     assert layout._skew(turned, 1000, 1300) == 0.0  # far more than a tilt: not straightened
 
 
-def test_a_table_whose_headings_cant_be_read_is_read_by_its_amounts():
-    """OCR runs bilingual headings together ("Qty Shipped/QuRate/Prix unitaire Extended /Prix total"): no heading
-    row to go by, but the table the table finder found is read by the column its amounts end in."""
+@pytest.mark.parametrize("headings", [
+    # OCR runs bilingual headings together: read apart at the "/" and where a heading starts ("Qty", "Prix", "total").
+    [("Item", 0.10, 0.15, 0.30), ("Qty", 0.45, 0.48, 0.30), ("Shipped/QuRate/Prix", 0.49, 0.62, 0.30),
+     ("total", 0.63, 0.68, 0.30)],
+    # ... or past reading: no heading row to go by.
+    [("Itm", 0.10, 0.15, 0.30), ("Qtv", 0.45, 0.48, 0.30), ("Shpped/QuRte/Prix", 0.49, 0.62, 0.30),
+     ("tota1", 0.63, 0.68, 0.30)],
+])  # fmt: skip
+def test_a_table_whose_headings_cant_be_read_is_read_by_its_amounts(headings):
+    """With headings OCR ran together past reading, the table the table finder found is read by the column its amounts
+    end in."""
     words = _words(
-        ("Item", 0.10, 0.15, 0.30), ("Qty", 0.45, 0.48, 0.30), ("Shipped/QuRate/Prix", 0.49, 0.62, 0.30),
-        ("total", 0.63, 0.68, 0.30),
+        *headings,
         ("LED", 0.10, 0.13, 0.34), ("panel", 0.135, 0.18, 0.34), ("24", 0.47, 0.48, 0.34), ("100,69", 0.52, 0.56, 0.34),
         ("2416.56", 0.62, 0.68, 0.34),
         ("Disinfectant", 0.10, 0.18, 0.38), ("24", 0.47, 0.48, 0.38), ("19.71", 0.52, 0.56, 0.38),
@@ -111,11 +118,14 @@ def test_a_table_whose_headings_cant_be_read_is_read_by_its_amounts():
         ("Bill", 0.10, 0.13, 0.10), ("No.", 0.135, 0.16, 0.10), ("S-40696", 0.30, 0.36, 0.10),
     )  # fmt: skip
     doc = _layout(words, source="ocr")
-    assert read_line_items(doc) == []  # no column headings: nothing read, as before
+    rows = [("LED panel", 24.0, 100.69, 2416.56), ("Disinfectant", 24.0, 19.71, 473.04)]
+    readable = headings[0][0] == "Item"
+    assert [(li.description, li.quantity, li.unit_price, li.amount) for li in read_line_items(doc)] == (
+        rows if readable else []  # no column headings: nothing read without the table finder
+    )
     tables = {1: [Box(1, 0.08, 0.08, 0.40, 0.12), Box(1, 0.08, 0.28, 0.70, 0.44)]}  # a header box, the line table
     items = read_line_items(doc, tables)
-    assert [(li.description, li.quantity, li.unit_price, li.amount) for li in items] == [
-        ("LED panel", 24.0, 100.69, 2416.56), ("Disinfectant", 24.0, 19.71, 473.04)]  # fmt: skip
+    assert [(li.description, li.quantity, li.unit_price, li.amount) for li in items] == rows
 
 
 def test_a_total_row_read_without_its_label_is_not_a_line():
