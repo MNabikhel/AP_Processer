@@ -52,23 +52,26 @@ _CUSTOMER_LABEL = re.compile(
 
 
 def read_invoice(path: str | Path, store: Any = None, layout: DocLayout | None = None,
-                 page_text: list[str] | None = None) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
+                 page_text: list[str] | None = None, ai_values: dict[str, Any] | None = None,
+                 ) -> tuple[CaptureResult, str, dict[str, Any] | None]:  # fmt: skip
     """(capture, supplier key, supplier profile): a first read, then again with the supplier's template
     and vendor-master record once the first read says who the supplier is. ``layout``: the page, already
     read (a scan is OCR'd once). ``page_text``: the page reader's transcription of each page, when it has
-    read them (one more independent reader). What AP approved on this computer calibrates the confidence."""
+    read them (one more independent reader). ``ai_values``: the chat model's own reading of the header from the page
+    images (another one). What AP approved on this computer calibrates the confidence."""
     path = Path(path)
     today = dt.date.today()
     layout = layout or build_layout(path)
     local = local_evidence(store)
-    capture = analyze(path, layout=layout, today=today, page_text=page_text, local_evidence=local)
+    capture = analyze(path, layout=layout, today=today, page_text=page_text, local_evidence=local,
+                      ai_values=ai_values or None)  # fmt: skip
     first = _values(capture)
     key, profile = supplier_for(store, first)
     template = (profile or {}).get("template") or None
     vendor = vendor_record(store, first.get("vendor_name"))
     if template or vendor:
         capture = analyze(path, layout=layout, template=template, vendor=vendor, today=today, page_text=page_text,
-                          local_evidence=local)  # fmt: skip
+                          local_evidence=local, ai_values=ai_values or None)  # fmt: skip
     return capture, key, profile
 
 

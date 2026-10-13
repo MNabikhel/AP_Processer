@@ -468,6 +468,87 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
     return out
 
 
+# --- The chat model's own reading of the header, from the page images ------------------------------------------------
+
+HEADER_READ = (
+    "vendor_name", "invoice_number", "invoice_date", "due_date", "po_number", "currency",
+    "gst_hst_registration_number", "qst_registration_number", "subtotal", "gst_amount", "hst_amount", "pst_amount",
+    "qst_amount", "tax_total", "grand_total", "payment_terms",
+)  # fmt: skip
+_HEADER_AMOUNTS = {"subtotal", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total", "grand_total"}
+HEADER_SYSTEM = (
+    "You read the header of a supplier's invoice from its page images, as an accounts-payable clerk copies it into "
+    "the ERP. Copy each value as it is printed on the page. Do not work anything out and do not guess: a field that "
+    "is not printed is null. vendor_name is the company that issued the invoice (its name at the top or in the "
+    "remit-to), never the customer it is billed or shipped to. po_number is the customer's purchase order number, "
+    "not the supplier's sales order, quote or account number. Dates as YYYY-MM-DD. Amounts as plain numbers (no "
+    "currency sign, no thousands separators), negative on a credit note. gst_hst_registration_number and "
+    "qst_registration_number are the supplier's tax registration numbers as printed. Answer with JSON only."
+)
+
+
+def _header_schema() -> dict[str, Any]:
+    props = {f: {"type": ["number", "null"]} if f in _HEADER_AMOUNTS else {"type": ["string", "null"]}
+             for f in HEADER_READ}  # fmt: skip
+    return {"type": "object", "properties": props, "required": list(HEADER_READ), "additionalProperties": False}
+
+
+def clean_header(data: dict[str, Any]) -> dict[str, Any]:
+    """The model's answer as capture values: known fields only, amounts as numbers, dates as YYYY-MM-DD, nothing
+    empty. A value it wrote in another shape is dropped, never guessed at."""
+    import datetime as dt
+    import re
+
+    out: dict[str, Any] = {}
+    for name in HEADER_READ:
+        value = data.get(name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        if name in _HEADER_AMOUNTS:
+            if isinstance(value, str):
+                text = value.strip().replace("$", "").replace(" ", "")
+                negative = text.startswith("(") and text.endswith(")") or text.upper().endswith("CR")
+                text = re.sub(r"(?i)cr$|[()]", "", text).replace(",", "")
+                try:
+                    value = float(text) * (-1 if negative else 1)
+                except ValueError:
+                    continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            out[name] = round(float(value), 2)
+        elif name in ("invoice_date", "due_date"):
+            try:
+                out[name] = dt.date.fromisoformat(str(value).strip()[:10]).isoformat()
+            except ValueError:
+                continue
+        elif name == "currency":
+            code = str(value).strip().upper()
+            if re.fullmatch(r"[A-Z]{3}", code):
+                out[name] = code
+        else:
+            out[name] = str(value).strip()[:120]
+    return out
+
+
+def read_header(coder: InvoiceCoder, images: list[PageImage]) -> dict[str, Any]:
+    """The local chat model's own reading of the invoice's header from its page images (Qwen 3.5 can see pages): one
+    more independent reader, never shown what the others found. {} when there are no images or the model can't see
+    pages; raises CodingError when the model isn't answering or answers nothing usable."""
+    if not images:
+        return {}
+    model = coder._prepare_local()
+    if not coder.profile.supports_vision:
+        return {}
+    content: list[dict[str, Any]] = [{"type": "text", "text": "Read the header of this invoice."}]
+    content += [{"type": "image_url", "image_url": {"url": img.to_data_url(), "detail": "high"}} for img in images]
+    messages = [{"role": "system", "content": HEADER_SYSTEM}, {"role": "user", "content": content}]
+    response = coder._local_create(model, messages, _header_schema())
+    reply = local_llm.read_reply(response.choices[0], coder.settings.llm.max_output_tokens)
+    if reply.data is None:
+        raise CodingError(reply.problem[:1].upper() + reply.problem[1:])
+    return clean_header(reply.data)
+
+
 def _accumulate_usage(total: dict[str, int], usage: Any) -> None:
     if usage is None:
         return
