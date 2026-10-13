@@ -63,12 +63,17 @@ def test_outside_a_session_each_call_opens_its_own_connection(tmp_path, connects
 
 
 def test_a_database_deleted_during_a_session_is_made_again(tmp_path):
+    """Where a database in use can be deleted (Linux, macOS), the session's next call makes it again; Windows refuses
+    to delete a file in use, and the session goes on with it."""
     store = Store(tmp_path / "ap.db")
     with store.session():
         store.set_setting("a", "1")
-        for suffix in ("", "-wal", "-shm"):
-            (tmp_path / f"ap.db{suffix}").unlink(missing_ok=True)
-        store.set_setting("b", "2")  # a fresh database, not the deleted file still open
+        try:
+            for suffix in ("", "-wal", "-shm"):
+                (tmp_path / f"ap.db{suffix}").unlink(missing_ok=True)
+        except PermissionError:  # Windows: the file is in use
+            assert store.get_setting("a") == "1"
+        store.set_setting("b", "2")  # a fresh database where it was deleted, not the deleted file still open
         assert store.get_setting("b") == "2"
     assert (tmp_path / "ap.db").exists() and Store(tmp_path / "ap.db").get_setting("b") == "2"
 
