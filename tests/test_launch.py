@@ -578,6 +578,10 @@ def no_models(launch, tmp_path, monkeypatch):
     empty = tmp_path / "rapidocr_models"
     empty.mkdir()
     monkeypatch.setattr(offline, "ppocrv5_installed", lambda: True)
+    # The table finder's model missing too, with its engine installed (CI's test jobs have no onnxruntime).
+    monkeypatch.setattr(offline, "onnxruntime_installed", lambda: True)
+    monkeypatch.setattr(offline, "table_finder_path", lambda: None)
+    monkeypatch.setattr(offline, "table_finder_dirs", lambda: [tmp_path / "code_models", tmp_path / "data_models"])
     monkeypatch.setattr(offline, "model_dir", lambda: empty)
     monkeypatch.setattr(fetch_models, "BUNDLE_MODELS", tmp_path / "models")  # no bundle models/ folder
     downloads: list[str] = []
