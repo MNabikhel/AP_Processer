@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from", dest="source", help=f"copy from this folder (default: {BUNDLE_MODELS})")
     parser.add_argument("--offline", action="store_true", help="never download, even with AP_ALLOW_INTERNET=1")
     parser.add_argument("--table-finder", action="store_true",
-                        help="developers: also download the table finder (with AP_ALLOW_INTERNET=1)")  # fmt: skip
+                        help="also download the table finder (online only)")  # fmt: skip
     args = parser.parse_args(argv)
 
     table_finder(args)  # reported only: without it line items are read as before
@@ -146,17 +146,19 @@ def main(argv: list[str] | None = None) -> int:
 
 def table_finder(args: argparse.Namespace) -> bool:
     """The table finder's model: AP Coder reads it from the bundle's models/ folder (or the data folder's), so there
-    is nothing to copy: it is reported, and downloaded into models/ only when a developer asks (``--table-finder``,
-    online with the opt-in). True when it is in place, intact."""
+    is nothing to copy: it is reported, and downloaded only when asked (``--table-finder``, online: the launcher's
+    setup from the code alone, or a developer with the opt-in), into the data folder's models/ folder (a models/
+    folder in the code would make it look like an offline bundle). True when it is in place, intact."""
     name = offline.TABLE_FINDER_NAME
     if offline.table_finder_path() is not None:
         print(f"Table finder: {name} present.")
         return True
     online = args.table_finder and offline.internet_allowed() and not args.offline and not args.check
     if online:
-        result = fetch(BUNDLE_MODELS, None, online=True, models=(offline.table_finder_file(),))
+        folder = offline.table_finder_dirs()[-1]
+        result = fetch(folder, None, online=True, models=(offline.table_finder_file(),))
         if result.ok:
-            print(f"Table finder: {name} downloaded into {BUNDLE_MODELS}.")
+            print(f"Table finder: {name} downloaded into {folder}.")
             return True
     print(f"Table finder: {name} missing (it comes with the offline bundle's models folder): line items are read "
           "without it.")  # fmt: skip

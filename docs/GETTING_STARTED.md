@@ -73,11 +73,11 @@ every day after. The first time (a few minutes) it:
 Later double-clicks reuse all of it and start in seconds; double-clicking while AP Coder already runs
 just opens it in the browser again.
 
-**For developers (online).** On a computer with internet you can work from a git checkout instead of
-the bundle. Set `AP_ALLOW_INTERNET=1` in a terminal (`set AP_ALLOW_INTERNET=1`), then run
-`APProcessor.bat` from it. Packages then come from PyPI and the OCR models are downloaded;
-`APProcessor.bat --installer` updates the checkout with git; with no Python, APProcessor.bat offers to install 3.12
-with `winget`. Never set it on a pilot laptop.
+**On a computer with internet: GitHub's ZIP, no bundle needed.** Download the code (**Code → Download ZIP**
+on GitHub), unzip it to a folder that is not synced by OneDrive and double-click `APProcessor.bat`. Like
+CloseDesk, its setup downloads the packages from PyPI and the OCR models once (with no Python, it offers to
+install 3.12 with `winget`); everything else is the same, and AP Coder itself stays offline. `set
+AP_ALLOW_INTERNET=0` in a terminal first forbids those downloads.
 
 **The installer's questions.** There is one file to open per computer: `APProcessor.bat` (Mac:
 `APProcessor.command`). Most people never need more. Add **`--installer`** to it and it runs the same

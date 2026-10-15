@@ -6,13 +6,13 @@ rem  The first time it sets up whatever is missing (a few minutes), checks that 
 rem  and opens the dashboard in your browser. After that it starts in seconds. Keep this window
 rem  open while you use AP Coder; close it to stop.
 rem
-rem  Offline build: nothing here connects to the internet. An installed Python 3.11 or newer
-rem  (3.12 recommended: the offline bundle has packages for the Python versions it was built for)
-rem  is used as it is, the .venv folder is made once, and only missing packages are installed,
-rem  from the wheelhouse\ folder of the offline bundle.
+rem  Offline build: AP Coder itself never connects to the internet. An installed Python 3.11 or
+rem  newer (3.12 recommended) is used as it is, the .venv folder is made once, and only missing
+rem  packages are installed: from the wheelhouse\ folder of the offline bundle, never the internet.
 rem
-rem  Developers only: set AP_ALLOW_INTERNET=1 in this window first to let it download packages,
-rem  the OCR models, and - when no Python is found - offer to install Python 3.12 with winget.
+rem  From GitHub's ZIP (the code alone, no offline bundle) the setup downloads the packages and
+rem  the OCR models once, like CloseDesk, and - when no Python is found - offers to install
+rem  Python 3.12 with winget. set AP_ALLOW_INTERNET=0 in this window first to forbid that.
 rem
 rem  The installer's questions (data folder, Azure settings, shortcut): APProcessor.bat --installer,
 rem  typed in scripts\terminal.bat. Older versions' install.bat and start.bat are gone: this file does both.
@@ -29,6 +29,9 @@ set "AP_YES="
 if defined AP_NO_PAUSE set "AP_YES=1"
 set "AP_ONLINE="
 for %%V in (1 true yes on) do if /i "%AP_ALLOW_INTERNET%"=="%%V" set "AP_ONLINE=1"
+rem The code alone (GitHub's ZIP or a git checkout): its setup may download, as scripts\launch.py does.
+if not exist "bundle_manifest.json" if not exist "wheelhouse\" if not exist "models\" set "AP_ONLINE=1"
+for %%V in (0 false no off) do if /i "%AP_ALLOW_INTERNET%"=="%%V" set "AP_ONLINE="
 for %%A in (%*) do if /i "%%~A"=="--yes" set "AP_YES=1"
 
 set "PY="
@@ -91,8 +94,8 @@ if exist "%~1" call :try "%~1"
 exit /b 0
 
 :installpython
-rem Developers only (AP_ALLOW_INTERNET=1): offer to install Python 3.12, for this user only,
-rem with winget (part of Windows). The offline build never does this.
+rem From GitHub's ZIP or with AP_ALLOW_INTERNET=1: offer to install Python 3.12, for this user
+rem only, with winget (part of Windows). The offline bundle never does this.
 where winget >nul 2>&1
 if errorlevel 1 exit /b 0
 echo.
@@ -111,6 +114,9 @@ exit /b 0
 echo.
 if defined OLDPY echo Python %OLDPY% is installed, but AP Coder needs Python 3.11 or newer (3.12 is best).
 if not defined OLDPY echo AP Coder needs Python 3.11 or newer (3.12 is best), and it is not installed.
+if defined AP_ONLINE echo What to do: install Python 3.12 - the installer from https://www.python.org/downloads/
+if defined AP_ONLINE echo with "Add python.exe to PATH" ticked - then double-click APProcessor.bat again.
+if defined AP_ONLINE goto :fail
 echo What to do: this is an offline build, so it does not download Python. Ask IT to install Python 3.12 -
 echo the installer from https://www.python.org/downloads/ with "Add python.exe to PATH" ticked - then
 echo double-click APProcessor.bat again.

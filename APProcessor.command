@@ -7,8 +7,9 @@
 # close it (or press Ctrl+C) to stop. Nothing already on this computer is installed twice: an installed
 # Python 3.11 or newer is used as it is (3.12 recommended: the offline bundle has packages for the Python
 # versions it was built for), the .venv folder is made once, and only missing packages are installed.
-# Offline build: nothing is downloaded (developers only: AP_ALLOW_INTERNET=1). Packages come from the
-# wheelhouse/ folder of the offline bundle next to this file.
+# Offline build: AP Coder itself never goes online. Packages come from the wheelhouse/ folder of the
+# offline bundle next to this file; from GitHub's ZIP (the code alone) the setup downloads them and the OCR
+# models once, like CloseDesk (AP_ALLOW_INTERNET=0 forbids it).
 #
 # The installer's questions (data folder, Azure settings): ./APProcessor.command --installer. Older versions'
 # install.sh and start.sh are gone: this file does both. The steps themselves are in scripts/launch.py.

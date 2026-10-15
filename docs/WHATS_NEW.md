@@ -15,6 +15,10 @@ backup of the database is made automatically once a day when AP Coder starts (th
   Studio for Gemma 4 12B first, then Qwen 3.5 9B. If Gemma's thinking is ever on, its thought channel is never read
   as the answer. Download links and steps: [LM_STUDIO.md](LM_STUDIO.md#using-gemma-4-12b-instead-of-qwen-35-9b-windows-laptop).
   It has not yet been measured against Qwen on AP's invoices: compare the two on the same invoices before deciding.
+- **Set up straight from GitHub, like CloseDesk.** Unzip GitHub's ZIP and double-click `APProcessor.bat`
+  (Mac: `APProcessor.command`): its setup now downloads the packages and OCR models once, and offers Python 3.12
+  with `winget` when there is none. No bundle to build first. AP Coder itself still never goes online, and the
+  offline bundle (for a laptop with no internet) never downloads anything. `AP_ALLOW_INTERNET=0` forbids it.
 
 ## Earlier: ready for the AP mailbox and JD Edwards
 

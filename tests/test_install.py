@@ -162,7 +162,8 @@ def test_installer_checks_for_updates_only_with_the_opt_in(tmp_path, monkeypatch
 
 
 def test_offline_reinstall_runs_no_pip(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(install.launch, "ROOT", tmp_path)  # no wheelhouse here
+    monkeypatch.setattr(install.launch, "ROOT", tmp_path)  # an offline bundle with no wheelhouse here
+    (tmp_path / "bundle_manifest.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(install.launch, "STATE", tmp_path / "state.json")
     monkeypatch.setattr(install.launch.subprocess, "Popen", lambda *a, **k: pytest.fail("pip ran offline"))
     monkeypatch.setattr(install.launch, "ensure_packages", lambda state, extras: ("ok", "Packages: all in place", 0))

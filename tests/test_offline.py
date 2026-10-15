@@ -584,6 +584,11 @@ def test_windows_launcher():
     # Offline build: winget (the internet) only with the developers' opt-in, never by default or --yes alone.
     assert "if not defined PY if defined AP_ONLINE call :installpython" in text
     assert 'if /i "%AP_ALLOW_INTERNET%"=="%%V" set "AP_ONLINE=1"' in text
+    # GitHub's ZIP (the code alone: no bundle manifest, wheelhouse or models) may download, like CloseDesk;
+    # AP_ALLOW_INTERNET=0 forbids it.
+    plain = 'if not exist "bundle_manifest.json" if not exist "wheelhouse\\" if not exist "models\\" set "AP_ONLINE=1"'
+    assert plain in text
+    assert text.index('set "AP_ONLINE=1"\n') < text.index('if /i "%AP_ALLOW_INTERNET%"=="%%V" set "AP_ONLINE="')
     # From a network share (\\server\share): pushd maps a drive letter, cd /d cannot.
     assert 'pushd "%~dp0"' in text and 'cd /d "%~dp0"' not in text and "popd" in text
     assert "if not defined AP_YES set /p" in text  # asked once; automated runs (AP_NO_PAUSE, --yes) are not

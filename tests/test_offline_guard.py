@@ -362,6 +362,9 @@ def test_the_launcher_installs_from_the_wheelhouse_without_the_internet(launch_m
 
 
 def test_without_a_wheelhouse_the_launcher_installs_nothing(launch_module, tmp_path, monkeypatch):
+    """An offline bundle (its manifest) that lacks its wheelhouse: nothing installed, never the internet."""
+    monkeypatch.setattr(launch_module, "ROOT", tmp_path)
+    (tmp_path / "bundle_manifest.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(launch_module, "wheelhouse_dir", lambda: tmp_path / "missing")
     monkeypatch.setattr(launch_module, "say", lambda text: None)
     assert launch_module.pip_source() is None

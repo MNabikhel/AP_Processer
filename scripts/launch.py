@@ -23,15 +23,21 @@ packages for) and runs this file with it. It then:
    every update; once it passed, the older installs' ``.venv``, models and folders are cleaned up;
 9. starts the server (``python -m ap_coder serve``) and opens it in the browser once it is up.
 
-Offline by default: this is an enterprise build, so nothing here connects to the internet. A package that is
-not in the wheelhouse is said plainly to be missing (it must come from the offline bundle); AP Coder still
-starts when its core packages are there. Developers and the bundle builder opt in to the internet (packages
-from PyPI, the OCR models from www.modelscope.cn, ``install.py``'s git update, APProcessor.bat's winget
-Python) with one environment variable, ``AP_ALLOW_INTERNET=1`` (e.g. ``set AP_ALLOW_INTERNET=1`` in cmd, then
-``APProcessor.bat``).
+Offline: this is an enterprise build. AP Coder itself (the dashboard and everything it runs) never connects to
+the internet. Its setup gets the packages and OCR models from one of two places:
 
-It never installs Python itself (APProcessor.bat offers that only with the opt-in) and never installs
-LM Studio: it only says whether a model is loaded. Safe to run again at any time, and from two windows at
+* the offline bundle (``wheelhouse/`` and ``models/`` next to this folder, ``bundle_manifest.json``): only from
+  there, never the internet. A package that is not in the wheelhouse is said plainly to be missing; AP Coder still
+  starts when its core packages are there.
+* the code alone (GitHub's ZIP or a git checkout: no manifest, no wheelhouse): like CloseDesk, the setup downloads
+  them once (packages from PyPI, the OCR models from www.modelscope.cn; APProcessor.bat offers Python 3.12 with
+  winget), for its own steps only (:func:`plain_download`). ``AP_ALLOW_INTERNET=0`` forbids that.
+
+``AP_ALLOW_INTERNET=1`` (developers, the bundle builder) also allows PyPI next to a wheelhouse built for another
+computer, and ``install.py``'s git update.
+
+It never installs Python itself (APProcessor.bat offers winget's from GitHub's ZIP or with the opt-in) and never
+installs LM Studio: it only says whether a model is loaded. Safe to run again at any time, and from two windows at
 once: an exclusive lock file (``.ap_coder_launch.lock``) is held while one sets up and runs AP Coder, and a
 second double-click waits for its dashboard and opens it in the browser.
 
@@ -73,6 +79,7 @@ for _folder in (ROOT, SCRIPTS):  # ap_coder/offline.py is standard-library only,
         sys.path.insert(0, str(_folder))
 
 import check_deps  # noqa: E402  (standard library plus pip's packaging)
+import fetch_models  # noqa: E402  (standard library only)
 import running  # noqa: E402  (standard library only)
 import upgrade  # noqa: E402  (standard library only)
 
@@ -565,14 +572,49 @@ def unexpected(exc: BaseException) -> int:
 # --- Phase 2: packages, data, checks (inside .venv) -------------------------------------------------------------
 
 
+def internet_forbidden() -> bool:
+    """``AP_ALLOW_INTERNET=0`` (or false / no / off): the setup never downloads, even from the code alone."""
+    return (os.environ.get(INTERNET_ENV) or "").strip().lower() in ("0", "false", "no", "off")
+
+
+def plain_download() -> bool:
+    """This folder is the code alone: GitHub's ZIP or a git checkout, with no offline bundle's manifest, wheelhouse or
+    models folder. Its setup downloads the packages and OCR models once, as CloseDesk does (unless
+    ``AP_ALLOW_INTERNET=0``); the dashboard it then starts stays offline. A bundle missing its wheelhouse is not one."""
+    if internet_forbidden() or (ROOT / "bundle_manifest.json").exists() or fetch_models.BUNDLE_MODELS.is_dir():
+        return False
+    return not wheelhouse_dir().is_dir()
+
+
+def setup_online() -> bool:
+    """The setup may download: with the opt-in (AP_ALLOW_INTERNET=1), or from the code alone (plain_download)."""
+    return internet_allowed() or plain_download()
+
+
+class setup_downloads:  # noqa: N801 - used as ``with setup_downloads():``
+    """The opt-in for one setup step that asks :func:`internet_allowed` itself (fetch_models), set only while it runs:
+    never in the environment of the dashboard started afterwards."""
+
+    def __enter__(self) -> None:
+        self.before = os.environ.get(INTERNET_ENV)
+        os.environ[INTERNET_ENV] = "1"
+
+    def __exit__(self, *exc: object) -> None:
+        if self.before is None:
+            os.environ.pop(INTERNET_ENV, None)
+        else:
+            os.environ[INTERNET_ENV] = self.before
+
+
 def pip_source() -> list[str] | None:
     """Where pip may install from: the offline bundle's wheelhouse/ folder, with ``--no-index`` (never the
-    internet). Without one: PyPI ([]) only with the opt-in (AP_ALLOW_INTERNET=1), else None (nowhere). A wheelhouse
-    built for another kind of computer or Python is passed over for PyPI only with the opt-in."""
+    internet). Without one: PyPI ([]) when the setup may download (:func:`setup_online`: the code alone, or the
+    opt-in), else None (nowhere). A wheelhouse built for another kind of computer or Python is passed over for PyPI
+    only with the opt-in."""
     wheelhouse = wheelhouse_dir()
     if wheelhouse.is_dir() and not (internet_allowed() and wheelhouse_misfit()):
         return ["--no-index", "--find-links", str(wheelhouse)]
-    return [] if internet_allowed() else None
+    return [] if setup_online() else None
 
 
 # The packages with compiled code AP Coder can't run without: their wheels say which computers and Pythons the
@@ -822,7 +864,8 @@ def install_hint(source: list[str], left: list[str]) -> str:
     """What to do when pip could not install ``left``: from the wheelhouse, or (opted in) from PyPI."""
     if not source:
         return ("Check the internet connection (behind a company proxy: set HTTPS_PROXY=http://proxy:port in this "
-                "window), close any other AP Coder window, then start AP Coder again.")  # fmt: skip
+                "window), close any other AP Coder window, then start AP Coder again. A computer with no internet "
+                "needs the offline bundle instead (docs/GETTING_STARTED.md).")  # fmt: skip
     version = f"{sys.version_info[0]}.{sys.version_info[1]}"
     what = names(left) or "AP Coder itself"
     return (f"The offline bundle's wheelhouse folder has no {what} for Python {version} on this computer. "
@@ -965,8 +1008,11 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
         say("Installing from the wheelhouse folder (no internet needed).")
     elif misfit:
         say(f"{misfit}. Installing from the internet (PyPI) instead: {INTERNET_ENV}=1 allows it.")
-    else:
+    elif internet_allowed():
         say(f"Installing from the internet (PyPI): {INTERNET_ENV}=1 allows it.")
+    else:
+        say("This folder is AP Coder's code without the offline bundle's packages (GitHub's ZIP): downloading them "
+            "from the internet once, for the setup only. AP Coder itself never goes online.")  # fmt: skip
     plain = tuple(e for e in extras if e != "ocr")
     if self_problem and missing:
         say(f"Installing AP Coder's packages ({len(missing)} missing). The first time takes a few minutes.")
@@ -1066,41 +1112,52 @@ def database_too_new(data: Path, version: str) -> SetupError | None:
 
 def models_attempt() -> str:
     """What a copy of the OCR models depends on: this version, the opt-in, and the bundle's models/ folder.
-    A copy that failed is tried again only when one of them changes (e.g. the full bundle is unzipped)."""
-    import fetch_models
+    A copy that failed is tried again only when one of them changes (e.g. the full bundle is unzipped); a download
+    that failed (the code alone) is tried again the next day."""
+    import datetime
 
     folder = fetch_models.BUNDLE_MODELS
     try:
         files = sorted(f"{p.name}:{p.stat().st_size}" for p in folder.iterdir()) if folder.is_dir() else []
     except OSError:
         files = []
-    return f"{fingerprint()}|{internet_allowed()}|{folder.is_dir()}|{','.join(files)}"
+    online = setup_online() and not folder.is_dir()
+    day = datetime.date.today().isoformat() if online else ""
+    return f"{fingerprint()}|{online}|{folder.is_dir()}|{','.join(files)}|{day}"
 
 
 def ensure_models(first: bool, state: dict) -> None:
     """The PP-OCRv5 OCR models, put in place only when missing (checksums checked on the first run): copied from
-    the offline bundle's models/ folder, never downloaded (only with AP_ALLOW_INTERNET=1). When that fails it is
-    said once and recorded, not tried again on every start."""
+    the offline bundle's models/ folder; downloaded only when the setup may (:func:`setup_online`: the code alone,
+    or AP_ALLOW_INTERNET=1), with the table finder's model then too (into the data folder's models/ folder, so the
+    code folder never looks like a bundle). When that fails it is said once and recorded, not tried again on every
+    start (a download: not before the next day)."""
     from ap_coder import offline
 
-    if not offline.ppocrv5_installed() or not offline.missing_models(verify=first):
+    online = not fetch_models.BUNDLE_MODELS.is_dir() and setup_online()
+    finder = online and offline.onnxruntime_installed() and offline.table_finder_path() is None
+    if (not offline.ppocrv5_installed() or not offline.missing_models(verify=first)) and not finder:
         state.pop("models_failed", None)
         return
-    import fetch_models
-
     attempt = models_attempt()
     if state.get("models_failed") == attempt:
         return  # said when it failed; the readiness summary still says scans are read with one engine
-    if not internet_allowed() and not fetch_models.BUNDLE_MODELS.is_dir():
+    if not online and not fetch_models.BUNDLE_MODELS.is_dir():
         say("The PP-OCRv5 OCR models are not here, and this offline build never downloads them: they come from the "
             "offline bundle's models folder. Scans are read with the other OCR engine.")  # fmt: skip
         state["models_failed"] = attempt
         return
-    say("Downloading the OCR models (once)." if internet_allowed() and not fetch_models.BUNDLE_MODELS.is_dir()
-        else "Copying the OCR models from the offline bundle (once).")  # fmt: skip
-    if fetch_models.main([]) != 0:
-        say("(Not needed to start: scans are read with the other OCR engine. Not tried again until the models "
-            "folder changes.)")  # fmt: skip
+    say("Downloading the OCR models (once)." if online else "Copying the OCR models from the offline bundle (once).")
+    if online:
+        with setup_downloads():
+            code = fetch_models.main(["--table-finder"] if finder else [])
+        if finder and offline.table_finder_path() is None:
+            code = code or 1
+    else:
+        code = fetch_models.main([])
+    if code != 0:
+        later = "Tried again tomorrow." if online else "Not tried again until the models folder changes."
+        say(f"(Not needed to start: scans are read with the other OCR engine. {later})")
         state["models_failed"] = attempt
     else:
         state.pop("models_failed", None)

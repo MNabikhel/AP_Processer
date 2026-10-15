@@ -176,8 +176,10 @@ bundle). One exception: the OCR engine (onnxruntime) is not published for Intel 
 there AP Coder installs without the OCR add-on (text PDFs are read, scans are not; Python 3.13 on that Mac
 has it). The build says so, and `bundle_manifest.json` lists it under `without_ocr`.
 
-**Developers with internet** can set up from a plain checkout instead: `set AP_ALLOW_INTERNET=1` in a
-terminal, then run `APProcessor.bat` from it (see *What is sent over the network*).
+**On a computer with internet** you can skip the bundle: unzip GitHub's ZIP (**Code → Download ZIP**) and
+double-click `APProcessor.bat`. Like CloseDesk, its setup downloads the packages and OCR models once (and, with no
+Python, offers Python 3.12 with `winget`); AP Coder itself stays offline. `set AP_ALLOW_INTERNET=0` first
+forbids those downloads.
 
 **Check the install again** (a few seconds, nothing is saved): `APProcessor.bat --check` runs the
 self-check before starting; for every sample's line, run `.venv\Scripts\python.exe scripts\pilot_check.py`
@@ -342,10 +344,12 @@ itself (and makes its `.venv` again with it).
 
 The only outside connections are the ones someone chooses:
 
+- **The setup from GitHub's ZIP** (the code alone, no offline bundle): APProcessor.bat downloads the missing
+  packages from PyPI and the OCR models from www.modelscope.cn, once, and offers Python 3.12 with `winget`. The
+  dashboard it then starts stays offline. An offline bundle never does this; `AP_ALLOW_INTERNET=0` forbids it.
 - **`AP_ALLOW_INTERNET=1`**, the one opt-in, for developers and the bundle builder only. With it set in the
-  terminal that runs APProcessor.bat, missing packages come from PyPI, the OCR models from
-  www.modelscope.cn, the installer checks GitHub for updates and APProcessor.bat offers to install
-  Python 3.12 with `winget`. `scripts/build_offline_bundle.py` sets it for itself, on IT's computer. Never set
-  it on a pilot laptop.
+  terminal that runs APProcessor.bat, the installer also checks GitHub for updates, and the app may use a model
+  server or Azure on the internet. `scripts/build_offline_bundle.py` sets it for itself, on IT's computer. Never
+  set it on a pilot laptop.
 - Azure, only on a developer's computer with `AP_ALLOW_INTERNET=1` and Azure settings filled in (then
   invoices go to your organisation's own Azure resources). The offline build ignores Azure settings.
