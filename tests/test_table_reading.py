@@ -225,10 +225,14 @@ def test_the_reading_settings_show_the_table_finder(monkeypatch, tmp_path):
 
 
 NO_MODEL = "the table finder's model isn't on this computer (it comes with the offline bundle)"
+# Found before the tests run: each test gets an empty data folder (conftest), so a model in the real data folder's
+# models/ (where the setup from GitHub's ZIP downloads it) is named to the test by its path.
+REAL_MODEL = offline.table_finder_path()
 
 
-@pytest.mark.skipif(offline.table_finder_path() is None or not offline.onnxruntime_installed(), reason=NO_MODEL)
-def test_the_real_model_finds_the_line_table_of_a_sample_invoice():
+@pytest.mark.skipif(REAL_MODEL is None or not offline.onnxruntime_installed(), reason=NO_MODEL)
+def test_the_real_model_finds_the_line_table_of_a_sample_invoice(monkeypatch):
+    monkeypatch.setenv(offline.TABLE_FINDER_ENV, str(REAL_MODEL))
     tables = table_finder.find_tables(PDF)
     assert tables and 1 in tables
     items = read_line_items(build_layout(PDF), tables)
