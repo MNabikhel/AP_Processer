@@ -56,7 +56,8 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
 
   **Qwen 3.5 9B in LM Studio.** IT puts the chat model in LM Studio next to OvisOCR2 (Qwen 3.5 9B, Q4_K_M:
   5.6 GB, plus its 0.9 GB vision file, `mmproj`, from the lmstudio-community repo; or another 7B–9B
-  instruct model at Q4_K_M). If no chat model is loaded, load it: in AP Coder, *Settings → Reading → Models
+  instruct model at Q4_K_M; or **Gemma 4 12B** (Google), QAT Q4_0, 7.0 GB plus a 0.18 GB vision file, set up as in
+  [LM_STUDIO.md](LM_STUDIO.md#using-gemma-4-12b-instead-of-qwen-35-9b-windows-laptop)). If no chat model is loaded, load it: in AP Coder, *Settings → Reading → Models
   in LM Studio* → **Load** (or in LM Studio itself). Use **Context Length 16384**, the size CloseDesk
   loads it with, so a Mac running both apps keeps one copy of it ([LM_STUDIO.md](LM_STUDIO.md)). The accounts
   call itself is short (about 1,300 tokens of chart and lines with the sample chart, and about 60 tokens of answer

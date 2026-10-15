@@ -183,7 +183,9 @@ def test_finalise_coding_recomputes_distribution_after_edits(tmp_path, settings,
     edited["line_items"][0]["predicted_gl_code"] = "6000"
     output, report = finalise_coding(InvoiceCoding.model_validate(edited), reference, settings)
     assert output["gl_distribution"][0]["gl_code"] == "6000"
-    assert report.issues == []
+    # The sample invoice fell due on 2026-10-14: from then on it is (rightly) noted as overdue, which is about today's
+    # date, not about the coding this test checks.
+    assert [i for i in report.issues if i.code != "PAYMENT_OVERDUE"] == []
 
 
 def test_sample_reference_files_are_importable(tmp_path):
