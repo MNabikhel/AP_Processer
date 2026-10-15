@@ -43,11 +43,12 @@ _VISION_HINTS = (
     "-vl", "vl-", "_vl", "vision", "llava", "pixtral", "gemma-3", "gemma3", "minicpm-v", "moondream", "internvl",
     "smolvlm", "granite-vision", "qwen2.5-omni", "mistral-small-3.1", "mistral-small-3.2", "llama4",
     "qwen3.5", "qwen3_5",  # every Qwen 3.5 size has a vision encoder
+    "gemma-4", "gemma4", "gemma_4",  # every Gemma 4 size can see pages too
 )  # fmt: skip
 
 LM_STUDIO_STEPS = (
-    "Open LM Studio. Your IT team installs it with the models already in it: the chat model (Qwen 3.5 9B, or "
-    "another 7B–9B instruct model, Q4_K_M) and OvisOCR2. If it isn't on this computer, ask IT.",
+    "Open LM Studio. Your IT team installs it with the models already in it: the chat model (Gemma 4 12B or "
+    "Qwen 3.5 9B, 4-bit) and OvisOCR2. If it isn't on this computer, ask IT.",
     "In LM Studio: Developer tab → Start server.",
     "If no model is loaded: Models in LM Studio (below) → pick the chat model → Load.",
 )
@@ -140,14 +141,26 @@ def is_chat_model(model_id: str) -> bool:
     return not any(word in plain for word in _NOT_CHAT) and not any(word in squashed for word in _NOT_CHAT_SQUASHED)
 
 
-# The chat model the team runs in LM Studio, beside CloseDesk (docs/LM_STUDIO.md): Qwen 3.5 9B, by any of the ids LM
-# Studio or Ollama give it ("qwen/qwen3.5-9b", "qwen3.5-9b-mlx", "lmstudio-community/Qwen3.5-9B-GGUF",
-# "qwen3.5-9b@q4_k_m", "qwen3.5:9b").
-_TEAM_CHAT = re.compile(r"qwen3[._-]?5(?![0-9.]).*?(?<![0-9.])9b(?![0-9])")
+# The chat models the team runs in LM Studio, beside CloseDesk (docs/LM_STUDIO.md), in the order AP Coder picks one
+# that is downloaded but not loaded: Gemma 4 12B (Google; "google/gemma-4-12b", "gemma-4-12b-it-qat",
+# "lmstudio-community/gemma-4-12B-it-QAT-GGUF", Ollama's "gemma4:12b"), then Qwen 3.5 9B ("qwen/qwen3.5-9b",
+# "qwen3.5-9b-mlx", "lmstudio-community/Qwen3.5-9B-GGUF", "qwen3.5-9b@q4_k_m", "qwen3.5:9b").
+_TEAM_CHAT = (
+    re.compile(r"gemma[._-]?4(?![0-9.]).*?(?<![0-9.])12b(?![0-9])"),
+    re.compile(r"qwen3[._-]?5(?![0-9.]).*?(?<![0-9.])9b(?![0-9])"),
+)
+
+
+def team_chat_rank(model_id: str) -> int | None:
+    """Which of the team's chat models ``model_id`` is (0 = Gemma 4 12B, 1 = Qwen 3.5 9B), None for any other."""
+    if not is_chat_model(model_id):
+        return None
+    plain = model_id.lower()
+    return next((rank for rank, pattern in enumerate(_TEAM_CHAT) if pattern.search(plain)), None)
 
 
 def team_chat_model(model_id: str) -> bool:
-    return bool(_TEAM_CHAT.search(model_id.lower())) and is_chat_model(model_id)
+    return team_chat_rank(model_id) is not None
 
 
 def looks_like_vision(model_id: str) -> bool:
@@ -158,7 +171,8 @@ def looks_like_vision(model_id: str) -> bool:
 def pick_model(requested: str, ids: list[str], loaded: list[str] | None = None, *, lm_studio: bool = False) -> str:
     """The chat model that suggests GL accounts, found on its own: the one a developer named in AP_LLM_MODEL, else
     the chat model loaded now (whichever app loaded it: CloseDesk shares LM Studio), else, with LM Studio (which loads
-    a downloaded model when a request names it), the team's chat model, Qwen 3.5 9B, when it is downloaded; never the
+    a downloaded model when a request names it), the team's chat model when it is downloaded (Gemma 4 12B, else Qwen 3.5
+    9B); never the
     first on LM Studio's list, which with just-in-time loading is every model downloaded, of any size (CloseDesk
     doesn't either). Other servers list only what they serve: their first chat model. Never OvisOCR2 (it reads pages,
     it doesn't chat) nor an embedding model."""
@@ -168,7 +182,8 @@ def pick_model(requested: str, ids: list[str], loaded: list[str] | None = None, 
     if chat_loaded:
         return chat_loaded[0]
     if lm_studio:
-        return next((m for m in ids if team_chat_model(m)), "")
+        ranked = [(rank, m) for m in ids if (rank := team_chat_rank(m)) is not None]
+        return min(ranked, key=lambda pair: pair[0])[1] if ranked else ""
     return next((m for m in ids if is_chat_model(m)), "")
 
 
@@ -490,16 +505,20 @@ def json_instructions(schema: dict[str, Any]) -> str:
 
 
 _THINK_RE = re.compile(r"<think>.*?(?:</think>|\Z)", re.S | re.I)
+# Gemma 4 writes its thinking in a thought channel instead: "<|channel>thought ... <channel|>".
+_CHANNEL_RE = re.compile(r"<\|channel>thought.*?(?:<channel\|>|\Z)", re.S)
 _FENCE_RE = re.compile(r"^\s*```(?:json|JSON)?\s*$", re.M)
 
 
 def strip_thinking(text: str) -> str:
-    """Reasoning models (Qwen3, DeepSeek-R1) put their scratch work in <think> tags. A template that opens the tag in
-    the prompt leaves only its close in the reply: everything before a "</think>" with no "<think>" is reasoning."""
+    """Reasoning models (Qwen3, DeepSeek-R1) put their scratch work in <think> tags, Gemma 4 in a thought channel. A
+    template that opens the tag or channel in the prompt leaves only its close in the reply: everything before a
+    "</think>" with no "<think>" (a "<channel|>" with no "<|channel>") is reasoning."""
     text = text or ""
-    if "</think>" in text and "<think>" not in text.split("</think>", 1)[0]:
-        text = text.split("</think>", 1)[1]
-    return _THINK_RE.sub("", text).strip()
+    for opening, closing in (("<think>", "</think>"), ("<|channel>", "<channel|>")):
+        if closing in text and opening not in text.split(closing, 1)[0]:
+            text = text.split(closing, 1)[1]
+    return _CHANNEL_RE.sub("", _THINK_RE.sub("", text)).strip()
 
 
 def _balanced(text: str, start: int) -> str | None:

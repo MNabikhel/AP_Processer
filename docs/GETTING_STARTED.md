@@ -26,8 +26,9 @@ page-reading model (about 1 GB) that reads every page of every invoice as a seco
 [LM Studio](https://lmstudio.ai/) on the laptop.
 
 1. **IT installs LM Studio** (0.4.8 or newer) with OvisOCR2 already in it, and optionally a chat model
-   (**Qwen 3.5 9B**, Q4_K_M) that suggests GL accounts for lines nothing was learned for. Nothing is
-   downloaded on the laptop. The files and sizes are in [PILOT.md](PILOT.md#what-you-need).
+   (**Gemma 4 12B**, QAT Q4_0, or **Qwen 3.5 9B**, Q4_K_M) that suggests GL accounts for lines nothing was learned for. Nothing is
+   downloaded on the laptop. The files and sizes are in [PILOT.md](PILOT.md#what-you-need); direct links and steps
+   for Gemma 4 12B are in [LM_STUDIO.md](LM_STUDIO.md#using-gemma-4-12b-instead-of-qwen-35-9b-windows-laptop).
 2. **Start the server:** open LM Studio, **Developer** tab → **Start server**.
 3. **That's all.** When AP Coder starts, it finds OvisOCR2 on its own and runs its self-test by itself (it
    reads a sample invoice whose answers are known): 10 to 20 minutes on a laptop the first time.

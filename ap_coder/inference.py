@@ -151,8 +151,8 @@ class InvoiceCoder:
         if not model:
             if status.reachable:
                 raise CodingError(
-                    f"{status.server_title} is running but no model is loaded. Load Qwen 3.5 9B in "
-                    "LM Studio (docs/LM_STUDIO.md), or name a model in AP_LLM_MODEL."
+                    f"{status.server_title} is running but no model is loaded. Load Gemma 4 12B (or Qwen "
+                    "3.5 9B) in LM Studio (docs/LM_STUDIO.md), or name a model in AP_LLM_MODEL."
                 )
             raise CodingError(
                 f"The local model isn't answering at {llm.base_url}. In LM Studio: load a model, then "
@@ -528,9 +528,9 @@ def clean_header(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def read_header(coder: InvoiceCoder, images: list[PageImage]) -> dict[str, Any]:
-    """The local chat model's own reading of the invoice's header from its page images (Qwen 3.5 can see pages): one
-    more independent reader, never shown what the others found. {} when there are no images or the model can't see
-    pages; raises CodingError when the model isn't answering or answers nothing usable."""
+    """The local chat model's own reading of the invoice's header from its page images (Gemma 4 and Qwen 3.5 can see
+    pages): one more independent reader, never shown what the others found. {} when there are no images or the model
+    can't see pages; raises CodingError when the model isn't answering or answers nothing usable."""
     if not images:
         return {}
     model = coder._prepare_local()

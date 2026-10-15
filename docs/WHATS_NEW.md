@@ -8,7 +8,15 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
-## This release: ready for the AP mailbox and JD Edwards
+## This release: Gemma 4 12B as the chat model
+
+- **Gemma 4 12B (Google) works in place of Qwen 3.5 9B.** Load it in LM Studio and AP Coder uses it for GL
+  suggestions and the header check from page images; nothing to set. With nothing loaded, AP Coder now asks LM
+  Studio for Gemma 4 12B first, then Qwen 3.5 9B. If Gemma's thinking is ever on, its thought channel is never read
+  as the answer. Download links and steps: [LM_STUDIO.md](LM_STUDIO.md#using-gemma-4-12b-instead-of-qwen-35-9b-windows-laptop).
+  It has not yet been measured against Qwen on AP's invoices: compare the two on the same invoices before deciding.
+
+## Earlier: ready for the AP mailbox and JD Edwards
 
 **For AP**
 

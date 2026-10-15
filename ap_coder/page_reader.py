@@ -885,8 +885,9 @@ def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader
 
 
 def _visible(text: str) -> str:
-    """The reading without a <think> block (a model that thinks despite the switch)."""
-    return local_llm.strip_thinking(text) if "think>" in text.lower() else text
+    """The reading without a <think> block or thought channel (a model that thinks despite the switch)."""
+    marked = "think>" in text.lower() or "<|channel>" in text or "<channel|>" in text
+    return local_llm.strip_thinking(text) if marked else text
 
 
 # A model reading a page greedily can fall into writing one line over and over (an empty table row) until its token
@@ -1454,7 +1455,9 @@ def _coding_row(settings: Settings) -> dict[str, str]:
         return row
     row.update(state="fallback", status=f"{status.describe()} Accounts come from what AP approved before; lines "
                                         "nothing was learned for are left for AP to code.")  # fmt: skip
-    row["note"] = "Start LM Studio's server with a chat model (Qwen 3.5 9B) for suggestions on new vendors."
+    row["note"] = (
+        "Start LM Studio's server with a chat model (Gemma 4 12B or Qwen 3.5 9B) for suggestions on new vendors."
+    )
     return row
 
 
@@ -1531,7 +1534,7 @@ def lm_studio_models(settings: Settings, *, use_cache: bool = True) -> list[dict
 
 
 # Tokens a chat model is loaded with from Settings: the context CloseDesk loads its chat model with (its
-# min_context_tokens), so on a Mac running both apps LM Studio keeps one copy of Qwen 3.5 9B, not a second one loaded
+# min_context_tokens), so on a Mac running both apps LM Studio keeps one copy of the chat model, not a second one loaded
 # with other settings (docs/LM_STUDIO.md). The accounts call itself is short; no more than the model supports.
 CHAT_CONTEXT = 16384
 

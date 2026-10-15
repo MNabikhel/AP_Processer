@@ -216,6 +216,11 @@ def test_detection_when_nothing_answers_is_quick_and_cached(real_fetch, monkeypa
         ("", ["ath-maas_ovisocr2", "text-embedding-x"], [], True, ""),  # never OvisOCR2 or an embedding model
         ("", ["text-embedding-qwen3-embedding-0.6b", "ovis-ocr2", "qwen3.5-9b-mlx"], [], True, "qwen3.5-9b-mlx"),
         ("", ["qwen3.5-27b", "qwen3.5-4b"], [], True, ""),  # another size is not the one the team runs
+        # Gemma 4 12B is the team's chat model too, picked first when both are downloaded and neither is loaded
+        ("", ["qwen/qwen3.5-9b", "google/gemma-4-12b", "b"], [], True, "google/gemma-4-12b"),
+        ("", ["gemma-4-e4b-it", "gemma-4-26b-a4b-it", "qwen3.5-9b"], [], True, "qwen3.5-9b"),  # other Gemma sizes: no
+        ("", ["google/gemma-4-12b", "qwen/qwen3.5-9b"], ["qwen/qwen3.5-9b"], True, "qwen/qwen3.5-9b"),  # loaded wins
+        ("", ["ath-maas_ovisocr2", "gemma-4-12b-it-qat"], ["ath-maas_ovisocr2"], True, "gemma-4-12b-it-qat"),
         ("", ["Ovis_OCR2-GGUF"], ["Ovis_OCR2-GGUF"], True, ""),  # a page reader, however it is spelled
         # OvisOCR2 under any name the page reader knows it by (an MLX build, separators): never the chat model
         ("", ["ovis-ocr2", "qwen/qwen3.5-9b"], ["ovis-ocr2"], True, "qwen/qwen3.5-9b"),
@@ -247,6 +252,26 @@ def test_recognises_the_team_chat_model_in_every_build(model_id):
     ],
 )  # fmt: skip
 def test_other_models_are_not_the_team_chat_model(model_id):
+    assert not local_llm.team_chat_model(model_id)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "google/gemma-4-12b", "gemma-4-12b-it", "gemma-4-12b-it-qat", "lmstudio-community/gemma-4-12B-it-QAT-GGUF",
+        "lmstudio-community/gemma-4-12B-it-GGUF", "gemma-4-12B-it-Q4_K_M.gguf", "gemma-4-12b-it-mlx", "gemma4:12b",
+        "gemma-4-12b@q4_0",
+    ],
+)  # fmt: skip
+def test_recognises_gemma_4_12b_in_every_build(model_id):
+    """The ids LM Studio and Ollama give Gemma 4 12B: it can see pages and is ranked before Qwen 3.5 9B."""
+    assert local_llm.team_chat_rank(model_id) == 0 and local_llm.looks_like_vision(model_id)
+
+
+@pytest.mark.parametrize(
+    "model_id", ["gemma-4-e4b-it", "gemma-4-26b-a4b-it", "gemma-4-31b-it", "gemma-3-12b-it", "gemma-4-112b"]
+)
+def test_other_gemma_models_are_not_the_team_chat_model(model_id):
     assert not local_llm.team_chat_model(model_id)
 
 
@@ -713,6 +738,7 @@ def test_qwen35_can_see_pages():
 
     assert looks_like_vision("qwen3.5-9b") and looks_like_vision("qwen3.5:9b") and looks_like_vision("Qwen3.5-2B")
     assert not looks_like_vision("qwen3-8b")
+    assert looks_like_vision("gemma-4-12b-it-qat") and looks_like_vision("gemma4:12b")
 
 
 # --- A good neighbour to CloseDesk (docs/LM_STUDIO.md) --------------------------------------------------------------
@@ -748,3 +774,17 @@ def test_a_failed_chat_request_is_not_sent_again_by_itself(lm_studio, reference)
         ask_accounts(server, reference)
     assert len(server.chats) == 1  # the OpenAI SDK's own retry would have sent it twice
     assert local_llm.build_local_client(LocalLLMSettings()).max_retries == 0
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '<|channel>thought\nThe line is office paper, so 6100.<channel|>{"gl_code": "6100"}',
+        'The line is office paper.<channel|>{"gl_code": "6100"}',  # the template opened the channel itself
+        '<|channel>thought\n<channel|>{"gl_code": "6100"}',  # an empty "ghost" channel
+    ],
+)
+def test_gemma_4_thought_channel_is_not_the_answer(content):
+    """Gemma 4 writes any thinking in a thought channel, not <think> tags: only what follows it is the answer."""
+    assert local_llm.strip_thinking(content) == '{"gl_code": "6100"}'
+    assert local_llm.parse_json_reply(content) == {"gl_code": "6100"}
