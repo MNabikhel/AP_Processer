@@ -152,13 +152,43 @@ def test_a_failed_install_stops_with_what_to_do(launch, monkeypatch):
 
 def test_packages_come_only_from_the_wheelhouse_unless_the_internet_is_allowed(launch, tmp_path, monkeypatch):
     monkeypatch.setattr(launch, "ROOT", tmp_path)
-    assert launch.pip_source() is None  # offline (the default) and no wheelhouse: nowhere to install from
+    (tmp_path / "bundle_manifest.json").write_text("{}", encoding="utf-8")  # an offline bundle...
+    assert launch.pip_source() is None  # ...without its wheelhouse: nowhere to install from, never the internet
     monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
     assert launch.pip_source() == []  # a developer's opt-in: PyPI
     (tmp_path / "wheelhouse").mkdir()
     assert launch.pip_source() == ["--no-index", "--find-links", str(tmp_path / "wheelhouse")]
     monkeypatch.delenv("AP_ALLOW_INTERNET")
     assert launch.pip_source() == ["--no-index", "--find-links", str(tmp_path / "wheelhouse")]
+
+
+def test_the_code_alone_downloads_its_packages_like_closedesk(launch, tmp_path, monkeypatch):
+    """GitHub's ZIP (no manifest, wheelhouse or models): the setup installs from PyPI, as CloseDesk does, unless
+    AP_ALLOW_INTERNET=0 forbids it; an offline bundle never does."""
+    monkeypatch.setattr(launch, "ROOT", tmp_path)
+    monkeypatch.setattr(launch.fetch_models, "BUNDLE_MODELS", tmp_path / "models")
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    assert launch.plain_download() and launch.pip_source() == []
+    for value in ("0", "false", "No", "off"):
+        monkeypatch.setenv("AP_ALLOW_INTERNET", value)
+        assert not launch.plain_download() and launch.pip_source() is None
+    monkeypatch.delenv("AP_ALLOW_INTERNET")
+    (tmp_path / "models").mkdir()  # the bundle's OCR models: an offline bundle (missing its wheelhouse)
+    assert not launch.plain_download() and launch.pip_source() is None
+    (tmp_path / "models").rmdir()
+    (tmp_path / "bundle_manifest.json").write_text("{}", encoding="utf-8")
+    assert not launch.plain_download() and launch.pip_source() is None
+
+
+def test_the_opt_in_for_a_download_step_is_never_left_for_the_dashboard(launch, monkeypatch):
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    with launch.setup_downloads():
+        assert launch.internet_allowed()
+    assert "AP_ALLOW_INTERNET" not in launch.os.environ and "AP_ALLOW_INTERNET" not in launch.child_env()
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "0")
+    with launch.setup_downloads():
+        pass
+    assert launch.os.environ["AP_ALLOW_INTERNET"] == "0"
 
 
 def _record_pip(launch, monkeypatch) -> list[list[str]]:
@@ -180,6 +210,7 @@ def _record_pip(launch, monkeypatch) -> list[list[str]]:
 def test_offline_pip_never_runs_without_no_index(launch, tmp_path, monkeypatch, capsys):
     """The offline default: pip runs only against the bundle's wheelhouse (``--no-index``), never PyPI."""
     monkeypatch.setattr(launch, "ROOT", tmp_path)
+    (tmp_path / "bundle_manifest.json").write_text("{}", encoding="utf-8")
     commands = _record_pip(launch, monkeypatch)
     monkeypatch.setattr(launch, "missing_packages", lambda extras: (["fastapi>=0.115,<1", "rapidocr>=3.4,<3.5"], "x"))
     with pytest.raises(launch.SetupError) as exc:  # no wheelhouse: nothing run, and it says what is missing
@@ -195,6 +226,7 @@ def test_offline_pip_never_runs_without_no_index(launch, tmp_path, monkeypatch, 
 
 def test_offline_without_wheelhouse_still_starts_when_the_core_is_there(launch, tmp_path, monkeypatch):
     monkeypatch.setattr(launch, "ROOT", tmp_path)
+    (tmp_path / "bundle_manifest.json").write_text("{}", encoding="utf-8")
     commands = _record_pip(launch, monkeypatch)
     ocr = [r for r in launch.check_deps.requirements(extras=("ocr",)) if launch.is_ocr(r)]
     monkeypatch.setattr(launch, "missing_packages", lambda extras: (ocr, "Missing: ap_coder (pip install -e .)"))
@@ -546,6 +578,10 @@ def no_models(launch, tmp_path, monkeypatch):
     empty = tmp_path / "rapidocr_models"
     empty.mkdir()
     monkeypatch.setattr(offline, "ppocrv5_installed", lambda: True)
+    # The table finder's model missing too, with its engine installed (CI's test jobs have no onnxruntime).
+    monkeypatch.setattr(offline, "onnxruntime_installed", lambda: True)
+    monkeypatch.setattr(offline, "table_finder_path", lambda: None)
+    monkeypatch.setattr(offline, "table_finder_dirs", lambda: [tmp_path / "code_models", tmp_path / "data_models"])
     monkeypatch.setattr(offline, "model_dir", lambda: empty)
     monkeypatch.setattr(fetch_models, "BUNDLE_MODELS", tmp_path / "models")  # no bundle models/ folder
     downloads: list[str] = []
@@ -560,6 +596,7 @@ def no_models(launch, tmp_path, monkeypatch):
 
 def test_offline_models_are_never_downloaded_and_a_failure_is_said_once(launch, no_models, monkeypatch, capsys):
     fetch_models, downloads = no_models
+    monkeypatch.setattr(launch, "plain_download", lambda: False)  # an offline bundle without its models folder
     ran: list[list[str]] = []
     real_main = fetch_models.main
     monkeypatch.setattr(fetch_models, "main", lambda argv: ran.append(argv) or real_main(argv))
@@ -584,7 +621,40 @@ def test_models_are_downloaded_only_with_the_opt_in(launch, no_models, monkeypat
     state: dict = {}
     launch.ensure_models(first=False, state=state)
     launch.ensure_models(first=False, state=state)  # the failed download is not retried on every start
-    assert len(downloads) == 3 and "Downloading the OCR models" in capsys.readouterr().out
+    assert len(downloads) == 4 and "Downloading the OCR models" in capsys.readouterr().out  # (+ the table finder)
+
+
+def test_the_code_alone_downloads_the_models_once_without_the_opt_in(launch, no_models, monkeypatch, capsys):
+    fetch_models, downloads = no_models
+    monkeypatch.delenv("AP_ALLOW_INTERNET", raising=False)
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+    state: dict = {}
+    launch.ensure_models(first=False, state=state)
+    launch.ensure_models(first=False, state=state)  # the failed download is not retried on every start
+    out = capsys.readouterr().out
+    assert len(downloads) == 4 and "Downloading the OCR models" in out and "Tried again tomorrow" in out
+    assert any("yolov8n_layout" in url for url in downloads)  # the table finder's model too
+    assert "AP_ALLOW_INTERNET" not in launch.os.environ  # set for the download only
+    state["models_failed"] = state["models_failed"].rsplit("|", 1)[0] + "|2000-01-01"  # failed on an earlier day
+    launch.ensure_models(first=False, state=state)
+    assert len(downloads) == 8  # tried again
+
+
+def test_the_table_finder_is_downloaded_into_the_data_folder(no_models, tmp_path, monkeypatch, capsys):
+    """Never into the code's models/ folder: that would make GitHub's ZIP look like an offline bundle."""
+    fetch_models, downloads = no_models
+    from ap_coder import offline
+
+    monkeypatch.setattr(offline, "table_finder_path", lambda: None)
+    monkeypatch.setattr(
+        offline, "table_finder_dirs", lambda: [tmp_path / "code" / "models", tmp_path / "data" / "models"]
+    )
+    got: list = []
+    monkeypatch.setattr(fetch_models, "fetch", lambda folder, source, online, models: got.append(folder) or
+                        SimpleNamespace(ok=True))  # fmt: skip
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
+    assert fetch_models.table_finder(SimpleNamespace(table_finder=True, offline=False, check=False))
+    assert got == [tmp_path / "data" / "models"] and "downloaded into" in capsys.readouterr().out
 
 
 def test_shortcut_is_made_once(launch, tmp_path, monkeypatch):

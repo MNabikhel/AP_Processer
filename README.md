@@ -4,13 +4,14 @@
 AP Coder reads each invoice, checks every number, proposes the GL split and learns from what AP approves.
 It then exports approved invoices to JD Edwards E1. It runs fully offline: every invoice is read on the
 laptop by OCR and by OvisOCR2, a small page-reading model in [LM Studio](https://lmstudio.ai/). A chat model
-(Qwen 3.5 9B for the pilot) is optional, and no data leaves the laptop.
+(Gemma 4 12B or Qwen 3.5 9B) is optional, and no data leaves the laptop.
 
 ![Review queue: today's work, KPIs and the invoices waiting for review](docs/screenshots/review-queue.png)
 
 ## Set up: one double-click
 
-1. **Unzip AP Coder** to a folder that OneDrive does not sync (e.g. `C:\APCoder\app`).
+1. **Unzip AP Coder** to a folder that OneDrive does not sync (e.g. `C:\APCoder\app`): GitHub's ZIP (**Code →
+   Download ZIP**) on a computer with internet, or the offline bundle on one without.
 2. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`; the first time, right-click → *Open*; on macOS 15
    or newer, System Settings → Privacy & Security → *Open Anyway*. See [PILOT.md](docs/PILOT.md#install-one-button)
    for a ZIP downloaded from the internet).
@@ -19,13 +20,13 @@ That's it, the first time and every day after. The launcher looks at what is alr
 only what is missing:
 
 - **Python:** it uses the Python already installed: 3.11 or newer (3.12 recommended: the offline bundle has
-  packages for the Python versions it was built for, and those are looked for first). It never downloads
-  Python; if there is none, or only an older one, it says so (IT installs Python 3.12).
-- **Packages:** it sets up its own environment (`.venv`) once and installs only missing packages, from the
-  offline bundle's `wheelhouse/` folder (never from the internet). Your system Python and other programs are
-  not touched.
+  packages for the Python versions it was built for, and those are looked for first). If there is none, or
+  only an older one, it says so; from GitHub's ZIP on Windows it offers to install Python 3.12 with `winget`.
+- **Packages:** it sets up its own environment (`.venv`) once and installs only missing packages: from the
+  offline bundle's `wheelhouse/` folder (never from the internet), or, from GitHub's ZIP, downloaded once from
+  PyPI, as CloseDesk does. Your system Python and other programs are not touched.
 - **OCR models, data folder, desktop shortcut:** each is made once, only if it is not there yet (the OCR
-  models are copied from the bundle's `models/` folder).
+  models are copied from the bundle's `models/` folder, or downloaded once from GitHub's ZIP).
 - **Self-check:** it reads the ten sample invoices and one scan, then shows what is ready and opens the
   dashboard:
 
@@ -48,10 +49,11 @@ lives in `~/APCoder`, outside the code, so updates never touch it. On a clean Wi
 every change: it confirms the existing Python is used, a second start installs nothing, only one copy runs,
 and only one shortcut is made.
 
-This is an offline enterprise build: the laptop never connects to the internet. IT builds the offline bundle
-once, online (`python scripts/build_offline_bundle.py`: Windows, Python 3.11 to 3.14; add `--mac` for Macs),
-and the double-click installs from its `wheelhouse/`
-folder. A package or model missing from the bundle is said plainly, and AP Coder still starts when its core
+This is an offline enterprise build: AP Coder itself never connects to the internet. Only its setup may, and
+only from GitHub's ZIP (the code alone), to download the packages and OCR models once (`AP_ALLOW_INTERNET=0`
+forbids it). For a laptop with no internet, IT builds the offline bundle once, online
+(`python scripts/build_offline_bundle.py`: Windows, Python 3.11 to 3.14; add `--mac` for Macs), and the
+double-click installs from its `wheelhouse/` folder. A package or model missing from the bundle is said plainly, and AP Coder still starts when its core
 packages are there. There is one file to open per computer: `APProcessor.bat` on Windows, `APProcessor.command`
 on a Mac. IT can add `--installer` to ask for the data folder and the Azure settings
 (`APProcessor.bat --installer`, typed in `scripts\terminal.bat`). The full pilot guide is
@@ -202,12 +204,14 @@ Automation*): Ardent Partners puts the average touchless rate at 32.6%, and best
 
 ## Run it by hand (developers)
 
-The launcher, the installer and `scripts/fetch_models.py` are offline by default: packages only from the
-bundle's `wheelhouse/` (`pip --no-index`), OCR models only from its `models/`, no `git` update, no `winget`
-Python. On a developer machine with internet, opt in with one environment variable, **`AP_ALLOW_INTERNET=1`**
-(`set AP_ALLOW_INTERNET=1` in cmd, `export AP_ALLOW_INTERNET=1` in bash): then missing packages come from
-PyPI, the PP-OCRv5 models from www.modelscope.cn, `APProcessor.bat --installer` updates a git checkout and APProcessor.bat
-offers to install Python 3.12 with `winget`. `scripts/build_offline_bundle.py` sets it for itself (building the
+In an offline bundle, the launcher, the installer and `scripts/fetch_models.py` never go online: packages only
+from the bundle's `wheelhouse/` (`pip --no-index`), OCR models only from its `models/`, no `git` update, no
+`winget` Python. From the code alone (GitHub's ZIP or a git checkout: no `bundle_manifest.json`, `wheelhouse/`
+or `models/`) the launcher's setup downloads what is missing, once, like CloseDesk: packages from PyPI, the
+PP-OCRv5 models from www.modelscope.cn, and APProcessor.bat offers Python 3.12 with `winget`; the dashboard it
+starts stays offline. `AP_ALLOW_INTERNET=0` forbids those downloads. **`AP_ALLOW_INTERNET=1`**
+(`set AP_ALLOW_INTERNET=1` in cmd, `export AP_ALLOW_INTERNET=1` in bash) also lets `APProcessor.bat
+--installer` update a git checkout and the app use a server or Azure on the internet. `scripts/build_offline_bundle.py` sets it for itself (building the
 bundle is the one step that downloads). CI's online jobs set it; its offline-bundle job runs without it.
 
 ```bash
