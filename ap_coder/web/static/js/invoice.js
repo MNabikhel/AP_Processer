@@ -610,6 +610,8 @@ async function chooseFor(event) {
     }),
   );
   group("New line", [["line_new", "A new line from these words"]]);
+  // Words with a description and an amount look like a row of the line table: a new line is the likely choice.
+  if (picked.length > 3 && /\d[\d,]*\.\d{2}\b/.test(text)) select.value = "line_new";
   chooser = document.createElement("div");
   chooser.className = "inv-chooser card";
   chooser.setAttribute("role", "dialog");

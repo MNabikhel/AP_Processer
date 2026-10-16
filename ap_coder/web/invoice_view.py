@@ -238,6 +238,7 @@ def line_value(name: str, text: str) -> Any:
         description = " ".join(plain[:start].split()) or " ".join((plain[:start] + plain[end:]).split())
         # A row reads "description  qty  price  amount": the numbers before the amount are not the description.
         description = re.sub(r"(\s+[-$]?\d[\d,.]*)+$", "", description).strip() or description
+        description = re.sub(r"^\d{1,3}[.)]?\s+(?=\D)", "", description)  # the row's number ("3 Copy paper")
         return {"description": description, "amount": round(amount, 2)}
     return None
 
@@ -248,7 +249,12 @@ def form_value(name: str, text: str) -> Any:
         return parse_amount(text)
     if name in ("invoice_date", "due_date"):
         return parse_date(text, prefer_day_first=None) or parse_date(text, prefer_day_first=True) or text.strip()
-    return " ".join(text.split())
+    plain = " ".join(text.split())
+    if name in ("invoice_number", "po_number", "gst_hst_registration_number", "qst_registration_number",
+                "pst_registration_number"):  # fmt: skip
+        # The label's own marks picked with the number ("#: PO-77120", "No. 4471"): the number alone.
+        plain = re.sub(r"^(?:(?:no|n°|nr|num|#)\.?\s*|[#:.\-–]\s*)+", "", plain, flags=re.I)
+    return plain
 
 
 def lines_frame(lines: list[dict[str, Any]]) -> pd.DataFrame:

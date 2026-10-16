@@ -175,7 +175,10 @@ def test_shape_fields_cleans_boxes_status_and_sources():
 def test_line_items_keep_their_row_boxes():
     items = [LineReading("Server", 1, 8900.0, 8900.0, [Box(1, 0.08, 0.33, 0.9, 0.35), Box(0, 0.8, 0.33, 0.9, 0.35)]),
              LineReading("No box", 1, 1.0, 1.0, [])]  # fmt: skip
-    assert document.shape_line_items(items) == [{"label": "Server", "boxes": [[1, 0.08, 0.33, 0.9, 0.35]]}]
+    assert document.shape_line_items(items) == [{"label": "Server", "boxes": [[1, 0.08, 0.33, 0.9, 0.35]], "n": 1,
+                                                 "amount": 8900.0}]  # fmt: skip
+    no_amount = LineReading("Fee", None, None, None, [Box(1, 0.1, 0.4, 0.9, 0.42)])
+    assert document.shape_line_items([no_amount])[0]["amount"] is None
 
 
 # --- The viewer's own files -------------------------------------------------------------------------------------------

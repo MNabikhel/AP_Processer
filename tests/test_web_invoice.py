@@ -555,6 +555,12 @@ def test_the_vendor_is_picked_from_the_vendor_list_or_added_as_a_new_vendor(clie
             {"description": 'Dell 27" monitor P2725H', "amount": 1316.0},
         ),
         ("line_new", "Freight 45.00", {"description": "Freight", "amount": 45.0}),
+        (
+            "line_new",
+            "3 Copy paper, letter (G, P) 10 52.00 520.00",
+            {"description": "Copy paper, letter (G, P)", "amount": 520.0},
+        ),
+        ("line_new", "2026 Annual licence 1,200.00", {"description": "2026 Annual licence", "amount": 1200.0}),
         ("line_new", "no amount here", None),
         ("line_amount", "toner", None),
     ],
@@ -599,3 +605,16 @@ def test_the_math_line_by_line_and_on_the_approve_bar(client, store):
     data["line_tax_r0"] = ["GST"]
     sections = check(client, pacific["id"], data)["sections"]
     assert "Math: 1 difference: PST" in sections["bar"] and "off by 62.30" in sections["taxcheck"]
+
+
+@pytest.mark.parametrize(
+    ("field", "text", "value"),
+    [
+        ("invoice_number", "#: PO-77120", "PO-77120"),
+        ("po_number", "No. 4471", "4471"),
+        ("invoice_number", "NW-2026-0912", "NW-2026-0912"),
+        ("vendor_name", "#1 Supplies", "#1 Supplies"),
+    ],
+)
+def test_a_numbers_label_marks_picked_with_it_are_dropped(field, text, value):
+    assert invoice_view.form_value(field, text) == value

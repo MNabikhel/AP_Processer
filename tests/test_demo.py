@@ -23,8 +23,16 @@ def test_demo_mistakes_are_flagged_or_visible(tmp_path):
     pacific = next(i for i in store.list_invoices() if i["vendor_name"].startswith("Pacific"))
     inv = store.get_invoice(pacific["id"])
     assert inv["requires_review"] and inv["ai_output"]["line_items"][1]["predicted_gl_code"] == "6000"
-    assert all(not issue["severity"] == "error" for i in store.list_invoices() for issue in
-               (store.get_invoice(i["id"])["validation"] or {}).get("issues", []))  # fmt: skip
+    # No error but one: the US vendor is left out of the sample vendor master on purpose, to show a vendor that must
+    # be picked from the list or added as a new vendor.
+    errors = {
+        (i["vendor_name"], issue["code"])
+        for i in store.list_invoices()
+        for issue in (store.get_invoice(i["id"])["validation"] or {}).get("issues", [])
+        if issue["severity"] == "error"
+    }
+    assert {code for _, code in errors} <= {"VENDOR_NOT_IN_MASTER"}
+    assert all(name.startswith("Cascade") for name, _ in errors)
 
 
 def test_removing_the_demo_keeps_real_invoices(tmp_path, ground_truth):
