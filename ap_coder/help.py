@@ -424,6 +424,20 @@ CHECKS: dict[str, CheckHelp] = {
         "Compare each line (description, quantity, price and amount) with the page and correct it before approving. "
         "Until the two readers agree, the invoice isn't approved without a person.",
     ),
+    "VERIFIER_DISAGREES": CheckHelp(
+        READING, "The AI reviewer reads it differently",
+        "The AI reviewer (the chat model in LM Studio, checking the invoice against its pages) read a field or a line "
+        "differently from what AP Coder proposes, and kept that answer when asked again. The field is marked Check.",
+        "Look at the page: correct the field if the reviewer is right (the warning goes once it matches), or approve "
+        "as it is if the proposal is right.",
+    ),
+    "VERIFIER_UNSURE": CheckHelp(
+        READING, "The AI reviewer is not sure",
+        "The AI reviewer could not confirm the invoice within its rounds and minutes (Settings → Reading), or gave "
+        "no usable answer. It never approves an invoice it is not sure of.",
+        "Check the fields it names (or the whole invoice) against the page, then approve. Have it check again from "
+        "the review screen if the chat model was busy or not loaded.",
+    ),
     "CURRENCY_NOT_FOUND": CheckHelp(
         READING, "Currency not printed",
         "The invoice shows no currency the reader could read (no code such as CAD or USD, no € or £ sign), so "

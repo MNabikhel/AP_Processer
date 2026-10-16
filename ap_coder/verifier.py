@@ -329,10 +329,12 @@ def issues(result: dict[str, Any] | None, output: dict[str, Any] | None = None) 
              f"{' (' + v['reason'] + ')' if v.get('reason') else ''}" for f, v in fields.items()]  # fmt: skip
     parts += [f"line {n}: {reason or 'not as entered'}" for n, reason in lines.items()]
     if status == DISAGREES and parts:
-        return [(WARNING, DISAGREES_CODE, f"the {NAME} disagrees: " + "; ".join(parts)[:900])]
+        return [(WARNING, "VERIFIER_DISAGREES", f"the {NAME} disagrees: " + "; ".join(parts)[:900])]
     if status == UNSURE:
         what = "; ".join(parts) if parts else "it could not confirm the invoice"
-        return [(WARNING, UNSURE_CODE, f"the {NAME} is not sure ({result.get('why') or 'not sure'}): {what}"[:900])]
+        return [
+            (WARNING, "VERIFIER_UNSURE", f"the {NAME} is not sure ({result.get('why') or 'not sure'}): {what}"[:900])
+        ]
     return []
 
 

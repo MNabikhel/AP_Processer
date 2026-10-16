@@ -618,3 +618,37 @@ def test_the_math_line_by_line_and_on_the_approve_bar(client, store):
 )
 def test_a_numbers_label_marks_picked_with_it_are_dropped(field, text, value):
     assert invoice_view.form_value(field, text) == value
+
+
+# --- The AI reviewer -----------------------------------------------------------------------------------------------
+
+
+def test_the_ai_reviewer_on_the_review_screen(client, store):
+    import json
+
+    from ap_coder import verifier
+
+    inv = store.list_invoices(REVIEW)[0]
+    page = client.get(f"/review/{inv['id']}").text
+    assert "The AI reviewer checks this invoice against its pages" in page  # every demo invoice waits for it
+    output = store.get_invoice(inv["id"])["ai_output"]
+    disputed = {"grand_total": {"value": output["grand_total"], "on_page": "9,999.00", "reason": "the total box"}}
+    store.next_verification(after_page_reader=False)
+    store.finish_verification(inv["id"], "done", rounds=2, seconds=95.0, result={
+        "status": verifier.DISAGREES, "fields": disputed, "lines": {}, "rounds": 2, "seconds": 95.0,
+        "summary": "The total printed is 9,999.00."})  # fmt: skip
+    page = client.get(f"/review/{inv['id']}").text
+    assert "The AI reviewer reads total differently (2 rounds, 95 s)" in page
+    assert "The total printed is 9,999.00." in page and "check it again" in page
+    sections = json.dumps(check(client, inv["id"])["sections"])
+    assert "VERIFIER_DISAGREES" in sections and "9,999.00" in sections
+    # The reviewer corrects the total to what is printed: the reviewer's finding is settled.
+    data = form_of(store, inv["id"], grand_total="9999.00")
+    assert "VERIFIER_DISAGREES" not in json.dumps(check(client, inv["id"], data)["sections"])
+
+    assert client.post(f"/review/{inv['id']}/review-again").status_code == 403  # no header: not from the page
+    answer = client.post(f"/review/{inv['id']}/review-again", headers=PAGE).json()
+    assert answer["ok"] and store.verification(inv["id"])["status"] == "waiting"
+    verifier.save_settings(store, on=False, rounds=3, minutes=5)
+    assert client.post(f"/review/{inv['id']}/review-again", headers=PAGE).status_code == 400
+    assert "The AI reviewer checks" not in client.get(f"/review/{inv['id']}").text  # off: nothing said

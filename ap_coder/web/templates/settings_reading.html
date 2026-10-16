@@ -148,6 +148,27 @@
   {% endif %}
 </section>
 
+<section class="card" id="reviewer">
+  <h4>AI reviewer</h4>
+  <p class="muted">The chat model in LM Studio (Gemma 4 12B) checks every invoice against its pages, as an AP clerk would
+    before posting it: the header, each line and its GL account, the taxes and the math. It thinks first, and is asked
+    again about anything it disputed until it is sure. It runs in the background, between OvisOCR2's invoices. What it
+    reads differently is marked Check; when it is not sure, a person looks. With it on, no invoice is approved without a
+    person until it agrees.</p>
+  <form method="post" action="/settings/reading/reviewer" class="stack" data-busy="Saving…">
+    <label class="check"><input type="checkbox" name="on" value="1"{% if ai_reviewer.on %} checked{% endif %}> On (recommended)</label>
+    <div class="row">
+      <label class="field">Rounds at most
+        <input type="number" name="rounds" min="1" max="{{ reviewer_limits.rounds }}" step="1" value="{{ ai_reviewer.rounds }}"
+               title="How many times it is asked about the invoice: the first look, then what it disputed."></label>
+      <label class="field">Minutes an invoice at most
+        <input type="number" name="minutes" min="0.5" max="{{ reviewer_limits.minutes }}" step="0.5" value="{{ '%g' | format(ai_reviewer.minutes) }}"
+               title="On a laptop without a graphics card a round takes one to three minutes."></label>
+    </div>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
+  </form>
+</section>
+
 {# ==== Slot: the "Azure Document Intelligence check" card. Built by pages/azure.py and its own template; nothing
    shows here until that partial exists. ==== #}
 {% include "partials/azure_check.html" ignore missing %}

@@ -483,6 +483,52 @@ def not_running(status: Any, settings: Settings, store: Store) -> str:
     return "" if model else "OvisOCR2 isn't running: see Settings → Reading."
 
 
+def reviewer_state(store: Store, inv: dict[str, Any]) -> dict[str, Any]:
+    """What the AI reviewer (verifier.py) made of this invoice, for a line under the document title: {state, lines:
+    [(icon, text)], again: offer to review it again}."""
+    from ap_coder import verifier
+
+    if not verifier.load_settings(store).on:
+        return {"state": "off", "lines": [], "again": False}
+    row = store.verification(inv["id"])
+    if row is None:
+        return {"state": "none", "lines": [], "again": True}
+    state, result = row["status"], row.get("result") or {}
+    name = verifier.NAME
+    if state == "verifying":
+        return {"state": state, "lines": [("hourglass_top", f"The {name} is checking this invoice against its pages "
+                                           "now.")], "again": False}  # fmt: skip
+    if state == "waiting":
+        text = (
+            f"The {name} checks this invoice against its pages when the chat model is free (after OvisOCR2). "
+            "It isn't approved without a person until it agrees."
+        )
+        lines = [("hourglass_top", text)]
+        if row.get("error"):
+            lines.append(("sync_problem", f"Last time: {row['error']}"))
+        return {"state": state, "lines": lines, "again": False}
+    if state == "failed":
+        return {"state": state, "lines": [("error", f"The {name} couldn't check it: {row.get('error')}. A person "
+                                                    "decides.")], "again": True}  # fmt: skip
+    if state == "skipped":
+        return {"state": state, "lines": [("info", f"Not checked by the {name}: {row.get('error')}.")], "again": True}
+    took = f"{plural(int(result.get('rounds') or 0), 'round')}, {float(result.get('seconds') or 0):.0f} s"
+    status = result.get("status")
+    if status == verifier.AGREED:
+        line = ("verified", f"The {name} checked every field and line against the pages and agrees ({took}).")
+    elif status == verifier.DISAGREES:
+        what = ", ".join(verifier.FIELDS.get(f, f) for f in result.get("fields") or {})
+        lines_ = ", ".join(f"line {n}" for n in result.get("lines") or {})
+        line = ("rule", f"The {name} reads {', '.join(x for x in (what, lines_) if x)} differently ({took}): see the "
+                        "checks.")  # fmt: skip
+    else:
+        line = ("help", f"The {name} is not sure ({result.get('why') or took}): a person checks it.")
+    out = [line]
+    if result.get("summary"):
+        out.append(("chat", f"“{result['summary']}”"))
+    return {"state": status or state, "lines": out, "again": True}
+
+
 def reader_state(store: Store, settings: Settings, inv: dict[str, Any], status: Any) -> dict[str, Any]:
     """What OvisOCR2 made of this invoice, for the line under the document title: ``state`` is "read" (its reading
     is in), "waiting", "reading", "skipped", "done" (read, not applied), "failed", "none" (not in its queue) or ""
@@ -927,6 +973,13 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     )
     output, report = finalise_coding(coding, reference, settings, extraction, store=store,
                                      exclude_invoice_id=inv["id"])  # fmt: skip
+    # The AI reviewer's findings, on what is on screen now: a field it disputed that the reviewer changed is settled.
+    from ap_coder import verifier
+    from ap_coder.validation import Issue
+
+    review = store.verification(inv["id"])
+    for severity, code, message in verifier.issues((review or {}).get("result"), output):
+        report.issues.append(Issue(severity, code, message))
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()

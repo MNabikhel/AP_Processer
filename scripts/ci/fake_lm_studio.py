@@ -66,7 +66,26 @@ def account_lines(request: dict) -> list[dict]:
     return [{"line_number": int(n), "gl_code": codes[0], "cost_center": "", "reason": "fake"} for n in numbers]
 
 
-def serve(port: int, chat: str, reader: str, embed: str, api: str, log: Path | None) -> None:
+def reviewer_answer(request: dict, mode: str) -> dict | None:
+    """An AI reviewer's request (its schema has "confident") answered as ``mode`` says: "agree" with everything,
+    "disagree" with the total (it reads 9,999.00, every time), or "unsure" (never confident). None for any other."""
+    schema = (request.get("response_format") or {}).get("json_schema", {}).get("schema") or {}
+    if "confident" not in (schema.get("properties") or {}):
+        return None
+    fields = _enum(schema, "field")
+    texts = [p.get("text", "") for m in request.get("messages", []) if isinstance(m.get("content"), list)
+             for p in m["content"] if isinstance(p, dict) and p.get("type") == "text"]  # fmt: skip
+    asked = texts[-1].split("For reference")[0] if texts else ""
+    numbers = sorted({int(n) for n in re.findall(r'"line_number": (\d+)', asked)})
+    wrong = mode == "disagree"
+    return {"fields": [{"field": f, "agree": not (wrong and f == "grand_total"),
+                        "on_page": "9,999.00" if wrong and f == "grand_total" else None, "reason": "fake"}
+                       for f in fields],
+            "lines": [{"line_number": n, "agree": True, "reason": ""} for n in numbers],
+            "confident": mode != "unsure", "summary": f"fake reviewer: {mode}"}  # fmt: skip
+
+
+def serve(port: int, chat: str, reader: str, embed: str, api: str, log: Path | None, reviewer: str = "agree") -> None:
     listed = models(chat, reader, embed)
 
     def write(entry: dict) -> None:
@@ -139,7 +158,11 @@ def serve(port: int, chat: str, reader: str, embed: str, api: str, log: Path | N
             elif kinds[model] == "embeddings":
                 self.send(400, {"error": f"'{model}' is not a llm"})
             else:
-                text = "INVOICE\nTotal 0.00" if images else json.dumps({"lines": account_lines(request)})
+                review = reviewer_answer(request, reviewer)
+                if review is not None:
+                    text = json.dumps(review)
+                else:
+                    text = "INVOICE\nTotal 0.00" if images else json.dumps({"lines": account_lines(request)})
                 if request.get("stream"):
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
@@ -218,11 +241,17 @@ def main(argv: list[str] | None = None) -> int:
         if name == "serve":
             p.add_argument("--port", type=int, default=1234)
             p.add_argument("--api", default="both", choices=["v0", "v1", "both"])
+            p.add_argument(
+                "--reviewer",
+                default="agree",
+                choices=["agree", "disagree", "unsure"],
+                help="how the chat model answers the AI reviewer's questions",
+            )
         else:
             p.add_argument("--app", required=True, help="AP Coder's address (http://127.0.0.1:8597)")
     args = parser.parse_args(argv)
     if args.command == "serve":
-        serve(args.port, args.chat, args.reader, args.embed, args.api, args.log)
+        serve(args.port, args.chat, args.reader, args.embed, args.api, args.log, args.reviewer)
         return 0
     return 1 if check(args.app, args.chat, args.reader, args.embed, args.log) else 0
 

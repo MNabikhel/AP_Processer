@@ -26,9 +26,9 @@ log = logging.getLogger(__name__)
 OK, WARN, OFF = "ok", "warn", "off"
 TESTING = "testing"  # loaded and working, testing itself before it is trusted (nothing is wrong)
 
-PDF_TEXT, OCR, TABLE_FINDER, PAGE_READER, RULES, TEMPLATES, CHECKS, GL_MODEL = (
+PDF_TEXT, OCR, TABLE_FINDER, PAGE_READER, RULES, TEMPLATES, CHECKS, GL_MODEL, REVIEWER = (
     "PDF text layer", "OCR (two engines)", "Table finder", "Page reader (OvisOCR2)", "Rule reader",
-    "Supplier templates", "Business checks", "GL coding model",
+    "Supplier templates", "Business checks", "GL coding model", "AI reviewer",
 )  # fmt: skip
 
 
@@ -80,6 +80,7 @@ def reading_status(settings: Any, store: Any, *, use_cache: bool = True) -> Read
         ReaderLine(CHECKS, OK, CHECKS_DETAIL),
         _safe(GL_MODEL, lambda: _gl_model(settings, use_cache, out)),
     ]
+    out.readers.append(_safe(REVIEWER, lambda: _reviewer(settings, store, out)))  # after the chat model's row
     _queue(settings, store, out)
     out.banner = _banner(out)
     return out
@@ -189,6 +190,30 @@ def _gl_model(settings: Any, use_cache: bool, out: ReadingStatus) -> ReaderLine:
         return ReaderLine(GL_MODEL, OK, detail)
     return ReaderLine(GL_MODEL, OFF, "Optional, not running: GL accounts come from AP's history and coding rules; "
                                      "a line nothing was learned for is left for AP to code.")  # fmt: skip
+
+
+def _reviewer(settings: Any, store: Any, out: ReadingStatus) -> ReaderLine:
+    """The AI reviewer (verifier.py): the chat model checks each invoice against its pages, in the background."""
+    from . import verifier
+
+    cfg = verifier.load_settings(store) if store is not None else verifier.ReviewerSettings()
+    if not cfg.on:
+        return ReaderLine(REVIEWER, OFF, "Off: invoices are approved by a person (or touchless) without it.")
+    counts = store.verification_counts() if store is not None else {}
+    waiting = counts.get("waiting", 0) + counts.get("verifying", 0)
+    tally = ""
+    if counts.get("done") or waiting:
+        tally = (
+            f" So far: {counts.get('agreed', 0)} agreed, {counts.get('disagrees', 0)} read something "
+            f"differently, {counts.get('unsure', 0)} not sure; {waiting} waiting."
+        )
+    how = (f"Checks every invoice against its pages with the chat model, thinking first, asked again until it is sure "
+           f"(up to {cfg.rounds} rounds and {cfg.minutes:g} min an invoice); no invoice is approved without a person "
+           "until it agrees.")  # fmt: skip
+    if not out.gl_model:
+        return ReaderLine(REVIEWER, WARN, f"{how} No chat model is running in LM Studio: load Gemma 4 12B; until "
+                                          f"then invoices wait for a person.{tally}")  # fmt: skip
+    return ReaderLine(REVIEWER, OK, f"{how}{tally}")
 
 
 def _queue(settings: Any, store: Any, out: ReadingStatus) -> None:
