@@ -138,6 +138,8 @@ def _quiet_setup(launch, monkeypatch, installed=False, self_check_ok=True):
     monkeypatch.setattr(launch, "ensure_shortcut", lambda: "")
     monkeypatch.setattr(launch, "lm_studio_line", lambda: ("info", "LM Studio: not running"))
     monkeypatch.setattr(launch, "page_reader_line", lambda: ("info", "Page reader: -"))
+    monkeypatch.setattr(launch, "chat_test_line", lambda state, force=False: None)
+    monkeypatch.setattr(launch, "setup_check_lines", lambda: [("ok", "Setup checks: -")])
     started: list[list[str]] = []
     monkeypatch.setattr(launch, "start_dashboard", lambda rest, state: started.append(rest) or 0)
     checks: list[int] = []

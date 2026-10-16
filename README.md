@@ -27,20 +27,27 @@ only what is missing:
   PyPI, as CloseDesk does. Your system Python and other programs are not touched.
 - **OCR models, data folder, desktop shortcut:** each is made once, only if it is not there yet (the OCR
   models are copied from the bundle's `models/` folder, or downloaded once from GitHub's ZIP).
-- **Self-check:** it reads the ten sample invoices and one scan, then shows what is ready and opens the
-  dashboard:
+- **Checks, on every start:** what `python -m ap_coder doctor --online` checks, so there is nothing to run by
+  hand. The models in LM Studio (the chat model, which it asks a two-line test question once per model, and
+  OvisOCR2), the GL accounts, tax mapping and settings, and, the first time and after an update, the ten sample
+  invoices and one scan. Then it opens the dashboard:
 
 ```
 AP Coder readiness:
   [OK] Python 3.12.10 (.venv)
-  [OK] Packages: all 13 in place
+  [OK] Packages: all 15 in place
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
-  [OK] LM Studio: model qwen3.5-9b loaded
+  [OK] Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
+  [OK] Chat model test passed: accounts from the chart in 4s: line 1 -> 6100, line 2 -> 6400
   [OK] Page reader: ath-maas_ovisocr2 found, self-test passed (reads every page of every invoice)
+  [OK] Setup checks: all 9 passed (GL accounts, tax mapping, coding rules, settings)
   [OK] Desktop shortcut 'AP Coder' made (once)
   [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR
 ```
+
+Start LM Studio's server (with the chat model loaded) before you double-click, and the summary covers it too.
+A problem is one plain line in the summary; AP Coder still starts.
 
 The first time takes a few minutes. Later starts take seconds and install nothing. Double-clicking while AP
 Coder is running opens the running copy. After an update, only new packages are installed. A damaged
@@ -217,7 +224,7 @@ bundle is the one step that downloads). CI's online jobs set it; its offline-bun
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[ocr,dev]"
-python -m ap_coder doctor --online   # setup check; with LM Studio running, a two-line test call
+python -m ap_coder doctor --online   # the same checks as a start, as a report to paste (troubleshooting)
 python -m ap_coder serve             # the dashboard: http://127.0.0.1:8501 (or the next free port)
 python scripts/pilot_check.py        # reads the ten samples offline and compares them with their answers
 ```

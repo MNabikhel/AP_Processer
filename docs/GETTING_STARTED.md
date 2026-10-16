@@ -105,18 +105,17 @@ To run AP Coder commands yourself (`doctor`, `share-report`, …), double-click 
 (in the `scripts` folder): it opens a command prompt in AP Coder's folder with everything ready, e.g.
 `python -m ap_coder doctor`.
 
-## Step 3: Check the setup → paste the doctor report
+## Step 3: Check the setup (nothing to run)
 
-In `scripts\terminal.bat`:
+Every double-click checks everything itself and prints it in the window before the dashboard opens: the
+packages and OCR, the data folder, the chat model in LM Studio (it asks it a two-line test question, once per
+model, on this laptop), OvisOCR2 and its self-test, and the GL accounts, tax mapping and settings. A problem is
+one plain line there; AP Coder still starts. **Settings → Reading** in the dashboard shows the readers too.
 
-```bat
-python -m ap_coder doctor --online
-```
+Start LM Studio's server, with the chat model loaded, **before** you double-click, so the check covers it.
 
-It checks the setup, the reference data and LM Studio: whether OvisOCR2 was found and passed its
-self-test (*page reader*), and, with the chat model loaded, one short test call on a tiny made-up invoice
-(on this laptop; nothing leaves it). **Paste the whole output into the chat.** Any FAIL line says why.
-**Settings → Reading** in the dashboard shows the same, reader by reader.
+Only if something is wrong, or I ask for it: `python -m ap_coder doctor --online` in `scripts\terminal.bat` gives
+the same checks as a report to paste into the chat (no keys, codes or invoice data).
 
 ## Step 4: Try the dashboard with the sample data (no enterprise data)
 

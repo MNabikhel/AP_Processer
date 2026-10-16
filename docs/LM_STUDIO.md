@@ -79,8 +79,9 @@ page reader stays OvisOCR2.
 5. **Developer → Start server**; Just-in-Time loading on, auto-evict off (above).
 6. **Load Gemma 4 12B, and unload Qwen** if it is loaded: with both loaded, AP Coder uses the first one LM Studio
    lists. Leave Gemma's *Thinking* off (its default).
-7. Check: `python -m ap_coder doctor --online` says Gemma is loaded and its dry run codes the two sample lines;
-   *Settings → Reading* shows the chat model as Gemma, *can see pages*, and OvisOCR2's self-test passed.
+7. **Double-click APProcessor.** Its summary says *Chat model: …gemma-4-12B… loaded in LM Studio (can see pages)*
+   and *Chat model test passed*; *Settings → Reading* shows the chat model as Gemma and OvisOCR2's self-test once
+   it has run. Nothing else to check.
 
 On an 8 GB graphics card Gemma and OvisOCR2 together (about 8.2 GB) spill a little into the computer's memory:
 slightly slower, nothing else. To go back to Qwen, load Qwen and unload Gemma.

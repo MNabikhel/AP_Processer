@@ -1308,19 +1308,113 @@ def sync_notes(data: Path) -> list[tuple[str, str]]:
 
 
 def lm_studio_line() -> tuple[str, str]:
-    """LM Studio is optional: say whether a model is loaded, never install or start it."""
+    """The chat model AP Coder would use (it suggests GL accounts for lines nothing was learned for), as LM Studio
+    reports it: loaded, or only downloaded (LM Studio then loads it on first use). Optional: never installs, starts or
+    loads anything."""
+    status = chat_status()
+    if status is None:
+        return "info", "Chat model: not checked (optional)"
+    if not status.reachable:
+        return "info", ("LM Studio: not running (optional: invoices are still read and coded without it; start its "
+                        "server before AP Coder to use it)")  # fmt: skip
+    if not status.active:
+        return "warn", f"{status.server}: running, but no chat model is loaded (optional: load Gemma 4 12B to use it)"
+    sees = "can see pages" if status.vision else "reads text only"
+    if status.lm_studio and status.model not in status.loaded:
+        return "info", (f"Chat model: {status.model} is downloaded but not loaded: LM Studio loads it the first time "
+                        "it is needed (load it now for a quick first invoice)")  # fmt: skip
+    from ap_coder.local_llm import is_chat_model
+
+    also = [m for m in status.loaded if m != status.model and is_chat_model(m)]  # (not OvisOCR2, the page reader)
+    more = f"; also loaded: {', '.join(also)} (unload it to use that one instead)" if also else ""
+    return "ok", f"Chat model: {status.model} loaded in {status.server} ({sees}){more}"
+
+
+def chat_status() -> Any:
+    """LM Studio's answer about the chat model (``local_llm.ModelStatus``), or None when it can't be asked."""
     try:
         from ap_coder import local_llm
         from ap_coder.config import Settings
 
-        status = local_llm.check_server(Settings.from_env().llm, timeout=1.0, use_cache=False)
+        return local_llm.check_server(Settings.from_env().llm, timeout=1.0, use_cache=False)
+    except Exception:  # noqa: BLE001 - the summary never stops the start
+        return None
+
+
+# How long the start waits for the chat model's answer to its test question (a loaded 12B model answers in seconds; a
+# model LM Studio is still loading can take longer: the start goes on and says so).
+CHAT_TEST_TIMEOUT = 90.0
+
+
+def chat_test_line(state: dict, force: bool = False) -> tuple[str, str] | None:
+    """The question ``doctor --online`` asks, asked by the double-click: the loaded chat model gets two made-up lines
+    and must answer with accounts from the chart. Asked once per model and version of AP Coder (remembered in the
+    launcher's state), again after it failed or with --check; never when no chat model is loaded (that would make LM
+    Studio load one). None when there is nothing to ask."""
+    status = chat_status()
+    if status is None or not status.active or (status.lm_studio and status.model not in status.loaded):
+        return None
+    key = f"{status.model}|{identity()['version']}"
+    last = state.get("chat_test") or {}
+    if not force and last.get("key") == key and last.get("ok"):
+        return "ok", f"Chat model test passed ({last.get('at', '?')}): it picks accounts from your chart"
+    say(f"Asking {status.model} a test question (two made-up invoice lines; a few seconds)...")
+    level, text = _ask_chat_model()
+    state["chat_test"] = {"key": key, "ok": level == "ok", "at": time.strftime("%Y-%m-%d %H:%M")}
+    return level, text
+
+
+def _ask_chat_model() -> tuple[str, str]:
+    """The doctor's local dry run, with a time limit: (level, line)."""
+    result: list[tuple[str, str, str]] = []
+
+    def ask() -> None:
+        try:
+            from ap_coder import doctor
+            from ap_coder.cli import _load_reference, build_parser
+            from ap_coder.config import Settings
+
+            reference = _load_reference(build_parser().parse_args(["doctor"]))
+            result.append(doctor._local_dry_run(Settings.from_env(), reference))
+        except Exception as exc:  # noqa: BLE001 - reported, never stops the start
+            result.append(("local dry run", "WARN", f"not asked ({type(exc).__name__}: {exc})"))
+
+    worker = threading.Thread(target=ask, name="chat-model-test", daemon=True)
+    worker.start()
+    worker.join(CHAT_TEST_TIMEOUT)
+    if not result:
+        return "warn", (f"Chat model test: no answer within {CHAT_TEST_TIMEOUT:.0f} s (is LM Studio still loading "
+                        "it?). AP Coder starts anyway; the next start asks again")  # fmt: skip
+    _, status, detail = result[0]
+    if status == "PASS":
+        return "ok", f"Chat model test passed: {detail}"
+    return "warn", f"Chat model test: {detail}. AP Coder starts anyway; the next start asks again"
+
+
+# The doctor's checks the summary already has a line of its own for (or that never need saying at a start).
+COVERED_CHECKS = ("python", "package ", "OCR", "table finder", "data folder", "local model", "page reader",
+                  "engine", "prompt size", "AI model")  # fmt: skip
+
+
+def setup_check_lines() -> list[tuple[str, str]]:
+    """The rest of ``python -m ap_coder doctor`` (offline): the GL accounts, cost centers, tax mapping, coding rules
+    and settings. One line when all is well, else one line for each problem, with the doctor's own words."""
+    try:
+        from ap_coder.cli import _load_reference, build_parser
+        from ap_coder.config import Settings
+        from ap_coder.doctor import FAIL, WARN, run_checks
+
+        args = build_parser().parse_args(["doctor"])
+        checks = run_checks(Settings.from_env(), lambda: _load_reference(args), online=False)
     except Exception as exc:  # noqa: BLE001 - the summary never stops the start
-        return "info", f"LM Studio: not checked ({type(exc).__name__}) (optional)"
-    if status.active:
-        return "ok", f"{status.server}: model {status.model} loaded"
-    if status.reachable:
-        return "warn", f"{status.server}: running, but no model is loaded (optional: load one to use it)"
-    return "info", "LM Studio: not running (optional: invoices are still read and coded without it)"
+        return [("warn", f"Setup checks: not run ({type(exc).__name__}: {exc})")]
+    shown = [c for c in checks if not c.area.startswith(COVERED_CHECKS)]
+    problems = [("fail" if c.status == FAIL else "warn", f"{c.area}: {c.detail}") for c in shown
+                if c.status in (FAIL, WARN)]  # fmt: skip
+    if problems:
+        return problems
+    passed = sum(1 for c in shown if c.status == "PASS")
+    return [("ok", f"Setup checks: all {passed} passed (GL accounts, tax mapping, coding rules, settings)")]
 
 
 def page_reader_line() -> tuple[str, str]:
@@ -1344,8 +1438,10 @@ def page_reader_line() -> tuple[str, str]:
     return "info", f"Page reader: {status.model} found; its self-test runs on its own before it reads invoices"
 
 
-def readiness(packages: tuple[str, str]) -> list[tuple[str, str]]:
-    """The lines of the readiness summary: (level, text)."""
+def readiness(packages: tuple[str, str], state: dict | None = None, force: bool = False) -> list[tuple[str, str]]:
+    """The lines of the readiness summary: (level, text). Everything ``doctor --online`` checks, on every start: the
+    packages, OCR, data folder, the chat model (and, with ``state``, its test question) and the page reader in LM
+    Studio, and the GL accounts, tax mapping and settings."""
     from ap_coder import offline, paths
 
     lines = [("ok", f"Python {sys.version.split()[0]} (.venv)"), packages]
@@ -1367,7 +1463,12 @@ def readiness(packages: tuple[str, str]) -> list[tuple[str, str]]:
     except OSError as exc:
         lines.append(("fail", f"Data folder {data} can't be written ({exc.strerror or exc})"))
     lines.append(lm_studio_line())
+    if state is not None:
+        test = chat_test_line(state, force)
+        if test:
+            lines.append(test)
     lines.append(page_reader_line())
+    lines += setup_check_lines()
     return lines
 
 
@@ -1731,7 +1832,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     paths.record_install(ident)
     upgrade.write_marker(ROOT, ident)
     shortcut = ensure_shortcut()
-    lines = readiness((level, packages)) + notes + sync_notes(data)
+    lines = readiness((level, packages), state, force=args.check) + notes + sync_notes(data)
     if shortcut:
         lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
     old = older_installs(ident, legacy)

@@ -122,11 +122,13 @@ Then it checks itself and prints a short summary before the browser opens:
 ```
 AP Coder readiness:
   [OK] Python 3.12.4 (.venv)
-  [OK] Packages: all 13 in place
+  [OK] Packages: all 15 in place
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
-  [OK] LM Studio: model qwen3.5-9b loaded
+  [OK] Chat model: lmstudio-community/gemma-4-12B-it-QAT-GGUF loaded in LM Studio (can see pages)
+  [OK] Chat model test passed: accounts from the chart in 4s: line 1 -> 6100, line 2 -> 6400
   [--] Page reader: ath-maas_ovisocr2 found; its self-test runs on its own before it reads invoices
+  [OK] Setup checks: all 9 passed (GL accounts, tax mapping, coding rules, settings)
   [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR (9 s)
 ```
 

@@ -153,7 +153,8 @@ jobs:
             Write-Host ".venv made from: $venvHome (setup-python: $env:pythonLocation)"
             if (-not (Test-Path (Join-Path $venvHome 'python.exe'))) { throw ".venv home $venvHome has no python.exe" }
             foreach ($m in @('First run', 'AP Coder readiness:', 'Python 3\.12', 'Packages: installed what was missing',
-                             'OCR for scanned invoices', 'Data folder', 'LM Studio: not running', 'Self-check OK: \d+ of \d+')) {
+                             'OCR for scanned invoices', 'Data folder', 'LM Studio: not running', 'Setup checks: all \d+ passed',
+                             'Self-check OK: \d+ of \d+')) {
               if ($out -notmatch $m) { throw "the first start did not print: $m" }
             }
             # Double-click again while it runs: the running dashboard is opened, nothing new is started.
