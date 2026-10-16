@@ -1,45 +1,198 @@
 {% extends "base.html" %}
 {% block head %}<link rel="stylesheet" href="/static/data.css?v={{ static_version }}">{% endblock %}
+{% macro hidden_except(skip) %}{% for k, v in query.params(page=1) if k not in skip %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}{% endmacro %}
+{% macro col_item(c, shown) %}<li class="dir-col" draggable="true">
+  <span class="ms dir-grip" aria-hidden="true">drag_indicator</span>
+  <label class="check"><input type="checkbox" name="col" value="{{ c.key }}" form="dir-columns"{% if shown %} checked{% endif %}>{{ c.label }}</label>
+  <span class="dir-move"><button type="button" class="dir-icon" data-move="-1" aria-label="Move {{ c.label }} up"><span class="ms" aria-hidden="true">arrow_upward</span></button><button type="button" class="dir-icon" data-move="1" aria-label="Move {{ c.label }} down"><span class="ms" aria-hidden="true">arrow_downward</span></button></span>
+</li>{% endmacro %}
+{% macro col_label(key) %}{{ all_columns[key].label if key in all_columns else key }}{% endmacro %}
+{% macro placeholder(c) %}{{ {"money": ">1000", "date": "2026-09", "number": "42"}.get(c.kind, "north*") }}{% endmacro %}
 {% block content %}
-<section class="card">
-  <form method="get" action="/search" role="search" class="search-box">
-    <label class="search-field"><span class="ms" aria-hidden="true">search</span>
-      <input type="search" name="q" value="{{ q }}" placeholder="e.g. northwind 0912 · 18,017.85 · PO-88213"
-             aria-label="Search" autofocus></label>
-    <button class="btn primary" type="submit">Search</button>
+<section class="card flush" id="directory">
+  <form id="dir" method="get" action="/search#directory" role="search" class="rq-toolbar dir-toolbar">
+    {% for c in columns %}<input type="hidden" name="col" value="{{ c.key }}">{% endfor %}
+    <input type="hidden" name="sort" value="{{ query.sort }}">
+    <input type="hidden" name="dir" value="{{ 'desc' if query.descending else 'asc' }}">
+    <label class="search"><span class="ms" aria-hidden="true">search</span>
+      <input type="search" name="q" value="{{ query.q }}" placeholder="Quick search: northwind 0912 · 18,017.85 · PO-88213"
+             aria-label="Quick search: vendor, invoice or PO number, or amount"></label>
+    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">filter_alt</span>Find</button>
+    {% if filtered %}<a class="btn" href="/search?{{ query.query_string(filters={}, q='', page=1) }}#directory"><span class="ms" aria-hidden="true">filter_alt_off</span>Clear filters</a>{% endif %}
+    <span class="dir-spacer"></span>
+
+    <details class="pop right">
+      <summary class="btn"><span class="ms" aria-hidden="true">bookmarks</span>Layouts{% if presets %} ({{ presets | length }}){% endif %}</summary>
+      <div class="pop-body stack">
+        {% if presets %}
+        <ul class="dir-presets">
+          {% for p in presets %}
+          <li>
+            <a href="/search?{{ p.query }}#directory"><b>{{ p.name }}</b></a>{% if p.name == default_preset %} {{ ui.pill("Opens first", "ok") }}{% endif %}
+            <span class="dir-preset-actions">
+              {% if p.name != default_preset %}<button class="link" type="submit" form="preset-default-{{ loop.index }}">Open first</button>{% endif %}
+              <button class="link danger" type="submit" form="preset-delete-{{ loop.index }}" aria-label="Delete the layout {{ p.name }}">Delete</button>
+            </span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% if default_preset %}<button class="link" type="submit" form="preset-standard">Open with the standard layout</button>{% endif %}
+        {% else %}
+        <p class="muted">No saved layouts yet. Set the columns, filters and sort you need, then save them here.</p>
+        {% endif %}
+        <div class="field">Save what is shown as
+          <div class="row"><input type="text" name="name" form="preset-save" maxlength="60" placeholder="e.g. Approved this month, Northwind" required aria-label="Layout name">
+            <button class="btn primary" type="submit" form="preset-save"><span class="ms" aria-hidden="true">save</span>Save</button></div>
+        </div>
+        <label class="check"><input type="checkbox" name="make_default" value="1" form="preset-save">Open the directory with it</label>
+      </div>
+    </details>
+
+    <details class="pop right" data-columns>
+      <summary class="btn"><span class="ms" aria-hidden="true">view_column</span>Columns</summary>
+      <div class="pop-body stack">
+        <p class="muted small">Tick the columns to show; drag them (or use the arrows) to change their order.</p>
+        <ol class="dir-cols" data-col-list>
+          {% for c in columns %}{{ col_item(c, true) }}{% endfor %}
+          {% for c in others %}{{ col_item(c, false) }}{% endfor %}
+        </ol>
+        <div class="row">
+          <button class="btn primary" type="submit" form="dir-columns"><span class="ms" aria-hidden="true">check</span>Show these columns</button>
+          <a class="link" href="/search?{{ query.query_string(columns=default_columns, page=1) }}#directory">Standard columns</a>
+        </div>
+      </div>
+    </details>
+
+    <details class="pop right">
+      <summary class="btn"><span class="ms" aria-hidden="true">download</span>Export</summary>
+      <div class="pop-body stack">
+        <p class="muted small">Every row the filters keep ({{ result.total }}{% if result.total > export_limit %}, the first {{ export_limit }}{% endif %}), with the columns shown, in their order.</p>
+        <div class="row">
+          <a class="btn" href="/search/export.xlsx?{{ here }}" download><span class="ms" aria-hidden="true">table_view</span>Excel</a>
+          <a class="btn" href="/search/export.csv?{{ here }}" download><span class="ms" aria-hidden="true">csv</span>CSV</a>
+        </div>
+      </div>
+    </details>
+
+    <details class="pop right">
+      <summary class="btn dir-icon" aria-label="How to filter"><span class="ms" aria-hidden="true">help</span></summary>
+      <div class="pop-body stack dir-help">
+        <p><b>Type in the box over a column</b>, then press Enter.</p>
+        <ul>
+          <li><b>Text</b>: <code>north</code> contains it · <code>north*</code> starts with it · <code>*0912</code> ends with it · <code>=TELUS</code> exactly · <code>!credit</code> not.</li>
+          <li><b>Amounts</b>: <code>1250</code> · <code>&gt;1000</code> · <code>&lt;=500</code> · <code>100..250</code> (both ends included).</li>
+          <li><b>Dates</b>: <code>2026-09-14</code> · <code>2026-09</code> (the month) · <code>2026</code> · <code>&gt;2026-09-01</code> · <code>2026-07..2026-09</code>.</li>
+          <li><b>GL accounts</b>: <code>6010</code> · <code>6*</code>: invoices with a line coded to it.</li>
+          <li><code>*</code> alone: has a value · <code>!*</code>: has none (e.g. no PO, not exported).</li>
+        </ul>
+        <p>Click a heading to sort by it; click again for the other way.</p>
+      </div>
+    </details>
   </form>
-  <p class="muted">Words match the vendor name; numbers match the invoice number (however written), the PO or the amount
-    (dates are not searched). Use both to narrow it down.</p>
+
+  <form id="dir-columns" method="get" action="/search#directory" hidden>{{ hidden_except(["col"]) }}</form>
+  <form id="preset-save" method="post" action="/search/presets" hidden><input type="hidden" name="query" value="{{ here }}"></form>
+  <form id="preset-standard" method="post" action="/search/presets/default" hidden><input type="hidden" name="name" value=""></form>
+  {% for p in presets %}
+  <form id="preset-default-{{ loop.index }}" method="post" action="/search/presets/default" hidden><input type="hidden" name="name" value="{{ p.name }}"></form>
+  <form id="preset-delete-{{ loop.index }}" method="post" action="/search/presets/delete" data-confirm="Delete this saved layout?" hidden><input type="hidden" name="name" value="{{ p.name }}"></form>
+  {% endfor %}
+
+  {% if result.problems %}
+  <div class="pad"><div class="flash warn" role="alert"><span class="ms" aria-hidden="true">warning</span><div>
+    Some filters were left out:<ul>{% for key, text in result.problems.items() %}<li><b>{{ col_label(key) }}</b>: {{ text }}</li>{% endfor %}</ul></div></div></div>
+  {% endif %}
+
+  <div class="table-wrap">
+    <table class="apc-table dir-table">
+      <caption class="sr-only">Invoices, {{ result.total }} found</caption>
+      <thead>
+        <tr>
+          {% for c in columns %}
+          {% set sorted = query.sort == c.key %}
+          <th scope="col" class="{{ 'r' if c.right else '' }}"{% if sorted %} aria-sort="{{ 'descending' if query.descending else 'ascending' }}"{% endif %}>
+            {% if c.sql %}<a class="dir-sort{{ ' on' if sorted else '' }}" href="/search?{{ query.sort_link(c.key) }}#directory">{{ c.label }}{% if sorted %}<span class="ms" aria-hidden="true">{{ 'arrow_downward' if query.descending else 'arrow_upward' }}</span>{% endif %}</a>
+            {% else %}{{ c.label }}{% endif %}
+          </th>
+          {% endfor %}
+          <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+        <tr class="dir-filters">
+          {% for c in columns %}
+          <td>
+            {% if c.kind == "status" %}
+            <select name="f_status" form="dir" aria-label="Filter {{ c.label }}" data-autosubmit>
+              <option value="">All</option>
+              {% for key, s in statuses.items() %}<option value="{{ key }}"{% if query.filters.get('status') == key %} selected{% endif %}>{{ s[0] }}</option>{% endfor %}
+            </select>
+            {% elif c.sql %}
+            <input type="text" name="f_{{ c.key }}" form="dir" value="{{ query.filters.get(c.key, '') }}" aria-label="Filter {{ c.label }}"
+                   placeholder="{{ placeholder(c) }}" class="{{ 'r' if c.right else '' }}"{% if c.key in result.problems %} aria-invalid="true" title="{{ result.problems[c.key] }}"{% endif %}>
+            {% endif %}
+          </td>
+          {% endfor %}
+          <td></td>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          {% for c in columns %}{% set v = r.cells[c.key] %}
+          {% if c.key == "vendor" %}<td class="w"><a href="/review/{{ r.id }}"><b>{{ v or "—" }}</b></a></td>
+          {% elif c.key == "status" %}<td>{{ ui.pill(*r.pill) }}</td>
+          {% elif c.key == "where" %}<td class="w dir-where">{{ v }}</td>
+          {% elif c.kind == kinds.money %}<td class="r">{% if v is not none %}{{ v | money }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          {% elif c.kind == kinds.date %}<td>{{ (v or "")[:10] or "—" }}</td>
+          {% elif c.key == "batch" %}<td class="r">{% if v %}<a href="/exports">{{ v }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+          {% else %}<td class="{{ 'r' if c.right else '' }}">{{ v if v not in (none, "") else "—" }}</td>
+          {% endif %}
+          {% endfor %}
+          <td class="dir-actions">
+            {% if r.status == "review" %}
+            <a class="btn sm" href="/review/{{ r.id }}"><span class="ms" aria-hidden="true">open_in_new</span>Open</a>
+            {% elif r.status == "approved" %}
+            <a class="btn sm" href="/search/{{ r.id }}/approved.pdf" download title="The invoice with its APPROVED stamp and coding page"><span class="ms" aria-hidden="true">approval</span>Approved PDF</a>
+            {% elif r.status == "parked" %}
+            <form method="post" action="/search/{{ r.id }}/unpark"><button class="btn sm" type="submit" title="Back to the review queue, and open it"><span class="ms" aria-hidden="true">play_circle</span>Bring back</button></form>
+            {% elif r.status == "pending_approval" %}
+            <a class="btn sm" href="/review/{{ r.id }}" title="Approved PDF once the second approver has approved it"><span class="ms" aria-hidden="true">visibility</span>View</a>
+            <span class="muted small dir-note">Approved PDF once the second approver has approved it.</span>
+            {% else %}
+            <a class="btn sm" href="/review/{{ r.id }}"><span class="ms" aria-hidden="true">visibility</span>View</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not rows %}
+  <div class="pad">{% if filtered %}{{ ui.empty_state("Not found", "No invoice in AP Coder matches these filters." ~ (" Not in the ERP register either." if query.q and not erp else "") ~ " Clear a filter, or ask the vendor to send it.") }}{% else %}{{ ui.empty_state("No invoices yet", "Invoices appear here once they are imported.") }}{% endif %}</div>
+  {% endif %}
+
+  <nav class="dir-pager" aria-label="Pages">
+    <span class="muted">{% if result.total %}Rows {{ result.first }}–{{ result.last }} of {{ result.total }}{% else %}0 rows{% endif %}</span>
+    {% if result.pages > 1 %}
+    <span class="dir-pages">
+      {% if result.page > 1 %}<a class="btn sm" href="/search?{{ query.query_string(page=result.page - 1) }}#directory" rel="prev"><span class="ms" aria-hidden="true">chevron_left</span>Previous</a>{% endif %}
+      <span>Page {{ result.page }} of {{ result.pages }}</span>
+      {% if result.page < result.pages %}<a class="btn sm" href="/search?{{ query.query_string(page=result.page + 1) }}#directory" rel="next">Next<span class="ms" aria-hidden="true">chevron_right</span></a>{% endif %}
+    </span>
+    {% endif %}
+  </nav>
 </section>
 
-{% if searched and not hits %}
+{% if erp %}
 <section class="card">
-  {{ ui.empty_state("Not found", "Not in AP Coder or the ERP register. Ask the vendor to send it (or check it was not sent to someone else).") }}
-</section>
-{% endif %}
-
-{% for h in hits %}
-<section class="card hit">
+  <h5>In the ERP's invoice register</h5>
+  <p class="muted">Imported on the Exports page: these were not processed by AP Coder.</p>
+  {% for h in erp %}
   <div class="hit-body">
     <div class="row"><b>{{ h.vendor }}</b>{{ ui.pill(*h.pill) }}</div>
-    <div class="muted">Invoice {{ h.number }} · {{ h.date }}{% if h.due %} · due {{ h.due }}{% endif %} · {{ h.total | money }} {{ h.currency }}</div>
-    <div>{{ h.where }}</div>
+    <div class="muted">Invoice {{ h.number }} · {{ h.date }} · {{ h.total | money }} {{ h.currency }}</div>
   </div>
-  <div class="hit-actions">
-    {% if not h.erp and h.status == "review" %}
-    <a class="btn" href="/review/{{ h.id }}"><span class="ms" aria-hidden="true">open_in_new</span>Open</a>
-    {% elif not h.erp and h.status == "pending_approval" %}
-    <span class="muted small">Approved PDF once the second approver has approved it.</span>
-    {% elif not h.erp and h.status == "approved" %}
-    <a class="btn" href="/search/{{ h.id }}/approved.pdf" download title="The invoice with its APPROVED stamp and coding page">
-      <span class="ms" aria-hidden="true">approval</span>Approved PDF</a>
-    {% elif not h.erp and h.status == "parked" %}
-    <form method="post" action="/search/{{ h.id }}/unpark">
-      <button class="btn" type="submit" title="Back to the review queue, and open it"><span class="ms" aria-hidden="true">play_circle</span>Bring back</button>
-    </form>
-    {% endif %}
-  </div>
+  {% endfor %}
 </section>
-{% endfor %}
-{% if limited %}<p class="muted">The best {{ limit }} matches: add words or numbers to narrow it down.</p>{% endif %}
+{% endif %}
 {% endblock %}
+{% block scripts %}<script type="module" src="/static/js/directory.js?v={{ static_version }}"></script>{% endblock %}

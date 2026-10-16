@@ -8,6 +8,22 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## This release: the invoice directory
+
+- **Find an invoice is now the Invoice directory**: every invoice in one table, like JD Edwards' query by example. Each
+  column has a filter box: `north` (contains), `north*` (starts with), `*0912`, `=TELUS` (exactly), `!credit` (not);
+  amounts `>1000`, `100..250`; dates `2026-09` (the month), `>2026-09-01`, `2026-07..2026-09`; GL account `6*` (a line
+  coded to it); `!*` for "none" (no PO, not exported). A filter it can't read says what to type instead.
+- **Sort by any heading** (click again for the other way), **100 rows a page**.
+- **Choose the columns and their order**: vendor, invoice #, dates, PO, currency, subtotal, tax, total, status, GL
+  accounts, approved by and on, second approver, export batch, received, file, AP Coder #, where it stands. Drag them
+  (or use the arrows) in **Columns**.
+- **Save a layout by name** (columns, filters and sort) in **Layouts**; one can open first. A layout is also an address
+  you can bookmark.
+- **Export what you see**: the filtered rows (all pages), with the columns shown in their order, to Excel or CSV.
+- The quick search (vendor, invoice or PO number, amount) still finds a vendor's invoice on the phone, in the ERP
+  register too; each row's button opens it, brings a parked one back, or downloads the approved PDF.
+
 ## This release: lessons from AP's corrections, and "why?"
 
 - **Every correction is remembered for its situation.** A situation is a vendor, a kind of document (invoice or credit

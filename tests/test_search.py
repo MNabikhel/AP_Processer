@@ -1,4 +1,4 @@
-"""Find an invoice."""
+"""The invoice directory's quick search."""
 
 import json
 

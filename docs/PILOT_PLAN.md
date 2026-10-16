@@ -41,7 +41,7 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
 - [ ] Export approved invoices to the ERP from the **Exports** page; attach the **Approved PDFs** if
       your ERP keeps invoice images.
 - [ ] Use **Ask the vendor** for missing GST/HST numbers, PO numbers and price differences.
-- [ ] Answer vendor calls with **Find an invoice**.
+- [ ] Answer vendor calls with the **Invoice directory**.
 
 ## Week 3: the full cycle
 

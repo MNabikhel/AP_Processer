@@ -467,9 +467,10 @@ FAQ: list[tuple[str, str]] = [
     ),
     (
         "A vendor is on the phone about an invoice. Where is it?",
-        "Find an invoice: type the vendor, the invoice or PO number (however they write it) or the amount. Each "
-        "match says where it is (in review, parked and why, approved by whom, exported in which batch, "
-        "rejected) and when it is due; the ERP register is searched too when you have imported it.",
+        "Invoice directory: type the vendor, the invoice or PO number (however they write it) or the amount in the "
+        "quick search, or in the filter box over a column. Each row says where the invoice is (in review, parked "
+        "and why, approved by whom, exported in which batch, rejected) and when it is due; the quick search looks "
+        "in the ERP register too when you have imported it.",
     ),
     (
         "Our invoices arrive by email. Do I have to save each PDF?",
@@ -590,7 +591,7 @@ ROUTINE: list[tuple[str, list[tuple[str, str]]]] = [
     ("Every day", [
         ("Process new invoices", "process"),
         ("Review queue (see Today)", "review"),
-        ("Vendor calls: find an invoice", "search"),
+        ("Vendor calls: the invoice directory", "search"),
         ("Export to the ERP", "exports"),
     ]),
     ("Every week", [
