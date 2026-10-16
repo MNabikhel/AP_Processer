@@ -66,6 +66,10 @@ def touchless(monkeypatch):
 
 
 def test_a_new_invoice_waits_for_the_page_reader_then_it_decides(store, touchless, monkeypatch):
+    from ap_coder import verifier
+
+    # The AI reviewer off: the page reader decides (with it on, the reviewer does, after: test_verifier.py).
+    verifier.save_settings(store, on=False, rounds=3, minutes=5)
     result = InvoicePipeline(_settings(), store.reference_data(), store=store).process(PDF)
     assert result.ok and touchless == [True]
     assert result.autonomy["reason"] == WAITING_FOR_PAGE_READER and not result.autonomy["auto"]

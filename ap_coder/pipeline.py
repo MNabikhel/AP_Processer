@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import azure_check
+from . import azure_check, verifier
 from .capture.bridge import review_issues
 from .capture.layout import CannotRead
 from .capture.workflow import AUTONOMOUS_REVIEWER, autonomy_decision, capture_invoice
@@ -408,6 +408,7 @@ class InvoicePipeline:
 
         key, profile = "", None
         azure = azure_check.Plan()
+        reviewer_plan = verifier.Plan()
         if result.output is not None:
             t2 = time.perf_counter()
             if captured is not None:  # already read (no AI model): the capture is the proposal itself
@@ -433,9 +434,14 @@ class InvoicePipeline:
                                                     output=result.output, awaiting_page_reader=awaiting,
                                                     pages_read=read)  # fmt: skip
                 result.autonomy = azure_check.hold(result.autonomy, azure)
+                # The AI reviewer (on by default): every invoice goes in line, and none is approved without a person
+                # until it agrees.
+                reviewer_plan = verifier.prepare(self.store, invoice_id)
+                result.autonomy = verifier.hold(result.autonomy, reviewer_plan)
 
         if self.store is not None and not save and invoice_id:  # read again (the page reader): same invoice
             azure_check.queue(self.store, invoice_id, azure)
+            verifier.queue(self.store, invoice_id, reviewer_plan, held=bool(result.autonomy.get("verifier_hold")))
         if self.store is not None and save:
             try:
                 result.invoice_id = self.store.add_invoice(
@@ -450,6 +456,8 @@ class InvoicePipeline:
                 if result.capture is not None:
                     self.store.save_capture(result.invoice_id, result.capture.to_dict())
                 azure_check.queue(self.store, result.invoice_id, azure)
+                verifier.queue(self.store, result.invoice_id, reviewer_plan,
+                               held=bool(result.autonomy.get("verifier_hold")))  # fmt: skip
                 if result.autonomy.get("auto") and result.output is not None:
                     self.store.approve_invoice(result.invoice_id, result.output, AUTONOMOUS_REVIEWER, login="ap-coder")
                 elif result.output is not None:  # the page reader reads every page of it in the background

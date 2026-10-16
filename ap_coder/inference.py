@@ -90,6 +90,10 @@ def build_openai_client(settings: Settings) -> Any:
     )
 
 
+# Room for a model asked to think first (the AI reviewer): its reasoning, then the JSON.
+THINKING_TOKENS = 12000
+
+
 class InvoiceCoder:
     """Turns an :class:`ExtractionResult` into a schema-valid :class:`InvoiceCoding`."""
 
@@ -288,20 +292,24 @@ class InvoiceCoder:
 
     # --- A local model (LM Studio, Ollama) -------------------------------------------------------------------
 
-    def _local_kwargs(self, model: str, mode: str, schema: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _local_kwargs(self, model: str, mode: str, schema: dict[str, Any] | None = None, *,
+                      thinking: bool = False) -> dict[str, Any]:  # fmt: skip
         """No max_completion_tokens: every local server takes max_tokens. Thinking is asked to be off (in the
-        fields each kind of server reads; see local_llm.THINKING_OFF)."""
+        fields each kind of server reads; see local_llm.THINKING_OFF), or on for ``thinking`` (the AI reviewer:
+        local_llm.THINKING_ON), with room for it (``THINKING_TOKENS``)."""
         llm = self.settings.llm
         kwargs: dict[str, Any] = {"model": model, "temperature": llm.temperature}
         if llm.max_output_tokens:
             kwargs["max_tokens"] = llm.max_output_tokens
+        if thinking:
+            kwargs["max_tokens"] = max(int(llm.max_output_tokens or 0), THINKING_TOKENS)
         if self.settings.openai.seed is not None:
             kwargs["seed"] = self.settings.openai.seed
         if mode == "json_schema":
             kwargs["response_format"] = response_format(schema or self.schema)
         elif mode == "json_object":
             kwargs["response_format"] = {"type": "json_object"}
-        kwargs.update(local_llm.thinking_off(llm.base_url, model))
+        kwargs.update((local_llm.thinking_on if thinking else local_llm.thinking_off)(llm.base_url, model))
         return kwargs
 
     def _with_json_instructions(
@@ -310,7 +318,8 @@ class InvoiceCoder:
         system, *rest = messages
         return [{**system, "content": system["content"] + local_llm.json_instructions(schema or self.schema)}, *rest]
 
-    def _local_create(self, model: str, messages: list[dict[str, Any]], schema: dict[str, Any] | None = None) -> Any:
+    def _local_create(self, model: str, messages: list[dict[str, Any]], schema: dict[str, Any] | None = None, *,
+                      thinking: bool = False) -> Any:  # fmt: skip
         """One chat call to the local model, in the best way its server takes: the strict schema, else plain JSON
         mode, else the schema in the prompt; with the thinking switch, else without the fields the server refused.
         What worked is remembered for the next call."""
@@ -318,14 +327,15 @@ class InvoiceCoder:
         mode = local_llm.start_mode(base, model)
         while True:
             kind = local_llm.RESPONSE_MODES[mode]
-            kwargs = self._local_kwargs(model, kind, schema)
+            kwargs = self._local_kwargs(model, kind, schema, thinking=thinking)
             sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
             try:
                 with local_llm.CHAT_LOCK:  # one request at a time: LM Studio is shared with CloseDesk
                     return self.client.chat.completions.create(messages=sent, **kwargs)
             except Exception as exc:  # noqa: BLE001 - every failure becomes a CodingError the reviewer can read
                 if "extra_body" in kwargs and local_llm.refuses_extra_fields(exc):
-                    if local_llm.refuse_thinking_off(base, model):
+                    refuse = local_llm.refuse_thinking_on if thinking else local_llm.refuse_thinking_off
+                    if refuse(base, model):
                         log.info("%s refused the thinking switch (%s); asking without it", model, exc)
                         continue
                 if local_llm.rejects_format(exc) and mode + 1 < len(local_llm.RESPONSE_MODES):
