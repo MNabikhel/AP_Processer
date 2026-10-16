@@ -9,7 +9,8 @@
       <summary class="btn sm" title="Show AP Coder where a field is printed: it learns it for this supplier."><span class="ms" aria-hidden="true">touch_app</span>Teach a field</summary>
       <div class="pop-body stack">
         <label class="field">Field<select data-teach-field>{% for name, label in doc.teach_fields %}<option value="{{ name }}">{{ label }}</option>{% endfor %}</select></label>
-        <p class="muted">Then click the words on the page that hold it, and <b>Use these words</b>.</p>
+        <p class="muted">Then click the words on the page that hold it (or drag a box around them), and <b>Use these words</b>.</p>
+        <p class="muted small">Or, any time: drag a box around words on the page to fill a field or a line item.</p>
         <button type="button" class="btn primary sm" data-teach-go><span class="ms" aria-hidden="true">ads_click</span>Show it on the page</button>
       </div>
     </details>

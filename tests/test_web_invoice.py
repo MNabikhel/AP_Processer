@@ -536,3 +536,66 @@ def test_the_vendor_is_picked_from_the_vendor_list_or_added_as_a_new_vendor(clie
             re.search(r'id="vendor-data">(.*?)</script>', client.get(f"/review/{cascade['id']}").text, re.S).group(1)
         )["list"]
     )
+
+
+# --- Words picked on the page by dragging a box --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field, text, value",
+    [
+        ("line_description", "  HP 26X   toner ", "HP 26X toner"),
+        ("line_amount", "$1,316.00", 1316.0),
+        ("line_quantity", "10", 10),
+        ("line_quantity", "2.5", 2.5),
+        ("line_unit_price", "329.00", 329.0),
+        (
+            "line_new",
+            'Dell 27" monitor P2725H 4 329.00 1,316.00',
+            {"description": 'Dell 27" monitor P2725H', "amount": 1316.0},
+        ),
+        ("line_new", "Freight 45.00", {"description": "Freight", "amount": 45.0}),
+        ("line_new", "no amount here", None),
+        ("line_amount", "toner", None),
+    ],
+)
+def test_words_picked_for_a_line_cell(field, text, value):
+    assert invoice_view.line_value(field, text) == value
+
+
+def test_dragged_words_fill_a_line_or_make_a_new_one(client, store):
+    inv = store.list_invoices(REVIEW)[0]
+    answer = client.post(f"/review/{inv['id']}/teach", data={"field": "line_amount", "text": "1,316.00"},
+                         headers=PAGE).json()  # fmt: skip
+    assert answer["ok"] and answer["value"] == "1316.00" and answer["field"] == "line_amount"
+    answer = client.post(f"/review/{inv['id']}/teach", data={"field": "line_new", "text": "Freight 45.00"},
+                         headers=PAGE).json()  # fmt: skip
+    assert answer["value"] == {"description": "Freight", "amount": 45.0}
+    bad = client.post(f"/review/{inv['id']}/teach", data={"field": "line_quantity", "text": "toner"}, headers=PAGE)
+    assert bad.status_code == 400 and "quantity" in bad.json()["error"]
+    bad = client.post(f"/review/{inv['id']}/teach", data={"field": "line_gl", "text": "6000"}, headers=PAGE)
+    assert bad.status_code == 400  # the GL account is chosen, never read off the page
+
+
+def test_the_viewer_knows_each_lines_amount_to_light_its_row(client, store):
+    import json
+
+    pacific = next(i for i in store.list_invoices(REVIEW) if "Pacific" in (i["vendor_name"] or ""))
+    page = client.get(f"/review/{pacific['id']}").text
+    data = json.loads(re.search(r'<script type="application/json" id="viewer-data">(.*?)</script>', page, re.S)
+                      .group(1))  # fmt: skip
+    amounts = [line["amount"] for line in data["line_items"]]
+    assert amounts == [890.0, 1316.0, 520.0] and all(line["boxes"] for line in data["line_items"])
+    assert "drag a box around" in page
+
+
+def test_the_math_line_by_line_and_on_the_approve_bar(client, store):
+    pacific = next(i for i in store.list_invoices(REVIEW) if "Pacific" in (i["vendor_name"] or ""))
+    sections = check(client, pacific["id"])["sections"]
+    assert "Math, line by line" in sections["taxcheck"] and "All adds up" in sections["taxcheck"]
+    assert "Math: All adds up" in sections["bar"]
+    # PST ticked off the first line: the PST charged is no longer 7% of the lines marked.
+    data = form_of(store, pacific["id"])
+    data["line_tax_r0"] = ["GST"]
+    sections = check(client, pacific["id"], data)["sections"]
+    assert "Math: 1 difference: PST" in sections["bar"] and "off by 62.30" in sections["taxcheck"]

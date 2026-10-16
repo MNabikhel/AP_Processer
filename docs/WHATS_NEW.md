@@ -8,6 +8,32 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## This release: the review screen (vendor list, sales tax, picking words on the page)
+
+- **The vendor comes from the vendor list.** Start typing in the Vendor field to pick it from the vendor list (the
+  vendor master imported from JD Edwards); under the field AP Coder says whether it is in the list, with its ERP ID,
+  or which vendor the printed GST/HST number belongs to. With a vendor master, a vendor not in it needs a person
+  (an error, "Approve anyway" to override). **Add new vendor…** adds a vendor that is really new, with its GST/HST,
+  QST and PST numbers and province; its invoices need a person until it is set up in JD Edwards and the vendor list
+  is imported again (it then becomes a vendor like any other).
+- **QST and PST numbers are checked against the vendor.** Vendors keep a QST number, a PST number (BC PST, Manitoba
+  RST, Saskatchewan PST) and a province (Vendors page, or columns of the vendor master file). The number printed on
+  an invoice is compared with the vendor's, like the GST/HST number already was, from the first invoice. The reader
+  now reads a PST/RST number printed after its label.
+- **Place of supply fills itself in.** Sales tax follows where the goods are delivered to you, not where the vendor
+  is or ships from (a vendor in Ontario shipping from BC to your site in BC charges GST and BC PST). Set your province
+  (and any sites in other provinces, by cost center) in Settings → Review; an invoice that prints no ship-to then
+  uses it. The review screen shows one line, "Place of supply: BC · your province", with Change. See
+  [Sales tax](SALES_TAX.md).
+- **Math, line by line.** Under the tax lines: the lines add up to the subtotal; each tax is its rate on the lines
+  ticked with it (PST on some lines only, QST before GST); subtotal + tax = total. The approve bar says "Math: All
+  adds up" or the differences.
+- **Drag a box on the page.** Drag across words on the invoice page to fill a field, a line item's description,
+  amount, quantity or unit price, or to add a new line from them; in "Teach a field", dragging picks every word in
+  the box. Any page of a multi-page invoice.
+- **A line item and its row light up together.** Point at a row of the line grid and its outline on the page lights
+  up (and the other way round); clicking into a row shows it on its page.
+
 ## This release: the pilot tester's first session
 
 - **"differs" next to a reader that agreed.** Hovering a field listed each reader's reading as it is printed

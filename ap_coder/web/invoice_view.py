@@ -210,6 +210,38 @@ def taught_boxes(draft: Draft) -> dict[str, list[Box]]:
     return {f: [Box.from_list(b) for b in boxes] for f, boxes in draft.taught.items()}
 
 
+# A line item's cells a reviewer can fill from words picked on the page (drag a box around them), and "line_new":
+# a new line from a picked row (its description and its amount, the last amount in it).
+LINE_TEACHABLE = {"line_description": "description", "line_amount": "amount", "line_quantity": "quantity",
+                  "line_unit_price": "unit price"}  # fmt: skip
+NEW_LINE = "line_new"
+
+
+def line_value(name: str, text: str) -> Any:
+    """What words picked on the page mean for a line item's cell (None when they don't read as one); for
+    ``NEW_LINE``, {"description", "amount"} (None without an amount)."""
+    plain = " ".join(text.split())
+    if name == "line_description":
+        return plain or None
+    if name in ("line_amount", "line_unit_price"):
+        return parse_amount(plain)
+    if name == "line_quantity":
+        value = parse_amount(plain)
+        return None if value is None else (int(value) if float(value).is_integer() else value)
+    if name == NEW_LINE:
+        from ap_coder.capture.normalize import find_amounts
+
+        found = find_amounts(plain)
+        if not found:
+            return None
+        amount, start, end = found[-1]
+        description = " ".join(plain[:start].split()) or " ".join((plain[:start] + plain[end:]).split())
+        # A row reads "description  qty  price  amount": the numbers before the amount are not the description.
+        description = re.sub(r"(\s+[-$]?\d[\d,.]*)+$", "", description).strip() or description
+        return {"description": description, "amount": round(amount, 2)}
+    return None
+
+
 def form_value(name: str, text: str) -> Any:
     """What the words clicked on the page mean for a field of the form (None when they don't read as one)."""
     if name in AMOUNT_FIELDS:
@@ -799,6 +831,58 @@ def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str,
     return rows
 
 
+def math_check(coding: InvoiceCoding) -> dict[str, Any]:
+    """Every sum on the invoice, worked out again from the lines as they are on screen: the lines add up to the
+    subtotal; each tax is its rate on the lines marked with it (GST/HST/PST/QST ticked per line, so a PST-exempt line
+    is simply not ticked; QST on the price before GST); subtotal + taxes = total. ``ok`` when all of it does, else
+    each difference. Tax is allowed a cent of rounding, or a cent per line when the vendor rounded line by line."""
+    rows: list[dict[str, Any]] = []
+    items = coding.line_items
+    n = len(items)
+    lines_total = round(sum(li.amount for li in items), 2)
+    diff = round(lines_total - coding.subtotal, 2)
+    rows.append({"what": "Lines = subtotal", "ok": abs(diff) < 0.015,
+                 "detail": f"{plural(n, 'line')} add up to {money(lines_total)}; the subtotal is "
+                           f"{money(coding.subtotal)}",
+                 "diff": money(diff) if abs(diff) >= 0.015 else ""})  # fmt: skip
+    for tax_type in dict.fromkeys(t.tax_type for t in coding.tax_lines):
+        taxes = [t for t in coding.tax_lines if t.tax_type == tax_type]
+        charged = round(sum(t.tax_amount for t in taxes), 2)
+        label = TAX_LABELS.get(tax_type, tax_type)
+        if abs(charged) < 0.005:
+            continue  # "GST 0.00" printed: nothing charged
+        flagged = [li for li in items if tax_type in li.taxes_applied]
+        if not flagged:
+            rows.append({"what": label, "ok": False, "diff": money(charged),
+                         "detail": f"{money(charged)} charged, but no line is marked {label}: tick it on the lines it "
+                                   "applies to"})  # fmt: skip
+            continue
+        rates = {round(t.rate, 6) for t in taxes}
+        if len(rates) != 1:  # the same tax at two rates (e.g. goods and freight): checked per tax line elsewhere
+            continue
+        rate = rates.pop()
+        base = round(sum(li.amount for li in flagged), 2)
+        expected = round(base * rate, 2)
+        per_line = round(sum(round(li.amount * rate, 2) for li in flagged), 2)
+        off = min(abs(expected - charged), abs(per_line - charged))
+        ok = off <= 0.015 or abs(expected - charged) <= 0.01 * (len(flagged) / 2 + 1) + 1e-9
+        which = "every line" if len(flagged) == n else f"{len(flagged)} of {n} lines"
+        rows.append({"what": label, "ok": ok, "diff": "" if ok else money(round(charged - expected, 2)),
+                     "detail": f"{which} ({money(base)}) × {rate * 100:.4g}% = {money(expected)}; charged "
+                               f"{money(charged)}"})  # fmt: skip
+    taxes_total = round(sum(t.tax_amount for t in coding.tax_lines), 2)
+    computed = round(coding.subtotal + taxes_total, 2)
+    diff = round(coding.grand_total - computed, 2)
+    rows.append({"what": "Subtotal + tax = total", "ok": abs(diff) < 0.015,
+                 "diff": money(diff) if abs(diff) >= 0.015 else "",
+                 "detail": f"{money(coding.subtotal)} + {money(taxes_total)} = {money(computed)}; the total is "
+                           f"{money(coding.grand_total)}"})  # fmt: skip
+    wrong = [r for r in rows if not r["ok"]]
+    return {"rows": rows, "ok": not wrong,
+            "text": "All adds up" if not wrong else f"{plural(len(wrong), 'difference')}: "
+            + ", ".join(r["what"] for r in wrong)}  # fmt: skip
+
+
 def spend_split(output: dict[str, Any], reference: ReferenceData) -> list[dict[str, Any]]:
     """Where the money goes: expense GLs (incl. non-recoverable tax) and recoverable tax accounts (a credit note:
     nothing to draw)."""
@@ -937,6 +1021,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "suggestions": suggestions(store, reference, coding),
         "po": po_section(store, coding, inv["id"]),
         "tax_check": tax_check(coding, reference),
+        "math": math_check(coding),
         "split": spend_split(output, reference),
         "posting": distribution(output, reference),
         "bar": {

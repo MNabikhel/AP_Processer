@@ -587,6 +587,16 @@ def teach(request: Request, invoice_id: int, field: str = Form(""), text: str = 
     """The words the reviewer clicked on the page, as the value of a field of the form. On approval, the supplier's
     template learns where that field is printed (the boxes are sent with the approval)."""
     _invoice(get_store(request), invoice_id)
+    if field in view.LINE_TEACHABLE or field == view.NEW_LINE:
+        found = view.line_value(field, text)
+        if found in (None, ""):
+            what = "a line (it needs an amount)" if field == view.NEW_LINE else f"a line's {view.LINE_TEACHABLE[field]}"
+            return refuse(f"Those words don't read as {what}: try again.")
+        if field == view.NEW_LINE:
+            return message(f"New line: {found['description'] or '(no description)'}, {found['amount']:.2f}. Code it "
+                           "to a GL account.", "ok", field=field, value=found)  # fmt: skip
+        shown = f"{found:.2f}" if field in ("line_amount", "line_unit_price") else str(found)
+        return message(f"Line {view.LINE_TEACHABLE[field]} set to {shown}.", "ok", field=field, value=shown)
     if field not in view.TEACHABLE:
         return refuse("That field can't be taught.")
     value = view.form_value(field, text)

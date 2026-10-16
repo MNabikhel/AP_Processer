@@ -8,7 +8,9 @@
      viewer.setWords(words); viewer.teachField("po_number"); // teach mode: click the words that hold the field
 
    Events: {type: "select", field}, {type: "assign", field, text, boxes: [[page, x0, y0, x1, y1], ...]} (the words
-   picked, in reading order) and {type: "teach_cancel", field}. Coordinates are fractions of the page (0..1, origin
+   picked, in reading order), {type: "teach_cancel", field}, {type: "selection", page, rect: [x0, y0, x1, y1], x, y}
+   (a box dragged on the page with the mouse, outside teach mode: x, y where the mouse was let go, in the window) and
+   {type: "line_hover", index, on} (a line item's outline on the page, pointed at or left). Coordinates are fractions of the page (0..1, origin
    top-left), pages numbered from 1. Text from the invoice is only ever set as text (never as HTML).
 */
 
@@ -28,7 +30,7 @@ const VIEWPORT_MARGIN = 230; // px of the browser window kept for the card aroun
 const MIN_FIT_HEIGHT = 360;
 // The field list, grouped as an AP clerk reads an invoice; fields not found go last, folded away.
 const GROUPS = [
-  ["Supplier", ["vendor_name", "gst_hst_registration_number", "qst_registration_number"]],
+  ["Supplier", ["vendor_name", "gst_hst_registration_number", "qst_registration_number", "pst_registration_number"]],
   ["Invoice", ["invoice_number", "invoice_date", "due_date", "po_number", "payment_terms", "currency"]],
   ["Amounts & tax", ["subtotal", "other_charges", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total", "grand_total"]],
 ];
@@ -250,7 +252,8 @@ export class InvoiceViewer {
     this.gLines = s("g", { class: "iv-lines" });
     this.gFields = s("g", { class: "iv-fields" });
     this.gWords = s("g", { class: "iv-words" });
-    this.svg.append(this.gLines, this.gFields, this.gWords);
+    this.gSel = s("g", { class: "iv-sel" });
+    this.svg.append(this.gLines, this.gFields, this.gWords, this.gSel);
     this.tags = h("div", { class: "iv-tags" });
     this.sheet = h("div", { class: "iv-sheet loading" }, this.img, this.svg, this.tags);
     this.empty = h("p", { class: "iv-empty", hidden: true }, "No page to show.");
@@ -270,9 +273,14 @@ export class InvoiceViewer {
       if (g && !g.contains(e.relatedTarget)) this.setHover(null);
     });
     this.gFields.addEventListener("click", (e) => {
+      if (this.dragged) return; // the end of a box dragged across the page, not a click on this field
       const g = e.target.closest(".iv-f");
       if (g) this.select(g.dataset.field, { from: "page" });
     });
+    this.sheet.addEventListener("pointerdown", (e) => this.dragStart(e));
+    this.sheet.addEventListener("pointermove", (e) => this.dragMove(e));
+    this.sheet.addEventListener("pointerup", (e) => this.dragEnd(e));
+    this.sheet.addEventListener("pointercancel", () => this.dragCancel());
     this.tags.addEventListener("click", (e) => {
       const tag = e.target.closest(".iv-tag");
       if (tag) this.select(tag.dataset.field, { from: "page" });
@@ -287,10 +295,18 @@ export class InvoiceViewer {
     });
     this.gLines.addEventListener("pointerover", (e) => {
       const r = e.target.closest(".iv-line");
-      if (r) this.showTip(r, [h("div", { class: "iv-tip-head" }, h("b", null, "Line item")), h("p", { class: "iv-tip-value" }, r.dataset.label)], 0);
+      if (!r) return;
+      this.showTip(r, [h("div", { class: "iv-tip-head" }, h("b", null, "Line item")), h("p", { class: "iv-tip-value" }, r.dataset.label)], 0);
+      const g = r.closest(".iv-lg");
+      if (g) this.emit({ type: "line_hover", index: Number(g.dataset.idx), on: true });
     });
-    this.gLines.addEventListener("pointerout", () => this.hideTip());
+    this.gLines.addEventListener("pointerout", (e) => {
+      this.hideTip();
+      const g = e.target.closest(".iv-lg");
+      if (g && !g.contains(e.relatedTarget)) this.emit({ type: "line_hover", index: Number(g.dataset.idx), on: false });
+    });
     this.gWords.addEventListener("click", (e) => {
+      if (this.dragged) return;
       const r = e.target.closest(".iv-w");
       if (r) this.toggleWord(Number(r.dataset.i));
     });
@@ -913,6 +929,64 @@ export class InvoiceViewer {
     }
   }
 
+  /* ----- A box dragged across the page (the mouse) ----- */
+
+  pointAt(e) {
+    const r = this.sheet.getBoundingClientRect();
+    return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
+  }
+
+  dragStart(e) {
+    if (e.button !== 0 || e.pointerType === "touch" || !this.pageInfo()) return; // a finger scrolls the page
+    this.drag = { start: this.pointAt(e), x: e.clientX, y: e.clientY, id: e.pointerId, moved: false };
+  }
+
+  dragMove(e) {
+    const d = this.drag;
+    if (!d || e.pointerId !== d.id) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return; // a click, not a drag
+    if (!d.moved) {
+      d.moved = true;
+      this.sheet.setPointerCapture?.(e.pointerId);
+      this.root.classList.add("dragging");
+      this.hideTip();
+    }
+    e.preventDefault();
+    d.end = this.pointAt(e);
+    const [x0, x1] = [d.start[0], d.end[0]].sort((a, b) => a - b);
+    const [y0, y1] = [d.start[1], d.end[1]].sort((a, b) => a - b);
+    d.rect = [x0, y0, x1, y1];
+    this.gSel.replaceChildren(s("rect", { class: "iv-drag", x: x0, y: y0, width: x1 - x0, height: y1 - y0 }));
+  }
+
+  dragEnd(e) {
+    const d = this.drag;
+    this.drag = null;
+    if (!d || e.pointerId !== d.id || !d.moved || !d.rect) return;
+    this.root.classList.remove("dragging");
+    this.dragged = true; // the click that follows the drag is not a click on what is under it
+    setTimeout(() => (this.dragged = false), 0);
+    if (this.teach) {
+      // Teach mode: every word in the box is picked (dragging again adds more).
+      this.gSel.replaceChildren();
+      const pageWords = this.words[this.page - 1] || [];
+      for (const w of this.wordsIn(this.page, d.rect)) {
+        const i = pageWords.findIndex((x) => x.b === w.b);
+        if (i >= 0) this.picks.set(`${this.page}:${i}`, { page: this.page, t: w.t, b: w.b });
+      }
+      this.renderWords();
+      this.renderTeach();
+      return;
+    }
+    this.emit({ type: "selection", page: this.page, rect: d.rect.map((v) => Math.round(v * 1e5) / 1e5), x: e.clientX, y: e.clientY });
+  }
+
+  dragCancel() {
+    this.drag = null;
+    this.root.classList.remove("dragging");
+    this.gSel.replaceChildren();
+  }
+
   /* ----- Teach mode ----- */
 
   startTeach(name) {
@@ -1124,6 +1198,34 @@ export class InvoiceViewer {
     this.renderPage(false);
     this.renderSelection();
     this.root.scrollIntoView({ block: "nearest", behavior: reducedMotion() ? "auto" : "smooth" });
+  }
+
+  /** Light a line item's outline up (its row in the grid is pointed at), or not; on another page, nothing. */
+  markLine(i, on) {
+    for (const g of this.gLines.querySelectorAll(".iv-lg.hot")) g.classList.remove("hot");
+    if (!on) return;
+    this.gLines.querySelector(`.iv-lg[data-idx="${Number(i)}"]`)?.classList.add("hot");
+  }
+
+  /** The words on a page inside a box (fractions of the page), in reading order: [{t, b, page}]. */
+  wordsIn(page, rect) {
+    const [x0, y0, x1, y1] = rect;
+    const inside = (this.words[page - 1] || [])
+      .filter((w) => {
+        const cx = (w.b[0] + w.b[2]) / 2;
+        const cy = (w.b[1] + w.b[3]) / 2;
+        return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
+      })
+      .map((w) => ({ t: w.t, b: w.b, page, x: w.b[0], cy: (w.b[1] + w.b[3]) / 2, h: w.b[3] - w.b[1] }));
+    return readingOrder(inside);
+  }
+
+  /** Show (or with null, clear) the box dragged on the page while the page asks what it is. */
+  markSelection(page, rect) {
+    this.gSel.replaceChildren();
+    if (!rect || page !== this.page) return;
+    const [x0, y0, x1, y1] = rect;
+    this.gSel.append(s("rect", { class: "iv-drag done", x: x0, y: y0, width: x1 - x0, height: y1 - y0 }));
   }
 
   /** Highlight a field's box (its input in the form got the focus), without telling the page back. */

@@ -161,6 +161,17 @@
 {% macro taxcheck(live, invoice_id) -%}
 {% if not live.ok %}
 <p class="muted">Fix the highlighted field to see the rate and amount check.</p>
+{% else %}
+{% set m = live.math %}
+<div class="rvw-subhead">Math, line by line {% if m.ok %}{{ ui.pill("All adds up", "ok", "check") }}{% else %}{{ ui.pill(m.text, "warn", "calculate") }}{% endif %}</div>
+<div class="table-wrap"><table class="apc-table inv-math">
+  <tbody>{% for r in m.rows %}
+    <tr><td><span class="{{ 'ok' if r.ok else 'bad' }}" aria-label="{{ 'Adds up' if r.ok else 'Does not add up' }}">{{ '✓' if r.ok else '✕' }}</span> <b>{{ r.what }}</b></td>
+      <td class="w">{{ r.detail }}</td><td class="r">{% if r.diff %}<span class="bad">off by {{ r.diff }}</span>{% endif %}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% endif %}
+{% if not live.ok %}
 {% elif not live.tax_check %}
 <p class="muted">No sales tax on this invoice.</p>
 {% else %}
@@ -212,7 +223,8 @@
 {% else %}
 {% set b = live.bar %}
 <div class="rvw-post">
-  <div class="rvw-post-amount">Post <b>{{ b.amount }}</b> {{ b.currency }}</div>
+  <div class="rvw-post-amount">Post <b>{{ b.amount }}</b> {{ b.currency }}
+    {% if live.math %}<span class="rvw-math {{ 'ok' if live.math.ok else 'bad' }}" title="{% for r in live.math.rows %}{{ '✓' if r.ok else '✕' }} {{ r.what }}: {{ r.detail }}&#10;{% endfor %}"><span class="ms" aria-hidden="true">{{ 'check' if live.math.ok else 'calculate' }}</span>Math: {{ live.math.text }}</span>{% endif %}</div>
   <div class="rvw-post-sub" title="Approving teaches AP Coder from {{ b.lines | plural('line') }}: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
     Teaches from {{ b.lines | plural("line") }} · <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
 </div>
