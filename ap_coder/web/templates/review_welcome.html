@@ -20,6 +20,8 @@
     </div>
   </section>
   {% endif %}
+  {% set demo_first = not waiting and not demo_count %}{# a first look: the demo invoices are the quickest start #}
+  {% if demo_first %}{% include "_demo_card.html" %}{% endif %}
   <section class="card">
     <div class="card-head">
       <div><h4><span class="ms" aria-hidden="true">flag</span> Getting started</h4>
@@ -33,6 +35,6 @@
       <a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Process invoices</a>
     </div>
   </section>
-  {% include "_demo_card.html" %}
+  {% if not demo_first %}{% include "_demo_card.html" %}{% endif %}
 </div>
 {% endblock %}

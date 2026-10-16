@@ -34,6 +34,7 @@ from ap_coder.web.core import (
     get_store,
     invoice_dir,
     jobs,
+    local_url,
     login,
     money,
     reference_or_none,
@@ -345,12 +346,14 @@ def review_bulk_approve(request: Request, ids: list[int] = Form(default=[])) -> 
 
 
 @router.post("/review/sample-gl")
-def review_sample_gl(request: Request) -> JSONResponse:
+def review_sample_gl(request: Request, back: str = Form("/review")) -> JSONResponse:
     store = get_store(request)
     if store.list_accounts("gl_accounts"):  # a page left open while the clerk imported their own chart
         return refuse("You already have GL accounts: the sample setup is only for an empty list.")
     load_sample_setup(store)
-    return done(request, "/review", "Sample GL accounts loaded. Replace them with yours in GL accounts & tax.")
+    return done(
+        request, local_url(back, "/review"), "Sample GL accounts loaded. Replace them with yours in GL accounts & tax."
+    )
 
 
 def delete_invoice(store: Store, invoice_id: int) -> None:

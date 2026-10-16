@@ -124,14 +124,18 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
     if ocr_available():
         reader = ("ok", "Reading invoices", "PDF text + OCR")
     else:
-        reader = ("todo", "Reading invoices", "text PDFs only: scans need OCR (run the launcher again)")
+        reader = ("todo", "Reading invoices", "text PDFs only: scans need OCR (double-click APProcessor again)")
     status = reading_status_or_none(settings, store)
     if status is None:
         second = ("todo", "OvisOCR2", "see Settings → Reading")
     elif status.page_reader_ready:
         second = ("ok", "OvisOCR2", "reads every invoice in the background")
+    elif status.self_test in ("pending", "running"):
+        second = ("todo", "OvisOCR2", "testing itself (10 to 20 min the first time); use AP Coder meanwhile")
+    elif status.self_test == "failed":
+        second = ("bad", "OvisOCR2", "failed its self-test (Settings → Reading)")
     else:
-        second = ("todo", "OvisOCR2", "not running yet: invoices wait for it (Settings → Reading)")
+        second = ("todo", "OvisOCR2", "not running in LM Studio: invoices wait for it (Settings → Reading)")
     return [  # the review queue's getting-started card reads the chat model at index 1
         reader,
         ("ok" if ai.ready else "opt", "Chat model for GL suggestions", ai.label if ai.ready else "optional"),

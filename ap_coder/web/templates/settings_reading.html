@@ -45,7 +45,7 @@
         <form method="post" action="/settings/reading/self-test" data-busy="Starting…">
           <button class="btn" type="submit"{% if not reader.can_test %} disabled{% endif %}
                   title="It reads an invoice whose answers are known; OvisOCR2 is trusted only when it reads it right. It also runs by itself whenever OvisOCR2 is found or changes.">
-            <span class="ms" aria-hidden="true">fact_check</span>Run the self-test again</button>
+            <span class="ms" aria-hidden="true">fact_check</span>{{ "Run the self-test again" if reader.tested else "Run the self-test now" }}</button>
         </form>
       </div>
       <div class="st-progress{% if reader.testing.state != 'running' %} hidden{% endif %}" id="self-test"
@@ -90,8 +90,8 @@
       </div>
       {% endif %}
       <p>{% if reader.queue[0] %}<b>{{ reader.queue[0] }}</b>{% endif %}{{ reader.queue[1] }}</p>
-      <p class="muted">It reads in the background while AP Coder is open; invoices wait in the review queue meanwhile. To
-        read the queue overnight instead (Task Scheduler): <code>python -m ap_coder read-pages --minutes 240</code>.</p>
+      <p class="muted">It reads in the background while AP Coder is open; invoices wait in the review queue meanwhile.{% if developer %} To
+        read the queue overnight instead (Task Scheduler): <code>python -m ap_coder read-pages --minutes 240</code>.{% endif %}</p>
       {% if reader.figures %}<p>{{ reader.figures }}</p>{% endif %}
       {% if reader.scans %}<p>{{ reader.scans }}</p>{% endif %}
       {% if reader.scorecard %}<p>{{ reader.scorecard }}</p>{% endif %}
@@ -136,7 +136,7 @@
   {% if unloaded %}
   <form method="post" action="/settings/reading/load-model" class="row st-load" data-busy="LM Studio is loading the model…">
     <label class="field">Load a model now
-      <select name="model" title="A chat model with a 16,384-token context (as CloseDesk loads it); OvisOCR2 with the context a page needs.">
+      <select name="model" title="A chat model with a 16,384-token context; OvisOCR2 with the context a page needs.">
         {% for m in unloaded %}<option value="{{ m.model }}">{{ m.model }}</option>{% endfor %}
       </select>
     </label>

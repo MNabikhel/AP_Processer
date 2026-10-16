@@ -120,6 +120,18 @@ def test_the_bundles_versions_come_first(mac):
 
 
 @needs_bash
+def test_without_python_the_code_alone_and_the_bundle_say_what_to_do(mac):
+    """GitHub's ZIP may get Python from python.org; the offline bundle says it never downloads one."""
+    mac.python("python3", "3.10")
+    out = mac.run()
+    assert out.returncode == 1 and "What to do: install Python 3.12 from" in out.stdout
+    assert "offline build" not in out.stdout
+    (mac.code / "bundle_manifest.json").write_text("{}")
+    out = mac.run()
+    assert out.returncode == 1 and "this is an offline build, so it does not download Python" in out.stdout
+
+
+@needs_bash
 def test_a_too_old_python_is_said_to_be_too_old_not_missing(mac):
     mac.python("python3", "3.10")
     mac.python("python", "2.7")

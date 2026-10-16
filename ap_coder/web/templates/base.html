@@ -53,8 +53,8 @@
       {% endif %}
       {% endblock %}
       {% if banner %}
-      <div class="banner warn" role="status">
-        <span class="ms" aria-hidden="true">visibility_off</span>
+      <div class="banner {{ banner_tone or 'warn' }}" role="status">
+        <span class="ms" aria-hidden="true">{{ 'hourglass_top' if banner_tone == 'info' else 'visibility_off' }}</span>
         <span>{{ banner }}</span>
         <a href="/settings#reading">Open Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>
       </div>

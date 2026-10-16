@@ -498,7 +498,7 @@ def test_first_start_runs_the_self_check_later_starts_do_not(launch, monkeypatch
     assert launch.run(args, rest) == 0
     out = capsys.readouterr().out
     assert checks == [1]  # not again
-    assert "reusing .venv" in out and "Self-check OK at setup" in out
+    assert "reusing .venv" not in out and "Self-check OK at setup" in out  # a later start: quiet
 
     args, rest = launch.parse(["--check", "--no-start"])
     launch.run(args, rest)
@@ -568,7 +568,9 @@ def test_lm_studio_is_only_reported(launch, monkeypatch):
                loaded=[GEMMA, "ath-maas_ovisocr2", "text-embedding-qwen3-embedding-0.6b"])  # fmt: skip
     assert launch.lm_studio_line() == ("ok", f"Chat model: {GEMMA} loaded in LM Studio (can see pages)")
     _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True, model=GEMMA, loaded=[GEMMA, "qwen3.5-9b"])
-    assert launch.lm_studio_line()[1].endswith("; also loaded: qwen3.5-9b (unload it to use that one instead)")
+    assert launch.lm_studio_line()[1].endswith(
+        "; also loaded: qwen3.5-9b (keep one chat model loaded: unload the one you don't want)"
+    )
     _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True, model=GEMMA)  # downloaded, not loaded
     level, text = launch.lm_studio_line()
     assert level == "info" and "downloaded but not loaded" in text
@@ -618,6 +620,33 @@ def test_the_chat_model_test_never_holds_up_the_start(launch, monkeypatch):
     monkeypatch.setattr(doctor, "_local_dry_run", lambda settings, reference: 1 / 0)
     level, text = launch._ask_chat_model()
     assert level == "warn" and "ZeroDivisionError" in text
+
+
+def test_a_start_asks_lm_studio_once_for_the_chat_model(launch, monkeypatch):
+    """The chat line, its test and the setup checks share one question to LM Studio (the page reader asks its own)."""
+    from ap_coder import doctor, local_llm
+
+    asked: list[int] = []
+    status = local_llm.ModelStatus(base_url="http://127.0.0.1:1234/v1", reachable=True, lm_studio=True, model=GEMMA,
+                                   loaded=[GEMMA], vision=True)  # fmt: skip
+    monkeypatch.setattr(local_llm, "check_server", lambda llm, **k: asked.append(1) or status)
+    monkeypatch.setattr(launch, "page_reader_line", lambda: ("info", "Page reader: -"))
+    monkeypatch.setattr(launch, "_ask_chat_model", lambda: ("ok", "Chat model test passed: fine"))
+    lines = launch.readiness(("ok", "Packages: all in place"), {}, force=False)
+    texts = [t for _, t in lines]
+    assert len(asked) == 1, f"LM Studio asked {len(asked)} times"
+    assert any(t.startswith(f"Chat model: {GEMMA} loaded") for t in texts) and "Chat model test passed: fine" in texts
+    assert any(t.startswith("Setup checks: all ") for t in texts)
+    areas = [c.area for c in doctor.run_checks(launch_settings(), lambda: 1 / 0, llm_checks=False)]
+    assert "local model" not in areas and "page reader" not in areas
+    areas = [c.area for c in doctor.run_checks(launch_settings(), lambda: 1 / 0)]  # the doctor itself: both kept
+    assert "local model" in areas and "page reader" in areas
+
+
+def launch_settings():
+    from ap_coder.config import Settings
+
+    return Settings()
 
 
 def test_the_start_runs_the_doctors_setup_checks(launch, monkeypatch):

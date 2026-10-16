@@ -116,7 +116,8 @@ def test_settings_opens_on_reading_and_says_lm_studio_is_down(client):
     assert "No self-test: LM Studio isn't running" in text and "To start LM Studio on this computer" in text
     assert "LM Studio isn't answering" in text  # Models in LM Studio
     assert "On a new computer" in text
-    assert 'id="self-test"' in text and "Run the self-test again" in text
+    assert 'id="self-test"' in text and "Run the self-test now" in text  # never run: not "again"
+    assert "Run the self-test again" not in text
     # The button is disabled: there is no OvisOCR2 to test.
     button = text.split('action="/settings/reading/self-test"', 1)[1].split("</button>", 1)[0]
     assert " disabled" in button

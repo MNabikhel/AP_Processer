@@ -1307,11 +1307,11 @@ def sync_notes(data: Path) -> list[tuple[str, str]]:
     return notes
 
 
-def lm_studio_line() -> tuple[str, str]:
+def lm_studio_line(status: Any = None) -> tuple[str, str]:
     """The chat model AP Coder would use (it suggests GL accounts for lines nothing was learned for), as LM Studio
     reports it: loaded, or only downloaded (LM Studio then loads it on first use). Optional: never installs, starts or
-    loads anything."""
-    status = chat_status()
+    loads anything. ``status``: LM Studio's answer already asked for this start (else it is asked now)."""
+    status = status if status is not None else chat_status()
     if status is None:
         return "info", "Chat model: not checked (optional)"
     if not status.reachable:
@@ -1326,7 +1326,8 @@ def lm_studio_line() -> tuple[str, str]:
     from ap_coder.local_llm import is_chat_model
 
     also = [m for m in status.loaded if m != status.model and is_chat_model(m)]  # (not OvisOCR2, the page reader)
-    more = f"; also loaded: {', '.join(also)} (unload it to use that one instead)" if also else ""
+    keep = "keep one chat model loaded: unload the one you don't want"
+    more = f"; also loaded: {', '.join(also)} ({keep})" if also else ""
     return "ok", f"Chat model: {status.model} loaded in {status.server} ({sees}){more}"
 
 
@@ -1346,12 +1347,12 @@ def chat_status() -> Any:
 CHAT_TEST_TIMEOUT = 90.0
 
 
-def chat_test_line(state: dict, force: bool = False) -> tuple[str, str] | None:
+def chat_test_line(state: dict, force: bool = False, status: Any = None) -> tuple[str, str] | None:
     """The question ``doctor --online`` asks, asked by the double-click: the loaded chat model gets two made-up lines
     and must answer with accounts from the chart. Asked once per model and version of AP Coder (remembered in the
     launcher's state), again after it failed or with --check; never when no chat model is loaded (that would make LM
-    Studio load one). None when there is nothing to ask."""
-    status = chat_status()
+    Studio load one). None when there is nothing to ask. ``status`` as for ``lm_studio_line``."""
+    status = status if status is not None else chat_status()
     if status is None or not status.active or (status.lm_studio and status.model not in status.loaded):
         return None
     key = f"{status.model}|{identity()['version']}"
@@ -1405,7 +1406,7 @@ def setup_check_lines() -> list[tuple[str, str]]:
         from ap_coder.doctor import FAIL, WARN, run_checks
 
         args = build_parser().parse_args(["doctor"])
-        checks = run_checks(Settings.from_env(), lambda: _load_reference(args), online=False)
+        checks = run_checks(Settings.from_env(), lambda: _load_reference(args), online=False, llm_checks=False)
     except Exception as exc:  # noqa: BLE001 - the summary never stops the start
         return [("warn", f"Setup checks: not run ({type(exc).__name__}: {exc})")]
     shown = [c for c in checks if not c.area.startswith(COVERED_CHECKS)]
@@ -1462,9 +1463,10 @@ def readiness(packages: tuple[str, str], state: dict | None = None, force: bool 
         lines.append(("ok", f"Data folder: {data}"))
     except OSError as exc:
         lines.append(("fail", f"Data folder {data} can't be written ({exc.strerror or exc})"))
-    lines.append(lm_studio_line())
+    chat = chat_status()  # LM Studio asked once for both chat-model lines
+    lines.append(lm_studio_line(chat))
     if state is not None:
-        test = chat_test_line(state, force)
+        test = chat_test_line(state, force, chat)
         if test:
             lines.append(test)
     lines.append(page_reader_line())
@@ -1786,8 +1788,8 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     state = load_state()
     ident = identity()
     first = args.venv in ("created", "recreated") or not state.get("setup_done")
-    if args.venv in (None, "reused"):
-        say(f"Python {sys.version.split()[0]}: reusing .venv")
+    if args.venv in (None, "reused") and (first or state.get("fingerprint") != ident["fingerprint"]):
+        say(f"Python {sys.version.split()[0]}: reusing .venv")  # (a later start of the same version: said nothing)
     unblock_launchers()
 
     # An AP Coder already running: this one opened; an older one (or another folder's) stopped first.

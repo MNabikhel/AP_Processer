@@ -8,29 +8,21 @@ laptop by OCR and by OvisOCR2, a small page-reading model in [LM Studio](https:/
 
 ![Review queue: today's work, KPIs and the invoices waiting for review](docs/screenshots/review-queue.png)
 
-## Set up: one double-click
+## Set up: start LM Studio, double-click
 
-1. **Unzip AP Coder** to a folder that OneDrive does not sync (e.g. `C:\APCoder\app`): GitHub's ZIP (**Code →
-   Download ZIP**) on a computer with internet, or the offline bundle on one without.
-2. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`; the first time, right-click → *Open*; on macOS 15
-   or newer, System Settings → Privacy & Security → *Open Anyway*. See [PILOT.md](docs/PILOT.md#install-one-button)
-   for a ZIP downloaded from the internet).
+1. **Start LM Studio's server** (*Developer → Start server*) with the chat model loaded (**Gemma 4 12B**, or Qwen
+   3.5 9B) and OvisOCR2 downloaded. Both are optional, and AP Coder reads invoices without them. Links and settings:
+   [docs/LM_STUDIO.md](docs/LM_STUDIO.md).
+2. **Unzip AP Coder** to a folder that OneDrive does not sync (e.g. `C:\APCoder\app`): GitHub's ZIP (**Code →
+   Download ZIP**), or the offline bundle IT gives you for a laptop with no internet.
+3. **Double-click `APProcessor.bat`** (Mac: `APProcessor.command`; the first time, right-click → *Open*; see
+   [PILOT.md](docs/PILOT.md#install-one-button) for macOS 15's *Open Anyway*).
 
-That's it, the first time and every day after. The launcher looks at what is already on the computer and adds
-only what is missing:
-
-- **Python:** it uses the Python already installed: 3.11 or newer (3.12 recommended: the offline bundle has
-  packages for the Python versions it was built for, and those are looked for first). If there is none, or
-  only an older one, it says so; from GitHub's ZIP on Windows it offers to install Python 3.12 with `winget`.
-- **Packages:** it sets up its own environment (`.venv`) once and installs only missing packages: from the
-  offline bundle's `wheelhouse/` folder (never from the internet), or, from GitHub's ZIP, downloaded once from
-  PyPI, as CloseDesk does. Your system Python and other programs are not touched.
-- **OCR models, data folder, desktop shortcut:** each is made once, only if it is not there yet (the OCR
-  models are copied from the bundle's `models/` folder, or downloaded once from GitHub's ZIP).
-- **Checks, on every start:** what `python -m ap_coder doctor --online` checks, so there is nothing to run by
-  hand. The models in LM Studio (the chat model, which it asks a two-line test question once per model, and
-  OvisOCR2), the GL accounts, tax mapping and settings, and, the first time and after an update, the ten sample
-  invoices and one scan. Then it opens the dashboard:
+That's it, the first time and every day after. The first time it sets up what is missing, once: its own Python
+environment (`.venv`, from the Python already installed: 3.11 or newer), the packages (from the offline bundle,
+or downloaded once from GitHub's ZIP, as CloseDesk does), the OCR models, the data folder (`~/APCoder`, outside
+the code, so updates never touch it) and one desktop shortcut. Every start then checks everything that
+`python -m ap_coder doctor --online` checks, prints it, and opens the dashboard:
 
 ```
 AP Coder readiness:
@@ -42,47 +34,25 @@ AP Coder readiness:
   [OK] Chat model test passed: accounts from the chart in 4s: line 1 -> 6100, line 2 -> 6400
   [OK] Page reader: ath-maas_ovisocr2 found, self-test passed (reads every page of every invoice)
   [OK] Setup checks: all 9 passed (GL accounts, tax mapping, coding rules, settings)
-  [OK] Desktop shortcut 'AP Coder' made (once)
-  [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR
+  [OK] Desktop shortcut 'AP Coder' made
+  [OK] Self-check OK: 10 of 10 sample invoices read right, and a scan with local OCR (9 s)
 ```
 
-Start LM Studio's server (with the chat model loaded) before you double-click, and the summary covers it too.
-A problem is one plain line in the summary; AP Coder still starts.
+The first time takes a few minutes; later starts take seconds and install nothing. A problem is one plain line in
+the summary, and AP Coder still starts. Double-clicking while it runs opens the running copy. Keep the window open
+while you work; close it to stop AP Coder.
 
-The first time takes a few minutes. Later starts take seconds and install nothing. Double-clicking while AP
-Coder is running opens the running copy. After an update, only new packages are installed. A damaged
-`.venv` is rebuilt on its own. Keep the window open while you work, and close it to stop AP Coder. Your data
-lives in `~/APCoder`, outside the code, so updates never touch it. On a clean Windows machine, CI checks
-every change: it confirms the existing Python is used, a second start installs nothing, only one copy runs,
-and only one shortcut is made.
+- **OvisOCR2** (about 1 GB) reads every page of every invoice as a second reader. AP Coder finds it in LM Studio
+  and tests it by itself (10 to 20 minutes the first time; *Settings → Reading* shows how it is doing). You can use
+  AP Coder meanwhile: invoices are read by OCR and wait for a person until it passes.
+- **The chat model** suggests GL accounts for lines nothing was learned for, and, as it can see pages, reads each
+  invoice's header from the page images as one more reader. Without it, lines are coded from what AP approved
+  before and from fixed rules ([docs/CODING.md](docs/CODING.md)).
 
-This is an offline enterprise build: AP Coder itself never connects to the internet. Only its setup may, and
-only from GitHub's ZIP (the code alone), to download the packages and OCR models once (`AP_ALLOW_INTERNET=0`
-forbids it). For a laptop with no internet, IT builds the offline bundle once, online
-(`python scripts/build_offline_bundle.py`: Windows, Python 3.11 to 3.14; add `--mac` for Macs), and the
-double-click installs from its `wheelhouse/` folder. A package or model missing from the bundle is said plainly, and AP Coder still starts when its core
-packages are there. There is one file to open per computer: `APProcessor.bat` on Windows, `APProcessor.command`
-on a Mac. IT can add `--installer` to ask for the data folder and the Azure settings
-(`APProcessor.bat --installer`, typed in `scripts\terminal.bat`). The full pilot guide is
-[docs/PILOT.md](docs/PILOT.md). The step-by-step for real data is
-[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Updating from an older version (each one since the first
-commit): [docs/UPGRADING.md](docs/UPGRADING.md).
-
-**LM Studio, with OvisOCR2.** IT installs LM Studio (0.4.8 or newer) with the models already in it. Nothing
-is downloaded on the laptop. On the laptop, open LM Studio and go to **Developer → Start server**. That is
-all:
-
-- **OvisOCR2** (about 1 GB) is part of how every invoice is read. AP Coder finds it on its own and runs its
-  self-test by itself (10 to 20 minutes on a laptop, the first time). *Settings → Reading* shows how it is
-  doing. There is nothing to choose or link. While it isn't running, invoices are still read by OCR, and a
-  banner says they wait for a person.
-- **The chat model** (**Qwen 3.5 9B**, or another 7B–9B instruct model, Q4_K_M) is optional. It
-  suggests GL accounts for lines nothing was learned for and, as Qwen 3.5 can see pages, reads each invoice's header
-  from the page images (after OvisOCR2, in the background) as one more independent reader. If it isn't loaded, load it with *Context Length
-  16384*, as CloseDesk loads it (*Settings → Reading → Models in LM Studio* → **Load**; see
-  [docs/LM_STUDIO.md](docs/LM_STUDIO.md)). Without it, lines are coded from what AP
-  approved before and from fixed rules; account names and the vendor master's default account are offered as
-  suggestions ([docs/CODING.md](docs/CODING.md)).
+This is an offline enterprise build: AP Coder itself never connects to the internet; only the setup from GitHub's
+ZIP downloads its packages and models, once. For IT (the offline bundle, `--installer`, what CI checks on clean
+Windows and Mac machines): [docs/PILOT.md](docs/PILOT.md). Real data, step by step:
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Updating from an older version: [docs/UPGRADING.md](docs/UPGRADING.md).
 
 ## Screens
 

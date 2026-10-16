@@ -155,3 +155,66 @@ def test_queue_helpers():
     assert [r["vendor_name"] for r in sort_queue(rows, "amount")] == ["a", "B"]
     assert [r["vendor_name"] for r in sort_queue(rows, "due")] == ["B", "a"]
     assert confidence_pct(0.849, 0.85) == "84.9%" and confidence_pct(0.9, 0.85) == "90%"
+
+
+# --- The first session: the quickest start first, no dead end, the self-test said calmly --------------------------
+
+
+def test_an_empty_queue_puts_the_demo_invoices_first(client, store, tmp_path):
+    text = client.get("/review").text
+    assert text.index("Load demo invoices") < text.index("Getting started")  # nothing yet: the quickest start
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    store.add_invoice(pdf, {"vendor_name": "Acme", "grand_total": 5}, {"issues": []})
+    text = client.get("/review").text  # invoices waiting for GL accounts: that comes first, the demo last
+    assert text.index("read and waiting") < text.index("Getting started") < text.index("Load demo invoices")
+
+
+def test_process_offers_the_sample_gl_accounts_when_there_are_none(client, store):
+    text = client.get("/process").text
+    assert "Finish the setup first" in text and 'action="/review/sample-gl"' in text
+    response = client.post("/review/sample-gl", data={"back": "/process"}, headers=PAGE)
+    assert response.status_code == 200 and response.json()["redirect"].startswith("/process")
+    assert store.has_reference()
+    text = client.get("/process").text
+    assert 'action="/review/sample-gl"' not in text and "Finish the setup first" not in text
+
+
+def test_the_sample_gl_accounts_never_send_the_browser_elsewhere(client):
+    response = client.post("/review/sample-gl", data={"back": "https://elsewhere.example/"}, headers=PAGE)
+    assert response.status_code == 200 and response.json()["redirect"].startswith("/review")
+
+
+@pytest.mark.parametrize(
+    ("self_test", "tone", "icon"),
+    [("pending", "info", "hourglass_top"), ("running", "info", "hourglass_top"), ("failed", "warn", "visibility_off"),
+     ("no model", "warn", "visibility_off")],
+)  # fmt: skip
+def test_the_reading_banner_is_calm_while_ovisocr2_tests_itself(client, monkeypatch, self_test, tone, icon):
+    from types import SimpleNamespace
+
+    from ap_coder.web import core
+
+    status = SimpleNamespace(banner="The page reader's state.", self_test=self_test)
+    monkeypatch.setattr(core, "reading_status_or_none", lambda settings, store, **k: status)
+    text = client.get("/review").text
+    banner = text.split('role="status">', 1)[0].rsplit("<div", 1)[1]
+    assert f'class="banner {tone}"' in banner
+    assert icon in text.split('role="status">', 1)[1].split("</span>", 1)[0]
+
+
+def test_the_setup_step_names_the_self_tests_state(store, monkeypatch):
+    from types import SimpleNamespace
+
+    from ap_coder.web.pages import process
+
+    def step(self_test, ready=False):
+        status = SimpleNamespace(page_reader_ready=ready, self_test=self_test)
+        monkeypatch.setattr(process, "reading_status_or_none", lambda settings, store, **k: status)
+        return process.setup_steps(store, Settings())[4]
+
+    assert step("passed", ready=True)[0] == "ok"
+    assert step("pending")[0] == "todo" and "testing itself" in step("pending")[2]
+    assert step("running")[0] == "todo" and "use AP Coder meanwhile" in step("running")[2]
+    assert step("failed") == ("bad", "OvisOCR2", "failed its self-test (Settings → Reading)")
+    assert step("no model")[0] == "todo" and "not running in LM Studio" in step("no model")[2]

@@ -153,7 +153,11 @@ elif ! find_python; then
   else
     echo "AP Coder needs Python 3.11 or newer (3.12 is best), and it is not installed."
   fi
-  echo "What to do: this is an offline build, so it does not download Python. Install Python 3.12 from"
+  if [ -e bundle_manifest.json ] || [ -d wheelhouse ] || [ -d models ]; then  # the offline bundle
+    echo "What to do: this is an offline build, so it does not download Python. Install Python 3.12 from"
+  else  # GitHub's ZIP (the code alone)
+    echo "What to do: install Python 3.12 from"
+  fi
   echo "https://www.python.org/downloads/ (or: brew install python@3.12), then open APProcessor.command again."
   stop
 fi

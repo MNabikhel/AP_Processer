@@ -54,10 +54,10 @@ plan that turns the pilot into a decision, see [PILOT_PLAN.md](PILOT_PLAN.md).
   slower than 10 minutes (`AP_LLM_TIMEOUT_SECONDS`), the invoice is still read and checked; its uncoded lines
   wait for AP. Each approval teaches AP Coder that vendor's accounts, which then come before the model.
 
-  **Qwen 3.5 9B in LM Studio.** IT puts the chat model in LM Studio next to OvisOCR2 (Qwen 3.5 9B, Q4_K_M:
-  5.6 GB, plus its 0.9 GB vision file, `mmproj`, from the lmstudio-community repo; or another 7B–9B
-  instruct model at Q4_K_M; or **Gemma 4 12B** (Google), QAT Q4_0, 7.0 GB plus a 0.18 GB vision file, set up as in
-  [LM_STUDIO.md](LM_STUDIO.md#using-gemma-4-12b-instead-of-qwen-35-9b-windows-laptop)). If no chat model is loaded, load it: in AP Coder, *Settings → Reading → Models
+  **The chat model in LM Studio.** IT puts it in LM Studio next to OvisOCR2: **Gemma 4 12B** (Google), QAT Q4_0,
+  7.0 GB plus a 0.18 GB vision file, set up as in
+  [LM_STUDIO.md](LM_STUDIO.md#using-gemma-4-12b-instead-of-qwen-35-9b-windows-laptop); or Qwen 3.5 9B, Q4_K_M
+  (5.6 GB, plus its 0.9 GB vision file, `mmproj`, from the lmstudio-community repo). If no chat model is loaded, load it: in AP Coder, *Settings → Reading → Models
   in LM Studio* → **Load** (or in LM Studio itself). Use **Context Length 16384**, the size CloseDesk
   loads it with, so a Mac running both apps keeps one copy of it ([LM_STUDIO.md](LM_STUDIO.md)). The accounts
   call itself is short (about 1,300 tokens of chart and lines with the sample chart, and about 60 tokens of answer
@@ -184,8 +184,8 @@ Python, offers Python 3.12 with `winget`); AP Coder itself stays offline. `set A
 forbids those downloads.
 
 **Check the install again** (a few seconds, nothing is saved): `APProcessor.bat --check` runs the
-self-check before starting; for every sample's line, run `.venv\Scripts\python.exe scripts\pilot_check.py`
-in the AP Coder folder. The same check runs on a clean Windows machine in CI for every change, from the
+self-check before starting; for every sample's line, run `python scripts\pilot_check.py` in `scripts\terminal.bat`.
+The same check runs on a clean Windows machine in CI for every change, from the
 double-click (first start, a second double-click while it runs, a later start) and from the offline
 bundle with the internet cut off, on Windows and on a Mac that has only Python 3.14.
 
@@ -251,7 +251,7 @@ and copy the whole data folder.
 
 ## Updating AP Coder
 
-When IT gives you a new offline bundle:
+When IT gives you a new offline bundle, or you download a new GitHub ZIP:
 
 1. Unzip it **anywhere**: a new folder (e.g. `C:\APCoder\app-0.2`) is fine, and so is unzipping it over
    the old folder. AP Coder may still be open.
@@ -315,7 +315,7 @@ itself (and makes its `.venv` again with it).
 | *A newer AP Coder ... is in ...: opening that one* | An old shortcut or folder was started: the newest version opens instead. Use its folder (the shortcut already does). |
 | *Your database ... was made by a newer AP Coder* | An older version was started on newer data: nothing was changed. Start the newer AP Coder. |
 | *AP Coder is being set up or started in another window* | The first double-click is still setting up: it waits, then opens the dashboard. |
-| *Self-check FAILED* in the summary | AP Coder still runs. Run `.venv\Scripts\python.exe scripts\pilot_check.py` in `scripts\terminal.bat` and send the output. |
+| *Self-check FAILED* in the summary | AP Coder still runs. Run `python scripts\pilot_check.py` in `scripts\terminal.bat` and send the output. |
 | *AP Coder is already running* | It is: the browser opens on it. Use that window, or close it to stop AP Coder. |
 | The browser does not open (*Could not open a web browser here*) | Open `http://127.0.0.1:8501` yourself (the window shows the exact address; it uses the next free port if 8501 is taken). Use `127.0.0.1`, not `localhost`: AP Coder listens on this computer's own address only, so Windows never asks about the firewall. |
 | *Port 8501 is in use by another program: AP Coder uses port 8502* | Nothing to do: another program has port 8501, so AP Coder took the next free one; open the address the window shows. |

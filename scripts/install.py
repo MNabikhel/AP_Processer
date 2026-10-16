@@ -143,7 +143,9 @@ def update_code(c: Console, args: argparse.Namespace) -> int | None:
         return None
     if not (ROOT / ".git").exists() or not shutil.which("git"):
         c.ok(f"{ROOT}")
-        c.info("Downloaded without git: to update later, download the new version and run its installer.")
+        c.info(
+            "Downloaded without git: to update later, unzip the new version anywhere and double-click its APProcessor."
+        )
         c.info("Your data and settings are kept either way.")
         return None
     branch = quiet(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()

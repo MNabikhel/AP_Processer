@@ -77,13 +77,21 @@
           {% if not ready %}<span class="muted">Finish the setup first (GL accounts).</span>{% endif %}
         </div>
       </form>
+      {% if not ready and steps[2][0] != "ok" %}
+      <form method="post" action="/review/sample-gl" class="row">
+        <input type="hidden" name="back" value="/process">
+        <span class="muted">No GL accounts yet?</span>
+        <button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button>
+        <a class="link" href="/accounts">Import yours <span class="ms" aria-hidden="true">arrow_forward</span></a>
+      </form>
+      {% endif %}
     </section>
 
     <section class="card">
       <div class="card-head">
         <h4>Invoices folder</h4>
         <form method="post" action="/process/open-folder">
-          <button class="btn" type="submit" title="{{ folder }}&#10;&#10;To process new files automatically (e.g. overnight), whoever runs AP Coder can start the folder watcher: python -m ap_coder watch">
+          <button class="btn" type="submit" title="{{ folder }}">
             <span class="ms" aria-hidden="true">folder_open</span>Open folder</button>
         </form>
       </div>
