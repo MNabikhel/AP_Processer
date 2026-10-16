@@ -215,7 +215,9 @@ jobs:
           Write-Host "dashboard served after $seconds s"
           if (-not $ok) { throw 'the later start did not serve the dashboard within a minute' }
           if ($out -match 'First run|Collecting|Installing|Running the self-check|Fetching the OCR models') { throw 'the later start set something up again' }
-          foreach ($m in @('reusing \.venv', 'AP Coder readiness:', 'Packages: all \d+ in place', 'Self-check OK at setup')) {
+          # (.venv reused: its Python in the summary; nothing set up again, above. A later start of the same version
+          # no longer prints "reusing .venv".)
+          foreach ($m in @('Python 3\.12\.\d+ \(\.venv\)', 'AP Coder readiness:', 'Packages: all \d+ in place', 'Self-check OK at setup')) {
             if ($out -notmatch $m) { throw "the later start did not print: $m" }
           }
           $links = @(Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk')
