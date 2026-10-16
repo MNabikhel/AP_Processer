@@ -438,7 +438,7 @@ FAQ: list[tuple[str, str]] = [
     (
         "Our invoices arrive by email. Do I have to save each PDF?",
         "No: save the email itself into the invoices folder (classic Outlook: drag it there, a .msg; Outlook on the "
-        "web or new Outlook: Download, a .eml), or upload it on Process invoices. Each email is sorted: invoices "
+        "web or new Outlook: Download, a .eml), or upload it on Import invoices. Each email is sorted: invoices "
         "and credit notes go to the review queue, statements to Statements, and anything else (a reminder, a "
         "quote, a bank-detail change, flagged as possible fraud) waits under Emails that need a person on Process "
         "invoices. Signature logos are left out. IT can have the AP mailbox save every email there: "
@@ -573,7 +573,7 @@ ROUTINE: list[tuple[str, list[tuple[str, str]]]] = [
 QUICK_START: list[tuple[str, str]] = [
     ("Set up your accounts", "Import your GL accounts (and cost centers) and say how each sales tax is posted."),
     ("Add purchase orders (optional)", "Import open POs to check invoices against what was ordered and received."),
-    ("Process invoices", "Drop PDFs or photos on the Process page. Each is read, coded and checked."),
+    ("Import invoices", "Drop PDFs or photos on the Import invoices page. Each is read, coded and checked."),
     ("Review", "Work through the queue: fix what the checks point to, then Approve & teach (Ctrl+Enter)."),
     ("Export", "Send approved invoices to the ERP in batches from the Exports page."),
 ]

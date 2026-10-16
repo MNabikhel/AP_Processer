@@ -72,7 +72,7 @@ connects to the internet (ONNX Runtime's own usage reports to Microsoft included
   folder goes. Unzipped over the old folder, the new bundle has already replaced them by its own samples (the
   same invoices, one detail changed, e.g. Pacific's GST number): those demo invoices then show the new sample.
   Your own invoices are in the data folder, never in `samples/`, and are not touched. (*Remove demo invoices*, on
-  the *Process invoices* page, clears them.)
+  the *Import invoices* page, clears them.)
 - **Python 3.10.** PR #1 and #2 ran on Python 3.10; the new version needs 3.11 or newer (3.12 is best). A `.venv`
   made with 3.10 is made again with the newer Python when one is installed; with only 3.10 the double-click says
   so (*Python 3.10 is installed, but AP Coder needs Python 3.11 or newer*).

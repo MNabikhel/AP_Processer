@@ -439,3 +439,15 @@ def test_the_settings_page_writes_the_env_ap_coder_reads(env_file):
     """The web page writes the .env AP Coder reads (AP_ENV_FILE, else the data folder's)."""
     assert settings_page.env_path() == env_file
     assert json.dumps(sorted(settings_page.TAB_KEYS)) == json.dumps(sorted(TABS))
+
+
+def test_a_page_reader_testing_itself_is_shown_as_testing_not_needs_a_look():
+    from types import SimpleNamespace
+
+    from ap_coder.reading import TESTING, WARN, ReaderLine
+    from ap_coder.web.pages.settings_reading import reader_rows
+
+    rows = reader_rows(SimpleNamespace(readers=[ReaderLine("Page reader (OvisOCR2)", TESTING, "Loaded and testing."),
+                                                ReaderLine("Page reader (OvisOCR2)", WARN, "Failed.")]))  # fmt: skip
+    assert (rows[0]["label"], rows[0]["tone"], rows[0]["icon"]) == ("Testing itself", "info", "hourglass_top")
+    assert rows[1]["label"] == "Needs a look"

@@ -8,6 +8,17 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## This release: the pilot tester's first session
+
+- **"differs" next to a reader that agreed.** Hovering a field listed each reader's reading as it is printed
+  ("Oct 1, 2026") and called it "differs" from the value (2026-10-01), although the readers agreed. The page now
+  says which readers agree; only a reader that read something else is "differs", with what it read.
+- **Testing itself is not "Needs a look".** While OvisOCR2 tests itself (10 to 20 minutes the first time),
+  Settings → Reading shows "Testing itself" with an hourglass, and the checklist and Setup card say so calmly.
+- **No name tags on the invoice page.** The boxes stay; a field's name and readings show when you hover it.
+- **"Process invoices" is now "Import invoices"**: the page to bring invoices in by hand (the review queue is the
+  work list). Same address.
+
 ## This release: Gemma 4 12B as the chat model
 
 - **Gemma 4 12B (Google) works in place of Qwen 3.5 9B.** Load it in LM Studio and AP Coder uses it for GL

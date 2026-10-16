@@ -24,6 +24,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 OK, WARN, OFF = "ok", "warn", "off"
+TESTING = "testing"  # loaded and working, testing itself before it is trusted (nothing is wrong)
 
 PDF_TEXT, OCR, TABLE_FINDER, PAGE_READER, RULES, TEMPLATES, CHECKS, GL_MODEL = (
     "PDF text layer", "OCR (two engines)", "Table finder", "Page reader (OvisOCR2)", "Rule reader",
@@ -159,6 +160,10 @@ def _page_reader(settings: Any, store: Any, use_cache: bool, out: ReadingStatus)
     if out.page_reader_ready:
         return ReaderLine(PAGE_READER, OK, f"Reads every page of every invoice as a second reader, in the background. "
                                            f"{out.self_test_detail}")  # fmt: skip
+    if out.self_test in ("pending", "running"):  # loaded and working: the first start's self-test, nothing wrong
+        return ReaderLine(PAGE_READER, TESTING, f"Loaded in LM Studio and testing itself. {out.self_test_detail} You "
+                                                "can use AP Coder meanwhile: invoices are read by OCR and wait for a "
+                                                "person until it passes.")  # fmt: skip
     return ReaderLine(PAGE_READER, WARN, f"{out.self_test_detail} Until it passes, invoices wait for a person.")
 
 

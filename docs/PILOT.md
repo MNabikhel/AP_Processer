@@ -198,8 +198,8 @@ bundle with the internet cut off, on Windows and on a Mac that has only Python 3
    close it to stop AP Coder. Double-clicking again while it runs just brings the running dashboard back
    up in the browser; it never starts a second copy. Each page has its own address, so a page or an
    invoice (`/review/<number>`) can be bookmarked or opened in a second tab.
-2. **Bring in invoices:** drop PDFs, scans or photos in the **invoices folder** (Process invoices →
-   *Open folder*), or upload them on the *Process invoices* page.
+2. **Bring in invoices:** drop PDFs, scans or photos in the **invoices folder** (Import invoices →
+   *Open folder*), or upload them on the *Import invoices* page.
 3. **Review (the clerk's job):** open each invoice in the *Review queue*, check the fields marked
    *Check*, the GL split and the tax lines, correct what is wrong and click **Approve & teach** (or park /
    reject). Each corrected field is recorded for that vendor and updates its template; the confirmation

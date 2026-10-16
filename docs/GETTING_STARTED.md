@@ -147,7 +147,7 @@ Things to try:
   *Ask the vendor for the missing invoices*.
 - **Month-end** shows what to accrue; **Sales tax** totals the GST/HST and QST to claim back (set
   the dates to include the demo invoices, dated mid-2026); **Help** explains every check.
-- *Remove demo invoices* on the **Process invoices** page removes the demo invoices (and any batch
+- *Remove demo invoices* on the **Import invoices** page removes the demo invoices (and any batch
   exported from them), sample POs and the sample vendor list again. The sample GL accounts and tax
   setup stay (replace them when you import yours: tick *Replace my current list*).
 
@@ -156,10 +156,10 @@ sample files would otherwise be recognised as already processed).
 
 1. **GL accounts & tax** → *Load sample setup* (skip this if you tried the demo: the sample setup is
    already loaded).
-2. Copy the sample PDFs from `samples\` into your invoices folder (**Process invoices** →
+2. Copy the sample PDFs from `samples\` into your invoices folder (**Import invoices** →
    *Open folder* shows it). `samples\README.md` lists what each one shows: HST, GST+PST,
    TPS/TVQ, GST only, a US invoice and a credit note.
-3. **Process invoices** → *Process 10 file(s)* (or copy only a few to start).
+3. **Import invoices** → *Process 10 file(s)* (or copy only a few to start).
 4. **Review queue** → open each invoice. Change a GL code in the grid and watch the checks and
    the GL distribution update. Approve, and look at **Learning & accuracy**.
 
@@ -210,11 +210,11 @@ names.
 
 ## Step 6: Process a test set
 
-Put **20–50 real invoices** in your invoices folder (**Process invoices** → *Open folder*), or
-upload them on **Process invoices**. Invoices that came by email: save the email itself into the folder
+Put **20–50 real invoices** in your invoices folder (**Import invoices** → *Open folder*), or
+upload them on **Import invoices**. Invoices that came by email: save the email itself into the folder
 (classic Outlook: drag it there, a `.msg`; Outlook on the web or new Outlook: *Download*, a `.eml`). Each email
 is sorted: invoices to the review queue, statements to *Statements*, the rest (a reminder, a quote, a bank-detail
-change) under *Emails that need a person* on **Process invoices**. To have the AP mailbox do it, see
+change) under *Emails that need a person* on **Import invoices**. To have the AP mailbox do it, see
 [MAILBOX_SETUP.md](MAILBOX_SETUP.md).
 Aim for a representative mix:
 

@@ -48,7 +48,7 @@ Process the week's invoices in AP Coder **and** code them the usual way. Do not 
 - [ ] Reconcile the statements of your three largest vendors (**Vendor statements**).
 - [ ] Turn on the **folder watcher** (`watch`, or Task Scheduler with `--once`) and have the AP mailbox's
       emails saved into the invoices folder ([MAILBOX_SETUP.md](MAILBOX_SETUP.md)): check *Emails that need a
-      person* on Process invoices each day.
+      person* on Import invoices each day.
 - [ ] Send the JDE team the worksheet (**Settings → JD Edwards E1 → Download the worksheet**), import their
       answers, and read **Exports → Dry run** before the first test load.
 - [ ] Look at **Vendors that make work** and ask the worst offenders for better invoices.

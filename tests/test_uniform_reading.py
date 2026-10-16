@@ -384,13 +384,18 @@ def test_reading_status_when_the_page_reader_is_ready(store, monkeypatch):
     ],
 )  # fmt: skip
 def test_reading_status_while_the_self_test_has_not_passed(store, monkeypatch, test, state, banner):
-    from ap_coder.reading import WARN, reading_status
+    from ap_coder.reading import TESTING, WARN, reading_status
 
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: _ovis("downloaded"))
     store.set_setting(page_worker.TEST_KEY, json.dumps({"models": {MODEL: test}}) if test else "")
     status = reading_status(_settings(), store)
     assert (status.self_test, status.page_reader_ready, status.page_reader_model) == (state, False, MODEL)
-    assert status.banner.startswith(banner) and status.reader("Page reader (OvisOCR2)").state == WARN
+    row = status.reader("Page reader (OvisOCR2)")
+    assert status.banner.startswith(banner)
+    # Testing itself is not "Needs a look": loaded and working, only not trusted yet. A failed test is.
+    assert row.state == (TESTING if state == "pending" else WARN)
+    if state == "pending":
+        assert row.detail.startswith("Loaded in LM Studio and testing itself.") and "meanwhile" in row.detail
 
 
 def test_reading_status_never_raises(monkeypatch):

@@ -187,3 +187,16 @@ def test_the_viewer_loads_nothing_from_the_internet():
         # The SVG namespace is a name, not a download.
         assert not re.search(r"""(src=|href=|url\(|import\s|fetch\()\s*["']?(https?:)?//""", text), path.name
     assert (STATIC_DIR / "js" / "invoice_viewer.js").is_file() and (STATIC_DIR / "invoice_viewer.css").is_file()
+
+
+def test_readers_that_read_the_same_value_printed_another_way_agree():
+    """A date printed "Oct 1, 2026" is 2026-10-01: the readers behind the value agree, whatever the print; only an
+    "other:<value>" reading differs (the tooltip said "differs" for both before)."""
+    rows = shape_fields([
+        {"field": "invoice_date", "value": "2026-10-01", "status": "verified", "confidence": 0.99,
+         "boxes": [[1, 0.1, 0.1, 0.3, 0.12]],
+         "sources": {"ai": "Oct 1, 2026", "rules": "Oct 1, 2026", "other:2026-10-02": "vlm"}},
+    ], {})  # fmt: skip
+    (row,) = rows
+    assert row["agreeing"] == ["ai", "rules"] and "other:2026-10-02" in row["sources"]
+    assert shape_fields([{"field": "po_number", "value": "PO-1", "status": "likely"}], {})[0]["agreeing"] == []

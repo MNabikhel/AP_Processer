@@ -200,7 +200,7 @@ def test_setup_steps_never_claim_the_self_test_passed_before_it_has(tmp_path):
 
     found = ReadingStatus(page_reader_model="ovis", self_test="pending")
     steps = {label: (state, detail) for state, label, detail in setup_steps(found, True, (False, ""))}
-    assert steps["Self-test passed (automatic)"] == ("todo", "runs by itself once OvisOCR2 is found")
+    assert steps["Self-test passed (automatic)"] == ("wait", "starts by itself in a moment")
     down = ReadingStatus(page_reader_model="", self_test="no model")
     steps = {label: (state, detail) for state, label, detail in setup_steps(down, False, (False, ""))}
     assert "start LM Studio first" in steps["OvisOCR2 is in LM Studio"][1]
