@@ -325,6 +325,33 @@ def province_options() -> list[tuple[str, str]]:
             for p in PROVINCE_VALUES]  # fmt: skip
 
 
+def supply_line(header: dict[str, Any], lines: list[dict[str, Any]], setup: Any) -> dict[str, Any]:
+    """The place of supply as the review screen says it: {province, label, why, open}: open when it is not known or
+    is only the vendor's province (a guess), so the reviewer sees the choice."""
+    from types import SimpleNamespace
+
+    from ap_coder.tax import SUPPLY_OURS, SUPPLY_PRINTED, SUPPLY_SITE, SUPPLY_VENDOR, supply_source
+
+    coding = SimpleNamespace(
+        ship_to_province=str(header.get("ship_to_province") or ""),
+        supplier_province=str(header.get("supplier_province") or ""),
+        line_items=[SimpleNamespace(predicted_cost_center=str(r.get("predicted_cost_center") or "")) for r in lines],
+    )
+    province, source = supply_source(coding, setup)
+    if not province and coding.ship_to_province == OUTSIDE_CANADA:
+        return {"province": OUTSIDE_CANADA, "label": "Outside Canada", "why": "delivered outside Canada: no Canadian "
+                "sales tax", "open": False}  # fmt: skip
+    ours = getattr(setup, "our_province", "")
+    why = {
+        SUPPLY_PRINTED: "your province (Settings)" if province == ours else "the ship-to on the invoice",
+        SUPPLY_SITE: "the province of the cost center the lines are coded to",
+        SUPPLY_OURS: "your province (Settings): no ship-to printed",
+        SUPPLY_VENDOR: "only the vendor's province: set where it is delivered to you",
+    }.get(source, "unknown: choose where it is delivered to you")
+    label = f"{province} · {PROVINCE_NAMES[province]}" if province in PROVINCE_NAMES else "Not known"
+    return {"province": province, "label": label, "why": why, "open": source in ("", SUPPLY_VENDOR)}
+
+
 def tax_province_options() -> list[tuple[str, str]]:
     return [(p, province_label(p) if p == OUTSIDE_CANADA else (p or NO_PROVINCE)) for p in PROVINCE_VALUES]
 

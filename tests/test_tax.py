@@ -335,3 +335,42 @@ def test_tax_spread_over_lines_in_whole_yen(reference):
     assert all(e["amount"] == round(e["amount"]) for e in dist)  # the PST (spread over the lines) in whole yen
     assert sum(e["non_recoverable_tax"] for e in dist if e["kind"] == "expense") == 191.0
     assert sum(e["amount"] for e in dist) == gt["grand_total"]
+
+
+# --- Place of supply: where it is delivered to us, not where the vendor is ---------------------------------------
+
+
+def _supply(ship_to="", supplier="", centers=()):
+    from types import SimpleNamespace
+
+    lines = [SimpleNamespace(predicted_cost_center=c) for c in centers]
+    return SimpleNamespace(ship_to_province=ship_to, supplier_province=supplier, line_items=lines)
+
+
+def test_place_of_supply_is_where_it_is_delivered_to_us():
+    from ap_coder.tax import TaxRateTable, TaxSetup, supply_source
+
+    setup = TaxSetup(TaxRateTable.load(), our_province="BC", site_provinces={"CC500": "ON", "CC600": "AB"})
+    # A vendor in Ontario shipping from BC to our BC site: BC (GST + PST), never Ontario's HST.
+    assert supply_source(_supply(supplier="ON"), setup) == ("BC", "ours")
+    assert supply_source(_supply(ship_to="AB", supplier="ON"), setup) == ("AB", "printed")  # a ship-to printed wins
+    assert supply_source(_supply(supplier="ON", centers=["CC500", "CC500"]), setup) == ("ON", "site")
+    assert supply_source(_supply(supplier="ON", centers=["CC500", "CC600"]), setup) == ("BC", "ours")  # two sites
+    assert supply_source(_supply(supplier="ON"), TaxSetup(TaxRateTable.load())) == ("ON", "vendor")  # last resort
+    assert supply_source(_supply(), TaxSetup(TaxRateTable.load())) == ("", "")
+
+
+def test_an_invoice_without_a_ship_to_is_taxed_where_we_are(ground_truth, reference):
+    from dataclasses import replace
+
+    from ap_coder.config import Settings
+    from ap_coder.pipeline import finalise_coding
+
+    doc = InvoiceCoding.model_validate({**ground_truth, "ship_to_province": "", "supplier_province": "ON"})
+    # HST charged by an Ontario vendor on goods delivered to us in BC: the wrong tax.
+    ours = replace(reference, tax=replace(reference.tax, our_province="BC"))
+    output, report = finalise_coding(doc, ours, Settings())
+    assert output["ship_to_province"] == "BC"
+    assert "TAX_REGIME_MISMATCH" in {i.code for i in report.issues}
+    output, _ = finalise_coding(doc, reference, Settings())  # no province of ours: left as printed (none)
+    assert output["ship_to_province"] == ""

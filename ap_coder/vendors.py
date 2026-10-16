@@ -12,8 +12,10 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * VENDOR_NEW (info): first invoice from this vendor, or none approved yet (no penalty, but never touchless)
 * DUPLICATE_IN_ERP (error): the same vendor and invoice number is in the ERP's invoice register
 * DUPLICATE_OTHER_VENDOR (warning): same invoice number and total under another vendor name
-* VENDOR_NOT_IN_MASTER (warning): a vendor master was imported from the ERP and this vendor is not in it
-  (by name or GST/HST number)
+* VENDOR_NOT_IN_MASTER (error): a vendor master was imported from the ERP and this vendor is not in it
+  (by name or GST/HST number): pick the vendor from the list, or add it as a new vendor
+* VENDOR_ADDED_HERE (error): a new vendor added to the vendor list from the review screen, not yet in the ERP
+* VENDOR_QST_CHANGED / VENDOR_PST_CHANGED (warning): the QST or PST number differs from the vendor's
 * VENDOR_MATCHED_BY_TAX_NUMBER (info): not found by name, but the GST/HST number belongs to a master vendor
 * CREDIT_NOTE_FOR (info) / CREDIT_NOTE_ORIGINAL_UNKNOWN (info) / CREDIT_EXCEEDS_INVOICE (warning): the invoice a
   credit note credits, found or not, and a credit larger than it
@@ -36,6 +38,9 @@ if TYPE_CHECKING:
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 ON_HOLD, ACTIVE = "on_hold", "active"
+# vendors.in_master: 0 a vendor AP only set controls for, 1 in the vendor master imported from the ERP, 2 added to
+# the vendor list from the review screen (a new vendor: set up in the ERP before it is paid).
+IN_ERP, ADDED_HERE = 1, 2
 UNUSUAL_FACTOR = 3.0  # total above 3x this vendor's median...
 UNUSUAL_MIN_GAP = 1000.0  # ...and at least this much above it
 UNUSUAL_MIN_HISTORY = 3
@@ -161,6 +166,12 @@ def _credit_note_findings(
     return out
 
 
+def _by(vendor: dict[str, Any]) -> str:
+    """ " by Jane on 2026-10-16" from the note a vendor added on the review screen keeps."""
+    match = re.match(r"Added by (.+?) on (\d{4}-\d{2}-\d{2})", str(vendor.get("notes") or ""))
+    return f" by {match.group(1)} on {match.group(2)}" if match else ""
+
+
 def norm_pst_number(value: Any) -> str:
     """A PST/RST number by its digits: "PST-1234-5678" and "1234 5678" are the same."""
     return re.sub(r"\D", "", str(value or ""))
@@ -209,7 +220,13 @@ def vendor_findings(
         return []
     findings: list[tuple[str, str, str]] = []
     master = store.get_vendor(key)
-    if store.has_vendor_master() and not (master and master.get("in_master")):
+    if master and master.get("in_master") == ADDED_HERE:
+        findings.append(
+            (ERROR, "VENDOR_ADDED_HERE",
+             f"a new vendor, added to the vendor list from the review screen{_by(master)}: set it up in JD Edwards "
+             "(and verify it by phone) before it is paid")
+        )  # fmt: skip
+    elif store.has_vendor_master() and not (master and master.get("in_master")):
         number = norm_tax_number(coding.gst_hst_registration_number)
         real = sum(c.isdigit() for c in number) >= 9  # a Business Number, not "N/A" or "pending"
         by_number = [v for v in store.master_vendors() if real and same_tax_number(v["expected_gst"], number)]
@@ -222,10 +239,11 @@ def vendor_findings(
             )  # fmt: skip
         else:
             findings.append(
-                (WARNING, "VENDOR_NOT_IN_MASTER",
-                 "this vendor is not in the vendor master imported from the ERP: set it up (and verify it) first")
+                (ERROR, "VENDOR_NOT_IN_MASTER",
+                 "this vendor is not in the vendor list imported from the ERP: pick it from the list, or add it as a "
+                 "new vendor")
             )  # fmt: skip
-    in_master = bool(master and master.get("in_master"))
+    in_master = bool(master and master.get("in_master") == IN_ERP)
     for posted in store.in_erp(coding.vendor_name, coding.invoice_number, coding.grand_total)[:2]:
         findings.append(
             (ERROR, "DUPLICATE_IN_ERP",

@@ -451,3 +451,20 @@ def test_a_page_reader_testing_itself_is_shown_as_testing_not_needs_a_look():
                                                 ReaderLine("Page reader (OvisOCR2)", WARN, "Failed.")]))  # fmt: skip
     assert (rows[0]["label"], rows[0]["tone"], rows[0]["icon"]) == ("Testing itself", "info", "hourglass_top")
     assert rows[1]["label"] == "Needs a look"
+
+
+def test_where_invoices_are_delivered_to_us(client, store):
+    from .test_web_invoice import PAGE as HEADERS
+
+    page = client.get("/settings/review").text
+    assert "Where invoices are delivered to you" in page and 'name="our_province"' in page
+    bad = client.post("/settings/review/supply", data={"our_province": "XX"}, headers=HEADERS)
+    assert bad.status_code == 400
+    bad = client.post("/settings/review/supply", data={"our_province": "BC", "site_provinces": "CC400 BC"},
+                      headers=HEADERS)  # fmt: skip
+    assert bad.status_code == 400 and "CC400 BC" in bad.json()["error"]
+    ok = client.post("/settings/review/supply", data={"our_province": "bc", "site_provinces": "CC400 = on\nCC500=AB"},
+                     headers=HEADERS)  # fmt: skip
+    assert ok.status_code == 200
+    assert store.our_province() == "BC" and store.site_provinces() == {"CC400": "ON", "CC500": "AB"}
+    assert "CC400=ON" in client.get("/settings/review").text

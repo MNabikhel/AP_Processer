@@ -138,3 +138,70 @@ def test_a_partial_file_keeps_what_it_has_no_column_for(tmp_path):
     cleared = [{"Vendor": "Pacific Office Supply Ltd.", "No.": "", "Terms": "Net 45"}]
     store.import_vendor_master(master_rows(cleared, master_columns(list(cleared[0]))))
     assert store.get_vendor("pacific office supply")["erp_id"] == ""  # the column is there, and empty
+
+
+# --- The vendor list on the review screen --------------------------------------------------------------------------
+
+
+def test_a_vendor_added_from_the_review_screen_needs_a_person_until_it_is_in_the_erp(tmp_path):
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    load_sample_vendor_master(store)
+    stranger = _gt(vendor_name="Totally New Supplies", gst_hst_registration_number="111111111RT0001")
+    _, report = finalise_coding(InvoiceCoding.model_validate(stranger), store.reference_data(), Settings(),
+                                store=store)  # fmt: skip
+    assert {i.code: i.severity for i in report.issues}["VENDOR_NOT_IN_MASTER"] == "error"
+    key = store.add_vendor_here("Totally New Supplies", gst="111111111RT0001", pst="PST-0000-1111", province="bc",
+                                actor="Jane", invoice_id=7)  # fmt: skip
+    vendor = store.get_vendor(key)
+    assert vendor["in_master"] == 2 and vendor["province"] == "BC" and vendor["pst_number"] == "PST-0000-1111"
+    assert store.events(actions=["vendor_added"])[0]["actor"] == "Jane"
+    codes = _codes(store, stranger)
+    assert "VENDOR_ADDED_HERE" in codes and "VENDOR_NOT_IN_MASTER" not in codes
+    _, report = finalise_coding(InvoiceCoding.model_validate(stranger), store.reference_data(), Settings(),
+                                store=store)  # fmt: skip
+    added = next(i for i in report.issues if i.code == "VENDOR_ADDED_HERE")
+    assert added.severity == "error" and "by Jane on" in added.message
+    assert not store.has_vendor_master() or key not in {v["vendor_key"] for v in store.master_vendors()}
+    # Set up in JD Edwards and the vendor list imported again: a vendor like any other.
+    store.import_vendor_master(
+        [
+            {
+                "vendor_name": "Totally New Supplies",
+                "erp_id": "V99999",
+                "gst": "111111111RT0001",
+                "terms": None,
+                "default_gl": None,
+                "status": "active",
+                "status_given": False,
+            }
+        ]
+    )
+    assert store.get_vendor(key)["in_master"] == 1
+    assert not {"VENDOR_ADDED_HERE", "VENDOR_NOT_IN_MASTER"} & _codes(store, stranger)
+
+
+def test_a_vendor_already_in_the_list_is_not_added_again(tmp_path):
+    import pytest
+
+    store = Store(tmp_path / "a.db")
+    load_sample_vendor_master(store)
+    with pytest.raises(ValueError, match="already in the vendor list"):
+        store.add_vendor_here("NORTHWIND IT SOLUTIONS INC", actor="Jane")
+    with pytest.raises(ValueError):
+        store.add_vendor_here("   ", actor="Jane")
+
+
+def test_the_vendor_choices(tmp_path):
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    doc = _gt()
+    store.approve_invoice(store.add_invoice(tmp_path / "a.pdf", doc, {}), doc, "jane")
+    store.save_vendor("on hold only", "On Hold Only Ltd", "on_hold")  # controls only: not a vendor of the list
+    # No vendor master: the vendors with an approved invoice.
+    assert [v["display_name"] for v in store.vendor_choices()] == [doc["vendor_name"]]
+    load_sample_vendor_master(store)
+    store.add_vendor_here("Zeta New Co", actor="Jane")
+    names = [v["display_name"] for v in store.vendor_choices()]
+    assert names == sorted(names, key=str.lower) and "Zeta New Co" in names and "On Hold Only Ltd" not in names
+    assert len(names) == len(store.master_vendors()) + 1

@@ -663,7 +663,12 @@ class Store:
         return ReferenceData(
             chart_of_accounts=table(gl, "GL account", "gl_code"),
             cost_centers=table(cc, "cost center", "cost_center") if cc else None,
-            tax=TaxSetup(rates or TaxRateTable.load(), self.tax_treatments()),
+            tax=TaxSetup(
+                rates or TaxRateTable.load(),
+                self.tax_treatments(),
+                our_province=self.our_province(),
+                site_provinces=self.site_provinces(),
+            ),
             notes=parse_policy_notes(self.get_setting("policy_notes")),
         )
 
@@ -2573,6 +2578,66 @@ class Store:
             })  # fmt: skip
         return {"added": added, "updated": updated, "duplicates": duplicates, "inserted": inserted}
 
+    def our_province(self) -> str:
+        """Where invoices are delivered to us when they print no ship-to (Settings → Review), "" if not set."""
+        return self.get_setting("our_province").strip().upper()
+
+    def site_provinces(self) -> dict[str, str]:
+        """{cost center: province} for sites in other provinces than ours (Settings → Review: "CC400=BC" per line)."""
+        out: dict[str, str] = {}
+        for line in re.split(r"[\n,;]+", self.get_setting("site_provinces")):
+            code, sep, province = line.partition("=")
+            if sep and code.strip() and province.strip():
+                out[code.strip()] = province.strip().upper()
+        return out
+
+    def vendor_choices(self) -> list[dict[str, Any]]:
+        """The vendors a reviewer picks from on the review screen: the vendor master's and the ones added there; with
+        no vendor master, every vendor with an approved invoice too. Sorted by name."""
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master IN (1, 2)")]
+            if not any(r["in_master"] == 1 for r in rows):
+                known = {r["vendor_key"] for r in rows}
+                for r in conn.execute(
+                    "SELECT vendor_key, MAX(vendor_name) name FROM invoices WHERE status = 'approved' AND vendor_key "
+                    "!= '' GROUP BY vendor_key"
+                ):
+                    if r["vendor_key"] not in known:
+                        rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0})
+        return sorted(rows, key=lambda r: str(r.get("display_name") or "").lower())
+
+    def add_vendor_here(
+        self, name: str, *, gst: str = "", qst: str = "", pst: str = "", province: str = "", actor: str | None = None,
+        invoice_id: int | None = None,
+    ) -> str:  # fmt: skip
+        """A new vendor added to the vendor list from the review screen (``vendors.ADDED_HERE``): every invoice from
+        it needs a person until it is in the vendor master imported from the ERP. Returns its key. A vendor already
+        in the list is refused (ValueError)."""
+        key = vendor_key(name)
+        if not key:
+            raise ValueError("Type the vendor's name.")
+        before = self.get_vendor(key) or {}
+        if before.get("in_master"):
+            raise ValueError(f"{before.get('display_name') or name} is already in the vendor list: pick it.")
+        note = f"Added by {actor or 'a reviewer'} on {_now()[:10]}"
+        note += f" from invoice #{invoice_id}." if invoice_id else "."
+        notes = "\n".join(n for n in (note, str(before.get("notes") or "").strip()) if n)
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, qst_number,
+                   pst_number, province, in_master) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
+                   ON CONFLICT(vendor_key) DO UPDATE SET display_name = excluded.display_name,
+                   expected_gst = excluded.expected_gst, notes = excluded.notes, updated_at = excluded.updated_at,
+                   qst_number = excluded.qst_number, pst_number = excluded.pst_number, province = excluded.province,
+                   in_master = 2""",
+                (key, name.strip(), before.get("status") or "active", gst.strip(), notes, _now(), qst.strip(),
+                 pst.strip(), province.strip().upper()),
+            )  # fmt: skip
+            self._log(conn, "vendor_added", invoice_id=invoice_id, actor=actor, detail={
+                "vendor": name.strip(), "gst": gst.strip(), "qst": qst.strip(), "pst": pst.strip(),
+                "province": province.strip().upper()})  # fmt: skip
+        return key
+
     def delete_vendors(self, keys: list[str]) -> int:
         """Remove vendors from the vendor list (e.g. the demo's sample vendor master)."""
         with self._conn() as conn:
@@ -2706,7 +2771,8 @@ class Store:
             r["notes"] = master.get("notes", "")
             for field in ("erp_id", "terms", "default_gl"):
                 r[field] = master.get(field) or ""
-            r["in_master"] = bool(master.get("in_master"))
+            r["in_master"] = master.get("in_master") == 1
+            r["added_here"] = master.get("in_master") == 2
         return sorted(rows, key=lambda r: -r["spend_in_cad"])
 
     def vendor_gl_usage(self, key: str) -> list[dict[str, Any]]:

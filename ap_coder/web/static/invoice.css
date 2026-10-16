@@ -215,3 +215,25 @@
 /* ---- Read-only states ------------------------------------------------------------------------------------- */
 .inv-state .card-head {flex-wrap: wrap;}
 .inv-state h4 .ms {color: var(--lg-subtle);}
+
+/* The vendor, picked from the vendor list (invoice.js says whether the name typed is in it). */
+.inv-vendor .inv-vendor-match {display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 18px; color: var(--lg-muted);}
+.inv-vendor .inv-vendor-match .ms {font-size: 16px;}
+.inv-vendor .inv-vendor-match.ok {color: #166534;}
+.inv-vendor .inv-vendor-match.warn {color: #92400e;}
+.inv-vendor .inv-vendor-match button {font: inherit; color: var(--lg-accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;}
+.inv-vendor-add {align-self: flex-start;}
+.inv-vendor-add .pop-body {left: 0; right: auto;}
+.inv-vendor-add .pop-body .row {display: flex; gap: 8px;}
+.inv-vendor-add .pop-body .grow {flex: 1;}
+@media (prefers-color-scheme: dark) {
+  .inv-vendor .inv-vendor-match.ok {color: #86efac;}
+  .inv-vendor .inv-vendor-match.warn {color: #fcd34d;}
+}
+
+/* Place of supply: one line (where it came from), the choice only when asked or not known. */
+.inv-supply-pick > summary {list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--lg-text); font-size: 13.5px; padding: 6px 0;}
+.inv-supply-pick > summary::-webkit-details-marker {display: none;}
+.inv-supply-pick > summary .link {color: var(--lg-accent); text-decoration: underline;}
+.inv-supply-pick[open] > summary .link {display: none;}
+.inv-supply-pick select {width: 100%;}

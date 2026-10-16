@@ -173,6 +173,10 @@ class TaxTreatment:
 class TaxSetup:
     rates: TaxRateTable
     treatments: dict[str, TaxTreatment] = field(default_factory=dict)
+    # Where goods and services are delivered to us (Settings → Review): the place of supply of an invoice that
+    # prints no ship-to, by cost center (sites in several provinces) or the one default.
+    our_province: str = ""
+    site_provinces: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def default(cls) -> TaxSetup:
@@ -243,11 +247,37 @@ def regime_on(province: str, on: dt.date | None, rates: TaxRateTable) -> frozens
     return usual
 
 
-def place_of_supply(coding: Any) -> str:
-    for prov in (coding.ship_to_province, coding.supplier_province):
-        if prov in PROVINCES:
-            return prov
-    return ""
+# Where a place of supply came from (``supply_source``), as the review screen says it.
+SUPPLY_PRINTED, SUPPLY_SITE, SUPPLY_OURS, SUPPLY_VENDOR = "printed", "site", "ours", "vendor"
+
+
+def supply_source(coding: Any, setup: TaxSetup | None = None) -> tuple[str, str]:
+    """(province, where it came from) of the place of supply, the province whose sales tax applies.
+
+    Goods are taxed where they are delivered to the buyer, services (generally) where the buyer is (Excise Tax Act,
+    Schedule IX; CRA GST/HST Memoranda 3-3-3 and 3-3-6; the BC, Saskatchewan and Manitoba PST acts follow the same
+    idea). Neither the vendor's province nor where the goods were shipped from decides it: an Ontario vendor shipping
+    from BC to our site in Alberta charges GST only. So, in order: the ship-to read on the invoice (or set by the
+    reviewer); the province of the cost center the lines are coded to (one site, one province); our default ship-to
+    province; and only when none is known, the vendor's province (often the same, never sure)."""
+    printed = getattr(coding, "ship_to_province", "") or ""
+    if printed in PROVINCES:
+        return printed, SUPPLY_PRINTED
+    if setup is not None:
+        sites = {setup.site_provinces.get(str(getattr(li, "predicted_cost_center", "") or ""))
+                 for li in getattr(coding, "line_items", []) or []} - {None, ""}  # fmt: skip
+        if len(sites) == 1 and (site := next(iter(sites))) in PROVINCES:
+            return site, SUPPLY_SITE
+        if setup.our_province in PROVINCES:
+            return setup.our_province, SUPPLY_OURS
+    supplier = getattr(coding, "supplier_province", "") or ""
+    if supplier in PROVINCES:
+        return supplier, SUPPLY_VENDOR
+    return "", ""
+
+
+def place_of_supply(coding: Any, setup: TaxSetup | None = None) -> str:
+    return supply_source(coding, setup)[0]
 
 
 def _invoice_date(coding: Any) -> dt.date | None:
@@ -279,7 +309,7 @@ def check_taxes(coding: Any, setup: TaxSetup, known_gl_codes: set[str] | None = 
         findings.append(TaxFinding(severity, code, message, line))
 
     on = _invoice_date(coding)
-    prov = place_of_supply(coding)
+    prov = place_of_supply(coding, setup)
     tax_lines = list(coding.tax_lines)
     # Canadian taxes actually charged (a printed "GST 0.00" on an exempt invoice is not a charge).
     charged = {tl.tax_type for tl in tax_lines if abs(tl.tax_amount) > 0.004 and tl.tax_type != "OTHER"}

@@ -1287,6 +1287,9 @@ HEADER_PROVEN_SOFT = {"LINES_ADD_UP"}
 ALWAYS_A_PERSON: dict[str, str] = {
     "VENDOR_BANK_CHANGED": "the bank account to pay into changed",
     "VENDOR_TAX_NUMBER_CHANGED": "the GST/HST number changed",
+    "VENDOR_QST_CHANGED": "the QST number changed",
+    "VENDOR_PST_CHANGED": "the PST number changed",
+    "VENDOR_ADDED_HERE": "the vendor was added from the review screen, not from the ERP",
     "DUPLICATE_INVOICE": "it may be a duplicate",
     "DUPLICATE_IN_ERP": "it may be a duplicate",
     "DUPLICATE_OTHER_VENDOR": "it may be a duplicate",

@@ -74,7 +74,7 @@ setting *Amounts* chooses one:
 
 ### Tax areas and explanation codes
 
-The province of supply (ship-to, else supplier province) picks the tax area (VLTXA1) and explanation
+The place of supply (the ship-to; with none printed, the province of the cost center the lines are coded to or your province from Settings → Review; only then the supplier province) picks the tax area (VLTXA1) and explanation
 code (VLEXR1). The defaults are editable; **the tax area names are placeholders** for the customer's own
 F4008 tax areas:
 

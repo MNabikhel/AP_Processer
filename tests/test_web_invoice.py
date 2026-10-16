@@ -499,3 +499,40 @@ def test_the_review_screen_says_where_the_file_as_it_came_in_is_kept(client, sto
         conn.execute("UPDATE invoices SET meta = ? WHERE id = ?", (json.dumps(meta), inv["id"]))
     text = client.get(f"/review/{inv['id']}").text
     assert said in text and f"<b>{name}</b>" in text and "<code>originals</code>" in text
+
+
+# --- The vendor, from the vendor list ------------------------------------------------------------------------------
+
+
+def test_the_vendor_is_picked_from_the_vendor_list_or_added_as_a_new_vendor(client, store):
+    import json
+
+    cascade = next(i for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
+    page = client.get(f"/review/{cascade['id']}").text
+    assert 'list="vendor-list"' in page and "Add new vendor" in page
+    data = json.loads(re.search(r'<script type="application/json" id="vendor-data">(.*?)</script>', page, re.S)
+                      .group(1))  # fmt: skip
+    assert data["enforced"] and any(v["id"] == "V10023" for v in data["list"])
+    assert not any("Cascade" in v["name"] for v in data["list"])  # the demo vendor not in the vendor master
+    answer = check(client, cascade["id"])
+    assert not answer["allow"] and "VENDOR_NOT_IN_MASTER" in json.dumps(answer["sections"])
+
+    assert client.post(f"/review/{cascade['id']}/vendor", data={"name": "Cascade"}).status_code == 403  # no header
+    bad = client.post(f"/review/{cascade['id']}/vendor", data={"name": "X", "province": "ZZ"}, headers=PAGE)
+    assert bad.status_code == 400
+    added = client.post(
+        f"/review/{cascade['id']}/vendor",
+        headers=PAGE,
+        data={"name": cascade["vendor_name"], "gst": "", "province": "OUTSIDE_CANADA"},
+    ).json()
+    assert added["ok"] and added["vendor"] == cascade["vendor_name"]
+    again = client.post(f"/review/{cascade['id']}/vendor", data={"name": "Northwind IT Solutions Inc."}, headers=PAGE)
+    assert again.status_code == 400 and "already in the vendor list" in again.json()["error"]
+    sections = json.dumps(check(client, cascade["id"])["sections"])
+    assert "VENDOR_ADDED_HERE" in sections and "VENDOR_NOT_IN_MASTER" not in sections
+    assert any(
+        v["added"]
+        for v in json.loads(
+            re.search(r'id="vendor-data">(.*?)</script>', client.get(f"/review/{cascade['id']}").text, re.S).group(1)
+        )["list"]
+    )

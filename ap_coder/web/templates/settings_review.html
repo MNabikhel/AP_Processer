@@ -36,4 +36,22 @@
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save approval settings</button>
     </form>
   </section>
+
+  <section class="card">
+    <h4>Where invoices are delivered to you (sales tax)</h4>
+    <form method="post" action="/settings/review/supply" class="stack" data-busy="Saving…">
+      <label class="field">Your province (where goods are delivered to you)
+        <select name="our_province">
+          <option value=""{% if not our_province %} selected{% endif %}>— not set</option>
+          {% for code, label in provinces.items() %}<option value="{{ code }}"{% if code == our_province %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select></label>
+      <label class="field">Sites in other provinces, by cost center (optional)
+        <textarea name="site_provinces" rows="3" placeholder="CC400=BC&#10;CC500=ON">{{ site_provinces }}</textarea></label>
+      <p class="muted">Sales tax follows where the goods are delivered to you (services: generally where you are), not where
+        the vendor is or ships from. A vendor in Ontario shipping from BC to your site in BC charges GST and BC PST. When an
+        invoice prints no ship-to, AP Coder uses the province of the cost center its lines are coded to, else your
+        province. A ship-to printed on the invoice always wins.</p>
+      <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save</button>
+    </form>
+  </section>
 </div>

@@ -295,6 +295,126 @@ if (split) {
   });
 }
 
+/* ---------- The vendor, from the vendor list ---------- */
+
+const vendorInput = document.getElementById("vendor-name");
+const vendorMatch = document.querySelector("[data-vendor-match]");
+const vendorAdd = document.querySelector("[data-vendor-add]");
+let vendors = { enforced: false, list: [] };
+try {
+  vendors = JSON.parse(document.getElementById("vendor-data")?.textContent || "null") || vendors;
+} catch {
+  /* no vendor list on this page */
+}
+
+/** Names compared the way AP Coder keys vendors: case, accents, punctuation and legal forms aside. */
+function vendorKey(name) {
+  return (name || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\b(inc|incorporated|ltd|ltee|limited|limitee|llc|llp|lp|corp|corporation|co|company|cie|enr|senc|sa|plc|gmbh|ulc)\b/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ");
+}
+
+function businessNumber(value) {
+  const digits = (value || "").replace(/\D/g, "");
+  return digits.length >= 9 ? digits.slice(0, 9) : "";
+}
+
+function vendorLine(icon, tone, text, action) {
+  vendorMatch.className = `inv-vendor-match small ${tone}`;
+  const mark = document.createElement("span");
+  mark.className = "ms";
+  mark.setAttribute("aria-hidden", "true");
+  mark.textContent = icon;
+  const words = document.createElement("span");
+  words.textContent = text;
+  vendorMatch.replaceChildren(mark, words);
+  if (action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = action.label;
+    button.addEventListener("click", action.run);
+    vendorMatch.append(button);
+  }
+}
+
+/** Under the vendor field: in the vendor list (with its ERP ID), the vendor a printed GST/HST number belongs to, or
+    not in the list (add it as a new vendor). */
+function showVendorMatch() {
+  if (!vendorInput || !vendorMatch) return;
+  const typed = vendorKey(vendorInput.value);
+  const found = typed ? vendors.list.find((v) => vendorKey(v.name) === typed) : null;
+  if (found) {
+    const id = found.id ? ` · ${found.id}` : "";
+    if (found.added) vendorLine("person_add", "warn", `Added here, not in JD Edwards yet${id}`);
+    else vendorLine("verified", "ok", `In the vendor list${id}`);
+    return;
+  }
+  const bn = businessNumber(input("gst_hst_registration_number")?.value);
+  const byNumber = bn ? vendors.list.find((v) => businessNumber(v.gst) === bn) : null;
+  if (byNumber) {
+    vendorLine("info", "warn", `The GST/HST number printed is ${byNumber.name}'s.`, {
+      label: `Use ${byNumber.name}`,
+      run: () => setVendor(byNumber.name),
+    });
+    return;
+  }
+  if (!vendors.list.length) {
+    vendorMatch.replaceChildren();
+    return;
+  }
+  vendorLine("gpp_maybe", "warn", typed ? "Not in the vendor list: pick one, or add it as a new vendor." : "Pick the vendor from the list.");
+}
+
+function setVendor(name) {
+  vendorInput.value = name;
+  showVendorMatch();
+  soon(0);
+}
+
+vendorInput?.addEventListener("input", showVendorMatch);
+input("gst_hst_registration_number")?.addEventListener("input", showVendorMatch);
+
+vendorAdd?.addEventListener("toggle", () => {
+  if (!vendorAdd.open) return;
+  const fill = { name: vendorInput?.value || "", gst: input("gst_hst_registration_number")?.value || "",
+    qst: input("qst_registration_number")?.value || "", pst: input("pst_registration_number")?.value || "",
+    province: input("supplier_province")?.value || "" };
+  for (const [key, value] of Object.entries(fill)) {
+    const el = vendorAdd.querySelector(`[data-new="${key}"]`);
+    if (el && !el.value) el.value = value;
+  }
+  vendorAdd.querySelector('[data-new="name"]')?.focus();
+});
+
+vendorAdd?.querySelector("[data-new-go]")?.addEventListener("click", async (e) => {
+  const button = e.currentTarget;
+  const body = new FormData();
+  vendorAdd.querySelectorAll("[data-new]").forEach((el) => body.append(el.dataset.new, el.value.trim()));
+  button.disabled = true;
+  const answer = await post(`${base}/vendor`, body);
+  button.disabled = false;
+  if (!answer.ok) {
+    toast({ text: answer.error || "That didn't work.", tone: "err" }, 9000);
+    return;
+  }
+  const added = { name: answer.vendor, id: "", gst: body.get("gst"), qst: body.get("qst"), pst: body.get("pst"), added: true };
+  vendors.list = vendors.list.filter((v) => vendorKey(v.name) !== vendorKey(added.name)).concat([added]);
+  const option = document.createElement("option");
+  option.value = added.name;
+  option.textContent = "added here";
+  document.getElementById("vendor-list")?.append(option);
+  vendorAdd.removeAttribute("open");
+  if (answer.toast) toast(answer.toast);
+  setVendor(added.name);
+});
+
 /* ---------- The vendor email's language ---------- */
 
 function showMailLanguage() {
@@ -359,6 +479,7 @@ async function onViewerEvent(event) {
   }
   const el = input(answer.field);
   if (el) el.value = answer.value;
+  if (answer.field === "vendor_name") showVendorMatch();
   const taught = document.querySelector("[data-taught]");
   let boxes = {};
   try {
@@ -419,5 +540,6 @@ document.addEventListener("keydown", (e) => {
 
 showMailLanguage();
 fillSplitLines();
+showVendorMatch();
 // The queue shows what this screen shows: check once on opening (today's checks, and any draft kept).
 if (form) check();
