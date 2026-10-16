@@ -74,6 +74,7 @@ LABELS = {
     "currency": "Currency",
     "gst_hst_registration_number": "GST/HST number",
     "qst_registration_number": "QST number",
+    "pst_registration_number": "PST number",
     "subtotal": "Subtotal",
     "gst_amount": "GST",
     "hst_amount": "HST",

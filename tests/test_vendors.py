@@ -271,3 +271,90 @@ def test_several_credit_notes_together_exceed_the_invoice(tmp_path, reference):
     store.reject_invoice(first_credit, "Jane", "duplicate")  # a rejected credit does not count
     codes, _ = _codes(store, {**credit, "invoice_number": "CN-7"}, reference)
     assert "CREDIT_EXCEEDS_INVOICE" not in codes
+
+
+# --- QST and PST numbers against the vendor chosen --------------------------------------------------------------------
+
+
+def test_the_vendor_lists_numbers_are_checked_on_the_first_invoice_too(tmp_path, ground_truth, reference):
+    """The vendor list's GST/HST, QST and PST numbers are checked even before any invoice from it was approved."""
+    store = Store(tmp_path / "ap.db")
+    store.save_vendor("northwind it solutions", "Northwind IT Solutions Inc.", expected_gst="111111111RT0001",
+                      qst_number="1234567890TQ0001", pst_number="PST-1234-5678", province="on")  # fmt: skip
+    vendor = store.get_vendor("northwind it solutions")
+    assert (vendor["qst_number"], vendor["pst_number"], vendor["province"]) == ("1234567890TQ0001", "PST-1234-5678",
+                                                                                "ON")  # fmt: skip
+    doc = {**ground_truth, "qst_registration_number": "9999999999 TQ 0001", "pst_registration_number": "PST 9999-0000"}
+    codes, report = _codes(store, doc, reference)
+    assert {codes.get(c) for c in ("VENDOR_TAX_NUMBER_CHANGED", "VENDOR_QST_CHANGED", "VENDOR_PST_CHANGED")} == {
+        "warning"
+    }
+    message = next(i.message for i in report.issues if i.code == "VENDOR_PST_CHANGED")
+    assert "PST 9999-0000" in message and "vendor list" in message
+    # The same numbers printed another way are the same numbers.
+    same = {**ground_truth, "gst_hst_registration_number": "111111111", "qst_registration_number": "1234567890 TQ 0001",
+            "pst_registration_number": "1234-5678"}  # fmt: skip
+    codes, _ = _codes(store, same, reference)
+    assert not {"VENDOR_TAX_NUMBER_CHANGED", "VENDOR_QST_CHANGED", "VENDOR_PST_CHANGED"} & set(codes)
+
+
+def test_saving_a_vendor_without_tax_numbers_keeps_them(tmp_path):
+    store = Store(tmp_path / "ap.db")
+    store.save_vendor("acme", "Acme", qst_number="1234567890TQ0001", pst_number="7654321", province="QC")
+    store.save_vendor("acme", "Acme", "on_hold", notes="disputed")  # the Vendors page's hold: numbers untouched
+    vendor = store.get_vendor("acme")
+    assert (vendor["status"], vendor["qst_number"], vendor["pst_number"], vendor["province"]) == (
+        "on_hold",
+        "1234567890TQ0001",
+        "7654321",
+        "QC",
+    )
+
+
+def test_without_the_vendor_list_the_approved_invoices_decide(tmp_path, ground_truth, reference):
+    store = Store(tmp_path / "ap.db")
+    _approved(store, {**_variant(ground_truth, "A-1"), "pst_registration_number": "RST 160482-7"}, tmp_path, "a.pdf")
+    codes, _ = _codes(store, {**_variant(ground_truth, "A-2"), "pst_registration_number": "160482-7"}, reference)
+    assert "VENDOR_PST_CHANGED" not in codes
+    codes, _ = _codes(store, {**_variant(ground_truth, "A-3"), "pst_registration_number": "555111-2"}, reference)
+    assert codes.get("VENDOR_PST_CHANGED") == "warning"
+
+
+def test_an_old_vendor_list_gets_the_new_columns(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "ap.db"
+    Store(path)
+    with sqlite3.connect(path) as conn:  # a vendor list made before the QST, PST and province columns
+        conn.execute("CREATE TABLE v2 AS SELECT vendor_key, display_name, status, expected_gst, notes, updated_at, "
+                     "erp_id, terms, default_gl, in_master FROM vendors")  # fmt: skip
+        conn.execute("DROP TABLE vendors")
+        conn.execute("ALTER TABLE v2 RENAME TO vendors")
+        conn.execute("INSERT INTO vendors VALUES ('acme', 'Acme', 'active', '', '', '2026-01-01', '', '', '', 0)")
+    vendor = Store(path).get_vendor("acme")
+    assert (vendor["qst_number"], vendor["pst_number"], vendor["province"]) == ("", "", "")
+
+
+def test_the_erp_vendor_list_brings_qst_pst_and_province(tmp_path):
+    from ap_coder.vendors import master_columns, master_rows
+
+    records = [
+        {
+            "Vendor Name": "Acme Ltée",
+            "Vendor ID": "V1",
+            "QST Number": "1234567890TQ0001",
+            "PST Number": "PST-1111-2222",
+            "Province": "Québec",
+        },
+        {"Vendor Name": "Beta", "Vendor ID": "V2", "QST Number": "", "PST Number": "", "Province": "Texas"},
+    ]
+    rows = master_rows(records, master_columns(list(records[0])))
+    assert (rows[0]["qst"], rows[0]["pst"], rows[0]["province"]) == ("1234567890TQ0001", "PST-1111-2222", "QC")
+    assert rows[1]["province"] in ("", "OUTSIDE_CANADA")
+    store = Store(tmp_path / "ap.db")
+    store.import_vendor_master(rows)
+    acme = next(v for v in store.master_vendors() if v["erp_id"] == "V1")
+    assert (acme["qst_number"], acme["pst_number"], acme["province"]) == ("1234567890TQ0001", "PST-1111-2222", "QC")
+    store.import_vendor_master([{**rows[0], "qst": "", "pst": "", "province": ""}])  # a file without them keeps them
+    acme = next(v for v in store.master_vendors() if v["erp_id"] == "V1")
+    assert acme["pst_number"] == "PST-1111-2222"

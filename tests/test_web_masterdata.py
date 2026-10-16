@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import replace
+from urllib.parse import urlencode
 
 import openpyxl
 import pandas as pd
@@ -148,6 +149,19 @@ def test_a_vendor_is_put_on_hold_and_given_its_gst_number(client, busy):
     assert "On hold" in client.get("/vendors?view=hold").text
     assert client.post("/vendors/save", data={"key": v["vendor_key"], "status": "x"}, headers=PAGE).status_code == 400
     assert client.post("/vendors/save", data={"key": "nobody"}, headers=PAGE).status_code == 404
+
+
+def test_a_vendor_is_given_its_qst_and_pst_numbers_and_province(client, busy):
+    v = busy.vendor_summaries()[0]
+    data = {"key": v["vendor_key"], "status": "active", "qst_number": "1234567890TQ0001", "pst_number": "PST-1234-5678",
+            "province": "BC"}  # fmt: skip
+    follow(client, client.post("/vendors/save", data=data, headers=PAGE))
+    saved = busy.get_vendor(v["vendor_key"])
+    assert (saved["qst_number"], saved["pst_number"], saved["province"]) == ("1234567890TQ0001", "PST-1234-5678", "BC")
+    detail = client.get("/vendors?" + urlencode({"open": v["vendor_key"]})).text
+    assert 'value="PST-1234-5678"' in detail and '<option value="BC" selected>' in detail
+    bad = client.post("/vendors/save", data={**data, "province": "XX"}, headers=PAGE)
+    assert bad.status_code == 400
 
 
 def test_bank_and_tax_number_history_is_masked(client, store, tmp_path):

@@ -30,7 +30,8 @@ SCREEN_DPI = 96
 # The order of the field list: as an invoice reads, header first, then the money, then the terms.
 FIELD_ORDER = (
     "vendor_name", "invoice_number", "invoice_date", "due_date", "po_number", "gst_hst_registration_number",
-    "qst_registration_number", "subtotal", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total",
+    "qst_registration_number", "pst_registration_number",
+    "subtotal", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total",
     "grand_total", "currency", "payment_terms",
 )  # fmt: skip
 
@@ -266,11 +267,15 @@ def shape_fields(fields: Iterable[FieldResult], labels: Mapping[str, str]) -> li
 
 
 def shape_line_items(items: Iterable[LineReading]) -> list[dict[str, Any]]:
+    """The line items read on the page that have a place on it, with their amount: the review screen finds the row of
+    its line grid each one is (by amount, else by order) to light both up together."""
     out = []
     for i, item in enumerate(items, start=1):
         boxes = clean_boxes([b.to_list() if isinstance(b, Box) else b for b in item.boxes])
         if boxes:
-            out.append({"label": str(item.description or f"Line {i}")[:40], "boxes": boxes})
+            amount = _num(item.amount, math.nan)
+            out.append({"label": str(item.description or f"Line {i}")[:40], "boxes": boxes, "n": i,
+                        "amount": round(amount, 2) if math.isfinite(amount) else None})  # fmt: skip
     return out
 
 

@@ -499,3 +499,122 @@ def test_the_review_screen_says_where_the_file_as_it_came_in_is_kept(client, sto
         conn.execute("UPDATE invoices SET meta = ? WHERE id = ?", (json.dumps(meta), inv["id"]))
     text = client.get(f"/review/{inv['id']}").text
     assert said in text and f"<b>{name}</b>" in text and "<code>originals</code>" in text
+
+
+# --- The vendor, from the vendor list ------------------------------------------------------------------------------
+
+
+def test_the_vendor_is_picked_from_the_vendor_list_or_added_as_a_new_vendor(client, store):
+    import json
+
+    cascade = next(i for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))
+    page = client.get(f"/review/{cascade['id']}").text
+    assert 'list="vendor-list"' in page and "Add new vendor" in page
+    data = json.loads(re.search(r'<script type="application/json" id="vendor-data">(.*?)</script>', page, re.S)
+                      .group(1))  # fmt: skip
+    assert data["enforced"] and any(v["id"] == "V10023" for v in data["list"])
+    assert not any("Cascade" in v["name"] for v in data["list"])  # the demo vendor not in the vendor master
+    answer = check(client, cascade["id"])
+    assert not answer["allow"] and "VENDOR_NOT_IN_MASTER" in json.dumps(answer["sections"])
+
+    assert client.post(f"/review/{cascade['id']}/vendor", data={"name": "Cascade"}).status_code == 403  # no header
+    bad = client.post(f"/review/{cascade['id']}/vendor", data={"name": "X", "province": "ZZ"}, headers=PAGE)
+    assert bad.status_code == 400
+    added = client.post(
+        f"/review/{cascade['id']}/vendor",
+        headers=PAGE,
+        data={"name": cascade["vendor_name"], "gst": "", "province": "OUTSIDE_CANADA"},
+    ).json()
+    assert added["ok"] and added["vendor"] == cascade["vendor_name"]
+    again = client.post(f"/review/{cascade['id']}/vendor", data={"name": "Northwind IT Solutions Inc."}, headers=PAGE)
+    assert again.status_code == 400 and "already in the vendor list" in again.json()["error"]
+    sections = json.dumps(check(client, cascade["id"])["sections"])
+    assert "VENDOR_ADDED_HERE" in sections and "VENDOR_NOT_IN_MASTER" not in sections
+    assert any(
+        v["added"]
+        for v in json.loads(
+            re.search(r'id="vendor-data">(.*?)</script>', client.get(f"/review/{cascade['id']}").text, re.S).group(1)
+        )["list"]
+    )
+
+
+# --- Words picked on the page by dragging a box --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field, text, value",
+    [
+        ("line_description", "  HP 26X   toner ", "HP 26X toner"),
+        ("line_amount", "$1,316.00", 1316.0),
+        ("line_quantity", "10", 10),
+        ("line_quantity", "2.5", 2.5),
+        ("line_unit_price", "329.00", 329.0),
+        (
+            "line_new",
+            'Dell 27" monitor P2725H 4 329.00 1,316.00',
+            {"description": 'Dell 27" monitor P2725H', "amount": 1316.0},
+        ),
+        ("line_new", "Freight 45.00", {"description": "Freight", "amount": 45.0}),
+        (
+            "line_new",
+            "3 Copy paper, letter (G, P) 10 52.00 520.00",
+            {"description": "Copy paper, letter (G, P)", "amount": 520.0},
+        ),
+        ("line_new", "2026 Annual licence 1,200.00", {"description": "2026 Annual licence", "amount": 1200.0}),
+        ("line_new", "no amount here", None),
+        ("line_amount", "toner", None),
+    ],
+)
+def test_words_picked_for_a_line_cell(field, text, value):
+    assert invoice_view.line_value(field, text) == value
+
+
+def test_dragged_words_fill_a_line_or_make_a_new_one(client, store):
+    inv = store.list_invoices(REVIEW)[0]
+    answer = client.post(f"/review/{inv['id']}/teach", data={"field": "line_amount", "text": "1,316.00"},
+                         headers=PAGE).json()  # fmt: skip
+    assert answer["ok"] and answer["value"] == "1316.00" and answer["field"] == "line_amount"
+    answer = client.post(f"/review/{inv['id']}/teach", data={"field": "line_new", "text": "Freight 45.00"},
+                         headers=PAGE).json()  # fmt: skip
+    assert answer["value"] == {"description": "Freight", "amount": 45.0}
+    bad = client.post(f"/review/{inv['id']}/teach", data={"field": "line_quantity", "text": "toner"}, headers=PAGE)
+    assert bad.status_code == 400 and "quantity" in bad.json()["error"]
+    bad = client.post(f"/review/{inv['id']}/teach", data={"field": "line_gl", "text": "6000"}, headers=PAGE)
+    assert bad.status_code == 400  # the GL account is chosen, never read off the page
+
+
+def test_the_viewer_knows_each_lines_amount_to_light_its_row(client, store):
+    import json
+
+    pacific = next(i for i in store.list_invoices(REVIEW) if "Pacific" in (i["vendor_name"] or ""))
+    page = client.get(f"/review/{pacific['id']}").text
+    data = json.loads(re.search(r'<script type="application/json" id="viewer-data">(.*?)</script>', page, re.S)
+                      .group(1))  # fmt: skip
+    amounts = [line["amount"] for line in data["line_items"]]
+    assert amounts == [890.0, 1316.0, 520.0] and all(line["boxes"] for line in data["line_items"])
+    assert "drag a box around" in page
+
+
+def test_the_math_line_by_line_and_on_the_approve_bar(client, store):
+    pacific = next(i for i in store.list_invoices(REVIEW) if "Pacific" in (i["vendor_name"] or ""))
+    sections = check(client, pacific["id"])["sections"]
+    assert "Math, line by line" in sections["taxcheck"] and "All adds up" in sections["taxcheck"]
+    assert "Math: All adds up" in sections["bar"]
+    # PST ticked off the first line: the PST charged is no longer 7% of the lines marked.
+    data = form_of(store, pacific["id"])
+    data["line_tax_r0"] = ["GST"]
+    sections = check(client, pacific["id"], data)["sections"]
+    assert "Math: 1 difference: PST" in sections["bar"] and "off by 62.30" in sections["taxcheck"]
+
+
+@pytest.mark.parametrize(
+    ("field", "text", "value"),
+    [
+        ("invoice_number", "#: PO-77120", "PO-77120"),
+        ("po_number", "No. 4471", "4471"),
+        ("invoice_number", "NW-2026-0912", "NW-2026-0912"),
+        ("vendor_name", "#1 Supplies", "#1 Supplies"),
+    ],
+)
+def test_a_numbers_label_marks_picked_with_it_are_dropped(field, text, value):
+    assert invoice_view.form_value(field, text) == value

@@ -57,9 +57,30 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "VENDOR_TAX_NUMBER_CHANGED": CheckHelp(
         FRAUD, "GST/HST number changed",
-        "The vendor's GST/HST number differs from earlier approved invoices or from the number recorded on the "
-        "Vendors page. Fake invoices often imitate a real supplier with different details.",
+        "The vendor's GST/HST number differs from the number in the vendor list or, when it has none, from its "
+        "earlier approved invoices. Fake invoices often imitate a real supplier with different details.",
         "Call the vendor on a number you already have (not the one on this invoice) to confirm before paying.",
+    ),
+    "VENDOR_ADDED_HERE": CheckHelp(
+        FRAUD, "New vendor added here",
+        "The vendor was added to the vendor list from the review screen: it is not in the vendor master imported "
+        "from JD Edwards yet, so nobody has verified it there.",
+        "Set the vendor up in JD Edwards (verifying it by phone, on a number you find yourself), import the vendor "
+        "list again, then approve. Approve anyway only when your process allows paying a vendor before that.",
+    ),
+    "VENDOR_QST_CHANGED": CheckHelp(
+        FRAUD, "QST number changed",
+        "The vendor's QST number differs from the one in the vendor list (or on its earlier approved invoices). A "
+        "different number can mean a fake invoice, or a bill from another company under a known name.",
+        "Call the vendor on a number you already have to confirm. If the vendor list is out of date, correct it on "
+        "the Vendors page.",
+    ),
+    "VENDOR_PST_CHANGED": CheckHelp(
+        FRAUD, "PST number changed",
+        "The vendor's provincial sales tax number (BC PST, Manitoba RST, Saskatchewan PST) differs from the one in "
+        "the vendor list (or on its earlier approved invoices).",
+        "Call the vendor on a number you already have to confirm. If the vendor list is out of date, correct it on "
+        "the Vendors page.",
     ),
     "VENDOR_BANK_CHANGED": CheckHelp(
         FRAUD, "Bank account changed",
@@ -92,7 +113,8 @@ CHECKS: dict[str, CheckHelp] = {
         FRAUD, "Not in the vendor master",
         "A vendor master was imported from the ERP and this vendor is in it neither by name nor by GST/HST "
         "number. Invoices from vendors nobody set up are a classic fraud route.",
-        "Have the vendor set up (and verified) in the ERP first, then import the vendor master again.",
+        "Pick the vendor from the list on the review screen (it may be there under another name). A vendor that is "
+        "really new: add it with \u201cAdd new vendor\u201d, and have it set up (and verified) in JD Edwards.",
     ),
     "VENDOR_MATCHED_BY_TAX_NUMBER": CheckHelp(
         FRAUD, "Known vendor under another name",

@@ -36,6 +36,7 @@ from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_mes
 from ap_coder.memory import ACCEPTED
 from ap_coder.reference_data import ReferenceData
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.web import document
 from ap_coder.web import invoice_view as view
 from ap_coder.web.core import (
@@ -330,8 +331,44 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         labels=view.FIELD_LABELS, provinces=view.province_options(),
         due_placeholder=f"{computed.isoformat()} (from terms)" if computed else "YYYY-MM-DD",
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
-        today=dt.date.today().isoformat(), taught_json=draft.taught,
+        today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
+        supply=view.supply_line(draft.header, draft.lines, reference.tax),
     )  # fmt: skip
+
+
+def vendor_options(store: Store) -> dict[str, Any]:
+    """The vendor list the review screen picks from: each vendor's name, ERP ID and tax numbers (the screen says
+    whether the name typed is in it, and which vendor a printed GST/HST number belongs to)."""
+    choices = store.vendor_choices()
+    return {
+        "enforced": store.has_vendor_master(),  # with a vendor master, an invoice's vendor must be in the list
+        "list": [{"name": v.get("display_name") or "", "id": v.get("erp_id") or "", "gst": v.get("expected_gst") or "",
+                  "qst": v.get("qst_number") or "", "pst": v.get("pst_number") or "", "added": v.get("in_master") == 2}
+                 for v in choices if v.get("display_name")],
+    }  # fmt: skip
+
+
+@router.post("/review/{invoice_id:int}/vendor")
+def add_vendor(
+    request: Request, invoice_id: int, name: str = Form(""), gst: str = Form(""), qst: str = Form(""),
+    pst: str = Form(""), province: str = Form(""),
+) -> JSONResponse:  # fmt: skip
+    """Add new vendor: a vendor not in the vendor list, added from the review screen. Its invoices need a person
+    (VENDOR_ADDED_HERE) until it is set up in JD Edwards and the vendor list is imported again."""
+    store = get_store(request)
+    inv = _invoice(store, invoice_id)
+    if inv["status"] != REVIEW:
+        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
+    name = " ".join(name.split())
+    if province and province not in PROVINCE_NAMES and province != OUTSIDE_CANADA:
+        return refuse("Choose a province from the list.")
+    try:
+        store.add_vendor_here(name, gst=gst, qst=qst, pst=pst, province=province, actor=reviewer(),
+                              invoice_id=invoice_id)  # fmt: skip
+    except ValueError as exc:
+        return refuse(str(exc))
+    return message(f"Added {name} to the vendor list. Set it up in JD Edwards before it is paid: its invoices need a "
+                   "person until then.", "ok", icon="person_add", vendor=name)  # fmt: skip
 
 
 def _mode(inv: dict[str, Any], reference: ReferenceData | None) -> str:
@@ -550,6 +587,16 @@ def teach(request: Request, invoice_id: int, field: str = Form(""), text: str = 
     """The words the reviewer clicked on the page, as the value of a field of the form. On approval, the supplier's
     template learns where that field is printed (the boxes are sent with the approval)."""
     _invoice(get_store(request), invoice_id)
+    if field in view.LINE_TEACHABLE or field == view.NEW_LINE:
+        found = view.line_value(field, text)
+        if found in (None, ""):
+            what = "a line (it needs an amount)" if field == view.NEW_LINE else f"a line's {view.LINE_TEACHABLE[field]}"
+            return refuse(f"Those words don't read as {what}: try again.")
+        if field == view.NEW_LINE:
+            return message(f"New line: {found['description'] or '(no description)'}, {found['amount']:.2f}. Code it "
+                           "to a GL account.", "ok", field=field, value=found)  # fmt: skip
+        shown = f"{found:.2f}" if field in ("line_amount", "line_unit_price") else str(found)
+        return message(f"Line {view.LINE_TEACHABLE[field]} set to {shown}.", "ok", field=field, value=shown)
     if field not in view.TEACHABLE:
         return refuse("That field can't be taught.")
     value = view.form_value(field, text)

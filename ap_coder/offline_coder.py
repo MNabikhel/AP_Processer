@@ -306,6 +306,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         ship_to_province=ship_to_province,
         gst_hst_registration_number=str(values.get("gst_hst_registration_number") or ""),
         qst_registration_number=str(values.get("qst_registration_number") or ""),
+        pst_registration_number=str(values.get("pst_registration_number") or ""),
         remit_bank_account=bank_details(text),
         subtotal=round(subtotal + freight, 2),
         tax_lines=tax_lines,

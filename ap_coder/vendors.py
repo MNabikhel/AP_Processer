@@ -12,8 +12,10 @@ expected GST/HST number, notes). ``vendor_findings`` turns that into checks on a
 * VENDOR_NEW (info): first invoice from this vendor, or none approved yet (no penalty, but never touchless)
 * DUPLICATE_IN_ERP (error): the same vendor and invoice number is in the ERP's invoice register
 * DUPLICATE_OTHER_VENDOR (warning): same invoice number and total under another vendor name
-* VENDOR_NOT_IN_MASTER (warning): a vendor master was imported from the ERP and this vendor is not in it
-  (by name or GST/HST number)
+* VENDOR_NOT_IN_MASTER (error): a vendor master was imported from the ERP and this vendor is not in it
+  (by name or GST/HST number): pick the vendor from the list, or add it as a new vendor
+* VENDOR_ADDED_HERE (error): a new vendor added to the vendor list from the review screen, not yet in the ERP
+* VENDOR_QST_CHANGED / VENDOR_PST_CHANGED (warning): the QST or PST number differs from the vendor's
 * VENDOR_MATCHED_BY_TAX_NUMBER (info): not found by name, but the GST/HST number belongs to a master vendor
 * CREDIT_NOTE_FOR (info) / CREDIT_NOTE_ORIGINAL_UNKNOWN (info) / CREDIT_EXCEEDS_INVOICE (warning): the invoice a
   credit note credits, found or not, and a credit larger than it
@@ -36,6 +38,9 @@ if TYPE_CHECKING:
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 ON_HOLD, ACTIVE = "on_hold", "active"
+# vendors.in_master: 0 a vendor AP only set controls for, 1 in the vendor master imported from the ERP, 2 added to
+# the vendor list from the review screen (a new vendor: set up in the ERP before it is paid).
+IN_ERP, ADDED_HERE = 1, 2
 UNUSUAL_FACTOR = 3.0  # total above 3x this vendor's median...
 UNUSUAL_MIN_GAP = 1000.0  # ...and at least this much above it
 UNUSUAL_MIN_HISTORY = 3
@@ -161,6 +166,51 @@ def _credit_note_findings(
     return out
 
 
+def _by(vendor: dict[str, Any]) -> str:
+    """ " by Jane on 2026-10-16" from the note a vendor added on the review screen keeps."""
+    match = re.match(r"Added by (.+?) on (\d{4}-\d{2}-\d{2})", str(vendor.get("notes") or ""))
+    return f" by {match.group(1)} on {match.group(2)}" if match else ""
+
+
+def norm_pst_number(value: Any) -> str:
+    """A PST/RST number by its digits: "PST-1234-5678" and "1234 5678" are the same."""
+    return re.sub(r"\D", "", str(value or ""))
+
+
+# (severity, check code, invoice field, vendor list column, the history key from ``Store.vendor_invoices``, name,
+# normaliser, same?) for each tax registration number an invoice prints.
+_TAX_NUMBERS = (
+    (WARNING, "VENDOR_TAX_NUMBER_CHANGED", "gst_hst_registration_number", "expected_gst", "gst_hst_number",
+     "GST/HST number", norm_tax_number, same_tax_number),
+    (WARNING, "VENDOR_QST_CHANGED", "qst_registration_number", "qst_number", "qst_number", "QST number",
+     norm_tax_number, lambda a, b: norm_tax_number(a) == norm_tax_number(b)),
+    (WARNING, "VENDOR_PST_CHANGED", "pst_registration_number", "pst_number", "pst_number", "PST number",
+     norm_pst_number, lambda a, b: norm_pst_number(a) == norm_pst_number(b)),
+)  # fmt: skip
+
+
+def tax_number_findings(
+    coding: InvoiceCoding, master: dict[str, Any] | None, history: list[dict[str, Any]]
+) -> list[tuple[str, str, str]]:
+    """Each tax number printed on the invoice (GST/HST, QST, PST) against the vendor's: the one in the vendor list
+    when it has one, else the ones on this vendor's approved invoices. A different number is a classic sign of a
+    fake invoice or a bill from another company under a known name."""
+    out = []
+    for severity, code, field, column, past, name, norm, same in _TAX_NUMBERS:
+        printed = str(getattr(coding, field, "") or "")
+        if not norm(printed):
+            continue
+        if master and norm(master.get(column)):
+            known, where = {master[column]}, "the vendor list's"
+        else:
+            known = {h.get(past) or "" for h in history if h["status"] == "approved"} - {""}
+            where = "this vendor's usual"
+        if known and not any(same(printed, k) for k in known):
+            out.append((severity, code, f"{name} {printed} differs from {where} ({', '.join(sorted(known))}); "
+                        "confirm with the vendor before paying"))  # fmt: skip
+    return out
+
+
 def vendor_findings(
     coding: InvoiceCoding, store: Store, exclude_invoice_id: int | None = None
 ) -> list[tuple[str, str, str]]:
@@ -170,7 +220,13 @@ def vendor_findings(
         return []
     findings: list[tuple[str, str, str]] = []
     master = store.get_vendor(key)
-    if store.has_vendor_master() and not (master and master.get("in_master")):
+    if master and master.get("in_master") == ADDED_HERE:
+        findings.append(
+            (ERROR, "VENDOR_ADDED_HERE",
+             f"a new vendor, added to the vendor list from the review screen{_by(master)}: set it up in JD Edwards "
+             "(and verify it by phone) before it is paid")
+        )  # fmt: skip
+    elif store.has_vendor_master() and not (master and master.get("in_master")):
         number = norm_tax_number(coding.gst_hst_registration_number)
         real = sum(c.isdigit() for c in number) >= 9  # a Business Number, not "N/A" or "pending"
         by_number = [v for v in store.master_vendors() if real and same_tax_number(v["expected_gst"], number)]
@@ -183,10 +239,11 @@ def vendor_findings(
             )  # fmt: skip
         else:
             findings.append(
-                (WARNING, "VENDOR_NOT_IN_MASTER",
-                 "this vendor is not in the vendor master imported from the ERP: set it up (and verify it) first")
+                (ERROR, "VENDOR_NOT_IN_MASTER",
+                 "this vendor is not in the vendor list imported from the ERP: pick it from the list, or add it as a "
+                 "new vendor")
             )  # fmt: skip
-    in_master = bool(master and master.get("in_master"))
+    in_master = bool(master and master.get("in_master") == IN_ERP)
     for posted in store.in_erp(coding.vendor_name, coding.invoice_number, coding.grand_total)[:2]:
         findings.append(
             (ERROR, "DUPLICATE_IN_ERP",
@@ -216,23 +273,9 @@ def vendor_findings(
         findings.append((INFO, "VENDOR_NEW", "first invoice from this vendor: confirm it is a known supplier"
                          if not history else "no invoice from this vendor approved yet: confirm it is a known "
                          "supplier"))  # fmt: skip
+    findings += tax_number_findings(coding, master, history)
     if not history:
         return findings
-
-    # GST/HST number compared with what this vendor used before (approved invoices) or what AP recorded.
-    number = norm_tax_number(coding.gst_hst_registration_number)
-    known = {norm_tax_number(h["gst_hst_number"]) for h in history if h["status"] == "approved"} - {""}
-    if master and master.get("expected_gst"):
-        known = {norm_tax_number(master["expected_gst"])}
-    if number and known and not any(same_tax_number(number, k) for k in known):
-        findings.append(
-            (
-                WARNING,
-                "VENDOR_TAX_NUMBER_CHANGED",
-                f"GST/HST number {coding.gst_hst_registration_number} differs from this vendor's usual "
-                f"({', '.join(sorted(known))}); confirm with the vendor before paying",
-            )
-        )
 
     # Bank account to pay into, compared with the ones on this vendor's approved invoices.
     account = coding.remit_bank_account
@@ -297,12 +340,26 @@ MASTER_ALIASES: dict[str, tuple[str, ...]] = {
     "gst": ("gsthstnumber", "gstnumber", "hstnumber", "gsthst", "gst", "businessnumber", "bn", "taxnumber",
             "tps", "numerotps", "vatregistrationno", "taxregistrationno", "gstregistrationno",
             "gsthstregistrationno"),
+    "qst": ("qstnumber", "qst", "tvq", "numerotvq", "qstregistrationno", "qstregistrationnumber"),
+    "pst": ("pstnumber", "pst", "rstnumber", "rst", "tvp", "pstregistrationno", "pstregistrationnumber",
+            "provincialtaxnumber"),
+    "province": ("province", "prov", "state", "region", "provincestate"),
     "terms": ("paymentterms", "terms", "termes", "conditions", "paymenttermscode", "termscode"),
     "status": ("status", "active", "blocked", "hold", "statut"),
     "default_gl": ("defaultgl", "glaccount", "gl", "glcode", "expenseaccount", "account", "defaultaccount"),
 }  # fmt: skip
 _HOLD_WORDS = {"hold", "on hold", "on_hold", "blocked", "inactive", "suspended", "closed", "disabled", "i", "h", "b",
                "bloqué", "bloque", "inactif", "suspendu"}  # fmt: skip
+
+
+def _province_or_blank(value: str) -> str:
+    """A province code from the vendor master's column ("British Columbia", "BC", "Qc"), "" when it is not one."""
+    from .schema import province_code
+
+    try:
+        return province_code(value) if value else ""
+    except ValueError:
+        return ""
 
 
 def _norm_header(value: Any) -> str:
@@ -342,7 +399,8 @@ def master_rows(records: list[dict[str, Any]], columns: dict[str, str]) -> list[
         else:  # a status column with words or codes
             on_hold = status in _HOLD_WORDS
         row = {"vendor_name": name, "gst": get("gst"), "status": ON_HOLD if on_hold else ACTIVE,
-               "status_given": bool(status)}  # fmt: skip
+               "status_given": bool(status), "qst": get("qst"), "pst": get("pst"),
+               "province": _province_or_blank(get("province"))}  # fmt: skip
         for field in ("erp_id", "terms", "default_gl"):  # None: not in this file, so the vendor keeps its value
             row[field] = get(field) if field in columns else None
         rows.append(row)

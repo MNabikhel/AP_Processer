@@ -16,6 +16,7 @@ import datetime as dt
 import math
 import os
 import platform
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from ap_coder import __version__, paths, ui
 from ap_coder.envfile import read_env, write_env
 from ap_coder.store import Store, unread_fx_text
+from ap_coder.tax import PROVINCE_NAMES
 from ap_coder.web.core import (
     data_dir,
     done,
@@ -138,6 +140,9 @@ def review_context(request: Request) -> dict[str, Any]:
         "approval_limit": store.approval_limit(),
         "terms_days": store.default_terms_days(),
         "fx_rates": store.get_setting("fx_rates"),
+        "our_province": store.our_province(),
+        "site_provinces": store.get_setting("site_provinces"),
+        "provinces": PROVINCE_NAMES,
     }
 
 
@@ -210,6 +215,33 @@ def save_approval(
     if changed:
         store.log_event("settings_changed", actor=reviewer(), detail={"keys": changed})
     return done(request, tab_url("review"), "Saved." if changed else "Nothing changed.")
+
+
+@router.post("/settings/review/supply")
+def save_supply(request: Request, our_province: str = Form(""), site_provinces: str = Form("")) -> JSONResponse:
+    """Where invoices are delivered to us: the place of supply of an invoice that prints no ship-to."""
+    store = get_store(request)
+    our_province = our_province.strip().upper()
+    if our_province and our_province not in PROVINCE_NAMES:
+        return refuse("Choose a province from the list.")
+    lines = [line.strip() for line in re.split(r"[\n,;]+", site_provinces) if line.strip()]
+    bad = [line for line in lines if line.partition("=")[2].strip().upper() not in PROVINCE_NAMES
+           or not line.partition("=")[0].strip()]  # fmt: skip
+    if bad:
+        return refuse(f"Not saved: “{bad[0]}” can't be read. Write one cost center per line, then = and its province "
+                      "code, e.g. CC400=BC.")  # fmt: skip
+    sites = "\n".join(f"{line.partition('=')[0].strip()}={line.partition('=')[2].strip().upper()}" for line in lines)
+    changed = []
+    if our_province != store.our_province():
+        store.set_setting("our_province", our_province, actor=reviewer())
+        changed.append("our_province")
+    if sites != store.get_setting("site_provinces"):
+        store.set_setting("site_provinces", sites, actor=reviewer())
+        changed.append("site_provinces")
+    if changed:
+        store.log_event("settings_changed", actor=reviewer(), detail={"keys": changed})
+    saved = "Saved. Invoices read from now on use it." if changed else "Nothing changed."
+    return done(request, tab_url("review"), saved)
 
 
 # --- Data & backups ------------------------------------------------------------------------------------------------

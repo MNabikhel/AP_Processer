@@ -340,3 +340,11 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
   .iv *, .iv *::before, .iv *::after { animation: none !important; transition: none !important; }
   .iv-f.flash .iv-halo { stroke-opacity: .55; stroke-width: 10; }
 }
+
+/* A box dragged across the page to pick the words in it (outside teach mode: then the page asks what they are). */
+.iv-sheet { cursor: crosshair; }
+.iv.dragging .iv-sheet, .iv.dragging .iv-f { cursor: crosshair; }
+.iv-sel { pointer-events: none; }
+.iv-drag { fill: var(--p-pick); fill-opacity: .08; stroke: var(--p-pick); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.iv-drag.done { fill-opacity: .12; stroke-dasharray: none; }
+.iv-lg.hot .iv-line { stroke: var(--p-pick); stroke-opacity: 1; stroke-width: 2; stroke-dasharray: none; fill: var(--p-pick); fill-opacity: .1; }

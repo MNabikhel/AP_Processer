@@ -508,8 +508,8 @@ scripts/             launch.py (the launcher: set up, start the dashboard, open 
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
 docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), HOW_IT_RUNS.md
                      (launcher, update, server, files, network), UPGRADING.md (from each older version),
-                     WHATS_NEW.md, PILOT_PLAN.md, CODING.md (GL coding without an AI model),
-                     screenshots/
+                     WHATS_NEW.md, PILOT_PLAN.md, CODING.md (GL coding without an AI model), SALES_TAX.md
+                     (place of supply, taxes per line, the math), screenshots/
 private/             git-ignored: default data folder when the installer is not used
 tests/               offline test suite (Azure clients and LM Studio mocked)
 ```

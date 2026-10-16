@@ -25,6 +25,7 @@ def ai_values(output: dict[str, Any] | None) -> dict[str, Any]:
             "currency",
             "gst_hst_registration_number",
             "qst_registration_number",
+            "pst_registration_number",
             "subtotal",
             "tax_total",
             "grand_total",

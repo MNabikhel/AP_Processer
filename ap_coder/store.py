@@ -173,7 +173,8 @@ _AZURE_IN_LINE = (  # ? = _stale_before()
 _HEADER_FIELDS = (
     "vendor_name", "invoice_number", "invoice_date", "po_number", "payment_terms", "due_date", "currency",
     "supplier_province",
-    "ship_to_province", "gst_hst_registration_number", "qst_registration_number", "original_invoice_number",
+    "ship_to_province", "gst_hst_registration_number", "qst_registration_number", "pst_registration_number",
+    "original_invoice_number",
     "remit_bank_account",
     "subtotal", "tax_total", "grand_total",
 )  # fmt: skip
@@ -398,6 +399,12 @@ class Store:
                 "WHERE e.action = 'autonomy_suspended' AND CASE WHEN json_valid(e.detail) THEN "
                 "json_extract(e.detail, '$.key') END = supplier_profiles.key), updated_at) WHERE state = 'suspended'"
             )
+        # The vendor list keeps each vendor's QST and PST numbers and province, to check the numbers an invoice
+        # prints against the vendor chosen (looked for whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(vendors)")}
+        for column in ("qst_number", "pst_number", "province"):
+            if columns and column not in columns:
+                conn.execute(f"ALTER TABLE vendors ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         # An invoice made from a picture remembers the picture's SHA-256 (intake.py), so the same photo sent again is
         # found (looked for whatever the version).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(invoices)")}
@@ -656,7 +663,12 @@ class Store:
         return ReferenceData(
             chart_of_accounts=table(gl, "GL account", "gl_code"),
             cost_centers=table(cc, "cost center", "cost_center") if cc else None,
-            tax=TaxSetup(rates or TaxRateTable.load(), self.tax_treatments()),
+            tax=TaxSetup(
+                rates or TaxRateTable.load(),
+                self.tax_treatments(),
+                our_province=self.our_province(),
+                site_provinces=self.site_provinces(),
+            ),
             notes=parse_policy_notes(self.get_setting("policy_notes")),
         )
 
@@ -2471,20 +2483,30 @@ class Store:
 
     def save_vendor(
         self, key: str, display_name: str, status: str = "active", expected_gst: str = "", notes: str = "",
-        actor: str | None = None,
+        actor: str | None = None, qst_number: str | None = None, pst_number: str | None = None,
+        province: str | None = None,
     ) -> None:  # fmt: skip
+        """Add or change a vendor. QST, PST and province left None keep what the vendor has."""
         if status not in ("active", "on_hold"):
             raise ValueError(f"unknown vendor status {status!r}")
         before = self.get_vendor(key) or {}
         values = {"status": status, "expected_gst": expected_gst.strip(), "notes": notes.strip()}
+        extra = {"qst_number": qst_number, "pst_number": pst_number, "province": province}
+        values.update({k: str(v).strip().upper() if k == "province" else str(v).strip()
+                       for k, v in extra.items() if v is not None})  # fmt: skip
+        keep = {k: before.get(k) or "" for k in extra if extra[k] is None}
+        row = {**keep, **values}
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key) DO UPDATE SET display_name = excluded.display_name,
-                   status = excluded.status, expected_gst = excluded.expected_gst, notes = excluded.notes,
-                   updated_at = excluded.updated_at""",
-                (key, display_name, status, values["expected_gst"], values["notes"], _now()),
-            )
+                """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, qst_number,
+                   pst_number, province)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key) DO UPDATE SET
+                   display_name = excluded.display_name, status = excluded.status,
+                   expected_gst = excluded.expected_gst, notes = excluded.notes, updated_at = excluded.updated_at,
+                   qst_number = excluded.qst_number, pst_number = excluded.pst_number, province = excluded.province""",
+                (key, display_name, status, values["expected_gst"], values["notes"], _now(), row["qst_number"],
+                 row["pst_number"], row["province"]),
+            )  # fmt: skip
             changed = {k: v for k, v in values.items() if before.get(k, "active" if k == "status" else "") != v}
             if changed:
                 self._log(conn, "vendor_updated", actor=actor, detail={"vendor": display_name, **changed})
@@ -2511,7 +2533,7 @@ class Store:
                 first = merged[key]
                 if row.get("status") == "on_hold":
                     first["status"], first["status_given"] = "on_hold", True
-                for field in ("erp_id", "gst", "terms", "default_gl"):
+                for field in ("erp_id", "gst", "terms", "default_gl", "qst", "pst", "province"):
                     first[field] = first.get(field) or row.get(field) or first.get(field)
             else:
                 merged[key] = dict(row)
@@ -2524,8 +2546,14 @@ class Store:
                     continue
                 conn.execute(
                     """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, erp_id,
-                       terms, default_gl, in_master) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 1)
+                       terms, default_gl, in_master, qst_number, pst_number, province)
+                       VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?)
                        ON CONFLICT(vendor_key) DO UPDATE SET
+                       qst_number = CASE WHEN excluded.qst_number != '' THEN excluded.qst_number
+                                    ELSE vendors.qst_number END,
+                       pst_number = CASE WHEN excluded.pst_number != '' THEN excluded.pst_number
+                                    ELSE vendors.pst_number END,
+                       province = CASE WHEN excluded.province != '' THEN excluded.province ELSE vendors.province END,
                        erp_id = CASE WHEN ? THEN excluded.erp_id ELSE vendors.erp_id END,
                        terms = CASE WHEN ? THEN excluded.terms ELSE vendors.terms END,
                        default_gl = CASE WHEN ? THEN excluded.default_gl ELSE vendors.default_gl END,
@@ -2535,6 +2563,7 @@ class Store:
                        status = CASE WHEN ? THEN excluded.status ELSE vendors.status END""",
                     (key, row["vendor_name"], row.get("status") or "active", row.get("gst") or "", now,
                      row.get("erp_id") or "", row.get("terms") or "", _clean_code(row.get("default_gl")),
+                     row.get("qst") or "", row.get("pst") or "", row.get("province") or "",
                      *(row.get(f) is not None for f in ("erp_id", "terms", "default_gl")),
                      bool(row.get("status_given"))),
                 )  # fmt: skip
@@ -2548,6 +2577,66 @@ class Store:
                 "added": added, "updated": updated, "duplicates": len(duplicates),
             })  # fmt: skip
         return {"added": added, "updated": updated, "duplicates": duplicates, "inserted": inserted}
+
+    def our_province(self) -> str:
+        """Where invoices are delivered to us when they print no ship-to (Settings → Review), "" if not set."""
+        return self.get_setting("our_province").strip().upper()
+
+    def site_provinces(self) -> dict[str, str]:
+        """{cost center: province} for sites in other provinces than ours (Settings → Review: "CC400=BC" per line)."""
+        out: dict[str, str] = {}
+        for line in re.split(r"[\n,;]+", self.get_setting("site_provinces")):
+            code, sep, province = line.partition("=")
+            if sep and code.strip() and province.strip():
+                out[code.strip()] = province.strip().upper()
+        return out
+
+    def vendor_choices(self) -> list[dict[str, Any]]:
+        """The vendors a reviewer picks from on the review screen: the vendor master's and the ones added there; with
+        no vendor master, every vendor with an approved invoice too. Sorted by name."""
+        with self._conn() as conn:
+            rows = [dict(r) for r in conn.execute("SELECT * FROM vendors WHERE in_master IN (1, 2)")]
+            if not any(r["in_master"] == 1 for r in rows):
+                known = {r["vendor_key"] for r in rows}
+                for r in conn.execute(
+                    "SELECT vendor_key, MAX(vendor_name) name FROM invoices WHERE status = 'approved' AND vendor_key "
+                    "!= '' GROUP BY vendor_key"
+                ):
+                    if r["vendor_key"] not in known:
+                        rows.append({"vendor_key": r["vendor_key"], "display_name": r["name"], "in_master": 0})
+        return sorted(rows, key=lambda r: str(r.get("display_name") or "").lower())
+
+    def add_vendor_here(
+        self, name: str, *, gst: str = "", qst: str = "", pst: str = "", province: str = "", actor: str | None = None,
+        invoice_id: int | None = None,
+    ) -> str:  # fmt: skip
+        """A new vendor added to the vendor list from the review screen (``vendors.ADDED_HERE``): every invoice from
+        it needs a person until it is in the vendor master imported from the ERP. Returns its key. A vendor already
+        in the list is refused (ValueError)."""
+        key = vendor_key(name)
+        if not key:
+            raise ValueError("Type the vendor's name.")
+        before = self.get_vendor(key) or {}
+        if before.get("in_master"):
+            raise ValueError(f"{before.get('display_name') or name} is already in the vendor list: pick it.")
+        note = f"Added by {actor or 'a reviewer'} on {_now()[:10]}"
+        note += f" from invoice #{invoice_id}." if invoice_id else "."
+        notes = "\n".join(n for n in (note, str(before.get("notes") or "").strip()) if n)
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO vendors (vendor_key, display_name, status, expected_gst, notes, updated_at, qst_number,
+                   pst_number, province, in_master) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 2)
+                   ON CONFLICT(vendor_key) DO UPDATE SET display_name = excluded.display_name,
+                   expected_gst = excluded.expected_gst, notes = excluded.notes, updated_at = excluded.updated_at,
+                   qst_number = excluded.qst_number, pst_number = excluded.pst_number, province = excluded.province,
+                   in_master = 2""",
+                (key, name.strip(), before.get("status") or "active", gst.strip(), notes, _now(), qst.strip(),
+                 pst.strip(), province.strip().upper()),
+            )  # fmt: skip
+            self._log(conn, "vendor_added", invoice_id=invoice_id, actor=actor, detail={
+                "vendor": name.strip(), "gst": gst.strip(), "qst": qst.strip(), "pst": pst.strip(),
+                "province": province.strip().upper()})  # fmt: skip
+        return key
 
     def delete_vendors(self, keys: list[str]) -> int:
         """Remove vendors from the vendor list (e.g. the demo's sample vendor master)."""
@@ -2609,6 +2698,8 @@ class Store:
             doc = json.loads(r.pop("final_output") or "null") or json.loads(r.pop("ai_output", None) or "null") or {}
             r.pop("ai_output", None)
             r["gst_hst_number"] = doc.get("gst_hst_registration_number") or ""
+            r["qst_number"] = doc.get("qst_registration_number") or ""
+            r["pst_number"] = doc.get("pst_registration_number") or ""
             r["bank_account"] = doc.get("remit_bank_account") or ""
             r["original_invoice_number"] = doc.get("original_invoice_number") or ""
         return rows
@@ -2675,10 +2766,13 @@ class Store:
             master = masters.get(r["vendor_key"]) or {}
             r["status"] = master.get("status", "active")
             r["expected_gst"] = master.get("expected_gst", "")
+            for field in ("qst_number", "pst_number", "province"):
+                r[field] = master.get(field) or ""
             r["notes"] = master.get("notes", "")
             for field in ("erp_id", "terms", "default_gl"):
                 r[field] = master.get(field) or ""
-            r["in_master"] = bool(master.get("in_master"))
+            r["in_master"] = master.get("in_master") == 1
+            r["added_here"] = master.get("in_master") == 2
         return sorted(rows, key=lambda r: -r["spend_in_cad"])
 
     def vendor_gl_usage(self, key: str) -> list[dict[str, Any]]:

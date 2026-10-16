@@ -83,9 +83,35 @@
       {%- endmacro %}
       <div class="rvw-group">Supplier</div>
       <div class="inv-grid">
-        {{ field("vendor_name", "wide") }}
+        {% set s = sure.get("vendor_name") %}
+        <div class="field wide inv-vendor" data-field="vendor_name">
+          <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="How sure AP Coder is of what it read"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+            <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span></span></label>
+          <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" list="vendor-list" autocomplete="off"
+                 placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match">
+          <datalist id="vendor-list">{% for v in vendors.list %}<option value="{{ v.name }}">{% if v.id %}{{ v.id }}{% endif %}{% if v.gst %} · GST/HST {{ v.gst }}{% endif %}{% if v.added %} · added here{% endif %}</option>{% endfor %}</datalist>
+          <div class="inv-vendor-match small" id="vendor-match" data-vendor-match aria-live="polite"></div>
+          <details class="pop inv-vendor-add" data-vendor-add>
+            <summary class="btn sm ghost"><span class="ms" aria-hidden="true">person_add</span>Add new vendor…</summary>
+            <div class="pop-body stack">
+              <p class="small muted">A vendor not in the vendor list. Its invoices need a person until it is set up in JD Edwards and the vendor list is imported again.</p>
+              <label class="field">Vendor name<input type="text" data-new="name" autocomplete="off"></label>
+              <div class="row">
+                <label class="field grow">GST/HST #<input type="text" data-new="gst" placeholder="123456789RT0001"></label>
+                <label class="field grow">QST #<input type="text" data-new="qst" placeholder="1234567890TQ0001"></label>
+              </div>
+              <div class="row">
+                <label class="field grow">PST #<input type="text" data-new="pst" placeholder="PST-1234-5678"></label>
+                <label class="field">Province<select data-new="province"><option value="">—</option>{% for code, label in provinces %}{% if code %}<option value="{{ code }}">{{ label }}</option>{% endif %}{% endfor %}</select></label>
+              </div>
+              <button class="btn primary sm" type="button" data-new-go><span class="ms" aria-hidden="true">person_add</span>Add to the vendor list</button>
+            </div>
+          </details>
+          <script type="application/json" id="vendor-data">{{ vendors | tojson }}</script>
+        </div>
         {{ field("gst_hst_registration_number", hint="The supplier's GST/HST registration number") }}
         {{ field("qst_registration_number", hint="The supplier's QST registration number (Québec)") }}
+        {{ field("pst_registration_number", hint="The supplier's provincial sales tax number (BC PST, Manitoba RST, Saskatchewan PST)") }}
         {{ province("supplier_province") }}
         {{ field("remit_bank_account", hint="The bank details printed for payment, if any: compared with this vendor's earlier invoices") }}
       </div>
@@ -97,7 +123,13 @@
         {{ field("payment_terms", placeholder="e.g. Net 30, 2/10 Net 30") }}
         {{ field("due_date", placeholder=due_placeholder, hint="Only if printed; otherwise it comes from the terms (shown greyed)") }}
         {{ field("currency") }}
-        {{ province("ship_to_province", "Where goods are delivered / services performed") }}
+        <div class="field inv-supply" data-field="ship_to_province">
+          <span class="lbl">{{ labels["ship_to_province"] }} <span class="rvw-hint" title="The province whose sales tax applies: where the goods are delivered to you (services: generally where you are), not where the vendor is or ships from."><span class="ms" aria-hidden="true">info</span></span></span>
+          <details class="inv-supply-pick"{% if supply.open %} open{% endif %}>
+            <summary><b>{{ supply.label }}</b> <span class="muted small">{{ supply.why }}</span> <span class="link small">Change</span></summary>
+            <select name="ship_to_province" form="inv" aria-label="{{ labels['ship_to_province'] }}">{% for code, label in provinces %}<option value="{{ code }}"{% if code == draft.header["ship_to_province"] %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+          </details>
+        </div>
         {{ field("original_invoice_number", hint="On a credit note: the invoice it credits") }}
       </div>
       <div class="rvw-group">Amounts</div>

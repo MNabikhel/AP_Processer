@@ -23,6 +23,7 @@ from .normalize import (
     currency_evidence,
     find_currency,
     find_gst_numbers,
+    find_pst_numbers,
     find_qst_numbers,
     infer_day_first,
     looks_like_money,
@@ -460,6 +461,7 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
                 (_REG_WORDS.search(plain(rest[:12])) and not looks_like_money(rest))
                 or find_gst_numbers(rest)
                 or find_qst_numbers(rest)
+                or find_pst_numbers(f"PST {rest[:40]}")  # "PST No. 1234567": rest is what follows the label
                 or _SPLIT_BN.search(rest)  # OCR broke the number: "HST # 18337 5716 RT 00.01"
             ):
                 return None
@@ -582,7 +584,12 @@ def _label_box(hit: _LabelHit) -> Box:
 
 def _registration_line(line: Line, hit: _LabelHit) -> bool:
     after = line.text[hit.end :]
-    return bool(_REG_WORDS.search(plain(after[:12])) or find_gst_numbers(after) or find_qst_numbers(after))
+    return bool(
+        _REG_WORDS.search(plain(after[:12]))
+        or find_gst_numbers(after)
+        or find_qst_numbers(after)
+        or find_pst_numbers(f"PST {after[:40]}")
+    )
 
 
 def _table_row(lines: list[Line], line: Line) -> bool:
@@ -655,6 +662,7 @@ _CUSTOMER_WORD = re.compile(r"c[l1i|]ient|cust[o0]mer|y[o0]ur|v[o0]tre|acheteur|
 def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
     gst: list[Reading] = []
     qst: list[Reading] = []
+    pst: list[Reading] = []
     for line in layout.lines():
         text = line.text
         lower = plain(text)
@@ -679,7 +687,13 @@ def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
             if _CUSTOMER_WORD.search(near) or bill_to:
                 score *= 0.35
             qst.append(Reading("qst_registration_number", value, text[a:b], _boxes(words), score, "pattern"))
-    return {"gst_hst_registration_number": gst, "qst_registration_number": qst}
+        for value, a, b in find_pst_numbers(text):
+            words = _span_words(line, a, b)
+            score = 0.9 * _min_conf(words)
+            if _CUSTOMER_WORD.search(lower[max(0, a - 40) : a]) or bill_to:
+                score *= 0.35
+            pst.append(Reading("pst_registration_number", value, text[a:b], _boxes(words), score, "pattern"))
+    return {"gst_hst_registration_number": gst, "qst_registration_number": qst, "pst_registration_number": pst}
 
 
 _BILL_TO = re.compile(r"^(bill(?:ed)?\s*to|sold\s*to|ship\s*to|invoice\s*to|deliver\s*to|for\s*:|to\s*:|service\s*address|"
