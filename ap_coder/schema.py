@@ -166,6 +166,11 @@ def build_json_schema(reference: ReferenceData | None = None, *, constrain_codes
             "type": "string",
             "description": "Supplier QST number as printed (e.g. 1234567890 TQ0001), empty if absent.",
         },
+        "pst_registration_number": {
+            "type": "string",
+            "description": "Supplier provincial sales tax number (BC PST, Manitoba RST, Saskatchewan PST) as printed "
+            "after its label (e.g. PST-1234-5678), empty if absent.",
+        },
         "original_invoice_number": {
             "type": "string",
             "description": "For a credit note: the number of the invoice it credits, as printed; empty otherwise.",
@@ -362,6 +367,7 @@ class InvoiceCoding(BaseModel):
     ship_to_province: str = ""
     gst_hst_registration_number: str = ""
     qst_registration_number: str = ""
+    pst_registration_number: str = ""
     original_invoice_number: str = ""
     remit_bank_account: str = ""
     subtotal: float

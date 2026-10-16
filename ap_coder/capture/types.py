@@ -19,6 +19,7 @@ FIELDS = (
     "currency",
     "gst_hst_registration_number",
     "qst_registration_number",
+    "pst_registration_number",
     "subtotal",
     "gst_amount",
     "hst_amount",

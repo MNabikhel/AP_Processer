@@ -48,13 +48,15 @@ from ap_coder.web.document import clean_boxes
 # Capture fields a reviewer can teach by clicking the words on the page: they are fields of the form (same names).
 TEACHABLE = (
     "vendor_name", "invoice_number", "invoice_date", "due_date", "po_number", "gst_hst_registration_number",
-    "qst_registration_number", "payment_terms", "currency", "subtotal", "tax_total", "grand_total",
+    "qst_registration_number", "pst_registration_number", "payment_terms", "currency", "subtotal", "tax_total",
+    "grand_total",
 )  # fmt: skip
 AMOUNT_FIELDS = ("subtotal", "tax_total", "grand_total")
 FORM_FIELDS = (*TEACHABLE, "supplier_province", "ship_to_province", "remit_bank_account", "original_invoice_number")
 FIELD_LABELS = {
     "vendor_name": "Vendor", "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #",
-    "supplier_province": "Supplier province", "remit_bank_account": "Pay into (bank account)",
+    "pst_registration_number": "PST #", "supplier_province": "Supplier province",
+    "remit_bank_account": "Pay into (bank account)",
     "invoice_number": "Invoice #", "invoice_date": "Invoice date", "po_number": "PO #",
     "payment_terms": "Payment terms", "due_date": "Due date", "currency": "Currency",
     "ship_to_province": "Place of supply", "original_invoice_number": "Credits invoice #", "subtotal": "Subtotal",
@@ -78,7 +80,7 @@ EDIT_LABELS = {
     "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "po_number": "PO #",
     "payment_terms": "terms", "due_date": "due date", "currency": "currency",
     "supplier_province": "supplier province", "ship_to_province": "place of supply",
-    "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #",
+    "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "pst_registration_number": "PST #",
     "original_invoice_number": "invoice credited", "remit_bank_account": "bank account", "subtotal": "subtotal",
     "tax_total": "tax total", "grand_total": "total",
 }  # fmt: skip

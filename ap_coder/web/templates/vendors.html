@@ -142,6 +142,19 @@
         <input type="text" name="expected_gst" value="{{ v.expected_gst }}" placeholder="e.g. 123456789RT0001"
                title="Invoices showing a different number are flagged (a common sign of a fake invoice)."></label>
     </div>
+    <div class="row">
+      <label class="field grow">QST number
+        <input type="text" name="qst_number" value="{{ v.qst_number }}" placeholder="e.g. 1234567890TQ0001"
+               title="Québec suppliers: invoices showing a different QST number are flagged."></label>
+      <label class="field grow">PST number
+        <input type="text" name="pst_number" value="{{ v.pst_number }}" placeholder="e.g. PST-1234-5678"
+               title="BC PST, Manitoba RST or Saskatchewan PST: invoices showing a different number are flagged."></label>
+      <label class="field">Province
+        <select name="province" title="Where the vendor is (its address). The tax charged depends on where goods are delivered to you, not on this.">
+          <option value=""{% if not v.province %} selected{% endif %}>—</option>
+          {% for code, label in provinces.items() %}<option value="{{ code }}"{% if v.province == code %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select></label>
+    </div>
     <p class="muted small">On hold: every new invoice from this vendor gets an error and needs an override to approve.</p>
     <label class="field full">Notes
       <textarea name="notes" rows="3" placeholder="e.g. bank details changed 2026-09, verified by phone">{{ v.notes }}</textarea></label>

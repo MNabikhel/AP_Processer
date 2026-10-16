@@ -43,7 +43,8 @@ HISTORY_LABELS = {"vendor_name": "Vendor *", "description": "Line description *"
 FIELD_LABELS = {
     "vendor_name": "Vendor", "invoice_number": "Invoice #", "invoice_date": "Invoice date", "due_date": "Due date",
     "po_number": "PO #", "currency": "Currency", "gst_hst_registration_number": "GST/HST #",
-    "qst_registration_number": "QST #", "subtotal": "Subtotal", "gst_amount": "GST", "hst_amount": "HST",
+    "qst_registration_number": "QST #", "pst_registration_number": "PST #", "subtotal": "Subtotal",
+    "gst_amount": "GST", "hst_amount": "HST",
     "pst_amount": "PST", "qst_amount": "QST", "tax_total": "Tax total", "grand_total": "Total",
     "payment_terms": "Terms",
 }  # fmt: skip

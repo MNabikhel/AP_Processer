@@ -30,7 +30,8 @@ SCREEN_DPI = 96
 # The order of the field list: as an invoice reads, header first, then the money, then the terms.
 FIELD_ORDER = (
     "vendor_name", "invoice_number", "invoice_date", "due_date", "po_number", "gst_hst_registration_number",
-    "qst_registration_number", "subtotal", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total",
+    "qst_registration_number", "pst_registration_number",
+    "subtotal", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total",
     "grand_total", "currency", "payment_terms",
 )  # fmt: skip
 

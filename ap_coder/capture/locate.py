@@ -13,10 +13,12 @@ import re
 from .normalize import (
     find_amounts,
     find_gst_numbers,
+    find_pst_numbers,
     find_qst_numbers,
     norm_gst,
     norm_id,
     norm_name,
+    norm_pst,
     norm_qst,
     parse_dates,
     terms_key,
@@ -82,6 +84,9 @@ def locate(layout: DocLayout, field: str, value: object) -> list[Reading]:
         elif field == "qst_registration_number":
             target_s = norm_qst(str(value))
             spans = [(a, b) for v, a, b in find_qst_numbers(text) if v == target_s]
+        elif field == "pst_registration_number":
+            target_s = norm_pst(str(value))
+            spans = [(a, b) for v, a, b in find_pst_numbers(text) if norm_pst(v) == target_s]
         elif field in ("invoice_number", "po_number"):
             spans = _id_spans(line, norm_id(str(value)))
         elif field == "vendor_name":

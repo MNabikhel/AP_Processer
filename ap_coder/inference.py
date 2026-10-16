@@ -473,8 +473,8 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
 
 HEADER_READ = (
     "vendor_name", "invoice_number", "invoice_date", "due_date", "po_number", "currency",
-    "gst_hst_registration_number", "qst_registration_number", "subtotal", "gst_amount", "hst_amount", "pst_amount",
-    "qst_amount", "tax_total", "grand_total", "payment_terms",
+    "gst_hst_registration_number", "qst_registration_number", "pst_registration_number", "subtotal", "gst_amount",
+    "hst_amount", "pst_amount", "qst_amount", "tax_total", "grand_total", "payment_terms",
 )  # fmt: skip
 _HEADER_AMOUNTS = {"subtotal", "gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total", "grand_total"}
 HEADER_SYSTEM = (
@@ -483,8 +483,9 @@ HEADER_SYSTEM = (
     "is not printed is null. vendor_name is the company that issued the invoice (its name at the top or in the "
     "remit-to), never the customer it is billed or shipped to. po_number is the customer's purchase order number, "
     "not the supplier's sales order, quote or account number. Dates as YYYY-MM-DD. Amounts as plain numbers (no "
-    "currency sign, no thousands separators), negative on a credit note. gst_hst_registration_number and "
-    "qst_registration_number are the supplier's tax registration numbers as printed. Answer with JSON only."
+    "currency sign, no thousands separators), negative on a credit note. gst_hst_registration_number, "
+    "qst_registration_number and pst_registration_number (BC PST, Manitoba RST, Saskatchewan PST) are the "
+    "supplier's tax registration numbers as printed, not the tax amounts. Answer with JSON only."
 )
 
 

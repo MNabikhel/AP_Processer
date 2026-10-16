@@ -57,9 +57,23 @@ CHECKS: dict[str, CheckHelp] = {
     ),
     "VENDOR_TAX_NUMBER_CHANGED": CheckHelp(
         FRAUD, "GST/HST number changed",
-        "The vendor's GST/HST number differs from earlier approved invoices or from the number recorded on the "
-        "Vendors page. Fake invoices often imitate a real supplier with different details.",
+        "The vendor's GST/HST number differs from the number in the vendor list or, when it has none, from its "
+        "earlier approved invoices. Fake invoices often imitate a real supplier with different details.",
         "Call the vendor on a number you already have (not the one on this invoice) to confirm before paying.",
+    ),
+    "VENDOR_QST_CHANGED": CheckHelp(
+        FRAUD, "QST number changed",
+        "The vendor's QST number differs from the one in the vendor list (or on its earlier approved invoices). A "
+        "different number can mean a fake invoice, or a bill from another company under a known name.",
+        "Call the vendor on a number you already have to confirm. If the vendor list is out of date, correct it on "
+        "the Vendors page.",
+    ),
+    "VENDOR_PST_CHANGED": CheckHelp(
+        FRAUD, "PST number changed",
+        "The vendor's provincial sales tax number (BC PST, Manitoba RST, Saskatchewan PST) differs from the one in "
+        "the vendor list (or on its earlier approved invoices).",
+        "Call the vendor on a number you already have to confirm. If the vendor list is out of date, correct it on "
+        "the Vendors page.",
     ),
     "VENDOR_BANK_CHANGED": CheckHelp(
         FRAUD, "Bank account changed",

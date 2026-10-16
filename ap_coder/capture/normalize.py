@@ -343,6 +343,34 @@ def find_qst_numbers(text: str) -> list[tuple[str, int, int]]:
     return [(f"{m.group(1)}TQ{m.group(3)}", m.start(), m.end()) for m in _QST.finditer(s)]
 
 
+# A provincial sales tax number (BC "PST-1234-5678", Manitoba "RST 123456-7", Saskatchewan "PST 1234567") has no
+# fixed shape, so it is read only after its own label: "PST No.", "RST #", "PST Reg.", "TVP". The rate line
+# ("PST 7%  190.82") is not a number: no percent, decimals or thousands separators.
+_PST = re.compile(
+    r"(?<![A-Za-z])(?:P\.?S\.?T\.?|R\.?S\.?T\.?|TVP)(?![A-Za-z])[\s:]*(?:(?:reg(?:istration)?|no|nr|number|num[ée]ro|"
+    r"n°|#)\.?[\s:#]*)*((?:PST|RST)[\s-]?)?(\d[\d-]{4,13}\d)(?![\d.,%])",
+    re.I,
+)
+
+
+def find_pst_numbers(text: str) -> list[tuple[str, int, int]]:
+    """Provincial sales tax numbers after their label: ('PST-1234-5678', start, end) with the number as printed
+    (its own "PST-" prefix kept); start..end covers the number, not the label."""
+    s = unicodedata.normalize("NFKC", text)
+    out = []
+    for m in _PST.finditer(s):
+        if sum(c.isdigit() for c in m.group(2)) < 6:
+            continue
+        a = m.start(1) if m.group(1) else m.start(2)
+        out.append((s[a : m.end()].strip(), a, m.end()))
+    return out
+
+
+def norm_pst(text: str | None) -> str:
+    """A PST number compared by its digits: "PST-1234-5678", "1234-5678" and "PST 12345678" are the same."""
+    return re.sub(r"\D", "", str(text or ""))
+
+
 def norm_gst(text: str | None) -> str:
     """'123 456 782 RT 0001' -> '123456782RT0001'; a bare 9-digit BN -> '123456782'."""
     if not text:
@@ -457,6 +485,8 @@ def normalize_value(field: str, value: object) -> object:
         return norm_gst(str(value))
     if field == "qst_registration_number":
         return norm_qst(str(value))
+    if field == "pst_registration_number":
+        return norm_pst(str(value))
     if field in ("invoice_number", "po_number"):
         return norm_id(str(value))
     if field == "vendor_name":

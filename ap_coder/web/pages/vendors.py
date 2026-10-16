@@ -21,6 +21,7 @@ from ap_coder.help import help_for
 from ap_coder.insights import vendor_workload
 from ap_coder.reference_data import short_name
 from ap_coder.store import PARKED, REVIEW, Store
+from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES
 from ap_coder.vendors import ACTIVE, ON_HOLD, mask_account, master_columns, master_rows, norm_tax_number
 from ap_coder.web.core import done, flash_message, get_store, reference_or_none, refuse, render, reviewer
 from ap_coder.web.files import SheetError, drop_upload, picked_columns, read_upload, receive_sheet, sheet_context
@@ -231,6 +232,7 @@ def vendors_page(
         master_error=master_error,
         detail=vendor_detail(store, chosen_vendor, lang) if chosen_vendor else None,
         statuses={ACTIVE: "Active", ON_HOLD: "On hold"},
+        provinces={**PROVINCE_NAMES, OUTSIDE_CANADA: "Outside Canada"},
         on_hold=ON_HOLD,
         languages=vendor_mail.LANGUAGES,
         recurring=found,
@@ -248,19 +250,25 @@ def save_vendor(
     key: str = Form(...),
     status: str = Form(ACTIVE),
     expected_gst: str = Form(""),
+    qst_number: str = Form(""),
+    pst_number: str = Form(""),
+    province: str = Form(""),
     notes: str = Form(""),
     back: str = Form(""),
 ) -> JSONResponse:
-    """The vendor's controls: on hold (every new invoice needs an override to approve), the GST/HST number its
-    invoices must show, notes."""
+    """The vendor's controls: on hold (every new invoice needs an override to approve), the GST/HST, QST and PST
+    numbers its invoices must show, its province, notes."""
     store = get_store(request)
     vendor = next((v for v in store.vendor_summaries() if v["vendor_key"] == key), None)
     if vendor is None:
         return refuse("That vendor is not in AP Coder.", 404)
     if status not in (ACTIVE, ON_HOLD):
         return refuse("Choose Active or On hold.")
+    if province and province not in PROVINCE_NAMES and province != OUTSIDE_CANADA:
+        return refuse("Choose a province from the list.")
     name = vendor["vendor_name"] or ""
-    store.save_vendor(key, name, status, expected_gst, notes, actor=reviewer())
+    store.save_vendor(key, name, status, expected_gst, notes, actor=reviewer(), qst_number=qst_number,
+                      pst_number=pst_number, province=province)  # fmt: skip
     url = "/vendors?" + urlencode({"open": key}) + "#vendor"
     if back.startswith("/vendors?"):
         url = back

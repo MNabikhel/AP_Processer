@@ -442,3 +442,37 @@ def test_sample_line_tables_read_whole():
     # A line's quantity ("Shipping - UPS Ground   1") is not a freight charge.
     us = analyze(samples / "cascade_US_SalesTax_INV-30981.pdf")
     assert us.fields["other_charges"].value is None
+
+
+# --- Provincial sales tax numbers -------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, found",
+    [
+        ("GST No. 555666775 RT0001    PST No. PST-1234-5678", ["PST-1234-5678"]),
+        ("GST No. 741852966 RT0001    MB RST No. 160482-7", ["160482-7"]),
+        ("PST Registration: 1234567", ["1234567"]),
+        ("TVP : 1006123456", ["1006123456"]),
+        ("PST 7%   190.82", []),  # the tax line, not a number
+        ("PST (7%): 1,316.00", []),
+        ("PST 12345.67", []),
+        ("Manitoba RST 7%", []),
+    ],
+)
+def test_pst_numbers_are_read_after_their_label(text, found):
+    from ap_coder.capture.normalize import find_pst_numbers, norm_pst
+
+    assert [v for v, _, _ in find_pst_numbers(text)] == found
+    assert norm_pst("PST-1234-5678") == norm_pst("1234 5678") == "12345678"
+
+
+@pytest.mark.parametrize(
+    ("stem", "number", "pst"),
+    [("pacific_BC_GST_PST_PO-77120", "PST-1234-5678", 190.82), ("redriver_MB_GST_RST_RRO-55821", "160482-7", 941.15)],
+)
+def test_the_pst_number_and_the_pst_amount_are_both_read(stem, number, pst):
+    result = analyze(SAMPLES / f"{stem}.pdf", ocr=False, today=TODAY)
+    assert result.fields["pst_registration_number"].value == number
+    assert result.fields["pst_registration_number"].boxes  # shown on the page
+    assert result.fields["pst_amount"].value == pst
