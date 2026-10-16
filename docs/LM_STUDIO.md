@@ -42,7 +42,8 @@ chat model is **loaded** is the one used, so switching between Gemma and Qwen is
 ## Settings in LM Studio for both apps
 
 1. **Developer → Start server** (`http://127.0.0.1:1234`). LM Studio 0.4.8 or newer (it honours "thinking off").
-2. **My Models → Qwen 3.5 9B → Context Length 16384**, and **OvisOCR2 → Context Length 20480**. Then a model LM
+2. **My Models → the chat model (Gemma 4 12B or Qwen 3.5 9B) → Context Length 16384**, and **OvisOCR2 → Context
+   Length 20480**. Then a model LM
    Studio loads on its own when a request names it (just-in-time loading) gets the same size the apps ask for, and
    neither app has to reload it.
 3. Leave **Just-in-Time model loading** on, but turn off the server setting that keeps only the last model loaded
@@ -77,10 +78,12 @@ page reader stays OvisOCR2.
 4. **My Models → Gemma 4 12B → Context Length 16384**, GPU offload at the maximum; **OvisOCR2 → 20480**, left
    unloaded (AP Coder loads it).
 5. **Developer → Start server**; Just-in-Time loading on, auto-evict off (above).
-6. **Load Gemma 4 12B, and unload Qwen** if it is loaded: with both loaded, AP Coder uses the first one LM Studio
-   lists. Leave Gemma's *Thinking* off (its default).
-7. Check: `python -m ap_coder doctor --online` says Gemma is loaded and its dry run codes the two sample lines;
-   *Settings → Reading* shows the chat model as Gemma, *can see pages*, and OvisOCR2's self-test passed.
+6. **Load Gemma 4 12B, and unload Qwen** if it is loaded: keep one chat model loaded. With two, AP Coder uses
+   one of them, and the double-click's summary names it and says to unload the other. Leave Gemma's *Thinking* off
+   (its default).
+7. **Double-click APProcessor.** Its summary says *Chat model: …gemma-4-12B… loaded in LM Studio (can see pages)*
+   and *Chat model test passed*; *Settings → Reading* shows the chat model as Gemma and OvisOCR2's self-test once
+   it has run. Nothing else to check.
 
 On an 8 GB graphics card Gemma and OvisOCR2 together (about 8.2 GB) spill a little into the computer's memory:
 slightly slower, nothing else. To go back to Qwen, load Qwen and unload Gemma.

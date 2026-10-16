@@ -610,6 +610,8 @@ select {max-width: 100%; text-overflow: ellipsis;} /* a long vendor name in its 
   font-size: 13.5px; border: 1px solid var(--apc-warn-line); background: var(--lg-warning-weak); color: #7c3a06;}
 .banner > .ms {color: var(--lg-warning);}
 .banner a {margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-weight: 500; color: #7c3a06;}
+.banner.info {border-color: var(--lg-accent-line); background: var(--lg-accent-weak); color: #1e3a8a;}
+.banner.info > .ms, .banner.info a {color: #1e3a8a;}
 .flashes {display: flex; flex-direction: column; gap: 8px;}
 .flashes:empty {display: none;}
 .flash {display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-radius: var(--lg-r); font-size: 13.5px;

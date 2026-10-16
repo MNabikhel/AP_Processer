@@ -309,10 +309,12 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
     reviewer, the messages left by the last action and, on Process and Review, OvisOCR2's warning."""
     store, settings = get_store(request), get_settings(request)
     meta = BY_KEY.get(page)
-    banner = ""
+    banner, banner_tone = "", "warn"
     if page in BANNER_PAGES:
         status = reading_status_or_none(settings, store)
         banner = str(getattr(status, "banner", "") or "").strip()
+        if getattr(status, "self_test", "") in ("pending", "running"):  # the first start's self-test: nothing wrong
+            banner_tone = "info"
     me = reviewer()
     base = {
         "page": page,
@@ -326,6 +328,7 @@ def render(request: Request, template: str, page: str, status_code: int = 200, *
         "data_folder": short_path(data_dir(store)),
         "flashes": take_flash(request.query_params.get("flash")),
         "banner": banner,
+        "banner_tone": banner_tone,
         "settings": settings,
     }
     base.update(context)

@@ -104,9 +104,9 @@ def _ocr() -> ReaderLine:
                                                        f"computer, in seconds.{photos}")  # fmt: skip
     if v4 or v5:
         return ReaderLine(OCR, WARN, "Scans and photos: one OCR model only (the second comes with the offline "
-                                     f"bundle's models folder: run APProcessor.bat).{photos}")  # fmt: skip
+                                     f"bundle's models folder: double-click APProcessor again).{photos}")  # fmt: skip
     return ReaderLine(OCR, OFF, "Not installed: scans and photos can't be read on this computer (digital PDFs can). "
-                                "Run APProcessor.bat: it installs OCR from the offline bundle.")  # fmt: skip
+                                "Double-click APProcessor again: it installs OCR.")  # fmt: skip
 
 
 def _table_finder() -> ReaderLine:
@@ -115,8 +115,8 @@ def _table_finder() -> ReaderLine:
 
     if not offline.onnxruntime_installed():
         return ReaderLine(TABLE_FINDER, OFF, "Not installed: it needs the OCR add-on (ONNX Runtime). Line items "
-                                             "are read from the words under the column headings. Run "
-                                             "APProcessor.bat.")  # fmt: skip
+                                             "are read from the words under the column headings. Double-click "
+                                             "APProcessor again.")  # fmt: skip
     if offline.table_finder_path() is None:
         return ReaderLine(TABLE_FINDER, WARN, "Missing: its model comes with the offline bundle's models folder "
                                               f"({offline.TABLE_FINDER_NAME}). Until it is there, line items are read "
@@ -211,5 +211,6 @@ def _banner(out: ReadingStatus) -> str:
             return "LM Studio isn't running: invoices are read by OCR only and wait for a person."
         return "OvisOCR2 isn't running in LM Studio: invoices are read by OCR only and wait for a person."
     if out.self_test in ("pending", "running"):
-        return "OvisOCR2 is testing itself before it reads invoices: invoices wait for a person meanwhile."
+        return ("OvisOCR2 is testing itself before it reads invoices (10 to 20 minutes the first time). You can use AP "
+                "Coder meanwhile: invoices are read by OCR and wait for a person until it passes.")  # fmt: skip
     return "OvisOCR2 failed its self-test: invoices are read by OCR only and wait for a person (Settings → Reading)."

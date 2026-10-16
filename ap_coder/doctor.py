@@ -108,7 +108,10 @@ def run_checks(
     settings: Settings,
     load_reference: Callable[[], ReferenceData],
     online: bool = False,
+    llm_checks: bool = True,
 ) -> list[Check]:
+    """Every check, in order. ``llm_checks=False`` leaves out the two that ask LM Studio (the chat model and the page
+    reader): the launcher's summary has its own lines for them, from one question to LM Studio."""
     checks: list[Check] = []
 
     def add(area: str, status: str, detail: str) -> None:
@@ -160,8 +163,9 @@ def run_checks(
         )
         if eng.vision and not profile.supports_vision and provider == "azure":
             add("vision mode", WARN, "AP_VISION=true but the model is not vision-capable; images will be dropped")
-    add(*_local_check(settings, provider))
-    add(*_page_reader_check(settings))
+    if llm_checks:
+        add(*_local_check(settings, provider))
+        add(*_page_reader_check(settings))
     add(
         "engine",
         PASS,

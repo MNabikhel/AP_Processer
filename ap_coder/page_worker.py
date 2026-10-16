@@ -127,7 +127,7 @@ def self_test(store: Any, model: str, now: dt.datetime | None = None) -> tuple[s
     if testing and testing.get("model") == model:
         done, pages = int(testing.get("done") or 0), int(testing.get("pages") or 0)
         where = f" (page {done + 1} of {pages})" if pages else ""
-        return "running", f"{name} is reading the test invoice now{where}; invoices are read once it passes."
+        return "running", f"{name} is reading the test invoice now{where}; it reads waiting invoices once it passes."
     if test is None:
         return "pending", (f"{name} reads a test invoice whose answers are known before it reads any invoice: the "
                            "test starts on its own.")  # fmt: skip

@@ -257,6 +257,7 @@ def page_reader_context(settings: Settings, store: Store, status: Any) -> dict[s
         "self_test_detail": status.self_test_detail,
         "testing": testing,
         "can_test": bool(model) and testing["state"] != "running" and status.self_test != "running",
+        "tested": test is not None,  # the button says "again" only once there is a result
         "wait": test_wait(settings, model) if model else FIRST_WAIT,
         "test": test,
         "test_detail": test_detail(test) if test else "",

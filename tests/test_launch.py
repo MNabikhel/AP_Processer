@@ -498,7 +498,7 @@ def test_first_start_runs_the_self_check_later_starts_do_not(launch, monkeypatch
     assert launch.run(args, rest) == 0
     out = capsys.readouterr().out
     assert checks == [1]  # not again
-    assert "reusing .venv" in out and "Self-check OK at setup" in out
+    assert "reusing .venv" not in out and "Self-check OK at setup" in out  # a later start: quiet
 
     args, rest = launch.parse(["--check", "--no-start"])
     launch.run(args, rest)
@@ -548,13 +548,127 @@ def test_pilot_check_passes_without_the_ocr_add_on_and_says_the_scan_was_not_tri
     assert pilot.main() == 1  # a sample read wrong still fails
 
 
+def _lm_studio(local_llm, monkeypatch, **fields):
+    status = local_llm.ModelStatus(base_url="http://127.0.0.1:1234/v1", **fields)
+    monkeypatch.setattr(local_llm, "check_server", lambda llm, **k: status)
+    return status
+
+
+GEMMA = "lmstudio-community/gemma-4-12B-it-QAT-GGUF"
+
+
 def test_lm_studio_is_only_reported(launch, monkeypatch):
     from ap_coder import local_llm
 
+    _lm_studio(local_llm, monkeypatch)  # nothing answers
     assert launch.lm_studio_line()[1].startswith("LM Studio: not running (optional")
-    monkeypatch.setattr(local_llm, "check_server", lambda llm, **k: local_llm.ModelStatus(
-        base_url="http://127.0.0.1:1234/v1", reachable=True, model="qwen3.5-9b", lm_studio=True))  # fmt: skip
-    assert launch.lm_studio_line() == ("ok", "LM Studio: model qwen3.5-9b loaded")
+    _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True)
+    assert launch.lm_studio_line()[0] == "warn" and "no chat model is loaded" in launch.lm_studio_line()[1]
+    _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True, model=GEMMA, vision=True,
+               loaded=[GEMMA, "ath-maas_ovisocr2", "text-embedding-qwen3-embedding-0.6b"])  # fmt: skip
+    assert launch.lm_studio_line() == ("ok", f"Chat model: {GEMMA} loaded in LM Studio (can see pages)")
+    _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True, model=GEMMA, loaded=[GEMMA, "qwen3.5-9b"])
+    assert launch.lm_studio_line()[1].endswith(
+        "; also loaded: qwen3.5-9b (keep one chat model loaded: unload the one you don't want)"
+    )
+    _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True, model=GEMMA)  # downloaded, not loaded
+    level, text = launch.lm_studio_line()
+    assert level == "info" and "downloaded but not loaded" in text
+    monkeypatch.setattr(local_llm, "check_server", lambda llm, **k: 1 / 0)
+    assert launch.lm_studio_line() == ("info", "Chat model: not checked (optional)")
+
+
+def test_the_double_click_asks_the_loaded_chat_model_once_per_model(launch, monkeypatch):
+    """What doctor --online asked, asked by the start itself: only of a loaded model, then remembered."""
+    from ap_coder import local_llm
+
+    asked: list[int] = []
+    answers = [("ok", "Chat model test passed: accounts from the chart in 2s: line 1 -> 6100, line 2 -> 6200")]
+    monkeypatch.setattr(launch, "_ask_chat_model", lambda: asked.append(1) or answers[0])
+    state: dict = {}
+    _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True, model=GEMMA)  # not loaded: never asked
+    assert launch.chat_test_line(state) is None and asked == []
+    _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True, model=GEMMA, loaded=[GEMMA])
+    assert launch.chat_test_line(state) == answers[0] and len(asked) == 1 and state["chat_test"]["ok"]
+    level, text = launch.chat_test_line(state)  # the next start: remembered, not asked again
+    assert level == "ok" and text.startswith("Chat model test passed (") and len(asked) == 1
+    assert launch.chat_test_line(state, force=True) == answers[0] and len(asked) == 2  # --check asks again
+    _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True, model="qwen3.5-9b", loaded=["qwen3.5-9b"])
+    launch.chat_test_line(state)  # another model loaded: asked again
+    assert len(asked) == 3
+    answers[0] = ("warn", "Chat model test: the model answered in 3s but gave no account from the chart")
+    state["chat_test"]["key"] = "changed"
+    launch.chat_test_line(state)
+    launch.chat_test_line(state)  # a failed test is asked again on every start
+    assert len(asked) == 5 and not state["chat_test"]["ok"]
+
+
+def test_the_chat_model_test_never_holds_up_the_start(launch, monkeypatch):
+    import threading
+
+    from ap_coder import doctor
+
+    release = threading.Event()
+    monkeypatch.setattr(doctor, "_local_dry_run", lambda settings, reference: release.wait(5) and None)
+    monkeypatch.setattr(launch, "CHAT_TEST_TIMEOUT", 0.2)
+    level, text = launch._ask_chat_model()
+    release.set()
+    assert level == "warn" and "no answer within 0 s" in text and "starts anyway" in text
+    monkeypatch.setattr(doctor, "_local_dry_run", lambda settings, reference: ("local dry run", "PASS", "fine"))
+    monkeypatch.setattr(launch, "CHAT_TEST_TIMEOUT", 30.0)
+    assert launch._ask_chat_model() == ("ok", "Chat model test passed: fine")
+    monkeypatch.setattr(doctor, "_local_dry_run", lambda settings, reference: 1 / 0)
+    level, text = launch._ask_chat_model()
+    assert level == "warn" and "ZeroDivisionError" in text
+
+
+def test_a_start_asks_lm_studio_once_for_the_chat_model(launch, monkeypatch):
+    """The chat line, its test and the setup checks share one question to LM Studio (the page reader asks its own)."""
+    from ap_coder import doctor, local_llm
+
+    asked: list[int] = []
+    status = local_llm.ModelStatus(base_url="http://127.0.0.1:1234/v1", reachable=True, lm_studio=True, model=GEMMA,
+                                   loaded=[GEMMA], vision=True)  # fmt: skip
+    monkeypatch.setattr(local_llm, "check_server", lambda llm, **k: asked.append(1) or status)
+    monkeypatch.setattr(launch, "page_reader_line", lambda: ("info", "Page reader: -"))
+    monkeypatch.setattr(launch, "_ask_chat_model", lambda: ("ok", "Chat model test passed: fine"))
+    lines = launch.readiness(("ok", "Packages: all in place"), {}, force=False)
+    texts = [t for _, t in lines]
+    assert len(asked) == 1, f"LM Studio asked {len(asked)} times"
+    assert any(t.startswith(f"Chat model: {GEMMA} loaded") for t in texts) and "Chat model test passed: fine" in texts
+    assert any(t.startswith("Setup checks: all ") for t in texts)
+    areas = [c.area for c in doctor.run_checks(launch_settings(), lambda: 1 / 0, llm_checks=False)]
+    assert "local model" not in areas and "page reader" not in areas
+    areas = [c.area for c in doctor.run_checks(launch_settings(), lambda: 1 / 0)]  # the doctor itself: both kept
+    assert "local model" in areas and "page reader" in areas
+
+
+def launch_settings():
+    from ap_coder.config import Settings
+
+    return Settings()
+
+
+def test_the_start_runs_the_doctors_setup_checks(launch, monkeypatch):
+    """GL accounts, tax mapping and settings: one line when all is well, each problem in the doctor's words."""
+    from ap_coder import doctor
+
+    lines = launch.setup_check_lines()
+    assert len(lines) == 1 and lines[0][0] == "ok" and lines[0][1].startswith("Setup checks: all ")
+    real = doctor.run_checks
+
+    def with_problems(*args, **kwargs):
+        return [*real(*args, **kwargs), doctor.Check("tax PST", doctor.WARN, "no GL account mapped yet"),
+                doctor.Check("GL accounts", doctor.FAIL, "none imported"),
+                doctor.Check("local model", doctor.WARN, "said by the chat model's own line"),
+                doctor.Check("OCR", doctor.WARN, "said by the OCR line"),
+                doctor.Check("package numpy", doctor.FAIL, "said by the packages line")]  # fmt: skip
+
+    monkeypatch.setattr(doctor, "run_checks", with_problems)
+    assert launch.setup_check_lines() == [("warn", "tax PST: no GL account mapped yet"),
+                                          ("fail", "GL accounts: none imported")]  # fmt: skip
+    monkeypatch.setattr(doctor, "run_checks", lambda *a, **k: 1 / 0)
+    assert launch.setup_check_lines()[0][1].startswith("Setup checks: not run (ZeroDivisionError")
 
 
 def test_marks_fall_back_to_ascii(launch, monkeypatch):

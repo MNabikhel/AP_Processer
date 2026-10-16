@@ -15,6 +15,16 @@ backup of the database is made automatically once a day when AP Coder starts (th
   Studio for Gemma 4 12B first, then Qwen 3.5 9B. If Gemma's thinking is ever on, its thought channel is never read
   as the answer. Download links and steps: [LM_STUDIO.md](LM_STUDIO.md#using-gemma-4-12b-instead-of-qwen-35-9b-windows-laptop).
   It has not yet been measured against Qwen on AP's invoices: compare the two on the same invoices before deciding.
+- **A clearer first session.** While OvisOCR2 tests itself (10 to 20 minutes the first time) the banner says
+  plainly that AP Coder can be used meanwhile, in a calm colour, and the Setup card says "testing itself" (or
+  "failed its self-test") instead of "not running yet". The demo invoices come first on an empty review queue, and
+  the Process page offers the sample GL accounts when none are imported. The screens no longer show
+  commands to type; the self-test button says "now" until it has run once. The double-click asks LM Studio once
+  for the chat model instead of three times and is quieter on later starts.
+- **The double-click checks everything, every time.** Its summary now has what `doctor --online` had: the chat
+  model AP Coder will use (and whether it is only downloaded, not loaded), a two-line test question to it (once per
+  model; again after a failure, a model switch or `--check`; it never holds up the start), and the GL accounts, tax
+  mapping and settings. The doctor is only a report to paste when something is wrong.
 - **Set up straight from GitHub, like CloseDesk.** Unzip GitHub's ZIP and double-click `APProcessor.bat`
   (Mac: `APProcessor.command`): its setup now downloads the packages and OCR models once, and offers Python 3.12
   with `winget` when there is none. No bundle to build first. AP Coder itself still never goes online, and the

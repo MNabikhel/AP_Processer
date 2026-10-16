@@ -43,6 +43,29 @@ def models(chat: str, reader: str, embed: str) -> list[dict]:
     ]
 
 
+def _enum(node: object, key: str) -> list:
+    """The enum of the first ``key`` property anywhere in a JSON schema ([] when none)."""
+    if isinstance(node, dict):
+        found = node.get("properties", {}).get(key) if isinstance(node.get("properties"), dict) else None
+        if isinstance(found, dict) and found.get("enum"):
+            return list(found["enum"])
+        return next((e for e in (_enum(v, key) for v in node.values()) if e), [])
+    if isinstance(node, list):
+        return next((e for e in (_enum(v, key) for v in node) if e), [])
+    return []
+
+
+def account_lines(request: dict) -> list[dict]:
+    """A GL question (its schema lists the chart's accounts) answered as a model would: the first account for each
+    numbered line of the question. Anything else gets no lines."""
+    codes = _enum(request.get("response_format"), "gl_code")
+    texts = [m.get("content") for m in request.get("messages", []) if m.get("role") == "user"]
+    numbers = re.findall(r"^(\d+)\. ", texts[-1] if texts and isinstance(texts[-1], str) else "", re.M)
+    if not codes:
+        return []
+    return [{"line_number": int(n), "gl_code": codes[0], "cost_center": "", "reason": "fake"} for n in numbers]
+
+
 def serve(port: int, chat: str, reader: str, embed: str, api: str, log: Path | None) -> None:
     listed = models(chat, reader, embed)
 
@@ -116,7 +139,7 @@ def serve(port: int, chat: str, reader: str, embed: str, api: str, log: Path | N
             elif kinds[model] == "embeddings":
                 self.send(400, {"error": f"'{model}' is not a llm"})
             else:
-                text = "INVOICE\nTotal 0.00" if images else json.dumps({"lines": []})
+                text = "INVOICE\nTotal 0.00" if images else json.dumps({"lines": account_lines(request)})
                 if request.get("stream"):
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")

@@ -14,5 +14,5 @@ if not exist ".venv\Scripts\python.exe" (
 )
 set "VIRTUAL_ENV=%CD%\.venv"
 set "PATH=%CD%\.venv\Scripts;%PATH%"
-cmd /k "echo AP Coder terminal. Try:  python -m ap_coder doctor"
+cmd /k "echo AP Coder terminal. APProcessor.bat already checks everything when it starts; for a report to send:  python -m ap_coder doctor --online"
 popd

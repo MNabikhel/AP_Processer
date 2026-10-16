@@ -105,18 +105,17 @@ To run AP Coder commands yourself (`doctor`, `share-report`, …), double-click 
 (in the `scripts` folder): it opens a command prompt in AP Coder's folder with everything ready, e.g.
 `python -m ap_coder doctor`.
 
-## Step 3: Check the setup → paste the doctor report
+## Step 3: Check the setup (nothing to run)
 
-In `scripts\terminal.bat`:
+Every double-click checks everything itself and prints it in the window before the dashboard opens: the
+packages and OCR, the data folder, the chat model in LM Studio (it asks it a two-line test question, once per
+model, on this laptop), OvisOCR2 and its self-test, and the GL accounts, tax mapping and settings. A problem is
+one plain line there; AP Coder still starts. **Settings → Reading** in the dashboard shows the readers too.
 
-```bat
-python -m ap_coder doctor --online
-```
+Start LM Studio's server, with the chat model loaded, **before** you double-click, so the check covers it.
 
-It checks the setup, the reference data and LM Studio: whether OvisOCR2 was found and passed its
-self-test (*page reader*), and, with the chat model loaded, one short test call on a tiny made-up invoice
-(on this laptop; nothing leaves it). **Paste the whole output into the chat.** Any FAIL line says why.
-**Settings → Reading** in the dashboard shows the same, reader by reader.
+Only if something is wrong, or I ask for it: `python -m ap_coder doctor --online` in `scripts\terminal.bat` gives
+the same checks as a report to paste into the chat (no keys, codes or invoice data).
 
 ## Step 4: Try the dashboard with the sample data (no enterprise data)
 
@@ -292,41 +291,10 @@ Phase 2.
 
 ### Updating AP Coder
 
-When IT gives you a new offline bundle:
-
-1. Unzip it **anywhere**: a new folder (e.g. `C:\APCoder\app-0.2`) is fine, and so is unzipping it over
-   the old folder. AP Coder may still be open.
-2. Double-click **`APProcessor.bat`** in the new folder (Mac: `APProcessor.command`).
-
-That is all. The new version takes over:
-
-- **The old one stops.** An AP Coder still running (from the old folder, or the old version in this one) is
-  stopped first, so two versions never use your data at once. If it can't be stopped, the window says
-  *Close the old AP Coder window, then start again* and waits up to a minute for you to do it.
-- **It says what changed**: *Updated AP Coder from 0.1.0 (2026-09-01) to 0.2.0 (2026-10-11)*. It sets up
-  only what is new (from the new bundle's `wheelhouse/`, never the internet) and runs the self-check.
-- **Your data is kept.** The data folder (`C:\Users\<you>\APCoder`) is never replaced. Before the new version
-  brings the database up to date, it copies it to the `backups` folder
-  (`ap_coder-<date>-before-update-from-schema-<n>.db`). Data an older version kept inside its own folder
-  (`private\`) and a `.env` left there move into the data folder (when the data folder already has data of
-  its own, they go, whole, to `backups\from-<folder>-<date>`: nothing is merged). Settings that are no longer
-  used are commented out in the `.env`, with the note *# no longer used (AP Coder 0.2)*.
-- **One shortcut, one install.** The *AP Coder* desktop shortcut now opens the new version (on a Mac, an
-  *AP Coder.command* on the desktop does). Once the self-check passed, the old version's `.venv`, OCR models
-  and folder are removed, and the window says how much space that freed. An old folder with files of your
-  own in it is kept, without its `.venv`. Unzipped over the old folder, the files of the old version that
-  the new one no longer has are removed (the bundle lists every file it holds).
-- **The old folder by mistake?** Starting an older version (an old shortcut, an old folder) opens the
-  newest one instead: older code never opens newer data. (A version from before the web app, 0.1, can't do
-  that: the update removes its folder once it found it. [UPGRADING.md](UPGRADING.md) says, for every older
-  version, how it was installed, what the update finds and what it does.) A database made by a newer AP Coder is refused in
-  plain words, and nothing is changed.
-
-If the new bundle doesn't fit the computer, it stops before installing anything and says which bundle to
-use, e.g. *This package folder (wheelhouse) was built for Windows, Python 3.11/3.12; this computer is a Mac
-with Python 3.14. Use the bundle built for Macs (build it with --mac): nothing was installed.* When the
-bundle has packages for another Python that is installed on the computer, AP Coder uses that Python by
-itself (and makes its `.venv` again with it).
+Unzip the new version **anywhere** (a new folder, or over the old one; AP Coder may still be open) and
+double-click its **`APProcessor.bat`** (Mac: `APProcessor.command`). It stops the old one, says what changed,
+sets up only what is new, keeps your data and settings, and cleans up the old version once its self-check
+passed. The details: [PILOT.md](PILOT.md#updating-ap-coder).
 
 ---
 
