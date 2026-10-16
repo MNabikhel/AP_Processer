@@ -847,8 +847,8 @@ class Store:
             self._log(conn, "erp_register_imported", actor=actor, detail={"rows": 0, "total": 0, "cleared": True})
 
     def search_rows(self) -> list[dict[str, Any]]:
-        """Every invoice's identifying fields and where it stands (for *Find an invoice*), with the date of
-        its export batch."""
+        """Every invoice's identifying fields and where it stands (for the invoice directory's quick search), with
+        the date of its export batch."""
         with self._conn() as conn:
             batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}
             rows = [
@@ -860,6 +860,50 @@ class Store:
                        FROM invoices ORDER BY id DESC"""
                 )
             ]
+        for r in rows:
+            r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
+        return rows
+
+    def directory_count(self, rows_sql: str, where: str, params: list[Any]) -> int:
+        """How many invoices the invoice directory's filters keep (``directory.py`` builds the SQL, with parameters)."""
+        with self._conn() as conn:
+            return int(conn.execute(f"{rows_sql} SELECT COUNT(*) FROM rows WHERE {where}", params).fetchone()[0])
+
+    def directory_rows(
+        self, rows_sql: str, fields: str, where: str, params: list[Any], order: str, limit: int, offset: int
+    ) -> list[dict[str, Any]]:
+        """One page of the invoice directory, with the date each one's export batch was made. The page's ids come
+        first (SQLite then reads only what the filters and the sort need), then their rows: reading every invoice's
+        coding to sort the whole table would take most of a second with tens of thousands of invoices."""
+        with self._conn() as conn:
+            ids = [
+                r[0]
+                for r in conn.execute(
+                    f"{rows_sql} SELECT id FROM rows WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
+                    [*params, limit, offset],
+                )
+            ]
+            found: dict[int, dict[str, Any]] = {}
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                for r in conn.execute(
+                    f"{rows_sql} SELECT {fields} FROM rows WHERE id IN ({', '.join('?' * len(chunk))})", chunk
+                ):
+                    found[r["id"]] = dict(r)
+            rows = [found[i] for i in ids if i in found]
+            wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
+            batches = {}
+            for start in range(0, len(wanted), 500):
+                chunk = wanted[start : start + 500]
+                batches.update(
+                    {
+                        b["id"]: b["created_at"]
+                        for b in conn.execute(
+                            f"SELECT id, created_at FROM export_batches WHERE id IN ({', '.join('?' * len(chunk))})",
+                            chunk,
+                        )
+                    }
+                )
         for r in rows:
             r["exported_at"] = batches.get(r["export_batch"]) if r["export_batch"] else None
         return rows

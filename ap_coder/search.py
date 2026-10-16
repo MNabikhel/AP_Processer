@@ -1,4 +1,4 @@
-"""Find an invoice: answer a vendor's "did you get it, and when will it be paid?".
+"""The invoice directory's quick search: answer a vendor's "did you get it, and when will it be paid?".
 
 One search box: words of the vendor name, an invoice or PO number (however it is written), or an amount.
 Each match says where the invoice stands; the ERP's invoice register (Exports page) is searched too.

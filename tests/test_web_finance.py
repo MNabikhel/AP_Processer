@@ -1,4 +1,5 @@
-"""The web dashboard's close & compliance pages: Find an invoice, Exports, Month-end, Sales tax and Vendor statements.
+"""The web dashboard's close & compliance pages: the Invoice directory, Exports, Month-end, Sales tax, Vendor
+statements.
 
 Each page draws on an empty and on a busy database (sample setup + demo invoices); every download is the file the
 earlier dashboard gave (the same ``exports`` / ``jde`` / ``stamp`` / ``accruals`` / ``taxreturn`` / ``statements``
@@ -104,7 +105,7 @@ def test_empty_pages_say_so(client):
     assert "Not found" in client.get("/search?q=zzz-nothing").text
 
 
-# --- Find an invoice -------------------------------------------------------------------------------------------
+# --- Invoice directory -------------------------------------------------------------------------------------------
 
 
 def test_search_finds_an_invoice_and_says_where_it_is(client, busy):

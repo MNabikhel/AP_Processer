@@ -86,4 +86,4 @@ def test_approved_list_is_capped_but_every_invoice_can_be_opened(app_db, tmp_pat
     page = client.get("/review?tab=approved").text
     assert "The 100 most recent of 105." in page and len(set(_rows(page))) == 100
     oldest = min(ids, key=lambda i: app_db.get_invoice(i)["reviewed_at"] or "")
-    assert client.get(f"/review/{oldest}").status_code == 200  # every one opens (Find an invoice finds it)
+    assert client.get(f"/review/{oldest}").status_code == 200  # every one opens (the invoice directory finds it)

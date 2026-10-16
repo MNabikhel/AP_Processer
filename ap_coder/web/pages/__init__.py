@@ -36,11 +36,12 @@ PAGES: list[Page] = [
     ),
     Page(
         "search",
-        "Find an invoice",
+        "Invoice directory",
         "/search",
-        "search",
+        "manage_search",
         W,
-        "Vendor on the phone? Search by vendor, invoice number, PO or amount: see where it is and when it is due.",
+        "Every invoice in one table: filter any column (vendor, number, PO, dates, amounts, status, GL account, "
+        "approver, export batch), sort, choose the columns, save the layout, export what you see.",
         module="search",
     ),
     Page(
