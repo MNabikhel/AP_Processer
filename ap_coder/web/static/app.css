@@ -306,6 +306,7 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 .apc-step .dot.ok {background: var(--lg-success-weak); color: var(--lg-success);}
 .apc-step .dot.todo {background: var(--lg-warning-weak); color: var(--lg-warning);}
 .apc-step .dot.bad {background: var(--lg-danger-weak); color: var(--lg-danger);}
+.apc-step .dot.wait {background: var(--lg-accent-weak); color: #1e3a8a;}
 .apc-step .state {margin-left: auto; color: var(--lg-muted); font-size: 12.5px;}
 .apc-env {display: flex; min-width: 0; margin-bottom: 10px;}
 .apc-env .apc-status {color: var(--lg-muted); font-size: 11.5px; font-weight: 450; letter-spacing: -.005em; min-width: 0; line-height: 1.4;

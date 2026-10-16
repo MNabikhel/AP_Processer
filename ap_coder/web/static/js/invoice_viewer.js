@@ -543,12 +543,20 @@ export class InvoiceViewer {
             "tbody",
             null,
             sources.map(([reader, value]) => {
-              const said = plainValue(value);
-              const agrees = said !== "" && (norm(value) === want || norm(value) === shown);
+              // "other:<value>": the readers named in ``value`` read <value>, not the field's value.
+              const other = reader.startsWith("other:");
+              const names = other
+                ? String(value).split(",").map((r) => READERS[r.trim()] || r.trim().replace(/_/g, " ")).join(", ")
+                : READERS[reader] || reader.replace(/_/g, " ");
+              const said = other ? reader.slice(6) : plainValue(value);
+              // The server says which readers agree (a date printed "Oct 1, 2026" agrees with 2026-10-01); older
+              // pages without that list compare the text.
+              const agrees = !other && said !== "" &&
+                (Array.isArray(f.agreeing) ? f.agreeing.includes(reader) : norm(value) === want || norm(value) === shown);
               return h(
                 "tr",
                 null,
-                h("th", { scope: "row" }, READERS[reader] || reader.replace(/_/g, " ")),
+                h("th", { scope: "row" }, names),
                 h("td", { class: said ? "" : "none" }, said || "nothing"),
                 h("td", { class: `iv-agree ${agrees ? "yes" : said ? "no" : ""}` }, agrees ? "agrees" : said ? "differs" : "")
               );
@@ -631,10 +639,7 @@ export class InvoiceViewer {
       }
       this.gFields.append(g);
       this.groups.set(f.field, g);
-      const first = boxes[0];
-      const tag = h("span", { class: `iv-tag t-${tone}`, dataset: { field: f.field, box: JSON.stringify([first[1] - padX, first[2] - padY, first[3] + padX, first[4] + padY]) } }, f.label);
-      this.tags.append(tag);
-      this.tagEls.set(f.field, tag);
+      // No name tag beside the box (it covered the page): the field's name and readings show on hover.
     }
     this.renderWords();
     this.renderSelection();

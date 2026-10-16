@@ -402,7 +402,7 @@ def review_reopen(request: Request, invoice_id: int) -> JSONResponse:
 
 @router.post("/review/{invoice_id}/retry")
 def review_retry(request: Request, invoice_id: int) -> JSONResponse:
-    """Read a failed invoice again (the new attempt replaces the failed one), as a Process invoices job."""
+    """Read a failed invoice again (the new attempt replaces the failed one), as a Import invoices job."""
     from ap_coder.web.pages.process import JOB, process_files
 
     store = get_store(request)

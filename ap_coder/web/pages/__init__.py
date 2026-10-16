@@ -27,11 +27,11 @@ PAGES: list[Page] = [
     Page("review", "Review queue", "/review", "inbox", W, "Invoices waiting for review.", module="review"),
     Page(
         "process",
-        "Process invoices",
+        "Import invoices",
         "/process",
         "upload_file",
         W,
-        "Read new invoices and send them to the review queue.",
+        "Bring invoices in by hand: upload files or saved emails, or pick up new files in the invoices folder.",
         module="process",
     ),
     Page(

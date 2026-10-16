@@ -11,7 +11,7 @@ compares the fields Azure reads with the values AP Coder's own readers settled o
   right 99.9% of the time are still compared with an independent reader once in a while;
 * never more pages a day than the daily cap (200 by default), so the cost is bounded; the rest wait for tomorrow.
 
-The check never holds up *Process invoices*: invoices are put in line (``azure_checks``) and checked in the
+The check never holds up *Import invoices*: invoices are put in line (``azure_checks``) and checked in the
 background, after OvisOCR2 has read them when it is running. Azure agreeing is recorded ("Azure agrees on 11 of 11
 fields"). A field Azure read differently is marked *Check* with the reason "Azure Document Intelligence read X", the
 invoice gets a review issue and can't be approved without a person; an invoice picked for a spot-check isn't

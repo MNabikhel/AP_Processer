@@ -54,9 +54,9 @@ before a flow is built.
 |---|---|---|
 | An invoice or credit note | the review queue (next to the email in the invoices folder) | Review queue |
 | A statement of account | `statements\` | Statements → *Statements received by email* |
-| A payment reminder (no invoice attached) | `emails\needs a person\` | Process invoices → *Emails that need a person* |
-| A bank-detail change request | `emails\needs a person\`, flagged as **possible fraud** | Process invoices (in red) and the Activity log |
-| Not for AP (quote, PO, packing slip, remittance advice, out-of-office, newsletter, a portal link) | `emails\needs a person\` | Process invoices |
+| A payment reminder (no invoice attached) | `emails\needs a person\` | Import invoices → *Emails that need a person* |
+| A bank-detail change request | `emails\needs a person\`, flagged as **possible fraud** | Import invoices (in red) and the Activity log |
+| Not for AP (quote, PO, packing slip, remittance advice, out-of-office, newsletter, a portal link) | `emails\needs a person\` | Import invoices |
 
 An invoice attached to a reminder or to a bank-change email is still read into the review queue (the duplicate check
 says if AP already has it); a document that does not say what it is goes to the review queue too, so **no invoice is
@@ -65,6 +65,6 @@ held back by the sorting**. Each email's sorting and the reason are kept in `ema
 ## Checking the setup (10 minutes)
 
 Send three test emails to the AP mailbox: one with a PDF invoice, one with a vendor statement, and one saying "please
-note our new bank details". Within a few minutes, with AP Coder's folder pick-up running (*Process invoices → Process*,
+note our new bank details". Within a few minutes, with AP Coder's folder pick-up running (*Import invoices → Process*,
 or the scheduled `python -m ap_coder watch --once`), the invoice is in the review queue, the statement on the
 Statements page and the bank-detail email in red under *Emails that need a person*.

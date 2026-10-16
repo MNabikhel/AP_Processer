@@ -214,7 +214,13 @@ def test_the_setup_step_names_the_self_tests_state(store, monkeypatch):
         return process.setup_steps(store, Settings())[4]
 
     assert step("passed", ready=True)[0] == "ok"
-    assert step("pending")[0] == "todo" and "testing itself" in step("pending")[2]
-    assert step("running")[0] == "todo" and "use AP Coder meanwhile" in step("running")[2]
+    assert step("pending")[0] == "wait" and "testing itself" in step("pending")[2]  # nothing wrong: calm
+    assert step("running")[0] == "wait" and "use AP Coder meanwhile" in step("running")[2]
     assert step("failed") == ("bad", "OvisOCR2", "failed its self-test (Settings → Reading)")
     assert step("no model")[0] == "todo" and "not running in LM Studio" in step("no model")[2]
+
+
+def test_the_rail_calls_the_manual_import_import_invoices(client):
+    """The review queue is the work list; the page that brings invoices in by hand is "Import invoices" (same URL)."""
+    text = client.get("/review").text
+    assert 'href="/process"' in text and "Import invoices" in text and "Process invoices" not in text

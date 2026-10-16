@@ -1,7 +1,7 @@
 """The page reader's queue: invoices waiting for OvisOCR2 to read their pages.
 
 Reading a page with a vision model takes minutes on a laptop without a graphics card, so it never holds up
-*Process invoices*: every invoice (digital PDFs, scans and photos alike) is read and checked at once with the PDF's
+*Import invoices*: every invoice (digital PDFs, scans and photos alike) is read and checked at once with the PDF's
 text or OCR, queued, and the page reader reads it in the background (a thread of the dashboard, or
 ``python -m ap_coder read-pages``). Its reading is then folded into the invoice as one more independent reader, while
 AP hasn't touched the invoice yet; once someone has edited or decided it, nothing in it is changed. Until it has read

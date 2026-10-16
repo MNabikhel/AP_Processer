@@ -1,4 +1,4 @@
-"""Process invoices: the setup checklist, uploading invoices, picking up new files in the invoices folder.
+"""Import invoices: the setup checklist, uploading invoices, picking up new files in the invoices folder.
 
 Reading and coding runs as the background job "process" (``ap_coder/web/jobs.py``): the page uploads the files,
 then polls ``GET /process/status`` and shows each invoice as it is done. The demo invoices (load / remove) are here
@@ -131,7 +131,7 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
     elif status.page_reader_ready:
         second = ("ok", "OvisOCR2", "reads every invoice in the background")
     elif status.self_test in ("pending", "running"):
-        second = ("todo", "OvisOCR2", "testing itself (10 to 20 min the first time); use AP Coder meanwhile")
+        second = ("wait", "OvisOCR2", "testing itself (10 to 20 min the first time); use AP Coder meanwhile")
     elif status.self_test == "failed":
         second = ("bad", "OvisOCR2", "failed its self-test (Settings → Reading)")
     else:

@@ -245,6 +245,9 @@ def shape_field(item: FieldResult | Mapping[str, Any], labels: Mapping[str, str]
         "confidence": round(min(1.0, max(0.0, _num(d.get("confidence")))), 4),
         "boxes": [] if status == MISSING else boxes,
         "sources": {str(k): _plain(v) for k, v in (d.get("sources") or {}).items()},
+        # The readers behind the value: every source but "other:<value>" ones (those read something else). Said by the
+        # server, so a reading printed differently ("Oct 1, 2026" for 2026-10-01) is not taken for a disagreement.
+        "agreeing": sorted(str(k) for k in (d.get("sources") or {}) if not str(k).startswith("other:")),
         "reasons": [str(r) for r in d.get("reasons") or []],
         "failed": failed,
     }

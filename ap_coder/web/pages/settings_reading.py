@@ -54,6 +54,7 @@ HOW_IT_READS: tuple[tuple[str, str], ...] = (
 READER_PILL = {
     "ok": ("Working", "ok", "check_circle"),
     "warn": ("Needs a look", "warn", "warning"),
+    "testing": ("Testing itself", "info", "hourglass_top"),
     "off": ("Not working", "err", "error"),
 }
 SELF_TEST_PILL = {
@@ -183,7 +184,8 @@ def setup_steps(status: Any, running: bool, chat: tuple[bool, str]) -> list[tupl
         have = "copy its two files into LM Studio's models folder (below)"
     test = {
         "passed": ("ok", "passed: OvisOCR2 is trusted"),
-        "running": ("todo", "running now, by itself"),
+        "running": ("wait", "running now, by itself: you can use AP Coder meanwhile"),
+        "pending": ("wait", "starts by itself in a moment"),
         "failed": ("bad", "failed: OvisOCR2 isn't trusted until it passes (Run the self-test again)"),
     }.get(status.self_test, ("todo", "runs by itself once OvisOCR2 is found"))
     ready, label = chat

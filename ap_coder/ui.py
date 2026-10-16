@@ -479,7 +479,7 @@ def supplier_row(name: str, sub: str, state: str, progress: float, explanation: 
 
 
 def step(state: str, label: str, detail: str) -> str:
-    mark = {"ok": "✓", "todo": "!", "bad": "✕"}.get(state, "•")
+    mark = {"ok": "✓", "todo": "!", "bad": "✕", "wait": "…"}.get(state, "•")
     return (
         f"<div class='apc-step'><span class='dot {state}' aria-hidden='true'>{mark}</span>{esc(label)}"
         f"<span class='state'>{esc(detail)}</span></div>"

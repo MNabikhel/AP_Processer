@@ -96,7 +96,7 @@ slightly slower, nothing else. To go back to Qwen, load Qwen and unload Gemma.
 | "LM Studio couldn't load OvisOCR2 … not enough memory" | Close other apps or unload a model you don't need. AP Coder asks again in half an hour, or when Settings are saved. |
 | AP Coder uses Qwen although Gemma is loaded (or the other way round) | Both are loaded: unload the one you don't want. |
 | Two copies of Qwen in LM Studio's loaded list | One app loaded a different build or context. Unload one; set the per-model Context Length (step 2). |
-| CloseDesk is slow while AP Coder reads pages | Expected on a laptop CPU: they share it. AP Coder sends one page at a time; *Process invoices* never waits for the page reader. |
+| CloseDesk is slow while AP Coder reads pages | Expected on a laptop CPU: they share it. AP Coder sends one page at a time; *Import invoices* never waits for the page reader. |
 | "The model spent its answer thinking" | Update LM Studio (0.4.8+), or set the model's Thinking off in LM Studio. |
 | A request times out | LM Studio may be loading a model or busy with CloseDesk. Try again, or raise `AP_LLM_TIMEOUT_SECONDS` / `AP_PAGE_READER_TIMEOUT_SECONDS`. |
 | The embedding model shows up somewhere | It shouldn't: AP Coder ignores it. Report it. |
