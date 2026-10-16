@@ -69,6 +69,8 @@ SYSTEM = (
     "Check the arithmetic and Canadian sales tax: the lines add up to the subtotal; each tax is its rate on the lines "
     "it applies to (PST may apply to some lines only; QST is worked out on the price before GST); subtotal plus taxes "
     "equals the total. Sales tax follows where the goods are delivered to the buyer, not where the vendor is.\n"
+    "When lessons are given (corrections AP made on this vendor's earlier invoices, with AP's reasons), apply them: "
+    "they say how AP reads this vendor's invoices.\n"
     "Set confident true only when you checked every item you were asked about on the pages and are sure of each "
     "answer. Never guess: when you cannot read something, say so in the reason and set confident false. "
     "Answer with JSON only."
@@ -176,7 +178,8 @@ def question(shown: dict[str, Any], fields: list[str], lines: list[int], earlier
     context = {k: v for k, v in shown.items() if k not in ("fields", "lines")}
     text = ["Check this invoice against its pages (the images below).",
             "What was entered, to check:", json.dumps(ask, ensure_ascii=False, indent=1),
-            "For reference (the taxes, the vendor list's record of the vendor, the math worked out again):",
+            "For reference (the taxes, the vendor list's record of the vendor, the math worked out again, and AP's "
+            "lessons for this vendor):",
             json.dumps(context, ensure_ascii=False, indent=1)]  # fmt: skip
     if earlier:
         text += ["You checked this invoice before and were not sure of everything. Your earlier answers on these "
@@ -472,6 +475,11 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     except Exception:  # noqa: BLE001
         names = {}
     shown = proposal(output, vendor, names)
+    from . import lessons
+
+    learned = lessons.prompt_lines(store, output.get("vendor_name") or "", lessons.kind_of(output), gl_names=names)
+    if learned:
+        shown["lessons"] = learned
     found = review(ask_model(coder, images), shown, rounds=cfg.rounds, seconds=cfg.minutes * 60, clock=clock)
     fields = {f: {"value": shown["fields"].get(f), **v} for f, v in found.fields.items()}
     result = {**found.to_dict(), "fields": fields, "model": model, "proposal": digest(output),

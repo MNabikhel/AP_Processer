@@ -689,6 +689,63 @@ document.addEventListener("pointerdown", (e) => {
   if (chooser && !chooser.contains(e.target)) closeChooser();
 });
 
+/* ---------- "Why is this the right value?" (the same correction again and again) ---------- */
+
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "text") node.textContent = v;
+    else node.setAttribute(k, v);
+  }
+  node.append(...children.filter(Boolean));
+  return node;
+}
+
+document.addEventListener("apc:ask-why", (event) => {
+  const { form: asked, submitter, ask } = event.detail;
+  if (asked !== form) return;
+  document.querySelector("dialog.inv-why")?.remove();
+  const items = (ask.fields || []).map((f, i) => {
+    const id = `why-${i}`;
+    const was = f.proposed ? `AP Coder read “${f.proposed}”; you chose “${f.value}”.` : `You chose “${f.value}”.`;
+    const area = el("textarea", { id, rows: "2", "data-why": f.key, placeholder: "e.g. On TELUS statements the invoice number is the account number and the statement date" });
+    if (f.explanation) area.value = f.explanation;
+    return el(
+      "div",
+      { class: "inv-why-item" },
+      el("label", { for: id }, el("b", { text: `${f.label[0].toUpperCase()}${f.label.slice(1)}` }), el("span", { class: "muted small", text: ` corrected ${f.times} times` })),
+      el("p", { class: "small", text: was }),
+      f.explanation ? el("p", { class: "small muted", text: "Your last reason is below: change it if it wasn't enough." }) : null,
+      area,
+    );
+  });
+  const skip = el("button", { type: "button", class: "btn ghost", text: "Skip for now" });
+  const save = el("button", { type: "button", class: "btn primary", text: "Keep the reason and approve" });
+  const dialog = el(
+    "dialog",
+    { class: "inv-why card", "aria-labelledby": "why-title" },
+    el("h3", { id: "why-title", text: "One question before saving" }),
+    el("p", { class: "muted", text: "You keep making the same correction for this vendor. In a sentence: why is your value the right one? AP Coder keeps your reason and the AI reads it with this vendor's next invoices, so it gets it right without you." }),
+    ...items,
+    el("div", { class: "row inv-why-actions" }, skip, save),
+  );
+  document.body.append(dialog);
+  const send = (withAnswers) => {
+    form.querySelectorAll("input[data-why-sent]").forEach((x) => x.remove());
+    const add = (name, value) => form.append(el("input", { type: "hidden", name, value, "data-why-sent": "1" }));
+    add("why_done", "1");
+    if (withAnswers) dialog.querySelectorAll("textarea[data-why]").forEach((t) => t.value.trim() && add(`why::${t.dataset.why}`, t.value.trim()));
+    dialog.close();
+    dialog.remove();
+    form.requestSubmit(submitter || approveButton || undefined);
+  };
+  skip.addEventListener("click", () => send(false));
+  save.addEventListener("click", () => send(true));
+  dialog.addEventListener("cancel", () => dialog.remove());
+  dialog.showModal();
+  dialog.querySelector("textarea")?.focus();
+});
+
 /* ---------- OvisOCR2 ---------- */
 
 const reader = document.querySelector("[data-reader][data-poll]");

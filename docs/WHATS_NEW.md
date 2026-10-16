@@ -8,6 +8,21 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## This release: lessons from AP's corrections, and "why?"
+
+- **Every correction is remembered for its situation.** A situation is a vendor, a kind of document (invoice or credit
+  note) and a field, or a kind of line ("lines like 'Mobility services'"). Each approval quietly counts, for each one,
+  whether AP Coder's value was right or corrected, and the value AP chose. Nothing is asked.
+- **When the same correction keeps coming back, AP Coder asks why.** The third time the same field is corrected on
+  the same vendor (Settings → Review, "Ask why after the same correction"), approving opens one short question
+  before saving: "Why is your value the right one?". The answer is kept with the lesson; **Skip for now** saves
+  without it and asks again next time. The question comes back only if the corrections keep coming.
+- **The AI reads the lessons, with AP's reasons.** The AI reviewer and the GL suggestions are given the lessons for
+  the invoice's vendor as short plain sentences ("Northwind invoices: AP corrects the invoice number (read as
+  'ACCT 2', AP chose '2-2026'), 3 times. AP's reason: the account number, then the year.").
+- **The reviewer sees them too.** The review screen shows "Learned from AP for this vendor"; the Learning page has a
+  **Lessons** tab to read every lesson, write or change its reason, and retire one that no longer applies.
+
 ## This release: the AI reviewer
 
 - **The chat model checks every invoice against its pages, as a clerk would before posting it.** Gemma 4 12B in LM

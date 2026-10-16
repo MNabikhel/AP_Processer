@@ -257,3 +257,15 @@
   .rvw-math.ok {color: #86efac; background: rgba(22, 101, 52, .25);}
   .rvw-math.bad {color: #fcd34d; background: rgba(146, 64, 14, .3);}
 }
+
+/* "Why is this the right value?": asked before saving when the same correction keeps coming back. */
+.inv-why {width: min(560px, 92vw); padding: 20px; border: 0; border-radius: 12px; box-shadow: 0 20px 50px rgba(16, 24, 40, .3);}
+.inv-why::backdrop {background: rgba(16, 24, 40, .45);}
+.inv-why h3 {margin: 0 0 6px;}
+.inv-why-item {display: flex; flex-direction: column; gap: 4px; margin-top: 14px;}
+.inv-why-item p {margin: 0;}
+.inv-why-item textarea {width: 100%; font: inherit;}
+.inv-why-actions {display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;}
+.inv-lessons > summary {display: flex; gap: 6px; align-items: center; cursor: pointer; list-style: none;}
+.inv-lessons ul {margin: 6px 0 0 24px; padding: 0;}
+.inv-lessons li {margin: 2px 0;}

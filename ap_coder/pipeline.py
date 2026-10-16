@@ -213,6 +213,13 @@ class InvoicePipeline:
         todo = {n: li for n, li in enumerate(coding.line_items, start=1) if li.predicted_gl_code == UNASSIGNED}
         if not todo:
             return
+        from .lessons import prompt_lines
+
+        learned = prompt_lines(
+            getattr(self, "store", None), coding.vendor_name, fields="lines"
+        )  # AP's corrections, with its reasons
+        if learned:
+            history = "\n".join([history, "AP's lessons for this vendor:", *learned]).strip()
         try:
             picks = suggest_accounts(
                 self.coder, coding.vendor_name, [(n, li.description, li.amount) for n, li in todo.items()], history

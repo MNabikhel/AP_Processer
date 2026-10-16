@@ -132,6 +132,13 @@ async function submitForm(form, submitter) {
   form.dataset.sending = "1";
   setBusy(form, true, submitter);
   const answer = await post(form.action, body);
+  if (answer.ask_why) {
+    // The server asks a question before going on (invoice.js answers it, then sends the form again).
+    delete form.dataset.sending;
+    setBusy(form, false);
+    document.dispatchEvent(new CustomEvent("apc:ask-why", { detail: { form, submitter, ask: answer.ask_why } }));
+    return;
+  }
   if (answer.job && answer.status) {
     document.dispatchEvent(new CustomEvent("apc:job", { detail: answer }));
     if (!document.getElementById("job")) await watchJob(answer.status);
