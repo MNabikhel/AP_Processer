@@ -468,3 +468,18 @@ def test_where_invoices_are_delivered_to_us(client, store):
     assert ok.status_code == 200
     assert store.our_province() == "BC" and store.site_provinces() == {"CC400": "ON", "CC500": "AB"}
     assert "CC400=ON" in client.get("/settings/review").text
+
+
+def test_the_ai_reviewer_settings(client, store):
+    from ap_coder import verifier
+
+    from .test_web_invoice import PAGE as HEADERS
+
+    page = client.get("/settings/reading").text
+    assert 'id="reviewer"' in page and "AI reviewer" in page and 'name="rounds"' in page
+    bad = client.post("/settings/reading/reviewer", data={"on": "1", "rounds": "50", "minutes": "5"}, headers=HEADERS)
+    assert bad.status_code == 400
+    ok = client.post("/settings/reading/reviewer", data={"rounds": "2", "minutes": "3.5"}, headers=HEADERS)
+    assert ok.status_code == 200
+    assert verifier.load_settings(store) == verifier.ReviewerSettings(False, 2, 3.5)  # unticked: off
+    assert "Off: invoices are approved" in client.get("/settings/reading").text

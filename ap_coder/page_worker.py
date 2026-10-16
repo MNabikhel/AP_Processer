@@ -607,9 +607,29 @@ class BackgroundReader(threading.Thread):
         self.current: int | None = None  # the invoice being read now
         self.last: ReadOutcome | None = None
         self.last_test: dict[str, Any] | None = None  # the self-test it ran on its own, when it ran one
+        self.last_review: Any = None  # the AI reviewer's last review (verifier.Outcome)
 
     def stop(self) -> None:
         self._halt.set()
+
+    def _review_one(self, settings: Settings, store: Any) -> float:
+        """Nothing for the page reader to read: the AI reviewer reviews the next invoice in line (verifier.py), here
+        in the same thread so the two never ask LM Studio at once. The pause before the next round."""
+        from . import verifier
+
+        try:
+            # With OvisOCR2 running, an invoice it hasn't read yet waits: it is reviewed as the page reader leaves it.
+            after = bool(ready(settings, store)[0])
+            outcome = verifier.verify_one(settings, store, after_page_reader=after)
+        except Exception:  # noqa: BLE001 - the reviewer is an extra: never the page reader's undoing
+            log.exception("AI reviewer round failed")
+            return OFF_SECONDS
+        if outcome is None:
+            return IDLE_SECONDS
+        self.last_review = outcome
+        log.info("AI reviewer: invoice %s %s (%s round(s), %.0f s)", outcome.invoice_id, outcome.status,
+                 outcome.rounds, outcome.seconds)  # fmt: skip
+        return OFF_SECONDS if outcome.status == "postponed" else 0.0
 
     def run(self) -> None:
         while not self._halt.is_set():
@@ -633,7 +653,7 @@ class BackgroundReader(threading.Thread):
                                      outcome.status, outcome.pages, outcome.seconds)  # fmt: skip
                             pause = 0.0 if outcome.status != "postponed" else OFF_SECONDS
                         else:
-                            pause = IDLE_SECONDS
+                            pause = self._review_one(settings, store)
             except Exception:  # never let the thread die: the next round tries again
                 log.exception("page reader round failed")
                 pause = OFF_SECONDS

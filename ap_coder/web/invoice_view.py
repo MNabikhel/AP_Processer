@@ -38,6 +38,7 @@ from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import Store, suggestion_kept
 from ap_coder.suggest import suggest_gl
 from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, TAX_TYPES, province_label
+from ap_coder.taxmath import math_check  # noqa: F401 - the review screen's math, shown with the tax lines
 from ap_coder.terms import describe as terms_describe
 from ap_coder.terms import payment
 from ap_coder.ui import TAX_LABELS, money, plural
@@ -482,6 +483,52 @@ def not_running(status: Any, settings: Settings, store: Store) -> str:
     return "" if model else "OvisOCR2 isn't running: see Settings → Reading."
 
 
+def reviewer_state(store: Store, inv: dict[str, Any]) -> dict[str, Any]:
+    """What the AI reviewer (verifier.py) made of this invoice, for a line under the document title: {state, lines:
+    [(icon, text)], again: offer to review it again}."""
+    from ap_coder import verifier
+
+    if not verifier.load_settings(store).on:
+        return {"state": "off", "lines": [], "again": False}
+    row = store.verification(inv["id"])
+    if row is None:
+        return {"state": "none", "lines": [], "again": True}
+    state, result = row["status"], row.get("result") or {}
+    name = verifier.NAME
+    if state == "verifying":
+        return {"state": state, "lines": [("hourglass_top", f"The {name} is checking this invoice against its pages "
+                                           "now.")], "again": False}  # fmt: skip
+    if state == "waiting":
+        text = (
+            f"The {name} checks this invoice against its pages when the chat model is free (after OvisOCR2). "
+            "It isn't approved without a person until it agrees."
+        )
+        lines = [("hourglass_top", text)]
+        if row.get("error"):
+            lines.append(("sync_problem", f"Last time: {row['error']}"))
+        return {"state": state, "lines": lines, "again": False}
+    if state == "failed":
+        return {"state": state, "lines": [("error", f"The {name} couldn't check it: {row.get('error')}. A person "
+                                                    "decides.")], "again": True}  # fmt: skip
+    if state == "skipped":
+        return {"state": state, "lines": [("info", f"Not checked by the {name}: {row.get('error')}.")], "again": True}
+    took = f"{plural(int(result.get('rounds') or 0), 'round')}, {float(result.get('seconds') or 0):.0f} s"
+    status = result.get("status")
+    if status == verifier.AGREED:
+        line = ("verified", f"The {name} checked every field and line against the pages and agrees ({took}).")
+    elif status == verifier.DISAGREES:
+        what = ", ".join(verifier.FIELDS.get(f, f) for f in result.get("fields") or {})
+        lines_ = ", ".join(f"line {n}" for n in result.get("lines") or {})
+        line = ("rule", f"The {name} reads {', '.join(x for x in (what, lines_) if x)} differently ({took}): see the "
+                        "checks.")  # fmt: skip
+    else:
+        line = ("help", f"The {name} is not sure ({result.get('why') or took}): a person checks it.")
+    out = [line]
+    if result.get("summary"):
+        out.append(("chat", f"“{result['summary']}”"))
+    return {"state": status or state, "lines": out, "again": True}
+
+
 def reader_state(store: Store, settings: Settings, inv: dict[str, Any], status: Any) -> dict[str, Any]:
     """What OvisOCR2 made of this invoice, for the line under the document title: ``state`` is "read" (its reading
     is in), "waiting", "reading", "skipped", "done" (read, not applied), "failed", "none" (not in its queue) or ""
@@ -837,58 +884,6 @@ def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str,
     return rows
 
 
-def math_check(coding: InvoiceCoding) -> dict[str, Any]:
-    """Every sum on the invoice, worked out again from the lines as they are on screen: the lines add up to the
-    subtotal; each tax is its rate on the lines marked with it (GST/HST/PST/QST ticked per line, so a PST-exempt line
-    is simply not ticked; QST on the price before GST); subtotal + taxes = total. ``ok`` when all of it does, else
-    each difference. Tax is allowed a cent of rounding, or a cent per line when the vendor rounded line by line."""
-    rows: list[dict[str, Any]] = []
-    items = coding.line_items
-    n = len(items)
-    lines_total = round(sum(li.amount for li in items), 2)
-    diff = round(lines_total - coding.subtotal, 2)
-    rows.append({"what": "Lines = subtotal", "ok": abs(diff) < 0.015,
-                 "detail": f"{plural(n, 'line')} add up to {money(lines_total)}; the subtotal is "
-                           f"{money(coding.subtotal)}",
-                 "diff": money(diff) if abs(diff) >= 0.015 else ""})  # fmt: skip
-    for tax_type in dict.fromkeys(t.tax_type for t in coding.tax_lines):
-        taxes = [t for t in coding.tax_lines if t.tax_type == tax_type]
-        charged = round(sum(t.tax_amount for t in taxes), 2)
-        label = TAX_LABELS.get(tax_type, tax_type)
-        if abs(charged) < 0.005:
-            continue  # "GST 0.00" printed: nothing charged
-        flagged = [li for li in items if tax_type in li.taxes_applied]
-        if not flagged:
-            rows.append({"what": label, "ok": False, "diff": money(charged),
-                         "detail": f"{money(charged)} charged, but no line is marked {label}: tick it on the lines it "
-                                   "applies to"})  # fmt: skip
-            continue
-        rates = {round(t.rate, 6) for t in taxes}
-        if len(rates) != 1:  # the same tax at two rates (e.g. goods and freight): checked per tax line elsewhere
-            continue
-        rate = rates.pop()
-        base = round(sum(li.amount for li in flagged), 2)
-        expected = round(base * rate, 2)
-        per_line = round(sum(round(li.amount * rate, 2) for li in flagged), 2)
-        off = min(abs(expected - charged), abs(per_line - charged))
-        ok = off <= 0.015 or abs(expected - charged) <= 0.01 * (len(flagged) / 2 + 1) + 1e-9
-        which = "every line" if len(flagged) == n else f"{len(flagged)} of {n} lines"
-        rows.append({"what": label, "ok": ok, "diff": "" if ok else money(round(charged - expected, 2)),
-                     "detail": f"{which} ({money(base)}) × {rate * 100:.4g}% = {money(expected)}; charged "
-                               f"{money(charged)}"})  # fmt: skip
-    taxes_total = round(sum(t.tax_amount for t in coding.tax_lines), 2)
-    computed = round(coding.subtotal + taxes_total, 2)
-    diff = round(coding.grand_total - computed, 2)
-    rows.append({"what": "Subtotal + tax = total", "ok": abs(diff) < 0.015,
-                 "diff": money(diff) if abs(diff) >= 0.015 else "",
-                 "detail": f"{money(coding.subtotal)} + {money(taxes_total)} = {money(computed)}; the total is "
-                           f"{money(coding.grand_total)}"})  # fmt: skip
-    wrong = [r for r in rows if not r["ok"]]
-    return {"rows": rows, "ok": not wrong,
-            "text": "All adds up" if not wrong else f"{plural(len(wrong), 'difference')}: "
-            + ", ".join(r["what"] for r in wrong)}  # fmt: skip
-
-
 def spend_split(output: dict[str, Any], reference: ReferenceData) -> list[dict[str, Any]]:
     """Where the money goes: expense GLs (incl. non-recoverable tax) and recoverable tax accounts (a credit note:
     nothing to draw)."""
@@ -978,6 +973,13 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     )
     output, report = finalise_coding(coding, reference, settings, extraction, store=store,
                                      exclude_invoice_id=inv["id"])  # fmt: skip
+    # The AI reviewer's findings, on what is on screen now: a field it disputed that the reviewer changed is settled.
+    from ap_coder import verifier
+    from ap_coder.validation import Issue
+
+    review = store.verification(inv["id"])
+    for severity, code, message in verifier.issues((review or {}).get("result"), output):
+        report.issues.append(Issue(severity, code, message))
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()

@@ -66,6 +66,10 @@ def touchless(monkeypatch):
 
 
 def test_a_new_invoice_waits_for_the_page_reader_then_it_decides(store, touchless, monkeypatch):
+    from ap_coder import verifier
+
+    # The AI reviewer off: the page reader decides (with it on, the reviewer does, after: test_verifier.py).
+    verifier.save_settings(store, on=False, rounds=3, minutes=5)
     result = InvoicePipeline(_settings(), store.reference_data(), store=store).process(PDF)
     assert result.ok and touchless == [True]
     assert result.autonomy["reason"] == WAITING_FOR_PAGE_READER and not result.autonomy["auto"]
@@ -346,13 +350,15 @@ def _ovis(state="loaded"):
 
 
 def test_reading_status_with_nothing_running(store):
-    from ap_coder.reading import OFF, ReadingStatus, reading_status
+    from ap_coder.reading import OFF, WARN, ReadingStatus, reading_status
 
     status = reading_status(Settings(), store)
     assert isinstance(status, ReadingStatus)
     assert [r.name for r in status.readers] == ["PDF text layer", "OCR (two engines)", "Table finder",
                                                 "Page reader (OvisOCR2)", "Rule reader", "Supplier templates",
-                                                "Business checks", "GL coding model"]  # fmt: skip
+                                                "Business checks", "GL coding model", "AI reviewer"]  # fmt: skip
+    # On, but with no chat model it can't review: invoices wait for a person (said, as a warning).
+    assert status.reader("AI reviewer").state == WARN and "load Gemma 4 12B" in status.reader("AI reviewer").detail
     assert (status.page_reader_model, status.page_reader_ready, status.self_test) == ("", False, "no model")
     assert status.reader("Page reader (OvisOCR2)").state == OFF and status.reader("GL coding model").state == OFF
     assert status.banner == "LM Studio isn't running: invoices are read by OCR only and wait for a person."
@@ -407,7 +413,7 @@ def test_reading_status_never_raises(monkeypatch):
 
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: _ovis())
     status = reading_status(Settings(), Broken())
-    assert len(status.readers) == 8 and not status.page_reader_ready and status.banner
+    assert len(status.readers) == 9 and not status.page_reader_ready and status.banner
     assert reading_status(Settings(), None).readers  # no database at all
     monkeypatch.setattr(page_reader, "reader_status", lambda *a, **k: (_ for _ in ()).throw(OSError("no")))
     assert reading_status(Settings(), None).self_test == "pending"

@@ -19,6 +19,10 @@
   <div class="inv-doc-notes">
     {% if mode == "review" %}
     <div data-reader data-state="{{ doc.reader.state }}"{% if doc.reader.poll %} data-poll="{{ poll_seconds }}"{% endif %}>{{ live_ui.reader(doc.reader, inv.id) }}</div>
+    {% for icon, text in doc.reviewer.lines %}<div class="inv-note"><span class="ms" aria-hidden="true">{{ icon }}</span><span>{{ text }}</span></div>{% endfor %}
+    {% if doc.reviewer.again %}
+    <form method="post" action="/review/{{ inv.id }}/review-again" class="inv-inline"><button class="btn sm ghost" type="submit" title="The AI reviewer checks the invoice against its pages, with the chat model in LM Studio"><span class="ms" aria-hidden="true">fact_check</span>{{ "Have the AI reviewer check it" if doc.reviewer.state == "none" else "Have the AI reviewer check it again" }}</button></form>
+    {% endif %}
     {% if kept %}
     <div class="inv-note"><span class="ms" aria-hidden="true">edit_note</span><span>OvisOCR2 finished after you started editing: your edits are kept, so the fields still show the first reading.</span>
       <form method="post" action="/review/{{ inv.id }}/start-over" class="inv-inline"><button class="btn sm ghost" type="submit"><span class="ms" aria-hidden="true">restart_alt</span>Start over from its reading</button></form></div>

@@ -32,6 +32,7 @@ from ap_coder.web.core import (
     reading_status_or_none,
     reference_or_none,
     refuse,
+    reviewer,
 )
 from ap_coder.web.jobs import Job
 
@@ -325,12 +326,38 @@ def reading_context(request: Request, *, fresh: bool = False) -> dict[str, Any]:
     }
     if status is not None:
         context["reader"] = page_reader_context(settings, store, status)
+    from ap_coder import verifier
+
+    context["ai_reviewer"] = verifier.load_settings(store)
+    context["reviewer_limits"] = {"rounds": verifier.MAX_ROUNDS, "minutes": verifier.MAX_MINUTES}
     if context["developer"]:
         context["azure"] = azure_context(settings, request)
     return context
 
 
 # --- Actions --------------------------------------------------------------------------------------------------------
+
+
+@router.post("/settings/reading/reviewer")
+def save_reviewer(
+    request: Request, on: str = Form(""), rounds: str = Form("3"), minutes: str = Form("5")
+) -> JSONResponse:
+    """The AI reviewer: on or off, how many rounds and how long an invoice at most."""
+    from ap_coder import verifier
+
+    try:
+        n, m = int(float(rounds)), float(minutes)
+    except (TypeError, ValueError, OverflowError):
+        return refuse("Rounds and minutes must be numbers.")
+    if not 1 <= n <= verifier.MAX_ROUNDS or not 0.5 <= m <= verifier.MAX_MINUTES:
+        return refuse(f"Rounds from 1 to {verifier.MAX_ROUNDS}, minutes from 0.5 to {verifier.MAX_MINUTES:g}.")
+    store = get_store(request)
+    before = verifier.load_settings(store)
+    after = verifier.save_settings(store, on=on in ("1", "on", "true"), rounds=n, minutes=m, actor=reviewer())
+    changed = before != after
+    if changed:
+        store.log_event("settings_changed", actor=reviewer(), detail={"keys": ["verifier"]})
+    return done(request, URL + "#reviewer", "Saved." if changed else "Nothing changed.")
 
 
 @router.post("/settings/reading/check")

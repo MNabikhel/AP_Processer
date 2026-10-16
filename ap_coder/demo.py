@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import verifier
 from .capture.workflow import capture_invoice
 from .config import Settings
 from .paths import PROJECT_DIR
@@ -166,6 +167,8 @@ def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
             store.approve_invoice(invoice_id, final, DEMO_REVIEWER)
             _record_supplier_outcomes(store, invoice_id, output, final)
             approved += 1
+        elif verifier.load_settings(store).on:  # the AI reviewer checks the demo invoices left to review too
+            store.queue_verification(invoice_id, "demo")
     return {"added": added, "approved": approved, "to_review": added - approved}
 
 

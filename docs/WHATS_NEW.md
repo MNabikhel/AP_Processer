@@ -8,6 +8,22 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## This release: the AI reviewer
+
+- **The chat model checks every invoice against its pages, as a clerk would before posting it.** Gemma 4 12B in LM
+  Studio is shown the page images and everything AP Coder proposes: the header, each line and its GL account, the
+  taxes, the vendor from the vendor list, and the math worked out again. It thinks first (its thinking is on for this,
+  and only this), and answers for each field and line, and whether it is sure.
+- **Asked again until it is sure.** What it disputed (or everything, when it was not confident) goes back to it with
+  its own reasons, up to 3 rounds and 5 minutes an invoice (Settings → Reading, "AI reviewer"). Then: it **agrees**;
+  or it **reads a field differently** twice in a row (the field is marked Check, the warning says what it read); or it
+  is **not sure** (a warning sends it to a person). It never changes a value: a person decides.
+- **No invoice is approved without a person until it agrees.** An invoice touchless processing would approve waits for
+  it, then is approved once it agrees (if the supplier is still touchless and within the limits).
+- **In the background, after OvisOCR2**, in the same line, so the two never load LM Studio at once. The review screen
+  says what it found (or that it waits), with "Have the AI reviewer check it again"; Settings → Reading shows its row
+  and how many it agreed with. Turn it off there if you need to.
+
 ## This release: the review screen (vendor list, sales tax, picking words on the page)
 
 - **The vendor comes from the vendor list.** Start typing in the Vendor field to pick it from the vendor list (the

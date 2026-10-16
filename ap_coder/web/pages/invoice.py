@@ -243,6 +243,7 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
         "problem": problem,
         "text": Markup(ui.document_text(inv.get("extraction_md") or "")),  # noqa: S704 - document_text escapes
         "reader": view.reader_state(store, settings, inv, status),
+        "reviewer": view.reviewer_state(store, inv),
         "lines_note": sources_line(capture.line_items, capture.checks) if capture is not None else "",
         "original": {"file": str(original["file"]),
                      "folder": Path(str(original.get("kept") or "")).parent.name or "originals"}
@@ -707,6 +708,23 @@ def read_pages(request: Request, invoice_id: int) -> JSONResponse:
     store.queue_page_read(invoice_id, "not read yet", requested_by=reviewer())
     return done(request, f"/review/{invoice_id}", flash_message(
         "Added to OvisOCR2's queue: it reads it in the background.", "ok", icon="visibility"))  # fmt: skip
+
+
+@router.post("/review/{invoice_id:int}/review-again")
+def review_again(request: Request, invoice_id: int) -> JSONResponse:
+    """Put the invoice in line for the AI reviewer again (the chat model was changed, or it wasn't answering)."""
+    from ap_coder import verifier
+
+    store = get_store(request)
+    inv = _invoice(store, invoice_id)
+    if inv["status"] != REVIEW:
+        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
+    if not verifier.load_settings(store).on:
+        return refuse(f"The {verifier.NAME} is off: turn it on in Settings → Reading.")
+    store.queue_verification(invoice_id, f"asked by {reviewer()}")
+    return done(request, f"/review/{invoice_id}", flash_message(
+        f"In line for the {verifier.NAME}: it checks the invoice when the chat model is free.", "ok",
+        icon="playlist_add"))  # fmt: skip
 
 
 @router.post("/review/{invoice_id:int}/start-over")

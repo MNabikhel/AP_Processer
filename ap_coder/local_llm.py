@@ -429,6 +429,32 @@ THINKING_MESSAGE = (
 CUT_OFF_MESSAGE = "The model's reply was cut off before the JSON was complete{limit}; raise AP_LLM_MAX_TOKENS."
 
 
+# The AI reviewer (verifier.py) is the one call that asks a model TO think: it checks a whole invoice, and a model that
+# reasons first catches more. The same fields, the other way round; a server that refuses them gets fewer.
+THINKING_ON: tuple[dict[str, Any], ...] = (
+    {"chat_template_kwargs": {"enable_thinking": True}, "reasoning_effort": "high"},
+    {"chat_template_kwargs": {"enable_thinking": True}},
+    {},
+)
+_thinking_on_by_model: dict[str, int] = {}
+
+
+def thinking_on(base_url: str, model: str) -> dict[str, Any]:
+    """``extra_body`` asking a thinking model to think (less, or nothing, for a server that refused the fields)."""
+    fields = THINKING_ON[_thinking_on_by_model.get(f"{base_url}|{model}", 0)]
+    return {"extra_body": dict(fields)} if fields else {}
+
+
+def refuse_thinking_on(base_url: str, model: str) -> bool:
+    """The server refused the thinking fields: send fewer from now on. False when none are left to drop."""
+    key = f"{base_url}|{model}"
+    level = _thinking_on_by_model.get(key, 0)
+    if level + 1 >= len(THINKING_ON):
+        return False
+    _thinking_on_by_model[key] = level + 1
+    return True
+
+
 def thinking_off(base_url: str, model: str) -> dict[str, Any]:
     """``extra_body`` for the OpenAI SDK: ask a thinking model not to think (less, or nothing, for a server that
     refused the fields)."""

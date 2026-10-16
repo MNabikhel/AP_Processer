@@ -1,0 +1,526 @@
+"""The AI reviewer: the local chat model (Gemma 4, Qwen 3.5) checks a whole invoice against its pages, in the
+background.
+
+Every reader so far reads fields; nothing looked at the invoice as a whole the way an AP clerk does before posting it.
+The AI reviewer is given the page images and everything AP Coder proposes (the header, the lines with their GL
+accounts, the taxes and totals, the vendor from the vendor list, the math worked out again) and asked, with its
+thinking on, whether each of it is right. It answers per field and per line, and whether it is confident.
+
+It is asked again until it is sure: the fields it disputed (or all of it, when it was not confident) go back to it
+with its own reasons, up to ``rounds`` times and ``minutes`` in all (Settings → Reading). Then:
+
+* **agreed**: it found nothing wrong and is confident. An invoice touchless processing had held for it is approved.
+* **disagrees**: it read a field differently twice in a row, confident: the field is marked Check and the warning
+  VERIFIER_DISAGREES says what it read.
+* **unsure**: out of rounds or time without being confident: the warning VERIFIER_UNSURE sends it to a person.
+
+Like the Azure check (azure_check.py), an invoice waits in line (``verifications``), is never approved without a
+person until the reviewer agrees (with the reviewer on), and the reviewer runs between the page reader's invoices, in
+the same background thread, so the two never load LM Studio at once. It never changes a value: a person decides.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import datetime as dt
+import hashlib
+import json
+import logging
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+log = logging.getLogger(__name__)
+
+SETTING = "verifier"  # Settings → Reading, as JSON: {"on", "rounds", "minutes"}
+DEFAULT_ROUNDS, MAX_ROUNDS = 3, 6
+DEFAULT_MINUTES, MAX_MINUTES = 5.0, 30.0
+MAX_PAGES = 3  # page images sent: the header, the lines, the totals
+NAME = "AI reviewer"
+READER = "verifier"  # its name among the readers (a field's sources)
+AGREED, DISAGREES, UNSURE = "agreed", "disagrees", "unsure"
+DISAGREES_CODE, UNSURE_CODE = "VERIFIER_DISAGREES", "VERIFIER_UNSURE"
+WAITING_FOR_REVIEWER = f"waiting for the {NAME}: approved once it agrees"
+WARNING = "warning"
+
+# What it checks, with the names a clerk knows them by.
+FIELDS: dict[str, str] = {
+    "vendor_name": "vendor", "invoice_number": "invoice number", "invoice_date": "invoice date",
+    "due_date": "due date", "po_number": "PO number", "currency": "currency",
+    "gst_hst_registration_number": "GST/HST number", "qst_registration_number": "QST number",
+    "pst_registration_number": "PST number", "subtotal": "subtotal", "tax_total": "total tax",
+    "grand_total": "total",
+}  # fmt: skip
+AMOUNTS = ("subtotal", "tax_total", "grand_total")
+
+SYSTEM = (
+    "You are a careful accounts-payable reviewer at a Canadian company. Before an invoice is posted to JD Edwards, you "
+    "check what was entered for it against the invoice's pages (the images). Think it through step by step before you "
+    "answer.\n"
+    "For each field you are asked about: look for it on the pages and say whether the value entered is what the "
+    "invoice says (agree true or false). A date, an amount or a number printed another way is the same value "
+    '("Oct 1, 2026" is 2026-10-01; "$1,234.50" is 1234.5; "123 456 789 RT 0001" is 123456789RT0001). When you '
+    "disagree, write in on_page the value as the invoice shows it; when the field is not on the pages, agree only if "
+    "the value entered is empty. vendor is the company that issued the invoice, never the customer it is billed or "
+    "shipped to.\n"
+    "For each line you are asked about: say whether its description and amount are on the pages as entered, and "
+    "whether its GL account plausibly fits what was bought (agree false if not, with the reason).\n"
+    "Check the arithmetic and Canadian sales tax: the lines add up to the subtotal; each tax is its rate on the lines "
+    "it applies to (PST may apply to some lines only; QST is worked out on the price before GST); subtotal plus taxes "
+    "equals the total. Sales tax follows where the goods are delivered to the buyer, not where the vendor is.\n"
+    "Set confident true only when you checked every item you were asked about on the pages and are sure of each "
+    "answer. Never guess: when you cannot read something, say so in the reason and set confident false. "
+    "Answer with JSON only."
+)
+
+
+def schema(fields: list[str], lines: list[int]) -> dict[str, Any]:
+    """The answer's JSON schema: one entry per field and per line asked about, then confident and a summary."""
+    field = {"type": "object", "additionalProperties": False, "required": ["field", "agree", "on_page", "reason"],
+             "properties": {"field": {"type": "string", "enum": fields or list(FIELDS)}, "agree": {"type": "boolean"},
+                            "on_page": {"type": ["string", "null"]}, "reason": {"type": "string"}}}  # fmt: skip
+    line = {"type": "object", "additionalProperties": False, "required": ["line_number", "agree", "reason"],
+            "properties": {"line_number": {"type": "integer"}, "agree": {"type": "boolean"},
+                           "reason": {"type": "string"}}}  # fmt: skip
+    return {"type": "object", "additionalProperties": False, "required": ["fields", "lines", "confident", "summary"],
+            "properties": {"fields": {"type": "array", "items": field}, "lines": {"type": "array", "items": line},
+                           "confident": {"type": "boolean"}, "summary": {"type": "string"}}}  # fmt: skip
+
+
+# --- Its settings -------------------------------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewerSettings:
+    on: bool = True
+    rounds: int = DEFAULT_ROUNDS
+    minutes: float = DEFAULT_MINUTES
+
+
+def load_settings(store: Any) -> ReviewerSettings:
+    """Settings → Reading (on by default: 3 rounds, 5 minutes an invoice)."""
+    try:
+        data = json.loads(store.get_setting(SETTING) or "{}")
+    except (ValueError, TypeError, AttributeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    try:
+        rounds = min(MAX_ROUNDS, max(1, int(data.get("rounds", DEFAULT_ROUNDS))))
+        minutes = min(MAX_MINUTES, max(0.5, float(data.get("minutes", DEFAULT_MINUTES))))
+    except (TypeError, ValueError):
+        rounds, minutes = DEFAULT_ROUNDS, DEFAULT_MINUTES
+    return ReviewerSettings(on=bool(data.get("on", True)), rounds=rounds, minutes=minutes)
+
+
+def save_settings(store: Any, *, on: bool, rounds: int, minutes: float, actor: str | None = None) -> ReviewerSettings:
+    cfg = ReviewerSettings(on=bool(on), rounds=min(MAX_ROUNDS, max(1, int(rounds))),
+                           minutes=min(MAX_MINUTES, max(0.5, float(minutes))))  # fmt: skip
+    store.set_setting(SETTING, json.dumps(dataclasses.asdict(cfg)), actor=actor)
+    return cfg
+
+
+# --- What it is shown -------------------------------------------------------------------------------------------
+
+
+def _shown(value: Any) -> Any:
+    if isinstance(value, float):
+        return round(value, 2)
+    return value if value not in (None, "") else ""
+
+
+def proposal(output: dict[str, Any], vendor: dict[str, Any] | None, gl_names: dict[str, str] | None = None
+             ) -> dict[str, Any]:  # fmt: skip
+    """Everything AP Coder proposes for the invoice, as the reviewer is shown it."""
+    gl_names = gl_names or {}
+    out: dict[str, Any] = {"fields": {name: _shown(output.get(name)) for name in FIELDS}}
+    out["lines"] = [
+        {"line_number": li.get("line_number"), "description": li.get("description") or "",
+         "quantity": li.get("quantity"), "unit_price": li.get("unit_price"), "amount": _shown(li.get("amount")),
+         "taxes": list(li.get("taxes_applied") or []),
+         "gl_account": f"{li.get('predicted_gl_code') or ''} {gl_names.get(str(li.get('predicted_gl_code')), '')}"
+         .strip()}
+        for li in output.get("line_items") or []
+    ]  # fmt: skip
+    out["taxes"] = [{"tax": t.get("tax_type"), "province": t.get("province") or "", "rate": t.get("rate"),
+                     "on": _shown(t.get("taxable_amount")), "amount": _shown(t.get("tax_amount"))}
+                    for t in output.get("tax_lines") or []]  # fmt: skip
+    out["place_of_supply"] = output.get("ship_to_province") or ""
+    if vendor:
+        out["vendor_list"] = {k: v for k, v in {
+            "name": vendor.get("display_name"), "erp_id": vendor.get("erp_id"), "gst_hst": vendor.get("expected_gst"),
+            "qst": vendor.get("qst_number"), "pst": vendor.get("pst_number"), "province": vendor.get("province"),
+        }.items() if v}  # fmt: skip
+    try:
+        from .schema import InvoiceCoding
+        from .taxmath import math_check
+
+        out["math"] = [f"{'OK' if r['ok'] else 'WRONG'}: {r['what']}: {r['detail']}"
+                       for r in math_check(InvoiceCoding.model_validate(output))["rows"]]  # fmt: skip
+    except Exception:  # noqa: BLE001 - the math is a help, never a reason not to ask
+        pass
+    return out
+
+
+def digest(output: dict[str, Any]) -> str:
+    """Which proposal a review was of: a new reading (the page reader's) is reviewed again."""
+    keep = {k: output.get(k) for k in (*FIELDS, "line_items", "tax_lines", "ship_to_province")}
+    return hashlib.sha256(json.dumps(keep, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def question(shown: dict[str, Any], fields: list[str], lines: list[int], earlier: dict[str, Any] | None) -> str:
+    """The user message's text: what to check (all of it, or what it disputed), and its own earlier answers."""
+    ask = {"fields": {f: shown["fields"].get(f, "") for f in fields},
+           "lines": [li for li in shown["lines"] if li.get("line_number") in lines]}  # fmt: skip
+    context = {k: v for k, v in shown.items() if k not in ("fields", "lines")}
+    text = ["Check this invoice against its pages (the images below).",
+            "What was entered, to check:", json.dumps(ask, ensure_ascii=False, indent=1),
+            "For reference (the taxes, the vendor list's record of the vendor, the math worked out again):",
+            json.dumps(context, ensure_ascii=False, indent=1)]  # fmt: skip
+    if earlier:
+        text += ["You checked this invoice before and were not sure of everything. Your earlier answers on these "
+                 "items, with your reasons:", json.dumps(earlier, ensure_ascii=False, indent=1),
+                 "Look at the pages again, carefully, item by item. Change an answer only if you now see it "
+                 "differently; keep it if you are sure."]  # fmt: skip
+    return "\n".join(text)
+
+
+# --- Asking it until it is sure -------------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class Review:
+    status: str  # agreed | disagrees | unsure
+    fields: dict[str, dict[str, Any]]  # disputed: {field: {"value", "on_page", "reason"}}
+    lines: dict[int, str]  # disputed lines: {line_number: reason}
+    rounds: int
+    seconds: float
+    summary: str = ""
+    why: str = ""  # unsure: out of rounds, out of time, or a reply it couldn't give
+
+    def to_dict(self) -> dict[str, Any]:
+        d = dataclasses.asdict(self)
+        d["lines"] = {str(k): v for k, v in self.lines.items()}
+        return d
+
+
+def _parse(data: dict[str, Any], fields: list[str], lines: list[int]) -> tuple[dict[str, dict], dict[int, str], bool,
+                                                                                  str]:  # fmt: skip
+    """(disputed fields, disputed lines, confident, summary) from one answer. An item asked about but not answered is
+    not confirmed: the answer is not confident."""
+    answered_f: dict[str, dict] = {}
+    for item in data.get("fields") or []:
+        if isinstance(item, dict) and item.get("field") in fields:
+            answered_f[str(item["field"])] = item
+    answered_l: dict[int, dict] = {}
+    for item in data.get("lines") or []:
+        try:
+            n = int(item.get("line_number"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if n in lines:
+            answered_l[n] = item
+    confident = bool(data.get("confident")) and set(answered_f) >= set(fields) and set(answered_l) >= set(lines)
+    disputed = {f: {"on_page": (str(a.get("on_page")) if a.get("on_page") not in (None, "") else ""),
+                    "reason": str(a.get("reason") or "")[:300]}
+                for f, a in answered_f.items() if a.get("agree") is False}  # fmt: skip
+    lines_out = {n: str(a.get("reason") or "")[:300] for n, a in answered_l.items() if a.get("agree") is False}
+    return disputed, lines_out, confident, str(data.get("summary") or "")[:400]
+
+
+def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: dict[str, Any], *,
+           rounds: int = DEFAULT_ROUNDS, seconds: float = DEFAULT_MINUTES * 60,
+           clock: Callable[[], float] = time.monotonic) -> Review:  # fmt: skip
+    """Ask (``ask(text, fields, lines)`` returns the model's JSON) until it is sure, ``rounds`` times at most and
+    ``seconds`` in all. Round 1 is everything; each next round is what it disputed (everything again when it disputed
+    nothing but was not confident), with its earlier answers. A dispute it keeps on a second look while confident is
+    a disagreement; one it drops is resolved."""
+    start = clock()
+    all_fields = list(FIELDS)
+    all_lines = [li["line_number"] for li in shown["lines"] if isinstance(li.get("line_number"), int)]
+    fields, lines, earlier = all_fields, all_lines, None
+    previous: tuple[set[str], set[int]] | None = None
+    summary, why, done = "", "", 0
+    disputed: dict[str, dict] = {}
+    disputed_lines: dict[int, str] = {}
+    while done < rounds:
+        if done and clock() - start >= seconds:
+            why = f"out of time ({seconds / 60:.0f} min)"
+            break
+        try:
+            data = ask(question(shown, fields, lines, earlier), fields, lines)
+        except Exception as exc:  # noqa: BLE001 - a reply it couldn't give counts as not sure
+            why = f"no usable answer ({str(exc)[:160]})"
+            done += 1
+            break
+        done += 1
+        got_f, got_l, confident, summary = _parse(data, fields, lines)
+        # What it now says about the items asked; items not asked this round keep their earlier answer (none: they
+        # were agreed).
+        disputed = {f: v for f, v in {**disputed, **got_f}.items() if f in got_f or f not in fields}
+        disputed_lines = {n: r for n, r in {**disputed_lines, **got_l}.items() if n in got_l or n not in lines}
+        now = (set(disputed), set(disputed_lines))
+        if confident and not disputed and not disputed_lines:
+            return Review(AGREED, {}, {}, done, round(clock() - start, 1), summary)
+        if confident and previous is not None and now[0] <= previous[0] and now[1] <= previous[1]:
+            # It stands by what it disputed, on a second look: a disagreement, for a person to settle.
+            return Review(DISAGREES, disputed, disputed_lines, done, round(clock() - start, 1), summary)
+        previous = now
+        fields = sorted(disputed) if (disputed or disputed_lines) else all_fields
+        lines = sorted(disputed_lines) if (disputed or disputed_lines) else all_lines
+        earlier = {"fields": {f: {"agree": False, **v} for f, v in disputed.items()},
+                   "lines": {str(n): r for n, r in disputed_lines.items()}, "summary": summary,
+                   "confident": confident}  # fmt: skip
+    if not why:
+        why = f"not sure after {done} round{'s' if done != 1 else ''}"
+    return Review(UNSURE, disputed, disputed_lines, done, round(clock() - start, 1), summary, why)
+
+
+def ask_model(coder: Any, images: list[Any]) -> Callable[[str, list[str], list[int]], dict[str, Any]]:
+    """``ask`` for ``review``: one call to the local chat model with the page images, thinking on."""
+    from . import local_llm
+    from .inference import CodingError
+
+    model = coder._prepare_local()
+
+    def ask(text: str, fields: list[str], lines: list[int]) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        content += [{"type": "image_url", "image_url": {"url": img.to_data_url(), "detail": "high"}} for img in images]
+        messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}]
+        response = coder._local_create(model, messages, schema(fields, lines), thinking=True)
+        reply = local_llm.read_reply(response.choices[0], response_limit(coder))
+        if reply.data is None:
+            raise CodingError(reply.problem)
+        return reply.data
+
+    return ask
+
+
+def response_limit(coder: Any) -> int:
+    from .inference import THINKING_TOKENS
+
+    return max(int(coder.settings.llm.max_output_tokens or 0), THINKING_TOKENS)
+
+
+# --- What it means for the invoice --------------------------------------------------------------------------------
+
+
+def _value_text(field: str, value: Any) -> str:
+    if field in AMOUNTS and isinstance(value, (int, float)):
+        return f"{value:,.2f}"
+    return str(value) if value not in (None, "") else "(empty)"
+
+
+def issues(result: dict[str, Any] | None, output: dict[str, Any] | None = None) -> list[tuple[str, str, str]]:
+    """(severity, code, message) for the review screen from a review's result. With ``output`` (what is on screen
+    now): a field it disputed that the reviewer has since changed is no longer reported."""
+    if not result:
+        return []
+    status = result.get("status")
+    fields = dict(result.get("fields") or {})
+    if output is not None:
+        from .capture.normalize import normalize_value
+
+        fields = {f: v for f, v in fields.items()
+                  if normalize_value(f, output.get(f)) == normalize_value(f, v.get("value"))}  # fmt: skip
+    lines = result.get("lines") or {}
+    parts = [f"{FIELDS.get(f, f)}: it reads {v.get('on_page') or 'something else'} on the page"
+             f"{' (' + v['reason'] + ')' if v.get('reason') else ''}" for f, v in fields.items()]  # fmt: skip
+    parts += [f"line {n}: {reason or 'not as entered'}" for n, reason in lines.items()]
+    if status == DISAGREES and parts:
+        return [(WARNING, "VERIFIER_DISAGREES", f"the {NAME} disagrees: " + "; ".join(parts)[:900])]
+    if status == UNSURE:
+        what = "; ".join(parts) if parts else "it could not confirm the invoice"
+        return [
+            (WARNING, "VERIFIER_UNSURE", f"the {NAME} is not sure ({result.get('why') or 'not sure'}): {what}"[:900])
+        ]
+    return []
+
+
+def mark_capture(capture: Any, result: dict[str, Any]) -> list[str]:
+    """The fields it disputed are Check in the capture, with what it read as a reader of its own. Returns them."""
+    from .capture.types import CHECK
+
+    marked = []
+    for name, v in (result.get("fields") or {}).items():
+        field = (getattr(capture, "fields", None) or {}).get(name)
+        if field is None:
+            continue
+        field.status = CHECK
+        seen = str(v.get("on_page") or "")
+        field.sources = {**(field.sources or {}), (f"other:{seen}" if seen else READER): READER}
+        note = f"{NAME} reads {seen or 'it differently'}" + (f": {v['reason']}" if v.get("reason") else "")
+        field.reasons = [*(field.reasons or []), note[:200]]
+        marked.append(name)
+    return marked
+
+
+# --- In line, in the background ------------------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class Plan:
+    """What the reviewer means for an invoice being processed: put in line, and held from touchless approval."""
+
+    queue: bool = False
+    hold: bool = False
+
+
+def prepare(store: Any, invoice_id: int | None) -> Plan:
+    """Before the touchless decision: with the reviewer on, every invoice is put in line and waits for it. Never
+    raises."""
+    if store is None:
+        return Plan()
+    try:
+        cfg = load_settings(store)
+    except Exception:  # noqa: BLE001
+        return Plan()
+    return Plan(queue=cfg.on, hold=cfg.on)
+
+
+def hold(autonomy: dict[str, Any], plan: Plan) -> dict[str, Any]:
+    if plan.hold and autonomy.get("auto"):
+        return {**autonomy, "auto": False, "audit": False, "verifier_hold": True, "reason": WAITING_FOR_REVIEWER}
+    return autonomy
+
+
+def queue(store: Any, invoice_id: int | None, plan: Plan, held: bool = False) -> bool:
+    if store is None or not invoice_id or not plan.queue:
+        return False
+    try:
+        return bool(store.queue_verification(invoice_id, "held for touchless" if held else "every invoice"))
+    except Exception as exc:  # noqa: BLE001 - the queue is an extra
+        log.warning("invoice %s: not queued for the %s (%s)", invoice_id, NAME, type(exc).__name__)
+        return False
+
+
+@dataclasses.dataclass
+class Outcome:
+    invoice_id: int
+    status: str  # agreed | disagrees | unsure | failed | skipped | postponed
+    message: str = ""
+    approved: bool = False
+    rounds: int = 0
+    seconds: float = 0.0
+
+
+def verify_one(settings: Any, store: Any, *, coder: Any = None, clock: Callable[[], float] = time.monotonic,
+               after_page_reader: bool = True) -> Outcome | None:  # fmt: skip
+    """Review the next invoice in line. None when the reviewer is off or nothing waits. The chat model not
+    answering leaves the invoice in line (postponed)."""
+    if store.restoring():
+        return None
+    cfg = load_settings(store)
+    if not cfg.on:
+        return None
+    row = store.next_verification(after_page_reader=after_page_reader)
+    if not row:
+        return None
+    iid = int(row["invoice_id"])
+    try:
+        return _verify(settings, store, row, cfg, coder, clock)
+    except Exception as exc:  # noqa: BLE001 - one invoice must never stop the queue
+        log.warning("%s: invoice %s failed (%s)", NAME, iid, exc)
+        store.finish_verification(iid, "failed", error=f"{type(exc).__name__}: {str(exc)[:300]}")
+        return Outcome(iid, "failed", str(exc)[:300])
+
+
+def _coder(settings: Any, store: Any) -> Any:
+    from .inference import InvoiceCoder
+    from .page_worker import reference_data
+
+    return InvoiceCoder(settings, reference_data(store), provider="local")
+
+
+def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSettings, coder: Any,
+            clock: Callable[[], float]) -> Outcome:  # fmt: skip
+    from .imaging import render_page_images
+    from .inference import CodingError
+    from .memory import vendor_key
+    from .store import PARKED, REVIEW
+
+    iid = int(row["invoice_id"])
+    inv = store.get_invoice(iid)
+    identity = store.row_identity(iid)
+    path = Path((inv or {}).get("source_path") or "")
+    if inv is None or not path.is_file():
+        store.finish_verification(iid, "skipped", error="the invoice or its file is gone")
+        return Outcome(iid, "skipped", "the invoice or its file is gone")
+    if inv.get("status") not in (REVIEW, PARKED):
+        store.finish_verification(iid, "skipped", error="already dealt with")
+        return Outcome(iid, "skipped", "already dealt with")
+    output = inv.get("final_output") or inv.get("ai_output") or {}
+    if not output:
+        store.finish_verification(iid, "skipped", error="nothing proposed to review")
+        return Outcome(iid, "skipped", "nothing proposed to review")
+    try:
+        coder = coder or _coder(settings, store)
+        model = coder._prepare_local()
+        if not coder.profile.supports_vision:
+            raise CodingError(f"{model} can't see pages: load a model that can (Gemma 4 12B)")
+        images = render_page_images(path, MAX_PAGES)
+    except CodingError as exc:  # not loaded, can't see: it waits in line
+        store.finish_verification(iid, "waiting", error=str(exc)[:300])
+        return Outcome(iid, "postponed", str(exc)[:300])
+    if not images:
+        store.finish_verification(iid, "skipped", error="no page to show (a text file)")
+        return Outcome(iid, "skipped", "no page to show")
+    vendor = store.get_vendor(vendor_key(output.get("vendor_name") or ""))
+    try:
+        names = {a["code"]: a["description"] for a in store.list_accounts("gl")}
+    except Exception:  # noqa: BLE001
+        names = {}
+    shown = proposal(output, vendor, names)
+    found = review(ask_model(coder, images), shown, rounds=cfg.rounds, seconds=cfg.minutes * 60, clock=clock)
+    fields = {f: {"value": shown["fields"].get(f), **v} for f, v in found.fields.items()}
+    result = {**found.to_dict(), "fields": fields, "model": model, "proposal": digest(output),
+              "at": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
+    if store.restoring() or store.row_identity(iid) != identity:
+        return Outcome(iid, "skipped", "not applied: a backup was restored meanwhile")
+    store.finish_verification(iid, "done", result=result, rounds=found.rounds, seconds=found.seconds)
+    approved = _fold_in(store, inv, result, expect=identity)
+    store.log_event("verified", iid, actor="AP Coder", detail={
+        "status": found.status, "rounds": found.rounds, "seconds": found.seconds, "fields": sorted(found.fields),
+        "lines": sorted(found.lines)})  # fmt: skip
+    return Outcome(iid, found.status, found.summary or found.why, approved, found.rounds, found.seconds)
+
+
+def _fold_in(store: Any, inv: dict[str, Any], result: dict[str, Any], *, expect: Any = None) -> bool:
+    """The review into the invoice: its issue, the fields it disputed marked Check, a note; an invoice held for it
+    and agreed is approved as touchless processing would have. Returns whether it was approved now."""
+    from .capture.types import CaptureResult
+    from .capture.workflow import AUTONOMOUS_REVIEWER, still_touchless
+    from .store import REVIEW
+
+    iid = int(inv["id"])
+    found = issues(result)
+    capture = None
+    stored = store.get_capture(iid)
+    if stored:
+        try:
+            capture = stored if isinstance(stored, CaptureResult) else CaptureResult.from_dict(stored)
+            mark_capture(capture, result)
+        except Exception:  # noqa: BLE001 - an older capture: the issue is enough
+            capture = None
+    meta = dict(inv.get("meta") or {})
+    notes = dict(meta.get("capture") or {})
+    held = bool(notes.pop("verifier_hold", False))
+    note = {k: result.get(k) for k in ("status", "rounds", "seconds", "summary", "why", "at", "model")}
+    issue = None
+    if found:
+        severity, code, message = found[0]
+        issue = {"severity": severity, "code": code, "message": message, "line_number": None}
+    folded = store.update_after_check(iid, capture.to_dict() if capture is not None else None, issue,
+                                      (DISAGREES_CODE, UNSURE_CODE), {"verifier": note, "capture": notes},
+                                      expect=expect)  # fmt: skip
+    untouched = inv.get("status") == REVIEW and not (inv.get("final_output") or inv.get("reviewer") or inv.get("edits"))
+    output = inv.get("ai_output")
+    if folded and held and untouched and result.get("status") == AGREED and output:
+        if still_touchless(store, capture, output):
+            try:
+                store.approve_invoice(iid, output, AUTONOMOUS_REVIEWER, login="ap-coder")
+                return True
+            except (KeyError, ValueError) as exc:
+                log.info("invoice %s: not approved after the %s (%s)", iid, NAME, exc)
+    return False
