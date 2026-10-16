@@ -37,7 +37,7 @@ from ap_coder.web.core import TARGET_ACCURACY, done, get_store, reference_or_non
 
 router = APIRouter()
 
-TABS = {"coding": "Coding accuracy", "suppliers": "Supplier learning", "readers": "Readers"}
+TABS = {"coding": "Coding accuracy", "suppliers": "Supplier learning", "lessons": "Lessons", "readers": "Readers"}
 HISTORY_LABELS = {"vendor_name": "Vendor *", "description": "Line description *", "gl_code": "GL account *",
                   "cost_center": "Cost center", "amount": "Amount", "date": "Date"}  # fmt: skip
 FIELD_LABELS = {
@@ -431,9 +431,43 @@ def learning_page(request: Request) -> HTMLResponse:
         context.update(coding_context(store, q.get("mem_q") or ""))
     elif tab == "suppliers":
         context.update(suppliers_context(store))
+    elif tab == "lessons":
+        context.update(lessons_context(store))
     else:
         context.update(readers_context(store, q.get("reader")))
     return render(request, "learning.html", "learning", **context)
+
+
+def lessons_context(store: Store) -> dict[str, Any]:
+    from ap_coder import lessons
+
+    rows = []
+    for lesson in store.list_lessons(include_retired=True):
+        what = lessons.FIELD_WORDS.get(lesson["field"], lesson["field"])
+        if lesson["field"] == lessons.LINE_GL:
+            what = f"GL account of lines like “{lesson['pattern']}”"
+        rows.append({**lesson, "what": what[:1].upper() + what[1:]})
+    return {"lessons": rows, "why_after": lessons.why_after(store)}
+
+
+@router.post("/learning/lessons/explain")
+def lesson_explain(request: Request, situation: str = Form(...), explanation: str = Form("")) -> JSONResponse:
+    store = get_store(request)
+    if not store.lesson(situation):
+        return refuse("That lesson is no longer there: reload the page.", 404)
+    if not explanation.strip():
+        return refuse("Write the reason first.")
+    store.explain_lesson(situation, explanation, actor=reviewer())
+    return done(request, "/learning?tab=lessons", "Reason kept: the AI reads it with this vendor's next invoices.")
+
+
+@router.post("/learning/lessons/retire")
+def lesson_retire(request: Request, lesson_id: int = Form(...), retired: str = Form("1")) -> JSONResponse:
+    store = get_store(request)
+    if not store.retire_lesson(lesson_id, actor=reviewer(), retired=retired == "1"):
+        return refuse("That lesson is no longer there: reload the page.", 404)
+    return done(request, "/learning?tab=lessons", "Retired: not shown to the AI again." if retired == "1"
+                else "Restored: the AI reads it again.")  # fmt: skip
 
 
 @router.post("/learning/suppliers/hold")

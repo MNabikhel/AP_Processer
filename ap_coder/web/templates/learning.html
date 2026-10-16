@@ -198,6 +198,35 @@
 {% endfor %}
 {% endif %}
 
+{% elif tab == "lessons" %}
+<p class="muted">What AP keeps correcting, remembered per vendor and kind of document, with AP's reasons. The AI reviewer
+  and the GL suggestions read them with each vendor's invoices, and the review screen shows them. When the same correction
+  comes back {{ why_after }} times, AP Coder asks why before saving (Settings → Review). Edit a reason, or retire a lesson
+  that is no longer true.</p>
+{% if not lessons %}
+<section class="card">{{ ui.empty_state("No lessons yet", "A lesson appears once AP corrects a field (or a line's GL account) on the review screen. Nothing to set up.") }}</section>
+{% else %}
+<section class="card" aria-labelledby="lessons-title">
+  <h4 id="lessons-title">Lessons <span class="muted small">{{ lessons | length }}</span></h4>
+  <div class="table-wrap"><table class="apc-table">
+    <thead><tr><th>Vendor</th><th>What</th><th>AP's value</th><th class="r">Corrected</th><th class="r">Since the reason</th><th class="r">Right since</th><th>AP's reason</th><th></th></tr></thead>
+    <tbody>{% for l in lessons %}
+      <tr{% if l.retired %} class="muted"{% endif %}><td>{{ l.vendor_name }} <span class="muted small">{{ l.kind }}</span></td>
+        <td>{{ l.what }}</td><td>{{ l.value }}{% if l.proposed %}<div class="muted small">read as {{ l.proposed }}</div>{% endif %}</td>
+        <td class="r">{{ l.corrected }}</td><td class="r">{{ l.since_why }}</td><td class="r">{{ l.confirmed }}</td>
+        <td class="w"><form method="post" action="/learning/lessons/explain" class="row" data-busy="Saving…">
+          <input type="hidden" name="situation" value="{{ l.situation }}">
+          <input type="text" name="explanation" value="{{ l.explanation }}" placeholder="Why AP chooses this value" aria-label="AP's reason">
+          <button class="btn sm" type="submit">Save</button></form>
+          {% if l.explained_by %}<div class="muted small">{{ l.explained_by }}, {{ (l.explained_at or "")[:10] }}</div>{% endif %}</td>
+        <td><form method="post" action="/learning/lessons/retire" data-busy="…">
+          <input type="hidden" name="lesson_id" value="{{ l.id }}"><input type="hidden" name="retired" value="{{ '0' if l.retired else '1' }}">
+          <button class="btn sm ghost" type="submit" title="{{ 'Use it again' if l.retired else 'No longer true: not shown to the AI again' }}">{{ "Restore" if l.retired else "Retire" }}</button></form></td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
 {% else %}
 <p class="muted">Each approval compares what every reader found on the page with what AP approved. The combined value is
   what the review screen showed; a reader that keeps agreeing with AP earns its trust.</p>

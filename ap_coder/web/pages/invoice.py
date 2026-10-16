@@ -209,6 +209,14 @@ def history(events: list[dict[str, Any]]) -> list[dict[str, str]]:
     return items
 
 
+def _lesson_hints(store: Store, inv: dict[str, Any]) -> list[str]:
+    """What AP taught for this vendor (lessons.py), shown as "Learned" hints beside the document."""
+    from ap_coder import lessons
+
+    output = inv.get("final_output") or inv.get("ai_output") or {}
+    return lessons.prompt_lines(store, output.get("vendor_name") or "", lessons.kind_of(output), limit=5)
+
+
 def viewer_data(inv: dict[str, Any], capture: Any, sizes: list[tuple[float, float]]) -> dict[str, Any]:
     """What the page viewer draws: the pages (pictures by address), the fields with their boxes, the line items."""
     v = document.version(inv["source_path"])
@@ -244,6 +252,7 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
         "text": Markup(ui.document_text(inv.get("extraction_md") or "")),  # noqa: S704 - document_text escapes
         "reader": view.reader_state(store, settings, inv, status),
         "reviewer": view.reviewer_state(store, inv),
+        "lessons": _lesson_hints(store, inv),
         "lines_note": sources_line(capture.line_items, capture.checks) if capture is not None else "",
         "original": {"file": str(original["file"]),
                      "folder": Path(str(original.get("kept") or "")).parent.name or "originals"}
@@ -496,6 +505,13 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
         bar = analysis.live["bar"]
         return refuse(bar["pick"] + "." if bar["pick"] else
                       f"Tick “Approve anyway” to approve despite {ui.plural(bar['errors'], 'error')}.")  # fmt: skip
+    # The same correction again and again: before saving, AP is asked once why (lessons.py). Skipping is fine: the
+    # question comes back next time.
+    from ap_coder import lessons
+
+    asked = lessons.due_for_why(store, inv.get("ai_output") or {}, analysis.output)
+    if asked and not form.get("why_done"):
+        return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
     after = next_url(store, invoice_id, query)
     open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number}
                    for i in analysis.errors + analysis.warnings]  # fmt: skip
@@ -505,6 +521,11 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     except ValueError as exc:
         return changed_meanwhile(request, invoice_id, exc)
     learned = learn_from_approval(store, invoice_id, analysis.output, actor=me, taught=view.taught_boxes(draft))
+    explained = 0
+    for item in asked:  # the reasons AP gave on the "why" screen (none when it was skipped), after this correction
+        answer = str(form.get(f"why::{item['key']}") or "").strip()  # was counted: the count starts again from 0
+        if answer and store.explain_lesson(item["key"], answer, actor=me, invoice_id=invoice_id):
+            explained += 1
     forget_draft(request, invoice_id)
     vendor = analysis.coding.vendor_name.rstrip(".")
     waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
@@ -521,6 +542,10 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
         + (f"{taught} {lines}" if taught else f"Learned from {ui.plural(total, 'line')}: "
            f"{counts[ACCEPTED]} confirmed, {total - counts[ACCEPTED]} corrected."),
         "ok", icon="school"))  # fmt: skip
+    if explained:
+        messages.append(flash_message(f"Thanks: {ui.plural(explained, 'reason')} kept. The AI reads "
+                                      f"{'it' if explained == 1 else 'them'} with this vendor's next invoices.", "ok",
+                                      icon="psychology"))  # fmt: skip
     if not store.list_invoices(REVIEW):
         messages.append(flash_message("Your queue is clear: every invoice has been reviewed.", "ok", icon="task_alt"))
     return done(request, after, *messages)

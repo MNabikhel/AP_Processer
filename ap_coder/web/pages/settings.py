@@ -25,7 +25,7 @@ import fastapi
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-from ap_coder import __version__, paths, ui
+from ap_coder import __version__, lessons, paths, ui
 from ap_coder.envfile import read_env, write_env
 from ap_coder.store import Store, unread_fx_text
 from ap_coder.tax import PROVINCE_NAMES
@@ -141,6 +141,7 @@ def review_context(request: Request) -> dict[str, Any]:
         "terms_days": store.default_terms_days(),
         "fx_rates": store.get_setting("fx_rates"),
         "our_province": store.our_province(),
+        "why_after": lessons.why_after(store),
         "site_provinces": store.get_setting("site_provinces"),
         "provinces": PROVINCE_NAMES,
     }
@@ -184,12 +185,17 @@ def save_review(
 
 @router.post("/settings/review/approval")
 def save_approval(
-    request: Request, approval_limit: str = Form("0"), terms_days: str = Form("30"), fx_rates: str = Form("")
+    request: Request,
+    approval_limit: str = Form("0"),
+    terms_days: str = Form("30"),
+    fx_rates: str = Form(""),
+    why_after: str = Form(""),
 ) -> JSONResponse:
     store = get_store(request)
     try:
         limit = round(float(approval_limit or 0), 2)
         days = int(float(terms_days or 0))
+        why = int(float(why_after)) if why_after.strip() else None
         if not math.isfinite(limit):  # "1e309" or "nan" posted directly
             raise ValueError(approval_limit)
     except (ValueError, OverflowError):  # int(float("1e309")) overflows
@@ -198,6 +204,8 @@ def save_approval(
         return refuse("The approval limit can't be below 0 (0 = never a second approval).")
     if not 0 <= days <= 180:
         return refuse("The days to pay must be from 0 to 180.")
+    if why is not None and not 1 <= why <= 20:
+        return refuse("Ask why after 1 to 20 corrections of the same thing.")
     unread = unread_fx_text(fx_rates)
     if unread:  # saved as it was, a rate typed the wrong way round would be ignored without a word
         return refuse(f"Exchange rates not saved: “{unread}” can't be read. Write each one as a currency code, then "
@@ -209,6 +217,9 @@ def save_approval(
     if days != store.default_terms_days():
         store.set_setting("default_terms_days", str(days), actor=reviewer())
         changed.append("default_terms_days")
+    if why is not None and why != lessons.why_after(store):
+        store.set_setting(lessons.SETTING, str(why), actor=reviewer())
+        changed.append(lessons.SETTING)
     if limit != store.approval_limit():
         store.set_setting("approval_limit", f"{limit:.2f}", actor=reviewer())
         changed.append("approval_limit")

@@ -263,6 +263,9 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     inv = store.get_invoice(invoice_id)
     if inv is None:
         return learned
+    from ..lessons import record as record_lessons
+
+    record_lessons(store, invoice_id, inv.get("ai_output") or {}, final, actor)  # per situation (never raises)
     try:
         store.record_reader_outcomes(invoice_id, reader_outcome_rows(store.get_capture(invoice_id), final))
     except Exception as exc:  # learning must never block an approval

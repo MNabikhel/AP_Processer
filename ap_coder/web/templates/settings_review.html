@@ -33,6 +33,9 @@
         <input type="text" name="fx_rates" value="{{ fx_rates }}" placeholder="e.g. USD=1.37, EUR=1.50"></label>
       <p class="muted">CAD per unit of each foreign currency you are billed in. Used for estimates in CAD (Spend, Sales tax);
         invoices and exports keep their own currency.</p>
+      <label class="field">Ask why after the same correction (times)
+        <input type="number" name="why_after" min="1" max="20" step="1" value="{{ why_after }}"
+               title="When AP corrects the same thing for a vendor this many times, AP Coder asks why before saving, once; the AI reads the reason."></label>
       <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">save</span>Save approval settings</button>
     </form>
   </section>

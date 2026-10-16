@@ -28,6 +28,8 @@
       <form method="post" action="/review/{{ inv.id }}/start-over" class="inv-inline"><button class="btn sm ghost" type="submit"><span class="ms" aria-hidden="true">restart_alt</span>Start over from its reading</button></form></div>
     {% endif %}
     {% endif %}
+    {% if doc.lessons %}<details class="inv-note inv-lessons"><summary><span class="ms" aria-hidden="true">psychology</span><span>Learned from AP for this vendor ({{ doc.lessons | length }})</span></summary>
+      <ul>{% for text in doc.lessons %}<li>{{ text }}</li>{% endfor %}</ul></details>{% endif %}
     {% if doc.lines_note %}<div class="inv-note"><span class="ms" aria-hidden="true">table_rows</span><span>{{ doc.lines_note }}</span></div>{% endif %}
     {% if doc.original %}<div class="inv-note"><span class="ms" aria-hidden="true">photo</span><span>{% if (doc.original.file or "").lower().endswith(".pdf") %}Shown upright: the scan <b>{{ doc.original.file }}</b> was scanned turned, and is kept as it came in{% else %}Made into a PDF from the picture <b>{{ doc.original.file }}</b>, kept as it came in{% endif %}, in the <code>{{ doc.original.folder }}</code> folder beside the PDF.</span></div>{% endif %}
     {% if doc.problem %}<div class="inv-note warn"><span class="ms" aria-hidden="true">broken_image</span><span>{{ doc.problem }}</span></div>{% endif %}

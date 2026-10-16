@@ -155,6 +155,15 @@ CREATE TABLE IF NOT EXISTS verifications (
     rounds INTEGER NOT NULL DEFAULT 0, seconds REAL NOT NULL DEFAULT 0, result_json TEXT,
     error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS verifications_status ON verifications (status, created_at);
+CREATE TABLE IF NOT EXISTS lessons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, situation TEXT NOT NULL UNIQUE, vendor_key TEXT NOT NULL,
+    vendor_name TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'invoice', field TEXT NOT NULL,
+    pattern TEXT NOT NULL DEFAULT '', value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
+    seen INTEGER NOT NULL DEFAULT 0, corrected INTEGER NOT NULL DEFAULT 0, since_why INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 0, explanation TEXT NOT NULL DEFAULT '', explained_by TEXT NOT NULL DEFAULT '',
+    explained_at TEXT, retired INTEGER NOT NULL DEFAULT 0, last_invoice INTEGER, created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS lessons_vendor ON lessons (vendor_key, kind);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
@@ -2372,6 +2381,79 @@ class Store:
         if check["status"] == AZURE_CHECKING and check["updated_at"] < _stale_before():
             check["status"] = AZURE_WAITING
         return check
+
+    # --- Lessons: AP's corrections per situation (ap_coder/lessons.py) ----------------------------------------------
+
+    def record_lesson(self, row: dict[str, Any], *, invoice_id: int | None = None, actor: str | None = None) -> None:
+        """One approval's word on a situation (``lessons.outcomes``): seen, and corrected (the value AP chose, what
+        was proposed) or confirmed. A situation never corrected is only counted, never shown."""
+        now = _now()
+        corrected = 1 if row.get("corrected") else 0
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO lessons (situation, vendor_key, vendor_name, kind, field, pattern, value, proposed, seen,
+                   corrected, since_why, confirmed, last_invoice, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, ?, ?, ?)
+                   ON CONFLICT(situation) DO UPDATE SET seen = lessons.seen + 1, vendor_name = excluded.vendor_name,
+                   corrected = lessons.corrected + excluded.corrected,
+                   since_why = lessons.since_why + excluded.since_why,
+                   confirmed = lessons.confirmed + CASE WHEN excluded.corrected = 0 AND lessons.corrected > 0
+                                                   THEN 1 ELSE 0 END,
+                   value = CASE WHEN excluded.corrected = 1 THEN excluded.value ELSE lessons.value END,
+                   proposed = CASE WHEN excluded.corrected = 1 THEN excluded.proposed ELSE lessons.proposed END,
+                   last_invoice = excluded.last_invoice, updated_at = excluded.updated_at""",
+                (row["key"], vendor_key(row.get("vendor") or ""), row.get("vendor") or "", row.get("kind") or "invoice",
+                 row["field"], row.get("pattern") or "", str(row.get("value") or "")[:300],
+                 str(row.get("proposed") or "")[:300], corrected, corrected, invoice_id, now, now),
+            )  # fmt: skip
+
+    def lesson(self, situation: str) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM lessons WHERE situation = ?", (situation,)).fetchone()
+        return dict(row) if row else None
+
+    def lessons_for(self, key: str, kind: str | None = None) -> list[dict[str, Any]]:
+        """A vendor's lessons (of one kind of document), the ones with a reason first, then the newest."""
+        sql = "SELECT * FROM lessons WHERE vendor_key = ?" + (" AND kind = ?" if kind else "")
+        with self._conn() as conn:
+            rows = conn.execute(sql + " ORDER BY explanation = '', updated_at DESC, id DESC",
+                                (key, kind) if kind else (key,)).fetchall()  # fmt: skip
+        return [dict(r) for r in rows]
+
+    def list_lessons(self, *, include_retired: bool = False, limit: int = 500) -> list[dict[str, Any]]:
+        """Every lesson AP corrected at least once, the most corrected since its last reason first."""
+        where = "corrected > 0" + ("" if include_retired else " AND retired = 0")
+        with self._conn() as conn:
+            rows = conn.execute(f"SELECT * FROM lessons WHERE {where} ORDER BY since_why DESC, updated_at DESC "
+                                "LIMIT ?", (limit,)).fetchall()  # fmt: skip
+        return [dict(r) for r in rows]
+
+    def explain_lesson(self, situation: str, explanation: str, actor: str | None = None,
+                       invoice_id: int | None = None) -> bool:  # fmt: skip
+        """AP's reason for a situation (the "why" screen, or the Learning page): kept, read by the AI, and the count
+        towards the next question starts again."""
+        text = " ".join(str(explanation or "").split())[:600]
+        if not text:
+            return False
+        with self._conn() as conn:
+            cur = conn.execute(
+                "UPDATE lessons SET explanation = ?, explained_by = ?, explained_at = ?, since_why = 0, retired = 0, "
+                "updated_at = ? WHERE situation = ?",
+                (text, actor or "", _now(), _now(), situation),
+            )
+            if cur.rowcount:
+                self._log(conn, "lesson_explained", invoice_id, actor, {"situation": situation, "reason": text})
+            return cur.rowcount > 0
+
+    def retire_lesson(self, lesson_id: int, actor: str | None = None, retired: bool = True) -> bool:
+        """A lesson no longer true (the vendor changed its invoices): not shown to the AI or the reviewer again."""
+        with self._conn() as conn:
+            cur = conn.execute("UPDATE lessons SET retired = ?, updated_at = ? WHERE id = ?",
+                               (int(retired), _now(), lesson_id))  # fmt: skip
+            if cur.rowcount:
+                self._log(conn, "lesson_retired" if retired else "lesson_restored", actor=actor,
+                          detail={"lesson": lesson_id})  # fmt: skip
+            return cur.rowcount > 0
 
     # --- The AI reviewer's queue (ap_coder/verifier.py) -----------------------------------------------------------
 
