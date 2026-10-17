@@ -26,7 +26,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ap_coder import __version__, lessons, paths, ui
-from ap_coder.envfile import read_env, write_env
+from ap_coder.envfile import one_line, read_env, write_env
 from ap_coder.store import Store, unread_fx_text
 from ap_coder.tax import PROVINCE_NAMES
 from ap_coder.web.core import (
@@ -78,6 +78,7 @@ def save_env(store: Store, updates: dict[str, str]) -> list[str]:
     """Write changed values to the .env and apply them to this running dashboard (it reads its settings from the
     environment). Logged as ``settings_changed``; a reviewer name change records both names. Returns changed keys."""
     current = read_env(env_path())
+    updates = {k: one_line(v) for k, v in updates.items()}
     changed = {k: v for k, v in updates.items() if v != current.get(k, "")}
     if changed:
         detail: dict[str, object] = {"keys": sorted(changed)}

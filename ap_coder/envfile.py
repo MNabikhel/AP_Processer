@@ -55,6 +55,11 @@ def read_env(path: Path) -> dict[str, str]:
     return values
 
 
+def one_line(value: str) -> str:
+    """A typed value as one line: a settings file can't hold a line break (the box it comes from has none)."""
+    return " ".join(str(value).splitlines()).strip()
+
+
 def write_env(path: Path, updates: dict[str, str]) -> None:
     """Set values in place (uncommenting ``# KEY=`` lines), keeping every other line as it is. A value with a line
     break is refused (ValueError, nothing written): it would end the line and set whatever follows as a setting."""

@@ -152,7 +152,7 @@ def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = ""
     """Save the Azure check's settings; the names of those that changed (never their values). An empty ``api_key``
     keeps the one saved (``forget_key`` removes it). Raises ValueError, in plain words, for a value that can't be
     used: an endpoint that isn't https://, a model name that isn't one, a share outside 0-100%, a negative cap."""
-    from .envfile import clean_url, write_env
+    from .envfile import clean_url, one_line, write_env
 
     endpoint = clean_url(endpoint or "")
     if endpoint and not endpoint_host(endpoint):
@@ -184,6 +184,7 @@ def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = ""
         env[KEY_ENV] = ""
     elif api_key and api_key != before.api_key:
         env[KEY_ENV] = api_key
+    env = {k: one_line(v) for k, v in env.items()}
     if env:
         write_env(env_path(), env)
         os.environ.update(env)  # the dashboard reads settings from the environment
