@@ -251,3 +251,53 @@ def test_retry_reads_again_only_an_invoice_that_failed(client, demo, monkeypatch
     failed = demo.add_invoice(pdf, None, None, error="the page could not be read")
     assert client.post(f"/review/{failed}/retry", headers=PAGE).json()["ok"]
     assert [p.name for p in read] == ["scan.pdf"]
+
+
+def test_the_review_and_export_pages_do_not_ask_the_database_once_per_invoice(tmp_path, monkeypatch):
+    """Sweep: the queue read each row's vendor terms, the second-approval tab each invoice's events and the JD Edwards
+    check each ready invoice, every one with its own database connection: 5,000 rows meant 5,000 connections."""
+    import sqlite3
+
+    from ap_coder import store as store_mod
+    from ap_coder.jde import FORMAT as JDE
+    from ap_coder.store import load_sample_setup
+
+    from .webclient import add_clean, client_for
+
+    monkeypatch.setenv("AP_REVIEWER", "Sam")
+    db = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(db)
+    db.set_setting("approval_limit", "10000")
+    client = client_for(db)
+    opened: list[str] = []
+    real = sqlite3.connect
+
+    def counting(*args, **kwargs):
+        opened.append(str(args[0]))
+        return real(*args, **kwargs)
+
+    def connections(url: str) -> int:
+        monkeypatch.setattr(store_mod.sqlite3, "connect", counting)
+        opened.clear()
+        assert client.get(url).status_code == 200
+        monkeypatch.setattr(store_mod.sqlite3, "connect", real)
+        return len(opened)
+
+    def add(n: int) -> None:
+        for _ in range(n):
+            add_clean(
+                db, vendor_name=f"Vendor {len(db.list_invoices())}", invoice_number=f"N-{len(db.list_invoices())}"
+            )
+            approved = add_clean(db, vendor_name=f"Vendor {len(db.list_invoices())}",
+                                 invoice_number=f"N-{len(db.list_invoices())}")  # fmt: skip
+            db.approve_invoice(approved, db.get_invoice(approved)["ai_output"], "Jane")  # over the limit: waits
+            ready = add_clean(db, vendor_name=f"Vendor {len(db.list_invoices())}",
+                              invoice_number=f"N-{len(db.list_invoices())}", grand_total=100.0)  # fmt: skip
+            db.approve_invoice(ready, db.get_invoice(ready)["ai_output"], "Jane")
+
+    pages = ("/review", "/review?tab=second", f"/exports?fmt={JDE}")
+    add(2)
+    few = [connections(url) for url in pages]
+    add(10)
+    many = [connections(url) for url in pages]
+    assert many == few

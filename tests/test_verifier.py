@@ -148,6 +148,19 @@ def test_the_queue(tmp_path):
     assert s.next_verification(after_page_reader=True) is None
 
 
+def test_a_review_that_ends_without_a_result_keeps_the_last_result(tmp_path):
+    from ap_coder.store import Store
+
+    s = Store(tmp_path / "a.db")
+    s.queue_verification(5)
+    s.next_verification(after_page_reader=False)
+    s.finish_verification(5, "done", result={"status": "disagreed"}, rounds=2, seconds=30)
+    s.queue_verification(5)
+    s.next_verification(after_page_reader=False)
+    s.finish_verification(5, "failed", error="the chat model stopped")
+    assert s.verification(5)["status"] == "failed" and s.verification(5)["result"] == {"status": "disagreed"}
+
+
 # --- With the chat model: thinking on, the page images, the schema -------------------------------------------------
 
 

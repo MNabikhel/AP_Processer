@@ -66,7 +66,9 @@ def _canonical_headers(headers: list[str]) -> dict[str, str]:
     present = {_norm_header(h) for h in headers}
     for canonical, aliases in COLUMN_ALIASES.items():
         if canonical in present:
-            continue  # an exact canonical column always wins
+            # An exact canonical column always wins, but its header may still be spelled "GL Code" or "Active".
+            mapping[next(h for h in headers if _norm_header(h) == canonical)] = canonical
+            continue
         for header in headers:
             if _norm_header(header) in aliases:
                 mapping[header] = canonical
