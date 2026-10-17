@@ -46,6 +46,7 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "balance": ("balance", "openbalance", "balancedue", "openamount", "amountdue", "outstanding", "due", "solde"),
     "type": ("type", "doctype", "documenttype", "transactiontype", "description"),
 }  # fmt: skip
+TYPE_HEADERS = {"type", "doctype", "documenttype", "transactiontype"}  # a column that says what each line is
 
 
 def _norm(value: Any) -> str:
@@ -152,6 +153,9 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
     seen: set[int] = set()
     dates = []
     day_first = day_first_order([str(get(rec, "date") or "") for rec in records])
+    # A description is free text ("14/2 NMD90 wire", "Brass check valves"): a payment word in it makes a line a
+    # payment only when no invoice has its number. A Type column is believed as it is.
+    free_text = "type" in columns and _norm(columns["type"]) not in TYPE_HEADERS
     for rec in records:
         raw_number = str(get(rec, "number") or "").strip()
         if raw_number.lower() in ("nan", "none"):
@@ -170,7 +174,7 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         if date:
             dates.append(date)
         key = norm_invoice_number(raw_number)
-        if not key or _PAYMENT_WORDS.search(kind):
+        if not key or (_PAYMENT_WORDS.search(kind) and not (free_text and by_number.get(key))):
             result.lines.append(Line(PAYMENT, raw_number, date, amount, note=kind_text or "no invoice number"))
             continue
         candidates = [i for i in by_number.get(key, []) if i["id"] not in seen]

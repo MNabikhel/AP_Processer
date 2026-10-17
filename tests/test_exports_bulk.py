@@ -36,6 +36,23 @@ def test_export_batch_lifecycle(demo_store):
     assert store.export_batches()[0]["undone_by"] == "jane"
 
 
+def test_a_batch_of_more_invoices_than_sqlite_takes_variables(demo_store, monkeypatch):
+    """Ticking every invoice: more ids than an older SQLite build takes as bound variables (999)."""
+    import sqlite3
+
+    opened = Store._open
+
+    def low_limit(self):
+        conn = opened(self)
+        conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+        return conn
+
+    monkeypatch.setattr(Store, "_open", low_limit)
+    ready = [i["id"] for i in demo_store.unexported_approved()]
+    batch = demo_store.create_export_batch([*ready, *range(10_000, 11_500)], "csv")
+    assert sorted(demo_store.batch_invoice_ids(batch)) == sorted(ready)
+
+
 def test_export_files_balance_to_the_invoices(demo_store):
     store = demo_store
     invoices = [store.get_invoice(i["id"]) for i in store.unexported_approved()]

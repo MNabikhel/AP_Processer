@@ -57,9 +57,10 @@ The code is in `ap_coder/jde.py` (pure logic), the settings in `ap_coder/web/pag
 * **Amounts** use **implied decimals** by default ($5.50 → `550`; -$2,316.50 → `-231650`), rounded half away
   from zero. Setting *Amount format* switches to a decimal point (`5.50`). Currencies without decimals (JPY,
   KRW, …) are written in whole units. *Your JDE team must confirm which their load expects.*
-* **Text** is cut to the column size (VLVINV 25, VLRMK / VNEXA / VNEXR 30), on one line; anything a
-  spreadsheet could run as a formula is prefixed with an apostrophe (`safe.csv_row`). Files are UTF-8
-  without a byte-order mark.
+* **Text** is cut to the column size (VLVINV 25, VLRMK / VNEXA / VNEXR 30), on one line, and written as it is:
+  the Z-files are for a database loader, not Excel, so there is no spreadsheet apostrophe (it would be loaded
+  into the table and the invoice number would no longer match). Do not open them in Excel to edit them. Files
+  are UTF-8 without a byte-order mark.
 
 ### Gross amount or tax amounts (never both)
 

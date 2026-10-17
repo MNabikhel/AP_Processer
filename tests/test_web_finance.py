@@ -260,6 +260,15 @@ def test_two_undos_of_a_batch_at_once_record_one_undo(client, busy, monkeypatch)
     assert len(busy.events(actions=["export_undone"])) == 1
 
 
+def test_an_undone_batch_cannot_be_downloaded(client, busy):
+    batch = _batch(client, busy)
+    follow(client, client.post(f"/exports/batches/{batch}/undo", headers=PAGE))
+    for url in (f"/exports/batches/{batch}/download", f"/exports/batches/{batch}/download?fmt=jde",
+                f"/exports/batches/{batch}/approved-pdfs.zip"):  # fmt: skip
+        answer = client.get(url)
+        assert answer.status_code == 410 and "undone" in answer.text
+
+
 def test_the_custom_layout_is_saved_and_previewed(client, busy):
     form = {
         "header": ["Vendor", "Amount", "Company", "Half"],
