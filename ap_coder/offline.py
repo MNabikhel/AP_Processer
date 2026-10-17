@@ -368,10 +368,10 @@ def offline_checks() -> list[tuple[str, str, str]]:
     if not v5:
         out.append(("OCR PP-OCRv5", WARN if v4 else SKIP, f"RapidOCR 3 not installed: {from_bundle}"))
     else:
-        missing = missing_models()
+        missing = missing_models(verify=True)  # as ppocrv5_ready() checks them (each file hashed once per version)
         out.append(("OCR PP-OCRv5", PASS if not missing else WARN,
                     f"{len(ppocrv5_files())} model files present" if not missing else
-                    "models missing (" + ", ".join(f.name for f in missing) + "): scans get one OCR read; "
+                    "models missing or damaged (" + ", ".join(f.name for f in missing) + "): scans get one OCR read; "
                     "copy them from the offline bundle: python scripts/fetch_models.py"))  # fmt: skip
     if not v4 and not v5:
         out.append(("OCR", WARN, "no local OCR: scanned invoices and photos can't be read here (text PDFs can)"))

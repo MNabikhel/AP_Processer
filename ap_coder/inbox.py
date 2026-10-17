@@ -115,7 +115,7 @@ def mark_done(store: Any, folder: Path, entry_id: str, actor: str | None = None)
 def log_sorted(store: Any, mail: Any) -> None:
     """Record in the activity log that an email was sorted (and, for a bank-detail change, that it may be fraud)."""
     t = getattr(mail, "triage", None)
-    if t is None:
+    if t is None or getattr(mail, "left_in_place", False):  # not moved: sorted again at the next check, logged then
         return
     detail = {"email": mail.email, "subject": mail.subject[:200], "kind": t.kind, "label": t.label,
               "to_queue": len(mail.saved), "statements": len(mail.statements), "set_aside": len(mail.held),

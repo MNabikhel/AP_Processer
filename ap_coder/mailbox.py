@@ -42,6 +42,7 @@ SETTLE_SECONDS = 5  # an email changed more recently may still be being copied
 MAX_EMAIL_BYTES = 100_000_000  # larger than any mail server sends: not read
 MAX_FORWARD_DEPTH = 20  # emails forwarded inside forwarded emails: deeper ones are not opened
 MAX_PARTS = 500  # attachments and text parts read from one email
+MAX_BOUNDARY_LINES = 5_000  # lines starting "--" (each part has one): an email with more is not parsed at all
 DONE_FOLDER = "emails"
 UNREADABLE_FOLDER = "could not read"  # inside DONE_FOLDER
 PERSON_FOLDER = "needs a person"  # inside DONE_FOLDER: emails and attachments a person must look at
@@ -63,6 +64,7 @@ class Unpacked:
     statements: list[Path] = field(default_factory=list)  # statements of account (statements/)
     held: list[Path] = field(default_factory=list)  # attachments a person must look at (emails/needs a person/)
     triage: triage.EmailTriage | None = None
+    left_in_place: bool = False  # it could not be moved (open in another program): sorted again, and logged, later
 
 
 @dataclass
@@ -155,6 +157,8 @@ def read_eml(raw: bytes) -> Mail:
     """The subject, sender, text and attachments of an .eml email (emails forwarded as attachments opened too)."""
     if len(raw) > MAX_EMAIL_BYTES:
         raise UnreadableEmail(f"the email is larger than {MAX_EMAIL_BYTES // 1_000_000} MB")
+    if raw.count(b"\n--") > MAX_BOUNDARY_LINES:  # parsing is the slow part: thousands of parts are refused before it
+        raise UnreadableEmail(f"it has more than {MAX_BOUNDARY_LINES} parts")
     try:
         msg = email.message_from_bytes(raw, policy=email.policy.default)
     except RecursionError:
@@ -223,7 +227,7 @@ def _move_to(path: Path, done: Path) -> Path:
     try:
         path.replace(target)
     except OSError:
-        return path  # left in place (e.g. open in another program): unpacking again writes nothing new
+        return path  # left in place (e.g. open in another program): unpacking again writes no file twice
     return target
 
 
@@ -238,14 +242,24 @@ def read_mail(path: Path, raw: bytes) -> Mail:
     return read_msg_mail(raw) if path.suffix.lower() == ".msg" else read_eml(raw)
 
 
+def _joined(stem: str, name: str, n: int = 0) -> str:
+    """The file name "<email name> - <name>" (with "_<n>" before the extension when ``n``), at most 200 bytes like
+    ``safe_name``: each part fits, but the two together can be over the 255 bytes a Mac or Linux file name holds
+    (Chinese, emoji)."""
+    base, suffix, tag = Path(name).stem, Path(name).suffix, f"_{n}" if n else ""
+    while len(f"{stem} - {base}{tag}{suffix}".encode()) > 200 and base:
+        base = base[:-1].rstrip(" .")
+    return f"{stem} - {base}{tag}{suffix}"
+
+
 def _save(folder: Path, stem: str, name: str, content: bytes) -> Path:
     """Write an attachment as "<email name> - <name>" in ``folder``; the same file already there is not written
     twice, a different one under that name gets a number."""
     folder.mkdir(parents=True, exist_ok=True)
-    target = folder / f"{stem} - {name}"
+    target = folder / _joined(stem, name)
     n = 1
     while target.exists() and target.read_bytes() != content:
-        target = folder / f"{stem} - {Path(name).stem}_{n}{Path(name).suffix}"
+        target = folder / _joined(stem, name, n)
         n += 1
     if not target.exists():
         target.write_bytes(content)
@@ -310,6 +324,9 @@ def unpack(path: Path, folder: Path | None = None) -> Unpacked:
         getattr(result, where).append(p)
     done = person if sorted_mail.needs_person else folder / DONE_FOLDER
     email_file = _move_to(path, done)
+    if email_file == path:  # still here: the next check sorts it again, so it is logged once it has moved
+        result.left_in_place = True
+        return result
     try:
         _record(folder, mail, email_file, result, [p for _, p in placed])
     except OSError:
@@ -354,7 +371,7 @@ def unpack_folder(folder: Path, now: float | None = None) -> list[Unpacked]:
     out = []
     for path in emails_in(folder):
         try:
-            if now - path.stat().st_mtime < SETTLE_SECONDS:
+            if abs(now - path.stat().st_mtime) < SETTLE_SECONDS:  # (a time far ahead of the clock is not "now")
                 continue  # still being written: the next check picks it up
             out.append(unpack(path, folder))
         except OSError:

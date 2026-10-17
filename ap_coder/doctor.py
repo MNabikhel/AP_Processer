@@ -82,6 +82,7 @@ _PACKAGES = {
     "pydantic": "",
     "openpyxl": "",
     "pymupdf": " (PDFs can't be read)",
+    "pillow": " (photos and scanned images can't be read)",  # intake turns each picture into a PDF with it
     "fastapi": " (the dashboard can't start)",
     "uvicorn": " (the dashboard can't start)",
     "jinja2": " (the dashboard can't start)",
@@ -122,9 +123,6 @@ def run_checks(
     for pkg in _PACKAGES:
         v = _version(pkg)
         add(f"package {pkg}", PASS if v else FAIL, v or f"not installed{_PACKAGES[pkg]}: {_INSTALL_FIX}")
-    v = _version("pillow")
-    status = PASS if v else (FAIL if settings.engine.vision else WARN)
-    add("package pillow", status, v or "not installed (needed only for --vision)")
     v = _version("azure-ai-documentintelligence")  # optional: only for the Azure check, when it is switched on
     add("package azure-ai-documentintelligence", PASS if v else SKIP,
         v or "not installed (optional: only the Azure check needs it, when it is switched on)")  # fmt: skip
