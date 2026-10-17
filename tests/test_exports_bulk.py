@@ -36,18 +36,8 @@ def test_export_batch_lifecycle(demo_store):
     assert store.export_batches()[0]["undone_by"] == "jane"
 
 
-def test_a_batch_of_more_invoices_than_sqlite_takes_variables(demo_store, monkeypatch):
+def test_a_batch_of_more_invoices_than_sqlite_takes_variables(demo_store, monkeypatch, few_sql_variables):
     """Ticking every invoice: more ids than an older SQLite build takes as bound variables (999)."""
-    import sqlite3
-
-    opened = Store._open
-
-    def low_limit(self):
-        conn = opened(self)
-        conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
-        return conn
-
-    monkeypatch.setattr(Store, "_open", low_limit)
     ready = [i["id"] for i in demo_store.unexported_approved()]
     batch = demo_store.create_export_batch([*ready, *range(10_000, 11_500)], "csv")
     assert sorted(demo_store.batch_invoice_ids(batch)) == sorted(ready)
@@ -123,18 +113,8 @@ def test_bulk_approve_skips_an_invoice_flagged_after_the_page_listed_it(demo_sto
     assert store.get_invoice(victim)["status"] == REVIEW
 
 
-def test_every_list_query_takes_more_ids_than_sqlite_takes_variables(demo_store, monkeypatch):
+def test_every_list_query_takes_more_ids_than_sqlite_takes_variables(demo_store, monkeypatch, few_sql_variables):
     """Each store call that takes a list of ids or keys: past an older SQLite build's 999 bound variables."""
-    import sqlite3
-
-    opened = Store._open
-
-    def low_limit(self):
-        conn = opened(self)
-        conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
-        return conn
-
-    monkeypatch.setattr(Store, "_open", low_limit)
     s = demo_store
     real = [i["id"] for i in s.list_invoices()]
     many = [*real, *range(10_000, 11_500)]

@@ -147,3 +147,63 @@ class FakeDIClient:
         self.calls.append({"model_id": model_id, "body": body, **kwargs})
         raw = self.raw
         return SimpleNamespace(result=lambda: SimpleNamespace(as_dict=lambda: raw))
+
+
+class _FewVariables:
+    """A connection that refuses a statement with more than ``limit`` bound variables, as an older SQLite build does
+    (Python 3.10 has no ``Connection.setlimit`` to lower the real limit)."""
+
+    def __init__(self, conn, limit):
+        self._conn, self._limit = conn, limit
+
+    def _check(self, sql, params):
+        import sqlite3
+
+        count = len(params) if isinstance(params, (list, tuple)) else len(params or {})
+        if sql.count("?") > self._limit or count > self._limit:
+            raise sqlite3.OperationalError("too many SQL variables")
+
+    def execute(self, sql, params=()):
+        self._check(sql, params)
+        return self._conn.execute(sql, params)
+
+    def executemany(self, sql, seq):
+        rows = list(seq)
+        for params in rows:
+            self._check(sql, params)
+        return self._conn.executemany(sql, rows)
+
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._conn.__exit__(*exc)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        if name in ("_conn", "_limit"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._conn, name, value)
+
+
+@pytest.fixture
+def few_sql_variables(monkeypatch):
+    """Every Store connection takes at most 999 bound variables (an older SQLite build's limit)."""
+    import sqlite3
+
+    from ap_coder.store import Store
+
+    opened = Store._open
+
+    def low_limit(self):
+        conn = opened(self)
+        if hasattr(conn, "setlimit"):  # Python 3.11+: the real limit
+            conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+            return conn
+        return _FewVariables(conn, 999)
+
+    monkeypatch.setattr(Store, "_open", low_limit)
