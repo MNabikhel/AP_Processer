@@ -50,6 +50,13 @@ PARKED = "parked"  # out of the queue while waiting for information (a buyer, a 
 ACTIVE_STATUSES = (REVIEW, PARKED, PENDING, APPROVED)  # invoices that count (for POs, recurring vendors...)
 _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
 
+
+def _in_list(column: str) -> str:
+    """``column IN`` a list bound as ONE parameter (a JSON array): a list of any length, where one ``?`` per item
+    fails past the SQLite build's limit (999 on older builds, 32,766 on newer)."""
+    return f"{column} IN (SELECT value FROM json_each(?))"
+
+
 # An invoice file looked for and not found (``Store.invoice_file``) is looked for again after this long, not on every
 # page picture the review screen asks for.
 _LOOK_AGAIN_SECONDS = 30.0
@@ -603,9 +610,8 @@ class Store:
             return {}
         with self._conn() as conn:
             rows = conn.execute(
-                f"SELECT * FROM events WHERE action = ? AND invoice_id IN ({','.join('?' * len(ids))}) "
-                "ORDER BY id DESC",
-                (action, *ids),
+                f"SELECT * FROM events WHERE action = ? AND {_in_list('invoice_id')} ORDER BY id DESC",
+                (action, json.dumps(ids)),
             ).fetchall()
         latest: dict[int, dict[str, Any]] = {}
         for r in rows:
@@ -1052,7 +1058,7 @@ class Store:
         with self._conn() as conn:
             found = {
                 r["id"]: r
-                for r in conn.execute(f"SELECT * FROM invoices WHERE id IN ({','.join('?' * len(unique))})", unique)
+                for r in conn.execute(f"SELECT * FROM invoices WHERE {_in_list('id')}", (json.dumps(unique),))
             }
         return [self._full_invoice(found[i]) for i in ids if i in found]
 
@@ -1237,8 +1243,8 @@ class Store:
             where.append("status = ?")
             args.append(status)
         if ids is not None:
-            where.append(f"id IN ({','.join('?' * len(ids))})")
-            args.extend(ids)
+            where.append(_in_list("id"))
+            args.append(json.dumps([int(i) for i in ids]))
         sql = f"SELECT {', '.join(columns)} FROM invoices" + (" WHERE " + " AND ".join(where) if where else "")
         with self._conn() as conn:
             rows = [dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
@@ -1665,12 +1671,12 @@ class Store:
 
     def delete_purchase_orders(self, keys: list[str], actor: str | None = None) -> int:
         with self._conn() as conn:
-            marks = ",".join("?" * len(keys))
+            listed = (json.dumps(list(keys)),)
             numbers = [
-                r[0] for r in conn.execute(f"SELECT po_number FROM purchase_orders WHERE po_key IN ({marks})", keys)
+                r[0] for r in conn.execute(f"SELECT po_number FROM purchase_orders WHERE {_in_list('po_key')}", listed)
             ]
-            conn.execute(f"DELETE FROM po_lines WHERE po_key IN ({marks})", keys)
-            conn.execute(f"DELETE FROM purchase_orders WHERE po_key IN ({marks})", keys)
+            conn.execute(f"DELETE FROM po_lines WHERE {_in_list('po_key')}", listed)
+            conn.execute(f"DELETE FROM purchase_orders WHERE {_in_list('po_key')}", listed)
             if numbers:
                 self._log(conn, "pos_deleted", actor=actor, detail={"pos": numbers})
         return len(numbers)
@@ -2189,8 +2195,8 @@ class Store:
             return []
         with self._conn() as conn:
             rows = conn.execute(
-                f"SELECT DISTINCT supplier_key FROM supplier_outcomes WHERE invoice_id IN ({','.join('?' * len(ids))})",
-                ids,
+                f"SELECT DISTINCT supplier_key FROM supplier_outcomes WHERE {_in_list('invoice_id')}",
+                (json.dumps([int(i) for i in ids]),),
             ).fetchall()
         return [r[0] for r in rows]
 
@@ -2198,12 +2204,11 @@ class Store:
         """Delete these supplier profiles when nothing is recorded for them any more (e.g. after the demo)."""
         if not keys:
             return 0
-        marks = ",".join("?" * len(keys))
         with self._conn() as conn:
             return conn.execute(
-                f"DELETE FROM supplier_profiles WHERE key IN ({marks}) AND state != 'autonomous' AND key NOT IN "
+                f"DELETE FROM supplier_profiles WHERE {_in_list('key')} AND state != 'autonomous' AND key NOT IN "
                 "(SELECT DISTINCT supplier_key FROM supplier_outcomes)",
-                keys,
+                (json.dumps(list(keys)),),
             ).rowcount
 
     # --- Each reader against what AP approved; the page reader's queue -------------------------------------------
@@ -2982,8 +2987,9 @@ class Store:
     def delete_vendors(self, keys: list[str]) -> int:
         """Remove vendors from the vendor list (e.g. the demo's sample vendor master)."""
         with self._conn() as conn:
-            marks = ",".join("?" * len(keys))
-            return conn.execute(f"DELETE FROM vendors WHERE vendor_key IN ({marks})", keys).rowcount
+            return conn.execute(
+                f"DELETE FROM vendors WHERE {_in_list('vendor_key')}", (json.dumps(list(keys)),)
+            ).rowcount
 
     def has_vendor_master(self) -> bool:
         with self._conn() as conn:

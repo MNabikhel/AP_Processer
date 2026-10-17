@@ -121,3 +121,27 @@ def test_bulk_approve_skips_an_invoice_flagged_after_the_page_listed_it(demo_sto
     result = bulk_approve(store, store.reference_data(), Settings(), ids, "jane")
     assert [i for i, _ in result["skipped"]] == [victim] and "AZURE_DI_DISAGREES" in result["skipped"][0][1]
     assert store.get_invoice(victim)["status"] == REVIEW
+
+
+def test_every_list_query_takes_more_ids_than_sqlite_takes_variables(demo_store, monkeypatch):
+    """Each store call that takes a list of ids or keys: past an older SQLite build's 999 bound variables."""
+    import sqlite3
+
+    opened = Store._open
+
+    def low_limit(self):
+        conn = opened(self)
+        conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+        return conn
+
+    monkeypatch.setattr(Store, "_open", low_limit)
+    s = demo_store
+    real = [i["id"] for i in s.list_invoices()]
+    many = [*real, *range(10_000, 11_500)]
+    assert sorted(i["id"] for i in s.get_invoices(many)) == sorted(real)
+    assert sorted(r["id"] for r in s.invoice_columns(("id",), ids=many)) == sorted(real)
+    assert isinstance(s.latest_events("approved", many), dict)
+    assert isinstance(s.supplier_keys_for_invoices(many), list)
+    keys = [f"none-{n}" for n in range(1_500)]
+    assert s.prune_supplier_profiles(keys) == 0 and s.delete_vendors(keys) == 0
+    s.delete_purchase_orders(keys)
