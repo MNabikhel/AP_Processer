@@ -198,9 +198,10 @@ class Settings:
             # The data folder's .env (written by the installer), else ./.env, else the project's.
             env_file = paths.env_file()
         # Read here (UTF-8 or Notepad's ANSI), never searched for: without a file, python-dotenv would load the first
-        # .env in any folder above AP Coder's code.
+        # .env in any folder above AP Coder's code. Values are taken as written: a saved key or password with "$" in
+        # it is never expanded like a shell variable.
         if env_file is not None and Path(env_file).is_file():
-            load_dotenv(stream=io.StringIO(envfile.read_text(Path(env_file))), override=False)
+            load_dotenv(stream=io.StringIO(envfile.read_text(Path(env_file))), override=False, interpolate=False)
 
         di = DocumentIntelligenceSettings(
             endpoint=_env("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"),

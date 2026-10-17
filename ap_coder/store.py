@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import re
 import shutil
 import sqlite3
@@ -219,7 +220,7 @@ def parse_fx_rates(text: str) -> dict[str, float]:
     rates = {"CAD": 1.0}
     for code, value in _FX_RATE.findall(text or ""):
         rate = float(value.replace(",", "."))
-        if rate > 0:
+        if rate > 0 and code.upper() != "CAD":  # a CAD rate typed in would scale every limit check
             rates[code.upper()] = rate
     return rates
 
@@ -474,6 +475,7 @@ class Store:
         if fresh:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
+            conn.commit()  # the upgrade's changes left open would refuse the caller's own BEGIN IMMEDIATE
         return conn
 
     @contextmanager
@@ -545,6 +547,24 @@ class Store:
         for r in rows:
             r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
         return rows
+
+    def latest_events(self, action: str, invoice_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """{invoice: its newest ``action`` event} for each of ``invoice_ids`` that has one, in one query (what
+        ``events(invoice_id, [action])[0]`` gives for each, without a query per invoice)."""
+        ids = list(dict.fromkeys(int(i) for i in invoice_ids))
+        if not ids:
+            return {}
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM events WHERE action = ? AND invoice_id IN ({','.join('?' * len(ids))}) "
+                "ORDER BY id DESC",
+                (action, *ids),
+            ).fetchall()
+        latest: dict[int, dict[str, Any]] = {}
+        for r in rows:
+            if r["invoice_id"] not in latest:
+                latest[r["invoice_id"]] = {**dict(r), "detail": json.loads(r["detail"]) if r["detail"] else {}}
+        return latest
 
     def import_accounts(
         self,
@@ -971,8 +991,23 @@ class Store:
     def get_invoice(self, invoice_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
-        if row is None:
-            return None
+        return None if row is None else self._full_invoice(row)
+
+    def get_invoices(self, invoice_ids: list[int]) -> list[dict[str, Any]]:
+        """``get_invoice`` of each of ``invoice_ids`` in one query, in that order (ones that no longer exist are left
+        out): a page listing many invoices does not open the database once per invoice."""
+        ids = [int(i) for i in invoice_ids]
+        if not ids:
+            return []
+        unique = list(dict.fromkeys(ids))
+        with self._conn() as conn:
+            found = {
+                r["id"]: r
+                for r in conn.execute(f"SELECT * FROM invoices WHERE id IN ({','.join('?' * len(unique))})", unique)
+            }
+        return [self._full_invoice(found[i]) for i in ids if i in found]
+
+    def _full_invoice(self, row: sqlite3.Row) -> dict[str, Any]:
         inv = dict(row)
         for key in ("ai_output", "final_output", "validation", "meta", "edits"):
             inv[key] = json.loads(inv[key]) if inv[key] else None
@@ -1171,17 +1206,23 @@ class Store:
     def approved_since(self, since_iso: str, reviewer: str | None = None) -> int:
         """Invoices approved since ``since_iso`` (and still approved, or waiting for a second approver). With
         ``reviewer``: only those this person approved, first or second approval (names compared without case)."""
-        if reviewer is None:
-            sql, args = "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?", ()
-        else:
-            sql = (
-                "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND ((reviewed_at >= ? AND "
-                "lower(trim(reviewer)) = ?) OR (second_reviewed_at >= ? AND lower(trim(second_reviewer)) = ?))"
-            )
-            me = reviewer.strip().lower()
-            args = (me, since_iso, me)
         with self._conn() as conn:
-            return int(conn.execute(sql, (APPROVED, PENDING, since_iso, *args)).fetchone()[0])
+            if reviewer is None:
+                sql = "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?"
+                return int(conn.execute(sql, (APPROVED, PENDING, since_iso)).fetchone()[0])
+            rows = conn.execute(
+                "SELECT reviewer, reviewed_at >= ?, second_reviewer, second_reviewed_at >= ? FROM invoices "
+                "WHERE status IN (?, ?) AND (reviewed_at >= ? OR second_reviewed_at >= ?)",
+                (since_iso, since_iso, APPROVED, PENDING, since_iso, since_iso),
+            ).fetchall()
+        # Compared here, not in SQL: SQLite's lower() leaves accented letters alone ("Élise" never matched).
+        me = reviewer.strip().casefold()
+        return sum(
+            1
+            for first, first_since, second, second_since in rows
+            if (first_since and (first or "").strip().casefold() == me)
+            or (second_since and (second or "").strip().casefold() == me)
+        )
 
     def approve_invoice(
         self,
@@ -1333,7 +1374,8 @@ class Store:
         rate = self.fx_rates().get(currency)
         if rate is None:
             return f"no CAD rate for {currency}: a second approval is needed" if unknown_rate else ""
-        if abs(float(coding.get("grand_total") or 0)) * rate > limit:
+        total = abs(float(coding.get("grand_total") or 0))
+        if not math.isfinite(total) or total * rate > limit:  # a NaN total is never "over" anything: refused here
             return f"over the approval limit of {limit:,.2f} CAD"
         return ""
 
@@ -2554,9 +2596,9 @@ class Store:
             raise ValueError(f"unknown review status {status!r}")
         with self._conn() as conn:
             cur = conn.execute(
-                """UPDATE verifications SET status = ?, result_json = CASE WHEN ? IS NOT NULL THEN ? ELSE
-                   result_json END, rounds = ?, seconds = ?, error = ?, updated_at = ? WHERE invoice_id = ?""",
-                (status, result is not None, json.dumps(result, default=str) if result is not None else None,
+                """UPDATE verifications SET status = ?, result_json = COALESCE(?, result_json), rounds = ?,
+                   seconds = ?, error = ?, updated_at = ? WHERE invoice_id = ?""",
+                (status, json.dumps(result, default=str) if result is not None else None,
                  int(rounds or 0), round(float(seconds or 0), 1), (error or "")[:2000], _now(), invoice_id),
             )  # fmt: skip
             return cur.rowcount > 0

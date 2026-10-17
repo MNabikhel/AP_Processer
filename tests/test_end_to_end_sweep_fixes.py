@@ -148,6 +148,14 @@ def test_approved_today_counts_this_reviewers_approvals(db):
     assert approved_today(db) == 1  # AP_REVIEWER is Sam
 
 
+def test_approved_today_matches_accented_names_without_case(db):
+    invoice_id = db.add_invoice(db.path.parent / "e.pdf", {**_gt(), "invoice_number": "E-1"}, {})
+    db.approve_invoice(invoice_id, {**_gt(), "invoice_number": "E-1"}, "Élise Tremblay")
+    today = dt.date.today().isoformat()
+    assert db.approved_since(today, "élise tremblay") == 1
+    assert db.approved_since(today, "Élise Tremblay ") == 1
+
+
 # --- 6. ISO weeks ---------------------------------------------------------------------------------------------------
 
 

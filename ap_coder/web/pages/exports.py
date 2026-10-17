@@ -69,7 +69,7 @@ def layout(store: Store) -> export_layout.Layout:
 def jde_left_out(store: Store, batch: int) -> tuple[list[dict[str, Any]], dict[int, list[str]]]:
     """(the batch's invoices, {invoice: why it cannot go to JD Edwards}) with the current JD Edwards settings."""
     ids = store.batch_invoice_ids(batch)
-    invoices = [i for i in (store.get_invoice(x) for x in ids) if i]
+    invoices = store.get_invoices(ids)
     left_out = jde.validate(invoices, jde.load(store), store.vendor_ids(), jde.prior_records(store, exclude_ids=ids))
     return invoices, left_out
 
@@ -95,7 +95,7 @@ def jde_check(store: Store, invoice_ids: list[int]) -> tuple[list[int], dict[int
     """(invoices that can go out, {invoice: why not}, settings problems that stop everything)."""
     settings = jde.load(store)
     blocking = jde.settings_problems(settings)
-    invoices = [i for i in (store.get_invoice(x) for x in invoice_ids) if i]
+    invoices = store.get_invoices(invoice_ids)
     problems = jde.validate(invoices, settings, store.vendor_ids(), jde.prior_records(store))
     ok = [] if blocking else [i["id"] for i in invoices if i["id"] not in problems]
     return ok, problems, blocking
@@ -105,16 +105,15 @@ def batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
     """(bytes, file name, content type) of export batch ``batch`` in format ``fmt``."""
     if fmt == jde.FORMAT:
         return jde_file(store, batch)
-    invoices = [store.get_invoice(i) for i in store.batch_invoice_ids(batch)]
-    return exports.build(
-        fmt, [i for i in invoices if i], gl_names(store), batch, store.vendor_ids(), layout=layout(store)
-    )
+    invoices = store.get_invoices(store.batch_invoice_ids(batch))
+    return exports.build(fmt, invoices, gl_names(store), batch, store.vendor_ids(), layout=layout(store))
 
 
 def problem_rows(store: Store, problems: dict[int, list[str]]) -> list[dict[str, Any]]:
+    found = {i["id"]: i for i in store.get_invoices(list(problems))}
     rows = []
     for inv_id, reasons in problems.items():
-        inv = store.get_invoice(inv_id) or {}
+        inv = found.get(inv_id) or {}
         rows.append(
             {
                 "id": inv_id,
@@ -135,8 +134,8 @@ def batch_total(b: dict[str, Any], totals: dict[int, dict[str, float]], exported
 def layout_preview(store: Store, new: export_layout.Layout) -> str:
     """The first lines of a custom CSV in layout ``new``, from invoices ready to export (else batch 1's)."""
     sample = store.unexported_approved()[:3] or [{"id": i} for i in store.batch_invoice_ids(1)[:3]]
-    invoices = [store.get_invoice(i["id"]) for i in sample]
-    rows = exports.custom_rows([i for i in invoices if i], gl_names(store), "", store.vendor_ids())
+    invoices = store.get_invoices([i["id"] for i in sample])
+    rows = exports.custom_rows(invoices, gl_names(store), "", store.vendor_ids())
     if not rows or not new.columns:
         return ""
     return export_layout.build(rows[:6], new).decode("utf-8-sig")
@@ -318,7 +317,7 @@ def jde_dry_run(request: Request) -> Response:
     """What a JD Edwards batch of the invoices ready to export would load, row by row, and why any invoice is held
     back. Nothing is exported and no batch is made."""
     store = get_store(request)
-    invoices = [i for i in (store.get_invoice(r["id"]) for r in store.unexported_approved()) if i]
+    invoices = store.get_invoices([r["id"] for r in store.unexported_approved()])
     report = jde.dry_run(invoices, jde.load(store), store.vendor_ids(), prior=jde.prior_records(store),
                          batch="(next)", fx_rates=store.fx_rates())  # fmt: skip
     return download(jde.dry_run_text(report).encode("utf-8"), "ap_coder_jde_dry_run.txt", "text/plain; charset=utf-8")
@@ -343,8 +342,8 @@ def approved_pdfs(request: Request, batch: int) -> Response:
     store = get_store(request)
     if not any(b["id"] == batch for b in store.export_batches()):
         raise HTTPException(status_code=404, detail="There is no such export batch.")
-    invoices = [store.get_invoice(i) for i in store.batch_invoice_ids(batch)]
-    data = stamp.batch_zip([i for i in invoices if i], gl_names(store))
+    invoices = store.get_invoices(store.batch_invoice_ids(batch))
+    data = stamp.batch_zip(invoices, gl_names(store))
     return download(data, f"ap_coder_batch_{batch}_approved_pdfs.zip", "application/zip")
 
 

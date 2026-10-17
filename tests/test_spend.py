@@ -112,12 +112,18 @@ def test_control_characters_do_not_break_the_workbooks(tmp_path):
     assert exports.build_xlsx([store.get_invoice(invoice_id)])[:2] == b"PK"
 
 
+def test_a_cad_rate_typed_in_is_ignored():
+    from ap_coder.store import parse_fx_rates
+
+    assert parse_fx_rates("CAD=1.4, USD=1.37") == {"CAD": 1.0, "USD": 1.37}  # CAD is always 1
+
+
 def test_exchange_rates_and_all_in_cad(tmp_path):
     from ap_coder.store import parse_fx_rates
 
     assert parse_fx_rates("USD=1.37, eur 1,50; GBP: 1.85, XXX=0") == {"CAD": 1.0, "USD": 1.37, "EUR": 1.5, "GBP": 1.85}
     assert parse_fx_rates("") == {"CAD": 1.0}
-    rows = [spend.SpendLine(1, "2026-09", "A", "6000", "", 100.0, "USD"),
+    rows =[spend.SpendLine(1, "2026-09", "A", "6000", "", 100.0, "USD"),
             spend.SpendLine(2, "2026-09", "B", "6000", "", 50.0, "CAD"),
             spend.SpendLine(3, "2026-09", "C", "6000", "", 10.0, "JPY")]  # fmt: skip
     converted = spend.in_cad(rows, {"CAD": 1.0, "USD": 1.37})
