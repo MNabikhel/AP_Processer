@@ -37,6 +37,8 @@ SETTING = "verifier"  # Settings → Reading, as JSON: {"on", "rounds", "minutes
 DEFAULT_ROUNDS, MAX_ROUNDS = 3, 6
 DEFAULT_MINUTES, MAX_MINUTES = 5.0, 30.0
 MAX_PAGES = 3  # page images sent: the header, the lines, the totals
+MAX_LINES = 60  # an invoice with more lines than this is not reviewed (it would not fit the model): a person checks it
+DESCRIPTION_CHARS = 160  # of each line's description, as it is shown
 NAME = "AI reviewer"
 READER = "verifier"  # its name among the readers (a field's sources)
 AGREED, DISAGREES, UNSURE = "agreed", "disagrees", "unsure"
@@ -138,7 +140,7 @@ def proposal(output: dict[str, Any], vendor: dict[str, Any] | None, gl_names: di
     gl_names = gl_names or {}
     out: dict[str, Any] = {"fields": {name: _shown(output.get(name)) for name in FIELDS}}
     out["lines"] = [
-        {"line_number": li.get("line_number"), "description": li.get("description") or "",
+        {"line_number": li.get("line_number"), "description": str(li.get("description") or "")[:DESCRIPTION_CHARS],
          "quantity": li.get("quantity"), "unit_price": li.get("unit_price"), "amount": _shown(li.get("amount")),
          "taxes": list(li.get("taxes_applied") or []),
          "gl_account": f"{li.get('predicted_gl_code') or ''} {gl_names.get(str(li.get('predicted_gl_code')), '')}"
@@ -208,6 +210,20 @@ class Review:
         return d
 
 
+def _agreed(data: dict[str, Any], fields: list[str], lines: list[int]) -> tuple[set[str], set[int]]:
+    """The fields and lines asked about that one answer says, in so many words, are right (agree true)."""
+    got_f = {str(i["field"]) for i in data.get("fields") or []
+             if isinstance(i, dict) and i.get("field") in fields and i.get("agree") is True}  # fmt: skip
+    got_l: set[int] = set()
+    for item in data.get("lines") or []:
+        try:
+            if item.get("agree") is True and int(item.get("line_number")) in lines:
+                got_l.add(int(item.get("line_number")))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return got_f, got_l
+
+
 def _parse(data: dict[str, Any], fields: list[str], lines: list[int]) -> tuple[dict[str, dict], dict[int, str], bool,
                                                                                   str]:  # fmt: skip
     """(disputed fields, disputed lines, confident, summary) from one answer. An item asked about but not answered is
@@ -236,17 +252,22 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
            rounds: int = DEFAULT_ROUNDS, seconds: float = DEFAULT_MINUTES * 60,
            clock: Callable[[], float] = time.monotonic) -> Review:  # fmt: skip
     """Ask (``ask(text, fields, lines)`` returns the model's JSON) until it is sure, ``rounds`` times at most and
-    ``seconds`` in all. Round 1 is everything; each next round is what it disputed (everything again when it disputed
-    nothing but was not confident), with its earlier answers. A dispute it keeps on a second look while confident is
-    a disagreement; one it drops is resolved."""
+    ``seconds`` in all. Round 1 is everything; after a confident round the next is what it disputed, with its
+    earlier answers; after a round it was not confident of, everything again (what it was unsure of, or never
+    answered, is not dropped). A dispute it keeps on a second look while confident is a disagreement; one it drops is
+    resolved. Agreed means every field and every line was answered "agree" in a round it was confident of."""
     start = clock()
     all_fields = list(FIELDS)
     all_lines = [li["line_number"] for li in shown["lines"] if isinstance(li.get("line_number"), int)]
     fields, lines, earlier = all_fields, all_lines, None
     previous: tuple[set[str], set[int]] | None = None
+    confirmed_f: set[str] = set()  # answered "agree" in a confident round, and not disputed since
+    confirmed_l: set[int] = set()
     summary, why, done = "", "", 0
     disputed: dict[str, dict] = {}
     disputed_lines: dict[int, str] = {}
+    if len(all_lines) > MAX_LINES:  # too long to be asked about in one go: never agreed, so not asked
+        return Review(UNSURE, {}, {}, 0, 0.0, "", f"{len(all_lines)} lines: more than the {MAX_LINES} it checks")
     while done < rounds:
         if done and clock() - start >= seconds:
             why = f"out of time ({seconds / 60:.0f} min)"
@@ -264,14 +285,24 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
         disputed = {f: v for f, v in {**disputed, **got_f}.items() if f in got_f or f not in fields}
         disputed_lines = {n: r for n, r in {**disputed_lines, **got_l}.items() if n in got_l or n not in lines}
         now = (set(disputed), set(disputed_lines))
-        if confident and not disputed and not disputed_lines:
+        if confident:
+            agreed_f, agreed_l = _agreed(data, fields, lines)
+            confirmed_f |= agreed_f
+            confirmed_l |= agreed_l
+        confirmed_f -= set(got_f)
+        confirmed_l -= set(got_l)
+        everything = confirmed_f >= set(all_fields) and confirmed_l >= set(all_lines)
+        if confident and not disputed and not disputed_lines and everything:
             return Review(AGREED, {}, {}, done, round(clock() - start, 1), summary)
-        if confident and previous is not None and now[0] <= previous[0] and now[1] <= previous[1]:
+        if (confident and previous is not None and (now[0] or now[1]) and now[0] <= previous[0]
+                and now[1] <= previous[1]):  # fmt: skip
             # It stands by what it disputed, on a second look: a disagreement, for a person to settle.
             return Review(DISAGREES, disputed, disputed_lines, done, round(clock() - start, 1), summary)
         previous = now
-        fields = sorted(disputed) if (disputed or disputed_lines) else all_fields
-        lines = sorted(disputed_lines) if (disputed or disputed_lines) else all_lines
+        # Only a confident round narrows the next to what it disputed; otherwise all of it is asked again.
+        narrow = confident and (disputed or disputed_lines)
+        fields = sorted(disputed) if narrow else all_fields
+        lines = sorted(disputed_lines) if narrow else all_lines
         earlier = {"fields": {f: {"agree": False, **v} for f, v in disputed.items()},
                    "lines": {str(n): r for n, r in disputed_lines.items()}, "summary": summary,
                    "confident": confident}  # fmt: skip
@@ -280,8 +311,13 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
     return Review(UNSURE, disputed, disputed_lines, done, round(clock() - start, 1), summary, why)
 
 
-def ask_model(coder: Any, images: list[Any]) -> Callable[[str, list[str], list[int]], dict[str, Any]]:
-    """``ask`` for ``review``: one call to the local chat model with the page images, thinking on."""
+MIN_CALL_SECONDS = 10.0  # a call is never given less, however little of the budget is left
+
+
+def ask_model(coder: Any, images: list[Any], *, seconds_left: Callable[[], float] | None = None
+              ) -> Callable[[str, list[str], list[int]], dict[str, Any]]:  # fmt: skip
+    """``ask`` for ``review``: one call to the local chat model with the page images, thinking on. ``seconds_left``:
+    what is left of the reviewer's time for the invoice, the most each call may take (not AP_LLM_TIMEOUT_SECONDS)."""
     from . import local_llm
     from .inference import CodingError
 
@@ -291,8 +327,10 @@ def ask_model(coder: Any, images: list[Any]) -> Callable[[str, list[str], list[i
         content: list[dict[str, Any]] = [{"type": "text", "text": text}]
         content += [{"type": "image_url", "image_url": {"url": img.to_data_url(), "detail": "high"}} for img in images]
         messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}]
-        response = coder._local_create(model, messages, schema(fields, lines), thinking=True)
-        reply = local_llm.read_reply(response.choices[0], response_limit(coder))
+        timeout = max(MIN_CALL_SECONDS, float(seconds_left())) if seconds_left is not None else None
+        response = coder._local_create(model, messages, schema(fields, lines), thinking=True, timeout=timeout)
+        # Strict: a draft in its thinking is not its answer (an answer that can approve an invoice).
+        reply = local_llm.read_reply(response.choices[0], response_limit(coder), strict=True)
         if reply.data is None:
             raise CodingError(reply.problem)
         return reply.data
@@ -382,9 +420,20 @@ def prepare(store: Any, invoice_id: int | None) -> Plan:
     return Plan(queue=cfg.on, hold=cfg.on)
 
 
+HOLDS = ("azure_hold", "verifier_hold")  # what an invoice touchless processing passed may still be waiting for
+
+
+def held(autonomy: dict[str, Any]) -> bool:
+    """Touchless processing passed it, but it is held back for a check (the Azure check, the AI reviewer)."""
+    return any(autonomy.get(k) for k in HOLDS)
+
+
 def hold(autonomy: dict[str, Any], plan: Plan) -> dict[str, Any]:
-    if plan.hold and autonomy.get("auto"):
-        return {**autonomy, "auto": False, "audit": False, "verifier_hold": True, "reason": WAITING_FOR_REVIEWER}
+    """The touchless decision, held back until the reviewer agrees: recorded whether or not another check (the
+    Azure check) is already holding it, so neither approves it alone."""
+    if plan.hold and (autonomy.get("auto") or held(autonomy)):
+        reason = WAITING_FOR_REVIEWER if autonomy.get("auto") else f"{autonomy.get('reason')}; {WAITING_FOR_REVIEWER}"
+        return {**autonomy, "auto": False, "audit": False, "verifier_hold": True, "reason": reason}
     return autonomy
 
 
@@ -480,7 +529,9 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
     learned = lessons.prompt_lines(store, output.get("vendor_name") or "", lessons.kind_of(output), gl_names=names)
     if learned:
         shown["lessons"] = learned
-    found = review(ask_model(coder, images), shown, rounds=cfg.rounds, seconds=cfg.minutes * 60, clock=clock)
+    budget, started = cfg.minutes * 60, clock()
+    ask = ask_model(coder, images, seconds_left=lambda: budget - (clock() - started))
+    found = review(ask, shown, rounds=cfg.rounds, seconds=budget, clock=clock)
     fields = {f: {"value": shown["fields"].get(f), **v} for f, v in found.fields.items()}
     result = {**found.to_dict(), "fields": fields, "model": model, "proposal": digest(output),
               "at": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
@@ -525,7 +576,9 @@ def _fold_in(store: Any, inv: dict[str, Any], result: dict[str, Any], *, expect:
     untouched = inv.get("status") == REVIEW and not (inv.get("final_output") or inv.get("reviewer") or inv.get("edits"))
     output = inv.get("ai_output")
     if folded and held and untouched and result.get("status") == AGREED and output:
-        if still_touchless(store, capture, output):
+        # Read again first: another check may still hold it, or a person may have approved it with corrections and
+        # reopened it while the reviewer looked.
+        if still_touchless(store, capture, output, invoice_id=iid):
             try:
                 store.approve_invoice(iid, output, AUTONOMOUS_REVIEWER, login="ap-coder")
                 return True

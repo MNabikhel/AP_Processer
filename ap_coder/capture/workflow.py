@@ -184,11 +184,37 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
     return {"state": state, "auto": ok and not audit, "audit": audit, "reason": reason}
 
 
-def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any]) -> bool:
-    """Whether an invoice touchless processing passed earlier but held back (for the Azure check) may still be
-    approved without a person now: the switch is still on, its supplier still touchless (not suspended or kept
-    supervised by an AP lead meanwhile) and its total still within the touchless and approval limits."""
+CHECK_CODES = ("VERIFIER_", "AZURE_DI_")  # the issues of a check made after processing (AI reviewer, Azure check)
+
+
+def still_untouched(store: Any, invoice_id: int, output: dict[str, Any]) -> bool:
+    """The invoice as stored now (read again, right before an approval by AP Coder): still in the review queue with
+    ``output`` as its proposal, nobody's coding on it (a person may have approved it with corrections and reopened it
+    meanwhile), no check still holding it (``azure_hold``, ``verifier_hold``) and no open issue from one."""
+    from ..store import REVIEW
+    from ..verifier import HOLDS
+
+    inv = store.get_invoice(invoice_id)
+    if not inv or inv.get("status") != REVIEW or inv.get("final_output") or inv.get("reviewer") or inv.get("edits"):
+        return False
+    if inv.get("ai_output") != output:  # read again meanwhile: what was checked is not what is proposed now
+        return False
+    notes = (inv.get("meta") or {}).get("capture") or {}
+    if any(notes.get(k) for k in HOLDS):
+        return False
+    issues = (inv.get("validation") or {}).get("issues") or []
+    return not any(str(i.get("code") or "").startswith(CHECK_CODES) for i in issues if isinstance(i, dict))
+
+
+def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any],
+                    invoice_id: int | None = None) -> bool:  # fmt: skip
+    """Whether an invoice touchless processing passed earlier but held back (for the Azure check, the AI reviewer)
+    may still be approved without a person now: the switch is still on, its supplier still touchless (not suspended
+    or kept supervised by an AP lead meanwhile) and its total still within the touchless and approval limits. With
+    ``invoice_id``: the invoice as stored now is also ``still_untouched``."""
     if store is None or not store.touchless_enabled():
+        return False
+    if invoice_id is not None and not still_untouched(store, invoice_id, output):
         return False
     key, _ = supplier_for(store, output)
     if not key:

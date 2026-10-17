@@ -363,6 +363,27 @@ def test_a_check_under_way_when_ap_restores_is_dropped_and_none_starts_meanwhile
     assert "azure_check" not in inv["meta"]
 
 
+@pytest.mark.parametrize("reviewer", ["still to review", "disagrees"])
+def test_azure_agreeing_does_not_approve_past_the_ai_reviewer(store, monkeypatch, reviewer):
+    """Held for Azure and for the AI reviewer: Azure agreeing approves nothing while the reviewer hasn't agreed (its
+    hold still pending, or its VERIFIER_DISAGREES issue open)."""
+    _turn_on(store, monkeypatch, rate=100)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
+    result = _process(store)
+    _touchless_vendor(store, result.output)
+    if reviewer == "still to review":
+        notes, issue = {"state": AUTONOMOUS, "azure_hold": True, "verifier_hold": True}, None
+    else:
+        notes = {"state": AUTONOMOUS, "azure_hold": True}
+        issue = {"severity": "warning", "code": "VERIFIER_DISAGREES", "message": "total", "line_number": None}
+    store.update_after_check(result.invoice_id, None, issue, ("VERIFIER_DISAGREES",), {"capture": notes})
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(_raw_from(result.capture)))
+    assert outcome.status == "done" and outcome.approved is False
+    inv = store.get_invoice(result.invoice_id)
+    assert inv["status"] == REVIEW and "azure_hold" not in inv["meta"]["capture"]
+    assert bool(inv["meta"]["capture"].get("verifier_hold")) == (reviewer == "still to review")
+
+
 def test_a_held_invoice_azure_disagrees_with_stays_for_a_person(store, monkeypatch):
     _turn_on(store, monkeypatch, rate=100)
     monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
