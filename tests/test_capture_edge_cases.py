@@ -492,7 +492,8 @@ def test_a_french_quantity_in_one_space_group_is_read_whole():
     from ap_coder.capture.tables import _qty_and_price
     from ap_coder.capture.transcript import layout_from_transcript
 
-    page1 = (SAMPLES / "montroyal_QC_TPS_TVQ_ACMR-2026-1187.md").read_text().split("<!-- PageBreak -->")[0]
+    text = (SAMPLES / "montroyal_QC_TPS_TVQ_ACMR-2026-1187.md").read_text(encoding="utf-8")
+    page1 = text.split("<!-- PageBreak -->")[0]
     got = [(li.quantity, li.unit_price, li.amount) for li in read_line_items(layout_from_transcript([page1]))]
     assert got == [(24.0, 95.0, 2280.0), (2500.0, 0.84, 2100.0), (1.0, 3500.0, 3500.0), (6000.0, 0.22, 1320.0)], got
     assert _qty_and_price("2 500", "0,84", 2100.0) == (2500.0, 0.84)

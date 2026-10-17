@@ -570,7 +570,7 @@ def test_settings_page_jde_tab(db):
 
 
 def test_docs_exist():
-    text = (ROOT / "docs" / "JDE_E1.md").read_text()
+    text = (ROOT / "docs" / "JDE_E1.md").read_text(encoding="utf-8")
     for column in [*jde.HEADER_COLUMNS, *jde.DIST_COLUMNS]:
         assert column in text, column
     assert "R04110ZA" in text and "JP040000" in text and "Orchestrator" in text
