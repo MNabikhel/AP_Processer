@@ -8,6 +8,7 @@ otherwise the invoice date plus the net days of the terms, otherwise the organis
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import re
 from dataclasses import dataclass, replace
@@ -32,13 +33,16 @@ _SLASH = re.compile(
 )
 _DISCOUNT = [
     _SLASH,
-    re.compile(r"(\d+(?:[.,]\d+)?)\s*%\s*(\d+)\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I),
+    re.compile(r"(?<![\d/.,])(\d+(?:[.,]\d+)?)\s*%\s*(\d+)\s*[,;]?\s*n(?:et)?\s*/?\s*(\d+)", re.I),
     re.compile(
-        r"(\d+(?:[.,]\d+)?)\s*%\s*(?:discount|escompte)?\s*(?:if paid|si pay[ée]e?)?\s*(?:within|in|dans les|sous)?"
-        r"\s*(\d+)\b(?!\s*%|[.,]\d)(?!\s*(?:months?|mois|years?|yrs?|ans?|ann[ée]es?)\b)\s*(?:days?|jours?)?",
+        r"(?<![\d/.,])(\d+(?:[.,]\d+)?)\s*%\s*(?:discount|escompte)?\s*(?:if paid|si pay[ée]e?)?"
+        r"\s*(?:within|in|dans les|sous)?\s*(\d+)\b(?!\s*%|[.,]\d)"
+        r"(?!\s*(?:months?|mois|years?|yrs?|ans?|ann[ée]es?)\b)\s*(?:days?|jours?)?",
         re.I,
     ),
 ]
+# A fraction of a percent: "1/2% 10 net 30" is a 0.5% discount (never 2%).
+_FRACTION_PCT = re.compile(r"(?<![\d/.,])(\d)\s*/\s*(\d)\s*%")
 # A rate charged on late payment, not a discount: "1.5% 1 month interest", "2% 30 days past due".
 _INTEREST = re.compile(
     r"interest|int[ée]r[êe]ts?|per\s+month|par\s+mois|monthly|\blate\b|overdue|past\s+due|retard|arrears|penalt|"
@@ -58,10 +62,29 @@ def _clause(text: str, start: int, end: int) -> str:
 
 # "2/10 EOM" prints no net days: the usual reading is that the net amount is due 20 days after the discount date.
 EOM_NET_AFTER_DISCOUNT = 20
+_MONTHS = r"(?:months?|mois)\b"
 _NET = [
-    re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,3})\b", re.I),
+    re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,3})\b(?!\s*" + _MONTHS + ")", re.I),  # "Net 1 month" is not 1 day
     re.compile(r"(\d{1,3})\s*(?:days?|jours?)\b", re.I),
 ]
+# Net months ("Net 1 month", "net 2 mois"): calendar months from the invoice date.
+_NET_MONTHS = re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,2})\s*" + _MONTHS, re.I)
+
+
+def _net_months(text: str) -> int | None:
+    for m in _NET_MONTHS.finditer(text):
+        if not _INTEREST.search(_clause(text, m.start(), m.end())) and 0 < int(m.group(1)) <= 6:
+            return int(m.group(1))
+    return None
+
+
+def _add_months(day: dt.date, months: int) -> dt.date:
+    """The same day ``months`` calendar months later, or the last day of a shorter month (Jan 31 + 1 -> Feb 28)."""
+    index = day.month - 1 + months
+    year, month = day.year + index // 12, index % 12 + 1
+    if year > dt.MAXYEAR:
+        raise OverflowError("date value out of range")
+    return dt.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
 
 
 def _net_days(text: str, *, outside_interest: bool = False) -> int | None:
@@ -83,6 +106,7 @@ class Terms:
     discount_days: int | None = None
     on_receipt: bool = False
     eom: bool = False  # counted from the end of the invoice's month ("Net 30 EOM")
+    net_months: int | None = None  # "Net 1 month": calendar months (net_days then holds about 30 a month)
 
 
 @dataclass(frozen=True)
@@ -105,6 +129,10 @@ def parse_terms(text: str | None) -> Terms:
     if not text:
         return Terms()
     eom = bool(_EOM.search(text))
+    text = _FRACTION_PCT.sub(
+        lambda m: f"{int(m.group(1)) / int(m.group(2)):g}%" if int(m.group(2)) else m.group(0), text
+    )
+    months = _net_months(text)
     for pattern in _DISCOUNT:
         for m in pattern.finditer(text):
             if _INTEREST.search(_clause(text, m.start(), m.end())):
@@ -112,14 +140,19 @@ def parse_terms(text: str | None) -> Terms:
             pct = float(m.group(1).replace(",", "."))
             days = int(m.group(2))
             net = int(m.group(3)) if m.lastindex and m.lastindex >= 3 and m.group(3) else None
+            if net is None and months:  # "2% 10 days, net 1 month"
+                net = 30 * months
             if net is None:  # "Net 45, 1% 15 days" or "2% 10 days, net 30": the net days are elsewhere
                 net = _net_days(text[: m.start()] + " " + text[m.end() :])
             if net is None and eom:  # "2/10 EOM": 2% by the 10th after month end, the net 20 days later
                 net = days + EOM_NET_AFTER_DISCOUNT
             if 0 < pct < 20 and 0 < days <= 60:
-                return Terms(net_days=net, discount_pct=pct, discount_days=days, eom=eom)
+                in_months = months if months and net == 30 * months else None
+                return Terms(net_days=net, discount_pct=pct, discount_days=days, eom=eom, net_months=in_months)
     # Before "on receipt": "Net 30 days upon receipt of invoice" is net 30. "Due on receipt, 2% per month on accounts
     # over 30 days" is due on receipt: the days of an interest clause count only when nothing else gives the terms.
+    if months:
+        return Terms(net_days=30 * months, eom=eom, net_months=months)
     net = _net_days(text, outside_interest=True)
     if net is not None:
         return Terms(net_days=net, eom=eom)
@@ -160,14 +193,17 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
         if invoice_date:  # a placeholder 9999-12-31: nothing can be counted from it
             _start(invoice_date, terms) + dt.timedelta(days=max(terms.net_days or 0, terms.discount_days or 0,
                                                                 default_days, 0))  # fmt: skip
+            if terms.net_months:
+                _add_months(_start(invoice_date, terms), terms.net_months)
     except OverflowError:
         invoice_date = None
     printed = _date(coding.get("due_date"))
     if printed:
         due, source = printed, "printed"
     elif invoice_date and terms.net_days is not None:
+        start = _start(invoice_date, terms)
         due, source = (
-            _start(invoice_date, terms) + dt.timedelta(days=terms.net_days),
+            _add_months(start, terms.net_months) if terms.net_months else start + dt.timedelta(days=terms.net_days),
             "vendor" if from_vendor else "terms",
         )
     elif invoice_date:

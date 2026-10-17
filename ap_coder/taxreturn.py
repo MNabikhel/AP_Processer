@@ -3,7 +3,7 @@
 * Input tax credits (ITCs): GST and HST on approved invoices dated in the period, where the tax setup
   treats the tax as recoverable
 * Input tax refunds (ITRs): the same for Quebec's QST
-* Claims at risk: tax claimed on an invoice of $30 or more that shows no valid GST/HST (or QST)
+* Claims at risk: tax claimed on an invoice of $100 or more ($30 before 2021) that shows no valid GST/HST (or QST)
   registration number (a documentary requirement for the claim; a GST/HST number failing the CRA's check
   digit is not a valid one), tax in a foreign currency (the return
   is in Canadian dollars), and approved invoices not exported to the ERP yet (the ERP's receivable will
@@ -20,17 +20,19 @@ import datetime as dt
 import io
 from collections import defaultdict
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 from .safe import csv_row
 from .store import APPROVED, PARKED, PENDING, REVIEW, Store
 from .tax import (
     DEFAULT_TREATMENTS,
-    PROVINCES,
     RECOVERABLE,
     TaxRateTable,
+    TaxSetup,
     TaxTreatment,
     gst_check_digit_ok,
+    place_of_supply,
     regime_on,
     valid_gst_number,
     valid_qst_number,
@@ -38,7 +40,16 @@ from .tax import (
 
 ITC, ITR = "GST/HST input tax credits (ITCs)", "QST input tax refunds (ITRs)"
 GROUPS = {"GST": ITC, "HST": ITC, "QST": ITR}
-DOCUMENT_THRESHOLD = 30.0  # below this total, no registration number is required on the invoice
+# Below this total, no registration number is required on the invoice: $100 for invoices dated from 2021-01-01, $30
+# before (Input Tax Credit Information (GST/HST) Regulations, amended 2021; Quebec's QST rules follow the same amounts).
+DOCUMENT_THRESHOLD = 100.0
+DOCUMENT_THRESHOLD_BEFORE_2021 = 30.0
+
+
+def document_threshold(invoice_date: str) -> float:
+    """The invoice total from which the supplier's registration number is needed to claim the tax."""
+    return DOCUMENT_THRESHOLD if str(invoice_date or "") >= "2021-01-01" else DOCUMENT_THRESHOLD_BEFORE_2021
+
 
 NO_GST_NUMBER = "No valid GST/HST number"
 NO_QST_NUMBER = "No valid QST number"
@@ -106,12 +117,31 @@ def _registration_issue(tax_type: str, doc: dict[str, Any]) -> tuple[str, str]:
     return number, "" if gst_check_digit_ok(number) else GST_CHECK_DIGIT
 
 
-def province(tax_type: str, tax_line: dict[str, Any], doc: dict[str, Any]) -> str:
+def supply_setup(store: Store, rates: TaxRateTable | None = None) -> TaxSetup:
+    """What the place of supply needs from Settings → Review: our province and the provinces of our sites."""
+    return TaxSetup(
+        rates or TaxRateTable.load(), our_province=store.our_province(), site_provinces=store.site_provinces()
+    )
+
+
+def supply_province(doc: dict[str, Any], setup: TaxSetup | None = None) -> str:
+    """The place of supply of a stored invoice, by the same rule as the tax checks (``tax.supply_source``): the
+    ship-to, else the province of the site the lines are coded to, else ours, else the vendor's."""
+    lines = [li for li in doc.get("line_items") or [] if isinstance(li, dict)]
+    coding = SimpleNamespace(
+        ship_to_province=str(doc.get("ship_to_province") or ""),
+        supplier_province=str(doc.get("supplier_province") or ""),
+        line_items=[SimpleNamespace(predicted_cost_center=li.get("predicted_cost_center") or "") for li in lines],
+    )
+    return place_of_supply(coding, setup)
+
+
+def province(tax_type: str, tax_line: dict[str, Any], doc: dict[str, Any], setup: TaxSetup | None = None) -> str:
     """The province a tax line belongs to: GST is federal (the same wherever the supply is), HST and QST
     from the line or else the place of supply."""
     if tax_type == "GST":
         return ""
-    return str(tax_line.get("province") or doc.get("ship_to_province") or doc.get("supplier_province") or "")
+    return str(tax_line.get("province") or supply_province(doc, setup))
 
 
 def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxTreatment] | None = None) -> Report:
@@ -122,6 +152,7 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
         t = treatments.get(tax_type)
         return (t.treatment if t else DEFAULT_TREATMENTS[tax_type]) == RECOVERABLE
 
+    setup = supply_setup(store)
     first, last = start.isoformat(), end.isoformat()
     claims, not_approved = [], 0
     for r in store.invoice_columns(("id", "status", "invoice_date", "export_batch", "ai_output", "final_output")):
@@ -143,7 +174,7 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
             if tax_type not in GROUPS or abs(amount) < 0.005 or not recoverable(tax_type):
                 continue
             number, issue = _registration_issue(tax_type, doc)
-            issues = [issue] if issue and abs(total) >= DOCUMENT_THRESHOLD else []
+            issues = [issue] if issue and abs(total) >= document_threshold(date) else []
             if currency != "CAD":
                 issues.append(FOREIGN)
             if r["export_batch"] is None:
@@ -157,7 +188,7 @@ def build(store: Store, start: dt.date, end: dt.date, treatments: dict[str, TaxT
                     currency,
                     total,
                     tax_type,
-                    province(tax_type, tl, doc),
+                    province(tax_type, tl, doc, setup),
                     float(tl.get("rate") or 0),
                     amount,
                     number,
@@ -196,6 +227,7 @@ def self_assessment(
     """Approved invoices for a supply in a PST or QST province that charge no PST / QST: the buyer may have to
     self-assess it (an estimate at the official rate on the subtotal; exempt goods and services owe nothing)."""
     rates = rates or TaxRateTable.load()
+    setup = supply_setup(store, rates)
     first, last = start.isoformat(), end.isoformat()
     out = []
     for r in store.invoice_columns(("id", "final_output"), APPROVED):
@@ -203,7 +235,7 @@ def self_assessment(
         date = str(doc.get("invoice_date") or "")
         if not (first <= date <= last):
             continue
-        province = next((p for p in (doc.get("ship_to_province"), doc.get("supplier_province")) if p in PROVINCES), "")
+        province = supply_province(doc, setup)
         # A printed "PST 0.00" is not a charge (as in the tax checks): that PST may still be owed.
         charged = {str(tl.get("tax_type") or "").upper() for tl in doc.get("tax_lines") or [] if _charged(tl)}
         base = float(doc.get("subtotal") or 0)

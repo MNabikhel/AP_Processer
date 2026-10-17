@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .audit import diff_coding
-from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
+from .memory import ACCEPTED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
 from .paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from .po import OPEN, po_key
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
@@ -434,6 +434,17 @@ class Store:
         if "original_sha256" not in columns:
             conn.execute("ALTER TABLE invoices ADD COLUMN original_sha256 TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS invoices_original_sha ON invoices (original_sha256)")
+        # Vendor keys stored under older vendor-matching rules (e.g. before "Limitée" and "s.e.c." were ignored) are
+        # recomputed, so the vendor's invoices, lessons, master record and POs still match (looked for whatever the
+        # version: the rules are recorded on their own).
+        row = conn.execute("SELECT value FROM settings WHERE key = 'vendor_key_rules'").fetchone()
+        if (row["value"] if row else "") != VENDOR_KEY_RULES:
+            self._recompute_vendor_keys(conn)
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('vendor_key_rules', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (VENDOR_KEY_RULES,),
+            )
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
         from .capture.workflow import AUTONOMOUS_REVIEWER
@@ -445,6 +456,42 @@ class Store:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
             )
+
+    @staticmethod
+    def _recompute_vendor_keys(conn: sqlite3.Connection) -> None:
+        """Every stored vendor key, recomputed with today's ``vendor_key``: from the vendor name kept beside it, else
+        (the vendor list, whose display name may have been edited, and the supplier profiles) from the old key itself.
+        Where the new key is already taken (two rows that are now the same vendor) the row already there is kept: a
+        duplicate ERP bill is dropped, anything else is left as it was."""
+
+        def new_key(name: Any, old: Any) -> str:
+            return vendor_key(str(name or "")) or refresh_vendor_key(str(old or ""))
+
+        for table, name, ident in (
+            ("invoices", "vendor_name", "id"), ("feedback", "vendor_name", "id"),
+            ("purchase_orders", "vendor_name", "po_key"), ("vendors", "''", "vendor_key"),
+            ("erp_invoices", "vendor_name", "rowid"),
+        ):  # fmt: skip
+            for r in conn.execute(f"SELECT {ident} AS ident, {name} AS name, vendor_key FROM {table}").fetchall():
+                key = new_key(r["name"], r["vendor_key"])
+                if key == (r["vendor_key"] or ""):
+                    continue
+                done = conn.execute(f"UPDATE OR IGNORE {table} SET vendor_key = ? WHERE {ident} = ?", (key, r["ident"]))
+                if not done.rowcount and table == "erp_invoices":  # the same ERP bill is already there under the key
+                    conn.execute("DELETE FROM erp_invoices WHERE rowid = ?", (r["ident"],))
+        for r in conn.execute("SELECT id, situation, vendor_name, vendor_key FROM lessons").fetchall():
+            key = new_key(r["vendor_name"], r["vendor_key"])
+            _old, sep, rest = str(r["situation"] or "").partition("|")
+            situation = f"{key}{sep}{rest}" if sep else r["situation"]
+            if (key, situation) != (r["vendor_key"], r["situation"]):
+                conn.execute("UPDATE OR IGNORE lessons SET vendor_key = ?, situation = ? WHERE id = ?",
+                             (key, situation, r["id"]))  # fmt: skip
+        for table, column in (("supplier_profiles", "key"), ("supplier_outcomes", "supplier_key")):
+            rows = conn.execute(f"SELECT rowid AS rid, {column} AS k FROM {table} WHERE {column} LIKE 'name:%'")
+            for r in rows.fetchall():
+                key = "name:" + refresh_vendor_key(r["k"][5:])
+                if key != r["k"]:
+                    conn.execute(f"UPDATE OR IGNORE {table} SET {column} = ? WHERE rowid = ?", (key, r["rid"]))
 
     @contextmanager
     def session(self) -> Iterator[None]:

@@ -88,6 +88,24 @@ def test_small_invoices_need_no_number(tmp_path):
     assert claim.amount == 1.0 and claim.issues == []
 
 
+def test_registration_number_needed_from_100_dollars_since_2021(tmp_path):
+    """Since 2021-01-01 the supplier's registration number is needed on an invoice of $100 or more (it was $30)."""
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc.update(gst_hst_registration_number="", subtotal=80.0, tax_total=4.0, grand_total=84.0,
+               tax_lines=[{"tax_type": "GST", "province": "", "rate": 0.05, "taxable_amount": 80.0, "tax_amount": 4.0}],
+               line_items=[{**doc["line_items"][0], "quantity": 1, "unit_price": 80.0, "amount": 80.0}])  # fmt: skip
+    for n, date in enumerate(("2026-03-02", "2020-12-31")):
+        d = {**doc, "invoice_number": f"S-{n}", "invoice_date": date}
+        invoice_id = store.add_invoice(tmp_path / f"s{n}.pdf", d, {})
+        store.approve_invoice(invoice_id, d, "Jane")
+        store.create_export_batch([invoice_id], "csv")
+    issues = {c.invoice_number: c.issues for c in taxreturn.build(store, *YEAR).claims}
+    assert issues == {"S-0": [], "S-1": [taxreturn.NO_GST_NUMBER]}  # $84: needs no number since 2021, did before
+    assert taxreturn.document_threshold("2021-01-01") == 100.0 and taxreturn.document_threshold("2020-12-31") == 30.0
+
+
 def test_demo_and_default_period(tmp_path):
     store = Store(tmp_path / "t.db")
     load_demo(store)
@@ -141,3 +159,25 @@ def test_gst_is_one_line_whatever_the_province(tmp_path):
     _approved(store, tmp_path, "montroyal_QC_TPS_TVQ_ACMR-2026-1187")
     gst = [row for row in taxreturn.build(store, *YEAR).by_type() if row[0] == "GST"]
     assert len(gst) == 1 and gst[0][1] == ""  # federal: not split by province
+
+
+def test_self_assessment_uses_the_place_of_supply_of_the_tax_checks(tmp_path):
+    """An invoice stored without a ship-to (approved before our province was set) is taxed where it is delivered
+    to us (tax.supply_source), never the vendor's province: a BC vendor delivering to our Alberta site owes no PST,
+    a US vendor delivering to our BC site may owe BC PST."""
+    store = Store(tmp_path / "t.db")
+    load_sample_setup(store)
+    store.set_setting("our_province", "BC")
+    store.set_setting("site_provinces", "CCAB=AB")
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    base = {**doc, "ship_to_province": ""}
+    bc_vendor = {**base, "invoice_number": "B-1", "supplier_province": "BC",
+                 "line_items": [{**li, "predicted_cost_center": "CCAB"} for li in doc["line_items"]]}  # fmt: skip
+    us_vendor = {**base, "invoice_number": "U-1", "supplier_province": "OUTSIDE_CANADA"}
+    for n, d in enumerate((bc_vendor, us_vendor)):
+        invoice_id = store.add_invoice(tmp_path / f"{n}.pdf", d, {})
+        store.approve_invoice(invoice_id, d, "Jane")
+    items = taxreturn.self_assessment(store, *YEAR)
+    assert [(s.invoice_number, s.province, s.tax_type) for s in items] == [("U-1", "BC", "PST")]
+    hst = {"tax_type": "HST", "province": "", "rate": 0.13, "taxable_amount": 100.0, "tax_amount": 13.0}
+    assert taxreturn.province("HST", hst, {"supplier_province": "ON"}, taxreturn.supply_setup(store)) == "BC"

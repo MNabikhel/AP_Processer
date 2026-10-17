@@ -44,6 +44,52 @@ def test_vendor_key_ignores_legal_suffixes_and_punctuation():
     assert vendor_key("Services Informatiques Laurentides Ltée") == "services informatiques laurentides"
 
 
+def test_vendor_key_ignores_french_legal_forms():
+    assert vendor_key("Les Entreprises ABC Limitée") == vendor_key("Les Entreprises ABC") == "les entreprises abc"
+    assert vendor_key("Construction XYZ Incorporée") == "construction xyz"
+    assert vendor_key("Énergir, s.e.c.") == vendor_key("Energir S.E.C.") == "energir"
+
+
+def test_vendor_keys_stored_by_an_older_version_are_recomputed(tmp_path):
+    """Keys stored before a change to vendor_key (here: French legal forms) still match once the database opens."""
+    import sqlite3
+
+    path = tmp_path / "t.db"
+    Store(path)
+    old, now = "energir sec", "2026-10-01T10:00:00"
+    conn = sqlite3.connect(path)
+    with conn:
+        conn.execute("INSERT INTO invoices (source_path, file_name, status, vendor_name, vendor_key, created_at) "
+                     "VALUES ('a.pdf', 'a.pdf', 'approved', 'Énergir, s.e.c.', ?, ?)", (old, now))  # fmt: skip
+        conn.execute("INSERT INTO feedback (vendor_key, vendor_name, description, final_gl, outcome, created_at) "
+                     "VALUES (?, 'Énergir, s.e.c.', 'Gas', '6100', 'accepted', ?)", (old, now))  # fmt: skip
+        conn.execute("INSERT INTO vendors (vendor_key, display_name, terms, updated_at) VALUES (?, 'Énergir, s.e.c.', "
+                     "'Net 15', ?)", (old, now))  # fmt: skip
+        conn.execute("INSERT INTO purchase_orders (po_key, po_number, vendor_name, vendor_key, updated_at) "
+                     "VALUES ('PO1', 'PO1', 'Énergir, s.e.c.', ?, ?)", (old, now))  # fmt: skip
+        conn.execute("INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, "
+                     "imported_at) VALUES (?, 'A1', 10, 'Énergir, s.e.c.', 'A1', ?)", (old, now))  # fmt: skip
+        conn.execute("INSERT INTO lessons (situation, vendor_key, vendor_name, field, created_at, updated_at) "
+                     "VALUES (?, ?, 'Énergir, s.e.c.', 'gl', ?, ?)", (f"{old}|invoice|gl|", old, now, now))  # fmt: skip
+        conn.execute("INSERT INTO supplier_profiles (key, updated_at) VALUES (?, ?)", (f"name:{old}", now))
+        conn.execute("INSERT INTO supplier_outcomes (supplier_key, field, correct, at) VALUES (?, 'total', 1, ?)",
+                     (f"name:{old}", now))  # fmt: skip
+        conn.execute("DELETE FROM settings WHERE key = 'vendor_key_rules'")  # as an older version left it
+    conn.close()
+    store = Store(path)
+    conn = sqlite3.connect(path)
+    for table in ("invoices", "feedback", "vendors", "purchase_orders", "erp_invoices", "lessons"):
+        assert conn.execute(f"SELECT vendor_key FROM {table}").fetchall() == [("energir",)], table
+    assert conn.execute("SELECT situation FROM lessons").fetchone() == ("energir|invoice|gl|",)
+    assert conn.execute("SELECT key FROM supplier_profiles").fetchone() == ("name:energir",)
+    assert conn.execute("SELECT supplier_key FROM supplier_outcomes").fetchone() == ("name:energir",)
+    conn.close()
+    assert store.vendor_terms(vendor_key("Énergir")) == "Net 15"
+    from ap_coder.jde import JdeSettings  # JDE address numbers saved by vendor key in the settings
+
+    assert JdeSettings.from_json('{"an8_overrides": {"energir sec": "77"}}').an8_overrides == {"energir": "77"}
+
+
 def test_select_examples_prefers_same_vendor_then_similar_lines():
     rows = [
         _row("Northwind IT Solutions Inc.", "Dell Latitude laptop", "6010"),

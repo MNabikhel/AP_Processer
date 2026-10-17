@@ -7,7 +7,6 @@ then pick the code / description / category columns: ``?file=``), edited in plac
 
 from __future__ import annotations
 
-import datetime as dt
 from collections import Counter
 from typing import Any
 
@@ -102,12 +101,7 @@ def account_context(store: Store, table: str, file: str, sheet: str) -> dict[str
 def tax_context(store: Store) -> dict[str, Any]:
     accounts = store.list_accounts("gl_accounts")
     treatments = store.tax_treatments()
-    today = dt.date.today()
-    rates = [
-        r
-        for r in TaxRateTable.load().rates
-        if r.effective_from <= today and (r.effective_to is None or today <= r.effective_to)
-    ]
+    rates = TaxRateTable.load().in_force()
     return {
         "taxes": [
             {"type": t, "where": WHERE.get(t, ""), "treatment": treatments[t].treatment, "gl": treatments[t].gl_code}

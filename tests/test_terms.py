@@ -150,3 +150,30 @@ def test_2_10_eom_counts_the_discount_and_the_net_from_month_end():
     p = payment({"payment_terms": "2/10 EOM", "invoice_date": "2026-09-15", "grand_total": 113.0, "subtotal": 100.0})
     assert p.source == "terms" and p.discount_amount == 2.0
     assert p.discount_by == dt.date(2026, 10, 10) and p.due == dt.date(2026, 10, 30)
+
+
+@pytest.mark.parametrize(
+    "text, invoice_date, due",
+    [
+        ("Net 1 month", "2026-09-10", dt.date(2026, 10, 10)),
+        ("Net 2 months", "2026-09-10", dt.date(2026, 11, 10)),
+        ("net 1 mois", "2026-01-31", dt.date(2026, 2, 28)),  # a calendar month: the last day of a shorter month
+        ("2% 10 days, net 1 month", "2026-09-10", dt.date(2026, 10, 10)),
+        ("Net 30 days 1.5% 1 month interest", "2026-09-10", dt.date(2026, 10, 10)),  # interest: still net 30 days
+    ],
+)
+def test_net_months_are_calendar_months_never_days(text, invoice_date, due):
+    assert payment({"invoice_date": invoice_date, "payment_terms": text, "grand_total": 100}).due == due
+
+
+@pytest.mark.parametrize(
+    "text, pct, amount",
+    [
+        ("1/2% 10 net 30", 0.5, 50.0),  # half a percent, not 2%
+        ("2% 10 net 30", 2.0, 200.0),
+        ("1.5% 10 net 30", 1.5, 150.0),
+    ],
+)
+def test_a_half_percent_discount_is_half_a_percent(text, pct, amount):
+    p = payment({"invoice_date": "2026-09-10", "payment_terms": text, "grand_total": 10000, "subtotal": 10000})
+    assert (p.terms.discount_pct, p.discount_amount) == (pct, amount)
