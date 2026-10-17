@@ -848,7 +848,8 @@ class Store:
 
     def search_rows(self) -> list[dict[str, Any]]:
         """Every invoice's identifying fields and where it stands (for the invoice directory's quick search), with
-        the date of its export batch."""
+        the date of its export batch and its GST/HST number (the JD Edwards duplicate check finds a supplier by
+        it)."""
         with self._conn() as conn:
             batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}
             rows = [
@@ -856,7 +857,8 @@ class Store:
                 for r in conn.execute(
                     """SELECT id, status, file_name, vendor_name, invoice_number, invoice_date, due_date, currency,
                               grand_total, po_key, created_at, reviewed_at, reviewer, second_reviewer,
-                              second_reviewed_at, export_batch, parked_reason, follow_up, error
+                              second_reviewed_at, export_batch, parked_reason, follow_up, error,
+                              json_extract(final_output, '$.gst_hst_registration_number') AS gst_hst_registration_number
                        FROM invoices ORDER BY id DESC"""
                 )
             ]
@@ -1605,11 +1607,11 @@ class Store:
         read, and each is taken only if it is still approved and not exported."""
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # the write lock from the read to the marks
-            marks = ", ".join("?" for _ in invoice_ids)
+            # The ids as one JSON list: one '?' however many are ticked (SQLite takes only so many bound variables).
             eligible = conn.execute(
-                f"SELECT id, grand_total, currency FROM invoices WHERE id IN ({marks}) AND status = ? "
-                "AND export_batch IS NULL ORDER BY id",
-                (*invoice_ids, APPROVED),
+                "SELECT id, grand_total, currency FROM invoices WHERE id IN (SELECT value FROM json_each(?)) "
+                "AND status = ? AND export_batch IS NULL ORDER BY id",
+                (json.dumps([int(i) for i in invoice_ids]), APPROVED),
             ).fetchall()
             if not eligible:
                 raise ValueError("none of these invoices can be exported (not approved, or already exported)")

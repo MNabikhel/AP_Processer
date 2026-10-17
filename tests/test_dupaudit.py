@@ -45,6 +45,7 @@ def test_audit_finds_the_likely_duplicates(tmp_path):
         {"vendor_name": doc["vendor_name"], "invoice_number": doc["invoice_number"], "invoice_date": "2026-09-30",
          "total": doc["grand_total"]},  # the same bill as #a, exported: not a duplicate
     ])  # fmt: skip
+    store.create_export_batch([a], "csv")
     found = {(p.reason, p.first.invoice_id, p.second.invoice_id) for p in dupaudit.find(store)}
     assert (dupaudit.NUMBER_TYPO, a, b) in found or (dupaudit.NUMBER_TYPO, b, a) in found
     assert any(r == dupaudit.OTHER_VENDOR and {x, y} == {a, c} for r, x, y in found)
@@ -82,6 +83,17 @@ def test_an_exported_invoice_is_not_its_own_duplicate_in_the_erp(tmp_path):
            "total": doc["grand_total"]}  # fmt: skip
     store.import_erp_register([row])
     assert [p.reason for p in dupaudit.find(store)] == [dupaudit.OTHER_VENDOR]  # not exported: it could be twice
+    store.create_export_batch([a], "csv")
+    assert dupaudit.find(store) == []  # exported: that ERP row is this invoice
+
+
+def test_an_unexported_invoice_already_in_the_erp_is_a_duplicate(tmp_path):
+    store = Store(tmp_path / "d.db")
+    a, doc = _approve(store, tmp_path, invoice_number="NW-100")
+    keyed_by_hand = {"vendor_name": doc["vendor_name"], "invoice_number": "NW-100", "total": doc["grand_total"]}
+    store.import_erp_register([keyed_by_hand])
+    (pair,) = dupaudit.find(store)
+    assert pair.reason == dupaudit.EXACT and {pair.first.invoice_id, pair.second.invoice_id} == {a, None}
     store.create_export_batch([a], "csv")
     assert dupaudit.find(store) == []  # exported: that ERP row is this invoice
 
