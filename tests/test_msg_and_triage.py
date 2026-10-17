@@ -103,6 +103,49 @@ def _read_all(raw: bytes) -> None:
     raise MsgError("read")  # a loop that was cut short still reads as a damaged file in unpack
 
 
+def _entries_named(raw: bytes, name: str) -> list[int]:
+    """The offsets of the directory entries called ``name`` in a .msg made by ``build_msg``."""
+    key, out, at = name.encode("utf-16-le") + b"\x00\x00", [], 0
+    while (at := raw.find(key, at)) != -1:
+        out.append(at)
+        at += 1
+    return out
+
+
+def test_attachments_sharing_one_stream_cannot_fill_the_memory():
+    """Each stream is checked against the file's size, but many attachments can point at the same big stream: a
+    small .msg must not read as many times its size."""
+    big = INVOICE + b"%" + b"x" * 40_000
+    small = [Attachment(f"s{n}.pdf", b"%PDF-1.4 s") for n in range(10)]
+    raw = bytearray(build_msg(Message(subject="x", attachments=[Attachment("big.pdf", big), *small])))
+    offsets = _entries_named(bytes(raw), "__substg1.0_37010102")
+    sizes = {off: int.from_bytes(raw[off + 120 : off + 128], "little") for off in offsets}
+    target = max(sizes, key=sizes.get)
+    for off in offsets:  # every attachment's data now points at the big one's sectors
+        raw[off + 116 : off + 128] = raw[target + 116 : target + 128]
+    with pytest.raises(MsgError):
+        read_msg(bytes(raw))
+
+
+def test_a_directory_walk_reads_each_entry_once():
+    """Storages that all claim the same chain of children: each entry belongs to one storage, so the walk stays as
+    large as the directory instead of growing with its square."""
+    from ap_coder.bench.msgwriter import _Node, compound_file
+    from ap_coder.msgfile import CompoundFile
+
+    n = 200
+    raw = bytearray(compound_file([_Node(f"s{i}") for i in range(n)] + [_Node(f"t{i}", b"x") for i in range(n)]))
+    index = {e.name: i for i, e in enumerate(CompoundFile(bytes(raw)).entries)}
+    at = {name: _entries_named(bytes(raw), name)[0] for name in index if name[:1] in "st"}
+    free = (0xFFFFFFFF).to_bytes(4, "little")
+    for i in range(n):  # t0 -> t1 -> ... as left siblings; every storage's child is t0
+        nxt = index[f"t{i + 1}"].to_bytes(4, "little") if i + 1 < n else free
+        raw[at[f"t{i}"] + 68 : at[f"t{i}"] + 76] = nxt + free
+        raw[at[f"s{i}"] + 76 : at[f"s{i}"] + 80] = index["t0"].to_bytes(4, "little")
+    cf = CompoundFile(bytes(raw))
+    assert sum(len(e.children) for e in cf.entries) <= len(cf.entries)
+
+
 # --- triage: no invoice lost --------------------------------------------------------------------------------------
 
 
@@ -179,6 +222,37 @@ def test_a_spreadsheet_is_a_statement_only_when_it_says_so():
     assert _kind("Statement of account", "", ("soa.csv", sheet)).kind == triage.STATEMENT
     other = _kind("Price list", "", ("prices.csv", b"Item,Price\nRebar,10\n"))
     assert other.kind == triage.NOT_FOR_AP and other.needs_person
+
+
+def test_a_spreadsheet_that_unzips_to_far_more_is_not_opened(monkeypatch):
+    """A small .xlsx can hold hundreds of MB of XML that openpyxl reads in full: its sizes are checked first."""
+    import io
+    import zipfile
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    wb.active.append(["Statement of account"])
+    good = io.BytesIO()
+    wb.save(good)
+    assert "Statement of account" in triage.sheet_text("soa.xlsx", good.getvalue())
+    bomb = io.BytesIO()
+    with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as z, zipfile.ZipFile(good) as src:
+        for item in src.infolist():
+            if item.filename != "xl/sharedStrings.xml":
+                z.writestr(item, src.read(item))
+        with z.open("xl/sharedStrings.xml", "w") as fh:
+            for _ in range(25):  # about 25 MB once unzipped, from under 100 KB
+                fh.write(b"<si><t>a</t></si>" * 60_000)
+    assert len(bomb.getvalue()) < 200_000
+    opened: list[int] = []
+
+    def load_workbook(*args, **kwargs):
+        opened.append(1)
+        raise ValueError("opened")
+
+    monkeypatch.setattr(openpyxl, "load_workbook", load_workbook)
+    assert triage.sheet_text("soa.xlsx", bomb.getvalue()) == "" and opened == []
 
 
 # --- where unpack puts things -------------------------------------------------------------------------------------

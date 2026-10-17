@@ -682,3 +682,15 @@ def test_first_run_records_a_data_folder_once(tmp_path, monkeypatch):
     assert first_run.choose_data_dir() == tmp_path / "APCoder"
     monkeypatch.setattr(first_run, "DEFAULT_DATA_DIR", tmp_path / "elsewhere")
     assert first_run.choose_data_dir() == tmp_path / "APCoder"  # kept, not changed on the next run
+
+
+def test_doctor_checks_the_model_files_as_the_app_does(tmp_path, monkeypatch):
+    """A damaged PP-OCRv5 model (the right name, the wrong content) is one the app won't use: doctor says so too."""
+    models = (offline.ModelFile("det.onnx", "https://models.invalid/det.onnx", hashlib.sha256(b"good").hexdigest()),)
+    monkeypatch.setattr(offline, "ppocrv5_files", lambda: models)
+    monkeypatch.setattr(offline, "ppocrv5_installed", lambda: True)
+    monkeypatch.setattr(offline, "model_dir", lambda: tmp_path)
+    (tmp_path / "det.onnx").write_bytes(b"damaged")
+    assert not offline.ppocrv5_ready()
+    (check,) = [c for c in offline.offline_checks() if c[0] == "OCR PP-OCRv5"]
+    assert check[1] == offline.WARN and "det.onnx" in check[2]
