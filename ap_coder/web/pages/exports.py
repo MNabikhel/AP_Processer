@@ -355,7 +355,10 @@ def undo_batch(request: Request, batch: int) -> JSONResponse:
     known = next((b for b in store.export_batches() if b["id"] == batch), None)
     if known is None or known["undone_at"]:
         return refuse(f"Batch {batch} is not an export that can be undone.")
-    count = store.undo_export_batch(batch, actor=current_reviewer())
+    try:
+        count = store.undo_export_batch(batch, actor=current_reviewer())
+    except ValueError:  # undone meanwhile (another click, another tab)
+        return refuse(f"Batch {batch} is not an export that can be undone.")
     return done(
         request,
         "/exports",

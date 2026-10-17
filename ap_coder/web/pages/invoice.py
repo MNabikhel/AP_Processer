@@ -518,7 +518,7 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     me = reviewer()
     try:
         counts = store.approve_invoice(invoice_id, analysis.output, me, open_issues=open_issues, login=login())
-    except ValueError as exc:
+    except (KeyError, ValueError) as exc:  # KeyError: deleted meanwhile, after it was read above
         return changed_meanwhile(request, invoice_id, exc)
     learned = learn_from_approval(store, invoice_id, analysis.output, actor=me, taught=view.taught_boxes(draft))
     explained = 0

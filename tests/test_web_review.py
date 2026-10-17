@@ -224,3 +224,30 @@ def test_the_rail_calls_the_manual_import_import_invoices(client):
     """The review queue is the work list; the page that brings invoices in by hand is "Import invoices" (same URL)."""
     text = client.get("/review").text
     assert 'href="/process"' in text and "Import invoices" in text and "Process invoices" not in text
+
+
+def test_retry_reads_again_only_an_invoice_that_failed(client, demo, monkeypatch, tmp_path):
+    """Retry on an invoice that is approved, in review or rejected (a stale page's button, or ids given out again
+    after a restore) read its file again into a second, duplicate review row."""
+    import shutil
+
+    from ap_coder.web.pages import process
+    from tests.conftest import SAMPLE_STEM, SAMPLES
+
+    read = []
+
+    def reading(store, settings, paths, **kwargs):
+        read.extend(paths)
+        return lambda job: {}
+
+    monkeypatch.setattr(process, "process_files", reading)
+    first, second = demo.list_invoices(REVIEW)[:2]
+    demo.reject_invoice(second["id"], "Jane", "duplicate")
+    for inv in [first, second, *demo.list_invoices(APPROVED)[:1]]:
+        refused = client.post(f"/review/{inv['id']}/retry", headers=PAGE)
+        assert refused.status_code == 409 and "only an invoice that could not be read" in refused.json()["error"]
+    assert read == []
+    pdf = shutil.copy(SAMPLES / f"{SAMPLE_STEM}.pdf", tmp_path / "scan.pdf")
+    failed = demo.add_invoice(pdf, None, None, error="the page could not be read")
+    assert client.post(f"/review/{failed}/retry", headers=PAGE).json()["ok"]
+    assert [p.name for p in read] == ["scan.pdf"]

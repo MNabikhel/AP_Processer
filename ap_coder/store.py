@@ -1750,11 +1750,17 @@ class Store:
             ]
 
     def undo_export_batch(self, batch: int, actor: str | None = None) -> int:
-        """The ERP import failed: put the batch's invoices back in the ready-to-export list."""
+        """The ERP import failed: put the batch's invoices back in the ready-to-export list. ValueError when the
+        batch was undone already (two clicks at once: the second must not log a second undo)."""
         with self._conn() as conn:
+            claimed = conn.execute(
+                "UPDATE export_batches SET undone_at = ?, undone_by = ? WHERE id = ? AND undone_at IS NULL",
+                (_now(), actor, batch),
+            )
+            if claimed.rowcount == 0:
+                raise ValueError(f"export batch {batch} is unknown or already undone")
             ids = [r["id"] for r in conn.execute("SELECT id FROM invoices WHERE export_batch = ?", (batch,))]
             conn.execute("UPDATE invoices SET export_batch = NULL WHERE export_batch = ?", (batch,))
-            conn.execute("UPDATE export_batches SET undone_at = ?, undone_by = ? WHERE id = ?", (_now(), actor, batch))
             self._log(conn, "export_undone", actor=actor, detail={"batch": batch, "invoices": len(ids)})
         return len(ids)
 

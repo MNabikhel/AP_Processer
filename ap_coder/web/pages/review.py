@@ -409,6 +409,8 @@ def review_retry(request: Request, invoice_id: int) -> JSONResponse:
     inv = store.get_invoice(invoice_id)
     if inv is None:
         return refuse("That invoice is no longer in AP Coder.", 404)
+    if inv["status"] != FAILED:  # a stale page's button: reading it again would add a second copy to the queue
+        return refuse("Retry reads again only an invoice that could not be read: reload the page.", 409)
     path = Path(inv["source_path"])
     if not path.exists():
         return refuse(f"The original file is no longer at {path}.")

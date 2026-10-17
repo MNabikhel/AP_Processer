@@ -248,6 +248,18 @@ def test_approved_pdfs_zip_and_undo_with_a_confirmation(client, busy):
     assert client.post(f"/exports/batches/{batch}/undo", headers=PAGE).status_code == 400  # not twice
 
 
+def test_two_undos_of_a_batch_at_once_record_one_undo(client, busy, monkeypatch):
+    """Two clicks on Undo at the same moment both found the batch not undone yet: the second wrote a second
+    "export undone" event (0 invoices) to the audit trail and took over the batch's "undone by"."""
+    batch = _batch(client, busy)
+    before = busy.export_batches()  # as both requests read it, before either undid the batch
+    follow(client, client.post(f"/exports/batches/{batch}/undo", headers=PAGE))
+    monkeypatch.setattr(busy, "export_batches", lambda *a, **k: before)
+    late = client.post(f"/exports/batches/{batch}/undo", headers=PAGE)
+    assert late.status_code == 400 and "not an export that can be undone" in late.json()["error"]
+    assert len(busy.events(actions=["export_undone"])) == 1
+
+
 def test_the_custom_layout_is_saved_and_previewed(client, busy):
     form = {
         "header": ["Vendor", "Amount", "Company", "Half"],

@@ -196,6 +196,21 @@ def test_a_field_that_cannot_be_read_is_shown_instead_of_the_checks(client, stor
     assert "Fix this field" in answer["sections"]["checks"] and "summary" not in answer["sections"]
 
 
+@pytest.mark.parametrize("typed", ["nan", "inf", "-1e309"])
+def test_a_header_amount_that_is_not_a_finite_number_is_refused(client, store, typed):
+    """A total posted as "nan" was taken as a number: only the total check flagged it, "Approve anyway" cleared
+    that, and a NaN total is never over the second-approval limit. It must read as an amount that can't be read."""
+    store.set_setting("approval_limit", "1")
+    inv_id = clean_invoice(client, store)
+    data = form_of(store, inv_id, grand_total=typed)
+    answer = check(client, inv_id, data)
+    assert not answer["valid"] and not answer["allow"] and "Fix this field" in answer["sections"]["checks"]
+    key = re.search(r'name="override" value="([0-9a-f]+)"', answer["sections"].get("bar", ""))
+    data = {**data, "override": key.group(1) if key else "", "why_done": "1"}
+    client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE)
+    assert store.get_invoice(inv_id)["status"] == REVIEW
+
+
 def test_errors_need_approve_anyway(client, store):
     inv_id = clean_invoice(client, store)
     data = form_of(store, inv_id, grand_total="1.00")  # the total no longer adds up: an error
@@ -581,6 +596,21 @@ def test_dragged_words_fill_a_line_or_make_a_new_one(client, store):
     assert bad.status_code == 400 and "quantity" in bad.json()["error"]
     bad = client.post(f"/review/{inv['id']}/teach", data={"field": "line_gl", "text": "6000"}, headers=PAGE)
     assert bad.status_code == 400  # the GL account is chosen, never read off the page
+
+
+def test_a_new_line_from_a_long_run_of_words_is_read_quickly(client, store):
+    """Stripping the numbers before a new line's amount took time growing with the square of the words picked
+    (8,000 numbers: over 3 seconds of the server's time)."""
+    import time
+
+    inv = store.list_invoices(REVIEW)[0]
+    text = "Item" + " 1" * 8000 + " x 12.50"
+    started = time.perf_counter()
+    answer = client.post(f"/review/{inv['id']}/teach", data={"field": "line_new", "text": text}, headers=PAGE).json()
+    assert time.perf_counter() - started < 1.5
+    assert answer["value"]["amount"] == 12.5 and answer["value"]["description"].endswith("1 1 x")
+    assert invoice_view.line_value("line_new", "Item" + " 1" * 8000 + " 12.50") == {"description": "Item",
+                                                                                   "amount": 12.5}  # fmt: skip
 
 
 def test_the_viewer_knows_each_lines_amount_to_light_its_row(client, store):
