@@ -60,10 +60,16 @@ function applySections(answer) {
     const el = document.querySelector(`[data-live="${name}"]`);
     if (!el) continue;
     const open = [...el.querySelectorAll("details")].map((d) => d.open); // what the reviewer opened stays open
+    // A box or choice of this section in use (ticked with the keyboard) keeps the focus once it is drawn again.
+    const active = el.contains(document.activeElement) && document.activeElement.name ? document.activeElement : null;
     el.innerHTML = html; // drawn by the server, every text escaped
     el.querySelectorAll("details").forEach((d, i) => {
       if (i < open.length) d.open = open[i];
     });
+    if (active) {
+      const same = [...el.querySelectorAll("[name]")].find((x) => x.name === active.name && x.value === active.value);
+      same?.focus({ preventScroll: true });
+    }
   }
   if (approveButton) approveButton.disabled = !answer.allow;
   showMailLanguage();
@@ -642,7 +648,11 @@ async function chooseFor(event) {
   cancel.addEventListener("click", closeChooser);
   chooser.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeChooser();
-    if (e.key === "Enter") use.click();
+    // Enter in the list uses the words; on a button, Enter presses that button (Cancel must not use them).
+    if (e.key === "Enter" && e.target === select) {
+      e.preventDefault();
+      use.click();
+    }
   });
   use.addEventListener("click", async () => {
     use.disabled = true;
