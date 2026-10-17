@@ -37,6 +37,9 @@ EXTRA_FIELDS = ("other_charges",)
 DATE_FIELDS = ("invoice_date", "due_date")
 
 VERIFIED, LIKELY, CHECK, MISSING = "verified", "likely", "check", "missing"
+# Added to a reading's method when it was printed for the customer (the bill-to block, after "Client:"): a
+# registration number read only so may be the customer's. The calibration reads the method by its family ("pattern").
+BILL_TO_READING = "+bill-to"
 STATUSES = (VERIFIED, LIKELY, CHECK, MISSING)
 
 
@@ -124,6 +127,7 @@ class PageLayout:
 class DocLayout:
     pages: list[PageLayout]
     source: str  # "text" | "ocr" | "di" | "mixed"
+    pages_left_out: int = 0  # the file's pages past the pages read (``build_layout`` reads at most ``max_pages``)
 
     def words(self) -> Iterator[Word]:
         for page in self.pages:
@@ -212,7 +216,9 @@ class CaptureResult:
     line_items: list[LineReading] = field(default_factory=list)
     checks: list[dict[str, Any]] = field(default_factory=list)
     layout_source: str = ""
-    page_count: int = 0
+    page_count: int = 0  # the file's pages, read or not
+    pages_left_out: int = 0  # of them, the pages the local readers did not read (past the first 20)
+    credit_note: bool = False  # titled as a credit note: a person applies it, whatever the sign of its total
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -221,6 +227,8 @@ class CaptureResult:
             "checks": list(self.checks),
             "layout_source": self.layout_source,
             "page_count": self.page_count,
+            "pages_left_out": self.pages_left_out,
+            "credit_note": self.credit_note,
         }
 
     @classmethod
@@ -229,7 +237,8 @@ class CaptureResult:
             fields={k: FieldResult.from_dict(v) for k, v in (d.get("fields") or {}).items()},
             line_items=[LineReading.from_dict(x) for x in d.get("line_items") or []],
             checks=list(d.get("checks") or []), layout_source=d.get("layout_source") or "",
-            page_count=int(d.get("page_count") or 0),
+            page_count=int(d.get("page_count") or 0), pages_left_out=int(d.get("pages_left_out") or 0),
+            credit_note=bool(d.get("credit_note")),
         )  # fmt: skip
 
     def status_counts(self) -> dict[str, int]:

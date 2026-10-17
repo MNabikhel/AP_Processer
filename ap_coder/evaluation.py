@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,9 @@ AMOUNT_TOLERANCE = 0.01
 
 
 def _norm_text(value: Any) -> str:
-    return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
+    """Letters and digits only, accents folded to plain letters ("Ltée" -> "ltee")."""
+    decomposed = unicodedata.normalize("NFKD", str(value or ""))
+    return re.sub(r"[^0-9a-z]", "", "".join(c for c in decomposed if not unicodedata.combining(c)).lower())
 
 
 def _amount_eq(a: Any, b: Any) -> bool:

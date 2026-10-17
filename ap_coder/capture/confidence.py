@@ -32,6 +32,7 @@ from typing import Any
 from .normalize import amounts_equal, gst_valid, norm_name, normalize_value, parse_dates, qst_valid
 from .types import (
     AMOUNT_FIELDS,
+    BILL_TO_READING,
     CHECK,
     DATE_FIELDS,
     FIELDS,
@@ -55,6 +56,7 @@ SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE", "DUE_MATCHES_TER
 # Checks that only show a value is reasonable, not that it is the printed one: passing them confirms nothing.
 WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE"}
 LIKELY_AT = 0.85
+REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
 SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
 
 TAX_FIELDS = ("gst_amount", "hst_amount", "pst_amount", "qst_amount")
@@ -441,6 +443,9 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                                    contested=contest.get(field, 0.0) > 0.25,
                                    confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
                 conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), alt, local_evidence))
+        if field in failed:
+            # The evidence pattern does not record the failed check: its measured accuracy must not undo the mark-down.
+            conf = min(conf, max(0.0, min(raw, 1.0)))
         # A lone reader is never verified on its own measured record (the benchmark is synthetic):
         # verified also needs a second reader or a check to agree. The second OCR read of a scan
         # shares the first one's blind spots (a word OCR never saw), so with the rule reader it
@@ -475,6 +480,15 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                 reasons.append("a dot between its digits may be a speck on the scan")
         if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
+        if (
+            field in REGISTRATION_FIELDS
+            and all(BILL_TO_READING in r.method for _, r in g.readings)
+            and not any(c["ok"] and c["code"] == "VENDOR_GST_MATCH" and field in c["fields"] for c in checks)
+        ):
+            # Read only where the customer's details are printed: a valid check digit shows the number is well
+            # formed, not that it is the supplier's. Only the vendor master can say it is.
+            conf = min(conf, SINGLE_READER_CAP)
+            reasons.append("read only in the bill-to block: it may be the customer's number")
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
         # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
         unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []

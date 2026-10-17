@@ -122,8 +122,8 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     its findings, a credit note, a total over the touchless limit (Settings → Automation) or over the approval
     limit (a second approver), a foreign currency with no exchange rate to check the limit with, and not yet read
     by the page reader, or not every page of it (``pages_read``: the pages it read, at most
-    AP_PAGE_READER_MAX_PAGES), a text file the page reader cannot look at (``no_page``), or a line of ``output``
-    whose account only the local chat model chose (``inference.MODEL_SUGGESTED``) or a weak match coded
+    AP_PAGE_READER_MAX_PAGES), nor by the local readers (past its first 20 pages), a text file the page reader
+    cannot look at (``no_page``), or a line of ``output`` whose account only the local chat model chose (``inference.MODEL_SUGGESTED``) or a weak match coded
     (``offline_coder.WEAK_MATCH``: an account's name, the vendor's default, an account AP moved away from)."""
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     coding = _amounts(capture, output)
@@ -139,7 +139,9 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
                            awaiting_page_reader=awaiting_page_reader, pages_unread=unread,
-                           no_rate_for=no_rate, no_page=no_page, model_coded_lines=guessed)  # fmt: skip
+                           no_rate_for=no_rate, no_page=no_page, model_coded_lines=guessed,
+                           credit_note=capture is not None and capture.credit_note,
+                           pages_left_out=capture.pages_left_out if capture is not None else 0)  # fmt: skip
 
 
 def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capture: CaptureResult | None,

@@ -23,6 +23,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .capture.normalize import CREDIT_TITLES
+
 INVOICE, CREDIT, STATEMENT, REMINDER, BANK_CHANGE, NOT_FOR_AP = (
     "invoice",
     "credit_note",
@@ -66,9 +68,7 @@ _INVOICE_TITLE = _any(
     r"no\.? de facture",
     r"numero de facture",
 )
-_CREDIT_TITLE = _any(
-    r"credit (?:note|memo|memorandum)", r"note de credit", r"avoir", r"facture d'avoir", r"credit invoice"
-)
+_CREDIT_TITLE = _any(*CREDIT_TITLES)  # the same titles capture reads a credit note by
 _STATEMENT_TITLE = _any(
     r"statement of account",
     r"account statement",
