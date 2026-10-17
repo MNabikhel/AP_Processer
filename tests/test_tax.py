@@ -374,3 +374,26 @@ def test_an_invoice_without_a_ship_to_is_taxed_where_we_are(ground_truth, refere
     assert "TAX_REGIME_MISMATCH" in {i.code for i in report.issues}
     output, _ = finalise_coding(doc, reference, Settings())  # no province of ours: left as printed (none)
     assert output["ship_to_province"] == ""
+
+
+def test_a_new_rate_row_wins_over_an_old_one_left_open():
+    from ap_coder.tax import TaxRate
+
+    table = TaxRateTable.load()
+    # Finance appends Saskatchewan's new rate but forgets to close the old row.
+    newer = TaxRateTable(table.rates + (TaxRate("PST", "SK", 0.07, dt.date(2026, 7, 1), None),))
+    assert newer.rate_for("PST", "SK", dt.date(2026, 9, 1)) == 0.07
+    assert newer.rate_for("PST", "SK", dt.date(2026, 6, 30)) == 0.06
+    shown = [r for r in newer.to_markdown(dt.date(2026, 9, 1)).splitlines() if "| PST | SK |" in r]
+    assert shown == ["| PST | SK | 0.07 |"]  # one row, the rate in force
+    assert newer.overlaps() and not table.overlaps()
+
+
+def test_a_rate_written_with_a_percent_sign_is_always_a_percentage(tmp_path):
+    path = tmp_path / "rates.csv"
+    path.write_text(
+        "tax_type,province,rate,effective_from,effective_to\nPST,BC,0.5%,2026-01-01,\nGST,,5%,2008-01-01,\n"
+    )
+    table = TaxRateTable.load(path)
+    assert table.rate_for("PST", "BC", dt.date(2026, 2, 1)) == pytest.approx(0.005)
+    assert table.rate_for("GST", "BC", dt.date(2026, 2, 1)) == pytest.approx(0.05)

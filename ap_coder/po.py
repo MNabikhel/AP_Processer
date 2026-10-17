@@ -121,6 +121,8 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
             skipped += 1
             continue
         qty, price, amount = _number(get("quantity")), _number(get("unit_price")), _number(get("amount"))
+        if amount:  # an ERP writes 0 rather than blank for the quantity and price of a lump-sum line
+            qty, price = qty or None, price or None
         amount_only = qty is None and price is None and amount is not None  # e.g. "Consulting services: 5,000"
         if qty is None:
             qty = 1.0 if price is None or amount is None or not price else amount / price

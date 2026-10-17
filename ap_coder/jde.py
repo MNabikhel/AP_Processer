@@ -45,7 +45,7 @@ from dataclasses import asdict, dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from .memory import vendor_key
+from .memory import refresh_vendor_key, vendor_key
 from .safe import csv_row
 from .tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from .vendors import norm_invoice_number
@@ -219,6 +219,8 @@ class JdeSettings:
         out.answers = {str(k): str(v) for k, v in out.answers.items()}
         if not isinstance(out.an8_overrides, dict):
             out.an8_overrides = {}
+        # Vendor keys saved under older vendor-matching rules, as today's rules give them ("energir sec" -> "energir").
+        out.an8_overrides = {refresh_vendor_key(str(k)): v for k, v in out.an8_overrides.items()}
         if out.amount_mode not in AMOUNT_MODES:
             out.amount_mode = AMOUNT_GROSS
         if out.decimals not in DECIMAL_MODES:
