@@ -26,3 +26,12 @@ def test_evaluation_scores_fields(tmp_path, ground_truth):
     assert report.cost_center_accuracy == round(4 / 10, 4)
     assert report.meets_target is False
     assert any(m["field"] == "predicted_gl_code" and m["line_number"] == 1 for m in report.mismatches)
+
+
+def test_accented_names_match_their_unaccented_spelling():
+    """ "Équipements Saint-Laurent Ltée" and "Equipements Saint-Laurent Ltee" are the same supplier: accents are folded
+    to plain letters, not deleted (deleted, the report counted the name as wrong)."""
+    from ap_coder.evaluation import _norm_text
+
+    assert _norm_text("Équipements Saint-Laurent Ltée") == _norm_text("Equipements Saint-Laurent Ltee")
+    assert _norm_text("Équipements Saint-Laurent Ltée") == "equipementssaintlaurentltee"

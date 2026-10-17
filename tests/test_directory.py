@@ -111,6 +111,17 @@ def test_quick_search_on_top_of_the_filters(store):
     assert d.run(store, d.Query(q="zzz-nothing")).total == 0
 
 
+def test_quick_search_with_more_hits_than_sqlite_takes_variables(store, monkeypatch, few_sql_variables):
+    """Up to EXPORT_LIMIT hits: more than a stock SQLite build takes as bound variables (32,766, or 999)."""
+    from ap_coder import search
+
+    real = {i["id"] for i in store.list_invoices()}
+    many = [search.Hit(1, {"id": n}) for n in [*real, *range(10_000, 12_000)]]
+    monkeypatch.setattr(search, "find", lambda *a, **kw: many)
+    found = d.run(store, d.Query(q="anything"), everything=True)
+    assert found.total == len(real) and {r["id"] for r in found.rows} == real
+
+
 # --- Sort, pages, columns -------------------------------------------------------------------------------------------
 
 

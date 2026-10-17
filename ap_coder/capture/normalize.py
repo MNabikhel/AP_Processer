@@ -18,11 +18,12 @@ _CURRENCY_WORDS = re.compile(r"\b(CAD|USD|EUR|GBP|CDN|CA\$|US\$|C\$)\b", re.I)
 # separator. Thousands: commas, dots, apostrophes or spaces ("1,234.56", "1.234,56", "1 234,56", "1 234.56",
 # "1 234 567"). One space group may also be a quantity set close to its price ("10 100.00" in a line item):
 # ``find_amounts`` tells them apart. "0.125" is a unit price with three decimals, never thousands, and "1.3023" one
-# with four. A credit's "CR" may follow a stray point on a scan ("392.99.CR").
+# with four ("1234.5678" too: four decimals are never thousands). A credit's "CR" may follow a stray point on a
+# scan ("392.99.CR").
 _AMOUNT = re.compile(
     r"""(?P<neg1>\((?=\s*(?:[$€£]\s*)?\d)|(?<![-−–])[-−–](?=(?:[$€£]\s*)?\d))?
         \s*(?:[$€£]\s*)?
-        (?P<num>\d{1,3}[.,]\d{4}(?!\d)(?![.,']\d)
+        (?P<num>\d{1,6}[.,]\d{4}(?!\d)(?![.,']\d)
           |(?!0[,.']\d)\d{1,3}(?:[,.']\d{3})+(?:[.,]\d{1,2})?
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+,\d{1,2}(?!\d)
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:\.\d{1,2})?(?![.,]?\d)
@@ -81,7 +82,7 @@ def _number(num: str) -> float | None:
     num = num.replace(" ", " ").replace(" ", " ").replace("'", " ")
     if re.fullmatch(r"0[.,]\d{3,4}", num):
         return float("0." + num[2:])  # a unit price to three or four decimals ("0.125"), not thousands
-    if re.fullmatch(r"\d{1,3}[.,]\d{4}", num):
+    if re.fullmatch(r"\d{1,6}[.,]\d{4}", num):
         return float(re.sub(r"[.,]", ".", num))  # four decimals ("1.3023" a cubic metre): never thousands
     last_sep = max(num.rfind("."), num.rfind(","))
     # The last separator is the decimal point when it has one or two digits after it, or when the separators
@@ -428,6 +429,14 @@ _CURRENCY_STATEMENT = re.compile(
     r"PAYABLE|EXPRIM[EÉ]S?|INDIQU[EÉ]S?|PAYABLES?)\s+)?(?:IN|EN)\s+(?:DOLLARS\s+)?" + _CODE
     + r"|(?:CURRENCY|DEVISE|MONNAIE)\s*[:=]?\s*" + _CODE
 )  # fmt: skip
+# The same said in words: "All prices in Canadian dollars", "Amounts in US dollars", "Montants en dollars canadiens".
+_WORDS_STATEMENT = re.compile(
+    r"(?:IN|EN)\s+(?:(?P<cad>CANADIAN)|(?P<usd>U\.?S\.?|AMERICAN))\s+DOLLARS"
+    r"|DOLLARS\s+(?:(?P<cad2>CANADIENS)|(?P<usd2>AM[EÉ]RICAINS|US)\b)"
+)
+# A line on how the supplier may be paid ("Payments in USD accepted", "Wire: ..., USD account 4455"): a code on it
+# is not the currency the invoice is billed in.
+_PAYMENT_NOTE = re.compile(r"ACCEPT|PAYMENTS?\s+(?:IN|EN)\b|PAIEMENTS?\s+EN\b|REMIT|\bWIRE|VIREMENT|ACCOUNT|COMPTE")
 # A code printed on an amount: "CAD 1,050.00", "$1,050.00 USD", "TOTALCAD1,050.00".
 _CODE_ON_AMOUNT = re.compile(_CODE + r"\s*\$?\s*\d|\d[.,]\d{2}\s*\$?\s*" + _CODE)
 _EXCHANGE = re.compile(r"EXCHANGE|\bRATE\b|\bTAUX\b|CONVERSION|=")
@@ -440,20 +449,28 @@ def find_currency(text: str) -> str | None:
 
 
 def currency_evidence(text: str) -> tuple[str, float] | None:
-    """(currency, how sure, 0-1). A statement ("All amounts in USD", "Currency: CAD") or a code printed on the
-    amounts settles it; a code anywhere else counts when it is the only one. Several codes and nothing to tell
-    which the invoice is billed in ("1 USD = 1.37 CAD" in a note): the first is given, but not as sure."""
+    """(currency, how sure, 0-1). A statement ("All amounts in USD", "Currency: CAD", "All prices in Canadian
+    dollars") or a code printed on the amounts settles it; a code anywhere else counts when it is the only one, and
+    not when it is only in a note on how the supplier may be paid ("Payments in USD accepted"). Several codes and
+    nothing to tell which the invoice is billed in ("1 USD = 1.37 CAD" in a note): the first is given, but not as
+    sure."""
     s = text.upper()
     stated = {m.group(1) or m.group(2) for m in _CURRENCY_STATEMENT.finditer(s)}
+    stated |= {"CAD" if m.group("cad") or m.group("cad2") else "USD" for m in _WORDS_STATEMENT.finditer(s)}
     if len(stated) == 1:
         return stated.pop(), 0.8
     lines = [ln for ln in s.splitlines() if not _EXCHANGE.search(ln)]
     on_amounts = {m.group(1) or m.group(2) for ln in lines for m in _CODE_ON_AMOUNT.finditer(ln)}
     if len(on_amounts) == 1:
         return on_amounts.pop(), 0.8
-    codes = [code for code in CURRENCIES if re.search(rf"(?<![A-Z]){code}(?![A-Z])", s)]
+    # A code anywhere else; one only in a note on how the supplier may be paid is a guess, not as sure.
+    rest = "\n".join(ln for ln in s.splitlines() if not _PAYMENT_NOTE.search(ln))
+    codes = [code for code in CURRENCIES if re.search(rf"(?<![A-Z]){code}(?![A-Z])", rest)]
     if codes:
         return codes[0], 0.8 if len(codes) == 1 else 0.5
+    codes = [code for code in CURRENCIES if re.search(rf"(?<![A-Z]){code}(?![A-Z])", s)]
+    if codes:
+        return codes[0], 0.5
     if re.search(r"\bUS\$|\bUS\s?DOLLARS?\b|\$\s?US\b", s):
         return "USD", 0.8
     if re.search(r"\bC\$|\bCDN\b|CANADIAN", s):
@@ -516,3 +533,14 @@ def same_value(field: str, a: object, b: object) -> bool:
     if isinstance(na, float) and isinstance(nb, float):
         return amounts_equal(na, nb)
     return na == nb
+
+
+# ---------------------------------------------------------------- document titles
+
+# What a credit note calls itself, in lower case without accents ("Note de crédit" -> "note de credit"). Email triage
+# (``triage``) and capture (``reader.credit_printed_positive``) read the same list: a document triage sends to the
+# queue as a credit note is a credit for capture too.
+CREDIT_TITLES = (
+    r"credit\s*(?:note|memo(?:randum)?|invoice)", r"note\s*de\s*credit", r"avis\s*de\s*credit",
+    r"facture\s*d\s*['’]?\s*avoir", r"avoir",
+)  # fmt: skip

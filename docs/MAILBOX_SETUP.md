@@ -1,6 +1,6 @@
 # Getting the AP mailbox's emails into AP Coder (for IT)
 
-AP Coder **never connects to the mailbox**, to Exchange or to the internet. A tool PCL already runs saves each email,
+AP Coder **never connects to the mailbox**, to Exchange or to the internet. A tool the company already runs saves each email,
 as a file, into AP Coder's **invoices folder** on the AP computer (`C:\Users\<user>\APCoder\invoices` by default;
 *Settings → Data* shows it). AP Coder then sorts every email it finds there, reads the invoices and sets the rest
 aside for a person. No mailbox password, token or network access is given to AP Coder.
@@ -28,13 +28,13 @@ robocopy "<synced AP Coder inbox folder>" "%USERPROFILE%\APCoder\invoices" *.eml
 ```
 
 `/MOV` removes each file from the library once copied, so the library only holds what AP Coder has not taken yet.
-Where an on-premises data gateway is already in use, step 3 can instead be **File System: Create file** on a PCL file
+Where an on-premises data gateway is already in use, step 3 can instead be **File System: Create file** on a company file
 share, with the same scheduled `robocopy` from that share.
 
-## Option 2: a mail-saving tool PCL already has
+## Option 2: a mail-saving tool the company already has
 
 Any server-side tool that saves messages as .eml or .msg (an archiving, journaling or capture product) can write to a
-PCL file share; the same scheduled `robocopy ... /MOV` moves them into the invoices folder.
+company file share; the same scheduled `robocopy ... /MOV` moves them into the invoices folder.
 
 ## Option 3: no setup (the pilot's first weeks)
 

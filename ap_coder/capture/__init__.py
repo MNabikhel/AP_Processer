@@ -17,7 +17,7 @@ from .confidence import LABELS, TAX_FIELDS, fuse
 from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available
 from .locate import locate
 from .normalize import find_amounts
-from .reader import _table_header_line, read_fields, read_line_items
+from .reader import _table_header_line, credit_titled, read_fields, read_line_items
 from .types import (
     AMOUNT_FIELDS,
     CHECK,
@@ -444,4 +444,5 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
                 fr.reasons.append(f"scanned at about {coarse:.0f} dpi, coarser than the scans its reading was measured "
                                   "on (150 dpi and up): a person checks it")  # fmt: skip
     return CaptureResult(fields=fields, line_items=items, checks=checks, layout_source=layout.source,
-                         page_count=len(layout.pages))  # fmt: skip
+                         page_count=len(layout.pages) + layout.pages_left_out, pages_left_out=layout.pages_left_out,
+                         credit_note=credit_titled(layout))  # fmt: skip

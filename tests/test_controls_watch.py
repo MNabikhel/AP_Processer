@@ -159,3 +159,62 @@ def test_a_crafted_email_does_not_stop_the_watcher(tmp_path, monkeypatch, capsys
     assert processed == ["a.pdf"]
     assert (inbox / "emails" / "could not read" / "deep.eml").exists()
     assert "deep.eml: could not be read" in capsys.readouterr().err
+
+
+def test_a_file_stamped_in_the_future_is_picked_up(tmp_path):
+    """A ZIP made in a time zone ahead, or a scanner with a fast clock: its time is ahead of this computer's, which
+    is not "still copying" (it was skipped until the clock caught up)."""
+    store = Store(tmp_path / "a.db")
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    ahead = inbox / "ahead.pdf"
+    shutil.copy(SAMPLES / f"{SAMPLE_STEM}.pdf", ahead)
+    os.utime(ahead, (time.time() + 3600, time.time() + 3600))
+    assert new_files(inbox, store) == [ahead]
+
+
+def _old_email(path, *attachments):
+    from email.message import EmailMessage
+
+    m = EmailMessage()
+    m["Subject"], m["From"] = "Invoice", "ar@vendor.example"
+    m.set_content("attached")
+    for name, content in attachments:
+        m.add_attachment(content, maintype="application", subtype="pdf", filename=name)
+    path.write_bytes(m.as_bytes())
+    os.utime(path, (1_700_000_000, 1_700_000_000))
+
+
+def test_watch_once_processes_the_invoices_it_just_took_out_of_emails(tmp_path, monkeypatch):
+    """The attachments were written a moment ago, so the "still copying" check skipped them until the next run (a
+    day later from Task Scheduler)."""
+    from types import SimpleNamespace
+
+    from ap_coder import cli
+
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    _old_email(inbox / "mail.eml", ("inv.pdf", b"%PDF-1.4 scan"))
+    processed = []
+
+    class Pipeline:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def process(self, path):
+            processed.append(path.name)
+            return SimpleNamespace(ok=True, error=None, output={"vendor_name": "V"}, report=None)
+
+    monkeypatch.setattr(cli, "InvoicePipeline", Pipeline)
+    assert cli.main(_watch_args(tmp_path, "--once")) == 0
+    assert processed == ["mail - inv.pdf"]
+
+
+def test_watch_once_fails_when_every_email_could_not_be_read(tmp_path):
+    from ap_coder import cli
+
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    (inbox / "bad.msg").write_bytes(b"not an outlook email" * 40)
+    os.utime(inbox / "bad.msg", (1_700_000_000, 1_700_000_000))
+    assert cli.main(_watch_args(tmp_path, "--once")) == 1

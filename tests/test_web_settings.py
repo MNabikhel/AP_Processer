@@ -483,3 +483,11 @@ def test_the_ai_reviewer_settings(client, store):
     assert ok.status_code == 200
     assert verifier.load_settings(store) == verifier.ReviewerSettings(False, 2, 3.5)  # unticked: off
     assert "Off: invoices are approved" in client.get("/settings/reading").text
+
+
+def test_a_setting_typed_with_a_line_break_is_saved_as_one_line(store, tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    monkeypatch.setattr(settings_page, "env_path", lambda: env)
+    monkeypatch.delenv("AP_LLM_MODEL", raising=False)
+    assert settings_page.save_env(store, {"AP_LLM_MODEL": "gemma\r\nAP_ALLOW_INTERNET=1"}) == ["AP_LLM_MODEL"]
+    assert read_env(env) == {"AP_LLM_MODEL": "gemma AP_ALLOW_INTERNET=1"}  # one setting, nothing smuggled in

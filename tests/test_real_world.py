@@ -209,6 +209,13 @@ def test_semicolon_csv_from_french_excel(tmp_path):
     assert read_csv_rows(f) == [{"Compte": "0100", "Description": "Encaisse – générale"}]
 
 
+def test_doubled_quotes_in_a_csv_cell_are_read_as_one_quote(tmp_path):
+    # Excel writes a quote inside a quoted cell as two quotes; the header line alone gives the sniffer no example.
+    f = tmp_path / "vendors.csv"
+    f.write_text('vendor_name,city\n"Acme ""Best"" Inc",Toronto\n', encoding="utf-8")
+    assert read_csv_rows(f) == [{"vendor_name": 'Acme "Best" Inc', "city": "Toronto"}]
+
+
 def test_tax_rate_file_resaved_by_excel(tmp_path):
     f = tmp_path / "rates.csv"
     f.write_text(

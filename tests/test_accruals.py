@@ -55,6 +55,24 @@ def test_exported_rejected_and_closed_are_left_out(tmp_path):
     assert not any(x.reference.startswith("PO-89904") for x in accruals.build(store, END))
 
 
+def test_a_resent_copy_of_a_bill_already_counted_is_not_accrued_again(tmp_path):
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    nw = _coded(store, "northwind_ON_HST_NW-2026-0912")
+    a = store.add_invoice(tmp_path / "a.pdf", nw, {})
+    store.approve_invoice(a, nw, "Jane")
+    store.create_export_batch([a], "csv")
+    flagged = {"issues": [{"severity": "error", "code": "DUPLICATE_INVOICE", "message": f"same as invoice #{a}"}]}
+    copy = store.add_invoice(tmp_path / "b.pdf", nw, flagged)  # the vendor sent it again: in review
+    other = store.add_invoice(tmp_path / "c.pdf", {**nw, "invoice_number": "NW-2026-0999"}, flagged)
+    accrued = {x.reference for x in accruals.build(store, END) if x.source == accruals.NOT_IN_ERP}
+    assert not any(f"(#{copy})" in r for r in accrued)  # the bill is in the ERP already
+    assert any(f"(#{other})" in r for r in accrued)  # flagged, but no bill with its number is counted
+    in_erp = {"issues": [{"severity": "error", "code": "DUPLICATE_IN_ERP", "message": "in the ERP"}]}
+    keyed = store.add_invoice(tmp_path / "d.pdf", {**nw, "invoice_number": "NW-2026-1000"}, in_erp)
+    assert not any(f"(#{keyed})" in x.reference for x in accruals.build(store, END))
+
+
 def test_expected_recurring_invoice(tmp_path):
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)

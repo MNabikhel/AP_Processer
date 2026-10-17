@@ -306,7 +306,7 @@ def test_account_columns_mode_and_mapping():
     assert jde.ani(jde.account_for("6010", "CC400", no_cc)) == "1.6010"
 
 
-def test_csv_columns_in_order_and_formula_safe():
+def test_csv_columns_in_order_and_text_as_it_is():
     inv = _invoice(ON)
     inv["final_output"]["gl_distribution"][0]["description"] = "=HYPERLINK(evil)"
     raw = jde.export_batch([inv], jde.JdeSettings(), AN8, batch=1)
@@ -314,7 +314,18 @@ def test_csv_columns_in_order_and_formula_safe():
     assert raw[jde.HEADER_FILE].decode().splitlines()[0].split(",") == jde.HEADER_COLUMNS
     assert raw[jde.DIST_FILE].decode().splitlines()[0].split(",") == jde.DIST_COLUMNS
     assert not raw[jde.HEADER_FILE].startswith(b"\xef\xbb\xbf")  # no BOM for database loaders
-    assert _csv(raw[jde.DIST_FILE])[0]["VNEXA"] == "'=HYPERLINK(evil)"
+    assert _csv(raw[jde.DIST_FILE])[0]["VNEXA"] == "=HYPERLINK(evil)"  # for a database loader, not Excel
+
+
+def test_z_files_hold_the_text_as_it_is_without_spreadsheet_quoting():
+    number = "+" + "A" * 24  # 25 characters: VLVINV's width
+    inv = _invoice(ON, invoice_number=number)
+    inv["final_output"]["gl_distribution"][0]["description"] = "- Labour, 4 h on site"
+    assert jde.validate([inv], jde.JdeSettings(), AN8) == {}
+    files = _files([inv])
+    assert files[jde.HEADER_FILE][0]["VLVINV"] == number  # JDE's own supplier + invoice number check still matches
+    line = files[jde.DIST_FILE][0]
+    assert (line["VNEXR"], line["VNEXA"]) == (number, "- Labour, 4 h on site")
 
 
 # --- Checks -------------------------------------------------------------------------------------------------------
@@ -360,6 +371,26 @@ def test_duplicates_in_the_batch_and_against_earlier_exports():
     assert jde.validate([_invoice(AB, 5)], settings, {}, prior)[5] == [
         "no JDE supplier number (AN8): set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards"
     ]  # without an AN8 the register row (another vendor name) is not the same supplier
+
+
+def test_an_earlier_export_known_only_by_its_gst_number_is_a_duplicate(tmp_path):
+    from ap_coder.vendors import norm_tax_number
+
+    settings = jde.JdeSettings()
+    first = _invoice(ON, 1)
+    gst = first["final_output"]["gst_hst_registration_number"]
+    ids = {f"gst:{norm_tax_number(gst)}": "10023"}  # the vendor master knows the supplier by its GST/HST number
+    second = _invoice(ON, 2, vendor_name="Northwind I.T. Solns")  # the same bill, the name read differently
+    assert jde.validate([first, second], settings, ids) == {
+        2: ["same supplier and invoice number as AP Coder #1 in this batch"]
+    }
+    # The first went out in an earlier batch: the store's rows of what is out carry its GST/HST number.
+    store = Store(tmp_path / "ap.db")
+    first_id = store.add_invoice(tmp_path / "a.pdf", first["final_output"], {})
+    store.approve_invoice(first_id, first["final_output"], "Jane")
+    batch = store.create_export_batch([first_id], jde.FORMAT)
+    problems = jde.validate([second], settings, ids, jde.prior_records(store))
+    assert problems == {2: [f"already exported: AP Coder #{first_id} in batch {batch}"]}
 
 
 def test_an8_from_the_vendor_master_and_the_overrides():
@@ -479,6 +510,48 @@ def test_exports_page_jde_flow(db):
     assert client.get("/exports").status_code == 200  # the undone batch is listed, nothing breaks
 
 
+def test_a_jde_batch_downloads_again_with_the_same_vouchers(db):
+    from ap_coder.demo import load_demo
+    from ap_coder.web.pages.exports import jde_file, jde_left_out
+
+    from .webclient import client_for, follow, post
+
+    store = Store(db)
+    load_demo(store)
+    client = client_for(store)
+    northwind = next(i for i in store.unexported_approved() if i["vendor_name"].startswith("Northwind"))
+    settings = jde.load(store)
+    settings.an8_overrides = {vendor_key(northwind["vendor_name"]): "10023"}
+    jde.save(store, settings)
+    follow(client, post(client, "/exports/create", {"fmt": jde.FORMAT, "ids": [northwind["id"]]}))
+    (batch,) = store.export_batches()
+
+    def vouchers() -> dict[str, bytes]:
+        with zipfile.ZipFile(io.BytesIO(jde_file(store, batch["id"])[0])) as zf:
+            return {n: zf.read(n) for n in (jde.HEADER_FILE, jde.DIST_FILE)}
+
+    first = vouchers()
+    assert len(_csv(first[jde.HEADER_FILE])) == 1
+    # AP loads the batch into JD Edwards, then imports the ERP's invoice register: the voucher is now in it.
+    final = store.get_invoice(northwind["id"])["final_output"]
+    store.import_erp_register([{"vendor_name": final["vendor_name"], "invoice_number": final["invoice_number"],
+                                "total": final["grand_total"]}])  # fmt: skip
+    assert vouchers() == first
+    assert jde_left_out(store, batch["id"])[1] == {}
+    # The JD Edwards settings change after the batch was made: the batch still holds its invoice.
+    settings.an8_overrides = {}
+    jde.save(store, settings)
+    again = vouchers()
+    assert [r["VLEDTN"] for r in _csv(again[jde.HEADER_FILE])] == [f"APC{northwind['id']}"]
+    with zipfile.ZipFile(io.BytesIO(jde_file(store, batch["id"])[0])) as zf:
+        text = zf.read("README.txt").decode()
+        dry = zf.read("DRY_RUN.txt").decode()
+    assert "check before loading" in text and f"AP Coder #{northwind['id']}: " in text
+    assert "it IS in this batch's files" in dry
+    assert "Not in this batch" not in text
+    assert store.batch_invoice_ids(batch["id"]) == [northwind["id"]]
+
+
 def test_settings_page_jde_tab(db):
     from .test_web_settings import general_form
     from .webclient import client_for, follow, post
@@ -497,7 +570,7 @@ def test_settings_page_jde_tab(db):
 
 
 def test_docs_exist():
-    text = (ROOT / "docs" / "JDE_E1.md").read_text()
+    text = (ROOT / "docs" / "JDE_E1.md").read_text(encoding="utf-8")
     for column in [*jde.HEADER_COLUMNS, *jde.DIST_COLUMNS]:
         assert column in text, column
     assert "R04110ZA" in text and "JP040000" in text and "Orchestrator" in text

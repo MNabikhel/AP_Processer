@@ -8,6 +8,26 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## This release: a bug sweep (72 bugs fixed)
+
+A review of every part of AP Coder, section by section, each finding reproduced, given a test, then fixed. The full log,
+with how to reproduce each one and the lesson, is [docs/BUGS.md](BUGS.md). What you may notice:
+
+- **Nothing is approved without a person when it shouldn't be:** the AI reviewer must agree with every field and line
+  (not only the last one it was asked about), its draft thinking is never taken as its answer, and its hold and the Azure
+  check's hold both count; a French "AVOIR" or a "Credit Invoice" printed positive is a credit note; a customer's GST
+  number printed in the bill-to block is not taken as the supplier's; "Payments in USD accepted" on a Canadian invoice
+  doesn't make it USD; an invoice reopened during a check keeps AP's corrections.
+- **Tax:** a rate row added to the rate table wins over the old one left open; self-assessment uses the same place of
+  supply as the tax checks; "Net 1 month" is a month, not a day; "1/2% 10" is half a percent; the GST/HST number is
+  needed on invoices from $100 (since 2021); French legal forms (Ltée, Limitée, s.e.c.) match their vendor.
+- **Exports:** a JD Edwards batch downloads again with the same vouchers; Z-files hold the text as it is; a formula in a
+  vendor name never reaches the JD Edwards worksheet; month-end doesn't accrue a resent copy twice.
+- **Emails and files:** crafted .msg, .eml and .xlsx files can't fill the memory; long names in other alphabets fit;
+  a file stamped in the future is picked up; the self-check fails when Pillow or the OCR models are missing or damaged.
+- **Screens:** pop-ups stay inside a phone's screen; Enter on Cancel cancels; the review screen stays readable when the
+  computer is in dark mode; big pages ask the database far less often.
+
 ## This release: the invoice directory
 
 - **Find an invoice is now the Invoice directory**: every invoice in one table, like JD Edwards' query by example. Each
@@ -140,7 +160,7 @@ backup of the database is made automatically once a day when AP Coder starts (th
 **For IT**
 
 - **[MAILBOX_SETUP.md](MAILBOX_SETUP.md)**: getting the AP mailbox's emails into AP Coder's folder (Power Automate,
-  a mail-saving tool PCL already has, or AP staff dragging emails) while AP Coder itself never connects to the
+  a mail-saving tool the company already has, or AP staff dragging emails) while AP Coder itself never connects to the
   mailbox or the internet.
 
 **For the JDE team**

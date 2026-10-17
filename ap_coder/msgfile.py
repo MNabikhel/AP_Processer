@@ -98,9 +98,12 @@ class CompoundFile:
         if n_mini_fat and first_mini_fat not in (_FREE, _END):
             raw = self._chain_bytes(first_mini_fat)
             self.mini_fat = list(struct.unpack_from(f"<{len(raw) // 4}I", raw))
+        self.read = 0  # bytes of streams read so far: never much more than the file holds
+        walked: set[int] = {0}  # each entry belongs to one storage: a crafted file sharing children walks them once
         for i, e in enumerate(self.entries):
             if e.kind in (_STORAGE, _ROOT):
-                e.children = self._children(e.child, i)
+                walked.add(i)  # never its own child
+                e.children = self._children(e.child, walked)
 
     def _raw_sector(self, n: int) -> bytes:
         if n >= self.n_sectors:
@@ -132,10 +135,11 @@ class CompoundFile:
             steps += 1
         return bytes(out[:size])
 
-    def _children(self, first: int, parent: int) -> dict[str, int]:
-        """The entries of one storage: its child and that child's siblings, a tree walked without recursion."""
+    def _children(self, first: int, seen: set[int]) -> dict[str, int]:
+        """The entries of one storage: its child and that child's siblings, a tree walked without recursion. ``seen``
+        is shared by every storage, so an entry another storage (or this one) already holds is not walked again."""
         found: dict[str, int] = {}
-        stack, seen = [first], {parent}
+        stack = [first]
         while stack:
             i = stack.pop()
             if i == _NOSTREAM or i in seen or i >= len(self.entries):
@@ -152,6 +156,9 @@ class CompoundFile:
             return b""
         if e.size > len(self.data) * 2 + 4096:
             raise MsgError("it is damaged (a stream larger than the file)")
+        self.read += e.size  # many entries can point at the same data: the sum is bounded, not only each one
+        if self.read > len(self.data) * 2 + 65536:
+            raise MsgError("it is damaged (its streams add up to far more than the file)")
         if e.size < self.cutoff:
             return self._mini_bytes(e.start, e.size)
         return self._chain_bytes(e.start, e.size)

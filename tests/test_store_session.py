@@ -78,6 +78,16 @@ def test_a_database_deleted_during_a_session_is_made_again(tmp_path):
     assert (tmp_path / "ap.db").exists() and Store(tmp_path / "ap.db").get_setting("b") == "2"
 
 
+def test_a_database_made_again_can_take_the_write_lock_at_once(tmp_path):
+    """Sweep: making a deleted database again left the upgrade's own changes uncommitted, so the next call's
+    BEGIN IMMEDIATE failed with "cannot start a transaction within a transaction"."""
+    store = Store(tmp_path / "ap.db")
+    for suffix in ("", "-wal", "-shm"):
+        (tmp_path / f"ap.db{suffix}").unlink(missing_ok=True)
+    store.delete_invoice(1, keep_approved=True)  # nothing to delete; it must not fail
+    assert (tmp_path / "ap.db").exists()
+
+
 def test_the_learning_memory_is_read_again_only_when_it_changes(tmp_path, connects):
     store = Store(tmp_path / "ap.db")
     store.import_history([_lesson(n) for n in range(3)])

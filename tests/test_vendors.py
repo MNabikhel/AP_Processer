@@ -133,6 +133,25 @@ def test_tax_numbers_compare_by_business_number(a, b, same):
     assert same_tax_number(a, b) is same
 
 
+@pytest.mark.parametrize(
+    "a, b, same",
+    [
+        ("1234567890", "1234567890 TQ 0001", True),  # the vendor list keeps only the 10 digits
+        ("1234567890TQ0001", "1234-567-890", True),
+        ("1234567890TQ0001", "1234567890TQ0002", False),  # two files of one registrant
+        ("1234567890", "9876543210TQ0001", False),
+        ("", "1234567890TQ0001", False),
+    ],
+)
+def test_qst_numbers_compare_by_their_ten_digits(a, b, same):
+    from types import SimpleNamespace
+
+    from ap_coder.vendors import tax_number_findings
+
+    changed = {c for _, c, _ in tax_number_findings(SimpleNamespace(qst_registration_number=b), {"qst_number": a}, [])}
+    assert ("VENDOR_QST_CHANGED" in changed) is (not same and bool(a))
+
+
 def test_a_vendor_master_with_only_the_business_number(tmp_path, ground_truth, reference):
     store = Store(tmp_path / "ap.db")
     _approved(store, _variant(ground_truth, "A-1"), tmp_path, "a.pdf")

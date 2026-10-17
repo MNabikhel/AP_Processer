@@ -9,7 +9,7 @@ ERP's invoice register (Exports page), for pairs that are probably the same bill
 * OTHER_VENDOR: same invoice number and amount under two vendor names (a duplicate vendor record)
 * SAME_AMOUNT: same vendor and amount, different number, dated within a week of each other
 
-An AP Coder invoice and its own entry in the ERP register (same vendor, number and amount) are the same
+An exported AP Coder invoice and its own entry in the ERP register (same vendor, number and amount) are the same
 bill, not a duplicate. Credit notes are left out.
 """
 
@@ -122,12 +122,13 @@ def bills(store: Store) -> list[Bill]:
 
 
 def _same_bill(a: Bill, b: Bill) -> bool:
-    """An AP Coder invoice and its own ERP entry: the same vendor and number, or an exported invoice whose number
-    and amount are in the ERP under the ERP's own name for the vendor."""
+    """An exported AP Coder invoice and its own ERP entry: the same number, and the same vendor or the same amount
+    (the ERP's own name for the vendor). An invoice not exported yet cannot be in the ERP already: an entry there
+    was keyed in some other way, and paying both would pay the bill twice."""
     if {a.source, b.source} != {"AP Coder", "ERP"} or a.number_key != b.number_key:
         return False
     ours = a if a.source == "AP Coder" else b
-    return a.vendor_key == b.vendor_key or (ours.exported and a.total == b.total)
+    return ours.exported and (a.vendor_key == b.vendor_key or a.total == b.total)
 
 
 def find(store: Store) -> list[Pair]:

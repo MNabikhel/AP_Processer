@@ -380,13 +380,18 @@ def remember_mode(base_url: str, model: str, index: int) -> None:
     _mode_by_model[f"{base_url}|{model}"] = index
 
 
+FORMAT_WORDS = ("response_format", "json_schema", "json schema", "json_object", "grammar")
+
+
 def rejects_format(exc: Exception) -> bool:
-    """A server refusing ``response_format`` (rather than failing): a 400/415/422/501, or a 500 that names it."""
+    """A server refusing ``response_format`` (rather than failing): a 415/501, or a 400/422/500 that names it. Any
+    other 400 (LM Studio couldn't load the model, say) is not one: the schema would be dropped, and remembered as
+    refused, over an error that has nothing to do with it."""
     status = getattr(exc, "status_code", None)
     text = str(exc).lower()
-    if status in {400, 415, 422, 501}:
+    if status in {415, 501}:
         return not context_overflow(exc)
-    return status == 500 and ("response_format" in text or "json_schema" in text or "grammar" in text)
+    return status in {400, 422, 500} and not context_overflow(exc) and any(w in text for w in FORMAT_WORDS)
 
 
 # The fields AP sends that a strict server may not know, as its refusal names them: the thinking switch
@@ -488,11 +493,22 @@ class Reply:
     cut_off: bool = False  # thought or wrote until the token limit: asking again would end the same way
 
 
-def read_reply(choice: Any, max_tokens: int | None = None) -> Reply:
+UNCLOSED_MESSAGE = "the reply's JSON was cut off before it closed"
+
+
+def _unclosed(answer: str) -> bool:
+    """An answer that starts a JSON object and never closes it: cut off, whatever the server said."""
+    text = _FENCE_RE.sub("", answer).lstrip()
+    return text.startswith("{") and _balanced(text, 0) is None
+
+
+def read_reply(choice: Any, max_tokens: int | None = None, *, strict: bool = False) -> Reply:
     """The JSON in a local model's reply: in its answer, else in a reply that is all <think>, else in the reasoning
     the server split off (LM Studio's ``reasoning_content``, Ollama's ``reasoning``). A model that thought until the
     token limit gets a message saying so, not a parse error. A reply stopped at the token limit is never read: the
-    JSON in it is unfinished, and an inner object that happens to be complete (one line item) is not the answer."""
+    JSON in it is unfinished, and an inner object that happens to be complete (one line item) is not the answer; nor
+    is one in an answer whose first object never closes. ``strict`` (the AI reviewer, whose answer can approve an
+    invoice): only the answer itself counts, never a draft in the reasoning or in a thought block."""
     message = getattr(choice, "message", None)
     content = str(_field(message, "content") or "")
     reasoning = str(_field(message, "reasoning_content") or _field(message, "reasoning") or "")
@@ -507,7 +523,9 @@ def read_reply(choice: Any, max_tokens: int | None = None) -> Reply:
         problem = (CUT_OFF_MESSAGE if started_json or not thought else THINKING_MESSAGE).format(limit=limit)
         return Reply(None, raw, problem, cut_off=True)
     data = parse_json_reply(content)
-    if data is None:
+    if data is None and _unclosed(answer):
+        return Reply(None, raw, UNCLOSED_MESSAGE)
+    if data is None and not strict:
         data = last_json_object(content) or last_json_object(reasoning)
     if data is not None:
         return Reply(data, raw)
@@ -570,10 +588,37 @@ def _balanced(text: str, start: int) -> str | None:
     return None
 
 
+def _whole_object(content: str) -> dict[str, Any] | None:
+    """The reply as one JSON object, as it is or after a leading thought block (or the stray close of one the template
+    opened), before any markup is taken out of it. None when it is not one."""
+    candidates = [content]
+    for opening, closing in (("<think>", "</think>"), ("<|channel>", "<channel|>")):
+        before, found, after = content.partition(closing)
+        if found and (before.lstrip().startswith(opening) or opening not in before):
+            candidates.append(after)
+    for candidate in candidates:
+        text = _FENCE_RE.sub("", candidate).strip()
+        if not text.startswith("{"):
+            continue
+        for attempt in (text, re.sub(r",\s*([}\]])", r"\1", text)):
+            try:
+                data = json.loads(attempt)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                return data
+    return None
+
+
 def parse_json_reply(content: str | None) -> dict[str, Any] | None:
     """The JSON object in a model's reply. Tolerates <think> blocks, code fences, prose around it, trailing text and
     trailing commas. Only an outermost object counts (the coding is the outermost one): when the first "{" never
-    closes, the reply was cut off and an object inside it (a line item) is not the answer, so there is none."""
+    closes, the reply was cut off and an object inside it (a line item) is not the answer, so there is none. A reply
+    that is one JSON object (after a leading thought block) is taken as it is: a "<think>" inside one of its strings
+    is text, not thinking."""
+    whole = _whole_object(content or "")
+    if whole is not None:
+        return whole
     text = _FENCE_RE.sub("", strip_thinking(content or ""))
     start = text.find("{")
     while start != -1:

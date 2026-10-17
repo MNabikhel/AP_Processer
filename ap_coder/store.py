@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import re
 import shutil
 import sqlite3
@@ -29,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .audit import diff_coding
-from .memory import ACCEPTED, CORRECTED, pair_lines, vendor_key
+from .memory import ACCEPTED, CORRECTED, VENDOR_KEY_RULES, pair_lines, refresh_vendor_key, vendor_key
 from .paths import PROJECT_DIR, default_db_path, find_moved_file, private_dir  # noqa: F401  (re-exported)
 from .po import OPEN, po_key
 from .reference_data import UNASSIGNED, ReferenceData, ReferenceTable, parse_policy_notes
@@ -48,6 +49,13 @@ PENDING = "pending_approval"  # approved once, over the approval limit: waiting 
 PARKED = "parked"  # out of the queue while waiting for information (a buyer, a credit note...)
 ACTIVE_STATUSES = (REVIEW, PARKED, PENDING, APPROVED)  # invoices that count (for POs, recurring vendors...)
 _ACTIVE_IN = "(" + ", ".join("?" * len(ACTIVE_STATUSES)) + ")"
+
+
+def _in_list(column: str) -> str:
+    """``column IN`` a list bound as ONE parameter (a JSON array): a list of any length, where one ``?`` per item
+    fails past the SQLite build's limit (999 on older builds, 32,766 on newer)."""
+    return f"{column} IN (SELECT value FROM json_each(?))"
+
 
 # An invoice file looked for and not found (``Store.invoice_file``) is looked for again after this long, not on every
 # page picture the review screen asks for.
@@ -219,7 +227,7 @@ def parse_fx_rates(text: str) -> dict[str, float]:
     rates = {"CAD": 1.0}
     for code, value in _FX_RATE.findall(text or ""):
         rate = float(value.replace(",", "."))
-        if rate > 0:
+        if rate > 0 and code.upper() != "CAD":  # a CAD rate typed in would scale every limit check
             rates[code.upper()] = rate
     return rates
 
@@ -433,6 +441,17 @@ class Store:
         if "original_sha256" not in columns:
             conn.execute("ALTER TABLE invoices ADD COLUMN original_sha256 TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS invoices_original_sha ON invoices (original_sha256)")
+        # Vendor keys stored under older vendor-matching rules (e.g. before "Limitée" and "s.e.c." were ignored) are
+        # recomputed, so the vendor's invoices, lessons, master record and POs still match (looked for whatever the
+        # version: the rules are recorded on their own).
+        row = conn.execute("SELECT value FROM settings WHERE key = 'vendor_key_rules'").fetchone()
+        if (row["value"] if row else "") != VENDOR_KEY_RULES:
+            self._recompute_vendor_keys(conn)
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('vendor_key_rules', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (VENDOR_KEY_RULES,),
+            )
         # Older versions recorded AP Coder's own approvals (nobody checked them) as lessons, counted in the
         # accuracy: withdrawn whatever the version, as nothing is recorded for them any more.
         from .capture.workflow import AUTONOMOUS_REVIEWER
@@ -444,6 +463,42 @@ class Store:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(SCHEMA_VERSION),),
             )
+
+    @staticmethod
+    def _recompute_vendor_keys(conn: sqlite3.Connection) -> None:
+        """Every stored vendor key, recomputed with today's ``vendor_key``: from the vendor name kept beside it, else
+        (the vendor list, whose display name may have been edited, and the supplier profiles) from the old key itself.
+        Where the new key is already taken (two rows that are now the same vendor) the row already there is kept: a
+        duplicate ERP bill is dropped, anything else is left as it was."""
+
+        def new_key(name: Any, old: Any) -> str:
+            return vendor_key(str(name or "")) or refresh_vendor_key(str(old or ""))
+
+        for table, name, ident in (
+            ("invoices", "vendor_name", "id"), ("feedback", "vendor_name", "id"),
+            ("purchase_orders", "vendor_name", "po_key"), ("vendors", "''", "vendor_key"),
+            ("erp_invoices", "vendor_name", "rowid"),
+        ):  # fmt: skip
+            for r in conn.execute(f"SELECT {ident} AS ident, {name} AS name, vendor_key FROM {table}").fetchall():
+                key = new_key(r["name"], r["vendor_key"])
+                if key == (r["vendor_key"] or ""):
+                    continue
+                done = conn.execute(f"UPDATE OR IGNORE {table} SET vendor_key = ? WHERE {ident} = ?", (key, r["ident"]))
+                if not done.rowcount and table == "erp_invoices":  # the same ERP bill is already there under the key
+                    conn.execute("DELETE FROM erp_invoices WHERE rowid = ?", (r["ident"],))
+        for r in conn.execute("SELECT id, situation, vendor_name, vendor_key FROM lessons").fetchall():
+            key = new_key(r["vendor_name"], r["vendor_key"])
+            _old, sep, rest = str(r["situation"] or "").partition("|")
+            situation = f"{key}{sep}{rest}" if sep else r["situation"]
+            if (key, situation) != (r["vendor_key"], r["situation"]):
+                conn.execute("UPDATE OR IGNORE lessons SET vendor_key = ?, situation = ? WHERE id = ?",
+                             (key, situation, r["id"]))  # fmt: skip
+        for table, column in (("supplier_profiles", "key"), ("supplier_outcomes", "supplier_key")):
+            rows = conn.execute(f"SELECT rowid AS rid, {column} AS k FROM {table} WHERE {column} LIKE 'name:%'")
+            for r in rows.fetchall():
+                key = "name:" + refresh_vendor_key(r["k"][5:])
+                if key != r["k"]:
+                    conn.execute(f"UPDATE OR IGNORE {table} SET {column} = ? WHERE rowid = ?", (key, r["rid"]))
 
     @contextmanager
     def session(self) -> Iterator[None]:
@@ -474,6 +529,7 @@ class Store:
         if fresh:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
+            conn.commit()  # the upgrade's changes left open would refuse the caller's own BEGIN IMMEDIATE
         return conn
 
     @contextmanager
@@ -545,6 +601,23 @@ class Store:
         for r in rows:
             r["detail"] = json.loads(r["detail"]) if r["detail"] else {}
         return rows
+
+    def latest_events(self, action: str, invoice_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """{invoice: its newest ``action`` event} for each of ``invoice_ids`` that has one, in one query (what
+        ``events(invoice_id, [action])[0]`` gives for each, without a query per invoice)."""
+        ids = list(dict.fromkeys(int(i) for i in invoice_ids))
+        if not ids:
+            return {}
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM events WHERE action = ? AND {_in_list('invoice_id')} ORDER BY id DESC",
+                (action, json.dumps(ids)),
+            ).fetchall()
+        latest: dict[int, dict[str, Any]] = {}
+        for r in rows:
+            if r["invoice_id"] not in latest:
+                latest[r["invoice_id"]] = {**dict(r), "detail": json.loads(r["detail"]) if r["detail"] else {}}
+        return latest
 
     def import_accounts(
         self,
@@ -848,7 +921,8 @@ class Store:
 
     def search_rows(self) -> list[dict[str, Any]]:
         """Every invoice's identifying fields and where it stands (for the invoice directory's quick search), with
-        the date of its export batch."""
+        the date of its export batch and its GST/HST number (the JD Edwards duplicate check finds a supplier by
+        it)."""
         with self._conn() as conn:
             batches = {r["id"]: r["created_at"] for r in conn.execute("SELECT id, created_at FROM export_batches")}
             rows = [
@@ -856,7 +930,8 @@ class Store:
                 for r in conn.execute(
                     """SELECT id, status, file_name, vendor_name, invoice_number, invoice_date, due_date, currency,
                               grand_total, po_key, created_at, reviewed_at, reviewer, second_reviewer,
-                              second_reviewed_at, export_batch, parked_reason, follow_up, error
+                              second_reviewed_at, export_batch, parked_reason, follow_up, error,
+                              json_extract(final_output, '$.gst_hst_registration_number') AS gst_hst_registration_number
                        FROM invoices ORDER BY id DESC"""
                 )
             ]
@@ -971,8 +1046,23 @@ class Store:
     def get_invoice(self, invoice_id: int) -> dict[str, Any] | None:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
-        if row is None:
-            return None
+        return None if row is None else self._full_invoice(row)
+
+    def get_invoices(self, invoice_ids: list[int]) -> list[dict[str, Any]]:
+        """``get_invoice`` of each of ``invoice_ids`` in one query, in that order (ones that no longer exist are left
+        out): a page listing many invoices does not open the database once per invoice."""
+        ids = [int(i) for i in invoice_ids]
+        if not ids:
+            return []
+        unique = list(dict.fromkeys(ids))
+        with self._conn() as conn:
+            found = {
+                r["id"]: r
+                for r in conn.execute(f"SELECT * FROM invoices WHERE {_in_list('id')}", (json.dumps(unique),))
+            }
+        return [self._full_invoice(found[i]) for i in ids if i in found]
+
+    def _full_invoice(self, row: sqlite3.Row) -> dict[str, Any]:
         inv = dict(row)
         for key in ("ai_output", "final_output", "validation", "meta", "edits"):
             inv[key] = json.loads(inv[key]) if inv[key] else None
@@ -1153,8 +1243,8 @@ class Store:
             where.append("status = ?")
             args.append(status)
         if ids is not None:
-            where.append(f"id IN ({','.join('?' * len(ids))})")
-            args.extend(ids)
+            where.append(_in_list("id"))
+            args.append(json.dumps([int(i) for i in ids]))
         sql = f"SELECT {', '.join(columns)} FROM invoices" + (" WHERE " + " AND ".join(where) if where else "")
         with self._conn() as conn:
             rows = [dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
@@ -1171,17 +1261,23 @@ class Store:
     def approved_since(self, since_iso: str, reviewer: str | None = None) -> int:
         """Invoices approved since ``since_iso`` (and still approved, or waiting for a second approver). With
         ``reviewer``: only those this person approved, first or second approval (names compared without case)."""
-        if reviewer is None:
-            sql, args = "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?", ()
-        else:
-            sql = (
-                "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND ((reviewed_at >= ? AND "
-                "lower(trim(reviewer)) = ?) OR (second_reviewed_at >= ? AND lower(trim(second_reviewer)) = ?))"
-            )
-            me = reviewer.strip().lower()
-            args = (me, since_iso, me)
         with self._conn() as conn:
-            return int(conn.execute(sql, (APPROVED, PENDING, since_iso, *args)).fetchone()[0])
+            if reviewer is None:
+                sql = "SELECT COUNT(*) FROM invoices WHERE status IN (?, ?) AND reviewed_at >= ?"
+                return int(conn.execute(sql, (APPROVED, PENDING, since_iso)).fetchone()[0])
+            rows = conn.execute(
+                "SELECT reviewer, reviewed_at >= ?, second_reviewer, second_reviewed_at >= ? FROM invoices "
+                "WHERE status IN (?, ?) AND (reviewed_at >= ? OR second_reviewed_at >= ?)",
+                (since_iso, since_iso, APPROVED, PENDING, since_iso, since_iso),
+            ).fetchall()
+        # Compared here, not in SQL: SQLite's lower() leaves accented letters alone ("Élise" never matched).
+        me = reviewer.strip().casefold()
+        return sum(
+            1
+            for first, first_since, second, second_since in rows
+            if (first_since and (first or "").strip().casefold() == me)
+            or (second_since and (second or "").strip().casefold() == me)
+        )
 
     def approve_invoice(
         self,
@@ -1333,7 +1429,8 @@ class Store:
         rate = self.fx_rates().get(currency)
         if rate is None:
             return f"no CAD rate for {currency}: a second approval is needed" if unknown_rate else ""
-        if abs(float(coding.get("grand_total") or 0)) * rate > limit:
+        total = abs(float(coding.get("grand_total") or 0))
+        if not math.isfinite(total) or total * rate > limit:  # a NaN total is never "over" anything: refused here
             return f"over the approval limit of {limit:,.2f} CAD"
         return ""
 
@@ -1574,12 +1671,12 @@ class Store:
 
     def delete_purchase_orders(self, keys: list[str], actor: str | None = None) -> int:
         with self._conn() as conn:
-            marks = ",".join("?" * len(keys))
+            listed = (json.dumps(list(keys)),)
             numbers = [
-                r[0] for r in conn.execute(f"SELECT po_number FROM purchase_orders WHERE po_key IN ({marks})", keys)
+                r[0] for r in conn.execute(f"SELECT po_number FROM purchase_orders WHERE {_in_list('po_key')}", listed)
             ]
-            conn.execute(f"DELETE FROM po_lines WHERE po_key IN ({marks})", keys)
-            conn.execute(f"DELETE FROM purchase_orders WHERE po_key IN ({marks})", keys)
+            conn.execute(f"DELETE FROM po_lines WHERE {_in_list('po_key')}", listed)
+            conn.execute(f"DELETE FROM purchase_orders WHERE {_in_list('po_key')}", listed)
             if numbers:
                 self._log(conn, "pos_deleted", actor=actor, detail={"pos": numbers})
         return len(numbers)
@@ -1605,11 +1702,11 @@ class Store:
         read, and each is taken only if it is still approved and not exported."""
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")  # the write lock from the read to the marks
-            marks = ", ".join("?" for _ in invoice_ids)
+            # The ids as one JSON list: one '?' however many are ticked (SQLite takes only so many bound variables).
             eligible = conn.execute(
-                f"SELECT id, grand_total, currency FROM invoices WHERE id IN ({marks}) AND status = ? "
-                "AND export_batch IS NULL ORDER BY id",
-                (*invoice_ids, APPROVED),
+                "SELECT id, grand_total, currency FROM invoices WHERE id IN (SELECT value FROM json_each(?)) "
+                "AND status = ? AND export_batch IS NULL ORDER BY id",
+                (json.dumps([int(i) for i in invoice_ids]), APPROVED),
             ).fetchall()
             if not eligible:
                 raise ValueError("none of these invoices can be exported (not approved, or already exported)")
@@ -1750,11 +1847,17 @@ class Store:
             ]
 
     def undo_export_batch(self, batch: int, actor: str | None = None) -> int:
-        """The ERP import failed: put the batch's invoices back in the ready-to-export list."""
+        """The ERP import failed: put the batch's invoices back in the ready-to-export list. ValueError when the
+        batch was undone already (two clicks at once: the second must not log a second undo)."""
         with self._conn() as conn:
+            claimed = conn.execute(
+                "UPDATE export_batches SET undone_at = ?, undone_by = ? WHERE id = ? AND undone_at IS NULL",
+                (_now(), actor, batch),
+            )
+            if claimed.rowcount == 0:
+                raise ValueError(f"export batch {batch} is unknown or already undone")
             ids = [r["id"] for r in conn.execute("SELECT id FROM invoices WHERE export_batch = ?", (batch,))]
             conn.execute("UPDATE invoices SET export_batch = NULL WHERE export_batch = ?", (batch,))
-            conn.execute("UPDATE export_batches SET undone_at = ?, undone_by = ? WHERE id = ?", (_now(), actor, batch))
             self._log(conn, "export_undone", actor=actor, detail={"batch": batch, "invoices": len(ids)})
         return len(ids)
 
@@ -2092,8 +2195,8 @@ class Store:
             return []
         with self._conn() as conn:
             rows = conn.execute(
-                f"SELECT DISTINCT supplier_key FROM supplier_outcomes WHERE invoice_id IN ({','.join('?' * len(ids))})",
-                ids,
+                f"SELECT DISTINCT supplier_key FROM supplier_outcomes WHERE {_in_list('invoice_id')}",
+                (json.dumps([int(i) for i in ids]),),
             ).fetchall()
         return [r[0] for r in rows]
 
@@ -2101,12 +2204,11 @@ class Store:
         """Delete these supplier profiles when nothing is recorded for them any more (e.g. after the demo)."""
         if not keys:
             return 0
-        marks = ",".join("?" * len(keys))
         with self._conn() as conn:
             return conn.execute(
-                f"DELETE FROM supplier_profiles WHERE key IN ({marks}) AND state != 'autonomous' AND key NOT IN "
+                f"DELETE FROM supplier_profiles WHERE {_in_list('key')} AND state != 'autonomous' AND key NOT IN "
                 "(SELECT DISTINCT supplier_key FROM supplier_outcomes)",
-                keys,
+                (json.dumps(list(keys)),),
             ).rowcount
 
     # --- Each reader against what AP approved; the page reader's queue -------------------------------------------
@@ -2554,9 +2656,9 @@ class Store:
             raise ValueError(f"unknown review status {status!r}")
         with self._conn() as conn:
             cur = conn.execute(
-                """UPDATE verifications SET status = ?, result_json = CASE WHEN ? IS NOT NULL THEN ? ELSE
-                   result_json END, rounds = ?, seconds = ?, error = ?, updated_at = ? WHERE invoice_id = ?""",
-                (status, result is not None, json.dumps(result, default=str) if result is not None else None,
+                """UPDATE verifications SET status = ?, result_json = COALESCE(?, result_json), rounds = ?,
+                   seconds = ?, error = ?, updated_at = ? WHERE invoice_id = ?""",
+                (status, json.dumps(result, default=str) if result is not None else None,
                  int(rounds or 0), round(float(seconds or 0), 1), (error or "")[:2000], _now(), invoice_id),
             )  # fmt: skip
             return cur.rowcount > 0
@@ -2885,8 +2987,9 @@ class Store:
     def delete_vendors(self, keys: list[str]) -> int:
         """Remove vendors from the vendor list (e.g. the demo's sample vendor master)."""
         with self._conn() as conn:
-            marks = ",".join("?" * len(keys))
-            return conn.execute(f"DELETE FROM vendors WHERE vendor_key IN ({marks})", keys).rowcount
+            return conn.execute(
+                f"DELETE FROM vendors WHERE {_in_list('vendor_key')}", (json.dumps(list(keys)),)
+            ).rowcount
 
     def has_vendor_master(self) -> bool:
         with self._conn() as conn:

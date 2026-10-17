@@ -17,6 +17,7 @@ from ap_coder.capture.supplier import (
     automatic_transition,
     clean_invoices_to_go,
     fresh_streak,
+    should_auto_approve,
     touchless_gates,
 )
 from ap_coder.capture.types import CaptureResult, FieldResult
@@ -333,6 +334,17 @@ def test_a_credit_note_always_needs_a_person(touchless, path):
     assert decision["reason"] == "always a person: it is a credit note"  # the coding's total wins
 
 
+def test_a_document_titled_as_a_credit_needs_a_person_whatever_its_total(touchless, path):
+    """A credit note is recognised by its title, not only by the sign of one number: a total read positive (an
+    adjustment line that kept the signs as printed) does not make it an invoice to pay."""
+    credit = _capture(total=250.0)
+    credit.credit_note = True
+    decision = _decide(touchless, path, capture=credit)
+    assert not decision["auto"] and decision["reason"] == "always a person: it is a credit note"
+    assert should_auto_approve(AUTONOMOUS, credit, True, [])[1] == "always a person: it is a credit note"
+    assert CaptureResult.from_dict(credit.to_dict()).credit_note
+
+
 def test_a_total_over_the_touchless_limit_needs_a_person_in_cad(touchless, path):
     assert _decide(touchless, path, capture=_capture(total=5000.0))["auto"]  # at the limit: fine
     decision = _decide(touchless, path, capture=_capture(total=5000.01))
@@ -375,6 +387,30 @@ def test_pages_the_page_reader_did_not_read_need_a_person(touchless, path):
     assert not decision["auto"] and decision["reason"] == "always a person: 2 of its pages were not read by OvisOCR2"
     assert _decide(touchless, path, capture=capture, pages_read=7)["auto"]
     assert touchless_gates(pages_unread=1) == ["1 of its pages was not read by OvisOCR2"]
+
+
+def test_pages_past_the_local_readers_limit_need_a_person(touchless, path, tmp_path):
+    """The local readers read a file's first 20 pages. A 25-page invoice that the page reader read whole (its limit
+    raised to 30) was approved without a person, though pages 21-25 were read by one reader only: the capture counted
+    20 pages, so no page looked unread."""
+    import pymupdf
+
+    from ap_coder.capture import analyze
+
+    doc = pymupdf.open()
+    for n in range(1, 26):
+        doc.new_page().insert_text((60, 80), f"Acme Supply Ltd. - Invoice AC-1001 - page {n} of 25", fontsize=10)
+    doc.save(tmp_path / "long.pdf")
+    read = analyze(tmp_path / "long.pdf", ocr=False, tables=False, second_read=False)
+    assert (read.page_count, read.pages_left_out) == (25, 5)
+    capture = _capture()
+    capture.page_count, capture.pages_left_out = 25, 5
+    decision = _decide(touchless, path, capture=capture, pages_read=25)
+    assert decision["reason"] == "always a person: 5 of its pages were not read by the local readers"
+    assert should_auto_approve(AUTONOMOUS, capture, True, [])[0] is False
+    capture.page_count, capture.pages_left_out = 25, 0
+    assert _decide(touchless, path, capture=capture, pages_read=5)["reason"] == (
+        "always a person: 20 of its pages were not read by OvisOCR2")  # fmt: skip
 
 
 def test_a_text_file_invoice_needs_a_person(touchless, path):

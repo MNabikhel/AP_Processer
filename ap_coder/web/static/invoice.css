@@ -226,10 +226,7 @@
 .inv-vendor-add .pop-body {left: 0; right: auto;}
 .inv-vendor-add .pop-body .row {display: flex; gap: 8px;}
 .inv-vendor-add .pop-body .grow {flex: 1;}
-@media (prefers-color-scheme: dark) {
-  .inv-vendor .inv-vendor-match.ok {color: #86efac;}
-  .inv-vendor .inv-vendor-match.warn {color: #fcd34d;}
-}
+/* No colours for a dark mode here: the dashboard has one (light) look, and pale text on its white page can't be read. */
 
 /* Place of supply: one line (where it came from), the choice only when asked or not known. */
 .inv-supply-pick > summary {list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--lg-text); font-size: 13.5px; padding: 6px 0;}
@@ -252,11 +249,6 @@
 .rvw-math .ms {font-size: 15px;}
 .rvw-math.ok {color: #166534; background: #dcfce7;}
 .rvw-math.bad {color: #92400e; background: #fef3c7;}
-@media (prefers-color-scheme: dark) {
-  .inv-math .ok {color: #86efac;} .inv-math .bad {color: #fca5a5;}
-  .rvw-math.ok {color: #86efac; background: rgba(22, 101, 52, .25);}
-  .rvw-math.bad {color: #fcd34d; background: rgba(146, 64, 14, .3);}
-}
 
 /* "Why is this the right value?": asked before saving when the same correction keeps coming back. */
 .inv-why {width: min(560px, 92vw); padding: 20px; border: 0; border-radius: 12px; box-shadow: 0 20px 50px rgba(16, 24, 40, .3);}

@@ -156,6 +156,13 @@ def test_insights_assumptions_are_saved_and_checked(client, busy):
     assert client.post("/insights/assumptions", data=form).status_code == 403  # no page header: refused
 
 
+def test_insights_assumptions_refuse_an_endless_invoice_count(client, busy):
+    form = {f: "1" for f in Assumptions.__dataclass_fields__}
+    for endless in ("1e309", "inf", "nan"):
+        bad = client.post("/insights/assumptions", data=form | {"monthly_volume": endless}, headers=PAGE)
+        assert bad.status_code == 400 and "enter a number" in bad.json()["error"], endless
+
+
 def test_spend_shows_the_period_charts_and_tables(client, busy):
     text = client.get("/spend?start=2000-01-01&end=2100-12-31").text
     for label in ("Spend", "Vendors", "Per month", "By month", "Top GL accounts", "Top vendors"):

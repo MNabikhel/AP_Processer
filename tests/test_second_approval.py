@@ -41,6 +41,12 @@ def test_over_the_limit_waits_for_a_second_approver(store, tmp_path):
         store.approve_invoice(invoice_id, _gt(), "Sam")
 
 
+@pytest.mark.parametrize("total", [float("nan"), float("inf"), float("-inf"), "nan"])
+def test_a_total_that_is_not_a_number_needs_the_second_approver(store, total):
+    # NaN compares False with everything, so "over the limit" was never true and no second approver was asked.
+    assert store.second_approval_reason({"grand_total": total, "currency": "CAD"})
+
+
 def test_under_the_limit_or_no_limit_is_approved_at_once(store, tmp_path):
     small = {**_gt(), "grand_total": 9000.0}
     a = store.add_invoice(tmp_path / "a.pdf", small, {})
