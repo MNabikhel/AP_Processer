@@ -187,6 +187,25 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") document.querySelectorAll("details.pop[open]").forEach((d) => d.removeAttribute("open"));
 });
 
+// A popover opens inside the screen: on a narrow one (a phone), a popover lined up with the right of its button would
+// start past the left edge, where nothing scrolls to it. ("toggle" doesn't bubble: it is caught on its way down.)
+document.addEventListener(
+  "toggle",
+  (event) => {
+    const pop = event.target;
+    if (!(pop instanceof HTMLDetailsElement) || !pop.open || !pop.classList.contains("pop")) return;
+    const body = pop.querySelector(":scope > .pop-body");
+    if (!body) return;
+    body.style.translate = "";
+    const box = body.getBoundingClientRect();
+    const gap = 8;
+    const right = document.documentElement.clientWidth - gap;
+    const shift = box.left < gap ? gap - box.left : box.right > right ? Math.max(gap - box.left, right - box.right) : 0;
+    if (shift) body.style.translate = `${Math.round(shift)}px 0`;
+  },
+  true,
+);
+
 // The flash token has done its job: take it out of the address, so a reload doesn't look for it again.
 if (new URLSearchParams(location.search).has("flash")) {
   const url = new URL(location.href);

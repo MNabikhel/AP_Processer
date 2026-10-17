@@ -652,3 +652,142 @@ def test_the_ai_reviewer_on_the_review_screen(client, store):
     verifier.save_settings(store, on=False, rounds=3, minutes=5)
     assert client.post(f"/review/{inv['id']}/review-again", headers=PAGE).status_code == 400
     assert "The AI reviewer checks" not in client.get(f"/review/{inv['id']}").text  # off: nothing said
+
+
+# --- In a browser (Chromium, when Playwright is installed) ---------------------------------------------------------
+
+
+def _chromium() -> str | None:
+    import importlib.util
+    import os
+    from pathlib import Path
+
+    if importlib.util.find_spec("playwright") is None:
+        return None
+    for root in (os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), "/opt/pw-browsers"):
+        if root:
+            found = sorted(Path(root).glob("chromium-*/chrome-linux/chrome"))
+            if found:
+                return str(found[-1])
+    return None
+
+
+@pytest.fixture
+def browser(store):
+    """The dashboard served on this computer (a free port) and a Chromium to open it: (browser, base URL)."""
+    if _chromium() is None:
+        pytest.skip("Playwright with Chromium isn't installed")
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+    from playwright.sync_api import sync_playwright
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(200):
+        if server.started:
+            break
+        time.sleep(0.05)
+    try:
+        with sync_playwright() as p:
+            chromium = p.chromium.launch(executable_path=_chromium(), args=["--no-proxy-server"])
+            yield chromium, f"http://127.0.0.1:{port}"
+            chromium.close()
+    finally:
+        server.should_exit = True
+        thread.join(5)
+
+
+def _open_review(browser, store, vendor, **context):
+    chromium, base = browser
+    inv = next(i for i in store.list_invoices(REVIEW) if vendor in (i["vendor_name"] or ""))
+    page = chromium.new_page(**context)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/review/{inv['id']}")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    return page, errors
+
+
+def _drag_across_the_top(page):
+    """A box dragged with the mouse across the top of the page (the vendor's name, on the Cascade invoice)."""
+    page.locator(".iv-sheet").scroll_into_view_if_needed()
+    sheet = page.locator(".iv-sheet").bounding_box()
+    page.mouse.move(sheet["x"] + sheet["width"] * 0.05, sheet["y"] + sheet["height"] * 0.02)
+    page.mouse.down()
+    page.mouse.move(sheet["x"] + sheet["width"] * 0.6, sheet["y"] + sheet["height"] * 0.08, steps=8)
+    page.mouse.up()
+    page.wait_for_selector(".inv-chooser")
+
+
+def test_in_a_browser_the_popovers_open_inside_a_phone_screen(browser, store):
+    """390 px wide: Park, Reject and Split a line open where they can be read and their buttons reached, not past the
+    left edge of the screen (where nothing scrolls to them)."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 390, "height": 844})
+    for summary in (".inv-actionbar summary[title^='Set it aside']", ".inv-actionbar summary[title^='Not ours']",
+                    "[data-split] > summary"):  # fmt: skip
+        page.locator(summary).scroll_into_view_if_needed()
+        page.click(summary)
+        box = page.locator("details[open] > .pop-body").bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= 390, (summary, box)
+        page.keyboard.press("Escape")
+    assert errors == []
+
+
+def test_in_a_browser_enter_on_cancel_leaves_the_words_dragged_on_the_page_unused(browser, store):
+    """Words dragged across on the page, then Cancel pressed with the keyboard: the field keeps its value."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000})
+    taught: list[str] = []
+    page.on("request", lambda r: r.url.endswith("/teach") and taught.append(r.url))
+    before = page.input_value("[form=inv][name=po_number]")
+    _drag_across_the_top(page)
+    page.select_option(".inv-chooser select", "po_number")
+    page.locator(".inv-chooser button", has_text="Cancel").focus()
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(500)
+    assert page.locator(".inv-chooser").count() == 0
+    assert taught == [] and page.input_value("[form=inv][name=po_number]") == before
+    # Enter in the list of choices still uses the words.
+    _drag_across_the_top(page)
+    page.select_option(".inv-chooser select", "po_number")
+    page.locator(".inv-chooser select").press("Enter")
+    page.wait_for_function("document.querySelector('[form=inv][name=po_number]').value.includes('Cascade')")
+    assert len(taught) == 1 and errors == []
+
+
+def test_in_a_browser_the_approve_anyway_box_keeps_the_focus_when_ticked_with_the_keyboard(browser, store):
+    """Ticking "Approve anyway" redraws the approve bar: the focus stays on the box, not back at the top of the page."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000})
+    page.wait_for_selector("[name=override]")
+    page.wait_for_timeout(800)  # the check made on opening the page
+    page.locator("[name=override]").focus()
+    with page.expect_response(lambda r: r.url.endswith("/check")):
+        page.keyboard.press("Space")
+    page.wait_for_timeout(300)
+    assert page.is_checked("[name=override]")
+    assert page.evaluate("document.activeElement.name") == "override" and errors == []
+
+
+def test_in_a_browser_os_dark_mode_leaves_the_light_page_readable(browser, store):
+    """The dashboard has one (light) look: a computer set to dark mode gets the same colours, not pale text meant for
+    a dark background on the white page."""
+    looks = {}
+    for scheme in ("light", "dark"):
+        page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000},
+                                    color_scheme=scheme)  # fmt: skip
+        page.wait_for_selector(".inv-vendor-match span")
+        page.wait_for_selector(".rvw-math")
+        looks[scheme] = page.evaluate("""() => ['.inv-vendor-match', '.rvw-math', '.inv-math .ok, .inv-math .bad']
+            .map(s => document.querySelector(s)).filter(Boolean)
+            .map(e => [e.className, getComputedStyle(e).color, getComputedStyle(e).backgroundColor])""")
+        assert errors == []
+        page.close()
+    assert len(looks["light"]) >= 2 and looks["dark"] == looks["light"]
