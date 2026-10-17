@@ -172,6 +172,19 @@ def test_a_picture_or_a_scan_named_statement_still_goes_to_the_queue():
     assert [d.kind for _, d in t.documents] == ["invoice", "invoice"]
 
 
+@pytest.mark.parametrize("title", ["AVOIR", "Facture d'avoir", "Credit Invoice", "Avis de crédit", "Credit Note",
+                                   "Note de crédit", "Credit Memo"])  # fmt: skip
+def test_triage_and_capture_know_the_same_credit_note_titles(title):
+    """Email triage and capture read a document's title from one list: a title triage sends to the queue as a credit
+    note is a credit for capture too (its amounts posted negative, and a person applies it)."""
+    from ap_coder.capture.reader import _CREDIT_TITLE as capture_title
+    from ap_coder.capture.reader import plain
+
+    doc = triage.Document("doc.pdf", f"{title}\nNo 55\nTotal 10,00")
+    assert triage.classify_document(doc).kind == triage.CREDIT
+    assert capture_title.match(plain(title))
+
+
 def test_kinds_in_english_and_french():
     assert _kind("Statement", "", ("soa.pdf", STATEMENT)).kind == triage.STATEMENT
     assert (

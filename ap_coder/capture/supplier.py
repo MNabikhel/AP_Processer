@@ -1332,7 +1332,8 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("A new vendor name", "no invoice under that name approved yet, even with a touchless vendor's GST/HST number"),
     ("Purchase order exception", "the PO is unknown, closed or another vendor's, or billed beyond what was ordered or "
      "received"),
-    ("Not read by every reader", "the page reader has not read it yet, not every page of it, or it is a text file"),
+    ("Not read by every reader", "the page reader has not read it yet, not every page of it (nor the local readers, "
+     "past its first 20 pages), or it is a text file"),
     ("Any failed check", "totals, tax, GST/HST check digit, line items read differently by two readers, or any field "
                          "not verified"),
 ]  # fmt: skip
@@ -1341,23 +1342,26 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
 def touchless_gates(
     issues: Iterable[dict[str, Any]] | None = None, *, grand_total: Any = None, over_limit: float | None = None,
     over_approval_limit: bool = False, awaiting_page_reader: bool = False, pages_unread: int = 0,
-    no_rate_for: str = "", no_page: bool = False, model_coded_lines: int = 0,
+    no_rate_for: str = "", no_page: bool = False, model_coded_lines: int = 0, credit_note: bool = False,
+    pages_left_out: int = 0,
 ) -> list[str]:  # fmt: skip
     """Why this invoice must be seen by a person whatever its supplier's record (plain English; empty: none applies).
     ``issues``: the validation findings ({"code", ...}); ``grand_total``: below zero is a credit note;
+    ``credit_note``: titled as one (``CaptureResult.credit_note``), whatever the sign of its total;
     ``over_limit``: the touchless limit its total is over (None: not over); ``no_rate_for``: its currency, when no
     exchange rate is set for it (the limit is in CAD, so it can't be checked); ``over_approval_limit``: it needs a
     second approver; ``awaiting_page_reader``: not every reader has read it yet; ``pages_unread``: pages of it the
-    page reader did not read (it reads at most AP_PAGE_READER_MAX_PAGES pages); ``no_page``: a text file (.md, .txt),
-    which the page reader cannot look at, so only one reader has read it; ``model_coded_lines``: lines whose account
-    only the local chat model chose, or a weak match (neither AP's approvals nor a coding rule)."""
+    page reader did not read (it reads at most AP_PAGE_READER_MAX_PAGES pages); ``pages_left_out``: pages of it the
+    local readers did not read (``CaptureResult.pages_left_out``: past the first 20); ``no_page``: a text file (.md,
+    .txt), which the page reader cannot look at, so only one reader has read it; ``model_coded_lines``: lines whose
+    account only the local chat model chose, or a weak match (neither AP's approvals nor a coding rule)."""
     reasons: list[str] = []
     for issue in issues or []:
         reason = ALWAYS_A_PERSON.get(str(issue.get("code") or ""))
         if reason and reason not in reasons:
             reasons.append(reason)
     total = parse_amount(grand_total) if grand_total is not None else None
-    if total is not None and total < 0:
+    if credit_note or (total is not None and total < 0):
         reasons.append("it is a credit note")
     if over_limit is not None:
         reasons.append(f"the total is over the touchless limit of {over_limit:,.2f}")
@@ -1372,6 +1376,9 @@ def touchless_gates(
         reasons.append("it is a text file: OvisOCR2 has no page to read")
     if pages_unread > 0:
         reasons.append(f"{pages_unread} of its pages {'was' if pages_unread == 1 else 'were'} not read by OvisOCR2")
+    if pages_left_out > 0:
+        n = pages_left_out
+        reasons.append(f"{n} of its pages {'was' if n == 1 else 'were'} not read by the local readers")
     if model_coded_lines > 0:
         n = model_coded_lines
         reasons.append(f"{n} line{'' if n == 1 else 's'} coded by the local model or from a weak match, not from "
@@ -1395,7 +1402,8 @@ def should_auto_approve(
         capture = CaptureResult.from_dict(capture)
     issues = list(issues or [])
     total = capture.fields.get("grand_total")
-    gates = touchless_gates(issues, grand_total=total.value if total is not None else None)
+    gates = touchless_gates(issues, grand_total=total.value if total is not None else None,
+                            credit_note=capture.credit_note, pages_left_out=capture.pages_left_out)  # fmt: skip
     if gates:
         return False, "always a person: " + "; ".join(gates)
     if not checks_ok:

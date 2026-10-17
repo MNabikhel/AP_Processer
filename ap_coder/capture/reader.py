@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from itertools import product
 
 from .normalize import (
+    CREDIT_TITLES,
     currency_evidence,
     find_currency,
     find_gst_numbers,
@@ -30,7 +31,18 @@ from .normalize import (
     norm_id,
     parse_dates,
 )
-from .types import AMOUNT_FIELDS, Box, DocLayout, Line, LineReading, PageLayout, Reading, Word, union_all
+from .types import (
+    AMOUNT_FIELDS,
+    BILL_TO_READING,
+    Box,
+    DocLayout,
+    Line,
+    LineReading,
+    PageLayout,
+    Reading,
+    Word,
+    union_all,
+)
 
 
 def plain(text: str) -> str:
@@ -660,6 +672,8 @@ _CUSTOMER_WORD = re.compile(r"c[l1i|]ient|cust[o0]mer|y[o0]ur|v[o0]tre|acheteur|
 
 
 def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
+    """The registration numbers printed. One printed for the customer (in the bill-to block, after "Client:") is
+    read "+bill-to" (``BILL_TO_READING``): it may be the customer's, and is never verified on its own."""
     gst: list[Reading] = []
     qst: list[Reading] = []
     pst: list[Reading] = []
@@ -679,20 +693,25 @@ def _registration_numbers(layout: DocLayout) -> dict[str, list[Reading]]:
                 score *= 0.35
             if line.box.page == 1 and line.box.cy < 0.3:
                 score = min(1.0, score + 0.02)
-            gst.append(Reading("gst_hst_registration_number", value, text[a:b], _boxes(words), score, "pattern"))
+            method = "pattern" + (BILL_TO_READING if bill_to else "")
+            gst.append(Reading("gst_hst_registration_number", value, text[a:b], _boxes(words), score, method))
         for value, a, b in find_qst_numbers(text):
             words = _span_words(line, a, b)
             score = 0.95 * _min_conf(words)
             near = lower[max(0, a - 40) : a]
-            if _CUSTOMER_WORD.search(near) or bill_to:
+            customer = bool(_CUSTOMER_WORD.search(near)) or bill_to
+            if customer:
                 score *= 0.35
-            qst.append(Reading("qst_registration_number", value, text[a:b], _boxes(words), score, "pattern"))
+            method = "pattern" + (BILL_TO_READING if customer else "")
+            qst.append(Reading("qst_registration_number", value, text[a:b], _boxes(words), score, method))
         for value, a, b in find_pst_numbers(text):
             words = _span_words(line, a, b)
             score = 0.9 * _min_conf(words)
-            if _CUSTOMER_WORD.search(lower[max(0, a - 40) : a]) or bill_to:
+            customer = bool(_CUSTOMER_WORD.search(lower[max(0, a - 40) : a])) or bill_to
+            if customer:
                 score *= 0.35
-            pst.append(Reading("pst_registration_number", value, text[a:b], _boxes(words), score, "pattern"))
+            method = "pattern" + (BILL_TO_READING if customer else "")
+            pst.append(Reading("pst_registration_number", value, text[a:b], _boxes(words), score, method))
     return {"gst_hst_registration_number": gst, "qst_registration_number": qst, "pst_registration_number": pst}
 
 
@@ -968,22 +987,42 @@ def _printed_as_money(token: str) -> bool:
     return looks_like_money(fixed) or bool(_CREDIT_MARK.search(fixed))
 
 
-_CREDIT_TITLE = re.compile(r"^(?:credit\s*(?:memo|note)|note\s*de\s*credit|avis\s*de\s*credit)(?![a-z])")
+_CREDIT_TITLE = re.compile(r"^(?:" + "|".join(CREDIT_TITLES) + r")(?![a-z])")  # as email triage reads them
+
+
+def credit_titled(layout: DocLayout) -> bool:
+    """The document calls itself a credit note ("CREDIT MEMO", "Note de crédit", "AVOIR" ...) at the top of its
+    first page."""
+    if not layout.pages:
+        return False
+    return any(ln.box.cy < 0.35 and _CREDIT_TITLE.match(plain(ln.text).strip()) for ln in layout.pages[0].lines)
 
 
 def credit_printed_positive(layout: DocLayout) -> bool:
-    """A credit memo (titled so at the top of its first page) that prints no amount with a sign: its amounts
-    are credits however they are printed, and AP posts credits as negative amounts."""
-    if not layout.pages:
-        return False
-    if not any(ln.box.cy < 0.35 and _CREDIT_TITLE.match(plain(ln.text).strip()) for ln in layout.pages[0].lines):
+    """A credit memo (titled so at the top of its first page) whose subtotal and total are printed without a sign:
+    its amounts are credits however they are printed, and AP posts credits as negative amounts. The subtotal's and
+    total's own signs decide: one adjustment line printed negative ("Restocking fee -50.00") is that line's sign,
+    not the document's. With no subtotal or total found, any amount printed with a sign means the signs are printed."""
+    if not credit_titled(layout):
         return False
     from .normalize import find_amounts
 
-    for line in layout.lines():
-        if any(v < 0 and looks_like_money(line.text[a:b]) for v, a, b in find_amounts(line.text)):
-            return False  # the signs are printed: read them as they are
-    return True
+    def money(line: Line) -> list[float]:
+        return [v for v, a, b in find_amounts(line.text) if looks_like_money(line.text[a:b])]
+
+    totals: list[float] = []
+    for page in layout.pages:
+        for line in page.lines:
+            p = plain(line.text).strip()
+            if not any(rx.match(p) for f in ("subtotal", "grand_total") for rx, _ in _LABELS[f]):
+                continue
+            # The amount on the label's line, or in the cells beside it on its row.
+            row = [line] + sorted((o for o in page.lines if o is not line and abs(o.box.cy - line.box.cy) < 0.006
+                                   and o.box.x0 >= line.box.x0), key=lambda o: o.box.x0)  # fmt: skip
+            totals += next((m for m in map(money, row) if m), [])[-1:]
+    if totals:
+        return all(v > 0 for v in totals)
+    return not any(v < 0 for line in layout.lines() for v in money(line))  # the signs are printed: read as they are
 
 
 def _heading_name(text: str) -> str | None:
@@ -1093,6 +1132,14 @@ def heading_row(page: PageLayout) -> tuple[Line, list[Line], dict[str, Box]] | N
 
 _THREE_PLACES = re.compile(r"-?\d{1,3}([.,])\d{3}")  # "1.459": a price to three decimals, or 1,459
 _SPACED_PAIR = re.compile(r"(\d{1,3})[   ](\d{3}[.,]\d{1,2})")  # "3 250,00": quantity 3 at 250,00
+_SPACED_WHOLE = re.compile(r"(\d{1,3})[   ](\d{3})")  # "2 500": 2500 (French thousands), or 2 and 500
+
+
+def spaced_whole(text: str) -> float | None:
+    """A cell that is one whole number in one space group ("2 500", "6 000"): the number kept whole (2500).
+    ``find_amounts`` reads it as two numbers (a quantity and a price); the line's amount tells which it is."""
+    m = _SPACED_WHOLE.fullmatch(text.strip())
+    return float(m.group(1) + m.group(2)) if m else None
 
 
 def _qty_times_price(segs: list[Line], nums: list[tuple[Line, list[tuple[float, int, int]]]], amt_seg: Line | None,
@@ -1110,6 +1157,9 @@ def _qty_times_price(segs: list[Line], nums: list[tuple[Line, list[tuple[float, 
         found = next((f for seg, f in nums if seg is s), [])
         if s is amt_seg:
             found = found[:-1]  # the amount itself
+        whole = spaced_whole(s.text) if s is not amt_seg and len(found) == 2 else None
+        if whole is not None:
+            options.append((k + 1, whole, 0))  # "2 500" kept whole, in the place of its first part
         for value, a, b in found:
             token = s.text[a:b].strip()
             k += 1

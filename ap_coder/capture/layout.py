@@ -704,6 +704,7 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
     sources: set[str] = set()
     di = layout_from_di(di_raw) if di_raw else None
     with pymupdf.open(path) as doc:
+        left_out = max(0, doc.page_count - max_pages)  # never read: said so (``DocLayout.pages_left_out``)
         for i, page in enumerate(doc):
             if i >= max_pages:
                 break
@@ -732,7 +733,7 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                 pages.append(text_page)
                 sources.add("text")
     source = sources.pop() if len(sources) == 1 else ("mixed" if sources else "none")
-    return DocLayout(pages, source)
+    return DocLayout(pages, source, pages_left_out=left_out)
 
 
 # ---------------------------------------------------------------- second read of a scan
