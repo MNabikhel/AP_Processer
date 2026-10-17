@@ -881,6 +881,10 @@ def _transcribe_once(settings: Settings, client: Any, model: str, reader: Reader
     if finish == "length" and not looped:
         # Half a page would hide the rest of it: the reading is not kept.
         raise CutOff(f"the reading stopped at the {reader.max_tokens:,}-token limit before the end of the page")
+    if not finish and not looped:
+        # The stream ended without the server saying the reply was done: it stopped part way down the page (the
+        # model unloaded, a dropped link). Half a page is not kept, nor cached: it is read again later.
+        raise PageReaderError("the model server ended the reading part way down the page", temporary=True)
     return text, looped
 
 

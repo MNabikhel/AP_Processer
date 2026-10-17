@@ -661,6 +661,15 @@ def test_transcribe_cut_off_blank_and_thinking(client):
     assert page_reader.transcribe(Settings(), b"png", model=OVIS_KEY) == "Invoice No: NW-2026-0912"
 
 
+def test_a_reading_that_ends_without_a_finish_reason_is_not_a_whole_page(client):
+    """The stream stopped part way down the page with no finish reason: the half page is not taken for the page (it
+    would be cached for good); it is read again later."""
+    client(FakeStream([chunk("# INVOICE\n"), chunk("Vendor: Northwind\n"), chunk("| Item | Amount |")]))
+    with pytest.raises(PageReaderError, match="part way") as raised:
+        page_reader.transcribe(Settings(), b"png", model=OVIS_KEY)
+    assert raised.value.temporary and not isinstance(raised.value, (CutOff, Blank))
+
+
 def test_thinking_fields_refused_are_dropped(client):
     refused = StatusError(400, "Unrecognized request argument supplied: chat_template_kwargs")
     fake = client(refused, refused, stream(PAGE))

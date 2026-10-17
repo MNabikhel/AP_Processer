@@ -66,17 +66,48 @@ def _env_int(name: str, default: int | None) -> int | None:
         return default
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")  # an IPv4 address on the internet, reached through a NAT64 gateway
+
+
+def _address(name: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The address ``name`` is, read the way the resolver reads it: an IPv4 address may also be written as one number
+    (134744072), in hex (0x08080808) or with fewer parts (127.1). None for a name."""
+    try:
+        return ipaddress.ip_address(name)
+    except ValueError:
+        pass
+    parts = name.split(".")
+    if not name or not name[0].isdigit() or len(parts) > 4 or set(name) - set("0123456789abcdefx."):
+        return None
+    numbers = []
+    for part in parts:  # as inet_aton reads each part: 0x… hex, 0… octal, else decimal
+        try:
+            numbers.append(int(part, 16) if part[:2] == "0x" else int(part, 8) if part[:1] == "0" else int(part, 10))
+        except ValueError:
+            return None
+    *head, last = numbers
+    if any(n > 255 for n in head) or last >= 256 ** (4 - len(head)):
+        return None
+    value = last
+    for index, n in enumerate(head):
+        value += n << (8 * (3 - index))
+    return ipaddress.IPv4Address(value)
+
+
 def _on_this_network(host: str) -> bool:
-    """localhost, a bare machine name, a .local/.lan name, or a private or loopback address."""
+    """localhost, a bare machine name, a .local/.lan name, or a private or loopback address (however it is written:
+    an address in another form is judged as the address it is)."""
     name = host.rsplit("@", 1)[-1]
     name = name[1:].split("]", 1)[0] if name.startswith("[") else name.rsplit(":", 1)[0]
     name = name.lower()
-    if name == "localhost" or name.endswith((".local", ".lan", ".home")) or "." not in name:
-        return True
-    try:
-        address = ipaddress.ip_address(name)
-    except ValueError:
-        return False
+    address = _address(name)
+    if address is None:
+        return name == "localhost" or name.endswith((".local", ".lan", ".home")) or "." not in name
+    if isinstance(address, ipaddress.IPv6Address):
+        if address in _NAT64:
+            return False
+        if address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
     return address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified
 
 

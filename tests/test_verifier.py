@@ -98,6 +98,42 @@ def test_an_item_left_unanswered_is_not_confident():
     assert found.status == verifier.UNSURE
 
 
+def test_agreed_needs_every_item_agreed_in_a_confident_round():
+    """Round 1 disputes one field, skips the rest and is not confident; round 2 answers only that field, confident.
+    Nothing else was ever confirmed: it is not agreed, and the round that was not confident did not narrow the next."""
+    skipped = {"fields": [{"field": "invoice_number", "agree": False, "on_page": "HPS-2026-0374", "reason": "x"}],
+               "lines": [], "confident": False, "summary": ""}  # fmt: skip
+    only_that = {"fields": [{"field": "invoice_number", "agree": True, "on_page": None, "reason": "ok"}],
+                 "lines": [], "confident": True, "summary": ""}  # fmt: skip
+    ask = Script(skipped, only_that, only_that)
+    found = verifier.review(ask, SHOWN, rounds=3)
+    assert found.status != verifier.AGREED
+    assert ask.asked[1][1] == list(verifier.FIELDS) and ask.asked[1][2] == [1]  # all of it again
+    # Extreme: only the vendor answered, then an empty confident answer.
+    vendor_only = {"fields": [{"field": "vendor_name", "agree": True, "on_page": None, "reason": ""}], "lines": [],
+                   "confident": False, "summary": ""}  # fmt: skip
+    empty = {"fields": [], "lines": [], "confident": True, "summary": ""}
+    assert verifier.review(Script(vendor_only, empty, empty), SHOWN, rounds=3).status != verifier.AGREED
+
+
+def test_a_confident_round_still_narrows_to_what_it_disputed():
+    ask = Script(_answer({"grand_total": "1,105.00"}), lambda fields: _answer(fields=fields, numbers=()))
+    found = verifier.review(ask, SHOWN)
+    assert (found.status, found.rounds) == (verifier.AGREED, 2) and ask.asked[1][1:] == (["grand_total"], [])
+
+
+def test_every_hold_is_recorded_whatever_the_order():
+    from ap_coder import azure_check
+
+    decided = {"state": "autonomous", "auto": True, "audit": False, "reason": "ok"}
+    for first, second in ((azure_check.hold, verifier.hold), (verifier.hold, azure_check.hold)):
+        held = first(decided, azure_check.Plan(hold=True) if first is azure_check.hold else verifier.Plan(hold=True))
+        held = second(held, azure_check.Plan(hold=True) if second is azure_check.hold else verifier.Plan(hold=True))
+        assert held["auto"] is False and held.get("azure_hold") and held.get("verifier_hold")
+    not_auto = {"auto": False, "reason": "x"}
+    assert verifier.hold(azure_check.hold(not_auto, azure_check.Plan(hold=True)), verifier.Plan(hold=True)) == not_auto
+
+
 def test_a_line_it_disputes_twice():
     ask = Script(_answer(lines={1: "GL 6000 Office Supplies does not fit consulting"}),
                  lambda fields: _answer(lines={1: "still not office supplies"}, fields=fields))  # fmt: skip
@@ -176,6 +212,28 @@ def test_the_model_is_asked_to_think_with_the_pages(monkeypatch, reference):
     assert "Think it through" in body["messages"][0]["content"]
 
 
+def test_a_draft_in_its_thinking_is_not_its_answer():
+    class Thinker(FakeCoder):
+        def _local_create(self, model, messages, schema=None, *, thinking=False, timeout=None):
+            draft = "Draft: " + json.dumps(_answer()) + " wait"
+            message = SimpleNamespace(content="Hmm, the total looks wrong.", reasoning_content=draft, model_extra={})
+            return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")])
+
+    found = verifier.review(verifier.ask_model(Thinker(), []), SHOWN)
+    assert found.status == verifier.UNSURE and "no usable answer" in found.why
+
+
+def test_each_call_is_given_only_the_time_left():
+    """The budget (5 minutes an invoice) bounds each call, not only the gap between calls: one call can't run the
+    full AP_LLM_TIMEOUT_SECONDS."""
+    left = [300.0]
+    coder = FakeCoder(_answer(), _answer())
+    verifier.ask_model(coder, [], seconds_left=lambda: left[0])("check", list(verifier.FIELDS), [1])
+    left[0] = 2.0
+    verifier.ask_model(coder, [], seconds_left=lambda: left[0])("check", list(verifier.FIELDS), [1])
+    assert coder.timeouts == [300.0, verifier.MIN_CALL_SECONDS]
+
+
 # --- In line: held from touchless approval until it agrees ---------------------------------------------------------
 
 
@@ -186,15 +244,16 @@ class FakeCoder:
         self.answers = list(answers)
         self.settings = _settings()
         self.profile = SimpleNamespace(supports_vision=vision)
-        self.calls = []
+        self.calls, self.timeouts = [], []
 
     def _prepare_local(self):
         return "gemma-4-12b"
 
-    def _local_create(self, model, messages, schema=None, *, thinking=False):
+    def _local_create(self, model, messages, schema=None, *, thinking=False, timeout=None):
         import re
 
         self.calls.append(thinking)
+        self.timeouts.append(timeout)
         data = self.answers.pop(0)
         fields = schema["properties"]["fields"]["items"]["properties"]["field"]["enum"]
         data = data(fields) if callable(data) else data
@@ -235,9 +294,48 @@ def test_touchless_waits_for_the_reviewer_then_it_approves(store, touchless, mon
     coder = FakeCoder(_answer())
     done = verifier.verify_one(_settings(), store, coder=coder)
     assert done.status == verifier.AGREED and done.approved and coder.calls == [True]  # asked with thinking on
+    assert 0 < coder.timeouts[0] <= 300  # within the reviewer's 5 minutes, not the 600 s of any call
     inv = store.get_invoice(iid)
     assert inv["status"] == APPROVED and "verifier_hold" not in inv["meta"]["capture"]
     assert inv["meta"]["verifier"]["status"] == verifier.AGREED
+
+
+def _held_for_the_reviewer(store, monkeypatch, **capture):  # noqa: F811
+    from .test_azure_check import _touchless_vendor
+
+    iid = InvoicePipeline(_settings(), store.reference_data(), store=store).process(PDF).invoice_id
+    _read_by_the_page_reader(store, monkeypatch)
+    _touchless_vendor(store, store.get_invoice(iid)["ai_output"])
+    if capture:
+        notes = {**store.get_invoice(iid)["meta"]["capture"], **capture}
+        store.update_after_check(iid, None, None, (), {"capture": notes})
+    return iid
+
+
+def test_the_reviewer_agreeing_does_not_approve_past_a_pending_azure_hold(store, touchless, monkeypatch):  # noqa: F811
+    iid = _held_for_the_reviewer(store, monkeypatch, azure_hold=True)
+    done = verifier.verify_one(_settings(), store, coder=FakeCoder(_answer()))
+    assert done.status == verifier.AGREED and not done.approved
+    inv = store.get_invoice(iid)
+    assert inv["status"] == REVIEW and inv["meta"]["capture"].get("azure_hold")
+
+
+def test_a_reopen_during_the_review_keeps_aps_corrections(store, touchless, monkeypatch):  # noqa: F811
+    """AP approves with a correction and reopens it while the reviewer is still looking: the reviewer agreeing with
+    the old proposal must not approve it over AP's coding."""
+    iid = _held_for_the_reviewer(store, monkeypatch)
+    proposed = store.get_invoice(iid)["ai_output"]
+    corrected = {**proposed, "invoice_number": "CORRECTED-1"}
+
+    def meanwhile(fields):
+        store.approve_invoice(iid, corrected, "Mia")
+        store.reopen(iid, "Mia", "one more look")
+        return _answer(fields=fields)
+
+    done = verifier.verify_one(_settings(), store, coder=FakeCoder(meanwhile))
+    assert done.status == verifier.AGREED and not done.approved
+    inv = store.get_invoice(iid)
+    assert inv["status"] == REVIEW and inv["final_output"]["invoice_number"] == "CORRECTED-1"
 
 
 def test_a_disagreement_marks_the_field_and_sends_it_to_a_person(store, touchless, monkeypatch):  # noqa: F811

@@ -788,3 +788,178 @@ def test_gemma_4_thought_channel_is_not_the_answer(content):
     """Gemma 4 writes any thinking in a thought channel, not <think> tags: only what follows it is the answer."""
     assert local_llm.strip_thinking(content) == '{"gl_code": "6100"}'
     assert local_llm.parse_json_reply(content) == {"gl_code": "6100"}
+
+
+def _choice(content, reasoning="", finish="stop"):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(message=SimpleNamespace(content=content, reasoning_content=reasoning), finish_reason=finish)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "The total looks wrong to me.",  # prose: no answer
+        "",  # nothing written
+        '<|channel>thought\nmaybe {"fields": [], "lines": [], "confident": true, "summary": "a"} then',  # unclosed
+        '<think>{"fields": [], "lines": [], "confident": true, "summary": "a"}',  # unclosed
+    ],
+)
+def test_a_strict_reply_never_takes_a_draft_from_the_thinking(content):
+    """The AI reviewer's answer can approve an invoice: a draft in its reasoning, or in a thought block it never
+    closed, is not its answer."""
+    draft = 'Draft: {"fields": [], "lines": [], "confident": true, "summary": "draft"} hmm, wait'
+    reply = read_reply(_choice(content, draft), strict=True)
+    assert reply.data is None and reply.problem
+    answer = '{"fields": [], "lines": [], "confident": false, "summary": "x"}'
+    assert read_reply(_choice(answer, draft), strict=True).data == json.loads(answer)
+    assert read_reply(_choice(f"<think>{draft}</think>{answer}"), strict=True).data == json.loads(answer)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        '{"reason": "model said </think> here", "a": 2}',
+        '{"reason": "a <think> b", "a": 2}',
+        '<think>first</think>{"reason": "a <think> b", "a": 2}',
+        '{"reason": "a <|channel>thought b", "a": 2}',
+    ],
+)
+def test_a_thinking_tag_inside_a_json_string_is_kept(reply):
+    assert parse_json_reply(reply)["a"] == 2
+
+
+def test_a_reply_cut_off_without_the_length_reason_is_not_read_as_its_first_line():
+    content = '{"lines": [{"line_number": 1, "gl_code": "6100", "reason": "a"}, {"line_num'
+    reply = read_reply(_choice(content))
+    assert reply.data is None and "cut off" in reply.problem
+
+
+def _raised(status, message):
+    exc = RuntimeError(message)
+    exc.status_code = status
+    return exc
+
+
+class _Raising:
+    """A chat client whose every call fails with ``exc``, keeping what it was sent."""
+
+    def __init__(self, exc):
+        from types import SimpleNamespace
+
+        self.calls, self.exc = [], exc
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        raise self.exc
+
+
+def test_a_400_that_is_not_about_the_format_keeps_structured_output(reference):
+    """LM Studio couldn't load the model (a 400): that is not the server refusing response_format, so the schema is
+    neither dropped for this call nor remembered as refused."""
+    settings = local_settings("http://127.0.0.1:9/v1")
+    client = _Raising(_raised(400, "Failed to load model 'gemma-4-12b': not enough memory"))
+    coder = InvoiceCoder(settings, reference, client=client, provider="local")
+    with pytest.raises(CodingError, match="Failed to load model"):
+        coder._local_create("gemma-4-12b", [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}])
+    assert [c.get("response_format", {}).get("type", "text") for c in client.calls] == ["json_schema"]
+    assert local_llm.start_mode(settings.llm.base_url, "gemma-4-12b") == 0
+    assert local_llm.rejects_format(_raised(400, "response_format json_schema is not supported"))
+    assert local_llm.rejects_format(_raised(422, "Unknown field: response_format"))
+
+
+class _PromptCoder:
+    """Enough of an InvoiceCoder for ``suggest_accounts``: keeps each prompt, codes every line it is asked to 6000."""
+
+    def __init__(self, reference, max_prompt_chars=24_000):
+        self.reference, self.prompts = reference, []
+        self.settings = local_settings("http://127.0.0.1:9/v1", max_prompt_chars=max_prompt_chars)
+
+    def _prepare_local(self):
+        return "qwen3.5-9b"
+
+    def _local_create(self, model, messages, schema=None, **kw):
+        self.prompts.append(messages)
+        numbers = [int(n) for n in re.findall(r"^(\d+)\. ", messages[-1]["content"], re.M)]
+        lines = [{"line_number": n, "gl_code": "6000", "cost_center": "", "reason": "x"} for n in numbers]
+        return make_completion(json.dumps({"lines": lines}))
+
+
+def test_a_long_invoice_is_suggested_within_the_prompt_budget(reference):
+    """300 lines with long descriptions and a big chart of accounts: every prompt fits AP_LLM_MAX_PROMPT_CHARS (the
+    lines go in batches, descriptions and the chart are clipped); a normal invoice is asked as before, in one call."""
+    from ap_coder.inference import SUGGEST_BATCH_LINES, suggest_accounts
+    from ap_coder.reference_data import ReferenceTable
+
+    lines = [(n, f"Item {n}: " + "replacement filter cartridge, heavy duty " * 12, 10.0 * n) for n in range(1, 301)]
+    coder = _PromptCoder(reference)
+    picks = suggest_accounts(coder, "Staples", lines, history="AP coded filters to 6000. " * 2000)
+    assert all(sum(len(m["content"]) for m in p) <= 24_000 for p in coder.prompts)
+    assert all(len(re.findall(r"^\d+\. ", p[-1]["content"], re.M)) <= SUGGEST_BATCH_LINES for p in coder.prompts)
+    assert len(coder.prompts) > 1 and len(picks) >= 100  # in batches, not one prompt of every line
+
+    chart = reference.chart_of_accounts
+    rows = [*chart.rows, *({**chart.rows[0], chart.key_column: str(70000 + i), "description": "Account " * 20}
+                           for i in range(2000))]  # fmt: skip
+    big = replace(reference, chart_of_accounts=ReferenceTable(chart.kind, chart.key_column, rows))
+    coder = _PromptCoder(big)
+    suggest_accounts(coder, "Staples", lines[:2])
+    assert sum(len(m["content"]) for m in coder.prompts[0]) <= 24_000
+
+    coder = _PromptCoder(reference)
+    assert set(suggest_accounts(coder, "Staples", TWO_LINES)) == {1, 2} and len(coder.prompts) == 1
+    assert reference.to_prompt_context() in coder.prompts[0][0]["content"]  # the whole chart, as before
+
+
+def test_the_reviewers_prompt_is_bounded(reference):
+    from ap_coder import verifier
+
+    output = {"vendor_name": "Staples", "grand_total": 100.0,
+              "line_items": [{"line_number": n, "description": "toner " * 200, "amount": 1.0,
+                              "predicted_gl_code": "6000"} for n in range(1, 301)]}  # fmt: skip
+    shown = verifier.proposal(output, None)
+    numbers = [li["line_number"] for li in shown["lines"]]
+    assert len(verifier.question(shown, list(verifier.FIELDS), numbers[:60], None)) <= 24_000
+    asked = []
+    found = verifier.review(lambda text, fields, lines: asked.append(text) or {}, shown)
+    assert found.status == verifier.UNSURE and not asked and "300 lines" in found.why  # too many to check: a person
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://134744072:1234/v1",  # 8.8.8.8 written as one number
+        "http://0x08080808:1234/v1",
+        "http://0x8.0x8.0x8.0x8:1234/v1",
+        "http://8.8.2056:1234/v1",
+        "http://[64:ff9b::808:808]:1234/v1",  # NAT64: 8.8.8.8
+        "http://[::ffff:8.8.8.8]:1234/v1",  # IPv4-mapped
+    ],
+)
+def test_an_internet_address_written_another_way_is_still_refused(url, monkeypatch):
+    from ap_coder.offline import INTERNET_ENV
+
+    monkeypatch.delenv(INTERNET_ENV, raising=False)
+    assert local_llm.refused_address(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://localhost:1234/v1", "http://127.0.0.1:1234/v1", "http://127.1:1234/v1", "http://[::1]:1234/v1",
+     "http://192.168.1.40:1234/v1", "http://10.0.0.5:1234/v1", "http://172.16.3.2:1234/v1", "http://studio-mac:1234/v1",
+     "http://studio-mac.local:1234/v1", "http://[::ffff:192.168.1.40]:1234/v1", "http://2130706433:1234/v1"],
+)  # fmt: skip
+def test_lm_studio_on_this_computer_or_the_lan_is_still_allowed(url, monkeypatch):
+    from ap_coder.offline import INTERNET_ENV
+
+    monkeypatch.delenv(INTERNET_ENV, raising=False)
+    assert local_llm.refused_address(url) == ""
+
+
+def test_a_call_given_less_time_than_the_timeout_gets_only_that(reference):
+    client = FakeOpenAI(make_completion("{}"))
+    settings = local_settings("http://127.0.0.1:9/v1", timeout_seconds=600)
+    coder = InvoiceCoder(settings, reference, client=client, provider="local")
+    coder._local_create("m", [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}], timeout=120)
+    assert client.calls[0]["timeout"] == 120
