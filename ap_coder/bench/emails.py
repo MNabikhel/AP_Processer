@@ -126,7 +126,7 @@ def _statement_pdf(rng: random.Random, vendor: str, lang: str, aged: bool) -> by
         (vendor, 14, True),
         (title, 18, True),
         (("Date du relevé" if fr else "Statement date") + ": 2026-09-30", 10, False),
-        (("Client" if fr else "Customer") + ": PCL Construction (made-up)", 10, False),
+        (("Client" if fr else "Customer") + ": Northern Ridge Builders (made-up)", 10, False),
         ("", 10, False),
     ]
     lines.append(

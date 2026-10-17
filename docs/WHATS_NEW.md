@@ -160,7 +160,7 @@ with how to reproduce each one and the lesson, is [docs/BUGS.md](BUGS.md). What 
 **For IT**
 
 - **[MAILBOX_SETUP.md](MAILBOX_SETUP.md)**: getting the AP mailbox's emails into AP Coder's folder (Power Automate,
-  a mail-saving tool PCL already has, or AP staff dragging emails) while AP Coder itself never connects to the
+  a mail-saving tool the company already has, or AP staff dragging emails) while AP Coder itself never connects to the
   mailbox or the internet.
 
 **For the JDE team**
