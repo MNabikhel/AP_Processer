@@ -142,6 +142,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - B-116: Don't make the result of a graph walk depend on the order the nodes are stored in. `tests/test_msg_and_triage.py::test_the_order_of_directory_entries_never_drops_an_attachment`
 - B-117: Don't apply a "most recent N" window before the filter that decides what is still open. `tests/test_msg_and_triage.py::test_an_open_email_stays_in_needs_a_person_however_many_were_sorted_after_it`
 - B-126: Don't fix a repeated mistake one place at a time: write a check that finds every place, then fix what it finds. `tests/test_directory.py::test_a_status_filter_with_more_statuses_than_sqlite_takes_variables`
+- B-128: Don't use a RecursionError as a limit: count what makes the code recurse and refuse it before. `tests/test_mailbox.py::test_an_email_forwarded_inside_itself_a_thousand_times_is_refused_before_it_is_parsed`
 
 ## Files
 - Data/config: `store.py` (SQLite store), `config.py` (Settings from env), `paths.py` (data folder, user settings), `envfile.py` (.env edits); `reference_data.py` (GL, cost centers, tax setup, policy, prompt context), `csvio.py` (Excel CSVs, dates); `safe.py` (formula-safe cells, the shared amount parser), `audit.py` (approval diffs, event labels).

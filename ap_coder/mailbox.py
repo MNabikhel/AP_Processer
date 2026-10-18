@@ -160,9 +160,11 @@ def read_eml(raw: bytes) -> Mail:
         raise UnreadableEmail(f"the email is larger than {MAX_EMAIL_BYTES // 1_000_000} MB")
     if raw.count(b"\n--") > MAX_BOUNDARY_LINES:  # parsing is the slow part: thousands of parts are refused before it
         raise UnreadableEmail(f"it has more than {MAX_BOUNDARY_LINES} parts")
+    if raw.lower().count(b"message/rfc822") > MAX_PARTS:  # the parser recurses once a forwarded email (B-128)
+        raise UnreadableEmail("it holds too many emails forwarded inside each other")
     try:
         msg = email.message_from_bytes(raw, policy=email.policy.default)
-    except RecursionError:
+    except RecursionError:  # last resort only: at this depth even clean-up code fails (B-128)
         raise UnreadableEmail("it holds too many emails forwarded inside each other") from None
     assert isinstance(msg, EmailMessage)
     mail = Mail(str(msg.get("Subject") or ""), str(msg.get("From") or ""))

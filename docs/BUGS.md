@@ -809,10 +809,10 @@ the code at the time of the sweep.
 | Document capture | 13 | 7 (B-98 to B-104) | 6 (N-51 to N-56) |
 | Web routes | 9 | 3 (B-105 to B-107) | 6 (N-57 to N-62) |
 | Front end | 13 | 8 (B-108 to B-115) | 5 (N-63 to N-67) |
-| Intake, CLI and launch | 10 | 2 (B-116, B-117) | 8 (N-68 to N-75) |
-| Codebase map tooling, CI and tests | 9 | 8 (B-118 to B-125) | 1 (N-76) |
+| Intake, CLI and launch | 11 | 3 (B-116, B-117, B-128) | 8 (N-68 to N-75) |
+| Codebase map tooling, CI and tests | 10 | 9 (B-118 to B-125, B-127) | 1 (N-76) |
 | Repeated lessons made into checks | 1 | 1 (B-126) | 0 |
-| **Total** | **99** | **54** | **45** |
+| **Total** | **101** | **56** | **45** |
 
 ### Store and config
 
@@ -1280,6 +1280,16 @@ the code at the time of the sweep.
 - **Test:** `tests/test_msg_and_triage.py::test_an_open_email_stays_in_needs_a_person_however_many_were_sorted_after_it`
 - **Lesson:** Don't apply a "most recent N" window before the filter that decides what is still open.
 
+#### B-128 · An email forwarded inside itself a thousand times was read by recursing to Python's limit · low
+- **Where:** `ap_coder/mailbox.py` (`read_eml`)
+- **Symptom:** CI on Python 3.13 (Ubuntu) failed `test_a_crafted_email_in_the_folder_does_not_break_the_process_page` once with "Failed to process unraisable exception"; the same commit had passed.
+- **Cause:** the only guard against deep forwarding was to catch the RecursionError of Python's email parser, which recurses once a forwarded layer. At that depth an object freed by the garbage collector (an event loop's `__del__`) failed too, outside the `try`.
+- **Reproduce:** `read_eml()` of an email with 1,000 nested `Content-Type: message/rfc822` layers, with `email.message_from_bytes` patched to fail when called.
+- **Reproduced:** yes (the parser was called).
+- **Fix:** more than 500 `message/rfc822` headers (the part cap) are refused before parsing; the RecursionError catch stays as a last resort.
+- **Test:** `tests/test_mailbox.py::test_an_email_forwarded_inside_itself_a_thousand_times_is_refused_before_it_is_parsed`
+- **Lesson:** Don't use a RecursionError as a limit: count what makes the code recurse and refuse it before.
+
 ### Codebase map tooling and CI
 
 #### B-118 · Interface names pass when they exist anywhere · medium
@@ -1372,6 +1382,16 @@ the code at the time of the sweep.
 - **Fix:** keep only real statuses, each once (so at most six); an unknown one is refused with a message, as the other filters are.
 - **Test:** `tests/test_directory.py::test_a_status_filter_with_more_statuses_than_sqlite_takes_variables`; the rule: `tests/test_code_rules.py::test_no_sql_placeholders_are_made_one_per_item_of_a_list`
 - **Lesson:** Don't fix a repeated mistake one place at a time: write a check that finds every place, then fix what it finds.
+
+#### B-127 · The browser tests could not start in CI's browser job · medium
+- **Where:** `tests/conftest.py` (`chromium_path`)
+- **Symptom:** in the new "Browser tests" CI job every browser test errored with "It looks like you are using Playwright Sync API inside the asyncio loop".
+- **Cause:** CI has no Chromium under /opt/pw-browsers, so `chromium_path()` asked Playwright for its own one by starting a second `sync_playwright()`, and the tests call it inside their own `with sync_playwright()`. Locally the /opt/pw-browsers path was found first, so the fallback never ran.
+- **Reproduce:** point the browser roots at an empty folder, with Playwright's own Chromium installed, and call `chromium_path()` inside `with sync_playwright()`.
+- **Reproduced:** yes (the same error as CI).
+- **Fix:** the lookup is made once per run (`functools.cache`), the first time outside a running Playwright; the folders searched are a list (`BROWSER_ROOTS`) a test can change.
+- **Test:** `tests/test_ci_workflow.py::test_the_browser_is_looked_up_once_not_inside_a_running_playwright`
+- **Lesson:** Don't let a fallback be the path only CI takes: make a test run it locally.
 ### Not reproduced or left as they are
 
 - **N-32** · Store · `_env_float` (`config.py:45`) accepts `AP_REVIEW_THRESHOLD=nan` or `-1` from a hand-edited `.env`, so low confidence would never force a review. The Settings page enforces 50-99%; not run end to end; left.

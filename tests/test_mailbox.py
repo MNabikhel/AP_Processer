@@ -188,3 +188,18 @@ def test_an_email_of_thousands_of_tiny_parts_is_refused_before_it_is_parsed():
     raw = f'From: a@b.example\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="b"\n\n{parts}--b--\n'
     with patch("email.message_from_bytes", side_effect=AssertionError("parsed")), pytest.raises(UnreadableEmail):
         read_eml(raw.encode())
+
+
+def test_an_email_forwarded_inside_itself_a_thousand_times_is_refused_before_it_is_parsed():
+    """B-128: the parser recurses once a forwarded layer, so the old guard (catch RecursionError) let Python reach its
+    recursion limit; an object freed at that depth then failed in its own clean-up (CI, Python 3.13)."""
+    import pytest
+
+    from ap_coder.mailbox import UnreadableEmail, read_eml
+
+    raw = "From: a@b.example\nMIME-Version: 1.0\n"
+    for _ in range(1000):
+        raw += "Content-Type: message/rfc822\n\nFrom: a@b.example\nMIME-Version: 1.0\n"
+    raw += "Content-Type: text/plain\n\nhi\n"
+    with patch("email.message_from_bytes", side_effect=AssertionError("parsed")), pytest.raises(UnreadableEmail):
+        read_eml(raw.encode())

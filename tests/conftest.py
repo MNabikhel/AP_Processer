@@ -1,3 +1,4 @@
+import functools
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -209,8 +210,13 @@ def few_sql_variables(monkeypatch):
     monkeypatch.setattr(Store, "_open", low_limit)
 
 
+BROWSER_ROOTS = ["/opt/pw-browsers"]  # a Chromium installed outside Playwright's own folder (this cloud image)
+
+
+@functools.cache
 def chromium_path() -> str | None:
-    """A Chromium for the browser tests: one under PLAYWRIGHT_BROWSERS_PATH or /opt/pw-browsers, else the one
+    """A Chromium for the browser tests, found once per run (they call this inside ``with sync_playwright()``, where
+    a second Playwright can't start: B-127): one under PLAYWRIGHT_BROWSERS_PATH or /opt/pw-browsers, else the one
     Playwright installed (``python -m playwright install chromium``). None when there is none: the browser tests
     skip, unless ``AP_REQUIRE_BROWSER=1`` (CI's browser job), where they fail so they can't pass by not running."""
     import importlib.util
@@ -218,7 +224,7 @@ def chromium_path() -> str | None:
 
     found = None
     if importlib.util.find_spec("playwright") is not None:
-        for root in (os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), "/opt/pw-browsers"):
+        for root in (os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), *BROWSER_ROOTS):
             for pattern in ("chromium-*/chrome-linux*/chrome", "chromium/chrome-linux*/chrome"):
                 hits = sorted(Path(root).glob(pattern)) if root else []
                 if hits and not found:

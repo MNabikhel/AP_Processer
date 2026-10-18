@@ -69,3 +69,29 @@ def test_ci_runs_the_browser_tests_and_never_lets_them_skip():
     text = yaml.safe_dump(job)
     assert "playwright install --with-deps chromium" in text and "-k in_a_browser" in text.replace('"', "")
     assert any((step.get("env") or {}).get("AP_REQUIRE_BROWSER") == "1" for step in job["steps"])
+
+
+def test_the_browser_is_looked_up_once_not_inside_a_running_playwright(monkeypatch, tmp_path):
+    """B-127: CI has no browser under /opt/pw-browsers, so chromium_path() asks Playwright for its own Chromium. The
+    browser tests call it again inside ``with sync_playwright()``, where a second Playwright can't start ("Sync API
+    inside the asyncio loop"): every browser test failed in CI and none locally, where the first lookup finds one."""
+    import importlib.util
+
+    import pytest
+
+    if importlib.util.find_spec("playwright") is None:
+        pytest.skip("Playwright isn't installed")
+    from playwright.sync_api import sync_playwright
+
+    from . import conftest
+
+    monkeypatch.setattr(conftest, "BROWSER_ROOTS", [str(tmp_path)])
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.delenv("AP_REQUIRE_BROWSER", raising=False)
+    conftest.chromium_path.cache_clear()
+    try:
+        first = conftest.chromium_path()  # as the fixtures do, before starting Playwright
+        with sync_playwright():
+            assert conftest.chromium_path() == first
+    finally:
+        conftest.chromium_path.cache_clear()

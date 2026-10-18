@@ -31,13 +31,14 @@ real LM Studio or the internet.
 - A lesson logged twice becomes a rule in test_code_rules.py (a check of the whole code), not a third fix.
 - test_how_it_runs_doc.py fails when docs/HOW_IT_RUNS.md cites a `file:function` that no longer exists.
 - test_package_data.py fails when the web app reads a file not listed in pyproject's package data.
-- The browser tests (`test_in_a_browser_...` in test_web_invoice.py and test_offline_guard.py) find Chromium with conftest `chromium_path()` and skip without it; CI's "Browser tests" job sets `AP_REQUIRE_BROWSER=1`, so there they must run.
+- The browser tests (`test_in_a_browser_...` in test_web_invoice.py and test_offline_guard.py) find Chromium with conftest `chromium_path()` (looked up once per run, never inside a running Playwright: B-127) and skip without it; CI's "Browser tests" job sets `AP_REQUIRE_BROWSER=1`, so there they must run.
 
 ### Bug lessons
 From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - B-104: Don't read a text file without naming its encoding. `tests/test_capture_edge_cases.py::test_a_french_quantity_in_one_space_group_is_read_whole`
 - B-124: Don't let a test that skips without its tool be the only proof: make CI provide the tool and fail without it. `tests/test_ci_workflow.py::test_ci_runs_the_browser_tests_and_never_lets_them_skip`
 - B-125: Don't assert on what a page does in an event handler right after the action that queues it: wait for the state, with a timeout. `tests/test_web_invoice.py::test_in_a_browser_the_popovers_open_inside_a_phone_screen`
+- B-127: Don't let a fallback be the path only CI takes: make a test run it locally. `tests/test_ci_workflow.py::test_the_browser_is_looked_up_once_not_inside_a_running_playwright`
 
 ## Files
 - Helpers: `__init__.py` (makes tests a package), `conftest.py` (isolation and fixtures), `webclient.py` (dashboard client), `offline_guard.py` (network guard), `offline_flow.py` (the offline walk).
