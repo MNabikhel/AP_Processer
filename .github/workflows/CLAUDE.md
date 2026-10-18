@@ -12,6 +12,8 @@ the offline jobs point every proxy at a closed port (127.0.0.1:9) to prove AP Co
 - Triggers: push to `main` and `claude/**`, pull requests, `workflow_dispatch`. A newer push cancels the older run.
 - Jobs, one line each:
   - `tests`: Ubuntu and Windows x Python 3.10, 3.12, 3.13, 3.14: `pip install -e ".[dev]"`, `ruff check`, `ruff format --check`, `pytest -q`.
+  - `codebase-map`: `python scripts/check_map.py --changed <base>` (a PR's base branch; on a push to main, the commit
+    before it): the map's errors fail; a folder whose code changed without its CLAUDE.md is a warning in the log.
   - `windows-installer`: `APProcessor.bat --installer --yes ...` twice (second run reuses .venv and packages), self-test, `/healthz`, `--fresh-start` keeps `.env`.
   - `windows-pilot-launcher`: the double-click on Windows: first setup prints the readiness summary; a second click opens the running one; one shortcut; `fetch_models.py --check`, `doctor`, `pilot_check.py`; a later start within a minute.
   - `windows-offline-bundle`: builds the bundle, unzips it, double-clicks offline (wheelhouse only), `pilot_check.py`, then `tests/test_offline_guard.py`.
@@ -29,7 +31,6 @@ the offline jobs point every proxy at a closed port (127.0.0.1:9) to prove AP Co
 - The checks match the launcher's printed sentences ("already running", "Self-check OK", "reusing .venv"):
   rewording one in `scripts/launch.py` or `scripts/install.py` breaks a job; change both together.
 - Env names are case-insensitive on GitHub: the lower-case proxy copies are set in the step's bash script, never in `env:`.
-- `scripts/check_map.py` is not run by this workflow yet (it says "CI" in its docstring).
 
 ## Files
-- `ci.yml`: the one CI workflow (seven jobs, above).
+- `ci.yml`: the one CI workflow (eight jobs, above).

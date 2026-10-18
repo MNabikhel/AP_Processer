@@ -7,7 +7,7 @@ Offline by default: the bundle builder downloads (it sets `AP_ALLOW_INTERNET=1` 
 only from the code alone (GitHub's ZIP or a checkout, no bundle; `AP_ALLOW_INTERNET=0` stops it) or with `AP_ALLOW_INTERNET=1`.
 
 **Depends on:** `ap_coder` (paths, envfile, offline, config, store, doctor, cli, local_llm, page_reader, page_worker, pipeline, reference_data, capture)
-**Used by:** the root launchers (`APProcessor.bat`, `APProcessor.command` run launch.py), `.github/workflows`, `tests`
+**Used by:** the root launchers (`APProcessor.bat`, `APProcessor.command` run launch.py), `.github/workflows`, `tests`, `.claude` (the hook runs check_map.py)
 
 ## Interface
 - `main()` (launch.py): argv -> exit code. The double-click: hand over to a newer install, reuse or make `.venv`,
@@ -22,14 +22,15 @@ only from the code alone (GitHub's ZIP or a checkout, no bundle; `AP_ALLOW_INTER
 - `main()` (install.py): the installer, the same setup plus questions; `--yes`, `--no-update`, `--skip-tests`, `--full-tests`,
   `--data-dir`, `--reinstall`, `--no-shortcut`, `--fresh-start`, `--no-start`.
 - `problems()` (check_deps.py): extras -> requirements of pyproject.toml missing or too old, and `ap_coder` itself not installed (exit 1 from the command line).
-- `fetch()` (fetch_models.py): copy the PP-OCRv5 models from the bundle's `models/` (never download unless opted in);
-  `--check` exits 1 if any is missing. `choose_data_dir()` (first_run.py): the data folder already in use, else `~/APCoder`.
+- `fetch()` (fetch_models.py): copy the PP-OCRv5 models (and the table finder) from the bundle's `models/` (never download
+  unless opted in); `--check` exits 1 if any is missing; also `--to`, `--from`, `--offline`, `--table-finder`. `choose_data_dir()` (first_run.py): the data folder already in use, else `~/APCoder`.
 - `build()` (build_offline_bundle.py): `dist/APProcessor-offline-*.zip` with code, `wheelhouse/`, `models/` and
   `bundle_manifest.json` (version, built, SHA-256 per file). `--mac`, `--platform`, `--python`, `--no-models`, `--no-current`, `--dry-run`, `--manifest-for FOLDER`.
 - `main()` (pilot_check.py): read and code each sample in `samples/` with no model and no Azure (`check()`, one sample),
   compare with `samples/ground_truth/`, then one scan with local OCR when installed (`check_ocr()`); exit 0 when all
   read right. A throwaway database, nothing sent.
-- check_map.py: `python scripts/check_map.py` (the whole map), `--changed BASE`, `--hook` (Claude Code reminder, never blocks).
+- check_map.py: `python scripts/check_map.py` (the whole map), `--changed BASE` (also warns when git can't compare),
+  `--modules` (writes `ap_coder/MODULES.md`), `--hook` (Claude Code reminder, never blocks). New files count before `git add`.
 
 ## Gotchas and decisions
 - launch.py, running.py, upgrade.py, check_deps.py, fetch_models.py, check_map.py and install.py run before any package
