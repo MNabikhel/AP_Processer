@@ -384,13 +384,13 @@ def review_delete(request: Request, invoice_id: int, back: str = Form("/review?t
     store = get_store(request)
     if store.get_invoice(invoice_id) is None:
         return refuse("That invoice is no longer in AP Coder.", 404)
-    from ap_coder.web.pages.invoice import forget_draft
+    from ap_coder.web.pages.invoice import forget_everyones_draft
 
     try:
         delete_invoice(store, invoice_id)
     except ValueError as exc:  # approved by someone else since this Delete button was shown
         return changed_meanwhile(request, exc, back)
-    forget_draft(request, invoice_id)
+    forget_everyones_draft(request, invoice_id)
     return done(request, back, flash_message("Deleted. The file moved to invoices/deleted.", "ok", icon="delete"))
 
 

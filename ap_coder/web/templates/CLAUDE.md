@@ -34,7 +34,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - Close and compliance: `exports.html` (/exports), `month_end.html` (/month-end), `sales_tax.html` (/sales-tax), `statements.html` (/statements).
 - Master data: `vendors.html` (/vendors), `purchase_orders.html` (/purchase-orders), `accounts.html` (/accounts).
 - Analytics: `learning.html` (/learning), `spend.html` (/spend), `insights.html` (/insights), `activity.html` (/activity).
-- System: `help.html` (/help); `settings.html` (/settings, /settings/{tab}, pages/settings.py render_tab), `azure_check_page.html` (/settings/azure-check, pages/azure.py).
+- System: `help.html` (/help); `who.html` (/who, pages/who.py: a colleague on the network gives their name); `settings.html` (/settings, /settings/{tab}, pages/settings.py render_tab), `azure_check_page.html` (/settings/azure-check, pages/azure.py).
 - Settings tabs, included by settings.html: `settings_reading.html` (includes `settings_azure.html`, the developer-only cloud form, and partials/azure_check.html), `settings_automation.html`, `settings_review.html`, `settings_jde.html`, `settings_data.html`, `settings_about.html`.
 - Partials and macros (the _*.html files): `_sheet.html` (spreadsheet import steps; accounts, exports, purchase_orders, statements, vendors), `_tiles.html` (KPI row), `_demo_card.html` (demo invoices; process, review_welcome).
 - Review screen pieces: `_invoice_document.html` (page viewer card), `_invoice_notes.html` (notes card), `_invoice_live.html` (sections redrawn on each edit), `_invoice_lines.html` (line and tax grids).

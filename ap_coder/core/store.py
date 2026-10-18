@@ -15,6 +15,7 @@ leaving the machine:
 
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import hashlib
 import json
@@ -210,6 +211,11 @@ _HEADER_FIELDS = (
     "remit_bank_account",
     "subtotal", "tax_total", "grand_total",
 )  # fmt: skip
+
+
+# Where the request being answered came from, when it is a colleague on the office network (set by
+# ap_coder/web/identity.py): every event then records it as detail["from"]. None on this computer.
+EVENT_ORIGIN: contextvars.ContextVar[str | None] = contextvars.ContextVar("ap_coder_event_origin", default=None)
 
 
 def _now() -> str:
@@ -619,6 +625,9 @@ class Store:
         conn: sqlite3.Connection, action: str, invoice_id: int | None = None, actor: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> None:  # fmt: skip
+        origin = EVENT_ORIGIN.get()
+        if origin:
+            detail = {**(detail or {}), "from": origin}
         conn.execute(
             "INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
             (invoice_id, action, actor, json.dumps(detail or {}, default=str), _now()),

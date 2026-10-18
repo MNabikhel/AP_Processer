@@ -14,15 +14,17 @@ Fully offline: CSS and scripts are served from this folder, fonts from `ap_coder
 - `render()` (core.py): (request, template, page key, **context) -> HTML with the rail, reviewer, flashes, banner; always `Cache-Control: no-store`.
 - `done()` / `message()` / `refuse()` (core.py): a POST's JSON answer: `{ok, redirect}` (with a ?flash= token), `{ok, toast}`, `{ok: false, error}` (400 by default).
 - `get_store()`, `get_settings()`, `jobs()`, `reviewer()`, `local_url()`, `money()` (core.py): what routes use; `templates` is the one Jinja environment.
-  `reviewer()` and `login()` are the server process's user: on 0.0.0.0 every browser approves under that one name.
+  `reviewer()` and `login()`: this computer's user, or a colleague on the office network (their name; `network <address>`).
 - `Job.start()` (jobs.py): runs work(job) in a thread, False if that job name is running; the page polls `snapshot()` at `GET /jobs/<name>` (the "process" job at /process/status).
+- `Identity`, `person()`, `PERSON`, `COOKIE`, `cookie_value()`, `name_from_cookie()`, `network_login()` (identity.py): on 0.0.0.0, who each
+  browser on another computer is (a cookie signed with `app.state.identity_secret`, made at each start); without one it gets /who only (D-34).
 - `LocalOnly` (security.py): middleware; `host_allowed()` and `same_origin()` decide. Header `X-AP-Coder: 1` (PAGE_HEADER), launcher token `X-AP-Coder-Token`.
 - `download()`, `receive_sheet()`, `read_upload()`, `sheet_context()` (files.py): downloads and the two-step spreadsheet import (uploads wait in memory 1 hour, never on disk;
   pages/learning.py keeps its own, 4 at most). `read_excel()`: every workbook upload or emailed sheet (unzipped sizes checked, "NA" kept as text).
 - `page_png()`, `page_sizes()`, `page_words()`, `shape_fields()` (document.py): the review screen's page pictures and words, boxes as page fractions (0..1, top-left).
 - `analyse()`, `Draft` (invoice_view.py): the review screen's coding, checks and sections from the reviewer's edits (uses pages/review.py's `confidence_pct`).
 - `line_chart()`, `bar_chart()` (charts.py): server-drawn SVG as Markup; `render()` (minimd.py): our own help Markdown to safe HTML.
-- Data it owns: `app.state` (store, settings_factory, jobs, reader, azure_checker, port, shutdown_token, server; pages/invoice.py adds invoice_drafts); flash messages (10 min) and uploads in memory only.
+- Data it owns: `app.state` (store, settings_factory, jobs, reader, azure_checker, port, shutdown_token, identity_secret, server; pages/invoice.py adds invoice_drafts, person_drafts); flash messages (10 min) and uploads in memory only.
 
 ## Gotchas and decisions
 - Every request but GET, HEAD and OPTIONS needs `X-AP-Coder: 1`, and an Origin (when sent) of this server and no cross-site or same-site
@@ -36,6 +38,7 @@ Fully offline: CSS and scripts are served from this folder, fonts from `ap_coder
 - `done()` passes the URL through `local_url()`: a page never redirects off this server.
 - Settings are read from the .env on every request (`settings_factory`), so a Settings change applies at once.
 - `MORE_MODULES` routers are included before `PAGES`, so `/settings/azure-check` wins over `/settings/{tab}`.
+- Who is asking is a contextvar set by `Identity` (and `store.EVENT_ORIGIN`): read `reviewer()`/`login()`/`identity.person()`; a `Job` thread inherits it.
 - Only "process", "settings-doctor" and "azure-test" are `Job`s (one per name at a time); backups, restore, export files, the training ZIP and the
   duplicate audit run inside the request.
 - invoice_view.py is over 1,100 lines: this folder does too much, see the scale assessment, PR #24.
@@ -52,7 +55,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - `__init__.py`: package docstring: layout, how to add a page, the rules.
 - `app.py`: create_app, error handlers, /healthz, /shutdown, /jobs.
 - `core.py`: templates, render, rail, flash messages, store/settings access, shared helpers.
-- `security.py`: Host check and POST header/origin check (LocalOnly).
+- `security.py`: Host check and POST header/origin check (LocalOnly). `identity.py`: who a colleague on the network is (Identity).
 - `server.py`: runs uvicorn, writes the server file, opens the browser.
 - `jobs.py`: background jobs (Job, Jobs).
 - `files.py`: downloads and uploaded spreadsheets.

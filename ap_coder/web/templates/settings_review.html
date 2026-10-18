@@ -3,9 +3,13 @@
   <section class="card">
     <h4>Review and AI behaviour</h4>
     <form method="post" action="/settings/review" class="stack" data-busy="Saving…">
+      {% if colleague %}
+      <p class="field">Your name: <b>{{ reviewer_name }}</b> (<a href="/who">change it</a>; this browser gave it to AP Coder)</p>
+      {% else %}
       <label class="field">Your name
         <input type="text" name="reviewer_name" value="{{ reviewer_name }}" placeholder="shown on the invoices you approve"
                title="Saved for your Windows account: two people sharing one AP Coder each keep their own name."></label>
+      {% endif %}
       <label class="field st-wide">Send to <i>Needs attention</i> when the AI's confidence is below
         <span class="st-range"><input type="range" name="threshold" min="50" max="99" step="1" value="{{ threshold }}"
           data-output="threshold-out"><output id="threshold-out">{{ threshold }}%</output></span></label>

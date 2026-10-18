@@ -19,6 +19,7 @@ result the page shows when it is done). An exception becomes the job's error, sh
 
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import threading
 from collections.abc import Callable
@@ -62,7 +63,10 @@ class Job:
             self.lines, self.result, self.error, self.about = [], None, "", dict(about or {})
             self.started_at, self.finished_at = _now(), ""
             self._finished.clear()
-        threading.Thread(target=self._run, args=(work,), name=f"ap-coder-job-{self.name}", daemon=True).start()
+        # The thread sees what the request saw: who started the job (web/identity.py) is who its events name.
+        context = contextvars.copy_context()
+        threading.Thread(target=context.run, args=(self._run, work), name=f"ap-coder-job-{self.name}",
+                         daemon=True).start()  # fmt: skip
         return True
 
     def step(self, done: int, total: int | None = None, note: str = "", stage: str = "") -> None:

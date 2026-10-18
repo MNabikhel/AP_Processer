@@ -31,6 +31,7 @@ from ap_coder.coding.tax import PROVINCE_NAMES
 from ap_coder.core import paths, ui
 from ap_coder.core.envfile import one_line, read_env, write_env
 from ap_coder.core.store import Store, unread_fx_text
+from ap_coder.web import identity
 from ap_coder.web.core import (
     data_dir,
     done,
@@ -136,8 +137,10 @@ def review_context(request: Request) -> dict[str, Any]:
     settings, store = get_settings(request), get_store(request)
     env = read_env(env_path())
     name = paths.read_user_settings().get("reviewer") or env.get("AP_REVIEWER") or os.environ.get("AP_REVIEWER", "")
+    colleague = identity.person()  # on the office network: their own name, changed on the Who are you? page
     return {
-        "reviewer_name": str(name or ""),
+        "colleague": colleague is not None,
+        "reviewer_name": colleague.name if colleague else str(name or ""),
         "threshold": round(float(settings.engine.review_threshold) * 100),
         "constrain": bool(settings.engine.constrain_codes),
         "approval_limit": store.approval_limit(),
@@ -162,6 +165,10 @@ def save_review(
     if not 50 <= percent <= 99:
         return refuse("The confidence threshold must be from 50% to 99%.")
     name = reviewer_name.strip()
+    if identity.person() is not None:  # a colleague's name is never the owner's saved one
+        if name and name != reviewer():
+            return refuse("Your name is the one this browser gave AP Coder: change it on the Who are you? page (/who).")
+        name = reviewer()
     changed: list[str] = []
     if name and name != reviewer():  # logged under the old name, with both names
         rename = {"from": reviewer(), "to": name}

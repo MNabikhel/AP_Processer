@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block header %}
+<header class="apc-head apc-anim"><div>
+  {{ ui.breadcrumbs(["AP Coder"]) }}
+  <h1 class="apc-title">Who are you?</h1>
+</div></header>
+{% endblock %}
+{% block content %}
+<section class="card">
+  {% if here %}
+  <p>On this computer you approve as <b>{{ reviewer }}</b>. Change your name in <a href="/settings/review">Settings → Review</a>.</p>
+  {% else %}
+  <p>This AP Coder runs on another computer of the office. Give your name once: it goes on every invoice you approve
+    and every change you make, so a colleague can give the second approval.</p>
+  <form method="post" action="/who" class="stack" data-busy="Saving…">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="field">Your name
+      <input type="text" name="name" value="{{ current }}" maxlength="60" required autofocus
+             placeholder="first and last name"></label>
+    <div class="row"><button class="btn primary" type="submit"><span class="ms" aria-hidden="true">badge</span>{{ "Change my name" if current else "Continue" }}</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

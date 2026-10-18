@@ -42,6 +42,7 @@ from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import REVIEW, Store
+from ap_coder.web import identity
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, SECTIONS
 
@@ -144,7 +145,11 @@ def reference_or_none(store: Store) -> ReferenceData | None:
 
 
 def login() -> str:
-    """The Windows / computer account running the dashboard (recorded with approvals)."""
+    """The Windows / computer account running the dashboard (recorded with approvals); for a colleague on the
+    office network, their computer's address (web/identity.py)."""
+    found = identity.person()
+    if found is not None:
+        return identity.network_login(found.address)
     try:
         return getpass.getuser()
     except Exception:  # noqa: BLE001 - no login name available (unusual service accounts)
@@ -153,7 +158,11 @@ def login() -> str:
 
 def reviewer() -> str:
     """The person approving: the name this Windows user saved in Settings (kept per user, so two people sharing one
-    AP Coder keep their own names), else AP_REVIEWER from the .env, else the computer login."""
+    AP Coder keep their own names), else AP_REVIEWER from the .env, else the computer login. A colleague on the
+    office network is the name they gave on the "Who are you?" page (web/identity.py)."""
+    found = identity.person()
+    if found is not None:
+        return found.name
     saved = str(paths.read_user_settings().get("reviewer") or "")
     for name in (saved, os.environ.get("AP_REVIEWER"), login()):
         if name and str(name).strip():

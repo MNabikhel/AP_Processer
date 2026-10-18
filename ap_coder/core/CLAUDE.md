@@ -11,6 +11,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.store
 ## Interface
 - `Store()` (store.py): path (default `ap_coder.db` in the data folder) -> the one SQLite store; `session()` shares one
   connection per thread. `load_sample_setup()`: the sample GL, cost centers, tax GL mapping and policy from `data/`.
+  `EVENT_ORIGIN` (store.py): a contextvar; set (web/identity.py, a colleague on the network), every event's detail gets `from`: their address.
 - `from_env()` (config.py, `Settings.from_env`): .env path, else `paths.env_file()` -> `Settings`; `override=False`: the OS environment wins, so a saved value also goes into `os.environ`.
 - `load_reference_data()` (reference_data.py): files -> `ReferenceData` (GL, cost centers, tax setup, policy) for prompts and checks.
 - `InvoiceCoding` (schema.py): the coding shape (and the JSON schema the models answer in).
