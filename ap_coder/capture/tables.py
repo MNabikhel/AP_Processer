@@ -247,8 +247,9 @@ def _page_items(page: PageLayout, rules: list[tuple[float, float, float]], table
 
 def _qty_and_price(qty_text: str, price_text: str, amount: float) -> tuple[float | None, float | None]:
     """The quantity and unit price cells read as numbers: a price printed "1.459" is 1.459 (a price to three
-    decimals) when that, not 1,459, makes the line's amount; first readings otherwise."""
-    from .reader import _THREE_PLACES, _amounts_in
+    decimals) when that, not 1,459, makes the line's amount, and a quantity printed "2 500" is 2500 when that, not 2,
+    makes it; first readings otherwise."""
+    from .reader import _THREE_PLACES, _amounts_in, spaced_whole
 
     def options(text: str, last: bool) -> list[float]:
         found = _amounts_in(text)
@@ -258,6 +259,9 @@ def _qty_and_price(qty_text: str, price_text: str, amount: float) -> tuple[float
         out = [value]
         if _THREE_PLACES.fullmatch(text[a:b].strip()):
             out.append(round(value / 1000, 4))
+        whole = spaced_whole(text) if len(found) == 2 else None
+        if whole is not None:
+            out.append(whole)  # "2 500": 2500 when that makes the line's amount
         return out
 
     qs, ps = options(qty_text, False), options(price_text, True)

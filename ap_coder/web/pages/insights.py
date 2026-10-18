@@ -173,7 +173,7 @@ async def insights_assumptions(request: Request) -> JSONResponse:
         text = str(form.get(f.name) or "").strip().replace(",", "")
         try:
             number = int(float(text)) if f.name == "monthly_volume" else float(text)
-        except ValueError:
+        except (ValueError, OverflowError):  # int() of an endless number ("1e309", "inf") overflows
             return refuse(f"{label}: enter a number.")
         if number < 0 or number != number or number in (float("inf"), float("-inf")):
             return refuse(f"{label}: enter a number of 0 or more.")

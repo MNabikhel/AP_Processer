@@ -11,12 +11,16 @@ _DELIMITERS = ",;\t|"
 
 
 def _dialect(sample: str) -> type[csv.Dialect] | csv.Dialect:
-    """Comma, or semicolon (French-Canadian Excel), tab or pipe when the header line uses one of those."""
+    """Comma, or semicolon (French-Canadian Excel), tab or pipe when the header line uses one of those.
+
+    Only the delimiter is taken from the sniffer: one header line says nothing about quoting, and the sniffer
+    then guesses that "" inside a cell is not an escaped quote. Excel's quoting rules are kept."""
     header = sample.splitlines()[0] if sample else ""
     try:
-        return csv.Sniffer().sniff(header, delimiters=_DELIMITERS)
+        delimiter = csv.Sniffer().sniff(header, delimiters=_DELIMITERS).delimiter
     except csv.Error:
         return csv.excel
+    return type("_Sniffed", (csv.excel,), {"delimiter": delimiter})
 
 
 def read_csv_rows(path: str | Path) -> list[dict[str, str]]:

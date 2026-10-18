@@ -86,6 +86,51 @@ def test_cli_mistakes_are_one_line_and_a_non_zero_exit(tmp_path, monkeypatch, ca
     assert _cli(tmp_path, "extract", str(tmp_path / "typo.pdf"), "-o", str(tmp_path / "x")) == 2
 
 
+def test_a_command_that_could_not_read_something_does_not_exit_0(tmp_path, monkeypatch, capsys):
+    """An email that could not be read, or a page read that failed, is said on screen: the exit code says it too, so
+    Task Scheduler or a script sees it."""
+    from types import SimpleNamespace
+
+    from ap_coder import page_worker
+
+    for key in [k for k in os.environ if k.startswith("AZURE_")]:
+        monkeypatch.delenv(key)
+    (tmp_path / "bad.msg").write_bytes(b"not an outlook email" * 40)
+    good = tmp_path / "good.pdf"
+    good.write_bytes(b"%PDF-1.4 good")
+
+    class Pipeline:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def process_many(self, inputs, workers=1, on_result=None):
+            return [SimpleNamespace(ok=True, summary=lambda p=p: {"status": "", "file": p.name}) for p in inputs]
+
+    monkeypatch.setattr(cli, "InvoicePipeline", Pipeline)
+    out = ["-o", str(tmp_path / "out"), "--cache-dir", ""]
+    assert _cli(tmp_path, "process", str(tmp_path / "bad.msg"), str(good), "--no-db", *out) == 1
+    assert "could not be read" in capsys.readouterr().err
+    (tmp_path / "bad2.msg").write_bytes(b"not an outlook email" * 40)
+    assert _cli(tmp_path, "extract", str(tmp_path / "bad2.msg"), *out) == 2  # nothing left to extract
+
+    monkeypatch.setattr(page_worker, "self_test_if_due", lambda *a, **k: None)
+    monkeypatch.setattr(page_worker, "ready", lambda *a, **k: ("ovis", ""))
+    monkeypatch.setattr(page_worker, "run_queue", lambda *a, **k: [page_worker.ReadOutcome(1, "failed")])
+    assert _cli(tmp_path, "read-pages", "--cache-dir", "") == 1
+
+
+def test_watch_uses_the_dashboard_invoices_folder(tmp_path, monkeypatch):
+    """With AP_DB_PATH (or --db) the dashboard picks up files from the invoices folder next to the database: so
+    does ``watch``, as its help says."""
+    seen = []
+    monkeypatch.setattr(cli, "watch_once", lambda args, settings, store, folder: seen.append(folder) or (0, 0))
+    monkeypatch.setenv("AP_DB_PATH", str(tmp_path / "srv" / "ap_coder.db"))
+    assert cli.main(["--env-file", str(tmp_path / "none.env"), "watch", "--once"]) == 0
+    assert cli.main(["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "b" / "x.db"), "watch",
+                     "--once"]) == 0  # fmt: skip
+    assert seen == [tmp_path / "srv" / "invoices", tmp_path / "b" / "invoices"]
+
+
 def test_cli_labels_with_nothing_processed_writes_nothing(tmp_path, capsys):
     dest = tmp_path / "labels.xlsx"
     args = ["labels", "--predictions", str(tmp_path / "out"), "-o", str(dest)]
@@ -121,6 +166,19 @@ def test_doctor_missing_packages_fail_with_the_offline_fix(reference, monkeypatc
         assert check.status == doctor.FAIL and "APProcessor.bat" in check.detail
         assert "pip install" not in check.detail
     assert "PDFs can't be read" in checks["package pymupdf"].detail
+
+
+def test_doctor_fails_without_pillow(reference, monkeypatch):
+    """Pillow turns every photo or scanned image into a PDF to read: not only for --vision."""
+    from ap_coder import doctor
+    from ap_coder.config import LocalLLMSettings
+
+    real = doctor._version
+    monkeypatch.setattr(doctor, "_version", lambda pkg: None if pkg == "pillow" else real(pkg))
+    checks = doctor.run_checks(Settings(llm=LocalLLMSettings(provider="off")), lambda: reference, llm_checks=False)
+    (pillow,) = [c for c in checks if c.area == "package pillow"]
+    assert pillow.status == doctor.FAIL and "images can't be read" in pillow.detail
+    assert doctor.exit_code(checks) != 0
 
 
 def test_doctor_skips_the_local_model_when_ai_coding_is_off(reference, monkeypatch):

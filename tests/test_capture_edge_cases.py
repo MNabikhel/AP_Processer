@@ -402,3 +402,152 @@ def test_column_headings_set_close_together_keep_their_own_columns(tmp_path):
     capture = analyze(_pdf(tmp_path, _table(rows, ((330, "Qty"), (360, "Unit Price")))), ocr=False, today=TODAY)
     got = [(li.quantity, li.unit_price, li.amount) for li in capture.line_items]
     assert got == [(10.0, 100.0, 1000.0), (3.0, 250.0, 750.0)], got
+
+
+# --- Read from a page reader's transcription, as on a digital PDF (the same text as the page reader's) -------------
+
+SAMPLES = Path(__file__).resolve().parent.parent / "samples"
+
+
+def _read(text: str):
+    """``text`` read as one page, by the rules and by the page reader (the same text, as on a digital PDF)."""
+    from ap_coder.capture.transcript import layout_from_transcript
+
+    return analyze(Path("x.md"), layout=layout_from_transcript([text]), tables=False, second_read=False,
+                   today=dt.date(2026, 10, 16), page_text=[text])  # fmt: skip
+
+
+_AVOIR = """Agence Créative Mont-Royal inc.
+4200 boul. Saint-Laurent, bureau 600, Montréal (QC) H2W 2R2
+No TPS : 812345676 RT0001    No TVQ : 1218765432 TQ0001
+
+# {title}
+
+Facture no : AV-2026-0042
+Date de facturation : 28 septembre 2026
+
+Facturer à : Fabrikam Canada Ltée, Service du marketing
+1000 rue De La Gauchetière O., bureau 2400, Montréal (QC) H3B 4W5
+
+<table>
+<tr><th>#</th><th>Description</th><th>Qté</th><th>Prix unitaire</th><th>Montant</th></tr>
+<tr><td>1</td><td>Crédit - conception graphique non livrée</td><td>1</td><td>2 100,00</td><td>2 100,00</td></tr>
+</table>
+
+<table>
+<tr><td>Sous-total</td><td>2 100,00 $</td></tr>
+<tr><td>TPS 5 %</td><td>105,00 $</td></tr>
+<tr><td>TVQ 9,975 %</td><td>209,48 $</td></tr>
+<tr><td>Total à créditer</td><td>2 414,48 $</td></tr>
+</table>
+"""
+
+
+def test_a_french_avoir_printed_positive_is_a_credit_and_needs_a_person():
+    """A French credit note titled "AVOIR" (or "Facture d'avoir", "Credit Invoice") printed with positive amounts is
+    a credit, as a "CREDIT NOTE" is: read as printed, it was approved without a person as an invoice to pay."""
+    for title in ("AVOIR", "FACTURE D'AVOIR", "CREDIT INVOICE"):
+        capture = _read(_AVOIR.format(title=title))
+        got = {f: capture.fields[f].value for f in ("subtotal", "gst_amount", "qst_amount", "grand_total")}
+        assert got == {"subtotal": -2100.0, "gst_amount": -105.0, "qst_amount": -209.48, "grand_total": -2414.48}, title
+        assert capture.credit_note, title
+        assert should_auto_approve(AUTONOMOUS, capture, True, []) == (False, "always a person: it is a credit note")
+    assert not _read(_AVOIR.format(title="FACTURE")).credit_note
+
+
+def test_canadian_dollars_stated_in_words_win_over_a_code_in_a_payment_note():
+    """ "All prices in Canadian dollars" settles the currency; "Payments in USD accepted" (or a USD wire account)
+    says how the supplier may be paid, not what it bills in. Read as USD, the invoice was approved without a person."""
+    from ap_coder.capture.normalize import currency_evidence
+
+    note = "All prices in Canadian dollars. Payments in USD accepted at the bank's posted rate."
+    assert currency_evidence(f"Total $1,000.00\n{note}")[0] == "CAD"
+    assert currency_evidence("Total $1,000.00\nMontants en dollars canadiens.")[0] == "CAD"
+    assert currency_evidence("Total $1,000.00\nAll amounts in US dollars")[0] == "USD"
+    assert currency_evidence("Total $1,000.00\nUSD cheques accepted at par")[1] < 0.8  # a guess, not verified
+    assert currency_evidence("Total $1,000.00\nWire to: Bank of Nova Scotia, USD account 4455")[1] < 0.8
+    text = (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text().replace("Total Due (CAD)", "Total Due")
+    capture = _read(text.replace("Payable on receipt.", f"Payable on receipt.\n{note}"))
+    assert capture.fields["currency"].value == "CAD"
+
+
+def test_a_registration_number_read_only_in_the_bill_to_block_is_not_verified():
+    """The customer's GST/HST number printed in the "Client:" block, and no number of the supplier's: a valid check
+    digit shows the number is well formed, not whose it is. Verified, input tax credits were claimed on it."""
+    text = (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text()
+    text = text.replace("HST Registration No. 356201848 RT0001\n", "")
+    capture = _read(text.replace("Attn: Controller\n", "Attn: Controller\nGST/HST No. 123456782 RT0001\n"))
+    gst = capture.fields["gst_hst_registration_number"]
+    assert gst.status != VERIFIED and any("bill-to" in r for r in gst.reasons), (gst.status, gst.reasons)
+    assert not should_auto_approve(AUTONOMOUS, capture, True, [])[0]
+    # The supplier's own number at the top is still verified.
+    assert _read((SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text()).fields[
+        "gst_hst_registration_number"].status == VERIFIED  # fmt: skip
+
+
+def test_a_french_quantity_in_one_space_group_is_read_whole():
+    """ "2 500" exemplaires at 0,84 make 2 100,00: the quantity is 2500, not 2 (and "6 000" mots at 0,22 are 6000).
+    The amounts were right, so nothing failed, and the offline coder posted quantities 2 and 6."""
+    from ap_coder.capture.reader import read_line_items
+    from ap_coder.capture.tables import _qty_and_price
+    from ap_coder.capture.transcript import layout_from_transcript
+
+    text = (SAMPLES / "montroyal_QC_TPS_TVQ_ACMR-2026-1187.md").read_text(encoding="utf-8")
+    page1 = text.split("<!-- PageBreak -->")[0]
+    got = [(li.quantity, li.unit_price, li.amount) for li in read_line_items(layout_from_transcript([page1]))]
+    assert got == [(24.0, 95.0, 2280.0), (2500.0, 0.84, 2100.0), (1.0, 3500.0, 3500.0), (6000.0, 0.22, 1320.0)], got
+    assert _qty_and_price("2 500", "0,84", 2100.0) == (2500.0, 0.84)
+    assert _qty_and_price("10", "100,00", 1000.0) == (10.0, 100.0)
+
+
+_POSITIVE_CREDIT_NOTE = """Northwind IT Solutions Inc.
+200 Bay Street, Suite 1500, Toronto, ON M5J 2J2
+GST/HST Reg. No: 123456782 RT0001
+
+# CREDIT NOTE
+
+Credit Note No: CN-2026-0047
+Credit Date: September 28, 2026
+Original Invoice: NW-2026-0912
+
+<table>
+<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr>
+<tr><td>1</td><td>Return of one Dell Latitude 7450 laptop</td><td>1</td><td>1,450.00</td><td>1,450.00</td></tr>
+<tr><td>2</td><td>Consulting hours not delivered</td><td>4</td><td>150.00</td><td>600.00</td></tr>
+<tr><td>3</td><td>Restocking fee</td><td>1</td><td>-50.00</td><td>-50.00</td></tr>
+</table>
+
+<table>
+<tr><td>Subtotal</td><td>$2,000.00</td></tr>
+<tr><td>HST 13% (ON)</td><td>$260.00</td></tr>
+<tr><td>Total Credit (CAD)</td><td>$2,260.00</td></tr>
+</table>
+"""
+
+
+def test_a_credit_note_printed_positive_with_one_negative_adjustment_is_still_a_credit():
+    """A CREDIT NOTE printed without signs but with a "Restocking fee -50.00" line: the fee's sign is the fee's, not
+    the document's. The credit's own subtotal and total are printed positive, so the credit is read negative."""
+    capture = _read(_POSITIVE_CREDIT_NOTE)
+    got = {f: capture.fields[f].value for f in ("subtotal", "hst_amount", "grand_total")}
+    assert got == {"subtotal": -2000.0, "hst_amount": -260.0, "grand_total": -2260.0}, got
+    assert [li.amount for li in capture.line_items] == [-1450.0, -600.0, 50.0]  # the fee lowers the credit
+    assert not [c["code"] for c in capture.checks if not c["ok"] and c["code"] in ("TOTALS_ADD_UP", "TAX_RATE")]
+
+
+def test_a_field_that_failed_a_check_does_not_show_its_measured_confidence():
+    """A total that does not add up is marked down (x0.3); the calibration's measure of its evidence pattern, which
+    does not record the failure, must not put it back up (it showed 0.918 beside "check failed")."""
+    text = (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.md").read_text().replace("$10,960.53", "$10,990.53")
+    total = _read(text).fields["grand_total"]
+    assert total.status == "check" and any(r.startswith("check failed") for r in total.reasons)
+    assert total.confidence <= 0.3, total.confidence
+
+
+def test_a_price_to_four_decimals_with_four_digits_before_the_point_is_one_number():
+    """ "1234.5678" is 1234.5678, not 1234.56 and a stray 78; "1.3023" stays a price to four decimals."""
+    from ap_coder.capture.normalize import find_amounts, parse_amount
+
+    assert parse_amount("1234.5678") == 1234.5678
+    assert [v for v, _, _ in find_amounts("Fuel 1234.5678 L")] == [1234.5678]
+    assert parse_amount("1.3023") == 1.3023 and parse_amount("1,234.56") == 1234.56

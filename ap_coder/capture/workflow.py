@@ -122,8 +122,8 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     its findings, a credit note, a total over the touchless limit (Settings → Automation) or over the approval
     limit (a second approver), a foreign currency with no exchange rate to check the limit with, and not yet read
     by the page reader, or not every page of it (``pages_read``: the pages it read, at most
-    AP_PAGE_READER_MAX_PAGES), a text file the page reader cannot look at (``no_page``), or a line of ``output``
-    whose account only the local chat model chose (``inference.MODEL_SUGGESTED``) or a weak match coded
+    AP_PAGE_READER_MAX_PAGES), nor by the local readers (past its first 20 pages), a text file the page reader
+    cannot look at (``no_page``), or a line of ``output`` whose account only the local chat model chose (``inference.MODEL_SUGGESTED``) or a weak match coded
     (``offline_coder.WEAK_MATCH``: an account's name, the vendor's default, an account AP moved away from)."""
     issues = [{"code": i.code, "severity": i.severity} for i in (report.issues if report else [])]
     coding = _amounts(capture, output)
@@ -139,7 +139,9 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
                            awaiting_page_reader=awaiting_page_reader, pages_unread=unread,
-                           no_rate_for=no_rate, no_page=no_page, model_coded_lines=guessed)  # fmt: skip
+                           no_rate_for=no_rate, no_page=no_page, model_coded_lines=guessed,
+                           credit_note=capture is not None and capture.credit_note,
+                           pages_left_out=capture.pages_left_out if capture is not None else 0)  # fmt: skip
 
 
 def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capture: CaptureResult | None,
@@ -184,11 +186,37 @@ def autonomy_decision(store: Any, key: str, profile: dict[str, Any] | None, capt
     return {"state": state, "auto": ok and not audit, "audit": audit, "reason": reason}
 
 
-def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any]) -> bool:
-    """Whether an invoice touchless processing passed earlier but held back (for the Azure check) may still be
-    approved without a person now: the switch is still on, its supplier still touchless (not suspended or kept
-    supervised by an AP lead meanwhile) and its total still within the touchless and approval limits."""
+CHECK_CODES = ("VERIFIER_", "AZURE_DI_")  # the issues of a check made after processing (AI reviewer, Azure check)
+
+
+def still_untouched(store: Any, invoice_id: int, output: dict[str, Any]) -> bool:
+    """The invoice as stored now (read again, right before an approval by AP Coder): still in the review queue with
+    ``output`` as its proposal, nobody's coding on it (a person may have approved it with corrections and reopened it
+    meanwhile), no check still holding it (``azure_hold``, ``verifier_hold``) and no open issue from one."""
+    from ..store import REVIEW
+    from ..verifier import HOLDS
+
+    inv = store.get_invoice(invoice_id)
+    if not inv or inv.get("status") != REVIEW or inv.get("final_output") or inv.get("reviewer") or inv.get("edits"):
+        return False
+    if inv.get("ai_output") != output:  # read again meanwhile: what was checked is not what is proposed now
+        return False
+    notes = (inv.get("meta") or {}).get("capture") or {}
+    if any(notes.get(k) for k in HOLDS):
+        return False
+    issues = (inv.get("validation") or {}).get("issues") or []
+    return not any(str(i.get("code") or "").startswith(CHECK_CODES) for i in issues if isinstance(i, dict))
+
+
+def still_touchless(store: Any, capture: CaptureResult | None, output: dict[str, Any],
+                    invoice_id: int | None = None) -> bool:  # fmt: skip
+    """Whether an invoice touchless processing passed earlier but held back (for the Azure check, the AI reviewer)
+    may still be approved without a person now: the switch is still on, its supplier still touchless (not suspended
+    or kept supervised by an AP lead meanwhile) and its total still within the touchless and approval limits. With
+    ``invoice_id``: the invoice as stored now is also ``still_untouched``."""
     if store is None or not store.touchless_enabled():
+        return False
+    if invoice_id is not None and not still_untouched(store, invoice_id, output):
         return False
     key, _ = supplier_for(store, output)
     if not key:

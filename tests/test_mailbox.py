@@ -132,3 +132,59 @@ def test_long_attachment_names_are_shortened_keeping_the_extension():
     assert safe_name("a" * 300 + ".pdf") == "a" * 76 + ".pdf"
     cjk = safe_name("发票" * 45 + ".pdf")
     assert cjk.endswith(".pdf") and len(cjk.encode()) <= 200
+
+
+def test_a_long_chinese_email_and_attachment_name_still_fit_one_file_name(tmp_path):
+    """Each part was capped, but "<email name> - <attachment name>" was not: 259 bytes, over the 255 a Mac or Linux
+    file name may hold, so the email was retried on every check and its invoice never saved."""
+    m = EmailMessage()
+    m["Subject"] = "发票"
+    m.set_content("x")
+    m.add_attachment(b"%PDF-1.4 x", maintype="application", subtype="pdf", filename="发票" * 28 + ".pdf")
+    path = tmp_path / ("供应商" * 14 + ".eml")
+    path.write_bytes(m.as_bytes())
+    (saved,) = unpack(path).saved
+    assert saved.exists() and saved.suffix == ".pdf" and len(saved.name.encode()) <= 200
+
+
+def test_an_email_that_cannot_be_moved_is_logged_once(tmp_path):
+    """An email open in Outlook stays in the folder and is sorted again at the next check: it is logged once it has
+    moved, not once per check."""
+    from ap_coder import inbox
+    from ap_coder.mailbox import triage_log
+    from ap_coder.store import Store
+
+    store = Store(tmp_path / "a.db")
+    path = tmp_path / "locked.eml"
+    path.write_bytes(_email().as_bytes())
+    with patch("pathlib.Path.replace", side_effect=PermissionError("open in Outlook")):
+        for _ in range(3):
+            result = unpack(path)
+            inbox.log_sorted(store, result)
+    assert path.exists() and len(result.saved) == 2 and triage_log(tmp_path) == [] and store.events() == []
+    result = unpack(path)  # closed in Outlook: it moves, and is logged
+    inbox.log_sorted(store, result)
+    assert not path.exists() and len(triage_log(tmp_path)) == 1 and len(store.events()) == 1
+
+
+def test_an_email_stamped_in_the_future_is_unpacked(tmp_path):
+    """Its time ahead of the clock (a ZIP made in a time zone ahead, a scanner's fast clock): not "still copying"."""
+    import os
+
+    path = tmp_path / "ahead.eml"
+    path.write_bytes(_email().as_bytes())
+    os.utime(path, (time.time() + 3600, time.time() + 3600))
+    (result,) = unpack_folder(tmp_path)
+    assert len(result.saved) == 2
+
+
+def test_an_email_of_thousands_of_tiny_parts_is_refused_before_it_is_parsed():
+    """Parsing costs about 86 µs a part, all before the 500-part cap: 100 MB of tiny parts would take minutes."""
+    import pytest
+
+    from ap_coder.mailbox import UnreadableEmail, read_eml
+
+    parts = "".join("--b\nContent-Type: text/plain\n\nx\n" for _ in range(6000))
+    raw = f'From: a@b.example\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="b"\n\n{parts}--b--\n'
+    with patch("email.message_from_bytes", side_effect=AssertionError("parsed")), pytest.raises(UnreadableEmail):
+        read_eml(raw.encode())

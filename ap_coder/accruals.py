@@ -5,7 +5,8 @@ Three sources, none counted twice:
 * Received, not invoiced: purchase order lines received (quantity received known) beyond what has been
   invoiced so far, at the PO price, on the PO line's GL account
 * Invoices not yet in the ERP: invoices dated on or before the period end that are still in review,
-  waiting for a second approval, or approved but not exported, by GL account (net of recoverable tax)
+  waiting for a second approval, or approved but not exported, by GL account (net of recoverable tax); a copy
+  flagged as a duplicate of a bill already exported or counted, or as already in the ERP, is left out
 * Expected recurring invoices: regular vendors whose next invoice was due by the period end and has not
   arrived, at their usual amount, on the GL account most used for them (an estimate)
 """
@@ -19,9 +20,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from . import recurring
+from .memory import vendor_key
 from .po import CLOSED, billed_by_line, po_label
 from .safe import csv_row
 from .store import APPROVED, PARKED, PENDING, REVIEW, Store
+from .vendors import norm_invoice_number
 
 RECEIVED, NOT_IN_ERP, RECURRING = "Received, not invoiced", "Invoice not in the ERP yet", "Expected recurring invoice"
 SOURCES = (RECEIVED, NOT_IN_ERP, RECURRING)
@@ -79,10 +82,24 @@ def _received_not_invoiced(store: Store, period_end: dt.date) -> list[Accrual]:
     return out
 
 
+def _bill(doc: dict) -> tuple[str, str, bool]:
+    """(vendor, invoice number, is a credit): what makes two invoices the same bill."""
+    return (vendor_key(doc.get("vendor_name") or ""), norm_invoice_number(doc.get("invoice_number")),
+            float(doc.get("grand_total") or 0) < 0)  # fmt: skip
+
+
+def _flags(validation: object) -> set[str]:
+    issues = validation.get("issues") if isinstance(validation, dict) else None
+    return {str(i.get("code")) for i in issues or [] if isinstance(i, dict)}
+
+
 def _not_in_erp(store: Store, period_end: dt.date) -> list[Accrual]:
     end = period_end.isoformat()
-    rows = store.invoice_columns(("id", "status", "ai_output", "final_output"))
+    rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation"))
     exported = {r["id"] for r in store.list_invoices(APPROVED)} - {r["id"] for r in store.unexported_approved()}
+    # A copy flagged as a duplicate of a bill already in the ERP (exported) or already accrued is not accrued
+    # again; one flagged as already in the ERP's invoice register is in the ERP.
+    counted = {_bill(r["final_output"] or {}) for r in rows if r["id"] in exported}
     out = []
     for r in rows:
         if r["status"] not in (REVIEW, PARKED, PENDING, APPROVED) or r["id"] in exported:
@@ -90,6 +107,10 @@ def _not_in_erp(store: Store, period_end: dt.date) -> list[Accrual]:
         doc = r["final_output"] or r["ai_output"] or {}
         if not doc or str(doc.get("invoice_date") or "") > end:
             continue
+        flags, bill = _flags(r["validation"]), _bill(doc)
+        if "DUPLICATE_IN_ERP" in flags or ("DUPLICATE_INVOICE" in flags and bill in counted):
+            continue
+        counted.add(bill)
         by_gl: dict[tuple[str, str], float] = defaultdict(float)
         for e in doc.get("gl_distribution") or []:
             if e.get("kind") == "expense" or e.get("non_recoverable_tax"):  # a cost; recoverable tax is not

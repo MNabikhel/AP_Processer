@@ -196,6 +196,21 @@ def test_a_field_that_cannot_be_read_is_shown_instead_of_the_checks(client, stor
     assert "Fix this field" in answer["sections"]["checks"] and "summary" not in answer["sections"]
 
 
+@pytest.mark.parametrize("typed", ["nan", "inf", "-1e309"])
+def test_a_header_amount_that_is_not_a_finite_number_is_refused(client, store, typed):
+    """A total posted as "nan" was taken as a number: only the total check flagged it, "Approve anyway" cleared
+    that, and a NaN total is never over the second-approval limit. It must read as an amount that can't be read."""
+    store.set_setting("approval_limit", "1")
+    inv_id = clean_invoice(client, store)
+    data = form_of(store, inv_id, grand_total=typed)
+    answer = check(client, inv_id, data)
+    assert not answer["valid"] and not answer["allow"] and "Fix this field" in answer["sections"]["checks"]
+    key = re.search(r'name="override" value="([0-9a-f]+)"', answer["sections"].get("bar", ""))
+    data = {**data, "override": key.group(1) if key else "", "why_done": "1"}
+    client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE)
+    assert store.get_invoice(inv_id)["status"] == REVIEW
+
+
 def test_errors_need_approve_anyway(client, store):
     inv_id = clean_invoice(client, store)
     data = form_of(store, inv_id, grand_total="1.00")  # the total no longer adds up: an error
@@ -583,6 +598,21 @@ def test_dragged_words_fill_a_line_or_make_a_new_one(client, store):
     assert bad.status_code == 400  # the GL account is chosen, never read off the page
 
 
+def test_a_new_line_from_a_long_run_of_words_is_read_quickly(client, store):
+    """Stripping the numbers before a new line's amount took time growing with the square of the words picked
+    (8,000 numbers: over 3 seconds of the server's time)."""
+    import time
+
+    inv = store.list_invoices(REVIEW)[0]
+    text = "Item" + " 1" * 8000 + " x 12.50"
+    started = time.perf_counter()
+    answer = client.post(f"/review/{inv['id']}/teach", data={"field": "line_new", "text": text}, headers=PAGE).json()
+    assert time.perf_counter() - started < 1.5
+    assert answer["value"]["amount"] == 12.5 and answer["value"]["description"].endswith("1 1 x")
+    assert invoice_view.line_value("line_new", "Item" + " 1" * 8000 + " 12.50") == {"description": "Item",
+                                                                                   "amount": 12.5}  # fmt: skip
+
+
 def test_the_viewer_knows_each_lines_amount_to_light_its_row(client, store):
     import json
 
@@ -652,3 +682,142 @@ def test_the_ai_reviewer_on_the_review_screen(client, store):
     verifier.save_settings(store, on=False, rounds=3, minutes=5)
     assert client.post(f"/review/{inv['id']}/review-again", headers=PAGE).status_code == 400
     assert "The AI reviewer checks" not in client.get(f"/review/{inv['id']}").text  # off: nothing said
+
+
+# --- In a browser (Chromium, when Playwright is installed) ---------------------------------------------------------
+
+
+def _chromium() -> str | None:
+    import importlib.util
+    import os
+    from pathlib import Path
+
+    if importlib.util.find_spec("playwright") is None:
+        return None
+    for root in (os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), "/opt/pw-browsers"):
+        if root:
+            found = sorted(Path(root).glob("chromium-*/chrome-linux/chrome"))
+            if found:
+                return str(found[-1])
+    return None
+
+
+@pytest.fixture
+def browser(store):
+    """The dashboard served on this computer (a free port) and a Chromium to open it: (browser, base URL)."""
+    if _chromium() is None:
+        pytest.skip("Playwright with Chromium isn't installed")
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+    from playwright.sync_api import sync_playwright
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(200):
+        if server.started:
+            break
+        time.sleep(0.05)
+    try:
+        with sync_playwright() as p:
+            chromium = p.chromium.launch(executable_path=_chromium(), args=["--no-proxy-server"])
+            yield chromium, f"http://127.0.0.1:{port}"
+            chromium.close()
+    finally:
+        server.should_exit = True
+        thread.join(5)
+
+
+def _open_review(browser, store, vendor, **context):
+    chromium, base = browser
+    inv = next(i for i in store.list_invoices(REVIEW) if vendor in (i["vendor_name"] or ""))
+    page = chromium.new_page(**context)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base}/review/{inv['id']}")
+    page.wait_for_selector(".iv-sheet:not(.loading)")
+    return page, errors
+
+
+def _drag_across_the_top(page):
+    """A box dragged with the mouse across the top of the page (the vendor's name, on the Cascade invoice)."""
+    page.locator(".iv-sheet").scroll_into_view_if_needed()
+    sheet = page.locator(".iv-sheet").bounding_box()
+    page.mouse.move(sheet["x"] + sheet["width"] * 0.05, sheet["y"] + sheet["height"] * 0.02)
+    page.mouse.down()
+    page.mouse.move(sheet["x"] + sheet["width"] * 0.6, sheet["y"] + sheet["height"] * 0.08, steps=8)
+    page.mouse.up()
+    page.wait_for_selector(".inv-chooser")
+
+
+def test_in_a_browser_the_popovers_open_inside_a_phone_screen(browser, store):
+    """390 px wide: Park, Reject and Split a line open where they can be read and their buttons reached, not past the
+    left edge of the screen (where nothing scrolls to them)."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 390, "height": 844})
+    for summary in (".inv-actionbar summary[title^='Set it aside']", ".inv-actionbar summary[title^='Not ours']",
+                    "[data-split] > summary"):  # fmt: skip
+        page.locator(summary).scroll_into_view_if_needed()
+        page.click(summary)
+        box = page.locator("details[open] > .pop-body").bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= 390, (summary, box)
+        page.keyboard.press("Escape")
+    assert errors == []
+
+
+def test_in_a_browser_enter_on_cancel_leaves_the_words_dragged_on_the_page_unused(browser, store):
+    """Words dragged across on the page, then Cancel pressed with the keyboard: the field keeps its value."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000})
+    taught: list[str] = []
+    page.on("request", lambda r: r.url.endswith("/teach") and taught.append(r.url))
+    before = page.input_value("[form=inv][name=po_number]")
+    _drag_across_the_top(page)
+    page.select_option(".inv-chooser select", "po_number")
+    page.locator(".inv-chooser button", has_text="Cancel").focus()
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(500)
+    assert page.locator(".inv-chooser").count() == 0
+    assert taught == [] and page.input_value("[form=inv][name=po_number]") == before
+    # Enter in the list of choices still uses the words.
+    _drag_across_the_top(page)
+    page.select_option(".inv-chooser select", "po_number")
+    page.locator(".inv-chooser select").press("Enter")
+    page.wait_for_function("document.querySelector('[form=inv][name=po_number]').value.includes('Cascade')")
+    assert len(taught) == 1 and errors == []
+
+
+def test_in_a_browser_the_approve_anyway_box_keeps_the_focus_when_ticked_with_the_keyboard(browser, store):
+    """Ticking "Approve anyway" redraws the approve bar: the focus stays on the box, not back at the top of the page."""
+    page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000})
+    page.wait_for_selector("[name=override]")
+    page.wait_for_timeout(800)  # the check made on opening the page
+    page.locator("[name=override]").focus()
+    with page.expect_response(lambda r: r.url.endswith("/check")):
+        page.keyboard.press("Space")
+    page.wait_for_timeout(300)
+    assert page.is_checked("[name=override]")
+    assert page.evaluate("document.activeElement.name") == "override" and errors == []
+
+
+def test_in_a_browser_os_dark_mode_leaves_the_light_page_readable(browser, store):
+    """The dashboard has one (light) look: a computer set to dark mode gets the same colours, not pale text meant for
+    a dark background on the white page."""
+    looks = {}
+    for scheme in ("light", "dark"):
+        page, errors = _open_review(browser, store, "Cascade", viewport={"width": 1400, "height": 1000},
+                                    color_scheme=scheme)  # fmt: skip
+        page.wait_for_selector(".inv-vendor-match span")
+        page.wait_for_selector(".rvw-math")
+        looks[scheme] = page.evaluate("""() => ['.inv-vendor-match', '.rvw-math', '.inv-math .ok, .inv-math .bad']
+            .map(s => document.querySelector(s)).filter(Boolean)
+            .map(e => [e.className, getComputedStyle(e).color, getComputedStyle(e).backgroundColor])""")
+        assert errors == []
+        page.close()
+    assert len(looks["light"]) >= 2 and looks["dark"] == looks["light"]

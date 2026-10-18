@@ -23,6 +23,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .capture.normalize import CREDIT_TITLES
+
 INVOICE, CREDIT, STATEMENT, REMINDER, BANK_CHANGE, NOT_FOR_AP = (
     "invoice",
     "credit_note",
@@ -44,6 +46,8 @@ QUEUE_KINDS = (INVOICE, CREDIT)  # documents that go to the review queue
 SHEET_EXTENSIONS = (".csv", ".xlsx", ".xls")
 TOP_CHARS = 700  # a document's title is near its top: words found there count double
 MAX_TEXT = 20_000
+MAX_SHEET_PART_BYTES = 20_000_000  # one file inside an .xlsx, unzipped: openpyxl reads some in full
+MAX_SHEET_BYTES = 50_000_000  # every file inside it, unzipped
 
 
 def fold(text: str) -> str:
@@ -66,9 +70,7 @@ _INVOICE_TITLE = _any(
     r"no\.? de facture",
     r"numero de facture",
 )
-_CREDIT_TITLE = _any(
-    r"credit (?:note|memo|memorandum)", r"note de credit", r"avoir", r"facture d'avoir", r"credit invoice"
-)
+_CREDIT_TITLE = _any(*CREDIT_TITLES)  # the same titles capture reads a credit note by
 _STATEMENT_TITLE = _any(
     r"statement of account",
     r"account statement",
@@ -352,9 +354,14 @@ def sheet_text(name: str, content: bytes, rows: int = 15) -> str:
         if name.lower().endswith(".csv"):
             return content[:8000].decode("utf-8-sig", "replace")
         import io
+        import zipfile
 
         import openpyxl
 
+        with zipfile.ZipFile(io.BytesIO(content)) as z:  # a few KB can unzip to GB: the sizes are checked first
+            sizes = [item.file_size for item in z.infolist()]
+        if max(sizes, default=0) > MAX_SHEET_PART_BYTES or sum(sizes) > MAX_SHEET_BYTES:
+            return ""
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
         ws = wb.worksheets[0]
         out = [" ".join(str(c) for c in row if c is not None) for row in ws.iter_rows(max_row=rows, values_only=True)]

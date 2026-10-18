@@ -152,7 +152,7 @@ def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = ""
     """Save the Azure check's settings; the names of those that changed (never their values). An empty ``api_key``
     keeps the one saved (``forget_key`` removes it). Raises ValueError, in plain words, for a value that can't be
     used: an endpoint that isn't https://, a model name that isn't one, a share outside 0-100%, a negative cap."""
-    from .envfile import clean_url, write_env
+    from .envfile import clean_url, one_line, write_env
 
     endpoint = clean_url(endpoint or "")
     if endpoint and not endpoint_host(endpoint):
@@ -184,6 +184,7 @@ def save_settings(store: Any, *, enabled: bool, endpoint: str, api_key: str = ""
         env[KEY_ENV] = ""
     elif api_key and api_key != before.api_key:
         env[KEY_ENV] = api_key
+    env = {k: one_line(v) for k, v in env.items()}
     if env:
         write_env(env_path(), env)
         os.environ.update(env)  # the dashboard reads settings from the environment
@@ -451,9 +452,13 @@ def prepare(store: Any, settings: Settings | None, invoice_id: int | None, captu
 
 
 def hold(autonomy: dict[str, Any], plan: Plan) -> dict[str, Any]:
-    """The touchless decision, held back while Azure hasn't checked an invoice picked for it."""
-    if plan.hold and autonomy.get("auto"):
-        return {**autonomy, "auto": False, "audit": False, "azure_hold": True, "reason": WAITING_FOR_AZURE}
+    """The touchless decision, held back while Azure hasn't checked an invoice picked for it: recorded whether or not
+    another check (the AI reviewer) is already holding it, so neither approves it alone."""
+    from .verifier import held
+
+    if plan.hold and (autonomy.get("auto") or held(autonomy)):
+        reason = WAITING_FOR_AZURE if autonomy.get("auto") else f"{autonomy.get('reason')}; {WAITING_FOR_AZURE}"
+        return {**autonomy, "auto": False, "audit": False, "azure_hold": True, "reason": reason}
     return autonomy
 
 
@@ -641,11 +646,13 @@ def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str,
                                                 ISSUE_CODE, {"azure_check": note, "capture": notes},
                                                 expect=expect)  # fmt: skip
         # Held at the touchless decision, maybe days ago: the switch, the supplier's state and the limits are
-        # checked again, as they stand now.
+        # checked again, as they stand now, and the invoice is read again: the AI reviewer may still hold it, or a
+        # person may have approved it with corrections and reopened it while Azure read it.
         output = inv.get("ai_output")
-        if folded and held and untouched and not differ and output and still_touchless(store, capture, output):
+        if (folded and held and untouched and not differ and output
+                and still_touchless(store, capture, output, invoice_id=iid)):  # fmt: skip
             try:
-                store.approve_invoice(iid, inv["ai_output"], AUTONOMOUS_REVIEWER, login="ap-coder")
+                store.approve_invoice(iid, output, AUTONOMOUS_REVIEWER, login="ap-coder")
                 approved = True
             except (KeyError, ValueError) as exc:  # approved, rejected or changed meanwhile
                 log.info("invoice %s: not approved after the Azure check (%s)", iid, exc)

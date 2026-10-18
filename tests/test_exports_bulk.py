@@ -36,6 +36,13 @@ def test_export_batch_lifecycle(demo_store):
     assert store.export_batches()[0]["undone_by"] == "jane"
 
 
+def test_a_batch_of_more_invoices_than_sqlite_takes_variables(demo_store, monkeypatch, few_sql_variables):
+    """Ticking every invoice: more ids than an older SQLite build takes as bound variables (999)."""
+    ready = [i["id"] for i in demo_store.unexported_approved()]
+    batch = demo_store.create_export_batch([*ready, *range(10_000, 11_500)], "csv")
+    assert sorted(demo_store.batch_invoice_ids(batch)) == sorted(ready)
+
+
 def test_export_files_balance_to_the_invoices(demo_store):
     store = demo_store
     invoices = [store.get_invoice(i["id"]) for i in store.unexported_approved()]
@@ -104,3 +111,17 @@ def test_bulk_approve_skips_an_invoice_flagged_after_the_page_listed_it(demo_sto
     result = bulk_approve(store, store.reference_data(), Settings(), ids, "jane")
     assert [i for i, _ in result["skipped"]] == [victim] and "AZURE_DI_DISAGREES" in result["skipped"][0][1]
     assert store.get_invoice(victim)["status"] == REVIEW
+
+
+def test_every_list_query_takes_more_ids_than_sqlite_takes_variables(demo_store, monkeypatch, few_sql_variables):
+    """Each store call that takes a list of ids or keys: past an older SQLite build's 999 bound variables."""
+    s = demo_store
+    real = [i["id"] for i in s.list_invoices()]
+    many = [*real, *range(10_000, 11_500)]
+    assert sorted(i["id"] for i in s.get_invoices(many)) == sorted(real)
+    assert sorted(r["id"] for r in s.invoice_columns(("id",), ids=many)) == sorted(real)
+    assert isinstance(s.latest_events("approved", many), dict)
+    assert isinstance(s.supplier_keys_for_invoices(many), list)
+    keys = [f"none-{n}" for n in range(1_500)]
+    assert s.prune_supplier_profiles(keys) == 0 and s.delete_vendors(keys) == 0
+    s.delete_purchase_orders(keys)

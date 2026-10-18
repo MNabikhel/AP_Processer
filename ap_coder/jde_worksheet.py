@@ -23,6 +23,7 @@ from typing import Any
 
 from . import jde
 from .memory import vendor_key
+from .safe import neutralise_sheet
 from .tax import OUTSIDE_CANADA, PROVINCES, province_label
 
 TEXT, BOOL, CHOICE, LIST, EXTRAS, INFO = "text", "bool", "choice", "list", "extras", "info"
@@ -345,6 +346,8 @@ def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors:
         if name:
             sup.append([name, (an8_of(name) if an8_of else "") or "", ""])
     table(sup, [44, 22, 16], (3,))
+    for sheet in wb.worksheets:
+        neutralise_sheet(sheet)  # a vendor name or GL description read from a document is text, never a formula
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

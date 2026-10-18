@@ -57,6 +57,24 @@ def test_negative_amount_formats():
     assert stm._number("n/a") is None and stm._number(float("nan")) is None
 
 
+def test_a_payment_word_in_a_description_does_not_turn_an_invoice_into_a_payment():
+    statement = [
+        {"Date": "2026-09-14", "Invoice": "E-5521", "Description": "14/2 NMD90 wire, 75 m", "Amount": "412.50"},
+        {"Date": "2026-09-16", "Invoice": "E-5530", "Description": "Brass check valves", "Amount": "96.00"},
+        {"Date": "2026-09-25", "Invoice": "88120", "Description": "Payment - thank you", "Amount": "-300.00"},
+        {"Date": "2026-09-26", "Invoice": "", "Description": "EFT received", "Amount": "-200.00"},
+    ]
+    cols = stm.map_columns(list(statement[0]))
+    rec = stm.reconcile(statement, cols, [_inv(11, "E-5521", 412.5), _inv(12, "E-5530", 96.0)])
+    assert sorted((li.status, li.number) for li in rec.lines) == [
+        (stm.MATCHED, "E-5521"), (stm.MATCHED, "E-5530"), (stm.PAYMENT, ""), (stm.PAYMENT, "88120"),
+    ]  # fmt: skip
+    # A real Type column still says what a line is, even with an invoice's number.
+    typed = [{"No": "E-5521", "Type": "Payment", "Amt": "-412.50"}]
+    (line,) = stm.reconcile(typed, {"number": "No", "type": "Type", "amount": "Amt"}, [_inv(11, "E-5521", 412.5)]).lines
+    assert line.status == stm.PAYMENT
+
+
 def test_the_same_invoice_is_not_matched_twice():
     statement = [{"n": "7", "a": "10"}, {"n": "7", "a": "10"}]
     rec = stm.reconcile(statement, {"number": "n", "amount": "a"}, [_inv(1, "7", 10.0)])

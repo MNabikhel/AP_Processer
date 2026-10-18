@@ -238,7 +238,11 @@ def line_value(name: str, text: str) -> Any:
         amount, start, end = found[-1]
         description = " ".join(plain[:start].split()) or " ".join((plain[:start] + plain[end:]).split())
         # A row reads "description  qty  price  amount": the numbers before the amount are not the description.
-        description = re.sub(r"(\s+[-$]?\d[\d,.]*)+$", "", description).strip() or description
+        # Word by word from the end (an anchored "(\s+number)+$" pattern takes quadratic time on a long run of words).
+        words = description.split(" ")
+        while len(words) > 1 and re.fullmatch(r"[-$]?\d[\d,.]*", words[-1]):
+            words.pop()
+        description = " ".join(words)
         description = re.sub(r"^\d{1,3}[.)]?\s+(?=\D)", "", description)  # the row's number ("3 Copy paper")
         return {"description": description, "amount": round(amount, 2)}
     return None
@@ -302,8 +306,13 @@ def header_values(header: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
         text = str(header.get(name) or "").strip()
         if name in AMOUNT_FIELDS:
             try:
-                out[name] = to_number(text)
+                number = to_number(text)
             except ValueError:
+                number = math.nan
+            # "nan" and "inf" read as numbers, but no check can use them (a NaN total is never over the limit).
+            if math.isfinite(number):
+                out[name] = number
+            else:
                 problems.append(f"{FIELD_LABELS[name]}: “{text}” is not an amount")
         else:
             out[name] = text

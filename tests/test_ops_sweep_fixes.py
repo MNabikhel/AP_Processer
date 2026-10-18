@@ -45,17 +45,18 @@ def test_jde_a_date_e1_cannot_hold_is_left_out_not_a_crash():
     assert all("due date" not in p for p in jde.validate([credit], settings, AN8).get(3, []))
 
 
-def test_jde_text_made_formula_safe_still_fits_its_column():
-    """A description starting with "-" (a discount line) gets an apostrophe in front so a spreadsheet does not run
-    it: a 30-character VNEXA became 31, and a 25-character VLVINV 26, longer than the Z-table columns."""
-    inv = _invoice(ON, invoice_number="=" + "1" * 24)
+def test_jde_text_starting_like_a_formula_is_written_as_it_is_and_fits_its_column():
+    """A description starting with "-" (a discount line) and an invoice number starting with "=" are written as
+    they are (the Z-files are for a database loader, not a spreadsheet: an apostrophe would be loaded with them),
+    within the Z-table columns."""
+    number = "=" + "1" * 24
+    inv = _invoice(ON, invoice_number=number)
     inv["final_output"]["gl_distribution"][0]["description"] = "-" + "x" * 40
     files = _files([inv])
     line = files[jde.DIST_FILE][0]
-    assert line["VNEXA"].startswith("'-") and len(line["VNEXA"]) == 30
-    assert len(line["VNEXR"]) <= 30
-    header = files[jde.HEADER_FILE][0]
-    assert header["VLVINV"].startswith("'=") and len(header["VLVINV"]) == 25
+    assert line["VNEXA"] == "-" + "x" * 29
+    assert line["VNEXR"] == number
+    assert files[jde.HEADER_FILE][0]["VLVINV"] == number
 
 
 # --- Labels workbook (python -m ap_coder labels) ---------------------------------------------------------------

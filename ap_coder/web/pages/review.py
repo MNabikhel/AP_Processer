@@ -118,10 +118,11 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float) -> l
         for r in store.invoice_columns(("id", "ai_output", "final_output"), ids=ids)
     }
     default_days = store.default_terms_days()
+    terms = store.all_vendor_terms()  # read once, not once per row
     rows = []
     for inv in shown:
         ai = outputs.get(inv["id"], {})
-        due, tone = due_note(ai, default_days, store.vendor_terms(vendor_key(ai.get("vendor_name") or "")))
+        due, tone = due_note(ai, default_days, terms.get(vendor_key(ai.get("vendor_name") or ""), ""))
         prov = ai.get("ship_to_province") or ai.get("supplier_province") or ""
         confidence = max(0.0, min(1.0, inv.get("adjusted_confidence") or 0.0))
         rows.append({
@@ -261,7 +262,8 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
         context.update(parked=[{**i, "late": bool(i["follow_up"] and i["follow_up"] <= today)} for i in store.parked()])
     elif tab == "second":
         me, my_login = reviewer(), login()
-        awaiting = [_second(store, i, me, my_login) for i in awaiting]
+        firsts = store.latest_events("approved", [i["id"] for i in awaiting])  # one query, not one per invoice
+        awaiting = [_second(i, firsts.get(i["id"]), me, my_login) for i in awaiting]
         context.update(limit_amount=store.approval_limit(), awaiting=awaiting)
     return render(request, "review.html", "review", **context)
 
@@ -273,9 +275,9 @@ def _other(inv: dict[str, Any]) -> dict[str, Any]:
     return {**inv, "first": first[:240] + ("…" if long else ""), "details": error if details.strip() or long else ""}
 
 
-def _second(store: Store, inv: dict[str, Any], me: str, my_login: str) -> dict[str, Any]:
-    """An invoice waiting for its second approval, and whether this reviewer may give it (not the first approver)."""
-    first = next((e for e in store.events(inv["id"]) if e["action"] == "approved"), None)
+def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login: str) -> dict[str, Any]:
+    """An invoice waiting for its second approval, and whether this reviewer may give it (not the first approver,
+    whose ``approved`` event is ``first``)."""
     first_login = ((first or {}).get("detail") or {}).get("login") or ""
     same = (me or "").strip().casefold() == (inv["reviewer"] or "").strip().casefold() or (
         bool(my_login) and my_login.casefold() == first_login.casefold()
@@ -409,6 +411,8 @@ def review_retry(request: Request, invoice_id: int) -> JSONResponse:
     inv = store.get_invoice(invoice_id)
     if inv is None:
         return refuse("That invoice is no longer in AP Coder.", 404)
+    if inv["status"] != FAILED:  # a stale page's button: reading it again would add a second copy to the queue
+        return refuse("Retry reads again only an invoice that could not be read: reload the page.", 409)
     path = Path(inv["source_path"])
     if not path.exists():
         return refuse(f"The original file is no longer at {path}.")

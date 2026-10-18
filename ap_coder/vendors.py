@@ -79,6 +79,23 @@ def same_tax_number(a: Any, b: Any) -> bool:
     return bn_a.group(1) == bn_b.group(1)
 
 
+_QST_FILE = re.compile(r"(\d{10})(?:tq\d{0,4})?")
+
+
+def same_qst_number(a: Any, b: Any) -> bool:
+    """Whether two QST numbers are the same registration: like ``same_tax_number``, a vendor list keeping only the
+    10 digits ("1234567890") matches the invoice's full number ("1234567890 TQ 0001"); two full ones must match."""
+    a, b = norm_tax_number(a), norm_tax_number(b)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    file_a, file_b = _QST_FILE.fullmatch(a), _QST_FILE.fullmatch(b)
+    if not file_a or not file_b or (len(a) == 16 and len(b) == 16):
+        return False
+    return file_a.group(1) == file_b.group(1)
+
+
 def master_vendor_id(ids: dict[str, str], vendor_name: str | None, gst_number: Any = None) -> str:
     """The vendor master's ERP vendor ID for an invoice (``ids``: ``Store.vendor_ids()``): by name, else by its
     GST/HST number however much of it either side keeps (``same_tax_number``): the master's 9-digit Business Number
@@ -183,7 +200,7 @@ _TAX_NUMBERS = (
     (WARNING, "VENDOR_TAX_NUMBER_CHANGED", "gst_hst_registration_number", "expected_gst", "gst_hst_number",
      "GST/HST number", norm_tax_number, same_tax_number),
     (WARNING, "VENDOR_QST_CHANGED", "qst_registration_number", "qst_number", "qst_number", "QST number",
-     norm_tax_number, lambda a, b: norm_tax_number(a) == norm_tax_number(b)),
+     norm_tax_number, same_qst_number),
     (WARNING, "VENDOR_PST_CHANGED", "pst_registration_number", "pst_number", "pst_number", "PST number",
      norm_pst_number, lambda a, b: norm_pst_number(a) == norm_pst_number(b)),
 )  # fmt: skip

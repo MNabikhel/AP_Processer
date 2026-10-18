@@ -45,3 +45,12 @@ def test_missing_key_column_rejected(tmp_path):
     p.write_text("code,account_name\n6000,A\n")
     with pytest.raises(ValueError, match="missing required column"):
         load_table(p, "GL account", "gl_code")
+
+
+def test_header_that_spells_the_standard_name_is_renamed(tmp_path):
+    # "GL Code" and "Active" normalise exactly to the standard names, so they must be used as those columns.
+    p = tmp_path / "coa.csv"
+    p.write_text("GL Code,Description,Active\n6000,Office,yes\n6100,Retired,no\n")
+    table = load_table(p, "GL account", "gl_code")
+    assert table.codes == ["6000"]
+    assert "Active" not in table.rows[0]

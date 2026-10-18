@@ -45,8 +45,7 @@ from dataclasses import asdict, dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from .memory import vendor_key
-from .safe import csv_row
+from .memory import refresh_vendor_key, vendor_key
 from .tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from .vendors import norm_invoice_number
 
@@ -112,7 +111,7 @@ UNCONFIRMED = (
 )
 
 HEADER_FILE, DIST_FILE, MATCH_FILE = "F0411Z1.csv", "F0911Z1.csv", "F0411Z1T.csv"
-# The text columns filled from invoice text, at their Z-table widths: still within them once made formula-safe.
+# The text columns filled from invoice text, at their Z-table widths.
 TEXT_WIDTHS = {"VLVINV": 25, "VLRMK": 30, "VNEXA": 30, "VNEXR": 30, "DSC1": 30}
 E1_YEARS = range(1900, 2900)  # what CYYDDD holds: century digit 0 (1900s) to 9 (2800s)
 
@@ -219,6 +218,8 @@ class JdeSettings:
         out.answers = {str(k): str(v) for k, v in out.answers.items()}
         if not isinstance(out.an8_overrides, dict):
             out.an8_overrides = {}
+        # Vendor keys saved under older vendor-matching rules, as today's rules give them ("energir sec" -> "energir").
+        out.an8_overrides = {refresh_vendor_key(str(k)): v for k, v in out.an8_overrides.items()}
         if out.amount_mode not in AMOUNT_MODES:
             out.amount_mode = AMOUNT_GROSS
         if out.decimals not in DECIMAL_MODES:
@@ -722,8 +723,10 @@ def duplicate_problems(
     out: dict[int, list[str]] = {}
     prior = prior or {}
 
-    def an8_of_name(name: str) -> str:
-        return resolve_an8({"vendor_name": name}, vendor_lookup, settings)
+    def an8_of(row: dict[str, Any]) -> str:  # by name, else by GST/HST number, as for the invoices themselves
+        gst = row.get("gst_hst_registration_number") or ""
+        known = {"vendor_name": row.get("vendor_name") or "", "gst_hst_registration_number": gst}
+        return resolve_an8(known, vendor_lookup, settings)
 
     def same(a: tuple[str, str], b: tuple[str, str]) -> bool:
         return (bool(a[0]) and a[0] == b[0]) or (bool(a[1]) and a[1] == b[1])
@@ -744,14 +747,14 @@ def duplicate_problems(
         for r in prior.get("exported") or []:
             if norm_invoice_number(r.get("invoice_number")) != number or _negative(r.get("grand_total")) != credit:
                 continue
-            if same(who, (an8_of_name(r.get("vendor_name") or ""), vendor_key(r.get("vendor_name") or ""))):
+            if same(who, (an8_of(r), vendor_key(r.get("vendor_name") or ""))):
                 msgs.append(f"already exported: AP Coder #{r['id']} in batch {r['export_batch']}")
                 break
         for r in prior.get("register") or []:
             if norm_invoice_number(r.get("invoice_number")) != number or _negative(r.get("total")) != credit:
                 continue
             key = r.get("vendor_key") or vendor_key(r.get("vendor_name") or "")
-            if same(who, (an8_of_name(r.get("vendor_name") or ""), key)):
+            if same(who, (an8_of(r), key)):  # (the register has no GST/HST number: by name)
                 when = f", dated {r['invoice_date']}" if r.get("invoice_date") else ""
                 msgs.append(f"already in the ERP (invoice {r.get('invoice_number')}{when})")
                 break
@@ -789,9 +792,11 @@ def _csv(columns: list[str], rows: list[dict[str, Any]]) -> bytes:
     writer = csv.writer(buf, lineterminator="\r\n")
     writer.writerow(columns)
     for r in rows:
-        safe = csv_row(["" if r.get(c) is None else r.get(c) for c in columns])
+        values = ["" if r.get(c) is None else r.get(c) for c in columns]
+        # The text as it is: a database loader reads the Z-files, not Excel, so no spreadsheet quoting (an
+        # apostrophe before "+A-100" would be loaded with it and JDE's supplier + invoice number check would miss).
         writer.writerow([v[: TEXT_WIDTHS[c]] if c in TEXT_WIDTHS and isinstance(v, str) else v
-                         for c, v in zip(columns, safe, strict=True)])  # fmt: skip
+                         for c, v in zip(columns, values, strict=True)])  # fmt: skip
     return buf.getvalue().encode("utf-8")  # no BOM: database loaders read the first header as-is
 
 
@@ -817,9 +822,10 @@ def export_batch(
 
 def readme(
     files: dict[str, bytes], settings: JdeSettings, batch: int | str, invoices: list[dict[str, Any]],
-    left_out: Mapping[int, list[str]] | None = None,
+    left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
 ) -> str:  # fmt: skip
-    """README.txt of the ZIP: what is in it and how to load it."""
+    """README.txt of the ZIP: what is in it and how to load it. ``left_out``: invoices not in the file;
+    ``to_check``: invoices in it that the current settings would refuse (a batch downloaded again)."""
     totals: dict[str, float] = {}
     for inv in invoices:
         final = inv.get("final_output") or {}
@@ -873,13 +879,18 @@ def readme(
         lines += ["", "Not in this batch (fix them, then export again)", "-" * 47]
         for inv_id, problems in left_out.items():
             lines.append(f"AP Coder #{inv_id}: " + "; ".join(problems))
+    if to_check:
+        title = "In this batch, but the current settings or vendor master would refuse them: check before loading"
+        lines += ["", title, "-" * len(title)]
+        for inv_id, problems in to_check.items():
+            lines.append(f"AP Coder #{inv_id}: " + "; ".join(problems))
     return "\n".join(lines) + "\n"
 
 
 def build_zip(
     invoices: list[dict[str, Any]], settings: JdeSettings, vendor_lookup: VendorLookup = None, *,
     batch: int | str = "", fx_rates: Mapping[str, float] | None = None, on: dt.date | None = None,
-    left_out: Mapping[int, list[str]] | None = None,
+    left_out: Mapping[int, list[str]] | None = None, to_check: Mapping[int, list[str]] | None = None,
 ) -> tuple[bytes, str, str]:  # fmt: skip
     """(ZIP bytes, file name, mime type): the CSVs and a README.txt."""
     files = export_batch(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
@@ -887,8 +898,12 @@ def build_zip(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
-        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out))
+        zf.writestr("README.txt", readme(files, settings, batch, invoices, left_out, to_check))
         report = dry_run(invoices, settings, vendor_lookup, batch=batch, fx_rates=fx_rates, on=on)
+        for h in report["held"]:
+            if h["id"] in (to_check or {}):  # the files hold it: it passed the checks when the batch was made
+                h["reasons"] = ["it IS in this batch's files (checked when the batch was made): check it before "
+                                "loading", *h["reasons"]]  # fmt: skip
         report["held"] += [
             {"id": i, "vendor": "", "number": "", "date": "", "reasons": r} for i, r in (left_out or {}).items()
         ]

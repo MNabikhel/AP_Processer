@@ -1,5 +1,7 @@
 """The .env file as people on Windows leave it: saved by Notepad with a byte-order mark, a key set twice."""
 
+import pytest
+
 from ap_coder.config import Settings
 from ap_coder.envfile import read_env, write_env
 
@@ -89,3 +91,19 @@ def test_a_comment_right_after_the_equals_sign_is_an_empty_value(tmp_path):
     values = read_env(env)
     assert values == {k: v for k, v in dotenv_values(env).items() if v is not None}
     assert values["AZURE_OPENAI_API_KEY"] == "" and values["B"] == "#notcomment"
+
+
+def test_a_saved_value_with_a_dollar_sign_reads_back_as_typed(tmp_path, monkeypatch):
+    # python-dotenv would expand ${HOME} inside double quotes; a saved key or password must come back as typed.
+    env = tmp_path / ".env"
+    write_env(env, {"AZURE_DOCUMENT_INTELLIGENCE_KEY": "pa$$word ${HOME}"})
+    monkeypatch.delenv("AZURE_DOCUMENT_INTELLIGENCE_KEY", raising=False)
+    assert Settings.from_env(env).document_intelligence.api_key == "pa$$word ${HOME}"
+
+
+def test_a_value_with_a_line_break_is_refused(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("AP_REVIEWER=Pat\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="line break"):
+        write_env(env, {"AP_REVIEWER": "Pat\nAP_REVIEW_THRESHOLD=0"})
+    assert read_env(env) == {"AP_REVIEWER": "Pat"}

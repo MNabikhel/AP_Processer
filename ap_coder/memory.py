@@ -31,12 +31,15 @@ from typing import Any
 
 ACCEPTED, CORRECTED = "accepted", "corrected"
 
-# Legal-form words dropped from the END of a vendor name ("Mueller GmbH & Co. KG" -> "mueller").
+# Legal-form words dropped from the END of a vendor name ("Mueller GmbH & Co. KG" -> "mueller"), in English and
+# French ("Limitée", "Incorporée", "s.e.c." for a société en commandite).
 _LEGAL_SUFFIXES = {
-    "inc", "incorporated", "ltd", "ltee", "limited", "corp", "corporation", "co", "company", "cie",
-    "llc", "llp", "lp", "plc", "ulc", "pc", "pllc", "enr", "senc", "sencrl", "srl", "gmbh", "ag", "kg",
+    "inc", "incorporated", "incorporee", "ltd", "ltee", "limited", "limitee", "corp", "corporation", "co", "company",
+    "cie", "llc", "llp", "lp", "plc", "ulc", "pc", "pllc", "enr", "senc", "sencrl", "sec", "srl", "gmbh", "ag", "kg",
     "sa", "sas", "sarl", "bv", "nv", "pty", "spa", "ltda", "and",
 }  # fmt: skip
+# Changes whenever ``vendor_key`` gives different keys: the database recomputes the keys it stores (Store._migrate).
+VENDOR_KEY_RULES = "2"
 _LIGATURES = str.maketrans({"œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ß": "ss", "ø": "o", "Ø": "O", "ł": "l"})
 _STOP_WORDS = {
     "and", "for", "the", "with", "from", "per", "each", "item", "items", "qty", "unit", "units",
@@ -79,9 +82,19 @@ def vendor_key(name: str) -> str:
     words = _normalise(text).split()
     if words and words[0] == "the":
         words = words[1:]
+    return _drop_legal_suffixes(words)
+
+
+def _drop_legal_suffixes(words: list[str]) -> str:
     while len(words) > 1 and words[-1] in _LEGAL_SUFFIXES:
         words.pop()
     return " ".join(words)
+
+
+def refresh_vendor_key(key: str) -> str:
+    """A key ``vendor_key`` gave under older rules, as today's rules give it for the same name (the name already
+    normalised: only the legal forms added since are dropped): "energir sec" -> "energir"."""
+    return _drop_legal_suffixes(str(key or "").split()) or str(key or "")
 
 
 def _token_set(text: str) -> frozenset[str]:

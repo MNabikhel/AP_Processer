@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -162,7 +163,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_reference_args(p)
 
     p = sub.add_parser("watch", help="Keep processing new files dropped in the invoices folder (Ctrl+C stops)")
-    p.add_argument("folder", nargs="?", default=str(private / "invoices"), help="Default: the dashboard's folder")
+    p.add_argument("folder", nargs="?", default=None,
+                   help="Default: the dashboard's folder (invoices, next to the database)")  # fmt: skip
     p.add_argument("--every", type=int, default=60, help="Seconds between checks (default 60)")
     p.add_argument("--once", action="store_true", help="Check once and stop (e.g. from Windows Task Scheduler)")
     p.add_argument("--cache-dir", default=str(cache_dir), help="Extraction cache directory ('' to disable)")
@@ -243,10 +245,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)))
 
 
-def _inputs(paths: list[str]) -> list[Path] | None:
+def _inputs(paths: list[str]) -> tuple[list[Path], bool] | None:
     """The invoice files named on the command line (folders expanded, the invoices taken out of saved emails, as
-    the dashboard and ``watch`` do), each invoice once: a file named twice, or two identical copies, is one invoice.
-    None, said in one line, when one of them is not there (a typo)."""
+    the dashboard and ``watch`` do), each invoice once: a file named twice, or two identical copies, is one invoice;
+    and whether an email could not be read (said on screen: the command then exits 1). None, said in one line, when
+    one of them is not there (a typo)."""
     try:
         found = discover_inputs(paths)
     except FileNotFoundError as exc:
@@ -255,14 +258,17 @@ def _inputs(paths: list[str]) -> list[Path] | None:
     files = [p for p in found if p.suffix.lower() not in EMAIL_EXTENSIONS]
     emails = [p for p in found if p.suffix.lower() in EMAIL_EXTENSIONS]
     emails += [e for raw in paths if Path(raw).is_dir() for e in emails_in(Path(raw))]
+    unread = False
     for path in dict.fromkeys(emails):
         try:
             mail = unpack(path)  # attachments saved next to the email; the email moves to emails/
         except OSError as exc:
             print(f"{path.name}: not read ({exc})", file=sys.stderr)
+            unread = True
             continue
         if mail.error:
             print(f"{mail.email}: {mail.error}; moved to emails/could not read", file=sys.stderr)
+            unread = True
         else:
             print(f"{mail.email}: {_sorted_line(mail)}", file=sys.stderr)
             files += mail.saved
@@ -275,7 +281,7 @@ def _inputs(paths: list[str]) -> list[Path] | None:
         unique.setdefault(key, path)
     if len(unique) < len(files):
         print(f"{len(files) - len(unique)} file(s) left out: the same invoice as another file given.", file=sys.stderr)
-    return list(unique.values())
+    return list(unique.values()), unread
 
 
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
@@ -285,9 +291,10 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
         model_name=args.model_name,
         vision=args.vision,
     )
-    inputs = _inputs(args.inputs)
-    if inputs is None:
+    given = _inputs(args.inputs)
+    if given is None:
         return 2
+    inputs, unread = given
     if not inputs:
         print("No supported invoice files found.", file=sys.stderr)
         return 2
@@ -307,7 +314,7 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
             )
             inputs = [p for p in inputs if p not in done]
         if not inputs:
-            return 0
+            return 1 if unread else 0
 
     stems = output_stems(inputs)
 
@@ -322,15 +329,16 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
     Path(args.out).mkdir(parents=True, exist_ok=True)
     (Path(args.out) / "batch_summary.json").write_text(json.dumps(summaries, indent=2), encoding="utf-8")
     _print_summary(summaries)
-    return 0 if all(r.ok for r in results) else 1
+    return 0 if all(r.ok for r in results) and not unread else 1
 
 
 SETTLE_SECONDS = 5  # a file changed more recently than this may still be copying in
 
 
-def new_files(folder: Path, store: Store, now: float | None = None) -> list[Path]:
+def new_files(folder: Path, store: Store, now: float | None = None, fresh: Collection[Path] = ()) -> list[Path]:
     """Invoice files in ``folder`` that AP Coder has not seen (failed attempts count as seen: no retry loop).
-    Two identical files dropped together are one invoice: only the first is returned."""
+    Two identical files dropped together are one invoice: only the first is returned. ``fresh`` files were just
+    written by AP Coder itself (taken out of emails): they are not "still copying"."""
     now = time.time() if now is None else now
     if not folder.is_dir():
         return []
@@ -338,7 +346,7 @@ def new_files(folder: Path, store: Store, now: float | None = None) -> list[Path
     seen: set[str] = set()  # the contents already in this check (the store knows them only once processed)
     for p in invoice_files(folder):
         try:  # a file being copied, locked by a scanner or removed meanwhile waits for the next check
-            if now - p.stat().st_mtime < SETTLE_SECONDS:
+            if p not in fresh and abs(now - p.stat().st_mtime) < SETTLE_SECONDS:  # (far ahead of the clock: settled)
                 continue
             digest = hashlib.sha256(p.read_bytes()).hexdigest()
             if digest not in seen and store.find_by_hash(p, include_failed=True) is None:
@@ -363,22 +371,26 @@ def _sorted_line(mail: Any) -> str:
 
 
 def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folder: Path) -> tuple[int, int]:
-    """One check of the watched folder: (invoices processed, of which failed)."""
+    """One check of the watched folder: (invoices processed, of which failed); an email that could not be read
+    counts as one of each."""
     from .inbox import log_sorted
 
+    done = failed = 0
+    taken_out: list[Path] = []  # invoices just written from emails: read in this check, not the next one
     for mail in unpack_folder(folder):  # saved emails (.eml, .msg), sorted by triage; a bad one is filed away
         if mail.error:
             print(f"{time.strftime('%H:%M:%S')} {mail.email}: {mail.error}; moved to emails/could not read",
                   file=sys.stderr)  # fmt: skip
+            done, failed = done + 1, failed + 1
             continue
         print(f"{time.strftime('%H:%M:%S')} {mail.email}: {_sorted_line(mail)}", file=sys.stderr)
         log_sorted(store, mail)
-    files = new_files(folder, store)
+        taken_out += mail.saved
+    files = new_files(folder, store, fresh=set(taken_out))
     if not files:
-        return 0, 0
+        return done, failed
     reference = _load_reference(args)  # picks up GL accounts edited in the dashboard meanwhile
     pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
-    done = failed = 0
     for path in files:
         try:
             result = pipeline.process(path)
@@ -400,7 +412,7 @@ def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
     # Like the dashboard: without Azure the invoices are read on this computer, and coded from AP's approvals
     # (plus LM Studio when its server answers), so there is nothing to refuse here.
     store = Store(args.db)
-    folder = Path(args.folder)
+    folder = Path(args.folder) if args.folder else store.path.parent / "invoices"  # as web.core.invoice_dir
     folder.mkdir(parents=True, exist_ok=True)
     print(f"Watching {folder} every {args.every}s. New invoices go to the review queue. Ctrl+C to stop.",
           file=sys.stderr)  # fmt: skip
@@ -416,7 +428,7 @@ def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
                     return 1
             else:
                 if args.once:
-                    return 1 if done and failed == done else 0  # every invoice failed: say so to Task Scheduler
+                    return 1 if done and failed == done else 0  # all failed (invoices, emails): tell Task Scheduler
             time.sleep(max(args.every, 5))
     except KeyboardInterrupt:
         print("Stopped.", file=sys.stderr)
@@ -471,7 +483,7 @@ def _read_pages(args: argparse.Namespace, settings: Settings, store: Store) -> i
     print(f"{waiting} invoice(s) waiting for the page reader.", file=sys.stderr)
     done = run_queue(settings, store, minutes=args.minutes, cache_dir=cache, on_result=say)
     print(f"Read {len(done)}; {store.page_reads_waiting()} still waiting.", file=sys.stderr)
-    return 0
+    return 1 if any(outcome.status == "failed" for outcome in done) else 0  # said above: Task Scheduler sees it too
 
 
 def _test_progress(number: int, total: int) -> None:
@@ -534,8 +546,12 @@ def _print_summary(rows: list[dict]) -> None:
 def cmd_extract(args: argparse.Namespace, settings: Settings) -> int:
     settings = settings.with_overrides(di_model=args.extraction_model)
     extractor = DocumentExtractor(settings.document_intelligence, cache_dir=args.cache_dir or None)
-    paths = _inputs(args.inputs)
-    if paths is None:
+    given = _inputs(args.inputs)
+    if given is None:
+        return 2
+    paths, unread = given
+    if not paths:
+        print("No supported invoice files found.", file=sys.stderr)
         return 2
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -549,7 +565,7 @@ def cmd_extract(args: argparse.Namespace, settings: Settings) -> int:
         if result.raw is not None:
             (out / f"{stem}.di.json").write_text(json.dumps(result.raw, indent=2), encoding="utf-8")
         print(f"{path.name}: {result.page_count} page(s), {result.table_count} table(s) -> {out}", file=sys.stderr)
-    return 0
+    return 1 if unread else 0
 
 
 def cmd_labels(args: argparse.Namespace) -> int:

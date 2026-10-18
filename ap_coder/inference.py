@@ -319,15 +319,18 @@ class InvoiceCoder:
         return [{**system, "content": system["content"] + local_llm.json_instructions(schema or self.schema)}, *rest]
 
     def _local_create(self, model: str, messages: list[dict[str, Any]], schema: dict[str, Any] | None = None, *,
-                      thinking: bool = False) -> Any:  # fmt: skip
+                      thinking: bool = False, timeout: float | None = None) -> Any:  # fmt: skip
         """One chat call to the local model, in the best way its server takes: the strict schema, else plain JSON
         mode, else the schema in the prompt; with the thinking switch, else without the fields the server refused.
-        What worked is remembered for the next call."""
+        What worked is remembered for the next call. ``timeout``: the most this call may take, when less than
+        AP_LLM_TIMEOUT_SECONDS (the AI reviewer's time for an invoice)."""
         base = self.settings.llm.base_url
         mode = local_llm.start_mode(base, model)
         while True:
             kind = local_llm.RESPONSE_MODES[mode]
             kwargs = self._local_kwargs(model, kind, schema, thinking=thinking)
+            if timeout is not None and timeout < float(self.settings.llm.timeout_seconds or 0):
+                kwargs["timeout"] = timeout
             sent = messages if kind == "json_schema" else self._with_json_instructions(messages, schema)
             try:
                 with local_llm.CHAT_LOCK:  # one request at a time: LM Studio is shared with CloseDesk
@@ -343,16 +346,16 @@ class InvoiceCoder:
                     mode += 1
                     local_llm.remember_mode(base, model, mode)
                     continue
-                raise self._local_error(exc) from exc
+                raise self._local_error(exc, kwargs.get("timeout")) from exc
 
-    def _local_error(self, exc: Exception) -> CodingError:
+    def _local_error(self, exc: Exception, timeout: float | None = None) -> CodingError:
         import openai
 
         llm = self.settings.llm
         if isinstance(exc, openai.APITimeoutError):
             return CodingError(
-                f"The local model took longer than {llm.timeout_seconds:.0f}s. LM Studio may still be loading it; "
-                "try again, or allow longer with AP_LLM_TIMEOUT_SECONDS."
+                f"The local model took longer than {timeout or llm.timeout_seconds:.0f}s. LM Studio may still be "
+                "loading it; try again, or allow longer with AP_LLM_TIMEOUT_SECONDS."
             )
         if isinstance(exc, (openai.APIConnectionError, ConnectionError)):
             local_llm.forget_status()
@@ -448,12 +451,42 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
         return {}
     model = coder._prepare_local()
     schema = _account_schema(coder.reference)
+    budget = int(coder.settings.llm.max_prompt_chars or 0)  # AP_LLM_MAX_PROMPT_CHARS: the whole prompt, both messages
+    # The chart of accounts in at most half the budget (a real JDE chart is long): its start and its end (the tax
+    # rates and the coding policy) are kept. The schema still lists every account.
+    context, _ = local_llm.clip_document(coder.reference.to_prompt_context(), budget // 2 if budget else 0)
     system = (
         "You code accounts-payable invoice lines to the company's GL accounts. Pick, for each line, the one expense "
         "account (and cost center, when the list has them) that fits it best, following the coding policy. Answer "
-        "with JSON only.\n\n" + coder.reference.to_prompt_context()
+        "with JSON only.\n\n" + context
     )
-    listing = "\n".join(f"{n}. {desc} | {amount:,.2f}" for n, desc, amount in lines)
+    if history and budget:
+        history, _ = local_llm.clip_document(history, SUGGEST_HISTORY_CHARS)
+    valid_gl = set(schema["properties"]["lines"]["items"]["properties"]["gl_code"]["enum"])
+    valid_cc = set(coder.reference.cost_centers.codes) if coder.reference.cost_centers is not None else set()
+    out: dict[int, tuple[str, str, str]] = {}
+    # A long invoice is asked in batches; past SUGGEST_MAX_LINES the lines are left for AP.
+    if len(lines) > SUGGEST_MAX_LINES:
+        log.info("%d lines to suggest accounts for: the first %d are asked, the rest left for AP", len(lines),
+                 SUGGEST_MAX_LINES)  # fmt: skip
+    asked = lines[:SUGGEST_MAX_LINES]
+    for first in range(0, len(asked), SUGGEST_BATCH_LINES):
+        batch = asked[first : first + SUGGEST_BATCH_LINES]
+        out.update(_suggest_batch(coder, model, schema, system, vendor, batch, history, valid_gl, valid_cc))
+    return out
+
+
+SUGGEST_BATCH_LINES = 40  # lines in one prompt
+SUGGEST_MAX_LINES = 200  # lines asked about in all (five prompts at most); the rest are left for AP
+SUGGEST_DESCRIPTION_CHARS = 160  # of each line's description
+SUGGEST_HISTORY_CHARS = 3_000  # of the approval history and AP's lessons
+
+
+def _suggest_batch(coder: InvoiceCoder, model: str, schema: dict[str, Any], system: str, vendor: str,
+                   lines: list[tuple[int, str, float]], history: str, valid_gl: set[str],
+                   valid_cc: set[str]) -> dict[int, tuple[str, str, str]]:  # fmt: skip
+    """``suggest_accounts`` for one batch of lines: one call."""
+    listing = "\n".join(f"{n}. {str(desc)[:SUGGEST_DESCRIPTION_CHARS]} | {amount:,.2f}" for n, desc, amount in lines)
     user = f"Vendor: {vendor or 'unknown'}\nLines (number. description | amount):\n{listing}"
     if history:
         user += f"\n\nHow AP coded similar lines before:\n{history}"
@@ -463,8 +496,6 @@ def suggest_accounts(coder: InvoiceCoder, vendor: str, lines: list[tuple[int, st
     if reply.data is None:  # the lines stay for AP to code; the reason is logged, and shown by the doctor
         raise CodingError(reply.problem[:1].upper() + reply.problem[1:])
     data = reply.data
-    valid_gl = set(schema["properties"]["lines"]["items"]["properties"]["gl_code"]["enum"])
-    valid_cc = set(coder.reference.cost_centers.codes) if coder.reference.cost_centers is not None else set()
     wanted = {n for n, _, _ in lines}
     out: dict[int, tuple[str, str, str]] = {}
     for row in data.get("lines") or []:

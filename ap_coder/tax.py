@@ -18,12 +18,15 @@ Three responsibilities, all deterministic (the LLM only reads what is printed):
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .csvio import parse_date, read_csv_rows
+
+log = logging.getLogger(__name__)
 
 PROVINCES = ("AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT")
 PROVINCE_NAMES = {
@@ -120,38 +123,67 @@ class TaxRateTable:
             tax_type = (row.get("tax_type") or "").strip().upper()
             if tax_type not in TAX_TYPES:
                 raise ValueError(f"{where}: unknown tax_type {tax_type!r}")
+            text = (row.get("rate") or "").strip()
             try:
-                rate = float((row.get("rate") or "").strip().rstrip("%").replace(",", "."))
+                rate = float(text.rstrip("%").strip().replace(",", "."))
             except ValueError:
                 raise ValueError(f"{where}: rate {row.get('rate')!r} is not a number") from None
+            # "0.5%" is half a percent: a rate written with % is always a percentage; without it, 5 means 5%.
+            percent = text.endswith("%") or rate >= 1
             end = (row.get("effective_to") or "").strip()
             rows.append(
                 TaxRate(
                     tax_type=tax_type,
                     province=(row.get("province") or "").strip().upper(),
-                    rate=rate / 100 if rate >= 1 else rate,
+                    rate=rate / 100 if percent else rate,
                     effective_from=parse_date(row.get("effective_from") or "", where),
                     effective_to=parse_date(end, where) if end else None,
                 )
             )
-        return cls(tuple(rows))
+        table = cls(tuple(rows))
+        for message in table.overlaps():
+            log.warning("%s: %s", path, message)
+        return table
+
+    def _in_force(self, tax_type: str, province: str, on: dt.date) -> TaxRate | None:
+        """The row in force: of the rows covering the date, the one that took effect last. File order never
+        decides, so a new rate appended with the old row still open (no effective_to) wins from its date."""
+        rows = [
+            r for r in self.rates
+            if r.tax_type == tax_type and (not r.province or r.province == province)
+            and r.effective_from <= on and (r.effective_to is None or on <= r.effective_to)
+        ]  # fmt: skip
+        return max(rows, key=lambda r: (r.effective_from, bool(r.province)), default=None)
 
     def rate_for(self, tax_type: str, province: str, on: dt.date | None = None) -> float | None:
         """Official rate for a tax type in a province on a date (None if not levied there)."""
+        row = self._in_force(tax_type, province, on or dt.date.today())
+        return row.rate if row else None
+
+    def overlaps(self) -> list[str]:
+        """Rows of the same tax and province whose date ranges overlap (an old row left open when a new rate was
+        added): the latest one wins, but the table should be tidied."""
+        found = []
+        for i, a in enumerate(self.rates):
+            for b in self.rates[i + 1 :]:
+                if (a.tax_type, a.province) != (b.tax_type, b.province):
+                    continue
+                a_end, b_end = a.effective_to or dt.date.max, b.effective_to or dt.date.max
+                if a.effective_from <= b_end and b.effective_from <= a_end:
+                    found.append(
+                        f"{a.tax_type} {a.province or 'all'}: rows from {a.effective_from} and {b.effective_from} "
+                        "overlap; the later one is used from its date (set effective_to on the older row)"
+                    )
+        return found
+
+    def in_force(self, on: dt.date | None = None) -> list[TaxRate]:
+        """The rows in force on a date, one per tax and province (the one ``rate_for`` uses), in file order."""
         on = on or dt.date.today()
-        for r in self.rates:
-            if r.tax_type != tax_type or (r.province and r.province != province):
-                continue
-            if r.effective_from <= on and (r.effective_to is None or on <= r.effective_to):
-                return r.rate
-        return None
+        return [r for r in self.rates if r is self._in_force(r.tax_type, r.province, on)]
 
     def to_markdown(self, on: dt.date | None = None) -> str:
-        on = on or dt.date.today()
         lines = ["| tax_type | province | rate |", "| --- | --- | --- |"]
-        for r in self.rates:
-            if r.effective_from <= on and (r.effective_to is None or on <= r.effective_to):
-                lines.append(f"| {r.tax_type} | {r.province or 'all'} | {r.rate:.5g} |")
+        lines += [f"| {r.tax_type} | {r.province or 'all'} | {r.rate:.5g} |" for r in self.in_force(on)]
         return "\n".join(lines)
 
 

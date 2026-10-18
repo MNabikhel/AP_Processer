@@ -281,8 +281,10 @@ def where(query: Query, ids: list[int] | None = None) -> tuple[str, list[Any], d
         parts.append(f"({sql})")
         params += values
     if ids is not None:
-        parts.append(f"id IN ({', '.join('?' * len(ids))})" if ids else "0")
-        params += ids
+        # The quick search's hits (up to EXPORT_LIMIT) as one JSON list: one '?' however many there are, as SQLite
+        # takes only so many bound variables (32,766 on a stock build, 999 on older ones).
+        parts.append("id IN (SELECT value FROM json_each(?))" if ids else "0")
+        params += [json.dumps([int(i) for i in ids])] if ids else []
     return " AND ".join(parts) or "1", params, problems
 
 

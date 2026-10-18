@@ -80,6 +80,18 @@ def test_rows_fill_in_missing_numbers_and_skip_incomplete_rows():
     assert rows[1]["quantity"] == 1.0 and rows[1]["unit_price"] == 1200.0 and rows[1]["status"] == "closed"
 
 
+def test_lump_sum_line_exported_with_zero_quantity_and_price_is_amount_only():
+    """ERP exports often write 0 (not blank) for the quantity and price of a lump-sum line."""
+    records = [
+        {"po": "PO-1", "desc": "Consulting", "qty": "0", "price": "0", "total": "5,000.00"},
+        {"po": "PO-1", "desc": "Install", "qty": "", "price": "0", "total": "800.00"},
+        {"po": "PO-1", "desc": "Freebie", "qty": "0", "price": "0", "total": "0"},
+    ]  # fmt: skip
+    rows, _ = rows_from_records(records, map_columns(list(records[0])))
+    numbers = [(r["quantity"], r["unit_price"], r["amount"], r["amount_only"]) for r in rows]
+    assert numbers == [(1.0, 5000.0, 5000.0, True), (1.0, 800.0, 800.0, True), (0.0, 0.0, 0.0, False)]
+
+
 def test_template_has_every_column():
     header = template_csv().decode("utf-8-sig").splitlines()[0].split(",")
     assert set(map_columns(header)) == set(header)
