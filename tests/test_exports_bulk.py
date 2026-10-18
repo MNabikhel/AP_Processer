@@ -2,6 +2,7 @@
 
 import csv
 import io
+import json
 
 import pytest
 from openpyxl import load_workbook
@@ -12,6 +13,8 @@ from ap_coder.config import Settings
 from ap_coder.demo import load_demo
 from ap_coder.memory import vendor_key
 from ap_coder.store import APPROVED, REVIEW, Store
+
+from .conftest import SAMPLE_STEM, SAMPLES
 
 
 @pytest.fixture
@@ -113,6 +116,33 @@ def test_bulk_approve_skips_an_invoice_flagged_after_the_page_listed_it(demo_sto
     assert store.get_invoice(victim)["status"] == REVIEW
 
 
+def test_bulk_approve_never_takes_a_check_that_always_needs_a_person(tmp_path):
+    """S2-T3: a new vendor's first invoice (VENDOR_NEW, info only) is not "clean": a person opens it."""
+    import json
+
+    from ap_coder.pipeline import finalise_coding
+    from ap_coder.schema import InvoiceCoding
+    from ap_coder.store import load_sample_setup
+
+    from .conftest import SAMPLES
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    ref = store.reference_data()
+    known = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    out, _ = finalise_coding(InvoiceCoding.model_validate(known), ref, Settings(), store=store)
+    store.approve_invoice(store.add_invoice(tmp_path / "a.pdf", out, {}), out, "jane")
+    doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
+    doc = {**doc, "vendor_name": "Totally New Supplies Inc", "confidence_score": 0.99}
+    out, report = finalise_coding(InvoiceCoding.model_validate(doc), ref, Settings(), store=store)
+    assert [(i.severity, i.code) for i in report.issues] == [("info", "VENDOR_NEW")] and not report.requires_review
+    invoice_id = store.add_invoice(tmp_path / "b.pdf", out, report.to_dict())
+    assert invoice_id not in [c["id"] for c in clean_candidates(store)]
+    result = bulk_approve(store, ref, Settings(), [invoice_id], "jane")
+    assert result["approved"] == [] and "VENDOR_NEW" in result["skipped"][0][1]
+    assert store.get_invoice(invoice_id)["status"] == REVIEW
+
+
 def test_every_list_query_takes_more_ids_than_sqlite_takes_variables(demo_store, monkeypatch, few_sql_variables):
     """Each store call that takes a list of ids or keys: past an older SQLite build's 999 bound variables."""
     s = demo_store
@@ -125,3 +155,33 @@ def test_every_list_query_takes_more_ids_than_sqlite_takes_variables(demo_store,
     keys = [f"none-{n}" for n in range(1_500)]
     assert s.prune_supplier_profiles(keys) == 0 and s.delete_vendors(keys) == 0
     s.delete_purchase_orders(keys)
+
+
+def _loader_invoice():
+    """An approved invoice whose invoice number and texts start with formula characters."""
+    gt = json.loads((SAMPLES / "ground_truth" / f"{SAMPLE_STEM}.json").read_text())
+    gt["invoice_number"] = "+A-100"
+    gt["gl_distribution"] = [
+        {"kind": "expense", "line_number": 1, "gl_code": "6010", "cost_center": "", "net_amount": 4350.0,
+         "non_recoverable_tax": 0.0, "amount": 4350.0, "description": "- Labour"},
+        {"kind": "expense", "line_number": 2, "gl_code": "6010", "cost_center": "", "net_amount": 1.0,
+         "non_recoverable_tax": 0.0, "amount": 1.0, "description": "=1+1"},
+    ]  # fmt: skip
+    return {"id": 1, "final_output": gt, "reviewer": "Jane", "reviewed_at": "2026-10-01T10:00:00", "file_name": "a.pdf"}
+
+
+def test_erp_csv_keeps_text_exactly_as_typed():
+    """The CSV file is for an ERP loader (E2-2): an apostrophe made invoice +A-100 into '+A-100, and the ERP's
+    supplier + invoice number duplicate check missed it."""
+    data, _, _ = exports.build("csv", [_loader_invoice()], {}, 1)
+    cells = [v for r in csv.DictReader(io.StringIO(data.decode("utf-8-sig"))) for v in r.values()]
+    assert "+A-100" in cells and "- Labour" in cells and "=1+1" in cells
+    assert not [v for v in cells if v.startswith("'")]
+
+
+def test_xlsx_export_still_neutralises_formulas():
+    """The xlsx export is opened in Excel by people: formula-looking text is stored as text."""
+    data, _, _ = exports.build("xlsx", [_loader_invoice()], {}, 1)
+    cells = [c for ws in load_workbook(io.BytesIO(data)).worksheets for row in ws.iter_rows() for c in row]
+    assert not [c.coordinate for c in cells if c.data_type == "f"]
+    assert any(c.value == "=1+1" and c.data_type == "s" for c in cells)

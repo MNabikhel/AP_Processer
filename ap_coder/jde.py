@@ -46,7 +46,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from .memory import refresh_vendor_key, vendor_key
-from .tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PROVINCES, ZERO_DECIMAL_CURRENCIES
+from .tax import CANADIAN_TAX_TYPES, OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCES, ZERO_DECIMAL_CURRENCIES
 from .vendors import norm_invoice_number
 
 SETTING_KEY = "jde_e1"
@@ -398,7 +398,7 @@ class _Voucher:
 
 
 def _place_of_supply(final: dict[str, Any]) -> str:
-    for key in ("ship_to_province", "supplier_province"):
+    for key in ("ship_to_province", PLACE_OF_SUPPLY, "supplier_province"):  # printed, worked out, the vendor's
         prov = _norm(final.get(key))
         if prov in PROVINCES:
             return prov
@@ -581,7 +581,10 @@ def voucher_rows(
         "VLDIVJ": julian(invoice_date), "VLDGJ": julian(gl_date), "VLDSVJ": julian(invoice_date),
         "VLTXA1": v.tax_area, "VLEXR1": v.tax_code, "VLCRRM": "F" if v.foreign else "D", "VLCRCD": v.currency,
         "VLCRR": _plain(rate, 7) if rate else "", "VLPTC": settings.payment_terms_code.strip(),
-        "VLDDJ": julian(due) if settings.send_due_date else "", "VLPST": settings.pay_status.strip(),
+        # A due date E1 cannot hold is left blank, not an error: a batch downloaded again is not checked again (B-21),
+        # and ``validate`` lists it for the README's "check before loading".
+        "VLDDJ": julian(due) if settings.send_due_date and due.year in E1_YEARS else "",
+        "VLPST": settings.pay_status.strip(),
         "VLPO": po[:8] if po and (settings.send_po_reference or v.po_matched) else "",
         "VLPDCT": settings.po_document_type.strip() if po and (settings.send_po_reference or v.po_matched) else "",
         "VLPKCO": (settings.po_company.strip().zfill(5) if settings.po_company.strip().isdigit()
@@ -928,6 +931,18 @@ def _shown(value: Any, settings: JdeSettings, decimals: int) -> str:
     return f"{number:,.{decimals}f}"
 
 
+def _gross_of(header: dict[str, Any], foreign: bool) -> Any:
+    """A pay item's gross as the file holds it: VLAG / VLACR, or with taxable / non-taxable / tax amounts (no gross
+    column) the three added up, from the currency's own VLC* columns for a foreign invoice."""
+    gross_col = "VLACR" if foreign else "VLAG"
+    parts = ("VLCTXA", "VLCTXN", "VLCTAM") if foreign else ("VLATXA", "VLATXN", "VLSTAM")
+    if header.get(gross_col) not in ("", None):
+        return header[gross_col]
+    if all(header.get(p) in ("", None) for p in parts):
+        return ""
+    return sum(Decimal(str(header.get(p) or 0)) for p in parts)
+
+
 def dry_run(
     invoices: list[dict[str, Any]],
     settings: JdeSettings,
@@ -971,7 +986,7 @@ def dry_run(
         an8 = resolve_an8(final, vendor_lookup, settings)
         v = _prepare(inv, settings, an8)
         headers, dists, matches = voucher_rows(inv, an8, settings, batch=batch, fx_rates=fx_rates, on=on)
-        gross_col, aa_col = ("VLACR", "VNACR") if v.foreign else ("VLAG", "VNAA")
+        aa_col = "VNACR" if v.foreign else "VNAA"
         dist_total = sum(Decimal(str(d.get(aa_col) or 0)) for d in dists)
         posted = Decimal(v.gross - sum(e["cents"] for e in v.entries)) / 100
         out["vouchers"].append(
@@ -984,7 +999,7 @@ def dry_run(
                 "pay_items": [
                     {
                         "line": h.get("VLEDLN"),
-                        "gross": _shown(h.get(gross_col, h.get("VLATXN")), settings, v.decimals),
+                        "gross": _shown(_gross_of(h, v.foreign), settings, v.decimals),
                         "tax": _shown(h.get("VLSTAM", h.get("VLCTAM", "")), settings, v.decimals),
                         "dates": f"invoice {h['VLDIVJ']}, G/L {h['VLDGJ']}"
                         + (f", due {h['VLDDJ']}" if h.get("VLDDJ") else ""),

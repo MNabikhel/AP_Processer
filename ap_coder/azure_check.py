@@ -52,6 +52,8 @@ log = logging.getLogger(__name__)
 LOW, SPOT = "low-confidence", "spot-check"
 REASONS = {LOW: "Low confidence", SPOT: "Spot-check"}
 ISSUE_CODE = "AZURE_DI_DISAGREES"
+NOT_COMPARED_CODE = "AZURE_DI_NOT_COMPARED"  # Azure read none of the fields AP Coder read: nothing was checked
+CODES = (ISSUE_CODE, NOT_COMPARED_CODE)
 READER = "di"  # Azure's name among the readers (capture's sources, the Learning page's Readers tab)
 NAME = "Azure Document Intelligence"
 
@@ -383,9 +385,13 @@ def apply(capture: Any, rows: list[dict[str, Any]]) -> list[str]:
 
 
 def issue(rows: list[dict[str, Any]]) -> Any:
-    """The review issue for fields Azure read differently (a ``validation.Issue``), or None when it agrees."""
+    """The review issue for fields Azure read differently (a ``validation.Issue``), or None when it agrees. Azure
+    reading none of AP Coder's fields is not agreeing: nothing was checked, and that is an issue too."""
     from .validation import WARNING, Issue
 
+    if not rows:
+        return Issue(WARNING, "AZURE_DI_NOT_COMPARED", f"{NAME} read none of the fields AP Coder read, so nothing was "
+                     "checked (is its model prebuilt-invoice?): check the invoice against the page.")  # fmt: skip
     differ = [r for r in rows if not r["agree"]]
     if not differ:
         return None
@@ -437,7 +443,7 @@ def prepare(store: Any, settings: Settings | None, invoice_id: int | None, captu
             differ = apply(capture, rows)
             found = issue(rows)
             if found is not None and report is not None:
-                report.issues = [i for i in report.issues if i.code != ISSUE_CODE] + [found]
+                report.issues = [i for i in report.issues if i.code not in CODES] + [found]
                 report.requires_review = True
             return Plan(differ=differ)
         cfg = load_settings(store, settings)
@@ -622,7 +628,8 @@ def _skip(store: Any, iid: int, why: str) -> CheckOutcome:
 def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str, Any]], reason: str,
              now: str, *, expect: tuple[Any, ...] | None = None) -> tuple[list[str], bool]:  # fmt: skip
     """Fold the check into the invoice: still open, its capture, review issue and notes (and, held only for this
-    check and Azure agreeing, it is approved as touchless processing would have); approved already, Azure's reading
+    check and Azure agreeing on every field it compared, it is approved as touchless processing would have; Azure
+    comparing no field keeps the hold, with a review issue); approved already, Azure's reading
     is scored against what AP approved. ``expect``: the invoice's ``Store.row_identity`` when the check started (a
     restore may have put another invoice under its number). Returns (fields read differently, approved now)."""
     from .capture.workflow import AUTONOMOUS_REVIEWER, still_touchless
@@ -639,17 +646,18 @@ def _fold_in(store: Any, inv: dict[str, Any], capture: Any, rows: list[dict[str,
         notes = dict(meta.get("capture") or {})
         held = bool(notes.get("azure_hold"))
         untouched = status_ == REVIEW and not (inv.get("final_output") or inv.get("reviewer") or inv.get("edits"))
-        if held:
+        if held and rows:  # nothing compared is not nothing differing: then the hold stays
             notes = {k: v for k, v in notes.items() if k != "azure_hold"}
             notes["reason"] = "" if not differ else f"{NAME} read {len(differ)} field(s) differently"
-        folded = store.update_after_azure_check(iid, capture.to_dict(), dataclasses.asdict(found) if found else None,
-                                                ISSUE_CODE, {"azure_check": note, "capture": notes},
-                                                expect=expect)  # fmt: skip
+        elif held:
+            notes["reason"] = summary(rows)
+        folded = store.update_after_check(iid, capture.to_dict(), dataclasses.asdict(found) if found else None,
+                                          CODES, {"azure_check": note, "capture": notes}, expect=expect)  # fmt: skip
         # Held at the touchless decision, maybe days ago: the switch, the supplier's state and the limits are
         # checked again, as they stand now, and the invoice is read again: the AI reviewer may still hold it, or a
         # person may have approved it with corrections and reopened it while Azure read it.
         output = inv.get("ai_output")
-        if (folded and held and untouched and not differ and output
+        if (folded and held and rows and untouched and not differ and output
                 and still_touchless(store, capture, output, invoice_id=iid)):  # fmt: skip
             try:
                 store.approve_invoice(iid, output, AUTONOMOUS_REVIEWER, login="ap-coder")

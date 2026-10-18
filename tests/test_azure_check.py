@@ -396,6 +396,25 @@ def test_a_held_invoice_azure_disagrees_with_stays_for_a_person(store, monkeypat
     assert inv["status"] == REVIEW and "azure_hold" not in inv["meta"]["capture"]
 
 
+def test_nothing_compared_is_not_nothing_differs(store, monkeypatch):
+    """Azure read none of the fields AP Coder read (a layout or read model, or an answer with no document): the
+    invoice held for the check is not approved without a person, stays held, and gets a review issue saying so."""
+    _turn_on(store, monkeypatch, rate=100)
+    monkeypatch.setattr(azure_check, "low_confidence", lambda capture: False)
+    result = _process(store)
+    _touchless_vendor(store, result.output)
+    store.update_after_azure_check(result.invoice_id, None, None, azure_check.ISSUE_CODE,
+                                   {"capture": {"state": AUTONOMOUS, "azure_hold": True}})  # fmt: skip
+    raw = {"modelId": "prebuilt-layout", "content": "", "pages": [{"pageNumber": 1, "words": []}], "documents": []}
+    outcome = azure_check.check_one(_settings(), store, client=FakeClient(raw))
+    assert outcome.status == "done" and outcome.approved is False
+    inv = store.get_invoice(result.invoice_id)
+    assert inv["status"] == REVIEW and inv["meta"]["capture"].get("azure_hold")
+    assert any(i["code"] == azure_check.NOT_COMPARED_CODE for i in inv["validation"]["issues"])
+    again = _process(store, page_text=None, save=False, invoice_id=result.invoice_id)  # read again: still flagged
+    assert any(i.code == azure_check.NOT_COMPARED_CODE for i in again.report.issues) and again.report.requires_review
+
+
 # --- Readers scorecard --------------------------------------------------------------------------------------------
 
 

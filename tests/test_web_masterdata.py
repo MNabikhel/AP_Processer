@@ -426,3 +426,23 @@ def test_tax_setup_policy_and_rules(client, busy):
 def test_rules_need_gl_accounts_first(client, store):
     assert "Import your GL accounts first" in client.get("/accounts?tab=rules").text
     assert client.post("/accounts/rules", data={"vendor": ["x"], "gl_code": ["1"]}, headers=PAGE).status_code == 400
+
+
+def test_an_excel_cell_reading_na_is_kept_as_typed():
+    """W2-04: the Excel readers dropped cells that read "NA", "NULL", "None", "N/A" (a cost center "NA" for North
+    America vanished), while the same file as CSV kept them: every reader keeps a cell as it was typed."""
+    from ap_coder.web.files import read_sheet
+    from ap_coder.web.pages import learning, settings_jde
+
+    book = openpyxl.Workbook()
+    book.active.append(["Cost center", "Name"])
+    for code in ("EU", "NA", "NULL", "N/A", "None"):
+        book.active.append([code, "x"])
+    raw = io.BytesIO()
+    book.save(raw)
+    codes = ["EU", "NA", "NULL", "N/A", "None"]
+    df, _names = read_sheet("cc.xlsx", raw.getvalue())
+    assert list(df["Cost center"]) == codes
+    assert [r["Cost center"] for r in settings_jde.read_sheet("cc.xlsx", raw.getvalue())] == codes
+    ((_columns, rows),) = learning.read_sheets("cc.xlsx", raw.getvalue()).values()
+    assert [r["Cost center"] for r in rows] == codes

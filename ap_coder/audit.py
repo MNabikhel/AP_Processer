@@ -51,6 +51,16 @@ ACTIONS = {
     "files_moved": ("drive_file_move", "info", "Invoice files moved by the update"),
     "file_found": ("find_in_page", "info", "Invoice file found in its new place"),
     "vendor_updated": ("storefront", "info", "Vendor updated"),
+    "vendor_added": ("add_business", "info", "Vendor added"),
+    "vendors_deleted": ("delete", "warn", "Vendors deleted"),
+    "verified": ("fact_check", "info", "AI reviewer checked it"),
+    "azure_checked": ("fact_check", "info", "Azure check done"),
+    "azure_check_disagrees": ("gpp_maybe", "warn", "Azure check disagrees"),
+    "lesson_explained": ("lightbulb", "info", "Lesson explained"),
+    "lesson_retired": ("archive", "warn", "Lesson retired"),
+    "lesson_restored": ("unarchive", "info", "Lesson restored"),
+    "directory_preset_saved": ("bookmark_add", "info", "Directory view saved"),
+    "directory_preset_deleted": ("bookmark_remove", "gray", "Directory view deleted"),
     "export_undone": ("undo", "warn", "Export undone"),
     "parked": ("pause_circle", "warn", "Parked"),
     "unparked": ("play_circle", "info", "Back in the queue"),
@@ -210,6 +220,30 @@ def describe(event: dict[str, Any]) -> str:
         if "notes" in d:
             parts.append("notes changed")
         return f"{d.get('vendor', '')}: {', '.join(parts)}"
+    if action == "vendor_added":
+        numbers = [f"{w} {d[k]}" for k, w in (("gst", "GST/HST #"), ("qst", "QST #"), ("pst", "PST #")) if d.get(k)]
+        return f"{d.get('vendor', '')} added from the review screen" + (f" ({', '.join(numbers)})" if numbers else "")
+    if action == "vendors_deleted":
+        names = [str(n) for n in d.get("vendors") or []]
+        return f"{', '.join(names[:8])}{' …' if len(names) > 8 else ''}" or "(none)"
+    if action == "verified":
+        rounds = f" in {d['rounds']} round(s)" if d.get("rounds") else ""
+        return f"{d.get('status') or 'done'}{rounds}" + (
+            f"; disputed: {', '.join(d['fields'])}" if d.get("fields") else ""
+        )
+    if action == "azure_checked":
+        differ = d.get("differ") or []
+        return f"{d.get('agreed', 0)} of {d.get('compared', 0)} field(s) agree" + (
+            f"; differ: {', '.join(differ)}" if differ else ""
+        )
+    if action == "azure_check_disagrees":
+        return "differ: " + (", ".join(d.get("fields") or []) or "(none)")
+    if action == "lesson_explained":
+        return f"why: {d.get('reason') or ''}"
+    if action in ("lesson_retired", "lesson_restored"):
+        return f"lesson {d.get('lesson', '?')}" + (" no longer used" if action == "lesson_retired" else " used again")
+    if action in ("directory_preset_saved", "directory_preset_deleted"):
+        return f'view "{d.get("name", "")}"'
     if action == "parked":
         follow = f" · follow up {d['follow_up']}" if d.get("follow_up") else ""
         return f"waiting for: {d.get('reason') or 'no reason given'}{follow}"

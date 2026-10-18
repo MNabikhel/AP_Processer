@@ -166,6 +166,25 @@ def test_a_vendor_master_with_only_the_business_number(tmp_path, ground_truth, r
     assert "VENDOR_MATCHED_BY_TAX_NUMBER" in codes and "VENDOR_NOT_IN_MASTER" not in codes
 
 
+def test_a_hold_on_the_name_survives_a_match_by_tax_number(tmp_path, ground_truth, reference):
+    """S2-T2: a name AP put on hold (not in the ERP master) that prints a master vendor's GST/HST number still
+    shows the hold, and its note."""
+    store = Store(tmp_path / "ap.db")
+    row = {"vendor_name": ground_truth["vendor_name"], "gst": ground_truth["gst_hst_registration_number"],
+           "status": "active", "status_given": True, "erp_id": "10001", "terms": None, "default_gl": None}  # fmt: skip
+    store.import_vendor_master([row])
+    store.save_vendor("nw trading do not pay", "NW Trading (do not pay)", "on_hold", notes="fraud alert",
+                      actor="jane")  # fmt: skip
+    _, report = _codes(store, {**_variant(ground_truth, "A-1"), "vendor_name": "NW Trading (do not pay)"}, reference)
+    codes = {i.code: i for i in report.issues}
+    assert "VENDOR_MATCHED_BY_TAX_NUMBER" in codes
+    assert codes["VENDOR_ON_HOLD"].severity == "error" and "fraud alert" in codes["VENDOR_ON_HOLD"].message
+    # And a master vendor on hold, found by its number under another name, is on hold too.
+    store.import_vendor_master([{**row, "status": "on_hold"}])
+    codes, _ = _codes(store, {**_variant(ground_truth, "A-2"), "vendor_name": "NW IT Sol."}, reference)
+    assert codes.get("VENDOR_ON_HOLD") == "error"
+
+
 @pytest.mark.parametrize(
     "a, b, same",
     [

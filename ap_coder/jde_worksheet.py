@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import jde
+from . import jde, triage
 from .memory import vendor_key
 from .safe import neutralise_sheet
 from .tax import OUTSIDE_CANADA, PROVINCES, province_label
@@ -267,8 +267,10 @@ def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors:
     answer_fill = PatternFill("solid", fgColor="FFF2CC")
     wrap = Alignment(wrap_text=True, vertical="top")
 
-    def table(ws: Any, widths: list[int], answer_cols: tuple[int, ...]) -> None:
-        """Style a sheet whose first row is its header: widths, a bold header, the answer columns in yellow."""
+    def table(ws: Any, widths: list[int], answer_cols: tuple[int, ...], code_cols: tuple[int, ...] = ()) -> None:
+        """Style a sheet whose first row is its header: widths, a bold header, the answer columns in yellow. The
+        answer and code columns are Text cells ("@"): Excel would keep 01 typed in a General cell as the number 1,
+        and subsidiary 01 or payment terms 01 are not the codes 1 in JD Edwards."""
         for i, w in enumerate(widths, 1):
             ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
             cell = ws.cell(row=1, column=i)
@@ -279,6 +281,8 @@ def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors:
                 cell.alignment = wrap
                 if cell.column in answer_cols:
                     cell.fill = answer_fill
+                if cell.column in answer_cols or cell.column in code_cols:
+                    cell.number_format = "@"
 
     readme = wb.active
     readme.title = "Read me"
@@ -320,14 +324,14 @@ def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors:
                 dv.add(f"F{ws.max_row}")
     for dv in choice_dv.values():
         ws.add_data_validation(dv)
-    table(ws, [18, 14, 60, 18, 34, 34, 34], (6,))
+    table(ws, [18, 14, 60, 18, 34, 34, 34], (6,), (5,))
 
     tax = wb.create_sheet("Tax areas")
     tax.append(["Province", "Name", "Tax area now", "Code now", "Your tax area (VLTXA1)", "Your code (VLEXR1)"])
     for p in [*PROVINCES, OUTSIDE_CANADA]:
         area = settings.tax_map.get(p) or jde.TaxArea("", "")
         tax.append([p, province_label(p), area.tax_area, area.code, "", ""])
-    table(tax, [10, 26, 16, 10, 24, 18], (5, 6))
+    table(tax, [10, 26, 16, 10, 24, 18], (5, 6), (3, 4))
 
     acc = wb.create_sheet("Account mapping")
     acc.append(["GL code", "Cost centre", "Description", "BU", "Object", "Subsidiary", "Subledger", "Subledger type"])
@@ -337,7 +341,7 @@ def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors:
     for (gl, cc), desc in sorted(rows.items()):
         m = mapped.get((gl, cc)) or jde.GlMap(gl, cc)
         acc.append([gl, cc, desc, m.bu, m.obj, m.sub, m.sbl, m.sblt])
-    table(acc, [12, 12, 40, 12, 10, 12, 12, 14], (4, 5, 6, 7, 8))
+    table(acc, [12, 12, 40, 12, 10, 12, 12, 14], (4, 5, 6, 7, 8), (1, 2))
 
     sup = wb.create_sheet("Suppliers")
     sup.append(["Vendor", "AN8 AP Coder sends now", "Your AN8"])
@@ -345,7 +349,7 @@ def build(settings: jde.JdeSettings, gl_accounts: list[dict[str, Any]], vendors:
         name = str(v.get("vendor_name") or "")
         if name:
             sup.append([name, (an8_of(name) if an8_of else "") or "", ""])
-    table(sup, [44, 22, 16], (3,))
+    table(sup, [44, 22, 16], (3,), (2,))
     for sheet in wb.worksheets:
         neutralise_sheet(sheet)  # a vendor name or GL description read from a document is text, never a formula
     buf = io.BytesIO()
@@ -387,6 +391,11 @@ def read(content: bytes, settings: jde.JdeSettings) -> Result:
 
     out = Result(jde.JdeSettings.from_json(settings.to_json()))
     s = out.settings
+    if triage.sheet_unzips_too_big(content):  # an uploaded workbook: its unzipped sizes are checked first (W2-01)
+        out.problems.append(
+            "This workbook unzips to far more than its size on disk, so it is not opened: it may be damaged."
+        )
+        return out
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
     except Exception as exc:  # noqa: BLE001 - not an Excel file, or damaged

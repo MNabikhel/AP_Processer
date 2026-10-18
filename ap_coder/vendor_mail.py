@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
+from .tax import stored_supply
+
 ENGLISH, FRENCH = "en", "fr"
 LANGUAGES = {ENGLISH: "English", FRENCH: "Français"}
 
@@ -213,7 +215,7 @@ def points(coding: dict[str, Any], issues: Iterable[Any], language: str = ENGLIS
             f"{names.get(str(tl.get('tax_type')), tl.get('tax_type'))} {_rate(float(tl.get('rate') or 0), language)}"
             for tl in coding.get("tax_lines") or []
         )
-        province = coding.get("ship_to_province") or coding.get("supplier_province") or ""
+        province = stored_supply(coding)
         where = _WHERE[language].get(province, "")
         out.append(t["tax_wrong"].format(taxes=taxes or "—", province=where).replace(" .", ".").replace("  ", " "))
     if "NO_TAX_CHARGED" in codes:

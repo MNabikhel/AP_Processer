@@ -247,3 +247,19 @@ def test_bulk_approval_scores_the_readers_too(tmp_path):
     card = {r["reader"]: r for r in store.reader_scorecard()}
     assert card["fused"]["invoices"] == len(result["approved"]) and card["rules"]["fields"]
     assert all(store.get_invoice(i)["status"] != REVIEW for i in result["approved"])
+
+
+def test_a_bulk_approval_does_not_feed_the_calibration(tmp_path):
+    """An untouched bulk approval is scored on the Readers tab, but nobody checked its fields: its values agreeing
+    with AP's (which bulk approval requires) are no proof the reading was right, so they do not move the local
+    calibration of confidence towards verified."""
+    from ap_coder.bulk import bulk_approve, clean_candidates
+    from ap_coder.config import Settings
+    from ap_coder.demo import load_demo
+
+    store = Store(tmp_path / "ap.db")
+    load_demo(store)
+    before = store.evidence_counts()
+    result = bulk_approve(store, store.reference_data(), Settings(), [c["id"] for c in clean_candidates(store)], "jane")
+    assert result["approved"] and {r["reader"] for r in store.reader_scorecard()} >= {"fused", "rules"}
+    assert store.evidence_counts() == before

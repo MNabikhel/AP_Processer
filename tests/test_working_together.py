@@ -169,6 +169,14 @@ def test_share_report_failure_category_hides_message(tmp_path):
     assert "ACME" not in text and "acme" not in text
 
 
+def test_share_report_failure_category_never_prints_a_file_name():
+    from ap_coder.share_report import _failure_category
+
+    error = "Acme Holdings invoice 4471 truncated.pdf can't be opened as a PDF: the file is damaged or incomplete."
+    assert _failure_category(error) == "output_truncated"
+    assert _failure_category("CodingError: Model refused: ACME") == "CodingError/model_refusal"
+
+
 def test_share_report_on_a_database_with_demo_invoices(tmp_path):
     """Demo invoices recorded no table count: a KeyError half-way, after the key file was already written."""
     from ap_coder.demo import load_demo

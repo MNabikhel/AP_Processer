@@ -105,3 +105,11 @@ def test_lines_that_do_not_add_up_to_the_subtotal():
     c.subtotal = 160.0
     c.grand_total = 167.5
     assert _rows(math_check(c))["Lines = subtotal"]["diff"] == "(10.00)"  # accounting style: less than the subtotal
+
+
+def test_a_yen_invoice_is_rounded_to_whole_yen_as_the_tax_checks_do():
+    """S2-T4: 5% GST on 1,234 yen is 61.7, charged 62: no difference (check_taxes rounds to whole yen too)."""
+    m = math_check(_coding([(1234, ["GST"])], [("GST", 0.05, 1234, 62)], province="AB", currency="JPY"))
+    assert m["ok"], m["text"]
+    off = math_check(_coding([(1234, ["GST"])], [("GST", 0.05, 1234, 64)], province="AB", currency="JPY"))
+    assert not _rows(off)["GST"]["ok"]  # two yen off is a difference

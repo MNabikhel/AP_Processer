@@ -2,7 +2,8 @@
 
 An export batch is a set of approved invoices handed to the ERP together. Each invoice is exported
 once (the store remembers its batch), and a batch's file can be downloaded again at any time: it is
-rebuilt from the approved data, so it is always identical.
+rebuilt from the approved data: the same invoices every time, with today's settings and master data (vendor IDs,
+GL names, exchange rates).
 
 Formats
 -------
@@ -10,6 +11,10 @@ Formats
   one row per expense line and per recoverable-tax account) and a *By GL account* summary.
 * ``csv``: one row per GL line, the shape most ERP AP-invoice imports accept.
 * ``custom``: a CSV with the columns of your ERP's import (``export_layout``).
+
+The two CSV files are for the ERP's loader, like the JD Edwards files: their text is written exactly as it
+is, with no spreadsheet apostrophe (an invoice number ``'+A-100`` would miss the ERP's duplicate check).
+The xlsx workbook is opened by people, so its formula-looking text is stored as plain text.
 * ``jde``: JD Edwards E1 Z-table files (F0411Z1 / F0911Z1), built by ``jde.build_zip``.
 """
 
@@ -24,7 +29,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .safe import csv_row, neutralise_sheet, xlsx_row
+from .safe import neutralise_sheet, xlsx_row
+from .tax import PLACE_OF_SUPPLY
 from .vendors import master_vendor_id
 
 FORMATS = {
@@ -74,6 +80,8 @@ def invoice_rows(
                 "batch": batch,
                 "invoice_id": inv["id"],
                 "vendor_id": _vendor_id(final, vendor_ids),
+                # the ship-to printed, else the place of supply worked out when it was coded (pipeline)
+                "ship_to_province": final.get("ship_to_province") or final.get(PLACE_OF_SUPPLY) or "",
                 # printed, else worked out from the terms / vendor master / default when it was approved
                 "due_date": final.get("due_date") or inv.get("due_date") or "",
                 "reviewer": inv.get("reviewer"),
@@ -174,7 +182,8 @@ def build_csv(
     writer = csv.writer(buf)
     writer.writerow([label for _, label in LINE_COLUMNS])
     for r in line_rows(invoices, gl_names, batch, vendor_ids):
-        writer.writerow(csv_row([r.get(key) if r.get(key) is not None else "" for key, _ in LINE_COLUMNS]))
+        # for the ERP's loader: text as it is, no spreadsheet apostrophe (see the module docstring)
+        writer.writerow([r.get(key) if r.get(key) is not None else "" for key, _ in LINE_COLUMNS])
     return buf.getvalue().encode("utf-8-sig")  # BOM: Excel shows accents correctly
 
 

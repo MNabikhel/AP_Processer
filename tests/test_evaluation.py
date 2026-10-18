@@ -35,3 +35,12 @@ def test_accented_names_match_their_unaccented_spelling():
 
     assert _norm_text("Équipements Saint-Laurent Ltée") == _norm_text("Equipements Saint-Laurent Ltee")
     assert _norm_text("Équipements Saint-Laurent Ltée") == "equipementssaintlaurentltee"
+
+
+def test_ligatures_and_sharp_s_fold_to_their_letters():
+    """ "Les Œuvres du Cœur" is "Les Oeuvres du Coeur", "Æther" "Aether", "Straße" "Strasse": Unicode has no
+    decomposition for these letters, and dropped, the report counted a correct name as wrong."""
+    from ap_coder.evaluation import _norm_text
+
+    assert _norm_text("Les Œuvres du Cœur") == _norm_text("Les Oeuvres du Coeur") == "lesoeuvresducoeur"
+    assert _norm_text("Æther Straße") == "aetherstrasse"

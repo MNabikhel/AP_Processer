@@ -25,7 +25,7 @@ from .po import po_findings
 from .reference_data import ReferenceData
 from .rules import apply as apply_rules
 from .schema import InvoiceCoding
-from .tax import SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
+from .tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
 from .terms import payment_findings
 from .validation import Issue, ValidationReport, validate_coding
 from .vendors import vendor_findings
@@ -119,10 +119,6 @@ def finalise_coding(
 
     Used after inference and again by the dashboard whenever a reviewer edits an invoice.
     """
-    if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
-        place, source = supply_source(coding, reference.tax)
-        if source in (SUPPLY_SITE, SUPPLY_OURS):  # never the vendor's province: it stays a guess
-            coding = coding.model_copy(update={"ship_to_province": place})
     if feedback is None and store is not None:
         feedback = store.feedback_rows(vendor_name=coding.vendor_name)  # history check needs this vendor only
     history = compare_with_history(coding, feedback) if feedback else None
@@ -149,6 +145,12 @@ def finalise_coding(
         po_findings=po_findings(coding, store, exclude_invoice_id) if store is not None else None,
     )
     output = coding.to_output()
+    if not coding.ship_to_province:  # no ship-to printed: where it is delivered to us (tax.supply_source)
+        place, source = supply_source(coding, reference.tax)
+        # Stored beside the printed ship-to, never in it, so that recoding the lines moves it (worked out again
+        # each time); never the vendor's province: it stays a guess.
+        if source in (SUPPLY_SITE, SUPPLY_OURS):
+            output[PLACE_OF_SUPPLY] = place
     output["gl_distribution"] = build_gl_distribution(coding, reference.tax)
     return output, report
 

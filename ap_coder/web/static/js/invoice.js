@@ -8,12 +8,13 @@
    * The page viewer (invoice_viewer.js): focusing a field of the form highlights its box on the page; "Teach a
      field" lets the reviewer click the words that hold it (sent with the approval, the supplier's template learns).
    * OvisOCR2: while it has this invoice in its queue, its progress is looked up again every few seconds.
-   * Keys: Ctrl+Enter approves, Alt+←/→ previous / next invoice, Alt+↑ the queue.
+   * Keys: Ctrl+Enter approves (typed in another form or a dialog, it is theirs), Alt+←/→ previous / next invoice
+     and Alt+↑ the queue (not in a text box, where they move the caret). Enter in a text box approves nothing.
 
    Everything from the server is either HTML it escaped (the sections, the rows) or set as text here.
 */
 
-import { follow, post, toast } from "./app.js";
+import { HEADERS, follow, post, toast } from "./app.js";
 import { InvoiceViewer } from "./invoice_viewer.js";
 
 const form = document.getElementById("inv");
@@ -313,18 +314,32 @@ try {
   /* no vendor list on this page */
 }
 
-/** Names compared the way AP Coder keys vendors: case, accents, punctuation and legal forms aside. */
-function vendorKey(name) {
-  return (name || "")
+/* A vendor name's key, exactly as memory.vendor_key gives it (accents, ligatures, punctuation, "&"/"and", a leading
+   "the" and the legal forms at the end aside: "The Northwind IT Solutions Inc." -> "northwind it solutions"). The
+   vendor list comes with each vendor's key from the server; this keys the name being typed. Keep it in step with
+   memory.py: tests/test_web_invoice.py compares the two on many spellings. */
+const LIGATURES = { "œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ß": "ss", "ø": "o", "Ø": "O", "ł": "l" };
+const LEGAL_SUFFIXES = new Set(
+  ("inc incorporated incorporee ltd ltee limited limitee corp corporation co company cie llc llp lp plc ulc pc pllc " +
+    "enr senc sencrl sec srl gmbh ag kg sa sas sarl bv nv pty spa ltda and").split(" "),
+);
+
+function fold(text) {
+  return (text || "")
+    .replace(/[œŒæÆßøØł]/g, (c) => LIGATURES[c])
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
+    .replace(/\p{Mn}/gu, "")
+    .toLowerCase();
+}
+
+export function vendorKey(name) {
+  const text = fold(name)
     .replace(/&/g, " and ")
-    .replace(/[^a-z0-9 ]/g, " ")
-    .replace(/\b(inc|incorporated|ltd|ltee|limited|limitee|llc|llp|lp|corp|corporation|co|company|cie|enr|senc|sa|plc|gmbh|ulc)\b/g, " ")
-    .split(/\s+/)
-    .filter(Boolean)
-    .join(" ");
+    .replace(/(?<![\p{L}\p{N}_])(?:[a-z]\.){2,}/gu, (m) => m.replace(/\./g, "")); // S.E.N.C. -> senc
+  const words = fold(text).replace(/[^0-9a-z]+/g, " ").split(" ").filter(Boolean);
+  if (words[0] === "the") words.shift();
+  while (words.length > 1 && LEGAL_SUFFIXES.has(words[words.length - 1])) words.pop();
+  return words.join(" ");
 }
 
 function businessNumber(value) {
@@ -355,7 +370,7 @@ function vendorLine(icon, tone, text, action) {
 function showVendorMatch() {
   if (!vendorInput || !vendorMatch) return;
   const typed = vendorKey(vendorInput.value);
-  const found = typed ? vendors.list.find((v) => vendorKey(v.name) === typed) : null;
+  const found = typed ? vendors.list.find((v) => (v.key ?? vendorKey(v.name)) === typed) : null;
   if (found) {
     const id = found.id ? ` · ${found.id}` : "";
     if (found.added) vendorLine("person_add", "warn", `Added here, not in JD Edwards yet${id}`);
@@ -410,8 +425,8 @@ vendorAdd?.querySelector("[data-new-go]")?.addEventListener("click", async (e) =
     toast({ text: answer.error || "That didn't work.", tone: "err" }, 9000);
     return;
   }
-  const added = { name: answer.vendor, id: "", gst: body.get("gst"), qst: body.get("qst"), pst: body.get("pst"), added: true };
-  vendors.list = vendors.list.filter((v) => vendorKey(v.name) !== vendorKey(added.name)).concat([added]);
+  const added = { name: answer.vendor, key: answer.key ?? vendorKey(answer.vendor), id: "", gst: body.get("gst"), qst: body.get("qst"), pst: body.get("pst"), added: true };
+  vendors.list = vendors.list.filter((v) => v.key !== added.key).concat([added]);
   const option = document.createElement("option");
   option.value = added.name;
   option.textContent = "added here";
@@ -752,6 +767,12 @@ document.addEventListener("apc:ask-why", (event) => {
   skip.addEventListener("click", () => send(false));
   save.addEventListener("click", () => send(true));
   dialog.addEventListener("cancel", () => dialog.remove());
+  dialog.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      save.click(); // Ctrl+Enter here is "Keep the reason and approve", with the reasons typed
+    }
+  });
   dialog.showModal();
   dialog.querySelector("textarea")?.focus();
 });
@@ -781,8 +802,22 @@ if (reader) {
 
 /* ---------- Keys ---------- */
 
+/** Where the key was typed belongs to something else than the review form: another form (Park, Reject, a note) or a
+    dialog. Ctrl+Enter is then that one's, never an approval. */
+function elsewhere(target) {
+  const owner = target.form || target.closest?.("form, dialog, [role=dialog]");
+  return Boolean(owner) && owner !== form;
+}
+
+/** A box being typed in, where Alt+←/→ moves the caret word by word (Option+arrows on a Mac). */
+function typing(target) {
+  if (target.isContentEditable || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return true;
+  return target.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "reset"].includes(target.type);
+}
+
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && approveButton && form) {
+    if (elsewhere(e.target)) return;
     e.preventDefault();
     flush().then(() => {
       if (!approveButton.disabled) form.requestSubmit(approveButton);
@@ -790,13 +825,22 @@ document.addEventListener("keydown", (e) => {
     });
     return;
   }
-  if (!e.altKey || e.ctrlKey || e.metaKey) return;
+  if (!e.altKey || e.ctrlKey || e.metaKey || typing(e.target)) return;
   const where = { ArrowLeft: "prev", ArrowRight: "next", ArrowUp: "queue" }[e.key];
   const link = where && document.querySelector(`[data-nav="${where}"]`);
   if (link) {
     e.preventDefault();
     flush().then(() => location.assign(link.href));
   }
+});
+
+/* The page left another way (the browser's Back, closing the tab) while an edit waits to be checked: it is sent
+   anyway, so the server keeps it as a draft (keepalive: the request outlives the page). */
+window.addEventListener("pagehide", () => {
+  if (!form || !timer || form.dataset.sending) return;
+  clearTimeout(timer);
+  timer = 0;
+  fetch(`${base}/check`, { method: "POST", body: formData(), headers: HEADERS, credentials: "same-origin", keepalive: true }).catch(() => {});
 });
 
 /* ---------- Start ---------- */

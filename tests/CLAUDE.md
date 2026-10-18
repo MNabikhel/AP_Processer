@@ -11,12 +11,12 @@ real LM Studio or the internet.
 ## Interface
 - Run: `pip install -e ".[ocr,dev]"` in `.venv`, then `python -m pytest -q tests`, serially. Don't use pytest-xdist: some
   parametrize ids hold PDF bytes made at collection (test_msg_and_triage.py), which differ between processes.
-- Markers (pyproject.toml): `slow` and `upgrade`, both only on test_update_from_old_versions.py, which also skips unless
+- Markers (pyproject.toml): `slow` and `upgrade`, both only on test_update_from_old_versions.py; they deselect nothing by themselves: it skips unless
   `AP_UPGRADE_TESTS=1` (with `AP_UPGRADE_BUNDLE=dist/APProcessor-offline-...zip`): `python -m pytest -m upgrade -v`.
 - conftest.py, autouse for every test: `AP_PRIVATE_DIR` and `AP_USER_SETTINGS` in tmp_path, `AP_ALLOW_INTERNET` unset,
   reading caches cleared, no background page reader or Azure thread, no local model (LM Studio refused).
 - conftest.py fixtures: `offline_guard`, `reference` (the sample data in data/), `settings`, `ground_truth`,
-  `sample_markdown_path`; fakes `FakeOpenAI`, `FakeDIClient` and `make_completion()`; constants ROOT, DATA, SAMPLES, SAMPLE_STEM.
+  `sample_markdown_path`, `few_sql_variables` (SQLite allowing few variables: a new id-list query is tested with it, B-11); fakes `FakeOpenAI`, `FakeDIClient` and `make_completion()`; constants ROOT, DATA, SAMPLES, SAMPLE_STEM.
 - webclient.py: `client_for()` (a FastAPI TestClient on the test's store, no reader thread), `post()` (with the
   `X-AP-Coder: 1` header the page sends), `follow()` (the page an action leads to), `draft_form()`, `gt()`, `add_clean()`, `web_settings()`.
 - offline_guard.py: `install()` / `uninstall()` patch the socket module so anything but 127.0.0.0/8, ::1 and localhost
@@ -28,9 +28,16 @@ real LM Studio or the internet.
 - A test that opens the dashboard must not leave threads running: start your own BackgroundReader and stop it.
 - A test that needs LM Studio starts a fake one (see test_local_llm.py, scripts/ci/fake_lm_studio.py); never a real one.
 - Bug tests keep the name given in docs/BUGS.md: renaming one breaks the log's **Test:** line.
+- A lesson logged twice becomes a rule in test_code_rules.py (a check of the whole code), not a third fix.
 - test_how_it_runs_doc.py fails when docs/HOW_IT_RUNS.md cites a `file:function` that no longer exists.
 - test_package_data.py fails when the web app reads a file not listed in pyproject's package data.
-- The browser tests in test_web_invoice.py (`test_in_a_browser_...`) need Playwright with a Chromium and skip without them.
+- The browser tests (`test_in_a_browser_...` in test_web_invoice.py and test_offline_guard.py) find Chromium with conftest `chromium_path()` and skip without it; CI's "Browser tests" job sets `AP_REQUIRE_BROWSER=1`, so there they must run.
+
+### Bug lessons
+From docs/BUGS.md (one line each; the entry has the repro and the fix).
+- B-104: Don't read a text file without naming its encoding. `tests/test_capture_edge_cases.py::test_a_french_quantity_in_one_space_group_is_read_whole`
+- B-124: Don't let a test that skips without its tool be the only proof: make CI provide the tool and fail without it. `tests/test_ci_workflow.py::test_ci_runs_the_browser_tests_and_never_lets_them_skip`
+- B-125: Don't assert on what a page does in an event handler right after the action that queues it: wait for the state, with a timeout. `tests/test_web_invoice.py::test_in_a_browser_the_popovers_open_inside_a_phone_screen`
 
 ## Files
 - Helpers: `__init__.py` (makes tests a package), `conftest.py` (isolation and fixtures), `webclient.py` (dashboard client), `offline_guard.py` (network guard), `offline_flow.py` (the offline walk).
@@ -50,4 +57,4 @@ real LM Studio or the internet.
   `test_web_robustness.py`, `test_web_settings.py`, `test_ui.py`, `test_reading_pages.py`, `test_touchless_pages.py`, `test_dashboard_sweep_fixes.py`, `test_round2_fixes.py`, `test_end_to_end_sweep_fixes.py`, `test_code_review_fixes.py`.
 - Intake, CLI and launch: `test_intake.py`, `test_mailbox.py`, `test_msg_and_triage.py`, `test_config_and_cli.py`, `test_controls_watch.py`, `test_integration_e2e.py`, `test_launch.py`, `test_launch_log.py`,
   `test_launch_platforms.py`, `test_launch_python.py`, `test_launch_update.py`, `test_launcher_scripts.py`, `test_browser_open.py`, `test_running.py`, `test_install.py`, `test_ops_sweep_fixes.py`.
-- Offline, packaging and update: `test_offline.py`, `test_offline_guard.py`, `test_network_gates.py`, `test_azure_optional.py`, `test_package_data.py`, `test_ci_workflow.py`, `test_check_map.py` (the codebase map's checker, and the repository's map is clean), `test_how_it_runs_doc.py`, `test_update.py`, `test_update_file_paths.py`, `test_update_from_old_versions.py`.
+- Offline, packaging and update: `test_offline.py`, `test_offline_guard.py`, `test_network_gates.py`, `test_azure_optional.py`, `test_package_data.py`, `test_ci_workflow.py`, `test_check_map.py` (the codebase map's checker, and the repository's map is clean), `test_code_rules.py` (repeated bug lessons as checks of the whole code: text files name their encoding, no SQL placeholders one per item of a list), `test_how_it_runs_doc.py`, `test_update.py`, `test_update_file_paths.py`, `test_update_from_old_versions.py`.

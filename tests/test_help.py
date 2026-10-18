@@ -6,7 +6,16 @@ from ap_coder.help import AREAS, CHECKS, help_for
 
 from .conftest import ROOT
 
-SOURCES = ["validation.py", "tax.py", "vendors.py", "po.py", "terms.py", "capture/bridge.py", "verifier.py"]
+SOURCES = [
+    "validation.py",
+    "tax.py",
+    "vendors.py",
+    "po.py",
+    "terms.py",
+    "capture/bridge.py",
+    "verifier.py",
+    "azure_check.py",
+]
 
 
 def _raised_codes():
@@ -16,6 +25,11 @@ def _raised_codes():
         codes |= set(
             re.findall(r"\b(?:ERROR|WARNING|INFO|\"error\"|\"warning\"|\"info\")\s*,\s*\"([A-Z][A-Z0-9_]+)\"", text)
         )
+        # a code raised through a constant: Issue(WARNING, ISSUE_CODE, ...) with ISSUE_CODE = "AZURE_DI_DISAGREES"
+        constants = dict(re.findall(r"(?m)^([A-Z][A-Z0-9_]*)\s*=\s*\"([A-Z][A-Z0-9_]+)\"", text))
+        for name in re.findall(r"\b(?:ERROR|WARNING|INFO)\s*,\s*([A-Z][A-Z0-9_]*)\s*,", text):
+            if name in constants:
+                codes.add(constants[name])
     return codes
 
 

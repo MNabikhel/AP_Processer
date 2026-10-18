@@ -370,10 +370,44 @@ def test_an_invoice_without_a_ship_to_is_taxed_where_we_are(ground_truth, refere
     # HST charged by an Ontario vendor on goods delivered to us in BC: the wrong tax.
     ours = replace(reference, tax=replace(reference.tax, our_province="BC"))
     output, report = finalise_coding(doc, ours, Settings())
-    assert output["ship_to_province"] == "BC"
+    assert output["place_of_supply"] == "BC" and output["ship_to_province"] == ""  # worked out, never "printed"
     assert "TAX_REGIME_MISMATCH" in {i.code for i in report.issues}
     output, _ = finalise_coding(doc, reference, Settings())  # no province of ours: left as printed (none)
-    assert output["ship_to_province"] == ""
+    assert output["ship_to_province"] == "" and "place_of_supply" not in output
+
+
+def test_a_worked_out_place_of_supply_follows_the_recoded_lines(reference):
+    """S2-T1: the province worked out from the cost center is not stored as the printed ship-to, so recoding the
+    lines to a site in another province moves it, and the review screen says where it came from."""
+    from dataclasses import replace
+
+    from ap_coder.config import Settings
+    from ap_coder.pipeline import finalise_coding
+    from ap_coder.web.invoice_view import supply_line
+
+    ours = replace(reference, tax=replace(reference.tax, our_province="AB", site_provinces={"CC400": "BC"}))
+    doc = _gt("chinook_AB_GST_CCO-26-10418")
+    doc = {**doc, "ship_to_province": "", "line_items": [{**li, "predicted_cost_center": "CC400"}
+                                                         for li in doc["line_items"]]}  # fmt: skip
+    out1, rep1 = finalise_coding(InvoiceCoding.model_validate(doc), ours, Settings())
+    assert out1["ship_to_province"] == "" and out1["place_of_supply"] == "BC"
+    assert "PROVINCIAL_TAX_NOT_CHARGED" in {i.code for i in rep1.issues}
+    # The reviewer recodes every line to head office (AB); the form posts back the header as stored.
+    edited = {k: v for k, v in out1.items() if k != "gl_distribution"}
+    edited["line_items"] = [{**li, "predicted_cost_center": "CC100"} for li in edited["line_items"]]
+    out2, rep2 = finalise_coding(InvoiceCoding.model_validate(edited), ours, Settings())
+    assert out2["place_of_supply"] == "AB"
+    assert "PROVINCIAL_TAX_NOT_CHARGED" not in {i.code for i in rep2.issues}
+    line = supply_line(edited, edited["line_items"], ours.tax)
+    assert line["province"] == "AB" and line["why"] == "your province (Settings): no ship-to printed"
+    # And back to the BC site: BC PST missing is flagged again.
+    back = {**edited, "line_items": [{**li, "predicted_cost_center": "CC400"} for li in edited["line_items"]]}
+    out3, rep3 = finalise_coding(InvoiceCoding.model_validate(back), ours, Settings())
+    assert out3["place_of_supply"] == "BC" and "PROVINCIAL_TAX_NOT_CHARGED" in {i.code for i in rep3.issues}
+    assert supply_line(back, back["line_items"], ours.tax)["why"].startswith("the province of the cost center")
+    # A ship-to printed (or set by the reviewer) to our own province is said to be the ship-to, not Settings.
+    printed = {**back, "ship_to_province": "AB"}
+    assert supply_line(printed, printed["line_items"], ours.tax)["why"] == "the ship-to on the invoice"
 
 
 def test_a_new_rate_row_wins_over_an_old_one_left_open():
@@ -387,6 +421,15 @@ def test_a_new_rate_row_wins_over_an_old_one_left_open():
     shown = [r for r in newer.to_markdown(dt.date(2026, 9, 1)).splitlines() if "| PST | SK |" in r]
     assert shown == ["| PST | SK | 0.07 |"]  # one row, the rate in force
     assert newer.overlaps() and not table.overlaps()
+
+
+@pytest.mark.parametrize("rate", ["nan", "inf", "-inf", "Infinity", "NaN%"])
+def test_a_rate_that_is_not_a_finite_number_is_refused(tmp_path, rate):
+    """float() reads "nan" and "inf": a rate like that is refused like any other text that is not a number."""
+    path = tmp_path / "rates.csv"
+    path.write_text(f"tax_type,province,rate,effective_from,effective_to\nGST,,{rate},2008-01-01,\n")
+    with pytest.raises(ValueError, match="is not a number"):
+        TaxRateTable.load(path)
 
 
 def test_a_rate_written_with_a_percent_sign_is_always_a_percentage(tmp_path):

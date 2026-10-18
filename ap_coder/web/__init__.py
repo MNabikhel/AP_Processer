@@ -56,8 +56,9 @@ Rules
   ask first. A page's own fetch calls use ``post(url, formData)`` from ``app.js``.
 * Text from invoices and files is escaped (Jinja autoescape). Never use ``|safe`` or ``Markup`` on it; the ``ui``
   helpers (``{{ ui.pill(...) }}``, ``ui.status``, ``ui.step``, ``ui.empty_note``...) escape what they are given.
-* Work that takes more than a second or two (reading invoices, exports, a backup) runs as a job: ``jobs(request)
-  .get("name").start(work)``, the page polls ``GET /jobs/<name>`` (``pollJob`` in app.js).
+* Work that takes more than a few seconds runs as a job: ``jobs(request).get("name").start(work)``, and the page
+  polls its status (``pollJob`` in app.js). Today that is reading invoices, the settings doctor and the Azure test;
+  backups, exports and the other downloads run inside the request.
 * Tests: ``TestClient(create_app(settings, store), base_url="http://localhost")`` (the Host check refuses the
   default "testserver"), and ``headers={"X-AP-Coder": "1"}`` on POSTs. See tests/test_web_*.py.
 """

@@ -508,7 +508,8 @@ def read_reply(choice: Any, max_tokens: int | None = None, *, strict: bool = Fal
     token limit gets a message saying so, not a parse error. A reply stopped at the token limit is never read: the
     JSON in it is unfinished, and an inner object that happens to be complete (one line item) is not the answer; nor
     is one in an answer whose first object never closes. ``strict`` (the AI reviewer, whose answer can approve an
-    invoice): only the answer itself counts, never a draft in the reasoning or in a thought block."""
+    invoice): only the answer itself counts, as one JSON object, never a draft in the reasoning, in a thought block
+    or in prose."""
     message = getattr(choice, "message", None)
     content = str(_field(message, "content") or "")
     reasoning = str(_field(message, "reasoning_content") or _field(message, "reasoning") or "")
@@ -522,7 +523,9 @@ def read_reply(choice: Any, max_tokens: int | None = None, *, strict: bool = Fal
         started_json = answer.lstrip().startswith(("{", "```"))
         problem = (CUT_OFF_MESSAGE if started_json or not thought else THINKING_MESSAGE).format(limit=limit)
         return Reply(None, raw, problem, cut_off=True)
-    data = parse_json_reply(content)
+    # Strict, the answer is one JSON object (after a closed thought block) or nothing: an object found in prose may
+    # be a draft in a thought the template opened and never closed ("Thinking Process: ... {draft} ... wait").
+    data = _whole_object(content) if strict else parse_json_reply(content)
     if data is None and _unclosed(answer):
         return Reply(None, raw, UNCLOSED_MESSAGE)
     if data is None and not strict:

@@ -62,6 +62,15 @@ def gt(stem: str = SAMPLE_STEM) -> dict[str, Any]:
     return json.loads((SAMPLES / "ground_truth" / f"{stem}.json").read_text())
 
 
+def known_vendors(store: Store, *stems: str) -> None:
+    """Put the vendors of these samples in the ERP vendor master, so their first invoice is not VENDOR_NEW (which
+    always goes to a person, B-80) and bulk approval may take it."""
+    rows = [
+        {"vendor_name": gt(stem)["vendor_name"], "erp_id": f"V{i}"} for i, stem in enumerate(stems or (SAMPLE_STEM,))
+    ]
+    store.import_vendor_master(rows)
+
+
 def add_clean(store: Store, stem: str = SAMPLE_STEM, **changes: Any) -> int:
     """A sample invoice in the queue that may be approved as it is (bulk approval takes it)."""
     doc = {**gt(stem), **changes}

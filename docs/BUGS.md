@@ -1,7 +1,7 @@
 # Bug log
 
 Every bug found by a bug sweep: what went wrong, how to reproduce it, the fix, the test that keeps it fixed, and the lesson
-("don't do this again"). Each lesson is also a line under Gotchas in the CLAUDE.md of the folder it belongs to.
+("don't do this again"). Each lesson is also a line in the "### Bug lessons" list of the CLAUDE.md of the folder its fix is in.
 A suspicion that could not be reproduced is logged as "not reproduced" and left as it is, never fixed blindly.
 
 How to add one: next number, its section, all fields; the test first (it fails), then the fix.
@@ -792,3 +792,630 @@ of the code at the time of the sweep.
 - **N-29** · Intake · doctor package checks read metadata only, so a broken install still shows PASS. Needs a broken install; left.
 - **N-30** · Intake · launchers (`APProcessor.bat`, `APProcessor.command`, `scripts/launch.py`, `scripts/running.py`). Read only, not run; quoting and the second-instance lock look right.
 - **N-31** · Intake · reaching the internet. Checked: every way out is behind `internet_allowed()` or the documented setup download.
+
+## Sweep 2 (after the codebase map), October 2026
+
+Each section was reviewed again once the codebase map was written, with its CLAUDE.md checked against the code. Each
+finding was checked again, given a failing test, and fixed. The sweep-1 fixes were re-checked too, and several entries
+below follow up on them (B-04, B-10, B-15, B-25, B-43, B-46, B-48, B-49, B-50, B-62, B-63). Line numbers are those of
+the code at the time of the sweep.
+
+| Section | Found | Reproduced and fixed | Not reproduced / left |
+|---|---|---|---|
+| Store and config | 12 | 6 (B-73 to B-78) | 6 (N-32 to N-37) |
+| Tax and coding rules | 9 | 6 (B-79 to B-84) | 3 (N-38 to N-40) |
+| Exports, ERP and reports | 14 | 8 (B-85 to B-92) | 6 (N-41 to N-46) |
+| AI and readers | 9 | 5 (B-93 to B-97) | 4 (N-47 to N-50) |
+| Document capture | 13 | 7 (B-98 to B-104) | 6 (N-51 to N-56) |
+| Web routes | 9 | 3 (B-105 to B-107) | 6 (N-57 to N-62) |
+| Front end | 13 | 8 (B-108 to B-115) | 5 (N-63 to N-67) |
+| Intake, CLI and launch | 10 | 2 (B-116, B-117) | 8 (N-68 to N-75) |
+| Codebase map tooling, CI and tests | 9 | 8 (B-118 to B-125) | 1 (N-76) |
+| Repeated lessons made into checks | 1 | 1 (B-126) | 0 |
+| **Total** | **99** | **54** | **45** |
+
+### Store and config
+
+#### B-73 · An on-hold vendor stops being on hold after a vendor-name rules update · medium
+- **Where:** `ap_coder/store.py:477-488` (`_recompute_vendor_keys`), fix in `_merge_vendor_rows` (:507)
+- **Symptom:** after an update to the vendor-name rules, a vendor on hold silently stops being on hold, and its invoices no longer get `VENDOR_ON_HOLD`.
+- **Cause:** the B-15 re-key used `UPDATE OR IGNORE`. When the new key was already taken, the on-hold row stayed under its old key, which no invoice produces any more.
+- **Reproduce:** vendor rows `acme` (active) and `acme ltee` (on hold), the database marked as on the older rules (`vendor_key_rules='1'`), then open the store again.
+- **Reproduced:** yes (rows `[('acme','active'), ('acme ltee','on_hold')]`; an "Acme Ltée" invoice found the active row and no findings).
+- **Fix:** when the new key is taken, the two rows are merged: on hold wins if either row is on hold, both notes are kept, a blank field is filled from the other row, `in_master` takes the larger value, and the old row is deleted.
+- **Test:** `tests/test_memory_store.py::test_rekeyed_vendor_rows_merge_and_on_hold_wins`
+- **Lesson:** Don't resolve a key collision by keeping one row when the other row holds a control.
+
+#### B-74 · French decimals such as "0,125" are read as thousands · medium-low
+- **Where:** `ap_coder/safe.py:51-93` (`parse_amount`, new `_thousands`)
+- **Symptom:** `"0,125"` became 125, `"-0,500"` -500, `"1,2345"` 12345, `"12.50.00"` 125000 and `"01.02.2026"` 1022026. A PO line with unit price `0,125` was stored at 125.
+- **Cause:** a comma followed by three digits was always read as a thousands separator, without checking the digit groups.
+- **Reproduce:** `parse_amount` on those strings; a PO import with unit price `0,125`, quantity `10 000` and amount `1 250,00`.
+- **Reproduced:** yes (`'unit_price': 125.0`).
+- **Fix:** a separator is thousands only when the first group is 1-3 digits not starting with 0 and every later group is exactly 3 digits. Otherwise a single comma is the decimal mark, and several separators return None. A single dot stays a decimal point (`"1.234"` is still 1.234).
+- **Test:** `tests/test_safety.py::test_parse_amount_reads_thousands_only_from_real_thousands_groups`
+- **Lesson:** Don't decide "thousands separator" without checking the groups are real thousands.
+
+#### B-75 · Logged actions missing from the Activity page and the controls report · low-medium
+- **Where:** `ap_coder/audit.py:30-63` (`ACTIONS`, `describe`); `ap_coder/controls.py:26-32` (`SETUP_ACTIONS`); `ap_coder/store.py:3017` (`delete_vendors`); `ap_coder/web/pages/activity.py:27-39`
+- **Symptom:** nine logged actions (vendor_added, verified, azure_checked, azure_check_disagrees, lesson_explained, lesson_retired, lesson_restored, directory_preset_saved, directory_preset_deleted) showed as a raw key with no description. The controls report said "None." for setup changes after a vendor was added, the ERP register was cleared, an invoice was deleted, history was imported or a lesson was retired. Deleting vendors logged nothing.
+- **Cause:** the hand-kept `ACTIONS` and `SETUP_ACTIONS` lists had drifted from the actions the code logs, and `delete_vendors` had no `_log` call.
+- **Reproduce:** log `vendor_added`, then `audit.describe`; build the controls report over a period with those setup events.
+- **Reproduced:** yes (`describe` gave ""; the setup section stayed empty). Found by both the store and the exports reviews.
+- **Fix:** labels and descriptions for the nine actions; `delete_vendors` takes an optional `actor` and logs `vendors_deleted`; `SETUP_ACTIONS` adds vendor_added, vendors_deleted, erp_register_imported, deleted, history_imported, lesson_retired and lesson_restored; the new actions are in the Activity page's filter groups.
+- **Test:** `tests/test_audit.py::test_every_logged_action_has_a_label_and_a_description`, `tests/test_controls_watch.py::test_controls_setup_section_counts_every_setup_change`
+- **Lesson:** Don't keep a hand list of audit actions apart from the actions the store logs.
+
+#### B-76 · An ERP history date with a time is cut at 10 characters · low
+- **Where:** `ap_coder/history.py:47-64`
+- **Symptom:** a history date like `1/25/2026 0:00` was stored cut short, so the same line imported again from an export with ISO dates was not seen as a duplicate and was taught twice.
+- **Cause:** `row["date"][:10]`.
+- **Reproduce:** import a history line dated with a time, then the same line with an ISO date.
+- **Reproduced:** yes (two rows, `['2026-01-05', '1/5/2026 0']`).
+- **Fix:** dates go through `statements.read_date` with the file's day/month order (`day_first_order`), as registers.py does. A date that can't be read, or an ambiguous one like `1/5/2026` with nothing else in the file, is kept as typed.
+- **Test:** `tests/test_history.py::test_history_dates_are_read_not_cut_at_ten_characters`
+- **Lesson:** Don't cut a date at 10 characters.
+
+#### B-77 · The labels workbook rounds quantities and unit prices · low
+- **Where:** `ap_coder/labels.py:71-75` (`_fmt_num`)
+- **Symptom:** in both xlsx and csv, unit price 0.125 came back as 0.12 and quantity 41.237 as 41.24. No effect on scores yet: `evaluate` scores only `amount`.
+- **Cause:** every number was written with `.2f`.
+- **Reproduce:** write and read back labels with those values.
+- **Reproduced:** yes, for both formats.
+- **Fix:** whole numbers are written as before; other numbers are written exactly, with no rounding.
+- **Test:** `tests/test_ops_sweep_fixes.py::test_labels_keep_quantities_and_unit_prices_unrounded`
+- **Lesson:** Don't round ground truth on the way out.
+
+#### B-78 · A coding policy saved with a byte-order mark turns its comment into a rule · low
+- **Where:** `ap_coder/store.py:3536`, `ap_coder/reference_data.py:208`
+- **Symptom:** a `coding_policy.md` saved with a byte-order mark sent its `#` comment line to the AI prompt as a rule.
+- **Cause:** both readers opened the file as `utf-8`, so the mark stayed at the start of the first line.
+- **Reproduce:** save the policy with a BOM, then read the notes.
+- **Reproduced:** yes (`['﻿# Coding policy notes', 'Rule one']`).
+- **Fix:** both readers use `utf-8-sig`.
+- **Test:** `tests/test_reference_data.py::test_coding_policy_saved_with_a_byte_order_mark_keeps_its_comment_line`
+- **Lesson:** Don't read a file people save in Notepad without `utf-8-sig`.
+
+### Tax and coding rules
+
+#### B-79 · A worked-out place of supply is frozen and shown as printed · medium
+- **Where:** `ap_coder/pipeline.py:122-125` (`finalise_coding`); `ap_coder/tax.py` (`PLACE_OF_SUPPLY`, `stored_supply`); `ap_coder/schema.py` (`InvoiceCoding`); `ap_coder/web/invoice_view.py:394`
+- **Symptom:** lines recoded to a cost center in another province kept the old place of supply in the tax checks, the stored output and the self-assessment, and the review screen said it came from "the ship-to on the invoice". Lines recoded from an AB site to a BC site never flagged BC PST.
+- **Cause:** with no ship-to printed, `finalise_coding` wrote the province it worked out into `ship_to_province`. The form sent it back, and `supply_source` then took it as printed.
+- **Reproduce:** our province AB, site CC400=BC; a sample GST invoice with no ship-to coded to CC400, then recoded to CC100 (and the reverse).
+- **Reproduced:** yes (BC kept with `PROVINCIAL_TAX_NOT_CHARGED`; the reverse stayed AB with no warning).
+- **Fix:** the worked-out province is stored beside the coding as `place_of_supply`, never in `ship_to_province`, and is worked out again on every check. `InvoiceCoding` drops it when a stored invoice is read, `tax.stored_supply` reads it from a stored invoice, and the review screen says where it came from.
+- **Test:** `tests/test_tax.py::test_a_worked_out_place_of_supply_follows_the_recoded_lines`
+- **Lesson:** Don't store a value you worked out in the field that means "printed on the invoice".
+
+#### B-80 · Bulk approval approves a new vendor's first invoice unseen · medium
+- **Where:** `ap_coder/bulk.py:28` (`clean_candidates`), `:63` (`bulk_approve`)
+- **Symptom:** an invoice whose only finding is `VENDOR_NEW` ("never touchless") was listed as clean and bulk-approved.
+- **Cause:** bulk.py skipped only errors and warnings. `capture/supplier.ALWAYS_A_PERSON` holds info-level codes too, and bulk.py never read it.
+- **Reproduce:** an invoice whose only issue is `('info','VENDOR_NEW')`, then `clean_candidates` and `bulk_approve`.
+- **Reproduced:** yes (listed, then `approved`).
+- **Fix:** both skip any finding whose code is in `ALWAYS_A_PERSON`, whatever its severity.
+- **Test:** `tests/test_exports_bulk.py::test_bulk_approve_never_takes_a_check_that_always_needs_a_person`
+- **Lesson:** Don't treat "no warnings" as "safe to approve unseen" when some person-only checks are info-level.
+
+#### B-81 · A vendor's hold is lost when its GST number matches a master vendor · medium-low
+- **Where:** `ap_coder/vendors.py:249-251` (`vendor_findings`)
+- **Symptom:** a name AP put on hold, not in the ERP vendor master, on an invoice printing a master vendor's GST number, showed only `VENDOR_MATCHED_BY_TAX_NUMBER`. The hold and its note were not shown.
+- **Cause:** `master = by_number[0]` replaced the vendor's own row, and only the replaced row was checked for the hold.
+- **Reproduce:** put a name on hold, then an invoice under that name with a master vendor's GST number.
+- **Reproduced:** yes (`['VENDOR_MATCHED_BY_TAX_NUMBER']`; with an unknown number `['VENDOR_NOT_IN_MASTER', 'VENDOR_ON_HOLD']`).
+- **Fix:** the vendor's own row is kept apart, and a hold on it or on the matched master vendor raises `VENDOR_ON_HOLD` with both notes.
+- **Test:** `tests/test_vendors.py::test_a_hold_on_the_name_survives_a_match_by_tax_number`
+- **Lesson:** Don't reuse one variable for two records when each carries its own controls.
+
+#### B-82 · The math check flags a correct yen invoice · low
+- **Where:** `ap_coder/taxmath.py:43-46` (`math_check`)
+- **Symptom:** a JPY invoice charging 5% GST on 1,234 prints 62. `check_taxes` passed it, but `math_check` reported "1 difference: GST (0.30)", and the AI reviewer was given that as a math failure.
+- **Cause:** `math_check` rounded to cents with a cent of tolerance; `check_taxes` uses `currency_places`.
+- **Reproduce:** that invoice through both checks.
+- **Reproduced:** yes.
+- **Fix:** `math_check` rounds with `tax.currency_places(coding.currency)`, as `check_taxes` does.
+- **Test:** `tests/test_math_check.py::test_a_yen_invoice_is_rounded_to_whole_yen_as_the_tax_checks_do`
+- **Lesson:** Don't re-implement a check with different rounding rules from the one it mirrors.
+
+#### B-83 · An interest rate in the same clause cancels the early-payment discount · low
+- **Where:** `ap_coder/terms.py:138` (`parse_terms`, `_clause`); fix in new `_discount_clause`
+- **Symptom:** "2/10 net 30 interest 1.5% per month on overdue accounts" was read with no discount, so `DISCOUNT_AVAILABLE` never came. With " - " before "interest" the discount was found.
+- **Cause:** with no punctuation, the whole text was one clause, and "interest" in it vetoed the discount.
+- **Reproduce:** `parse_terms` on that text.
+- **Reproduced:** yes.
+- **Fix:** when another rate follows in the same clause, the text checked for interest words stops at the discount.
+- **Test:** `tests/test_terms.py::test_interest_words_of_another_rate_do_not_veto_the_discount`
+- **Lesson:** Don't veto a match using words that belong to another clause.
+
+#### B-84 · A tax rate of "nan" loads · low
+- **Where:** `ap_coder/tax.py:128` (`TaxRateTable`)
+- **Symptom:** a rate of `nan` or `inf` in `canada_tax_rates.csv` loaded (as `rate=nan`) instead of stopping the load like any other non-number.
+- **Cause:** `float()` reads "nan" and "inf".
+- **Reproduce:** a rate row with `nan`, then load the table.
+- **Reproduced:** yes (found by the store review while checking the data map).
+- **Fix:** a rate that is not a finite number stops the load with "rate ... is not a number".
+- **Test:** `tests/test_tax.py::test_a_rate_that_is_not_a_finite_number_is_refused`
+- **Lesson:** Don't take `float()` succeeding as proof that the text is a number.
+
+### Exports, ERP and reports
+
+#### B-85 · The JDE dry run shows "gross 0.00" in tax-amounts mode · medium
+- **Where:** `ap_coder/jde.py:987` (`dry_run`, new `_gross_of`)
+- **Symptom:** with "Taxable / non-taxable / tax amounts" chosen, DRY_RUN.txt showed "gross 0.00" for an 18,017.85 invoice; for a foreign currency the gross was blank.
+- **Cause:** that mode writes no VLAG/VLACR column, so the dry run fell back to VLATXN (only the non-taxable part), and to the domestic column even for a foreign invoice.
+- **Reproduce:** `jde.dry_run` with `amount_mode=AMOUNT_TAX` on the ON sample, in CAD and then in USD.
+- **Reproduced:** yes (`PV gross 0.00, tax 2,072.85`; USD `gross , tax 2,072.85`).
+- **Fix:** the gross is VLAG/VLACR when it is there; otherwise ATXA + ATXN + STAM, from the VLC* columns for a foreign currency.
+- **Test:** `tests/test_jde_readiness.py::test_the_dry_run_gross_is_the_whole_invoice_in_every_amount_mode`
+- **Lesson:** Don't show a column under a label it doesn't mean.
+
+#### B-86 · A statement's payment line with the invoice's number is "not received" · medium
+- **Where:** `ap_coder/statements.py:177`
+- **Symptom:** a statement row "1001 / Payment - thank you / -500.00" came out as Not received -500, that is "ask the vendor for a copy".
+- **Cause:** since the B-25 fix, a payment word in a free-text column counted only when no invoice had that number. Statements usually print the invoice number on its payment line.
+- **Reproduce:** a statement with Invoice, Description and Amount columns: invoice 1001 for 500.00, then that payment row.
+- **Reproduced:** yes (`not_received 1001 -500.0`).
+- **Fix:** a line with a payment word and an invoice's number is a payment when its sign is the opposite of every invoice with that number; with no amount, only when those invoices are all matched already. "Already matched" alone is not used when there is an amount, so a bill sent twice is still flagged.
+- **Test:** `tests/test_statements.py::test_a_payment_line_with_the_invoices_number_is_a_payment`
+- **Lesson:** Don't fix one misreading of free text by trusting another field without the sign.
+
+#### B-87 · A JDE batch downloaded again fails on a due date JDE can't hold · medium
+- **Where:** `ap_coder/jde.py:584` (`voucher_rows`)
+- **Symptom:** after "send due date" was switched on, downloading again a batch with an invoice due 3026-10-14 gave a 500.
+- **Cause:** a JDE batch is not re-checked on download (B-21), and `julian()` raises for years outside 1900-2899.
+- **Reproduce:** a batch made with send due date off and a 3026-10-14 due date; switch the option on; download again.
+- **Reproduced:** yes (`ValueError 3026-10-14 is outside what JD Edwards dates hold`).
+- **Fix:** VLDDJ is left blank when the year is out of range. `validate` already lists the date under "check before loading" in the README.
+- **Test:** `tests/test_jde.py::test_a_due_date_jde_cannot_hold_leaves_vlddj_blank_in_a_batch_downloaded_again`
+- **Lesson:** Don't let a file that skipped re-checking hit code that assumes the checks ran.
+
+#### B-88 · A JDE batch downloads while a setting stops every export · low-medium
+- **Where:** `ap_coder/web/pages/exports.py:84` (`download_batch`)
+- **Symptom:** after the User ID was cleared, a JDE batch downloaded again with a blank VLEDUS. Its DRY_RUN.txt said "NOTHING CAN LOAD", and README.txt said nothing.
+- **Cause:** `settings_problems` was never checked on downloads.
+- **Reproduce:** make a batch, clear the User ID, download it again.
+- **Reproduced:** yes (200 with the bad file).
+- **Fix:** the download answers 409 with each settings problem and "Set it in Settings → JD Edwards E1, then download the batch again.", as downloads already refuse with 404 and 410. The same batch as xlsx or csv still downloads.
+- **Test:** `tests/test_jde.py::test_a_jde_batch_is_not_downloaded_while_a_setting_stops_every_export`
+- **Lesson:** Don't produce a file that its own report says cannot load.
+
+#### B-89 · Directory filters miss accented vendor names · low-medium
+- **Where:** `ap_coder/directory.py:182,184`; `ap_coder/store.py` (new `fold_text`, registered as `ap_fold` in `_open`)
+- **Symptom:** the filters `éclair`, `eclair` and `=éclair s.e.c.` didn't find vendor "Éclair S.E.C."; only `Éclair` or `ÉCLAIR` did. The docstring said accents were ignored.
+- **Cause:** SQLite's `LOWER()` and `LIKE` fold only the letters A to Z.
+- **Reproduce:** add vendor "Éclair S.E.C.", then filter Vendor with `éclair`.
+- **Reproduced:** yes (`[]`).
+- **Fix:** store.py registers `ap_fold` (accents removed, case folded, a quick path for plain ASCII) on every connection. directory.py compares `ap_fold(column)` with the typed text, folded the same way before `*` and `?` are read, so a fullwidth ％ can't become SQL's `%`. About 30 ms per filter over 50,000 rows (3 ms before).
+- **Test:** `tests/test_directory.py::test_text_filters_ignore_accents_and_case_beyond_ascii`
+- **Lesson:** Don't compare non-ASCII text with SQLite `lower()` (B-04 again).
+
+#### B-90 · JDE worksheet codes such as "01" come back as 1 · low-medium
+- **Where:** `ap_coder/jde_worksheet.py:270-281` and its four `table(...)` calls
+- **Symptom:** a subsidiary or terms code typed `01` by the JDE team came back as `1` (account `CC400.6010.1`, terms `1`).
+- **Cause:** the answer cells were in Excel's General format.
+- **Reproduce:** write the number 1 in an answer cell, as Excel saves `01` typed there, and read the worksheet back.
+- **Reproduced:** yes, simulated (`CC400.6010.1`, `terms: 1`; the cells were `General`).
+- **Fix:** the answer and code columns are Text cells (`"@"`): Questions E-F, Tax areas C-F, Account mapping A, B and D-H, Suppliers B-C.
+- **Test:** `tests/test_jde_readiness.py::test_the_worksheet_answer_and_code_cells_are_text`
+- **Lesson:** Don't collect codes in cells that Excel will turn into numbers.
+
+#### B-91 · The redacted share report can print a file name · low
+- **Where:** `ap_coder/share_report.py:39-43` (`_failure_category`)
+- **Symptom:** the redacted report printed e.g. `Acme invoice 4471 truncated.pdf can't be opened as a PDF/output_truncated`.
+- **Cause:** when a keyword matched, the text before the first colon was printed without checking it was an exception name, and `plain_error` messages start with the file name.
+- **Reproduce:** `_failure_category` on a plain-words error that starts with a file name.
+- **Reproduced:** yes.
+- **Fix:** that text is printed only when `isidentifier()` holds; otherwise only the category is printed.
+- **Test:** `tests/test_working_together.py::test_share_report_failure_category_never_prints_a_file_name`
+- **Lesson:** Don't put back raw text in the one branch after redacting it in the others.
+
+#### B-92 · The ERP CSV files get Excel apostrophes · medium
+- **Where:** `ap_coder/exports.py:177` (`build_csv`), `ap_coder/export_layout.py:109` (`build`)
+- **Symptom:** in the CSV and Custom CSV files meant for an ERP import, invoice `+A-100` became `'+A-100` and `- Labour` became `'- Labour`, so the ERP's supplier + invoice-number duplicate check missed the invoice.
+- **Cause:** both files passed every cell through the spreadsheet formula quoting in `safe.py` (`csv_row` / `csv_cell`), although they go to a database loader (the same mistake as B-26 in two more files).
+- **Reproduce:** export one invoice numbered `+A-100` with a line `- Labour` as CSV and as Custom CSV.
+- **Reproduced:** yes (`'+A-100,'- Labour` in both files).
+- **Fix:** both files hold text exactly as typed, like the JDE Z-files; the xlsx export and the files for people (search, directory, statements, accruals, reports) keep their formula protection. Decided by the user; docs/decisions.md D-28 updated.
+- **Test:** `tests/test_exports_bulk.py::test_erp_csv_keeps_text_exactly_as_typed`, `tests/test_export_layout.py::test_custom_csv_keeps_text_exactly_as_typed`
+- **Lesson:** Don't apply Excel quoting to files meant for a database (B-26 again).
+
+### AI and readers
+
+#### B-93 · Azure comparing nothing approves touchless · high
+- **Where:** `ap_coder/azure_check.py:649` (`_fold_in`)
+- **Symptom:** an invoice held for the Azure check was approved touchless when Azure compared none of its fields; the summary even said "Azure read none of the fields AP Coder read".
+- **Cause:** approval needed only "nothing differs", and an empty comparison has nothing that differs. It happens with the model set to `prebuilt-layout` or `prebuilt-read`, or when Azure returns no documents.
+- **Reproduce:** set the Azure model to `prebuilt-layout` and check an invoice held for Azure.
+- **Reproduced:** yes (`CheckOutcome(status='done', ..., differ=[], approved=True)`).
+- **Fix:** approval also needs at least one field compared. With nothing compared, `azure_hold` stays and a new issue, `AZURE_DI_NOT_COMPARED`, is added (by `prepare()` too when the page reader reads the invoice again). `update_after_check` replaces both Azure issue codes. The new code has a help entry.
+- **Test:** `tests/test_azure_check.py::test_nothing_compared_is_not_nothing_differs`
+- **Lesson:** Don't treat "nothing compared" as "nothing differs".
+
+#### B-94 · A server outage closes the AI review as "unsure" · medium
+- **Where:** `ap_coder/verifier.py:283` (`review`), `:561` (`_postpone_or_fail`), `_verify`; `ap_coder/inference.py` (`CodingError`); `ap_coder/store.py` (`verifications.tries`)
+- **Symptom:** when LM Studio stopped or a call timed out, the review was finished as done/unsure: the hold was dropped, VERIFIER_UNSURE added, and the invoice never reviewed again. The docstring promised it stays in line.
+- **Cause:** every exception from `ask` became an UNSURE result. Since B-36 each call is capped at the time left (5 min by default), which a thinking model with 3 page images on a laptop CPU can pass.
+- **Reproduce:** make the coder's `_local_create` raise a connection error, then a timeout, during the review.
+- **Reproduced:** yes for a server not answering (`outcome: unsure | queue row: done | issues: ['VERIFIER_UNSURE'] | verifier_hold: None`); the timeout case only by injecting a timeout into `_local_create`.
+- **Fix:** `CodingError` gets a `temporary` flag, set for a timeout or a connection failure. `review()` re-raises it on the first question; after a round already answered it is still "unsure". `_verify` puts the invoice back in line with the hold kept and no VERIFIER issue, and after `MAX_TRIES = 3` marks it failed so AP has it checked again. A new `verifications.tries` column (an ALTER for existing databases) is reset by a finished review and by `queue_verification`.
+- **Test:** `tests/test_verifier.py::test_the_servers_outage_is_not_the_reviewers_verdict`, `tests/test_verifier.py::test_an_outage_on_the_first_question_is_not_an_answer`
+- **Lesson:** Don't record the server's outage as the reviewer's verdict.
+
+#### B-95 · The AI reviewer is never shown the math · medium
+- **Where:** `ap_coder/verifier.py:165` (`proposal`)
+- **Symptom:** the reviewer's prompt never held "the math worked out again", though `SYSTEM` and `question()` say it does.
+- **Cause:** the stored `ai_output` includes `gl_distribution`, which `InvoiceCoding` (`extra="forbid"`) rejects, and the error was swallowed by a bare `pass`. Every other caller strips that key first.
+- **Reproduce:** process the sample PDF, then `proposal(<stored ai_output>, None)`.
+- **Reproduced:** yes (`math` was None; without that key, 3 math rows).
+- **Fix:** `gl_distribution` is stripped before `model_validate`, and the bare `pass` is a `log.warning`.
+- **Test:** `tests/test_verifier.py::test_the_reviewer_is_shown_the_math`
+- **Lesson:** Don't silence a helper's exception without a log line.
+
+#### B-96 · A draft after "Thinking Process:" is taken as a strict answer · low
+- **Where:** `ap_coder/local_llm.py:528` (`read_reply`, strict)
+- **Symptom:** with `strict=True` (the reviewer, since B-34), a draft JSON inside an unclosed "Thinking Process:" block was returned as the answer. The same text inside an unclosed `<think>` was refused.
+- **Cause:** strict mode still used `parse_json_reply`, which finds the first object anywhere in prose.
+- **Reproduce:** `read_reply(..., strict=True)` on "Thinking Process: … {draft} … wait".
+- **Reproduced:** yes (the draft dict came back instead of None).
+- **Fix:** strict mode accepts only `_whole_object(content)`, still read after a closed or stray-closed thought block and through code fences. JSON inside prose is refused, which gives "unsure", not an approval. Non-strict reading is unchanged.
+- **Test:** `tests/test_local_llm.py::test_a_strict_reply_is_the_whole_answer_not_json_found_in_prose`
+- **Lesson:** Don't let the strict path fall back to scanning prose for JSON.
+
+#### B-97 · The Azure disagreement has no help entry · low
+- **Where:** `ap_coder/help.py` (`CHECKS`); `tests/test_help.py` (`_raised_codes`)
+- **Symptom:** `AZURE_DI_DISAGREES` (Azure read a field differently) had no help entry, and `tests/test_help.py` still passed.
+- **Cause:** the code is raised through a constant (`Issue(WARNING, ISSUE_CODE, ...)`), and the test's pattern matched only a code written as a string.
+- **Reproduce:** look up `AZURE_DI_DISAGREES` in `help.CHECKS`.
+- **Reproduced:** yes (no entry). Noted by the B-93 fix, not in a review report.
+- **Fix:** a help entry for `AZURE_DI_DISAGREES`; the test pattern now resolves `Issue(LEVEL, CONST, ...)` through the module's `CONST = "CODE"` lines.
+- **Test:** `tests/test_help.py::test_every_check_has_help`
+- **Lesson:** Don't let a coverage test match only one spelling of the thing it covers.
+
+### Document capture
+
+#### B-98 · A zero balance due keeps a credit note positive · medium
+- **Where:** `ap_coder/capture/reader.py:1001` (`credit_printed_positive`)
+- **Symptom:** a credit note printed positive that also prints "Balance Due $0.00" or "Amount Due 0.00" was read with positive amounts, all verified (2,000 / 260 / 2,260). The credit-note title still stopped approval without a person.
+- **Cause:** since B-46, every amount on a subtotal or total line votes on the sign. A 0.00 fails `v > 0`, and look-alike lines ("Previous Balance", "Total payments") vote too.
+- **Reproduce:** add a "Balance Due $0.00" row to a positive CREDIT NOTE.
+- **Reproduced:** yes (`credit_printed_positive` True without the line, False with it). The rule before B-46 read it right.
+- **Fix:** zero amounts don't vote, and lines matching `DISTRACTORS["grand_total"]` are skipped unless they are also subtotal labels.
+- **Test:** `tests/test_capture_edge_cases.py::test_a_zero_or_a_total_lookalike_does_not_vote_on_a_credit_notes_sign`
+- **Lesson:** Don't let a zero, or a line that only looks like a total, vote on the document's sign.
+
+#### B-99 · "Payments in US dollars accepted" makes a Canadian invoice USD · low-medium
+- **Where:** `ap_coder/capture/normalize.py:460` (`_in_payment_note`, used by `currency_evidence`)
+- **Symptom:** "Total Due CAD 1,050.00" with the note "Payments in US dollars accepted" was read as USD 0.8. With an AI coding that said USD, `analyze` gave USD, Likely, 0.997.
+- **Cause:** a currency written in words was a statement wherever it appeared; the B-43 payment-note guard covered only codes.
+- **Reproduce:** a sample invoice with that total and that note.
+- **Reproduced:** yes (`('USD', 0.8)` where `('CAD', 0.8)` was right).
+- **Fix:** both kinds of statement are skipped when their own sentence is a payment note. It works by sentence, not line, so "All prices in Canadian dollars. Payments in USD accepted" on one line still reads CAD. The repro now reads CAD and goes to Check.
+- **Test:** `tests/test_capture_edge_cases.py::test_a_currency_in_words_in_a_payment_note_is_not_a_statement`
+- **Lesson:** Don't guard one spelling of a signal and leave its other spellings unguarded.
+
+#### B-100 · A page OCR could not read counts as read · low-medium
+- **Where:** `ap_coder/capture/layout.py:731` (`build_layout`); `capture/types.py` (`DocLayout.pages_unread_locally`); `capture/__init__.py` (`CaptureResult`)
+- **Symptom:** when OCR failed on a scanned page, the capture said 2 pages and 0 left out, and no gate fired.
+- **Cause:** the `except` kept an empty page and only logged a warning.
+- **Reproduce:** make `ocr_image` raise on page 2 of a two-page scan.
+- **Reproduced:** yes, only by injecting that failure; no real file was found that makes OCR fail.
+- **Fix:** failed pages are counted in `DocLayout.pages_unread_locally`, and `CaptureResult.pages_left_out` includes them (`page_count` is unchanged). The B-50 gate then says "1 of its pages was not read by the local readers".
+- **Test:** `tests/test_touchless.py::test_a_page_ocr_could_not_read_counts_as_unread`
+- **Lesson:** Don't turn a page you could not read into an empty page you did read.
+
+#### B-101 · Bulk approvals feed the confidence calibration · low-medium
+- **Where:** `ap_coder/capture/workflow.py:299` (`learn_from_approval`)
+- **Symptom:** an untouched bulk approval stays out of the supplier's touchless record, but its kept values were saved as "right" cases with evidence keys and fed the calibration: the 3 demo invoices added cases to 15 patterns.
+- **Cause:** fused reader rows were recorded with evidence whether or not anyone checked them. "Right" there only meant capture agreed with the AI coding, which bulk approval already requires.
+- **Reproduce:** bulk-approve the 3 demo invoices and compare `evidence_counts()`.
+- **Reproduced:** yes (15 patterns grew).
+- **Fix:** on a bulk approval, rows AP kept are saved with empty evidence, which `evidence_counts()` already leaves out. They still count on the Readers tab. A value someone corrected keeps its evidence.
+- **Test:** `tests/test_reader_outcomes.py::test_a_bulk_approval_does_not_feed_the_calibration`
+- **Lesson:** Don't count an approval nobody looked at as proof a reading was right.
+
+#### B-102 · A grouped amount to four decimals is cut in two · low
+- **Where:** `ap_coder/capture/normalize.py:23` (`_AMOUNT`, `_number`, `_ONE_SPACE_GROUP`)
+- **Symptom:** "12,345.6789" was read as 12345.678 and a stray 9; "1.234,5678" and "1 234.5678" split the same way.
+- **Cause:** the B-49 four-decimal pattern allowed only digits with no thousands separators.
+- **Reproduce:** `parse_amount("12,345.6789")`.
+- **Reproduced:** yes (12345.678).
+- **Fix:** two more patterns, one with comma, dot or apostrophe grouping and one with space grouping; `_number` reads four digits after a new separator as decimals. A quantity next to a four-decimal price still splits by the product check ("2 250.5000 501.00" gives 2, 250.5, 501).
+- **Test:** `tests/test_capture_edge_cases.py::test_a_grouped_amount_to_four_decimals_is_one_number`
+- **Lesson:** Don't fix one spelling of a number and leave its other spellings broken.
+
+#### B-103 · Œ, æ and ß are deleted, not folded · low
+- **Where:** `ap_coder/evaluation.py:28` (`_norm_text`); `ap_coder/capture/normalize.py:172` (`_plain`, used by `norm_name`)
+- **Symptom:** "Les Œuvres du Cœur" became "lesuvresducur" in the accuracy report, so a correct name counted as wrong. `norm_name` gave "les uvres du c ur", so VENDOR_NAME_MATCH failed (the safe direction).
+- **Cause:** NFKD has no decomposition for œ, æ or ß, so the B-48 fix deleted them with the accents.
+- **Reproduce:** both functions on "Les Œuvres du Cœur".
+- **Reproduced:** yes, both.
+- **Fix:** a small fold table (œ→oe, æ→ae, ß→ss and the capitals) runs before the accents are dropped, in both modules; evaluation.py doesn't import the capture package.
+- **Test:** `tests/test_evaluation.py::test_ligatures_and_sharp_s_fold_to_their_letters`, plus an assertion in `tests/test_capture.py::test_ids_and_names_compare_loosely`
+- **Lesson:** Don't assume Unicode decomposition folds every letter.
+
+#### B-104 · On Windows a capture test reads the French sample in the wrong encoding · low
+- **Where:** `tests/test_capture_edge_cases.py`; `tests/test_jde.py`
+- **Symptom:** on Windows, the French quantity test read a fifth line item.
+- **Cause:** the test read the French sample with `read_text()`, which is cp1252 on Windows, so the accented "Sous-total" line no longer looked like a total. The app reads the file as UTF-8; only the tests were wrong.
+- **Reproduce:** run the test on Windows.
+- **Reproduced:** yes, on Windows. Found while running the tests there, not in a review report.
+- **Fix:** `encoding="utf-8"` there and in tests/test_jde.py, which reads the JDE guide.
+- **Test:** `tests/test_capture_edge_cases.py::test_a_french_quantity_in_one_space_group_is_read_whole`
+- **Lesson:** Don't read a text file without naming its encoding.
+
+### Web routes
+
+#### B-105 · An emailed statement spreadsheet can freeze the dashboard · medium-high
+- **Where:** `ap_coder/web/files.py:126` (new `read_excel`); `ap_coder/triage.py:351` (`sheet_unzips_too_big`); `ap_coder/web/pages/statements.py:139-150` (`statements_emailed`); `ap_coder/web/pages/settings_jde.py`, `ap_coder/web/pages/learning.py`, `ap_coder/jde_worksheet.py:390`
+- **Symptom:** an emailed "Statement of account" .xlsx of 108 KB that unzips to 30 MB froze Reconcile for 11 s and added 141 MB of memory, again on every redraw.
+- **Cause:** the B-63 unzipped-size check was only in `triage.sheet_text`. Triage refused the sheet, but the email was still filed as a statement, and the other readers of the same files (`files.read_sheet`, `settings_jde.read_sheet`, `learning.read_sheets`, the JDE worksheet import) passed them to `pd.read_excel` or openpyxl unchecked. `statements_emailed` also read the whole file with no size cap.
+- **Reproduce:** such an email sorted into the statements folder, then Reconcile on the Statements page.
+- **Reproduced:** yes (11.4 s, 141 MB more); the new test saw all 5 routes open the workbook.
+- **Fix:** one guard, `triage.sheet_unzips_too_big()` (triage's limits: 20 MB a part, 50 MB in all), used by `sheet_text` and by one shared reader, `files.read_excel()`, which raises `SheetError(TOO_BIG_UNZIPPED)`. `files.read_sheet`, `settings_jde.read_sheet` and `learning.read_sheets` use it; `jde_worksheet.read` checks the guard itself, since core code can't import from web. `statements_emailed` reads at most `_MAX_BYTES + 1` and refuses more with the upload's message. Side effect: an .xlsx AP line history with a sheet over 20 MB unzipped is now refused too; the message says to save it as CSV UTF-8, which has no unzip limit.
+- **Test:** `tests/test_msg_and_triage.py::test_every_reader_of_an_uploaded_sheet_checks_its_unzipped_sizes`, `tests/test_msg_and_triage.py::test_an_emailed_statement_larger_than_an_upload_is_not_read`
+- **Lesson:** Don't put a size guard in one reader of untrusted files and leave the other readers of the same files without it.
+
+#### B-106 · Excel imports drop cells that read "NA" · low-medium
+- **Where:** `ap_coder/web/files.py:125`; `ap_coder/web/pages/settings_jde.py:171`; `ap_coder/web/pages/learning.py:136`
+- **Symptom:** an Excel import dropped cells reading "NA", "NULL", "N/A" or "None", so a cost center "NA" disappeared. The same file as CSV kept them.
+- **Cause:** `read_excel` was called without `keep_default_na=False`; the CSV reader has it.
+- **Reproduce:** import a cost-center .xlsx with the codes EU, NA and NULL.
+- **Reproduced:** yes (`['EU']` from xlsx, `['EU', 'NA', 'NULL']` from csv).
+- **Fix:** all three readers go through the shared `files.read_excel` (B-105), which passes `keep_default_na=False, na_filter=False`. One `pd.read_excel` call is left in the web code.
+- **Test:** `tests/test_web_masterdata.py::test_an_excel_cell_reading_na_is_kept_as_typed`
+- **Lesson:** Don't read the same kind of upload with different parser options in three copies of the reader.
+
+#### B-107 · The vendor detail asks the database once per invoice · low (performance)
+- **Where:** `ap_coder/web/pages/vendors.py:87-111` (`ask_vendor`)
+- **Symptom:** `GET /vendors?open=<key>` opened one more database connection for each of the vendor's invoices in the queue.
+- **Cause:** `store.get_invoice()` was called inside the row loop (B-10 again).
+- **Reproduce:** count `sqlite3.connect` calls with 2 and then 12 invoices.
+- **Reproduced:** yes (21 and 31 connections).
+- **Fix:** one `store.get_invoices()` call for the rows in review or parked.
+- **Test:** `tests/test_web_review.py::test_the_vendor_detail_does_not_ask_the_database_once_per_invoice`
+- **Lesson:** Don't call the store inside a row loop.
+
+### Front end
+
+#### B-108 · The vendor line under the name disagrees with the server's match · low
+- **Where:** `ap_coder/web/static/js/invoice.js:335` (`vendorKey`); `ap_coder/web/pages/invoice.py:355`
+- **Symptom:** for names ending in "S.E.N.C.", "Incorporée" or "s.e.c.", or starting with "The", the server's key matched a listed vendor but the page said the name wasn't that vendor. Only the hint was wrong; the server refuses a duplicate vendor.
+- **Cause:** the JavaScript copy of `memory.vendor_key` had drifted: legal forms dropped anywhere in the name, a short list of them, no joining of dotted letters (S.E.N.C.), a leading "the" kept, no ligatures.
+- **Reproduce:** type "The North IT Solutions Inc." in the vendor box.
+- **Reproduced:** yes (the page's keys differed from the server's; the page had no vendor `key` from the server).
+- **Fix:** each vendor in the list carries its `key` from `vendor_key`, and the add-vendor answer returns it too. The JavaScript copy, still needed for the name being typed, follows `vendor_key` exactly and is exported for a parity test.
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_the_vendor_key_is_the_servers`
+- **Lesson:** Don't re-implement a server normaliser in JavaScript without a parity test.
+
+#### B-109 · Ctrl+Enter in the "why" dialog throws away the reason · low-medium
+- **Where:** `ap_coder/web/static/js/invoice.js:773` (the why dialog's keydown)
+- **Symptom:** a reason typed in "One question before saving", then Ctrl+Enter: the dialog came back empty and no reason was sent.
+- **Cause:** Ctrl+Enter sent the approval again without `why_done`, so the server asked again and the dialog was drawn again blank.
+- **Reproduce:** approve while `lessons.due_for_why` asks a question, type a reason, press Ctrl+Enter.
+- **Reproduced:** yes, in Chromium with the server's question simulated (2 approve requests, reason never sent).
+- **Fix:** inside the dialog Ctrl+Enter does `save.click()`, and the page-wide shortcut ignores dialogs (B-110).
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_ctrl_enter_in_the_why_dialog_keeps_the_reason`
+- **Lesson:** Don't let a page-wide shortcut fire inside a modal dialog.
+
+#### B-110 · Ctrl+Enter typed in another form approves the invoice · medium
+- **Where:** `ap_coder/web/static/js/invoice.js:807` (`elsewhere`, used by the keydown listener)
+- **Symptom:** Ctrl+Enter in Park's "Waiting for" box or in "Add a note" approved the invoice, and the note was never posted.
+- **Cause:** the page-wide Ctrl+Enter listener never checked which form the focused box belongs to.
+- **Reproduce:** open an invoice that can be approved, type in Park or the note, press Ctrl+Enter.
+- **Reproduced:** yes (`['approve', 'check']` sent; status approved).
+- **Fix:** Ctrl+Enter does nothing when the focus belongs to another form, a `<dialog>` or a `[role=dialog]`.
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_ctrl_enter_in_another_form_never_approves` (`[park]` and `[note]`)
+- **Lesson:** Don't bind a page-wide submit shortcut without checking which form owns the focus.
+
+#### B-111 · After an update, browsers keep running the old app.js · medium
+- **Where:** `ap_coder/web/app.py:39` (`CheckedStaticFiles`)
+- **Symptom:** after an upgrade, the old `app.js` and `invoice_viewer.js` kept running, even after a reload, while page scripts and CSS changed at once.
+- **Cause:** those two files have no `?v=`, and `/static` sent no `Cache-Control`, so Chromium cached them by guesswork.
+- **Reproduce:** GET `/static/js/app.js` and look at the headers.
+- **Reproduced:** yes (`cache-control` was `None`; the new app.js did not run after the update or a reload).
+- **Fix:** a `StaticFiles` subclass adds `Cache-Control: no-cache` to every answer; an unchanged file still answers 304.
+- **Test:** `tests/test_web_app.py::test_static_files_are_checked_again_on_every_use`
+- **Lesson:** Don't leave an unversioned module URL without a revalidation header.
+
+#### B-112 · Plain Enter in a review field approves the invoice · medium
+- **Where:** `ap_coder/web/templates/invoice.html:52`; `ap_coder/web/static/js/app.js` (`submitButton`)
+- **Symptom:** typing a PO number and pressing Enter approved at once, with the half-typed value.
+- **Cause:** the browser's implicit submission pressed Approve, the form's only default button.
+- **Reproduce:** type in the PO number box and press Enter.
+- **Reproduced:** yes (`['approve', 'check']` sent; status approved).
+- **Fix:** a disabled, hidden submit button is the first child of `form#inv`. `submitButton` in app.js skips hidden buttons, so "Approving…" still lands on the real Approve button.
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_enter_in_a_review_field_never_approves`
+- **Lesson:** Don't let a form whose submit button approves be submitted by Enter in a text field.
+
+#### B-113 · A refused export says "The page is refreshed", and the button's count freezes · low
+- **Where:** `ap_coder/web/pages/exports.py:313`; `ap_coder/web/static/js/exports.js:13`
+- **Symptom:** after the refusal nothing reloaded and the stale rows stayed listed; afterwards the button kept saying "Export 5 invoices" with one ticked.
+- **Cause:** `refuse()` never reloads. Separately, the busy state replaces the button's contents, so the `#export-label` that exports.js kept was no longer on the page.
+- **Reproduce:** export invoices another tab exported first, then untick a row.
+- **Reproduced:** yes (no reload; the count did not follow the ticks).
+- **Fix:** the server answers with `done(request, "/exports?fmt=…", message, tone="warn")`, and `update()` looks up `#export-label` each time. The end of `test_the_ready_list_and_a_new_batch`, which expected the old 400, was changed.
+- **Test:** `tests/test_web_finance.py::test_an_export_refused_as_exported_meanwhile_refreshes_the_page`, `tests/test_web_invoice.py::test_in_a_browser_a_refused_export_reloads_and_the_count_follows_the_ticks`
+- **Lesson:** Don't keep references to elements inside a `data-busy` button.
+
+#### B-114 · An edit typed just before Back is lost · low
+- **Where:** `ap_coder/web/static/js/invoice.js:839`
+- **Symptom:** an edit typed just before Back or closing the tab was gone on coming back, though the page promises edits are kept as a draft.
+- **Cause:** the check that saves the draft waits 450 ms and was flushed only for links, forms and the page's own keys.
+- **Reproduce:** type a PO number, press Back within 100 ms, come back.
+- **Reproduced:** yes (the PO number was `''`).
+- **Fix:** on `pagehide`, a pending check is sent with `fetch(…/check, {keepalive: true})`.
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_an_edit_typed_just_before_leaving_is_kept`
+- **Lesson:** Don't debounce a save without flushing it when the page is left.
+
+#### B-115 · Alt+←/→ in a text box jumps to another invoice · low
+- **Where:** `ap_coder/web/static/js/invoice.js:813` (`typing`)
+- **Symptom:** Alt+←/→ in a text box (Option+arrows on a Mac, which move the cursor by word) went to the previous or next invoice.
+- **Cause:** the listener didn't check where the focus was.
+- **Reproduce:** click the vendor box and press Alt+←.
+- **Reproduced:** yes (`/review/5` went to `/review/7`).
+- **Fix:** the shortcut is skipped in text inputs, textareas, selects and editable areas; it still works elsewhere on the page.
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_alt_arrows_in_a_text_box_stay_on_the_invoice`
+- **Lesson:** Don't take over text-editing keys while a text box has the focus.
+
+### Intake, CLI and launch
+
+#### B-116 · An invoice in an email forwarded inside a .msg is dropped · medium
+- **Where:** `ap_coder/msgfile.py:102-109` (`_children`)
+- **Symptom:** an invoice inside an email forwarded in a .msg was silently dropped when the .msg's directory lists the inner storage before its parent, which the file format allows.
+- **Cause:** the B-62 fix walked storages in index order with one shared `walked` set. A child storage with a lower index than its parent was already marked seen, so the parent's walk skipped it and everything reached only through it.
+- **Reproduce:** a .msg with an attached email (`bench.msgwriter`), its directory entries renumbered in reverse with the root kept at 0, then `read_msg`.
+- **Reproduced:** yes (`['INV-1.pdf']`, against `['INV-1.pdf', 'INV-0.pdf']` for the file as written).
+- **Fix:** storages are walked as a tree from the root (a stack, each storage pushing the child storages it finds), with one shared `walked` set. B-62's test still passes.
+- **Test:** `tests/test_msg_and_triage.py::test_the_order_of_directory_entries_never_drops_an_attachment`
+- **Lesson:** Don't make the result of a graph walk depend on the order the nodes are stored in.
+
+#### B-117 · An open fraud email drops off "needs a person" after 500 newer emails · medium
+- **Where:** `ap_coder/inbox.py:39-53` (`needs_person`, `entry`); `ap_coder/mailbox.py:337` (`triage_log`)
+- **Symptom:** a bank-detail-change (possible fraud) email nobody marked done dropped off "needs a person" once 500 newer emails had been sorted. An old open email could also be shown but not opened or marked done.
+- **Cause:** `needs_person()` read `triage_log` with its default limit of 500, applied before the needs-person and not-done filters. `triage_log` also read only the last 4 MB, and `entry()` searched only the newest 5000 entries.
+- **Reproduce:** a log with one open fraud entry followed by 500 newer invoice entries, then `inbox.needs_person`.
+- **Reproduced:** yes (`['fraud01']` with 499 newer, `[]` with 500).
+- **Fix:** `triage_log` takes an optional `keep` filter: with it the whole log is read and `limit` counts only the entries kept. `needs_person` filters first, puts possible fraud first, then cuts to `limit`; `entry()` matches the id through the filter. The dashboard now reads the whole triage log on each load.
+- **Test:** `tests/test_msg_and_triage.py::test_an_open_email_stays_in_needs_a_person_however_many_were_sorted_after_it`
+- **Lesson:** Don't apply a "most recent N" window before the filter that decides what is still open.
+
+### Codebase map tooling and CI
+
+#### B-118 · Interface names pass when they exist anywhere · medium
+- **Where:** `scripts/check_map.py:255-262`
+- **Symptom:** the "names in ## Interface exist" check passed `` `nosuchmodule.main()` ``, passed a name whose file was renamed because another file in the folder had a function of that name, and skipped a folder with no code.
+- **Cause:** a qualified name passed if the function name existed anywhere in the repository; an unqualified one only had to exist somewhere in the folder; a folder with no .py or .js files skipped the check.
+- **Reproduce:** add `` `nosuchmodule.main()` `` to scripts/CLAUDE.md; rename `pilot_check.check()`; add `` `does_not_exist()` `` to .claude/CLAUDE.md; run the checker.
+- **Reproduced:** yes (exit 0 each time).
+- **Fix:** a name given with its file (x.py) must be in that file; `mod.name()` or `Class.name()` must be in that module or class; in a folder with no code, a name must exist somewhere in the repository.
+- **Test:** `tests/test_check_map.py::test_an_interface_name_must_be_in_the_module_or_file_it_names`, `tests/test_check_map.py::test_a_name_in_a_folder_without_code_must_exist_somewhere`
+- **Lesson:** Don't let an existence check be satisfied by any match anywhere.
+
+#### B-119 · A source file with a byte-order mark crashes the map checker · low-medium
+- **Where:** `scripts/check_map.py:91, 171`
+- **Symptom:** the checker crashed with `SyntaxError: invalid non-printable character U+FEFF` on a .py saved with a UTF-8 BOM (Notepad). Python runs such files fine.
+- **Cause:** `ast.parse(read_text("utf-8"))` kept the mark.
+- **Reproduce:** add a BOM to a .py in the map and run the checker.
+- **Reproduced:** yes (traceback).
+- **Fix:** a source is parsed from bytes, as Python reads it.
+- **Test:** `tests/test_check_map.py::test_a_source_file_with_a_byte_order_mark_is_read_like_python_reads_it`
+- **Lesson:** Don't parse source text in a way stricter than the interpreter that runs it.
+
+#### B-120 · `--changed` passes over a base git can't compare with · low
+- **Where:** `scripts/check_map.py:273`; `.github/workflows/ci.yml` (the "Check the map" step)
+- **Symptom:** a base that doesn't resolve, or a depth-1 clone, silently reported no changed folders, exit 0. A push to main never got the "code changed without its map" warning.
+- **Cause:** git's errors were swallowed. On a push to main, CI's base was `origin/main`, which equals HEAD.
+- **Reproduce:** `check_map.py --changed no-such-branch`; the same in a shallow clone.
+- **Reproduced:** yes (exit 0, nothing said).
+- **Fix:** `--changed` warns "git can't compare with <base>". CI compares a push to main with the commit before it (`github.event.before`, else `HEAD~1`).
+- **Test:** `tests/test_check_map.py::test_a_base_git_cannot_compare_with_is_said_not_passed_over`
+- **Lesson:** Don't swallow a tool's error and report that nothing changed.
+
+#### B-121 · A new file not yet added to git is invisible to the map checker · low
+- **Where:** `scripts/check_map.py`
+- **Symptom:** a new module not yet `git add`ed passed both the Files index check and `--changed` (2 errors once it was staged). The hook's "then run check_map.py" advice missed exactly this case.
+- **Cause:** the checker listed only the files git tracks.
+- **Reproduce:** create a new module in a mapped folder without adding it, then run the checker.
+- **Reproduced:** yes (exit 0).
+- **Fix:** new untracked files that git doesn't ignore count too.
+- **Test:** `tests/test_check_map.py::test_a_new_module_counts_before_it_is_added_to_git`
+- **Lesson:** Don't take the files git tracks as all the files that exist.
+
+#### B-122 · The map checker crashes on a deleted file, a list as hook input, or no base · low
+- **Where:** `scripts/check_map.py`
+- **Symptom:** a tracked file deleted but not yet `git rm`ed gave `FileNotFoundError`; `--hook` given a JSON list on stdin gave `AttributeError` (exit 1, still not blocking); `--changed` with no value gave `IndexError`.
+- **Cause:** each input was taken as well formed.
+- **Reproduce:** each of the three.
+- **Reproduced:** yes.
+- **Fix:** a deleted file is simply gone from the map (a map that still lists it is an error), the hook ignores input that isn't an object, and `--changed` with no base exits 2.
+- **Test:** `tests/test_check_map.py::test_a_new_module_counts_before_it_is_added_to_git` (deleted file), `tests/test_check_map.py::test_the_hook_reminds_of_the_folder_map_and_never_blocks` (a JSON list), `tests/test_check_map.py::test_a_base_git_cannot_compare_with_is_said_not_passed_over` (no base)
+- **Lesson:** Don't let a checker crash on input it didn't expect; say what is wrong instead.
+
+#### B-123 · The hook never reminds of an edit in an agent's worktree · low
+- **Where:** `scripts/check_map.py:60` (`_skipped`)
+- **Symptom:** when the hook runs from the main checkout, edits under `.claude/worktrees/` never got the folder-map reminder.
+- **Cause:** `_skipped()` dropped every path under `.claude/worktrees/`.
+- **Reproduce:** send the hook an edit of `.claude/worktrees/agent-1/ap_coder/sub/b.py`.
+- **Reproduced:** yes (no reminder).
+- **Fix:** an edit inside an agent's worktree gets the reminder of its folder in that worktree.
+- **Test:** `tests/test_check_map.py::test_the_hook_reminds_of_an_edit_in_an_agents_worktree_too`
+- **Lesson:** Don't skip a whole folder in a hook without checking who works in it.
+
+#### B-124 · The browser tests never ran in CI · medium
+- **Where:** `tests/conftest.py` (`chromium_path`), `.github/workflows/ci.yml` (no browser job)
+- **Symptom:** the 12 tests that open the dashboard in Chromium (B-57 to B-60, B-108 to B-115, and every page asking only this computer) passed in CI by skipping: CI installs no Playwright, and the tests looked for Chromium only under /opt/pw-browsers or `PLAYWRIGHT_BROWSERS_PATH`.
+- **Cause:** a test that skips without its tool was the only proof of the front-end fixes, and nothing made CI provide the tool. Found by the map's second accuracy pass.
+- **Reproduce:** any CI run before this fix: the `test_in_a_browser_*` tests are reported as skipped.
+- **Reproduced:** yes (11 skipped per Tests job).
+- **Fix:** a "Browser tests" CI job installs Playwright and its Chromium and runs them with `AP_REQUIRE_BROWSER=1`, where a missing browser fails instead of skipping; one shared `chromium_path()` also finds Playwright's own install.
+- **Test:** `tests/test_ci_workflow.py::test_ci_runs_the_browser_tests_and_never_lets_them_skip`
+- **Lesson:** Don't let a test that skips without its tool be the only proof: make CI provide the tool and fail without it.
+
+
+#### B-125 · The phone-screen popover test read the position before the page placed it · low
+- **Where:** `tests/test_web_invoice.py` (`test_in_a_browser_the_popovers_open_inside_a_phone_screen`)
+- **Symptom:** the test failed on some runs (the Split a line popover at x = -79 on a 390 px screen), then passed on others, with no code change; seen on a loaded machine, on main as well as this branch.
+- **Cause:** app.js moves a popover inside the screen on the "toggle" event, which the browser fires a moment after the click; the test read the box right after the click, sometimes before that. The page itself was right: 300 ms later every popover sat 8 px from the edge.
+- **Reproduce:** run the test a few times on a busy machine; or read the box right after the click and again 300 ms later (-79 then 8).
+- **Reproduced:** yes.
+- **Fix:** the test waits (up to 2 s) for the popover to be inside the screen, then checks it; it still fails if the page never places it (checked against app.js without the placing code).
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_the_popovers_open_inside_a_phone_screen`
+- **Lesson:** Don't assert on what a page does in an event handler right after the action that queues it: wait for the state, with a timeout.
+
+#### B-126 · A Status filter with many statuses broke the invoice directory · low
+- **Where:** `ap_coder/directory.py` (`condition`, the Status column)
+- **Symptom:** /search with `status=review,review,...` (1,200 times) failed with "too many SQL variables" on an older SQLite build (999 variables); a misspelt status ("reveiw") matched nothing, without a word.
+- **Cause:** one "?" per status typed in the address, with no check that each is a real status or that it is there only once. Found by the new rule in tests/test_code_rules.py, which turns the lesson of B-10, B-29 and B-30 into a check of the whole code.
+- **Reproduce:** `d.run(store, d.Query(filters={"status": ",".join(["review"] * 1200)}))` with the `few_sql_variables` fixture.
+- **Reproduced:** yes.
+- **Fix:** keep only real statuses, each once (so at most six); an unknown one is refused with a message, as the other filters are.
+- **Test:** `tests/test_directory.py::test_a_status_filter_with_more_statuses_than_sqlite_takes_variables`; the rule: `tests/test_code_rules.py::test_no_sql_placeholders_are_made_one_per_item_of_a_list`
+- **Lesson:** Don't fix a repeated mistake one place at a time: write a check that finds every place, then fix what it finds.
+### Not reproduced or left as they are
+
+- **N-32** · Store · `_env_float` (`config.py:45`) accepts `AP_REVIEW_THRESHOLD=nan` or `-1` from a hand-edited `.env`, so low confidence would never force a review. The Settings page enforces 50-99%; not run end to end; left.
+- **N-33** · Store · `add_invoice` deletes earlier failed attempts but not their `page_reads`, `azure_checks`, `verifications` or `invoice_capture` rows (foreign keys are off, so `ON DELETE CASCADE` never fires). Failed invoices are never queued; no effect seen; left.
+- **N-34** · Store · `copy_backup` prunes every `ap_coder-*.db` in the second backup folder, so two installs sharing one folder would delete each other's copies. Read only; left.
+- **N-35** · Store · a `labels.csv` saved again by a French Excel uses `;` and fails with "row 2 has no document" (`labels._read_rows` doesn't sniff the delimiter). A clear error, not silent; left.
+- **N-36** · Store · `envfile.parse_value` unescapes `\\` in single-quoted values, but python-dotenv does not. `write_env` never writes single quotes; left.
+- **N-37** · Store · `reference_data.load_table` accepts an inactive GL row followed by an active one with the same code, but refuses the reverse order. Inconsistent, harmless; left.
+- **N-38** · Tax · `vendor_mail.Draft.mailto` percent-encodes the "@" (`a%40b.com`), which some mail clients may not decode. No mail client to try it with; left.
+- **N-39** · Tax · `po._header_findings` divides the word overlap by the shorter name, so "Acme" against "Acme Fraud Holdings" scores 0.9 and `PO_VENDOR_MISMATCH` never fires. Read in the code only; it may be intended; left.
+- **N-40** · Tax · `math_check` allows 0.015 for "Lines = subtotal" while `validate_coding` allows a cent per line. Display only, the same family as N-07; left.
+- **N-41** · Exports · MATCH_HEADER and tax-mode balancing. Checked: every sample, both numberings and both amount modes; the pay items always add up to the invoice total.
+- **N-42** · Exports · accruals (B-27 fix): a flagged copy with a lower id than its original would be accrued too. Invoices are read in id order; not built; left.
+- **N-43** · Exports · a JDE batch downloaded again uses today's settings, FX rates and vendor master, so it can differ from the first download. By design (the docstring says so).
+- **N-44** · Exports · one damaged source page that raises inside `_stamp` would fail the whole stamped-PDF ZIP. Not built; left.
+- **N-45** · Exports · `Layout.from_json` and `JdeSettings.from_json` crash on wrong types or extra keys. Only a hand-edited database reaches them; left.
+- **N-46** · Exports · the duplicate audit ignores currency: CAD 100 and USD 100 with the same number pair up. Looks like a design choice; left.
+- **N-47** · AI · `store.queue_verification` refuses while a row is `verifying`, so a page-reader re-read in another process during a review leaves the new proposal unreviewed, showing the old result's issues (the proposal digest is stored but never compared). Needs two processes and real timing; left. The stale `meta.capture` write in `verifier._fold_in` is N-11.
+- **N-48** · AI · since B-15, "ABC Sec" and "ABC" share a vendor key. Read in the code only; no real collision shown.
+- **N-49** · AI · `mark_capture` overwrites an existing `other:<value>` source and the readers listed there. Unlikely: capture keys hold typed values (`9999.0`), the model writes strings (`9,999.00`); left.
+- **N-50** · AI · the reviewer keys answers by line number, so two lines with the same number could be confirmed by one answer. Local readers number lines in sequence, so only the Azure path could reach it; left.
+- **N-51** · Capture · at a late approval, `still_touchless` calls `invoice_gates` without the report, `pages_read` or `no_page`, and never re-runs `should_auto_approve`. No path found that approves something wrong: the first decision applied these gates, and B-32 re-reads the reviewer and Azure issues; left.
+- **N-52** · Capture · image files over 20 frames skip the B-50 count (`_image_pngs`). Not reachable: the pipeline turns pictures into PDFs first.
+- **N-53** · Capture · `evaluation._amount_eq(None, None)` counts an amount blank in both as a miss. Not reachable: the schema and `labels.py` require numbers.
+- **N-54** · Capture · `VENDOR_NAME_MATCH` is a plain substring test ("bell" is in "bellwether"). A misuse is caught by the coding and the page disagreeing; not shown to be harmful.
+- **N-55** · Capture · a blank-looking page with a hidden text layer is left out of `text_layer_check`. Safe: `made_up("")` counts it as not read, which fires the "pages not read by OvisOCR2" gate.
+- **N-56** · Capture · the other places that rebuild a `DocLayout` (`straightened`, the tables-only layout, `second_read_layout`) drop `pages_left_out`. No effect on the gate today, because `analyze` builds the final capture from the original layout; left.
+- **N-57** · Web routes · W2-02: the dashboard shared on the network (`AP_DASHBOARD_ADDRESS=0.0.0.0`) records every action as the server's user, so a colleague's second approval is refused and review drafts are shared. Left open: the user chose a per-person identity, to come in its own PR.
+- **N-58** · Web routes · `security.host_allowed` calls `socket.getfqdn()` (a DNS lookup) in the async middleware when listening on 0.0.0.0, so a slow DNS could freeze every request. Needs a real network; not tried.
+- **N-59** · Web routes · up to 24 uploads of 50 MB wait in memory (about 1.2 GB), and `process_upload` and `learning.history_upload` read a whole file with no cap. Not measured; left.
+- **N-60** · Web routes · `Job._run` catches only `Exception`, so a `BaseException` would leave a job "running" forever. Read in the code only.
+- **N-61** · Web routes · `server.write_server_file` writes the token before its `chmod` to 0600, so for a moment it has the default permissions. Read only; the token only allows a shutdown from this computer.
+- **N-62** · Web routes · `/review/{id}/read-pages` and `/split` don't check the status. Checked: `page_worker` refuses an invoice not in review, so at worst a read is wasted or a draft unused.
+- **N-63** · Front end · XSS. Checked in Chromium: HTML in the vendor, invoice and PO numbers, terms, lines and notes, on 15 pages and in the viewer tooltips; nothing was injected.
+- **N-64** · Front end · forms and pages. Checked: all 65 POST forms crawled have a route; every page at 1400 and 390 px wide has no JS errors, no requests leaving the computer and no sideways scroll.
+- **N-65** · Front end · a `/check` in flight while approving could save a stale draft again. Checked: the handlers run one after the other; the check sees "approved" and answers 409.
+- **N-66** · Front end · a redirect that changes only the `#` part (the form stuck busy), and the OvisOCR2 progress check reloading forever. Checked: every `done()` with a message adds a fresh flash token; the template and `/reader` both use `reader_state`.
+- **N-67** · Front end · help.js filtering unlike the server, and the `taught` hidden field encoded twice. Checked: both filters match the same plain substring; `taught` is a dict, so `tojson` gives an object.
+- **N-68** · Intake · a photo picked up twice by `watch`. Checked end to end: the PDF left in the folder is found by `find_by_hash`.
+- **N-69** · Intake · the B-63 zip check fooled by sizes that lie. Checked: Python's zipfile unpacks at most the declared size.
+- **N-70** · Intake · the B-71 boundary count bypassed. Every part needs a `\n--` line; no way around it found.
+- **N-71** · Intake · touchless approval of an invoice from a "possible fraud" email: the triage flag never reaches the pipeline, so only the invoice's own `VENDOR_BANK_CHANGED` check can hold it. An end-to-end touchless run was too heavy to try; left.
+- **N-72** · Intake · Windows reserved names in `safe_name` (e.g. an uploaded `CON.pdf`). Can't be tried on Linux; left.
+- **N-73** · Intake · `cli._inputs` given one email as both a relative and an absolute path: the second unpack fails and the command exits 1. Edge case, not run.
+- **N-74** · Intake · `ui.money(NaN)` shows "nan", and `ui.time_ago` would crash on a timestamp with a time zone. Not run; the store writes timestamps without one.
+- **N-75** · Intake · `inbox.done_ids()` reads only the last 20,000 "email marked done" events, so past that, emails marked done long ago would come back as open. Noted by the B-117 fix; left.
+- **N-76** · Codebase map · Depends on / Used by is worked out only for `ap_coder`, so `scripts` and `tests` are never counted as users of a module, and the Depends on lines of `scripts`, `tests`, `.github` and `.claude` are not checked. By design; the `ap_coder/MODULES.md` "Imported by" column now lists the scripts that import each module.

@@ -25,9 +25,10 @@ SIGNALS = {
 }  # fmt: skip
 SETUP_ACTIONS = (
     "accounts_imported", "accounts_edited", "accounts_deleted", "tax_setup_changed", "policy_changed",
-    "settings_changed", "rules_changed", "vendor_updated", "vendors_imported", "pos_imported", "po_status",
-    "pos_deleted", "lessons_forgotten", "export_undone", "backup_restored", "autonomy_on", "autonomy_off",
-    "autonomy_suspended", "autonomy_held", "autonomy_allowed", "touchless_on", "touchless_off",
+    "settings_changed", "rules_changed", "vendor_updated", "vendor_added", "vendors_deleted", "vendors_imported",
+    "erp_register_imported", "pos_imported", "po_status", "pos_deleted", "deleted", "history_imported",
+    "lessons_forgotten", "lesson_retired", "lesson_restored", "export_undone", "backup_restored", "autonomy_on",
+    "autonomy_off", "autonomy_suspended", "autonomy_held", "autonomy_allowed", "touchless_on", "touchless_off",
 )  # fmt: skip
 
 

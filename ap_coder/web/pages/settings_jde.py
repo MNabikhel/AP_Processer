@@ -21,6 +21,7 @@ from ap_coder.store import Store
 from ap_coder.tax import OUTSIDE_CANADA, PROVINCES, province_label
 from ap_coder.web import minimd
 from ap_coder.web.core import done, get_store, refuse, reviewer
+from ap_coder.web.files import SheetError, read_excel
 
 router = APIRouter()
 
@@ -168,7 +169,7 @@ def read_sheet(name: str, content: bytes) -> list[dict[str, Any]]:
         raise ValueError("the file is empty")
     try:
         if name.lower().endswith((".xlsx", ".xls")):
-            frame = pd.read_excel(io.BytesIO(content), dtype=str)
+            frame = read_excel(content, 0)
         else:
             frame = None
             for encoding in ("utf-8-sig", "cp1252"):  # Excel "CSV" exports are often Windows-1252
@@ -200,6 +201,8 @@ async def import_gl_map(
         return refuse("Upload a CSV or Excel file (GL code, Cost center, BU, Object, Subsidiary).")
     try:
         records = read_sheet(name, await file.read())
+    except SheetError as exc:  # already a whole sentence
+        return refuse(str(exc))
     except ValueError as exc:
         return refuse(f"This file could not be read as a spreadsheet: {exc}.")
     rows = jde.gl_map_from_records(records)

@@ -310,8 +310,13 @@ async def create_batch(request: Request) -> JSONResponse:
             return refuse("None of the ticked invoices can go to JD Edwards yet: fix them first (see the list).")
     try:
         batch = store.create_export_batch(chosen, fmt, actor=current_reviewer())
-    except ValueError:
-        return refuse("These invoices were exported meanwhile (or are no longer approved). The page is refreshed.")
+    except ValueError:  # the page is drawn again: what is still ready to export, without them
+        return done(
+            request,
+            f"/exports?fmt={fmt}",
+            "These invoices were exported meanwhile (or are no longer approved). The page is refreshed.",
+            tone="warn",
+        )
     count = len(store.batch_invoice_ids(batch))
     return done(
         request,
@@ -352,6 +357,10 @@ def download_batch(request: Request, batch: int, fmt: str = "") -> Response:
     fmt = fmt or known["format"]
     if fmt not in exports.FORMATS:
         raise HTTPException(status_code=400, detail="Unknown export format.")
+    if fmt == jde.FORMAT and (blocking := jde.settings_problems(jde.load(store))):
+        # Z-files made with these settings cannot load (their own dry run says "NOTHING CAN LOAD"): say what to fix.
+        detail = " ".join(f"{p} Set it in Settings → JD Edwards E1, then download the batch again." for p in blocking)
+        raise HTTPException(status_code=409, detail=detail)
     return download(*batch_file(store, batch, fmt))
 
 

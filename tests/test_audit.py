@@ -50,3 +50,46 @@ def test_diff_spots_removed_lines_and_tax_changes(ground_truth):
     whats = [c["what"] for c in diff_coding(ground_truth, final)]
     assert "line 5 removed" in whats and "sales tax lines" in whats
     assert diff_coding(ground_truth, copy.deepcopy(ground_truth)) == []
+
+
+def _logged_actions() -> set[str]:
+    """Every event action the code logs, read from the source: the literal (or the constant, or the values of a
+    local ``action``) given to ``_log`` / ``log_event``, and the update script's own insert."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    found: set[str] = set()
+    for path in [*(root / "ap_coder").rglob("*.py"), root / "scripts" / "upgrade.py"]:
+        text = path.read_text(encoding="utf-8")
+        constants = dict(re.findall(r'^([A-Z_]+_ACTION) = "(\w+)"', text, re.M))
+        for arg in re.findall(r"(?:\b_log\(conn,|\blog_event\()\s*([^,()]+)", text):
+            found |= set(re.findall(r'"(\w+)"', arg))
+            found |= {constants[n] for n in re.findall(r"\b[A-Z_]+_ACTION\b", arg) if n in constants}
+            if arg.strip() == "action":
+                found |= set(re.findall(r'\baction = "(\w+)"', text))
+                for values in re.findall(r"\baction = \{([^}]*)\}", text):
+                    found |= set(re.findall(r'"(\w+)"', values))
+        found |= set(re.findall(r'\("(\w+)", UPDATE_ACTOR', text))
+    return found
+
+
+def test_every_logged_action_has_a_label_and_a_description():
+    from ap_coder.audit import ACTIONS
+
+    logged = _logged_actions()
+    assert {"vendor_added", "lesson_retired", "lesson_restored", "autonomy_held", "autonomy_on", "email_sorted",
+            "files_moved", "vendors_deleted"} <= logged  # fmt: skip
+    assert sorted(logged - set(ACTIONS)) == []
+    from ap_coder.web.pages.activity import GROUPS  # and every one can be found by the Activity page's filters
+
+    assert sorted(set(ACTIONS) - {a for actions in GROUPS.values() for a in actions}) == []
+    details = {
+        "vendor_added": {"vendor": "Acme", "gst": "123456789RT0001"}, "verified": {"status": "agreed", "rounds": 2},
+        "azure_checked": {"compared": 5, "agreed": 4, "differ": ["total"]},
+        "azure_check_disagrees": {"fields": ["total", "date"]}, "lesson_explained": {"reason": "Rent is 6200"},
+        "lesson_retired": {"lesson": 3}, "lesson_restored": {"lesson": 3}, "directory_preset_saved": {"name": "Q3"},
+        "directory_preset_deleted": {"name": "Q3"}, "vendors_deleted": {"vendors": ["acme"]},
+    }  # fmt: skip
+    for action, detail in details.items():
+        assert describe({"action": action, "detail": detail}), action

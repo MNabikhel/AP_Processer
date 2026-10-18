@@ -9,14 +9,16 @@ Nothing here is loaded from the internet, and nothing may be: the app is fully o
 
 ## Interface
 - Design tokens `--lg-*` on `:root` in app.css (colours, type, radii); the other stylesheets use them, except invoice_viewer.css (below).
-- Class families: `.apc-*` (the HTML of ap_coder/ui.py), `.rq-*` (review queue), `rvw-*`/`inv-*` (invoice.css), `iv-*` (invoice_viewer.css), `st-*` (settings.css).
+  A second `:root` in app.css maps `--rv-*` aliases onto them for invoice.css.
+- Class families: `.apc-*` (the HTML of ap_coder/ui.py), `.rq-*` (review queue), `rvw-*`/`inv-*` (invoice.css), `iv-*` (invoice_viewer.css), `st-*` and `hp-*` (Settings, Help: settings.css), `an-*` (analytics.css), `dir-*` (data.css).
 - Every `<link>` is `/static/<file>.css?v={{ static_version }}`: the hash of every file under this folder, made once when web/core.py is imported.
 
 ## Gotchas and decisions
-- Edit a file and the `?v=` changes on the next server start, so no browser keeps an old copy; a running server keeps the old version.
+- Edit a file and the `?v=` changes on the next server start; files without it (js/app.js, js/invoice_viewer.js) are checked again on every use
+  (`Cache-Control: no-cache`, web/app.py). A running server keeps the old `?v=`.
 - Load a stylesheet with `?v={{ static_version }}` in the template's `head` block, never without it.
 - No `@import`, no web fonts or images from a URL: `url()` only points at /fonts or /assets on this server.
-- invoice_viewer.css has its own copies of the Ledger colours (`--ink`, `--muted`, `--line`... on `.iv`): change a colour there too.
+- invoice_viewer.css has its own copies of the Ledger colours (`--ink`, `--muted`, `--line`... on `.iv, .iv-tip`: the hover card lives on `<body>`): change a colour there too.
 - ap_coder/ui.py repeats the hex values of `--lg-success` / `--lg-warning` / `--lg-danger` / `--lg-accent` (OK, WARN, ERR, BRAND): change a colour in both.
 
 ### Bug lessons

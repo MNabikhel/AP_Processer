@@ -140,3 +140,22 @@ def test_an_uncoded_line_is_held_back_in_plain_words():
     (reasons,) = jde.validate([inv], jde.JdeSettings(), AN8).values()
     assert any("has no GL account" in r and "review screen" in r for r in reasons)
     assert not any("too long" in r for r in reasons)
+
+
+def test_the_dry_run_gross_is_the_whole_invoice_in_every_amount_mode():
+    """With taxable / non-taxable / tax amounts there is no gross column: the dry run adds the three up (from the
+    VLC* columns for a foreign invoice), never shows the non-taxable part as the gross."""
+    settings = jde.JdeSettings(amount_mode=jde.AMOUNT_TAX, currencies=["CAD", "USD"])
+    for inv in (_invoice(ON, 1), _invoice(ON, 2, currency="USD")):
+        (voucher,) = jde.dry_run([inv], settings, AN8)["vouchers"]
+        (item,) = voucher["pay_items"]
+        assert (item["gross"], item["tax"]) == ("18,017.85", "2,072.85"), voucher["currency"]
+
+
+def test_the_worksheet_answer_and_code_cells_are_text():
+    """Excel turns 01 typed in a General cell into the number 1: a subsidiary or terms code would lose its zero."""
+    wb = _sheet(accounts=[{"code": "6010", "description": "Computers"}], vendors=[{"vendor_name": "Northwind"}])
+    code_columns = {"Questions": "EF", "Tax areas": "CDEF", "Account mapping": "ABDEFGH", "Suppliers": "BC"}
+    for sheet, columns in code_columns.items():
+        for col in columns:
+            assert wb[sheet][f"{col}2"].number_format == "@", (sheet, col)

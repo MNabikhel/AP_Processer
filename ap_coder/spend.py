@@ -16,6 +16,7 @@ from typing import Any
 from .reference_data import ReferenceData
 from .safe import neutralise_sheet, xlsx_row
 from .store import APPROVED, FAILED, Store
+from .tax import PLACE_OF_SUPPLY
 
 
 @dataclass
@@ -156,6 +157,8 @@ def workbook(store: Store, reference: ReferenceData | None) -> bytes:
     for r in rows:
         doc = r["final_output"] or r["ai_output"] or {}
         merged = {**doc, **{k: r[k] for k in r if k not in ("ai_output", "final_output")}}
+        # the ship-to printed, else the place of supply worked out when it was coded (pipeline)
+        merged["ship_to_province"] = doc.get("ship_to_province") or doc.get(PLACE_OF_SUPPLY) or ""
         ws_by_name["Invoices"].append(xlsx_row([merged.get(k) for k, _ in INVOICE_COLUMNS]))
         head = [r["id"], doc.get("vendor_name"), doc.get("invoice_number"), doc.get("invoice_date")]
         for li in doc.get("line_items") or []:

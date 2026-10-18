@@ -41,6 +41,7 @@ from ap_coder.config import LocalLLMSettings, Settings
 
 from . import offline_flow
 from . import offline_guard as guard_module
+from .conftest import chromium_path
 
 ROOT = Path(__file__).resolve().parent.parent
 REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test; the real one is needed here
@@ -550,15 +551,7 @@ def test_the_whole_walk_works_in_a_network_namespace_without_network(tmp_path, l
 
 
 def _chromium() -> str | None:
-    if importlib.util.find_spec("playwright") is None:
-        return None
-    for pattern in ("chromium-*/chrome-linux/chrome", "chromium/chrome-linux/chrome"):
-        for root in (os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), "/opt/pw-browsers"):
-            if root:
-                found = sorted(Path(root).glob(pattern))
-                if found:
-                    return str(found[-1])
-    return None
+    return chromium_path()
 
 
 @pytest.mark.skipif(_chromium() is None, reason="Playwright with Chromium isn't installed")

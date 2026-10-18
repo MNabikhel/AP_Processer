@@ -59,3 +59,13 @@ def test_the_retired_run_check_catches_what_it_should():
         '[ ! -e "$F/install.sh" ] || fail "still there"',
     ):
         assert not RETIRED_RUN.search(line), line
+
+
+def test_ci_runs_the_browser_tests_and_never_lets_them_skip():
+    """The tests that open the dashboard in Chromium skip on a computer without it, and CI had none: they passed by
+    never running. A CI job installs Chromium and runs them with AP_REQUIRE_BROWSER=1, where a missing browser fails."""
+    jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
+    job = jobs["browser-tests"]
+    text = yaml.safe_dump(job)
+    assert "playwright install --with-deps chromium" in text and "-k in_a_browser" in text.replace('"', "")
+    assert any((step.get("env") or {}).get("AP_REQUIRE_BROWSER") == "1" for step in job["steps"])

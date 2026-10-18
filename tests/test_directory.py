@@ -60,6 +60,18 @@ def test_wildcards_never_reach_sql_as_its_own(store, tmp_path):
     assert store.get_invoice(a)
 
 
+def test_text_filters_ignore_accents_and_case_beyond_ascii(store, tmp_path):
+    """SQLite's lower() and LIKE fold only A to Z: "énergir" never found "Énergir S.E.C."."""
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    a = store.add_invoice(pdf, {"vendor_name": "Énergir S.E.C.", "invoice_number": "É-100", "grand_total": 5},
+                          {"issues": []})  # fmt: skip
+    for typed in ("énergir", "ÉNERGIR", "energir", "=énergir s.e.c.", "=ENERGIR S.E.C.", "*gir s.e.c."):
+        assert ids(store, vendor=typed) == [a], typed
+    assert ids(store, invoice_number="=é-100") == [a]
+    assert a not in ids(store, vendor="!énergir")
+
+
 def test_amount_filters(store):
     totals = every(store, "total")
     assert len(ids(store, total=">10000")) == sum(t > 10000 for t in totals)
@@ -238,3 +250,12 @@ def test_row_actions_follow_where_the_invoice_is(store):
     approved = store.list_invoices(APPROVED)[0]
     assert f'href="/search/{approved["id"]}/approved.pdf"' in page
     assert store.get_invoice(review["id"])["status"] == PARKED
+
+
+def test_a_status_filter_with_more_statuses_than_sqlite_takes_variables(store, few_sql_variables):
+    """The Status filter comes from the address: a link or a script can list a status a thousand times. One "?" per
+    status typed failed past SQLite's variable limit (999 on older builds), and a status that doesn't exist just
+    matched nothing without a word (B-126)."""
+    assert ids(store, status=",".join(["review"] * 1200)) == ids(store, status="review")
+    with pytest.raises(d.FilterError):
+        d.condition("status", "reveiw")

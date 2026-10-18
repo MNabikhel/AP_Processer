@@ -816,6 +816,19 @@ def test_a_strict_reply_never_takes_a_draft_from_the_thinking(content):
     assert read_reply(_choice(f"<think>{draft}</think>{answer}"), strict=True).data == json.loads(answer)
 
 
+def test_a_strict_reply_is_the_whole_answer_not_json_found_in_prose():
+    """A template that opened the thought itself writes a bare "Thinking Process:" it never closes: a draft inside it
+    is not the answer, as it isn't inside an unclosed <think>. Strict, the answer is one JSON object or nothing."""
+    draft = json.dumps({"fields": [], "lines": [], "confident": True, "summary": "all fine"})
+    content = f"Thinking Process:\n1. The header.\n2. A first draft: {draft}\n3. Wait, the total on page 2 differs"
+    reply = read_reply(_choice(content), strict=True)
+    assert reply.data is None and reply.problem
+    assert read_reply(_choice(f"I checked it. {draft}"), strict=True).data is None  # prose around it: not taken
+    assert read_reply(_choice(f"Thinking Process: hmm</think>\n{draft}"), strict=True).data == json.loads(draft)
+    assert read_reply(_choice(f"```json\n{draft}\n```"), strict=True).data == json.loads(draft)
+    assert read_reply(_choice(content)).data is not None  # not strict (coding): read loosely, as before
+
+
 @pytest.mark.parametrize(
     "reply",
     [

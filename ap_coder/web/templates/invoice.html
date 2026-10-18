@@ -47,6 +47,9 @@
 {# ---------------------------------------------------------------- the workspace #}
 {% if mode == "review" %}
 <form id="inv" method="post" action="/review/{{ inv.id }}/approve" data-busy="Approving…" data-invoice="{{ inv.id }}">
+  {# The form's default button, disabled: Enter in one of its text boxes sends nothing (only Approve and Ctrl+Enter
+     approve), where the browser would otherwise press Approve with the value half typed. #}
+  <button type="submit" disabled hidden aria-hidden="true" tabindex="-1"></button>
   <input type="hidden" name="grids" value="1">
   <input type="hidden" name="reader_at" value="{{ draft.reader_at }}">
   <input type="hidden" name="taught" value="{{ taught_json | tojson | forceescape }}" data-taught>

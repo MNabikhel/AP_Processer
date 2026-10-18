@@ -9,17 +9,23 @@ The data comes from the route in `ap_coder/web/pages`; the HTML builders called 
 
 ## Interface
 - base.html blocks: `title`, `head` (a page's CSS), `header`, `heading`, `subtitle`, `aside`, `content`, `scripts` (a page's script). Context from `render()`: page, meta, title, rail, reviewer, flashes, banner, settings...
-- Macros other templates import: `_sheet.html` (upload_form, preview, columns), `_tiles.html` (tile_row), `_invoice_live.html` (summary, checks, amounts, reasons, suggest, po, taxcheck, posting, bar, reader), `_invoice_lines.html` (line_rows, tax_rows...).
+- Macros other templates import: `_sheet.html` (upload_form, preview, columns), `_tiles.html` (tile_row), `_invoice_live.html` (conf, head, summary, status_block, checks, amounts, reasons, suggest, po, taxcheck, posting_table, posting, bar, reader), `_invoice_lines.html` (line_rows, tax_rows...).
 - pages/invoice.py also calls `_invoice_live.html` and `_invoice_lines.html` macros alone (`.module`) to answer /check, the grid actions and /reader with HTML pieces.
 
 ## Gotchas and decisions
 - Autoescape is on: never `|safe` or `Markup` text from an invoice or a file. `ui.*` (only the `_UI_HTML` names in core.py) and the charts escape their input.
-- Every change is a `<form method="post">`; app.js sends it with `X-AP-Coder: 1`. Add `data-confirm="..."` to ask first. A GET form only filters or sorts.
+- A change is a `<form method="post">`; app.js sends it with `X-AP-Coder: 1`. Add `data-confirm="..."` to ask first. A GET form only filters or sorts.
+  Except: invoice.js posts /check, /teach, /vendor and the grid actions itself, and exports.js the layout preview.
 - Nothing from the internet: CSS and scripts come from /static, fonts from /fonts, the icon from /assets. The Azure URLs in settings_azure.html and partials/azure_check.html are placeholder text.
-- Load a page's CSS or script with `?v={{ static_version }}`; only base.html's app.js has none (page scripts import "./app.js", the same URL).
+- Load a page's CSS or script with `?v={{ static_version }}`; only js/app.js and js/invoice_viewer.js have none (imported as "./app.js" and
+  "./invoice_viewer.js", the same URL); every static file is served `Cache-Control: no-cache`, so a browser checks them again (B-111).
 - A new page template needs its `Page` in pages/__init__.py PAGES, so `render()` finds its title and rail entry.
 - Settings tabs are `settings_<tab>.html`, included by settings.html from the tab key: a new tab needs its file, an entry in pages/settings.py TABS, its context in `settings_tab()`, and static/js/settings.js TABS (old #tab links).
 - sales_tax.html says "$100 or more ($30 before 2021)": keep it in step with taxreturn.document_threshold (B-19, tests/test_taxreturn.py::test_registration_number_needed_from_100_dollars_since_2021).
+
+### Bug lessons
+From docs/BUGS.md (one line each; the entry has the repro and the fix).
+- B-112: Don't let a form whose submit button approves be submitted by Enter in a text field. `tests/test_web_invoice.py::test_in_a_browser_enter_in_a_review_field_never_approves`
 
 ## Files
 - `base.html`: the layout every page extends (rail, header, flashes, banner, toasts, app.js).

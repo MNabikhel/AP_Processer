@@ -19,6 +19,8 @@ from ap_coder import statements as stm
 from ap_coder.store import Store
 from ap_coder.web.core import done, get_store, invoice_dir, money, refuse, render, reviewer
 from ap_coder.web.files import (
+    _MAX_BYTES,
+    TOO_BIG,
     SheetError,
     download,
     keep_upload,
@@ -142,7 +144,10 @@ def statements_emailed(request: Request, entry_id: str, n: int, vendor: str = Fo
     path = inbox.file_of(invoice_dir(get_store(request)), entry_id, n)
     if path is None:
         return refuse("That statement is no longer in the invoices folder.")
-    content = path.read_bytes()
+    with path.open("rb") as fh:  # an email's attachment: capped like an upload before anything reads it (W2-01)
+        content = fh.read(_MAX_BYTES + 1)
+    if len(content) > _MAX_BYTES:
+        return refuse(TOO_BIG)
     try:
         read_sheet(path.name, content)
     except SheetError as exc:

@@ -48,6 +48,27 @@ def test_controls_report_lists_the_exceptions(tmp_path):
     assert earlier["approvals"] == 0 and "None: no error was overridden." in controls.report_html(earlier)
 
 
+def test_controls_setup_section_counts_every_setup_change(tmp_path):
+    """Vendors added or deleted, the ERP register cleared, an invoice deleted, history imported and a lesson retired
+    or restored are all changes to setup, vendors or learning that the controls report lists."""
+    store = Store(tmp_path / "a.db")
+    store.add_vendor_here("Acme", gst="123456789RT0001", actor="Jane")
+    store.delete_vendors(["acme"], actor="Jane")
+    store.clear_erp_register(actor="Jane")
+    store.delete_invoice(store.add_invoice(tmp_path / "a.pdf", _gt("A"), {}), actor="Sam")
+    store.import_history([{"vendor_name": "Acme", "description": "Paper", "gl_code": "6000"}], actor="Sam")
+    with store._conn() as conn:
+        conn.execute("INSERT INTO lessons (situation, vendor_key, vendor_name, field, created_at, updated_at) "
+                     "VALUES ('acme|invoice|gl|', 'acme', 'Acme', 'gl', '2026-10-01', '2026-10-01')")  # fmt: skip
+        lesson = conn.execute("SELECT id FROM lessons").fetchone()[0]
+    store.retire_lesson(lesson, actor="Sam")
+    store.retire_lesson(lesson, actor="Sam", retired=False)
+    today = dt.date.today()
+    setup = {e["action"] for e in controls.build(store, today - dt.timedelta(days=1), today)["setup"]}
+    assert setup >= {"vendor_added", "vendors_deleted", "erp_register_imported", "deleted", "history_imported",
+                     "lesson_retired", "lesson_restored"}  # fmt: skip
+
+
 def test_watch_picks_new_settled_files_only(tmp_path):
     store = Store(tmp_path / "a.db")
     inbox = tmp_path / "inbox"

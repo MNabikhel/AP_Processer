@@ -109,6 +109,34 @@ def test_labels_csv_is_formula_safe_and_reads_back_the_same(tmp_path):
     assert not unreviewed and docs["inv"]["vendor_name"] == evil
 
 
+def test_labels_keep_quantities_and_unit_prices_unrounded(tmp_path):
+    """Ground truth is not rounded on the way out: unit price 0.125 and quantity 41.237 read back as they were."""
+    lines = [
+        {"line_number": 1, "description": "Screws", "quantity": 10000, "unit_price": 0.125, "amount": 1250.0},
+        {"line_number": 2, "description": "Fuel", "quantity": 41.237, "unit_price": 1.659, "amount": 68.41},
+    ]
+    out = _prediction(tmp_path, line_items=lines)
+    for name in ("labels.csv", "labels.xlsx"):
+        dest = tmp_path / name
+        labels.export_labels(out, dest)
+        if name.endswith(".csv"):
+            rows = list(csv.DictReader(io.StringIO(dest.read_text(encoding="utf-8-sig"))))
+            for row in rows:
+                row["reviewed"] = "Y"
+            with dest.open("w", newline="", encoding="utf-8-sig") as fh:
+                writer = csv.DictWriter(fh, fieldnames=list(rows[0]))
+                writer.writeheader()
+                writer.writerows(rows)
+        else:
+            wb = load_workbook(dest)
+            for r in range(2, wb["Labels"].max_row + 1):
+                wb["Labels"].cell(r, 1).value = "Y"
+            wb.save(dest)
+        docs, _ = labels.load_labels(dest)
+        got = [(li["quantity"], li["unit_price"], li["amount"]) for li in docs["inv"]["line_items"]]
+        assert got == [(10000, 0.125, 1250), (41.237, 1.659, 68.41)], name
+
+
 # --- The .env settings file -------------------------------------------------------------------------------------
 
 

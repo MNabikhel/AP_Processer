@@ -24,9 +24,13 @@ LINE_FIELDS = ("amount", "predicted_gl_code", "predicted_cost_center")
 AMOUNT_TOLERANCE = 0.01
 
 
+# Letters Unicode does not decompose: dropped with the accents, "Œuvres" became "uvres".
+_LIGATURES = str.maketrans({"œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ß": "ss"})
+
+
 def _norm_text(value: Any) -> str:
-    """Letters and digits only, accents folded to plain letters ("Ltée" -> "ltee")."""
-    decomposed = unicodedata.normalize("NFKD", str(value or ""))
+    """Letters and digits only, accents folded to plain letters ("Ltée" -> "ltee", "Cœur" -> "coeur")."""
+    decomposed = unicodedata.normalize("NFKD", str(value or "").translate(_LIGATURES))
     return re.sub(r"[^0-9a-z]", "", "".join(c for c in decomposed if not unicodedata.combining(c)).lower())
 
 

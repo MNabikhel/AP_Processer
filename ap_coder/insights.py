@@ -1,4 +1,4 @@
-"""Insights for the business case: volume, straight-through rate, time saved and Azure cost.
+"""Insights: the business case (volume, straight-through rate, time saved, Azure cost), operations, workload.
 
 Everything is computed from data AP Coder already keeps (invoices, their processing metadata with page
 counts and token usage, and the audit trail of approvals). Time and price figures are *assumptions* the

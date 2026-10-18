@@ -23,6 +23,8 @@ import pandas as pd
 from fastapi import UploadFile
 from fastapi.responses import Response
 
+from ap_coder import triage
+
 SHEET_TYPES = (".csv", ".xlsx", ".xls")
 NONE = ""  # the value of "(none)" in a column choice
 PREVIEW_ROWS = 5
@@ -34,6 +36,11 @@ CANNOT_READ = (
 NOT_A_SHEET = "Upload a CSV or Excel file (.csv or .xlsx)."
 NO_ROWS = "This file has no rows under its header line."
 GONE = "That upload is no longer here (uploads are kept for an hour). Upload the file again."
+TOO_BIG_UNZIPPED = (
+    "This workbook unzips to far more than its size on disk (over 50 MB, or one sheet over 20 MB), so it is not "
+    "opened: it may be damaged. Export fewer rows, or save it as CSV UTF-8 and upload that."
+)
+TOO_BIG = "This file is larger than 50 MB. Export fewer rows, or only the columns needed."
 
 
 # --- Downloads ---------------------------------------------------------------------------------------------------
@@ -52,7 +59,7 @@ def download(data: bytes, name: str, mime: str) -> Response:
 
 _TTL = 3600  # seconds an upload waits
 _MAX = 24  # uploads kept at most (the oldest go first)
-_MAX_BYTES = 50 * 1024 * 1024
+_MAX_BYTES = 50 * 1024 * 1024  # an uploaded file, and an emailed statement read for the Statements page
 
 
 @dataclass(frozen=True)
@@ -101,7 +108,7 @@ async def receive_sheet(file: UploadFile) -> tuple[str, str]:
         return "", NOT_A_SHEET
     content = await file.read(_MAX_BYTES + 1)
     if len(content) > _MAX_BYTES:
-        return "", "This file is larger than 50 MB. Export fewer rows, or only the columns needed."
+        return "", TOO_BIG
     try:
         read_sheet(name, content)
     except SheetError as exc:
@@ -116,13 +123,23 @@ class SheetError(ValueError):
     """A spreadsheet that cannot be read; the message says what to do, in plain words."""
 
 
+def read_excel(content: bytes, sheet_name: int | None = None) -> Any:
+    """``pd.read_excel`` of an uploaded or emailed workbook, as every page reads one: text cells exactly as typed ("NA"
+    and "NULL" stay text, W2-04), and the workbook's unzipped sizes checked before pandas opens it (W2-01, the limits
+    of triage, B-63). ``sheet_name``: None for every sheet ({name: DataFrame}), 0 for the first (one DataFrame).
+    Raises SheetError (TOO_BIG_UNZIPPED) for a workbook that unzips to too much."""
+    if triage.sheet_unzips_too_big(content):
+        raise SheetError(TOO_BIG_UNZIPPED)
+    return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name, dtype=str, keep_default_na=False, na_filter=False)
+
+
 def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.DataFrame, list[str]]:
     """(the sheet as text cells, the workbook's sheet names) of an uploaded CSV or Excel file. ``sheet``: the
     workbook sheet to read (default the first). Semicolon CSVs and Windows-1252 CSVs (Excel's "CSV") are read too."""
     names: list[str] = []
     try:
         if name.lower().endswith((".xlsx", ".xls")):
-            sheets = pd.read_excel(io.BytesIO(content), sheet_name=None, dtype=str)
+            sheets = read_excel(content)
             names = [str(n) for n in sheets]
             if not names:
                 raise SheetError(CANNOT_READ)

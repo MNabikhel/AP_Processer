@@ -22,7 +22,7 @@ from ap_coder.web.core import invoice_dir
 
 from .conftest import SAMPLE_STEM, SAMPLES
 from .test_web_invoice import check, form_of
-from .webclient import add_clean, client_for, follow, gt, post
+from .webclient import add_clean, client_for, follow, gt, known_vendors, post
 
 
 @pytest.fixture
@@ -198,6 +198,7 @@ def test_a_suggested_gl_codes_a_line_just_added(client, store):
 
 def test_bulk_approve_keeps_an_earlier_approvers_corrections(client, store):
     """A reopened invoice is shown with what its approver approved: bulk approval posts that, not the AI's."""
+    known_vendors(store, SAMPLE_STEM, "chinook_AB_GST_CCO-26-10418", "laurentides_QC_TPS_TVQ_SIL-4471")
     reopened = add_clean(store)
     others = [add_clean(store, "chinook_AB_GST_CCO-26-10418"), add_clean(store, "laurentides_QC_TPS_TVQ_SIL-4471")]
     fixed = copy.deepcopy(store.get_invoice(reopened)["ai_output"])

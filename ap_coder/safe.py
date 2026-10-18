@@ -48,6 +48,12 @@ def neutralise_sheet(ws: Any) -> None:
 _CURRENCY = re.compile(r"(?i)(cad|usd|eur|\$|€|£)")
 
 
+def _thousands(text: str, sep: str) -> bool:
+    """Whether ``text`` is digits in real thousands groups: 1-3 digits (not 0) first, then threes ("1,234,567";
+    not "0,125", "1,2345" or "12.50.00")."""
+    return re.fullmatch(rf"[1-9]\d{{0,2}}(?:{re.escape(sep)}\d{{3}})+", text) is not None
+
+
 def parse_amount(value: Any) -> float | None:
     """A number from a spreadsheet cell as people write it: "1,234.50", "1 234,56 $", "(150.00)",
     "150.00-", "99.00 CR", "-$150", "150,00". None when it is not a number (or NaN / infinite)."""
@@ -70,17 +76,21 @@ def parse_amount(value: Any) -> float | None:
         negative, text = True, text[1:]
     elif text.startswith("+"):
         text = text[1:]
-    if "," in text and "." in text:  # the last separator is the decimal mark
-        text = text.replace(".", "").replace(",", ".") if text.rfind(",") > text.rfind(".") else text.replace(",", "")
-    elif "," in text:  # "150,00" is a decimal comma; "1,234" and "1,234,567" are thousands
-        whole, _, decimals = text.rpartition(",")
-        text = (
-            f"{whole.replace(',', '')}.{decimals}"
-            if text.count(",") == 1 and len(decimals) in (1, 2)
-            else text.replace(",", "")
-        )
-    elif text.count(".") > 1:  # "1.234.567" thousands
-        text = text.replace(".", "")
+    if "," in text and "." in text:  # the last separator is the decimal mark, the other the thousands one
+        mark = "," if text.rfind(",") > text.rfind(".") else "."
+        whole, _, decimals = text.rpartition(mark)
+        group = "." if mark == "," else ","
+        if group in whole and not _thousands(whole, group):
+            return None  # "12,34.50": not real thousands
+        text = f"{whole.replace(group, '')}.{decimals}"
+    elif "," in text or "." in text:
+        sep = "," if "," in text else "."
+        if _thousands(text, sep) and (sep == "," or text.count(".") > 1):  # "1,234", "1,234,567", "1.234.567"
+            text = text.replace(sep, "")
+        elif text.count(sep) == 1:  # "150,00", "0,125", "1,2345": a decimal comma ("1.5" as it is)
+            text = text.replace(",", ".")
+        else:  # "12.50.00", "01.02.2026": not a number
+            return None
     try:
         number = float(text)
     except ValueError:

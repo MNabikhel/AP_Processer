@@ -429,7 +429,7 @@ def pid_alive(pid: int) -> bool:
     except OSError:
         return False
     try:  # a zombie (ended, not reaped yet) is not running
-        return " Z " not in Path(f"/proc/{pid}/stat").read_text()
+        return " Z " not in Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
     except OSError:
         return True
 
@@ -644,7 +644,7 @@ def scenario(sha: str, how: str, where: str, bundle: Path, work: Path, port: int
     for window in range(max(windows, 1) if how != "cli" else 0):  # (a second window: start.sh twice, next port)
         log = work / f"old-dashboard{window or ''}.log"
         run(me("start", str(old), "--how", how, "--log", str(log)), env=online)  # (the double-click installs too)
-        pids.append(int(Path(f"{log}.pid").read_text()))
+        pids.append(int(Path(f"{log}.pid").read_text(encoding="ascii")))
         STARTED.append(pids[-1])
         old_ports = [p for p in range(8501, 8511) if streamlit_answers(p)]
     run(me("seed", str(old), "--how", how, "--out", str(work / "before.json")), env=online)

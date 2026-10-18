@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from ap_coder import page_reader, page_worker, verifier
 from ap_coder.capture.types import CHECK
 from ap_coder.pipeline import InvoicePipeline
@@ -89,6 +91,16 @@ def test_the_time_cap_stops_it():
 def test_an_answer_it_cannot_give_is_unsure():
     found = verifier.review(Script(RuntimeError("cut off at the token limit")), SHOWN)
     assert found.status == verifier.UNSURE and "cut off" in found.why
+
+
+def test_an_outage_on_the_first_question_is_not_an_answer():
+    from ap_coder.inference import CodingError
+
+    with pytest.raises(CodingError):
+        verifier.review(Script(CodingError("The local model isn't answering", temporary=True)), SHOWN)
+    # Answered once, then out of time on the second look: that is its verdict (not sure).
+    late = verifier.review(Script(_answer(confident=False), CodingError("took longer", temporary=True)), SHOWN)
+    assert late.status == verifier.UNSURE and late.rounds == 2 and "took longer" in late.why
 
 
 def test_an_item_left_unanswered_is_not_confident():
@@ -380,6 +392,55 @@ def test_no_chat_model_leaves_it_in_line(store, touchless, monkeypatch):  # noqa
     done = verifier.verify_one(_settings(), store, coder=FakeCoder(vision=False))
     assert done.status == "postponed" and store.verification(result.invoice_id)["status"] == "waiting"
     assert "can't see pages" in store.verification(result.invoice_id)["error"]
+
+
+class DownCoder(FakeCoder):
+    """LM Studio stopped (or one call ran out of time) after the model was found: every call fails as the real
+    coder's does."""
+
+    def __init__(self, failure):
+        super().__init__()
+        self.failure = failure
+
+    def _local_create(self, model, messages, schema=None, *, thinking=False, timeout=None):
+        import httpx
+        import openai
+
+        from ap_coder.inference import InvoiceCoder
+
+        request = httpx.Request("POST", "http://127.0.0.1:9/v1/chat/completions")
+        exc = openai.APITimeoutError(request) if self.failure == "timeout" else openai.APIConnectionError(
+            request=request)  # fmt: skip
+        raise InvoiceCoder._local_error(self, exc, timeout)
+
+
+@pytest.mark.parametrize("failure", ["stopped", "timeout"])
+def test_the_servers_outage_is_not_the_reviewers_verdict(store, touchless, monkeypatch, failure):  # noqa: F811
+    """The chat model not answering the first question is no review: the invoice stays in line, held, with no
+    VERIFIER_UNSURE; after MAX_TRIES such outages it leaves the line as failed (put in line again, it starts over)."""
+    iid = _held_for_the_reviewer(store, monkeypatch)
+    for attempt in range(1, verifier.MAX_TRIES):
+        done = verifier.verify_one(_settings(), store, coder=DownCoder(failure))
+        row = store.verification(iid)
+        assert done.status == "postponed" and row["status"] == "waiting" and row["tries"] == attempt
+        inv = store.get_invoice(iid)
+        assert inv["meta"]["capture"].get("verifier_hold") and "verifier" not in inv["meta"]
+        assert not any(i["code"].startswith("VERIFIER") for i in inv["validation"]["issues"])
+    done = verifier.verify_one(_settings(), store, coder=DownCoder(failure))
+    assert done.status == "failed" and store.verification(iid)["status"] == "failed"
+    assert store.get_invoice(iid)["meta"]["capture"].get("verifier_hold")  # never approved without the review
+    assert store.queue_verification(iid) and store.verification(iid)["tries"] == 0
+
+
+def test_the_reviewer_is_shown_the_math(store):  # noqa: F811
+    """The stored proposal carries gl_distribution, which the coding model refuses: the math is still worked out."""
+    iid = InvoicePipeline(_settings(), store.reference_data(), store=store).process(PDF).invoice_id
+    output = store.get_invoice(iid)["ai_output"]
+    assert "gl_distribution" in output
+    shown = verifier.proposal(output, None)
+    assert shown.get("math") and all(row.startswith(("OK", "WRONG")) for row in shown["math"])
+    assert "the math worked out again" in verifier.question(shown, ["grand_total"], [], None)
+    assert '"math"' in verifier.question(shown, ["grand_total"], [], None)
 
 
 def test_with_the_reviewer_off_nothing_waits_for_it(store, touchless, monkeypatch):  # noqa: F811

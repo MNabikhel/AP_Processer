@@ -301,3 +301,40 @@ def test_the_review_and_export_pages_do_not_ask_the_database_once_per_invoice(tm
     add(10)
     many = [connections(url) for url in pages]
     assert many == few
+
+
+def test_the_vendor_detail_does_not_ask_the_database_once_per_invoice(tmp_path, monkeypatch):
+    """W2-03 (B-10 again): the vendor detail drafted its "ask the vendor" emails with one get_invoice per
+    invoice in the queue, each with its own database connection."""
+    import sqlite3
+
+    from ap_coder import store as store_mod
+    from ap_coder.store import load_sample_setup
+
+    from .webclient import add_clean, client_for
+
+    db = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(db)
+    client = client_for(db)
+    real = sqlite3.connect
+    opened: list[str] = []
+
+    def counting(*args, **kwargs):
+        opened.append(str(args[0]))
+        return real(*args, **kwargs)
+
+    def connections() -> int:
+        key = db.vendor_summaries()[0]["vendor_key"]
+        assert client.get(f"/vendors?open={key}").status_code == 200  # warm up
+        monkeypatch.setattr(store_mod.sqlite3, "connect", counting)
+        opened.clear()
+        assert client.get(f"/vendors?open={key}").status_code == 200
+        monkeypatch.setattr(store_mod.sqlite3, "connect", real)
+        return len(opened)
+
+    for i in range(2):
+        add_clean(db, invoice_number=f"NW-{i}")
+    few = connections()
+    for i in range(2, 12):
+        add_clean(db, invoice_number=f"NW-{i}")
+    assert connections() == few

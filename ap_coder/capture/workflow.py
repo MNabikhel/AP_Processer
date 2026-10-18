@@ -284,7 +284,8 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
 
     ``bulk``: approved in bulk, without anyone opening it. Its corrections (made earlier, on a reopened or sent-back
     invoice) still count, but an untouched bulk approval does not count as a clean invoice towards touchless
-    processing: nobody checked its fields. Returns what was learned ({"supplier", "name", "fields", "corrected":
+    processing: nobody checked its fields. For the same reason, a value of it AP kept does not count towards the
+    local calibration of confidence (a value AP corrected still does: a person changed it). Returns what was learned ({"supplier", "name", "fields", "corrected":
     [fields], "counted", "template"}), for ``taught_message``."""
     learned: dict[str, Any] = {"supplier": "", "name": "", "fields": 0, "corrected": [], "counted": False,
                                "template": False}  # fmt: skip
@@ -295,7 +296,10 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
 
     record_lessons(store, invoice_id, inv.get("ai_output") or {}, final, actor)  # per situation (never raises)
     try:
-        store.record_reader_outcomes(invoice_id, reader_outcome_rows(store.get_capture(invoice_id), final))
+        reader_rows = reader_outcome_rows(store.get_capture(invoice_id), final)
+        if bulk:  # nobody checked a value AP kept: scored on the Readers tab, but no proof for the calibration
+            reader_rows = [{**r, "evidence": ""} if r.get("correct") else r for r in reader_rows]
+        store.record_reader_outcomes(invoice_id, reader_rows)
     except Exception as exc:  # learning must never block an approval
         log.warning("invoice %s: reader outcomes not recorded (%s)", invoice_id, exc)
     name = final.get("vendor_name") or ""

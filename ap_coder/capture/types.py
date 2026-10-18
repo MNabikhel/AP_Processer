@@ -128,6 +128,7 @@ class DocLayout:
     pages: list[PageLayout]
     source: str  # "text" | "ocr" | "di" | "mixed"
     pages_left_out: int = 0  # the file's pages past the pages read (``build_layout`` reads at most ``max_pages``)
+    pages_unread_locally: int = 0  # of the pages here, the ones OCR failed on: kept empty, never read
 
     def words(self) -> Iterator[Word]:
         for page in self.pages:
@@ -217,7 +218,7 @@ class CaptureResult:
     checks: list[dict[str, Any]] = field(default_factory=list)
     layout_source: str = ""
     page_count: int = 0  # the file's pages, read or not
-    pages_left_out: int = 0  # of them, the pages the local readers did not read (past the first 20)
+    pages_left_out: int = 0  # of them, the pages the local readers did not read (past the first 20, or OCR failed)
     credit_note: bool = False  # titled as a credit note: a person applies it, whatever the sign of its total
 
     def to_dict(self) -> dict[str, Any]:

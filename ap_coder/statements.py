@@ -154,7 +154,7 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
     dates = []
     day_first = day_first_order([str(get(rec, "date") or "") for rec in records])
     # A description is free text ("14/2 NMD90 wire", "Brass check valves"): a payment word in it makes a line a
-    # payment only when no invoice has its number. A Type column is believed as it is.
+    # payment only when no invoice has its number, or the amount's sign says so (below). A Type column is believed.
     free_text = "type" in columns and _norm(columns["type"]) not in TYPE_HEADERS
     for rec in records:
         raw_number = str(get(rec, "number") or "").strip()
@@ -174,7 +174,17 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         if date:
             dates.append(date)
         key = norm_invoice_number(raw_number)
-        if not key or (_PAYMENT_WORDS.search(kind) and not (free_text and by_number.get(key))):
+        paid = bool(_PAYMENT_WORDS.search(kind))
+        if paid and free_text and by_number.get(key):
+            # Statements often print the invoice's number on its payment line: with a payment word it is the
+            # payment when its sign is the opposite of the invoices with that number ("Brass check valves" billed
+            # again stays an invoice). With no amount, only when every invoice with that number is matched already.
+            same_number = by_number[key]
+            if amount is None:
+                paid = all(i["id"] in seen for i in same_number)
+            else:
+                paid = all(amount * (i["grand_total"] or 0) < 0 for i in same_number)
+        if not key or paid:
             result.lines.append(Line(PAYMENT, raw_number, date, amount, note=kind_text or "no invoice number"))
             continue
         candidates = [i for i in by_number.get(key, []) if i["id"] not in seen]

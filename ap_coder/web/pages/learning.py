@@ -1,4 +1,4 @@
-"""Learning & accuracy, in three tabs (``?tab=coding|suppliers|readers``):
+"""Learning & accuracy, in four tabs (``?tab=coding|suppliers|lessons|readers``; Lessons: corrections per situation):
 
 * Coding accuracy: accuracy against the 90% target, by week (an SVG line), recent lessons, accuracy by vendor, the
   most common corrections, the memory (every lesson, with the option to forget some) and teaching from past coding
@@ -34,6 +34,7 @@ from ap_coder.reference_data import short_name
 from ap_coder.store import APPROVED, Store
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
 from ap_coder.web.core import TARGET_ACCURACY, done, get_store, reference_or_none, refuse, render, reviewer
+from ap_coder.web.files import SheetError, read_excel
 
 router = APIRouter()
 
@@ -133,7 +134,7 @@ def read_sheets(name: str, data: bytes) -> dict[str, tuple[list[str], list[dict[
     frames: dict[str, Any] = {}
     try:
         if name.lower().endswith((".xlsx", ".xls")):
-            frames = pd.read_excel(io.BytesIO(data), sheet_name=None, dtype=str)
+            frames = read_excel(data)
         else:
             for encoding in ("utf-8-sig", "cp1252"):  # Excel "CSV" exports are often Windows-1252
                 try:
@@ -142,6 +143,8 @@ def read_sheets(name: str, data: bytes) -> dict[str, tuple[list[str], list[dict[
                     break
                 except UnicodeDecodeError:
                     continue
+    except SheetError:  # a workbook that unzips to too much: its message says so
+        raise
     except Exception as exc:  # noqa: BLE001 - empty, damaged or not a spreadsheet at all
         raise ValueError(
             "This file could not be read as a spreadsheet: it may be empty, damaged or another format. In Excel, save "
