@@ -4,6 +4,7 @@ field, OvisOCR2's queue, and the page's protections."""
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import re
 from dataclasses import replace
@@ -761,11 +762,21 @@ def _drag_across_the_top(page):
 def test_in_a_browser_the_popovers_open_inside_a_phone_screen(browser, store):
     """390 px wide: Park, Reject and Split a line open where they can be read and their buttons reached, not past the
     left edge of the screen (where nothing scrolls to them)."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
     page, errors = _open_review(browser, store, "Cascade", viewport={"width": 390, "height": 844})
     for summary in (".inv-actionbar summary[title^='Set it aside']", ".inv-actionbar summary[title^='Not ours']",
                     "[data-split] > summary"):  # fmt: skip
         page.locator(summary).scroll_into_view_if_needed()
         page.click(summary)
+        # app.js places it on "toggle", which the browser fires a moment after the click: wait for that, then check
+        # where it is (B-125).
+        with contextlib.suppress(PlaywrightTimeout):
+            page.wait_for_function(
+                "() => { const r = document.querySelector('details[open] > .pop-body').getBoundingClientRect();"
+                " return r.left >= 0 && r.right <= 390; }",
+                timeout=2000,
+            )
         box = page.locator("details[open] > .pop-body").bounding_box()
         assert box["x"] >= 0 and box["x"] + box["width"] <= 390, (summary, box)
         page.keyboard.press("Escape")
