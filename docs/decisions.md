@@ -55,3 +55,4 @@ that is reversed keeps its line, marked "replaced by D-NN".
 ## Working on the code
 
 - **D-31** · Every bug gets a failing test first, then the fix, and an entry in docs/BUGS.md with its lesson; a suspicion that cannot be reproduced is logged as N-NN and left. Why: a fix without a test comes back; a blind fix breaks something else. (docs/BUGS.md, `CLAUDE.md`)
+- **D-32** · The codebase map is checked, not only asked for: `scripts/check_map.py` fails CI on a stale index, a Depends on / Used by line that the imports contradict, an interface name that no longer exists or a bug lesson missing from its folder; a hook reminds after each edit; the map-reviewer agent checks a change's Used-by folders. Why: a map nobody checks goes stale, and a stale map misleads more than none. (`scripts/check_map.py`, `.claude/`, `.github/workflows/ci.yml`)

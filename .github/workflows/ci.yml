@@ -37,6 +37,30 @@ jobs:
       - name: Tests
         run: python -m pytest -q
 
+  codebase-map:
+    # The codebase map (every folder's CLAUDE.md): its indexes, Depends on / Used by and interface names match the
+    # code, every bug's lesson is in its folder; and a folder whose code changed without its map is named (a warning).
+    name: Codebase map
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the base branch too, to see which folders changed
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the map
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # A pull request: its base branch. A push to main: the commit before the push (main itself would be HEAD).
+          base="origin/${GITHUB_BASE_REF:-main}"
+          if [ -z "$GITHUB_BASE_REF" ] && [ "$GITHUB_REF_NAME" = "main" ]; then
+            base="$BEFORE"
+            git cat-file -e "$base^{commit}" 2>/dev/null || base="HEAD~1"
+          fi
+          python scripts/check_map.py --changed "$base"
+
   windows-installer:
     # The installer (APProcessor.bat --installer) on a clean Windows machine, then a second run.
     name: Installer on Windows

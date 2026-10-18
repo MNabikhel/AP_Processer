@@ -2,17 +2,25 @@
 
     python scripts/check_map.py                 # the whole map (CI): errors fail, warnings are printed
     python scripts/check_map.py --changed BASE  # also: folders whose code changed since BASE but whose map didn't
+    python scripts/check_map.py --modules       # write ap_coder/MODULES.md (the flat core's module index) again
     python scripts/check_map.py --hook          # Claude Code hook (PostToolUse on Edit/Write): a reminder only
 
-What is checked, for every folder git tracks (except the ones in SKIP):
+What is checked, for every folder git tracks or that holds new files not yet added (except the ones in SKIP):
 1. it has a CLAUDE.md, of at most MAX_LINES lines (over WARN_LINES: a warning, the folder may do too much);
 2. its "## Files" index names every file and sub-folder in it, and nothing that isn't there;
 3. for a Python package: its "**Depends on:**" and "**Used by:**" lines name exactly the folders its modules import
-   and the folders that import it (from the code, ``import`` and ``from ... import``, inside functions too);
-4. every name in backticks followed by ``()`` in the "## Interface" section is defined in the folder's code;
+   and the folders that import it (from the code, ``import`` and ``from ... import``, inside functions too). Only
+   packages under ap_coder/ count: scripts/ and tests/ import the core but aren't named in its Used by (MODULES.md
+   lists the scripts that import each module);
+4. every name in backticks followed by ``()`` in the "## Interface" section exists: `name()` (x.py) in x.py,
+   `name()` in the folder's code (or anywhere, for a folder with no code), `mod.name()` / `Class.name()` in that
+   module or class;
 5. every bug in docs/BUGS.md (B-NN) has its lesson in the "### Bug lessons" list of the folder its fix is in (the
-   folder of the first path of its **Where:** line). That list is not counted in the size limit: one line per bug.
-With --changed: a folder whose code changed but whose CLAUDE.md didn't is a warning (an interface change updates it).
+   folder of the first path of its **Where:** line). That list is not counted in the size limit: one line per bug;
+6. ap_coder/MODULES.md (the flat core's module index: each module's job and the modules that import it, made by
+   ``--modules``) is up to date: a folder too big for one CLAUDE.md still says, module by module, what breaks where.
+With --changed: a folder whose code changed but whose CLAUDE.md didn't is a warning (an interface change updates it);
+a base git can't compare with (a shallow clone, a typo) is a warning too, never a silent pass.
 
 Only the standard library: it runs before anything is installed, offline.
 """
@@ -39,8 +47,17 @@ PACKAGE_ROOTS = ("ap_coder",)
 
 
 def tracked() -> list[PurePosixPath]:
-    out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
-    return [PurePosixPath(p) for p in out.decode("utf-8").split("\0") if p]
+    """The files git tracks, plus new ones not yet added (a new module is checked before its commit), minus the
+    ones deleted but not yet removed from git."""
+    out = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=ROOT,
+                         capture_output=True, check=True).stdout  # fmt: skip
+    names = {p for p in out.decode("utf-8").split("\0") if p}
+    return [PurePosixPath(p) for p in sorted(names) if (ROOT / p).is_file()]
+
+
+def source(path: PurePosixPath) -> ast.Module:
+    """The parsed module, read as Python reads it (from bytes, so a UTF-8 byte-order mark is allowed)."""
+    return ast.parse((ROOT / path).read_bytes())
 
 
 def folders(files: list[PurePosixPath]) -> dict[str, list[PurePosixPath]]:
@@ -85,7 +102,7 @@ def module_of(path: PurePosixPath) -> str:
 
 def imports(path: PurePosixPath, modules: set[str]) -> set[str]:
     """The project modules ``path`` imports (resolved to modules that exist)."""
-    tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    tree = source(path)
     here = module_of(path)
     package = here if path.name == "__init__.py" else here.rpartition(".")[0]
     found: set[str] = set()
@@ -98,7 +115,8 @@ def imports(path: PurePosixPath, modules: set[str]) -> set[str]:
                 target = ".".join(base + ([node.module] if node.module else []))
             else:
                 target = node.module or ""
-            names = [f"{target}.{a.name}" for a in node.names] + [target]
+            # ``from pkg import mod`` imports pkg.mod (a module), ``from mod import name`` imports mod
+            names = [f"{target}.{a.name}" if f"{target}.{a.name}" in modules else target for a in node.names]
         else:
             continue
         for name in names:
@@ -129,17 +147,71 @@ def folder_graph(files: list[PurePosixPath]) -> tuple[dict[str, set[str]], dict[
     return uses, used_by
 
 
+MODULES = "ap_coder/MODULES.md"
+
+
+def module_index(files: list[PurePosixPath]) -> str:
+    """The flat core's module index: each ``ap_coder/*.py`` module, the first line of its docstring, and every
+    project module that imports it (sub-packages and scripts/; tests aside)."""
+    py = [f for f in files if f.suffix == ".py" and f.parts[0] in PACKAGE_ROOTS]
+    modules = {module_of(f): f for f in py}
+    importers: dict[str, set[str]] = defaultdict(set)
+    for f in py + [f for f in files if f.suffix == ".py" and f.parts[0] == "scripts"]:
+        for m in imports(f, set(modules)):
+            if m != module_of(f):
+                importers[m].add(module_of(f))
+    rows = []
+    for f in sorted(f for f in py if len(f.parts) == 2):
+        mod = module_of(f)
+        doc = ast.get_docstring(source(f)) or ""
+        first = " ".join(doc.strip().split("\n\n")[0].split())
+        first = first if len(first) <= 110 else first[:107].rsplit(" ", 1)[0] + "..."
+        users = sorted(u.removeprefix("ap_coder.").replace(".", "/") for u in importers.get(mod, ()))
+        rows.append(f"| `{f.name}` | {first.replace('|', '/')} | {', '.join(users) or '(entry point)'} |")
+    return (
+        "# ap_coder: module index (generated)\n\n"
+        "Made by `python scripts/check_map.py --modules`; CI fails when it is out of date. For each module of the\n"
+        "flat core: its job (its docstring's first lines) and every module that imports it, so a change can be\n"
+        "followed to its callers. `web/pages/review` is `ap_coder/web/pages/review.py`.\n\n"
+        "| Module | Job | Imported by |\n|---|---|---|\n" + "\n".join(rows) + "\n"
+    )
+
+
 def defined_names(files: list[PurePosixPath]) -> set[str]:
-    names: set[str] = set()
+    return set().union(*(names_in(f) for f in files)) if files else set()
+
+
+def names_in(f: PurePosixPath) -> set[str]:
+    """The functions and classes (methods too) one .py or .js file defines."""
+    if f.suffix == ".py":
+        kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        return {n.name for n in ast.walk(source(f)) if isinstance(n, kinds)}
+    text = (ROOT / f).read_text(encoding="utf-8-sig", errors="replace")
+    return set(re.findall(r"(?:function\s+|const\s+|let\s+|class\s+)([A-Za-z_$][\w$]*)", text))
+
+
+def class_members(files: list[PurePosixPath]) -> dict[str, set[str]]:
+    """Every Python class -> the names defined in its body (methods, nested classes)."""
+    out: dict[str, set[str]] = defaultdict(set)
     for f in files:
-        text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
         if f.suffix == ".py":
-            for node in ast.walk(ast.parse(text)):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    names.add(node.name)
-        elif f.suffix == ".js":
-            names |= set(re.findall(r"(?:function\s+|const\s+|let\s+|class\s+)([A-Za-z_$][\w$]*)", text))
-    return names
+            for node in ast.walk(source(f)):
+                if isinstance(node, ast.ClassDef):
+                    out[node.name] |= {n.name for n in ast.walk(node) if n is not node and hasattr(n, "name")}
+    return out
+
+
+def qualified_ok(qualifier: str, called: str, code: list[PurePosixPath], members: dict[str, set[str]]) -> bool:
+    """`mod.name()` / `Class.name()`: the qualifier is a module (file or package) that defines name, or a class
+    that has it."""
+    last = qualifier.rpartition(".")[2]
+    if called in members.get(last, set()):
+        return True
+    for f in code:
+        stem = f.parent.name if f.stem == "__init__" else f.stem
+        if stem == last and called in names_in(f):
+            return True
+    return False
 
 
 def bug_folders() -> dict[str, set[str]]:
@@ -174,7 +246,9 @@ def check(changed_since: str | None = None) -> tuple[list[str], list[str]]:
         for parent in list(f.parents)[:-1]:
             subfolders[str(parent.parent)].add(parent.name)
     bugs = bug_folders()
-    everywhere = defined_names([f for f in files if f.suffix in (".py", ".js") and not _skipped(str(f.parent))])
+    code = [f for f in files if f.suffix in (".py", ".js")]
+    everywhere = defined_names(code)
+    members = class_members(code)
     errors: list[str] = []
     warnings: list[str] = []
     for folder, here in sorted(by_folder.items()):
@@ -218,27 +292,47 @@ def check(changed_since: str | None = None) -> tuple[list[str], list[str]]:
         for bug in sorted(listed - set(bugs.get(folder, ()))):
             errors.append(f"{where}: ### Bug lessons lists {bug}, which docs/BUGS.md doesn't place in {folder}/")
         # 4. Interface names that exist.
-        names = defined_names(here)
-        for qualifier, called in re.findall(r"`(?:([\w.]+)\.)?(\w+)\(\)`", section(text, "Interface")):
-            if (
-                qualifier and "." not in qualifier and called in everywhere
-            ):  # e.g. `capture.luhn_ok()`: another folder's
+        code_here = [f for f in here if f.suffix in (".py", ".js")]
+        names = defined_names(code_here)
+        for m in re.finditer(r"`(?:([\w.]+)\.)?(\w+)\(\)`(?:\s*\((\w+\.(?:py|js))\b)?", section(text, "Interface")):
+            qualifier, called, in_file = m.groups()
+            if qualifier:  # `mailbox.unpack_folder()`, `InvoicePipeline.process()`: a module or a class anywhere
+                if not qualified_ok(qualifier, called, code, members):
+                    errors.append(f"{where}: ## Interface names `{qualifier}.{called}()`, which no module or class "
+                                  "of that name defines")  # fmt: skip
                 continue
-            if names and called not in names and not (qualifier and called in everywhere):
+            named = [f for f in code_here if f.name == in_file]
+            if named and called not in names_in(named[0]):
+                errors.append(f"{where}: ## Interface names `{called}()` ({in_file}), not defined in {in_file}")
+            elif not code_here and called not in everywhere:
+                errors.append(f"{where}: ## Interface names `{called}()`, defined nowhere in the project")
+            elif code_here and called not in names:
                 errors.append(f"{where}: ## Interface names `{called}()`, not defined in {folder}/")
+    if (ROOT / MODULES).is_file() and (ROOT / MODULES).read_text(encoding="utf-8") != module_index(files):
+        errors.append(f"{MODULES} is out of date: run python scripts/check_map.py --modules")
+    elif not (ROOT / MODULES).is_file() and (ROOT / "ap_coder").is_dir():
+        errors.append(f"{MODULES} is missing: run python scripts/check_map.py --modules")
     if changed_since:
         warnings += stale(changed_since, by_folder)
     return errors, warnings
 
 
-def changed_files(base: str) -> list[PurePosixPath]:
+def changed_files(base: str) -> list[PurePosixPath] | None:
+    """Files changed since ``base`` (committed, staged, not yet staged, or new); None when git can't compare."""
     out = subprocess.run(["git", "diff", "--name-only", f"{base}...HEAD"], cwd=ROOT, capture_output=True, text=True)
     work = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=ROOT, capture_output=True, text=True)
-    return [PurePosixPath(p) for p in {*out.stdout.split(), *work.stdout.split()}]
+    new = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=ROOT, capture_output=True,
+                         text=True)  # fmt: skip
+    if out.returncode or work.returncode:
+        return None
+    return [PurePosixPath(p) for p in {*out.stdout.split(), *work.stdout.split(), *new.stdout.split()}]
 
 
 def stale(base: str, by_folder: dict[str, list[PurePosixPath]]) -> list[str]:
     changed = changed_files(base)
+    if changed is None:
+        return [f"--changed {base}: git can't compare with {base} (unknown name, or a shallow clone: fetch the full "
+                "history), so changed folders were not checked"]  # fmt: skip
     touched_maps = {str(p.parent) for p in changed if p.name == MAP}
     code = {str(p.parent) for p in changed if p.suffix in CODE and p.name != MAP and str(p.parent) in by_folder}
     note = (f"its code changed but its {MAP} didn't: if an interface, a dependency or a file changed, update it and "
@@ -252,11 +346,14 @@ def hook() -> int:
         event = json.load(sys.stdin)
     except ValueError:
         return 0
-    path = Path(str((event.get("tool_input") or {}).get("file_path") or ""))
+    tool_input = event.get("tool_input") if isinstance(event, dict) else None
+    path = Path(str((tool_input if isinstance(tool_input, dict) else {}).get("file_path") or ""))
     try:
         rel = PurePosixPath(path.resolve().relative_to(ROOT).as_posix())
     except ValueError:
         return 0
+    if rel.parts[:2] == (".claude", "worktrees") and len(rel.parts) > 3:  # an agent's worktree: its own copy
+        rel = PurePosixPath(*rel.parts[3:])
     if rel.suffix not in CODE or rel.name == MAP or _skipped(str(rel.parent)):
         return 0
     doc = rel.parent / MAP
@@ -273,6 +370,13 @@ def main(argv: list[str]) -> int:
         return 0
     if "--hook" in argv:
         return hook()
+    if "--modules" in argv:
+        (ROOT / MODULES).write_text(module_index(tracked()), encoding="utf-8", newline="\n")
+        print(f"wrote {MODULES}")
+        return 0
+    if "--changed" in argv and argv.index("--changed") + 1 >= len(argv):
+        print("--changed needs a base to compare with, e.g. --changed origin/main")
+        return 2
     base = argv[argv.index("--changed") + 1] if "--changed" in argv else None
     errors, warnings = check(base)
     for w in warnings:
