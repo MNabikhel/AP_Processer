@@ -1,8 +1,8 @@
 """Demo mode: the sample invoices in the queue as if Azure had coded them, and removable again."""
 
-from ap_coder import cli
-from ap_coder.demo import DEMO_INVOICES, is_demo, load_demo, remove_demo
-from ap_coder.store import APPROVED, REVIEW, Store
+from ap_coder.core.store import APPROVED, REVIEW, Store
+from ap_coder.ops import cli
+from ap_coder.ops.demo import DEMO_INVOICES, is_demo, load_demo, remove_demo
 
 
 def test_demo_fills_the_queue_once_and_teaches(tmp_path):

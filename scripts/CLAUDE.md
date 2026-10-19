@@ -6,7 +6,7 @@ the map checker. The app itself (`python -m ap_coder serve` and the rest) is in 
 Offline by default: the bundle builder downloads (it sets `AP_ALLOW_INTERNET=1` for itself); the setup downloads from PyPI
 only from the code alone (GitHub's ZIP or a checkout, no bundle; `AP_ALLOW_INTERNET=0` stops it) or with `AP_ALLOW_INTERNET=1`.
 
-**Depends on:** `ap_coder` (paths, envfile, offline, config, store, doctor, cli, local_llm, page_reader, page_worker, pipeline, reference_data, capture)
+**Depends on:** `ap_coder/core` (paths, envfile, config, store, reference_data), `ap_coder/ops` (offline, doctor, cli), `ap_coder/ai` (local_llm, page_reader, page_worker, pipeline), `ap_coder/capture`
 **Used by:** the root launchers (`APProcessor.bat`, `APProcessor.command` run launch.py), `.github/workflows`, `tests`, `.claude` (the hook runs check_map.py)
 
 ## Interface
@@ -35,7 +35,7 @@ only from the code alone (GitHub's ZIP or a checkout, no bundle; `AP_ALLOW_INTER
 ## Gotchas and decisions
 - launch.py, running.py, upgrade.py, check_deps.py, fetch_models.py, check_map.py and install.py run before any package
   is installed: at the top they import only the standard library (check_deps.py: plus pip's `packaging`) and
-  `ap_coder`'s standard-library modules (paths, envfile, offline); anything else is imported inside a function, after setup.
+  `ap_coder`'s standard-library modules (core/paths, core/envfile, ops/offline); anything else is imported inside a function, after setup.
 - Never two versions on one database: a start calls `take_over()` (`run()` in launch.py) before packages, data or models are touched.
 - `.venv` is made once and kept (made again only when broken or made with a Python the bundle has no packages for); packages are installed only when missing or too old; the shortcut is rewritten, never added.
 - `prune_stale()` removes only files under the manifest's own folders and AP Coder's retired top-level files; the

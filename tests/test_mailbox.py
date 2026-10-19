@@ -4,7 +4,7 @@ import time
 from email.message import EmailMessage
 from unittest.mock import patch
 
-from ap_coder.mailbox import MAX_FORWARD_DEPTH, attachments, emails_in, safe_name, unpack, unpack_folder
+from ap_coder.intake.mailbox import MAX_FORWARD_DEPTH, attachments, emails_in, safe_name, unpack, unpack_folder
 
 
 def _email(subject="Invoice INV-1"):
@@ -112,7 +112,7 @@ def test_an_email_that_cannot_be_read_is_filed_away_and_the_others_unpacked(tmp_
     (tmp_path / "b good.eml").write_bytes(_email().as_bytes())
     (tmp_path / "c huge.eml").write_bytes(b"x" * 3_000_000)
     later = time.time() + 60
-    with patch("ap_coder.mailbox.MAX_EMAIL_BYTES", 2_000_000):  # a smaller limit than the real one, for the test
+    with patch("ap_coder.intake.mailbox.MAX_EMAIL_BYTES", 2_000_000):  # a smaller limit than the real one, for the test
         deep, good, huge = unpack_folder(tmp_path, now=later)
     assert deep.error.startswith("could not be read") and "forwarded inside each other" in deep.error
     assert "larger than" in huge.error and good.error == "" and len(good.saved) == 2
@@ -122,7 +122,7 @@ def test_an_email_that_cannot_be_read_is_filed_away_and_the_others_unpacked(tmp_
 
 def test_any_other_error_in_one_email_is_filed_away_too(tmp_path):
     (tmp_path / "odd.eml").write_bytes(_email().as_bytes())
-    with patch("ap_coder.mailbox.read_eml", side_effect=LookupError("unknown encoding")):
+    with patch("ap_coder.intake.mailbox.read_eml", side_effect=LookupError("unknown encoding")):
         (odd,) = unpack_folder(tmp_path, now=time.time() + 60)
     assert odd.error == "could not be read: it is damaged (LookupError)"
     assert (tmp_path / "emails" / "could not read" / "odd.eml").exists()
@@ -150,9 +150,9 @@ def test_a_long_chinese_email_and_attachment_name_still_fit_one_file_name(tmp_pa
 def test_an_email_that_cannot_be_moved_is_logged_once(tmp_path):
     """An email open in Outlook stays in the folder and is sorted again at the next check: it is logged once it has
     moved, not once per check."""
-    from ap_coder import inbox
-    from ap_coder.mailbox import triage_log
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
+    from ap_coder.intake import inbox
+    from ap_coder.intake.mailbox import triage_log
 
     store = Store(tmp_path / "a.db")
     path = tmp_path / "locked.eml"
@@ -182,7 +182,7 @@ def test_an_email_of_thousands_of_tiny_parts_is_refused_before_it_is_parsed():
     """Parsing costs about 86 µs a part, all before the 500-part cap: 100 MB of tiny parts would take minutes."""
     import pytest
 
-    from ap_coder.mailbox import UnreadableEmail, read_eml
+    from ap_coder.intake.mailbox import UnreadableEmail, read_eml
 
     parts = "".join("--b\nContent-Type: text/plain\n\nx\n" for _ in range(6000))
     raw = f'From: a@b.example\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="b"\n\n{parts}--b--\n'

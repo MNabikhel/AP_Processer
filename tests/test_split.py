@@ -5,10 +5,10 @@ import json
 import pandas as pd
 import pytest
 
-from ap_coder.config import Settings
-from ap_coder.pipeline import finalise_coding
-from ap_coder.review import coding_from_inputs, split_line
-from ap_coder.store import Store, load_sample_setup
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.coding.review import coding_from_inputs, split_line
+from ap_coder.core.config import Settings
+from ap_coder.core.store import Store, load_sample_setup
 
 from .conftest import SAMPLE_STEM, SAMPLES
 from .webclient import client_for, draft_form, follow, post

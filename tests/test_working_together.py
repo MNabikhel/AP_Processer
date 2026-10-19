@@ -4,13 +4,13 @@ import json
 
 import pytest
 
-from ap_coder import cli
-from ap_coder.config import Settings
-from ap_coder.doctor import FAIL, PASS, SKIP, WARN, format_checks, run_checks
-from ap_coder.evaluation import evaluate
-from ap_coder.labels import export_labels, load_labels
-from ap_coder.reference_data import load_table
-from ap_coder.share_report import build_share_report
+from ap_coder.ai.evaluation import evaluate
+from ap_coder.ai.labels import export_labels, load_labels
+from ap_coder.core.config import Settings
+from ap_coder.core.reference_data import load_table
+from ap_coder.ops import cli
+from ap_coder.ops.doctor import FAIL, PASS, SKIP, WARN, format_checks, run_checks
+from ap_coder.ops.share_report import build_share_report
 
 from .conftest import SAMPLE_STEM, SAMPLES, FakeOpenAI, make_completion
 
@@ -135,8 +135,8 @@ def test_inserted_row_inherits_document(tmp_path):
 
 
 def test_share_report_is_redacted(tmp_path, settings, reference, ground_truth, sample_markdown_path):
-    from ap_coder.inference import InvoiceCoder
-    from ap_coder.pipeline import InvoicePipeline, write_outputs
+    from ap_coder.ai.inference import InvoiceCoder
+    from ap_coder.ai.pipeline import InvoicePipeline, write_outputs
 
     pipe = InvoicePipeline(
         settings,
@@ -170,7 +170,7 @@ def test_share_report_failure_category_hides_message(tmp_path):
 
 
 def test_share_report_failure_category_never_prints_a_file_name():
-    from ap_coder.share_report import _failure_category
+    from ap_coder.ops.share_report import _failure_category
 
     error = "Acme Holdings invoice 4471 truncated.pdf can't be opened as a PDF: the file is damaged or incomplete."
     assert _failure_category(error) == "output_truncated"
@@ -179,8 +179,8 @@ def test_share_report_failure_category_never_prints_a_file_name():
 
 def test_share_report_on_a_database_with_demo_invoices(tmp_path):
     """Demo invoices recorded no table count: a KeyError half-way, after the key file was already written."""
-    from ap_coder.demo import load_demo
-    from ap_coder.store import Store, load_sample_setup
+    from ap_coder.core.store import Store, load_sample_setup
+    from ap_coder.ops.demo import load_demo
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
@@ -194,7 +194,7 @@ def test_share_report_on_a_database_with_demo_invoices(tmp_path):
 
 
 def test_share_report_that_fails_leaves_no_key_file(tmp_path, monkeypatch):
-    from ap_coder import share_report
+    from ap_coder.ops import share_report
 
     out = tmp_path / "out"
     out.mkdir()
@@ -210,7 +210,7 @@ def test_share_report_that_fails_leaves_no_key_file(tmp_path, monkeypatch):
 
 
 def test_doctor_offline_never_prints_secrets(reference):
-    from ap_coder.config import DocumentIntelligenceSettings, OpenAISettings
+    from ap_coder.core.config import DocumentIntelligenceSettings, OpenAISettings
 
     s = Settings(
         document_intelligence=DocumentIntelligenceSettings(endpoint="https://secret-di.example", api_key="k-di-123"),
@@ -244,7 +244,7 @@ def test_doctor_large_chart_falls_back_from_enums(tmp_path):
     coa.write_text("gl_code,name\n" + "".join(f"{i},Account {i}\n" for i in range(600)))
     cc = tmp_path / "cc.csv"
     cc.write_text("cost_center,name\nCC1,Ops\n")
-    from ap_coder.reference_data import load_reference_data
+    from ap_coder.core.reference_data import load_reference_data
 
     checks = run_checks(Settings(), lambda: load_reference_data(coa, cc))
     coa_check = next(c for c in checks if c.area == "GL accounts")

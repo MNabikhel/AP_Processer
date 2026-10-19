@@ -2,7 +2,7 @@
 
 The only network it may use is this computer (its own dashboard on 127.0.0.1, LM Studio on localhost), and the Azure
 check's endpoint once AP switched that check on in Settings. Developers and the bundle builder opt in to the internet
-with AP_ALLOW_INTERNET=1 (ap_coder/offline.py).
+with AP_ALLOW_INTERNET=1 (ap_coder/ops/offline.py).
 
 * A static audit: every module that can open a connection is listed here with what keeps it on this computer; a new
   one fails the test until it is added (with its gate). Pages, styles and scripts name no other host.
@@ -36,8 +36,9 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder import local_llm, offline
-from ap_coder.config import LocalLLMSettings, Settings
+from ap_coder.ai import local_llm
+from ap_coder.core.config import LocalLLMSettings, Settings
+from ap_coder.ops import offline
 
 from . import offline_flow
 from . import offline_guard as guard_module
@@ -95,15 +96,16 @@ def test_the_guard_reaches_a_python_subprocess(tmp_path):
 TOUCHPOINTS = {
     "ap_coder/web/server.py": "urllib to its own /healthz on 127.0.0.1 (no proxy); webbrowser opens that address",
     "ap_coder/web/security.py": "socket.gethostname/getfqdn: only when AP_DASHBOARD_ADDRESS=0.0.0.0 (office network)",
-    "ap_coder/local_llm.py": "LM Studio on this computer or network (no proxy); a server on the internet only with "
+    "ap_coder/ai/local_llm.py": "LM Studio on this computer or network (no proxy); a server on the internet only with "
     "AP_ALLOW_INTERNET=1",
-    "ap_coder/page_reader.py": "OvisOCR2 in LM Studio: same gate as local_llm",
-    "ap_coder/inference.py": "Azure OpenAI only with AP_ALLOW_INTERNET=1 (local_llm.resolve_provider); else LM Studio",
-    "ap_coder/extraction.py": "Azure Document Intelligence client: AP_ALLOW_INTERNET=1, or the Azure check's client",
-    "ap_coder/azure_check.py": "Azure Document Intelligence: only switched on in Settings, only its endpoint host "
+    "ap_coder/ai/page_reader.py": "OvisOCR2 in LM Studio: same gate as local_llm",
+    "ap_coder/ai/inference.py": "Azure OpenAI only with AP_ALLOW_INTERNET=1 (local_llm.resolve_provider); else LM "
+    "Studio",
+    "ap_coder/ai/extraction.py": "Azure Document Intelligence client: AP_ALLOW_INTERNET=1, or the Azure check's client",
+    "ap_coder/ai/azure_check.py": "Azure Document Intelligence: only switched on in Settings, only its endpoint host "
     "(only_host)",
-    "ap_coder/doctor.py": "doctor --online: Azure only with AP_ALLOW_INTERNET=1; LM Studio as local_llm",
-    "ap_coder/offline.py": "import_azure: imports only; free_port binds and connects on this computer's dashboard "
+    "ap_coder/ops/doctor.py": "doctor --online: Azure only with AP_ALLOW_INTERNET=1; LM Studio as local_llm",
+    "ap_coder/ops/offline.py": "import_azure: imports only; free_port binds and connects on this computer's dashboard "
     "address (no proxy)",
     "ap_coder/web/pages/settings.py": "git log -1 on this checkout (no network)",
     "scripts/launch.py": "pip --no-index from the wheelhouse (PyPI only with AP_ALLOW_INTERNET=1); socket binds "
@@ -194,9 +196,9 @@ def test_python_written_html_names_no_other_host():
             for url in re.findall(r"https?://[A-Za-z][^\s\"'<>)]*", line):
                 if url.startswith(_NAMESPACES) or re.match(r"https?://(localhost|127\.0\.0\.1)\b", url):
                     continue
-                if rel == "ap_coder/offline.py" and "modelscope.cn" in url:
+                if rel == "ap_coder/ops/offline.py" and "modelscope.cn" in url:
                     continue  # the models' origin, for the bundle builder (fetch_models: AP_ALLOW_INTERNET=1)
-                if rel == "ap_coder/inference.py" and "cognitiveservices.azure.com/.default" in url:
+                if rel == "ap_coder/ai/inference.py" and "cognitiveservices.azure.com/.default" in url:
                     continue  # Azure OpenAI's sign-in scope (AP_ALLOW_INTERNET=1 only)
                 problems.append(f"{rel}:{number}: {url}")
     assert not problems, "\n".join(problems)
@@ -227,7 +229,7 @@ def test_a_model_server_on_the_internet_is_never_asked(offline_guard, real_fetch
     with pytest.raises(openai.APIConnectionError) as refused:
         client.models.list()
     assert "AP_ALLOW_INTERNET" in str(refused.value.__cause__ or refused.value)
-    from ap_coder import page_reader
+    from ap_coder.ai import page_reader
 
     with pytest.raises(page_reader.PageReaderError, match="AP_ALLOW_INTERNET"):
         page_reader._post_json("https://api.example.com/api/v1/models/load", {}, "key", 1.0)
@@ -255,7 +257,7 @@ def test_with_the_opt_in_a_model_server_on_the_internet_is_asked(offline_guard, 
 
 
 def _azure_store(tmp_path):
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
 
     return Store(tmp_path / "private" / "ap_coder.db")
 
@@ -263,7 +265,7 @@ def _azure_store(tmp_path):
 def test_the_azure_check_sends_nothing_until_it_is_switched_on(offline_guard, tmp_path, monkeypatch):
     """Endpoint and key saved but the check off: "Test connection" and the background check send nothing. Switched
     on, only the endpoint's host is contacted (here the guard stops it)."""
-    from ap_coder import azure_check
+    from ap_coder.ai import azure_check
 
     _bait(monkeypatch)
     installed = azure_check.packages_installed()
@@ -420,7 +422,7 @@ def _dashboard(settings: Settings, store):
 def _approve_one(app, base: str) -> tuple[int | None, list[str]]:
     """Approve one invoice on its review screen, as the page posts it: its coding, with an account and a cost center
     picked for the lines left for AP (as a reviewer does)."""
-    from ap_coder.store import REVIEW
+    from ap_coder.core.store import REVIEW
     from ap_coder.web import invoice_view
     from ap_coder.web.invoice_view import Draft
 
@@ -461,7 +463,7 @@ def _approve_one(app, base: str) -> tuple[int | None, list[str]]:
 def test_the_dashboard_in_this_process_never_reaches_the_internet(
     offline_guard, real_fetch, tmp_path, monkeypatch, lm_studio
 ):
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
 
     _bait(monkeypatch)
     fake = offline_flow.FakeLMStudio() if lm_studio else None

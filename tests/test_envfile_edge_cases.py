@@ -2,8 +2,8 @@
 
 import pytest
 
-from ap_coder.config import Settings
-from ap_coder.envfile import read_env, write_env
+from ap_coder.core.config import Settings
+from ap_coder.core.envfile import read_env, write_env
 
 
 def test_a_byte_order_mark_does_not_hide_the_first_setting(tmp_path, monkeypatch):
@@ -45,7 +45,7 @@ def test_a_setting_written_below_its_commented_example_is_the_one_changed(tmp_pa
 
 def test_a_data_folder_set_with_quotes_on_windows_is_the_folder(tmp_path, monkeypatch):
     # cmd's  set AP_PRIVATE_DIR="C:\Users\me\OneDrive - Acme\AP"  keeps the quotes in the value.
-    from ap_coder import paths
+    from ap_coder.core import paths
 
     folder = tmp_path / "OneDrive - Acme" / "AP"
     monkeypatch.setenv("AP_PRIVATE_DIR", f' "{folder}" ')

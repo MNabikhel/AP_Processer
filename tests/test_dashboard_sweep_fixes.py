@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ap_coder.store import Store, load_sample_setup
+from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.core import STATIC_DIR
 
 from .conftest import SAMPLE_STEM, SAMPLES
@@ -208,8 +208,8 @@ def test_insights_charge_no_cloud_cost_for_invoices_read_and_coded_on_this_compu
     """The offline build sends nothing to Azure, yet Insights priced the tokens LM Studio (or the demo) recorded at
     Azure's rates: "Cloud cost / invoice $0.040 · Azure, measured on 10 invoices", and a cloud cost taken off the
     business case's net benefit."""
-    from ap_coder.demo import load_demo
-    from ap_coder.insights import compute
+    from ap_coder.erp.insights import compute
+    from ap_coder.ops.demo import load_demo
 
     load_demo(store)
     assert compute(store)["cost_per_invoice_cad"] is None

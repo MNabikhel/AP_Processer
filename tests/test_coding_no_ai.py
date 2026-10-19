@@ -5,14 +5,14 @@ from __future__ import annotations
 
 import json
 
-from ap_coder import suggest
+from ap_coder.ai import suggest
+from ap_coder.ai.line_match import PREFIX, Index, keys, similarity, word_match
+from ap_coder.ai.offline_coder import code_from_capture
+from ap_coder.ai.suggest import suggest_gl
 from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
-from ap_coder.line_match import PREFIX, Index, keys, similarity, word_match
-from ap_coder.memory import aggregate, tokens, vendor_key
-from ap_coder.offline_coder import code_from_capture
-from ap_coder.reference_data import UNASSIGNED
-from ap_coder.store import Store
-from ap_coder.suggest import suggest_gl
+from ap_coder.core.memory import aggregate, tokens, vendor_key
+from ap_coder.core.reference_data import UNASSIGNED
+from ap_coder.core.store import Store
 
 
 def _history(*decisions: tuple[str, str, str]) -> list[dict]:

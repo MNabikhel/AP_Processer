@@ -8,11 +8,11 @@ import pymupdf
 import pytest
 from PIL import Image, ImageDraw
 
+from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.capture import layout, table_finder
 from ap_coder.capture.types import Box
-from ap_coder.config import Settings
-from ap_coder.pipeline import InvoicePipeline
-from ap_coder.store import Store
+from ap_coder.core.config import Settings
+from ap_coder.core.store import Store
 
 LINES = [
     ([[20, 20], [300, 20], [300, 40], [20, 40]], "Northwind Supplies Ltd.", 0.98),

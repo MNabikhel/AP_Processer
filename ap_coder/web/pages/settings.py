@@ -6,7 +6,7 @@ Back works; ``/settings`` is the Reading tab. The Reading, Automation and JD Edw
 (``settings_reading.py``, ``settings_automation.py``, ``settings_jde.py``), included here.
 
 Values that belong to the computer (review threshold, Azure endpoints...) are written to the ``.env`` with the same
-functions as before (``ap_coder.envfile``) and applied to the running dashboard at once; values that belong to the
+functions as before (``ap_coder.core.envfile``) and applied to the running dashboard at once; values that belong to the
 data (approval limit, exchange rates, backups...) are kept in the database's settings. Every change is logged.
 """
 
@@ -25,10 +25,12 @@ import fastapi
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-from ap_coder import __version__, lessons, paths, ui
-from ap_coder.envfile import one_line, read_env, write_env
-from ap_coder.store import Store, unread_fx_text
-from ap_coder.tax import PROVINCE_NAMES
+from ap_coder import __version__
+from ap_coder.ai import lessons
+from ap_coder.coding.tax import PROVINCE_NAMES
+from ap_coder.core import paths, ui
+from ap_coder.core.envfile import one_line, read_env, write_env
+from ap_coder.core.store import Store, unread_fx_text
 from ap_coder.web.core import (
     data_dir,
     done,

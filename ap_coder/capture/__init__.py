@@ -296,7 +296,7 @@ def text_layer_check(layout: DocLayout, page_text: list[str], fields: dict[str, 
     didn't see are marked Check."""
     from decimal import Decimal
 
-    from ..figures import compare_figures, figures
+    from ..ai.figures import compare_figures, figures
 
     # Page by page, the pages the page reader read only (one it found blank, or didn't reach, is left out of both).
     pairs = [(page, text) for page, text in zip(layout.pages, page_text, strict=False) if (text or "").strip()]

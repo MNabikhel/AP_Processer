@@ -9,9 +9,9 @@ import time
 
 import pytest
 
-from ap_coder import page_reader, page_worker, reading
-from ap_coder.reading import ReaderLine, ReadingStatus
-from ap_coder.store import Store, load_sample_setup
+from ap_coder.ai import page_reader, page_worker, reading
+from ap_coder.ai.reading import ReaderLine, ReadingStatus
+from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.pages import settings_reading
 from ap_coder.web.pages.settings import TAB_KEYS
 
@@ -332,7 +332,7 @@ def test_the_banner_shows_on_the_process_page_from_the_cache(client, status):
 
 
 def test_the_banner_shows_on_the_review_queue_with_a_link_to_settings(client, store, status):
-    from ap_coder.demo import load_demo
+    from ap_coder.ops.demo import load_demo
 
     load_demo(store)
     status.now = broken()
@@ -359,8 +359,8 @@ def test_the_banner_is_not_on_other_pages(client, status):
 
 def _invoice(store, queued=True):
     """One sample invoice processed, in OvisOCR2's queue (``queued``) or not."""
-    from ap_coder.page_worker import TEST_KEY
-    from ap_coder.pipeline import InvoicePipeline
+    from ap_coder.ai.page_worker import TEST_KEY
+    from ap_coder.ai.pipeline import InvoicePipeline
 
     load_sample_setup(store)
     store.set_setting(TEST_KEY, json.dumps({"model": MODEL, "ok": True, "fields_right": 9, "fields_total": 9}))

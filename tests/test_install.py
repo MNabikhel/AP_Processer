@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder import paths
-from ap_coder.config import Settings
+from ap_coder.core import paths
+from ap_coder.core.config import Settings
 
 ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("ap_install", ROOT / "scripts" / "install.py")
@@ -55,7 +55,7 @@ def _forget_env_after_test(monkeypatch, text):
 
 def test_installer_env_has_no_example_endpoints(tmp_path, monkeypatch):
     """The .env the installer writes never points the app at an example Azure endpoint: it stays offline."""
-    from ap_coder.local_llm import resolve_provider
+    from ap_coder.ai.local_llm import resolve_provider
 
     env = tmp_path / ".env"
     install.write_example_env(env)
@@ -69,7 +69,7 @@ def test_installer_env_has_no_example_endpoints(tmp_path, monkeypatch):
 
 def test_example_endpoints_left_in_an_older_env_count_as_unset(tmp_path, monkeypatch):
     """A .env written by an older installer still has the example endpoints in effect: the app ignores them."""
-    from ap_coder.local_llm import resolve_provider
+    from ap_coder.ai.local_llm import resolve_provider
 
     env = tmp_path / ".env"
     env.write_text(

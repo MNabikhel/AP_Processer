@@ -13,11 +13,11 @@ from email.message import EmailMessage
 import pymupdf
 import pytest
 
-from ap_coder import inbox, triage
 from ap_coder.bench.msgwriter import Attachment, Message, build_msg
-from ap_coder.mailbox import PERSON_FOLDER, STATEMENTS_FOLDER, read_msg_mail, triage_log, unpack, unpack_folder
-from ap_coder.msgfile import MsgError, read_msg
-from ap_coder.store import Store, load_sample_setup
+from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.intake import inbox, triage
+from ap_coder.intake.mailbox import PERSON_FOLDER, STATEMENTS_FOLDER, read_msg_mail, triage_log, unpack, unpack_folder
+from ap_coder.intake.msgfile import MsgError, read_msg
 
 from .webclient import client_for, follow, post
 
@@ -131,7 +131,7 @@ def test_a_directory_walk_reads_each_entry_once():
     """Storages that all claim the same chain of children: each entry belongs to one storage, so the walk stays as
     large as the directory instead of growing with its square."""
     from ap_coder.bench.msgwriter import _Node, compound_file
-    from ap_coder.msgfile import CompoundFile
+    from ap_coder.intake.msgfile import CompoundFile
 
     n = 200
     raw = bytearray(compound_file([_Node(f"s{i}") for i in range(n)] + [_Node(f"t{i}", b"x") for i in range(n)]))
@@ -149,7 +149,7 @@ def test_a_directory_walk_reads_each_entry_once():
 def _renumbered(raw: bytes) -> bytes:
     """The same .msg with its directory entries in reverse order (the root stays first): a storage now comes before
     the storage that holds it. The file format puts no order on entries, so this is still a valid file."""
-    from ap_coder.msgfile import CompoundFile
+    from ap_coder.intake.msgfile import CompoundFile
 
     cf, out = CompoundFile(raw), bytearray(raw)
     sectors, s = [], int.from_bytes(raw[0x30:0x34], "little")

@@ -200,7 +200,7 @@ def _vendor_name(rng: random.Random, kind: str, trade: str, lang: str) -> str:
 def make_company(seed: int, n: int) -> list[Vendor]:
     """``n`` vendors, the same for a given seed: about one in seven a utility, the rest suppliers of one trade
     (vendors of a trade overlap) plus a few other items; about a quarter print French or both languages."""
-    from ap_coder.memory import vendor_key
+    from ap_coder.core.memory import vendor_key
 
     rng = random.Random(f"ap-bench-coding:{seed}:company")
     utilities = max(1, round(n / 7)) if n >= 3 else 0
@@ -335,12 +335,12 @@ def _source(suggestion: Any) -> str:
 
 def simulate(vendors: int = 30, invoices: int = 30, seed: int = 1) -> list[dict[str, Any]]:
     """Every line of every invoice, in the order they arrived, with what was proposed and the truth."""
-    from ap_coder import rules
-    from ap_coder.memory import _normalise
-    from ap_coder.offline_coder import code_from_capture
-    from ap_coder.reference_data import UNASSIGNED, load_reference_data
-    from ap_coder.store import Store
-    from ap_coder.suggest import suggest_gl
+    from ap_coder.ai.offline_coder import code_from_capture
+    from ap_coder.ai.suggest import suggest_gl
+    from ap_coder.coding import rules
+    from ap_coder.core.memory import _normalise
+    from ap_coder.core.reference_data import UNASSIGNED, load_reference_data
+    from ap_coder.core.store import Store
     from ap_coder.web.invoice_view import suggestions
 
     reference = load_reference_data(

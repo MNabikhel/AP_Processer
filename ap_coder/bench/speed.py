@@ -31,7 +31,7 @@ DATA = Path(__file__).resolve().parents[2] / "data"
 
 
 def _reference() -> Any:
-    from ap_coder.reference_data import load_reference_data
+    from ap_coder.core.reference_data import load_reference_data
 
     return load_reference_data(
         DATA / "chart_of_accounts.csv", DATA / "cost_centers.csv", DATA / "tax_gl_mapping.csv",
@@ -79,9 +79,9 @@ def run_speed(n: int, seed: int, scanned: float, out: str | Path, history: int =
     old = os.environ.get("AP_PRIVATE_DIR")
     os.environ["AP_PRIVATE_DIR"] = str(data)  # the OCR cache, the page reader's cache: this run's own
     try:
-        from ap_coder.config import Settings
-        from ap_coder.pipeline import InvoicePipeline
-        from ap_coder.store import Store
+        from ap_coder.ai.pipeline import InvoicePipeline
+        from ap_coder.core.config import Settings
+        from ap_coder.core.store import Store
 
         store = Store(data / "ap_coder.db")
         if history:

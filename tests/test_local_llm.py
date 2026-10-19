@@ -14,11 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder import local_llm
-from ap_coder.config import LocalLLMSettings, OpenAISettings, Settings, normalise_base_url
-from ap_coder.extraction import result_from_text
-from ap_coder.inference import CodingError, InvoiceCoder
-from ap_coder.local_llm import (
+from ap_coder.ai import local_llm
+from ap_coder.ai.extraction import result_from_text
+from ap_coder.ai.inference import CodingError, InvoiceCoder
+from ap_coder.ai.local_llm import (
     check_server,
     clip_document,
     parse_json_reply,
@@ -27,6 +26,7 @@ from ap_coder.local_llm import (
     read_reply,
     resolve_provider,
 )
+from ap_coder.core.config import LocalLLMSettings, OpenAISettings, Settings, normalise_base_url
 
 from .conftest import FakeOpenAI, make_completion
 
@@ -327,8 +327,8 @@ def test_no_model_anywhere(reference, sample_markdown_path):
 def test_a_text_invoice_without_a_model_is_read_by_the_rule_reader(reference, sample_markdown_path, ground_truth):
     """A .md/.txt invoice with no AI model used to fail ("No AI model is set up"): it is read by the same rule reader
     and checks as a PDF, its text taken as exact, and coded from AP's history (none here: left for AP)."""
-    from ap_coder.offline_coder import MODEL_NAME
-    from ap_coder.pipeline import InvoicePipeline
+    from ap_coder.ai.offline_coder import MODEL_NAME
+    from ap_coder.ai.pipeline import InvoicePipeline
 
     result = InvoicePipeline(Settings(), reference).process(sample_markdown_path)
     assert result.ok, result.error
@@ -448,7 +448,7 @@ def test_vision_follows_the_loaded_model(lm_studio, reference):
 
 
 def test_doctor_reports_the_local_model(lm_studio, reference):
-    from ap_coder.doctor import PASS, SKIP, run_checks
+    from ap_coder.ops.doctor import PASS, SKIP, run_checks
 
     server = lm_studio(["qwen2.5-7b-instruct"], V0_LOADED)
     checks = {
@@ -460,7 +460,7 @@ def test_doctor_reports_the_local_model(lm_studio, reference):
 
 
 def test_doctor_local_dry_run(lm_studio, reference, ground_truth):
-    from ap_coder.doctor import PASS, run_checks
+    from ap_coder.ops.doctor import PASS, run_checks
 
     # The dry run asks what the pipeline asks a local model: the accounts of two lines.
     picks = {"lines": [{"line_number": 1, "gl_code": "6000", "cost_center": "", "reason": "supplies"},
@@ -476,7 +476,7 @@ def test_doctor_local_dry_run(lm_studio, reference, ground_truth):
 @pytest.fixture
 def no_reading_status(monkeypatch):
     """Settings → Reading with nothing known yet about the readers (OvisOCR2 not found)."""
-    from ap_coder import reading
+    from ap_coder.ai import reading
 
     monkeypatch.setattr(reading, "reading_status", lambda settings, store, use_cache=True: reading.ReadingStatus())
 
@@ -486,7 +486,7 @@ def settings_client(tmp_path, monkeypatch):
     """The dashboard reading its settings from a .env of the test's own (as it does for every page)."""
     from fastapi.testclient import TestClient
 
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
     from ap_coder.web.app import create_app
 
     env = tmp_path / "private" / ".env"
@@ -512,7 +512,7 @@ def test_settings_page_when_lm_studio_is_not_running(settings_client, no_reading
 
 def test_settings_page_lists_the_models_with_nothing_to_choose(settings_client, lm_studio, monkeypatch,
                                                                no_reading_status):  # fmt: skip
-    from ap_coder.envfile import read_env
+    from ap_coder.core.envfile import read_env
 
     client, env = settings_client
     server = lm_studio(["qwen2.5-7b-instruct", "llama-3.2-3b-instruct", "text-embedding-nomic"], V0_LOADED)
@@ -535,8 +535,8 @@ def test_settings_page_lists_the_models_with_nothing_to_choose(settings_client, 
 def test_with_a_local_model_the_reader_reads_and_the_model_codes_the_leftover_lines(lm_studio, reference):
     """A small model misreads totals and provinces; the local reader does not. So the invoice is read by the
     reader, and the model is only asked for the accounts the approval memory could not give."""
-    from ap_coder.pipeline import InvoicePipeline
-    from ap_coder.store import Store
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.core.store import Store
 
     from .conftest import SAMPLES
 
@@ -566,7 +566,7 @@ def test_with_a_local_model_the_reader_reads_and_the_model_codes_the_leftover_li
 
 
 def test_a_province_as_a_model_writes_it():
-    from ap_coder.schema import province_code
+    from ap_coder.core.schema import province_code
 
     assert province_code("Vancouver, BC") == "BC" and province_code("British Columbia") == "BC"
     assert province_code("Québec") == "QC" and province_code("Seattle, USA") == "OUTSIDE_CANADA"
@@ -609,7 +609,7 @@ def test_a_province_as_a_model_writes_it():
     ],
 )
 def test_a_province_from_an_address_or_an_old_abbreviation(written, code):
-    from ap_coder.schema import province_code
+    from ap_coder.core.schema import province_code
 
     assert province_code(written) == code
 
@@ -631,7 +631,7 @@ def thinking_reply(content, reasoning, finish="stop"):
 
 
 def ask_accounts(server, reference):
-    from ap_coder.inference import suggest_accounts
+    from ap_coder.ai.inference import suggest_accounts
 
     return suggest_accounts(InvoiceCoder(local_settings(server.base_url), reference), "Staples", TWO_LINES)
 
@@ -710,7 +710,7 @@ def test_an_answer_without_json_is_an_error_not_an_empty_suggestion(lm_studio, r
 
 
 def test_the_doctor_dry_run_names_the_thinking_problem(lm_studio, reference):
-    from ap_coder.doctor import WARN, run_checks
+    from ap_coder.ops.doctor import WARN, run_checks
 
     server = lm_studio(["qwen3.5-9b"], QWEN35_V0, reply=lambda body: thinking_reply("", "Thinking Process:", "length"))
     checks = {c.area: c for c in run_checks(local_settings(server.base_url), lambda: reference, online=True)}
@@ -734,7 +734,7 @@ def test_a_server_refusing_the_thinking_fields_is_asked_again_with_fewer(lm_stud
 
 
 def test_qwen35_can_see_pages():
-    from ap_coder.local_llm import looks_like_vision
+    from ap_coder.ai.local_llm import looks_like_vision
 
     assert looks_like_vision("qwen3.5-9b") and looks_like_vision("qwen3.5:9b") and looks_like_vision("Qwen3.5-2B")
     assert not looks_like_vision("qwen3-8b")
@@ -902,8 +902,8 @@ class _PromptCoder:
 def test_a_long_invoice_is_suggested_within_the_prompt_budget(reference):
     """300 lines with long descriptions and a big chart of accounts: every prompt fits AP_LLM_MAX_PROMPT_CHARS (the
     lines go in batches, descriptions and the chart are clipped); a normal invoice is asked as before, in one call."""
-    from ap_coder.inference import SUGGEST_BATCH_LINES, suggest_accounts
-    from ap_coder.reference_data import ReferenceTable
+    from ap_coder.ai.inference import SUGGEST_BATCH_LINES, suggest_accounts
+    from ap_coder.core.reference_data import ReferenceTable
 
     lines = [(n, f"Item {n}: " + "replacement filter cartridge, heavy duty " * 12, 10.0 * n) for n in range(1, 301)]
     coder = _PromptCoder(reference)
@@ -926,7 +926,7 @@ def test_a_long_invoice_is_suggested_within_the_prompt_budget(reference):
 
 
 def test_the_reviewers_prompt_is_bounded(reference):
-    from ap_coder import verifier
+    from ap_coder.ai import verifier
 
     output = {"vendor_name": "Staples", "grand_total": 100.0,
               "line_items": [{"line_number": n, "description": "toner " * 200, "amount": 1.0,
@@ -951,7 +951,7 @@ def test_the_reviewers_prompt_is_bounded(reference):
     ],
 )
 def test_an_internet_address_written_another_way_is_still_refused(url, monkeypatch):
-    from ap_coder.offline import INTERNET_ENV
+    from ap_coder.ops.offline import INTERNET_ENV
 
     monkeypatch.delenv(INTERNET_ENV, raising=False)
     assert local_llm.refused_address(url)
@@ -964,7 +964,7 @@ def test_an_internet_address_written_another_way_is_still_refused(url, monkeypat
      "http://studio-mac.local:1234/v1", "http://[::ffff:192.168.1.40]:1234/v1", "http://2130706433:1234/v1"],
 )  # fmt: skip
 def test_lm_studio_on_this_computer_or_the_lan_is_still_allowed(url, monkeypatch):
-    from ap_coder.offline import INTERNET_ENV
+    from ap_coder.ops.offline import INTERNET_ENV
 
     monkeypatch.delenv(INTERNET_ENV, raising=False)
     assert local_llm.refused_address(url) == ""

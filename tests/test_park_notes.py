@@ -5,9 +5,9 @@ import json
 
 import pytest
 
-from ap_coder import accruals
-from ap_coder.audit import describe
-from ap_coder.store import PARKED, REVIEW, Store, load_sample_setup
+from ap_coder.core.audit import describe
+from ap_coder.core.store import PARKED, REVIEW, Store, load_sample_setup
+from ap_coder.erp import accruals
 
 from .conftest import SAMPLE_STEM, SAMPLES
 from .webclient import client_for, follow, post

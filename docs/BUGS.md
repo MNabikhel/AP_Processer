@@ -26,7 +26,7 @@ of the code at the time of the sweep.
 ### Store and config
 
 #### B-01 · A header that spells the standard name is not renamed · medium
-- **Where:** `ap_coder/reference_data.py:63-77` (`_canonical_headers`)
+- **Where:** `ap_coder/core/reference_data.py:63-77` (`_canonical_headers`)
 - **Symptom:** a GL file with headers "GL Code" and "Active" is refused with "missing required column 'gl_code'"; an Active=no column is ignored, so retired codes reach the prompt.
 - **Cause:** when a header normalised exactly to the standard name, the loop skipped it and kept the original header text.
 - **Reproduce:** CSV `GL Code,Description,Active`, then `load_table`.
@@ -36,7 +36,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't skip the rename step for the exact standard name.
 
 #### B-02 · Doubled quotes in a CSV cell are misread · medium-low
-- **Where:** `ap_coder/csvio.py:13-23` (`_dialect`)
+- **Where:** `ap_coder/core/csvio.py:13-23` (`_dialect`)
 - **Symptom:** `"Acme ""Best"" Inc"` is read as `Acme "Best"" Inc"`.
 - **Cause:** the sniffer looked at the header line only and guessed doublequote=False.
 - **Reproduce:** a CSV with a doubled quote in a quoted cell, read with `read_csv_rows`.
@@ -46,7 +46,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't use a sniffed dialect's quoting rules after sniffing one line.
 
 #### B-03 · A re-review without a result erases the last result · medium-low
-- **Where:** `ap_coder/store.py:2599` (`finish_verification`)
+- **Where:** `ap_coder/core/store.py:2599` (`finish_verification`)
 - **Symptom:** a re-review that ends failed, waiting or skipped erases the previous result and its disputed-field issues.
 - **Cause:** `CASE WHEN ? IS NOT NULL` was given a Python bool, which is never NULL.
 - **Reproduce:** finish "done" with a result, queue again, finish "failed".
@@ -56,7 +56,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't pass a Python bool to IS NULL.
 
 #### B-04 · An accented reviewer name never counts approvals today · low
-- **Where:** `ap_coder/store.py:1203-1225` (`approved_since`)
+- **Where:** `ap_coder/core/store.py:1203-1225` (`approved_since`)
 - **Symptom:** reviewer "Élise Tremblay" always sees 0 approved today.
 - **Cause:** SQLite `lower()` only changes ASCII letters, but the name was lowered in Python.
 - **Reproduce:** approve as "Élise Tremblay", then `approved_since(today, "élise tremblay")`.
@@ -66,7 +66,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't compare non-ASCII text with SQLite `lower()`.
 
 #### B-05 · A re-created database can't take the write lock · low
-- **Where:** `ap_coder/store.py:478` (`_open`)
+- **Where:** `ap_coder/core/store.py:478` (`_open`)
 - **Symptom:** the first BEGIN IMMEDIATE on a re-created database fails.
 - **Cause:** the upgrade step's DELETE opened a transaction that was never committed.
 - **Reproduce:** delete the database file, then `delete_invoice(1, keep_approved=True)`.
@@ -76,7 +76,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't leave a setup step's changes uncommitted on a connection handed to callers.
 
 #### B-06 · Saved settings are expanded or split · low
-- **Where:** `ap_coder/config.py:204`, `ap_coder/envfile.py:58-64`
+- **Where:** `ap_coder/core/config.py:204`, `ap_coder/core/envfile.py:58-64`
 - **Symptom:** a saved secret `pa$$word ${HOME}` comes back as `pa$$word /root`; a value with a line break splits into extra settings.
 - **Cause:** `load_dotenv` expanded variables; `write_env` allowed line breaks.
 - **Reproduce:** write the key with `write_env`, then `Settings.from_env`.
@@ -86,7 +86,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't let a settings file expand or split values the user typed.
 
 #### B-07 · A CAD rate can be typed in · minor
-- **Where:** `ap_coder/store.py:223` (`parse_fx_rates`)
+- **Where:** `ap_coder/core/store.py:223` (`parse_fx_rates`)
 - **Symptom:** `CAD=1.4` is accepted and scales every CAD limit check.
 - **Cause:** CAD, the base currency, was not excluded.
 - **Reproduce:** `parse_fx_rates("CAD=1.4, USD=1.37")`.
@@ -96,7 +96,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't let the base currency's rate be overridden.
 
 #### B-08 · A setting typed with a line break gives an error page · low
-- **Where:** `ap_coder/envfile.py:58` (`one_line`), used by `save_env` in `ap_coder/web/pages/settings.py` and `save_settings` in `ap_coder/azure_check.py`
+- **Where:** `ap_coder/core/envfile.py:58` (`one_line`), used by `save_env` in `ap_coder/web/pages/settings.py` and `save_settings` in `ap_coder/ai/azure_check.py`
 - **Symptom:** once `write_env` refused line breaks (B-06), a setting sent with a line break gave a 500 from the Settings page.
 - **Cause:** the refusal was at the file writer, not where the value is typed.
 - **Reproduce:** post a Settings value that holds a line break.
@@ -106,7 +106,7 @@ of the code at the time of the sweep.
 - **Lesson:** Refuse bad input where it is typed, not with an error page.
 
 #### B-09 · A NaN total skips the second approver · medium
-- **Where:** `ap_coder/store.py:1377-1379` (`second_approval_reason`)
+- **Where:** `ap_coder/core/store.py:1377-1379` (`second_approval_reason`)
 - **Symptom:** a NaN total returns "" and the invoice is approved with no second approver.
 - **Cause:** NaN compares False with everything, so it is never "over" the limit.
 - **Reproduce:** `second_approval_reason({"grand_total": nan})` with a 10000 limit.
@@ -126,7 +126,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't call the store inside a row loop.
 
 #### B-11 · List queries fail past SQLite's variable limit · medium
-- **Where:** `ap_coder/store.py:54` (`_in_list`), used by every store query that takes a list of ids or keys
+- **Where:** `ap_coder/core/store.py:54` (`_in_list`), used by every store query that takes a list of ids or keys
 - **Symptom:** a query with a long list of ids or keys fails with "too many SQL variables" on older SQLite builds (999 variables).
 - **Cause:** each list used one `?` per item.
 - **Reproduce:** set the connection's variable limit to 999 and pass more ids than that.
@@ -138,7 +138,7 @@ of the code at the time of the sweep.
 ### Tax and coding rules
 
 #### B-12 · An old rate row left open keeps winning · high
-- **Where:** `ap_coder/tax.py:148` (`_in_force`; was `rate_for` at 139)
+- **Where:** `ap_coder/coding/tax.py:148` (`_in_force`; was `rate_for` at 139)
 - **Symptom:** if a new rate row is appended and the old row is left open, the old rate keeps winning.
 - **Cause:** `rate_for` returned the first covering row in file order.
 - **Reproduce:** add `PST SK 0.07 from 2026-07-01, no end`, then `rate_for("PST","SK",2026-09-01)`.
@@ -148,7 +148,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't let file order decide which effective-dated row wins.
 
 #### B-13 · Self-assessment uses its own place of supply · medium
-- **Where:** `ap_coder/taxreturn.py:127` (`supply_province`), plus `province()`, `build`, `self_assessment`
+- **Where:** `ap_coder/coding/taxreturn.py:127` (`supply_province`), plus `province()`, `build`, `self_assessment`
 - **Symptom:** BC PST is flagged for a BC vendor delivering to our AB site, and missed for a US vendor delivering to our BC site.
 - **Cause:** it used ship-to, then the supplier's province, and ignored the site and default provinces in TaxSetup.
 - **Reproduce:** set our province to BC and site `CCAB=AB`; approve two invoices with no ship-to.
@@ -158,7 +158,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't compute place of supply twice with different rules.
 
 #### B-14 · ERP lump-sum lines with qty 0 and price 0 raise PO alarms · medium
-- **Where:** `ap_coder/po.py:124`
+- **Where:** `ap_coder/coding/po.py:124`
 - **Symptom:** lump-sum PO lines exported as qty 0 / price 0 raise false PO_PRICE_OVER and PO_QTY_OVER.
 - **Cause:** `amount_only` was set only when qty and price were blank, not when they were 0.
 - **Reproduce:** import qty 0, price 0, total 5,000.
@@ -168,7 +168,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't treat 0 differently from blank for ERP quantities and prices.
 
 #### B-15 · French legal forms are not dropped from vendor keys · medium
-- **Where:** `ap_coder/memory.py:35,42,94`; `ap_coder/store.py:439,460`; `ap_coder/jde.py` (`from_json`)
+- **Where:** `ap_coder/core/memory.py:35,42,94`; `ap_coder/core/store.py:439,460`; `ap_coder/erp/jde.py` (`from_json`)
 - **Symptom:** "Les Entreprises ABC Limitée" doesn't match "Les Entreprises ABC"; "X, s.e.c." keys as "x sec".
 - **Cause:** the legal-form list was English only.
 - **Reproduce:** `vendor_key("Les Entreprises ABC Limitée")`.
@@ -178,7 +178,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't build the legal-form list from English only in a bilingual market.
 
 #### B-16 · A QST number without its TQ suffix counts as changed · low
-- **Where:** `ap_coder/vendors.py:85`
+- **Where:** `ap_coder/coding/vendors.py:85`
 - **Symptom:** master QST "1234567890" against invoice "1234567890 TQ 0001" raises VENDOR_QST_CHANGED.
 - **Cause:** QST numbers were compared as exact strings.
 - **Reproduce:** `tax_number_findings` with those two values.
@@ -188,7 +188,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't compare a registration number more strictly than the vendor list stores it.
 
 #### B-17 · "Net 1 month" is read as one day · low-medium
-- **Where:** `ap_coder/terms.py:62-87, 109, 129-155, 193-206`
+- **Where:** `ap_coder/coding/terms.py:62-87, 109, 129-155, 193-206`
 - **Symptom:** "Net 1 month" makes the invoice due the next day.
 - **Cause:** the first net-terms pattern read "Net 1 month" as 1 day.
 - **Reproduce:** `payment({"invoice_date":"2026-09-10","payment_terms":"Net 1 month",...}).due`.
@@ -198,7 +198,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't read a number before "month" as days.
 
 #### B-18 · "1/2%" is read as 2% · low
-- **Where:** `ap_coder/terms.py:36-45`
+- **Where:** `ap_coder/coding/terms.py:36-45`
 - **Symptom:** "1/2% 10 net 30" gives a $200 discount on $10,000 instead of $50.
 - **Cause:** two discount patterns lacked the lookbehind guard, so they matched "2%" inside "1/2%".
 - **Reproduce:** `payment(... "1/2% 10 net 30", total 10000)`.
@@ -208,7 +208,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't let a regex start matching in the middle of a number.
 
 #### B-19 · The GST number threshold is $30, not $100 · low
-- **Where:** `ap_coder/taxreturn.py:41-51, 168`; `ap_coder/web/templates/sales_tax.html`
+- **Where:** `ap_coder/coding/taxreturn.py:41-51, 168`; `ap_coder/web/templates/sales_tax.html`
 - **Symptom:** an $84 invoice from 2026 with no GST number is flagged as a claim at risk.
 - **Cause:** the threshold was a flat $30.
 - **Reproduce:** approve an $84 invoice with no number.
@@ -218,7 +218,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't hard-code a regulatory threshold without the date it applies from.
 
 #### B-20 · A rate written "0.5%" loads as 50% · low
-- **Where:** `ap_coder/tax.py:126-132`
+- **Where:** `ap_coder/coding/tax.py:126-132`
 - **Symptom:** a rate written "0.5%" loads as 0.5.
 - **Cause:** the % sign was stripped first, then `rate >= 1` decided whether to divide by 100.
 - **Reproduce:** load a CSV with `PST,BC,0.5%`.
@@ -230,7 +230,7 @@ of the code at the time of the sweep.
 ### Exports, ERP and reports
 
 #### B-21 · A JDE batch downloaded again leaves invoices out · high
-- **Where:** `ap_coder/web/pages/exports.py:69` (`jde_left_out`, `jde_file`); `ap_coder/jde.py` (`readme`, `build_zip`)
+- **Where:** `ap_coder/web/pages/exports.py:69` (`jde_left_out`, `jde_file`); `ap_coder/erp/jde.py` (`readme`, `build_zip`)
 - **Symptom:** downloading an existing JDE batch again gives an empty or short F0411Z1, but the invoices stay marked as in that batch.
 - **Cause:** every download re-ran `jde.validate` against today's settings and ERP register; once loaded, a batch's vouchers were duplicates of themselves.
 - **Reproduce:** make a JDE batch, import a register holding its invoice, download again.
@@ -240,7 +240,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't re-run gatekeeping checks when re-downloading something already committed.
 
 #### B-22 · The duplicate audit hides an unexported bill already in the ERP · medium
-- **Where:** `ap_coder/dupaudit.py:124` (`_same_bill`)
+- **Where:** `ap_coder/erp/dupaudit.py:124` (`_same_bill`)
 - **Symptom:** an approved invoice not yet exported, but keyed into the ERP by hand, produced no audit pair.
 - **Cause:** same vendor and number counted as "its own ERP entry" even when it was never exported.
 - **Reproduce:** approve NW-100, put the same vendor, number and amount in the register, run `find`.
@@ -250,7 +250,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't treat "same vendor and number" as "same bill" unless we actually sent it.
 
 #### B-23 · A formula in the JDE worksheet · medium
-- **Where:** `ap_coder/jde_worksheet.py:350`
+- **Where:** `ap_coder/erp/jde_worksheet.py:350`
 - **Symptom:** a vendor name such as `=HYPERLINK(...)` was saved as a live formula in the Suppliers sheet.
 - **Cause:** it was the only workbook writer that skipped `safe.neutralise_sheet`.
 - **Reproduce:** `build(...)` with that vendor name, then look for formula cells.
@@ -260,7 +260,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't write document text to a workbook without neutralising it.
 
 #### B-24 · The JDE duplicate check misses an earlier export known by GST number · medium
-- **Where:** `ap_coder/jde.py:724` (`an8_of`); `ap_coder/store.py` (`search_rows`)
+- **Where:** `ap_coder/erp/jde.py:724` (`an8_of`); `ap_coder/core/store.py` (`search_rows`)
 - **Symptom:** a second copy of a bill, its name read differently, went through when the first copy was exported earlier and the vendor is known only by its GST/HST number.
 - **Cause:** earlier exports carried no GST/HST number, so their AN8 was looked up by name only.
 - **Reproduce:** lookup `{"gst:<n>": "10023"}`, two names, the first copy exported.
@@ -270,7 +270,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't compare two records with lookups of different strength.
 
 #### B-25 · A payment word in a statement description makes a payment · medium
-- **Where:** `ap_coder/statements.py:158`
+- **Where:** `ap_coder/erp/statements.py:158`
 - **Symptom:** statement lines such as "14/2 NMD90 wire" or "Brass check valves" became payments, and their invoices showed as "Not on statement".
 - **Cause:** the Description column maps to `type`, and payment words were searched in that free text.
 - **Reproduce:** headers Date, Invoice, Description, Amount, with matching invoices.
@@ -280,7 +280,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't read meaning into free-text columns.
 
 #### B-26 · Excel apostrophes in the JDE Z-files · low
-- **Where:** `ap_coder/jde.py:788` (`_csv`); `docs/JDE_E1.md:60`
+- **Where:** `ap_coder/erp/jde.py:788` (`_csv`); `docs/JDE_E1.md:60`
 - **Symptom:** a 25-character `+AAA…` invoice number became `'+AAA…` cut to 25 characters; "- Labour" became `'- Labour`.
 - **Cause:** spreadsheet quoting (`csv_row`) was applied to files meant for a database loader.
 - **Reproduce:** a 25-character invoice number `+AAAA…`, then `export_batch`.
@@ -290,7 +290,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't apply Excel quoting to files meant for a database.
 
 #### B-27 · A resent copy of an exported bill is accrued · low-medium
-- **Where:** `ap_coder/accruals.py:96` (`_not_in_erp`)
+- **Where:** `ap_coder/erp/accruals.py:96` (`_not_in_erp`)
 - **Symptom:** a resent copy in review, flagged DUPLICATE_INVOICE, was accrued, which overstates month-end.
 - **Cause:** nothing checked the duplicate flags.
 - **Reproduce:** export NW-2026-0912, add the copy flagged DUPLICATE_INVOICE, run `build`.
@@ -310,7 +310,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't serve a file for a record that has been undone.
 
 #### B-29 · Directory quick search fails past SQLite's variable limit · medium
-- **Where:** `ap_coder/directory.py:286`
+- **Where:** `ap_coder/erp/directory.py:286`
 - **Symptom:** "too many SQL variables" on SQLite builds limited to 32,766 or 999 variables.
 - **Cause:** up to 50,000 ids were bound as `id IN (?,…)`.
 - **Reproduce:** set the variable limit to 999 and search with 2,000+ hits.
@@ -320,7 +320,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't bind an unbounded id list as separate SQL variables.
 
 #### B-30 · An export batch fails past SQLite's variable limit · medium
-- **Where:** `ap_coder/store.py:1612` (`create_export_batch`)
+- **Where:** `ap_coder/core/store.py:1612` (`create_export_batch`)
 - **Symptom:** exporting more than 999 ticked invoices on an older SQLite build fails.
 - **Cause:** the same `IN (?,…)` pattern.
 - **Reproduce:** low variable limit, 1,500+ ids.
@@ -332,7 +332,7 @@ of the code at the time of the sweep.
 ### AI and readers
 
 #### B-31 · The AI reviewer agrees after confirming one field · high
-- **Where:** `ap_coder/verifier.py:269-306` (`review`)
+- **Where:** `ap_coder/ai/verifier.py:269-306` (`review`)
 - **Symptom:** the result is AGREED, and the invoice is approved touchless, after the reviewer has confirmed only one field.
 - **Cause:** a round that wasn't confident still narrowed the next round to the disputed items; AGREED only looked at the last round.
 - **Reproduce:** round 1 disputes `invoice_number`, skips the rest, not confident; round 2 answers only `invoice_number`, confident.
@@ -342,7 +342,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't let a later round's confidence stand in for items that were never answered.
 
 #### B-32 · Azure agreeing approves past the AI reviewer · high
-- **Where:** `ap_coder/verifier.py:431`, `ap_coder/azure_check.py:453` (`hold`); `verifier.py:581`, `azure_check.py:652` (`_fold_in`); `ap_coder/capture/workflow.py:190-209`
+- **Where:** `ap_coder/ai/verifier.py:431`, `ap_coder/ai/azure_check.py:453` (`hold`); `verifier.py:581`, `azure_check.py:652` (`_fold_in`); `ap_coder/capture/workflow.py:190-209`
 - **Symptom:** Azure agreeing approves an invoice whether the reviewer hasn't run yet or has flagged VERIFIER_DISAGREES.
 - **Cause:** `azure_check.hold` turned `auto` off first, so `verifier.hold` never recorded its hold; `still_touchless` ignored stored issues.
 - **Reproduce:** apply both holds; then let Azure agree on an invoice held for both, or with a stored VERIFIER_DISAGREES.
@@ -352,7 +352,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't make approval gates depend on the order they were applied in.
 
 #### B-33 · A reopen during the review loses AP's corrections · high
-- **Where:** `ap_coder/verifier.py` and `ap_coder/azure_check.py` (`_fold_in`)
+- **Where:** `ap_coder/ai/verifier.py` and `ap_coder/ai/azure_check.py` (`_fold_in`)
 - **Symptom:** AP approves with a correction and reopens during the review; the reviewer agreeing then approves the old proposal over AP's coding.
 - **Cause:** "untouched" was judged from the row read before the minutes-long review.
 - **Reproduce:** a fake model approves the invoice with a changed `invoice_number`, then reopens it, during its own answer.
@@ -362,7 +362,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't approve from a copy of the row read minutes earlier.
 
 #### B-34 · A draft in the model's thinking is taken as its answer · medium
-- **Where:** `ap_coder/local_llm.py:505` (`read_reply`), used by `verifier.ask_model`
+- **Where:** `ap_coder/ai/local_llm.py:505` (`read_reply`), used by `verifier.ask_model`
 - **Symptom:** a draft JSON in the model's reasoning is taken as the reviewer's answer.
 - **Cause:** the fallback `last_json_object(content) or last_json_object(reasoning)`.
 - **Reproduce:** prose, empty, or unclosed-thought content, with an all-agree draft in the reasoning.
@@ -372,7 +372,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't treat a model's scratch work as its decision.
 
 #### B-35 · A page reading with no finish reason is cached as whole · medium
-- **Where:** `ap_coder/page_reader.py:884`
+- **Where:** `ap_coder/ai/page_reader.py:884`
 - **Symptom:** a partial page is accepted as complete and cached for good.
 - **Cause:** "no finish reason" only counted as a failure when nothing had been written.
 - **Reproduce:** a stream of three content chunks with no `finish_reason`.
@@ -382,7 +382,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't accept a stream as finished unless the server said so.
 
 #### B-36 · One reviewer call can outrun its time budget · low-medium
-- **Where:** `ap_coder/verifier.py:317` (`ask_model`, `_verify`); `ap_coder/inference.py:333` (`_local_create`)
+- **Where:** `ap_coder/ai/verifier.py:317` (`ask_model`, `_verify`); `ap_coder/ai/inference.py:333` (`_local_create`)
 - **Symptom:** one call can run the full 600 s against a 5-minute budget.
 - **Cause:** the budget was only checked between rounds.
 - **Reproduce:** a fake coder records the per-call timeout.
@@ -392,7 +392,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't check a time budget only between blocking calls.
 
 #### B-37 · One unrelated 400 turns off structured output · medium-low
-- **Where:** `ap_coder/local_llm.py:386` (`rejects_format`)
+- **Where:** `ap_coder/ai/local_llm.py:386` (`rejects_format`)
 - **Symptom:** a 400 "Failed to load model" switches off structured output for that model until restart.
 - **Cause:** every 400 or 422 was read as "this server refuses `response_format`".
 - **Reproduce:** a fake client that always raises 400 "Failed to load model".
@@ -402,7 +402,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't infer a capability from an error that didn't name it.
 
 #### B-38 · Prompts have no size budget · medium
-- **Where:** `ap_coder/inference.py:444-485` (`suggest_accounts`, `_suggest_batch`); `ap_coder/verifier.py` (`MAX_LINES`, `DESCRIPTION_CHARS`)
+- **Where:** `ap_coder/ai/inference.py:444-485` (`suggest_accounts`, `_suggest_batch`); `ap_coder/ai/verifier.py` (`MAX_LINES`, `DESCRIPTION_CHARS`)
 - **Symptom:** prompts of about 90k characters (GL suggestions) and about 77k (reviewer) for 300 lines.
 - **Cause:** prompts were built with no length budget.
 - **Reproduce:** 300 lines, a 2,000-account chart, a long history.
@@ -412,7 +412,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't build a prompt from data without a length budget.
 
 #### B-39 · Internet addresses written another way pass the offline guard · low
-- **Where:** `ap_coder/config.py:72-97` (`_address`, `_on_this_network`)
+- **Where:** `ap_coder/core/config.py:72-97` (`_address`, `_on_this_network`)
 - **Symptom:** `134744072`, `0x08080808` and `[64:ff9b::808:808]` (all 8.8.8.8) pass the offline guard.
 - **Cause:** hosts were classified by how they are spelled.
 - **Reproduce:** call `refused_address` on those URLs.
@@ -422,7 +422,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't classify hosts by their spelling; parse them the way the resolver will.
 
 #### B-40 · A thinking tag inside a JSON string breaks the parse · low
-- **Where:** `ap_coder/local_llm.py:591` (`_whole_object`, used by `parse_json_reply`)
+- **Where:** `ap_coder/ai/local_llm.py:591` (`_whole_object`, used by `parse_json_reply`)
 - **Symptom:** `</think>` or `<think>` inside a JSON string gives None or a cut-off string.
 - **Cause:** markup was regex-stripped before parsing.
 - **Reproduce:** `parse_json_reply('{"reason": "model said </think> here", "a": 2}')`.
@@ -432,7 +432,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't regex-strip markup out of text that might be JSON.
 
 #### B-41 · A cut-off reply returns its first line item as the answer · low
-- **Where:** `ap_coder/local_llm.py:499-505` (`_unclosed`, `read_reply`)
+- **Where:** `ap_coder/ai/local_llm.py:499-505` (`_unclosed`, `read_reply`)
 - **Symptom:** a reply cut off with finish reason "stop" returns line 1's object as the answer.
 - **Cause:** the `last_json_object` fallback undid `parse_json_reply`'s guard against inner objects.
 - **Reproduce:** `read_reply` on `{"lines": [{…}, {"line_num` with `finish_reason="stop"`.
@@ -444,7 +444,7 @@ of the code at the time of the sweep.
 ### Document capture
 
 #### B-42 · A French "AVOIR" printed positive is approved as an invoice · high
-- **Where:** `ap_coder/capture/reader.py:990` (`_CREDIT_TITLE`), `:993` (`credit_titled`); `capture/normalize.py:543` (`CREDIT_TITLES`); `ap_coder/triage.py:71`; `capture/supplier.py:1364`
+- **Where:** `ap_coder/capture/reader.py:990` (`_CREDIT_TITLE`), `:993` (`credit_titled`); `capture/normalize.py:543` (`CREDIT_TITLES`); `ap_coder/intake/triage.py:71`; `capture/supplier.py:1364`
 - **Symptom:** a credit note titled "AVOIR", "Facture d'avoir" or "Credit Invoice" with positive amounts was approved without a person.
 - **Cause:** capture's credit titles were fewer than triage's, and the only credit gate was "total < 0".
 - **Reproduce:** a French sample header with `# AVOIR` and "Total à créditer 2 414,48 $", through the in-memory harness.
@@ -504,7 +504,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't apply a penalty and then overwrite it.
 
 #### B-48 · The accuracy report deletes accents · low
-- **Where:** `ap_coder/evaluation.py:27` (`_norm_text`)
+- **Where:** `ap_coder/ai/evaluation.py:27` (`_norm_text`)
 - **Symptom:** accented names did not match their unaccented spelling in the accuracy report.
 - **Cause:** accented letters were deleted instead of folded to plain letters.
 - **Reproduce:** `_norm_text("Équipements Saint-Laurent Ltée")`.
@@ -586,7 +586,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't trust the template to hide a button; check the state in the route.
 
 #### B-56 · Two undos of one batch record two undos · low
-- **Where:** `ap_coder/store.py:1752-1764` (`undo_export_batch`); `ap_coder/web/pages/exports.py:358`
+- **Where:** `ap_coder/core/store.py:1752-1764` (`undo_export_batch`); `ap_coder/web/pages/exports.py:358`
 - **Symptom:** two undos at the same moment both passed; the second wrote an `export_undone` event with 0 invoices and replaced `undone_by`.
 - **Cause:** the route's check and the store's write were separate steps.
 - **Reproduce:** undo a batch, make `store.export_batches` return the listing from before, post the undo again.
@@ -640,7 +640,7 @@ of the code at the time of the sweep.
 ### Intake, CLI and launch
 
 #### B-61 · A small .msg can fill the memory · high
-- **Where:** `ap_coder/msgfile.py:159` (`stream`)
+- **Where:** `ap_coder/intake/msgfile.py:159` (`stream`)
 - **Symptom:** a 1.2 MB .msg held 201 MB in memory.
 - **Cause:** each stream was checked against the file size, but the total was never bounded, and many entries can point at the same sectors.
 - **Reproduce:** a .msg with one 40 KB attachment and 10 small ones whose data entries all point at the big one; `read_msg`.
@@ -650,7 +650,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't bound each piece and forget the sum.
 
 #### B-62 · The .msg directory walk is quadratic · high
-- **Where:** `ap_coder/msgfile.py:101-106, 138` (`_children`)
+- **Where:** `ap_coder/intake/msgfile.py:101-106, 138` (`_children`)
 - **Symptom:** the walk grew with the square of the entry count (8,000 entries: 8 s and 1.1 GB).
 - **Cause:** each storage walked its children with its own visited set.
 - **Reproduce:** a CFB with 200 storages whose child is the same 200-entry sibling chain.
@@ -660,7 +660,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't put a per-call limit on a walk that runs once per node.
 
 #### B-63 · A spreadsheet zip bomb is opened · high
-- **Where:** `ap_coder/triage.py:363`
+- **Where:** `ap_coder/intake/triage.py:363`
 - **Symptom:** a small .xlsx unzipped to hundreds of MB inside openpyxl.
 - **Cause:** the zip went to openpyxl with no check of its unzipped sizes.
 - **Reproduce:** an .xlsx under 100 KB whose `sharedStrings.xml` unzips to 25 MB.
@@ -670,7 +670,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't hand an untrusted zip to a library before checking its unzipped sizes.
 
 #### B-64 · A long Chinese name sticks an email forever · medium
-- **Where:** `ap_coder/mailbox.py:245` (`_joined`, used by `_save`)
+- **Where:** `ap_coder/intake/mailbox.py:245` (`_joined`, used by `_save`)
 - **Symptom:** an email with a long Chinese name and attachment name was never sorted and was retried silently on every check.
 - **Cause:** each part of the file name was capped, but the joined name was not (259 bytes, over 255).
 - **Reproduce:** a 40-character Chinese email name plus a 56-character Chinese attachment name.
@@ -680,7 +680,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't size-cap the parts of a file name and then join them uncapped.
 
 #### B-65 · An email that can't be moved is logged on every check · medium
-- **Where:** `ap_coder/mailbox.py:327-329`; `ap_coder/inbox.py:118`
+- **Where:** `ap_coder/intake/mailbox.py:327-329`; `ap_coder/intake/inbox.py:118`
 - **Symptom:** an email held open (e.g. by Outlook) got a new `triage.jsonl` line and audit event on every check.
 - **Cause:** `_record` and `log_sorted` ran even when the move failed.
 - **Reproduce:** make `Path.replace` raise PermissionError and unpack the same email 3 times.
@@ -690,7 +690,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't log "done" when the step that makes it done failed.
 
 #### B-66 · `watch` watches a different folder from the dashboard's · medium
-- **Where:** `ap_coder/cli.py:166, 415`
+- **Where:** `ap_coder/ops/cli.py:166, 415`
 - **Symptom:** with `AP_DB_PATH` or `--db`, `watch` watched `private/invoices` instead of the dashboard's folder.
 - **Cause:** the default folder was worked out separately from the database path.
 - **Reproduce:** `AP_DB_PATH=<tmp>/srv/ap_coder.db`, then `watch --once`.
@@ -700,7 +700,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't work out the same path two ways.
 
 #### B-67 · Doctor passes damaged OCR models · medium
-- **Where:** `ap_coder/offline.py:371`
+- **Where:** `ap_coder/ops/offline.py:371`
 - **Symptom:** doctor said PASS for damaged PP-OCRv5 models that the app itself won't use.
 - **Cause:** `missing_models()` was called without `verify=True`.
 - **Reproduce:** one model file with the right name and the wrong SHA-256.
@@ -710,7 +710,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't let the doctor check less than the code it vouches for.
 
 #### B-68 · Doctor treats a missing Pillow as optional · medium
-- **Where:** `ap_coder/doctor.py:85`
+- **Where:** `ap_coder/ops/doctor.py:85`
 - **Symptom:** a missing Pillow was a WARN "needed only for --vision", with exit code 0.
 - **Cause:** the wording was left behind when Pillow became a core dependency (photos and scans need it).
 - **Reproduce:** make `_version("pillow")` return None.
@@ -720,7 +720,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't leave doctor wording behind when a dependency's role grows.
 
 #### B-69 · A file stamped in the future is never picked up · medium
-- **Where:** `ap_coder/cli.py:349`; `ap_coder/mailbox.py:374`
+- **Where:** `ap_coder/ops/cli.py:349`; `ap_coder/intake/mailbox.py:374`
 - **Symptom:** a file stamped ahead of the clock was skipped until the clock caught up.
 - **Cause:** `now - mtime < SETTLE` is also true when the difference is negative.
 - **Reproduce:** set a file's mtime one hour ahead.
@@ -730,7 +730,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't assume a file's timestamp is in the past.
 
 #### B-70 · The CLI exits 0 after printed failures · low
-- **Where:** `ap_coder/cli.py:249-284, 297, 317, 332, 386-430, 486, 548-570`
+- **Where:** `ap_coder/ops/cli.py:249-284, 297, 317, 332, 386-430, 486, 548-570`
 - **Symptom:** `process`, `extract`, `read-pages` and `watch --once` exited 0 after printing failures.
 - **Cause:** errors weren't carried through to the exit code.
 - **Reproduce:** `process bad.msg good.pdf`; `watch --once` with only a bad email.
@@ -740,7 +740,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't print an error and then return success.
 
 #### B-71 · A big .eml is parsed before the part cap applies · low-medium
-- **Where:** `ap_coder/mailbox.py:160`
+- **Where:** `ap_coder/intake/mailbox.py:160`
 - **Symptom:** an email of thousands of tiny parts was fully parsed (about 86 µs a part) before the 500-part cap.
 - **Cause:** the limit was applied after the costly parse.
 - **Reproduce:** `read_eml` on a 6,000-part email.
@@ -750,7 +750,7 @@ of the code at the time of the sweep.
 - **Lesson:** Don't apply the limit after the costly parse.
 
 #### B-72 · `watch --once` skips invoices it just took out of emails · low
-- **Where:** `ap_coder/cli.py:378-389` (`new_files(..., fresh=...)`)
+- **Where:** `ap_coder/ops/cli.py:378-389` (`new_files(..., fresh=...)`)
 - **Symptom:** `watch --once` skipped the invoices it had just taken out of emails, so they waited a full scheduler cycle.
 - **Cause:** the "still copying" check applied to files AP Coder had just written itself.
 - **Reproduce:** an old .eml with one PDF, then `watch --once`.
@@ -817,7 +817,7 @@ the code at the time of the sweep.
 ### Store and config
 
 #### B-73 · An on-hold vendor stops being on hold after a vendor-name rules update · medium
-- **Where:** `ap_coder/store.py:477-488` (`_recompute_vendor_keys`), fix in `_merge_vendor_rows` (:507)
+- **Where:** `ap_coder/core/store.py:477-488` (`_recompute_vendor_keys`), fix in `_merge_vendor_rows` (:507)
 - **Symptom:** after an update to the vendor-name rules, a vendor on hold silently stops being on hold, and its invoices no longer get `VENDOR_ON_HOLD`.
 - **Cause:** the B-15 re-key used `UPDATE OR IGNORE`. When the new key was already taken, the on-hold row stayed under its old key, which no invoice produces any more.
 - **Reproduce:** vendor rows `acme` (active) and `acme ltee` (on hold), the database marked as on the older rules (`vendor_key_rules='1'`), then open the store again.
@@ -827,7 +827,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't resolve a key collision by keeping one row when the other row holds a control.
 
 #### B-74 · French decimals such as "0,125" are read as thousands · medium-low
-- **Where:** `ap_coder/safe.py:51-93` (`parse_amount`, new `_thousands`)
+- **Where:** `ap_coder/core/safe.py:51-93` (`parse_amount`, new `_thousands`)
 - **Symptom:** `"0,125"` became 125, `"-0,500"` -500, `"1,2345"` 12345, `"12.50.00"` 125000 and `"01.02.2026"` 1022026. A PO line with unit price `0,125` was stored at 125.
 - **Cause:** a comma followed by three digits was always read as a thousands separator, without checking the digit groups.
 - **Reproduce:** `parse_amount` on those strings; a PO import with unit price `0,125`, quantity `10 000` and amount `1 250,00`.
@@ -837,7 +837,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't decide "thousands separator" without checking the groups are real thousands.
 
 #### B-75 · Logged actions missing from the Activity page and the controls report · low-medium
-- **Where:** `ap_coder/audit.py:30-63` (`ACTIONS`, `describe`); `ap_coder/controls.py:26-32` (`SETUP_ACTIONS`); `ap_coder/store.py:3017` (`delete_vendors`); `ap_coder/web/pages/activity.py:27-39`
+- **Where:** `ap_coder/core/audit.py:30-63` (`ACTIONS`, `describe`); `ap_coder/erp/controls.py:26-32` (`SETUP_ACTIONS`); `ap_coder/core/store.py:3017` (`delete_vendors`); `ap_coder/web/pages/activity.py:27-39`
 - **Symptom:** nine logged actions (vendor_added, verified, azure_checked, azure_check_disagrees, lesson_explained, lesson_retired, lesson_restored, directory_preset_saved, directory_preset_deleted) showed as a raw key with no description. The controls report said "None." for setup changes after a vendor was added, the ERP register was cleared, an invoice was deleted, history was imported or a lesson was retired. Deleting vendors logged nothing.
 - **Cause:** the hand-kept `ACTIONS` and `SETUP_ACTIONS` lists had drifted from the actions the code logs, and `delete_vendors` had no `_log` call.
 - **Reproduce:** log `vendor_added`, then `audit.describe`; build the controls report over a period with those setup events.
@@ -847,7 +847,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't keep a hand list of audit actions apart from the actions the store logs.
 
 #### B-76 · An ERP history date with a time is cut at 10 characters · low
-- **Where:** `ap_coder/history.py:47-64`
+- **Where:** `ap_coder/ai/history.py:47-64`
 - **Symptom:** a history date like `1/25/2026 0:00` was stored cut short, so the same line imported again from an export with ISO dates was not seen as a duplicate and was taught twice.
 - **Cause:** `row["date"][:10]`.
 - **Reproduce:** import a history line dated with a time, then the same line with an ISO date.
@@ -857,7 +857,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't cut a date at 10 characters.
 
 #### B-77 · The labels workbook rounds quantities and unit prices · low
-- **Where:** `ap_coder/labels.py:71-75` (`_fmt_num`)
+- **Where:** `ap_coder/ai/labels.py:71-75` (`_fmt_num`)
 - **Symptom:** in both xlsx and csv, unit price 0.125 came back as 0.12 and quantity 41.237 as 41.24. No effect on scores yet: `evaluate` scores only `amount`.
 - **Cause:** every number was written with `.2f`.
 - **Reproduce:** write and read back labels with those values.
@@ -867,7 +867,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't round ground truth on the way out.
 
 #### B-78 · A coding policy saved with a byte-order mark turns its comment into a rule · low
-- **Where:** `ap_coder/store.py:3536`, `ap_coder/reference_data.py:208`
+- **Where:** `ap_coder/core/store.py:3536`, `ap_coder/core/reference_data.py:208`
 - **Symptom:** a `coding_policy.md` saved with a byte-order mark sent its `#` comment line to the AI prompt as a rule.
 - **Cause:** both readers opened the file as `utf-8`, so the mark stayed at the start of the first line.
 - **Reproduce:** save the policy with a BOM, then read the notes.
@@ -879,7 +879,7 @@ the code at the time of the sweep.
 ### Tax and coding rules
 
 #### B-79 · A worked-out place of supply is frozen and shown as printed · medium
-- **Where:** `ap_coder/pipeline.py:122-125` (`finalise_coding`); `ap_coder/tax.py` (`PLACE_OF_SUPPLY`, `stored_supply`); `ap_coder/schema.py` (`InvoiceCoding`); `ap_coder/web/invoice_view.py:394`
+- **Where:** `ap_coder/ai/pipeline.py:122-125` (`finalise_coding`); `ap_coder/coding/tax.py` (`PLACE_OF_SUPPLY`, `stored_supply`); `ap_coder/core/schema.py` (`InvoiceCoding`); `ap_coder/web/invoice_view.py:394`
 - **Symptom:** lines recoded to a cost center in another province kept the old place of supply in the tax checks, the stored output and the self-assessment, and the review screen said it came from "the ship-to on the invoice". Lines recoded from an AB site to a BC site never flagged BC PST.
 - **Cause:** with no ship-to printed, `finalise_coding` wrote the province it worked out into `ship_to_province`. The form sent it back, and `supply_source` then took it as printed.
 - **Reproduce:** our province AB, site CC400=BC; a sample GST invoice with no ship-to coded to CC400, then recoded to CC100 (and the reverse).
@@ -889,7 +889,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't store a value you worked out in the field that means "printed on the invoice".
 
 #### B-80 · Bulk approval approves a new vendor's first invoice unseen · medium
-- **Where:** `ap_coder/bulk.py:28` (`clean_candidates`), `:63` (`bulk_approve`)
+- **Where:** `ap_coder/coding/bulk.py:28` (`clean_candidates`), `:63` (`bulk_approve`)
 - **Symptom:** an invoice whose only finding is `VENDOR_NEW` ("never touchless") was listed as clean and bulk-approved.
 - **Cause:** bulk.py skipped only errors and warnings. `capture/supplier.ALWAYS_A_PERSON` holds info-level codes too, and bulk.py never read it.
 - **Reproduce:** an invoice whose only issue is `('info','VENDOR_NEW')`, then `clean_candidates` and `bulk_approve`.
@@ -899,7 +899,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't treat "no warnings" as "safe to approve unseen" when some person-only checks are info-level.
 
 #### B-81 · A vendor's hold is lost when its GST number matches a master vendor · medium-low
-- **Where:** `ap_coder/vendors.py:249-251` (`vendor_findings`)
+- **Where:** `ap_coder/coding/vendors.py:249-251` (`vendor_findings`)
 - **Symptom:** a name AP put on hold, not in the ERP vendor master, on an invoice printing a master vendor's GST number, showed only `VENDOR_MATCHED_BY_TAX_NUMBER`. The hold and its note were not shown.
 - **Cause:** `master = by_number[0]` replaced the vendor's own row, and only the replaced row was checked for the hold.
 - **Reproduce:** put a name on hold, then an invoice under that name with a master vendor's GST number.
@@ -909,7 +909,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't reuse one variable for two records when each carries its own controls.
 
 #### B-82 · The math check flags a correct yen invoice · low
-- **Where:** `ap_coder/taxmath.py:43-46` (`math_check`)
+- **Where:** `ap_coder/coding/taxmath.py:43-46` (`math_check`)
 - **Symptom:** a JPY invoice charging 5% GST on 1,234 prints 62. `check_taxes` passed it, but `math_check` reported "1 difference: GST (0.30)", and the AI reviewer was given that as a math failure.
 - **Cause:** `math_check` rounded to cents with a cent of tolerance; `check_taxes` uses `currency_places`.
 - **Reproduce:** that invoice through both checks.
@@ -919,7 +919,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't re-implement a check with different rounding rules from the one it mirrors.
 
 #### B-83 · An interest rate in the same clause cancels the early-payment discount · low
-- **Where:** `ap_coder/terms.py:138` (`parse_terms`, `_clause`); fix in new `_discount_clause`
+- **Where:** `ap_coder/coding/terms.py:138` (`parse_terms`, `_clause`); fix in new `_discount_clause`
 - **Symptom:** "2/10 net 30 interest 1.5% per month on overdue accounts" was read with no discount, so `DISCOUNT_AVAILABLE` never came. With " - " before "interest" the discount was found.
 - **Cause:** with no punctuation, the whole text was one clause, and "interest" in it vetoed the discount.
 - **Reproduce:** `parse_terms` on that text.
@@ -929,7 +929,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't veto a match using words that belong to another clause.
 
 #### B-84 · A tax rate of "nan" loads · low
-- **Where:** `ap_coder/tax.py:128` (`TaxRateTable`)
+- **Where:** `ap_coder/coding/tax.py:128` (`TaxRateTable`)
 - **Symptom:** a rate of `nan` or `inf` in `canada_tax_rates.csv` loaded (as `rate=nan`) instead of stopping the load like any other non-number.
 - **Cause:** `float()` reads "nan" and "inf".
 - **Reproduce:** a rate row with `nan`, then load the table.
@@ -941,7 +941,7 @@ the code at the time of the sweep.
 ### Exports, ERP and reports
 
 #### B-85 · The JDE dry run shows "gross 0.00" in tax-amounts mode · medium
-- **Where:** `ap_coder/jde.py:987` (`dry_run`, new `_gross_of`)
+- **Where:** `ap_coder/erp/jde.py:987` (`dry_run`, new `_gross_of`)
 - **Symptom:** with "Taxable / non-taxable / tax amounts" chosen, DRY_RUN.txt showed "gross 0.00" for an 18,017.85 invoice; for a foreign currency the gross was blank.
 - **Cause:** that mode writes no VLAG/VLACR column, so the dry run fell back to VLATXN (only the non-taxable part), and to the domestic column even for a foreign invoice.
 - **Reproduce:** `jde.dry_run` with `amount_mode=AMOUNT_TAX` on the ON sample, in CAD and then in USD.
@@ -951,7 +951,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't show a column under a label it doesn't mean.
 
 #### B-86 · A statement's payment line with the invoice's number is "not received" · medium
-- **Where:** `ap_coder/statements.py:177`
+- **Where:** `ap_coder/erp/statements.py:177`
 - **Symptom:** a statement row "1001 / Payment - thank you / -500.00" came out as Not received -500, that is "ask the vendor for a copy".
 - **Cause:** since the B-25 fix, a payment word in a free-text column counted only when no invoice had that number. Statements usually print the invoice number on its payment line.
 - **Reproduce:** a statement with Invoice, Description and Amount columns: invoice 1001 for 500.00, then that payment row.
@@ -961,7 +961,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't fix one misreading of free text by trusting another field without the sign.
 
 #### B-87 · A JDE batch downloaded again fails on a due date JDE can't hold · medium
-- **Where:** `ap_coder/jde.py:584` (`voucher_rows`)
+- **Where:** `ap_coder/erp/jde.py:584` (`voucher_rows`)
 - **Symptom:** after "send due date" was switched on, downloading again a batch with an invoice due 3026-10-14 gave a 500.
 - **Cause:** a JDE batch is not re-checked on download (B-21), and `julian()` raises for years outside 1900-2899.
 - **Reproduce:** a batch made with send due date off and a 3026-10-14 due date; switch the option on; download again.
@@ -981,7 +981,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't produce a file that its own report says cannot load.
 
 #### B-89 · Directory filters miss accented vendor names · low-medium
-- **Where:** `ap_coder/directory.py:182,184`; `ap_coder/store.py` (new `fold_text`, registered as `ap_fold` in `_open`)
+- **Where:** `ap_coder/erp/directory.py:182,184`; `ap_coder/core/store.py` (new `fold_text`, registered as `ap_fold` in `_open`)
 - **Symptom:** the filters `éclair`, `eclair` and `=éclair s.e.c.` didn't find vendor "Éclair S.E.C."; only `Éclair` or `ÉCLAIR` did. The docstring said accents were ignored.
 - **Cause:** SQLite's `LOWER()` and `LIKE` fold only the letters A to Z.
 - **Reproduce:** add vendor "Éclair S.E.C.", then filter Vendor with `éclair`.
@@ -991,7 +991,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't compare non-ASCII text with SQLite `lower()` (B-04 again).
 
 #### B-90 · JDE worksheet codes such as "01" come back as 1 · low-medium
-- **Where:** `ap_coder/jde_worksheet.py:270-281` and its four `table(...)` calls
+- **Where:** `ap_coder/erp/jde_worksheet.py:270-281` and its four `table(...)` calls
 - **Symptom:** a subsidiary or terms code typed `01` by the JDE team came back as `1` (account `CC400.6010.1`, terms `1`).
 - **Cause:** the answer cells were in Excel's General format.
 - **Reproduce:** write the number 1 in an answer cell, as Excel saves `01` typed there, and read the worksheet back.
@@ -1001,7 +1001,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't collect codes in cells that Excel will turn into numbers.
 
 #### B-91 · The redacted share report can print a file name · low
-- **Where:** `ap_coder/share_report.py:39-43` (`_failure_category`)
+- **Where:** `ap_coder/ops/share_report.py:39-43` (`_failure_category`)
 - **Symptom:** the redacted report printed e.g. `Acme invoice 4471 truncated.pdf can't be opened as a PDF/output_truncated`.
 - **Cause:** when a keyword matched, the text before the first colon was printed without checking it was an exception name, and `plain_error` messages start with the file name.
 - **Reproduce:** `_failure_category` on a plain-words error that starts with a file name.
@@ -1011,7 +1011,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't put back raw text in the one branch after redacting it in the others.
 
 #### B-92 · The ERP CSV files get Excel apostrophes · medium
-- **Where:** `ap_coder/exports.py:177` (`build_csv`), `ap_coder/export_layout.py:109` (`build`)
+- **Where:** `ap_coder/erp/exports.py:177` (`build_csv`), `ap_coder/erp/export_layout.py:109` (`build`)
 - **Symptom:** in the CSV and Custom CSV files meant for an ERP import, invoice `+A-100` became `'+A-100` and `- Labour` became `'- Labour`, so the ERP's supplier + invoice-number duplicate check missed the invoice.
 - **Cause:** both files passed every cell through the spreadsheet formula quoting in `safe.py` (`csv_row` / `csv_cell`), although they go to a database loader (the same mistake as B-26 in two more files).
 - **Reproduce:** export one invoice numbered `+A-100` with a line `- Labour` as CSV and as Custom CSV.
@@ -1023,7 +1023,7 @@ the code at the time of the sweep.
 ### AI and readers
 
 #### B-93 · Azure comparing nothing approves touchless · high
-- **Where:** `ap_coder/azure_check.py:649` (`_fold_in`)
+- **Where:** `ap_coder/ai/azure_check.py:649` (`_fold_in`)
 - **Symptom:** an invoice held for the Azure check was approved touchless when Azure compared none of its fields; the summary even said "Azure read none of the fields AP Coder read".
 - **Cause:** approval needed only "nothing differs", and an empty comparison has nothing that differs. It happens with the model set to `prebuilt-layout` or `prebuilt-read`, or when Azure returns no documents.
 - **Reproduce:** set the Azure model to `prebuilt-layout` and check an invoice held for Azure.
@@ -1033,7 +1033,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't treat "nothing compared" as "nothing differs".
 
 #### B-94 · A server outage closes the AI review as "unsure" · medium
-- **Where:** `ap_coder/verifier.py:283` (`review`), `:561` (`_postpone_or_fail`), `_verify`; `ap_coder/inference.py` (`CodingError`); `ap_coder/store.py` (`verifications.tries`)
+- **Where:** `ap_coder/ai/verifier.py:283` (`review`), `:561` (`_postpone_or_fail`), `_verify`; `ap_coder/ai/inference.py` (`CodingError`); `ap_coder/core/store.py` (`verifications.tries`)
 - **Symptom:** when LM Studio stopped or a call timed out, the review was finished as done/unsure: the hold was dropped, VERIFIER_UNSURE added, and the invoice never reviewed again. The docstring promised it stays in line.
 - **Cause:** every exception from `ask` became an UNSURE result. Since B-36 each call is capped at the time left (5 min by default), which a thinking model with 3 page images on a laptop CPU can pass.
 - **Reproduce:** make the coder's `_local_create` raise a connection error, then a timeout, during the review.
@@ -1043,7 +1043,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't record the server's outage as the reviewer's verdict.
 
 #### B-95 · The AI reviewer is never shown the math · medium
-- **Where:** `ap_coder/verifier.py:165` (`proposal`)
+- **Where:** `ap_coder/ai/verifier.py:165` (`proposal`)
 - **Symptom:** the reviewer's prompt never held "the math worked out again", though `SYSTEM` and `question()` say it does.
 - **Cause:** the stored `ai_output` includes `gl_distribution`, which `InvoiceCoding` (`extra="forbid"`) rejects, and the error was swallowed by a bare `pass`. Every other caller strips that key first.
 - **Reproduce:** process the sample PDF, then `proposal(<stored ai_output>, None)`.
@@ -1053,7 +1053,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't silence a helper's exception without a log line.
 
 #### B-96 · A draft after "Thinking Process:" is taken as a strict answer · low
-- **Where:** `ap_coder/local_llm.py:528` (`read_reply`, strict)
+- **Where:** `ap_coder/ai/local_llm.py:528` (`read_reply`, strict)
 - **Symptom:** with `strict=True` (the reviewer, since B-34), a draft JSON inside an unclosed "Thinking Process:" block was returned as the answer. The same text inside an unclosed `<think>` was refused.
 - **Cause:** strict mode still used `parse_json_reply`, which finds the first object anywhere in prose.
 - **Reproduce:** `read_reply(..., strict=True)` on "Thinking Process: … {draft} … wait".
@@ -1063,7 +1063,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't let the strict path fall back to scanning prose for JSON.
 
 #### B-97 · The Azure disagreement has no help entry · low
-- **Where:** `ap_coder/help.py` (`CHECKS`); `tests/test_help.py` (`_raised_codes`)
+- **Where:** `ap_coder/ops/help.py` (`CHECKS`); `tests/test_help.py` (`_raised_codes`)
 - **Symptom:** `AZURE_DI_DISAGREES` (Azure read a field differently) had no help entry, and `tests/test_help.py` still passed.
 - **Cause:** the code is raised through a constant (`Issue(WARNING, ISSUE_CODE, ...)`), and the test's pattern matched only a code written as a string.
 - **Reproduce:** look up `AZURE_DI_DISAGREES` in `help.CHECKS`.
@@ -1125,7 +1125,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't fix one spelling of a number and leave its other spellings broken.
 
 #### B-103 · Œ, æ and ß are deleted, not folded · low
-- **Where:** `ap_coder/evaluation.py:28` (`_norm_text`); `ap_coder/capture/normalize.py:172` (`_plain`, used by `norm_name`)
+- **Where:** `ap_coder/ai/evaluation.py:28` (`_norm_text`); `ap_coder/capture/normalize.py:172` (`_plain`, used by `norm_name`)
 - **Symptom:** "Les Œuvres du Cœur" became "lesuvresducur" in the accuracy report, so a correct name counted as wrong. `norm_name` gave "les uvres du c ur", so VENDOR_NAME_MATCH failed (the safe direction).
 - **Cause:** NFKD has no decomposition for œ, æ or ß, so the B-48 fix deleted them with the accents.
 - **Reproduce:** both functions on "Les Œuvres du Cœur".
@@ -1147,7 +1147,7 @@ the code at the time of the sweep.
 ### Web routes
 
 #### B-105 · An emailed statement spreadsheet can freeze the dashboard · medium-high
-- **Where:** `ap_coder/web/files.py:126` (new `read_excel`); `ap_coder/triage.py:351` (`sheet_unzips_too_big`); `ap_coder/web/pages/statements.py:139-150` (`statements_emailed`); `ap_coder/web/pages/settings_jde.py`, `ap_coder/web/pages/learning.py`, `ap_coder/jde_worksheet.py:390`
+- **Where:** `ap_coder/web/files.py:126` (new `read_excel`); `ap_coder/intake/triage.py:351` (`sheet_unzips_too_big`); `ap_coder/web/pages/statements.py:139-150` (`statements_emailed`); `ap_coder/web/pages/settings_jde.py`, `ap_coder/web/pages/learning.py`, `ap_coder/erp/jde_worksheet.py:390`
 - **Symptom:** an emailed "Statement of account" .xlsx of 108 KB that unzips to 30 MB froze Reconcile for 11 s and added 141 MB of memory, again on every redraw.
 - **Cause:** the B-63 unzipped-size check was only in `triage.sheet_text`. Triage refused the sheet, but the email was still filed as a statement, and the other readers of the same files (`files.read_sheet`, `settings_jde.read_sheet`, `learning.read_sheets`, the JDE worksheet import) passed them to `pd.read_excel` or openpyxl unchecked. `statements_emailed` also read the whole file with no size cap.
 - **Reproduce:** such an email sorted into the statements folder, then Reconcile on the Statements page.
@@ -1261,7 +1261,7 @@ the code at the time of the sweep.
 ### Intake, CLI and launch
 
 #### B-116 · An invoice in an email forwarded inside a .msg is dropped · medium
-- **Where:** `ap_coder/msgfile.py:102-109` (`_children`)
+- **Where:** `ap_coder/intake/msgfile.py:102-109` (`_children`)
 - **Symptom:** an invoice inside an email forwarded in a .msg was silently dropped when the .msg's directory lists the inner storage before its parent, which the file format allows.
 - **Cause:** the B-62 fix walked storages in index order with one shared `walked` set. A child storage with a lower index than its parent was already marked seen, so the parent's walk skipped it and everything reached only through it.
 - **Reproduce:** a .msg with an attached email (`bench.msgwriter`), its directory entries renumbered in reverse with the root kept at 0, then `read_msg`.
@@ -1271,7 +1271,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't make the result of a graph walk depend on the order the nodes are stored in.
 
 #### B-117 · An open fraud email drops off "needs a person" after 500 newer emails · medium
-- **Where:** `ap_coder/inbox.py:39-53` (`needs_person`, `entry`); `ap_coder/mailbox.py:337` (`triage_log`)
+- **Where:** `ap_coder/intake/inbox.py:39-53` (`needs_person`, `entry`); `ap_coder/intake/mailbox.py:337` (`triage_log`)
 - **Symptom:** a bank-detail-change (possible fraud) email nobody marked done dropped off "needs a person" once 500 newer emails had been sorted. An old open email could also be shown but not opened or marked done.
 - **Cause:** `needs_person()` read `triage_log` with its default limit of 500, applied before the needs-person and not-done filters. `triage_log` also read only the last 4 MB, and `entry()` searched only the newest 5000 entries.
 - **Reproduce:** a log with one open fraud entry followed by 500 newer invoice entries, then `inbox.needs_person`.
@@ -1281,7 +1281,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't apply a "most recent N" window before the filter that decides what is still open.
 
 #### B-128 · An email forwarded inside itself a thousand times was read by recursing to Python's limit · low
-- **Where:** `ap_coder/mailbox.py` (`read_eml`)
+- **Where:** `ap_coder/intake/mailbox.py` (`read_eml`)
 - **Symptom:** CI on Python 3.13 (Ubuntu) failed `test_a_crafted_email_in_the_folder_does_not_break_the_process_page` once with "Failed to process unraisable exception"; the same commit had passed.
 - **Cause:** the only guard against deep forwarding was to catch the RecursionError of Python's email parser, which recurses once a forwarded layer. At that depth an object freed by the garbage collector (an event loop's `__del__`) failed too, outside the `try`.
 - **Reproduce:** `read_eml()` of an email with 1,000 nested `Content-Type: message/rfc822` layers, with `email.message_from_bytes` patched to fail when called.
@@ -1374,7 +1374,7 @@ the code at the time of the sweep.
 - **Lesson:** Don't assert on what a page does in an event handler right after the action that queues it: wait for the state, with a timeout.
 
 #### B-126 · A Status filter with many statuses broke the invoice directory · low
-- **Where:** `ap_coder/directory.py` (`condition`, the Status column)
+- **Where:** `ap_coder/erp/directory.py` (`condition`, the Status column)
 - **Symptom:** /search with `status=review,review,...` (1,200 times) failed with "too many SQL variables" on an older SQLite build (999 variables); a misspelt status ("reveiw") matched nothing, without a word.
 - **Cause:** one "?" per status typed in the address, with no check that each is a real status or that it is there only once. Found by the new rule in tests/test_code_rules.py, which turns the lesson of B-10, B-29 and B-30 into a check of the whole code.
 - **Reproduce:** `d.run(store, d.Query(filters={"status": ",".join(["review"] * 1200)}))` with the `few_sql_variables` fixture.

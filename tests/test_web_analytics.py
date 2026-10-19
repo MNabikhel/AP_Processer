@@ -17,10 +17,10 @@ from markupsafe import Markup
 
 from ap_coder.capture.supplier import HELD, SUPERVISED
 from ap_coder.capture.workflow import learn_from_approval
-from ap_coder.config import Settings
-from ap_coder.demo import load_demo
-from ap_coder.insights import Assumptions
-from ap_coder.store import REVIEW, Store, load_sample_setup
+from ap_coder.core.config import Settings
+from ap_coder.core.store import REVIEW, Store, load_sample_setup
+from ap_coder.erp.insights import Assumptions
+from ap_coder.ops.demo import load_demo
 from ap_coder.web import charts
 from ap_coder.web.app import create_app
 from ap_coder.web.pages.activity import controls_period, filter_events

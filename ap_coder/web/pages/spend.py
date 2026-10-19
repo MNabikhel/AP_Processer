@@ -13,7 +13,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
-from ap_coder import spend, ui
+from ap_coder.core import ui
+from ap_coder.erp import spend
 from ap_coder.web.charts import SERIES, Series, bar_chart, compact, legend_items
 from ap_coder.web.core import get_store, money, reference_or_none, render
 

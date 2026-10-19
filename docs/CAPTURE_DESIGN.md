@@ -38,7 +38,7 @@ company-wide switch and the invoices that always go to a person.
 
 ## One way to read every invoice
 
-There is one reading pipeline, with nothing to configure (`ap_coder/reading.py`; Settings → Reading shows
+There is one reading pipeline, with nothing to configure (`ap_coder/ai/reading.py`; Settings → Reading shows
 each reader's state):
 
 1. every invoice is a PDF: a photo or a scanned picture is made into one when it comes in (see
@@ -438,7 +438,7 @@ figure by figure with OCR. AP Coder does the same, with the same recommended mod
 Apache-2.0, a Qwen3.5-0.8B trained to read document pages; `bartowski/ATH-MaaS_OvisOCR2-GGUF`, Q8_0 plus
 its `mmproj`, about 1 GB).
 
-- **Reading** (`ap_coder/page_reader.py`): each page is rendered at 200 dpi (long side 2048 px) and sent with
+- **Reading** (`ap_coder/ai/page_reader.py`): each page is rendered at 200 dpi (long side 2048 px) and sent with
   OvisOCR2's own prompt, greedy. A reply that starts repeating itself is stopped and read once more with
   Qwen's sampling; a reply cut off at the length limit, or a blank page, is an error, never a short reading.
   Readings are cached by file, page, model and prompt, so a page is never read twice.
@@ -448,7 +448,7 @@ its `mmproj`, about 1 GB).
   (`RELIABILITY["vlm"] = 0.85`), independent of the text layer, OCR and the rules: OCR and the page reader
   agreeing makes two readers (a field can reach *verified*), disagreeing sends it to *check*. Its line items
   are used when they add up to the subtotal and OCR's don't.
-- **Figure by figure** (`ap_coder/figures.py`, from CloseDesk): every amount in the transcription is counted
+- **Figure by figure** (`ap_coder/ai/figures.py`, from CloseDesk): every amount in the transcription is counted
   against OCR's text or the PDF's own. The review screen shows how many figures both read the same and lists
   the ones read two ways ("1,105.00 / 1,150.00"). On a digital PDF the first reading is exact, so the share
   read the same is the page reader's own accuracy, measured on every invoice it reads (Settings → Reading).
@@ -509,7 +509,7 @@ processing is off, and neither vendor has a record yet.
 
 ## Pictures become PDFs, and line items read with the table finder
 
-**Every invoice is a PDF** (`ap_coder/intake.py`). A JPEG, PNG, iPhone HEIC/HEIF, TIFF (every frame) or BMP that
+**Every invoice is a PDF** (`ap_coder/intake/pictures.py`). A JPEG, PNG, iPhone HEIC/HEIF, TIFF (every frame) or BMP that
 comes in (upload, invoices folder, email attachment, `process`/`watch`) is made into a PDF first
 (`InvoicePipeline.process`): one page a picture, upright as its EXIF says, at its resolution (a believable DPI gives
 the page its size, else a letter-sized page). A JPEG goes in as it is, turned by the page's `/Rotate`; PNG, TIFF and
@@ -641,7 +641,7 @@ field is scored against what AP approved (`reader_outcomes`), along with the fus
 
 ## The Azure check: an optional second opinion
 
-`ap_coder/azure_check.py`, Settings → Reading → *Azure check*. **Off by default**, never needed: AP Coder reads every
+`ap_coder/ai/azure_check.py`, Settings → Reading → *Azure check*. **Off by default**, never needed: AP Coder reads every
 invoice on this computer. Turned on, with a Document Intelligence endpoint and key, a background thread of the
 dashboard sends some invoices to Azure (`prebuilt-invoice`, read with `extraction.DocumentExtractor`, its fields
 with capture's DI reader) and compares Azure's fields with the values AP Coder settled on:

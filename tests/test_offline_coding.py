@@ -3,10 +3,10 @@
 import json
 from dataclasses import replace
 
-from ap_coder.config import Settings
-from ap_coder.pipeline import InvoicePipeline
-from ap_coder.reference_data import UNASSIGNED
-from ap_coder.store import Store
+from ap_coder.ai.pipeline import InvoicePipeline
+from ap_coder.core.config import Settings
+from ap_coder.core.reference_data import UNASSIGNED
+from ap_coder.core.store import Store
 
 from .conftest import SAMPLES
 
@@ -19,7 +19,7 @@ def test_a_tax_above_the_provinces_rate_is_not_a_partial_base():
     tax check then flags the place of supply that differs). Less than the rate is still a partial base."""
     import datetime as dt
 
-    from ap_coder.offline_coder import _tax_lines
+    from ap_coder.ai.offline_coder import _tax_lines
 
     on = dt.date(2026, 4, 3)
     (hst,) = _tax_lines({"hst_amount": 140.0}, 1000.0, "ON", on)
@@ -93,7 +93,7 @@ def test_every_sample_reads_right_offline(tmp_path, reference):
 
 
 def test_queue_card_confidence_follows_the_review_screen(tmp_path, reference):
-    from ap_coder.store import REVIEW
+    from ap_coder.core.store import REVIEW
 
     store = Store(tmp_path / "ap.db")
     result = InvoicePipeline(_offline_settings(), reference, store=store).process(SAMPLES / f"{STEM}.pdf")

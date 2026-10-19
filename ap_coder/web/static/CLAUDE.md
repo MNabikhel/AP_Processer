@@ -5,12 +5,12 @@ The page scripts are in `js/`. The fonts (Inter, Material Symbols) are in `ap_co
 Nothing here is loaded from the internet, and nothing may be: the app is fully offline.
 
 **Depends on:** `ap_coder/static` (the fonts that app.css's `@font-face` rules point to at /fonts)
-**Used by:** `ap_coder/web/templates` (each `<link>`), `ap_coder` (ui.py builds the `.apc-*` classes app.css styles)
+**Used by:** `ap_coder/web/templates` (each `<link>`), `ap_coder/core` (ui.py builds the `.apc-*` classes app.css styles)
 
 ## Interface
 - Design tokens `--lg-*` on `:root` in app.css (colours, type, radii); the other stylesheets use them, except invoice_viewer.css (below).
   A second `:root` in app.css maps `--rv-*` aliases onto them for invoice.css.
-- Class families: `.apc-*` (the HTML of ap_coder/ui.py), `.rq-*` (review queue), `rvw-*`/`inv-*` (invoice.css), `iv-*` (invoice_viewer.css), `st-*` and `hp-*` (Settings, Help: settings.css), `an-*` (analytics.css), `dir-*` (data.css).
+- Class families: `.apc-*` (the HTML of ap_coder/core/ui.py), `.rq-*` (review queue), `rvw-*`/`inv-*` (invoice.css), `iv-*` (invoice_viewer.css), `st-*` and `hp-*` (Settings, Help: settings.css), `an-*` (analytics.css), `dir-*` (data.css).
 - Every `<link>` is `/static/<file>.css?v={{ static_version }}`: the hash of every file under this folder, made once when web/core.py is imported.
 
 ## Gotchas and decisions
@@ -19,7 +19,7 @@ Nothing here is loaded from the internet, and nothing may be: the app is fully o
 - Load a stylesheet with `?v={{ static_version }}` in the template's `head` block, never without it.
 - No `@import`, no web fonts or images from a URL: `url()` only points at /fonts or /assets on this server.
 - invoice_viewer.css has its own copies of the Ledger colours (`--ink`, `--muted`, `--line`... on `.iv, .iv-tip`: the hover card lives on `<body>`): change a colour there too.
-- ap_coder/ui.py repeats the hex values of `--lg-success` / `--lg-warning` / `--lg-danger` / `--lg-accent` (OK, WARN, ERR, BRAND): change a colour in both.
+- ap_coder/core/ui.py repeats the hex values of `--lg-success` / `--lg-warning` / `--lg-danger` / `--lg-accent` (OK, WARN, ERR, BRAND): change a colour in both.
 
 ### Bug lessons
 From docs/BUGS.md (one line each; the entry has the repro and the fix).

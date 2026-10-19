@@ -117,7 +117,7 @@ def _simulate(job: Job) -> dict[str, Any]:
         pick_for_audit,
         should_auto_approve,
     )
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
 
     out_dir, seed, supplier, invoices, scanned_fraction, policy_d, vendor_master, ignore = job
     policy = AutonomyPolicy.from_dict(policy_d)

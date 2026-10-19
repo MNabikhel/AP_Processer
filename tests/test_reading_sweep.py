@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pymupdf
 
-from ap_coder.config import Settings
-from ap_coder.pipeline import InvoicePipeline
-from ap_coder.store import Store
+from ap_coder.ai.pipeline import InvoicePipeline
+from ap_coder.core.config import Settings
+from ap_coder.core.store import Store
 
 
 def _pdf(path: Path, pages: list[list[str | tuple[float, str]]]) -> Path:
@@ -78,7 +78,7 @@ def test_figures_are_read_in_french_and_european_formats():
     fragments, so the page reader's figure-by-figure comparison measured nothing on them."""
     from decimal import Decimal
 
-    from ap_coder.figures import compare_figures, figures
+    from ap_coder.ai.figures import compare_figures, figures
 
     found = figures("\n".join(_FRENCH) + "\nNetto 1.234,56 EUR\nTotal 1 050.00")
     for amount in ("42.25", "507.00", "1234.56", "2469.12", "3721.72", "186.09", "4279.05", "1050.00"):
@@ -116,11 +116,11 @@ def test_a_page_the_page_reader_wrote_nothing_real_for_is_not_counted_as_read(tm
     read passed the "every page read by the page reader" gate and could be approved without a person."""
     import json
 
-    from ap_coder import page_reader, page_worker
-    from ap_coder.config import PageReaderSettings
-    from ap_coder.figures import PAGE_BREAK
-    from ap_coder.pipeline import autonomy_decision
-    from ap_coder.store import load_sample_setup
+    from ap_coder.ai import page_reader, page_worker
+    from ap_coder.ai.figures import PAGE_BREAK
+    from ap_coder.ai.pipeline import autonomy_decision
+    from ap_coder.core.config import PageReaderSettings
+    from ap_coder.core.store import load_sample_setup
 
     from .conftest import SAMPLES
 
@@ -146,7 +146,7 @@ def test_a_page_the_page_reader_wrote_nothing_real_for_is_not_counted_as_read(tm
         decided.append(kwargs.get("pages_read"))
         return autonomy_decision(*args, **kwargs)
 
-    monkeypatch.setattr("ap_coder.pipeline.autonomy_decision", spy)
+    monkeypatch.setattr("ap_coder.ai.pipeline.autonomy_decision", spy)
     result = InvoicePipeline(settings, store.reference_data(), store=store).process(SAMPLES / f"{stem}.pdf")
     assert result.ok and result.capture.page_count == 2
     outcome = page_worker.read_one(settings, store)
@@ -176,11 +176,11 @@ def _touchless_supplier(tmp_path, ground_truth):
 
 def _decision(store, doc, reference, tmp_path):
     """The touchless decision on ``doc``, read with every header field verified and every check passed."""
+    from ap_coder.ai.pipeline import finalise_coding
     from ap_coder.capture.types import CaptureResult, FieldResult
     from ap_coder.capture.workflow import audit_pick, autonomy_decision
-    from ap_coder.pipeline import finalise_coding
-    from ap_coder.schema import InvoiceCoding
-    from ap_coder.validation import ERROR
+    from ap_coder.coding.validation import ERROR
+    from ap_coder.core.schema import InvoiceCoding
 
     _, report = finalise_coding(InvoiceCoding.model_validate(doc), reference, Settings(), store=store)
     report.issues = [i for i in report.issues if i.severity != ERROR]  # the sample's GL codes: not what is tested
@@ -267,7 +267,7 @@ def test_a_changed_bank_account_is_found_without_an_ai_model(tmp_path, reference
 
 
 def test_bank_details_are_read_only_where_the_page_gives_them():
-    from ap_coder.offline_coder import bank_details
+    from ap_coder.ai.offline_coder import bank_details
 
     assert (
         bank_details("Remit by EFT within 30 days.\nCustomer account No: 45521\n100 Bank Street, Ottawa K1P 5N2") == ""
@@ -282,7 +282,7 @@ def test_bank_details_are_read_only_where_the_page_gives_them():
 def test_days_in_a_late_interest_clause_are_not_the_net_days():
     """ "Due on receipt. Interest of 2% per month on accounts over 30 days" (common on Canadian invoices) was read
     as net 30: the due date came out 30 days late. Days in a late-payment clause say when interest starts."""
-    from ap_coder.terms import parse_terms, payment
+    from ap_coder.coding.terms import parse_terms, payment
 
     for printed in ("Payable upon receipt, interest 2% per month after 30 days",
                     "Due on receipt; 2% per month charged on overdue accounts over 30 days"):  # fmt: skip

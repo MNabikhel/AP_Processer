@@ -2,8 +2,8 @@
 
 import json
 
-from ap_coder import export_layout as el
-from ap_coder import exports
+from ap_coder.erp import export_layout as el
+from ap_coder.erp import exports
 
 from .conftest import SAMPLE_STEM, SAMPLES
 

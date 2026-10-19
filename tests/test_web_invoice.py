@@ -13,11 +13,11 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.config import Settings
-from ap_coder.demo import load_demo
-from ap_coder.reference_data import UNASSIGNED
-from ap_coder.rules import Rule
-from ap_coder.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.coding.rules import Rule
+from ap_coder.core.config import Settings
+from ap_coder.core.reference_data import UNASSIGNED
+from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.ops.demo import load_demo
 from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
 from ap_coder.web.invoice_view import Draft
@@ -659,7 +659,7 @@ def test_a_numbers_label_marks_picked_with_it_are_dropped(field, text, value):
 def test_the_ai_reviewer_on_the_review_screen(client, store):
     import json
 
-    from ap_coder import verifier
+    from ap_coder.ai import verifier
 
     inv = store.list_invoices(REVIEW)[0]
     page = client.get(f"/review/{inv['id']}").text
@@ -861,7 +861,7 @@ def test_in_a_browser_ctrl_enter_in_another_form_never_approves(browser, client,
 
 def test_in_a_browser_ctrl_enter_in_the_why_dialog_keeps_the_reason(browser, client, store, monkeypatch):
     """Ctrl+Enter in "One question before saving" is its "Keep the reason and approve": the reason typed is sent."""
-    from ap_coder import lessons
+    from ap_coder.ai import lessons
 
     asked = [{"key": "k1", "field": "invoice_number", "label": "invoice number", "pattern": "", "proposed": "A1",
               "value": "A2", "times": 3, "explanation": ""}]  # fmt: skip
@@ -938,7 +938,7 @@ def test_in_a_browser_the_vendor_key_is_the_servers(browser, client, store):
     invoice.js's copy of it, which gives the same keys: the line under the vendor agrees with the server's match."""
     import json
 
-    from ap_coder.memory import vendor_key
+    from ap_coder.core.memory import vendor_key
 
     invoice_id = next(i["id"] for i in store.list_invoices(REVIEW) if "Agence" in (i["vendor_name"] or ""))
     text = client.get(f"/review/{invoice_id}").text

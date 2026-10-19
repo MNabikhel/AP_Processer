@@ -17,9 +17,9 @@ from fastapi import APIRouter, Form, Request, UploadFile
 from fastapi import File as FileParam
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from ap_coder import po as po_mod
-from ap_coder import ui
-from ap_coder.store import Store, load_sample_purchase_orders
+from ap_coder.coding import po as po_mod
+from ap_coder.core import ui
+from ap_coder.core.store import Store, load_sample_purchase_orders
 from ap_coder.web.core import done, flash_message, get_store, message, refuse, render, reviewer
 from ap_coder.web.files import (
     SheetError,

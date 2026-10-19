@@ -24,6 +24,8 @@ The setup and update code they exercise is in `scripts/` (launch.py, upgrade.py,
   export batch, a setting, `.env` values); `check()` compares the new version's data, pages and files with BEFORE.json.
 
 ## Gotchas and decisions
+- old_versions.py's `seed` imports keep the flat paths (`ap_coder.store`, `ap_coder.pipeline`...): they run inside an older
+  version's own code, which has no `ap_coder/core` and the other folders (D-33). Never move them to the new paths.
 - Both are standard library only at the top (`check` runs on any Python 3.10+); old_versions.py `install` and `start` download from
   PyPI (CI runs them with `AP_ALLOW_INTERNET=1`, the old launchers' opt-in); everything after the new bundle is unzipped runs offline.
 - `scenario --strace` (Linux) records every connection: none may leave this computer.

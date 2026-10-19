@@ -16,13 +16,15 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ap_coder import recurring, ui, vendor_mail
-from ap_coder.help import help_for
-from ap_coder.insights import vendor_workload
-from ap_coder.reference_data import short_name
-from ap_coder.store import PARKED, REVIEW, Store
-from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES
-from ap_coder.vendors import ACTIVE, ON_HOLD, mask_account, master_columns, master_rows, norm_tax_number
+from ap_coder.coding import vendor_mail
+from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
+from ap_coder.coding.vendors import ACTIVE, ON_HOLD, mask_account, master_columns, master_rows, norm_tax_number
+from ap_coder.core import ui
+from ap_coder.core.reference_data import short_name
+from ap_coder.core.store import PARKED, REVIEW, Store
+from ap_coder.erp import recurring
+from ap_coder.erp.insights import vendor_workload
+from ap_coder.ops.help import help_for
 from ap_coder.web.core import done, flash_message, get_store, reference_or_none, refuse, render, reviewer
 from ap_coder.web.files import SheetError, drop_upload, picked_columns, read_upload, receive_sheet, sheet_context
 

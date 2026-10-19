@@ -1,6 +1,6 @@
 """Insights: the business case. Volume, the straight-through rate (approved exactly as coded), the time it saves,
 the cloud cost, AP operations (queue age, days to approve, discounts), what the checks catch, approvals by week and
-the projection at your monthly volume, from ``ap_coder.insights`` (the same figures as the one-page report).
+the projection at your monthly volume, from ``ap_coder.erp.insights`` (the same figures as the one-page report).
 
 The assumptions behind the figures are a POST (saved with who changed them); the one-page business case is a GET
 download.
@@ -15,8 +15,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from ap_coder import ui
-from ap_coder.insights import Assumptions, compute, operations, report_html
+from ap_coder.core import ui
+from ap_coder.erp.insights import Assumptions, compute, operations, report_html
 from ap_coder.web.charts import OK_GREEN, SERIES, WARN_AMBER, Series, bar_chart
 from ap_coder.web.core import done, get_store, refuse, render, reviewer
 
@@ -42,7 +42,7 @@ def pct(v: float | None) -> str:
 
 def check_title(code: str) -> str:
     """A check's plain-English name ("No cost center"), as the Help page lists it; the code as a fallback."""
-    from ap_coder.help import CHECKS
+    from ap_coder.ops.help import CHECKS
 
     found = CHECKS.get(code)
     return found.title if found else code.replace("_", " ").capitalize()

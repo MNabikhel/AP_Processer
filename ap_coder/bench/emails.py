@@ -25,7 +25,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
-from .. import mailbox, triage
+from ..intake import mailbox, triage
 from .generator import Renderer, _pymupdf, make_invoice, scan
 from .msgwriter import Attachment, Message, build_msg
 

@@ -9,8 +9,8 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.config import Settings
-from ap_coder.store import REVIEW, Store, load_sample_setup
+from ap_coder.core.config import Settings
+from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.core import invoice_dir
 from ap_coder.web.pages.process import safe_file_name, save_upload

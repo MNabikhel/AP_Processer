@@ -1,6 +1,6 @@
 /* AP Coder dashboard styles ("Ledger"), for the FastAPI dashboard (ap_coder/web).
 
-   The design tokens (--lg-*), then the component classes (.apc-* built by ap_coder/ui.py, .rq-* of the review
+   The design tokens (--lg-*), then the component classes (.apc-* built by ap_coder/core/ui.py, .rq-* of the review
    queue); the shell (rail, cards, buttons, fields, messages) is at the end.
 
    Colour only ever means a status or the accent. Space 4/8/12/16/24/32/40 px; card padding 20px, 16px between

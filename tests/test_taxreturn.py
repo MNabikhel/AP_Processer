@@ -3,13 +3,13 @@
 import datetime as dt
 import json
 
-from ap_coder import taxreturn
-from ap_coder.config import Settings
-from ap_coder.demo import load_demo
-from ap_coder.pipeline import finalise_coding
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store, load_sample_setup
-from ap_coder.tax import EXPENSE_TO_LINE
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.coding import taxreturn
+from ap_coder.coding.tax import EXPENSE_TO_LINE
+from ap_coder.core.config import Settings
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.ops.demo import load_demo
 
 from .conftest import SAMPLES
 

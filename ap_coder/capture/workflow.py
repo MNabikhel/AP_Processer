@@ -20,7 +20,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from ..extraction import TEXT_EXTENSIONS
+from ..ai.extraction import TEXT_EXTENSIONS
 from . import analyze, build_layout
 from .bridge import ai_values, vendor_record
 from .supplier import (
@@ -131,8 +131,8 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     unread = max(0, capture.page_count - pages_read) if capture is not None and pages_read is not None else 0
     currency = str(coding["currency"]).strip().upper()
     no_rate = "" if currency in store.fx_rates() else currency  # the limit is in CAD: unknown without a rate
-    from ..inference import MODEL_SUGGESTED
-    from ..offline_coder import WEAK_MATCH
+    from ..ai.inference import MODEL_SUGGESTED
+    from ..ai.offline_coder import WEAK_MATCH
 
     guessed = sum(1 for li in (output or {}).get("line_items") or []
                   if str(li.get("reasoning_justification") or "").startswith((MODEL_SUGGESTED, WEAK_MATCH)))  # fmt: skip
@@ -193,8 +193,8 @@ def still_untouched(store: Any, invoice_id: int, output: dict[str, Any]) -> bool
     """The invoice as stored now (read again, right before an approval by AP Coder): still in the review queue with
     ``output`` as its proposal, nobody's coding on it (a person may have approved it with corrections and reopened it
     meanwhile), no check still holding it (``azure_hold``, ``verifier_hold``) and no open issue from one."""
-    from ..store import REVIEW
-    from ..verifier import HOLDS
+    from ..ai.verifier import HOLDS
+    from ..core.store import REVIEW
 
     inv = store.get_invoice(invoice_id)
     if not inv or inv.get("status") != REVIEW or inv.get("final_output") or inv.get("reviewer") or inv.get("edits"):
@@ -292,7 +292,7 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     inv = store.get_invoice(invoice_id)
     if inv is None:
         return learned
-    from ..lessons import record as record_lessons
+    from ..ai.lessons import record as record_lessons
 
     record_lessons(store, invoice_id, inv.get("ai_output") or {}, final, actor)  # per situation (never raises)
     try:
@@ -367,7 +367,7 @@ def supplier_progress(store: Any, key: str) -> tuple[str, int, str]:
 def taught_message(store: Any, learned: dict[str, Any]) -> str:
     """What an approval taught, in plain words: "Learned from your 2 corrections (invoice number, due date). Acme
     Ltd: 14 invoices reviewed, about 6 more clean invoices to go touchless." "" when no supplier was found."""
-    from ..ui import plural
+    from ..core.ui import plural
 
     key = learned.get("supplier")
     if not key:

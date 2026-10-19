@@ -15,15 +15,17 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from ap_coder import inbox, page_reader, ui
+from ap_coder.ai import page_reader
+from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS
+from ap_coder.ai.local_llm import provider_status
+from ap_coder.ai.pipeline import InvoicePipeline, invoice_files
 from ap_coder.capture.layout import ocr_available
-from ap_coder.config import Settings
-from ap_coder.extraction import SUPPORTED_EXTENSIONS
-from ap_coder.local_llm import provider_status
-from ap_coder.mailbox import EMAIL_EXTENSIONS, Unpacked, emails_in, safe_name, unpack, unpack_folder
-from ap_coder.pipeline import InvoicePipeline, invoice_files
-from ap_coder.store import REVIEW, Store
-from ap_coder.tax import TAX_TYPES
+from ap_coder.coding.tax import TAX_TYPES
+from ap_coder.core import ui
+from ap_coder.core.config import Settings
+from ap_coder.core.store import REVIEW, Store
+from ap_coder.intake import inbox
+from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, Unpacked, emails_in, safe_name, unpack, unpack_folder
 from ap_coder.web.core import (
     cache_dir,
     done,
@@ -267,7 +269,7 @@ def folder_files(store: Store) -> list[dict[str, Any]]:
 
 @router.get("/process", response_class=HTMLResponse)
 def process_page(request: Request) -> HTMLResponse:
-    from ap_coder.demo import demo_available
+    from ap_coder.ops.demo import demo_available
 
     store, settings = get_store(request), get_settings(request)
     steps = setup_steps(store, settings)
@@ -403,7 +405,7 @@ def inbox_done(request: Request, entry_id: str) -> JSONResponse:
 
 @router.post("/demo/load")
 def demo_load(request: Request, back: str = Form("/process")) -> JSONResponse:
-    from ap_coder.demo import demo_available, load_demo
+    from ap_coder.ops.demo import demo_available, load_demo
 
     if not demo_available():
         return refuse("The demo invoices are not in this copy of AP Coder.")
@@ -415,7 +417,7 @@ def demo_load(request: Request, back: str = Form("/process")) -> JSONResponse:
 
 @router.post("/demo/remove")
 def demo_remove(request: Request, back: str = Form("/process"), sure: str = Form("")) -> JSONResponse:
-    from ap_coder.demo import remove_demo
+    from ap_coder.ops.demo import remove_demo
 
     if not sure:
         return refuse("Tick “Yes, remove the demo invoices” first.")

@@ -6,8 +6,7 @@ import json
 
 import pytest
 
-from ap_coder.schema import InvoiceCoding
-from ap_coder.tax import (
+from ap_coder.coding.tax import (
     EXPENSE_SEPARATE,
     TaxRateTable,
     TaxSetup,
@@ -17,7 +16,8 @@ from ap_coder.tax import (
     valid_gst_number,
     valid_qst_number,
 )
-from ap_coder.validation import validate_coding
+from ap_coder.coding.validation import validate_coding
+from ap_coder.core.schema import InvoiceCoding
 
 from .conftest import SAMPLES
 
@@ -348,7 +348,7 @@ def _supply(ship_to="", supplier="", centers=()):
 
 
 def test_place_of_supply_is_where_it_is_delivered_to_us():
-    from ap_coder.tax import TaxRateTable, TaxSetup, supply_source
+    from ap_coder.coding.tax import TaxRateTable, TaxSetup, supply_source
 
     setup = TaxSetup(TaxRateTable.load(), our_province="BC", site_provinces={"CC500": "ON", "CC600": "AB"})
     # A vendor in Ontario shipping from BC to our BC site: BC (GST + PST), never Ontario's HST.
@@ -363,8 +363,8 @@ def test_place_of_supply_is_where_it_is_delivered_to_us():
 def test_an_invoice_without_a_ship_to_is_taxed_where_we_are(ground_truth, reference):
     from dataclasses import replace
 
-    from ap_coder.config import Settings
-    from ap_coder.pipeline import finalise_coding
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.core.config import Settings
 
     doc = InvoiceCoding.model_validate({**ground_truth, "ship_to_province": "", "supplier_province": "ON"})
     # HST charged by an Ontario vendor on goods delivered to us in BC: the wrong tax.
@@ -381,8 +381,8 @@ def test_a_worked_out_place_of_supply_follows_the_recoded_lines(reference):
     lines to a site in another province moves it, and the review screen says where it came from."""
     from dataclasses import replace
 
-    from ap_coder.config import Settings
-    from ap_coder.pipeline import finalise_coding
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.core.config import Settings
     from ap_coder.web.invoice_view import supply_line
 
     ours = replace(reference, tax=replace(reference.tax, our_province="AB", site_provinces={"CC400": "BC"}))
@@ -411,7 +411,7 @@ def test_a_worked_out_place_of_supply_follows_the_recoded_lines(reference):
 
 
 def test_a_new_rate_row_wins_over_an_old_one_left_open():
-    from ap_coder.tax import TaxRate
+    from ap_coder.coding.tax import TaxRate
 
     table = TaxRateTable.load()
     # Finance appends Saskatchewan's new rate but forgets to close the old row.

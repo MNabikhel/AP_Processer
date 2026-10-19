@@ -4,8 +4,8 @@ import datetime as dt
 import json
 import sqlite3
 
-from ap_coder.insights import operations
-from ap_coder.store import Store
+from ap_coder.core.store import Store
+from ap_coder.erp.insights import operations
 
 from .conftest import SAMPLE_STEM, SAMPLES
 
@@ -60,8 +60,8 @@ def test_operations_on_an_empty_database(tmp_path):
 def test_vendors_that_make_work(tmp_path):
     import json
 
-    from ap_coder.insights import vendor_workload
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
+    from ap_coder.erp.insights import vendor_workload
 
     from .conftest import SAMPLE_STEM, SAMPLES
 
@@ -85,8 +85,8 @@ def test_vendors_that_make_work(tmp_path):
 def test_duplicates_stopped_in_the_business_case(tmp_path):
     import json
 
-    from ap_coder.insights import compute, report_html
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
+    from ap_coder.erp.insights import compute, report_html
 
     from .conftest import SAMPLE_STEM, SAMPLES
 

@@ -9,13 +9,14 @@ import zipfile
 
 import pytest
 
-from ap_coder import help as help_catalog
-from ap_coder import stamp, taxreturn
-from ap_coder.insights import _week
-from ap_coder.memory import ACCEPTED, CORRECTED
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import APPROVED, PENDING, Store, load_sample_setup
-from ap_coder.tax import check_taxes, gst_check_digit_ok
+from ap_coder.coding import taxreturn
+from ap_coder.coding.tax import check_taxes, gst_check_digit_ok
+from ap_coder.core.memory import ACCEPTED, CORRECTED
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import APPROVED, PENDING, Store, load_sample_setup
+from ap_coder.erp import stamp
+from ap_coder.erp.insights import _week
+from ap_coder.ops import help as help_catalog
 
 from .conftest import SAMPLE_STEM, SAMPLES
 from .webclient import client_for, follow, post
@@ -203,7 +204,7 @@ def test_download_again_defaults_to_the_batchs_format_and_warns_about_jde_left_o
 
 
 def test_setup_steps_never_claim_the_self_test_passed_before_it_has(tmp_path):
-    from ap_coder.reading import ReadingStatus
+    from ap_coder.ai.reading import ReadingStatus
     from ap_coder.web.pages.settings_reading import setup_steps
 
     found = ReadingStatus(page_reader_model="ovis", self_test="pending")

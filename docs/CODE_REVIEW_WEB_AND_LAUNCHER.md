@@ -1,7 +1,7 @@
 # Code review: the dashboard and the launcher
 
 A skeptical review and bug hunt of the web app (`ap_coder/web/`) and of everything that installs, starts and
-updates AP Coder (`APProcessor.bat` / `.command`, `scripts/`, `ap_coder/paths.py`, `offline.py`, `doctor.py`,
+updates AP Coder (`APProcessor.bat` / `.command`, `scripts/`, `ap_coder/core/paths.py`, `offline.py`, `doctor.py`,
 `cli.py`). The engine (pipeline, capture, store, exports) and the Mac install scenario were reviewed separately.
 
 Every real bug was reproduced by a failing test first (`tests/test_code_review_fixes.py`), then fixed in its own
@@ -163,7 +163,7 @@ Update over an older install:
 - `check_deps.py` reports `ap_coder` missing until `pip install -e .` has run; that is by design, because the
   launcher's `.venv` installs it.
 
-### `ap_coder/paths.py`, `offline.py`, `doctor.py`, `cli.py`: verdict sound after fixes
+### `ap_coder/core/paths.py`, `offline.py`, `doctor.py`, `cli.py`: verdict sound after fixes
 
 The data folder lookup, the settings file and install record, offline guards and the free port, the health check,
 and the command line.

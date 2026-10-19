@@ -2,10 +2,10 @@
 
 import csv
 
-from ap_coder import statements as stm
-from ap_coder.demo import load_demo
-from ap_coder.memory import vendor_key
-from ap_coder.store import Store
+from ap_coder.core.memory import vendor_key
+from ap_coder.core.store import Store
+from ap_coder.erp import statements as stm
+from ap_coder.ops.demo import load_demo
 
 from .conftest import DATA
 

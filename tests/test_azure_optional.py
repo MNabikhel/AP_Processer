@@ -12,9 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from ap_coder import doctor, extraction, inference
-from ap_coder.config import DocumentIntelligenceSettings, Settings
-from ap_coder.offline import AZURE_UNAVAILABLE
+from ap_coder.ai import extraction, inference
+from ap_coder.core.config import DocumentIntelligenceSettings, Settings
+from ap_coder.ops import doctor
+from ap_coder.ops.offline import AZURE_UNAVAILABLE
 
 ROOT = Path(__file__).resolve().parent.parent
 AZURE_PACKAGES = ("azure-ai-documentintelligence", "azure-identity")

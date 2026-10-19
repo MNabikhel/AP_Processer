@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from ap_coder.store import APPROVED, PENDING, REVIEW, Store, load_sample_setup
+from ap_coder.core.store import APPROVED, PENDING, REVIEW, Store, load_sample_setup
 
 from .conftest import SAMPLE_STEM, SAMPLES
 from .webclient import client_for, follow, post
@@ -73,7 +73,7 @@ def test_send_back_returns_it_to_the_queue_and_withdraws_the_lessons(store, tmp_
 
 
 def test_waiting_invoices_still_count_for_duplicates_and_pos(store, tmp_path):
-    from ap_coder.store import load_sample_purchase_orders
+    from ap_coder.core.store import load_sample_purchase_orders
 
     load_sample_purchase_orders(store)
     invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
@@ -98,7 +98,7 @@ def test_second_approval_tab(tmp_path, monkeypatch):
 
 
 def test_insights_count_a_sent_back_invoice_once(store, tmp_path):
-    from ap_coder.insights import compute
+    from ap_coder.erp.insights import compute
 
     invoice_id = store.add_invoice(tmp_path / "a.pdf", _gt(), {})
     store.approve_invoice(invoice_id, _gt(), "Jane")

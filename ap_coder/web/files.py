@@ -23,7 +23,7 @@ import pandas as pd
 from fastapi import UploadFile
 from fastapi.responses import Response
 
-from ap_coder import triage
+from ap_coder.intake import triage
 
 SHEET_TYPES = (".csv", ".xlsx", ".xls")
 NONE = ""  # the value of "(none)" in a column choice

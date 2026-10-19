@@ -7,11 +7,11 @@ outside the code (`AP_PRIVATE_DIR`, else the folder recorded in `~/.ap_coder/set
 default), else the git-ignored `private/` of a checkout, else `./private`; `paths.private_dir`), and is imported in the dashboard.
 
 **Depends on:** none
-**Used by:** `ap_coder` (tax.py, store.py, cli.py), `ap_coder/web/pages` (accounts, purchase orders, review), `ap_coder/bench`, `scripts` (pilot_check.py), `scripts/ci` (old_versions.py), `tests`
+**Used by:** `ap_coder/coding` (tax.py), `ap_coder/core` (store.py), `ap_coder/ops` (cli.py), `ap_coder/web/pages` (accounts, purchase orders, review), `ap_coder/bench`, `scripts` (pilot_check.py), `scripts/ci` (old_versions.py), `tests`
 
 ## Interface
 - `canada_tax_rates.csv`: `tax_type,province,rate,effective_from,effective_to,notes`. Read by `TaxRateTable.load` in
-  `ap_coder/tax.py` (via `rates_path`): a `canada_tax_rates.csv` in the data folder wins over this one.
+  `ap_coder/coding/tax.py` (via `rates_path`): a `canada_tax_rates.csv` in the data folder wins over this one.
   `province` empty = Canada-wide (GST); `effective_to` empty = still in force; `rate` 0.05, 5 or "5%" (5%).
 - `chart_of_accounts.csv` (`gl_code,description,category`), `cost_centers.csv` (`cost_center,description,category`),
   `tax_gl_mapping.csv` (`tax_type,treatment,gl_code`; treatment `recoverable`, `expense_to_line` or `expense_separate`),

@@ -10,9 +10,9 @@ from urllib.parse import parse_qsl
 import pytest
 from openpyxl import load_workbook
 
-from ap_coder import directory as d
-from ap_coder.demo import load_demo
-from ap_coder.store import APPROVED, PARKED, REVIEW, Store, load_sample_setup
+from ap_coder.core.store import APPROVED, PARKED, REVIEW, Store, load_sample_setup
+from ap_coder.erp import directory as d
+from ap_coder.ops.demo import load_demo
 
 from .conftest import SAMPLE_STEM, SAMPLES
 from .webclient import PAGE, client_for, follow
@@ -125,7 +125,7 @@ def test_quick_search_on_top_of_the_filters(store):
 
 def test_quick_search_with_more_hits_than_sqlite_takes_variables(store, monkeypatch, few_sql_variables):
     """Up to EXPORT_LIMIT hits: more than a stock SQLite build takes as bound variables (32,766, or 999)."""
-    from ap_coder import search
+    from ap_coder.erp import search
 
     real = {i["id"] for i in store.list_invoices()}
     many = [search.Hit(1, {"id": n}) for n in [*real, *range(10_000, 12_000)]]

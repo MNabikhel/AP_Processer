@@ -558,7 +558,7 @@ GEMMA = "lmstudio-community/gemma-4-12B-it-QAT-GGUF"
 
 
 def test_lm_studio_is_only_reported(launch, monkeypatch):
-    from ap_coder import local_llm
+    from ap_coder.ai import local_llm
 
     _lm_studio(local_llm, monkeypatch)  # nothing answers
     assert launch.lm_studio_line()[1].startswith("LM Studio: not running (optional")
@@ -580,7 +580,7 @@ def test_lm_studio_is_only_reported(launch, monkeypatch):
 
 def test_the_double_click_asks_the_loaded_chat_model_once_per_model(launch, monkeypatch):
     """What doctor --online asked, asked by the start itself: only of a loaded model, then remembered."""
-    from ap_coder import local_llm
+    from ap_coder.ai import local_llm
 
     asked: list[int] = []
     answers = [("ok", "Chat model test passed: accounts from the chart in 2s: line 1 -> 6100, line 2 -> 6200")]
@@ -606,7 +606,7 @@ def test_the_double_click_asks_the_loaded_chat_model_once_per_model(launch, monk
 def test_the_chat_model_test_never_holds_up_the_start(launch, monkeypatch):
     import threading
 
-    from ap_coder import doctor
+    from ap_coder.ops import doctor
 
     release = threading.Event()
     monkeypatch.setattr(doctor, "_local_dry_run", lambda settings, reference: release.wait(5) and None)
@@ -624,7 +624,8 @@ def test_the_chat_model_test_never_holds_up_the_start(launch, monkeypatch):
 
 def test_a_start_asks_lm_studio_once_for_the_chat_model(launch, monkeypatch):
     """The chat line, its test and the setup checks share one question to LM Studio (the page reader asks its own)."""
-    from ap_coder import doctor, local_llm
+    from ap_coder.ai import local_llm
+    from ap_coder.ops import doctor
 
     asked: list[int] = []
     status = local_llm.ModelStatus(base_url="http://127.0.0.1:1234/v1", reachable=True, lm_studio=True, model=GEMMA,
@@ -644,14 +645,14 @@ def test_a_start_asks_lm_studio_once_for_the_chat_model(launch, monkeypatch):
 
 
 def launch_settings():
-    from ap_coder.config import Settings
+    from ap_coder.core.config import Settings
 
     return Settings()
 
 
 def test_the_start_runs_the_doctors_setup_checks(launch, monkeypatch):
     """GL accounts, tax mapping and settings: one line when all is well, each problem in the doctor's words."""
-    from ap_coder import doctor
+    from ap_coder.ops import doctor
 
     lines = launch.setup_check_lines()
     assert len(lines) == 1 and lines[0][0] == "ok" and lines[0][1].startswith("Setup checks: all ")
@@ -687,7 +688,7 @@ def no_models(launch, tmp_path, monkeypatch):
     """RapidOCR 3 installed with an empty models folder; every download attempt recorded (and refused)."""
     import fetch_models  # scripts/ is on sys.path: the launcher imports it the same way
 
-    from ap_coder import offline
+    from ap_coder.ops import offline
 
     empty = tmp_path / "rapidocr_models"
     empty.mkdir()
@@ -757,7 +758,7 @@ def test_the_code_alone_downloads_the_models_once_without_the_opt_in(launch, no_
 def test_the_table_finder_is_downloaded_into_the_data_folder(no_models, tmp_path, monkeypatch, capsys):
     """Never into the code's models/ folder: that would make GitHub's ZIP look like an offline bundle."""
     fetch_models, downloads = no_models
-    from ap_coder import offline
+    from ap_coder.ops import offline
 
     monkeypatch.setattr(offline, "table_finder_path", lambda: None)
     monkeypatch.setattr(
@@ -772,7 +773,7 @@ def test_the_table_finder_is_downloaded_into_the_data_folder(no_models, tmp_path
 
 
 def test_shortcut_is_made_once(launch, tmp_path, monkeypatch):
-    from ap_coder import paths
+    from ap_coder.core import paths
 
     desk = tmp_path / "Desktop"
     desk.mkdir()

@@ -1,0 +1,106 @@
+"""Reading and updating the ``.env`` settings file in place.
+
+Standard library only: the installer uses it before any package is installed.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+PLACEHOLDER = "<your-resource>"  # the example endpoints in .env.example
+
+
+_QUOTED = {'"': re.compile(r'"((?:[^"\\]|\\.)*)"'), "'": re.compile(r"'((?:[^'\\]|\\.)*)'")}
+_ESCAPES = {'"': re.compile(r'\\([\\"])'), "'": re.compile(r"\\([\\'])")}
+
+
+def parse_value(value: str) -> str:
+    """One value as python-dotenv (what the app reads with) reads it: a quoted value ends at its closing quote
+    (an inline ``# comment`` after it is not part of it), an unquoted one at `` #`` (``abc#def`` is kept).
+    ``KEY= #paste key here`` is empty: the space after ``=`` makes the rest a comment (``KEY=#x`` reads ``#x``)."""
+    stripped = value.strip()
+    quote = stripped[:1]
+    if quote in _QUOTED:
+        match = _QUOTED[quote].match(stripped)
+        if match:
+            return _ESCAPES[quote].sub(r"\1", match.group(1))
+        return stripped  # no closing quote: kept as it is (python-dotenv cannot read the line either)
+    return re.sub(r"\s+#.*", "", value).strip()  # before stripping, so a space after "=" counts
+
+
+def read_text(path: Path) -> str:
+    """The file's text: UTF-8 (with or without Notepad's byte-order mark), else Windows-1252 (what older Notepad
+    saves as "ANSI"), so one accented letter never stops AP Coder."""
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
+def read_env(path: Path) -> dict[str, str]:
+    """``KEY=value`` pairs that are set (commented lines and example placeholders are skipped)."""
+    values = {}
+    if path.exists():
+        for line in read_text(path).splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = re.sub(r"^export\s+", "", key.strip())
+            value = parse_value(value)
+            if PLACEHOLDER not in value:
+                values[key] = value
+    return values
+
+
+def one_line(value: str) -> str:
+    """A typed value as one line: a settings file can't hold a line break (the box it comes from has none)."""
+    return " ".join(str(value).splitlines()).strip()
+
+
+def write_env(path: Path, updates: dict[str, str]) -> None:
+    """Set values in place (uncommenting ``# KEY=`` lines), keeping every other line as it is. A value with a line
+    break is refused (ValueError, nothing written): it would end the line and set whatever follows as a setting."""
+    for key, value in updates.items():
+        if "\n" in value or "\r" in value:
+            raise ValueError(f"{key}: a setting cannot contain a line break")
+    lines = read_text(path).splitlines() if path.exists() else []
+    for key, value in updates.items():
+        if re.search(r"[\s#'\"]", value):
+            value = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        # The line in effect if there is one (the last, as it is read), else the commented example.
+        live = [i for i, line in enumerate(lines) if re.match(rf"^\s*{re.escape(key)}\s*=", line)]
+        examples = [i for i, line in enumerate(lines) if re.match(rf"^\s*#\s*{re.escape(key)}\s*=", line)]
+        if live or examples:
+            lines[live[-1] if live else examples[0]] = f"{key}={value}"
+        else:
+            lines.append(f"{key}={value}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def retire(path: Path, keys: tuple[str, ...] | list[str], note: str) -> list[str]:
+    """Comment out the settings ``keys`` (no longer read) in place, each behind ``# <note>: ``, so the file says so
+    instead of looking like it still does something; every other line is kept as it is. Returns the keys found."""
+    if not path.is_file():
+        return []
+    lines = read_text(path).splitlines()
+    found: list[str] = []
+    for i, line in enumerate(lines):
+        match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
+        if match and match.group(1) in keys:
+            lines[i] = f"# {note}: {line.strip()}"
+            found.append(match.group(1))
+    if found:
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return list(dict.fromkeys(found))
+
+
+def clean_url(value: str) -> str:
+    """An endpoint as Azure expects it: https:// in front, one slash at the end."""
+    value = value.strip()
+    if value and not value.lower().startswith(("http://", "https://")):
+        value = "https://" + value
+    return value.rstrip("/") + "/" if value else value

@@ -18,7 +18,7 @@ is the map of its code. When a doc and the code disagree, the code wins and the 
   a line in the `### Bug lessons` list of the folder of the first path on its **Where:** line. check_map.py reads
   `BUGS.md` (`#### B-NN` headings, the **Where:** line): keep that format. A suspicion not reproduced is an N-NN line, never fixed blindly.
 - A significant choice (what you would have to explain to the next developer) gets a D-NN line in `decisions.md`.
-- `JDE_E1.md`'s open questions are the rows of the JDE worksheet (`ap_coder/jde_worksheet.py`); test_jde_readiness.py
+- `JDE_E1.md`'s open questions are the rows of the JDE worksheet (`ap_coder/erp/jde_worksheet.py`); test_jde_readiness.py
   checks that they match. B-26 also changed `JDE_E1.md` (Z-files hold text as it is).
 - User-facing wording: "pilot tester", never another title for that person; plain English; no company data.
 - `screenshots/` is a data folder (no CLAUDE.md): the PNGs the README shows.

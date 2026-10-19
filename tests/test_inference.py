@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from ap_coder.config import OpenAISettings, Settings
-from ap_coder.extraction import result_from_text
-from ap_coder.imaging import PageImage
-from ap_coder.inference import CodingError, InvoiceCoder, ModelProfile
+from ap_coder.ai.extraction import result_from_text
+from ap_coder.ai.imaging import PageImage
+from ap_coder.ai.inference import CodingError, InvoiceCoder, ModelProfile
+from ap_coder.core.config import OpenAISettings, Settings
 
 from .conftest import FakeOpenAI, make_completion
 

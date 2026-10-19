@@ -11,8 +11,8 @@ A page module uses these::
     return refuse("That file is not a CSV.")                      # stay, show the problem
 
 Templates are escaped automatically (Jinja autoescape). The ``ui`` global gives the HTML helpers of
-``ap_coder/ui.py`` (they escape what they are given), e.g. ``{{ ui.pill("Ready", "ok") }}``. Never mark text from an
-invoice or a file as safe yourself.
+``ap_coder/core/ui.py`` (they escape what they are given), e.g. ``{{ ui.pill("Ready", "ok") }}``. Never mark text from
+an invoice or a file as safe yourself.
 """
 
 from __future__ import annotations
@@ -37,10 +37,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
-from ap_coder import __version__, paths, ui
-from ap_coder.config import Settings
-from ap_coder.reference_data import ReferenceData
-from ap_coder.store import REVIEW, Store
+from ap_coder import __version__
+from ap_coder.core import paths, ui
+from ap_coder.core.config import Settings
+from ap_coder.core.reference_data import ReferenceData
+from ap_coder.core.store import REVIEW, Store
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, SECTIONS
 
@@ -55,8 +56,8 @@ TARGET_ACCURACY = 0.90
 
 # --- Templates ---------------------------------------------------------------------------------------------------
 
-# The HTML builders of ap_coder/ui.py that a template may call (each escapes the text it is given). The text helpers
-# (money, plural, time_ago, initials) are filters instead, so their output is escaped like any text.
+# The HTML builders of ap_coder/core/ui.py that a template may call (each escapes the text it is given). The text
+# helpers (money, plural, time_ago, initials) are filters instead, so their output is escaped like any text.
 _UI_HTML = {
     "avatar", "breadcrumbs", "check", "empty_note", "empty_state", "icon", "kbd", "kv", "meter", "page_header",
     "pill", "progress", "recent_row", "ring", "section_title", "sparkline", "split_bar", "status", "step",
@@ -206,9 +207,9 @@ def open_folder(path: Path) -> bool:
 
 
 def reading_status_or_none(settings: Settings, store: Store, *, use_cache: bool = True) -> Any:
-    """``ap_coder.reading.reading_status``, or None when it can't be worked out (never raises)."""
+    """``ap_coder.ai.reading.reading_status``, or None when it can't be worked out (never raises)."""
     try:
-        from ap_coder.reading import reading_status
+        from ap_coder.ai.reading import reading_status
 
         return reading_status(settings, store, use_cache=use_cache)
     except Exception:  # noqa: BLE001 - a page never breaks over a status line

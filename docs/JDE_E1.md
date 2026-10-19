@@ -9,7 +9,7 @@ E1's Voucher Batch Processor (**R04110ZA**, or the older R04110Z) reads from its
 | `F0911Z1.csv` | F0911Z1 (Journal Entry Transactions - Batch File) | G/L distribution line |
 | `F0411Z1T.csv` | *(not a standard table: see "PO-matched vouchers")* | PO match line |
 
-The code is in `ap_coder/jde.py` (pure logic), the settings in `ap_coder/web/pages/settings_jde.py`
+The code is in `ap_coder/erp/jde.py` (pure logic), the settings in `ap_coder/web/pages/settings_jde.py`
 (Settings → **JD Edwards E1**) and the export on the Exports page (ERP format **JD Edwards E1**).
 
 ## Using it

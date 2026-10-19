@@ -5,9 +5,9 @@ import re
 
 import pytest
 
-from ap_coder.bulk import clean_candidates
-from ap_coder.demo import load_demo
-from ap_coder.store import APPROVED, REVIEW, Store, load_sample_setup
+from ap_coder.coding.bulk import clean_candidates
+from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
+from ap_coder.ops.demo import load_demo
 
 from .conftest import SAMPLE_STEM, SAMPLES
 from .webclient import client_for

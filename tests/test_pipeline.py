@@ -1,10 +1,10 @@
 import json
 
-from ap_coder.config import Settings
-from ap_coder.evaluation import evaluate
-from ap_coder.extraction import DocumentExtractor
-from ap_coder.inference import InvoiceCoder
-from ap_coder.pipeline import InvoicePipeline, discover_inputs, write_outputs
+from ap_coder.ai.evaluation import evaluate
+from ap_coder.ai.extraction import DocumentExtractor
+from ap_coder.ai.inference import InvoiceCoder
+from ap_coder.ai.pipeline import InvoicePipeline, discover_inputs, write_outputs
+from ap_coder.core.config import Settings
 
 from .conftest import SAMPLE_STEM, SAMPLES, FakeDIClient, FakeOpenAI, make_completion
 
@@ -89,8 +89,8 @@ def test_local_model_suggestions_only_fill_uncoded_lines(monkeypatch):
     uncoded line must not overwrite the coded line with the same number."""
     from types import SimpleNamespace
 
-    import ap_coder.inference as inference
-    from ap_coder.schema import InvoiceCoding
+    import ap_coder.ai.inference as inference
+    from ap_coder.core.schema import InvoiceCoding
 
     data = json.loads((SAMPLES / "ground_truth" / "pacific_BC_GST_PST_PO-77120.json").read_text())
     data["line_items"][1]["line_number"] = 1  # lines numbered 1, 1, 3
@@ -115,7 +115,7 @@ def test_local_model_suggestions_only_fill_uncoded_lines(monkeypatch):
 
 def test_an_invoice_read_again_is_no_duplicate_of_itself(tmp_path, settings, reference, ground_truth,
                                                          sample_markdown_path):  # fmt: skip
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
 
     store = Store(tmp_path / "ap.db")
     pipe = _pipeline(settings, reference, *[make_completion(json.dumps(ground_truth))] * 3)

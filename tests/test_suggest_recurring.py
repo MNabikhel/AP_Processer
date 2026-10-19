@@ -3,11 +3,11 @@
 import datetime as dt
 import re
 
-from ap_coder import recurring
-from ap_coder.demo import load_demo
-from ap_coder.reference_data import UNASSIGNED
-from ap_coder.store import Store
-from ap_coder.suggest import suggest_gl
+from ap_coder.ai.suggest import suggest_gl
+from ap_coder.core.reference_data import UNASSIGNED
+from ap_coder.core.store import Store
+from ap_coder.erp import recurring
+from ap_coder.ops.demo import load_demo
 
 from .webclient import client_for, draft_form, follow, post
 

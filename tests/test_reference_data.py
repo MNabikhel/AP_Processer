@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ap_coder.reference_data import load_reference_data, load_table
+from ap_coder.core.reference_data import load_reference_data, load_table
 
 
 def test_loads_sample_reference_data(reference):
@@ -38,7 +38,7 @@ def test_coding_policy_saved_with_a_byte_order_mark_keeps_its_comment_line(tmp_p
     reference files are loaded and when the sample setup is put in the database."""
     import shutil
 
-    from ap_coder.store import Store, load_sample_setup
+    from ap_coder.core.store import Store, load_sample_setup
 
     from .conftest import DATA
 

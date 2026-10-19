@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder import cli, offline
 from ap_coder.capture import analyze, layout
-from ap_coder.store import APPROVED, Store
+from ap_coder.core.store import APPROVED, Store
+from ap_coder.ops import cli, offline
 
 from .conftest import ROOT, SAMPLE_STEM, SAMPLES
 
@@ -123,8 +123,8 @@ def demo_db(tmp_path):
 
 def test_demo_review_and_jde_export_offline(no_network, demo_db):
     """The demo invoices through validation, tax checks, capture and a JD Edwards batch, offline."""
-    from ap_coder import jde
-    from ap_coder.demo import load_demo
+    from ap_coder.erp import jde
+    from ap_coder.ops.demo import load_demo
 
     store = Store(demo_db)
     counts = load_demo(store)
@@ -138,7 +138,7 @@ def test_demo_review_and_jde_export_offline(no_network, demo_db):
 
 def test_every_dashboard_page_runs_offline(no_network, demo_db):
     """Every page of the dashboard and the review screen of each demo invoice, with nothing reachable."""
-    from ap_coder.demo import load_demo
+    from ap_coder.ops.demo import load_demo
     from ap_coder.web.pages import PAGES
 
     from .webclient import client_for
@@ -502,7 +502,7 @@ def test_bundle_ships_the_code_but_never_data_or_keys():
                 f != "private/README.md"]  # fmt: skip
     for path, out in (("private/ap_coder.db", True), ("private/README.md", False), (".env", True),
                       (".env.local", True), (".env.example", False), (".venv/lib/x.py", True),
-                      ("ap_coder/__pycache__/x.pyc", True), ("ap_coder/cli.py", False)):  # fmt: skip
+                      ("ap_coder/__pycache__/x.pyc", True), ("ap_coder/ops/cli.py", False)):  # fmt: skip
         assert bundle.excluded(Path(path)) is out, path
 
 
@@ -511,7 +511,7 @@ def test_bundle_never_ships_databases_spreadsheets_or_invoices_left_in_the_code_
     an invoice PDF or a .env left in it are data, never code. A database is not git-ignored, so
     even a git checkout would list it as a new file."""
     bundle = _script("build_offline_bundle")
-    code = ("ap_coder/cli.py", "samples/a.pdf", "data/chart_of_accounts.csv", "ap_coder/web/static/app.css")
+    code = ("ap_coder/ops/cli.py", "samples/a.pdf", "data/chart_of_accounts.csv", "ap_coder/web/static/app.css")
     data = ("ap_coder.db", "old/ap_coder.db-wal", "labels.xlsx", "Invoice 1.pdf", "scan.TIF", "private/.env")
     for rel in code + data:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)

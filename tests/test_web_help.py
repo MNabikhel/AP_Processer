@@ -9,9 +9,9 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.config import Settings
-from ap_coder.help import AREAS, CHECKS, FAQ, QUICK_START, TAX
-from ap_coder.store import Store
+from ap_coder.core.config import Settings
+from ap_coder.core.store import Store
+from ap_coder.ops.help import AREAS, CHECKS, FAQ, QUICK_START, TAX
 from ap_coder.web import minimd
 from ap_coder.web.app import create_app
 from ap_coder.web.pages.help import matching_checks

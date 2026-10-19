@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder import local_llm
+from ap_coder.ai import local_llm
+from ap_coder.ai.inference import HEADER_SYSTEM, clean_header
+from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.capture.types import CHECK
-from ap_coder.inference import HEADER_SYSTEM, clean_header
-from ap_coder.pipeline import InvoicePipeline
-from ap_coder.store import Store
+from ap_coder.core.store import Store
 
 from .conftest import SAMPLES
 from .test_local_llm import REAL_FETCH, FakeLMStudio, chat_reply, local_settings

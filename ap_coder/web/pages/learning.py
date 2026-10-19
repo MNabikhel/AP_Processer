@@ -29,9 +29,10 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from markupsafe import Markup
 
-from ap_coder import history, ui
-from ap_coder.reference_data import short_name
-from ap_coder.store import APPROVED, Store
+from ap_coder.ai import history
+from ap_coder.core import ui
+from ap_coder.core.reference_data import short_name
+from ap_coder.core.store import APPROVED, Store
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
 from ap_coder.web.core import TARGET_ACCURACY, done, get_store, reference_or_none, refuse, render, reviewer
 from ap_coder.web.files import SheetError, read_excel
@@ -68,7 +69,7 @@ OUTCOMES = {"accepted": "✓ confirmed", "corrected": "✎ corrected", "history"
 
 
 def built(html: str) -> Markup:
-    """HTML from an ``ap_coder.ui`` builder (it escaped the text it was given), for a template."""
+    """HTML from an ``ap_coder.core.ui`` builder (it escaped the text it was given), for a template."""
     return Markup(html)  # noqa: S704 - ui.py escapes its input
 
 
@@ -396,7 +397,7 @@ def readers_context(store: Store, pick: str | None) -> dict[str, Any]:
 
 
 def training_context(store: Store) -> dict[str, Any]:
-    from ap_coder.training_export import training_invoices
+    from ap_coder.ai.training_export import training_invoices
 
     picked = training_invoices(store)
     invoices = picked["invoices"]
@@ -442,7 +443,7 @@ def learning_page(request: Request) -> HTMLResponse:
 
 
 def lessons_context(store: Store) -> dict[str, Any]:
-    from ap_coder import lessons
+    from ap_coder.ai import lessons
 
     rows = []
     for lesson in store.list_lessons(include_retired=True):
@@ -569,7 +570,7 @@ def training_zip(request: Request) -> Response:
     """The training set as a ZIP, made on this computer for the approvals as they are now (each approved invoice's
     pages as images, with the values AP approved). Spooled to a temporary file, so a large set is not held in
     memory."""
-    from ap_coder.training_export import export_training_set
+    from ap_coder.ai.training_export import export_training_set
 
     store = get_store(request)
     spool = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)  # noqa: SIM115 - closed after streaming

@@ -10,8 +10,8 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from ap_coder import jde, jde_worksheet
-from ap_coder.memory import vendor_key
+from ap_coder.core.memory import vendor_key
+from ap_coder.erp import jde, jde_worksheet
 
 from .test_jde import AN8, BC, CREDIT, ON, QC, USD, _invoice
 

@@ -3,7 +3,7 @@
 import base64
 import datetime as dt
 
-from ap_coder import ui
+from ap_coder.core import ui
 
 
 def test_all_text_is_escaped():

@@ -7,8 +7,8 @@ import sqlite3
 
 import pytest
 
-from ap_coder import store as store_module
-from ap_coder.store import SCHEMA_VERSION, DatabaseTooNew, Store
+from ap_coder.core import store as store_module
+from ap_coder.core.store import SCHEMA_VERSION, DatabaseTooNew, Store
 
 
 def _schema(path) -> int | None:

@@ -2,12 +2,12 @@
 
 import pytest
 
-from ap_coder import statements as stm
-from ap_coder.labels import _number
-from ap_coder.po import match_invoice
-from ap_coder.rules import Rule
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store
+from ap_coder.ai.labels import _number
+from ap_coder.coding.po import match_invoice
+from ap_coder.coding.rules import Rule
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store
+from ap_coder.erp import statements as stm
 
 
 @pytest.mark.parametrize(

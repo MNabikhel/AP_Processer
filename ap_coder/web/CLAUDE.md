@@ -2,11 +2,11 @@
 
 The local web dashboard: `create_app()` builds a FastAPI app with Jinja templates and a little plain JavaScript, `server.py` runs it on 127.0.0.1 by default (`python -m ap_coder serve`; `--host 0.0.0.0` opens it to the office network).
 This folder holds what every page shares: rendering, flash messages, security, jobs, files, the review screen's logic.
-The routes themselves are in `pages/`; the reading, coding, checks and the database are in `ap_coder/` (store, pipeline, review...), never here.
-Fully offline: CSS and scripts are served from this folder, fonts from `ap_coder/static`, the logo from `ap_coder/assets` (Azure is an opt-in exception, in `ap_coder/azure_check.py`).
+The routes themselves are in `pages/`; the reading, coding, checks and the database are in `ap_coder/core`, `ap_coder/ai`, `ap_coder/coding` (store, pipeline, review...), never here.
+Fully offline: CSS and scripts are served from this folder, fonts from `ap_coder/static`, the logo from `ap_coder/assets` (Azure is an opt-in exception, in `ap_coder/ai/azure_check.py`).
 
-**Depends on:** `ap_coder`, `ap_coder/capture`, `ap_coder/web/pages`
-**Used by:** `ap_coder` (cli.py runs server.serve), `ap_coder/bench` (invoice_view.suggestions), `ap_coder/web/pages`
+**Depends on:** `ap_coder`, `ap_coder/ai`, `ap_coder/capture`, `ap_coder/coding`, `ap_coder/core`, `ap_coder/intake`, `ap_coder/ops`, `ap_coder/web/pages`
+**Used by:** `ap_coder/ops` (cli.py runs server.serve), `ap_coder/bench` (invoice_view.suggestions), `ap_coder/web/pages`
 
 ## Interface
 - `create_app()` (app.py): (settings=None, store=None, address, start_reader) -> FastAPI. Mounts /static, /fonts, /assets; includes `MORE_MODULES` then every `PAGES` module; adds `/`, `/healthz`, `POST /shutdown`, `GET /jobs/<name>`.

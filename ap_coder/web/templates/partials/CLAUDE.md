@@ -2,7 +2,7 @@
 
 Template pieces that draw themselves from a template global, so any page can include them with nothing to pass.
 Today there is one: the card of the optional Azure check (a cloud second opinion, off by default; the app is otherwise fully offline).
-The Azure check's logic is in `ap_coder/azure_check.py`; its routes are in `ap_coder/web/pages/azure.py`. Shared macros live in the parent folder's `_*.html` files instead.
+The Azure check's logic is in `ap_coder/ai/azure_check.py`; its routes are in `ap_coder/web/pages/azure.py`. Shared macros live in the parent folder's `_*.html` files instead.
 
 **Depends on:** `ap_coder/web/pages` (azure.py sets the `azure_check_card` global it calls)
 **Used by:** `ap_coder/web/templates` (settings_reading.html and azure_check_page.html include it)

@@ -17,9 +17,10 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
-from ap_coder import controls, dupaudit, ui
-from ap_coder.audit import ACTIONS, describe
-from ap_coder.safe import csv_row
+from ap_coder.core import ui
+from ap_coder.core.audit import ACTIONS, describe
+from ap_coder.core.safe import csv_row
+from ap_coder.erp import controls, dupaudit
 from ap_coder.web.core import get_store, render
 
 router = APIRouter()

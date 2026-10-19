@@ -7,7 +7,7 @@ each step lives: `file:function`). Everything here is read from the code; when t
 this file is wrong.
 
 AP Coder is an **offline** build: nothing it runs connects to the internet unless a developer or the bundle builder
-sets `AP_ALLOW_INTERNET=1` (`ap_coder/offline.py:internet_allowed`). The one exception, by design, is the optional
+sets `AP_ALLOW_INTERNET=1` (`ap_coder/ops/offline.py:internet_allowed`). The one exception, by design, is the optional
 Azure check, which AP switches on in Settings (it is off by default; [section 10](#10-the-network-every-place-and-its-gate)).
 
 Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
@@ -40,7 +40,7 @@ Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 | `scripts/fetch_models.py` | Copies the PP-OCRv5 OCR models from the bundle's `models/` into place. |
 | `scripts/pilot_check.py` | The self-check: reads the ten sample invoices with no AI model and no Azure. |
 | `scripts/build_offline_bundle.py` | IT, on a computer with internet: builds the offline ZIP (code, `wheelhouse/`, `models/`, `bundle_manifest.json`). |
-| `ap_coder/cli.py:cmd_serve` → `ap_coder/web/server.py:serve` | The dashboard server (`python -m ap_coder serve`). |
+| `ap_coder/ops/cli.py:cmd_serve` → `ap_coder/web/server.py:serve` | The dashboard server (`python -m ap_coder serve`). |
 
 One file to open per computer: older versions also shipped `install.bat` / `install.sh`, `start.bat` / `start.sh`
 and a top-level `terminal.bat`. Unzipped over such a folder, the new version removes them (`scripts/upgrade.py:prune_stale`),
@@ -93,7 +93,7 @@ key" at the end, for automated runs), `AP_ALLOW_INTERNET=1` (developers), `BROWS
 
 AP Coder runs on any CPython **3.11 or newer** (`scripts/launch.py:MINIMUM`; no upper bound). 3.12 is preferred,
 then the other versions the offline bundle is built for (3.11, 3.13, 3.14), because the wheelhouse has packages
-only for those. `pyproject.toml` says `>=3.10` and CI still tests 3.10 (`ap_coder/doctor.py` warns on it), but the
+only for those. `pyproject.toml` says `>=3.10` and CI still tests 3.10 (`ap_coder/ops/doctor.py` warns on it), but the
 launchers never pick one older than 3.11. Python is never installed by the offline build.
 
 ### Windows: `APProcessor.bat`
@@ -199,7 +199,7 @@ What the .venv has been through is kept in `.venv/ap_coder_launcher.json` (`STAT
 A new version is installed by unzipping its bundle **anywhere** (a new folder, or over the old one) and
 double-clicking its `APProcessor`. Nothing is installed twice; the data is never opened by older code.
 
-**The record** (`ap_coder/paths.py`): `~/.ap_coder/settings.json` (`AP_USER_SETTINGS` overrides) holds `data_dir`,
+**The record** (`ap_coder/core/paths.py`): `~/.ap_coder/settings.json` (`AP_USER_SETTINGS` overrides) holds `data_dir`,
 `installs` (each folder started: version, build, last run), `current`, `desktop_shortcut`, `shortcut_target`,
 `data_move` (while a move runs) and the reviewer's name. Written whole to a `.part` file, then replaced
 (`write_user_settings`).
@@ -239,8 +239,8 @@ data (then it stays, and that is said).
 
 **The settings file** (`scripts/launch.py:settle_settings`): a `.env` or data left in the code folder moves to the
 data folder (`upgrade.adopt_legacy`; when the data folder has its own, the old one goes whole to
-`backups/from-<folder>-<date>/`); settings no longer read (`ap_coder/config.py:RETIRED_SETTINGS`: `AP_PAGE_READER`,
-`AP_PAGE_READER_SCOPE`, `AP_LLM_PROVIDER`) are commented out with a note (`ap_coder/envfile.py:retire`).
+`backups/from-<folder>-<date>/`); settings no longer read (`ap_coder/core/config.py:RETIRED_SETTINGS`: `AP_PAGE_READER`,
+`AP_PAGE_READER_SCOPE`, `AP_LLM_PROVIDER`) are commented out with a note (`ap_coder/core/envfile.py:retire`).
 
 **File paths** (`scripts/upgrade.py:repoint_files`): invoices record their file as an absolute path. Every path into
 an older folder (its `private/` invoices, its `samples/` demo invoices) is pointed at the file's new place, or the
@@ -248,7 +248,7 @@ file is copied into `data/invoices/`, in one transaction after a backup (`_backe
 `backups/ap_coder-<date>-before-update-file-paths.db`). While the database still needs a file it could not copy,
 the older folder is kept.
 
-**The database** (`ap_coder/store.py:Store._before_migrating`, `_migrate`): `settings.schema_version` (now
+**The database** (`ap_coder/core/store.py:Store._before_migrating`, `_migrate`): `settings.schema_version` (now
 `SCHEMA_VERSION = 15`). Older: backed up first (`backups/ap_coder-<date>-before-update-from-schema-<n>.db`), then
 migrated step by step. Newer: refused (`DatabaseTooNew`) and never opened. The launcher checks this before starting
 the server (`scripts/launch.py:database_too_new`) and stops with "start the newer AP Coder".
@@ -269,10 +269,10 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **Database too new**: see above.
 * **OCR models** (`scripts/launch.py:ensure_models` → `scripts/fetch_models.py:main`): RapidOCR 3's PP-OCRv5 models
   (det, cls, rec) are copied from the bundle's `models/` into RapidOCR's package folder inside `.venv`, only when
-  missing (SHA-256 checked on the first run, `ap_coder/offline.py:missing_models`). Never downloaded offline; a
+  missing (SHA-256 checked on the first run, `ap_coder/ops/offline.py:missing_models`). Never downloaded offline; a
   failure is said once and not retried until the bundle's `models/` folder changes (`models_attempt`). Without them,
   scans are read by the second engine (`rapidocr-onnxruntime`, PP-OCRv4 models inside its package).
-* **Table finder** (`ap_coder/offline.py:table_finder_path`): RapidLayout's `yolov8n_layout_general6.onnx` is read in
+* **Table finder** (`ap_coder/ops/offline.py:table_finder_path`): RapidLayout's `yolov8n_layout_general6.onnx` is read in
   place from the bundle's `models/`, else `<data>/models/`, else `AP_TABLE_FINDER_MODEL`; SHA-256 checked; never
   copied or downloaded. Without it, line items are read as before.
 * **Record and marker**: `paths.record_install` (this folder is current), `upgrade.write_marker`
@@ -292,12 +292,12 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 
 `scripts/launch.py:start_dashboard` starts `python -m ap_coder serve --port N --no-browser [options]` as a child:
 
-* **Port**: `--port` when given, else the first from **8501** this computer can bind (`ap_coder/offline.py:free_port`,
+* **Port**: `--port` when given, else the first from **8501** this computer can bind (`ap_coder/ops/offline.py:free_port`,
   which `python -m ap_coder serve` uses too: a bind test on the dashboard address, 50 tries, then one the system
   picks; on Windows without `SO_REUSEADDR`, which would let it take a port in use). The port is recorded in
   `.venv/ap_coder_launcher.json` so the next double-click finds it. `serve` on a port something already answers on
   says so and starts nothing (it never writes over a running server's file).
-* **Address** (`ap_coder/offline.py:dashboard_address`): `127.0.0.1`, unless `AP_DASHBOARD_ADDRESS` (or
+* **Address** (`ap_coder/ops/offline.py:dashboard_address`): `127.0.0.1`, unless `AP_DASHBOARD_ADDRESS` (or
   `--address`) says otherwise; listening beyond this computer prints a warning (there is no login).
 * **Server** (`ap_coder/web/server.py:serve`): uvicorn in that process; a random token; the server file
   `<data>/.ap_coder_server.json` (`pid`, `port`, `folder`, `version`, `token`, `started`; mode 0600 on macOS/Linux),
@@ -310,7 +310,7 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **Up?** The server checks its own `/healthz` directly, never through a proxy, and prints `AP Coder is running at
   http://127.0.0.1:N`. The launcher opens `http://localhost:N` when it sees that line or `/healthz` answers
   (`running.health`), once.
-* **Browser** (`scripts/launch.py:open_browser`, `ap_coder/offline.py:browser_wanted`): not with `BROWSER=none`, and
+* **Browser** (`scripts/launch.py:open_browser`, `ap_coder/ops/offline.py:browser_wanted`): not with `BROWSER=none`, and
   not on a Linux computer with neither `DISPLAY` nor `WAYLAND_DISPLAY` (over SSH: Python would start a text browser
   in this window); then the address is said.
 * **Stop**: close the window or press Ctrl+C (the launcher ends the child, killing it after 15 s); the launcher of a
@@ -323,7 +323,7 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 ## 9. The data folder and everything AP Coder writes
 
 Default data folder `~/APCoder` (`C:\Users\<you>\APCoder`); `AP_PRIVATE_DIR` overrides it, the record
-(`data_dir`) chooses it otherwise (`ap_coder/paths.py:private_dir`). Keep it out of OneDrive (`doctor` warns: sync
+(`data_dir`) chooses it otherwise (`ap_coder/core/paths.py:private_dir`). Keep it out of OneDrive (`doctor` warns: sync
 can corrupt an open SQLite database).
 
 | Where | What | Written by |
@@ -342,7 +342,7 @@ can corrupt an open SQLite database).
 | `.ap_coder_server.json` | the running server: pid, port, folder, version, token | `web/server.write_server_file` |
 | `.cache/extraction/`, `.cache/page_reader/` | text read from each file, OvisOCR2's readings (by SHA-256) | capture, `page_reader` |
 | `.cache/ocr/` | each scanned page's OCR, per engine (by the page image's SHA-256): a page is OCR'd once however often its invoice is read; at most 4,000, the oldest removed first | `capture/layout.ocr_cache` (the pipeline) |
-| `output/`, `share_report.md`, `share_report_key.csv`, `labels.xlsx` | command-line outputs | `ap_coder/cli.py` |
+| `output/`, `share_report.md`, `share_report_key.csv`, `labels.xlsx` | command-line outputs | `ap_coder/ops/cli.py` |
 | `backup-<date>/` | the data set aside by `install --fresh-start` | `install.fresh_start` |
 | `models/` (optional) | the table finder model, if IT puts it there | IT |
 | **`~/.ap_coder/settings.json`** | the record of installs and the data folder (section 6) | `paths.write_user_settings` |
@@ -371,11 +371,11 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 | 5 | `scripts/build_offline_bundle.py` | PyPI, modelscope | IT's online computer; sets the opt-in for itself |
 | 6 | `scripts/running.py:health`, `ask_to_stop`, `legacy_dashboard` | `127.0.0.1:<port>` only | never through a proxy (`ProxyHandler({})`) |
 | 7 | `ap_coder/web/server.py:_announce_when_up` | its own `/healthz` | direct, never through a proxy |
-| 8 | `ap_coder/local_llm.py:check_server`, `build_local_client`; `ap_coder/page_reader.py:_post_json`, `_client` | LM Studio / Ollama at `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` (default `127.0.0.1:1234`) | this computer or the office network (private address, bare or `.local`/`.lan` name) only; an internet address only with `AP_ALLOW_INTERNET=1` (`refused_address`); no proxy for a local one |
-| 9 | `ap_coder/extraction.py:DocumentExtractor` | Azure Document Intelligence as the reader | only with `AP_ALLOW_INTERNET=1` and an endpoint |
-| 10 | `ap_coder/inference.py:build_openai_client` | Azure OpenAI for coding | `local_llm.resolve_provider`: only with `AP_ALLOW_INTERNET=1` and an endpoint |
-| 11 | `ap_coder/doctor.py` (`--online`) | Azure | only with `AP_ALLOW_INTERNET=1` |
-| 12 | `ap_coder/azure_check.py` | the one Azure Document Intelligence endpoint in the `.env` (`only_host` checks every request, redirects included) | **its own switch** in Settings → Reading (off by default), with its packages, endpoint and key; not `AP_ALLOW_INTERNET` (by design) |
+| 8 | `ap_coder/ai/local_llm.py:check_server`, `build_local_client`; `ap_coder/ai/page_reader.py:_post_json`, `_client` | LM Studio / Ollama at `AP_LLM_BASE_URL` / `AP_PAGE_READER_BASE_URL` (default `127.0.0.1:1234`) | this computer or the office network (private address, bare or `.local`/`.lan` name) only; an internet address only with `AP_ALLOW_INTERNET=1` (`refused_address`); no proxy for a local one |
+| 9 | `ap_coder/ai/extraction.py:DocumentExtractor` | Azure Document Intelligence as the reader | only with `AP_ALLOW_INTERNET=1` and an endpoint |
+| 10 | `ap_coder/ai/inference.py:build_openai_client` | Azure OpenAI for coding | `local_llm.resolve_provider`: only with `AP_ALLOW_INTERNET=1` and an endpoint |
+| 11 | `ap_coder/ops/doctor.py` (`--online`) | Azure | only with `AP_ALLOW_INTERNET=1` |
+| 12 | `ap_coder/ai/azure_check.py` | the one Azure Document Intelligence endpoint in the `.env` (`only_host` checks every request, redirects included) | **its own switch** in Settings → Reading (off by default), with its packages, endpoint and key; not `AP_ALLOW_INTERNET` (by design) |
 | 13 | `ap_coder/web/security.py:host_allowed` | `socket.getfqdn()` (a DNS lookup of this computer's name) | only when listening on every network (`AP_DASHBOARD_ADDRESS=0.0.0.0`) and a request names a host |
 | 14 | the dashboard itself | listens on `127.0.0.1:8501` | `AP_DASHBOARD_ADDRESS` opens it to the office network (inbound; a warning is printed) |
 | 15 | RapidOCR's own model downloader | (would fetch models on first use) | never runs: the engine is given the model paths (`offline.ppocrv5_engine_params`) and used only when they are intact (`ppocrv5_ready`) |

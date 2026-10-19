@@ -15,10 +15,8 @@ from urllib.parse import urlparse
 import pytest
 from PIL import Image
 
-from ap_coder import local_llm, page_reader
-from ap_coder.capture.types import Reading
-from ap_coder.config import PageReaderSettings, Settings
-from ap_coder.page_reader import (
+from ap_coder.ai import local_llm, page_reader
+from ap_coder.ai.page_reader import (
     GENERAL,
     NOT_DOWNLOADED,
     OVIS,
@@ -31,6 +29,8 @@ from ap_coder.page_reader import (
     reader_for,
     reader_name,
 )
+from ap_coder.capture.types import Reading
+from ap_coder.core.config import PageReaderSettings, Settings
 
 from .conftest import SAMPLE_STEM, SAMPLES
 

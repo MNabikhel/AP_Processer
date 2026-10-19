@@ -4,8 +4,8 @@ import math
 
 import pandas as pd
 
-from ap_coder.reference_data import UNASSIGNED
-from ap_coder.review import coding_from_inputs
+from ap_coder.coding.review import coding_from_inputs
+from ap_coder.core.reference_data import UNASSIGNED
 
 HEADER_FIELDS = (
     "vendor_name", "invoice_number", "invoice_date", "po_number", "payment_terms", "due_date", "currency",

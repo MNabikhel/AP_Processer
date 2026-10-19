@@ -4,12 +4,12 @@ import json
 
 import pytest
 
-from ap_coder import rules
-from ap_coder.inference import InvoiceCoder
-from ap_coder.pipeline import InvoicePipeline
-from ap_coder.rules import Rule
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import SCHEMA_VERSION, Store
+from ap_coder.ai.inference import InvoiceCoder
+from ap_coder.ai.pipeline import InvoicePipeline
+from ap_coder.coding import rules
+from ap_coder.coding.rules import Rule
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import SCHEMA_VERSION, Store
 
 from .conftest import FakeOpenAI, make_completion
 

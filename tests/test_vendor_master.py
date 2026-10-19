@@ -3,14 +3,14 @@
 import json
 import sqlite3
 
-from ap_coder import exports
-from ap_coder.config import Settings
-from ap_coder.demo import load_demo, remove_demo
-from ap_coder.pipeline import finalise_coding
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store, load_sample_setup, load_sample_vendor_master
-from ap_coder.suggest import suggest_gl
-from ap_coder.vendors import ON_HOLD, master_columns, master_rows
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.ai.suggest import suggest_gl
+from ap_coder.coding.vendors import ON_HOLD, master_columns, master_rows
+from ap_coder.core.config import Settings
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store, load_sample_setup, load_sample_vendor_master
+from ap_coder.erp import exports
+from ap_coder.ops.demo import load_demo, remove_demo
 
 from .conftest import SAMPLE_STEM, SAMPLES
 

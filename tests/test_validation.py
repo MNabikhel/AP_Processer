@@ -1,10 +1,10 @@
 import copy
 
-from ap_coder.extraction import result_from_raw
-from ap_coder.reference_data import UNASSIGNED
-from ap_coder.schema import InvoiceCoding
-from ap_coder.tax import build_gl_distribution
-from ap_coder.validation import validate_coding
+from ap_coder.ai.extraction import result_from_raw
+from ap_coder.coding.tax import build_gl_distribution
+from ap_coder.coding.validation import validate_coding
+from ap_coder.core.reference_data import UNASSIGNED
+from ap_coder.core.schema import InvoiceCoding
 
 
 def _codes(report):

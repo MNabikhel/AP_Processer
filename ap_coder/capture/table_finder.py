@@ -46,13 +46,13 @@ _lock = threading.Lock()
 
 def available() -> bool:
     """ONNX Runtime is installed and the model is on this computer, intact."""
-    from ..offline import onnxruntime_installed, table_finder_path
+    from ..ops.offline import onnxruntime_installed, table_finder_path
 
     return onnxruntime_installed() and table_finder_path() is not None
 
 
 def _model() -> Any:
-    from ..offline import table_finder_path
+    from ..ops.offline import table_finder_path
 
     global _session, _session_path
     path = table_finder_path()
@@ -62,7 +62,7 @@ def _model() -> Any:
         if _session is None or _session_path != path:
             import onnxruntime
 
-            from ..offline import quiet_onnxruntime
+            from ..ops.offline import quiet_onnxruntime
 
             quiet_onnxruntime()
             options = onnxruntime.SessionOptions()
@@ -169,7 +169,7 @@ def find_tables(path: str | Path, max_pages: int = MAX_PAGES) -> dict[int, list[
         return None
     import hashlib
 
-    from ..offline import table_finder_path
+    from ..ops.offline import table_finder_path
 
     try:
         key = (hashlib.sha256(Path(path).read_bytes()).hexdigest(), max_pages, str(table_finder_path()))

@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from ap_coder.reference_data import UNASSIGNED, ReferenceData
-from ap_coder.schema import InvoiceCoding, build_json_schema, line_gl_codes, response_format
+from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
+from ap_coder.core.schema import InvoiceCoding, build_json_schema, line_gl_codes, response_format
 
 TARGET_HEADER = [
     "vendor_name", "invoice_number", "invoice_date", "po_number", "payment_terms", "due_date", "currency",

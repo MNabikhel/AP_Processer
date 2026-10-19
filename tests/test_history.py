@@ -1,9 +1,9 @@
 """Teaching the AI from the ERP's past AP coding."""
 
-from ap_coder import history
-from ap_coder.memory import compare_with_history
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store
+from ap_coder.ai import history
+from ap_coder.core.memory import compare_with_history
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store
 
 
 def _rows():

@@ -7,12 +7,12 @@ import json
 import pytest
 from openpyxl import load_workbook
 
-from ap_coder import exports
-from ap_coder.bulk import bulk_approve, clean_candidates
-from ap_coder.config import Settings
-from ap_coder.demo import load_demo
-from ap_coder.memory import vendor_key
-from ap_coder.store import APPROVED, REVIEW, Store
+from ap_coder.coding.bulk import bulk_approve, clean_candidates
+from ap_coder.core.config import Settings
+from ap_coder.core.memory import vendor_key
+from ap_coder.core.store import APPROVED, REVIEW, Store
+from ap_coder.erp import exports
+from ap_coder.ops.demo import load_demo
 
 from .conftest import SAMPLE_STEM, SAMPLES
 
@@ -83,7 +83,7 @@ def test_bulk_approve_only_takes_invoices_that_are_still_clean(demo_store):
 def test_bulk_approve_skips_an_invoice_a_colleague_parks_meanwhile(demo_store, monkeypatch):
     """One invoice parked (or approved) by someone else while the loop checks the others is skipped with the
     reason; the rest are still approved and the result is not lost."""
-    from ap_coder import bulk
+    from ap_coder.coding import bulk
 
     store = demo_store
     ids = [c["id"] for c in clean_candidates(store)]
@@ -120,9 +120,9 @@ def test_bulk_approve_never_takes_a_check_that_always_needs_a_person(tmp_path):
     """S2-T3: a new vendor's first invoice (VENDOR_NEW, info only) is not "clean": a person opens it."""
     import json
 
-    from ap_coder.pipeline import finalise_coding
-    from ap_coder.schema import InvoiceCoding
-    from ap_coder.store import load_sample_setup
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import load_sample_setup
 
     from .conftest import SAMPLES
 

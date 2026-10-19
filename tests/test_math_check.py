@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ap_coder.schema import InvoiceCoding
+from ap_coder.core.schema import InvoiceCoding
 from ap_coder.web.invoice_view import math_check
 
 

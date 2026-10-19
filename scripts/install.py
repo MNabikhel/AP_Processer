@@ -33,15 +33,15 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))  # ap_coder/envfile.py is standard-library only, usable before installing
+sys.path.insert(0, str(ROOT))  # ap_coder/core/envfile.py is standard-library only, usable before installing
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import launch  # noqa: E402  (the one setup: .venv, packages, models, shortcut, readiness)
 import upgrade  # noqa: E402  (data kept in a code folder moves to the data folder)
 
-from ap_coder import paths  # noqa: E402  (the one reader and writer of ~/.ap_coder/settings.json)
-from ap_coder.envfile import PLACEHOLDER, clean_url, read_env, write_env  # noqa: E402
-from ap_coder.offline import internet_allowed  # noqa: E402
+from ap_coder.core import paths  # noqa: E402  (the one reader and writer of ~/.ap_coder/settings.json)
+from ap_coder.core.envfile import PLACEHOLDER, clean_url, read_env, write_env  # noqa: E402
+from ap_coder.ops.offline import internet_allowed  # noqa: E402
 
 WINDOWS = os.name == "nt"
 DEFAULT_DATA_DIR = paths.default_data_dir()

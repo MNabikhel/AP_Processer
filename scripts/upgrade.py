@@ -3,8 +3,8 @@
 A new version is installed by unzipping its offline bundle anywhere (a new folder, or over the old one) and
 double-clicking APProcessor. The launcher (scripts/launch.py) then uses what is here to take over from the old one:
 
-* the record of installs (``~/.ap_coder/settings.json``, ``ap_coder/paths.py``): every AP Coder folder started on this
-  computer and the current one. An older folder started by mistake hands over to the newest (:func:`newer_install`,
+* the record of installs (``~/.ap_coder/settings.json``, ``ap_coder/core/paths.py``): every AP Coder folder started on
+  this computer and the current one. An older folder started by mistake hands over to the newest (:func:`newer_install`,
   :func:`hand_over`): the database is never opened by older code. An AP Coder 0.1 folder, which kept no record, is
   found from the data folder it used (``<folder>/private``) and the desktop shortcut (:func:`legacy_installs`).
 * :func:`prune_stale`: unzipped over an older version, the files the older one had and this one does not (deleted
@@ -43,7 +43,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ap_coder import paths  # noqa: E402  (standard library only)
+from ap_coder.core import paths  # noqa: E402  (standard library only)
 
 MARKER = ".ap_coder_install.json"  # written into a folder the launcher set up (not a git checkout)
 LOCK_NAME = ".ap_coder_launch.lock"

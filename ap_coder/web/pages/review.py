@@ -17,12 +17,13 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ap_coder import recurring, ui
-from ap_coder.bulk import bulk_approve, clean_candidates
-from ap_coder.memory import vendor_key
-from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
-from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
-from ap_coder.terms import DUE_SOON_DAYS, payment
+from ap_coder.coding.bulk import bulk_approve, clean_candidates
+from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
+from ap_coder.coding.terms import DUE_SOON_DAYS, payment
+from ap_coder.core import ui
+from ap_coder.core.memory import vendor_key
+from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
+from ap_coder.erp import recurring
 from ap_coder.web.core import (
     TARGET_ACCURACY,
     approved_today,
@@ -286,7 +287,7 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
-    from ap_coder.demo import demo_available
+    from ap_coder.ops.demo import demo_available
     from ap_coder.web.pages.process import setup_steps
 
     steps = setup_steps(store, get_settings(request))

@@ -6,10 +6,8 @@ import sqlite3
 
 import pytest
 
-from ap_coder.config import Settings
-from ap_coder.demo import load_demo, remove_demo
-from ap_coder.pipeline import finalise_coding
-from ap_coder.po import (
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.coding.po import (
     map_columns,
     match_invoice,
     pair_with_po,
@@ -19,8 +17,10 @@ from ap_coder.po import (
     similarity,
     template_csv,
 )
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store, load_sample_purchase_orders
+from ap_coder.core.config import Settings
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store, load_sample_purchase_orders
+from ap_coder.ops.demo import load_demo, remove_demo
 
 from .conftest import SAMPLES
 

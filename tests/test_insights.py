@@ -2,9 +2,9 @@
 
 import copy
 
-from ap_coder.demo import load_demo
-from ap_coder.insights import Assumptions, compute, invoice_cost_usd, report_html
-from ap_coder.store import Store
+from ap_coder.core.store import Store
+from ap_coder.erp.insights import Assumptions, compute, invoice_cost_usd, report_html
+from ap_coder.ops.demo import load_demo
 
 
 def test_cost_of_one_invoice():
@@ -49,8 +49,8 @@ def test_assumptions_are_saved_and_the_report_has_no_invoice_details(tmp_path, m
 
 def test_a_damaged_stored_check_does_not_break_insights_or_vendors(tmp_path):
     """A hand-edited or damaged database with a check stored as plain text: the pages still draw."""
-    from ap_coder import insights
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
+    from ap_coder.erp import insights
 
     store = Store(tmp_path / "ap.db")
     iid = store.add_invoice(tmp_path / "x.pdf", {"vendor_name": "Acme", "grand_total": 10.0, "currency": "CAD"},
@@ -62,7 +62,7 @@ def test_a_damaged_stored_check_does_not_break_insights_or_vendors(tmp_path):
 
 def test_filling_in_a_blank_is_not_a_correction():
     """The audit trail keeps every change; Insights counts as corrected only what changed what was proposed."""
-    from ap_coder.insights import _corrected
+    from ap_coder.erp.insights import _corrected
 
     filled = {"detail": {"changes": [{"what": "line 1 cost center", "before": "UNASSIGNED", "after": "100"},
                                      {"what": "line 2 cost center", "before": "", "after": "200"}]}}  # fmt: skip

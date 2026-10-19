@@ -5,8 +5,8 @@ import sqlite3
 
 import pytest
 
-from ap_coder import store as store_mod
-from ap_coder.store import Store
+from ap_coder.core import store as store_mod
+from ap_coder.core.store import Store
 
 
 @pytest.fixture

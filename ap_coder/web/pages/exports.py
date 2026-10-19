@@ -17,9 +17,10 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from ap_coder import dupaudit, export_layout, exports, jde, registers, stamp, ui
-from ap_coder.reference_data import short_name
-from ap_coder.store import Store
+from ap_coder.core import ui
+from ap_coder.core.reference_data import short_name
+from ap_coder.core.store import Store
+from ap_coder.erp import dupaudit, export_layout, exports, jde, registers, stamp
 from ap_coder.web.core import by_currency, done, flash_message, get_store, message, reference_or_none, refuse, render
 from ap_coder.web.core import reviewer as current_reviewer
 from ap_coder.web.files import (

@@ -1,6 +1,6 @@
 """Settings → Reading: how AP Coder reads every invoice, the same way each time, and how each reader is doing.
 
-Nothing to choose here. Every invoice goes through the same readers (``ap_coder.reading``); the tab shows each one's
+Nothing to choose here. Every invoice goes through the same readers (``ap_coder.ai.reading``); the tab shows each one's
 state, the page reader's (OvisOCR2 in LM Studio) self-test (run again from here, its progress polled from
 ``GET /settings/reading/self-test``), its queue and record, the models LM Studio has (with Load) and a checklist for a
 new computer. The Azure Document Intelligence check is a card of its own (``partials/azure_check.html``, built in
@@ -18,11 +18,12 @@ from typing import Any
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse
 
-from ap_coder import page_reader, page_worker, ui
-from ap_coder.config import Settings
-from ap_coder.envfile import clean_url, read_env
-from ap_coder.offline import internet_allowed
-from ap_coder.store import Store
+from ap_coder.ai import page_reader, page_worker
+from ap_coder.core import ui
+from ap_coder.core.config import Settings
+from ap_coder.core.envfile import clean_url, read_env
+from ap_coder.core.store import Store
+from ap_coder.ops.offline import internet_allowed
 from ap_coder.web.core import (
     done,
     get_settings,
@@ -165,7 +166,7 @@ def lm_studio_running(settings: Settings) -> bool:
 
 def chat_model(settings: Settings) -> tuple[bool, str]:
     """(ready, label) of the optional chat model that suggests GL accounts."""
-    from ap_coder.local_llm import provider_status
+    from ap_coder.ai.local_llm import provider_status
 
     try:
         status = provider_status(settings)
@@ -242,7 +243,7 @@ def testing_snapshot(store: Store) -> dict[str, Any]:
 
 
 def page_reader_context(settings: Settings, store: Store, status: Any) -> dict[str, Any]:
-    from ap_coder.local_llm import LM_STUDIO_STEPS
+    from ap_coder.ai.local_llm import LM_STUDIO_STEPS
 
     running = lm_studio_running(settings)
     model = status.page_reader_model
@@ -326,7 +327,7 @@ def reading_context(request: Request, *, fresh: bool = False) -> dict[str, Any]:
     }
     if status is not None:
         context["reader"] = page_reader_context(settings, store, status)
-    from ap_coder import verifier
+    from ap_coder.ai import verifier
 
     context["ai_reviewer"] = verifier.load_settings(store)
     context["reviewer_limits"] = {"rounds": verifier.MAX_ROUNDS, "minutes": verifier.MAX_MINUTES}
@@ -343,7 +344,7 @@ def save_reviewer(
     request: Request, on: str = Form(""), rounds: str = Form("3"), minutes: str = Form("5")
 ) -> JSONResponse:
     """The AI reviewer: on or off, how many rounds and how long an invoice at most."""
-    from ap_coder import verifier
+    from ap_coder.ai import verifier
 
     try:
         n, m = int(float(rounds)), float(minutes)
@@ -363,7 +364,7 @@ def save_reviewer(
 @router.post("/settings/reading/check")
 def check_again(request: Request) -> JSONResponse:
     """Ask LM Studio and the readers afresh (the page normally uses a short-lived cache)."""
-    from ap_coder.local_llm import forget_status
+    from ap_coder.ai.local_llm import forget_status
 
     page_reader.forget_status()
     forget_status()
@@ -446,7 +447,7 @@ def save_azure(
 @router.post("/settings/reading/azure-test")
 def test_azure(request: Request) -> JSONResponse:
     """Send one tiny made-up invoice to each Azure service and check the rest (``doctor.run_checks``), as a job."""
-    from ap_coder.doctor import FAIL, PASS, WARN, run_checks
+    from ap_coder.ops.doctor import FAIL, PASS, WARN, run_checks
 
     if not internet_allowed():
         return refuse("Cloud services are only in a developer build that may use the internet.", status=403)

@@ -8,9 +8,9 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.config import Settings
-from ap_coder.demo import load_demo
-from ap_coder.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.core.config import Settings
+from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
 from ap_coder.web.pages.review import confidence_pct, filter_queue, sort_queue
 
@@ -82,7 +82,7 @@ def test_filters_search_and_sort_are_in_the_address(client, demo):
 
 
 def test_bulk_approve_approves_clean_invoices_and_says_which_were_left(client, demo):
-    from ap_coder.bulk import clean_candidates
+    from ap_coder.coding.bulk import clean_candidates
 
     candidates = clean_candidates(demo)
     assert len(candidates) >= 2
@@ -258,9 +258,9 @@ def test_the_review_and_export_pages_do_not_ask_the_database_once_per_invoice(tm
     check each ready invoice, every one with its own database connection: 5,000 rows meant 5,000 connections."""
     import sqlite3
 
-    from ap_coder import store as store_mod
-    from ap_coder.jde import FORMAT as JDE
-    from ap_coder.store import load_sample_setup
+    from ap_coder.core import store as store_mod
+    from ap_coder.core.store import load_sample_setup
+    from ap_coder.erp.jde import FORMAT as JDE
 
     from .webclient import add_clean, client_for
 
@@ -308,8 +308,8 @@ def test_the_vendor_detail_does_not_ask_the_database_once_per_invoice(tmp_path, 
     invoice in the queue, each with its own database connection."""
     import sqlite3
 
-    from ap_coder import store as store_mod
-    from ap_coder.store import load_sample_setup
+    from ap_coder.core import store as store_mod
+    from ap_coder.core.store import load_sample_setup
 
     from .webclient import add_clean, client_for
 

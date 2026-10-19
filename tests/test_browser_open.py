@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder import offline
+from ap_coder.ops import offline
 from ap_coder.web import server as web_server
 
 ROOT = Path(__file__).resolve().parent.parent

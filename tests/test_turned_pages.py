@@ -11,8 +11,8 @@ import pymupdf
 import pytest
 from PIL import Image
 
-from ap_coder import intake
 from ap_coder.capture import layout
+from ap_coder.intake import pictures as intake
 
 W, H = 1000, 1300
 UPRIGHT = [  # (text, x0, y0, x1, y1) as printed on the upright page
@@ -115,9 +115,9 @@ def test_a_pdf_made_from_a_picture_is_turned_where_it_is(tmp_path):
 def test_the_pipeline_shows_a_page_scanned_upside_down_upright(tmp_path, monkeypatch):
     import dataclasses as dc
 
-    from ap_coder.config import Settings
-    from ap_coder.pipeline import InvoicePipeline
-    from ap_coder.store import Store, load_sample_setup
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import Store, load_sample_setup
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)

@@ -2,8 +2,8 @@
 
 import copy
 
-from ap_coder.audit import describe, diff_coding
-from ap_coder.store import Store
+from ap_coder.core.audit import describe, diff_coding
+from ap_coder.core.store import Store
 
 
 def test_approval_records_every_reviewer_change(tmp_path, ground_truth):
@@ -75,7 +75,7 @@ def _logged_actions() -> set[str]:
 
 
 def test_every_logged_action_has_a_label_and_a_description():
-    from ap_coder.audit import ACTIONS
+    from ap_coder.core.audit import ACTIONS
 
     logged = _logged_actions()
     assert {"vendor_added", "lesson_retired", "lesson_restored", "autonomy_held", "autonomy_on", "email_sorted",

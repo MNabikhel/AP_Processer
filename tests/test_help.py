@@ -2,19 +2,19 @@
 
 import re
 
-from ap_coder.help import AREAS, CHECKS, help_for
+from ap_coder.ops.help import AREAS, CHECKS, help_for
 
 from .conftest import ROOT
 
 SOURCES = [
-    "validation.py",
-    "tax.py",
-    "vendors.py",
-    "po.py",
-    "terms.py",
+    "coding/validation.py",
+    "coding/tax.py",
+    "coding/vendors.py",
+    "coding/po.py",
+    "coding/terms.py",
     "capture/bridge.py",
-    "verifier.py",
-    "azure_check.py",
+    "ai/verifier.py",
+    "ai/azure_check.py",
 ]
 
 
@@ -62,7 +62,7 @@ def test_help_page_search_filters_the_catalog():
 
 def test_routine_links_to_real_pages():
 
-    from ap_coder.help import ROUTINE
+    from ap_coder.ops.help import ROUTINE
     from ap_coder.web.pages import BY_KEY
 
     assert {page for _, tasks in ROUTINE for _, page in tasks} <= set(BY_KEY)

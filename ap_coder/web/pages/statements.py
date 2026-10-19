@@ -14,9 +14,10 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from ap_coder import inbox, vendor_mail
-from ap_coder import statements as stm
-from ap_coder.store import Store
+from ap_coder.coding import vendor_mail
+from ap_coder.core.store import Store
+from ap_coder.erp import statements as stm
+from ap_coder.intake import inbox
 from ap_coder.web.core import done, get_store, invoice_dir, money, refuse, render, reviewer
 from ap_coder.web.files import (
     _MAX_BYTES,

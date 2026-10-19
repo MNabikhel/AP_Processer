@@ -11,7 +11,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 
-from ..msgfile import SIGNATURE
+from ..intake.msgfile import SIGNATURE
 
 _FREE, _END, _FAT = 0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD
 SECTOR, MINI, CUTOFF = 512, 64, 4096
