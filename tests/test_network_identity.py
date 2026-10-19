@@ -107,7 +107,7 @@ def test_two_colleagues_give_the_two_approvals_and_the_audit_trail_names_each(ap
     done = store.get_invoice(invoice_id)
     assert done["status"] == APPROVED and done["reviewer"] == "Ana" and done["second_reviewer"] == "Ben"
     final = next(e for e in store.events(invoice_id) if e["action"] == "final_approved")
-    assert final["actor"] == "Ben" and final["detail"]["from"] == "10.0.0.6"
+    assert final["actor"] == "Ben" and final["detail"]["address"] == "10.0.0.6"
 
 
 def test_an_action_from_the_network_records_the_person_and_their_address(app, store):
@@ -116,7 +116,7 @@ def test_an_action_from_the_network_records_the_person_and_their_address(app, st
     answer = ana.post(f"/review/{invoice_id}/reject", data={"reason": "not ours"}, headers=PAGE).json()
     assert answer["ok"], answer
     event = next(e for e in store.events(invoice_id) if e["action"] == "rejected")
-    assert event["actor"] == "Ana" and event["detail"]["from"] == "10.0.0.5"
+    assert event["actor"] == "Ana" and event["detail"]["address"] == "10.0.0.5"
 
 
 def test_each_person_keeps_their_own_unsaved_edits(app, store):
@@ -138,7 +138,7 @@ def test_this_computers_browser_is_not_asked_and_keeps_its_name(app, store):
     invoice_id = store.list_invoices(REVIEW)[0]["id"]
     me.post(f"/review/{invoice_id}/reject", data={"reason": "dup"}, headers=PAGE)
     event = next(e for e in store.events(invoice_id) if e["action"] == "rejected")
-    assert event["actor"] == "Server Owner" and "from" not in event["detail"]
+    assert event["actor"] == "Server Owner" and "address" not in event["detail"]
 
 
 def test_on_this_computer_only_nobody_is_asked(store):
@@ -168,3 +168,36 @@ def test_a_background_job_started_by_a_colleague_works_in_their_name():
     finally:
         identity.PERSON.reset(token)
     assert job.wait(5) and job.result == {"who": "Ana"}
+
+
+def test_a_colleagues_address_never_replaces_what_an_event_itself_records(store):
+    """B-129: the address was written as ``detail["from"]``, which some events already use for the old value (the
+    touchless limit, a supplier's state, a moved file), so a change made from the network lost what it changed from."""
+    from ap_coder.core.store import EVENT_ORIGIN
+
+    token = EVENT_ORIGIN.set("192.168.1.20")
+    try:
+        before = store.touchless_limit()
+        store.set_touchless_limit(1234.0, "Ana")
+    finally:
+        EVENT_ORIGIN.reset(token)
+    event = next(e for e in store.events() if e["action"] == "settings_changed")
+    assert event["detail"]["from"] == before and event["detail"]["to"] == 1234.0
+    assert event["detail"]["address"] == "192.168.1.20"
+
+
+def test_invoices_read_in_parallel_keep_the_colleague_who_started_them(monkeypatch):
+    """B-130: a colleague's "Process" job reads files in a thread pool, and pool threads did not carry the person or
+    their address, so those invoices' events were recorded as nobody's."""
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.core.store import EVENT_ORIGIN
+
+    seen = []
+    pipeline = InvoicePipeline.__new__(InvoicePipeline)
+    monkeypatch.setattr(InvoicePipeline, "process", lambda self, p: seen.append(EVENT_ORIGIN.get()) or p, raising=False)
+    token = EVENT_ORIGIN.set("10.0.0.5")
+    try:
+        pipeline.process_many(["a.pdf", "b.pdf", "c.pdf"], workers=3)
+    finally:
+        EVENT_ORIGIN.reset(token)
+    assert seen == ["10.0.0.5"] * 3

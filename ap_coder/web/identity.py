@@ -8,7 +8,8 @@ colleague gives their name again. For each request, ``Identity`` (ASGI middlewar
 
 * ``core.reviewer()`` is then their name, and ``core.login()`` ``network <their address>``, so a second approval
   from the same computer as the first is refused, whatever name it gives;
-* every event the store records names them (``actor``) and their address (``detail["from"]``, ``store.EVENT_ORIGIN``);
+* every event the store records names them (``actor``) and their address (``detail["address"]``,
+  ``store.EVENT_ORIGIN``);
 * the review screen keeps their unsaved edits apart (``pages/invoice.py``).
 
 A browser on another computer without a valid cookie sees only the "Who are you?" page (a page asked for is sent

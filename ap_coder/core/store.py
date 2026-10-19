@@ -214,7 +214,7 @@ _HEADER_FIELDS = (
 
 
 # Where the request being answered came from, when it is a colleague on the office network (set by
-# ap_coder/web/identity.py): every event then records it as detail["from"]. None on this computer.
+# ap_coder/web/identity.py): every event then records it as detail["address"]. None on this computer.
 EVENT_ORIGIN: contextvars.ContextVar[str | None] = contextvars.ContextVar("ap_coder_event_origin", default=None)
 
 
@@ -627,7 +627,7 @@ class Store:
     ) -> None:  # fmt: skip
         origin = EVENT_ORIGIN.get()
         if origin:
-            detail = {**(detail or {}), "from": origin}
+            detail = {**(detail or {}), "address": origin}  # never "from": events use it (B-129)
         conn.execute(
             "INSERT INTO events (invoice_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)",
             (invoice_id, action, actor, json.dumps(detail or {}, default=str), _now()),

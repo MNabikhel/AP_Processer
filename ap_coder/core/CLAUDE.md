@@ -11,7 +11,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.store
 ## Interface
 - `Store()` (store.py): path (default `ap_coder.db` in the data folder) -> the one SQLite store; `session()` shares one
   connection per thread. `load_sample_setup()`: the sample GL, cost centers, tax GL mapping and policy from `data/`.
-  `EVENT_ORIGIN` (store.py): a contextvar; set (web/identity.py, a colleague on the network), every event's detail gets `from`: their address.
+  `EVENT_ORIGIN` (store.py): a contextvar; set (web/identity.py, a colleague on the network), every event's detail gets `address`: theirs (never `from`, which events use for an old value: B-129).
 - `from_env()` (config.py, `Settings.from_env`): .env path, else `paths.env_file()` -> `Settings`; `override=False`: the OS environment wins, so a saved value also goes into `os.environ`.
 - `load_reference_data()` (reference_data.py): files -> `ReferenceData` (GL, cost centers, tax setup, policy) for prompts and checks.
 - `InvoiceCoding` (schema.py): the coding shape (and the JSON schema the models answer in).
@@ -55,6 +55,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - B-74: Don't decide "thousands separator" without checking the groups are real thousands. `tests/test_safety.py::test_parse_amount_reads_thousands_only_from_real_thousands_groups`
 - B-75: Don't keep a hand list of audit actions apart from the actions the store logs. `tests/test_audit.py::test_every_logged_action_has_a_label_and_a_description`
 - B-78: Don't read a file people save in Notepad without `utf-8-sig`. `tests/test_reference_data.py::test_coding_policy_saved_with_a_byte_order_mark_keeps_its_comment_line`
+- B-129: Don't add a field to every record under a name some records already use: pick a key nothing else writes. `tests/test_network_identity.py::test_a_colleagues_address_never_replaces_what_an_event_itself_records`
 
 ## Files
 - `__init__.py`: the package docstring only.

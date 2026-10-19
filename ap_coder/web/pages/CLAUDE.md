@@ -23,7 +23,7 @@ The shared helpers (render, done/refuse, jobs, files) are in `ap_coder/web`; the
 - The settings_*.py routers are not in `PAGES`: settings.py includes them into its own router (`_include_tabs`).
 - `render()`'s page key highlights the rail: the invoice screen uses "review", the Azure check page "settings".
 - Every POST needs the header `X-AP-Coder: 1` (checked by web/security.py before any route runs) and answers JSON, never an HTML page.
-- The review screen's unsaved edits live in memory, per person (`app.state.invoice_drafts` here, `person_drafts[name]` per colleague, invoice.py):
+- The review screen's unsaved edits live in memory, per person (`app.state.invoice_drafts` here, `person_drafts[name.casefold()]` per colleague, so two who give one name share them; invoice.py):
   a restart loses them; bulk approval skips an invoice anyone is editing; approve, reject, reopen and delete drop everyone's, Start over only the asker's.
 
 ### Bug lessons

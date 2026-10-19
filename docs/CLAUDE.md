@@ -24,7 +24,7 @@ is the map of its code. When a doc and the code disagree, the code wins and the 
 - `screenshots/` is a data folder (no CLAUDE.md): the PNGs the README shows.
 
 ## Files
-- Decisions and bugs: `decisions.md` (D-NN: each significant choice and why), `BUGS.md` (the bug log: sweep 1 B-01 to B-72 and N-01 to N-31, sweep 2 B-73 to B-128 and N-32 to N-76).
+- Decisions and bugs: `decisions.md` (D-NN: each significant choice and why), `BUGS.md` (the bug log: sweep 1 B-01 to B-72 and N-01 to N-31, sweep 2 B-73 to B-130 and N-32 to N-76).
 - For the pilot: `GETTING_STARTED.md` (running the prototype on your data, step by step), `PILOT.md` (pilot guide on one laptop), `PILOT_PLAN.md` (four weeks to a decision).
 - For IT: `HOW_IT_RUNS.md` (double-click to dashboard: Python, packages, update, files written, every network place), `UPGRADING.md` (each older version and what the update does), `LM_STUDIO.md` (the models, limits shared with CloseDesk), `MAILBOX_SETUP.md` (getting emails into the invoices folder).
 - For finance and AP: `SALES_TAX.md` (place of supply, taxes per line, the math, rates), `JDE_E1.md` (JD Edwards E1 Z-file export and open questions), `CODING.md` (GL coding without an AI model).

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 import logging
 import time
@@ -503,7 +504,8 @@ class InvoicePipeline:
             return [r for r in results if r is not None]
         pool = ThreadPoolExecutor(max_workers=workers)
         try:
-            futures = {pool.submit(self.process, p): i for i, p in enumerate(paths)}
+            # each file in a copy of the caller's context: who started the run, for the events (B-130)
+            futures = {pool.submit(contextvars.copy_context().run, self.process, p): i for i, p in enumerate(paths)}
             for future in as_completed(futures):
                 done(futures[future], future.result())
         except KeyboardInterrupt:

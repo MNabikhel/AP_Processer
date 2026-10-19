@@ -16,7 +16,7 @@ Fully offline: CSS and scripts are served from this folder, fonts from `ap_coder
 - `get_store()`, `get_settings()`, `jobs()`, `reviewer()`, `local_url()`, `money()` (core.py): what routes use; `templates` is the one Jinja environment.
   `reviewer()` and `login()`: this computer's user, or a colleague on the office network (their name; `network <address>`).
 - `Job.start()` (jobs.py): runs work(job) in a thread, False if that job name is running; the page polls `snapshot()` at `GET /jobs/<name>` (the "process" job at /process/status).
-- `Identity`, `person()`, `PERSON`, `COOKIE`, `cookie_value()`, `name_from_cookie()`, `network_login()` (identity.py): on 0.0.0.0, who each
+- `Identity`, `person()`, `PERSON`, `COOKIE`, `WHO_PATH`, `cookie_value()`, `name_from_cookie()`, `clean_name()`, `is_this_computer()`, `network_login()` (identity.py): on 0.0.0.0, who each
   browser on another computer is (a cookie signed with `app.state.identity_secret`, made at each start); without one it gets /who only (D-34).
 - `LocalOnly` (security.py): middleware; `host_allowed()` and `same_origin()` decide. Header `X-AP-Coder: 1` (PAGE_HEADER), launcher token `X-AP-Coder-Token`.
 - `download()`, `receive_sheet()`, `read_upload()`, `sheet_context()` (files.py): downloads and the two-step spreadsheet import (uploads wait in memory 1 hour, never on disk;
@@ -38,7 +38,7 @@ Fully offline: CSS and scripts are served from this folder, fonts from `ap_coder
 - `done()` passes the URL through `local_url()`: a page never redirects off this server.
 - Settings are read from the .env on every request (`settings_factory`), so a Settings change applies at once.
 - `MORE_MODULES` routers are included before `PAGES`, so `/settings/azure-check` wins over `/settings/{tab}`.
-- Who is asking is a contextvar set by `Identity` (and `store.EVENT_ORIGIN`): read `reviewer()`/`login()`/`identity.person()`; a `Job` thread inherits it.
+- Who is asking is a contextvar set by `Identity` (and `store.EVENT_ORIGIN`): read `reviewer()`/`login()`/`identity.person()`; a `Job` thread and `process_many`'s pool inherit it (B-130).
 - Only "process", "settings-doctor" and "azure-test" are `Job`s (one per name at a time); backups, restore, export files, the training ZIP and the
   duplicate audit run inside the request.
 - invoice_view.py is over 1,100 lines: this folder does too much, see the scale assessment, PR #24.
