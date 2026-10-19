@@ -54,12 +54,16 @@ def needs_person(store: Any, folder: Path, limit: int = 100) -> list[dict[str, A
 
 
 def statements(store: Any, folder: Path, limit: int = 50) -> list[dict[str, Any]]:
-    """The statements of account received by email, newest first (those marked done left out)."""
+    """The statements of account received by email, newest first (those marked done left out). The whole log is
+    searched (B-117): a statement nobody marked done stays here however many emails were sorted after it."""
     finished = done_ids(store)
+
+    def open_statement(e: dict[str, Any]) -> bool:
+        has = any(d.get("kind") == triage.STATEMENT for d in e.get("documents") or [] if isinstance(d, dict))
+        return has and e["id"] not in finished
+
     out = []
-    for entry in triage_log(folder):
-        if entry["id"] in finished:
-            continue
+    for entry in triage_log(folder, limit, keep=open_statement):
         for n, d in enumerate(entry.get("documents") or []):
             if d.get("kind") == triage.STATEMENT and _file(folder, d.get("file", "")) is not None:
                 out.append({"id": entry["id"], "n": n, "name": d["name"], "at": entry.get("at", ""),
