@@ -39,7 +39,10 @@ TEST_KEY = "page_reader_test"
 RETEST_HOURS = 24.0  # a model that failed its self-test is tested again on its own after this long
 RETEST_UNREAD_HOURS = 1.0  # ... or after this long when the test read nothing (LM Studio stopped, not enough memory)
 TEST_PAGES = 2  # the test invoice's pages
-TESTING_KEY = "page_reader_testing"  # the test under way, as JSON: model, started, pid, pages done (else "")
+TESTING_KEY = "page_reader_testing"  # the test under way, as JSON: model, started, updated, pid, pages done (else "")
+# Another process's test whose mark was not renewed for this long is gone: it is renewed at each page (minutes), and a
+# process id is used again by another program later (the token in READER_ID can't be checked from another process).
+TEST_STALE_HOURS = 1.0
 FIGURES_KEY = "page_reader_figures"  # running totals of figures compared: {"digital": [same, figures], "scans": ...}
 MAX_TRIES = 3  # reads cut off by the model server before an invoice leaves the queue as failed
 BLANK_WORDS = 3  # a page OCR finds fewer words on than this is blank: the page reader isn't shown it
@@ -676,8 +679,9 @@ _testing_here = threading.Event()  # this process is testing the page reader now
 
 
 def test_under_way(store: Any) -> dict[str, Any] | None:
-    """The test of the page reader under way on this computer: {model, started, pid, page, pages, done}, or None.
-    A test whose process is gone (the dashboard was closed during it) is not under way."""
+    """The test of the page reader under way on this computer: {model, started, updated, pid, pages, done}, or
+    None. A test whose process is gone (the dashboard was closed during it), or whose mark was not renewed for
+    ``TEST_STALE_HOURS`` (its process id now another program's), is not under way."""
     try:
         raw = store.get_setting(TESTING_KEY)
         testing = json.loads(raw) if raw else None
@@ -687,7 +691,13 @@ def test_under_way(store: Any) -> dict[str, Any] | None:
         return None
     if testing.get("reader") == READER_ID:  # this process's: under way until its test ends
         return testing if _testing_here.is_set() else None
-    return testing if reader_alive(str(testing.get("reader") or "")) else None
+    if not reader_alive(str(testing.get("reader") or "")):
+        return None
+    try:
+        noted = dt.datetime.fromisoformat(str(testing.get("updated") or testing.get("started")))
+    except ValueError:
+        return None  # no time noted: nothing says it is still under way
+    return testing if dt.datetime.now() - noted < dt.timedelta(hours=TEST_STALE_HOURS) else None
 
 
 test_under_way.__test__ = False  # type: ignore[attr-defined]  # not a pytest test
@@ -778,8 +788,9 @@ def wait_seconds(settings: Settings, store: Any, model: str = "", invoice_id: in
 
 
 def _mark_test(store: Any, model: str, done: int, pages: int, started: str = "") -> str:
-    started = started or dt.datetime.now().isoformat(timespec="seconds")
-    store.set_setting(TESTING_KEY, json.dumps({"model": model, "started": started, "pid": os.getpid(),
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    started = started or now
+    store.set_setting(TESTING_KEY, json.dumps({"model": model, "started": started, "updated": now, "pid": os.getpid(),
                                                "reader": READER_ID, "done": done, "pages": pages}))  # fmt: skip
     return started
 

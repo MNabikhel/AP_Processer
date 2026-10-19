@@ -812,7 +812,7 @@ def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -
              if li.predicted_gl_code == UNASSIGNED or accounts.get(li.predicted_gl_code) is None]  # fmt: skip
     if not lines:
         return []
-    feedback = store.feedback_rows()
+    feedback = store.learning_rows(coding.vendor_name)
     default_gl = (store.get_vendor(vendor_key(coding.vendor_name)) or {}).get("default_gl") or ""
     out = []
     for pos, li in lines:

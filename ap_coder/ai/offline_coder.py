@@ -180,6 +180,17 @@ _BANK_WORDS = re.compile(
     r"blvd)\b)|banque|account|acct|compte|virement|eft|wire|direct)"
 )
 _MONEY = re.compile(r"\d[\d,. ]*[.,]\d{2}(?!\d)")
+# Where the banking details end: a number after its own label (an IBAN or SWIFT code after theirs), and the words that
+# start something else on the same line ("..., quoting invoice NW-2026-0912", "ref. 88231", "Call 416-555-1212").
+_BANK_NUMBER = re.compile(
+    r"(?i)\biban\b\W{0,3}[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b"
+    r"|\b(?:swift|bic)\b\W{0,3}[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b"
+    r"|\b(?:transit|institution|inst|branch|account|acct|a/c|compte|routing|aba)\b\D{0,15}?\d(?:[\d -]*\d)?"
+)
+_BANK_END = re.compile(
+    r"(?i)\b(?:quot(?:e|ing)|invoices?|inv|facture|ref|reference|r[ée]f[ée]rence|date|order|po|questions?|call|"
+    r"phone|tel|t[ée]l[ée]phone|fax|e-?mail|courriel)\b"
+)
 
 
 def bank_details(text: str) -> str:
@@ -191,6 +202,14 @@ def bank_details(text: str) -> str:
     def digits(s: str) -> int:
         return sum(c.isdigit() for c in _MONEY.sub(" ", s))
 
+    def account_part(s: str) -> str:
+        # Up to the first word of something else once the account's digits are in (the invoice number every
+        # invoice quotes would make each one a changed account), then up to the last labelled number.
+        end = next((m.start() for m in _BANK_END.finditer(s) if digits(s[: m.start()]) >= 5), len(s))
+        s = s[:end]
+        numbers = list(_BANK_NUMBER.finditer(s))
+        return (s[: numbers[-1].end()] if numbers else s).rstrip(" ,;:.(-–")
+
     found: list[str] = []
     lines = [ln.strip() for ln in (text or "").splitlines()]
     for i, line in enumerate(lines):
@@ -199,18 +218,24 @@ def bank_details(text: str) -> str:
         heading = digits(line) < 5 and (line.endswith(":") or len(line.split()) <= 4)  # "Banking details:"
         for row in [line] if not heading else lines[i + 1 : i + 4]:  # under a heading: the account lines
             m = _BANK_WORDS.search(row)
-            if m and digits(row[m.start() :]) >= 5 and row[m.start() :] not in found:
-                found.append(row[m.start() :])
+            details = account_part(row[m.start() :]) if m else ""
+            if digits(details) >= 5 and details not in found:
+                found.append(details)
     return "; ".join(found)[:200]
 
 
 def _unlisted_charge(text: str, amount: float) -> str:
     """The label printed beside an amount outside the line table ("Delivery & handling: $95.00")."""
-    figure = f"{abs(amount):,.2f}"
-    for line in text.splitlines():
-        if figure in line:
-            label = line.split(figure)[0].strip(" :$-–\t")
-            if 2 < len(label) < 60 and not re.search(r"(?i)sub\s*-?total|total|tax|gst|hst|pst|qst|tps|tvq", label):
+    figure = re.compile(rf"(?<![\d,.]){re.escape(f'{abs(amount):,.2f}')}(?!\d)")  # whole: not "50.00" in "1,250.00"
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = figure.search(line)
+        if m:
+            label = line[: m.start()].strip(" :$-–\t")
+            if not label and i:  # the figure alone on its line (a PDF's text, a cell a line): its label just above
+                label = lines[i - 1].strip(" :$-–\t")
+            if (2 < len(label) < 60 and re.search(r"[^\W\d_]", label)
+                    and not re.search(r"(?i)sub\s*-?total|total|tax|gst|hst|pst|qst|tps|tvq", label)):  # fmt: skip
                 return label
     return "Charges not in the line table"
 
@@ -259,6 +284,12 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
              else float(li.amount) / li.quantity if li.quantity else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)
         ]  # fmt: skip
+    # A credit note that prints its lines without a sign but its subtotal negative: the lines are the credit (their
+    # sum is minus the subtotal), not lines owed with a charge twice their size taking them back. The quantity
+    # keeps its sign and the unit price carries the credit's, as the reader codes a credit's line.
+    listed = round(sum(r[3] for r in readings_data), 2)
+    if readings and subtotal < 0 < listed and abs(listed + subtotal) < 0.01:
+        readings_data = [(d, q, -u, -a) for d, q, u, a in readings_data]
     # Lines that fall short of the subtotal (plus freight read beside it): a charge printed outside the table.
     short = round(subtotal + freight - sum(r[3] for r in readings_data), 2)
     if (readings or freight) and abs(short) >= 0.01:

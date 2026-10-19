@@ -72,6 +72,7 @@ _RESTORING_LOCK = threading.Lock()
 # The learning memory as last read, per database: (highest lesson id and count, rows) (``Store.feedback_rows``).
 _FEEDBACK: dict[tuple[str, int, str | None], tuple[tuple[Any, ...], list[dict[str, Any]]]] = {}
 _FEEDBACK_LOCK = threading.Lock()
+FEEDBACK_READ = 50_000  # lessons read for the whole memory, at most (newest first); one vendor's are added past it
 
 # Touchless processing (Settings → Automation): one switch for the company, "on" or "off" (off when not set), and
 # the largest invoice total approved without a person, in CAD.
@@ -3386,10 +3387,12 @@ class Store:
 
     # --- Learning memory ------------------------------------------------------------------------------
 
-    def feedback_rows(self, limit: int = 50_000, vendor_name: str | None = None) -> list[dict[str, Any]]:
-        """Recorded reviewer decisions, newest first (only one vendor's when ``vendor_name`` is given). Read once and
-        kept until a lesson is added or removed: every invoice read asks for them, and years of imported ERP history
-        take a third of a second to load on a laptop. The list is shared: read it, don't change it."""
+    def feedback_rows(self, limit: int | None = None, vendor_name: str | None = None) -> list[dict[str, Any]]:
+        """Recorded reviewer decisions, newest first (only one vendor's when ``vendor_name`` is given), at most
+        ``limit`` (``FEEDBACK_READ``). Read once and kept until a lesson is added or removed: every invoice read asks
+        for them, and years of imported ERP history take a third of a second to load on a laptop. The list is
+        shared: read it, don't change it."""
+        limit = FEEDBACK_READ if limit is None else limit
         sql, args = "SELECT * FROM feedback", ()
         if vendor_name is not None:
             sql, args = sql + " WHERE vendor_key = ?", (vendor_key(vendor_name),)
@@ -3418,6 +3421,19 @@ class Store:
                 while len(_FEEDBACK) > 8:
                     _FEEDBACK.pop(next(iter(_FEEDBACK)))
         return rows
+
+    def learning_rows(self, vendor_name: str | None) -> list[dict[str, Any]]:
+        """``feedback_rows()`` with every lesson of this vendor in it: what an invoice from it is coded and checked
+        with. Past ``FEEDBACK_READ`` lessons the whole memory holds only the newest, so a vendor whose history was
+        imported first would have none of its own; its older lessons then follow the shared list (in a new list,
+        the rows themselves shared). The shared list itself while it holds them all."""
+        rows = self.feedback_rows()
+        if not vendor_name or len(rows) < FEEDBACK_READ:
+            return rows
+        key = vendor_key(vendor_name)
+        have = {r["id"] for r in rows if r["vendor_key"] == key}
+        missing = [r for r in self.feedback_rows(vendor_name=vendor_name) if r["id"] not in have]
+        return rows + missing if missing else rows
 
     def import_history(self, rows: list[dict[str, Any]], actor: str | None = None) -> dict[str, int]:
         """Past AP coding from the ERP (``history.rows_from_records``) into the learning memory, as history.

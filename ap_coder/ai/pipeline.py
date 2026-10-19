@@ -82,12 +82,15 @@ def invoice_files(folder: Path) -> list[Path]:
 
     A .md/.txt file is skipped when a PDF or image with the same name sits next to it
     (it is a text copy of the same invoice, e.g. the bundled samples), so nothing is coded twice.
-    README files are documentation, never invoices.
+    README files are documentation, never invoices; nor are hidden files (a Mac's "._inv.pdf" beside "inv.pdf" on a
+    shared or USB drive) or an Office lock file ("~$...").
     """
     files = sorted(
         c
         for c in folder.iterdir()
-        if c.is_file() and c.suffix.lower() in SUPPORTED_EXTENSIONS and not c.name.lower().startswith("readme")
+        if c.is_file()
+        and c.suffix.lower() in SUPPORTED_EXTENSIONS
+        and not c.name.lower().startswith(("readme", ".", "~$"))
     )
     documents = {c.stem.lower() for c in files if c.suffix.lower() not in TEXT_EXTENSIONS}
     return [c for c in files if c.suffix.lower() not in TEXT_EXTENSIONS or c.stem.lower() not in documents]
@@ -367,8 +370,8 @@ class InvoicePipeline:
             result.timings["extraction"] = time.perf_counter() - t0
 
             # Reviewer history relevant to this document (immediate learning).
-            feedback = self.store.feedback_rows() if self.store is not None else []
             vendor_hint = (result.extraction.invoice_fields.get("VendorName") or {}).get("value")
+            feedback = self.store.learning_rows(vendor_hint) if self.store is not None else []
             examples = select_examples(feedback, result.extraction.content, vendor_hint)
             result.history_examples = len(examples)
             history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
@@ -387,6 +390,9 @@ class InvoicePipeline:
                 # page images too, when it can see pages: one more independent reader of every field.
                 model_values = self._model_reading(path) if page_text is not None and provider == "local" else None
                 captured = read_invoice(path, self.store, layout=layout, page_text=page_text, ai_values=model_values)
+                vendor = captured[0].fields.get("vendor_name")
+                if self.store is not None and vendor is not None and vendor.value:  # its lessons, past the cap too
+                    feedback = self.store.learning_rows(str(vendor.value))
                 result.coding = code_from_capture(
                     captured[0], self.reference, feedback, self.store, text=result.extraction.content,
                     assign_weak=provider == "local",
@@ -420,34 +426,40 @@ class InvoicePipeline:
         azure = azure_check.Plan()
         reviewer_plan = verifier.Plan()
         if result.output is not None:
-            t2 = time.perf_counter()
-            if captured is not None:  # already read (no AI model): the capture is the proposal itself
-                result.capture, key, profile = captured
-            else:
-                result.capture, key, profile = capture_invoice(
-                    path, result.output, store=self.store, page_text=page_text,
-                    di_raw=result.extraction.raw if result.extraction else None,
-                )  # fmt: skip
-            result.timings["capture"] = time.perf_counter() - t2
-            if result.capture is not None and result.report is not None:
-                for severity, code, message in review_issues(result.capture, result.output.get("currency")):
-                    result.report.issues.append(Issue(severity, code, message))
-                # The optional Azure check (off unless turned on): a check already done is folded in again (read
-                # again by the page reader); otherwise whether it goes in line, and waits for it.
-                azure = azure_check.prepare(self.store, self.settings, invoice_id, result.capture, result.report, path)
-                # Not read by the page reader yet: it will be (queued below), and decides then.
-                awaiting = page_text is None and not text_file
-                read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
-                if read is not None and pages_read is not None:
-                    read = min(read, pages_read)
-                result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
-                                                    output=result.output, awaiting_page_reader=awaiting,
-                                                    pages_read=read)  # fmt: skip
-                result.autonomy = azure_check.hold(result.autonomy, azure)
-                # The AI reviewer (on by default): every invoice goes in line, and none is approved without a person
-                # until it agrees.
-                reviewer_plan = verifier.prepare(self.store, invoice_id)
-                result.autonomy = verifier.hold(result.autonomy, reviewer_plan)
+            try:
+                t2 = time.perf_counter()
+                if captured is not None:  # already read (no AI model): the capture is the proposal itself
+                    result.capture, key, profile = captured
+                else:
+                    result.capture, key, profile = capture_invoice(
+                        path, result.output, store=self.store, page_text=page_text,
+                        di_raw=result.extraction.raw if result.extraction else None,
+                    )  # fmt: skip
+                result.timings["capture"] = time.perf_counter() - t2
+                if result.capture is not None and result.report is not None:
+                    for severity, code, message in review_issues(result.capture, result.output.get("currency")):
+                        result.report.issues.append(Issue(severity, code, message))
+                    # The optional Azure check (off unless turned on): a check already done is folded in again (read
+                    # again by the page reader); otherwise whether it goes in line, and waits for it.
+                    azure = azure_check.prepare(
+                        self.store, self.settings, invoice_id, result.capture, result.report, path
+                    )
+                    # Not read by the page reader yet: it will be (queued below), and decides then.
+                    awaiting = page_text is None and not text_file
+                    read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
+                    if read is not None and pages_read is not None:
+                        read = min(read, pages_read)
+                    result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
+                                                        output=result.output, awaiting_page_reader=awaiting,
+                                                        pages_read=read)  # fmt: skip
+                    result.autonomy = azure_check.hold(result.autonomy, azure)
+                    # The AI reviewer (on by default): every invoice goes in line, and none is approved without a person
+                    # until it agrees.
+                    reviewer_plan = verifier.prepare(self.store, invoice_id)
+                    result.autonomy = verifier.hold(result.autonomy, reviewer_plan)
+            except Exception:  # one bad invoice must not stop a batch: saved for a person, never touchless
+                log.exception("Checks after coding failed for %s", path)
+                result.autonomy = {}
 
         if self.store is not None and not save and invoice_id:  # read again (the page reader): same invoice
             azure_check.queue(self.store, invoice_id, azure)
