@@ -95,8 +95,22 @@ cutting words, with some short bullets sharing a line (words down 8 to 23%; what
 `--online` to the ops map), and the checker now warns past 50 (D-37). An earlier trim that only joined lines into
 ones of up to 586 characters (words down 0 to 3%) was reverted before it was committed.
 
+## Cold-start round 5 (2026-10-19, on the trimmed maps of PR #31)
+Run after the trim to 50 lines, to show whether it lost anything an agent needs; maps only, graded in the code.
+1. What a new POST route needs (header, origin, Host, JSON answers; `LocalOnly`): right.
+2. "Already running" on a double-click (`take_over()`, the server file, `/healthz`, `/shutdown` with the token):
+   right; the four verdicts' meanings were missing. Fix: the scripts map says what each means.
+3. A test that opens the dashboard and approves (webclient helpers, conftest's autouse setup, no threads left):
+   right; it could not tell where `BackgroundReader` lives. Fix: tests map names ai/page_worker.py.
+4. A new Settings tab (template, TABS in settings.py and settings.js, context, maps): right; it saw templates
+   name `settings_tab()` and pages name `render_tab()` and took them for a contradiction (both exist). Fix: the
+   pages map names `TABS` and `settings_tab()`.
+5. A capture bug fix (failing test, fix, B-NN entry, lesson line, check_map.py in CI): right.
+It also reported the root map saying "warns past 60"; the root map on disk says "warns past that" (50), so that
+one did not reproduce.
+
 ## Next checks
-- A cold-start round every 3 months (root CLAUDE.md): add it here as round 5, 6... with its 5 questions, the verdicts
+- A cold-start round every 3 months (root CLAUDE.md): add it here as round 6, 7... with its 5 questions, the verdicts
   and the fixes. The map-reviewer says when the last one is older than that.
 
 ## Not recoverable

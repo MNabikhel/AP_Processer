@@ -12,8 +12,8 @@ models) only from the code alone, with no bundle (`AP_ALLOW_INTERNET=0` stops it
 - `main()` (launch.py): argv -> exit code. The double-click: hand over to a newer install, make or reuse `.venv`, `take_over()`
   a running AP Coder, prune old files, install missing packages from `wheelhouse/`, settle the data folder, copy OCR models,
   shortcut, self-check, clean up older installs, then `python -m ap_coder serve` (`--installer`, `--yes`, `--check`, `--no-start`; the rest goes to serve).
-- `take_over()` (running.py): this folder and version -> ("open" | "newer" | "clear" | "blocked", port). Finds servers
-  by `<data>/.ap_coder_server.json` and `GET /healthz`, stops an older one with `POST /shutdown` + `X-AP-Coder-Token`.
+- `take_over()` (running.py): this folder and version -> ("open": the same is running | "newer": a newer one is | "clear" | "blocked": an older one
+  would not stop, port). Finds servers by `<data>/.ap_coder_server.json` and `GET /healthz`; stops an older one with `POST /shutdown` + `X-AP-Coder-Token`.
 - Update (upgrade.py): `newer_install()`, `hand_over()`, `prune_stale()` (files the manifest no longer lists), `settle_data_folder()`
   (data out of a code folder into `~/APCoder`), `repoint_files()`, `clean_up()` (old `.venv`, models, folders, after the self-check).
 - `main()` (install.py): the installer, the same setup plus questions (`--yes`: none; `--help` lists the rest).

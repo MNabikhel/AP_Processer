@@ -21,7 +21,7 @@ failing test here (docs/BUGS.md names it). Tests never touch the real data folde
 - offline_flow.py: `walk()` drives a real `python -m ap_coder serve` like AP would and reports any address but this server's (`--netns`: under `unshare -rn`).
 
 ## Gotchas and decisions
-- A test that opens the dashboard must not leave threads running: start your own BackgroundReader and stop it.
+- A test that opens the dashboard must not leave threads running: start your own `BackgroundReader` (ai/page_worker.py) and stop it.
 - A test that needs LM Studio starts a fake one (see test_local_llm.py, scripts/ci/fake_lm_studio.py); never a real one.
 - Bug tests keep the name given in docs/BUGS.md: renaming one breaks the log's **Test:** line.
 - A lesson logged twice becomes a rule in test_code_rules.py (a check of the whole code), not a third fix.
