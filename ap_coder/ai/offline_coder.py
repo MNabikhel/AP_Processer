@@ -226,11 +226,16 @@ def bank_details(text: str) -> str:
 
 def _unlisted_charge(text: str, amount: float) -> str:
     """The label printed beside an amount outside the line table ("Delivery & handling: $95.00")."""
-    figure = f"{abs(amount):,.2f}"
-    for line in text.splitlines():
-        if figure in line:
-            label = line.split(figure)[0].strip(" :$-–\t")
-            if 2 < len(label) < 60 and not re.search(r"(?i)sub\s*-?total|total|tax|gst|hst|pst|qst|tps|tvq", label):
+    figure = re.compile(rf"(?<![\d,.]){re.escape(f'{abs(amount):,.2f}')}(?!\d)")  # whole: not "50.00" in "1,250.00"
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = figure.search(line)
+        if m:
+            label = line[: m.start()].strip(" :$-–\t")
+            if not label and i:  # the figure alone on its line (a PDF's text, a cell a line): its label just above
+                label = lines[i - 1].strip(" :$-–\t")
+            if (2 < len(label) < 60 and re.search(r"[^\W\d_]", label)
+                    and not re.search(r"(?i)sub\s*-?total|total|tax|gst|hst|pst|qst|tps|tvq", label)):  # fmt: skip
                 return label
     return "Charges not in the line table"
 

@@ -101,3 +101,18 @@ def test_a_self_test_mark_whose_process_id_another_program_now_has_is_not_under_
     finally:
         other.kill()
         other.wait()
+
+
+def test_an_unlisted_charge_is_labelled_from_its_own_figure_not_part_of_another(reference):
+    # "50.00" is inside "1,250.00": the line above the charge's own was taken, and its label came out "1,2".
+    capture = _capture([("Widgets", 1, 1250.0, 1250.0)], subtotal=1300.0, gst_amount=65.0, tax_total=65.0,
+                       grand_total=1365.0)  # fmt: skip
+    text = (
+        "Acme\nToronto ON M5V 1A1\nBill to:\nCalgary AB T2P 1A1\nWidgets 1 1,250.00 1,250.00\nDelivery charge 50.00\n"
+    )
+    coding = code_from_capture(capture, reference, [], text=text).coding
+    assert [(li.description, li.amount) for li in coding.line_items] == [("Widgets", 1250.0), ("Delivery charge", 50.0)]
+    # A PDF's text, a cell a line: the label is the line above the figure.
+    text = "Acme\nCalgary AB T2P 1A1\nWidgets\n1\n1,250.00\n1,250.00\nDelivery charge\n50.00\nSubtotal\n1,300.00\n"
+    coding = code_from_capture(capture, reference, [], text=text).coding
+    assert coding.line_items[1].description == "Delivery charge"
