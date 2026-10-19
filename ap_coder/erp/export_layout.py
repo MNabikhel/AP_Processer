@@ -15,6 +15,7 @@ import datetime as dt
 import io
 import json
 from dataclasses import asdict, dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from ..coding.tax import currency_places
@@ -83,7 +84,34 @@ def default_columns() -> list[Column]:
     ]  # fmt: skip
 
 
-def _value(row: dict[str, Any], col: Column, layout: Layout) -> Any:
+def _money(value: Any, places: int) -> Decimal:
+    """Rounded half away from zero, on the decimal value (2.5 yen -> 3), as the JD Edwards files round."""
+    return Decimal(str(float(value))).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
+
+
+def _line_amounts(rows: list[dict[str, Any]]) -> dict[int, Decimal]:
+    """Each row's posting amount (by position), rounded to what its currency holds. In a currency without cents (the
+    yen), lines spread in cents (10.66 + 10.67 + 10.67) each rounded to the yen can be a yen off the invoice's total:
+    when the lines balance in cents, the largest takes the difference (like jde.py's vouchers)."""
+    out: dict[int, Decimal] = {}
+    whole: dict[Any, list[int]] = {}
+    for i, row in enumerate(rows):
+        if row.get("amount") is None or row.get("amount") == "":
+            continue
+        places = currency_places(row.get("currency"))
+        out[i] = _money(row["amount"], places)
+        if places == 0:
+            whole.setdefault(row.get("invoice_id"), []).append(i)
+    for lines in whole.values():
+        total = rows[lines[0]].get("grand_total")
+        if total is None or total == "" or sum(_money(rows[i]["amount"], 2) for i in lines) != _money(total, 2):
+            continue
+        biggest = max(lines, key=lambda i: abs(out[i]))
+        out[biggest] += _money(total, 0) - sum(out[i] for i in lines)
+    return out
+
+
+def _value(row: dict[str, Any], col: Column, layout: Layout, amount: Decimal | None = None) -> Any:
     if col.field == FIXED:
         return col.text
     value = row.get(col.field)
@@ -96,7 +124,8 @@ def _value(row: dict[str, Any], col: Column, layout: Layout) -> Any:
             return value
     if col.field in MONEY_FIELDS:
         places = currency_places(row.get("currency"))  # the yen has no cents
-        text = f"{float(value):.{places}f}"
+        money = amount if col.field == "amount" and amount is not None else _money(value, places)
+        text = f"{money:.{places}f}"
         return text.replace(".", ",") if layout.decimal_comma else text
     return value
 
@@ -107,6 +136,7 @@ def build(rows: list[dict[str, Any]], layout: Layout) -> bytes:
     writer = csv.writer(out, delimiter=layout.delimiter, lineterminator="\r\n")
     if layout.header_row:
         writer.writerow([c.header for c in layout.columns])
-    for row in rows:
-        writer.writerow([_value(row, c, layout) for c in layout.columns])
+    amounts = _line_amounts(rows)
+    for i, row in enumerate(rows):
+        writer.writerow([_value(row, c, layout, amounts.get(i)) for c in layout.columns])
     return out.getvalue().encode("utf-8-sig")

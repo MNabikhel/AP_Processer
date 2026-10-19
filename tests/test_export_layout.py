@@ -61,6 +61,25 @@ def test_yen_amounts_have_no_decimals():
     assert rows[0].startswith("4350,") and ".00" not in "\n".join(rows)
 
 
+def test_whole_yen_lines_add_up_to_the_invoice_total():
+    """A distribution spread in cents (10.66 + 10.67 + 10.67), each line rounded to the yen, is 33, not 32: the
+    lines round half up and the largest line takes the difference, as in the JD Edwards files."""
+    from .test_jde import _yen_invoice
+
+    inv = _yen_invoice(old_distribution=True)
+    assert [e["amount"] for e in inv["final_output"]["gl_distribution"]] == [10.66, 10.67, 10.67, 1000.0, 52.0]
+    layout = el.Layout([el.Column("Amount", "amount"), el.Column("Total", "grand_total")])
+    rows = [line.split(",") for line in exports.build("custom", [inv], {}, 1, {}, layout)[0].decode("utf-8-sig")
+            .splitlines()[1:]]  # fmt: skip
+    assert [r[0] for r in rows] == ["11", "11", "11", "999", "52"]
+    assert sum(int(r[0]) for r in rows) == 1084 and {r[1] for r in rows} == {"1084"}
+    half = el.Layout([el.Column("Net", "net_amount")])
+    one = {**inv["final_output"], "gl_distribution": [dict(inv["final_output"]["gl_distribution"][3], net_amount=2.5)]}
+    assert exports.build("custom", [{**inv, "final_output": one}], {}, 1, {}, half)[0].decode("utf-8-sig") == (
+        "Net\r\n3\r\n"
+    )  # half up, as an amount is rounded everywhere else (not 2, the even yen)
+
+
 def test_custom_csv_keeps_text_exactly_as_typed():
     """The custom CSV is for an ERP loader (E2-2): no spreadsheet apostrophe, so the ERP sees the invoice
     number the supplier printed."""
