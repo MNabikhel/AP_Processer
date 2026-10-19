@@ -544,6 +544,15 @@ def _keys(prefix: str, settings: JdeSettings, batch: int | str, inv_id: int) -> 
     }
 
 
+def _rate(fx_rates: Mapping[str, float] | None, currency: str, domestic: str) -> float | None:
+    """VLCRR: units of the domestic currency per unit of ``currency``. AP Coder's rates are CAD per unit (Settings →
+    Review), so with books in another currency it is the rate across CAD (USD books, a CAD invoice: 1 / 1.37), and
+    None (left blank: E1's exchange-rate table) without a rate for both."""
+    rates = {"CAD": 1.0, **(fx_rates or {})}
+    foreign, home = rates.get(_norm(currency)), rates.get(_norm(domestic))
+    return foreign / home if foreign and home else None
+
+
 def _doc_type(v: _Voucher, settings: JdeSettings) -> str:
     if v.gross < 0 and settings.credit_document_type.strip():
         return settings.credit_document_type.strip().upper()
@@ -566,7 +575,7 @@ def voucher_rows(
         due = invoice_date  # a credit note is not "due"; E1 needs a date
     doc_type = _doc_type(v, settings)
     po = str(final.get("po_number") or "").strip()
-    rate = (fx_rates or {}).get(v.currency) if v.foreign else None
+    rate = _rate(fx_rates, v.currency, settings.domestic_currency) if v.foreign else None
     common = {
         **keys, "VLDCT": doc_type, "VLCO": settings.company_code, "VLMCU": settings.header_bu.strip(),
         "VLAN8": str(vendor_an8 or "").strip(), "VLVINV": str(final.get("invoice_number") or "").strip()[:25],

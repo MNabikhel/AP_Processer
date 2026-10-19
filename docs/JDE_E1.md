@@ -141,8 +141,9 @@ number the G/L lines 1, 2, 3 under pay item 1. The setting *Line numbering* offe
 The domestic currency (default CAD) gives VLCRRM = `D`; any other currency gives VLCRRM = `F`, VLCRCD = the
 currency and the amounts in the foreign columns (VLACR, and VNACR on the lines; VLAG / VNAA blank: E1
 converts them). VLCRR is the rate from Settings → Review → *Exchange rates* when there is one, else blank
-(E1 then uses its exchange-rate table for the G/L date). A currency not in *Currencies set up in E1* blocks
-the invoice.
+(E1 then uses its exchange-rate table for the G/L date). Those rates are CAD per unit: with a domestic currency
+other than CAD, VLCRR is the rate across CAD (USD books, a CAD invoice at USD 1.37: 0.729927), and blank without
+a rate for the domestic currency. A currency not in *Currencies set up in E1* blocks the invoice.
 
 ### Credit notes
 
