@@ -18,7 +18,16 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.coding import vendor_mail
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
-from ap_coder.coding.vendors import ACTIVE, ON_HOLD, mask_account, master_columns, master_rows, norm_tax_number
+from ap_coder.coding.vendors import (
+    ACTIVE,
+    ON_HOLD,
+    bank_branch,
+    mask_account,
+    master_columns,
+    master_rows,
+    norm_tax_number,
+    same_bank_account,
+)
 from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import PARKED, REVIEW, Store
@@ -66,9 +75,13 @@ def spend_items(v: dict[str, Any]) -> list[tuple[str, float]]:
     return [(c, t) for c, t in (v.get("spend") or {}).items() if t]
 
 
-def history(invoices: list[dict[str, Any]], field: str, same: Any, show: Any) -> list[dict[str, Any]]:
+def history(
+    invoices: list[dict[str, Any]], field: str, same: Any, show: Any, apart: Any = None
+) -> list[dict[str, Any]]:
     """The values ``field`` took on a vendor's invoices, oldest first: each with the first and last invoice date it
-    was seen on and how many invoices carried it (a change of bank account or GST/HST number stands out)."""
+    was seen on and how many invoices carried it (a change of bank account or GST/HST number stands out). Two
+    values ``same`` tells apart but shown alike (two accounts ending in the same 4 digits) also show ``apart``'s
+    text (their bank and branch numbers), or, when that is alike too, that the number is another."""
     out: list[dict[str, Any]] = []
     for inv in sorted(invoices, key=lambda i: (i.get("invoice_date") or "", i["id"])):
         value = inv.get(field) or ""
@@ -82,8 +95,23 @@ def history(invoices: list[dict[str, Any]], field: str, same: Any, show: Any) ->
             entry["last"] = when or entry["last"]
             entry["invoices"] += 1
     for e in out:
+        twins = [o for o in out if o["shown"] == e["shown"]]
+        if apart is not None and len(twins) > 1:
+            extra = apart(e["raw"])
+            if extra and sum(apart(o["raw"]) == extra for o in twins) == 1:
+                e["shown_apart"] = f"{e['shown']}, bank and branch {extra}"
+            elif twins[0] is not e:
+                e["shown_apart"] = f"{e['shown']}, another account number"
+    for e in out:
+        e["shown"] = e.pop("shown_apart", e["shown"])
         del e["raw"]  # never the whole bank account on the page
     return out
+
+
+def same_bank(a: Any, b: Any) -> bool:
+    """One account, however written (``same_bank_account``, never only its last 4 digits); details without a number
+    go together."""
+    return same_bank_account(a, b) or mask_account(a) == mask_account(b) == "(none)"
 
 
 def ask_vendor(store: Store, invoices: list[dict[str, Any]], language: str) -> list[dict[str, Any]]:
@@ -135,9 +163,7 @@ def vendor_detail(store: Store, v: dict[str, Any], language: str) -> dict[str, A
         "numbers": numbers,
         "recent": [{**i, "pill": ui.STATUS_PILLS.get(i["status"], (i["status"], "gray", ""))} for i in invoices[:8]],
         "tax_history": history(invoices, "gst_hst_number", lambda a, b: norm_tax_number(a) == norm_tax_number(b), str),
-        "bank_history": history(
-            invoices, "bank_account", lambda a, b: mask_account(a) == mask_account(b), mask_account
-        ),
+        "bank_history": history(invoices, "bank_account", same_bank, mask_account, apart=bank_branch),
         "asks": ask_vendor(store, invoices, language),
         "lang": language,
     }
