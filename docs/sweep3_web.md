@@ -64,3 +64,16 @@
   attributes, and a cross-site POST still 403; the sweep's browser repro used the server's own address, which B-190
   now counts as this computer)
 - **Lesson:** Don't make a login cookie Strict when the CSRF defence is already elsewhere: it only breaks incoming links.
+
+#### B-194 · "Bring back" on the directory said "Back in the review queue." for an invoice rejected meanwhile · low
+- **Where:** `ap_coder/web/pages/search.py:217` (`bring_back`)
+- **Symptom:** a parked invoice is rejected in another tab (or by a colleague) after the directory was drawn; "Bring
+  back" then opens it with "Back in the review queue." though it is rejected.
+- **Cause:** the store's refusal (`ValueError: not parked`) was swallowed as "someone else brought it back
+  meanwhile", whatever the invoice's state now.
+- **Reproduce:** park an invoice, reject it, POST `/search/{id}/unpark`.
+- **Reproduced:** yes (`answer: /review/1 | message shown: ['Back in the review queue.'] | status now: rejected`)
+- **Fix:** on the refusal, unless the invoice is in the review queue now, answer with `invoice.changed_meanwhile()`
+  ("Not done: this invoice changed meanwhile ... It is rejected.").
+- **Test:** `tests/test_web_finance.py::test_bring_back_of_an_invoice_rejected_meanwhile_says_it_changed`
+- **Lesson:** Don't swallow a store's refusal on the guess that the wanted state was reached: check the state now.

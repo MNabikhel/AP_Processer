@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from ap_coder.coding import taxreturn
 from ap_coder.core.config import Settings
-from ap_coder.core.store import APPROVED, PARKED, REVIEW, Store, load_sample_setup
+from ap_coder.core.store import APPROVED, PARKED, REJECTED, REVIEW, Store, load_sample_setup
 from ap_coder.erp import accruals, dupaudit, export_layout, exports, jde, stamp
 from ap_coder.erp import statements as stm
 from ap_coder.ops.demo import load_demo
@@ -142,6 +142,22 @@ def test_search_brings_a_parked_invoice_back(client, busy):
     assert page.url.path == f"/review/{inv['id']}"
     assert busy.get_invoice(inv["id"])["status"] == REVIEW
     assert busy.get_invoice(inv["id"])["status"] != PARKED
+
+
+def test_bring_back_of_an_invoice_rejected_meanwhile_says_it_changed(client, busy):
+    """B-194: "Bring back" on the directory swallowed the store's refusal and said "Back in the review queue." for
+    an invoice rejected in another tab after the directory was drawn."""
+    inv = busy.list_invoices(REVIEW)[0]
+    busy.park_invoice(inv["id"], "Pat", "waiting for the buyer")
+    busy.reject_invoice(inv["id"], "Sam", "not ours")
+    page = follow(client, client.post(f"/search/{inv['id']}/unpark", headers=PAGE)).text
+    assert "Back in the review queue." not in page and "changed meanwhile" in page and "rejected" in page
+    assert busy.get_invoice(inv["id"])["status"] == REJECTED
+    other = busy.list_invoices(REVIEW)[0]  # brought back meanwhile by someone else: it is in the queue, as asked
+    busy.park_invoice(other["id"], "Pat", "waiting")
+    busy.unpark_invoice(other["id"], "Sam")
+    page = follow(client, client.post(f"/search/{other['id']}/unpark", headers=PAGE)).text
+    assert "Back in the review queue." in page
 
 
 def test_search_escapes_what_an_invoice_says(client, store, tmp_path):
