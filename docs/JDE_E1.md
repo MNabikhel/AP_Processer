@@ -259,7 +259,9 @@ each one stays covered.
 * Document type for imported vouchers (PV or a custom one), credit notes, and the **P0400047 version** run by
   R04110ZA (its processing options: tax recalculation, duplicate-invoice edit H/I, default G/L date, …).
 * Tax areas and codes per province, and how the AAIs post GST, HST, QST and PST (the C and B codes in particular).
-* Implied decimals or decimal points; gross only or taxable / tax; VNEDLN numbering.
+* Implied decimals or decimal points; gross only or taxable / tax; VNEDLN numbering; whether the line numbers
+  VLEDLN / VNEDLN, written 1, 2, 3, load as written (E1 shows EDLN with display decimals: a direct table load
+  may read 1 as 0.001 and need 1000, a table conversion does not).
 * Account mapping and subledgers; whether BUs must be right-justified (E1 stores MCU right-aligned in 12
   characters; a database load may need the padding, a table conversion does it).
 * Batch numbering and the user R04110ZA is run for; whether a batch should be limited in size.

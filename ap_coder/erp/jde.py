@@ -106,6 +106,8 @@ MATCH_COLUMNS = [
 UNCONFIRMED = (
     "the PO-matched extra columns (e.g. VLATFLG, VLPSTE) and the whole F0411Z1T match file",
     "VNEDLN numbering (sequential, or matching VLEDLN)",
+    "VLEDLN / VNEDLN as written (1, 2, 3): E1 shows EDLN with display decimals, so a direct table load of 1 may "
+    "read as 0.001 (1000 needed) where a table conversion would not",
     "the tax area names (ON-HST, QC-GSTQST, …) and explanation codes",
     "VLCRR (exchange rate): left blank when no rate is set, so E1 takes it from the exchange-rate table",
 )
