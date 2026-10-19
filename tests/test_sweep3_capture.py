@@ -100,3 +100,21 @@ def test_text_drawn_twice_for_bold_is_read_once(tmp_path):
     capture = analyze(_pdf(tmp_path, lines), ocr=False, today=TODAY)
     assert capture.fields["vendor_name"].value == "Acme Supply Ltd."
     assert capture.fields["invoice_date"].value == "2026-09-14"
+
+
+def test_the_amount_a_tax_is_charged_on_is_not_the_tax(tmp_path):
+    """ "HST 13% on $1,000.00" with 130.00 in the amount column: the tax is 130.00, not the base it is charged on."""
+    head = [x for x in _ACME if x[1] < 500]
+    lines = head + [(380, 500, "Subtotal"), (500, 500, "1,000.00"), (300, 515, "HST 13% on $1,000.00"),
+                    (500, 515, "130.00"), (380, 530, "Total Due CAD"), (500, 530, "1,130.00")]  # fmt: skip
+    capture = _read(_pdf(tmp_path, lines))
+    assert capture.fields["hst_amount"].value == 130.0
+    assert capture.fields["grand_total"].status == VERIFIED
+
+
+def test_modalites_alone_labels_the_payment_terms(tmp_path):
+    """ "Modalités : Net 30 jours" are the terms; "Modalités de livraison : 5 jours" are not."""
+    capture = _read(_pdf(tmp_path, _ACME + [(60, 150, "Modalités : Net 30 jours")]))
+    assert capture.fields["payment_terms"].value == "Net 30"
+    delivery = _read(_pdf(tmp_path, _ACME + [(60, 150, "Modalités de livraison : 5 jours")], "livraison.pdf"))
+    assert delivery.fields["payment_terms"].value is None

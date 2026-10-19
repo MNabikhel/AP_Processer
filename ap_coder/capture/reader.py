@@ -136,6 +136,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
     "payment_terms": [
         (r"payment\s*terms", 1.0), (r"terms(?:\s*of\s*payment)?\b", 0.9), (r"conditions\s*(?:de\s*)?(?:paiement|reglement)", 1.0),
         (r"modalites\s*(?:de\s*)?paiement", 1.0), (r"conditions\b", 0.6), (r"termes\b", 0.8),
+        (r"modalites(?!\s*(?:(?:de|du)(?![a-z])|d\s*'))", 0.8),  # "Modalités : Net 30", not "Modalités de livraison"
     ],
 }  # fmt: skip
 
@@ -481,6 +482,9 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             ):
                 return None
         amounts = _amounts_in(cleaned)
+        if field in _TAX_FIELDS or field == "tax_total":
+            # "HST 13% on $1,000.00": the amount the tax is charged on, not the tax (further right, or the next column)
+            amounts = [x for x in amounts if not _TAX_BASE.search(cleaned[: x[1]])]
         if not amounts:
             return None
         money = [a for a in amounts if looks_like_money(cleaned[a[1] : a[2]])]
@@ -904,6 +908,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
 # ---------------------------------------------------------------- totals solver
 
 _TAX_FIELDS = ("gst_amount", "hst_amount", "pst_amount", "qst_amount")
+_TAX_BASE = re.compile(r"(?i)\b(?:on|sur)\s*\$?\s*$")  # "13% on $1,000.00", "5 % sur 1 000,00 $"
 _RATES = {
     "gst_amount": (0.05,),
     "hst_amount": (0.13, 0.14, 0.15),

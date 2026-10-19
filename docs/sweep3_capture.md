@@ -49,3 +49,28 @@
 - **Fix:** The layout drops a text-layer word with the same text as one of the last few words that covers mostly the same spot; the text-layer check now reads the layout's lines as they are (its `_printed_once` moved into the layout).
 - **Test:** `tests/test_sweep3_capture.py::test_text_drawn_twice_for_bold_is_read_once`
 - **Lesson:** Don't clean the input in one consumer only: clean it where it is built, so every reader sees the same page.
+
+#### B-187 · "HST 13% on $1,000.00" reads the base as the tax · low
+- **Where:** `ap_coder/capture/reader.py:487` (`_value_reading`)
+- **Symptom:** A tax line "HST 13% on $1,000.00" with 130.00 in the amount column reads the HST as 1,000.00 (both readers agree), so the totals fail and the subtotal, tax and total all go to Check.
+- **Cause:** The amount after the label on its own line was taken first, and the base the tax is charged on is an amount on that line.
+- **Reproduce:** the Acme invoice with "HST 13% on $1,000.00" and "130.00" in the next column, total 1,130.00, `analyze(..., page_text=[...])`.
+- **Reproduced:** yes (`hst_amount 1000.0 check`, `TOTALS_ADD_UP` and `TAX_RATE` failed)
+- **Fix:** For a tax or tax total, an amount right after "on" / "sur" is the base, not the tax: it is skipped, and the tax is read further right or in the next column.
+- **Test:** `tests/test_sweep3_capture.py::test_the_amount_a_tax_is_charged_on_is_not_the_tax`
+- **Lesson:** Don't take the first amount after a tax label without asking whether it is the tax or what the tax is charged on.
+
+#### B-188 · "Modalités : Net 30 jours" is not read as the terms · low
+- **Where:** `ap_coder/capture/reader.py:139` (`LABELS["payment_terms"]`)
+- **Symptom:** A French invoice printing "Modalités : Net 30 jours" has no payment terms.
+- **Cause:** "Modalités" was a terms label only as "Modalités de paiement".
+- **Reproduce:** the Acme invoice with "Modalités : Net 30 jours", `analyze(..., page_text=[...])`.
+- **Reproduced:** yes (`{'payment_terms': (None, 'missing', 0.0)}`)
+- **Fix:** "Modalités" alone labels the terms (strength 0.8, as "Termes"); "Modalités de/du/d'..." (livraison, expédition) does not.
+- **Test:** `tests/test_sweep3_capture.py::test_modalites_alone_labels_the_payment_terms`
+- **Lesson:** Don't list only the long form of a label when invoices print its short form too.
+
+### Not fixed
+- **N-XX** · capture · The page reader's transcription is read by the same rule reader as the page (`capture/__init__.py` `_page_reader`, `transcript.py`), so a rule-parsing mistake (B-183, B-184, B-185 here) appears in both readings and fusion counts it as two independent readers agreeing (verified). Making the transcript an independent reader needs its own parsing or a fusion rule that discounts agreement on the same rule path; a design change, not a bug fix.
+- **N-XX** · capture · A day/month order taken only from a real US supplier address (`read_fields`, B-183) still settles 03/04/2026 without the ambiguous mark, as docs/CAPTURE_DESIGN.md describes. Marking it ambiguous (or likely at best) would send every US invoice dated on day 1 to 12 to a person; a policy choice, left. B-183 removed the false addresses and the Canadian suppliers from that path.
+- **N-XX** · capture · An invoice number in groups of three followed by more text on its line ("No de facture 123 456 Date ...") is still cut at the first space (B-185 joins it only when nothing follows); capping its confidence would need a new method name, which changes calibration keys. Left.
