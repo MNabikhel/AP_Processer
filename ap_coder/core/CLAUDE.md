@@ -18,6 +18,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.store
   _second repeat the check to show the button: change all three together.
 - `from_env()` (config.py, `Settings.from_env`): .env path, else `paths.env_file()` -> `Settings`; `override=False`: the OS environment wins, so a saved value also goes into `os.environ`.
 - `load_reference_data()` (reference_data.py): files -> `ReferenceData` (GL, cost centers, tax setup, policy) for prompts and checks.
+- `sniff_delimiter()` (csvio.py): a CSV's text -> its delimiter, from the header and the rows under it; `read_csv_rows` and web/files.py's uploads use it.
 - `InvoiceCoding` (schema.py): the coding shape (and the JSON schema the models answer in).
 - Data it owns: store.py's tables `invoices`, `feedback`, `events`, `settings`, `gl_accounts`, `cost_centers`, `tax_treatments`,
   `vendors`, `export_batches`, `purchase_orders`, `po_lines`, `erp_invoices`, `coding_rules`, `invoice_capture`, `supplier_profiles`,
@@ -64,5 +65,5 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 ## Files
 - `__init__.py`: the package docstring only.
 - `store.py` (SQLite store), `config.py` (Settings from env), `paths.py` (data folder, user settings), `envfile.py` (.env edits).
-- `reference_data.py` (GL, cost centers, tax setup, policy, prompt context), `csvio.py` (Excel CSVs, dates; `sniff_delimiter` also reads web/files.py uploads); `schema.py` (JSON schema, InvoiceCoding).
+- `reference_data.py` (GL, cost centers, tax setup, policy, prompt context), `csvio.py` (Excel CSVs, dates); `schema.py` (JSON schema, InvoiceCoding).
 - `safe.py` (formula-safe cells, the shared amount parser), `audit.py` (approval diffs, event labels); `memory.py` (reviewer decisions, vendor key), `ui.py` (HTML pieces).

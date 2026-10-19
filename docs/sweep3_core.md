@@ -89,3 +89,7 @@
 - **Fix:** an address ending with a country Canadian businesses commonly buy from (UK, France, Germany, China, Mexico, Ireland…) is OUTSIDE_CANADA; the province at the end still wins ("London, ON"), and a place nothing identifies is still an error.
 - **Test:** `tests/test_sweep3_core.py::test_a_place_abroad_is_outside_canada`, `tests/test_sweep3_core.py::test_canadian_places_named_like_places_abroad_stay_canadian`
 - **Lesson:** Don't treat "not a province" as "an error" when the value is a place abroad: outside Canada is an answer.
+
+### Not fixed
+- **N-XX** · core · B-158 can only take back an approval's part of a lesson recorded from this version on (`lesson_approvals`): an approval made before the update and withdrawn after it still leaves its counts and value in `lessons` (nothing recorded which approval added what; rebuilding the lessons from past approvals would need each approval's proposed and final coding replayed in order, a bigger change than the fix).
+- **N-XX** · core · `docs/CLAUDE.md` does not list `sweep3_core.md` in its Files index, so `scripts/check_map.py` reports one error until this file is folded into `docs/BUGS.md` (and the B-158 to B-166 lessons into `ap_coder/core/CLAUDE.md`'s Bug lessons), left to the merge of the sweep.
