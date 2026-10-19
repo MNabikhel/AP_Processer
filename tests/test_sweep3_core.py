@@ -17,6 +17,7 @@ from ap_coder.ai import lessons
 from ap_coder.capture.workflow import learn_from_approval
 from ap_coder.core.config import Settings
 from ap_coder.core.csvio import read_csv_rows
+from ap_coder.core.safe import parse_amount
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.files import read_sheet
@@ -197,3 +198,15 @@ def test_two_lessons_that_become_one_vendor_add_up(tmp_path):
         ("energir|invoice|invoice_number|", 3, 3, 3)
     ]
     assert store.lessons_for("energir sec") == []
+
+
+# --- B-163: amounts as registers and statements write them ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "number"),
+    [("CA$1,234.50", 1234.5), ("C$5", 5.0), ("US$99.00", 99.0), ("250.00 DR", 250.0), ("−150.00", -150.0),
+     ("CAD 1 234,56", 1234.56), ("99.00 CR", -99.0), ("$ −12.00", -12.0)],
+)  # fmt: skip
+def test_parse_amount_reads_currency_prefixes_debits_and_the_minus_sign(text, number):
+    assert parse_amount(text) == number
