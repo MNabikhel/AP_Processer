@@ -314,6 +314,16 @@ def test_activity_counts_each_invoices_standing_approval_once_as_insights_does(c
     )
 
 
+def test_the_bulk_banner_says_why_a_ready_invoice_is_left_out(client, store):
+    """The demo queue: three Ready, two that look clean; the third is a credit note, which a person applies."""
+    from ap_coder.coding.bulk import clean_candidates
+
+    page = client.get("/review").text
+    bar = page.split('class="rq-bulk-bar"')[1].split("</details>")[0]
+    assert "Ready · 3" in page and f"{len(clean_candidates(store))} invoices look clean" in bar
+    assert "1 credit note left for a person" in bar
+
+
 # --- 9. First run: your name ----------------------------------------------------------------------------------------
 
 

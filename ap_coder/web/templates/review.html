@@ -48,7 +48,7 @@
     <div class="rq-bulk-bar">
       <div class="rq-bulk" title="No errors or warnings, confidence above the threshold">
         <span class="ms" aria-hidden="true">done_all</span>
-        <span><b>{{ candidates | length }} invoices look clean</b><span class="rq-bulk-sub"> · no errors or warnings · {{ candidates_total }}</span></span>
+        <span><b>{{ candidates | length }} invoices look clean</b><span class="rq-bulk-sub"> · no errors or warnings · {{ candidates_total }}{% if candidates_left %} · {{ candidates_left }}{% endif %}</span></span>
       </div>
       <details class="pop">
         <summary class="btn sm"><span class="ms" aria-hidden="true">done_all</span>Approve {{ candidates | length }}</summary>

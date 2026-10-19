@@ -18,7 +18,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ap_coder.coding.bulk import bulk_approve, clean_candidates
+from ap_coder.coding.bulk import bulk_approve, sort_for_bulk
 from ap_coder.coding.review import codes_to_pick, uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, payment
@@ -167,6 +167,16 @@ def attention(store: Store, reference: ReferenceData | None, pending: list[dict[
     return out
 
 
+def left_out(pending: list[dict[str, Any]], reasons: dict[int, str], left: dict[int, str]) -> str:
+    """Why the queue's Ready invoices not offered for bulk approval are left out (``sort_for_bulk``'s ``left``):
+    "1 credit note and 2 with a warning left for a person", or "" when none is."""
+    ready = [left[i["id"]] for i in pending if i["id"] not in reasons and i["id"] in left]
+    credit, warned = ready.count("credit note"), ready.count("warning")
+    parts = [ui.plural(credit, "credit note") if credit else "", f"{warned} with a warning" if warned else ""]
+    text = " and ".join(p for p in parts if p)
+    return f"{text} left for a person" if text else ""
+
+
 def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
                reasons: dict[int, str] | None = None) -> list[dict[str, Any]]:  # fmt: skip
     """What each row of the queue shows (plain values; the template escapes them). ``reasons``: ``attention()``."""
@@ -302,7 +312,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     if tab == "review":
         shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
-        candidates = clean_candidates(store) if show != "attention" else []
+        candidates, left = sort_for_bulk(store) if show != "attention" else ([], {})
         context.update(
             pending=pending,
             counts={"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)},
@@ -312,6 +322,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
             threshold=threshold,
             candidates=candidates if len(candidates) >= 2 else [],
             candidates_total=by_currency(candidates),
+            candidates_left=left_out(pending, reasons, left),
         )  # fmt: skip
     elif tab == "approved":
         recent = sorted(approved, key=lambda i: i["reviewed_at"] or "", reverse=True)[:APPROVED_SHOWN]

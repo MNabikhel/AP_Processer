@@ -34,18 +34,26 @@ def _credit_note(titled: bool, grand_total: Any) -> bool:
 def clean_candidates(store: Store) -> list[dict[str, Any]]:
     """Invoices in the queue that were clean when processed (no review flag, no errors or warnings, nothing that
     always goes to a person, not a credit note)."""
+    return sort_for_bulk(store)[0]
+
+
+def sort_for_bulk(store: Store) -> tuple[list[dict[str, Any]], dict[int, str]]:
+    """(``clean_candidates``, why each other invoice of the queue not flagged when processed is left for a person:
+    "credit note", or "warning" for an error, a warning or a finding that always goes to a person)."""
     validations = {r["id"]: r["validation"] or {} for r in store.invoice_columns(("id", "validation"), REVIEW)}
     titled = store.credit_note_ids(REVIEW)
-    candidates = []
+    candidates, left = [], {}
     for inv in store.list_invoices(REVIEW):
         if inv["requires_review"]:
             continue
         issues = validations.get(inv["id"], {}).get("issues") or []
-        if any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
-            continue
-        if not _credit_note(inv["id"] in titled, inv["grand_total"]):
+        if _credit_note(inv["id"] in titled, inv["grand_total"]):
+            left[inv["id"]] = "credit note"
+        elif any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
+            left[inv["id"]] = "warning"
+        else:
             candidates.append(inv)
-    return candidates
+    return candidates, left
 
 
 def bulk_approve(
