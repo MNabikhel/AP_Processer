@@ -32,7 +32,7 @@ from ..core.reference_data import ReferenceData, load_reference_data, load_table
 from ..core.schema import build_json_schema
 from ..core.store import Store, default_db_path, private_dir
 from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, unpack, unpack_folder
-from .doctor import exit_code, format_checks, run_checks
+from .doctor import FAIL, Check, exit_code, format_checks, run_checks
 from .share_report import build_share_report
 
 SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
@@ -223,8 +223,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
     checks = run_checks(settings, lambda: _load_reference(args), online=args.online)
+    try:
+        source = reference_source(args)
+    except Exception as exc:  # noqa: BLE001 - a damaged database file: the doctor reports it, it never crashes
+        db = Path(getattr(args, "db", None) or default_db_path())
+        checks.append(Check("database", FAIL, f"{db} cannot be opened ({exc}): it is damaged or not an AP Coder "
+                            "database. Put back a copy from the backups folder next to it."))  # fmt: skip
+        source = "none (the database cannot be opened)"
     report = format_checks(checks)
-    print(report.replace("\n\n", f"\n\nreference data source: {reference_source(args)}\n\n", 1))
+    print(report.replace("\n\n", f"\n\nreference data source: {source}\n\n", 1))
     return exit_code(checks)
 
 

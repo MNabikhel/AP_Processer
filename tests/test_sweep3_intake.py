@@ -187,3 +187,27 @@ def test_a_picture_outlook_marks_hidden_is_a_logo():
                                Attachment("scan.jpg", jpg, "image/jpeg", "f_lx3abc1")])  # fmt: skip
     mail = read_msg_mail(build_msg(msg))
     assert [n for n, _ in mail.found] == ["scan.jpg"] and any("image002.jpg" in s for s in mail.skipped)
+
+
+# --- B-143: the doctor on a damaged database -------------------------------------------------------------------------
+
+
+def test_the_doctor_reports_a_damaged_database_instead_of_crashing(tmp_path, capsys):
+    from ap_coder.ops import cli
+
+    db = tmp_path / "ap_coder.db"
+    db.write_bytes(b"this is not a database " * 200)
+    assert cli.main(["--db", str(db), "doctor"]) == 1
+    out = capsys.readouterr().out
+    assert "[FAIL] database" in out and "ap_coder.db" in out and "failure(s)" in out
+
+
+def test_the_doctor_warns_when_iphone_photos_cannot_be_read(monkeypatch):
+    from ap_coder.core.config import Settings
+    from ap_coder.ops import doctor
+
+    real = doctor._version
+    monkeypatch.setattr(doctor, "_version", lambda pkg: None if pkg == "pillow-heif" else real(pkg))
+    checks = doctor.run_checks(Settings(), lambda: (_ for _ in ()).throw(ValueError("no data")), llm_checks=False)
+    heif = next(c for c in checks if c.area == "package pillow-heif")
+    assert heif.status == doctor.WARN and "HEIC" in heif.detail
