@@ -201,8 +201,20 @@ def _text_layer_page(page: Any, number: int) -> PageLayout:
         if not text:
             continue
         r = _rotated(page, matrix, x0, y0, x1, y1)
-        words.append(Word(text, Box(number, r[0] / width, r[1] / height, r[2] / width, r[3] / height), 1.0, "text"))
+        box = Box(number, r[0] / width, r[1] / height, r[2] / width, r[3] / height)
+        # Some PDF writers make bold by drawing the text twice a hair apart: the page shows the word once.
+        if any(w.text == text and _overlap(w.box, box) for w in words[-4:]):
+            continue
+        words.append(Word(text, box, 1.0, "text"))
     return PageLayout(number, width, height, words, group_lines(words, number), page.rotation)
+
+
+def _overlap(a: Box, b: Box) -> bool:
+    """The two boxes cover mostly the same spot (at least half of the smaller one)."""
+    width = min(a.x1, b.x1) - max(a.x0, b.x0)
+    height = min(a.y1, b.y1) - max(a.y0, b.y0)
+    smaller = min(a.width * a.height, b.width * b.height)
+    return a.page == b.page and width > 0 and height > 0 and width * height >= 0.5 * smaller
 
 
 def _rotated(page: Any, matrix: Any, x0: float, y0: float, x1: float, y1: float) -> tuple[float, ...]:

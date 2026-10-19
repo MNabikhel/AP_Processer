@@ -39,3 +39,13 @@
 - **Fix:** A number of one to three digits followed only by groups of three digits, each one space apart, with nothing else after it on the line, is read whole ("123 456"; compared without spaces).
 - **Test:** `tests/test_sweep3_capture.py::test_an_invoice_number_in_french_digit_groups_is_read_whole`
 - **Lesson:** Don't end a number at a space before checking whether the space is part of how the number is printed.
+
+#### B-186 · Text drawn twice for bold is read twice ("Acme Acme Supply Supply") · low
+- **Where:** `ap_coder/capture/layout.py:192` (`_text_layer_page`)
+- **Symptom:** On a PDF whose writer makes bold by drawing the text twice a hair apart, every bold word is read twice: the supplier is "Acme Acme Supply Supply Ltd. Ltd." and a bold "Invoice Date:" label is not recognised, so the invoice date is missing.
+- **Cause:** The text layer's words went into the layout as they were stored; only the text-layer check (`_printed_once` in `capture/__init__.py`) kept a word drawn over itself once, so the readers saw both copies.
+- **Reproduce:** the Acme invoice with "Acme Supply Ltd." and "Invoice Date:" each inserted again 0.3 pt to the right, `analyze(..., ocr=False)`.
+- **Reproduced:** yes (`{'vendor_name': ('Acme Acme Supply Supply Ltd. Ltd.', 'likely'), 'invoice_date': (None, 'missing')}`)
+- **Fix:** The layout drops a text-layer word with the same text as one of the last few words that covers mostly the same spot; the text-layer check now reads the layout's lines as they are (its `_printed_once` moved into the layout).
+- **Test:** `tests/test_sweep3_capture.py::test_text_drawn_twice_for_bold_is_read_once`
+- **Lesson:** Don't clean the input in one consumer only: clean it where it is built, so every reader sees the same page.

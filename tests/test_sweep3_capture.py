@@ -90,3 +90,13 @@ def test_an_invoice_number_in_french_digit_groups_is_read_whole(tmp_path):
     lines = _NO_NUMBER + [(380, 120, "No de facture"), (470, 120, "123 456")]
     fr = _read(_pdf(tmp_path, lines)).fields["invoice_number"]
     assert fr.value.replace(" ", "") == "123456", fr
+
+
+def test_text_drawn_twice_for_bold_is_read_once(tmp_path):
+    """Some PDF writers make bold by drawing the text twice a hair apart: each word is read once."""
+    lines = []
+    for x, y, t in _ACME:
+        lines += [(x, y, t)] + ([(x + 0.3, y, t)] if t in ("Acme Supply Ltd.", "Invoice Date:") else [])
+    capture = analyze(_pdf(tmp_path, lines), ocr=False, today=TODAY)
+    assert capture.fields["vendor_name"].value == "Acme Supply Ltd."
+    assert capture.fields["invoice_date"].value == "2026-09-14"
