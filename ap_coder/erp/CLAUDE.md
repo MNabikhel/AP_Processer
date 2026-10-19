@@ -10,7 +10,8 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.expor
 **Used by:** `ap_coder/ai`, `ap_coder/coding`, `ap_coder/web/pages`
 
 ## Interface
-- `build()` (exports.py): format, approved invoices, GL names, batch, vendor ids, layout -> (bytes, name, mime);
+- `build()` (exports.py): format, approved invoices, GL names, batch, vendor ids, layout, tax treatments -> (bytes, name, mime);
+  `distribution()` (exports.py): an invoice's posting lines, stored or (an older approval) built again, also for jde.py;
   `fmt="jde"` raises ValueError: JDE files come from `build_zip()` (jde.py; columns in docs/JDE_E1.md). `FORMATS` (exports.py):
   xlsx, csv, custom, jde, with their help; a new one is a key there, a branch in `build()` (else it is built as xlsx) and a tab in web/pages/exports.py's `SHORT_FORMATS` (`AGAIN_FORMATS` labels past batches).
 - `stamped_pdf()` / `batch_zip()` (stamp.py): the approved PDFs; `rows_from_records()` (registers.py): an ERP register's rows (the register itself is in the store).

@@ -408,19 +408,11 @@ def _place_of_supply(final: dict[str, Any]) -> str:
 
 
 def _distribution(final: dict[str, Any]) -> list[dict[str, Any]]:
-    dist = final.get("gl_distribution")
-    if dist:
-        return list(dist)
-    # Not stored (an old invoice): rebuild it with the default tax treatments; recoverable taxes are dropped
-    # from the F0911Z1 lines anyway, so their GL accounts do not matter here.
-    from ..coding.tax import TaxRateTable, TaxSetup, build_gl_distribution
-    from ..core.schema import InvoiceCoding
+    # Not stored (an old invoice): rebuilt with the default tax treatments (``exports.distribution``); recoverable
+    # taxes are dropped from the F0911Z1 lines anyway, so their GL accounts do not matter here.
+    from .exports import distribution
 
-    try:
-        coding = InvoiceCoding.model_validate({k: v for k, v in final.items() if k != "gl_distribution"})
-    except ValueError:
-        return []
-    return build_gl_distribution(coding, TaxSetup(TaxRateTable(()), {}))
+    return distribution(final)
 
 
 def _is_recoverable_entry(e: dict[str, Any]) -> bool:

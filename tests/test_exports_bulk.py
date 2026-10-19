@@ -185,3 +185,25 @@ def test_xlsx_export_still_neutralises_formulas():
     cells = [c for ws in load_workbook(io.BytesIO(data)).worksheets for row in ws.iter_rows() for c in row]
     assert not [c.coordinate for c in cells if c.data_type == "f"]
     assert any(c.value == "=1+1" and c.data_type == "s" for c in cells)
+
+
+def test_an_invoice_approved_without_a_stored_distribution_still_has_its_lines_in_the_export():
+    """An invoice approved by an older version has no gl_distribution stored: its posting lines are built again
+    from its coding (as for JD Edwards), with the tax setup's accounts, instead of the file leaving it out."""
+    from ap_coder.coding.tax import load_tax_mapping
+
+    from .conftest import DATA
+
+    doc = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    assert "gl_distribution" not in doc
+    inv = {"id": 5, "final_output": doc}
+    treatments = load_tax_mapping(DATA / "tax_gl_mapping.csv")
+    for fmt in ("csv", "custom"):
+        data, _, _ = exports.build(fmt, [inv], {}, 3, {}, tax_treatments=treatments)
+        rows = list(csv.DictReader(io.StringIO(data.decode("utf-8-sig"))))
+        assert len(rows) == len(doc["line_items"]) + 1, fmt  # each line and the HST
+        assert round(sum(float(r["Amount"]) for r in rows), 2) == doc["grand_total"]
+        assert "2310" in {r.get("GL account") or r.get("GLAccount") for r in rows}  # the HST account
+    (lines,) = [ws for ws in load_workbook(io.BytesIO(exports.build("xlsx", [inv], {}, 3)[0])).worksheets
+                if ws.title == "GL lines"]  # fmt: skip
+    assert lines.max_row == len(doc["line_items"]) + 2  # the header, each line and the HST
