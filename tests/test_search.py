@@ -77,3 +77,24 @@ def test_an_exported_invoice_is_not_shown_again_from_the_erp_register(tmp_path):
     store.import_erp_register([{"vendor_name": "CHINOOK COURIER", "invoice_number": doc["invoice_number"],
                                 "invoice_date": doc["invoice_date"], "total": doc["grand_total"]}])  # fmt: skip
     assert [h.source for h in search.find(store, doc["invoice_number"])] == ["AP Coder"]
+
+
+def test_another_vendors_erp_bill_with_the_same_number_and_amount_is_still_found(tmp_path):
+    """Only the exported invoice's own ERP entry is hidden: another vendor's bill (or a credit) with the same
+    number and amount is a different document."""
+    store = Store(tmp_path / "s.db")
+    doc = {**json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text()),
+           "invoice_number": "1001", "grand_total": 500.0}  # fmt: skip
+    a = store.add_invoice(tmp_path / "a.pdf", doc, {})
+    store.approve_invoice(a, doc, "Jane")
+    store.create_export_batch([a], "csv")
+    store.import_erp_register([
+        {"vendor_name": "Other Supplies Ltd", "invoice_number": "1001", "invoice_date": "2026-09-01", "total": 500.0},
+        {"vendor_name": "Chinook Courier", "invoice_number": "1001", "invoice_date": "2026-09-05", "total": -500.0},
+    ])  # fmt: skip
+    found = sorted((h.source, h.row["vendor_name"], h.row["grand_total"]) for h in search.find(store, "1001"))
+    assert found == [
+        ("AP Coder", doc["vendor_name"], 500.0), ("ERP", "Chinook Courier", -500.0),
+        ("ERP", "Other Supplies Ltd", 500.0),
+    ]  # fmt: skip
+    assert [h.source for h in search.find(store, "other supplies")] == ["ERP"]
