@@ -1399,23 +1399,28 @@ COVERED_CHECKS = ("python", "package ", "OCR", "table finder", "data folder", "l
 
 def setup_check_lines() -> list[tuple[str, str]]:
     """The rest of ``python -m ap_coder doctor`` (offline): the GL accounts, cost centers, tax mapping, coding rules
-    and settings. One line when all is well, else one line for each problem, with the doctor's own words."""
+    and settings. One line when all is well, else one line for each problem, with the doctor's own words; and one
+    when no GL accounts were imported yet (the checks then ran on the bundled sample's)."""
     try:
         from ap_coder.core.config import Settings
-        from ap_coder.ops.cli import _load_reference, build_parser
+        from ap_coder.ops.cli import _load_reference, build_parser, reference_source
         from ap_coder.ops.doctor import FAIL, WARN, run_checks
 
         args = build_parser().parse_args(["doctor"])
         checks = run_checks(Settings.from_env(), lambda: _load_reference(args), online=False, llm_checks=False)
+        sample = reference_source(args).startswith("BUNDLED")
     except Exception as exc:  # noqa: BLE001 - the summary never stops the start
         return [("warn", f"Setup checks: not run ({type(exc).__name__}: {exc})")]
+    lines = [("warn", "GL accounts: none imported yet, so the sample ones are used: import yours on GL accounts & "
+                      "tax")] if sample else []  # fmt: skip
     shown = [c for c in checks if not c.area.startswith(COVERED_CHECKS)]
     problems = [("fail" if c.status == FAIL else "warn", f"{c.area}: {c.detail}") for c in shown
                 if c.status in (FAIL, WARN)]  # fmt: skip
     if problems:
-        return problems
+        return lines + problems
     passed = sum(1 for c in shown if c.status == "PASS")
-    return [("ok", f"Setup checks: all {passed} passed (GL accounts, tax mapping, coding rules, settings)")]
+    gl = "the sample GL accounts" if sample else "GL accounts"
+    return lines + [("ok", f"Setup checks: all {passed} passed ({gl}, tax mapping, coding rules, settings)")]
 
 
 def page_reader_line() -> tuple[str, str]:

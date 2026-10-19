@@ -650,10 +650,23 @@ def launch_settings():
     return Settings()
 
 
+def test_the_start_says_no_gl_accounts_were_imported_yet(launch, monkeypatch):
+    """B-169: on a new data folder the GL accounts are the bundled sample's, and the summary said "Setup checks: all 9
+    passed (GL accounts, ...)" as if the setup were done."""
+    monkeypatch.delenv("AP_REFERENCE_DIR", raising=False)
+    lines = launch.setup_check_lines()
+    assert ("warn", "GL accounts: none imported yet, so the sample ones are used: import yours on GL accounts & "
+                    "tax") in lines  # fmt: skip
+    assert not any(text.startswith("Setup checks: all ") and "(GL accounts" in text for _level, text in lines)
+    monkeypatch.setenv("AP_REFERENCE_DIR", str(ROOT / "data"))  # a reference folder of its own: nothing to say
+    assert not any("none imported yet" in text for _level, text in launch.setup_check_lines())
+
+
 def test_the_start_runs_the_doctors_setup_checks(launch, monkeypatch):
     """GL accounts, tax mapping and settings: one line when all is well, each problem in the doctor's words."""
     from ap_coder.ops import doctor
 
+    monkeypatch.setenv("AP_REFERENCE_DIR", str(ROOT / "data"))  # GL accounts of its own, not the bundled sample
     lines = launch.setup_check_lines()
     assert len(lines) == 1 and lines[0][0] == "ok" and lines[0][1].startswith("Setup checks: all ")
     real = doctor.run_checks
