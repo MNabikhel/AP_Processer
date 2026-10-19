@@ -70,13 +70,28 @@ def _discount_clause(text: str, start: int, end: int) -> str:
     return text[first : end if "%" in text[end:last] else last]
 
 
+def _eom(text: str) -> bool:
+    """EOM terms ("Net 30 EOM", "fin de mois"). End of month in a late-payment clause ("interest charged at end of
+    month on overdue accounts") says when interest is charged, not where the terms count from."""
+    for m in _EOM.finditer(text):
+        before = [c.end() for c in _CLAUSE_END.finditer(text, 0, m.start())]
+        if not _INTEREST.search(text, before[-1] if before else 0, m.start()):
+            return True
+    return False
+
+
 # "2/10 EOM" prints no net days: the usual reading is that the net amount is due 20 days after the discount date.
 EOM_NET_AFTER_DISCOUNT = 20
 _MONTHS = r"(?:months?|mois)\b"
+_WEEKS = r"(?:weeks?|wks?|semaines?)\b"
+# (pattern, days in each unit it counts). "Net 1 month", "Net 2 weeks" and "Net 10 prox" are not 1, 2 or 10 days.
 _NET = [
-    re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,3})\b(?!\s*" + _MONTHS + ")", re.I),  # "Net 1 month" is not 1 day
-    re.compile(r"(\d{1,3})\s*(?:days?|jours?)\b", re.I),
+    (re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,3})\b(?!\s*(?:" + _MONTHS + "|" + _WEEKS + r"|prox))", re.I), 1),
+    (re.compile(r"(\d{1,3})\s*(?:days?|jours?)\b", re.I), 1),
+    (re.compile(r"(\d{1,2})\s*" + _WEEKS, re.I), 7),
 ]
+# "Net 10 prox" (proximo): due on the 10th of the month after the invoice's. Not a discount's day ("2/10th prox").
+_PROX = re.compile(r"(?<![\d/.,])\b(?:n(?:et)?\s*/?\s*)?(\d{1,2})(?:st|nd|rd|th)?\s*prox(?:imo)?\b", re.I)
 # Net months ("Net 1 month", "net 2 mois"): calendar months from the invoice date.
 _NET_MONTHS = re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,2})\s*" + _MONTHS, re.I)
 
@@ -100,12 +115,19 @@ def _add_months(day: dt.date, months: int) -> dt.date:
 def _net_days(text: str, *, outside_interest: bool = False) -> int | None:
     """``outside_interest``: days in a late-payment clause ("2% per month on accounts over 30 days") are left out:
     they say when interest starts, which is the net days only when nothing else says when it is due."""
-    for pattern in _NET:
+    for pattern, unit in _NET:
         for m in pattern.finditer(text):
-            if outside_interest and pattern is _NET[1] and _INTEREST.search(_clause(text, m.start(), m.end())):
+            if outside_interest and pattern is not _NET[0][0] and _INTEREST.search(_clause(text, m.start(), m.end())):
                 continue
-            if 0 <= int(m.group(1)) <= 180:
-                return int(m.group(1))
+            if 0 <= int(m.group(1)) * unit <= 180:
+                return int(m.group(1)) * unit
+    return None
+
+
+def _prox_day(text: str) -> int | None:
+    for m in _PROX.finditer(text):
+        if not _INTEREST.search(_clause(text, m.start(), m.end())) and 1 <= int(m.group(1)) <= 31:
+            return int(m.group(1))
     return None
 
 
@@ -117,6 +139,7 @@ class Terms:
     on_receipt: bool = False
     eom: bool = False  # counted from the end of the invoice's month ("Net 30 EOM")
     net_months: int | None = None  # "Net 1 month": calendar months (net_days then holds about 30 a month)
+    prox_day: int | None = None  # "Net 10 prox": that day of the next month (net_days then holds about 30)
 
 
 @dataclass(frozen=True)
@@ -138,7 +161,7 @@ def parse_terms(text: str | None) -> Terms:
     text = (text or "").strip()
     if not text:
         return Terms()
-    eom = bool(_EOM.search(text))
+    eom = _eom(text)
     text = _FRACTION_PCT.sub(
         lambda m: f"{int(m.group(1)) / int(m.group(2)):g}%" if int(m.group(2)) else m.group(0), text
     )
@@ -166,10 +189,15 @@ def parse_terms(text: str | None) -> Terms:
     net = _net_days(text, outside_interest=True)
     if net is not None:
         return Terms(net_days=net, eom=eom)
+    if prox := _prox_day(text):
+        return Terms(net_days=30, prox_day=prox)
     if _RECEIPT.search(text):
         return Terms(net_days=0, on_receipt=True)
     net = _net_days(text)
-    return Terms(net_days=net, eom=eom) if net is not None else Terms(eom=eom)
+    if net is not None:
+        return Terms(net_days=net, eom=eom)
+    # "Net EOM", "Due EOM": no days printed, so due at the end of the invoice's month.
+    return Terms(net_days=0, eom=True) if eom else Terms()
 
 
 def _date(value: Any) -> dt.date | None:
@@ -177,6 +205,12 @@ def _date(value: Any) -> dt.date | None:
         return dt.date.fromisoformat(str(value or "")[:10]) if value else None
     except ValueError:
         return None
+
+
+def _prox(invoice_date: dt.date, day: int) -> dt.date:
+    """That day of the month after the invoice's, or the last day of a shorter one (Net 30 prox in January: Feb 28)."""
+    next_month = _add_months(invoice_date.replace(day=1), 1)
+    return next_month.replace(day=min(day, calendar.monthrange(next_month.year, next_month.month)[1]))
 
 
 def _start(invoice_date: dt.date, terms: Terms) -> dt.date:
@@ -205,6 +239,8 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
                                                                 default_days, 0))  # fmt: skip
             if terms.net_months:
                 _add_months(_start(invoice_date, terms), terms.net_months)
+            if terms.prox_day:
+                _prox(invoice_date, terms.prox_day)
     except OverflowError:
         invoice_date = None
     printed = _date(coding.get("due_date"))
@@ -212,10 +248,13 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
         due, source = printed, "printed"
     elif invoice_date and terms.net_days is not None:
         start = _start(invoice_date, terms)
-        due, source = (
-            _add_months(start, terms.net_months) if terms.net_months else start + dt.timedelta(days=terms.net_days),
-            "vendor" if from_vendor else "terms",
-        )
+        if terms.prox_day:
+            due = _prox(invoice_date, terms.prox_day)
+        elif terms.net_months:
+            due = _add_months(start, terms.net_months)
+        else:
+            due = start + dt.timedelta(days=terms.net_days)
+        source = "vendor" if from_vendor else "terms"
     elif invoice_date:
         due, source = invoice_date + dt.timedelta(days=default_days), "default"
     else:

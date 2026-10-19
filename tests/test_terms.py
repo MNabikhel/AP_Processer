@@ -185,3 +185,45 @@ def test_interest_words_of_another_rate_do_not_veto_the_discount():
     assert parse_terms("2/10 net 30 interest 1.5% per month on overdue accounts") == Terms(30, 2.0, 10)
     assert parse_terms("2% 10 net 30 overdue accounts 2% per month") == Terms(30, 2.0, 10)
     assert parse_terms("Net 30 interest 2% 30 days after due date") == Terms(30)  # no later rate: still interest
+
+
+@pytest.mark.parametrize(
+    "text, due",
+    [
+        ("Net 30, interest of 2% per month charged at end of month on overdue accounts", dt.date(2026, 10, 10)),
+        ("Net 30 days. Overdue accounts are charged 1.5% at the end of the month", dt.date(2026, 10, 10)),
+        ("Net 30 EOM, interest 2% per month on overdue accounts", dt.date(2026, 10, 30)),  # EOM of the terms: kept
+        ("Net 30 EOM overdue interest 2% per month", dt.date(2026, 10, 30)),
+    ],
+)
+def test_end_of_month_in_the_interest_clause_does_not_make_the_terms_eom(text, due):
+    """B-135: "charged at end of month on overdue accounts" says when interest is charged, not that the net days
+    count from the end of the month (as B-83 did for a discount)."""
+    assert payment({"invoice_date": "2026-09-10", "payment_terms": text, "grand_total": 1130}).due == due
+
+
+@pytest.mark.parametrize(
+    "text, due",
+    [
+        ("Net 2 weeks", dt.date(2026, 9, 24)),
+        ("Payable within 2 weeks", dt.date(2026, 9, 24)),
+        ("Net 3 semaines", dt.date(2026, 10, 1)),
+        ("Net 10 prox", dt.date(2026, 10, 10)),  # the 10th of the next month
+        ("Net 25th prox", dt.date(2026, 10, 25)),
+        ("Net 31 proximo", dt.date(2026, 10, 31)),
+    ],
+)
+def test_weeks_and_prox_terms_are_never_read_as_days(text, due):
+    """B-136: "Net 2 weeks" is 14 days and "Net 3 semaines" 21, never 2 or 3 days; "Net 10 prox" is due on the 10th
+    of the month after the invoice's, not 10 days after it."""
+    p = payment({"invoice_date": "2026-09-10", "payment_terms": text, "grand_total": 100})
+    assert (p.due, p.source) == (due, "terms")
+    shorter = payment({"invoice_date": "2026-01-31", "payment_terms": "Net 30 prox", "grand_total": 1})
+    assert shorter.due == dt.date(2026, 2, 28)  # the last day of a shorter month
+
+
+@pytest.mark.parametrize("text", ["Net EOM", "Due EOM", "Payable fin de mois", "Due end of month"])
+def test_eom_terms_with_no_days_are_due_at_the_end_of_the_month(text):
+    """B-137: "Net EOM" prints no days: it is due at the end of the invoice's month, not the default 30 days later."""
+    p = payment({"invoice_date": "2026-09-10", "payment_terms": text, "grand_total": 100})
+    assert (p.due, p.source) == (dt.date(2026, 9, 30), "terms")
