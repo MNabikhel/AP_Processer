@@ -19,12 +19,12 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.tax` 
 - `math_check()` (taxmath.py): the invoice math again, shown under the tax lines; `bulk_approve()` (bulk.py); `draft()` (vendor_mail.py).
 
 ## Gotchas and decisions
-- Place of supply: `place_of_supply()` (printed ship-to, else the cost center's site in `site_provinces` "CC=PROV" lines, else `our_province`,
-  vendor last); taxreturn.py uses the same (B-13). Terms: printed, else the vendor master's, else `default_terms_days`.
+- Place of supply: `place_of_supply()` (printed ship-to, else the site in `site_provinces` "CC=PROV" lines when every line goes to it, an
+  unlisted cost center being ours, else `our_province`, vendor last); taxreturn.py uses the same (B-13). Terms: printed, else the vendor master's, else `default_terms_days`.
 - A check code is raised in tax.py, validation.py, vendors.py, po.py, terms.py, capture or ai (azure_check, verifier), explained in `ap_coder/ops/help.py` `CHECKS`
   (tests/test_help.py fails on a code with no help) and shown by web/invoice_view.py.
 - A worked-out `place_of_supply` sits beside `ship_to_province`, never in it; the model drops it.
-- A check that must always reach a person goes in `capture/supplier.ALWAYS_A_PERSON` (else bulk.py approves an info-level one unseen); one a vendor can fix in `vendor_mail.ASKABLE` (never a fraud or hold code).
+- A check that must always reach a person goes in `capture/supplier.ALWAYS_A_PERSON` (else bulk.py approves an info-level one unseen; it skips credit notes as `touchless_gates` does); one a vendor can fix in `vendor_mail.ASKABLE` (never a fraud or hold code).
 - tax.py's `DEFAULT_RATES_PATH` is `data/` at the project root: `Path(__file__)` is one folder deeper since the grouping.
 - `norm_tax_number()` (vendors.py) also compares the invoice number in validation.py's DI check: keep it "letters and
   digits, lower case".
