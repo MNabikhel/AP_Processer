@@ -5,10 +5,16 @@ an old database's safety copy, Excel's trailing blank rows and places abroad."""
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
+
+import pytest
+from fastapi.testclient import TestClient
 
 from ap_coder.ai import lessons
 from ap_coder.capture.workflow import learn_from_approval
+from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.web.app import create_app
 
 PAGE = {"X-AP-Coder": "1"}
 
@@ -78,3 +84,32 @@ def test_an_invoice_deleted_with_its_lessons_forgets_them(tmp_path, ground_truth
     _approve(store, iid, wrong)
     store.delete_invoice(iid, forget_lessons=True)
     assert lessons.prompt_lines(store, wrong["vendor_name"], lessons.INVOICE) == []
+
+
+# --- B-159: an import with no usable code never empties the GL list ------------------------------------------------
+
+
+def test_an_import_with_no_usable_code_never_replaces_the_gl_accounts(tmp_path):
+    store = Store(tmp_path / "a.db")
+    load_sample_setup(store)
+    before = store.list_accounts("gl_accounts")
+    rows = [{"GL": "", "Description": "Office"}, {"GL": " ", "Description": "Travel"}]  # the wrong column picked
+    with pytest.raises(ValueError, match="nothing was replaced"):
+        store.import_accounts("gl_accounts", rows, "GL", "Description", replace_all=True)
+    assert store.list_accounts("gl_accounts") == before
+    store.reference_data()  # coding still works
+
+
+def test_the_accounts_page_says_why_an_import_with_no_codes_is_refused(tmp_path):
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    s = Settings()
+    client = TestClient(create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False),
+                        base_url="http://localhost")  # fmt: skip
+    sent = client.post("/accounts/gl_accounts/upload", headers=PAGE,
+                       files={"file": ("gl.csv", b"GL,Description\r\n,Office\r\n,Travel\r\n", "text/csv")})  # fmt: skip
+    token = client.get(sent.json()["redirect"]).url.params["file"]
+    form = {"file": token, "col_code": "GL", "col_description": "Description", "replace": "1"}
+    answer = client.post("/accounts/gl_accounts/import", headers=PAGE, data=form)
+    assert answer.status_code == 400 and "nothing was replaced" in answer.json()["error"]
+    assert len(store.list_accounts("gl_accounts")) > 20

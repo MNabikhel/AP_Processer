@@ -696,10 +696,16 @@ class Store:
         """Import rows using the columns the user picked.
 
         Existing codes are updated, but only in the columns picked: importing codes without a
-        category column keeps the categories already typed in.
+        category column keeps the categories already typed in. ``replace_all`` with rows none of which has a code
+        (the wrong column picked) is refused, nothing deleted: it would leave no account to code to.
         """
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
+        if replace_all and rows and not any(_clean_code(row.get(code_column)) for row in rows):
+            raise ValueError(
+                f"No row has a code in the column {code_column!r}: nothing was replaced. Pick the column that "
+                "holds the codes and import again."
+            )
         added = updated = skipped = 0
         with self._conn() as conn:
             if replace_all:
