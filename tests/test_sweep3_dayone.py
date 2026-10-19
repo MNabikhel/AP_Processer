@@ -381,3 +381,16 @@ def test_a_batch_just_made_offers_download_not_download_again(client, store):
 
     batch = parse_qs(urlsplit(answer["redirect"]).query)["made"][0]
     assert "Download again" in client.get("/exports", params={"batch": batch}).text  # picked later, from the list
+
+
+def test_serve_with_no_browser_does_not_say_it_opens_in_your_browser(monkeypatch, capsys, tmp_path):
+    from ap_coder.ops import cli
+    from ap_coder.web import server
+
+    monkeypatch.setattr(server, "serve", lambda host, port, **kwargs: 0)
+    db = str(tmp_path / "private" / "ap_coder.db")
+    assert cli.cmd_serve(cli.build_parser().parse_args(["--db", db, "serve", "--no-browser", "--port", "8642"])) == 0
+    said = capsys.readouterr().err
+    assert "http://127.0.0.1:8642" in said and "opens in your browser" not in said and "Ctrl+C" in said
+    cli.cmd_serve(cli.build_parser().parse_args(["--db", db, "serve", "--port", "8642"]))
+    assert "opens in your browser" in capsys.readouterr().err

@@ -248,7 +248,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     host = args.host or dashboard_address()
     port = args.port or free_port(address=host)  # (the launcher's own choice: 8501, else the next free one)
-    print(f"Dashboard: {browser_url(host, port)}  (it opens in your browser; Ctrl+C here to stop)", file=sys.stderr)
+    opens = "" if args.no_browser else "it opens in your browser; "  # (the launcher opens it, and says so itself)
+    print(f"Dashboard: {browser_url(host, port)}  ({opens}Ctrl+C here to stop)", file=sys.stderr)
     if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
         print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
               "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
