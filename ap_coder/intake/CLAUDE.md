@@ -17,7 +17,11 @@ The old module `ap_coder/intake.py` is now `pictures.py` (the package took its n
 - `sheet_unzips_too_big()` (triage.py): every openpyxl reader of an emailed or uploaded workbook calls it first.
 
 ## Gotchas and decisions
-- Email files are untrusted: cap sizes before parsing (each part, their sum, the walk of a .msg directory).
+- Email files are untrusted: cap sizes before parsing (each part, their sum, the walk of a .msg directory). An email
+  attached as a file (.eml, .msg, or message/rfc822 in base64) is parsed again: `_Opened` bounds their sum too.
+- No attachment is dropped silently: anything left out but a logo or a signature (`Mail.left_out`) makes the email
+  wait for a person, the reason listed (`classify_email(..., left_out)`). A .msg picture with a Content-ID is a logo
+  only when hidden or shown in the HTML (Outlook keeps every Gmail attachment's Content-ID); a TIFF is never one.
 - `__init__.py` forwards the old `ap_coder.intake` module's names (`from ap_coder.intake import to_pdf`) to pictures.py for
   one release; it never forwards its own submodules' names. Patch `ap_coder.intake.pictures`, not the package.
 

@@ -13,7 +13,9 @@ The email moves to ``emails/`` (or ``emails/needs a person/``) so it is unpacked
 added to ``emails/triage.jsonl`` (``triage_log``): what the email was, and why.
 
 Signature logos and other small inline pictures are left out: an image referenced from the email's own
-text (a Content-ID) or smaller than ``MIN_IMAGE_BYTES`` is not an invoice.
+text (a Content-ID) or smaller than ``MIN_IMAGE_BYTES`` is not an invoice. Any other attachment left out (a zip, a
+Word file, one that cannot be read) makes the email wait for a person, with the reason (``Mail.left_out``). An email
+attached as a file (.eml, .msg) is opened like a forwarded one.
 
 An email that cannot be read (damaged, far too large, or emails forwarded inside each other hundreds of
 times) moves to ``emails/could not read`` with the reason, so it never stops the other files.
@@ -21,6 +23,8 @@ times) moves to ``emails/could not read`` with the reason, so it never stops the
 
 from __future__ import annotations
 
+import base64
+import binascii
 import email
 import email.policy
 import hashlib
@@ -44,6 +48,11 @@ MAX_EMAIL_BYTES = 100_000_000  # larger than any mail server sends: not read
 MAX_FORWARD_DEPTH = 20  # emails forwarded inside forwarded emails: deeper ones are not opened
 MAX_PARTS = 500  # attachments and text parts read from one email
 MAX_BOUNDARY_LINES = 5_000  # lines starting "--" (each part has one): an email with more is not parsed at all
+LOGO = "(a small or inline picture, e.g. a logo)"
+SIGNATURE = "(a digital signature or contact card)"
+_SIGNATURE_TYPES = {"application/pkcs7-signature", "application/x-pkcs7-signature", "application/pgp-signature",
+                    "application/pgp-keys", "text/vcard", "text/x-vcard"}  # fmt: skip
+_SIGNATURE_SUFFIXES = {".p7s", ".asc", ".sig", ".vcf"}
 DONE_FOLDER = "emails"
 UNREADABLE_FOLDER = "could not read"  # inside DONE_FOLDER
 PERSON_FOLDER = "needs a person"  # inside DONE_FOLDER: emails and attachments a person must look at
@@ -78,6 +87,27 @@ class Mail:
     found: list[tuple[str, bytes]] = field(default_factory=list)  # PDFs and pictures
     sheets: list[tuple[str, bytes]] = field(default_factory=list)  # CSV and Excel (a statement, maybe)
     skipped: list[str] = field(default_factory=list)
+
+    @property
+    def left_out(self) -> list[str]:
+        """The attachments left out that may be an invoice (all but logos and signatures): a person must look."""
+        return [s for s in self.skipped if not s.endswith((LOGO, SIGNATURE))]
+
+    def add(self, inner: Mail) -> None:
+        """Add what an email attached to this one holds (its words, its attachments)."""
+        self.found += inner.found
+        self.sheets += inner.sheets
+        self.skipped += inner.skipped
+        if inner.body and len(self.body) < 200_000:
+            self.body = f"{self.body}\n\n{inner.body}"[:200_000]
+
+
+@dataclass
+class _Opened:
+    """The emails attached to one email, opened so far: each is parsed again, so their sum is bounded too."""
+
+    bytes: int = 0
+    lines: int = 0
 
 
 class UnreadableEmail(ValueError):
@@ -114,6 +144,9 @@ def _keep(mail: Mail, name: str, content_type: str, content: bytes, inline: bool
     """Add one attachment to ``mail``: a PDF or a picture to ``found``, a spreadsheet to ``sheets``, the rest (and
     signature logos) to ``skipped`` with the reason."""
     label = name or "an unnamed attachment"
+    if content_type in _SIGNATURE_TYPES or Path(name).suffix.lower() in _SIGNATURE_SUFFIXES:
+        mail.skipped.append(f"{label} {SIGNATURE}")
+        return
     if Path(name).suffix.lower() in triage.SHEET_EXTENSIONS:
         mail.sheets.append((safe_name(name), content))
         return
@@ -124,8 +157,10 @@ def _keep(mail: Mail, name: str, content_type: str, content: bytes, inline: bool
     if suffix == ".pdf" and not content.lstrip()[:1024].startswith(b"%PDF") and b"%PDF" not in content[:1024]:
         mail.skipped.append(f"{label} (named as a PDF but is not one)")
         return
-    if suffix != ".pdf" and (len(content) < MIN_IMAGE_BYTES or (inline and len(content) < MAX_LOGO_BYTES)):
-        mail.skipped.append(f"{label} (a small or inline picture, e.g. a logo)")
+    # A TIFF is a scan or a fax, never a logo: a page in black and white is often under MIN_IMAGE_BYTES.
+    small = len(content) < MIN_IMAGE_BYTES or (inline and len(content) < MAX_LOGO_BYTES)
+    if suffix not in (".pdf", ".tif") and small:
+        mail.skipped.append(f"{label} {LOGO}")
         return
     safe = safe_name(name or f"attachment{suffix}")
     if Path(safe).suffix.lower() != suffix:  # keep a type the invoices folder picks up
@@ -140,8 +175,60 @@ def attachments(raw: bytes) -> tuple[str, list[tuple[str, bytes]], list[str]]:
     return mail.subject, mail.found, mail.skipped
 
 
-def read_msg_mail(raw: bytes) -> Mail:
+def _email_kind(name: str, content_type: str) -> str:
+    """The kind of email an attachment is (".eml" or ".msg": an email forwarded as an attachment), else ""."""
+    suffix = Path(name).suffix.lower()
+    if suffix == ".msg" or content_type in ("application/vnd.ms-outlook", "application/x-msg"):
+        return ".msg"
+    return ".eml" if suffix == ".eml" or content_type == "message/rfc822" else ""
+
+
+def _open_attached(mail: Mail, name: str, kind: str, content: bytes, depth: int, opened: _Opened) -> None:
+    """Add the email attached to ``mail`` as a file (``kind`` .eml or .msg) as a forwarded email is: no deeper
+    than ``MAX_FORWARD_DEPTH``, and all of them together no larger than one email may be."""
+    label = name or f"an attached email{kind}"
+    if depth >= MAX_FORWARD_DEPTH:
+        mail.skipped.append(f"emails forwarded more than {MAX_FORWARD_DEPTH} levels deep (not opened)")
+        return
+    opened.bytes += len(content)
+    opened.lines += content.count(b"\n--")
+    if opened.bytes > MAX_EMAIL_BYTES or opened.lines > MAX_BOUNDARY_LINES:
+        mail.skipped.append(f"{label} (not opened: the emails attached to this one are too large together)")
+        return
+    try:
+        inner = (read_msg_mail if kind == ".msg" else read_eml)(content, depth + 1, opened)
+    except Exception as exc:  # noqa: BLE001 - one damaged attached email: the rest of this one is still read
+        why = str(exc) if isinstance(exc, UnreadableEmail) else f"it is damaged ({type(exc).__name__})"
+        mail.skipped.append(f"{label} (an attached email that could not be read: {why})")
+        return
+    mail.add(inner)
+
+
+def _in_base64(part: EmailMessage) -> bool:
+    """An email forwarded as message/rfc822 in base64: the parser reads it as an email with no headers whose text is
+    the base64, so it is decoded and opened like an attached .eml file."""
+    cte = str(part.get("Content-Transfer-Encoding") or "").strip().lower()
+    return part.get_content_type() == "message/rfc822" and cte == "base64"
+
+
+def _base64_email(part: EmailMessage) -> bytes | None:
+    """The bytes of an email forwarded in base64 (``_in_base64``), else None."""
+    if not _in_base64(part):
+        return None
+    payload = part.get_payload()
+    inner = payload[0] if isinstance(payload, list) and payload else payload
+    text = inner.get_payload() if isinstance(inner, EmailMessage) else inner
+    if not isinstance(text, str):
+        text = inner.as_string() if isinstance(inner, EmailMessage) else ""
+    try:
+        return base64.b64decode(text.encode("ascii", "ignore"))  # line breaks and stray characters are skipped
+    except (binascii.Error, ValueError):
+        return b""
+
+
+def read_msg_mail(raw: bytes, depth: int = 0, opened: _Opened | None = None) -> Mail:
     """The subject, sender, text and attachments of an Outlook .msg email (emails attached to it opened too)."""
+    opened = opened or _Opened()
     if len(raw) > MAX_EMAIL_BYTES:
         raise UnreadableEmail(f"the email is larger than {MAX_EMAIL_BYTES // 1_000_000} MB")
     try:
@@ -150,12 +237,18 @@ def read_msg_mail(raw: bytes) -> Mail:
         raise UnreadableEmail(str(exc)) from None
     mail = Mail(msg.subject, msg.sender, msg.body, skipped=list(msg.skipped))
     for a in msg.attachments:
-        _keep(mail, a.name, a.content_type, a.data, inline=bool(a.content_id))
+        kind = _email_kind(a.name, a.content_type)
+        if kind:
+            _open_attached(mail, a.name, kind, a.data, depth, opened)
+        else:
+            _keep(mail, a.name, a.content_type, a.data, inline=a.inline)
     return mail
 
 
-def read_eml(raw: bytes) -> Mail:
-    """The subject, sender, text and attachments of an .eml email (emails forwarded as attachments opened too)."""
+def read_eml(raw: bytes, depth: int = 0, opened: _Opened | None = None) -> Mail:
+    """The subject, sender, text and attachments of an .eml email (emails forwarded as attachments opened too).
+    ``depth``: how many emails this one is attached inside (an attached .eml or .msg file is parsed again)."""
+    opened = opened or _Opened()
     if len(raw) > MAX_EMAIL_BYTES:
         raise UnreadableEmail(f"the email is larger than {MAX_EMAIL_BYTES // 1_000_000} MB")
     if raw.count(b"\n--") > MAX_BOUNDARY_LINES:  # parsing is the slow part: thousands of parts are refused before it
@@ -171,32 +264,48 @@ def read_eml(raw: bytes) -> Mail:
     skipped = mail.skipped
     texts: list[str] = []
 
-    def parts(message: EmailMessage) -> list[EmailMessage]:
-        """Every part of the email, also inside emails forwarded as attachments (message/rfc822), without
-        going deeper than ``MAX_FORWARD_DEPTH`` or past ``MAX_PARTS`` (a loop, not recursion)."""
-        out: list[EmailMessage] = []
-        stack: list[tuple[EmailMessage, int]] = [(message, 0)]
+    def parts(message: EmailMessage) -> list[tuple[EmailMessage, int]]:
+        """Every part of the email and how deep it is, also inside emails forwarded as attachments (message/rfc822),
+        without going deeper than ``MAX_FORWARD_DEPTH`` or past ``MAX_PARTS`` (a loop, not recursion)."""
+        out: list[tuple[EmailMessage, int]] = []
+        stack: list[tuple[EmailMessage, int]] = [(message, depth)]
         while stack and len(out) < MAX_PARTS:
-            part, depth = stack.pop()
-            out.append(part)
-            if not part.is_multipart():
+            part, level = stack.pop()
+            out.append((part, level))
+            if not part.is_multipart() or _in_base64(part):  # base64: opened from its bytes in walk()
                 continue
             if part.get_content_type() == "message/rfc822":
-                if depth >= MAX_FORWARD_DEPTH:
+                if level >= MAX_FORWARD_DEPTH:
                     skipped.append(f"emails forwarded more than {MAX_FORWARD_DEPTH} levels deep (not opened)")
                     continue
-                depth += 1
+                level += 1
             children = part.get_payload()
-            stack.extend((child, depth) for child in reversed(children if isinstance(children, list) else []))
+            stack.extend((child, level) for child in reversed(children if isinstance(children, list) else []))
         if stack:
             skipped.append(f"everything after the first {MAX_PARTS} parts of the email (not opened)")
         return out
 
     def walk(message: EmailMessage) -> None:
-        for part in parts(message):
-            if part.is_multipart() or part.get_content_maintype() in ("message", "multipart"):
-                continue
+        for part, level in parts(message):
             name = part.get_filename() or ""
+            encoded = _base64_email(part)
+            if encoded is not None:
+                _open_attached(mail, name, ".eml", encoded, level, opened)
+                continue
+            if part.is_multipart():
+                continue
+            kind = _email_kind(name, part.get_content_type())
+            if kind or part.get_content_maintype() == "message":  # an email attached as a file
+                try:
+                    content = part.get_payload(decode=True) or b""
+                except Exception:  # noqa: BLE001 - a damaged attachment
+                    skipped.append(f"{name or 'an attached email'} (could not be read)")
+                    continue
+                if part.get_content_type() in ("message/rfc822", "message/global") or kind:
+                    _open_attached(mail, name, kind or ".eml", content, level, opened)
+                continue  # a delivery report and the like: nothing for AP
+            if part.get_content_maintype() == "multipart":
+                continue
             if part.get_content_maintype() == "text" and not name:  # the email's own words (for triage)
                 if sum(len(t) for t in texts) < 200_000:
                     try:
@@ -214,7 +323,7 @@ def read_eml(raw: bytes) -> Mail:
             _keep(mail, name, part.get_content_type(), content, inline)
 
     walk(msg)
-    mail.body = "\n\n".join(t for t in texts if t.strip())[:200_000]
+    mail.body = "\n\n".join(t for t in [*texts, mail.body] if t.strip())[:200_000]  # its own words, then attached
     return mail
 
 
@@ -309,7 +418,7 @@ def unpack(path: Path, folder: Path | None = None) -> Unpacked:
     try:
         mail = read_mail(path, raw)
         docs = [triage.document_for(name, content) for name, content in [*mail.found, *mail.sheets]]
-        sorted_mail = triage.classify_email(mail.subject, mail.body, docs)
+        sorted_mail = triage.classify_email(mail.subject, mail.body, docs, mail.left_out)
     except Exception as exc:  # noqa: BLE001 - one bad email must never stop the others
         return _unreadable(path, folder, exc)
     result = Unpacked(path.name, mail.subject, skipped=mail.skipped, triage=sorted_mail)

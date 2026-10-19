@@ -28,6 +28,7 @@ MAX_ATTACHMENTS = 500
 SUBJECT, BODY, HTML_BODY = "0037", "1000", "1013"
 SENDER_NAME, SENDER_EMAIL, SENDER_SMTP, SENT_REPRESENTING = "0C1A", "0C1F", "5D01", "0065"
 ATTACH_DATA, ATTACH_NAME, ATTACH_LONG_NAME, ATTACH_MIME, ATTACH_CONTENT_ID = "3701", "3704", "3707", "370E", "3712"
+ATTACH_HIDDEN = 0x7FFE000B  # PidTagAttachmentHidden (a boolean): Outlook hides the pictures shown in the text
 _ATTACH_PREFIX, _RECIP_PREFIX = "__attach_version1.0_", "__recip_version1.0_"
 
 
@@ -173,6 +174,7 @@ class MsgAttachment:
     content_type: str
     content_id: str
     data: bytes
+    inline: bool = False  # a picture shown in the email's text (hidden, or its Content-ID referenced from the HTML)
 
 
 @dataclass
@@ -193,6 +195,26 @@ def _text(cf: CompoundFile, storage: int, tag: str) -> str:
     return ""
 
 
+def _html(cf: CompoundFile, storage: int) -> str:
+    """The HTML body of the message in ``storage`` ("" when it has none)."""
+    kids = cf.entries[storage].children
+    i = kids.get(f"__SUBSTG1.0_{HTML_BODY}0102")
+    if i is not None:
+        return cf.stream(i).decode("utf-8", "replace")
+    return _text(cf, storage, HTML_BODY)
+
+
+def _hidden(cf: CompoundFile, storage: int) -> bool:
+    """PidTagAttachmentHidden of the attachment in ``storage``: its fixed-size properties stream holds 8 bytes of
+    header, then 16 bytes per property (tag, flags, value)."""
+    i = cf.entries[storage].children.get("__PROPERTIES_VERSION1.0")
+    raw = cf.stream(i) if i is not None else b""
+    for off in range(8, len(raw) - 15, 16):
+        if struct.unpack_from("<I", raw, off)[0] == ATTACH_HIDDEN:
+            return struct.unpack_from("<H", raw, off + 8)[0] != 0
+    return False
+
+
 def html_to_text(value: str) -> str:
     """Readable text from an email's HTML body: scripts and styles dropped, tags removed, entities decoded."""
     value = re.sub(r"(?is)<(script|style|head)\b.*?</\1>", " ", value)
@@ -206,6 +228,7 @@ def _message(cf: CompoundFile, storage: int, out: MsgEmail, depth: int) -> None:
     stack = [(storage, depth)]
     while stack:
         node, level = stack.pop()
+        html_body: str | None = None  # read once, only when an attachment has a Content-ID
         for key, i in sorted(cf.entries[node].children.items()):
             if not key.startswith(_ATTACH_PREFIX.upper()) or cf.entries[i].kind != _STORAGE:
                 continue
@@ -228,8 +251,16 @@ def _message(cf: CompoundFile, storage: int, out: MsgEmail, depth: int) -> None:
             if data_i is None:
                 out.skipped.append(f"{name or 'an attachment'} (a link or an object, not a file)")
                 continue
-            out.attachments.append(MsgAttachment(name, _text(cf, i, ATTACH_MIME).lower(),
-                                                 _text(cf, i, ATTACH_CONTENT_ID), cf.stream(data_i)))  # fmt: skip
+            # Outlook keeps the Content-ID of every attachment from Gmail, so it alone does not make a picture inline:
+            # it must also be hidden or shown in the HTML text (the .eml rule: a Content-ID, not an attachment).
+            content_id = _text(cf, i, ATTACH_CONTENT_ID).strip().strip("<>")
+            inline = False
+            if content_id:
+                if html_body is None:
+                    html_body = _html(cf, node)
+                inline = _hidden(cf, i) or f"cid:{content_id}".lower() in html_body.lower()
+            out.attachments.append(MsgAttachment(name, _text(cf, i, ATTACH_MIME).lower(), content_id,
+                                                 cf.stream(data_i), inline))  # fmt: skip
 
 
 def read_msg(data: bytes) -> MsgEmail:

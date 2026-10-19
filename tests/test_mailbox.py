@@ -46,12 +46,15 @@ def test_unpack_saves_attachments_and_files_the_email(tmp_path):
         "Invoice from Northwind - INV-1.pdf", "Invoice from Northwind - photo of receipt.jpg",
     ]  # fmt: skip
     assert (tmp_path / "Invoice from Northwind - INV-1.pdf").read_bytes() == b"%PDF-1.4 invoice"
-    assert emails_in(tmp_path) == [] and (tmp_path / "emails" / "Invoice from Northwind.eml").exists()
+    # terms.docx is not read: the email waits for a person, in case it is an invoice (B-140)
+    assert (
+        emails_in(tmp_path) == [] and (tmp_path / "emails" / "needs a person" / "Invoice from Northwind.eml").exists()
+    )
     # The same email again: the same files, nothing new written, the email kept under another name.
     (tmp_path / "Invoice from Northwind.eml").write_bytes(_email().as_bytes())
     (again,) = unpack_folder(tmp_path, now=time.time() + 60)
     assert [p.name for p in again.saved] == [p.name for p in result.saved]
-    assert (tmp_path / "emails" / "Invoice from Northwind_1.eml").exists()
+    assert (tmp_path / "emails" / "needs a person" / "Invoice from Northwind_1.eml").exists()
 
 
 def test_unsafe_attachment_names_stay_in_the_folder(tmp_path):
