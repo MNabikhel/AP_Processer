@@ -17,6 +17,7 @@ from ap_coder.ai import lessons
 from ap_coder.capture.workflow import learn_from_approval
 from ap_coder.core.config import Settings
 from ap_coder.core.csvio import read_csv_rows
+from ap_coder.core.reference_data import load_table
 from ap_coder.core.safe import parse_amount
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
@@ -249,3 +250,16 @@ def test_a_database_without_ap_coders_tables_is_still_refused(tmp_path):
     conn.close()
     with pytest.raises(ValueError, match="not an AP Coder database"):
         Store.check_backup(other)
+
+
+# --- B-165: Excel's trailing blank rows ---------------------------------------------------------------------------
+
+
+def test_a_gl_csv_with_excels_trailing_blank_rows_loads(tmp_path):
+    path = tmp_path / "gl.csv"
+    path.write_text("GL Code,Description\r\n6000,Office\r\n6100,Travel\r\n,\r\n,\r\n", encoding="utf-8")
+    table = load_table(path, "GL account", "gl_code")
+    assert [r["gl_code"] for r in table.rows] == ["6000", "6100"]
+    path.write_text("GL Code,Description\r\n6000,Office\r\n,Travel\r\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="row 2 has an empty 'gl_code'"):  # a code really missing is still refused
+        load_table(path, "GL account", "gl_code")

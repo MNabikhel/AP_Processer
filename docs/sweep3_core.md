@@ -69,3 +69,13 @@
 - **Fix:** a missing row is version 1 when the file has the first version's shape (AP Coder's `invoices` and `feedback` tables, `invoices` without the `export_batch` column added in version 3); a newer database whose row was removed is still refused (tests/test_backups.py).
 - **Test:** `tests/test_sweep3_core.py::test_the_safety_copy_of_a_schema_1_database_can_be_restored`, `tests/test_sweep3_core.py::test_a_database_without_ap_coders_tables_is_still_refused`
 - **Lesson:** Don't make a check stricter than the code it guards: read a missing version the way the migration reads it.
+
+#### B-165 · A GL CSV with Excel's trailing blank rows was refused · low
+- **Where:** `ap_coder/core/reference_data.py:161` (`load_table`)
+- **Symptom:** a chart of accounts saved from Excel with empty rows under the list (`,` lines) was refused: "row 3 has an empty 'gl_code'".
+- **Cause:** every row was checked for a code, including rows with nothing in any cell.
+- **Reproduce:** `load_table()` on `GL Code,Description` / `6000,Office` / `6100,Travel` / `,` / `,`.
+- **Reproduced:** yes (`ValueError: …gl.csv: row 3 has an empty 'gl_code'`)
+- **Fix:** a row with every cell blank is skipped before the checks; a row with a description and no code is still refused, under its row number in the file.
+- **Test:** `tests/test_sweep3_core.py::test_a_gl_csv_with_excels_trailing_blank_rows_loads`
+- **Lesson:** Don't treat an all-blank row from a spreadsheet as a row with a missing value: skip it first.
