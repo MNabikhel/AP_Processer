@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import UNASSIGNED
-from ap_coder.core.store import REVIEW, Store
+from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import MORE_MODULES, PAGES
@@ -346,6 +346,19 @@ def test_the_first_steps_ask_for_your_name_until_it_is_given(tmp_path, monkeypat
 
 
 # --- 10. Words: the guide's buttons, the first download --------------------------------------------------------------
+
+
+def test_the_welcome_page_and_import_invoices_count_the_same_setup_steps(tmp_path):
+    import re
+
+    empty = Store(tmp_path / "empty" / "ap_coder.db")
+    fresh = TestClient(create_app(replace(Settings(), llm=replace(Settings().llm, provider="off")), empty,
+                                  start_reader=False), base_url="http://localhost")  # fmt: skip
+    for setup in (lambda: None, lambda: load_sample_setup(empty)):
+        setup()
+        welcome = re.search(r"aria-label='(\d+)/(\d+)'", fresh.get("/review").text).groups()
+        process = re.search(r"(\d+) of (\d+) done", fresh.get("/process").text).groups()
+        assert welcome == process
 
 
 def test_the_getting_started_guide_names_the_sample_button_as_the_app_does():

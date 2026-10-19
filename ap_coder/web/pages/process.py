@@ -165,6 +165,15 @@ def name_step() -> tuple[str, str, str]:
     return "todo", "Your name", "Settings → Review: each approval is recorded in it"
 
 
+def first_steps(store: Store, settings: Settings, has_invoices: bool) -> tuple[list[tuple[str, str, str]], int, int]:
+    """(steps, done, needed) of getting started, the same on Import invoices' Setup card and the review queue's
+    welcome page: ``setup_steps``, then processing the first invoices; the optional chat model is not counted."""
+    steps = setup_steps(store, settings)
+    steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
+    needed = [s for s, _, _ in steps if s != "opt"]
+    return steps, sum(1 for s in needed if s == "ok"), len(needed)
+
+
 def ready_to_read(steps: list[tuple[str, str, str]]) -> bool:
     """PDF text / OCR and GL accounts are enough: OvisOCR2 reads invoices once it runs, the chat model is optional."""
     return steps[0][0] != "bad" and steps[2][0] == "ok"
@@ -302,17 +311,17 @@ def process_page(request: Request) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
 
     store, settings = get_store(request), get_settings(request)
-    steps = setup_steps(store, settings)
-    needed = [s for s, _, _ in steps if s != "opt"]
-    recent = sorted(store.list_invoices(), key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
+    invoices = store.list_invoices()
+    steps, steps_done, steps_needed = first_steps(store, settings, bool(invoices))
+    recent = sorted(invoices, key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
     waiting = [i for i in recent if i["status"] == REVIEW]
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
     return render(
         request, "process.html", "process",
         steps=steps,
-        steps_done=sum(1 for s in needed if s == "ok"),
-        steps_needed=len(needed),
+        steps_done=steps_done,
+        steps_needed=steps_needed,
         ready=ready_to_read(steps),
         recent=recent,
         recent_waiting=any(i["status"] == REVIEW for i in recent),

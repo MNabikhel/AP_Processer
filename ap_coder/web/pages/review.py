@@ -359,19 +359,15 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
-    from ap_coder.web.pages.process import setup_steps
+    from ap_coder.web.pages.process import first_steps
 
-    steps = setup_steps(store, get_settings(request))
-    has_invoices = bool(invoices)
-    steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
-    needed = [s for s, _, _ in steps if s != "opt"]  # as the Process page counts: the chat model is optional
-    done_steps = sum(1 for s in needed if s == "ok")
+    steps, done_steps, needed = first_steps(store, get_settings(request), bool(invoices))  # as Import invoices counts
     return render(
         request, "review_welcome.html", "review",
         greeting=f"{ui.greeting()}, {first_name()}",
         steps=steps,
-        ring_value=done_steps / len(needed),
-        ring_label=f"{done_steps}/{len(needed)}",
+        ring_value=done_steps / needed,
+        ring_label=f"{done_steps}/{needed}",
         chat_ready=steps[1][0] == "ok",
         name_todo=steps[5][0] != "ok",  # approvals are recorded in the computer login until a name is given
         waiting=sum(1 for i in invoices if i["status"] == REVIEW) if reference_or_none(store) is None else 0,
