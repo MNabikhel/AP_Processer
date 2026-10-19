@@ -37,7 +37,7 @@ _DISCOUNT = [
     re.compile(
         r"(?<![\d/.,])(\d+(?:[.,]\d+)?)\s*%\s*(?:discount|escompte)?\s*(?:if paid|si pay[ée]e?)?"
         r"\s*(?:within|in|dans les|sous)?\s*(\d+)\b(?!\s*%|[.,]\d)"
-        r"(?!\s*(?:months?|mois|years?|yrs?|ans?|ann[ée]es?)\b)\s*(?:days?|jours?)?",
+        r"(?!\s*(?:months?|mois|years?|yrs?|ans?|ann[ée]es?|weeks?|wks?|semaines?)\b)\s*(?:days?|jours?)?",
         re.I,
     ),
 ]

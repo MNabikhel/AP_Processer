@@ -220,6 +220,7 @@ def test_weeks_and_prox_terms_are_never_read_as_days(text, due):
     assert (p.due, p.source) == (due, "terms")
     shorter = payment({"invoice_date": "2026-01-31", "payment_terms": "Net 30 prox", "grand_total": 1})
     assert shorter.due == dt.date(2026, 2, 28)  # the last day of a shorter month
+    assert parse_terms("2% 2 weeks net 30").discount_days != 2  # nor a discount's weeks
 
 
 @pytest.mark.parametrize("text", ["Net EOM", "Due EOM", "Payable fin de mois", "Due end of month"])
