@@ -337,6 +337,7 @@ def _getting_started(request: Request, store: Store, invoices: list[dict[str, An
         ring_value=done_steps / len(needed),
         ring_label=f"{done_steps}/{len(needed)}",
         chat_ready=steps[1][0] == "ok",
+        name_todo=steps[5][0] != "ok",  # approvals are recorded in the computer login until a name is given
         waiting=sum(1 for i in invoices if i["status"] == REVIEW) if reference_or_none(store) is None else 0,
         demo_available=demo_available(),
         demo_count=store.demo_count(),

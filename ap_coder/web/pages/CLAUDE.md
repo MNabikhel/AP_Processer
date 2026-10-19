@@ -12,7 +12,7 @@ Every URL of the dashboard: each module's `APIRouter` `router` reads the store, 
   screen's is "review", the Azure check's "settings"); a POST answers JSON with done, message or refuse (web/core.py).
 - Settings (settings.py): `TABS`, `settings_tab()` (GET /settings/{tab}), `render_tab()`, `save_env()` (.env changes into os.environ, logged as `settings_changed`), the tabs' `reading_context()`, `automation_context()`, `jde_context()`; `card()` (azure.py): the Azure card.
 - Shared between pages: `filter_queue()`, `sort_queue()`, `attention()` (review.py, used by invoice.py; Ready = Approve open), `tax_types_mapped()` (process.py, used by accounts.py), `day()` (month_end.py, used by sales_tax.py);
-  `setup_steps()`, `process_files()`, `JOB` (process.py) and `unsaved_edits()`, `forget_everyones_draft()` (invoice.py), used by review.py; `forget_all_drafts()` (invoice.py, used by settings.py);
+  `setup_steps()` (its last step, "Your name"), `process_files()`, `JOB` (process.py) and `unsaved_edits()`, `forget_everyones_draft()` (invoice.py), used by review.py; `forget_all_drafts()` (invoice.py, used by settings.py);
   `env_path()`, `saved_line()` and `save_env()` (settings.py, used by settings_reading.py); `HOW_IT_READS` (settings_reading.py, used by help.py); `confidence_pct()` (review.py, used by web/invoice_view.py).
 - Jobs: "process" (process.py and review.py's retry; /process/status), "settings-doctor" (settings_reading.py), "azure-test" (azure.py); the self-test runs in page_worker.
 

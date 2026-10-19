@@ -270,3 +270,24 @@ def test_insights_learning_activity_and_the_queue_count_approved_as_coded_alike(
 
     accuracy = store.metrics()["line_accuracy"]  # the same figure, written the same way, on the queue and Learning
     assert f"{accuracy:.1%}" in client.get("/review").text and f"{accuracy:.1%}" in learning
+
+
+# --- 9. First run: your name ----------------------------------------------------------------------------------------
+
+
+def test_the_first_steps_ask_for_your_name_until_it_is_given(tmp_path, monkeypatch):
+    from ap_coder.core import paths
+    from ap_coder.web.pages.process import setup_steps
+
+    monkeypatch.delenv("AP_REVIEWER", raising=False)
+    empty = Store(tmp_path / "empty" / "ap_coder.db")
+    fresh = TestClient(create_app(replace(Settings(), llm=replace(Settings().llm, provider="off")), empty,
+                                  start_reader=False), base_url="http://localhost")  # fmt: skip
+    steps = {label: (state, detail) for state, label, detail in setup_steps(empty, Settings())}
+    assert steps["Your name"][0] == "todo" and "Settings → Review" in steps["Your name"][1]
+    for page in (fresh.get("/review").text, fresh.get("/process").text):  # the welcome page and Import invoices
+        assert "Your name" in page and 'href="/settings/review"' in page
+
+    paths.write_user_settings(reviewer="Pat Clerk")
+    steps = {label: (state, detail) for state, label, detail in setup_steps(empty, Settings())}
+    assert steps["Your name"] == ("ok", "Pat Clerk")
