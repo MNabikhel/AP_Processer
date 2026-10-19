@@ -179,6 +179,22 @@
         <button type="button" class="btn primary sm" data-split-go disabled><span class="ms" aria-hidden="true">call_split</span>Split the line</button>
       </div>
     </details>
+    <details class="pop" data-fill>
+      <summary class="btn sm"><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines…</summary>
+      <div class="pop-body inv-split-pop">
+        <p class="muted">Code every line that has no GL account{% if grid.has_cc %} or no cost center{% endif %} yet in one go. Lines already coded keep theirs.</p>
+        <label class="field">GL account<select data-fill-gl aria-label="GL account for the lines without one">
+          <option value="">Leave as they are</option>
+          {% for code, label in grid.gl_options if code != "UNASSIGNED" %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
+        {% if grid.has_cc %}
+        <label class="field">Cost center<select data-fill-cc aria-label="Cost center for the lines without one">
+          <option value="">Leave as they are</option>
+          {% for code, label in grid.cc_options if code != "UNASSIGNED" %}<option value="{{ code }}"{% if code == usual_cc %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+        {% if usual_cc %}<p class="muted small">Suggested: every past approval of this vendor used cost center {{ usual_cc }}.</p>{% endif %}
+        {% endif %}
+        <button type="button" class="btn primary sm" data-fill-go><span class="ms" aria-hidden="true">playlist_add_check</span>Apply to all lines without one</button>
+      </div>
+    </details>
   </div>
   <div data-live="reasons">{{ live_ui.reasons(live, inv.id) }}</div>
 </section>

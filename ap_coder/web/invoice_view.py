@@ -1149,6 +1149,30 @@ def po_coding(store: Store, coding: InvoiceCoding, draft: Draft, invoice_id: int
     return lines_records(frame), len(differs)
 
 
+def fill_lines(draft: Draft, gl: str, cc: str) -> tuple[list[dict[str, Any]], int, int]:
+    """Give every line without a GL account ``gl`` and every line without a cost center ``cc`` (either may be "":
+    left as it is); a line already coded keeps its code. Returns the new rows and how many lines got each."""
+    frame = lines_frame(draft.lines)
+    real = ~frame.apply(lambda row: all(is_blank(row.get(k)) for k in ("description", "amount")), axis=1)
+    counts = []
+    for column, code in (("predicted_gl_code", gl), ("predicted_cost_center", cc)):
+        missing = real & frame[column].apply(lambda v: is_blank(v) or v == UNASSIGNED)
+        if code:
+            frame.loc[missing, column] = code
+        counts.append(int(missing.sum()) if code else 0)
+    return lines_records(frame), counts[0], counts[1]
+
+
+def usual_cost_center(store: Store, reference: ReferenceData, vendor_name: str) -> str:
+    """The one cost center every past decision on this vendor's lines used (still in the list), else "": offered
+    for its lines without one. Two cost centers, or a line without one, and there is no usual one."""
+    if not uses_cost_centers(reference) or not (vendor_name or "").strip():
+        return ""
+    used = {r.get("final_cc") or "" for r in store.feedback_rows(vendor_name=vendor_name)}
+    only = next(iter(used)) if len(used) == 1 else ""
+    return only if only != UNASSIGNED and reference.cost_centers.get(only) is not None else ""
+
+
 def use_suggestion(reference: ReferenceData, coding: InvoiceCoding, draft: Draft, position: int, gl: str,
                    cc: str) -> list[dict[str, Any]]:  # fmt: skip
     """Code the ``position``-th line with a suggested GL account (and its cost center, when the line has none)."""

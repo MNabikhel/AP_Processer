@@ -92,3 +92,65 @@ def test_every_invoice_the_queue_calls_ready_can_be_approved_on_its_screen(clien
     for inv in store.list_invoices(REVIEW):
         if f'href="/review/{inv["id"]}"' in ready:
             assert check(client, inv["id"])["allow"], inv["vendor_name"]
+
+
+# --- 2. Apply a cost center to every line without one ----------------------------------------------------------------
+
+
+def test_apply_to_all_lines_codes_only_the_lines_that_have_none(client, store):
+    from .test_web_invoice import form_of
+
+    invoice_id = without_cost_centers(store)
+    reference = store.reference_data()
+    cc, other = reference.cost_centers.codes[:2]
+    form = form_of(store, invoice_id, lambda rows: [{**r, "predicted_cost_center": other} if i == 0 else r
+                                                    for i, r in enumerate(rows)])  # fmt: skip
+    answer = client.post(f"/review/{invoice_id}/fill-lines", data={**form, "fill_cc": cc}, headers=PAGE).json()
+    assert answer["ok"], answer
+    n = len(store.get_invoice(invoice_id)["ai_output"]["line_items"])
+    assert f"Cost center {cc} set on {n - 1} line" in answer["toast"]["text"]
+    lines = answer["lines"]
+    assert lines.count(f'<option value="{cc}" selected') == n - 1
+    assert lines.count(f'<option value="{other}" selected') == 1
+    assert check(client, invoice_id)["allow"]  # every line has its cost center now: Approve is open
+
+
+def test_apply_to_all_lines_refuses_a_code_not_in_the_lists(client, store):
+    from .test_web_invoice import form_of
+
+    invoice_id = without_cost_centers(store)
+    form = form_of(store, invoice_id)
+    refused = client.post(f"/review/{invoice_id}/fill-lines", data={**form, "fill_cc": "NOPE"}, headers=PAGE).json()
+    assert not refused["ok"] and "not in your cost center list" in refused["error"]
+    nothing = client.post(f"/review/{invoice_id}/fill-lines", data=form, headers=PAGE).json()
+    assert not nothing["ok"] and "Pick a GL account or a cost center" in nothing["error"]
+
+
+def test_a_vendors_one_usual_cost_center_is_offered_for_its_lines(client, store):
+    from ap_coder.web import invoice_view
+
+    reference = store.reference_data()
+    cc, other = reference.cost_centers.codes[:2]
+    first, second = (store.get_invoice(i["id"]) for i in store.list_invoices(REVIEW)[:2])
+    vendor = first["ai_output"]["vendor_name"]
+    approved = copy.deepcopy(first["ai_output"])
+    for li in approved["line_items"]:
+        li["predicted_cost_center"] = cc
+    store.approve_invoice(first["id"], approved, "Jordan Lee")
+    assert invoice_view.usual_cost_center(store, reference, vendor) == cc
+
+    output = copy.deepcopy(second["ai_output"])  # another invoice of the same vendor, its cost centers left blank
+    output["vendor_name"] = vendor
+    for li in output["line_items"]:
+        li["predicted_cost_center"] = UNASSIGNED
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(output), second["id"]))
+    page = client.get(f"/review/{second['id']}").text
+    start = page.index("data-fill-cc")
+    assert f'<option value="{cc}" selected' in page[start : page.index("</select>", start)]
+    assert f"used cost center {cc}" in page
+
+    # One past line on another cost center: there is no single usual one any more.
+    line = {**output["line_items"][0], "predicted_cost_center": other}
+    store.approve_invoice(second["id"], {**output, "line_items": [line]}, "Jordan Lee")
+    assert invoice_view.usual_cost_center(store, reference, vendor) == ""

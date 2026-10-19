@@ -14,8 +14,9 @@ page viewer ``static/js/invoice_viewer.js``.
 Routes (all under ``/review/<id>``): GET the screen, ``page/<n>.png`` (a page's picture), ``words`` (the words on
 the pages, to teach a field), ``reader`` (OvisOCR2's progress on it), ``approved.pdf``; POST ``check``,
 ``approve``, ``park``, ``reject``, ``note``, ``teach``, ``split``, ``apply-rules``, ``po-coding``,
-``suggestion``, ``vendor`` (add the printed vendor), ``read-pages``, ``review-again`` (the AI reviewer),
-``start-over``, ``resume`` (a parked invoice), ``restore`` (a rejected one), ``correct`` (an approved one).
+``suggestion``, ``fill-lines`` (Apply to all lines), ``vendor`` (add the printed vendor), ``read-pages``,
+``review-again`` (the AI reviewer), ``start-over``, ``resume`` (a parked invoice), ``restore`` (a rejected one),
+``correct`` (an approved one).
 Delete, final approval and send back are the queue's own POSTs (``pages/review.py``).
 """
 
@@ -367,6 +368,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
+        usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
     )  # fmt: skip
 
 
@@ -746,6 +748,30 @@ async def use_suggestion(request: Request, invoice_id: int) -> JSONResponse:
         return refuse(f"Not changed: {exc}.")
     number = analysis.coding.line_items[position].line_number
     return _new_lines(request, invoice_id, reference, draft, lines, f"Line {number} coded to GL {gl}.", "add_task")
+
+
+@router.post("/review/{invoice_id:int}/fill-lines")
+async def fill_lines(request: Request, invoice_id: int) -> JSONResponse:
+    """Apply to all lines: one GL account and / or cost center for every line that has none yet (lines already
+    coded keep theirs)."""
+    store = get_store(request)
+    inv = _invoice(store, invoice_id)
+    if inv["status"] != REVIEW:
+        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
+    reference = _reference(store)
+    form, draft = await _posted(request, inv)
+    gl, cc = str(form.get("fill_gl") or "").strip(), str(form.get("fill_cc") or "").strip()
+    if not gl and not cc:
+        return refuse("Pick a GL account or a cost center to apply to the lines without one.")
+    if gl and (reference.chart_of_accounts.get(gl) is None or gl in reference.tax.tax_gl_codes()):
+        return refuse(f"GL {gl} is not in your GL accounts (or it is a sales-tax account).")
+    if cc and (reference.cost_centers is None or reference.cost_centers.get(cc) is None):
+        return refuse(f"Cost center {cc} is not in your cost center list.")
+    lines, n_gl, n_cc = view.fill_lines(draft, gl, cc)
+    done_text = [f"GL {gl} set on {ui.plural(n_gl, 'line')}" if gl else "",
+                 f"Cost center {cc} set on {ui.plural(n_cc, 'line')}" if cc else ""]  # fmt: skip
+    text = "; ".join(t for t in done_text if t) + ". Lines already coded kept theirs."
+    return _new_lines(request, invoice_id, reference, draft, lines, text, "playlist_add_check")
 
 
 # --- OvisOCR2 ---------------------------------------------------------------------------------------------------------

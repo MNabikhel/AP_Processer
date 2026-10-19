@@ -210,6 +210,18 @@ async function gridAction(url, extra, button) {
   } else follow(answer);
 }
 
+/* ---------- Apply to all lines: one GL account / cost center for the lines without one ---------- */
+
+document.addEventListener("click", (e) => {
+  const go = e.target.closest("[data-fill-go]");
+  if (!go) return;
+  const pop = go.closest("[data-fill]");
+  const value = (name) => pop?.querySelector(`[data-fill-${name}]`)?.value || "";
+  gridAction(`${base}/fill-lines`, { fill_gl: value("gl"), fill_cc: value("cc") }, go).then(() =>
+    pop?.removeAttribute("open"),
+  );
+});
+
 /* ---------- Split a line ---------- */
 
 const split = document.querySelector("[data-split]");

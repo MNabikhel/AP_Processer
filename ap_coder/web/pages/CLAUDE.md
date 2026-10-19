@@ -38,7 +38,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 ## Files
 - `__init__.py`: Page, PAGES (the rail), MORE_MODULES, SECTIONS, BY_KEY, BANNER_PAGES.
 - `review.py`: /review (queue, welcome page), /review/bulk-approve, /review/sample-gl, /review/{id}/delete, reopen, retry, unpark, final-approve, send-back; key "review".
-- `invoice.py`: /review/{id} (the review screen) and its /check, /approve, /park, /reject, /note, /teach, grid actions (/split, /apply-rules, /po-coding, /suggestion), /page/{n}.png, /words, /reader, /approved.pdf, /vendor, /read-pages, /review-again, /start-over, /resume, /restore, /correct; key "review".
+- `invoice.py`: /review/{id} (the review screen) and its /check, /approve, /park, /reject, /note, /teach, grid actions (/split, /apply-rules, /po-coding, /suggestion, /fill-lines), /page/{n}.png, /words, /reader, /approved.pdf, /vendor, /read-pages, /review-again, /start-over, /resume, /restore, /correct; key "review".
 - `process.py`: /process, /process/upload, /process/folder, /process/status, /process/open-folder, /process/inbox/..., /demo/load, /demo/remove; key "process".
 - `search.py`: /search, /search/export.csv|.xlsx, /search/presets (save), /search/presets/default, /search/presets/delete (directory.py stores them), /search/{id}/approved.pdf, /search/{id}/unpark; key "search".
 - `exports.py`: /exports, /exports/create, /exports/batches/{n}/download|approved-pdfs.zip|undo, /exports/layout(/preview), /exports/register/upload|import|clear, /exports/jde/dry-run.txt, /exports/duplicates.csv; key "exports".

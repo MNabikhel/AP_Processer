@@ -751,13 +751,13 @@ def _drag_across_the_top(page):
 
 
 def test_in_a_browser_the_popovers_open_inside_a_phone_screen(browser, store):
-    """390 px wide: Park, Reject and Split a line open where they can be read and their buttons reached, not past the
-    left edge of the screen (where nothing scrolls to them)."""
+    """390 px wide: Park, Reject, Split a line and Apply to all lines open where they can be read and their buttons
+    reached, not past the left edge of the screen (where nothing scrolls to them)."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
     page, errors = _open_review(browser, store, "Cascade", viewport={"width": 390, "height": 844})
     for summary in (".inv-actionbar summary[title^='Set it aside']", ".inv-actionbar summary[title^='Not ours']",
-                    "[data-split] > summary"):  # fmt: skip
+                    "[data-split] > summary", "[data-fill] > summary"):  # fmt: skip
         page.locator(summary).scroll_into_view_if_needed()
         page.click(summary)
         # app.js places it on "toggle", which the browser fires a moment after the click: wait for that, then check
@@ -984,3 +984,25 @@ def test_in_a_browser_a_refused_export_reloads_and_the_count_follows_the_ticks(b
     page.wait_for_load_state("networkidle")
     assert "exported meanwhile" in page.inner_text("body")
     assert page.locator("input.export-pick").count() == 0 and page.errors == []
+
+
+def test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank(browser, client, store):
+    """Apply to all lines: one cost center picked, every line without one gets it, and Approve opens."""
+    import json
+
+    invoice_id = clean_invoice(client, store)
+    output = store.get_invoice(invoice_id)["ai_output"]
+    for li in output["line_items"]:
+        li["predicted_cost_center"] = UNASSIGNED
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(output), invoice_id))
+    client.app.state.invoice_drafts.clear()
+    cc = store.reference_data().cost_centers.codes[0]
+    page = _open(browser, invoice_id)
+    assert "Pick a cost center" in page.inner_text(".inv-actionbar")
+    page.click("[data-fill] > summary")
+    page.select_option("[data-fill-cc]", cc)
+    page.click("[data-fill-go]")
+    page.wait_for_function("() => !document.querySelector('.inv-actionbar').innerText.includes('Pick a cost center')")
+    values = page.eval_on_selector_all('[data-grid="lines"] select[name="line_cc"]', "els => els.map((e) => e.value)")
+    assert values == [cc] * len(output["line_items"]) and "fill-lines" in page.posts and page.errors == []
