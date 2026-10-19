@@ -54,15 +54,18 @@ GENERATED = {".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".cache", M
              ".env.moved-to-data-folder", ".ap_coder_server.json", ".DS_Store", "launch.out", "launch.err"}  # fmt: skip
 # What an AP Coder bundle folder holds (for a folder whose manifest has no file list: AP Coder 0.1). The older
 # versions' install.bat / install.sh / start.bat / start.sh / terminal.bat stay listed: the bundle no longer ships them,
-# so unzipped over an older folder they are removed (prune_stale), and an older folder is still recognised.
+# so unzipped over an older folder they are removed (prune_stale), and an older folder is still recognised. Every
+# top-level name git tracks is here too: GitHub's ZIP holds them all (tests/test_update.py checks it).
 BUNDLE_TOP = {"ap_coder", "scripts", "tests", "docs", "data", "samples", "static", "wheelhouse", "models", "private",
-              ".streamlit", ".github", "APProcessor.bat", "APProcessor.command", "install.bat", "install.sh",
-              "start.bat", "start.sh", "terminal.bat", "README.md", "pyproject.toml", "requirements.txt",
-              "streamlit_app.py", "bundle_manifest.json", ".env.example", ".gitignore", ".gitattributes"}  # fmt: skip
+              ".streamlit", ".github", ".claude", "APProcessor.bat", "APProcessor.command", "install.bat",
+              "install.sh", "start.bat", "start.sh", "terminal.bat", "README.md", "CLAUDE.md", "pyproject.toml",
+              "requirements.txt", "streamlit_app.py", "bundle_manifest.json", ".env.example", ".gitignore",
+              ".gitattributes"}  # fmt: skip
 # Top-level names of a bundle folder never removed when a newer bundle no longer ships them: data, the person's own
-# notes may be there, the manifest itself (not in its own file list), and what starts AP Coder.
+# notes may be there, the manifest itself (not in its own file list), what starts AP Coder, and Claude Code's
+# settings (the bundle leaves .claude/ out; a developer's own settings.local.json may be in it).
 RETIRED_KEPT = {"private", "data", "docs", "bundle_manifest.json", "pyproject.toml", "APProcessor.bat",
-                "APProcessor.command", "README.md"}  # fmt: skip
+                "APProcessor.command", "README.md", ".claude"}  # fmt: skip
 DATA_SUFFIXES = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3", ".xlsx", ".xlsm", ".xls")
 # What starts an AP Coder folder: the double-click, and the installer and start scripts of the older versions.
 LAUNCHERS = ("APProcessor.bat", "APProcessor.command", "start.bat", "start.sh", "install.bat", "install.sh")
