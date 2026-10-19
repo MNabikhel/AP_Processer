@@ -45,7 +45,7 @@ def server(tmp_path):
                 self.send_error(404)
                 return
             body = json.dumps({"ok": True, "app": "ap-coder", "version": state["version"], "folder": state["folder"],
-                               "pid": 4242, "port": port}).encode()  # fmt: skip
+                               "pid": 4242, "port": port, **state.get("health", {})}).encode()  # fmt: skip
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -101,6 +101,21 @@ def test_a_server_that_cannot_be_stopped_waits_for_the_person(running, server, t
     assert any("Close the old AP Coder window, then start again" in s for s in said)
 
 
+@pytest.mark.parametrize("ours", ["0.2.0", "0.2.1", "0.1.9"])
+def test_another_accounts_ap_coder_is_never_opened_nor_stopped(running, server, tmp_path, ours):
+    """B-168: two Windows accounts share one AP Coder folder and data folder: the second person's double-click opened
+    the first person's dashboard (approving under their name), or stopped it under them for an update."""
+    import getpass
+
+    state, port, data = server
+    state["health"] = {"user": "someone-else"}
+    assert running.take_over(tmp_path / "B", ours, [], data, say=lambda m: None) == ("other", port)
+    assert state["shutdowns"] == [] and running.listening(port)
+    assert running.find([], data)[0].user == "someone-else"
+    state["health"] = {"user": getpass.getuser().upper()}  # this person's own (Windows names ignore case)
+    assert running.take_over(tmp_path / "B", "0.2.0", [], data, say=lambda m: None) == ("open", port)
+
+
 def test_nothing_running_is_clear(running, tmp_path):
     assert running.take_over(tmp_path, "0.2.0", [9], tmp_path, say=lambda m: None) == ("clear", None)
 
@@ -140,6 +155,59 @@ def test_an_ap_coder_0_1_dashboard_is_found_by_its_port_and_stopped(running, tmp
         assert "0.1 (the Streamlit dashboard)" in said[0] and str(old) in said[0]
     finally:
         proc.kill()
+
+
+FAKE_WATCH = "import sys, time\nprint('watching', flush=True)\nwhile True:\n    time.sleep(0.1)\n"
+
+
+def _fake_worker(tmp_path, command: str) -> subprocess.Popen:
+    """A process whose command line is ``python -m ap_coder <command>`` (a stand-in package, so nothing is read)."""
+    fake = tmp_path / f"fake-{command}"
+    (fake / "ap_coder").mkdir(parents=True)
+    (fake / "ap_coder" / "__init__.py").write_text("")
+    (fake / "ap_coder" / "__main__.py").write_text(FAKE_WATCH)
+    proc = subprocess.Popen([sys.executable, "-m", "ap_coder", command, "--every", "60"], cwd=fake,
+                            stdout=subprocess.PIPE, text=True)  # fmt: skip
+    assert proc.stdout.readline().strip() == "watching"
+    return proc
+
+
+def _worker_note(data: Path, proc: subprocess.Popen, command: str, folder: Path, version: str) -> None:
+    note = {"pid": proc.pid, "command": command, "folder": str(folder), "version": version, "started": "x"}
+    (data / f".ap_coder_worker-{proc.pid}.json").write_text(json.dumps(note))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="reads the process's command line through /proc or ps")
+def test_an_older_versions_watch_is_stopped_before_the_update(running, tmp_path):
+    """B-167: an update stopped the older version's server, but its ``python -m ap_coder watch`` kept running on the
+    same database; once the clean-up deleted its .venv, it marked every new invoice failed (ModuleNotFoundError),
+    and the new version never read them again. An older watch or read-pages is stopped like an older server; this
+    version's own is left running."""
+    data = tmp_path / "data"
+    data.mkdir()
+    old = _fake_worker(tmp_path, "watch")
+    same = _fake_worker(tmp_path, "read-pages")
+    try:
+        _worker_note(data, old, "watch", tmp_path / "AP Coder 0.2.0", "0.2.0")
+        _worker_note(data, same, "read-pages", tmp_path / "AP Coder 0.2.1", "0.2.1")
+        said: list[str] = []
+        assert running.take_over(tmp_path / "AP Coder 0.2.1", "0.2.1", [], data, say=said.append) == ("clear", None)
+        assert old.wait(timeout=10) is not None and same.poll() is None
+        assert "AP Coder 0.2.0" in said[0] and "watch" in said[0] and "Stopped it" in said[1]
+        assert str(tmp_path / "AP Coder 0.2.0") in running.stopped  # (its folder is cleaned up after the update)
+        assert not (data / f".ap_coder_worker-{old.pid}.json").exists()
+    finally:
+        for proc in (old, same):
+            proc.kill()
+            proc.wait()
+
+
+def test_a_worker_note_whose_process_is_gone_is_passed_over(running, tmp_path):
+    (tmp_path / ".ap_coder_worker-1.json").write_text("{not json")
+    gone = {"pid": 2**22 + 12345, "command": "watch", "folder": "x", "version": "0.1.0"}
+    (tmp_path / f".ap_coder_worker-{gone['pid']}.json").write_text(json.dumps(gone))
+    assert running.take_over(tmp_path, "0.2.0", [], tmp_path, say=lambda m: None) == ("clear", None)
+    assert running.workers(tmp_path) == []
 
 
 def test_only_ap_coder_processes_are_ever_ended(running):

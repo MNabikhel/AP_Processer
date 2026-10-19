@@ -501,6 +501,32 @@ def test_an_ap_coder_from_before_the_launcher_is_an_older_install(upgrade, tmp_p
     assert not upgrade.is_install(stranger)
 
 
+def test_an_older_folder_from_githubs_zip_is_removed_whole(upgrade, tmp_path):
+    """GitHub's ZIP holds every file git tracks, CLAUDE.md and .claude/ too: with no file list to go by, those were
+    taken for the person's own files and the older folder was always kept ("files AP Coder didn't put there")."""
+    old = make_pre_launcher_install(tmp_path / "AP_Processer-main")
+    (old / "CLAUDE.md").write_text("# the codebase map\n")
+    (old / ".claude").mkdir()
+    (old / ".claude" / "settings.json").write_text("{}")
+    assert upgrade.removable(old, make_install(tmp_path / "APProcessor", "0.2.0")) == ""
+
+
+def test_every_top_level_name_git_tracks_is_one_ap_coder_put_there(upgrade):
+    """Every top-level file and folder of the repository is in BUNDLE_TOP, so a folder made from GitHub's ZIP (no
+    manifest) is recognised whole: a new top-level file must be added there."""
+    import shutil
+    import subprocess
+
+    git = shutil.which("git")
+    if not (ROOT / ".git").exists() or not git:
+        pytest.skip("not a git checkout")
+    out = subprocess.run([git, "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
+    if out.returncode != 0:
+        pytest.skip("git can't list the files here")
+    tops = {name.split("/", 1)[0] for name in out.stdout.split("\0") if name}
+    assert tops and sorted(tops - upgrade.BUNDLE_TOP) == []
+
+
 def test_data_kept_in_an_older_folder_found_running_moves_out_before_the_start(upgrade, tmp_path, monkeypatch):
     """Run by hand (``python -m ap_coder dashboard``), an older AP Coder kept its data in its own private/ folder and
     recorded nothing: the new version unzipped elsewhere started on an empty database while the data stayed behind."""
