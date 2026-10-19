@@ -42,7 +42,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - Store, config and core data: `test_audit.py`, `test_backups.py`, `test_data_layer_fixes.py`, `test_envfile_edge_cases.py`, `test_hardening.py`, `test_memory_store.py`, `test_park_notes.py`, `test_reference_data.py`, `test_safety.py`,
   `test_scale.py`, `test_schema.py`, `test_store_session.py`, `test_store_status_fixes.py`, `test_update_database.py`, `test_working_together.py`, `test_demo.py`, `test_help.py`.
 - Capture and benchmark: `test_capture.py`, `test_capture_edge_cases.py`, `test_coarse_scans.py`, `test_line_item_recall.py`, `test_scan_reading_fixes.py`, `test_supplier.py`, `test_table_reading.py`, `test_totals_proven.py`, `test_transcript.py`,
-  `test_turned_pages.py`, `test_reader_outcomes.py`, `test_reading_once.py`, `test_samples.py`, `test_evaluation.py`, `test_training_export.py`, `test_bench.py`, `test_bench_speed.py`.
+  `test_turned_pages.py`, `test_reader_outcomes.py`, `test_reading_once.py`, `test_samples.py`, `test_evaluation.py`, `test_training_export.py`, `test_bench.py`, `test_bench_speed.py`, `test_sweep3_capture.py`.
 - AI and readers: `test_azure_check.py`, `test_extraction.py`, `test_inference.py`, `test_local_llm.py`, `test_model_reading.py`, `test_page_reader.py`, `test_page_reads.py`,
   `test_page_worker.py`, `test_uniform_reading.py`, `test_verifier.py`, `test_figures.py`, `test_reading_sweep.py`, `test_lessons.py`, `test_history.py`.
 - Tax, coding and touchless: `test_tax.py`, `test_taxreturn.py`, `test_terms.py`, `test_validation.py`, `test_math_check.py`, `test_rules.py`, `test_po.py`, `test_split.py`, `test_suggest_recurring.py`, `test_vendors.py`, `test_vendor_master.py`,
