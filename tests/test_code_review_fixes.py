@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder import paths
+from ap_coder.core import paths
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -68,9 +68,9 @@ def test_a_launcher_state_that_is_not_a_json_object_is_read_as_empty(launch, tex
 @pytest.fixture
 def demo(tmp_path, monkeypatch):
     """The dashboard on a database with the demo invoices loaded."""
-    from ap_coder.config import Settings
-    from ap_coder.demo import load_demo
-    from ap_coder.store import Store
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import Store
+    from ap_coder.ops.demo import load_demo
     from tests.webclient import client_for
 
     monkeypatch.setenv("AP_REVIEWER", "Jordan Lee")
@@ -82,7 +82,7 @@ def demo(tmp_path, monkeypatch):
 def test_the_approved_pdf_of_a_vendor_named_beyond_latin_1_downloads(demo):
     """A vendor named "Bœuf Œuvre Ltée" (œ is not in Latin-1, which HTTP headers are written in): the stamped PDF's
     download answered 500."""
-    from ap_coder.store import APPROVED
+    from ap_coder.core.store import APPROVED
 
     store, client = demo
     inv = next(i for i in store.list_invoices() if i["status"] == APPROVED)
@@ -97,7 +97,7 @@ def test_the_approved_pdf_of_a_vendor_named_beyond_latin_1_downloads(demo):
 def test_a_file_in_the_invoices_folder_that_cant_be_opened_never_breaks_process_invoices(demo, monkeypatch):
     """A scan still being written, a PDF open in another program, a OneDrive placeholder: reading it to see whether it
     was processed raised, and Process invoices (the page and "Process N files") answered 500."""
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
     from ap_coder.web.core import invoice_dir
     from tests.webclient import PAGE
 
@@ -146,9 +146,9 @@ def test_a_number_too_large_or_not_a_number_is_refused_plainly(demo, url, field,
 def test_correcting_an_exported_touchless_invoice_does_not_suspend_its_supplier(demo):
     """Reopen for correction on a stale page, for an invoice approved without review and exported meanwhile: the
     reopen is refused (exported), but the supplier had already been sent back to supervised review."""
-    from ap_coder import exports
     from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER
-    from ap_coder.store import APPROVED
+    from ap_coder.core.store import APPROVED
+    from ap_coder.erp import exports
     from tests.webclient import PAGE
 
     store, client = demo
@@ -171,7 +171,7 @@ def test_correcting_an_exported_touchless_invoice_does_not_suspend_its_supplier(
 def test_a_second_approval_by_the_first_approver_says_why_it_is_refused(demo):
     """The first approver's own second approval (a stale page, or the button posted directly) said "someone else
     changed this invoice meanwhile": nobody had."""
-    from ap_coder.store import PENDING
+    from ap_coder.core.store import PENDING
     from tests.webclient import PAGE
 
     store, client = demo
@@ -194,7 +194,7 @@ def test_serve_without_a_port_never_picks_one_the_system_refuses(monkeypatch):
     bind test already passed over those. Both now use the same one (``offline.free_port``)."""
     import socket as real
 
-    from ap_coder import cli
+    from ap_coder.ops import cli
     from ap_coder.web import server
 
     refused = set(range(8501, 8561))  # (the 50 from 8501 and a few more)

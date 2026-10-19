@@ -7,8 +7,8 @@ import zipfile
 import pymupdf
 from PIL import Image
 
-from ap_coder import stamp
-from ap_coder.store import Store
+from ap_coder.core.store import Store
+from ap_coder.erp import stamp
 
 from .conftest import SAMPLE_STEM, SAMPLES
 

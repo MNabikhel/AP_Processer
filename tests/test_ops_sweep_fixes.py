@@ -18,11 +18,14 @@ from types import SimpleNamespace
 import pytest
 from openpyxl import load_workbook
 
-from ap_coder import cli, envfile, jde, labels, paths
-from ap_coder.config import DocumentIntelligenceSettings, Settings
-from ap_coder.doctor import run_checks
-from ap_coder.extraction import DocumentExtractor
-from ap_coder.store import Store
+from ap_coder.ai import labels
+from ap_coder.ai.extraction import DocumentExtractor
+from ap_coder.core import envfile, paths
+from ap_coder.core.config import DocumentIntelligenceSettings, Settings
+from ap_coder.core.store import Store
+from ap_coder.erp import jde
+from ap_coder.ops import cli
+from ap_coder.ops.doctor import run_checks
 
 from .conftest import ROOT, SAMPLE_STEM, SAMPLES
 from .test_jde import AN8, ON, _files, _invoice

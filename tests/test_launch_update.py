@@ -14,8 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ap_coder import paths
-from ap_coder.store import SCHEMA_VERSION
+from ap_coder.core import paths
+from ap_coder.core.store import SCHEMA_VERSION
 
 ROOT = Path(__file__).resolve().parent.parent
 

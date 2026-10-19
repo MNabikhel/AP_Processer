@@ -6,7 +6,7 @@ says how a line is coded, how well it works, and how to measure it again.
 
 ## How a line is coded
 
-Each line gets suggestions from five sources (`ap_coder/suggest.py`):
+Each line gets suggestions from five sources (`ap_coder/ai/suggest.py`):
 
 - **this vendor's lines**: how AP coded similar lines from the same vendor;
 - **other vendors' lines**: how AP coded similar lines from other vendors;
@@ -36,7 +36,7 @@ invoice be approved without a person, however trusted its supplier.
 ### Lines worded differently
 
 Suppliers print the same thing in many ways: "Nitrile gloves, box of 100", "GLOVES, NITRILE", "Nit. glove LG",
-"Ntrl gloves". Lines are compared word by word (`ap_coder/line_match.py`):
+"Ntrl gloves". Lines are compared word by word (`ap_coder/ai/line_match.py`):
 
 - case, accents, punctuation, numbers, units and packaging ("box of 100", "pouces") and month names do not count;
 - singular and plural are one word;

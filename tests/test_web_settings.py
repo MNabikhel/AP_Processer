@@ -13,11 +13,13 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder import jde, page_reader, page_worker, paths, reading
-from ap_coder.config import Settings
-from ap_coder.envfile import read_env
-from ap_coder.reading import ReaderLine, ReadingStatus
-from ap_coder.store import Store, load_sample_setup
+from ap_coder.ai import page_reader, page_worker, reading
+from ap_coder.ai.reading import ReaderLine, ReadingStatus
+from ap_coder.core import paths
+from ap_coder.core.config import Settings
+from ap_coder.core.envfile import read_env
+from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.erp import jde
 from ap_coder.web.app import create_app
 from ap_coder.web.pages import settings as settings_page
 
@@ -444,7 +446,7 @@ def test_the_settings_page_writes_the_env_ap_coder_reads(env_file):
 def test_a_page_reader_testing_itself_is_shown_as_testing_not_needs_a_look():
     from types import SimpleNamespace
 
-    from ap_coder.reading import TESTING, WARN, ReaderLine
+    from ap_coder.ai.reading import TESTING, WARN, ReaderLine
     from ap_coder.web.pages.settings_reading import reader_rows
 
     rows = reader_rows(SimpleNamespace(readers=[ReaderLine("Page reader (OvisOCR2)", TESTING, "Loaded and testing."),
@@ -471,7 +473,7 @@ def test_where_invoices_are_delivered_to_us(client, store):
 
 
 def test_the_ai_reviewer_settings(client, store):
-    from ap_coder import verifier
+    from ap_coder.ai import verifier
 
     from .test_web_invoice import PAGE as HEADERS
 

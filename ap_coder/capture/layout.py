@@ -229,7 +229,7 @@ def _installed(module: str) -> bool:
 def _ppocrv5_ready() -> bool:
     """RapidOCR 3 with its PP-OCRv5 models on disk. Without them it would download them on first use,
     which an offline computer cannot: the other engine reads alone (scripts/fetch_models.py fetches them)."""
-    from ..offline import ppocrv5_ready
+    from ..ops.offline import ppocrv5_ready
 
     return ppocrv5_ready()
 
@@ -262,13 +262,13 @@ def _engine(name: str | None = None) -> Any:
     """A callable: RGB image array -> [(quad, text, score), ...]."""
     name = name or _engine_name()
     if name not in _ENGINES:
-        from ..offline import quiet_onnxruntime
+        from ..ops.offline import quiet_onnxruntime
 
         quiet_onnxruntime()  # both engines run on ONNX Runtime: its usage events off
         if name == "ppocrv5":
             from rapidocr import RapidOCR
 
-            from ..offline import ppocrv5_engine_params
+            from ..ops.offline import ppocrv5_engine_params
 
             eng = RapidOCR(params=ppocrv5_engine_params())  # the model files on disk: RapidOCR never downloads
 
@@ -621,7 +621,7 @@ def _scan_png(doc: Any, page: Any) -> bytes:
 
 
 def _make_scan_png(doc: Any, page: Any) -> bytes:
-    from ..intake import made_from_picture, page_picture
+    from ..intake.pictures import made_from_picture, page_picture
 
     if made_from_picture(doc):
         picture = page_picture(doc, page)

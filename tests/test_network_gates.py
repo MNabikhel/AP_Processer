@@ -15,8 +15,8 @@ import urllib.request
 
 import pytest
 
-from ap_coder import local_llm, page_reader
-from ap_coder.config import LocalLLMSettings, Settings
+from ap_coder.ai import local_llm, page_reader
+from ap_coder.core.config import LocalLLMSettings, Settings
 from ap_coder.web import server as web_server
 
 REAL_FETCH = local_llm._fetch_json  # conftest replaces it for every test (no real LM Studio)

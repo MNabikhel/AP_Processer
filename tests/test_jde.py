@@ -9,11 +9,18 @@ import zipfile
 
 import pytest
 
-from ap_coder import jde
-from ap_coder.memory import vendor_key
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store
-from ap_coder.tax import RECOVERABLE, TaxRateTable, TaxSetup, TaxTreatment, build_gl_distribution, load_tax_mapping
+from ap_coder.coding.tax import (
+    RECOVERABLE,
+    TaxRateTable,
+    TaxSetup,
+    TaxTreatment,
+    build_gl_distribution,
+    load_tax_mapping,
+)
+from ap_coder.core.memory import vendor_key
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store
+from ap_coder.erp import jde
 
 from .conftest import DATA, ROOT, SAMPLES
 
@@ -374,7 +381,7 @@ def test_duplicates_in_the_batch_and_against_earlier_exports():
 
 
 def test_an_earlier_export_known_only_by_its_gst_number_is_a_duplicate(tmp_path):
-    from ap_coder.vendors import norm_tax_number
+    from ap_coder.coding.vendors import norm_tax_number
 
     settings = jde.JdeSettings()
     first = _invoice(ON, 1)
@@ -465,7 +472,7 @@ def db(tmp_path):
 
 
 def test_exports_page_jde_flow(db):
-    from ap_coder.demo import load_demo
+    from ap_coder.ops.demo import load_demo
     from ap_coder.web.pages.exports import batch_file
 
     from .webclient import client_for, follow, post
@@ -511,7 +518,7 @@ def test_exports_page_jde_flow(db):
 
 
 def test_a_jde_batch_downloads_again_with_the_same_vouchers(db):
-    from ap_coder.demo import load_demo
+    from ap_coder.ops.demo import load_demo
     from ap_coder.web.pages.exports import jde_file, jde_left_out
 
     from .webclient import client_for, follow, post
@@ -554,7 +561,7 @@ def test_a_jde_batch_downloads_again_with_the_same_vouchers(db):
 
 def _one_jde_batch(store, send_due_date=True, **final_changes):
     """A JD Edwards batch of the demo's Northwind invoice (its coding changed by ``final_changes`` first)."""
-    from ap_coder.demo import load_demo
+    from ap_coder.ops.demo import load_demo
 
     from .webclient import client_for, follow, post
 

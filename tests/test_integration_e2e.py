@@ -18,11 +18,13 @@ from email.message import EmailMessage
 
 import openpyxl
 
-from ap_coder import cli, inbox, jde, jde_worksheet, mailbox, triage
 from ap_coder.bench.msgwriter import Attachment, Message, build_msg
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import APPROVED, REVIEW, Store, load_sample_setup
-from ap_coder.tax import build_gl_distribution
+from ap_coder.coding.tax import build_gl_distribution
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
+from ap_coder.erp import jde, jde_worksheet
+from ap_coder.intake import inbox, mailbox, triage
+from ap_coder.ops import cli
 from ap_coder.web.core import invoice_dir
 
 from .conftest import SAMPLES

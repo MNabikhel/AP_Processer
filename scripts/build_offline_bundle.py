@@ -192,7 +192,7 @@ def plan(args: argparse.Namespace) -> dict:
     plain = requirements([e for e in args.extras if e != "ocr" and e not in OPTIONAL_EXTRAS])
     extras = project().get("optional-dependencies", {})
     optional = [r for e in args.extras if e in OPTIONAL_EXTRAS for r in extras.get(e, [])]
-    from ap_coder import offline
+    from ap_coder.ops import offline
 
     return {
         "name": f"{TOP}-offline-{project()['version']}-{dt.date.today():%Y%m%d}.zip",
@@ -233,7 +233,7 @@ def _zip(stage: Path, dest: Path) -> None:
 
 def file_list(stage: Path) -> dict[str, str]:
     """Every file in the bundle folder ``stage`` (but the manifest itself), by its path, with its SHA-256."""
-    from ap_coder.offline import sha256
+    from ap_coder.ops.offline import sha256
 
     return {path.relative_to(stage).as_posix(): sha256(path) for path in sorted(stage.rglob("*"))
             if path.is_file() and path.name != "bundle_manifest.json"}  # fmt: skip
@@ -297,7 +297,7 @@ def build(args: argparse.Namespace) -> int:
         print("[3/4] OCR models")
         import fetch_models
 
-        from ap_coder import offline
+        from ap_coder.ops import offline
 
         result = fetch_models.fetch(stage / "models", offline.model_dir(), online=True)
         # The table finder's model, from this checkout's models/ folder when it is there, else downloaded.
@@ -333,7 +333,7 @@ def build(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from ap_coder.offline import allow_internet
+    from ap_coder.ops.offline import allow_internet
 
     allow_internet()  # building the bundle is the one step that downloads (packages, OCR models), on IT's computer
     parser = argparse.ArgumentParser(description="Build the offline install ZIP (code + wheelhouse + OCR models).")

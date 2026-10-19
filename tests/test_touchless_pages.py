@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from ap_coder.store import Store, load_sample_setup
+from ap_coder.core.store import Store, load_sample_setup
 
 from .test_touchless import _ready
 from .test_web_invoice import form_of

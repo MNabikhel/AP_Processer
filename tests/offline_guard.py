@@ -1,7 +1,7 @@
 """A network guard for the offline proof: every connection, name lookup or datagram to anything but this computer
 (127.0.0.0/8, ::1, localhost) is refused and recorded.
 
-AP Coder is an offline build (``ap_coder/offline.py``): it may talk to its own web server and to LM Studio on
+AP Coder is an offline build (``ap_coder/ops/offline.py``): it may talk to its own web server and to LM Studio on
 127.0.0.1, and to the Azure check's endpoint only when AP switched that on in Settings. ``install()`` patches the
 socket module so any other attempt raises ``OfflineViolation`` (a ``ConnectionRefusedError``, so the code under test
 sees what an offline computer would show it) and is appended to ``attempts`` and, when ``AP_OFFLINE_GUARD_LOG`` names

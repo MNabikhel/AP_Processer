@@ -82,7 +82,7 @@ def test_a_label_ocr_misread_is_not_the_invoice_number(tmp_path):
 
 
 def test_a_standard_fax_is_a_full_page_measured_by_its_coarser_rows(tmp_path):
-    from ap_coder import intake
+    from ap_coder.intake import pictures as intake
 
     # A fax-to-email TIFF in standard mode: 204 dpi across, 98 down. Sweep: it was letterboxed into its page, measured
     # at 204 dpi (so the coarse-scan guard missed it), and OCR read it squashed to half its height.

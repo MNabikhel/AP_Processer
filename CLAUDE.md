@@ -6,7 +6,10 @@ centers, checks GST/HST/PST/QST and the math, and learns from what AP approves. 
 127.0.0.1, and approved invoices are exported to JD Edwards E1 (or Excel/CSV). Nothing leaves the laptop.
 
 ## Sections
-- `ap_coder`: the core package: store, settings, pipeline, tax, checks, exports, intake, CLI.
+- `ap_coder`: the package (version, `python -m ap_coder`, the old paths' aliases) and its index of folders.
+- `ap_coder/core`: store, settings, data folder, reference data, schema, memory, HTML pieces. `ap_coder/ai`: the pipeline, readers, models, second opinions, learning, accuracy.
+- `ap_coder/coding`: sales tax, checks, vendors, POs, rules, terms, review, bulk approval. `ap_coder/erp`: exports, JD Edwards, registers and the reports.
+- `ap_coder/intake`: pictures to PDF, emails unpacked and sorted. `ap_coder/ops`: the command line, doctor, offline guard, demo, help, share report.
 - `ap_coder/capture`: document capture: layout, readers, confidence, supplier learning, touchless decisions.
 - `ap_coder/bench`: the accuracy and speed benchmark (made-up invoices and emails, scoring).
 - `ap_coder/web`: the dashboard (FastAPI app, shared page helpers, server); `ap_coder/web/pages`: one route module per page.

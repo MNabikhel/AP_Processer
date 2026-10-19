@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder import paths
+from ap_coder.core import paths
 
 ROOT = Path(__file__).resolve().parent.parent
 

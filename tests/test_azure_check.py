@@ -1,4 +1,4 @@
-"""The Azure check (ap_coder/azure_check.py): Azure AI Document Intelligence as an optional second opinion, off by
+"""The Azure check (ap_coder/ai/azure_check.py): Azure AI Document Intelligence as an optional second opinion, off by
 default. Azure is never called: every test that "reads with Azure" hands in a fake client, and the host guard is
 tested on the real client with a transport that sends nothing."""
 
@@ -9,13 +9,13 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder import azure_check
+from ap_coder.ai import azure_check
+from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.capture.supplier import AUTONOMOUS, should_auto_approve
 from ap_coder.capture.types import CHECK, CaptureResult
 from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER, audit_pick, reader_outcome_rows
-from ap_coder.config import Settings
-from ap_coder.pipeline import InvoicePipeline
-from ap_coder.store import APPROVED, REVIEW, Store, load_sample_setup
+from ap_coder.core.config import Settings
+from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
 
 from .conftest import SAMPLES

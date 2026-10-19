@@ -1,9 +1,9 @@
 # ap_coder/capture: document capture and touchless decisions
 
-Reads an invoice's header fields and line items from the page, with boxes, a calibrated confidence and a status (verified / likely / check / missing) per field, and decides whether an invoice may be approved without a person. One invoice: `analyze()` builds the layout (text layer, Azure DI words, or local OCR), runs every reader (rules, the supplier's template, DI, the AI's values located on the page, a second OCR, the page reader's transcript) and the line readers, then `fuse()` groups their readings, runs the cross-field checks and calibrates, giving a `CaptureResult`; `workflow.py` then applies the gates (`invoice_gates()`, `should_auto_approve()`). It does not code GL accounts (`ap_coder/offline_coder.py`, `ap_coder/inference.py`), run the page reader model (`ap_coder/page_reader.py`) or store anything (`ap_coder/store.py`). Fully offline: OCR and the table model run here; DI readings only when an Azure analysis is passed in (opt-in).
+Reads an invoice's header fields and line items from the page, with boxes, a calibrated confidence and a status (verified / likely / check / missing) per field, and decides whether an invoice may be approved without a person. One invoice: `analyze()` builds the layout (text layer, Azure DI words, or local OCR), runs every reader (rules, the supplier's template, DI, the AI's values located on the page, a second OCR, the page reader's transcript) and the line readers, then `fuse()` groups their readings, runs the cross-field checks and calibrates, giving a `CaptureResult`; `workflow.py` then applies the gates (`invoice_gates()`, `should_auto_approve()`). It does not code GL accounts (`ap_coder/ai/offline_coder.py`, `ap_coder/ai/inference.py`), run the page reader model (`ap_coder/ai/page_reader.py`) or store anything (`ap_coder/core/store.py`). Fully offline: OCR and the table model run here; DI readings only when an Azure analysis is passed in (opt-in).
 
-**Depends on:** `ap_coder`
-**Used by:** `ap_coder`, `ap_coder/bench`, `ap_coder/web`, `ap_coder/web/pages`
+**Depends on:** `ap_coder/ai`, `ap_coder/coding`, `ap_coder/core`, `ap_coder/intake`, `ap_coder/ops`
+**Used by:** `ap_coder/ai`, `ap_coder/bench`, `ap_coder/coding`, `ap_coder/core`, `ap_coder/erp`, `ap_coder/intake`, `ap_coder/ops`, `ap_coder/web`, `ap_coder/web/pages`
 
 ## Interface
 - `analyze()` (__init__.py): file path + optional di_raw, ai_values, template, vendor, page_text, local_evidence -> `CaptureResult`.
@@ -46,7 +46,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - `__init__.py`: analyze: runs the readers, picks the line items, the text-layer and low-dpi checks.
 - `types.py` (it shadows the standard library's types module: never run Python from inside this folder): Box, Word, Line, PageLayout, DocLayout, Reading, FieldResult, LineReading, CaptureResult, field lists, statuses, BILL_TO_READING.
 - `layout.py`: words and lines with boxes from the PDF text layer, DI or local OCR; photos, HEIC, OCR cache.
-- `normalize.py`: amounts, dates, ids, GST/QST/PST numbers (`luhn_ok()`: the GST check digit, used by the GST_NUMBER_VALID check in confidence.py), currency evidence, credit titles (CREDIT_TITLES, also used by ap_coder/triage.py: a change changes email sorting).
+- `normalize.py`: amounts, dates, ids, GST/QST/PST numbers (`luhn_ok()`: the GST check digit, used by the GST_NUMBER_VALID check in confidence.py), currency evidence, credit titles (CREDIT_TITLES, also used by ap_coder/intake/triage.py: a change changes email sorting).
 - Readers: `reader.py` (rule reader: labels, totals, line items), `locate.py` (finds AI/DI values on the page), `transcript.py` (page reader's text laid out as a page; its `made_up()` tells page_worker.py which pages it didn't read).
 - Line tables: `tables.py` (text-layer columns), `table_finder.py` (local layout model finds tables), `line_items.py` (page vs page-reader lines agree).
 - `confidence.py`: fusion of the readers, cross-field checks, reader reliabilities, calibration; `calibration.json`: its measured table.

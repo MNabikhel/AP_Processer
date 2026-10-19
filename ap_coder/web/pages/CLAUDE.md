@@ -2,9 +2,9 @@
 
 Every URL of the dashboard lives here: each module has an `APIRouter` called `router` that reads the store, calls the core modules and draws a template.
 `__init__.py` holds `PAGES`, the one list of pages in rail order; `create_app` (web/app.py) includes each page's module from it.
-The shared helpers (render, done/refuse, jobs, files) are in `ap_coder/web`; the business rules (approval, tax, exports) are in `ap_coder/`, not here.
+The shared helpers (render, done/refuse, jobs, files) are in `ap_coder/web`; the business rules (approval, tax, exports) are in `ap_coder/coding`, `ap_coder/erp` and the other core folders, not here.
 
-**Depends on:** `ap_coder`, `ap_coder/capture`, `ap_coder/web`
+**Depends on:** `ap_coder`, `ap_coder/ai`, `ap_coder/capture`, `ap_coder/coding`, `ap_coder/core`, `ap_coder/erp`, `ap_coder/intake`, `ap_coder/ops`, `ap_coder/web`
 **Used by:** `ap_coder/web`
 
 ## Interface

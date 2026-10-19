@@ -23,7 +23,7 @@ sends forms, follows answers and redraws pieces the server returns already escap
   sends both with `Cache-Control: no-cache`, so a browser checks them again after an update (B-111).
 - A form sends once: `data-sending` blocks a double submit until the answer (and is cleared on a back-forward page show).
 - `data-busy` swaps the button's HTML and puts it back after: a script must not keep references to elements inside it (B-113).
-- `vendorKey()` in invoice.js copies `memory.vendor_key` (ap_coder/memory.py): change both (a browser test compares them, B-108).
+- `vendorKey()` in invoice.js copies `memory.vendor_key` (ap_coder/core/memory.py): change both (a browser test compares them, B-108).
 
 ### Bug lessons
 From docs/BUGS.md (one line each; the entry has the repro and the fix).

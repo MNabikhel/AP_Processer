@@ -2,7 +2,7 @@
 
     python scripts/check_map.py                 # the whole map (CI): errors fail, warnings are printed
     python scripts/check_map.py --changed BASE  # also: folders whose code changed since BASE but whose map didn't
-    python scripts/check_map.py --modules       # write ap_coder/MODULES.md (the flat core's module index) again
+    python scripts/check_map.py --modules       # write ap_coder/MODULES.md (the core folders' module index) again
     python scripts/check_map.py --hook          # Claude Code hook (PostToolUse on Edit/Write): a reminder only
 
 What is checked, for every folder git tracks or that holds new files not yet added (except the ones in SKIP):
@@ -17,8 +17,8 @@ What is checked, for every folder git tracks or that holds new files not yet add
    module or class;
 5. every bug in docs/BUGS.md (B-NN) has its lesson in the "### Bug lessons" list of the folder its fix is in (the
    folder of the first path of its **Where:** line). That list is not counted in the size limit: one line per bug;
-6. ap_coder/MODULES.md (the flat core's module index: each module's job and the modules that import it, made by
-   ``--modules``) is up to date: a folder too big for one CLAUDE.md still says, module by module, what breaks where.
+6. ap_coder/MODULES.md (the module index of ap_coder/ and its GROUPED folders, old-path aliases aside: each module's
+   job and the modules that import it, made by ``--modules``) is up to date: module by module, what breaks where.
 With --changed: a folder whose code changed but whose CLAUDE.md didn't is a warning (an interface change updates it);
 a base git can't compare with (a shallow clone, a typo) is a warning too, never a silent pass.
 
@@ -148,11 +148,14 @@ def folder_graph(files: list[PurePosixPath]) -> tuple[dict[str, set[str]], dict[
 
 
 MODULES = "ap_coder/MODULES.md"
+GROUPED = ("core", "ai", "coding", "erp", "intake", "ops")  # the folders the flat core was grouped into (MODULES.md)
+ALIAS = "Moved to ap_coder."  # the docstring of an old path kept as an alias for one release (not indexed)
 
 
 def module_index(files: list[PurePosixPath]) -> str:
-    """The flat core's module index: each ``ap_coder/*.py`` module, the first line of its docstring, and every
-    project module that imports it (sub-packages and scripts/; tests aside)."""
+    """The core's module index: each ``ap_coder/*.py`` module (old-path aliases aside) and each module of the GROUPED
+    folders, the first line of its docstring, and every project module that imports it (sub-packages and scripts/;
+    tests aside)."""
     py = [f for f in files if f.suffix == ".py" and f.parts[0] in PACKAGE_ROOTS]
     modules = {module_of(f): f for f in py}
     importers: dict[str, set[str]] = defaultdict(set)
@@ -161,18 +164,23 @@ def module_index(files: list[PurePosixPath]) -> str:
             if m != module_of(f):
                 importers[m].add(module_of(f))
     rows = []
-    for f in sorted(f for f in py if len(f.parts) == 2):
+    grouped = [f for f in py if len(f.parts) == 3 and f.parts[1] in GROUPED and f.name != "__init__.py"]
+    for f in sorted(f for f in py if len(f.parts) == 2) + sorted(grouped):
         mod = module_of(f)
         doc = ast.get_docstring(source(f)) or ""
+        if len(f.parts) == 2 and doc.startswith(ALIAS):
+            continue
         first = " ".join(doc.strip().split("\n\n")[0].split())
         first = first if len(first) <= 110 else first[:107].rsplit(" ", 1)[0] + "..."
         users = sorted(u.removeprefix("ap_coder.").replace(".", "/") for u in importers.get(mod, ()))
-        rows.append(f"| `{f.name}` | {first.replace('|', '/')} | {', '.join(users) or '(entry point)'} |")
+        name = "/".join(f.parts[1:])
+        rows.append(f"| `{name}` | {first.replace('|', '/')} | {', '.join(users) or '(entry point)'} |")
     return (
         "# ap_coder: module index (generated)\n\n"
-        "Made by `python scripts/check_map.py --modules`; CI fails when it is out of date. For each module of the\n"
-        "flat core: its job (its docstring's first lines) and every module that imports it, so a change can be\n"
-        "followed to its callers. `web/pages/review` is `ap_coder/web/pages/review.py`.\n\n"
+        "Made by `python scripts/check_map.py --modules`; CI fails when it is out of date. For each module of\n"
+        f"ap_coder/ and of its folders {', '.join(GROUPED)} (the old paths' aliases aside): its job (its docstring's\n"
+        "first lines) and every module that imports it, so a change can be followed to its callers.\n"
+        "`web/pages/review` is `ap_coder/web/pages/review.py`.\n\n"
         "| Module | Job | Imported by |\n|---|---|---|\n" + "\n".join(rows) + "\n"
     )
 

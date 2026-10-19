@@ -2,11 +2,11 @@
 
 import json
 
-from ap_coder import registers
-from ap_coder.config import Settings
-from ap_coder.pipeline import finalise_coding
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store, load_sample_setup
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.core.config import Settings
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.erp import registers
 
 from .conftest import SAMPLE_STEM, SAMPLES
 

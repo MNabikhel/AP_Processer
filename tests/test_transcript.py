@@ -246,7 +246,7 @@ def test_local_evidence_reaches_the_confidence(tmp_path):
 
 
 def test_read_invoice_and_capture_invoice_pass_the_page_text_and_local_counts(monkeypatch):
-    from ap_coder import offline_coder
+    from ap_coder.ai import offline_coder
     from ap_coder.capture import workflow
 
     from .conftest import SAMPLE_STEM, SAMPLES
@@ -302,7 +302,7 @@ def test_a_currency_the_page_does_not_show_is_flagged():
     assert ("info", "CURRENCY_NOT_FOUND") == review_issues(_capture(missing))[-1][:2]
     usd = FieldResult("currency", "USD", 0.36, CHECK, [], {"ai": "USD"})
     assert ("warning", "CURRENCY_NOT_FOUND") == review_issues(_capture(usd))[-1][:2]
-    from ap_coder.help import help_for
+    from ap_coder.ops.help import help_for
 
     assert help_for("CURRENCY_NOT_FOUND").title == "Currency not printed"
     assert find_currency("Total 1.234,56 €") == "EUR" and find_currency("Total £12.00") == "GBP"
@@ -313,7 +313,7 @@ def test_a_currency_the_page_does_not_show_is_flagged():
                                                    ("500 Main St, Cheyenne, WY 82001", "USD"),
                                                    ("Hauptstrasse 5, 10115 Berlin", "CAD")])  # fmt: skip
 def test_offline_coding_assumes_a_currency_by_the_suppliers_address(tmp_path, reference, address, currency):
-    from ap_coder.offline_coder import code_from_capture
+    from ap_coder.ai.offline_coder import code_from_capture
 
     lines = [(60, 60, "Acme Supply Ltd."), (60, 75, address), (380, 120, "Invoice No: AC-1001"),
              (380, 135, "Invoice Date: 2026-09-14"), (380, 500, "Subtotal"), (500, 500, "$1,000.00"),

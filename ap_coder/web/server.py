@@ -22,9 +22,10 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-from ap_coder import __version__, paths
-from ap_coder.offline import browser_wanted, listening
-from ap_coder.store import Store
+from ap_coder import __version__
+from ap_coder.core import paths
+from ap_coder.core.store import Store
+from ap_coder.ops.offline import browser_wanted, listening
 from ap_coder.web.app import CODE_FOLDER, create_app
 
 SERVER_FILE = ".ap_coder_server.json"

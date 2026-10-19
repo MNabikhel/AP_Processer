@@ -3,7 +3,7 @@
 The card is ``templates/partials/azure_check.html``; Settings → Reading includes it, and ``/settings/azure-check``
 shows it on its own. It draws itself: the template global ``azure_check_card(request)`` gives it what it shows
 (``azure_check.overview``), so the page that includes it needs to pass nothing. Off by default; AP Coder works fully
-offline without it (see ``ap_coder/azure_check.py``).
+offline without it (see ``ap_coder/ai/azure_check.py``).
 
 * ``GET /settings/azure-check``: the card on a page of its own.
 * ``POST /settings/azure-check``: save the settings (the key is never sent back to the page, only a hint of it).
@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ap_coder import azure_check
+from ap_coder.ai import azure_check
 from ap_coder.web.core import done, get_settings, get_store, jobs, local_url, refuse, render, reviewer, templates
 
 router = APIRouter()

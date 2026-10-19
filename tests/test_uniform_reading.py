@@ -12,17 +12,17 @@ from dataclasses import replace
 import pytest
 from PIL import Image
 
-from ap_coder import page_reader, page_worker, pipeline
+from ap_coder.ai import page_reader, page_worker, pipeline
+from ap_coder.ai.extraction import DocumentExtractor
+from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.capture import CannotRead, analyze, layout
 from ap_coder.capture.bridge import review_issues
 from ap_coder.capture.supplier import AUTONOMOUS, should_auto_approve
 from ap_coder.capture.types import CHECK, VERIFIED
 from ap_coder.capture.workflow import WAITING_FOR_PAGE_READER
-from ap_coder.config import DocumentIntelligenceSettings, Settings
-from ap_coder.extraction import DocumentExtractor
-from ap_coder.help import help_for
-from ap_coder.pipeline import InvoicePipeline
-from ap_coder.store import APPROVED, REVIEW, Store, load_sample_setup
+from ap_coder.core.config import DocumentIntelligenceSettings, Settings
+from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
+from ap_coder.ops.help import help_for
 
 from .conftest import SAMPLES
 
@@ -66,7 +66,7 @@ def touchless(monkeypatch):
 
 
 def test_a_new_invoice_waits_for_the_page_reader_then_it_decides(store, touchless, monkeypatch):
-    from ap_coder import verifier
+    from ap_coder.ai import verifier
 
     # The AI reviewer off: the page reader decides (with it on, the reviewer does, after: test_verifier.py).
     verifier.save_settings(store, on=False, rounds=3, minutes=5)
@@ -350,7 +350,7 @@ def _ovis(state="loaded"):
 
 
 def test_reading_status_with_nothing_running(store):
-    from ap_coder.reading import OFF, WARN, ReadingStatus, reading_status
+    from ap_coder.ai.reading import OFF, WARN, ReadingStatus, reading_status
 
     status = reading_status(Settings(), store)
     assert isinstance(status, ReadingStatus)
@@ -366,7 +366,7 @@ def test_reading_status_with_nothing_running(store):
 
 
 def test_reading_status_when_the_page_reader_is_ready(store, monkeypatch):
-    from ap_coder.reading import OK, reading_status
+    from ap_coder.ai.reading import OK, reading_status
 
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: _ovis())
     monkeypatch.setattr(page_reader, "page_seconds_estimate", lambda settings, model=None: 180.0)
@@ -390,7 +390,7 @@ def test_reading_status_when_the_page_reader_is_ready(store, monkeypatch):
     ],
 )  # fmt: skip
 def test_reading_status_while_the_self_test_has_not_passed(store, monkeypatch, test, state, banner):
-    from ap_coder.reading import TESTING, WARN, reading_status
+    from ap_coder.ai.reading import TESTING, WARN, reading_status
 
     monkeypatch.setattr(page_reader, "reader_status", lambda settings, use_cache=True: _ovis("downloaded"))
     store.set_setting(page_worker.TEST_KEY, json.dumps({"models": {MODEL: test}}) if test else "")
@@ -405,7 +405,7 @@ def test_reading_status_while_the_self_test_has_not_passed(store, monkeypatch, t
 
 
 def test_reading_status_never_raises(monkeypatch):
-    from ap_coder.reading import reading_status
+    from ap_coder.ai.reading import reading_status
 
     class Broken:
         def __getattr__(self, name):
@@ -420,7 +420,7 @@ def test_reading_status_never_raises(monkeypatch):
 
 
 def test_supplier_templates_are_counted(store):
-    from ap_coder.reading import reading_status
+    from ap_coder.ai.reading import reading_status
 
     assert "none yet" in reading_status(_settings(), store).reader("Supplier templates").detail
     store.save_supplier_profile("name:harbourview", "Harbourview", template={"fields": {"invoice_number": {}}})

@@ -2,9 +2,9 @@
 
 import json
 
-from ap_coder import search
-from ap_coder.demo import load_demo
-from ap_coder.store import Store
+from ap_coder.core.store import Store
+from ap_coder.erp import search
+from ap_coder.ops.demo import load_demo
 
 from .conftest import SAMPLES
 

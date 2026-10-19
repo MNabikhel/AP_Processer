@@ -23,21 +23,15 @@ from typing import Any
 
 import pandas as pd
 
-from ap_coder import rules, vendor_mail
+from ap_coder.ai.extraction import ExtractionResult
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.ai.suggest import suggest_gl
 from ap_coder.capture.normalize import parse_amount, parse_date
 from ap_coder.capture.types import MISSING, Box, CaptureResult
-from ap_coder.config import Settings
-from ap_coder.extraction import ExtractionResult
-from ap_coder.help import help_for
-from ap_coder.memory import pair_lines, vendor_key
-from ap_coder.pipeline import finalise_coding
-from ap_coder.po import match_invoice, po_label
-from ap_coder.reference_data import UNASSIGNED, ReferenceData, short_name
-from ap_coder.review import coding_from_inputs, is_blank, split_line, to_number
-from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
-from ap_coder.store import Store, suggestion_kept
-from ap_coder.suggest import suggest_gl
-from ap_coder.tax import (
+from ap_coder.coding import rules, vendor_mail
+from ap_coder.coding.po import match_invoice, po_label
+from ap_coder.coding.review import coding_from_inputs, is_blank, split_line, to_number
+from ap_coder.coding.tax import (
     OUTSIDE_CANADA,
     PLACE_OF_SUPPLY,
     PROVINCE_NAMES,
@@ -46,10 +40,16 @@ from ap_coder.tax import (
     province_label,
     stored_supply,
 )
-from ap_coder.taxmath import math_check  # noqa: F401 - the review screen's math, shown with the tax lines
-from ap_coder.terms import describe as terms_describe
-from ap_coder.terms import payment
-from ap_coder.ui import TAX_LABELS, money, plural
+from ap_coder.coding.taxmath import math_check  # noqa: F401 - the review screen's math, shown with the tax lines
+from ap_coder.coding.terms import describe as terms_describe
+from ap_coder.coding.terms import payment
+from ap_coder.core.config import Settings
+from ap_coder.core.memory import pair_lines, vendor_key
+from ap_coder.core.reference_data import UNASSIGNED, ReferenceData, short_name
+from ap_coder.core.schema import PROVINCE_VALUES, InvoiceCoding
+from ap_coder.core.store import Store, suggestion_kept
+from ap_coder.core.ui import TAX_LABELS, money, plural
+from ap_coder.ops.help import help_for
 from ap_coder.web.document import clean_boxes
 
 # --- The form ------------------------------------------------------------------------------------------------------
@@ -386,7 +386,7 @@ def supply_line(header: dict[str, Any], lines: list[dict[str, Any]], setup: Any)
     is only the vendor's province (a guess), so the reviewer sees the choice."""
     from types import SimpleNamespace
 
-    from ap_coder.tax import SUPPLY_OURS, SUPPLY_PRINTED, SUPPLY_SITE, SUPPLY_VENDOR, supply_source
+    from ap_coder.coding.tax import SUPPLY_OURS, SUPPLY_PRINTED, SUPPLY_SITE, SUPPLY_VENDOR, supply_source
 
     coding = SimpleNamespace(
         ship_to_province=str(header.get("ship_to_province") or ""),
@@ -460,7 +460,7 @@ def capture_confidence(capture: CaptureResult | None) -> dict[str, dict[str, str
 
 def waiting_line(status: Any, ahead: int) -> str:
     """ "Waiting for OvisOCR2: 2 invoices ahead, about 6 minutes" (the time when a page time has been measured)."""
-    from ap_coder import page_reader
+    from ap_coder.ai import page_reader
 
     where = f"{plural(ahead, 'invoice')} ahead" if ahead else "it's next"
     eta = ""
@@ -490,7 +490,7 @@ def not_running(status: Any, settings: Settings, store: Store) -> str:
     """Why OvisOCR2 isn't reading now ("" when it is): from the reading status, else from the background reader."""
     if status is not None:
         return "" if status.page_reader_ready else "OvisOCR2 isn't running: see Settings → Reading."
-    from ap_coder.page_worker import ready
+    from ap_coder.ai.page_worker import ready
 
     try:
         model, _why = ready(settings, store)
@@ -502,7 +502,7 @@ def not_running(status: Any, settings: Settings, store: Store) -> str:
 def reviewer_state(store: Store, inv: dict[str, Any]) -> dict[str, Any]:
     """What the AI reviewer (verifier.py) made of this invoice, for a line under the document title: {state, lines:
     [(icon, text)], again: offer to review it again}."""
-    from ap_coder import verifier
+    from ap_coder.ai import verifier
 
     if not verifier.load_settings(store).on:
         return {"state": "off", "lines": [], "again": False}
@@ -549,7 +549,7 @@ def reader_state(store: Store, settings: Settings, inv: dict[str, Any], status: 
     """What OvisOCR2 made of this invoice, for the line under the document title: ``state`` is "read" (its reading
     is in), "waiting", "reading", "skipped", "done" (read, not applied), "failed", "none" (not in its queue) or ""
     (a text file: no page to read). ``lines``: (icon, text); ``queue``: offer to put it in OvisOCR2's queue."""
-    from ap_coder.extraction import TEXT_EXTENSIONS
+    from ap_coder.ai.extraction import TEXT_EXTENSIONS
 
     path = str(inv.get("source_path") or "")
     if any(path.lower().endswith(s) for s in TEXT_EXTENSIONS):
@@ -990,8 +990,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     output, report = finalise_coding(coding, reference, settings, extraction, store=store,
                                      exclude_invoice_id=inv["id"])  # fmt: skip
     # The AI reviewer's findings, on what is on screen now: a field it disputed that the reviewer changed is settled.
-    from ap_coder import verifier
-    from ap_coder.validation import Issue
+    from ap_coder.ai import verifier
+    from ap_coder.coding.validation import Issue
 
     review = store.verification(inv["id"])
     for severity, code, message in verifier.issues((review or {}).get("result"), output):

@@ -11,10 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from ap_coder import page_reader, page_worker
-from ap_coder.config import PageReaderSettings, Settings
-from ap_coder.pipeline import InvoicePipeline
-from ap_coder.store import APPROVED, REVIEW, Store, load_sample_setup
+from ap_coder.ai import page_reader, page_worker
+from ap_coder.ai.pipeline import InvoicePipeline
+from ap_coder.core.config import PageReaderSettings, Settings
+from ap_coder.core.store import APPROVED, REVIEW, Store, load_sample_setup
 
 from .conftest import SAMPLES
 
@@ -363,8 +363,8 @@ def test_queue_position_counts_who_is_ahead(store):
 
 def test_figures_are_compared_on_the_pages_the_page_reader_read(store, fake_reader, monkeypatch):
     """At most AP_PAGE_READER_MAX_PAGES pages are read: OCR's later pages aren't counted as figures it missed."""
-    from ap_coder import figures
-    from ap_coder.figures import PAGE_BREAK, compare_figures, first_pages
+    from ap_coder.ai import figures
+    from ap_coder.ai.figures import PAGE_BREAK, compare_figures, first_pages
 
     pages = [f"Page {p}\nLine A 1,{p}00.00\nLine B {p}50.75\nSubtotal 9,{p}12.40" for p in range(1, 8)]
     full = f"\n\n{PAGE_BREAK}\n\n".join(pages)
@@ -516,7 +516,7 @@ def test_the_background_thread_reads_and_stops(store, fake_reader, monkeypatch):
 
 
 def test_read_pages_command(store, fake_reader, tmp_path, monkeypatch, capsys):
-    from ap_coder import cli
+    from ap_coder.ops import cli
 
     env = tmp_path / "pr.env"
     env.write_text("", encoding="utf-8")
@@ -542,8 +542,8 @@ def test_read_pages_command(store, fake_reader, tmp_path, monkeypatch, capsys):
 
 
 def test_doctor_reports_the_page_reader_and_never_fails_on_it(store, fake_reader, monkeypatch):
-    from ap_coder import doctor
-    from ap_coder.doctor import PASS, WARN
+    from ap_coder.ops import doctor
+    from ap_coder.ops.doctor import PASS, WARN
 
     monkeypatch.setenv("AP_DB_PATH", str(store.path))
     area, level, detail = doctor._page_reader_check(_settings())
@@ -815,7 +815,7 @@ def test_the_background_thread_puts_back_what_a_closed_dashboard_was_reading(sto
 
 
 def test_read_pages_stops_cleanly_on_ctrl_c(store, fake_reader, tmp_path, monkeypatch, capsys):
-    from ap_coder import cli
+    from ap_coder.ops import cli
 
     env = tmp_path / "pr.env"
     env.write_text("", encoding="utf-8")
@@ -958,7 +958,7 @@ def test_the_background_reader_waits_while_the_page_reader_is_tested(store, fake
 
 
 def test_read_pages_test_option(store, tmp_path, monkeypatch, capsys):
-    from ap_coder import cli
+    from ap_coder.ops import cli
 
     env = tmp_path / "pr.env"
     env.write_text("", encoding="utf-8")

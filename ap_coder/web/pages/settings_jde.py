@@ -1,5 +1,5 @@
 """Settings → JD Edwards E1: company, batch, amount and account formats, the GL → BU.Object.Subsidiary mapping, the
-province → tax area table, PO-matched vouchers and supplier address numbers. Saved with ``ap_coder.jde.save``
+province → tax area table, PO-matched vouchers and supplier address numbers. Saved with ``ap_coder.erp.jde.save``
 (logged), checked with ``jde.settings_problems``.
 
 The editable tables (GL mapping, address numbers) are rows of inputs posted as lists (``gl_code``, ``bu``... one value
@@ -15,10 +15,11 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
-from ap_coder import jde, jde_worksheet, ui
-from ap_coder.memory import vendor_key
-from ap_coder.store import Store
-from ap_coder.tax import OUTSIDE_CANADA, PROVINCES, province_label
+from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCES, province_label
+from ap_coder.core import ui
+from ap_coder.core.memory import vendor_key
+from ap_coder.core.store import Store
+from ap_coder.erp import jde, jde_worksheet
 from ap_coder.web import minimd
 from ap_coder.web.core import done, get_store, refuse, reviewer
 from ap_coder.web.files import SheetError, read_excel

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ap_coder.config import Settings
-from ap_coder.reference_data import load_reference_data
+from ap_coder.core.config import Settings
+from ap_coder.core.reference_data import load_reference_data
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
@@ -27,8 +27,8 @@ def isolated_private_dir(monkeypatch, tmp_path):
 def fresh_reading_memory():
     """The tables found per file and the learning memory are remembered for the life of the process: each test
     starts with none."""
-    from ap_coder import store
     from ap_coder.capture import layout, table_finder
+    from ap_coder.core import store
 
     table_finder._found.clear()
     layout._pruned.clear()
@@ -44,10 +44,10 @@ def no_dashboard_page_reader(monkeypatch):
     """The dashboard's own page-reader thread runs for the life of the process: started by a test that opens the
     dashboard, it would run on in later tests and act on their fakes (a self-test counted twice). Tests that need a
     reader thread start their own BackgroundReader and stop it."""
-    from ap_coder import page_worker
+    from ap_coder.ai import page_worker
 
     monkeypatch.setattr(page_worker, "start_background", lambda *args, **kwargs: None)
-    from ap_coder import azure_check  # the Azure check's thread likewise (it is off unless a test turns it on)
+    from ap_coder.ai import azure_check  # the Azure check's thread likewise (it is off unless a test turns it on)
 
     monkeypatch.setattr(azure_check, "start_background", lambda *args, **kwargs: None)
 
@@ -56,7 +56,7 @@ def no_dashboard_page_reader(monkeypatch):
 def no_local_model(monkeypatch):
     """Never ask a real LM Studio on this computer: every test sees no local model unless it starts a fake one
     (tests/test_local_llm.py restores the real fetch for that)."""
-    from ap_coder import local_llm
+    from ap_coder.ai import local_llm
 
     def refused(url, api_key, timeout):
         raise ConnectionRefusedError(f"no local model in tests ({url})")
@@ -196,7 +196,7 @@ def few_sql_variables(monkeypatch):
     """Every Store connection takes at most 999 bound variables (an older SQLite build's limit)."""
     import sqlite3
 
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
 
     opened = Store._open
 

@@ -1,8 +1,8 @@
 """The offline path on unusual but real invoices: French labels, freight, a missing subtotal."""
 
+from ap_coder.ai.offline_coder import code_from_capture, provinces
 from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
-from ap_coder.offline_coder import code_from_capture, provinces
-from ap_coder.validation import validate_coding
+from ap_coder.coding.validation import validate_coding
 
 HEADER = {"vendor_name": "Acme", "invoice_number": "A1", "invoice_date": "2026-01-05", "currency": "CAD"}
 
@@ -100,9 +100,9 @@ def test_a_file_that_cannot_be_read_does_not_stop_the_batch(tmp_path, reference,
     from dataclasses import replace
     from pathlib import Path
 
-    from ap_coder.config import Settings
-    from ap_coder.pipeline import InvoicePipeline
-    from ap_coder.store import Store
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import Store
 
     from .conftest import SAMPLES
 
@@ -129,7 +129,7 @@ def test_a_file_that_cannot_be_read_does_not_stop_the_batch(tmp_path, reference,
 def test_output_names_never_collide():
     from pathlib import Path
 
-    from ap_coder.pipeline import output_stems
+    from ap_coder.ai.pipeline import output_stems
 
     paths = [Path("a/Invoice.pdf"), Path("b/Invoice.pdf"), Path("c/Invoice_2.pdf"), Path("d/INVOICE.pdf")]
     stems = output_stems(paths)
@@ -138,7 +138,7 @@ def test_output_names_never_collide():
 
 
 def test_a_text_invoice_saved_by_windows_in_ansi_or_with_a_bom_is_read(tmp_path):
-    from ap_coder.extraction import result_from_text
+    from ap_coder.ai.extraction import result_from_text
 
     ansi = tmp_path / "ansi.txt"
     ansi.write_bytes("Fournitures Laval\nFacture no 12\nTotal 114,98 $ (TPS incluse, été)\n".encode("cp1252"))

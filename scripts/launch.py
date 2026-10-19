@@ -74,7 +74,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
-for _folder in (ROOT, SCRIPTS):  # ap_coder/offline.py is standard-library only, usable before installing
+for _folder in (ROOT, SCRIPTS):  # ap_coder/ops/offline.py is standard-library only, usable before installing
     if str(_folder) not in sys.path:
         sys.path.insert(0, str(_folder))
 
@@ -83,8 +83,8 @@ import fetch_models  # noqa: E402  (standard library only)
 import running  # noqa: E402  (standard library only)
 import upgrade  # noqa: E402  (standard library only)
 
-from ap_coder import envfile, paths  # noqa: E402  (standard library only)
-from ap_coder.offline import INTERNET_ENV, browser_wanted, internet_allowed  # noqa: E402
+from ap_coder.core import envfile, paths  # noqa: E402  (standard library only)
+from ap_coder.ops.offline import INTERNET_ENV, browser_wanted, internet_allowed  # noqa: E402
 
 WINDOWS = os.name == "nt"
 MAC = sys.platform == "darwin"
@@ -1078,7 +1078,7 @@ def settle_settings(data: Path, version: str) -> list[tuple[str, str]]:
 
 
 def retire_settings(data: Path, version: str) -> list[tuple[str, str]]:
-    from ap_coder.config import RETIRED_SETTINGS
+    from ap_coder.core.config import RETIRED_SETTINGS
 
     env = data / ".env"
     short = ".".join(version.split(".")[:2]) or version
@@ -1094,7 +1094,7 @@ def retire_settings(data: Path, version: str) -> list[tuple[str, str]]:
 
 def database_too_new(data: Path, version: str) -> SetupError | None:
     """A database made by a newer AP Coder: this older version never opens it (nothing changed)."""
-    from ap_coder.store import SCHEMA_VERSION, database_schema
+    from ap_coder.core.store import SCHEMA_VERSION, database_schema
 
     database = paths.env_path("AP_DB_PATH") or data / "ap_coder.db"
     found = database_schema(database)
@@ -1132,7 +1132,7 @@ def ensure_models(first: bool, state: dict) -> None:
     or AP_ALLOW_INTERNET=1), with the table finder's model then too (into the data folder's models/ folder, so the
     code folder never looks like a bundle). When that fails it is said once and recorded, not tried again on every
     start (a download: not before the next day)."""
-    from ap_coder import offline
+    from ap_coder.ops import offline
 
     online = not fetch_models.BUNDLE_MODELS.is_dir() and setup_online()
     finder = online and offline.onnxruntime_installed() and offline.table_finder_path() is None
@@ -1323,7 +1323,7 @@ def lm_studio_line(status: Any = None) -> tuple[str, str]:
     if status.lm_studio and status.model not in status.loaded:
         return "info", (f"Chat model: {status.model} is downloaded but not loaded: LM Studio loads it the first time "
                         "it is needed (load it now for a quick first invoice)")  # fmt: skip
-    from ap_coder.local_llm import is_chat_model
+    from ap_coder.ai.local_llm import is_chat_model
 
     also = [m for m in status.loaded if m != status.model and is_chat_model(m)]  # (not OvisOCR2, the page reader)
     keep = "keep one chat model loaded: unload the one you don't want"
@@ -1334,8 +1334,8 @@ def lm_studio_line(status: Any = None) -> tuple[str, str]:
 def chat_status() -> Any:
     """LM Studio's answer about the chat model (``local_llm.ModelStatus``), or None when it can't be asked."""
     try:
-        from ap_coder import local_llm
-        from ap_coder.config import Settings
+        from ap_coder.ai import local_llm
+        from ap_coder.core.config import Settings
 
         return local_llm.check_server(Settings.from_env().llm, timeout=1.0, use_cache=False)
     except Exception:  # noqa: BLE001 - the summary never stops the start
@@ -1371,9 +1371,9 @@ def _ask_chat_model() -> tuple[str, str]:
 
     def ask() -> None:
         try:
-            from ap_coder import doctor
-            from ap_coder.cli import _load_reference, build_parser
-            from ap_coder.config import Settings
+            from ap_coder.core.config import Settings
+            from ap_coder.ops import doctor
+            from ap_coder.ops.cli import _load_reference, build_parser
 
             reference = _load_reference(build_parser().parse_args(["doctor"]))
             result.append(doctor._local_dry_run(Settings.from_env(), reference))
@@ -1401,9 +1401,9 @@ def setup_check_lines() -> list[tuple[str, str]]:
     """The rest of ``python -m ap_coder doctor`` (offline): the GL accounts, cost centers, tax mapping, coding rules
     and settings. One line when all is well, else one line for each problem, with the doctor's own words."""
     try:
-        from ap_coder.cli import _load_reference, build_parser
-        from ap_coder.config import Settings
-        from ap_coder.doctor import FAIL, WARN, run_checks
+        from ap_coder.core.config import Settings
+        from ap_coder.ops.cli import _load_reference, build_parser
+        from ap_coder.ops.doctor import FAIL, WARN, run_checks
 
         args = build_parser().parse_args(["doctor"])
         checks = run_checks(Settings.from_env(), lambda: _load_reference(args), online=False, llm_checks=False)
@@ -1421,9 +1421,9 @@ def setup_check_lines() -> list[tuple[str, str]]:
 def page_reader_line() -> tuple[str, str]:
     """The page reader (OvisOCR2 in LM Studio): found or not, and its self-test. Never downloads or loads a model."""
     try:
-        from ap_coder.config import Settings
-        from ap_coder.page_reader import reader_status
-        from ap_coder.page_worker import self_test_detail
+        from ap_coder.ai.page_reader import reader_status
+        from ap_coder.ai.page_worker import self_test_detail
+        from ap_coder.core.config import Settings
 
         status = reader_status(Settings.from_env(), use_cache=False)
         state, _detail = self_test_detail(status.model) if status.usable else ("no model", "")
@@ -1443,7 +1443,8 @@ def readiness(packages: tuple[str, str], state: dict | None = None, force: bool 
     """The lines of the readiness summary: (level, text). Everything ``doctor --online`` checks, on every start: the
     packages, OCR, data folder, the chat model (and, with ``state``, its test question) and the page reader in LM
     Studio, and the GL accounts, tax mapping and settings."""
-    from ap_coder import offline, paths
+    from ap_coder.core import paths
+    from ap_coder.ops import offline
 
     lines = [("ok", f"Python {sys.version.split()[0]} (.venv)"), packages]
     v4, v5 = offline.ppocrv4_installed(), offline.ppocrv5_installed()
@@ -1543,7 +1544,7 @@ def running_dashboard(rest: list[str], state: dict) -> int | None:
 def dashboard_url(port: int) -> str:
     """The address the browser opens: the one the dashboard listens on (127.0.0.1 by default). Never "localhost": a
     Mac or Windows browser tries it as ::1 first, where another program may answer."""
-    from ap_coder.offline import dashboard_address
+    from ap_coder.ops.offline import dashboard_address
 
     address = dashboard_address()
     shown = "127.0.0.1" if address in ("", "0.0.0.0", "::", "localhost") else address
@@ -1642,9 +1643,9 @@ def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
 
 def free_port(start: int = DEFAULT_PORT) -> int:
     """The first port from ``start`` the dashboard can listen on and nothing answers on yet
-    (``ap_coder/offline.py:free_port``, which ``python -m ap_coder serve`` uses too)."""
-    from ap_coder.offline import dashboard_address
-    from ap_coder.offline import free_port as first_free
+    (``ap_coder/ops/offline.py:free_port``, which ``python -m ap_coder serve`` uses too)."""
+    from ap_coder.ops.offline import dashboard_address
+    from ap_coder.ops.offline import free_port as first_free
 
     return first_free(start, dashboard_address(), windows=WINDOWS, answers=running.listening)
 

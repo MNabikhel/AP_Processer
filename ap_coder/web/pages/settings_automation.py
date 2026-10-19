@@ -15,8 +15,8 @@ from typing import Any
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse
 
-from ap_coder import ui
-from ap_coder.store import Store
+from ap_coder.core import ui
+from ap_coder.core.store import Store
 from ap_coder.web.core import done, get_store, refuse, reviewer
 
 router = APIRouter()

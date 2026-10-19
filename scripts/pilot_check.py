@@ -19,10 +19,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from ap_coder.config import Settings  # noqa: E402
-from ap_coder.pipeline import InvoicePipeline  # noqa: E402
-from ap_coder.reference_data import load_reference_data  # noqa: E402
-from ap_coder.store import Store  # noqa: E402
+from ap_coder.ai.pipeline import InvoicePipeline  # noqa: E402
+from ap_coder.core.config import Settings  # noqa: E402
+from ap_coder.core.reference_data import load_reference_data  # noqa: E402
+from ap_coder.core.store import Store  # noqa: E402
 
 SAMPLES = ROOT / "samples"
 DATA = ROOT / "data"

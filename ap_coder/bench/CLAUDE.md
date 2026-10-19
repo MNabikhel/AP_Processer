@@ -2,8 +2,8 @@
 
 Makes random, reproducible invoices and emails with ground truth, plays them through the app's own code and reports accuracy and speed: capture fields, supplier learning and autonomy, GL coding with no AI model, email triage, seconds per invoice. It also fits capture's confidence table (`ap_coder/capture/calibration.json`). It does not read invoices itself (`ap_coder/capture`) and is not part of the review app, apart from one runtime use of `scan()`. Everything is made up and offline.
 
-**Depends on:** `ap_coder`, `ap_coder/capture`, `ap_coder/web`
-**Used by:** `ap_coder`
+**Depends on:** `ap_coder/ai`, `ap_coder/capture`, `ap_coder/coding`, `ap_coder/core`, `ap_coder/intake`, `ap_coder/web`
+**Used by:** `ap_coder/ai` (page_reader.py's self-test draws its scan with generator.py)
 
 ## Interface
 - Run: `python -m ap_coder.bench run --n 300 --seed 1 --scanned 0.3 [--out bench_out] [--workers N] [--regen] [--reader capture|stub|auto]` -> report.json, report.md, failures.jsonl, evidence.jsonl.
@@ -16,7 +16,7 @@ Makes random, reproducible invoices and emails with ground truth, plays them thr
 - What ships: the whole folder is in the `ap_coder` package and the offline bundle, but only `scan()` runs in the app (`page_reader.test_pages`, the page reader's test). The rest is for the CLI and tests (tests/test_bench.py, tests/test_bench_speed.py, tests/test_msg_and_triage.py, ...).
 
 ## Gotchas and decisions
-- Layering slip (scale assessment): `ap_coder.page_reader` imports `bench.generator` (`scan()` in `test_pages`); changing `scan()` changes the page reader's test pages.
+- Layering slip (scale assessment): `ap_coder.ai.page_reader` imports `bench.generator` (`scan()` in `test_pages`); changing `scan()` changes the page reader's test pages.
 - Layering slip (scale assessment): `bench.coding` imports `web.invoice_view` (`suggestions`), so the benchmark depends on the web layer.
 - Each case's random seed includes `GENERATOR_VERSION`: bump it and every case changes, and cached cases are regenerated (manifest.json).
 - `calibrate` rewrites `calibration.json` from only the runs it is given: pass every run (see its "runs" list), or the measured patterns are lost.

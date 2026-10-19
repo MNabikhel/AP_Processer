@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from ap_coder import paths  # noqa: E402
+from ap_coder.core import paths  # noqa: E402
 
 DEFAULT_DATA_DIR = paths.default_data_dir()
 

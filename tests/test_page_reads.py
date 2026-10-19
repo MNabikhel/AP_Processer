@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 from ap_coder.capture.types import Box, CaptureResult, FieldResult
-from ap_coder.po import po_key
-from ap_coder.store import PENDING, REVIEW, Store
+from ap_coder.coding.po import po_key
+from ap_coder.core.store import PENDING, REVIEW, Store
 
 from .conftest import SAMPLE_STEM, SAMPLES
 

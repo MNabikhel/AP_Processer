@@ -15,9 +15,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from ap_coder.demo import load_demo
-from ap_coder.rules import Rule
-from ap_coder.store import APPROVED, PENDING, REJECTED, Store, load_sample_setup
+from ap_coder.coding.rules import Rule
+from ap_coder.core.store import APPROVED, PENDING, REJECTED, Store, load_sample_setup
+from ap_coder.ops.demo import load_demo
 from ap_coder.web.core import invoice_dir
 
 from .conftest import SAMPLE_STEM, SAMPLES
@@ -441,7 +441,7 @@ def test_vendors_named_like_the_pages_own_words_open(client, store):
 
 
 def test_vendors_page_with_the_demo_shows_the_vendors_that_make_work(client, store):
-    from ap_coder.insights import vendor_workload
+    from ap_coder.erp.insights import vendor_workload
 
     load_demo(store)
     page = client.get("/vendors").text

@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder.csvio import parse_date, read_csv_rows
-from ap_coder.memory import CORRECTED, select_examples, vendor_key
-from ap_coder.pipeline import InvoicePipeline, PipelineResult, output_stems
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store
-from ap_coder.tax import TaxRateTable, build_gl_distribution, check_taxes
-from ap_coder.validation import validate_coding
+from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, output_stems
+from ap_coder.coding.tax import TaxRateTable, build_gl_distribution, check_taxes
+from ap_coder.coding.validation import validate_coding
+from ap_coder.core.csvio import parse_date, read_csv_rows
+from ap_coder.core.memory import CORRECTED, select_examples, vendor_key
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store
 
 
 def _codes(doc, reference):

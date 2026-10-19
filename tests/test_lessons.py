@@ -9,9 +9,9 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder import lessons
-from ap_coder.config import Settings
-from ap_coder.store import APPROVED, Store, load_sample_setup
+from ap_coder.ai import lessons
+from ap_coder.core.config import Settings
+from ap_coder.core.store import APPROVED, Store, load_sample_setup
 from ap_coder.web.app import create_app
 
 from .test_web_invoice import PAGE, form_of
@@ -88,7 +88,7 @@ def test_the_ai_and_the_reviewer_read_the_lessons(tmp_path, ground_truth):
 
 
 def test_the_ai_reviewer_is_given_the_lessons(tmp_path, ground_truth, monkeypatch):
-    from ap_coder import verifier
+    from ap_coder.ai import verifier
 
     store = Store(tmp_path / "a.db")
     lessons.record(store, 1, _doc(ground_truth, "ACCT 1"), _doc(ground_truth, "1-2026"))

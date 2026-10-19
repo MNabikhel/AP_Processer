@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from ap_coder.config import Settings
-from ap_coder.pipeline import finalise_coding
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import APPROVED, REJECTED, Store
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.core.config import Settings
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import APPROVED, REJECTED, Store
 
 from .conftest import SAMPLE_STEM, SAMPLES
 
@@ -71,8 +71,8 @@ def test_a_rejected_invoice_cannot_be_approved_from_a_stale_screen(tmp_path):
 
 
 def test_the_approval_limit_applies_in_cad_to_a_foreign_currency_invoice(tmp_path):
-    from ap_coder import controls
-    from ap_coder.store import PENDING
+    from ap_coder.core.store import PENDING
+    from ap_coder.erp import controls
 
     store = Store(tmp_path / "a.db")
     store.set_setting("approval_limit", "10000")

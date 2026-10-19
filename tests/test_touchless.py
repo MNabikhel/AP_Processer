@@ -31,8 +31,8 @@ from ap_coder.capture.workflow import (
     on_reopen,
     taught_message,
 )
-from ap_coder.store import DEFAULT_TOUCHLESS_LIMIT, Store
-from ap_coder.validation import ERROR, WARNING, Issue, ValidationReport
+from ap_coder.coding.validation import ERROR, WARNING, Issue, ValidationReport
+from ap_coder.core.store import DEFAULT_TOUCHLESS_LIMIT, Store
 
 KEY = "id:V1"
 
@@ -322,7 +322,7 @@ def test_findings_that_always_need_a_person(touchless, path, code, reason):
 
 
 def test_every_always_a_person_code_is_a_check_the_engine_raises():
-    from ap_coder.help import CHECKS
+    from ap_coder.ops.help import CHECKS
 
     assert set(ALWAYS_A_PERSON) <= set(CHECKS)
 
@@ -472,7 +472,7 @@ def test_a_line_without_an_account_is_never_approved_without_a_person(touchless,
 def test_a_line_only_the_local_model_coded_is_never_approved_without_a_person(touchless, path):
     """A line neither AP's history nor a coding rule could code gets the local chat model's guess (right on 11 of
     41 sample lines): a valid account, so no finding, and the touchless bar measures header fields only."""
-    from ap_coder.pipeline import MODEL_SUGGESTED
+    from ap_coder.ai.pipeline import MODEL_SUGGESTED
 
     line = {"line_number": 1, "predicted_gl_code": "6010", "reasoning_justification": f"{MODEL_SUGGESTED}: hardware"}
     output = {"grand_total": 1050.0, "currency": "CAD", "line_items": [line]}
@@ -485,9 +485,9 @@ def test_a_line_only_the_local_model_coded_is_never_approved_without_a_person(to
 def test_a_line_coded_from_a_weak_match_is_never_approved_without_a_person(touchless, path, tmp_path):
     """Sweep: with the chat model loaded, a weak match (an account's name, the vendor's default) codes the line
     (``assign_weak``) and nothing held the invoice back: looser than with no model at all."""
+    from ap_coder.ai.offline_coder import WEAK_MATCH, code_from_capture
     from ap_coder.capture.types import LineReading
-    from ap_coder.offline_coder import WEAK_MATCH, code_from_capture
-    from ap_coder.store import load_sample_setup
+    from ap_coder.core.store import load_sample_setup
 
     store = Store(tmp_path / "w.db")
     load_sample_setup(store)

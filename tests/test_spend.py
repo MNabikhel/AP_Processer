@@ -5,9 +5,9 @@ import io
 
 from openpyxl import load_workbook
 
-from ap_coder import spend
-from ap_coder.demo import load_demo
-from ap_coder.store import Store
+from ap_coder.core.store import Store
+from ap_coder.erp import spend
+from ap_coder.ops.demo import load_demo
 
 YEAR = (dt.date(2020, 1, 1), dt.date(2030, 12, 31))
 
@@ -77,11 +77,11 @@ def test_workbook_text_cannot_run_as_a_formula(tmp_path):
 def test_non_recoverable_tax_on_its_own_account_is_spend(tmp_path):
     import json
 
-    from ap_coder.config import Settings
-    from ap_coder.pipeline import finalise_coding
-    from ap_coder.schema import InvoiceCoding
-    from ap_coder.store import load_sample_setup
-    from ap_coder.tax import EXPENSE_SEPARATE
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.coding.tax import EXPENSE_SEPARATE
+    from ap_coder.core.config import Settings
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import load_sample_setup
 
     from .conftest import SAMPLES
 
@@ -98,7 +98,7 @@ def test_non_recoverable_tax_on_its_own_account_is_spend(tmp_path):
 
 
 def test_control_characters_do_not_break_the_workbooks(tmp_path):
-    from ap_coder import exports
+    from ap_coder.erp import exports
 
     store = Store(tmp_path / "s.db")
     load_demo(store)
@@ -113,13 +113,13 @@ def test_control_characters_do_not_break_the_workbooks(tmp_path):
 
 
 def test_a_cad_rate_typed_in_is_ignored():
-    from ap_coder.store import parse_fx_rates
+    from ap_coder.core.store import parse_fx_rates
 
     assert parse_fx_rates("CAD=1.4, USD=1.37") == {"CAD": 1.0, "USD": 1.37}  # CAD is always 1
 
 
 def test_exchange_rates_and_all_in_cad(tmp_path):
-    from ap_coder.store import parse_fx_rates
+    from ap_coder.core.store import parse_fx_rates
 
     assert parse_fx_rates("USD=1.37, eur 1,50; GBP: 1.85, XXX=0") == {"CAD": 1.0, "USD": 1.37, "EUR": 1.5, "GBP": 1.85}
     assert parse_fx_rates("") == {"CAD": 1.0}

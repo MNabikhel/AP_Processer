@@ -417,7 +417,7 @@ Each invoice produces the original target fields plus the Canadian tax fields, a
 - **Local first.** The reader, the checks, the GL distribution and the learning run on the laptop with no
   AI at all. A model only fills accounts nothing else could code, so a small local model is enough, and a
   slow or missing model never stops an invoice from being read and checked.
-- **Structured Outputs, natively enforced.** The schema (`ap_coder/schema.py`) follows strict-mode
+- **Structured Outputs, natively enforced.** The schema (`ap_coder/core/schema.py`) follows strict-mode
   rules: closed objects, all properties required. A Pydantic mirror re-validates values (dates,
   provinces, tax types, rate ranges). If that fails, the model gets one repair round-trip.
 - **Codes cannot be invented.** Your GL codes (excluding the tax accounts) and cost centers are
@@ -466,39 +466,50 @@ Next to the AI coder, AP Coder reads every invoice itself and shows *where* each
 ## Project layout
 
 ```
-ap_coder/
-  extraction.py      Document Intelligence → ExtractionResult (+ cache)
-  inference.py       Structured Outputs (Azure or local), model profiles, repair loop, account suggestions
-  offline_coder.py   coding with no model: rules, vendor history, vendor master, account names
-  local_llm.py       LM Studio / Ollama: finding the server and model, reading a small model's JSON
-  reading.py         how every invoice is read, and each reader's state (Settings → Reading, the doctor, the banner)
-  page_reader.py     the page reader: OvisOCR2 in LM Studio transcribes each page (loop and cut-off checks, a
+ap_coder/            the package; the old flat paths (ap_coder/store.py...) are aliases for one release
+  core/              the foundations
+    store.py         local SQLite: accounts, tax setup, invoices, feedback, POs, vendors, exports, audit trail
+    schema.py        strict JSON Schema + Pydantic mirror
+    memory.py        learning memory: example selection, history comparison
+    config.py · paths.py · envfile.py · reference_data.py · csvio.py · safe.py · audit.py · ui.py
+  ai/                reading and AI
+    pipeline.py      extract → code → validate → capture → store
+    extraction.py    Document Intelligence → ExtractionResult (+ cache)
+    inference.py     Structured Outputs (Azure or local), model profiles, repair loop, account suggestions
+    offline_coder.py coding with no model: rules, vendor history, vendor master, account names
+    local_llm.py     LM Studio / Ollama: finding the server and model, reading a small model's JSON
+    reading.py       how every invoice is read, and each reader's state (Settings → Reading, the doctor, the banner)
+    page_reader.py   the page reader: OvisOCR2 in LM Studio transcribes each page (loop and cut-off checks, a
                      cache);  page_worker.py: its queue, background thread and automatic self-test
-  training_export.py approved invoices as a training set (page images + approved fields), local ZIP
-  prompts.py         system prompt (extraction, Canadian tax, GL coding, learning rules)
-  schema.py          strict JSON Schema + Pydantic mirror
-  tax.py             Canadian rates, tax checks, GL distribution
-  memory.py          learning memory: example selection, history comparison
-  store.py           local SQLite: accounts, tax setup, invoices, feedback, POs, vendors, exports, audit trail
-  validation.py      deterministic controls, adjusted confidence, review flag
-  vendors.py         vendor master, fraud and duplicate signals
-  po.py              purchase orders: import, 2- and 3-way matching
-  terms.py           payment terms, due dates, early-payment discounts
-  suggest.py         GL suggestions, and when one is strong enough to code a line;  recurring.py: recurring vendors
-  line_match.py      how alike two line descriptions are (shortened words, plurals, accents, word order)
-  statements.py      vendor statement reconciliation;  accruals.py: month-end accruals
-  exports.py · bulk.py · insights.py · controls.py · audit.py · help.py · demo.py
+    training_export.py approved invoices as a training set (page images + approved fields), local ZIP
+    prompts.py       system prompt (extraction, Canadian tax, GL coding, learning rules)
+    suggest.py       GL suggestions, and when one is strong enough to code a line
+    line_match.py    how alike two line descriptions are (shortened words, plurals, accents, word order)
+    labels.py · evaluation.py · verifier.py · azure_check.py · lessons.py · history.py · imaging.py · figures.py
+  coding/            the coding checks
+    tax.py           Canadian rates, tax checks, GL distribution
+    validation.py    deterministic controls, adjusted confidence, review flag
+    vendors.py       vendor master, fraud and duplicate signals
+    po.py            purchase orders: import, 2- and 3-way matching
+    terms.py         payment terms, due dates, early-payment discounts
+    review.py        grid edits → InvoiceCoding
+    bulk.py · rules.py · taxmath.py · taxreturn.py · vendor_mail.py
+  erp/               ERP files and reports
+    jde.py           JD Edwards E1 F0411Z1/F0911Z1 export
+    statements.py    vendor statement reconciliation;  accruals.py: month-end accruals
+    recurring.py     recurring vendors
+    exports.py · insights.py · controls.py · export_layout.py · jde_worksheet.py · registers.py · stamp.py ·
+    directory.py · search.py · spend.py · dupaudit.py
+  intake/            pictures.py (pictures to PDF) · mailbox.py · msgfile.py · triage.py · inbox.py
+  ops/               cli.py · doctor.py · offline.py · demo.py · help.py · share_report.py
   capture/           invoice capture: layout (text/OCR), rule reader, locate, confidence + checks, supplier
                      templates and autonomy, calibration.json (measured confidence), transcript.py (reads
                      the page reader's transcription as one more reader)
   bench/             random invoices with ground truth: accuracy benchmark, calibration, supplier simulation,
                      GL coding without an AI model (bench coding)
-  jde.py             JD Edwards E1 F0411Z1/F0911Z1 export
-  pipeline.py        extract → code → validate → capture → store
   web/               the dashboard, a local FastAPI web app: app.py (the app, /healthz, /shutdown), server.py
                      (`serve`), security.py (this computer only), pages/ (one module per page), templates/,
-                     static/;  review.py: grid edits → InvoiceCoding
-  doctor.py · share_report.py · labels.py · evaluation.py · reference_data.py · cli.py
+                     static/
 data/                sample GL accounts, cost centers, tax rates and mapping, coding policy, POs, a statement
 samples/             10 synthetic invoices (ON, QC, BC, AB, MB, NS, SK, US, a credit note) + ground truth
 scripts/             launch.py (the launcher: set up, start the dashboard, open the running one), running.py (finds

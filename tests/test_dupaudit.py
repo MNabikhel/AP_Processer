@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from ap_coder import dupaudit
-from ap_coder.store import Store
+from ap_coder.core.store import Store
+from ap_coder.erp import dupaudit
 
 from .conftest import SAMPLES
 
@@ -99,7 +99,7 @@ def test_an_unexported_invoice_already_in_the_erp_is_a_duplicate(tmp_path):
 
 
 def test_erp_dates_in_other_formats(tmp_path):
-    from ap_coder import registers
+    from ap_coder.erp import registers
 
     rows, _ = registers.rows_from_records(
         [{"Vendor": "Acme", "Invoice": "A-1", "Date": "25/09/2026", "Amount": "500.00"},
@@ -115,7 +115,7 @@ def test_erp_dates_in_other_formats(tmp_path):
 
 def test_erp_dates_with_a_time_and_single_digit_day_or_month(tmp_path):
     # Excel / JDE exports write "1/5/2026 0:00": the date must not be cut in the middle of the time.
-    from ap_coder import registers
+    from ap_coder.erp import registers
 
     rows, _ = registers.rows_from_records(
         [{"Vendor": "Acme", "Invoice": "A-1", "Date": "2026/1/5 0:00", "Amount": "500.00"},

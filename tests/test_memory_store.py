@@ -3,8 +3,9 @@
 import copy
 import json
 
-from ap_coder.inference import InvoiceCoder
-from ap_coder.memory import (
+from ap_coder.ai.inference import InvoiceCoder
+from ap_coder.ai.pipeline import InvoicePipeline, finalise_coding
+from ap_coder.core.memory import (
     ACCEPTED,
     CORRECTED,
     compare_with_history,
@@ -12,9 +13,8 @@ from ap_coder.memory import (
     select_examples,
     vendor_key,
 )
-from ap_coder.pipeline import InvoicePipeline, finalise_coding
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import APPROVED, REVIEW, Store
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import APPROVED, REVIEW, Store
 
 from .conftest import DATA, FakeOpenAI, make_completion
 
@@ -85,7 +85,7 @@ def test_vendor_keys_stored_by_an_older_version_are_recomputed(tmp_path):
     assert conn.execute("SELECT supplier_key FROM supplier_outcomes").fetchone() == ("name:energir",)
     conn.close()
     assert store.vendor_terms(vendor_key("Énergir")) == "Net 15"
-    from ap_coder.jde import JdeSettings  # JDE address numbers saved by vendor key in the settings
+    from ap_coder.erp.jde import JdeSettings  # JDE address numbers saved by vendor key in the settings
 
     assert JdeSettings.from_json('{"an8_overrides": {"energir sec": "77"}}').an8_overrides == {"energir": "77"}
 
@@ -265,7 +265,7 @@ def test_sample_reference_files_are_importable(tmp_path):
 
 
 def test_share_report_from_dashboard_database_is_redacted(tmp_path, ground_truth):
-    from ap_coder.share_report import build_share_report
+    from ap_coder.ops.share_report import build_share_report
 
     store = Store(tmp_path / "ap.db")
     for _ in range(2):  # the same file twice must still get two labels

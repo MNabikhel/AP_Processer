@@ -10,7 +10,7 @@ do when something is wrong.
 | Model in LM Studio | AP Coder uses it for | CloseDesk uses it for |
 | --- | --- | --- |
 | **Gemma 4 12B** or **Qwen 3.5 9B** (chat, can see; one of them) | Suggests a GL account for an invoice line nothing was learned for, and reads each invoice's header from the page images (after OvisOCR2, in the background) as one more independent reader. It is also the **AI reviewer**: it checks each whole invoice against its pages, thinking first, until it is sure (Settings → Reading). Optional: without it those lines are left for AP, the other readers read the header, and invoices wait for a person instead of the reviewer. | Files mail, answers questions, reads scans when OvisOCR2 can't. |
-| **OvisOCR2** (0.85B document reader, `ATH-MaaS_OvisOCR2-GGUF` Q8_0, about 1 GB) | The page reader: reads every page of every invoice in the background (`ap_coder/page_reader.py`). | Reads scanned pages. |
+| **OvisOCR2** (0.85B document reader, `ATH-MaaS_OvisOCR2-GGUF` Q8_0, about 1 GB) | The page reader: reads every page of every invoice in the background (`ap_coder/ai/page_reader.py`). | Reads scanned pages. |
 | **Qwen embedding model** | **Not used by AP Coder.** It is never picked as the chat model or page reader, not listed in *Settings → Reading*, and never loaded or unloaded. | Search by meaning. |
 
 AP Coder finds both models on its own (no names to type), however LM Studio spells them: `google/gemma-4-12b`,

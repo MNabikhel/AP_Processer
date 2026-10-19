@@ -9,10 +9,10 @@ import pymupdf
 import pytest
 from PIL import Image, ImageDraw
 
-from ap_coder import intake
 from ap_coder.capture import layout
 from ap_coder.capture.layout import _image_pngs, _scan_png
-from ap_coder.store import Store
+from ap_coder.core.store import Store
+from ap_coder.intake import pictures as intake
 
 
 def _picture(size=(600, 800), color="white", mode="RGB") -> Image.Image:
@@ -193,9 +193,9 @@ def offline_pipeline(tmp_path, monkeypatch):
     """A pipeline reading on this computer, OCR stubbed: a page of a picture reads as a few words."""
     import dataclasses as dc
 
-    from ap_coder.config import Settings
-    from ap_coder.pipeline import InvoicePipeline
-    from ap_coder.store import load_sample_setup
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.core.config import Settings
+    from ap_coder.core.store import load_sample_setup
 
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
@@ -222,7 +222,7 @@ def test_a_photo_is_stored_and_read_as_its_pdf_and_found_when_sent_again(tmp_pat
     # The same photo uploaded or dropped in the folder again is the invoice already there, and so is its PDF.
     assert store.find_by_hash(copy, include_failed=True)["id"] == result.invoice_id
     assert store.find_by_hash(result.source)["id"] == result.invoice_id
-    from ap_coder.cli import new_files
+    from ap_coder.ops.cli import new_files
 
     assert new_files(inbox, store, now=10**12) == []  # nothing in the folder is new
 

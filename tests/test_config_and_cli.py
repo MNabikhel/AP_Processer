@@ -1,9 +1,9 @@
 import json
 import os
 
-from ap_coder import cli
-from ap_coder.config import Settings
-from ap_coder.imaging import render_page_images
+from ap_coder.ai.imaging import render_page_images
+from ap_coder.core.config import Settings
+from ap_coder.ops import cli
 
 from .conftest import SAMPLES
 
@@ -47,7 +47,7 @@ def test_watch_works_offline_without_azure_or_a_model(tmp_path, monkeypatch):
     import os
     import shutil
 
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
 
     for key in [k for k in os.environ if k.startswith(("AZURE_", "AP_LLM_"))]:
         monkeypatch.delenv(key)
@@ -91,7 +91,7 @@ def test_a_command_that_could_not_read_something_does_not_exit_0(tmp_path, monke
     Task Scheduler or a script sees it."""
     from types import SimpleNamespace
 
-    from ap_coder import page_worker
+    from ap_coder.ai import page_worker
 
     for key in [k for k in os.environ if k.startswith("AZURE_")]:
         monkeypatch.delenv(key)
@@ -142,7 +142,7 @@ def test_cli_labels_with_nothing_processed_writes_nothing(tmp_path, capsys):
 
 
 def test_doctor_python_range_matches_the_launcher():
-    from ap_coder.doctor import FAIL, PASS, WARN, _python_check
+    from ap_coder.ops.doctor import FAIL, PASS, WARN, _python_check
 
     assert _python_check((3, 12, 1))[1] == PASS and _python_check((3, 11, 0))[1] == PASS
     assert _python_check((3, 13, 2))[1] == PASS
@@ -154,8 +154,8 @@ def test_doctor_python_range_matches_the_launcher():
 
 def test_doctor_missing_packages_fail_with_the_offline_fix(reference, monkeypatch):
     """pymupdf reads every PDF, so it is a failure; the fix never needs the internet (pip install -e .)."""
-    from ap_coder import doctor
-    from ap_coder.config import LocalLLMSettings
+    from ap_coder.core.config import LocalLLMSettings
+    from ap_coder.ops import doctor
 
     gone = {"pymupdf", "fastapi", "uvicorn", "pandas", "python-dotenv"}
     real = doctor._version
@@ -170,8 +170,8 @@ def test_doctor_missing_packages_fail_with_the_offline_fix(reference, monkeypatc
 
 def test_doctor_fails_without_pillow(reference, monkeypatch):
     """Pillow turns every photo or scanned image into a PDF to read: not only for --vision."""
-    from ap_coder import doctor
-    from ap_coder.config import LocalLLMSettings
+    from ap_coder.core.config import LocalLLMSettings
+    from ap_coder.ops import doctor
 
     real = doctor._version
     monkeypatch.setattr(doctor, "_version", lambda pkg: None if pkg == "pillow" else real(pkg))
@@ -182,8 +182,8 @@ def test_doctor_fails_without_pillow(reference, monkeypatch):
 
 
 def test_doctor_skips_the_local_model_when_ai_coding_is_off(reference, monkeypatch):
-    from ap_coder import doctor
-    from ap_coder.config import LocalLLMSettings
+    from ap_coder.core.config import LocalLLMSettings
+    from ap_coder.ops import doctor
 
     def never(*args, **kwargs):
         raise AssertionError("asked the local server although AI coding is off")

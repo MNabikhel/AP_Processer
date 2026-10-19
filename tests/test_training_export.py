@@ -14,12 +14,12 @@ import pymupdf
 import pytest
 from PIL import Image
 
-from ap_coder import cli
+from ap_coder.ai.training_export import INSTRUCTION, approved_values, export_training_set, training_invoices
 from ap_coder.capture.confidence import MIN_EVIDENCE
 from ap_coder.capture.types import Box, CaptureResult, FieldResult
 from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER, capture_invoice, learn_from_approval
-from ap_coder.store import Store
-from ap_coder.training_export import INSTRUCTION, approved_values, export_training_set, training_invoices
+from ap_coder.core.store import Store
+from ap_coder.ops import cli
 
 from .conftest import SAMPLE_STEM, SAMPLES
 

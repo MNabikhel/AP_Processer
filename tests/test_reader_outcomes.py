@@ -6,7 +6,7 @@ import sqlite3
 
 from ap_coder.capture.types import Box, CaptureResult, FieldResult
 from ap_coder.capture.workflow import learn_from_approval, reader_outcome_rows
-from ap_coder.store import PENDING, REVIEW, SCHEMA_VERSION, Store
+from ap_coder.core.store import PENDING, REVIEW, SCHEMA_VERSION, Store
 
 from .conftest import SAMPLE_STEM, SAMPLES
 
@@ -234,9 +234,9 @@ def test_learn_from_approval_records_the_readers(tmp_path, ground_truth, monkeyp
 
 
 def test_bulk_approval_scores_the_readers_too(tmp_path):
-    from ap_coder.bulk import bulk_approve, clean_candidates
-    from ap_coder.config import Settings
-    from ap_coder.demo import load_demo
+    from ap_coder.coding.bulk import bulk_approve, clean_candidates
+    from ap_coder.core.config import Settings
+    from ap_coder.ops.demo import load_demo
 
     store = Store(tmp_path / "ap.db")
     load_demo(store)  # the demo's pre-approved invoices record no reader rows: nobody approved them here
@@ -253,9 +253,9 @@ def test_a_bulk_approval_does_not_feed_the_calibration(tmp_path):
     """An untouched bulk approval is scored on the Readers tab, but nobody checked its fields: its values agreeing
     with AP's (which bulk approval requires) are no proof the reading was right, so they do not move the local
     calibration of confidence towards verified."""
-    from ap_coder.bulk import bulk_approve, clean_candidates
-    from ap_coder.config import Settings
-    from ap_coder.demo import load_demo
+    from ap_coder.coding.bulk import bulk_approve, clean_candidates
+    from ap_coder.core.config import Settings
+    from ap_coder.ops.demo import load_demo
 
     store = Store(tmp_path / "ap.db")
     load_demo(store)

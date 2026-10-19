@@ -25,9 +25,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ap_coder import __version__, paths
-from ap_coder.config import Settings
-from ap_coder.store import Store, default_db_path
+from ap_coder import __version__
+from ap_coder.core import paths
+from ap_coder.core.config import Settings
+from ap_coder.core.store import Store, default_db_path
 from ap_coder.web import core
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import MORE_MODULES, PAGES, Page
@@ -71,12 +72,12 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         except OSError:
             pass  # a backup problem must never stop the dashboard from opening
         if start_reader:
-            from ap_coder import page_worker
+            from ap_coder.ai import page_worker
 
             app.state.reader = page_worker.start_background(
                 settings_factory, lambda: Store(store.path), cache_dir=core.cache_dir(store)
             )
-            from ap_coder import azure_check
+            from ap_coder.ai import azure_check
 
             # The optional Azure check (Settings → Reading): it does nothing while it is off, the default.
             app.state.azure_checker = azure_check.start_background(settings_factory, lambda: Store(store.path))
@@ -91,7 +92,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.settings_factory = settings_factory
     app.state.jobs = Jobs()
     app.state.reader = None
-    app.state.azure_checker = None  # the Azure check's thread (ap_coder/azure_check.py), started with the reader
+    app.state.azure_checker = None  # the Azure check's thread (ap_coder/ai/azure_check.py), started with the reader
     app.state.port = None  # set by server.serve
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve

@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from ap_coder.audit import describe
-from ap_coder.store import Store
+from ap_coder.core.audit import describe
+from ap_coder.core.store import Store
 
 
 def test_backup_and_restore_round_trip(tmp_path, ground_truth):

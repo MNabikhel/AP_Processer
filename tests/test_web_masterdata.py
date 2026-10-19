@@ -14,13 +14,13 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder import po as po_mod
-from ap_coder.config import Settings
-from ap_coder.demo import load_demo
-from ap_coder.rules import Rule
-from ap_coder.safe import csv_cell
-from ap_coder.store import Store, load_sample_setup
-from ap_coder.vendors import ON_HOLD
+from ap_coder.coding import po as po_mod
+from ap_coder.coding.rules import Rule
+from ap_coder.coding.vendors import ON_HOLD
+from ap_coder.core.config import Settings
+from ap_coder.core.safe import csv_cell
+from ap_coder.core.store import Store, load_sample_setup
+from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
 
 PAGE = {"X-AP-Coder": "1"}

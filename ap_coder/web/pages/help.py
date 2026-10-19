@@ -1,5 +1,5 @@
 """Help: getting started, how every invoice is read, the AP routine, what every check means and what to do about it
-(``ap_coder.help.CHECKS``, searchable by word and area), questions, shortcuts and where the data is. The search and
+(``ap_coder.ops.help.CHECKS``, searchable by word and area), questions, shortcuts and where the data is. The search and
 the area are in the address (``/help?q=duplicate&area=Sales+tax``), so a filtered list can be linked to; the page also
 filters as you type.
 """
@@ -12,8 +12,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from ap_coder import paths
-from ap_coder.help import AREAS, CHECKS, FAQ, QUICK_START, ROUTINE, CheckHelp
+from ap_coder.core import paths
+from ap_coder.ops.help import AREAS, CHECKS, FAQ, QUICK_START, ROUTINE, CheckHelp
 from ap_coder.web import minimd
 from ap_coder.web.core import data_dir, get_store, render, short_path
 from ap_coder.web.pages import BY_KEY

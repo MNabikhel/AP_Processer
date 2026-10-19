@@ -14,8 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import ap_coder
-from ap_coder.config import Settings
-from ap_coder.store import Store
+from ap_coder.core.config import Settings
+from ap_coder.core.store import Store
 from ap_coder.web import core, server
 from ap_coder.web.app import CODE_FOLDER, create_app
 from ap_coder.web.jobs import DONE, ERROR, Job
@@ -162,7 +162,7 @@ def test_after_an_action_the_browser_only_goes_to_this_server(client):
 
 
 def test_text_from_invoices_is_escaped(client, store, tmp_path):
-    from ap_coder.store import load_sample_setup
+    from ap_coder.core.store import load_sample_setup
 
     load_sample_setup(store)
     # "<" and ">" can't be in a Windows file name; there the vendor name below carries the markup

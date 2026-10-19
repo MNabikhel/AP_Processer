@@ -2,7 +2,7 @@
 
 import json
 
-from ap_coder.store import Store
+from ap_coder.core.store import Store
 
 from .conftest import SAMPLES
 
@@ -36,7 +36,7 @@ def test_by_currency_text():
 
 
 def test_every_recorded_action_has_an_activity_filter():
-    from ap_coder.audit import ACTIONS
+    from ap_coder.core.audit import ACTIONS
     from ap_coder.web.pages.activity import GROUPS
 
     assert set(ACTIONS) <= {a for actions in GROUPS.values() for a in actions}
@@ -113,7 +113,7 @@ def test_backup_copy_to_the_backups_folder_itself_is_refused(tmp_path):
 def test_approving_one_invoice_again_counts_once_in_the_controls_report(tmp_path):
     import datetime as dt
 
-    from ap_coder import controls
+    from ap_coder.erp import controls
 
     store = Store(tmp_path / "c.db")
     doc = _doc("chinook_AB_GST_CCO-26-10418")
@@ -128,7 +128,7 @@ def test_approving_one_invoice_again_counts_once_in_the_controls_report(tmp_path
 
 
 def test_removing_the_demo_removes_its_export_batches(tmp_path):
-    from ap_coder.demo import load_demo, remove_demo
+    from ap_coder.ops.demo import load_demo, remove_demo
 
     store = Store(tmp_path / "d.db")
     load_demo(store)

@@ -31,13 +31,14 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from markupsafe import Markup
 
-from ap_coder import stamp, ui
 from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
-from ap_coder.memory import ACCEPTED, vendor_key
-from ap_coder.reference_data import ReferenceData
-from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
-from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES
+from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES
+from ap_coder.core import ui
+from ap_coder.core.memory import ACCEPTED, vendor_key
+from ap_coder.core.reference_data import ReferenceData
+from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
+from ap_coder.erp import stamp
 from ap_coder.web import document
 from ap_coder.web import invoice_view as view
 from ap_coder.web.core import (
@@ -199,7 +200,7 @@ NOTE_ACTIONS = ("note", "parked", "sent_back")  # what the notes card lists
 
 def history(events: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Audit events as timeline items (``ui.timeline``), newest first."""
-    from ap_coder.audit import ACTIONS, describe
+    from ap_coder.core.audit import ACTIONS, describe
 
     items = []
     for e in events:
@@ -212,7 +213,7 @@ def history(events: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 def _lesson_hints(store: Store, inv: dict[str, Any]) -> list[str]:
     """What AP taught for this vendor (lessons.py), shown as "Learned" hints beside the document."""
-    from ap_coder import lessons
+    from ap_coder.ai import lessons
 
     output = inv.get("final_output") or inv.get("ai_output") or {}
     return lessons.prompt_lines(store, output.get("vendor_name") or "", lessons.kind_of(output), limit=5)
@@ -329,7 +330,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     computed = None
     try:
         if float(start.get("grand_total") or 0) > 0:  # a credit note has no due date
-            from ap_coder.terms import payment
+            from ap_coder.coding.terms import payment
 
             computed = payment({**start, **draft.header}, store.default_terms_days(),
                                store.vendor_terms(vendor_key(draft.header.get("vendor_name") or ""))).due  # fmt: skip
@@ -509,7 +510,7 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
                       f"Tick “Approve anyway” to approve despite {ui.plural(bar['errors'], 'error')}.")  # fmt: skip
     # The same correction again and again: before saving, AP is asked once why (lessons.py). Skipping is fine: the
     # question comes back next time.
-    from ap_coder import lessons
+    from ap_coder.ai import lessons
 
     asked = lessons.due_for_why(store, inv.get("ai_output") or {}, analysis.output)
     if asked and not form.get("why_done"):
@@ -740,7 +741,7 @@ def read_pages(request: Request, invoice_id: int) -> JSONResponse:
 @router.post("/review/{invoice_id:int}/review-again")
 def review_again(request: Request, invoice_id: int) -> JSONResponse:
     """Put the invoice in line for the AI reviewer again (the chat model was changed, or it wasn't answering)."""
-    from ap_coder import verifier
+    from ap_coder.ai import verifier
 
     store = get_store(request)
     inv = _invoice(store, invoice_id)

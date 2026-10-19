@@ -11,7 +11,6 @@ import numpy as np
 import pymupdf
 import pytest
 
-from ap_coder import offline
 from ap_coder.capture import analyze, build_layout, layout, table_finder
 from ap_coder.capture.bridge import review_issues
 from ap_coder.capture.line_items import (
@@ -27,7 +26,8 @@ from ap_coder.capture.reader import inside_tables, read_line_items, straightened
 from ap_coder.capture.supplier import AUTONOMOUS, HEADER_PROVEN_SOFT, should_auto_approve
 from ap_coder.capture.tables import text_table_items, vertical_rules
 from ap_coder.capture.types import VERIFIED, Box, CaptureResult, DocLayout, FieldResult, LineReading, PageLayout, Word
-from ap_coder.help import help_for
+from ap_coder.ops import offline
+from ap_coder.ops.help import help_for
 
 from .conftest import SAMPLES
 
@@ -212,7 +212,7 @@ def no_network(monkeypatch):
 
 
 def test_the_reading_settings_show_the_table_finder(monkeypatch, tmp_path):
-    from ap_coder.reading import OK, WARN, _table_finder
+    from ap_coder.ai.reading import OK, WARN, _table_finder
 
     monkeypatch.setattr(offline, "onnxruntime_installed", lambda: True)
     monkeypatch.setattr(offline, "table_finder_path", lambda: None)

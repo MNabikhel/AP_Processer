@@ -14,13 +14,13 @@ import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from ap_coder import ui
-from ap_coder.reference_data import short_name
-from ap_coder.rules import Rule
-from ap_coder.rules import suggest as suggest_rules
-from ap_coder.safe import csv_cell
-from ap_coder.store import Store, load_sample_setup
-from ap_coder.tax import DEFAULT_RATES_PATH, RATES_FILE, TAX_TYPES, TREATMENTS, TaxRateTable, rates_path
+from ap_coder.coding.rules import Rule
+from ap_coder.coding.rules import suggest as suggest_rules
+from ap_coder.coding.tax import DEFAULT_RATES_PATH, RATES_FILE, TAX_TYPES, TREATMENTS, TaxRateTable, rates_path
+from ap_coder.core import ui
+from ap_coder.core.reference_data import short_name
+from ap_coder.core.safe import csv_cell
+from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.core import done, flash_message, get_store, refuse, render, reviewer, short_path
 from ap_coder.web.files import SheetError, download, drop_upload, read_upload, receive_sheet, sheet_context
 from ap_coder.web.pages.process import tax_types_mapped

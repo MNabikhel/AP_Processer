@@ -11,7 +11,8 @@ Layout
 * ``security.py``: only this computer's addresses; only AP Coder's own pages may POST.
 * ``pages/__init__.py``: ``PAGES``, the one list of pages, in rail order. ``pages/<name>.py``: one module per page.
 * ``templates/``: ``base.html`` (rail, header, messages), one template per page, ``_*.html`` partials.
-* ``static/``: ``app.css`` (the Ledger look of ap_coder/ui.py), ``js/app.js`` (POSTs, messages, jobs), page scripts.
+* ``static/``: ``app.css`` (the Ledger look of ap_coder/core/ui.py), ``js/app.js`` (POSTs, messages, jobs), page
+  scripts.
 
 Adding a page
 -------------

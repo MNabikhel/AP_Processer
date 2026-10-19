@@ -7,9 +7,9 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from ap_coder.config import Settings
-from ap_coder.demo import load_demo
-from ap_coder.store import REVIEW, Store
+from ap_coder.core.config import Settings
+from ap_coder.core.store import REVIEW, Store
+from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
 
 PAGE = {"X-AP-Coder": "1"}
@@ -123,7 +123,7 @@ def test_a_number_cell_that_is_not_a_finite_number_never_breaks_the_review_scree
 def test_clearing_your_name_in_settings_goes_back_to_the_default_name(client, store, monkeypatch):
     """A name saved by mistake on a shared computer could not be removed: clearing the box said "Nothing changed."
     and the name stayed on every approval."""
-    from ap_coder import paths
+    from ap_coder.core import paths
     from ap_coder.web import core
 
     monkeypatch.delenv("AP_REVIEWER")
@@ -154,7 +154,7 @@ def test_exchange_rates_written_as_the_page_shows_are_saved(client, store):
 
 def test_the_activity_search_finds_what_the_log_shows_in_its_what_column(client, store):
     """The clerk types the word the log shows for an event ("Approved", "Rejected"): it is found."""
-    from ap_coder.audit import ACTIONS
+    from ap_coder.core.audit import ACTIONS
 
     store.log_event("settings_changed", actor="Jordan Lee", detail={"keys": ["approval_limit"]})
     label = ACTIONS["settings_changed"][2]

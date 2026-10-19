@@ -8,16 +8,16 @@ import sqlite3
 import pandas as pd
 import pytest
 
-from ap_coder import accruals, controls
-from ap_coder import statements as stm
-from ap_coder.cli import new_files
-from ap_coder.config import Settings
-from ap_coder.pipeline import finalise_coding
-from ap_coder.po import billed_quantity, map_columns, po_key, rows_from_records
-from ap_coder.review import split_line
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store, load_sample_purchase_orders, load_sample_setup
-from ap_coder.terms import Terms, parse_terms, payment
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.coding.po import billed_quantity, map_columns, po_key, rows_from_records
+from ap_coder.coding.review import split_line
+from ap_coder.coding.terms import Terms, parse_terms, payment
+from ap_coder.core.config import Settings
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store, load_sample_purchase_orders, load_sample_setup
+from ap_coder.erp import accruals, controls
+from ap_coder.erp import statements as stm
+from ap_coder.ops.cli import new_files
 
 from .conftest import SAMPLE_STEM, SAMPLES
 
@@ -231,7 +231,7 @@ def test_statement_with_debit_and_credit_columns():
 
 def test_month_end_totals_keep_currencies_apart(tmp_path):
     store = Store(tmp_path / "a.db")
-    from ap_coder.demo import load_demo
+    from ap_coder.ops.demo import load_demo
 
     load_demo(store)
     by_currency = accruals.summary(accruals.build(store, dt.date(2026, 10, 31)))[accruals.NOT_IN_ERP][1]
@@ -239,7 +239,7 @@ def test_month_end_totals_keep_currencies_apart(tmp_path):
 
 
 def test_export_due_date_is_worked_out_when_not_printed(tmp_path):
-    from ap_coder import exports
+    from ap_coder.erp import exports
 
     store = Store(tmp_path / "a.db")
     doc = _gt(payment_terms="Net 30", due_date="")
@@ -258,7 +258,7 @@ def test_due_date_message_names_the_due_date():
 
 
 def test_demo_leaves_the_users_vendor_records_alone(tmp_path):
-    from ap_coder.demo import load_demo, remove_demo
+    from ap_coder.ops.demo import load_demo, remove_demo
 
     store = Store(tmp_path / "a.db")
     store.save_vendor("northwind it solutions", "Northwind", "on_hold", "999999999 RT0001", "bank details changed")
@@ -270,7 +270,7 @@ def test_demo_leaves_the_users_vendor_records_alone(tmp_path):
 
 
 def test_demo_does_not_add_a_vendor_master_next_to_real_invoices(tmp_path):
-    from ap_coder.demo import load_demo
+    from ap_coder.ops.demo import load_demo
 
     store = Store(tmp_path / "a.db")
     store.add_invoice(tmp_path / "real.pdf", _gt(vendor_name="Real Supplier Inc", invoice_number="R-1"), {})
@@ -285,7 +285,7 @@ def test_demo_does_not_add_a_vendor_master_next_to_real_invoices(tmp_path):
      ("Status", "Active", False)],
 )  # fmt: skip
 def test_vendor_status_columns(header, value, on_hold):
-    from ap_coder.vendors import master_columns, master_rows
+    from ap_coder.coding.vendors import master_columns, master_rows
 
     rows = master_rows([{"Vendor Name": "Acme", header: value}], master_columns(["Vendor Name", header]))
     assert (rows[0]["status"] == "on_hold") is on_hold
@@ -315,7 +315,7 @@ def test_reviewer_lessons_come_before_history(tmp_path):
 
 
 def test_undated_history_is_not_taught_twice_on_another_day(tmp_path, monkeypatch):
-    import ap_coder.store as store_module
+    import ap_coder.core.store as store_module
 
     store = Store(tmp_path / "a.db")
     row = {"vendor_name": "Acme", "description": "Janitorial cleaning", "gl_code": "6230", "cost_center": "",
@@ -334,7 +334,7 @@ def test_history_with_unknown_gl_accounts_is_left_out(tmp_path):
 
 
 def test_operations_count_the_second_approval(tmp_path):
-    from ap_coder.insights import operations
+    from ap_coder.erp.insights import operations
 
     path = tmp_path / "a.db"
     store = Store(path)
@@ -351,8 +351,8 @@ def test_operations_count_the_second_approval(tmp_path):
 
 
 def test_vendor_id_found_by_gst_number(tmp_path):
-    from ap_coder import exports
-    from ap_coder.store import load_sample_vendor_master
+    from ap_coder.core.store import load_sample_vendor_master
+    from ap_coder.erp import exports
 
     store = Store(tmp_path / "a.db")
     load_sample_vendor_master(store)

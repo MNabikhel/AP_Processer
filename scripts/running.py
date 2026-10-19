@@ -37,8 +37,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ap_coder.offline import listening as offline_listening  # noqa: E402  (standard library only)
-from ap_coder.paths import same_folder, version_key  # noqa: E402  (standard library only)
+from ap_coder.core.paths import same_folder, version_key  # noqa: E402  (standard library only)
+from ap_coder.ops.offline import listening as offline_listening  # noqa: E402  (standard library only)
 
 SERVER_FILE = ".ap_coder_server.json"  # in the data folder, written by `python -m ap_coder serve`
 TOKEN_HEADER = "X-AP-Coder-Token"
@@ -69,7 +69,7 @@ class Server:
 
 
 def listening(port: int) -> bool:
-    """Something accepts connections on ``port`` here (``ap_coder/offline.py:listening``: 0.3 s at most)."""
+    """Something accepts connections on ``port`` here (``ap_coder/ops/offline.py:listening``: 0.3 s at most)."""
     return offline_listening(port)
 
 

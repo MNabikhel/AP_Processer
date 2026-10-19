@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .capture.layout import HEIF_EXTENSIONS, IMAGE_EXTENSIONS, open_image
+from ..capture.layout import HEIF_EXTENSIONS, IMAGE_EXTENSIONS, open_image
 
 log = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ def _orientation(frame: Any) -> int:
 
 def _flat(picture: Any) -> Any:
     """The picture without transparency (on white paper, as printed); black-and-white and grey pictures stay so."""
-    from .capture.layout import _on_paper
+    from ..capture.layout import _on_paper
 
     if picture.mode in ("1", "L", "RGB"):
         return picture
@@ -118,7 +118,7 @@ def _encoded(frame: Any, source: Path, raw: bytes, single: bool) -> tuple[bytes,
     high-quality JPEG."""
     from PIL import ImageOps
 
-    from .capture.layout import flatten_photo
+    from ..capture.layout import flatten_photo
 
     orientation = _orientation(frame)
     jpeg = frame.format == "JPEG" or (single and raw[:3] == b"\xff\xd8\xff")

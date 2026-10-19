@@ -1,5 +1,5 @@
-from ap_coder.config import DocumentIntelligenceSettings
-from ap_coder.extraction import DocumentExtractor, result_from_raw, result_from_text
+from ap_coder.ai.extraction import DocumentExtractor, result_from_raw, result_from_text
+from ap_coder.core.config import DocumentIntelligenceSettings
 
 from .conftest import FakeDIClient
 

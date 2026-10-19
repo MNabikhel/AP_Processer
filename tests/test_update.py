@@ -1,4 +1,4 @@
-"""Updating over an older AP Coder (scripts/upgrade.py, the record in ap_coder/paths.py): one install, always the
+"""Updating over an older AP Coder (scripts/upgrade.py, the record in ap_coder/core/paths.py): one install, always the
 newest; the older one's leftovers, .venv and folder are cleaned up; data kept in a code folder moves to the data
 folder; nothing is duplicated and the data folder's contents are never touched."""
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ap_coder import paths
+from ap_coder.core import paths
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -587,8 +587,8 @@ def test_a_version_registered_by_the_older_install_is_noticed(tmp_path, monkeypa
 
 
 def test_settings_no_longer_used_are_commented_out_with_a_note(tmp_path):
-    from ap_coder import envfile
-    from ap_coder.config import RETIRED_SETTINGS
+    from ap_coder.core import envfile
+    from ap_coder.core.config import RETIRED_SETTINGS
 
     env = tmp_path / ".env"
     env.write_text("# my settings\nAP_REVIEWER=Ann\nexport AP_PAGE_READER=on\nAP_PAGE_READER_SCOPE = all\n")

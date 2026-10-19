@@ -7,9 +7,9 @@ import time
 
 import pytest
 
-import ap_coder.store as store_module
+import ap_coder.core.store as store_module
 from ap_coder.capture.workflow import AUTONOMOUS_REVIEWER
-from ap_coder.store import APPROVED, PARKED, PENDING, REJECTED, Store
+from ap_coder.core.store import APPROVED, PARKED, PENDING, REJECTED, Store
 
 from .webclient import client_for
 

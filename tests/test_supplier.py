@@ -35,7 +35,7 @@ from ap_coder.capture.supplier import (
     wilson_lower,
 )
 from ap_coder.capture.types import Box, CaptureResult, DocLayout, FieldResult, PageLayout, Word
-from ap_coder.store import SCHEMA_VERSION, Store
+from ap_coder.core.store import SCHEMA_VERSION, Store
 
 # --- Synthetic layouts --------------------------------------------------------------------------------------------
 
@@ -576,7 +576,7 @@ def test_supplier_key_for_uses_the_vendor_master(tmp_path):
 
 
 def test_demo_records_and_removes_supplier_outcomes(tmp_path):
-    from ap_coder.demo import load_demo, remove_demo
+    from ap_coder.ops.demo import load_demo, remove_demo
 
     store = Store(tmp_path / "ap.db")
     load_demo(store)

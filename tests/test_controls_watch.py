@@ -6,10 +6,10 @@ import os
 import shutil
 import time
 
-from ap_coder import controls
-from ap_coder.audit import describe
-from ap_coder.cli import new_files
-from ap_coder.store import Store
+from ap_coder.core.audit import describe
+from ap_coder.core.store import Store
+from ap_coder.erp import controls
+from ap_coder.ops.cli import new_files
 
 from .conftest import SAMPLE_STEM, SAMPLES
 
@@ -104,7 +104,7 @@ def _watch_args(tmp_path, *extra):
 
 def test_an_error_outside_one_invoice_does_not_stop_the_watcher(tmp_path, monkeypatch, capsys):
     """E.g. the GL accounts CSV open in Excel: that check is skipped and said, the next one runs."""
-    from ap_coder import cli
+    from ap_coder.ops import cli
 
     checks: list[int] = []
 
@@ -127,7 +127,7 @@ def test_an_error_outside_one_invoice_does_not_stop_the_watcher(tmp_path, monkey
 def test_watch_once_fails_when_every_invoice_failed(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from ap_coder import cli
+    from ap_coder.ops import cli
 
     inbox = tmp_path / "in"
     inbox.mkdir()
@@ -155,7 +155,7 @@ def test_a_crafted_email_does_not_stop_the_watcher(tmp_path, monkeypatch, capsys
     invoice was processed any more: it is filed away, said, and the invoices next to it are processed."""
     from types import SimpleNamespace
 
-    from ap_coder import cli
+    from ap_coder.ops import cli
 
     from .test_mailbox import nested_email
 
@@ -211,7 +211,7 @@ def test_watch_once_processes_the_invoices_it_just_took_out_of_emails(tmp_path, 
     day later from Task Scheduler)."""
     from types import SimpleNamespace
 
-    from ap_coder import cli
+    from ap_coder.ops import cli
 
     inbox = tmp_path / "in"
     inbox.mkdir()
@@ -232,7 +232,7 @@ def test_watch_once_processes_the_invoices_it_just_took_out_of_emails(tmp_path, 
 
 
 def test_watch_once_fails_when_every_email_could_not_be_read(tmp_path):
-    from ap_coder import cli
+    from ap_coder.ops import cli
 
     inbox = tmp_path / "in"
     inbox.mkdir()

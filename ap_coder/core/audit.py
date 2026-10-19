@@ -1,0 +1,303 @@
+"""Audit trail: what changed between the AI's suggestion and what was approved, and how to show events.
+
+The store records an event for everything that changes data (processing, approvals with the exact
+field changes, rejections, deletions, GL and tax setup changes, forgotten lessons, exports,
+restores). This module computes the approval differences and turns events into readable lines.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ..coding.vendors import mask_account
+from .memory import pair_lines
+
+HEADER_LABELS = {
+    "vendor_name": "vendor", "invoice_number": "invoice #", "invoice_date": "date", "po_number": "PO #",
+    "payment_terms": "terms", "due_date": "due date",
+    "currency": "currency",
+    "supplier_province": "supplier province", "ship_to_province": "place of supply",
+    "gst_hst_registration_number": "GST/HST #", "qst_registration_number": "QST #", "pst_registration_number": "PST #",
+    "original_invoice_number": "invoice credited", "remit_bank_account": "bank account", "subtotal": "subtotal",
+    "tax_total": "tax total", "grand_total": "total",
+}  # fmt: skip
+LINE_LABELS = {
+    "predicted_gl_code": "GL", "predicted_cost_center": "cost center", "amount": "amount",
+    "description": "description", "taxes_applied": "taxes",
+}  # fmt: skip
+
+# action -> (Material icon, tone, label)
+ACTIONS = {
+    "processed": ("document_scanner", "info", "Processed"),
+    "email_sorted": ("mark_email_read", "info", "Email sorted"),
+    "email_bank_change": ("gpp_maybe", "err", "Bank-detail change (possible fraud)"),
+    "email_triage_done": ("done_all", "ok", "Email dealt with"),
+    "email_attachment_to_queue": ("move_to_inbox", "info", "Email attachment sent to the queue"),
+    "failed": ("error", "err", "Could not be processed"),
+    "approved": ("task_alt", "ok", "Approved"),
+    "rejected": ("block", "gray", "Rejected"),
+    "deleted": ("delete", "gray", "Deleted"),
+    "exported": ("ios_share", "violet", "Exported"),
+    "accounts_imported": ("upload", "info", "Accounts imported"),
+    "accounts_edited": ("edit", "info", "Accounts edited"),
+    "accounts_deleted": ("delete", "warn", "Accounts deleted"),
+    "tax_setup_changed": ("percent", "info", "Tax setup changed"),
+    "policy_changed": ("rule", "info", "Coding policy changed"),
+    "rules_changed": ("rule_settings", "info", "Coding rules changed"),
+    "lessons_forgotten": ("delete_sweep", "warn", "Lessons forgotten"),
+    "settings_changed": ("settings", "info", "Settings changed"),
+    "backup_made": ("backup", "info", "Backup made"),
+    "backup_restored": ("settings_backup_restore", "warn", "Backup restored"),
+    "files_moved": ("drive_file_move", "info", "Invoice files moved by the update"),
+    "file_found": ("find_in_page", "info", "Invoice file found in its new place"),
+    "vendor_updated": ("storefront", "info", "Vendor updated"),
+    "vendor_added": ("add_business", "info", "Vendor added"),
+    "vendors_deleted": ("delete", "warn", "Vendors deleted"),
+    "verified": ("fact_check", "info", "AI reviewer checked it"),
+    "azure_checked": ("fact_check", "info", "Azure check done"),
+    "azure_check_disagrees": ("gpp_maybe", "warn", "Azure check disagrees"),
+    "lesson_explained": ("lightbulb", "info", "Lesson explained"),
+    "lesson_retired": ("archive", "warn", "Lesson retired"),
+    "lesson_restored": ("unarchive", "info", "Lesson restored"),
+    "directory_preset_saved": ("bookmark_add", "info", "Directory view saved"),
+    "directory_preset_deleted": ("bookmark_remove", "gray", "Directory view deleted"),
+    "export_undone": ("undo", "warn", "Export undone"),
+    "parked": ("pause_circle", "warn", "Parked"),
+    "unparked": ("play_circle", "info", "Back in the queue"),
+    "note": ("sticky_note_2", "violet", "Note"),
+    "final_approved": ("how_to_reg", "ok", "Second approval"),
+    "sent_back": ("undo", "warn", "Sent back"),
+    "proposal_updated": ("visibility", "info", "Page reader read it: proposal updated"),
+    "page_reader_tested": ("fact_check", "info", "Page reader tested"),
+    "reopened": ("undo", "warn", "Reopened for correction"),
+    "erp_register_imported": ("receipt_long", "info", "ERP invoice register imported"),
+    "history_imported": ("history_edu", "info", "History imported"),
+    "vendors_imported": ("storefront", "info", "Vendor master imported"),
+    "pos_imported": ("shopping_cart", "info", "Purchase orders imported"),
+    "po_status": ("shopping_cart", "info", "Purchase order updated"),
+    "pos_deleted": ("remove_shopping_cart", "warn", "Purchase orders deleted"),
+    "autonomy_on": ("bolt", "ok", "Autonomy turned on"),
+    "autonomy_off": ("pan_tool", "gray", "Autonomy turned off"),
+    "autonomy_suspended": ("gpp_maybe", "err", "Autonomy suspended"),
+    "autonomy_held": ("pan_tool", "warn", "Vendor kept supervised"),
+    "autonomy_allowed": ("bolt", "info", "Vendor allowed to go touchless again"),
+    "touchless_on": ("bolt", "ok", "Touchless processing turned on"),
+    "touchless_off": ("pan_tool", "gray", "Touchless processing turned off"),
+}
+
+
+def _fmt(value: Any) -> str:
+    if value is None or value == "":
+        return "(blank)"
+    if isinstance(value, float):
+        return f"{value:,.2f}"
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value) or "(none)"
+    return str(value)
+
+
+def _tax_signature(doc: dict[str, Any]) -> list[tuple]:
+    return sorted(
+        (t.get("tax_type"), t.get("province") or "", round(float(t.get("rate") or 0), 6),
+         round(float(t.get("taxable_amount") or 0), 2), round(float(t.get("tax_amount") or 0), 2))
+        for t in doc.get("tax_lines") or []
+    )  # fmt: skip
+
+
+def diff_coding(ai: dict[str, Any], final: dict[str, Any]) -> list[dict[str, str]]:
+    """Every change a reviewer made: header fields, line fields, added/removed lines, tax lines."""
+    changes: list[dict[str, str]] = []
+    for field, label in HEADER_LABELS.items():
+        before, after = ai.get(field), final.get(field)
+        if _fmt(before) != _fmt(after):
+            if field == "remit_bank_account":  # the audit trail is downloadable: never the whole account
+                before, after = (mask_account(v) if v else "" for v in (before, after))
+            changes.append({"what": label, "before": _fmt(before), "after": _fmt(after)})
+    ai_lines, final_lines = ai.get("line_items") or [], final.get("line_items") or []
+    matched = set()
+    for original, line in pair_lines(ai_lines, final_lines):
+        n = line.get("line_number")
+        if original is None:
+            changes.append({"what": f"line {n} added", "before": "", "after": _line_summary(line)})
+            continue
+        matched.add(id(original))
+        for field, label in LINE_LABELS.items():
+            before, after = original.get(field), line.get(field)
+            if field == "taxes_applied":
+                before, after = sorted(before or []), sorted(after or [])
+            if _fmt(before) != _fmt(after):
+                changes.append({"what": f"line {n} {label}", "before": _fmt(before), "after": _fmt(after)})
+    for original in ai_lines:
+        if id(original) not in matched:
+            changes.append(
+                {"what": f"line {original.get('line_number')} removed", "before": _line_summary(original), "after": ""}
+            )
+    if _tax_signature(ai) != _tax_signature(final):
+        changes.append({"what": "sales tax lines", "before": _tax_text(ai), "after": _tax_text(final)})
+    return changes
+
+
+def _line_summary(line: dict[str, Any]) -> str:
+    return f"{line.get('description', '')[:40]} · {_fmt(line.get('amount'))} · GL {line.get('predicted_gl_code', '')}"
+
+
+def _tax_text(doc: dict[str, Any]) -> str:
+    return (
+        "; ".join(
+            f"{t.get('tax_type')} {float(t.get('rate') or 0) * 100:g}% = {float(t.get('tax_amount') or 0):,.2f}"
+            for t in doc.get("tax_lines") or []
+        )
+        or "(none)"
+    )
+
+
+_TABLES = {"gl_accounts": "GL accounts", "cost_centers": "Cost centers"}
+
+
+def _table(d: dict[str, Any]) -> str:
+    """The account list an event is about, as the app names it ("GL accounts", not gl_accounts)."""
+    table = str(d.get("table", ""))
+    return _TABLES.get(table, table)
+
+
+def describe(event: dict[str, Any]) -> str:
+    """One readable sentence for an event (plain text; escape before putting it in HTML)."""
+    d = event.get("detail") or {}
+    action = event["action"]
+    if action == "processed":
+        flag = "needs attention" if d.get("requires_review") else "ready"
+        conf = d.get("confidence")
+        conf_text = f", confidence {conf:.0%}" if isinstance(conf, (int, float)) else ""
+        return f"{d.get('file', '')} read and coded{conf_text} ({flag})" + (" · demo" if d.get("demo") else "")
+    if action == "failed":
+        return f"{d.get('file', '')}: {str(d.get('error', ''))[:160]}"
+    if action in ("email_sorted", "email_bank_change"):
+        parts = [f'{d.get("label", "")}: "{d.get("subject", "")}"']
+        parts += [f"{d[k]} {w}" for k, w in (("to_queue", "to the review queue"), ("statements", "to Statements"),
+                                             ("set_aside", "set aside for a person")) if d.get(k)]  # fmt: skip
+        return " · ".join(parts) + (f" ({'; '.join(d.get('reasons') or [])})" if action == "email_bank_change" else "")
+    if action == "email_triage_done":
+        return f'"{d.get("subject", "")}" ({d.get("kind", "")})'
+    if action == "email_attachment_to_queue":
+        return f"{d.get('file', '')} moved to the invoices folder to be read"
+    if action == "approved":
+        overridden = [i["code"] for i in d.get("open_issues") or [] if i.get("severity") == "error"]
+        prefix = f"approved despite {', '.join(overridden)}; " if overridden else ""
+        if d.get("needs_second"):
+            prefix += "over the approval limit (second approval needed); "
+        return prefix + _approved_text(d)
+    if action == "rejected":
+        return f"reason: {d.get('reason') or 'none given'}"
+    if action == "deleted":
+        return f"{d.get('vendor') or d.get('file', '')} {d.get('invoice_number') or ''}".strip()
+    if action == "exported":
+        return f"in export batch {d.get('batch', '')}"
+    if action == "export_undone":
+        n = d.get("invoices", 0)
+        return f"batch {d.get('batch', '')}: {n} invoice{'' if n == 1 else 's'} back in the ready-to-export list"
+    if action == "accounts_imported":
+        return f"{_table(d)}: {d.get('added', 0)} added, {d.get('updated', 0)} updated" + (
+            " (replaced the list)" if d.get("replace_all") else ""
+        )
+    if action in ("accounts_edited", "accounts_deleted"):
+        codes = d.get("codes") or []
+        return f"{_table(d)}: {', '.join(codes[:8])}{' …' if len(codes) > 8 else ''}"
+    if action == "tax_setup_changed":
+        return f"{d.get('tax_type')}: {d.get('treatment')}" + (f" → GL {d['gl_code']}" if d.get("gl_code") else "")
+    if action == "lessons_forgotten":
+        n = d.get("count", 0)
+        return f"{n} lesson{'' if n == 1 else 's'}"
+    if action == "settings_changed":
+        rename = d.get("reviewer") or {}
+        renamed = f" (reviewer name {rename.get('from')} → {rename.get('to')})" if rename else ""
+        return ", ".join(d.get("keys") or []) + renamed
+    if action == "vendor_updated":
+        parts = []
+        if "status" in d:
+            parts.append("put on hold" if d["status"] == "on_hold" else "made active")
+        if "expected_gst" in d:
+            parts.append(f"expected GST/HST # {d['expected_gst'] or '(cleared)'}")
+        if "notes" in d:
+            parts.append("notes changed")
+        return f"{d.get('vendor', '')}: {', '.join(parts)}"
+    if action == "vendor_added":
+        numbers = [f"{w} {d[k]}" for k, w in (("gst", "GST/HST #"), ("qst", "QST #"), ("pst", "PST #")) if d.get(k)]
+        return f"{d.get('vendor', '')} added from the review screen" + (f" ({', '.join(numbers)})" if numbers else "")
+    if action == "vendors_deleted":
+        names = [str(n) for n in d.get("vendors") or []]
+        return f"{', '.join(names[:8])}{' …' if len(names) > 8 else ''}" or "(none)"
+    if action == "verified":
+        rounds = f" in {d['rounds']} round(s)" if d.get("rounds") else ""
+        return f"{d.get('status') or 'done'}{rounds}" + (
+            f"; disputed: {', '.join(d['fields'])}" if d.get("fields") else ""
+        )
+    if action == "azure_checked":
+        differ = d.get("differ") or []
+        return f"{d.get('agreed', 0)} of {d.get('compared', 0)} field(s) agree" + (
+            f"; differ: {', '.join(differ)}" if differ else ""
+        )
+    if action == "azure_check_disagrees":
+        return "differ: " + (", ".join(d.get("fields") or []) or "(none)")
+    if action == "lesson_explained":
+        return f"why: {d.get('reason') or ''}"
+    if action in ("lesson_retired", "lesson_restored"):
+        return f"lesson {d.get('lesson', '?')}" + (" no longer used" if action == "lesson_retired" else " used again")
+    if action in ("directory_preset_saved", "directory_preset_deleted"):
+        return f'view "{d.get("name", "")}"'
+    if action == "parked":
+        follow = f" · follow up {d['follow_up']}" if d.get("follow_up") else ""
+        return f"waiting for: {d.get('reason') or 'no reason given'}{follow}"
+    if action == "unparked":
+        return "returned to the review queue"
+    if action == "note":
+        return str(d.get("text") or "")
+    if action == "final_approved":
+        return f"approved after {d.get('first_approver') or '?'} (over the approval limit)"
+    if action in ("sent_back", "reopened"):
+        return f"back to the review queue · reason: {d.get('reason') or 'none given'}"
+    if action == "erp_register_imported":
+        return (
+            "cleared" if d.get("cleared") else f"{d.get('rows', 0)} row(s) read; {d.get('total', 0)} invoice(s) known"
+        )
+    if action == "history_imported":
+        return f"{d.get('added', 0)} past line(s) taught" + (f", {d['skipped']} skipped" if d.get("skipped") else "")
+    if action == "vendors_imported":
+        return f"{d.get('added', 0)} vendor(s) added, {d.get('updated', 0)} updated"
+    if action == "pos_imported":
+        return f"{d.get('orders', 0)} PO(s), {d.get('lines', 0)} line(s): {d.get('added', 0)} new, " + (
+            f"{d.get('updated', 0)} updated" + (" (replaced the list)" if d.get("replace_all") else "")
+        )
+    if action == "po_status":
+        return f"{d.get('po', '')} {'closed' if d.get('status') == 'closed' else 'reopened'}"
+    if action == "pos_deleted":
+        pos = d.get("pos") or []
+        return f"{', '.join(pos[:8])}{' …' if len(pos) > 8 else ''}"
+    if action in ("touchless_on", "touchless_off"):
+        limit = d.get("limit")
+        return (
+            f"for every vendor; largest invoice without a person {float(limit):,.2f}" if limit else "for every vendor"
+        )
+    if action in ("autonomy_on", "autonomy_off", "autonomy_suspended", "autonomy_held", "autonomy_allowed"):
+        text = str(d.get("supplier") or d.get("key") or "")
+        if action == "autonomy_on" and d.get("audit_rate") is not None:
+            text += f": touchless, {float(d['audit_rate']):.0%} audited"
+        return text + (f" · {d['reason']}" if d.get("reason") else "")
+    if action == "files_moved":
+        copied = f"; {d['copied']} copied into the data folder" if d.get("copied") else ""
+        left = f"; {len(d['not_moved'])} could not be copied (the old folder is kept)" if d.get("not_moved") else ""
+        return f"{d.get('invoices', 0)} invoice(s) of {d.get('from', '?')} now point to the new place{copied}{left}"
+    if action == "file_found":
+        return f"{d.get('from', '?')} → {d.get('to', '?')}"
+    if action in ("backup_made", "backup_restored"):
+        return str(d.get("file", "")) + (f" · {d['note']}" if d.get("note") else "")
+    return ""
+
+
+def _approved_text(d: dict[str, Any]) -> str:
+    changes = d.get("changes") or []
+    if not changes:
+        bulk = " (bulk approval)" if d.get("bulk") else ""
+        return f"{d.get('lines', 0)} line(s), all as the AI suggested{bulk}"
+    shown = "; ".join(f"{c['what']}: {c['before']} → {c['after']}" for c in changes[:4])
+    more = f" (+{len(changes) - 4} more)" if len(changes) > 4 else ""
+    return f"{len(changes)} change(s): {shown}{more}"

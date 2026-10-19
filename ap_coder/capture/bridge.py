@@ -48,7 +48,7 @@ def vendor_record(store: Any, vendor_name: str | None) -> dict[str, Any] | None:
     """{name, gst_number, erp_id} from the vendor master, if this vendor is there."""
     if store is None or not vendor_name:
         return None
-    from ..memory import vendor_key
+    from ..core.memory import vendor_key
 
     try:
         rec = store.get_vendor(vendor_key(vendor_name))
@@ -64,7 +64,7 @@ def review_issues(capture: CaptureResult, assumed_currency: str | None = None) -
     """(severity, code, message) for the review screen: header fields the readers could not confirm, totals that
     don't add up as printed, a PDF whose hidden text is not what its page shows, and a currency the page does not
     show (the coding's is then assumed: ``assumed_currency``, e.g. USD for a supplier with a US address)."""
-    from ..validation import INFO, WARNING, currency_not_found
+    from ..coding.validation import INFO, WARNING, currency_not_found
     from .confidence import LABELS
 
     out: list[tuple[str, str, str]] = []

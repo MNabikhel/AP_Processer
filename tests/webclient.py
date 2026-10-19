@@ -9,8 +9,8 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from ap_coder.config import Settings
-from ap_coder.store import Store
+from ap_coder.core.config import Settings
+from ap_coder.core.store import Store
 from ap_coder.web.app import create_app
 
 from .conftest import SAMPLE_STEM, SAMPLES

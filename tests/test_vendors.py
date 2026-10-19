@@ -4,11 +4,11 @@ import copy
 
 import pytest
 
-from ap_coder.config import Settings
-from ap_coder.pipeline import finalise_coding
-from ap_coder.schema import InvoiceCoding
-from ap_coder.store import Store
-from ap_coder.vendors import norm_invoice_number
+from ap_coder.ai.pipeline import finalise_coding
+from ap_coder.coding.vendors import norm_invoice_number
+from ap_coder.core.config import Settings
+from ap_coder.core.schema import InvoiceCoding
+from ap_coder.core.store import Store
 
 
 def _codes(store, doc, reference, exclude=None):
@@ -128,7 +128,7 @@ def test_expected_gst_number_from_the_vendor_master_wins(tmp_path, ground_truth,
     ],
 )
 def test_tax_numbers_compare_by_business_number(a, b, same):
-    from ap_coder.vendors import same_tax_number
+    from ap_coder.coding.vendors import same_tax_number
 
     assert same_tax_number(a, b) is same
 
@@ -146,7 +146,7 @@ def test_tax_numbers_compare_by_business_number(a, b, same):
 def test_qst_numbers_compare_by_their_ten_digits(a, b, same):
     from types import SimpleNamespace
 
-    from ap_coder.vendors import tax_number_findings
+    from ap_coder.coding.vendors import tax_number_findings
 
     changed = {c for _, c, _ in tax_number_findings(SimpleNamespace(qst_registration_number=b), {"qst_number": a}, [])}
     assert ("VENDOR_QST_CHANGED" in changed) is (not same and bool(a))
@@ -196,13 +196,13 @@ def test_a_hold_on_the_name_survives_a_match_by_tax_number(tmp_path, ground_trut
     ],
 )
 def test_bank_accounts_compare_regardless_of_formatting(a, b, same):
-    from ap_coder.vendors import same_bank_account
+    from ap_coder.coding.vendors import same_bank_account
 
     assert same_bank_account(a, b) is same
 
 
 def test_changed_bank_account_is_flagged(tmp_path, ground_truth, reference):
-    from ap_coder.vendors import mask_account
+    from ap_coder.coding.vendors import mask_account
 
     store = Store(tmp_path / "ap.db")
     first = {**_variant(ground_truth, "B-1", date="2026-06-01"), "remit_bank_account": "004-12345-1234567"}
@@ -238,13 +238,13 @@ def test_bank_account_without_approved_history_is_not_flagged(tmp_path, ground_t
     ],
 )
 def test_masking_shows_the_account_number(details, masked):
-    from ap_coder.vendors import mask_account
+    from ap_coder.coding.vendors import mask_account
 
     assert mask_account(details) == masked
 
 
 def test_bank_details_without_leading_zeros_are_the_same_account():
-    from ap_coder.vendors import same_bank_account
+    from ap_coder.coding.vendors import same_bank_account
 
     assert same_bank_account("transit 00012, inst 003, account 1234567", "transit 12, institution 3, acct 1234567")
     assert not same_bank_account("Inst 003 Transit 00012 Account 1234567", "Inst 003 Transit 00099 Account 1234567")
@@ -374,7 +374,7 @@ def test_an_old_vendor_list_gets_the_new_columns(tmp_path):
 
 
 def test_the_erp_vendor_list_brings_qst_pst_and_province(tmp_path):
-    from ap_coder.vendors import master_columns, master_rows
+    from ap_coder.coding.vendors import master_columns, master_rows
 
     records = [
         {

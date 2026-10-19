@@ -5,9 +5,9 @@ import json
 import pymupdf
 import pytest
 
-from ap_coder.schema import InvoiceCoding
-from ap_coder.tax import build_gl_distribution
-from ap_coder.validation import validate_coding
+from ap_coder.coding.tax import build_gl_distribution
+from ap_coder.coding.validation import validate_coding
+from ap_coder.core.schema import InvoiceCoding
 
 from .conftest import SAMPLES
 

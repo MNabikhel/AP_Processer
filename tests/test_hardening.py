@@ -7,21 +7,21 @@ from dataclasses import replace
 
 from openpyxl import load_workbook
 
-from ap_coder import cli, doctor
-from ap_coder.config import DocumentIntelligenceSettings, OpenAISettings, Settings
-from ap_coder.evaluation import _is_prediction_file
-from ap_coder.labels import _prediction_files, export_labels
-from ap_coder.memory import CORRECTED, pair_lines
-from ap_coder.pipeline import discover_inputs
-from ap_coder.reference_data import load_reference_data
-from ap_coder.schema import (
+from ap_coder.ai.evaluation import _is_prediction_file
+from ap_coder.ai.labels import _prediction_files, export_labels
+from ap_coder.ai.pipeline import discover_inputs
+from ap_coder.coding.tax import TaxRateTable, load_tax_mapping
+from ap_coder.core.config import DocumentIntelligenceSettings, OpenAISettings, Settings
+from ap_coder.core.memory import CORRECTED, pair_lines
+from ap_coder.core.reference_data import load_reference_data
+from ap_coder.core.schema import (
     FIXED_ENUM_VALUES,
     MAX_ENUM_VALUES_TOTAL,
     build_json_schema,
     plan_code_enums,
 )
-from ap_coder.store import Store
-from ap_coder.tax import TaxRateTable, load_tax_mapping
+from ap_coder.core.store import Store
+from ap_coder.ops import cli, doctor
 
 from .conftest import DATA
 
@@ -187,7 +187,7 @@ def test_unassigned_lines_are_not_learned(tmp_path, ground_truth):
 def test_added_rows_get_unassigned_cost_center_when_configured(ground_truth):
     import pandas as pd
 
-    from ap_coder.review import coding_from_inputs
+    from ap_coder.coding.review import coding_from_inputs
 
     header = {k: ground_truth[k] for k in ground_truth if k not in ("line_items", "tax_lines", "confidence_score")}
     lines = pd.concat(

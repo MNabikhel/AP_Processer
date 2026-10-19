@@ -36,7 +36,7 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import Any
 
-from ..memory import vendor_key
+from ..core.memory import vendor_key
 from .types import (
     AMOUNT_FIELDS,
     DATE_FIELDS,

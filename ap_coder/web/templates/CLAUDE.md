@@ -2,7 +2,7 @@
 
 The HTML of every page, drawn on the server by `render()` in web/core.py (one Jinja environment, `templates`, autoescape on).
 Each page template extends `base.html`, which draws the rail, the header, the messages and loads `app.css` and `js/app.js`.
-The data comes from the route in `ap_coder/web/pages`; the HTML builders called as `ui.*` are in ap_coder/ui.py; styles and scripts are in `ap_coder/web/static`.
+The data comes from the route in `ap_coder/web/pages`; the HTML builders called as `ui.*` are in ap_coder/core/ui.py; styles and scripts are in `ap_coder/web/static`.
 
 **Depends on:** `ap_coder/web` (core.py's globals: ui, static_version, version; filters money, plural, time_ago, initials, num, pct), `ap_coder/web/static`
 **Used by:** `ap_coder/web/pages` (each route renders one), `ap_coder/web` (app.py renders error.html and placeholder.html)

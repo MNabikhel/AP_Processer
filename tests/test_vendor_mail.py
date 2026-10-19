@@ -3,8 +3,8 @@
 import json
 from urllib.parse import unquote
 
-from ap_coder import vendor_mail
-from ap_coder.validation import Issue
+from ap_coder.coding import vendor_mail
+from ap_coder.coding.validation import Issue
 
 from .conftest import SAMPLES
 
@@ -62,13 +62,13 @@ def test_po_points_need_a_po_number_and_are_not_repeated():
 
 
 def test_every_askable_code_is_a_real_check():
-    from ap_coder.help import CHECKS
+    from ap_coder.ops.help import CHECKS
 
     assert vendor_mail.ASKABLE <= set(CHECKS)
 
 
 def test_statement_request():
-    from ap_coder import statements as stm
+    from ap_coder.erp import statements as stm
 
     lines = [
         stm.Line(stm.MATCHED, "101", "2026-09-01", 1000.0, 1000.0, 1),
@@ -120,6 +120,6 @@ def test_credit_note_subject():
 
 
 def test_a_gst_number_failing_its_check_digit_is_asked_about():
-    from ap_coder.vendor_mail import ASKABLE
+    from ap_coder.coding.vendor_mail import ASKABLE
 
     assert "GST_NUMBER_CHECK_DIGIT" in ASKABLE

@@ -2,7 +2,7 @@
 the table finder's model (``capture/table_finder.py``), which AP Coder reads from the bundle's ``models/`` folder.
 
 AP Coder is an offline build: this copies the models from the ``models/`` folder of the offline bundle and
-never downloads them. RapidOCR 3 itself is never allowed to download them either (``ap_coder/offline.py``).
+never downloads them. RapidOCR 3 itself is never allowed to download them either (``ap_coder/ops/offline.py``).
 Safe to run again: files already there (and intact) are kept.
 
     python scripts/fetch_models.py            # copy what is missing from the bundle's models/ folder
@@ -30,7 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from ap_coder import offline  # noqa: E402
+from ap_coder.ops import offline  # noqa: E402
 
 BUNDLE_MODELS = ROOT / "models"  # the offline bundle's copy (scripts/build_offline_bundle.py)
 TIMEOUT = 60

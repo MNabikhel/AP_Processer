@@ -6,8 +6,8 @@ import sqlite3
 
 import pytest
 
-from ap_coder.store import Store
-from ap_coder.terms import Terms, describe, parse_terms, payment, payment_findings
+from ap_coder.coding.terms import Terms, describe, parse_terms, payment, payment_findings
+from ap_coder.core.store import Store
 
 from .conftest import SAMPLE_STEM, SAMPLES
 

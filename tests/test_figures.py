@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from ap_coder.figures import compare_figures, figures
+from ap_coder.ai.figures import compare_figures, figures
 
 
 def test_amounts_are_found_however_they_are_written():

@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from ap_coder import page_reader, page_worker, verifier
+from ap_coder.ai import page_reader, page_worker, verifier
+from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.capture.types import CHECK
-from ap_coder.pipeline import InvoicePipeline
-from ap_coder.store import APPROVED, REVIEW
+from ap_coder.core.store import APPROVED, REVIEW
 
 from .test_local_llm import REAL_FETCH, FakeLMStudio, chat_reply, local_settings  # imported first: the real fetch
 from .test_uniform_reading import MODEL, PDF, STEM, _settings, store, touchless  # noqa: F401 - fixtures
@@ -94,7 +94,7 @@ def test_an_answer_it_cannot_give_is_unsure():
 
 
 def test_an_outage_on_the_first_question_is_not_an_answer():
-    from ap_coder.inference import CodingError
+    from ap_coder.ai.inference import CodingError
 
     with pytest.raises(CodingError):
         verifier.review(Script(CodingError("The local model isn't answering", temporary=True)), SHOWN)
@@ -135,7 +135,7 @@ def test_a_confident_round_still_narrows_to_what_it_disputed():
 
 
 def test_every_hold_is_recorded_whatever_the_order():
-    from ap_coder import azure_check
+    from ap_coder.ai import azure_check
 
     decided = {"state": "autonomous", "auto": True, "audit": False, "reason": "ok"}
     for first, second in ((azure_check.hold, verifier.hold), (verifier.hold, azure_check.hold)):
@@ -171,7 +171,7 @@ def test_the_issues_say_what_it_read_and_drop_a_field_since_corrected():
 
 
 def test_settings_are_kept_within_bounds(tmp_path):
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
 
     s = Store(tmp_path / "a.db")
     assert verifier.load_settings(s) == verifier.ReviewerSettings(True, 3, 5.0)
@@ -180,7 +180,7 @@ def test_settings_are_kept_within_bounds(tmp_path):
 
 
 def test_the_queue(tmp_path):
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
 
     s = Store(tmp_path / "a.db")
     assert s.queue_verification(5, "every invoice") and s.queue_verification(6)
@@ -197,7 +197,7 @@ def test_the_queue(tmp_path):
 
 
 def test_a_review_that_ends_without_a_result_keeps_the_last_result(tmp_path):
-    from ap_coder.store import Store
+    from ap_coder.core.store import Store
 
     s = Store(tmp_path / "a.db")
     s.queue_verification(5)
@@ -213,15 +213,15 @@ def test_a_review_that_ends_without_a_result_keeps_the_last_result(tmp_path):
 
 
 def test_the_model_is_asked_to_think_with_the_pages(monkeypatch, reference):
-    from ap_coder import local_llm
-    from ap_coder.imaging import PageImage
-    from ap_coder.inference import THINKING_TOKENS
+    from ap_coder.ai import local_llm
+    from ap_coder.ai.imaging import PageImage
+    from ap_coder.ai.inference import THINKING_TOKENS
 
     monkeypatch.setattr(local_llm, "_fetch_json", REAL_FETCH)
     server = FakeLMStudio(["gemma-4-12b"], [{"id": "gemma-4-12b", "type": "vlm", "state": "loaded"}],
                           lambda body: chat_reply(json.dumps(_answer()), model="gemma-4-12b"))  # fmt: skip
     try:
-        from ap_coder.inference import InvoiceCoder
+        from ap_coder.ai.inference import InvoiceCoder
 
         coder = InvoiceCoder(local_settings(server.base_url), reference, provider="local")
         image = PageImage(1, "image/png", b"\x89PNG\r\n\x1a\n" + b"0" * 20)
@@ -406,7 +406,7 @@ class DownCoder(FakeCoder):
         import httpx
         import openai
 
-        from ap_coder.inference import InvoiceCoder
+        from ap_coder.ai.inference import InvoiceCoder
 
         request = httpx.Request("POST", "http://127.0.0.1:9/v1/chat/completions")
         exc = openai.APITimeoutError(request) if self.failure == "timeout" else openai.APIConnectionError(
