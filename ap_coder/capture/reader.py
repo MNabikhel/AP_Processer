@@ -524,7 +524,9 @@ def _amounts_in(text: str) -> list[tuple[float, int, int]]:
 
 
 _TERMS = [
-    (re.compile(r"(\d{1,2})\s*%?[\s.]*(\d{1,2})[\s,.;]*net[\s.:]*(\d{1,3})(?!\d)", re.I), "{0}% {1} Net {2}"),
+    # "2% 10 Net 30", "2/10 Net 30", "2/10, n/30", "2% 10 days, Net 30": the rate, the discount days, the net days
+    (re.compile(r"(?<![\d.])(\d{1,2})(?:\s*%\s*/?\s*|\s*/\s*|[\s.]+)(\d{1,2})(?!\d)(?:\s*(?:days?|jours?))?[\s,.;]*(?:net|n\s*/)[\s.:]*(\d{1,3})(?!\d)", re.I),
+     "{0}% {1} Net {2}"),
     (re.compile(r"\bnet[\s.:]*(\d{1,3})(?!\d)", re.I), "Net {0}"),
     (re.compile(r"\bn\s*/?\s*(\d{1,3})\b", re.I), "Net {0}"),
     (re.compile(r"(?<!\d)(\d{1,3})\s*(?:days|jours|j\b)", re.I), "Net {0}"),

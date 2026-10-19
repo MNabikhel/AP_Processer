@@ -130,3 +130,16 @@ def test_payable_on_receipt_in_a_note_is_read_as_the_terms(tmp_path):
     plain = _NO_NUMBER + [(380, 110, "Invoice #: AC-1001"), (380, 122, "Invoice Date: Sep 14, 2026"),
                           (60, 400, "Goods remain our property until receipt of payment.")]  # fmt: skip
     assert _read(_pdf(tmp_path, plain, "plain.pdf")).fields["payment_terms"].value is None
+
+
+def test_printed_early_payment_discount_terms_keep_the_discount():
+    """ "2/10 Net 30" was read as "1% 0 Net 30" (the first number skipped for the slash), and "2% 10 days, Net 30" as
+    plain "Net 30" (the word "days" broke the pattern): the discount was lost or wrong."""
+    from ap_coder.capture.reader import _terms
+
+    assert _terms("2/10 Net 30") == "2% 10 Net 30"
+    assert _terms("Terms: 2/10, n/30") == "2% 10 Net 30"
+    assert _terms("2% 10 days, Net 30") == "2% 10 Net 30"
+    assert _terms("2%10 Net 30") == "2% 10 Net 30"
+    assert _terms("Net 30") == "Net 30"
+    assert _terms("1.5% 15 Net 45") in ("1.5% 15 Net 45", "Net 45")  # a decimal rate: never a wrong discount

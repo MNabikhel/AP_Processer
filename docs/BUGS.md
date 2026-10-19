@@ -1483,12 +1483,12 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 | Tax and coding rules | 8 | 7 (B-132 to B-138) | 1 (N-78) |
 | Exports, ERP and reports | 11 | 8 (B-150 to B-157) | 3 (N-79 to N-81) |
 | AI and readers | 10 | 8 (B-174 to B-181) | 2 (N-82 to N-83) |
-| Document capture | 11 | 8 (B-182 to B-189) | 3 (N-84 to N-86) |
+| Document capture | 12 | 9 (B-182 to B-189, B-205) | 3 (N-84 to N-86) |
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
 | Intake, email and command line | 12 | 10 (B-140 to B-149) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
 | Day-one walk-through | 8 | 8 (B-197 to B-204) | 0 |
-| **Total** | **87** | **70** | **17** |
+| **Total** | **88** | **71** | **17** |
 
 ### Store and config
 
@@ -1899,6 +1899,16 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 - **Fix:** when no labelled terms are found, a "payable/due (up)on receipt" or "payable à réception" phrase anywhere on the page is read as "Due on receipt", at a lower strength than a labelled value.
 - **Test:** `tests/test_sweep3_capture.py::test_payable_on_receipt_in_a_note_is_read_as_the_terms`
 - **Lesson:** Don't look for a value only beside its label when documents also state it in a sentence.
+
+#### B-205 · Printed discount terms "2/10 Net 30" were read as "1% 0 Net 30" · medium
+- **Where:** `ap_coder/capture/reader.py` (`_TERMS`, the discount pattern)
+- **Symptom:** an invoice printing "2/10 Net 30" offered a 1% discount within 0 days; "2% 10 days, Net 30" lost its discount (plain Net 30). Found while taking the guide's screenshots.
+- **Cause:** the pattern allowed no "/" between the rate and the days, so it started inside "10" ("1", "0"); the word "days" after the discount days broke the match.
+- **Reproduce:** `reader._terms("2/10 Net 30")`.
+- **Reproduced:** yes (`1% 0 Net 30`).
+- **Fix:** a separator is required between the rate and the days ("%", "/", a space or a dot), neither number may start or end inside another, "days"/"jours" may follow the discount days, and "n/30" counts as net.
+- **Test:** `tests/test_sweep3_capture.py::test_printed_early_payment_discount_terms_keep_the_discount`
+- **Lesson:** Don't let a number pattern start inside another number: anchor both ends.
 
 ### Web routes
 
