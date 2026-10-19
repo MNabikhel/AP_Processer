@@ -45,7 +45,7 @@ def neutralise_sheet(ws: Any) -> None:
                 cell.quotePrefix = True
 
 
-_CURRENCY = re.compile(r"(?i)(cad|usd|eur|\$|€|£)")
+_CURRENCY = re.compile(r"(?i)(ca\$|c\$|us\$|cdn|cad|usd|eur|\$|€|£)")  # "CA$" before "$": no "CA" left over
 
 
 def _thousands(text: str, sep: str) -> bool:
@@ -56,13 +56,17 @@ def _thousands(text: str, sep: str) -> bool:
 
 def parse_amount(value: Any) -> float | None:
     """A number from a spreadsheet cell as people write it: "1,234.50", "1 234,56 $", "(150.00)",
-    "150.00-", "99.00 CR", "-$150", "150,00". None when it is not a number (or NaN / infinite)."""
+    "150.00-", "99.00 CR", "250.00 DR", "-$150", "−150.00" (a typeset minus), "CA$1,234.50", "150,00". A credit
+    (CR) is negative, a debit (DR) positive, as a register or statement shows them. None when it is not a number
+    (or NaN / infinite)."""
     if value is None:
         return None
     if isinstance(value, (int, float)):
         number = float(value)
         return number if math.isfinite(number) else None
-    text = _CURRENCY.sub("", str(value)).replace(" ", "").replace(" ", "").replace(" ", "").strip()
+    text = (
+        _CURRENCY.sub("", str(value)).replace(" ", "").replace(" ", "").replace(" ", "").strip().replace("\u2212", "-")
+    )
     if not text:
         return None
     negative = False
@@ -70,6 +74,8 @@ def parse_amount(value: Any) -> float | None:
         negative, text = True, text[1:-1]
     if text.upper().endswith("CR"):
         negative, text = True, text[:-2]
+    elif text.upper().endswith("DR"):
+        text = text[:-2]
     if text.endswith("-"):
         negative, text = True, text[:-1]
     if text.startswith("-"):

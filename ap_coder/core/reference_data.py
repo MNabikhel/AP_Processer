@@ -172,6 +172,8 @@ def load_table(path: str | Path, kind: str, key_column: str) -> ReferenceTable:
         )
     for i, raw in enumerate(raw_rows, start=1):
         row = {rename.get(k, k.strip()): (v or "").strip() for k, v in raw.items() if k is not None}
+        if not any(row.values()):  # a blank row (Excel saves the empty rows under a list as ",,")
+            continue
         code = row[key_column]
         if not code:
             raise ValueError(f"{path}: row {i} has an empty {key_column!r}")

@@ -215,15 +215,18 @@ async def accounts_import(request: Request, table: str) -> JSONResponse:
     picked = {f: c if c in columns else "" for f, c in picked.items()}
     if not picked["code"]:
         return refuse(f"Pick the column with the {noun} code.")
-    result = store.import_accounts(
-        table,
-        df.to_dict("records"),
-        picked["code"],
-        picked["description"] or None,
-        picked["category"] or None,
-        replace_all=bool(form.get("replace")),
-        actor=reviewer(),
-    )
+    try:
+        result = store.import_accounts(
+            table,
+            df.to_dict("records"),
+            picked["code"],
+            picked["description"] or None,
+            picked["category"] or None,
+            replace_all=bool(form.get("replace")),
+            actor=reviewer(),
+        )
+    except ValueError as exc:  # a replace with no code in any row: nothing was changed
+        return refuse(str(exc))
     drop_upload(token)
     return done(
         request,

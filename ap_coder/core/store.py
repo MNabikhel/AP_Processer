@@ -176,6 +176,11 @@ CREATE TABLE IF NOT EXISTS lessons (
     explained_at TEXT, retired INTEGER NOT NULL DEFAULT 0, last_invoice INTEGER, created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS lessons_vendor ON lessons (vendor_key, kind);
+CREATE TABLE IF NOT EXISTS lesson_approvals (
+    invoice_id INTEGER NOT NULL, situation TEXT NOT NULL, corrected INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
+    at TEXT NOT NULL, PRIMARY KEY (invoice_id, situation));
+CREATE INDEX IF NOT EXISTS lesson_approvals_situation ON lesson_approvals (situation);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
@@ -494,8 +499,9 @@ class Store:
         """Every stored vendor key, recomputed with today's ``vendor_key``: from the vendor name kept beside it, else
         (the vendor list, whose display name may have been edited, and the supplier profiles) from the old key itself.
         Where the new key is already taken (two rows that are now the same vendor) the row already there is kept: a
-        duplicate ERP bill is dropped, two vendor list rows are merged into one (on hold if either was), anything
-        else is left as it was."""
+        duplicate ERP bill is dropped, two vendor list rows are merged into one (on hold if either was), two lessons
+        into one (counts added up), two supplier profiles into one (the stricter state), anything else is left as
+        it was."""
 
         def new_key(name: Any, old: Any) -> str:
             return vendor_key(str(name or "")) or refresh_vendor_key(str(old or ""))
@@ -519,14 +525,71 @@ class Store:
             _old, sep, rest = str(r["situation"] or "").partition("|")
             situation = f"{key}{sep}{rest}" if sep else r["situation"]
             if (key, situation) != (r["vendor_key"], r["situation"]):
-                conn.execute("UPDATE OR IGNORE lessons SET vendor_key = ?, situation = ? WHERE id = ?",
-                             (key, situation, r["id"]))  # fmt: skip
+                done = conn.execute("UPDATE OR IGNORE lessons SET vendor_key = ?, situation = ? WHERE id = ?",
+                                    (key, situation, r["id"]))  # fmt: skip
+                if not done.rowcount:  # the same situation of the same vendor twice: one lesson, counts added up
+                    Store._merge_lesson_rows(conn, r["id"], situation)
+                if situation != r["situation"]:  # each approval's part follows its lesson (B-158)
+                    conn.execute("UPDATE OR IGNORE lesson_approvals SET situation = ? WHERE situation = ?",
+                                 (situation, r["situation"]))  # fmt: skip
+                    conn.execute("DELETE FROM lesson_approvals WHERE situation = ?", (r["situation"],))
         for table, column in (("supplier_profiles", "key"), ("supplier_outcomes", "supplier_key")):
             rows = conn.execute(f"SELECT rowid AS rid, {column} AS k FROM {table} WHERE {column} LIKE 'name:%'")
             for r in rows.fetchall():
                 key = "name:" + refresh_vendor_key(r["k"][5:])
                 if key != r["k"]:
-                    conn.execute(f"UPDATE OR IGNORE {table} SET {column} = ? WHERE rowid = ?", (key, r["rid"]))
+                    done = conn.execute(f"UPDATE OR IGNORE {table} SET {column} = ? WHERE rowid = ?", (key, r["rid"]))
+                    if not done.rowcount and table == "supplier_profiles":  # one profile, the strictest state kept
+                        Store._merge_supplier_profiles(conn, r["k"], key)
+
+    @staticmethod
+    def _merge_lesson_rows(conn: sqlite3.Connection, gone_id: int, situation: str) -> None:
+        """The lesson ``gone_id`` folded into the one already at ``situation`` (the same vendor under today's rules),
+        then removed: the counts added up, the newer value and the latest reason kept, shown unless both are retired."""
+        kept = conn.execute("SELECT * FROM lessons WHERE situation = ?", (situation,)).fetchone()
+        gone = conn.execute("SELECT * FROM lessons WHERE id = ?", (gone_id,)).fetchone()
+        if kept is None or gone is None:
+            return
+        newer = gone if gone["updated_at"] > kept["updated_at"] else kept
+        reasons = [r for r in (kept, gone) if r["explanation"]]
+        reason = max(reasons, key=lambda r: r["explained_at"] or "") if reasons else kept
+        conn.execute(
+            "UPDATE lessons SET seen = ?, corrected = ?, since_why = ?, confirmed = ?, value = ?, proposed = ?, "
+            "explanation = ?, explained_by = ?, explained_at = ?, retired = ?, last_invoice = ?, updated_at = ? "
+            "WHERE id = ?",
+            (
+                kept["seen"] + gone["seen"], kept["corrected"] + gone["corrected"],
+                kept["since_why"] + gone["since_why"], kept["confirmed"] + gone["confirmed"], newer["value"],
+                newer["proposed"], reason["explanation"], reason["explained_by"], reason["explained_at"],
+                min(kept["retired"], gone["retired"]), newer["last_invoice"], newer["updated_at"], kept["id"],
+            ),
+        )  # fmt: skip
+        conn.execute("DELETE FROM lessons WHERE id = ?", (gone_id,))
+
+    @staticmethod
+    def _merge_supplier_profiles(conn: sqlite3.Connection, old: str, key: str) -> None:
+        """The supplier profile under ``old`` folded into the one under ``key`` (the same supplier under today's
+        rules), then removed: the stricter state wins (held, then suspended, supervised, touchless), with its dates
+        and audit rate, so a held supplier never goes touchless by a key change; a field blank in one is filled from
+        the other."""
+        from ..capture.supplier import AUTONOMOUS, HELD, SUPERVISED, SUSPENDED
+
+        strict = {HELD: 3, SUSPENDED: 2, SUPERVISED: 1, AUTONOMOUS: 0}
+        kept = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (key,)).fetchone()
+        gone = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (old,)).fetchone()
+        if kept is None or gone is None:
+            return
+        state = gone if strict.get(gone["state"], 1) > strict.get(kept["state"], 1) else kept
+        conn.execute(
+            "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, suspended_at = ?, audit_rate = ?, "
+            "display_name = ?, vendor_id = ?, template_json = ?, updated_at = ? WHERE key = ?",
+            (
+                state["state"], state["autonomous_since"], state["suspended_at"], state["audit_rate"],
+                kept["display_name"] or gone["display_name"], kept["vendor_id"] or gone["vendor_id"],
+                kept["template_json"] or gone["template_json"], _now(), key,
+            ),
+        )  # fmt: skip
+        conn.execute("DELETE FROM supplier_profiles WHERE key = ?", (old,))
 
     @staticmethod
     def _merge_vendor_rows(conn: sqlite3.Connection, old: str, key: str) -> None:
@@ -692,10 +755,16 @@ class Store:
         """Import rows using the columns the user picked.
 
         Existing codes are updated, but only in the columns picked: importing codes without a
-        category column keeps the categories already typed in.
+        category column keeps the categories already typed in. ``replace_all`` with rows none of which has a code
+        (the wrong column picked) is refused, nothing deleted: it would leave no account to code to.
         """
         if table not in ACCOUNT_TABLES:
             raise ValueError(f"unknown table {table!r}")
+        if replace_all and rows and not any(_clean_code(row.get(code_column)) for row in rows):
+            raise ValueError(
+                f"No row has a code in the column {code_column!r}: nothing was replaced. Pick the column that "
+                "holds the codes and import again."
+            )
         added = updated = skipped = 0
         with self._conn() as conn:
             if replace_all:
@@ -1232,10 +1301,12 @@ class Store:
 
     @staticmethod
     def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> None:
-        """Withdraw what an invoice's approval taught: its lessons, its supplier outcomes (from a review or an
-        audit sample alike, so none keeps counting towards the supplier's autonomy) and its reader scores."""
+        """Withdraw what an invoice's approval taught: its coding memory, its lessons (what the AI is told), its
+        supplier outcomes (from a review or an audit sample alike, so none keeps counting towards the supplier's
+        autonomy) and its reader scores."""
         for table in ("feedback", "supplier_outcomes", "reader_outcomes"):
             conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
+        Store._withdraw_lessons(conn, invoice_id)
 
     def delete_invoice(
         self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None, *, keep_approved: bool = False
@@ -1271,6 +1342,7 @@ class Store:
                 })  # fmt: skip
             if forget_lessons:
                 conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+                self._withdraw_lessons(conn, invoice_id)
 
     def list_invoices_full(self) -> list[dict[str, Any]]:
         """Every invoice with its file path, status and metadata (no AI output: kept light)."""
@@ -2588,10 +2660,16 @@ class Store:
 
     def record_lesson(self, row: dict[str, Any], *, invoice_id: int | None = None, actor: str | None = None) -> None:
         """One approval's word on a situation (``lessons.outcomes``): seen, and corrected (the value AP chose, what
-        was proposed) or confirmed. A situation never corrected is only counted, never shown."""
+        was proposed) or confirmed. A situation never corrected is only counted, never shown. What ``invoice_id``'s
+        approval added is kept beside it (``lesson_approvals``), to be taken back when the approval is withdrawn."""
         now = _now()
         corrected = 1 if row.get("corrected") else 0
+        value, proposed = str(row.get("value") or "")[:300], str(row.get("proposed") or "")[:300]
         with self._conn() as conn:
+            if invoice_id is not None:  # the same invoice's word on it counts once, the latest
+                self._withdraw_lessons(conn, invoice_id, row["key"])
+            before = conn.execute("SELECT corrected FROM lessons WHERE situation = ?", (row["key"],)).fetchone()
+            confirmed = 1 if not corrected and before is not None and before["corrected"] > 0 else 0
             conn.execute(
                 """INSERT INTO lessons (situation, vendor_key, vendor_name, kind, field, pattern, value, proposed, seen,
                    corrected, since_why, confirmed, last_invoice, created_at, updated_at)
@@ -2605,9 +2683,43 @@ class Store:
                    proposed = CASE WHEN excluded.corrected = 1 THEN excluded.proposed ELSE lessons.proposed END,
                    last_invoice = excluded.last_invoice, updated_at = excluded.updated_at""",
                 (row["key"], vendor_key(row.get("vendor") or ""), row.get("vendor") or "", row.get("kind") or "invoice",
-                 row["field"], row.get("pattern") or "", str(row.get("value") or "")[:300],
-                 str(row.get("proposed") or "")[:300], corrected, corrected, invoice_id, now, now),
+                 row["field"], row.get("pattern") or "", value, proposed, corrected, corrected, invoice_id, now, now),
             )  # fmt: skip
+            if invoice_id is not None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO lesson_approvals (invoice_id, situation, corrected, confirmed, value, "
+                    "proposed, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (invoice_id, row["key"], corrected, confirmed, value, proposed, now),
+                )
+
+    @staticmethod
+    def _withdraw_lessons(conn: sqlite3.Connection, invoice_id: int, situation: str | None = None) -> None:
+        """Take back what ``invoice_id``'s approval added to the lessons (one situation's, or all): seen, corrected,
+        confirmed, and the count towards the next "why" (unless AP gave a reason since). A withdrawn correction's value
+        gives way to the latest correction still standing; with none left the lesson is no longer shown."""
+        where, args = "invoice_id = ?" + (" AND situation = ?" if situation else ""), (invoice_id,)
+        args += (situation,) if situation else ()
+        for c in conn.execute(f"SELECT * FROM lesson_approvals WHERE {where}", args).fetchall():
+            lesson = conn.execute("SELECT * FROM lessons WHERE situation = ?", (c["situation"],)).fetchone()
+            if lesson is None:
+                continue
+            value, proposed = lesson["value"], lesson["proposed"]
+            if c["corrected"]:
+                last = conn.execute(
+                    "SELECT value, proposed FROM lesson_approvals WHERE situation = ? AND invoice_id != ? "
+                    "AND corrected = 1 ORDER BY at DESC, rowid DESC LIMIT 1",
+                    (c["situation"], invoice_id),
+                ).fetchone()
+                if last is not None:
+                    value, proposed = last["value"], last["proposed"]
+            since_why = c["corrected"] if not lesson["explained_at"] or c["at"] > lesson["explained_at"] else 0
+            conn.execute(
+                "UPDATE lessons SET seen = MAX(seen - 1, 0), corrected = MAX(corrected - ?, 0), "
+                "since_why = MAX(since_why - ?, 0), confirmed = MAX(confirmed - ?, 0), value = ?, proposed = ? "
+                "WHERE id = ?",
+                (c["corrected"], since_why, c["confirmed"], value, proposed, lesson["id"]),
+            )
+        conn.execute(f"DELETE FROM lesson_approvals WHERE {where}", args)
 
     def lesson(self, situation: str) -> dict[str, Any] | None:
         with self._conn() as conn:
@@ -3263,9 +3375,13 @@ class Store:
     def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
         """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies."""
         daily = [p for p in self.list_backups() if p.stem.count("-") == 2]  # ap_coder-YYYYMMDD-HHMMSS
-        if daily:
-            age = dt.datetime.now() - dt.datetime.fromtimestamp(daily[0].stat().st_mtime)
-            if age < dt.timedelta(hours=min_hours):
+        now = dt.datetime.now()
+        for backup in daily:  # one made in the future (the clock was ahead) is old: it never stops the daily backups
+            try:
+                age = now - dt.datetime.fromtimestamp(backup.stat().st_mtime)
+            except OSError:
+                continue
+            if dt.timedelta(0) <= age < dt.timedelta(hours=min_hours):
                 return None
         if not self.path.exists():
             return None
@@ -3315,16 +3431,21 @@ class Store:
                 if "settings" in tables
                 else None
             )
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(invoices)")}
         except sqlite3.DatabaseError:
             raise ValueError(f"{name} is not an AP Coder database (or it is damaged)") from None
         finally:
             conn.close()
         if kinds:
             raise ValueError(f"{name} contains {' and '.join(sorted(kinds))}s, which AP Coder never makes")
-        if row is None or not {"invoices", "feedback"} <= tables:
+        # No schema_version row: a database older than the setting (the update's own safety copy of one, made
+        # before migrating) is version 1 and has its shape (invoices without export_batch, added in version 3);
+        # a newer one without the row is not one AP Coder made.
+        first = row is None and "export_batch" not in columns
+        if not {"invoices", "feedback"} <= tables or (row is None and not first):
             raise ValueError(f"{name} is not an AP Coder database")
         try:
-            version = int(row[0])
+            version = 1 if first else int(row[0])
         except (TypeError, ValueError):
             raise ValueError(f"{name} is not an AP Coder database") from None
         if version > SCHEMA_VERSION:
