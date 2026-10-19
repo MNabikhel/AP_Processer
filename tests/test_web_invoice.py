@@ -1008,6 +1008,30 @@ def test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank(brows
     assert values == [cc] * len(output["line_items"]) and "fill-lines" in page.posts and page.errors == []
 
 
+def test_in_a_browser_a_message_after_apply_to_all_lines_leaves_the_approve_bar_clear(browser, client, store):
+    """The toast "Cost center … set on 3 lines" sat in the corner over "Approve & teach": it now rises above the
+    sticky approve bar (at the window's foot, as the pilot tester sees it)."""
+    import json
+
+    invoice_id = clean_invoice(client, store)
+    output = store.get_invoice(invoice_id)["ai_output"]
+    for li in output["line_items"]:
+        li["predicted_cost_center"] = UNASSIGNED
+    with store._conn() as conn:
+        conn.execute("UPDATE invoices SET ai_output = ? WHERE id = ?", (json.dumps(output), invoice_id))
+    client.app.state.invoice_drafts.clear()
+    page = _open(browser, invoice_id)
+    page.set_viewport_size({"width": 1366, "height": 860})
+    page.click("[data-fill] > summary")
+    page.select_option("[data-fill-cc]", store.reference_data().cost_centers.codes[0])
+    page.click("[data-fill-go]")
+    page.wait_for_selector("#toasts .flash")
+    toast = page.locator("#toasts .flash").last.bounding_box()
+    bar = page.locator(".inv-actionbar").bounding_box()
+    assert toast["y"] + toast["height"] <= bar["y"], (toast, bar)  # wholly above the bar, so nothing in it is covered
+    assert page.errors == []
+
+
 def test_in_a_browser_not_in_the_vendor_list_is_said_only_once_a_vendor_master_is_imported(browser, store):
     """Without a vendor master, the vendors to pick from are the ones approved before: a new vendor is no mistake,
     so the screen doesn't ask to pick one or add it."""

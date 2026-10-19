@@ -43,6 +43,10 @@ export function toast(msg, ms = 6000) {
   const box = document.getElementById("toasts");
   if (!box) return;
   const el = messageElement(typeof msg === "string" ? { text: msg, tone: "info" } : msg);
+  // Above a bar fixed at the window's foot (the review screen's approve bar), never over its buttons.
+  const bar = document.querySelector(".inv-actionbar");
+  const top = bar ? bar.getBoundingClientRect().top : window.innerHeight;
+  box.style.bottom = `${Math.max(20, window.innerHeight - top + 12)}px`;
   box.appendChild(el);
   setTimeout(() => el.remove(), ms);
 }
