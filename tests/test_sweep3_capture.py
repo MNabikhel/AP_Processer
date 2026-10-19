@@ -118,3 +118,15 @@ def test_modalites_alone_labels_the_payment_terms(tmp_path):
     assert capture.fields["payment_terms"].value == "Net 30"
     delivery = _read(_pdf(tmp_path, _ACME + [(60, 150, "Modalités de livraison : 5 jours")], "livraison.pdf"))
     assert delivery.fields["payment_terms"].value is None
+
+
+def test_payable_on_receipt_in_a_note_is_read_as_the_terms(tmp_path):
+    """The Harbourview sample prints its terms only in a note ("... effective April 1, 2025. Payable on receipt."):
+    with no "Terms:" label, the due date fell back to 30 days and the invoice showed as overdue."""
+    lines = _NO_NUMBER + [(380, 110, "Invoice #: AC-1001"), (380, 122, "Invoice Date: Sep 14, 2026"),
+                          (60, 400, "HST charged at 14%, the Nova Scotia rate. Payable on receipt.")]  # fmt: skip
+    terms = _read(_pdf(tmp_path, lines)).fields["payment_terms"]
+    assert terms.value == "Due on receipt"
+    plain = _NO_NUMBER + [(380, 110, "Invoice #: AC-1001"), (380, 122, "Invoice Date: Sep 14, 2026"),
+                          (60, 400, "Goods remain our property until receipt of payment.")]  # fmt: skip
+    assert _read(_pdf(tmp_path, plain, "plain.pdf")).fields["payment_terms"].value is None

@@ -532,6 +532,11 @@ _TERMS = [
 ]  # fmt: skip
 
 
+_ON_RECEIPT = re.compile(
+    r"(?i)\b(?:payable|due)\s+(?:up)?on\s+receipt\b|payable\s+(?:à|a|dès|des)\s+(?:la\s+)?r[ée]ception"
+)
+
+
 def _terms(text: str) -> str | None:
     # OCR's full-width comma ("2%10，Net30") and a speck read as a middle dot ("Net·30")
     text = unicodedata.normalize("NFKC", text).replace("·", " ")
@@ -1617,6 +1622,14 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             terms = _value_reading("payment_terms", hit.line, hit.end, 0.95 * hit.strength, "label-inline")
             if terms and terms.value == "Due on receipt":
                 cands.setdefault("payment_terms", []).append(terms)
+    if not cands.get("payment_terms"):
+        # Terms printed only in a note ("... Payable on receipt."): weaker than a labelled value, so a person confirms.
+        for line in (ln for page in by_page.values() for ln in page):
+            m = _ON_RECEIPT.search(line.text)
+            terms = _value_reading("payment_terms", line, m.start(), 0.6, "label-inline") if m else None
+            if terms:
+                cands.setdefault("payment_terms", []).append(terms)
+                break
     if credit_printed_positive(layout):
         for field in AMOUNT_FIELDS:
             for r in cands.get(field, []):

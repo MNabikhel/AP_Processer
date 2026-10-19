@@ -70,6 +70,16 @@
 - **Test:** `tests/test_sweep3_capture.py::test_modalites_alone_labels_the_payment_terms`
 - **Lesson:** Don't list only the long form of a label when invoices print its short form too.
 
+#### B-189 · Payment terms printed only in a note were not read, so a "payable on receipt" invoice showed as overdue · low
+- **Where:** `ap_coder/capture/reader.py` (`read_fields`, payment terms)
+- **Symptom:** the Harbourview sample prints "HST charged at 14%, ... Payable on receipt." with no "Terms:" label: terms came out "not found", the due date fell back to 30 days and the invoice showed "Overdue by 50 days".
+- **Cause:** payment terms were only read after a terms label (or a due-date label); a terms phrase inside a sentence was never looked at.
+- **Reproduce:** read `samples/harbourview_NS_HST_HPS-2026-0347.pdf`: `payment_terms` missing. Found by the pilot tester's day-one walk-through.
+- **Reproduced:** yes (`payment_terms` status missing).
+- **Fix:** when no labelled terms are found, a "payable/due (up)on receipt" or "payable à réception" phrase anywhere on the page is read as "Due on receipt", at a lower strength than a labelled value.
+- **Test:** `tests/test_sweep3_capture.py::test_payable_on_receipt_in_a_note_is_read_as_the_terms`
+- **Lesson:** Don't look for a value only beside its label when documents also state it in a sentence.
+
 ### Not fixed
 - **N-XX** · capture · The page reader's transcription is read by the same rule reader as the page (`capture/__init__.py` `_page_reader`, `transcript.py`), so a rule-parsing mistake (B-183, B-184, B-185 here) appears in both readings and fusion counts it as two independent readers agreeing (verified). Making the transcript an independent reader needs its own parsing or a fusion rule that discounts agreement on the same rule path; a design change, not a bug fix.
 - **N-XX** · capture · A day/month order taken only from a real US supplier address (`read_fields`, B-183) still settles 03/04/2026 without the ambiguous mark, as docs/CAPTURE_DESIGN.md describes. Marking it ambiguous (or likely at best) would send every US invoice dated on day 1 to 12 to a person; a policy choice, left. B-183 removed the false addresses and the Canadian suppliers from that path.
