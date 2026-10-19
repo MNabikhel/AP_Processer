@@ -13,5 +13,15 @@ export, look around the reports). What they ran into, fixed with a failing test 
 - **Test:** `tests/test_sweep3_dayone.py::test_the_queue_never_calls_ready_an_invoice_whose_review_screen_blocks_approval`, `tests/test_sweep3_dayone.py::test_every_invoice_the_queue_calls_ready_can_be_approved_on_its_screen`
 - **Lesson:** Don't answer "can this be approved?" with a stored flag in one place and the approval rule in another: ask one shared function.
 
+#### B-198 · "Not in the vendor list" warned on every new vendor when no vendor master was imported · medium
+- **Where:** `ap_coder/web/static/js/invoice.js:402` (`showVendorMatch`)
+- **Symptom:** with no vendor master imported (the sample setup), once one invoice was approved every other new vendor showed an amber "Not in the vendor list: pick one, or add it as a new vendor." under the vendor field, asking the pilot tester to fix something that isn't wrong.
+- **Cause:** `store.vendor_choices()` falls back to the vendors approved before when there is no vendor master, so the list is not empty, and the script warned whenever the typed name was not in that list, whether or not a vendor master is enforced (`vendors.enforced`).
+- **Reproduce:** no vendor master; approve one invoice; open another and type a new vendor's name.
+- **Reproduced:** yes (`'gpp_maybe\nNot in the vendor list: pick one, or add it as a new vendor.'`)
+- **Fix:** the warning (and "Pick the vendor from the list") only with a vendor master; without one a new vendor gets no note, and a vendor approved before reads "Approved before" (not "In the vendor list").
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_not_in_the_vendor_list_is_said_only_once_a_vendor_master_is_imported`
+- **Lesson:** Don't warn against a fallback list as if it were the master list it stands in for.
+
 ### Improvements
 - Review screen, line grid: "Apply to all lines…" gives one GL account and / or cost center to every line that has none (lines already coded keep theirs; POST /review/<id>/fill-lines, like the other grid actions); when every past approval of the vendor used one cost center, it is pre-selected there as a suggestion (`invoice_view.usual_cost_center`; the coder itself is unchanged). `tests/test_sweep3_dayone.py::test_apply_to_all_lines_codes_only_the_lines_that_have_none`, `tests/test_sweep3_dayone.py::test_apply_to_all_lines_refuses_a_code_not_in_the_lists`, `tests/test_sweep3_dayone.py::test_a_vendors_one_usual_cost_center_is_offered_for_its_lines`, `tests/test_web_invoice.py::test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank`

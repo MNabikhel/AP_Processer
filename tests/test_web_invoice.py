@@ -1006,3 +1006,28 @@ def test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank(brows
     page.wait_for_function("() => !document.querySelector('.inv-actionbar').innerText.includes('Pick a cost center')")
     values = page.eval_on_selector_all('[data-grid="lines"] select[name="line_cc"]', "els => els.map((e) => e.value)")
     assert values == [cc] * len(output["line_items"]) and "fill-lines" in page.posts and page.errors == []
+
+
+def test_in_a_browser_not_in_the_vendor_list_is_said_only_once_a_vendor_master_is_imported(browser, store):
+    """Without a vendor master, the vendors to pick from are the ones approved before: a new vendor is no mistake,
+    so the screen doesn't ask to pick one or add it."""
+    first, second = store.list_invoices(REVIEW)[:2]
+    no_number = "[form=inv][name=gst_hst_registration_number]"  # a printed number names a vendor of the list
+    with_master = _open(browser, second["id"])
+    with_master.fill(no_number, "")
+    with_master.fill("#vendor-name", "Brand New Vendor Ltd")
+    assert "Not in the vendor list" in with_master.inner_text("[data-vendor-match]")
+
+    with store._conn() as conn:  # no vendor master: only the vendors approved before
+        conn.execute("UPDATE vendors SET in_master = 0 WHERE in_master = 1")
+    store.approve_invoice(first["id"], store.get_invoice(first["id"])["ai_output"], "Jordan Lee")
+    assert not store.has_vendor_master() and store.vendor_choices()
+    page = _open(browser, second["id"])
+    page.fill(no_number, "")
+    page.fill("#vendor-name", "Brand New Vendor Ltd")
+    page.wait_for_timeout(200)
+    shown = page.inner_text("[data-vendor-match]")
+    assert "Not in the vendor list" not in shown and "Pick the vendor" not in shown
+    page.fill("#vendor-name", first["vendor_name"])
+    assert "Approved before" in page.inner_text("[data-vendor-match]")
+    assert page.errors == []

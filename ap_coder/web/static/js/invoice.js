@@ -386,6 +386,7 @@ function showVendorMatch() {
   if (found) {
     const id = found.id ? ` · ${found.id}` : "";
     if (found.added) vendorLine("person_add", "warn", `Added here, not in JD Edwards yet${id}`);
+    else if (!vendors.enforced) vendorLine("history", "ok", "Approved before"); // no vendor master: a past vendor
     else vendorLine("verified", "ok", `In the vendor list${id}`);
     return;
   }
@@ -398,8 +399,10 @@ function showVendorMatch() {
     });
     return;
   }
-  if (!vendors.list.length) {
+  // Without a vendor master the list is only the vendors approved before: a new one is no mistake, so say nothing.
+  if (!vendors.list.length || !vendors.enforced) {
     vendorMatch.replaceChildren();
+    vendorMatch.className = "inv-vendor-match small";
     return;
   }
   vendorLine("gpp_maybe", "warn", typed ? "Not in the vendor list: pick one, or add it as a new vendor." : "Pick the vendor from the list.");
