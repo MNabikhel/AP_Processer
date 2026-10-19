@@ -3430,16 +3430,21 @@ class Store:
                 if "settings" in tables
                 else None
             )
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(invoices)")}
         except sqlite3.DatabaseError:
             raise ValueError(f"{name} is not an AP Coder database (or it is damaged)") from None
         finally:
             conn.close()
         if kinds:
             raise ValueError(f"{name} contains {' and '.join(sorted(kinds))}s, which AP Coder never makes")
-        if row is None or not {"invoices", "feedback"} <= tables:
+        # No schema_version row: a database older than the setting (the update's own safety copy of one, made
+        # before migrating) is version 1 and has its shape (invoices without export_batch, added in version 3);
+        # a newer one without the row is not one AP Coder made.
+        first = row is None and "export_batch" not in columns
+        if not {"invoices", "feedback"} <= tables or (row is None and not first):
             raise ValueError(f"{name} is not an AP Coder database")
         try:
-            version = int(row[0])
+            version = 1 if first else int(row[0])
         except (TypeError, ValueError):
             raise ValueError(f"{name} is not an AP Coder database") from None
         if version > SCHEMA_VERSION:

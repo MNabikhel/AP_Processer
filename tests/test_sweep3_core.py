@@ -210,3 +210,42 @@ def test_two_lessons_that_become_one_vendor_add_up(tmp_path):
 )  # fmt: skip
 def test_parse_amount_reads_currency_prefixes_debits_and_the_minus_sign(text, number):
     assert parse_amount(text) == number
+
+
+# --- B-164: the update's safety copy of a schema-1 database ------------------------------------------------------
+
+SCHEMA_1 = """
+CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE invoices (id INTEGER PRIMARY KEY AUTOINCREMENT, source_path TEXT NOT NULL, file_name TEXT NOT NULL,
+    file_sha256 TEXT, status TEXT NOT NULL, vendor_name TEXT, vendor_key TEXT, invoice_number TEXT, invoice_date TEXT,
+    currency TEXT, grand_total REAL, model_confidence REAL, adjusted_confidence REAL, requires_review INTEGER,
+    ai_output TEXT, final_output TEXT, validation TEXT, extraction_md TEXT, meta TEXT, edits TEXT, error TEXT,
+    created_at TEXT NOT NULL, reviewed_at TEXT, reviewer TEXT);
+CREATE TABLE feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, invoice_id INTEGER, line_number INTEGER,
+    vendor_key TEXT NOT NULL, vendor_name TEXT NOT NULL, description TEXT NOT NULL, amount REAL, suggested_gl TEXT,
+    final_gl TEXT NOT NULL, suggested_cc TEXT, final_cc TEXT, outcome TEXT NOT NULL, reviewer TEXT,
+    created_at TEXT NOT NULL);
+"""
+
+
+def test_the_safety_copy_of_a_schema_1_database_can_be_restored(tmp_path):
+    db = tmp_path / "ap_coder.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(SCHEMA_1)  # no schema_version row: older than the setting
+    conn.close()
+    old = tmp_path / "old.db"
+    old.write_bytes(db.read_bytes())
+    Store.check_backup(old)
+    store = Store(db)  # the update: its safety copy first
+    safety = [p for p in store.backup_dir().glob("*.db") if "before-update" in p.name]
+    assert safety
+    Store.check_backup(safety[0])
+
+
+def test_a_database_without_ap_coders_tables_is_still_refused(tmp_path):
+    other = tmp_path / "other.db"
+    conn = sqlite3.connect(other)
+    conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.close()
+    with pytest.raises(ValueError, match="not an AP Coder database"):
+        Store.check_backup(other)
