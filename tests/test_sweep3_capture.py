@@ -70,3 +70,16 @@ def test_a_canadian_supplier_billing_in_us_dollars_is_not_read_month_first(tmp_p
     capture = _read(_pdf(tmp_path, lines), today=dt.date(2026, 4, 10))
     date = capture.fields["invoice_date"]
     assert not (date.value == "2026-03-04" and date.status == VERIFIED), date
+
+
+def test_due_upon_receipt_does_not_take_the_delivery_date_below_it(tmp_path):
+    """ "Due Date: Upon Receipt" over "Delivery Date: Sep 20, 2026": the delivery date is not the due date; "Upon
+    Receipt" is the terms."""
+    lines = _NO_NUMBER + [(380, 110, "Invoice #: AC-1001"), (380, 122, "Invoice Date: Sep 14, 2026"),
+                          (380, 134, "Due Date: Upon Receipt"), (380, 146, "Delivery Date: Sep 20, 2026")]  # fmt: skip
+    capture = _read(_pdf(tmp_path, lines))
+    assert capture.fields["due_date"].value != "2026-09-20"
+    assert capture.fields["payment_terms"].value == "Due on receipt"
+    na = _NO_NUMBER + [(380, 110, "Invoice #: AC-1001"), (380, 122, "Invoice Date: Sep 14, 2026"),
+                       (380, 134, "Due Date: N/A"), (380, 146, "Delivery Date: Sep 20, 2026")]  # fmt: skip
+    assert _read(_pdf(tmp_path, na, "na.pdf")).fields["due_date"].value != "2026-09-20"

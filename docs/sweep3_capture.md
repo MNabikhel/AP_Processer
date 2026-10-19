@@ -19,3 +19,13 @@
 - **Fix:** A state and ZIP code count as an address only after a city, a comma or at the start of a line, never after a label word (Order, Vendor, Store, Job, Ticket...): `us_address()`, used by the reader and `provinces()`. Month first is never forced on a supplier with a Canadian postal code or a valid GST/HST number.
 - **Test:** `tests/test_sweep3_capture.py::test_an_order_id_is_not_a_us_address_and_a_calgary_suppliers_date_is_not_read_month_first`, `tests/test_sweep3_capture.py::test_a_label_with_an_id_is_not_a_us_address`, `tests/test_sweep3_capture.py::test_a_canadian_supplier_billing_in_us_dollars_is_not_read_month_first`
 - **Lesson:** Don't let a two-letter code and five digits stand for an address: check the shape around it, and the evidence against it.
+
+#### B-184 · "Due Date: Upon Receipt" takes the delivery date printed under it · medium
+- **Where:** `ap_coder/capture/reader.py:635` (`_labelled`)
+- **Symptom:** An invoice printing "Due Date: Upon Receipt" (or "Due Date: N/A") over "Delivery Date: Sep 20, 2026" has its due date verified as 2026-09-20; its terms are not read.
+- **Cause:** When the label's own line held no date, the reader looked right of it and then below it, and took the first date it found there even when that date came after a label of its own ("Delivery Date:"). The page reader's transcription, read by the same rules, agreed. "Upon Receipt" after a due-date label was never read as the terms.
+- **Reproduce:** the Acme invoice with "Invoice Date: Sep 14, 2026", "Due Date: Upon Receipt", "Delivery Date: Sep 20, 2026" on three lines, `analyze(..., page_text=[...])`.
+- **Reproduced:** yes (`{'due_date': ('2026-09-20', 'verified', 0.99), 'payment_terms': (None, 'missing', 0.0)}`)
+- **Fix:** A value right of or below a label is not taken when it comes after another label on its own line (`_after_another_label`: a label shape, a colon, or another field's label before it). A due-date label followed by "Upon Receipt" gives the payment terms "Due on receipt" when no terms label was read.
+- **Test:** `tests/test_sweep3_capture.py::test_due_upon_receipt_does_not_take_the_delivery_date_below_it`
+- **Lesson:** Don't take a value from a neighbouring line without checking it isn't already another label's value.

@@ -621,6 +621,17 @@ def _own_label(line: Line, field: str) -> bool:
     return any(h.field == field for h in _label_hits(line))
 
 
+def _after_another_label(line: Line, got: Reading) -> bool:
+    """``got``, read from ``line`` for a label on another line, comes after a label of its own on ``line``
+    ("Delivery Date: Sep 20, 2026"): it is that label's value."""
+    at = line.text.find(str(got.raw))
+    before = plain(line.text[: max(at, 0)]).strip()
+    if at <= 0 or not before:
+        return False
+    return bool(_LABEL_SHAPE.search(before) or before.endswith(":") or any(
+        h.field != got.field and h.end <= at for h in _label_hits(line)))  # fmt: skip
+
+
 def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
     """For each label: the value after it on the same line, else just right of it, else just below it
     (header grids print a row of labels over a row of values)."""
@@ -646,6 +657,9 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
             if _under_another_label(lines, other, line):
                 break  # a header grid's value, under its own label ("Order No." over "SO-28797"): look below
             got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
+            if got and _after_another_label(other, got):
+                got = None
+                break  # "Delivery Date: Sep 20, 2026": that label's value, not this one's
             if got:
                 got.score *= 1.0 - min(other.box.x0 - line.box.x1, 0.4) * 0.5
                 break
@@ -655,6 +669,9 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
                 if _own_label(other, field):
                     break
                 got = _value_reading(field, other, 0, 0.85 * hit.strength, "label-below")
+                if got and _after_another_label(other, got):
+                    got = None
+                    break  # "Due Date: Upon Receipt" over "Delivery Date: Sep 20, 2026": not the due date
                 if got:
                     break
                 if _label_hits(other) or _LABEL_SHAPE.search(plain(other.text).strip()):
@@ -1586,6 +1603,12 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
             readings += got
         cands[field] = readings
+    if not cands.get("payment_terms"):
+        # "Due Date: Upon Receipt" (no date): the terms, printed where the due date goes.
+        for hit in hits.get("due_date", []):
+            terms = _value_reading("payment_terms", hit.line, hit.end, 0.95 * hit.strength, "label-inline")
+            if terms and terms.value == "Due on receipt":
+                cands.setdefault("payment_terms", []).append(terms)
     if credit_printed_positive(layout):
         for field in AMOUNT_FIELDS:
             for r in cands.get(field, []):
