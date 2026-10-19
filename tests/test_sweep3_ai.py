@@ -3,10 +3,11 @@ unlisted charges and the files a folder of invoices holds."""
 
 from dataclasses import replace
 
-from ap_coder.ai.offline_coder import code_from_capture
+from ap_coder.ai.offline_coder import bank_details, code_from_capture
 from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
 from ap_coder.coding.validation import validate_coding
+from ap_coder.coding.vendors import same_bank_account
 from ap_coder.core import store as store_mod
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
@@ -56,3 +57,22 @@ def test_a_vendor_imported_first_keeps_its_learning_past_the_memory_read_cap(tmp
     result = _offline_pipeline(reference, store).process(SAMPLES / f"{SAMPLE_STEM}.md", save=False)
     coded = {li["description"]: li["predicted_gl_code"] for li in result.output["line_items"]}
     assert {d: coded[d] for d in lines} == lines
+
+
+def test_a_banking_line_that_quotes_the_invoice_number_keeps_only_the_account():
+    # Every invoice quotes its own number on the banking line: kept, it made every later invoice a changed account.
+    first = bank_details("EFT payments: Transit 12345 Inst 001 Account 1234567, quoting invoice NW-2026-0912")
+    later = bank_details("EFT payments: Transit 12345 Inst 001 Account 1234567, quoting invoice NW-2026-0987")
+    assert first == later == "EFT payments: Transit 12345 Inst 001 Account 1234567"
+    assert same_bank_account(first, later)
+    assert bank_details("Wire transfer to RBC 003-00012-1234567, ref. invoice 88231") == (
+        "Wire transfer to RBC 003-00012-1234567"
+    )
+    assert bank_details("EFT: Transit 12345 Inst 001 Account 1234567. Questions? Call 416-555-1212") == (
+        "EFT: Transit 12345 Inst 001 Account 1234567"
+    )
+    # A word about the invoice before the account's digits is not where the details end.
+    assert bank_details("EFT (quote the invoice number): Transit 12345 Inst 001 Account 1234567") == (
+        "EFT (quote the invoice number): Transit 12345 Inst 001 Account 1234567"
+    )
+    assert bank_details("IBAN GB29 NWBK 6016 1331 9268 19, invoice 4471") == "IBAN GB29 NWBK 6016 1331 9268 19"
