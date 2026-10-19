@@ -138,6 +138,16 @@ def mask_account(value: Any) -> str:
     return f"…{digits[-4:]}" if digits else "(none)"
 
 
+def bank_branch(value: Any) -> str:
+    """The bank details' other numbers, as printed ("00012 003": transit, institution or the like), never the
+    account's digits: the numbers outside the one after "Account", else every number but the last. "" when none."""
+    text = str(value or "")
+    labelled = _ACCOUNT_LABEL.search(text)
+    if labelled:
+        return " ".join(re.findall(r"\d+", f"{text[: labelled.start(1)]} {text[labelled.end(1) :]}"))
+    return " ".join(re.findall(r"\d+", text)[:-1])
+
+
 def _date(value: Any) -> dt.date | None:
     try:
         return dt.date.fromisoformat(str(value)[:10])

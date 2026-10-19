@@ -1,10 +1,11 @@
 """Who is using the dashboard, when it is shared on the office network (W2-02, docs/decisions.md D-34).
 
 On this computer (the default, 127.0.0.1) the person is the one logged in here, as always: ``core.reviewer()`` and
-``core.login()``. When AP Coder listens on the network (``AP_DASHBOARD_ADDRESS=0.0.0.0``), a browser on another
-computer gives its name once, on the "Who are you?" page (``pages/who.py``). The name is kept in a cookie the server
-signs with a secret made when it starts, so it cannot be made up or changed in the browser; after a restart each
-colleague gives their name again. For each request, ``Identity`` (ASGI middleware) puts the person in ``PERSON``:
+``core.login()`` (also when its browser opens AP Coder at this computer's own network address: ``from_this_computer``).
+When AP Coder listens on the network (``AP_DASHBOARD_ADDRESS=0.0.0.0``), a browser on another computer gives its
+name once, on the "Who are you?" page (``pages/who.py``). The name is kept in a cookie the server signs with a secret
+made when it starts, so it cannot be made up or changed in the browser; after a restart each colleague gives their
+name again. For each request, ``Identity`` (ASGI middleware) puts the person in ``PERSON``:
 
 * ``core.reviewer()`` is then their name, and ``core.login()`` ``network <their address>``, so a second approval
   from the same computer as the first is refused, whatever name it gives;
@@ -94,12 +95,29 @@ def name_from_cookie(secret: bytes, value: str | None) -> str | None:
     return clean_name(name) or None
 
 
-def is_this_computer(host: str) -> bool:
-    """Whether a request came from this computer's own browser (a loopback address)."""
+def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """An address as an IP, an IPv4-mapped IPv6 one (``::ffff:10.0.0.5``) as its IPv4 address; None for a name."""
     try:
-        return ipaddress.ip_address(host).is_loopback
+        ip = ipaddress.ip_address(str(host or "").strip().strip("[]"))
     except ValueError:
+        return None
+    return getattr(ip, "ipv4_mapped", None) or ip
+
+
+def is_this_computer(host: str, server: str = "") -> bool:
+    """Whether a request came from this computer's own browser: a loopback address (also ``::ffff:127.0.0.1``), or,
+    given ``server`` (the address the connection arrived on), that same address: the browser of the computer running
+    AP Coder opened at its own network address (``http://192.168.1.20:8501``) comes from it, not from a colleague."""
+    ip = _ip(host)
+    if ip is None:
         return host == "localhost"
+    return ip.is_loopback or (bool(server) and ip == _ip(server))
+
+
+def from_this_computer(scope: dict[str, Any]) -> bool:
+    """``is_this_computer`` for an ASGI request: its client against the address it arrived on (``scope["server"]``)."""
+    client = (scope.get("client") or ("", 0))[0] or ""
+    return is_this_computer(client, (scope.get("server") or ("", 0))[0] or "")
 
 
 def _cookies(headers: list[tuple[bytes, bytes]]) -> dict[str, str]:
@@ -123,7 +141,7 @@ class Identity:
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         client = (scope.get("client") or ("", 0))[0] or ""
-        if scope["type"] != "http" or not self.network or is_this_computer(client):
+        if scope["type"] != "http" or not self.network or from_this_computer(scope):
             await self.app(scope, receive, send)
             return
         name = name_from_cookie(self.secret, _cookies(scope.get("headers") or []).get(COOKIE))

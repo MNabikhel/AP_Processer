@@ -68,7 +68,8 @@ NAV_PARAMS = ("show", "q", "sort")  # the queue's view, carried along so Previou
 # --- Drafts: edits not approved yet --------------------------------------------------------------------------------
 # Kept in memory for the dashboard's lifetime, per invoice and per person: this computer's in
 # ``app.state.invoice_drafts``, each colleague's on the office network (web/identity.py) in
-# ``app.state.person_drafts[<their name>]``, so one person's edits never open on another's screen.
+# ``app.state.person_drafts[(<their name, case aside>, <their address>)]``, so one person's edits never open on
+# another's screen, even one who gives the same name on another computer; a new name on /who takes them along.
 
 _drafts_lock = threading.Lock()
 
@@ -90,7 +91,22 @@ def _drafts(request: Request) -> dict[int, dict[str, Any]]:
     if found is None:
         return request.app.state.invoice_drafts
     with _drafts_lock:
-        return request.app.state.person_drafts.setdefault(found.name.casefold(), {})
+        return request.app.state.person_drafts.setdefault(_draft_key(found), {})
+
+
+def _draft_key(found: identity.Person) -> tuple[str, str]:
+    return found.name.casefold(), found.address
+
+
+def rename_drafts(request: Request, found: identity.Person, name: str) -> None:
+    """A colleague gave a new name on /who: their edits go with them (else they would be no one's, and bulk approval
+    would leave those invoices alone until a restart)."""
+    _all_drafts(request)
+    everyone = request.app.state.person_drafts
+    with _drafts_lock:
+        kept = everyone.pop(_draft_key(found), None)
+        if kept:
+            everyone.setdefault(_draft_key(identity.Person(name, found.address)), {}).update(kept)
 
 
 def unsaved_edits(request: Request) -> set[int]:
