@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.web import identity
 from ap_coder.web.core import done, local_url, refuse, render, reviewer
+from ap_coder.web.pages.invoice import rename_drafts
 
 router = APIRouter()
 
@@ -31,6 +32,9 @@ def who_save(request: Request, name: str = Form(""), next: str = Form("/review")
     cleaned = identity.clean_name(name)
     if not cleaned:
         return refuse("Type your name: it goes on every invoice you approve.")
+    found = identity.person()
+    if found is not None and found.name != cleaned:
+        rename_drafts(request, found, cleaned)  # their unsaved edits on the review screen stay theirs
     answer = done(request, next or "/review", f"Thanks, {cleaned}. Your approvals are now in your name.")
     answer.set_cookie(identity.COOKIE, identity.cookie_value(request.app.state.identity_secret, cleaned),
                       max_age=COOKIE_DAYS * 86400, httponly=True, samesite="strict", path="/")  # fmt: skip

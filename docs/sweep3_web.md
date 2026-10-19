@@ -32,3 +32,19 @@
   account number" when those are alike too.
 - **Test:** `tests/test_web_masterdata.py::test_a_new_bank_account_ending_in_the_same_four_digits_shows_as_changed`
 - **Lesson:** Don't group records by their masked display value: compare what they are, then mask for showing.
+
+#### B-192 · Colleagues' unsaved edits were kept by name only · low-medium
+- **Where:** `ap_coder/web/pages/invoice.py:93` (`_drafts`)
+- **Symptom:** "Mike" on one computer and "mike" on another see each other's unsaved edits on the review screen; a
+  colleague who gives a new name on /who loses the edits made under the old one, Start over can't drop them, and bulk
+  approval skips that invoice ("it has edits open on its review screen") until AP Coder restarts.
+- **Cause:** `person_drafts` was keyed by `name.casefold()` alone, and nothing moved the drafts when the cookie's name changed.
+- **Reproduce:** colleagues at 10.0.0.5 "Mike" and 10.0.0.9 "mike"; A posts `/review/{id}/check` with a PO; B opens
+  `/review/{id}`. Then "Ana" edits, renames to "Ana Silva" on /who, presses Start over, and this computer bulk-approves.
+- **Reproduced:** yes (`Mike B's screen shows Mike A's unsaved edit: True`, `Ana Silva sees her edit: False`,
+  `after Start over, draft still held: True`, bulk approval skipped it)
+- **Fix:** drafts keyed by (name, case aside, and the colleague's address); `who_save` moves the asker's drafts to
+  their new name (`invoice.rename_drafts()`).
+- **Test:** `tests/test_network_identity.py::test_two_colleagues_who_give_one_name_on_two_computers_keep_their_own_edits`,
+  `tests/test_network_identity.py::test_a_colleague_who_changes_their_name_keeps_their_edits_and_can_start_over`
+- **Lesson:** Don't key a person's state by the name they typed alone: a name is neither unique nor fixed.
