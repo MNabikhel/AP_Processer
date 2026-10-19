@@ -138,3 +138,13 @@ def test_a_bug_in_the_touchless_decision_does_not_stop_the_batch(tmp_path, refer
     results = _offline_pipeline(reference, store).process_many(files)
     assert len(results) == 2 and all(r.invoice_id and r.output for r in results)
     assert [store.get_invoice(r.invoice_id)["status"] for r in results] == ["review", "review"]  # a person looks
+
+
+def test_the_reviewer_saying_confident_false_as_text_is_not_confident():
+    # In json_object or text mode a model may write "false" as a string: a non-empty string is truthy.
+    from ap_coder.ai import verifier
+
+    answer = {"fields": [{"field": "vendor_name", "agree": True}], "lines": [{"line_number": 1, "agree": True}]}
+    assert verifier._parse({**answer, "confident": True}, ["vendor_name"], [1])[2] is True
+    for said in ("false", "no", "False", 0, None):
+        assert verifier._parse({**answer, "confident": said}, ["vendor_name"], [1])[2] is False, said

@@ -244,7 +244,8 @@ def _parse(data: dict[str, Any], fields: list[str], lines: list[int]) -> tuple[d
             continue
         if n in lines:
             answered_l[n] = item
-    confident = bool(data.get("confident")) and set(answered_f) >= set(fields) and set(answered_l) >= set(lines)
+    # Only a true that is a boolean (as for "agree"): in json_object or text mode "false" can come back as a string.
+    confident = data.get("confident") is True and set(answered_f) >= set(fields) and set(answered_l) >= set(lines)
     disputed = {f: {"on_page": (str(a.get("on_page")) if a.get("on_page") not in (None, "") else ""),
                     "reason": str(a.get("reason") or "")[:300]}
                 for f, a in answered_f.items() if a.get("agree") is False}  # fmt: skip
