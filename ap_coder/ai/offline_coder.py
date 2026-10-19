@@ -259,6 +259,12 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
              else float(li.amount) / li.quantity if li.quantity else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)
         ]  # fmt: skip
+    # A credit note that prints its lines without a sign but its subtotal negative: the lines are the credit (their
+    # sum is minus the subtotal), not lines owed with a charge twice their size taking them back. The quantity
+    # keeps its sign and the unit price carries the credit's, as the reader codes a credit's line.
+    listed = round(sum(r[3] for r in readings_data), 2)
+    if readings and subtotal < 0 < listed and abs(listed + subtotal) < 0.01:
+        readings_data = [(d, q, -u, -a) for d, q, u, a in readings_data]
     # Lines that fall short of the subtotal (plus freight read beside it): a charge printed outside the table.
     short = round(subtotal + freight - sum(r[3] for r in readings_data), 2)
     if (readings or freight) and abs(short) >= 0.01:
