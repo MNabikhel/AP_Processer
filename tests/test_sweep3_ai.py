@@ -83,6 +83,27 @@ def test_a_banking_line_that_quotes_the_invoice_number_keeps_only_the_account():
     assert bank_details("IBAN GB29 NWBK 6016 1331 9268 19, invoice 4471") == "IBAN GB29 NWBK 6016 1331 9268 19"
 
 
+def test_bank_details_stored_before_they_were_cut_at_the_account_are_the_same_account(
+    tmp_path, ground_truth, reference
+):
+    # Invoices approved before B-176 stored the whole line ("... Account 1234567. Questions? Call 416-555-1212"): the
+    # next invoice, read with the details cut after the account, was a changed bank account (no bulk, no touchless).
+    for stored in ["EFT: Transit 00012, Institution 003, Account 1234567. Questions? Call 416-555-1212",
+                   "Wire transfer to RBC 003-00012-1234567, ref. invoice 88231",
+                   "Royal Bank, Transit 00012 Institution 003 Account 1234567 Ref 88231; "
+                   "IBAN GB29 NWBK 6016 1331 9268 19, invoice 4471"]:  # fmt: skip
+        assert same_bank_account(bank_details(stored.replace("; ", "\n")), stored), stored
+    assert not same_bank_account("EFT: Transit 00012, Institution 003, Account 7654321", (
+        "EFT: Transit 00012, Institution 003, Account 1234567. Questions? Call 416-555-1212"))  # fmt: skip
+    from tests.test_vendors import _approved, _codes, _variant
+
+    store = Store(tmp_path / "ap.db")
+    old = "EFT: Transit 00012, Institution 003, Account 1234567. Questions? Call 416-555-1212"
+    _approved(store, {**_variant(ground_truth, "B-1", date="2026-06-01"), "remit_bank_account": old}, tmp_path, "a.pdf")
+    codes, _ = _codes(store, {**_variant(ground_truth, "B-2"), "remit_bank_account": bank_details(old)}, reference)
+    assert "VENDOR_BANK_CHANGED" not in codes
+
+
 def test_a_self_test_mark_whose_process_id_another_program_now_has_is_not_under_way(tmp_path):
     # A dashboard killed during OvisOCR2's self-test left its mark; its process id now belongs to another program.
     store = Store(tmp_path / "ap.db")

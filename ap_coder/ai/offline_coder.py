@@ -23,6 +23,7 @@ from ..capture.reader import us_address
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout
 from ..capture.workflow import local_evidence, supplier_for
 from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
+from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
@@ -179,18 +180,6 @@ _BANK_WORDS = re.compile(
     r"(?i)\b(?:transit|institution|inst\b|iban|swift|bic|routing|aba|bank(?!\s+(?:st|street|ave|avenue|rd|road|"
     r"blvd)\b)|banque|account|acct|compte|virement|eft|wire|direct)"
 )
-_MONEY = re.compile(r"\d[\d,. ]*[.,]\d{2}(?!\d)")
-# Where the banking details end: a number after its own label (an IBAN or SWIFT code after theirs), and the words that
-# start something else on the same line ("..., quoting invoice NW-2026-0912", "ref. 88231", "Call 416-555-1212").
-_BANK_NUMBER = re.compile(
-    r"(?i)\biban\b\W{0,3}[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b"
-    r"|\b(?:swift|bic)\b\W{0,3}[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b"
-    r"|\b(?:transit|institution|inst|branch|account|acct|a/c|compte|routing|aba)\b\D{0,15}?\d(?:[\d -]*\d)?"
-)
-_BANK_END = re.compile(
-    r"(?i)\b(?:quot(?:e|ing)|invoices?|inv|facture|ref|reference|r[ée]f[ée]rence|date|order|po|questions?|call|"
-    r"phone|tel|t[ée]l[ée]phone|fax|e-?mail|courriel)\b"
-)
 
 
 def bank_details(text: str) -> str:
@@ -199,27 +188,16 @@ def bank_details(text: str) -> str:
     next is found (``vendors.VENDOR_BANK_CHANGED``, a payment-fraud signal that always needs a person): lines that
     name banking details with at least 5 digits on them, and the account lines under a "Banking details" heading."""
 
-    def digits(s: str) -> int:
-        return sum(c.isdigit() for c in _MONEY.sub(" ", s))
-
-    def account_part(s: str) -> str:
-        # Up to the first word of something else once the account's digits are in (the invoice number every
-        # invoice quotes would make each one a changed account), then up to the last labelled number.
-        end = next((m.start() for m in _BANK_END.finditer(s) if digits(s[: m.start()]) >= 5), len(s))
-        s = s[:end]
-        numbers = list(_BANK_NUMBER.finditer(s))
-        return (s[: numbers[-1].end()] if numbers else s).rstrip(" ,;:.(-–")
-
     found: list[str] = []
     lines = [ln.strip() for ln in (text or "").splitlines()]
     for i, line in enumerate(lines):
         if not _BANKING.search(line):
             continue
-        heading = digits(line) < 5 and (line.endswith(":") or len(line.split()) <= 4)  # "Banking details:"
+        heading = bank_digit_count(line) < 5 and (line.endswith(":") or len(line.split()) <= 4)  # "Banking details:"
         for row in [line] if not heading else lines[i + 1 : i + 4]:  # under a heading: the account lines
             m = _BANK_WORDS.search(row)
-            details = account_part(row[m.start() :]) if m else ""
-            if digits(details) >= 5 and details not in found:
+            details = cut_bank_details(row[m.start() :]) if m else ""
+            if bank_digit_count(details) >= 5 and details not in found:
                 found.append(details)
     return "; ".join(found)[:200]
 

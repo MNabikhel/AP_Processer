@@ -124,9 +124,47 @@ def bank_digits(value: Any) -> tuple[str, tuple[str, ...]]:
     return "".join(runs), tuple(sorted(r.lstrip("0") or "0" for r in runs))
 
 
-def same_bank_account(a: Any, b: Any) -> bool:
+_MONEY = re.compile(r"\d[\d,. ]*[.,]\d{2}(?!\d)")
+# Where the banking details end: a number after its own label (an IBAN or SWIFT code after theirs), and the words that
+# start something else on the same line ("..., quoting invoice NW-2026-0912", "ref. 88231", "Call 416-555-1212").
+_BANK_NUMBER = re.compile(
+    r"(?i)\biban\b\W{0,3}[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b"
+    r"|\b(?:swift|bic)\b\W{0,3}[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b"
+    r"|\b(?:transit|institution|inst|branch|account|acct|a/c|compte|routing|aba)\b\D{0,15}?\d(?:[\d -]*\d)?"
+)
+_BANK_END = re.compile(
+    r"(?i)\b(?:quot(?:e|ing)|invoices?|inv|facture|ref|reference|r[ée]f[ée]rence|date|order|po|questions?|call|"
+    r"phone|tel|t[ée]l[ée]phone|fax|e-?mail|courriel)\b"
+)
+
+
+def bank_digit_count(text: str) -> int:
+    """How many digits bank details hold, amounts of money not counted."""
+    return sum(c.isdigit() for c in _MONEY.sub(" ", text))
+
+
+def cut_bank_details(details: str) -> str:
+    """Bank details (from their first banking word) up to the end of the account: up to the first word of something
+    else once the account's digits are in (the invoice number every invoice quotes would make each one a changed
+    account), then up to the last labelled number."""
+    end = next((m.start() for m in _BANK_END.finditer(details) if bank_digit_count(details[: m.start()]) >= 5), None)
+    details = details[:end]
+    numbers = list(_BANK_NUMBER.finditer(details))
+    return (details[: numbers[-1].end()] if numbers else details).rstrip(" ,;:.(-–")
+
+
+def _same_digits(a: Any, b: Any) -> bool:
     (digits_a, runs_a), (digits_b, runs_b) = bank_digits(a), bank_digits(b)
     return bool(digits_a) and (digits_a == digits_b or runs_a == runs_b)
+
+
+def same_bank_account(a: Any, b: Any) -> bool:
+    """One account however written. Invoices approved before B-176 stored the whole banking line ("... Account
+    1234567. Questions? Call 416-555-1212"): both sides are also compared cut at the account, as they are read now."""
+    if _same_digits(a, b):
+        return True
+    cut_a, cut_b = ("; ".join(cut_bank_details(part) for part in str(v or "").split("; ")) for v in (a, b))
+    return _same_digits(cut_a, cut_b)
 
 
 def mask_account(value: Any) -> str:

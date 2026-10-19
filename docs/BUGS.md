@@ -1482,13 +1482,13 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 | Store and config | 10 | 9 (B-158 to B-166) | 1 (N-77) |
 | Tax and coding rules | 8 | 7 (B-132 to B-138) | 1 (N-78) |
 | Exports, ERP and reports | 12 | 9 (B-150 to B-157, B-208) | 3 (N-79 to N-81) |
-| AI and readers | 10 | 8 (B-174 to B-181) | 2 (N-82 to N-83) |
+| AI and readers | 11 | 9 (B-174 to B-181, B-209) | 2 (N-82 to N-83) |
 | Document capture | 12 | 9 (B-182 to B-189, B-205) | 3 (N-84 to N-86) |
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
 | Intake, email and command line | 14 | 12 (B-140 to B-149, B-206 to B-207) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
 | Day-one walk-through | 8 | 8 (B-197 to B-204) | 0 |
-| **Total** | **91** | **74** | **17** |
+| **Total** | **92** | **75** | **17** |
 
 ### Store and config
 
@@ -1827,6 +1827,16 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 - **Fix:** only a boolean `true` counts, as for each item's "agree".
 - **Test:** `tests/test_sweep3_ai.py::test_the_reviewer_saying_confident_false_as_text_is_not_confident`
 - **Lesson:** Don't read a model's yes/no with `bool()`: accept only a real boolean.
+
+#### B-209 · Bank details approved before B-176 made the vendor's next invoice a changed bank account · medium-low
+- **Where:** `ap_coder/coding/vendors.py:161` (`same_bank_account`), `ap_coder/coding/vendors.py:146` (`cut_bank_details`)
+- **Symptom:** a vendor whose banking line runs on past the account ("... Account 1234567. Questions? Call 416-555-1212", "..., ref. invoice 88231") got VENDOR_BANK_CHANGED on its first invoice read after B-176, which holds it out of bulk approval and touchless.
+- **Cause:** B-176 cut the details read from new invoices after the account, but the approved invoices compared with kept the whole line they were stored with, so their digits (the phone or reference number included) differed.
+- **Reproduce:** review33/s/t7.py, then `same_bank_account(bank_details(old), old)` for the stored lines above.
+- **Reproduced:** yes (`False 'EFT: Transit 00012, Institution 003, Account 1234567' | stored: '... Account 1234567. Questions? Call 416-555-1212'`, the same for the wire and "Ref 88231" lines)
+- **Fix:** the cutting moved from `offline_coder.bank_details` to `vendors.cut_bank_details` (with `bank_digit_count`); `same_bank_account` also compares both sides cut at the account (each of the "; "-joined details), so a stored long line matches the same account read now; another account number still differs.
+- **Test:** `tests/test_sweep3_ai.py::test_bank_details_stored_before_they_were_cut_at_the_account_are_the_same_account`
+- **Lesson:** Don't change how a value is read without comparing the values already stored the same way.
 
 ### Document capture
 
