@@ -49,7 +49,8 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "po_number": ("ponumber", "po", "pono", "ponum", "purchaseorder", "purchaseordernumber", "ordernumber",
                   "order", "pobr", "bondecommande"),
     "vendor_name": ("vendorname", "vendor", "supplier", "suppliername", "fournisseur"),
-    "line_number": ("linenumber", "line", "lineno", "linenum", "poline", "item", "itemnumber"),
+    # Not "Item" or "Item Number": in most exports that is the part number (SKU), not the PO line.
+    "line_number": ("linenumber", "line", "lineno", "linenum", "poline"),
     "description": ("description", "desc", "itemdescription", "linedescription", "product", "service"),
     "quantity": ("quantity", "qty", "orderedqty", "qtyordered", "quantityordered", "ordered"),
     "unit_price": ("unitprice", "price", "unitcost", "rate", "prixunitaire"),
