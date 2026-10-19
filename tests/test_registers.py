@@ -33,6 +33,16 @@ def test_register_columns_and_rows():
     assert skipped == 1 and rows[0]["total"] == 18017.85
 
 
+def test_the_suppliers_invoice_number_is_chosen_over_the_erps_document_number():
+    """An ERP register lists its own document number next to the supplier's invoice number: the duplicate check
+    needs the supplier's."""
+    for header in ("Supplier Invoice", "Vendor Invoice", "Supplier Invoice Number", "Vendor Invoice No"):
+        for document in ("Document Number", "Doc No", "Document"):
+            cols = registers.map_columns(["Supplier Name", document, header, "Date", "Amount"])
+            assert cols["invoice_number"] == header, (document, header)
+    assert registers.map_columns(["Vendor", "Document Number", "Amount"])["invoice_number"] == "Document Number"
+
+
 def test_invoice_already_in_the_erp_is_an_error(tmp_path):
     store = Store(tmp_path / "a.db")
     load_sample_setup(store)
