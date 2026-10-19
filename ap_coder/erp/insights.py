@@ -53,12 +53,41 @@ class Assumptions:
         store.set_setting("insights_assumptions", json.dumps(asdict(self)), actor=actor)
 
 
-def _corrected(event: dict[str, Any]) -> bool:
-    """Whether an approval changed what was proposed. Filling in what was left blank (a cost center the AI could
-    not pick, an UNASSIGNED account) completes the coding: it is in the audit trail, but it is not a correction."""
+AS_CODED = "Approved as coded"  # the one label of the figure, on Insights, Learning and Activity (D-39)
+
+
+def corrected(event: dict[str, Any]) -> bool:
+    """Whether an approval (its ``approved`` event) changed what the coder proposed: a value it gave changed, a line
+    added or removed. Filling in what it left blank (a cost center it could not pick, an UNASSIGNED account, an empty
+    field) completes the coding: it is in the audit trail, but it is not a change. The one definition of "approved as
+    coded" (D-39)."""
     changes = (event.get("detail") or {}).get("changes") or []
-    return any(str(c.get("before") or "").strip().upper() not in ("", "UNASSIGNED", "NONE") for c in changes
-               if isinstance(c, dict))  # fmt: skip
+    return any(
+        str(c.get("what") or "").endswith(" added")
+        or str(c.get("before") or "").strip().upper() not in ("", "UNASSIGNED", "NONE")
+        for c in changes
+        if isinstance(c, dict)
+    )
+
+
+_corrected = corrected  # the name Insights' own tests use
+
+
+def latest_approvals(store: Store, rows: dict[int, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """The latest approval of each invoice still approved (or waiting for its second approval): one sent back and
+    approved again counts once. ``rows``: the invoices by id, when already read."""
+    rows = rows if rows is not None else {r["id"]: r for r in store.list_invoices()}
+    latest: dict[int, dict[str, Any]] = {}
+    for e in sorted(store.events(actions=["approved"], limit=100_000), key=lambda e: (e["created_at"], e["id"])):
+        latest[e["invoice_id"]] = e
+    return [e for i, e in latest.items() if i in rows and rows[i]["status"] in (APPROVED, PENDING)]
+
+
+def approved_as_coded(store: Store) -> tuple[int, int]:
+    """(approved as coded, approved): the invoices of ``latest_approvals`` whose approval changed nothing the coder
+    proposed (``corrected``). Insights and Learning show this pair."""
+    approvals = latest_approvals(store)
+    return sum(1 for e in approvals if not corrected(e)), len(approvals)
 
 
 def _issues(validation: Any) -> list[dict[str, Any]]:
@@ -90,13 +119,9 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     metas = {r["id"]: r["meta"] or {} for r in light}
     processed = [r for r in rows.values() if r["status"] != FAILED]
     failed = [r for r in rows.values() if r["status"] == FAILED]
-    # The latest approval of each invoice that is still approved: one sent back and approved again counts once.
-    latest: dict[int, dict[str, Any]] = {}
-    for e in sorted(store.events(actions=["approved"], limit=100_000), key=lambda e: (e["created_at"], e["id"])):
-        latest[e["invoice_id"]] = e
-    approvals = [e for i, e in latest.items() if i in rows and rows[i]["status"] in (APPROVED, PENDING)]
-    clean = [e for e in approvals if not _corrected(e)]
-    changed = [e for e in approvals if _corrected(e)]
+    approvals = latest_approvals(store, rows)  # as approved_as_coded counts them (Learning shows the same pair)
+    clean = [e for e in approvals if not corrected(e)]
+    changed = [e for e in approvals if corrected(e)]
 
     # Only a build that may use the internet can send anything to Azure. Offline, the tokens recorded are LM Studio's
     # (or the demo's) on this computer: no cloud cost, whatever Azure would have charged for them.
@@ -139,7 +164,7 @@ def compute(store: Store, a: Assumptions | None = None) -> dict[str, Any]:
     for r in processed:
         weekly[_week(r["created_at"])]["processed"] += 1
     for e in approvals:
-        weekly[_week(e["created_at"])]["changed" if _corrected(e) else "clean"] += 1
+        weekly[_week(e["created_at"])]["changed" if corrected(e) else "clean"] += 1
 
     projection = None
     if per_invoice_minutes is not None:
@@ -307,7 +332,7 @@ def report_html(s: dict[str, Any], organisation: str = "") -> str:
         "no invoice details included</div>",
         f"<h1>{e(title)}</h1><div class='grid'>",
         tile("Invoices processed", str(s["processed"])),
-        tile("Approved with no changes", _pct(s["straight_through"])),
+        tile(AS_CODED, _pct(s["straight_through"])),
         tile("Hours saved so far", f"{s['hours_saved']:,.1f}"),
         tile("Azure cost per invoice", _money(s["cost_per_invoice_cad"], 3)),
         f"</div><h2>At {a.monthly_volume:,} invoices a month</h2><table>",

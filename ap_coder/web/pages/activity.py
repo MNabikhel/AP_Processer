@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, Response
 from ap_coder.core import ui
 from ap_coder.core.audit import ACTIONS, describe
 from ap_coder.core.safe import csv_row
-from ap_coder.erp import controls, dupaudit
+from ap_coder.erp import controls, dupaudit, insights
 from ap_coder.web.core import get_store, render
 
 router = APIRouter()
@@ -159,12 +159,13 @@ def activity_page(request: Request) -> HTMLResponse:
     today = dt.date.today()
     week = sum(1 for e in events if str(e["created_at"])[:10] >= (today - dt.timedelta(days=7)).isoformat())
     approvals = [e for e in events if e["action"] == "approved"]
-    changed = sum(1 for e in approvals if (e["detail"] or {}).get("changes"))
+    changed = sum(1 for e in approvals if insights.corrected(e))  # the one definition of a change (D-39)
     people = sorted({e["actor"] for e in events if e["actor"]})
     tiles = [
         ("Events", len(events), "blue", f"{week} in the last 7 days"),
         ("Invoices approved", len({e["invoice_id"] for e in approvals}), "green",
-         f"{ui.plural(len(approvals), 'approval')}, {changed} with reviewer changes"),
+         f"{ui.plural(len(approvals), 'approval')}: {len(approvals) - changed} approved as coded, "
+         f"{changed} corrected"),
         ("People", len(people), "violet", ", ".join(people[:3]) or "none recorded yet"),
         ("Deletions", sum(1 for e in events if e["action"] in DELETIONS), "amber", "invoices, accounts, lessons"),
     ]  # fmt: skip

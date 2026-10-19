@@ -170,8 +170,10 @@
 </section>
 
 {# ==== Slot: the "Azure Document Intelligence check" card. Built by pages/azure.py and its own template; nothing
-   shows here until that partial exists. ==== #}
+   shows here until that partial exists, nor in the offline build unless it was switched on before. ==== #}
+{% if show_azure_check %}
 {% include "partials/azure_check.html" ignore missing %}
+{% endif %}
 
 {% if developer and azure %}
 {% include "settings_azure.html" %}

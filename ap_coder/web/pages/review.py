@@ -18,10 +18,12 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ap_coder.coding.bulk import bulk_approve, clean_candidates
+from ap_coder.coding.review import codes_to_pick, uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, payment
 from ap_coder.core import ui
 from ap_coder.core.memory import vendor_key
+from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
 from ap_coder.erp import recurring
 from ap_coder.web.core import (
@@ -111,8 +113,39 @@ def due_note(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> t
     return f"Due {p.due:%b} {p.due.day}", ""
 
 
-def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float) -> list[dict[str, Any]]:
-    """What each row of the queue shows (plain values; the template escapes them)."""
+def attention(store: Store, reference: ReferenceData | None, pending: list[dict[str, Any]],
+              threshold: float | None = None) -> dict[int, str]:  # fmt: skip
+    """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
+    screen's Approve is open as it stands. The lines' codes are asked as the review screen asks (``codes_to_pick``),
+    then the checks' flag (an error, or confidence under ``threshold``; None: the flag alone, without its words)."""
+    cost_centers = reference is not None and uses_cost_centers(reference)
+    stored = {  # one query, not one per invoice
+        r["id"]: r
+        for r in store.invoice_columns(
+            ("id", "validation", "ai_output", "final_output"), ids=[i["id"] for i in pending]
+        )
+    }
+    out = {}
+    for inv in pending:
+        r = stored.get(inv["id"]) or {}
+        coded = r.get("final_output") or r.get("ai_output") or {}
+        errors = [i for i in (r.get("validation") or {}).get("issues") or [] if i.get("severity") == "error"]
+        low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
+        why = [
+            codes_to_pick(coded.get("line_items"), cost_centers).removesuffix(" to approve"),
+            f"{ui.plural(len(errors), 'error')} to fix" if errors else "",
+            f"confidence under {threshold:.0%}" if low and inv.get("requires_review") else "",
+        ]
+        why = [w for w in why if w]
+        if why or inv.get("requires_review"):
+            out[inv["id"]] = (why[0][0].upper() + "; ".join(why)[1:]) if why else "Flagged by the checks"
+    return out
+
+
+def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
+               reasons: dict[int, str] | None = None) -> list[dict[str, Any]]:  # fmt: skip
+    """What each row of the queue shows (plain values; the template escapes them). ``reasons``: ``attention()``."""
+    reasons = reasons or {}
     ids = [i["id"] for i in shown]
     outputs = {  # a sent-back invoice shows the first approver's corrections, as its review screen does
         r["id"]: r["final_output"] or r["ai_output"] or {}
@@ -134,7 +167,8 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float) -> l
             "province": prov if prov in PROVINCE_NAMES else ("Int’l" if prov == OUTSIDE_CANADA else "—"),
             "province_title": province_label(prov, "Province unknown"),
             "taxes": [t for t in dict.fromkeys(t.get("tax_type", "") for t in ai.get("tax_lines", [])) if t],
-            "flagged": bool(inv.get("requires_review")),
+            "flagged": inv["id"] in reasons,
+            "reason": reasons.get(inv["id"], ""),
             "confidence": confidence,
             "confidence_text": confidence_pct(confidence, threshold),
             "confidence_ok": confidence >= threshold,
@@ -180,11 +214,11 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     accuracy = metrics["line_accuracy"]
     corrections = metrics["lines_corrected"]
     return [
-        {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} flagged by checks"},
+        {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
          "sub": f"of {total_today:,} today · {len(approved):,} approved in all",
          "bar": done_today / total_today if total_today else 0.0},
-        {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.0%}",
+        {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
          "sub": "after the first approvals" if accuracy is None else "vs 90% target",
          "delta": "" if accuracy is None else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace("-", "−"),
          "good": accuracy is not None and accuracy >= TARGET_ACCURACY},
@@ -215,8 +249,10 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     sort = sort if sort in SORTS else "priority"
     limit = max(QUEUE_PAGE, min(limit, 5000))
 
+    threshold = settings.engine.review_threshold
     pending = [i for i in invoices if i["status"] == REVIEW]
-    flagged = [i for i in pending if i["requires_review"]]
+    reasons = attention(store, reference, pending, threshold)  # Ready means its Approve is open
+    flagged = [i for i in pending if i["id"] in reasons]
     approved = [i for i in invoices if i["status"] == APPROVED]
     awaiting = [i for i in invoices if i["status"] == PENDING]
     parked = [i for i in invoices if i["status"] == PARKED]
@@ -239,14 +275,13 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
                                "kpis": kpis(store, pending, flagged, approved), "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     if tab == "review":
-        threshold = settings.engine.review_threshold
-        shown = {"attention": flagged, "ready": [i for i in pending if not i["requires_review"]]}.get(show, pending)
+        shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
         candidates = clean_candidates(store) if show != "attention" else []
         context.update(
             pending=pending,
             counts={"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)},
-            rows=queue_rows(store, shown[:limit], threshold),
+            rows=queue_rows(store, shown[:limit], threshold, reasons),
             more=max(0, len(shown) - limit),
             next_limit=limit + QUEUE_PAGE,
             threshold=threshold,
@@ -302,6 +337,7 @@ def _getting_started(request: Request, store: Store, invoices: list[dict[str, An
         ring_value=done_steps / len(needed),
         ring_label=f"{done_steps}/{len(needed)}",
         chat_ready=steps[1][0] == "ok",
+        name_todo=steps[5][0] != "ok",  # approvals are recorded in the computer login until a name is given
         waiting=sum(1 for i in invoices if i["status"] == REVIEW) if reference_or_none(store) is None else 0,
         demo_available=demo_available(),
         demo_count=store.demo_count(),

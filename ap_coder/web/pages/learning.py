@@ -32,7 +32,8 @@ from markupsafe import Markup
 from ap_coder.ai import history
 from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
-from ap_coder.core.store import APPROVED, Store
+from ap_coder.core.store import Store
+from ap_coder.erp import insights
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
 from ap_coder.web.core import TARGET_ACCURACY, done, get_store, reference_or_none, refuse, render, reviewer
 from ap_coder.web.files import SheetError, read_excel
@@ -210,7 +211,7 @@ def coding_context(store: Store, mem_q: str) -> dict[str, Any]:
     if not m["lines_reviewed"]:
         return {"metrics": None}
     accuracy = m["line_accuracy"] or 0.0
-    approved = m["invoices_by_status"].get(APPROVED, 0)
+    clean, total = insights.approved_as_coded(store)  # as Insights counts them (D-39)
     weekly = []
     for w in m["weekly"]:
         lines = w["accepted"] + w["corrected"]
@@ -222,8 +223,8 @@ def coding_context(store: Store, mem_q: str) -> dict[str, Any]:
                 [w["accuracy"] or 0 for w in weekly] if len(weekly) > 1 else None),
         ui.tile("Lines reviewed", f"{m['lines_reviewed']:,}", "", "blue", f"{m['lines_accepted']:,} confirmed"),
         ui.tile("Corrections taught", f"{m['lines_corrected']:,}", "", "amber", "used on the next invoice"),
-        ui.tile("Approved without edits", f"{m['invoices_approved_without_edits']}/{approved}", "", "green",
-                "straight-through invoices"),
+        ui.tile(insights.AS_CODED, "—" if not total else f"{clean / total:.0%}", "", "green",
+                f"{clean} of {total} needed no change"),
     ]  # fmt: skip
     tiles = [built(tile) for tile in tiles]
     weeks = [w["week"] for w in weekly]

@@ -52,6 +52,10 @@ from ..core.memory import refresh_vendor_key, vendor_key
 SETTING_KEY = "jde_e1"
 FORMAT = "jde"
 LABEL = "JD Edwards E1 (F0411Z1 / F0911Z1)"
+# The two reasons an invoice is held back for its supplier number: the Exports page links them to Settings → JD
+# Edwards E1 → Supplier address numbers (``an8_problem``).
+NO_AN8 = "no JDE supplier number (AN8)"
+BAD_AN8 = "is not a JDE address number"
 
 AMOUNT_GROSS, AMOUNT_TAX = "gross", "tax"
 AMOUNT_MODES = {
@@ -421,15 +425,20 @@ def _is_recoverable_entry(e: dict[str, Any]) -> bool:
     return e.get("kind") == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < 0.005
 
 
+def an8_problem(reason: str) -> bool:
+    """Whether a reason ``validate`` gives is about the supplier's address number (set in Settings → JD Edwards E1)."""
+    return reason.startswith(NO_AN8) or BAD_AN8 in reason
+
+
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     final = inv.get("final_output") or {}
     v = _Voucher(int(inv.get("id") or 0), final, [])
     add = v.problems.append
 
     if not an8:
-        add("no JDE supplier number (AN8): set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards")
+        add(f"{NO_AN8}: set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards")
     elif not an8.isdigit() or len(an8) > 8:
-        add(f"supplier number {an8!r} is not a JDE address number (digits only, up to 8)")
+        add(f"supplier number {an8!r} {BAD_AN8} (digits only, up to 8)")
     number = str(final.get("invoice_number") or "").strip()
     if not number:
         add("no invoice number (VLVINV)")

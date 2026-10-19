@@ -8,6 +8,7 @@ too; the review queue's welcome card uses the same routes.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -21,11 +22,12 @@ from ap_coder.ai.local_llm import provider_status
 from ap_coder.ai.pipeline import InvoicePipeline, invoice_files
 from ap_coder.capture.layout import ocr_available
 from ap_coder.coding.tax import TAX_TYPES
-from ap_coder.core import ui
+from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.intake import inbox
 from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, Unpacked, emails_in, safe_name, unpack, unpack_folder
+from ap_coder.web import identity
 from ap_coder.web.core import (
     cache_dir,
     done,
@@ -138,13 +140,26 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         second = ("bad", "OvisOCR2", "failed its self-test (Settings → Reading)")
     else:
         second = ("todo", "OvisOCR2", "not running in LM Studio: invoices wait for it (Settings → Reading)")
-    return [  # the review queue's getting-started card reads the chat model at index 1
+    return [  # the review queue's getting-started card reads the chat model at index 1; process.html 2 to 5
         reader,
         ("ok" if ai.ready else "opt", "Chat model for GL suggestions", ai.label if ai.ready else "optional"),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
         second,
+        name_step(),
     ]
+
+
+def name_step() -> tuple[str, str, str]:
+    """Whether the person approving gave their name: each approval records it, and without one it is the computer
+    login ("root", "jsmith"). Given in Settings → Review (or AP_REVIEWER), or by a colleague on the "Who are you?"
+    page."""
+    colleague = identity.person()
+    name = colleague.name if colleague is not None else ""
+    name = name or str(paths.read_user_settings().get("reviewer") or "") or os.environ.get("AP_REVIEWER", "")
+    if name.strip():
+        return "ok", "Your name", name.strip()
+    return "todo", "Your name", "Settings → Review: each approval is recorded in it"
 
 
 def ready_to_read(steps: list[tuple[str, str, str]]) -> bool:

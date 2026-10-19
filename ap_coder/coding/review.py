@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 from pydantic import ValidationError
 
-from ..core.reference_data import UNASSIGNED
+from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
 
 
@@ -90,6 +90,36 @@ def coding_from_inputs(
         for err in exc.errors():
             problems.append(f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}")
         return None, problems
+
+
+def uses_cost_centers(reference: ReferenceData) -> bool:
+    """Whether every line needs a cost center to be approved: a cost center list with codes is imported."""
+    return reference.cost_centers is not None and bool(reference.cost_centers.codes)
+
+
+def codes_to_pick(lines: Any, cost_centers: bool) -> str:
+    """What approval still needs on the lines (dicts or line items): "Pick a GL account for line 2 and a cost center
+    for lines 1, 2 to approve", or "" when every line has a GL account and, where cost centers are used, a cost
+    center. The review screen's Approve bar and the queue's Ready ask this one question, so they always agree."""
+
+    def code(li: Any, key: str) -> str:
+        value = li.get(key) if isinstance(li, dict) else getattr(li, key, "")
+        return "" if is_blank(value) else str(value)
+
+    def which(numbers: list[str]) -> str:
+        return f"line{'s' if len(numbers) > 1 else ''} {', '.join(numbers)}"
+
+    lines = list(lines or [])
+    uncoded = [code(li, "line_number") for li in lines if code(li, "predicted_gl_code") in ("", UNASSIGNED)]
+    no_cc = (
+        [code(li, "line_number") for li in lines if code(li, "predicted_cost_center") in ("", UNASSIGNED)]
+        if cost_centers
+        else []
+    )
+    parts = ([f"a GL account for {which(uncoded)}"] if uncoded else []) + (
+        [f"a cost center for {which(no_cc)}"] if no_cc else []
+    )
+    return f"Pick {' and '.join(parts)} to approve" if parts else ""
 
 
 def split_line(lines: pd.DataFrame, line_number: int, parts: list[tuple[str, str, float]]) -> pd.DataFrame:
