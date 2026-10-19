@@ -17,7 +17,7 @@ folder, fonts from `ap_coder/static`, the logo from `ap_coder/assets`.
 - `get_store()`, `get_settings()`, `jobs()`, `local_url()`, `money()` (core.py); `reviewer()` and `login()`: this computer's user, or a colleague on the network (their name; `network <address>`).
 - `Job.start()` (jobs.py): runs work(job) in a thread, False if that job name is running; the page polls `snapshot()` at `GET /jobs/<name>`.
 - `Identity`, `person()`, `PERSON`, `COOKIE`, `WHO_PATH`, `cookie_value()`, `name_from_cookie()`, `clean_name()`, `is_this_computer()`,
-  `network_login()` (identity.py): on 0.0.0.0, who each other computer's browser is (a cookie signed with `app.state.identity_secret`, made at each start); without one it gets /who only (D-34).
+  `from_this_computer()` (loopback, or the address it arrived on), `network_login()` (identity.py): on 0.0.0.0, who each other computer's browser is (a cookie signed with `app.state.identity_secret`, made at each start); without one it gets /who only (D-34).
 - `LocalOnly` (security.py): middleware; `host_allowed()` and `same_origin()` decide. Header `X-AP-Coder: 1` (PAGE_HEADER), launcher token `X-AP-Coder-Token`.
 - `download()`, `receive_sheet()`, `read_upload()`, `sheet_context()` (files.py): downloads and the two-step spreadsheet import (uploads held in memory 1 hour).
   `read_excel()`: every workbook upload or emailed sheet (unzipped sizes checked, "NA" kept as text).

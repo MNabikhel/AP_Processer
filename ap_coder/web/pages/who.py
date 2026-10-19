@@ -18,7 +18,7 @@ COOKIE_DAYS = 365  # kept by the browser; a restart of AP Coder asks again (the 
 @router.get(identity.WHO_PATH, response_class=HTMLResponse)
 def who(request: Request, next: str = "/review") -> HTMLResponse:  # noqa: A002 - the address's own word
     found = identity.person()
-    here = request.client is None or identity.is_this_computer(request.client.host)
+    here = request.client is None or identity.from_this_computer(request.scope)
     name = reviewer() if (found or here) else "Not given yet"  # the rail shows no one's name before it is given
     return render(request, "who.html", "", title="Who are you?", next=local_url(next, "/review"), here=here,
                   current=found.name if found else "", reviewer=name)  # fmt: skip
@@ -26,7 +26,7 @@ def who(request: Request, next: str = "/review") -> HTMLResponse:  # noqa: A002 
 
 @router.post(identity.WHO_PATH)
 def who_save(request: Request, name: str = Form(""), next: str = Form("/review")) -> JSONResponse:  # noqa: A002
-    if request.client is None or identity.is_this_computer(request.client.host):
+    if request.client is None or identity.from_this_computer(request.scope):
         return refuse("On this computer, your name is set in Settings → Review.")
     cleaned = identity.clean_name(name)
     if not cleaned:
