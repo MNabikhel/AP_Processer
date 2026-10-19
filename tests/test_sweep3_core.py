@@ -19,6 +19,7 @@ from ap_coder.core.config import Settings
 from ap_coder.core.csvio import read_csv_rows
 from ap_coder.core.reference_data import load_table
 from ap_coder.core.safe import parse_amount
+from ap_coder.core.schema import OUTSIDE_CANADA, province_code
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
 from ap_coder.web.files import read_sheet
@@ -263,3 +264,18 @@ def test_a_gl_csv_with_excels_trailing_blank_rows_loads(tmp_path):
     path.write_text("GL Code,Description\r\n6000,Office\r\n,Travel\r\n", encoding="utf-8")
     with pytest.raises(ValueError, match="row 2 has an empty 'gl_code'"):  # a code really missing is still refused
         load_table(path, "GL account", "gl_code")
+
+
+# --- B-166: a place abroad --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "place", ["London, UK", "Paris, France", "Berlin, Germany", "Shenzhen, China", "Dublin, Ireland",
+              "Manchester, United Kingdom", "Mexico City, Mexico"],
+)  # fmt: skip
+def test_a_place_abroad_is_outside_canada(place):
+    assert province_code(place) == OUTSIDE_CANADA
+
+
+def test_canadian_places_named_like_places_abroad_stay_canadian():
+    assert province_code("London, ON") == "ON" and province_code("Paris, Ontario") == "ON"

@@ -240,6 +240,16 @@ _US_NAMES = [
         "SOUTH CAROLINA,SOUTH DAKOTA,TENNESSEE,TEXAS,UTAH,VERMONT,VIRGINIA,WASHINGTON,WEST VIRGINIA,WISCONSIN,WYOMING"
     ).split(",")
 ]
+# Countries Canadian businesses buy from, as an address ends with them ("London, UK", "Paris, France"): no
+# province's name ends like one, so they are OUTSIDE_CANADA rather than an error the model is asked to fix.
+_COUNTRY_NAMES = [
+    name.split()
+    for name in (
+        "UK,UNITED KINGDOM,GREAT BRITAIN,ENGLAND,SCOTLAND,WALES,IRELAND,FRANCE,GERMANY,DEUTSCHLAND,ITALY,SPAIN,"
+        "PORTUGAL,NETHERLANDS,BELGIUM,SWITZERLAND,AUSTRIA,SWEDEN,NORWAY,DENMARK,FINLAND,POLAND,MEXICO,BRAZIL,CHINA,"
+        "HONG KONG,TAIWAN,JAPAN,KOREA,SOUTH KOREA,INDIA,SINGAPORE,AUSTRALIA,NEW ZEALAND,ISRAEL"
+    ).split(",")
+]
 
 
 def _province_at_end(words: list[str]) -> str | None:
@@ -260,7 +270,7 @@ def _province_at_end(words: list[str]) -> str | None:
     # A state code as written in capitals ("Boston, MA"), so a trailing "or"/"in"/"me" is not read as a state.
     if upper[-1] in _US_STATES and (len(words) == 1 or words[-1].isupper()):
         return OUTSIDE_CANADA
-    if any(upper[-len(tail) :] == tail for tail in _US_NAMES):
+    if any(upper[-len(tail) :] == tail for tail in _US_NAMES + _COUNTRY_NAMES):
         return OUTSIDE_CANADA
     return None
 

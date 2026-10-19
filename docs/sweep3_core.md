@@ -79,3 +79,13 @@
 - **Fix:** a row with every cell blank is skipped before the checks; a row with a description and no code is still refused, under its row number in the file.
 - **Test:** `tests/test_sweep3_core.py::test_a_gl_csv_with_excels_trailing_blank_rows_loads`
 - **Lesson:** Don't treat an all-blank row from a spreadsheet as a row with a missing value: skip it first.
+
+#### B-166 · A supplier abroad ("London, UK", "Paris, France") made the coding invalid · low
+- **Where:** `ap_coder/core/schema.py:245` (`province_code`, `_province_at_end`)
+- **Symptom:** a model that wrote the supplier's place as "London, UK" or "Paris, France" got its answer refused ("province must be a Canadian province code"), using up its one repair turn (or failing the read) for an invoice that simply comes from outside Canada.
+- **Cause:** only US states and the USA were known as outside Canada; any other country fell through to the error.
+- **Reproduce:** `province_code("London, UK")`, `province_code("Paris, France")`.
+- **Reproduced:** yes (`ValueError: province must be a Canadian province code, got 'London, UK'`)
+- **Fix:** an address ending with a country Canadian businesses commonly buy from (UK, France, Germany, China, Mexico, Ireland…) is OUTSIDE_CANADA; the province at the end still wins ("London, ON"), and a place nothing identifies is still an error.
+- **Test:** `tests/test_sweep3_core.py::test_a_place_abroad_is_outside_canada`, `tests/test_sweep3_core.py::test_canadian_places_named_like_places_abroad_stay_canadian`
+- **Lesson:** Don't treat "not a province" as "an error" when the value is a place abroad: outside Canada is an answer.
