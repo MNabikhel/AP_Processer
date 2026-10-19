@@ -34,6 +34,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.store
 - Store methods that run `BEGIN IMMEDIATE` (`create_export_batch`, `next_page_read`, `next_azure_check`, `next_verification`,
   `update_after_check`, `replace_proposal`, `delete_invoice(keep_approved=True)`) fail inside an open `session()` write.
 - `get_invoice` can write (a moved file is re-pointed, logged `file_found`). `feedback_rows` is cached: feedback rows are only added or deleted, never updated.
+  It reads at most `FEEDBACK_READ` (newest first): an invoice is coded with `learning_rows(vendor)`, which adds that vendor's older ones.
 - A new event action needs its `audit.ACTIONS` entry (tests/test_audit.py fails without it).
 - Changing `memory.vendor_key` means bumping `VENDOR_KEY_RULES` (the store recomputes stored keys); invoice.js has a copy (parity test).
 - A stored `ai_output` / `final_output` holds `gl_distribution`: strip it before `InvoiceCoding.model_validate` (extra fields are refused).

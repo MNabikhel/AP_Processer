@@ -367,8 +367,8 @@ class InvoicePipeline:
             result.timings["extraction"] = time.perf_counter() - t0
 
             # Reviewer history relevant to this document (immediate learning).
-            feedback = self.store.feedback_rows() if self.store is not None else []
             vendor_hint = (result.extraction.invoice_fields.get("VendorName") or {}).get("value")
+            feedback = self.store.learning_rows(vendor_hint) if self.store is not None else []
             examples = select_examples(feedback, result.extraction.content, vendor_hint)
             result.history_examples = len(examples)
             history_text = format_examples(examples, with_cost_center=self.reference.cost_centers is not None)
@@ -387,6 +387,9 @@ class InvoicePipeline:
                 # page images too, when it can see pages: one more independent reader of every field.
                 model_values = self._model_reading(path) if page_text is not None and provider == "local" else None
                 captured = read_invoice(path, self.store, layout=layout, page_text=page_text, ai_values=model_values)
+                vendor = captured[0].fields.get("vendor_name")
+                if self.store is not None and vendor is not None and vendor.value:  # its lessons, past the cap too
+                    feedback = self.store.learning_rows(str(vendor.value))
                 result.coding = code_from_capture(
                     captured[0], self.reference, feedback, self.store, text=result.extraction.content,
                     assign_weak=provider == "local",
