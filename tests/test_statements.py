@@ -108,3 +108,34 @@ def test_sample_statement_against_the_demo(tmp_path):
         "NW-2026-0912": stm.MATCHED, "CN-2026-0047": stm.MATCHED, "NW-2026-0938": stm.NOT_RECEIVED,
     }  # fmt: skip
     assert rec.count(stm.PAYMENT) == 1
+
+
+def test_a_payment_line_carrying_the_invoice_number_never_takes_the_invoice():
+    """A payment or credit applied to an invoice often carries its number, with its own Type (PMT, CHQ) or in a
+    Credit column, before or after the invoice: its sign, opposite to the invoice's, makes it the payment."""
+    invoices = [_inv(1, "1001", 500.0, "2026-09-02"), _inv(2, "1002", 250.0, "2026-09-09")]
+    typed = [
+        {"Date": "2026-09-20", "Type": "PMT", "Ref": "1001", "Amount": "-500.00"},  # newest first
+        {"Date": "2026-09-02", "Type": "INV", "Ref": "1001", "Amount": "500.00"},
+        {"Date": "2026-09-09", "Type": "INV", "Ref": "1002", "Amount": "250.00"},
+        {"Date": "2026-09-25", "Type": "PMT", "Ref": "CHQ 88123", "Amount": "-250.00"},
+    ]
+    debit_credit = [
+        {"Date": "2026-09-20", "Invoice": "1001", "Debit": "", "Credit": "500.00"},
+        {"Date": "2026-09-02", "Invoice": "1001", "Debit": "500.00", "Credit": ""},
+        {"Date": "2026-09-09", "Invoice": "1002", "Debit": "250.00", "Credit": ""},
+    ]
+    described = [
+        {"Date": "2026-09-20", "Invoice": "1001", "Description": "Payment - thank you", "Amount": "-500.00"},
+        {"Date": "2026-09-02", "Invoice": "1001", "Description": "Brass check valves", "Amount": "500.00"},
+        {"Date": "2026-09-09", "Invoice": "1002", "Description": "Brass check valves", "Amount": "250.00"},
+    ]
+    for statement in (typed, debit_credit, described):
+        rec = stm.reconcile(statement, stm.map_columns(list(statement[0])), invoices)
+        assert {(li.status, li.invoice_id) for li in rec.lines if li.status != stm.PAYMENT} == {
+            (stm.MATCHED, 1), (stm.MATCHED, 2),
+        }, statement  # fmt: skip
+        assert rec.count(stm.NOT_RECEIVED) == rec.count(stm.DIFFERS) == 0
+    # A credit note AP holds under the same number still matches the credit line.
+    rec = stm.reconcile(debit_credit, stm.map_columns(list(debit_credit[0])), [*invoices, _inv(3, "1001", -500.0)])
+    assert {(li.status, li.invoice_id) for li in rec.lines} == {(stm.MATCHED, 1), (stm.MATCHED, 2), (stm.MATCHED, 3)}
