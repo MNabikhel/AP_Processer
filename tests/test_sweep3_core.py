@@ -13,8 +13,10 @@ from fastapi.testclient import TestClient
 from ap_coder.ai import lessons
 from ap_coder.capture.workflow import learn_from_approval
 from ap_coder.core.config import Settings
+from ap_coder.core.csvio import read_csv_rows
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.web.app import create_app
+from ap_coder.web.files import read_sheet
 
 PAGE = {"X-AP-Coder": "1"}
 
@@ -113,3 +115,27 @@ def test_the_accounts_page_says_why_an_import_with_no_codes_is_refused(tmp_path)
     answer = client.post("/accounts/gl_accounts/import", headers=PAGE, data=form)
     assert answer.status_code == 400 and "nothing was replaced" in answer.json()["error"]
     assert len(store.list_accounts("gl_accounts")) > 20
+
+
+# --- B-160: a semicolon CSV with a comma in its header ------------------------------------------------------------
+
+FRENCH = "Compte GL;Description;Catégorie (dépenses, revenus)\r\n6000;Fournitures de bureau;Dépenses\r\n"
+
+
+def test_a_semicolon_csv_with_a_comma_in_its_header_is_split_on_semicolons(tmp_path):
+    path = tmp_path / "gl.csv"
+    path.write_text(FRENCH + "6100;Déplacements;Dépenses\r\n", encoding="utf-8")
+    rows = read_csv_rows(path)
+    assert rows[0] == {"Compte GL": "6000", "Description": "Fournitures de bureau",
+                       "Catégorie (dépenses, revenus)": "Dépenses"}  # fmt: skip
+    df, _names = read_sheet("gl.csv", FRENCH.encode("utf-8"))
+    assert list(df.columns) == ["Compte GL", "Description", "Catégorie (dépenses, revenus)"]
+    assert df.iloc[0].tolist() == ["6000", "Fournitures de bureau", "Dépenses"]
+
+
+def test_a_plain_comma_csv_is_still_read_on_commas(tmp_path):
+    path = tmp_path / "gl.csv"
+    path.write_text('GL Code,Description\r\n6000,"Office; supplies"\r\n6100,Travel\r\n', encoding="utf-8")
+    assert read_csv_rows(path)[0] == {"GL Code": "6000", "Description": "Office; supplies"}
+    df, _names = read_sheet("gl.csv", path.read_bytes())
+    assert list(df.columns) == ["GL Code", "Description"] and df.iloc[0].tolist() == ["6000", "Office; supplies"]

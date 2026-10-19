@@ -64,5 +64,5 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 ## Files
 - `__init__.py`: the package docstring only.
 - `store.py` (SQLite store), `config.py` (Settings from env), `paths.py` (data folder, user settings), `envfile.py` (.env edits).
-- `reference_data.py` (GL, cost centers, tax setup, policy, prompt context), `csvio.py` (Excel CSVs, dates); `schema.py` (JSON schema, InvoiceCoding).
+- `reference_data.py` (GL, cost centers, tax setup, policy, prompt context), `csvio.py` (Excel CSVs, dates; `sniff_delimiter` also reads web/files.py uploads); `schema.py` (JSON schema, InvoiceCoding).
 - `safe.py` (formula-safe cells, the shared amount parser), `audit.py` (approval diffs, event labels); `memory.py` (reviewer decisions, vendor key), `ui.py` (HTML pieces).

@@ -23,6 +23,7 @@ import pandas as pd
 from fastapi import UploadFile
 from fastapi.responses import Response
 
+from ap_coder.core.csvio import sniff_delimiter
 from ap_coder.intake import triage
 
 SHEET_TYPES = (".csv", ".xlsx", ".xls")
@@ -149,17 +150,17 @@ def read_sheet(name: str, content: bytes, sheet: str | None = None) -> tuple[pd.
             df = None
             for encoding in ("utf-8-sig", "cp1252"):
                 try:
-                    df = pd.read_csv(
-                        io.BytesIO(content),
-                        dtype=str,
-                        keep_default_na=False,
-                        encoding=encoding,
-                        sep=None,
-                        engine="python",
-                    )
-                    break
+                    text = content.decode(encoding)
                 except UnicodeDecodeError:
                     continue
+                df = pd.read_csv(
+                    io.StringIO(text),
+                    dtype=str,
+                    keep_default_na=False,
+                    sep=sniff_delimiter(text),  # as the reference files are read: several lines, not the header alone
+                    engine="python",
+                )
+                break
             if df is None:
                 raise SheetError("Could not read this file. In Excel, use Save As → CSV UTF-8 and upload it again.")
     except SheetError:
