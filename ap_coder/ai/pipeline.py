@@ -426,34 +426,40 @@ class InvoicePipeline:
         azure = azure_check.Plan()
         reviewer_plan = verifier.Plan()
         if result.output is not None:
-            t2 = time.perf_counter()
-            if captured is not None:  # already read (no AI model): the capture is the proposal itself
-                result.capture, key, profile = captured
-            else:
-                result.capture, key, profile = capture_invoice(
-                    path, result.output, store=self.store, page_text=page_text,
-                    di_raw=result.extraction.raw if result.extraction else None,
-                )  # fmt: skip
-            result.timings["capture"] = time.perf_counter() - t2
-            if result.capture is not None and result.report is not None:
-                for severity, code, message in review_issues(result.capture, result.output.get("currency")):
-                    result.report.issues.append(Issue(severity, code, message))
-                # The optional Azure check (off unless turned on): a check already done is folded in again (read
-                # again by the page reader); otherwise whether it goes in line, and waits for it.
-                azure = azure_check.prepare(self.store, self.settings, invoice_id, result.capture, result.report, path)
-                # Not read by the page reader yet: it will be (queued below), and decides then.
-                awaiting = page_text is None and not text_file
-                read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
-                if read is not None and pages_read is not None:
-                    read = min(read, pages_read)
-                result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
-                                                    output=result.output, awaiting_page_reader=awaiting,
-                                                    pages_read=read)  # fmt: skip
-                result.autonomy = azure_check.hold(result.autonomy, azure)
-                # The AI reviewer (on by default): every invoice goes in line, and none is approved without a person
-                # until it agrees.
-                reviewer_plan = verifier.prepare(self.store, invoice_id)
-                result.autonomy = verifier.hold(result.autonomy, reviewer_plan)
+            try:
+                t2 = time.perf_counter()
+                if captured is not None:  # already read (no AI model): the capture is the proposal itself
+                    result.capture, key, profile = captured
+                else:
+                    result.capture, key, profile = capture_invoice(
+                        path, result.output, store=self.store, page_text=page_text,
+                        di_raw=result.extraction.raw if result.extraction else None,
+                    )  # fmt: skip
+                result.timings["capture"] = time.perf_counter() - t2
+                if result.capture is not None and result.report is not None:
+                    for severity, code, message in review_issues(result.capture, result.output.get("currency")):
+                        result.report.issues.append(Issue(severity, code, message))
+                    # The optional Azure check (off unless turned on): a check already done is folded in again (read
+                    # again by the page reader); otherwise whether it goes in line, and waits for it.
+                    azure = azure_check.prepare(
+                        self.store, self.settings, invoice_id, result.capture, result.report, path
+                    )
+                    # Not read by the page reader yet: it will be (queued below), and decides then.
+                    awaiting = page_text is None and not text_file
+                    read = None if page_text is None else len(page_text)  # it stops at AP_PAGE_READER_MAX_PAGES
+                    if read is not None and pages_read is not None:
+                        read = min(read, pages_read)
+                    result.autonomy = autonomy_decision(self.store, key, profile, result.capture, result.report, path,
+                                                        output=result.output, awaiting_page_reader=awaiting,
+                                                        pages_read=read)  # fmt: skip
+                    result.autonomy = azure_check.hold(result.autonomy, azure)
+                    # The AI reviewer (on by default): every invoice goes in line, and none is approved without a person
+                    # until it agrees.
+                    reviewer_plan = verifier.prepare(self.store, invoice_id)
+                    result.autonomy = verifier.hold(result.autonomy, reviewer_plan)
+            except Exception:  # one bad invoice must not stop a batch: saved for a person, never touchless
+                log.exception("Checks after coding failed for %s", path)
+                result.autonomy = {}
 
         if self.store is not None and not save and invoice_id:  # read again (the page reader): same invoice
             azure_check.queue(self.store, invoice_id, azure)

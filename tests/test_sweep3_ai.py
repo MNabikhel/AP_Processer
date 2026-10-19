@@ -123,3 +123,18 @@ def test_hidden_files_and_lock_files_in_the_invoices_folder_are_not_invoices(tmp
     for name in ("inv.pdf", "._inv.pdf", ".hidden.pdf", "~$notes.txt", "scan.png"):
         (tmp_path / name).write_bytes(b"x")
     assert [p.name for p in invoice_files(tmp_path)] == ["inv.pdf", "scan.png"]
+
+
+def test_a_bug_in_the_touchless_decision_does_not_stop_the_batch(tmp_path, reference, monkeypatch):
+    # One bad invoice must not stop a batch: the checks after coding (review issues, touchless, holds) included.
+    from ap_coder.ai import pipeline
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(pipeline, "autonomy_decision", broken)
+    store = Store(tmp_path / "ap.db")
+    files = [SAMPLES / f"{SAMPLE_STEM}.md", SAMPLES / "chinook_AB_GST_CCO-26-10418.md"]
+    results = _offline_pipeline(reference, store).process_many(files)
+    assert len(results) == 2 and all(r.invoice_id and r.output for r in results)
+    assert [store.get_invoice(r.invoice_id)["status"] for r in results] == ["review", "review"]  # a person looks
