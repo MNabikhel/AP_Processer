@@ -194,3 +194,36 @@ def test_an_export_held_back_for_a_supplier_number_links_to_the_address_numbers(
     held = page[page.index("cannot go to JD Edwards yet") :]
     assert 'href="/settings/jde#an8"' in held and "Supplier address numbers" in held
     assert 'id="an8"' in client.get("/settings/jde").text
+
+
+# --- 6. Settings → Reading: no cloud card offline, optional parts in grey ---------------------------------------
+
+
+def test_the_reading_tab_shows_the_azure_check_only_where_the_internet_is_allowed(client, store, monkeypatch):
+    from ap_coder.ai import azure_check
+
+    assert 'id="azure-check"' not in client.get("/settings/reading").text  # the offline build: no cloud card
+    store.set_setting(azure_check.ENABLED_KEY, "on")  # switched on before: shown, so it can be switched off
+    assert 'id="azure-check"' in client.get("/settings/reading").text
+    store.set_setting(azure_check.ENABLED_KEY, "off")
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")  # a developer's computer
+    assert 'id="azure-check"' in client.get("/settings/reading").text
+
+
+def test_optional_readers_not_set_up_are_grey_not_red(client, monkeypatch):
+    from ap_coder.ai import reading
+    from ap_coder.ops import offline
+    from ap_coder.web.pages.settings_reading import reader_rows
+
+    monkeypatch.setattr(offline, "onnxruntime_installed", lambda: True)
+    monkeypatch.setattr(offline, "table_finder_path", lambda: None)
+    monkeypatch.setattr(offline, "from_bundle", lambda: False)  # set up from the code alone, no models folder
+    assert reading._table_finder().state == reading.OPTIONAL
+    monkeypatch.setattr(offline, "from_bundle", lambda: True)  # the bundle should have brought it: a real problem
+    assert reading._table_finder().state == reading.WARN
+
+    status = reading.reading_status(Settings(), None)  # no chat model running in LM Studio
+    gl = status.reader("GL coding model")
+    assert gl.state == reading.OPTIONAL
+    row = next(r for r in reader_rows(status) if r["name"] == "GL coding model")
+    assert (row["label"], row["tone"]) == ("Not set up (optional)", "gray")

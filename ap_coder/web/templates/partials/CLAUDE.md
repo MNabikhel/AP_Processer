@@ -13,7 +13,7 @@ The Azure check's logic is in `ap_coder/ai/azure_check.py`; its routes are in `a
 
 ## Gotchas and decisions
 - The API key is never put in the page: the password field is always empty, an empty field keeps the saved key, "Remove the saved key" (forget_key) clears it.
-- settings_reading.html includes it with `ignore missing`; azure_check_page.html includes it plainly.
+- settings_reading.html includes it with `ignore missing`, only where the internet is allowed or the check is on (`show_azure_check`); azure_check_page.html includes it plainly.
 - Autoescape is on, as for every template: text from Azure or the settings is never marked safe.
 - The `https://<name>...` text is placeholder help, not a request: nothing is loaded from the internet.
 - Its few styles are an inline `<style>` in the card (`.azure-check`, using the `--lg-*` tokens), not a static/ stylesheet.

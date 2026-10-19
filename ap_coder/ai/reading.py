@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 OK, WARN, OFF = "ok", "warn", "off"
 TESTING = "testing"  # loaded and working, testing itself before it is trusted (nothing is wrong)
+OPTIONAL = "optional"  # an optional part that is simply not set up here (nothing is wrong)
 
 PDF_TEXT, OCR, TABLE_FINDER, PAGE_READER, RULES, TEMPLATES, CHECKS, GL_MODEL, REVIEWER = (
     "PDF text layer", "OCR (two engines)", "Table finder", "Page reader (OvisOCR2)", "Rule reader",
@@ -120,6 +121,10 @@ def _table_finder() -> ReaderLine:
                                              "are read from the words under the column headings. Double-click "
                                              "APProcessor again.")  # fmt: skip
     if offline.table_finder_path() is None:
+        if not offline.from_bundle():  # set up from the code alone: the model only comes with the offline bundle
+            return ReaderLine(TABLE_FINDER, OPTIONAL, "Not set up: its model comes with the offline bundle's models "
+                                                      f"folder ({offline.TABLE_FINDER_NAME}). Line items are read from "
+                                                      "the words under the column headings.")  # fmt: skip
         return ReaderLine(TABLE_FINDER, WARN, "Missing: its model comes with the offline bundle's models folder "
                                               f"({offline.TABLE_FINDER_NAME}). Until it is there, line items are read "
                                               "from the words under the column headings, as before.")  # fmt: skip
@@ -178,7 +183,7 @@ def _gl_model(settings: Any, use_cache: bool, out: ReadingStatus) -> ReaderLine:
         return ReaderLine(GL_MODEL, OK, f"Azure OpenAI ({settings.openai.deployment}): the internet is allowed on "
                                         "this computer (AP_ALLOW_INTERNET).")  # fmt: skip
     if provider == "off":
-        return ReaderLine(GL_MODEL, OFF, "Not asked: GL accounts come from AP's history and coding rules.")
+        return ReaderLine(GL_MODEL, OPTIONAL, "Not asked: GL accounts come from AP's history and coding rules.")
     status = check_server(settings.llm, use_cache=use_cache)
     out.lm_studio = out.lm_studio or status.reachable
     if status.active:
@@ -188,8 +193,8 @@ def _gl_model(settings: Any, use_cache: bool, out: ReadingStatus) -> ReaderLine:
             detail += (" It can see pages, so it also reads each invoice's header from the page images (after the page "
                        "reader, in the background) as one more reader.")  # fmt: skip
         return ReaderLine(GL_MODEL, OK, detail)
-    return ReaderLine(GL_MODEL, OFF, "Optional, not running: GL accounts come from AP's history and coding rules; "
-                                     "a line nothing was learned for is left for AP to code.")  # fmt: skip
+    return ReaderLine(GL_MODEL, OPTIONAL, "Optional, not running: GL accounts come from AP's history and coding "
+                                          "rules; a line nothing was learned for is left for AP to code.")  # fmt: skip
 
 
 def _reviewer(settings: Any, store: Any, out: ReadingStatus) -> ReaderLine:

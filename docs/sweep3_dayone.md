@@ -23,6 +23,26 @@ export, look around the reports). What they ran into, fixed with a failing test 
 - **Test:** `tests/test_web_invoice.py::test_in_a_browser_not_in_the_vendor_list_is_said_only_once_a_vendor_master_is_imported`
 - **Lesson:** Don't warn against a fallback list as if it were the master list it stands in for.
 
+#### B-199 · Settings → Reading showed the Azure check's form in the offline build · medium
+- **Where:** `ap_coder/web/pages/settings_reading.py:339` (`reading_context`, `show_azure_check`); `ap_coder/web/templates/settings_reading.html`
+- **Symptom:** on a pilot laptop (no `AP_ALLOW_INTERNET`), Settings → Reading ended with an "Azure check · optional" card asking for an Azure endpoint and key, while docs/PILOT.md tells the pilot tester the offline build never uses cloud services.
+- **Cause:** the card was included on the Reading tab unconditionally (only the developer's Azure connection form looked at `internet_allowed()`).
+- **Reproduce:** GET /settings/reading without `AP_ALLOW_INTERNET`: `id="azure-check"` is in the page.
+- **Reproduced:** yes (`'re-check" id="azure-check" aria-labelledby="azure-check-title">'` in the offline page)
+- **Fix:** the card shows only where the internet is allowed, or while the check is still switched on from before (so it can be switched off); /settings/azure-check itself is unchanged.
+- **Test:** `tests/test_sweep3_dayone.py::test_the_reading_tab_shows_the_azure_check_only_where_the_internet_is_allowed` (and `tests/test_azure_check.py::test_settings_reading_shows_the_azure_card_and_its_own_page_is_not_taken_for_a_tab`, updated: it asserted the card in the offline build)
+- **Lesson:** Don't offer a cloud setting on a screen of the build that promises it uses none.
+
+#### B-200 · Optional parts that are simply not set up showed as red "Not working" / "Needs a look" · low
+- **Where:** `ap_coder/ai/reading.py:124` (`_table_finder`, `_gl_model`); `ap_coder/web/pages/settings_reading.py` (`READER_PILL`)
+- **Symptom:** a fresh pilot laptop showed "GL coding model · Not working" in red and, on a copy set up from the code alone, "Table finder · Needs a look", for parts that are optional and not set up; the pilot tester reads that as something broken.
+- **Cause:** the readers' status had only ok / warn / off / testing, so "optional and not there" fell into off or warn.
+- **Reproduce:** `reading_status(Settings(), None)` with no LM Studio: the GL coding model's state is `off`; `_table_finder()` without the model file on a non-bundle copy: `warn`.
+- **Reproduced:** yes (`AssertionError: assert ('off' == 'off' and 'optional' == 'off')` once the test expected the new state)
+- **Fix:** a new state `optional`, drawn as a grey "Not set up (optional)": the GL coding model when not running or not asked, and the table finder's missing model on a copy that didn't come from the offline bundle (`offline.from_bundle()`: no models/ folder next to the app). From the bundle, a missing model is still "Needs a look".
+- **Test:** `tests/test_sweep3_dayone.py::test_optional_readers_not_set_up_are_grey_not_red` (and `tests/test_table_reading.py::test_the_reading_settings_show_the_table_finder`, `tests/test_uniform_reading.py::test_reading_status_with_nothing_running`, updated where the old state was the bug)
+- **Lesson:** Don't show "optional and not set up" in the colour of "broken".
+
 ### Improvements
 - Review screen, line grid: "Apply to all lines…" gives one GL account and / or cost center to every line that has none (lines already coded keep theirs; POST /review/<id>/fill-lines, like the other grid actions); when every past approval of the vendor used one cost center, it is pre-selected there as a suggestion (`invoice_view.usual_cost_center`; the coder itself is unchanged). `tests/test_sweep3_dayone.py::test_apply_to_all_lines_codes_only_the_lines_that_have_none`, `tests/test_sweep3_dayone.py::test_apply_to_all_lines_refuses_a_code_not_in_the_lists`, `tests/test_sweep3_dayone.py::test_a_vendors_one_usual_cost_center_is_offered_for_its_lines`, `tests/test_web_invoice.py::test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank`
 - Second approval on one laptop: Settings → Review ("Approval and payment"), the waiting invoice's screen and the Second approval tab say it takes another person on another computer login, so one Windows login can't give it; how to test it (a second Windows account on the laptop, or a colleague over the office network); and that Send back returns it to the queue. The control is unchanged. `tests/test_sweep3_dayone.py::test_the_second_approval_says_how_to_give_it_when_one_login_cannot`

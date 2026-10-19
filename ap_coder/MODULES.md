@@ -9,7 +9,7 @@ first lines) and every module that imports it, so a change can be followed to it
 |---|---|---|
 | `__init__.py` | AP Coder: reads vendor invoices on this computer (PDF text, local OCR) and codes them to GL accounts, with... | core/store, web/app, web/core, web/pages/settings, web/server |
 | `__main__.py` |  | (entry point) |
-| `ai/azure_check.py` | The Azure check: Azure AI Document Intelligence as an optional second opinion, off unless AP turns it on. | ai/pipeline, web/app, web/pages/azure |
+| `ai/azure_check.py` | The Azure check: Azure AI Document Intelligence as an optional second opinion, off unless AP turns it on. | ai/pipeline, web/app, web/pages/azure, web/pages/settings_reading |
 | `ai/evaluation.py` | Accuracy evaluation against hand-labelled ground truth. | ops/cli, ops/share_report |
 | `ai/extraction.py` | Component 1 - Extraction layer (Azure AI Document Intelligence). | ai/azure_check, ai/inference, ai/offline_coder, ai/page_worker, ai/pipeline, capture/workflow, coding/validation, erp/stamp, intake/mailbox, ops/cli, ops/doctor, web/invoice_view, web/pages/process |
 | `ai/figures.py` | Two readings of a page compared figure by figure, as CloseDesk compares its page reader with OCR. | ai/offline_coder, ai/page_worker, capture |
