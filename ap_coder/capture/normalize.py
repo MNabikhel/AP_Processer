@@ -313,11 +313,6 @@ def norm_id(text: str | None) -> str:
     return re.sub(r"[\s\-_./#:]", "", s)
 
 
-def clean_id(text: str) -> str:
-    """The identifier as printed, trimmed of label punctuation around it."""
-    return str(text).strip().strip(":#.,;").strip()
-
-
 def luhn_ok(digits: str) -> bool:
     if not digits.isdigit():
         return False

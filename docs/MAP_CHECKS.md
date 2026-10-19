@@ -66,6 +66,10 @@ Question 4 still needed a code search for one method's callers: the map stays at
 - The final pass and round 3 above were the last check of the maps: 0 checker errors, one warning (core map at
   76 lines, resolved by stage 5's grouping).
 
+## Next checks
+- A cold-start round every 3 months (root CLAUDE.md): add it here as round 4, 5... with its 5 questions, the verdicts
+  and the fixes. The map-reviewer says when the last one is older than that.
+
 ## Not recoverable
 - Round 1 and 2 question wording is summarised, not quoted. Round 2 has no per-question verdict; pass 1 and the
   sweep-2 review have no claim totals.

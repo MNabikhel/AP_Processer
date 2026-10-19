@@ -84,8 +84,6 @@
 .apc-subhead b {font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--lg-subtle); font-weight: 600;}
 .apc-subhead span {font-size: 12.5px; color: var(--lg-subtle);}
 .apc-subhead.first {border-top: none; padding-top: 0; margin-top: 0;}
-/* Column heads above a hand-built grid of widgets (e.g. tax treatments) */
-.apc-colhead {font-size: 12px; color: var(--lg-muted); font-weight: 500; padding-bottom: 2px;}
 /* ---- Typography helpers ---------------------------------------------------------------------- */
 .apc-eyebrow {font-size: 12.5px; color: var(--lg-subtle); font-weight: 500;}
 .apc-title {font-size: 24px; font-weight: 600; color: var(--lg-text); letter-spacing: -.01em; line-height: 1.25; margin: 4px 0 0;}
@@ -120,20 +118,6 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 .apc-status::before {content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dot, var(--lg-subtle));}
 .apc-status.ok {--dot: #16a34a;} .apc-status.warn {--dot: var(--apc-warn-dot);} .apc-status.err {--dot: var(--lg-danger);}
 .apc-status.info {--dot: var(--lg-accent);} .apc-status.violet {--dot: var(--lg-violet);}
-/* ---- Plain header with a progress figure (ui.hero; no banner) ------------------------------------------ */
-.apc-hero {display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 4px;}
-.apc-hero .main {min-width: 0;}
-.apc-hero .eyebrow {color: var(--lg-subtle); font-size: 12.5px; font-weight: 500;}
-.apc-hero h1 {color: var(--lg-text); font-size: 24px; font-weight: 600; margin: 4px 0 2px; letter-spacing: -.01em; padding: 0;
-  line-height: 1.25;}
-.apc-hero .lead {color: var(--lg-muted); font-size: 14px; margin: 0;}
-.apc-hero .chips {display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;}
-.apc-hero .chips:empty {display: none;}
-.apc-hero .goal {flex: none; width: 160px; text-align: right; padding-bottom: 2px;}
-.apc-hero .goal .num {font-size: 22px; font-weight: 600; color: var(--lg-text); font-feature-settings: var(--lg-num); line-height: 1.2;}
-.apc-hero .goal .cap {font-size: 12px; color: var(--lg-muted); margin: 2px 0 6px;}
-.apc-hero .goal .bar {height: 4px; border-radius: 2px; background: var(--lg-hairline); overflow: hidden;}
-.apc-hero .goal .bar > div {height: 100%; background: var(--lg-accent); border-radius: 2px;}
 
 /* ---- KPI strip: one bordered card, hairline dividers ------------------------------------------------- */
 .apc-tiles {display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--lg-hairline);
@@ -173,20 +157,6 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
   font-weight: 600; letter-spacing: .02em; width: 28px; height: 28px; font-size: 11px;}
 .apc-avatar.lg {width: 40px; height: 40px; font-size: 14px; border-radius: var(--lg-r-lg);}
 .apc-avatar.sm {width: 24px; height: 24px; font-size: 10px;}
-.apc-qcard {display: grid; grid-template-columns: auto minmax(0, 1fr) 160px 130px 20px; align-items: center; gap: 16px;
-  background: var(--lg-surface); border: 1px solid var(--lg-border); border-radius: var(--lg-r-lg); padding: 12px 16px;
-  transition: background .12s ease, border-color .12s ease;}
-.apc-qcard .who {min-width: 0;}
-.apc-qcard .vendor {font-weight: 600; color: var(--lg-text); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
-.apc-qcard .meta {display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px; color: var(--lg-muted); font-size: 12.5px;}
-.apc-qcard .meta [aria-hidden] {color: var(--lg-subtle);}
-.apc-qcard .amount {text-align: right; font-weight: 600; font-size: 14px; color: var(--lg-text); font-variant-numeric: tabular-nums;
-  font-feature-settings: var(--lg-num);}
-.apc-qcard .amount small {display: block; font-weight: 500; font-size: 11.5px; color: var(--lg-subtle);}
-.apc-qcard .chev {color: var(--lg-subtle); font-size: 18px; transition: color .12s ease;}
-.apc-qcard .state {display: flex; flex-direction: column; gap: 6px; align-items: flex-start;}
-.apc-qcard .state .apc-meter {width: 100%;}
-@media (max-width: 1000px) {.apc-qcard {grid-template-columns: auto minmax(0, 1fr) 120px 20px;} .apc-qcard .state {display: none;}}
 
 /* Confidence meter: a 4px bar, the number as text */
 .apc-meter {display: flex; flex-direction: column; gap: 4px;}
@@ -194,22 +164,6 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
 .apc-meter .fill {height: 100%; border-radius: 2px;}
 .apc-meter .txt {font-size: 12px; color: var(--lg-muted); display: flex; justify-content: space-between;}
 .apc-meter .txt b {color: var(--lg-text); font-weight: 600; font-variant-numeric: tabular-nums;}
-/* ---- Review: progress strip, invoice header ---------------------------------------------------------------- */
-.apc-progress {height: 4px; background: var(--lg-hairline); border-radius: 2px; overflow: hidden; margin: 4px 0 14px;}
-.apc-progress > div {height: 100%; background: var(--lg-accent); border-radius: 2px; transition: width .4s ease;}
-.apc-inv {display: flex; gap: 16px; align-items: center;}
-.apc-inv .main {flex: 1; min-width: 0;}
-.apc-inv .vendor {font-size: 20px; font-weight: 600; letter-spacing: -.01em; color: var(--lg-text); line-height: 1.25;}
-.apc-inv .meta {display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--lg-muted); font-size: 13px; margin: 4px 0 8px;}
-.apc-inv .meta span {display: inline-flex; align-items: center; gap: 4px;}
-.apc-inv .meta [aria-hidden] {color: var(--lg-subtle);}
-.apc-inv .pills {display: flex; gap: 6px; flex-wrap: wrap;}
-.apc-inv .side {display: flex; align-items: center; gap: 24px; flex: none;}
-.apc-inv .total {text-align: right;}
-.apc-inv .total .label {font-size: 12.5px; color: var(--lg-muted); font-weight: 500;}
-.apc-inv .total .value {font-size: 24px; font-weight: 600; letter-spacing: -.01em; color: var(--lg-text); font-variant-numeric: tabular-nums;
-  font-feature-settings: var(--lg-num);}
-.apc-inv .total .cur {font-size: 12px; color: var(--lg-subtle); font-weight: 500;}
 /* Donut gauge: conic gradient with a masked centre (only where it carries the key number) */
 .apc-ring {position: relative; display: inline-grid; place-items: center; flex: none; font-weight: 600;
   font-variant-numeric: tabular-nums; letter-spacing: -.01em;}
@@ -219,9 +173,7 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
   mask: radial-gradient(farthest-side, transparent calc(100% - var(--w)), #000 calc(100% - var(--w) + 1px));}
 .apc-ring span {position: relative;}
 
-/* ---- Money breakdown bar --------------------------------------------------------------------------------- */
-.apc-split {display: flex; height: 8px; border-radius: 4px; overflow: hidden; gap: 2px; background: var(--lg-surface); margin: 6px 0 10px;}
-.apc-split > div {height: 100%; min-width: 4px;}
+/* ---- Chart legend ----------------------------------------------------------------------------------------- */
 .apc-legend {display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 13px; color: var(--lg-text);}
 .apc-legend span {display: inline-flex; align-items: center; gap: 6px;}
 .apc-legend i {width: 8px; height: 8px; border-radius: 2px; display: inline-block;}

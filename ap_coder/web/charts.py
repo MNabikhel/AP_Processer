@@ -319,21 +319,3 @@ def bar_chart(labels: Sequence[str], series: Series | Sequence[Series], *, title
 def legend_items(series: Sequence[Series]) -> list[tuple[str, str]]:
     """(name, colour) for a key drawn in HTML next to a chart made with ``legend=False``."""
     return [(s.name, s.color) for s in series]
-
-
-def stacked_bar_chart(labels: Sequence[str], series: Sequence[Series], **kwargs) -> Markup:  # noqa: ANN003
-    return bar_chart(labels, series, mode="stacked", **kwargs)
-
-
-def grouped_bar_chart(labels: Sequence[str], series: Sequence[Series], **kwargs) -> Markup:  # noqa: ANN003
-    return bar_chart(labels, series, mode="grouped", **kwargs)
-
-
-def colors_for(names: Sequence[str]) -> dict[str, str]:
-    """A colour per name in a fixed order; past the palette, the rest share the last (fold them into "Other")."""
-    return {name: SERIES[min(i, len(SERIES) - 1)] for i, name in enumerate(names)}
-
-
-def fold_other(names: Sequence[str], keep: int = len(SERIES) - 1, other: str = "Other") -> dict[str, str]:
-    """Each name → the series it is drawn in: the first ``keep`` as themselves, the rest as ``other``."""
-    return {name: (name if i < keep else other) for i, name in enumerate(names)}

@@ -24,7 +24,9 @@ Do this, in order:
    data formats, behaviour it relies on), quoting file:line. A caller that breaks is a blocking finding.
 5. docs/decisions.md: does the change reverse a recorded decision (D-NN)? If so, say so: the change must update it
    with the reason. A significant new choice with no D-NN entry: propose its line.
-6. Standing rules: nothing reaches the internet at run time (unless behind `internet_allowed()`); no company data in
+6. Upkeep: say if a touched CLAUDE.md is over about 50 lines (the folder may need splitting), and if the last
+   cold-start round in docs/MAP_CHECKS.md is more than 3 months old (one is due: root CLAUDE.md).
+7. Standing rules: nothing reaches the internet at run time (unless behind `internet_allowed()`); no company data in
    the repo; user-facing text says "pilot tester", never "manager"; a bug fix has its failing-first test and a
    docs/BUGS.md entry whose lesson is in its folder's ### Bug lessons.
 

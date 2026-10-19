@@ -9,9 +9,11 @@ the offline jobs point every proxy at a closed port (127.0.0.1:9) to prove AP Co
 **Used by:** GitHub Actions; `tests` (`tests/test_ci_workflow.py` reads `ci.yml`)
 
 ## Interface
-- Triggers: push to `main` and `claude/**`, pull requests, `workflow_dispatch`. A newer push cancels the older run.
+- Triggers: push to `main`, pull requests, `workflow_dispatch` (a branch without a PR: run it by hand). Each commit of a
+  PR runs once (D-36). A newer push cancels the older run.
 - Jobs, one line each:
-  - `tests`: Ubuntu and Windows x Python 3.10, 3.12, 3.13, 3.14: `pip install -e ".[dev]"`, `ruff check`, `ruff format --check`, `pytest -q`.
+  - `tests`: Ubuntu and Windows x Python 3.10, 3.12, 3.13, 3.14: `pip install -e ".[dev]"`, `pytest -q`.
+  - `lint`: `ruff check` and `ruff format --check` once, on Ubuntu (the dev extra's ruff).
   - `browser-tests`: Ubuntu, Playwright and its Chromium installed online, then the `in_a_browser` tests with
     `AP_REQUIRE_BROWSER=1` (a missing browser fails, never skips).
   - `codebase-map`: `python scripts/check_map.py --changed <base>` (a PR's base branch; on a push to main, the commit
@@ -26,7 +28,7 @@ the offline jobs point every proxy at a closed port (127.0.0.1:9) to prove AP Co
 ## Gotchas and decisions
 - How to read a failure: open the failed step. Shell steps stop at a line `FAILED: <what>`; PowerShell steps
   `throw` a sentence naming what was missing; just above it is the launcher's own output (`launch.out`,
-  `launch1.out`, `install1.out`...), printed whole. In `tests`, a red Lint step is ruff (run `ruff format` locally).
+  `launch1.out`, `install1.out`...), printed whole. A red `lint` job is ruff (run `ruff format` locally).
 - `update-over-older-install`: `old_versions.py check` prints one line per thing lost or left; the line
   "the update lost or left something" only sums them up. Read the lines above it.
 - Background processes do not outlive a step on Windows: the update job is one long step on purpose.

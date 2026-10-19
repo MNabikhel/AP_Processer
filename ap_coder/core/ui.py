@@ -162,16 +162,6 @@ def breadcrumbs(parts: Sequence[str]) -> str:
     return f"<nav class='apc-crumbs' aria-label='Breadcrumb'>{sep.join(items)}</nav>"
 
 
-def page_header(eyebrow: str, title: str, subtitle: str = "", aside: str = "",
-                crumbs: Sequence[str] = ()) -> str:  # fmt: skip
-    """Title block of a page. ``crumbs`` (e.g. ``("AP Coder", "Close & compliance")``) replaces the eyebrow
-    with a breadcrumb; ``aside`` is HTML (pills, a status) shown on the right, built with these helpers."""
-    sub = f"<div class='apc-sub'>{esc(subtitle)}</div>" if subtitle else ""
-    top = breadcrumbs(crumbs) if crumbs else f"<div class='apc-eyebrow'>{esc(eyebrow)}</div>"
-    side = f"<div class='aside'>{aside}</div>" if aside else ""
-    return f"<div class='apc-head apc-anim'><div>{top}<div class='apc-title'>{esc(title)}</div>{sub}</div>{side}</div>"
-
-
 def section_title(title: str, note: str = "") -> str:
     """A small uppercase heading between cards, with an optional note on the right."""
     note_html = f"<span>{esc(note)}</span>" if note else ""
@@ -182,11 +172,6 @@ def subhead(title: str, note: str = "", first: bool = False) -> str:
     """A small uppercase heading that groups fields inside a card (``first``: no rule above it)."""
     note_html = f"<span>{esc(note)}</span>" if note else ""
     return f"<div class='apc-subhead{' first' if first else ''}'><b>{esc(title)}</b>{note_html}</div>"
-
-
-def colheads(*titles: str) -> str:
-    """One column head (use one per st.columns cell above a hand-built grid of widgets)."""
-    return "".join(f"<div class='apc-colhead'>{esc(t)}</div>" for t in titles)
 
 
 def status(text: str, tone: str = "ok") -> str:
@@ -200,114 +185,9 @@ def empty_note(title: str, text: str = "", icon_name: str = "inbox") -> str:
     return f"<div class='apc-empty-sm'><span class='ico'>{icon(icon_name)}</span><div>{body}</div></div>"
 
 
-def kv(pairs: Iterable[tuple[str, str]]) -> str:
-    """A two-column label / value list (plain text, escaped)."""
-    rows = "".join(f"<dt>{esc(k)}</dt><dd>{esc(v)}</dd>" for k, v in pairs)
-    return f"<dl class='apc-kv'>{rows}</dl>"
-
-
 def greeting(now: dt.datetime | None = None) -> str:
     hour = (now or dt.datetime.now()).hour
     return "Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
-
-
-def hero(eyebrow: str, title: str, lead: str, chips: Iterable[str], ring_value: float, ring_label: str,
-         ring_caption: str) -> str:  # fmt: skip
-    """A plain page header (no banner): ``eyebrow`` above the title, ``lead`` under it, ``chips`` (HTML) as
-    quiet notes, and on the right ``ring_label`` over ``ring_caption`` (e.g. "2/10", "today's progress") with
-    a thin bar filled to ``ring_value``."""
-    chips_html = "".join(f"<span class='chip'>{c}</span>" for c in chips)
-    pct = max(0.0, min(1.0, ring_value or 0.0)) * 100
-    return (
-        f"<div class='apc-hero apc-anim'><div class='main'>"
-        f"<div class='eyebrow'>{esc(eyebrow)}</div><h1>{esc(title)}</h1><p class='lead'>{esc(lead)}</p>"
-        f"<div class='chips'>{chips_html}</div></div>"
-        f"<div class='goal'><div class='num'>{esc(ring_label)}</div><div class='cap'>{esc(ring_caption)}</div>"
-        f"<div class='bar' role='progressbar' aria-valuenow='{pct:.0f}' aria-valuemin='0' aria-valuemax='100'>"
-        f"<div style='width:{pct:.0f}%'></div></div></div></div>"
-    )
-
-
-def meter(value: float, threshold: float = 0.85) -> str:
-    value = max(0.0, min(1.0, value or 0.0))
-    return (
-        f"<div class='apc-meter'><div class='txt'><span>Confidence</span><b>{value:.0%}</b></div>"
-        f"<div class='bar'><div class='fill' style='width:{value * 100:.0f}%;"
-        f"background:{confidence_color(value, threshold)}'></div></div></div>"
-    )
-
-
-def queue_card(inv: dict[str, Any], taxes: Sequence[str] = (), province: str = "", badge: str = "") -> str:
-    """``badge``: extra HTML (e.g. a due-date pill) shown with the invoice details."""
-    flagged = bool(inv.get("requires_review"))
-    status = pill("Needs attention", "warn") if flagged else pill("Ready", "ok")
-    meta = [f"<span>{icon('receipt_long', '1em')} {esc(inv.get('invoice_number') or '—')}</span>",
-            f"<span>{icon('event', '1em')} {esc(inv.get('invoice_date') or '—')}</span>"]  # fmt: skip
-    if province:
-        meta.append(f"<span>{icon('location_on', '1em')} {esc(province)}</span>")
-    meta += [tax_chip(t) for t in taxes]
-    if badge:
-        meta.append(badge)
-    return (
-        f"<div class='apc-qcard {'attn' if flagged else 'ready'} apc-anim'>"
-        f"{avatar(inv.get('vendor_name') or inv.get('file_name') or '')}"
-        f"<div class='who'><div class='vendor'>{esc(inv.get('vendor_name') or inv.get('file_name'))}</div>"
-        f"<div class='meta'>{''.join(meta)}</div></div>"
-        f"<div class='state'>{status}{meter(inv.get('adjusted_confidence') or 0.0)}</div>"
-        f"<div class='amount'>{money(inv.get('grand_total'))}<small>{esc(inv.get('currency') or '')}</small></div>"
-        f"<div class='chev'>{icon('chevron_right')}</div></div>"
-    )
-
-
-def progress(position: int, total: int) -> str:
-    pct = 0 if not total else (position / total) * 100
-    return f"<div class='apc-progress' aria-hidden='true'><div style='width:{pct:.0f}%'></div></div>"
-
-
-def invoice_hero(vendor: str, meta: Iterable[tuple[str, str]], pills: Iterable[str], confidence: float,
-                 total: float, currency: str, threshold: float = 0.85) -> str:  # fmt: skip
-    meta_html = "".join(f"<span>{icon(i, '1.05em')} {esc(t)}</span>" for i, t in meta if t)
-    gauge = ring(confidence, size=70, stroke=7, color=confidence_color(confidence, threshold))
-    return (
-        f"<div class='apc-inv apc-anim'>{avatar(vendor, 'lg')}<div class='main'>"
-        f"<div class='vendor'>{esc(vendor or 'Unknown vendor')}</div><div class='meta'>{meta_html}</div>"
-        f"<div class='pills'>{''.join(pills)}</div></div>"
-        f"<div class='side'><div style='text-align:center'>{gauge}<div class='apc-muted' "
-        f"style='font-size:.72rem'>AI confidence</div></div>"
-        f"<div class='total'><div class='label'>{'Credit' if total < 0 else 'Total due'}</div>"
-        f"<div class='value'>{money(total)}</div>"
-        f"<div class='cur'>{esc(currency)}</div></div></div></div>"
-    )
-
-
-def split_bar(segments: Sequence[tuple[str, float]], max_segments: int = 6) -> str:
-    """Stacked bar + legend showing where an invoice's money goes (fixed palette order, 'Other' fold)."""
-    segments = [(label, amount) for label, amount in segments if amount > 0]
-    if len(segments) > max_segments:
-        head = segments[: max_segments - 1]
-        segments = [*head, ("Other", sum(a for _, a in segments[max_segments - 1 :]))]
-    total = sum(a for _, a in segments) or 1.0
-    bars, legend = [], []
-    for i, (label, amount) in enumerate(segments):
-        color = SERIES[i % len(SERIES)]
-        share = amount / total
-        title = f"{label}: {money(amount)} ({share:.0%})"
-        bars.append(f"<div style='flex:{share:.4f};background:{color}' title='{esc(title)}'></div>")
-        legend.append(
-            f"<span><i style='background:{color}'></i>{esc(label)} <b>{money(amount)}</b> <em>{share:.0%}</em></span>"
-        )
-    return f"<div class='apc-split' role='img' aria-label='Spend by account'>{''.join(bars)}</div><div class='apc-legend'>{''.join(legend)}</div>"  # noqa: E501
-
-
-def reason_row(number: int, description: str, gl_code: str, gl_label: str, reasoning: str,
-               badges: Iterable[str] = ()) -> str:  # fmt: skip
-    """One line of the 'why the AI chose these codes' panel (badges are pre-built HTML)."""
-    return (
-        f"<div class='apc-reason'><span class='apc-pill gray'>{number}</span><div class='body'>"
-        f"<div class='head'><span class='desc'>{esc(description)}</span><span class='apc-arrow'>→</span>"
-        f"<b class='apc-mono'>{esc(gl_code)}</b> <span class='apc-muted'>{esc(gl_label)}</span></div>"
-        f"<div class='why'>{esc(reasoning)}</div><div class='badges'>{''.join(badges)}</div></div></div>"
-    )
 
 
 _CHECK_ICONS = {"error": "!", "warning": "!", "ok": "✓", "info": "★"}
@@ -406,14 +286,6 @@ def time_ago(iso: str | None, now: dt.datetime | None = None) -> str:
     return iso
 
 
-def feed_item(reviewer: str, html_text: str, when: str) -> str:
-    """``html_text`` must already be escaped."""
-    return (
-        f"<div class='item apc-anim'>{avatar(reviewer, 'sm')}<div><div class='txt'>{html_text}</div>"
-        f"<div class='when'>{esc(when)}</div></div></div>"
-    )
-
-
 STATUS_PILLS = {
     "attention": ("Needs attention", "warn", "flag"),
     "review": ("In queue", "info", "inbox"),
@@ -483,22 +355,6 @@ def step(state: str, label: str, detail: str) -> str:
     return (
         f"<div class='apc-step'><span class='dot {state}' aria-hidden='true'>{mark}</span>{esc(label)}"
         f"<span class='state'>{esc(detail)}</span></div>"
-    )
-
-
-def sidebar_profile(name: str, approved_today: int, waiting: int, env: str = "", env_tone: str = "ok",
-                    where: str = "", where_title: str = "") -> str:  # fmt: skip
-    """The sidebar footer: one quiet line on where the app runs (``env`` and ``where``, e.g. "Offline · Data
-    stays on this computer", with ``where_title``, e.g. the data folder, as a tooltip), then who is reviewing
-    and what they approved today (``waiting`` is on the Review queue's nav badge, so it is only in the tooltip)."""
-    env_html = ""
-    if env:
-        text = " · ".join(x for x in (env, where) if x)
-        env_html = f"<div class='apc-env' title='{esc(where_title or text)}'>{status(text, env_tone)}</div>"
-    today = f"{approved_today:,} approved today"
-    return (
-        f"{env_html}<div class='apc-me' title='AP reviewer · {esc(today)} · {waiting:,} waiting'>{avatar(name, 'sm')}"
-        f"<div><div class='name'>{esc(name)}</div><div class='role'>{esc(today)}</div></div></div>"
     )
 
 

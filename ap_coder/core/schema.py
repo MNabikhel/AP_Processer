@@ -70,11 +70,6 @@ def plan_code_enums(gl_codes: list[str], cc_codes: list[str] | None) -> tuple[li
     return None, None
 
 
-def enum_values_or_none(codes: list[str]) -> list[str] | None:
-    """A single code list on its own within the budget (kept for callers checking one list)."""
-    return plan_code_enums(codes, None)[0]
-
-
 def line_gl_codes(reference: ReferenceData) -> list[str]:
     """GL codes an expense line may use: everything except accounts mapped to a tax type."""
     tax_gls = reference.tax.tax_gl_codes()

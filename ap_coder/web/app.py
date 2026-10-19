@@ -15,7 +15,6 @@ from __future__ import annotations
 import contextlib
 import hmac
 import importlib
-import ipaddress
 import os
 import secrets
 from collections.abc import AsyncIterator, Callable
@@ -31,7 +30,7 @@ from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, default_db_path
 from ap_coder.web import core
-from ap_coder.web.identity import Identity
+from ap_coder.web.identity import Identity, is_this_computer
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import MORE_MODULES, PAGES, Page
 from ap_coder.web.security import TOKEN_HEADER, LocalOnly
@@ -136,7 +135,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     def shutdown(request: Request) -> JSONResponse:
         token = request.app.state.shutdown_token
         given = request.headers.get(TOKEN_HEADER) or ""
-        if not _loopback(request.client.host if request.client else "") or not token:
+        if not is_this_computer(request.client.host if request.client else "") or not token:
             raise HTTPException(status_code=403, detail="AP Coder only stops from this computer.")
         if not hmac.compare_digest(given.encode(), str(token).encode()):
             raise HTTPException(status_code=403, detail="Wrong or missing X-AP-Coder-Token.")
@@ -168,13 +167,6 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
         return await http_error(request, StarletteHTTPException(404, "Nothing in AP Coder has that number."))
 
     return app
-
-
-def _loopback(host: str) -> bool:
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return host == "localhost"
 
 
 def _placeholder(page: Page) -> Callable[[Request], HTMLResponse]:

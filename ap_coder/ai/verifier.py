@@ -354,12 +354,6 @@ def response_limit(coder: Any) -> int:
 # --- What it means for the invoice --------------------------------------------------------------------------------
 
 
-def _value_text(field: str, value: Any) -> str:
-    if field in AMOUNTS and isinstance(value, (int, float)):
-        return f"{value:,.2f}"
-    return str(value) if value not in (None, "") else "(empty)"
-
-
 def issues(result: dict[str, Any] | None, output: dict[str, Any] | None = None) -> list[tuple[str, str, str]]:
     """(severity, code, message) for the review screen from a review's result. With ``output`` (what is on screen
     now): a field it disputed that the reviewer has since changed is no longer reported."""

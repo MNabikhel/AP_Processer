@@ -1,13 +1,13 @@
 # scripts: setup, start, update, the offline bundle and developer tools
 
 Everything that installs, starts and updates AP Coder from outside the package: the launcher behind the double-click,
-the installer, the update over older installs, the offline bundle builder, the OCR model copier, the self-check, and
-the map checker. The app itself (`python -m ap_coder serve` and the rest) is in `ap_coder/`; CI-only tools are in `ci/`.
+the installer, the update over older installs, the offline bundle builder, the OCR model copier, the self-check, the
+map checker and the map-reviewer gate. The app itself (`python -m ap_coder serve` and the rest) is in `ap_coder/`; CI-only tools are in `ci/`.
 Offline by default: the bundle builder downloads (it sets `AP_ALLOW_INTERNET=1` for itself); the setup downloads from PyPI
 only from the code alone (GitHub's ZIP or a checkout, no bundle; `AP_ALLOW_INTERNET=0` stops it) or with `AP_ALLOW_INTERNET=1`.
 
 **Depends on:** `ap_coder/core` (paths, envfile, config, store, reference_data), `ap_coder/ops` (offline, doctor, cli), `ap_coder/ai` (local_llm, page_reader, page_worker, pipeline), `ap_coder/capture`
-**Used by:** the root launchers (`APProcessor.bat`, `APProcessor.command` run launch.py), `.github/workflows`, `tests`, `.claude` (the hook runs check_map.py)
+**Used by:** the root launchers (`APProcessor.bat`, `APProcessor.command` run launch.py), `.github/workflows`, `tests`, `.claude` (the hooks run check_map.py and map_review_gate.py)
 
 ## Interface
 - `main()` (launch.py): argv -> exit code. The double-click: hand over to a newer install, reuse or make `.venv`,
@@ -31,9 +31,12 @@ only from the code alone (GitHub's ZIP or a checkout, no bundle; `AP_ALLOW_INTER
   read right. A throwaway database, nothing sent.
 - check_map.py: `python scripts/check_map.py` (the whole map), `--changed BASE` (also warns when git can't compare),
   `--modules` (writes `ap_coder/MODULES.md`), `--hook` (Claude Code reminder, never blocks). New files count before `git add`.
+- map_review_gate.py (D-35): `--reviewed` (the map-reviewer finished: record every changed file's staged and work-tree
+  git blob, from the top folder, in git's folder); `--commit` (hook event on stdin: before a `git commit`, any changed
+  non-Markdown file not reviewed as it is exits 2). `commit_dirs()`: the folders a shell command commits in.
 
 ## Gotchas and decisions
-- launch.py, running.py, upgrade.py, check_deps.py, fetch_models.py, check_map.py and install.py run before any package
+- launch.py, running.py, upgrade.py, check_deps.py, fetch_models.py, check_map.py, map_review_gate.py and install.py run before any package
   is installed: at the top they import only the standard library (check_deps.py: plus pip's `packaging`) and
   `ap_coder`'s standard-library modules (core/paths, core/envfile, ops/offline); anything else is imported inside a function, after setup.
 - Never two versions on one database: a start calls `take_over()` (`run()` in launch.py) before packages, data or models are touched.
@@ -58,5 +61,5 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 ## Files
 - Start: `launch.py` (the one-button setup and start), `running.py` (find and stop a running AP Coder), `first_run.py` (data folder and models on first run), `check_deps.py` (missing packages), `fetch_models.py` (OCR models from the bundle).
 - Install and update: `install.py` (the installer's questions), `upgrade.py` (update over older installs), `terminal.bat` (a Windows prompt with .venv first on PATH).
-- Build and check: `build_offline_bundle.py` (the offline ZIP), `pilot_check.py` (self-check on the samples), `make_sample_pdf.py` (regenerate the sample PDFs and Markdown), `check_map.py` (the CLAUDE.md map checker).
+- Build and check: `build_offline_bundle.py` (the offline ZIP), `pilot_check.py` (self-check on the samples), `make_sample_pdf.py` (regenerate the sample PDFs and Markdown), `check_map.py` (the CLAUDE.md map checker), `map_review_gate.py` (no commit the map-reviewer hasn't seen).
 - `ci/`: CI-only helpers (has its own CLAUDE.md).

@@ -4,7 +4,7 @@ Agents Claude Code can run in this repository. Each is a Markdown file with a YA
 and its instructions. They read and report; none edits code.
 
 **Depends on:** none
-**Used by:** none (run by Claude Code on request, or as the root CLAUDE.md asks)
+**Used by:** `.claude` (settings.json's SubagentStop hook matches the name `^map-reviewer$`); else run by Claude Code on request
 
 ## Interface
 - `map-reviewer`: give it a change (the working tree, or a base to diff against). It runs `scripts/check_map.py
@@ -12,7 +12,10 @@ and its instructions. They read and report; none edits code.
   for callers that break, checks docs/decisions.md and the standing rules, and reports BLOCKING / UPDATE / OK.
 
 ## Gotchas and decisions
-- Run it before every commit that changes code (the root CLAUDE.md's rule); its findings are fixed before pushing.
+- Run it before every commit that changes code: the review gate (D-35) stops a commit it hasn't reviewed; its
+  findings are fixed before pushing, and a code fix after it means running it again.
+- Renaming map-reviewer (its `name:`) means changing the matcher in `.claude/settings.json`: otherwise no review is
+  recorded and the gate stops every code commit.
 - It has a fresh context on purpose: it trusts the code, not the map, and reports where they differ.
 
 ## Files

@@ -275,10 +275,6 @@ def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
     return data
 
 
-def has_data_besides_env(folder: Path) -> bool:
-    return any(p.name not in (".env", "invoices") or (p.is_dir() and any(p.iterdir())) for p in folder.iterdir())
-
-
 def fresh_start(c: Console, data: Path) -> None:
     """Move the database, invoices and outputs into a dated backup folder (settings and cache are kept)."""
     keep = {".env", ".cache", "backups"}  # settings, the scanned-text cache (re-reading costs) and backups

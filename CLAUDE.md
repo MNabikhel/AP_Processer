@@ -14,9 +14,9 @@ centers, checks GST/HST/PST/QST and the math, and learns from what AP approves. 
 - `ap_coder/bench`: the accuracy and speed benchmark (made-up invoices and emails, scoring).
 - `ap_coder/web`: the dashboard (FastAPI app, shared page helpers, server); `ap_coder/web/pages`: one route module per page.
 - `ap_coder/web/templates`, `ap_coder/web/templates/partials`: the Jinja pages; `ap_coder/web/static`, `ap_coder/web/static/js`: stylesheets and scripts.
-- `scripts`: launcher, installer, update, offline bundle, OCR models, self-check, map checker; `scripts/ci`: CI-only helpers.
+- `scripts`: launcher, installer, update, offline bundle, OCR models, self-check, map checker and review gate; `scripts/ci`: CI-only helpers.
 - `tests`: the pytest suite and its helpers. `data`: shipped tax rates and sample reference data. `docs`: guides, bug log, decisions.
-- `.github`, `.github/workflows`: the CI workflow. `.claude`, `.claude/agents`: the map hook and the map-reviewer agent. `samples`, `private`: data folders (sample invoices; the git-ignored data folder).
+- `.github`, `.github/workflows`: the CI workflow. `.claude`, `.claude/agents`: the map hooks (edit reminder, review gate) and the map-reviewer agent. `samples`, `private`: data folders (sample invoices; the git-ignored data folder).
 
 ## How to navigate
 Read this file, then the CLAUDE.md of the folder you will change, then the code. Each folder's **Used by:** line
@@ -27,8 +27,12 @@ Any change to a folder's interface, dependencies or files means updating its CLA
 checking every folder in its **Used by:** line. Run `python scripts/check_map.py` before committing (it checks the
 size, the Files index, Depends on / Used by against the imports for `ap_coder/` packages, Interface names, bug
 lessons and `ap_coder/MODULES.md`), and run the map-reviewer agent
-(`.claude/agents/map-reviewer.md`) on the change. CI runs the same checker (the "Codebase map" job), and a
-Claude Code hook (`.claude/settings.json`) reminds you after each edit.
+(`.claude/agents/map-reviewer.md`) on the change. CI runs the same checker (the "Codebase map" job). Claude Code
+hooks (`.claude/settings.json`) remind you after each edit and stop a `git commit` of code the map-reviewer hasn't
+reviewed as it is (Markdown-only edits after its review pass; `scripts/map_review_gate.py`, D-35).
+Keep each CLAUDE.md near 50 lines (the checker warns past 60, fails past 80, bug lessons aside): one that grows flags a folder to split.
+Every 3 months, run a cold-start round (5 questions, maps only) and add it to `docs/MAP_CHECKS.md`; the map-reviewer
+says when the last one is older.
 
 ## Standing rules
 - Fully offline at run time: nothing connects to the internet unless `AP_ALLOW_INTERNET=1` (developers, the bundle

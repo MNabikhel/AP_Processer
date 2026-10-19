@@ -154,16 +154,6 @@ def _dashboard_store(db_path: Path | None = None) -> Any:
     return Store(db) if db.exists() else None
 
 
-def linked(model: str, db_path: Path | None = None) -> bool:
-    """``confirmed`` in the database the dashboard uses, opened only when it exists: for the doctor and the launcher,
-    which have no store at hand."""
-    try:
-        store = _dashboard_store(db_path)
-        return store is not None and confirmed(store, model)
-    except Exception:  # a locked or damaged database: say "not passed", the dashboard tells the rest
-        return False
-
-
 def self_test_detail(model: str, db_path: Path | None = None) -> tuple[str, str]:
     """``self_test`` in the database the dashboard uses (for the doctor and the launcher): "pending" when there is
     no database yet (the test runs on its own once AP Coder is open). Never raises."""
@@ -673,10 +663,6 @@ def start_background(settings_factory: Callable[[], Settings], store_factory: Ca
             _background = BackgroundReader(settings_factory, store_factory, cache_dir)
             _background.start()
         return _background
-
-
-def background() -> BackgroundReader | None:
-    return _background if _background is not None and _background.is_alive() else None
 
 
 # --- Testing the page reader, in the background -----------------------------------------------------------------

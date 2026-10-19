@@ -59,7 +59,6 @@ REQUIRED_FIELDS = ("vendor_name", "invoice_number", "invoice_date", "grand_total
 
 LEARNING, SUPERVISED, READY, AUTONOMOUS, SUSPENDED = "learning", "supervised", "ready", "autonomous", "suspended"
 HELD = "held"  # an AP lead keeps this supplier supervised, whatever its record
-STATES = (LEARNING, SUPERVISED, READY, AUTONOMOUS, SUSPENDED, HELD)
 STORED_STATES = (SUPERVISED, AUTONOMOUS, SUSPENDED, HELD)  # what touchless processing, an AP lead or a found error sets
 STATE_LABELS = {
     LEARNING: "Learning", SUPERVISED: "Supervised", READY: "Ready", AUTONOMOUS: "Autonomous", SUSPENDED: "Suspended",
