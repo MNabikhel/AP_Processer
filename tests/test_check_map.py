@@ -197,6 +197,15 @@ def test_a_map_too_long_fails_but_its_bug_lessons_do_not_count(project):
     assert code == 1 and "the folder does too much, split it" in out
 
 
+def test_a_map_past_fifty_lines_is_a_warning(project):
+    """The root map's rule: each CLAUDE.md at 50 lines or fewer, bug lessons aside; past that, a warning."""
+    edit(project, "ap_coder/CLAUDE.md", "- Nothing yet.\n", "".join(f"- note {n}\n" for n in range(33)))
+    assert run(project) == (0, "map: 0 error(s), 0 warning(s)\n")  # 50 lines
+    edit(project, "ap_coder/CLAUDE.md", "- note 0\n", "- note 0\n- one more\n")
+    code, out = run(project)
+    assert code == 0 and "ap_coder/CLAUDE.md: 51 lines: keep it short (about 50)" in out
+
+
 def test_a_module_index_behind_the_imports_fails_until_it_is_made_again(project):
     edit(project, "ap_coder/a.py", "from .sub.b import helper", '"""Runs the core."""\nfrom .sub.b import helper')
     code, out = run(project)

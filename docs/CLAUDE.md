@@ -8,7 +8,7 @@ is the map of its code. When a doc and the code disagree, the code wins and the 
 **Used by:** `scripts` (check_map.py reads BUGS.md), `ap_coder/web/pages` (help.py shows WHATS_NEW.md on the Help page), `tests` (test_how_it_runs_doc.py checks HOW_IT_RUNS.md, test_jde.py and test_jde_readiness.py read JDE_E1.md), `.github/workflows` (comments point to UPGRADING.md), README links
 
 ## Interface
-- `decisions.md`: D-01 to D-36, one line per significant choice, its reason and its source file. Add the next number.
+- `decisions.md`: D-01 to D-37, one line per significant choice, its reason and its source file. Add the next number.
 - `BUGS.md`: every bug a sweep found: B-NN (where, symptom, cause, repro, fix, test, lesson) and N-NN (not reproduced, left).
 - `HOW_IT_RUNS.md` cites code as `file:function`; `tests/test_how_it_runs_doc.py` fails when a cited name no longer exists.
 - `WHATS_NEW.md` is rendered in the app (Help page): keep its Markdown to what `web/minimd.py` renders.

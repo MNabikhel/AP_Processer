@@ -37,7 +37,7 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
 MAP = "CLAUDE.md"
-MAX_LINES, WARN_LINES = 80, 60
+MAX_LINES, WARN_LINES = 80, 50
 # Folders that hold data or fixtures, not code to explain: each is described by its parent's CLAUDE.md instead.
 SKIP = {"samples", "samples/ground_truth", "docs/screenshots", "tests/fixtures", "tests/fixtures/page_reader",
         "tests/offline_guard_site",

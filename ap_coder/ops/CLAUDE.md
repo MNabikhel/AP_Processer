@@ -12,7 +12,8 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.cli` 
 - `main()` (cli.py): argv -> exit code (`__main__.py` and the `ap-coder` script call it); `watch_once()`: the invoices
   folder (and saved emails) once into the pipeline; `serve` runs `web/server.serve()`.
 - `internet_allowed()` (offline.py): `AP_ALLOW_INTERNET` is 1, true, yes or on; `ppocrv5_ready()`: every model file there, with the right SHA-256.
-- `run_checks()` (doctor.py): settings, reference data and LM Studio -> `Check` list (`python -m ap_coder doctor`).
+- `run_checks()` (doctor.py): settings, reference data and LM Studio -> `Check` list (`python -m ap_coder doctor`; `--online`
+  adds a dry run on the local model, and the Azure checks only with `AP_ALLOW_INTERNET=1`).
 - `load_demo()` (demo.py): the sample invoices through the whole product, without Azure.
 - `help_for()` (help.py): a check code -> its `CheckHelp` from `CHECKS`; `build_share_report()` (share_report.py).
 

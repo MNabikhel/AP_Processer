@@ -82,7 +82,10 @@ A fresh agent read only the CLAUDE.md files, MODULES.md, decisions.md and BUGS.m
 5. Whose GST number on a scan, and a bad check digit: right on capture (bill-to reading capped below verified,
    B-44; `GST_NUMBER_VALID`). Missing: coding's code. Fix: the coding map names `GST_NUMBER_CHECK_DIGIT` (with
    `GST_HST_NUMBER_MISSING`, `GST_HST_NUMBER_FORMAT`, all askable of the vendor) and taxreturn.py's claim at risk.
-To keep the root map under 60 lines, two of its lines were shortened (the checker's list, the cold-start rule).
+Then the five maps over 50 lines (root, web, web/pages, scripts, tests: 53 to 60) were trimmed to 50 mostly by
+cutting words, with some short bullets sharing a line (words down 8 to 23%; what moved went to the map that owns it, e.g. doctor
+`--online` to the ops map), and the checker now warns past 50 (D-37). An earlier trim that only joined lines into
+ones of up to 586 characters (words down 0 to 3%) was reverted before it was committed.
 
 ## Next checks
 - A cold-start round every 3 months (root CLAUDE.md): add it here as round 5, 6... with its 5 questions, the verdicts

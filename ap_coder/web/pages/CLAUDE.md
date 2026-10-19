@@ -1,28 +1,25 @@
 # ap_coder/web/pages: the dashboard's route modules, one per page
 
-Every URL of the dashboard lives here: each module has an `APIRouter` called `router` that reads the store, calls the core modules and draws a template.
-`__init__.py` holds `PAGES`, the one list of pages in rail order; `create_app` (web/app.py) includes each page's module from it.
-The shared helpers (render, done/refuse, jobs, files) are in `ap_coder/web`; the business rules (approval, tax, exports) are in `ap_coder/coding`, `ap_coder/erp` and the other core folders, not here.
+Every URL of the dashboard: each module's `APIRouter` `router` reads the store, calls the core folders and draws a template.
+`PAGES` (`__init__.py`) lists the pages in rail order. Shared helpers are in `ap_coder/web`; business rules in the core folders, not here.
 
 **Depends on:** `ap_coder`, `ap_coder/ai`, `ap_coder/capture`, `ap_coder/coding`, `ap_coder/core`, `ap_coder/erp`, `ap_coder/intake`, `ap_coder/ops`, `ap_coder/web`
 **Used by:** `ap_coder/web`
 
 ## Interface
 - `PAGES`, `MORE_MODULES`, `SECTIONS`, `BY_KEY`, `BANNER_PAGES` (__init__.py); `page()`: key -> `Page`(key, title, path, icon, section, subtitle, module).
-- Each module's `router`; a GET draws `render(request, "<name>.html", "<page key>")`, a POST answers with done, message or refuse from web/core.py (JSON).
-- `render_tab()`, `save_env()` (settings.py): draw a Settings tab; write .env changes, apply them to os.environ, log `settings_changed`.
-- `reading_context()`, `automation_context()`, `jde_context()`: each Settings tab's template context. `card()` (azure.py): the Azure card, set as the `azure_check_card` template global.
+- Each module's `router`: a GET draws `render(request, "<name>.html", "<page key>")` (the key lights the rail: the invoice
+  screen's is "review", the Azure check's "settings"); a POST answers JSON with done, message or refuse (web/core.py).
+- Settings: `render_tab()`, `save_env()` (.env changes into os.environ, logged as `settings_changed`), the tabs' `reading_context()`, `automation_context()`, `jde_context()`; `card()` (azure.py): the Azure card.
 - Shared between pages: `filter_queue()`, `sort_queue()` (review.py, used by invoice.py), `tax_types_mapped()` (process.py, used by accounts.py), `day()` (month_end.py, used by sales_tax.py);
   `setup_steps()`, `process_files()`, `JOB` (process.py) and `unsaved_edits()`, `forget_everyones_draft()` (invoice.py), used by review.py; `forget_all_drafts()` (invoice.py, used by settings.py);
-  `env_path()`, `save_env()`, `saved_line()` (settings.py, used by settings_reading.py); `HOW_IT_READS` (settings_reading.py, used by help.py); `confidence_pct()` (review.py, used by web/invoice_view.py).
-- Jobs started here: "process" (process.py, also review.py's retry; polled at /process/status), "settings-doctor" (settings_reading.py, the developer build's Azure connection test), "azure-test" (azure.py). The self-test runs in page_worker, polled at GET /settings/reading/self-test.
+  `env_path()`, `saved_line()` and `save_env()` (settings.py, used by settings_reading.py); `HOW_IT_READS` (settings_reading.py, used by help.py); `confidence_pct()` (review.py, used by web/invoice_view.py).
+- Jobs: "process" (process.py and review.py's retry; /process/status), "settings-doctor" (settings_reading.py), "azure-test" (azure.py); the self-test runs in page_worker.
 
 ## Gotchas and decisions
 - A new page: add `module="<name>"` to its `Page` in `PAGES`; a page without a module gets the placeholder template.
 - Routes with no rail entry go in `MORE_MODULES` ("invoice", "azure", "who"), included first so their fixed paths beat `/settings/{tab}`.
 - The settings_*.py routers are not in `PAGES`: settings.py includes them into its own router (`_include_tabs`).
-- `render()`'s page key highlights the rail: the invoice screen uses "review", the Azure check page "settings".
-- Every POST needs the header `X-AP-Coder: 1` (checked by web/security.py before any route runs) and answers JSON, never an HTML page.
 - The review screen's unsaved edits live in memory, per person (`app.state.invoice_drafts` here, `person_drafts[name.casefold()]` per colleague, so two who give one name share them; invoice.py):
   a restart loses them; bulk approval skips an invoice anyone is editing; approve, reject, reopen and delete drop everyone's, Start over only the asker's.
 
