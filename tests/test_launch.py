@@ -329,6 +329,26 @@ def test_a_running_ap_coder_is_found_and_another_server_is_not(launch, web, monk
     assert launch.running_dashboard(["--port", str(closed)], {}) is None
 
 
+def test_another_accounts_running_ap_coder_is_named_never_opened(launch, web, monkeypatch, capsys):
+    """B-168: with two Windows accounts on one AP Coder folder and data folder, the second person's double-click opened
+    the first person's dashboard (it approves under their name). It says whose AP Coder is open and starts nothing."""
+    site, port = web
+    health = {"ok": True, "app": "ap-coder", "version": launch.identity()["version"], "folder": str(launch.ROOT),
+              "pid": 1, "port": port, "user": "someone-else"}  # fmt: skip
+    (site / "healthz").write_text(json.dumps(health))
+    monkeypatch.setattr(launch, "candidate_ports", lambda rest, state: [port])
+    opened: list[str] = []
+    monkeypatch.setattr(launch, "open_browser", opened.append)
+    monkeypatch.setattr(launch, "ensure_packages", lambda state: pytest.fail("set up under another person's AP Coder"))
+    assert launch.running_dashboard([], {}) is None
+    assert launch.run(launch.parse([])[0], []) == 1
+    monkeypatch.setattr(launch, "take_lock", lambda: False)  # (their start holds the folder's lock)
+    assert launch.wait_for_other([], timeout=60, every=0) == 1
+    out = capsys.readouterr().out
+    assert opened == [] and out.count("open in someone-else's account on this computer") == 2
+    assert "Ask someone-else to close" in out and "waiting for it" not in out
+
+
 def test_second_start_while_running_only_opens_the_browser(launch, monkeypatch):
     monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("open", 8501))
     opened: list[str] = []

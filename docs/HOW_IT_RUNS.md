@@ -218,8 +218,10 @@ record so the newest cleans it up.
 this folder's last, every install's last, 8501, and the one in `<data>/.ap_coder_server.json`. On each:
 
 * **0.2+ server**: `GET http://127.0.0.1:<port>/healthz` (no proxy) answers `{"app": "ap-coder", version, folder,
-  pid, port}`. Same folder and version: opened, nothing started. Newer: opened, never stopped. Older, or another
-  folder: `POST /shutdown` with `X-AP-Coder-Token` from the server file; if that fails, the process listening on
+  pid, port, user}` (`user`, the computer account running it, only to this computer). Another account's (a second
+  Windows user sharing the folder): never opened (it works under that person's name) nor stopped; the start says
+  whose it is and stops (`scripts/launch.py:someone_elses`). Same folder and version: opened, nothing started.
+  Newer: opened, never stopped. Older, or another folder: `POST /shutdown` with `X-AP-Coder-Token` from the server file; if that fails, the process listening on
   the port (`port_owner`: `/proc` on Linux, `lsof` on a Mac, `Get-NetTCPConnection` on Windows) is ended, but only
   when its command line is AP Coder's (`is_ap_coder_process`).
 * **0.1 Streamlit dashboard** (no `/healthz`): recognised by its font `/app/static/InterVariable.woff2`, stopped
@@ -310,7 +312,7 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **Address** (`ap_coder/ops/offline.py:dashboard_address`): `127.0.0.1`, unless `AP_DASHBOARD_ADDRESS` (or
   `--address`) says otherwise; listening beyond this computer prints a warning (there is no login).
 * **Server** (`ap_coder/web/server.py:serve`): uvicorn in that process; a random token; the server file
-  `<data>/.ap_coder_server.json` (`pid`, `port`, `folder`, `version`, `token`, `started`; mode 0600 on macOS/Linux),
+  `<data>/.ap_coder_server.json` (`pid`, `port`, `folder`, `version`, `token`, `user`, `started`; mode 0600 on macOS/Linux),
   removed when it stops if it is still its own.
 * **App** (`ap_coder/web/app.py:create_app`): `LocalOnly` middleware (`ap_coder/web/security.py`: a Host header
   that is not this computer is refused, against DNS rebinding; a POST must carry `X-AP-Coder: 1` and come from the
@@ -349,7 +351,7 @@ can corrupt an open SQLite database).
 | `backups/ap_coder-YYYYMMDD-HHMMSS.db` | daily backup when the dashboard starts, newest 14 kept; `-manual`; `-before-update-from-schema-<n>`; `-before-update-file-paths` | `Store.auto_backup`, `backup_now`, `_before_migrating`, `upgrade._backed_up` |
 | `backups/from-<folder>-<date>/` | an older install's data when the data folder had its own | `upgrade.adopt_legacy` |
 | `.env` | settings (Azure for developers, LM Studio address, reviewer…) | installer, Settings page, `adopt_legacy`, `envfile.retire` |
-| `.ap_coder_server.json` | the running server: pid, port, folder, version, token | `web/server.write_server_file` |
+| `.ap_coder_server.json` | the running server: pid, port, folder, version, token, user (the computer account) | `web/server.write_server_file` |
 | `.ap_coder_worker-<pid>.json` | a running `watch` or `read-pages`: pid, command, folder, version | `ops/cli.running_note` |
 | `.cache/extraction/`, `.cache/page_reader/` | text read from each file, OvisOCR2's readings (by SHA-256) | capture, `page_reader` |
 | `.cache/ocr/` | each scanned page's OCR, per engine (by the page image's SHA-256): a page is OCR'd once however often its invoice is read; at most 4,000, the oldest removed first | `capture/layout.ocr_cache` (the pipeline) |

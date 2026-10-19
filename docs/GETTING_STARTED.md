@@ -335,6 +335,8 @@ The second approval needs both people to use the same AP Coder database. The sim
 AP PC that both sign in to with their own Windows accounts: put the code in a folder both can open
 (e.g. `C:\APCoder\app`) and have each person run `APProcessor.bat --installer --data-dir C:\APCoder\data`
 once (in `scripts\terminal.bat`). Each person sets *Your name* in Settings → Review; it is kept per Windows account.
+One person at a time has AP Coder open: while the other's is still running (a switched user, not signed out), a
+double-click says whose AP Coder is open and asks them to close it, instead of opening theirs under their name.
 Keep the data folder on a local disk: the database must not live on a network share. To protect it
 against a lost or broken PC, set *Also copy each backup to* in Settings → Data & backups to a OneDrive or
 network folder: the daily backup copies go there (that is safe; only the live database must stay local).

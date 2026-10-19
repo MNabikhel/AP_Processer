@@ -246,6 +246,19 @@ def test_shutdown_is_refused_from_another_computer_or_without_a_server_token(sto
     assert app.state.server.should_exit is False
 
 
+def test_healthz_and_the_server_file_say_which_account_runs_it(store):
+    """B-168: two Windows accounts sharing one AP Coder folder and data folder: the second person's double-click opened
+    the first person's dashboard, and acted under their name. The server says whose it is (to this computer only)."""
+    import getpass
+
+    _app, local = _launcher_client(store)
+    assert local.get("/healthz").json()["user"] == getpass.getuser()
+    _app, colleague = _launcher_client(store, client=("192.168.1.30", 50000))
+    assert "user" not in colleague.get("/healthz").json()
+    info = json.loads(server.write_server_file(8611, "tok").read_text(encoding="utf-8"))
+    assert info["user"] == getpass.getuser()
+
+
 def test_the_server_file_describes_the_running_server(tmp_path):
     path = server.write_server_file(8611, "tok")
     assert path == tmp_path / "private" / ".ap_coder_server.json"

@@ -11,7 +11,7 @@ folder, fonts from `ap_coder/static`, the logo from `ap_coder/assets`.
 
 ## Interface
 - `create_app()` (app.py): (settings=None, store=None, address, start_reader) -> FastAPI. Mounts /static, /fonts, /assets; includes `MORE_MODULES` then every `PAGES` module; adds `/`, `/healthz`, `POST /shutdown`, `GET /jobs/<name>`.
-- `serve()` (server.py): (host, port, open_browser, store) -> exit code; writes `<data folder>/.ap_coder_server.json` {pid, port, folder, version, token, started}.
+- `serve()` (server.py): (host, port, open_browser, store) -> exit code; writes `<data folder>/.ap_coder_server.json` {pid, port, folder, version, token, user, started}; `os_user()` (app.py): the account, also in `/healthz` to this computer.
 - `render()` (core.py): (request, template, page key, **context) -> HTML with the rail, reviewer, flashes, banner; always `Cache-Control: no-store`.
 - `done()` / `message()` / `refuse()` (core.py): a POST's JSON answer: `{ok, redirect}` (a ?flash= token; `local_url()` keeps it on this server), `{ok, toast}`, `{ok: false, error}` (400 by default).
 - `get_store()`, `get_settings()`, `jobs()`, `local_url()`, `money()` (core.py); `reviewer()` and `login()`: this computer's user, or a colleague on the network (their name; `network <address>`).

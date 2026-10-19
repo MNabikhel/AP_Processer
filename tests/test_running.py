@@ -45,7 +45,7 @@ def server(tmp_path):
                 self.send_error(404)
                 return
             body = json.dumps({"ok": True, "app": "ap-coder", "version": state["version"], "folder": state["folder"],
-                               "pid": 4242, "port": port}).encode()  # fmt: skip
+                               "pid": 4242, "port": port, **state.get("health", {})}).encode()  # fmt: skip
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -99,6 +99,21 @@ def test_a_server_that_cannot_be_stopped_waits_for_the_person(running, server, t
     said: list[str] = []
     assert running.take_over(tmp_path / "C", "0.3.0", [], data, say=said.append, patience=0.5) == ("blocked", port)
     assert any("Close the old AP Coder window, then start again" in s for s in said)
+
+
+@pytest.mark.parametrize("ours", ["0.2.0", "0.2.1", "0.1.9"])
+def test_another_accounts_ap_coder_is_never_opened_nor_stopped(running, server, tmp_path, ours):
+    """B-168: two Windows accounts share one AP Coder folder and data folder: the second person's double-click opened
+    the first person's dashboard (approving under their name), or stopped it under them for an update."""
+    import getpass
+
+    state, port, data = server
+    state["health"] = {"user": "someone-else"}
+    assert running.take_over(tmp_path / "B", ours, [], data, say=lambda m: None) == ("other", port)
+    assert state["shutdowns"] == [] and running.listening(port)
+    assert running.find([], data)[0].user == "someone-else"
+    state["health"] = {"user": getpass.getuser().upper()}  # this person's own (Windows names ignore case)
+    assert running.take_over(tmp_path / "B", "0.2.0", [], data, say=lambda m: None) == ("open", port)
 
 
 def test_nothing_running_is_clear(running, tmp_path):

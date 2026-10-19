@@ -1546,6 +1546,26 @@ def running_dashboard(rest: list[str], state: dict) -> int | None:
     return None
 
 
+def other_users_dashboard(rest: list[str], state: dict) -> int | None:
+    """The port of an AP Coder another computer account runs on this data (a second Windows user sharing this
+    folder), else None: never opened here, it works under that person's name."""
+    version = identity()["version"]
+    for server in running.find(candidate_ports(rest, state), paths.private_dir()):
+        if running.judge(server, ROOT, version) == "other":
+            return server.port
+    return None
+
+
+def someone_elses(port: int) -> SetupError:
+    """What a start says when another computer account's AP Coder is open (``running.take_over``'s "other")."""
+    user = running.owner(port)
+    who = f"{user}'s account" if user else "another account"
+    return SetupError(f"AP Coder is open in {who} on this computer (port {port}): it works under that person's name, "
+                      "so it is not opened here, and one person at a time uses AP Coder's data.",
+                      f"Ask {user or 'the person signed in to it'} to close their AP Coder window, then start AP "
+                      "Coder again.")  # fmt: skip
+
+
 def dashboard_url(port: int) -> str:
     """The address the browser opens: the one the dashboard listens on (127.0.0.1 by default). Never "localhost": a
     Mac or Windows browser tries it as ::1 first, where another program may answer."""
@@ -1607,6 +1627,9 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
     port = running_dashboard(argv, load_state())
     if port:
         return open_running(port)
+    theirs = other_users_dashboard(argv, load_state())
+    if theirs:
+        return failed(someone_elses(theirs))
     blocked = stop_older(argv)
     if blocked is not None:
         return blocked
@@ -1619,6 +1642,9 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
         port = running_dashboard(argv, load_state())
         if port:
             return open_running(port)
+        theirs = other_users_dashboard(argv, load_state())
+        if theirs:
+            return failed(someone_elses(theirs))
         if take_lock():
             return None
     say("The other AP Coder window has not opened the dashboard yet: look at that window, or close it and start "
@@ -1645,6 +1671,8 @@ def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
     verdict, port = running.take_over(ROOT, version, ports, paths.private_dir(), say)
     if verdict == "blocked":
         return failed(older_still_running(port))
+    if verdict == "other":
+        return failed(someone_elses(port))
     if verdict in ("open", "newer"):
         return open_running(port)
     deadline = time.monotonic() + wait  # its start ends once its dashboard stopped
@@ -1807,6 +1835,8 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
 
     # An AP Coder already running: this one opened; an older one (or another folder's) stopped first.
     verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, state), paths.private_dir(), say)
+    if verdict == "other":  # another computer account's: never opened under their name, nor stopped under them
+        return failed(someone_elses(port))
     if verdict == "open":
         return open_running(port)
     if verdict == "newer":

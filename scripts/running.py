@@ -8,8 +8,10 @@ version would downgrade nothing, it just steps aside).
 How a running AP Coder is found:
 
 * AP Coder 0.2 and later (``python -m ap_coder serve``) write ``<data folder>/.ap_coder_server.json`` (pid, port,
-  folder, version, token, started) and answer ``GET /healthz`` with ``{"ok", "app": "ap-coder", "version", "folder",
-  "pid", "port"}``; ``POST /shutdown`` with the header ``X-AP-Coder-Token`` (the token from that file) stops one.
+  folder, version, token, user, started) and answer ``GET /healthz`` with ``{"ok", "app": "ap-coder", "version",
+  "folder", "pid", "port", "user"}`` ("user": the computer account, to this computer only; another account's is
+  never opened nor stopped); ``POST /shutdown`` with the header ``X-AP-Coder-Token`` (the token from that file)
+  stops one.
 * AP Coder 0.1 (the Streamlit dashboard) only serves its font, ``/app/static/InterVariable.woff2``: it is stopped
   through its process, found as the owner of its port whose command line runs ``streamlit run`` on AP Coder's
   dashboard.
@@ -24,6 +26,7 @@ through a proxy: every request goes to 127.0.0.1.
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import re
@@ -62,6 +65,7 @@ class Server:
     pid: int | None = None
     token: str = ""
     legacy: bool = False  # AP Coder 0.1's Streamlit dashboard: no /healthz, stopped through its process
+    user: str = ""  # the computer account running it ("": not said, by an older AP Coder)
 
     def name(self) -> str:
         version = "0.1 (the Streamlit dashboard)" if self.legacy else (self.version or "of an unknown version")
@@ -137,8 +141,11 @@ def find(ports: list[int], data: Path | None) -> list[Server]:
         info = health(port)
         if info is not None:
             pid = _port(info.get("pid")) if str(info.get("pid", "")).isdigit() else None
-            token = str(record.get("token") or "") if _port(record.get("port")) == port else ""
-            found.append(Server(port, str(info.get("version") or ""), str(info.get("folder") or ""), pid, token))
+            own = _port(record.get("port")) == port  # (the server file: another account's may be unreadable)
+            token = str(record.get("token") or "") if own else ""
+            user = str(info.get("user") or (record.get("user") if own else "") or "")
+            found.append(Server(port, str(info.get("version") or ""), str(info.get("folder") or ""), pid, token,
+                                user=user))  # fmt: skip
         elif legacy_dashboard(port):
             pid = port_owner(port)
             folder = folder_in_command(command_line(pid)) if pid else ""
@@ -146,9 +153,21 @@ def find(ports: list[int], data: Path | None) -> list[Server]:
     return found
 
 
+def this_user() -> str:
+    """The computer account this start runs as ("" when it can't be told)."""
+    try:
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001 - no login name available
+        return ""
+
+
 def judge(server: Server | Worker, root: Path, version: str) -> str:
-    """``same`` (this folder and version: open it), ``newer`` (open it, never stop it) or ``older`` (stop it: an
-    older version, or the same one from another folder)."""
+    """``same`` (this folder and version: open it), ``newer`` (open it, never stop it), ``older`` (stop it: an
+    older version, or the same one from another folder) or ``other`` (another computer account's, e.g. a second
+    Windows user sharing this folder: never opened, it would act under their name, nor stopped under them)."""
+    user, me = getattr(server, "user", ""), this_user()
+    if user and me and user.casefold() != me.casefold():  # (Windows account names ignore case)
+        return "other"
     if server.legacy:
         return "older"
     if version_key(server.version) > version_key(version):
@@ -156,6 +175,11 @@ def judge(server: Server | Worker, root: Path, version: str) -> str:
     if same_folder(server.folder, root) and server.version == version:
         return "same"
     return "older"
+
+
+def owner(port: int) -> str:
+    """The computer account running the AP Coder on ``port`` ("" when it doesn't say)."""
+    return str((health(port) or {}).get("user") or "")
 
 
 # --- watch and read-pages ---------------------------------------------------------------------------------------
@@ -384,10 +408,14 @@ def take_over(root: Path, version: str, ports: list[int], data: Path | None,
     * ``("open", port)``: this same folder and version is running: open it (nothing to set up);
     * ``("newer", port)``: a newer version is running: open it (this older one never takes over from it);
     * ``("clear", None)``: nothing (left) running: set up and start;
+    * ``("other", port)``: another computer account's AP Coder runs on this data: stop, and say whose
+      (:func:`owner`);
     * ``("blocked", port)``: an older one is still running after ``patience`` seconds: stop (port None: an older
       watch or read-pages)."""
     for server in find(ports, data):
         verdict = judge(server, root, version)
+        if verdict == "other":
+            return "other", server.port
         if verdict in ("same", "newer"):
             return ("open" if verdict == "same" else "newer"), server.port
         say(f"{server.name()} is still running (port {server.port}): stopping it, so this version takes over.")
