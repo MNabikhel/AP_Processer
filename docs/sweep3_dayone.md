@@ -53,6 +53,16 @@ export, look around the reports). What they ran into, fixed with a failing test 
 - **Test:** `tests/test_sweep3_dayone.py::test_insights_learning_activity_and_the_queue_count_approved_as_coded_alike`, `tests/test_sweep3_dayone.py::test_a_change_is_a_value_the_reviewer_changed_or_a_line_added_not_a_blank_filled_in`
 - **Lesson:** Don't compute one business figure in three pages with three rules: define it once and import it.
 
+#### B-202 · With ten files chosen to import, the sixth name ran under the "Process" button · low
+- **Where:** `ap_coder/web/static/app.css:594` (`.picked`)
+- **Symptom:** Import invoices with the ten sample PDFs chosen: the list was a 180 px scroll box with no gap or edge, so the sixth name was cut in half right against the "Process 10 uploaded invoices" button and looked overlapped (shots/06_process_selected.png); the other four were hidden in the box.
+- **Cause:** `.picked` had `max-height: 180px` (about five names) and no margin below it.
+- **Reproduce:** /process, choose ten PDFs: the list's box ends at the button's top (630.5 px both) with the sixth row from 609.8 to 641.6 px.
+- **Reproduced:** yes (`AssertionError: (5, {'y': 609.75, 'height': 31.84}, {'y': 630.53})`)
+- **Fix:** the list shows about a dozen names (`max-height: min(55vh, 440px)`) before it scrolls, with a closing line and a gap above the button.
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_ten_files_chosen_to_import_are_listed_clear_of_the_process_button`
+- **Lesson:** Don't give a scroll box no edge and no gap: the row it cuts looks like it slides under the next control.
+
 ### Improvements
 - Review screen, line grid: "Apply to all lines…" gives one GL account and / or cost center to every line that has none (lines already coded keep theirs; POST /review/<id>/fill-lines, like the other grid actions); when every past approval of the vendor used one cost center, it is pre-selected there as a suggestion (`invoice_view.usual_cost_center`; the coder itself is unchanged). `tests/test_sweep3_dayone.py::test_apply_to_all_lines_codes_only_the_lines_that_have_none`, `tests/test_sweep3_dayone.py::test_apply_to_all_lines_refuses_a_code_not_in_the_lists`, `tests/test_sweep3_dayone.py::test_a_vendors_one_usual_cost_center_is_offered_for_its_lines`, `tests/test_web_invoice.py::test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank`
 - Second approval on one laptop: Settings → Review ("Approval and payment"), the waiting invoice's screen and the Second approval tab say it takes another person on another computer login, so one Windows login can't give it; how to test it (a second Windows account on the laptop, or a colleague over the office network); and that Send back returns it to the queue. The control is unchanged. `tests/test_sweep3_dayone.py::test_the_second_approval_says_how_to_give_it_when_one_login_cannot`

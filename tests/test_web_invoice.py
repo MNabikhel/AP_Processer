@@ -1031,3 +1031,21 @@ def test_in_a_browser_not_in_the_vendor_list_is_said_only_once_a_vendor_master_i
     page.fill("#vendor-name", first["vendor_name"])
     assert "Approved before" in page.inner_text("[data-vendor-match]")
     assert page.errors == []
+
+
+def test_in_a_browser_ten_files_chosen_to_import_are_listed_clear_of_the_process_button(browser, store, tmp_path):
+    """Import invoices with ten files chosen: every name can be read, none under the "Process" button."""
+    files = []
+    for n in range(10):
+        files.append(tmp_path / f"vendor_{n:02d}_invoice_2026-{n:04d}.pdf")
+        files[-1].write_bytes(b"%PDF-1.4 " + bytes(n))
+    page = _open(browser, None, "/process")
+    page.set_input_files("#upload-files", [str(f) for f in files])
+    page.wait_for_selector("#picked li")
+    button = page.locator("#upload-go").bounding_box()
+    names = page.locator("#picked li")
+    assert names.count() == 10
+    for i in range(10):
+        box = names.nth(i).bounding_box()
+        assert box["y"] + box["height"] <= button["y"] + 0.5, (i, box, button)
+    assert page.errors == []

@@ -591,7 +591,8 @@ select {max-width: 100%; text-overflow: ellipsis;} /* a long vendor name in its 
 .dropzone small {color: var(--lg-muted); font-size: 12.5px;}
 .dropzone input {position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;}
 .dropzone:focus-within {border-color: var(--lg-accent); box-shadow: var(--lg-focus);}
-.picked {list-style: none; margin: 0; padding: 0; font-size: 13px; max-height: 180px; overflow-y: auto;}
+.picked {list-style: none; margin: 8px 0 14px; padding: 0; font-size: 13px; overflow-y: auto; overscroll-behavior: contain;
+  max-height: min(55vh, 440px); border-bottom: 1px solid var(--lg-border);}  /* a dozen names at once, then it scrolls */
 .picked li {display: flex; justify-content: space-between; gap: 12px; padding: 6px 2px; border-bottom: 1px solid var(--lg-hairline);}
 .picked li span:last-child {color: var(--lg-muted); white-space: nowrap;}
 .file-ico {color: #c53030;}
