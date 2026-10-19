@@ -12,6 +12,10 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.store
 - `Store()` (store.py): path (default `ap_coder.db` in the data folder) -> the one SQLite store; `session()` shares one
   connection per thread. `load_sample_setup()`: the sample GL, cost centers, tax GL mapping and policy from `data/`.
   `EVENT_ORIGIN` (store.py): a contextvar; set (web/identity.py, a colleague on the network), every event's detail gets `address`: theirs (never `from`, which events use for an old value: B-129).
+- Second approval: `second_approval_reason()` (store.py; the total in CAD over `approval_limit`, or a currency with no `fx_rates`
+  rate) -> `pending_approval`; `final_approve()` refuses the first approver's name (any case) or login (the latest `approved`
+  event's `detail.login`; a colleague's is `network <address>`: web/core.py's login). web/pages/invoice.py and review.py's
+  _second repeat the check to show the button: change all three together.
 - `from_env()` (config.py, `Settings.from_env`): .env path, else `paths.env_file()` -> `Settings`; `override=False`: the OS environment wins, so a saved value also goes into `os.environ`.
 - `load_reference_data()` (reference_data.py): files -> `ReferenceData` (GL, cost centers, tax setup, policy) for prompts and checks.
 - `InvoiceCoding` (schema.py): the coding shape (and the JSON schema the models answer in).

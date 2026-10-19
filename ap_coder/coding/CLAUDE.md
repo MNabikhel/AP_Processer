@@ -13,6 +13,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.tax` 
 - `check_taxes()` (tax.py): coding, `TaxSetup` -> `TaxFinding` list; `build_gl_distribution()`: (coding, `TaxSetup`) ->
   posting lines that add up to the total (tax spread in whole units for a currency without cents, e.g. JPY); `supply_source()`: (province, where it came from), the one place-of-supply rule; `place_of_supply()` gives its province (B-13).
 - GST/HST number: `valid_gst_number()`, `gst_check_digit_ok()` (tax.py; taxreturn.py uses them); capture's `normalize.luhn_ok()` repeats the check digit: change both.
+  With GST/HST charged, `check_taxes()` warns `GST_HST_NUMBER_MISSING`, `GST_HST_NUMBER_FORMAT`, `GST_NUMBER_CHECK_DIGIT` (all in `vendor_mail.ASKABLE`); taxreturn.py lists the claim at risk.
 - `validate_coding()` (validation.py): coding, reference and the vendor, PO, terms and duplicate findings -> a report.
 - `rules.apply()`: AP's fixed rules, after the coder (they win over it); `tax_number_findings()` (vendors.py); `payment()` (terms.py).
 - `math_check()` (taxmath.py): the invoice math again, shown under the tax lines; `bulk_approve()` (bulk.py); `draft()` (vendor_mail.py).
@@ -20,7 +21,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.tax` 
 ## Gotchas and decisions
 - Place of supply: `place_of_supply()` (printed ship-to, else the cost center's site in `site_provinces` "CC=PROV" lines, else `our_province`,
   vendor last); taxreturn.py uses the same (B-13). Terms: printed, else the vendor master's, else `default_terms_days`.
-- A check code is raised in tax.py, validation.py, vendors.py, po.py or capture, explained in `ap_coder/ops/help.py` `CHECKS`
+- A check code is raised in tax.py, validation.py, vendors.py, po.py, terms.py, capture or ai (azure_check, verifier), explained in `ap_coder/ops/help.py` `CHECKS`
   (tests/test_help.py fails on a code with no help) and shown by web/invoice_view.py.
 - A worked-out `place_of_supply` sits beside `ship_to_province`, never in it; the model drops it.
 - A check that must always reach a person goes in `capture/supplier.ALWAYS_A_PERSON` (else bulk.py approves an info-level one unseen); one a vendor can fix in `vendor_mail.ASKABLE` (never a fraud or hold code).

@@ -57,6 +57,14 @@ Question 4 still needed a code search for one method's callers: the map stays at
   shadows the standard library, the `few_sql_variables` fixture, the `slow` marker, CI installing `.[dev]` only).
   All fixed. One finding went past wording: the browser tests never ran in CI (B-124); a "Browser tests" job now
   runs them with `AP_REQUIRE_BROWSER=1`. Its prompt and B-124 call it the "second" pass; its commit says "pass 3".
+- **Pass after the 50-line trim** (2026-10-19, PR #31): an independent agent checked about **375 claims** in the 9
+  maps the round-4 work touched (root, web, web/pages, scripts, tests, ops, core, erp, coding) and all 79 bug-lesson
+  test names: **4 wrong** (fetch_models copies no table finder; fixtures/page_reader is read by test_transcript.py
+  only; one browser test's name; terms.py and ai also raise check codes) and 3 imprecise (the gate records
+  non-Markdown files only; two `app.state` keys; the `/accounts/rules/add` route), all fixed. Its one doubt, that the
+  doctor's Azure dry run might run without the opt-in, does not hold: there the provider is "off" and the coder
+  stops before any client is built (`resolve_provider()`, `InvoiceCoder.client`). The map-reviewer's own pass on
+  the trim found 4 statements the cut had made false (setup downloads, the POST origin rule, `_UI_HTML`, `--yes`).
 
 ## Final review of stage 4 (PR #27, merged 2026-10-19 UTC)
 - Bug sweep 2: 8 fresh-context agents reviewed each section again and checked its CLAUDE.md against the code.
@@ -66,8 +74,43 @@ Question 4 still needed a code search for one method's callers: the map stays at
 - The final pass and round 3 above were the last check of the maps: 0 checker errors, one warning (core map at
   76 lines, resolved by stage 5's grouping).
 
+## Cold-start round 4 (2026-10-19, after PR #30; the first 3-monthly round, run early)
+A fresh agent read only the CLAUDE.md files, MODULES.md, decisions.md and BUGS.md; each answer was graded in the code.
+1. A second approval refused on the office network: right on D-34 (a colleague's address stands for their login) and
+   the routes; it could not name the function. It is `Store.final_approve()`: another name (any case) and another
+   login than the latest `approved` event's `detail.login`; the review screen and the second-approval tab repeat the
+   check (`_second()` in web/pages/review.py). Fix: a core map line naming all three.
+2. A new plain-CSV ERP export: right (erp/exports.py `build()`, D-28 text as typed, the tests to copy); it could not
+   find the list of formats. Fix: the erp map names `FORMATS`, `build()`'s branch and the page's `SHORT_FORMATS` tabs.
+3. Where the review gate stops a commit, and renaming the map-reviewer: right (the settings.json matcher must follow
+   the `name:`). Fix: the scripts map names `_unreviewed()`, the comparison.
+4. A required argument on `Store.events()`: guessed most callers and named the right tests, but missed
+   ai/training_export.py and `final_approve()` itself. As in round 3, the maps stay at module level; the root map
+   now says so and how to search (MODULES.md lists imports, not a store handed in, as intake/inbox.py gets it).
+5. Whose GST number on a scan, and a bad check digit: right on capture (bill-to reading capped below verified,
+   B-44; `GST_NUMBER_VALID`). Missing: coding's code. Fix: the coding map names `GST_NUMBER_CHECK_DIGIT` (with
+   `GST_HST_NUMBER_MISSING`, `GST_HST_NUMBER_FORMAT`, all askable of the vendor) and taxreturn.py's claim at risk.
+Then the five maps over 50 lines (root, web, web/pages, scripts, tests: 53 to 60) were trimmed to 50 mostly by
+cutting words, with some short bullets sharing a line (words down 8 to 23%; what moved went to the map that owns it, e.g. doctor
+`--online` to the ops map), and the checker now warns past 50 (D-37). An earlier trim that only joined lines into
+ones of up to 586 characters (words down 0 to 3%) was reverted before it was committed.
+
+## Cold-start round 5 (2026-10-19, on the trimmed maps of PR #31)
+Run after the trim to 50 lines, to show whether it lost anything an agent needs; maps only, graded in the code.
+1. What a new POST route needs (header, origin, Host, JSON answers; `LocalOnly`): right.
+2. "Already running" on a double-click (`take_over()`, the server file, `/healthz`, `/shutdown` with the token):
+   right; the four verdicts' meanings were missing. Fix: the scripts map says what each means.
+3. A test that opens the dashboard and approves (webclient helpers, conftest's autouse setup, no threads left):
+   right; it could not tell where `BackgroundReader` lives. Fix: tests map names ai/page_worker.py.
+4. A new Settings tab (template, TABS in settings.py and settings.js, context, maps): right; it saw templates
+   name `settings_tab()` and pages name `render_tab()` and took them for a contradiction (both exist). Fix: the
+   pages map names `TABS` and `settings_tab()`.
+5. A capture bug fix (failing test, fix, B-NN entry, lesson line, check_map.py in CI): right.
+It also reported the root map saying "warns past 60"; the root map on disk says "warns past that" (50), so that
+one did not reproduce.
+
 ## Next checks
-- A cold-start round every 3 months (root CLAUDE.md): add it here as round 4, 5... with its 5 questions, the verdicts
+- A cold-start round every 3 months (root CLAUDE.md): add it here as round 6, 7... with its 5 questions, the verdicts
   and the fixes. The map-reviewer says when the last one is older than that.
 
 ## Not recoverable

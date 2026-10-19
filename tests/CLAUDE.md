@@ -1,37 +1,32 @@
 # tests: the test suite (pytest), its helpers and fixtures
 
-About 130 test files for the whole app, the launcher and the update, plus the helpers they share: autouse isolation
-in `conftest.py`, a dashboard client, and the offline proof (a network guard and a walk through a running server).
-Every bug fix starts here with a failing test (docs/BUGS.md names it). Tests never touch the real data folder, a
-real LM Studio or the internet.
+About 130 test files for the app, the launcher and the update, and their shared helpers: isolation in `conftest.py`, a
+dashboard client, the offline proof (a network guard, a walk through a running server). Every bug fix starts with a
+failing test here (docs/BUGS.md names it). Tests never touch the real data folder, a real LM Studio or the internet.
 
 **Depends on:** `ap_coder` (and its sub-packages), `scripts`, `scripts/ci`, `data`, `samples`, `docs`, `.github/workflows`
 **Used by:** `.github/workflows` (`pytest -q`; `test_offline_guard.py` inside the unzipped bundle); developers
 
 ## Interface
-- Run: `pip install -e ".[ocr,dev]"` in `.venv`, then `python -m pytest -q tests`, serially. Don't use pytest-xdist: some
-  parametrize ids hold PDF bytes made at collection (test_msg_and_triage.py), which differ between processes.
-- Markers (pyproject.toml): `slow` and `upgrade`, both only on test_update_from_old_versions.py; they deselect nothing by themselves: it skips unless
-  `AP_UPGRADE_TESTS=1` (with `AP_UPGRADE_BUNDLE=dist/APProcessor-offline-...zip`): `python -m pytest -m upgrade -v`.
-- conftest.py, autouse for every test: `AP_PRIVATE_DIR` and `AP_USER_SETTINGS` in tmp_path, `AP_ALLOW_INTERNET` unset,
-  reading caches cleared, no background page reader or Azure thread, no local model (LM Studio refused).
+- Run: `pip install -e ".[ocr,dev]"`, then `python -m pytest -q tests`, serially: no pytest-xdist (test_msg_and_triage.py's
+  ids hold PDF bytes made at collection). CI installs `.[dev]`, so the local-OCR tests run only where `.[ocr]` is.
+- Markers `slow`, `upgrade`: test_update_from_old_versions.py, which skips unless `AP_UPGRADE_TESTS=1` and `AP_UPGRADE_BUNDLE` are set.
+- conftest.py, for every test: `AP_PRIVATE_DIR`, `AP_USER_SETTINGS` in tmp_path, `AP_ALLOW_INTERNET` unset, reading caches cleared, no page-reader or
+  Azure-check thread, no LM Studio.
 - conftest.py fixtures: `offline_guard`, `reference` (the sample data in data/), `settings`, `ground_truth`,
   `sample_markdown_path`, `few_sql_variables` (SQLite allowing few variables: a new id-list query is tested with it, B-11); fakes `FakeOpenAI`, `FakeDIClient` and `make_completion()`; constants ROOT, DATA, SAMPLES, SAMPLE_STEM.
-- webclient.py: `client_for()` (a FastAPI TestClient on the test's store, no reader thread), `post()` (with the
-  `X-AP-Coder: 1` header the page sends), `follow()` (the page an action leads to), `draft_form()`, `gt()`, `add_clean()`, `web_settings()`.
+- webclient.py: `client_for()` (a TestClient on the test's store), `post()` (with `X-AP-Coder: 1`), `follow()`, `draft_form()`, `gt()`, `add_clean()`, `web_settings()`.
 - offline_guard.py: `install()` / `uninstall()` patch the socket module so anything but 127.0.0.0/8, ::1 and localhost
   raises `OfflineViolation` and is recorded in `attempts`; `subprocess_env()` gives a subprocess the guard (via offline_guard_site/) and bait proxy and pip-index settings.
-- offline_flow.py: `walk()` drives a real `python -m ap_coder serve` over HTTP like AP would (every page, every sample,
-  approval, export, Settings, Help) and reports any address that is not this server; `python -m tests.offline_flow --netns` under `unshare -rn`.
+- offline_flow.py: `walk()` drives a real `python -m ap_coder serve` like AP would and reports any address but this server's (`--netns`: under `unshare -rn`).
 
 ## Gotchas and decisions
-- A test that opens the dashboard must not leave threads running: start your own BackgroundReader and stop it.
+- A test that opens the dashboard must not leave threads running: start your own `BackgroundReader` (ai/page_worker.py) and stop it.
 - A test that needs LM Studio starts a fake one (see test_local_llm.py, scripts/ci/fake_lm_studio.py); never a real one.
 - Bug tests keep the name given in docs/BUGS.md: renaming one breaks the log's **Test:** line.
 - A lesson logged twice becomes a rule in test_code_rules.py (a check of the whole code), not a third fix.
-- test_how_it_runs_doc.py fails when docs/HOW_IT_RUNS.md cites a `file:function` that no longer exists.
 - test_package_data.py fails when the web app reads a file not listed in pyproject's package data.
-- The browser tests (`test_in_a_browser_...` in test_web_invoice.py and test_offline_guard.py) find Chromium with conftest `chromium_path()` (looked up once per run, never inside a running Playwright: B-127) and skip without it; CI's "Browser tests" job sets `AP_REQUIRE_BROWSER=1`, so there they must run.
+- The browser tests (names holding `in_a_browser`, which CI's `-k` selects: test_web_invoice.py, test_offline_guard.py) find Chromium with conftest `chromium_path()` (looked up once per run, never inside a running Playwright: B-127) and skip without it; CI's "Browser tests" job sets `AP_REQUIRE_BROWSER=1`, so there they must run.
 
 ### Bug lessons
 From docs/BUGS.md (one line each; the entry has the repro and the fix).
@@ -42,7 +37,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 
 ## Files
 - Helpers: `__init__.py` (makes tests a package), `conftest.py` (isolation and fixtures), `webclient.py` (dashboard client), `offline_guard.py` (network guard), `offline_flow.py` (the offline walk).
-- `fixtures/`: data folder (no CLAUDE.md): page_reader/ holds one scanned page (s212-0000) with its Markdown and truth, used by test_transcript.py and test_verifier.py.
+- `fixtures/`: data folder (no CLAUDE.md): page_reader/ holds one scanned page (s212-0000) with its Markdown and truth, used by test_transcript.py.
 - `offline_guard_site/`: data folder (no CLAUDE.md): a sitecustomize.py that installs the guard in subprocesses.
 - Store, config and core data: `test_audit.py`, `test_backups.py`, `test_data_layer_fixes.py`, `test_envfile_edge_cases.py`, `test_hardening.py`, `test_memory_store.py`, `test_park_notes.py`, `test_reference_data.py`, `test_safety.py`,
   `test_scale.py`, `test_schema.py`, `test_store_session.py`, `test_store_status_fixes.py`, `test_update_database.py`, `test_working_together.py`, `test_demo.py`, `test_help.py`.
