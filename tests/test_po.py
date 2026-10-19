@@ -67,6 +67,22 @@ def test_columns_are_recognised_from_common_erp_headers():
     }  # fmt: skip
 
 
+def test_an_item_column_is_an_sku_never_the_po_line_number():
+    """B-138: an export's "Item" (or "Item Number") column holds the part number: SKU 88341 was taken as PO line
+    88341. Only a line column is the line number; without one, the lines are numbered in file order."""
+    headers = ["PO Number", "Vendor", "Item", "Description", "Qty", "Unit Price", "Amount"]
+    assert "line_number" not in map_columns(headers)
+    assert "line_number" not in map_columns(["PO", "Item Number", "Description", "Amount"])
+    records = [
+        {"PO Number": "PO-1", "Vendor": "Acme", "Item": "WID-0042", "Description": "Widget", "Qty": 10,
+         "Unit Price": 5, "Amount": 50},
+        {"PO Number": "PO-1", "Vendor": "Acme", "Item": "88341", "Description": "Gadget", "Qty": 2,
+         "Unit Price": 20, "Amount": 40},
+    ]  # fmt: skip
+    rows, _ = rows_from_records(records, map_columns(headers))
+    assert [r["line_number"] for r in rows] == [None, None]
+
+
 def test_rows_fill_in_missing_numbers_and_skip_incomplete_rows():
     records = [
         {"po": "PO-1", "desc": "Widgets", "qty": "4", "price": "2.50", "total": "", "received": "", "status": "Open"},

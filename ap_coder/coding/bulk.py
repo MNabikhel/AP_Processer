@@ -2,7 +2,8 @@
 
 An invoice qualifies only if, re-checked right now (duplicates and history may have changed since it was
 processed), it has no error and no warning, no finding that always goes to a person (``ALWAYS_A_PERSON``: some,
-like a new vendor name, are only info) and the AI's confidence is above the review threshold.
+like a new vendor name, are only info), it is not a credit note (a credit is always applied by a person, as the
+touchless rules say) and the AI's confidence is above the review threshold.
 Everything else is skipped with the reason, and still needs a person.
 """
 
@@ -11,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..ai.pipeline import finalise_coding
-from ..capture.supplier import ALWAYS_A_PERSON
+from ..capture.supplier import ALWAYS_A_PERSON, touchless_gates
 from ..capture.workflow import learn_from_approval
 from ..core.config import Settings
 from ..core.reference_data import ReferenceData
@@ -24,16 +25,25 @@ def _needs_a_person(severity: Any, code: Any) -> bool:
     return severity in ("error", "warning") or str(code or "") in ALWAYS_A_PERSON
 
 
+def _credit_note(store: Store, invoice_id: int, grand_total: Any) -> bool:
+    """A total below zero, or titled a credit note by what capture read (whatever the sign of its total): the same
+    notion as the touchless gates (``supplier.touchless_gates``)."""
+    titled = bool((store.get_capture(invoice_id) or {}).get("credit_note"))
+    return bool(touchless_gates(grand_total=grand_total, credit_note=titled))
+
+
 def clean_candidates(store: Store) -> list[dict[str, Any]]:
     """Invoices in the queue that were clean when processed (no review flag, no errors or warnings, nothing that
-    always goes to a person)."""
+    always goes to a person, not a credit note)."""
     validations = {r["id"]: r["validation"] or {} for r in store.invoice_columns(("id", "validation"), REVIEW)}
     candidates = []
     for inv in store.list_invoices(REVIEW):
         if inv["requires_review"]:
             continue
         issues = validations.get(inv["id"], {}).get("issues") or []
-        if not any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
+        if any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
+            continue
+        if not _credit_note(store, inv["id"], inv["grand_total"]):
             candidates.append(inv)
     return candidates
 
@@ -68,6 +78,9 @@ def bulk_approve(
             coding = InvoiceCoding.model_validate(coded)
         except ValueError:
             skipped.append((invoice_id, "the coding needs fixing by hand"))
+            continue
+        if _credit_note(store, invoice_id, coding.grand_total):
+            skipped.append((invoice_id, "it is a credit note: a credit is always applied by a person"))
             continue
         output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id)
         blocking = [i for i in report.issues if _needs_a_person(i.severity, i.code)]
