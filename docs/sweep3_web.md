@@ -77,3 +77,8 @@
   ("Not done: this invoice changed meanwhile ... It is rejected.").
 - **Test:** `tests/test_web_finance.py::test_bring_back_of_an_invoice_rejected_meanwhile_says_it_changed`
 - **Lesson:** Don't swallow a store's refusal on the guess that the wanted state was reached: check the state now.
+
+### Not fixed
+- **N-XX** · web · B-192 keys a colleague's drafts by (name, address): a colleague whose computer gets a new address
+  (DHCP) while AP Coder runs keeps their cookie but not their unsaved edits, which then block bulk approval of those
+  invoices until a restart (as a rename did). Rare, and a fix needs a per-cookie id (a design choice on D-34's cookie).
