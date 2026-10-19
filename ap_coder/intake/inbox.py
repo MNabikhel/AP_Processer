@@ -48,7 +48,8 @@ def needs_person(store: Any, folder: Path, limit: int = 100) -> list[dict[str, A
             if d.get("kind") in (*triage.QUEUE_KINDS, triage.STATEMENT):
                 continue
             docs.append({**d, "n": n, "label": triage.LABELS.get(d.get("kind", ""), d.get("kind", "")),
-                         "there": _file(folder, d.get("file", "")) is not None})  # fmt: skip
+                         "there": _file(folder, d.get("file", "")) is not None,
+                         "sheet": Path(str(d.get("name", ""))).suffix.lower() in triage.SHEET_EXTENSIONS})  # fmt: skip
         rows.append({**entry, "docs": docs, "email_there": _file(folder, entry.get("email", "")) is not None})
     return sorted(rows, key=lambda r: not r.get("possible_fraud"))[:limit]
 
@@ -92,10 +93,14 @@ def file_of(folder: Path, entry_id: str, n: int) -> Path | None:
 
 def to_queue(store: Any, folder: Path, entry_id: str, n: int, actor: str | None = None) -> Path | None:
     """Put attachment ``n`` of an email set aside into the invoices folder, so the next pick-up reads it into the
-    review queue (a person decided it is an invoice after all). Its new path, or None if it is not there."""
+    review queue (a person decided it is an invoice after all). Its new path, or None if it is not there. A
+    spreadsheet is refused (ValueError): the invoices folder never reads one, so it would only disappear there."""
     source = file_of(folder, entry_id, n)
     if source is None or source.parent == folder.resolve():
         return None
+    if source.suffix.lower() in triage.SHEET_EXTENSIONS:
+        raise ValueError(f"{source.name} is a spreadsheet: AP Coder reads invoices only from PDFs and pictures. Open "
+                         "it, and if it is an invoice, save it as a PDF and add that on Import invoices.")  # fmt: skip
     target = folder / safe_name(source.name)
     stem, k = target.stem, 1
     while target.exists():

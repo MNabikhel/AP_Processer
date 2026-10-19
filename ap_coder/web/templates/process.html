@@ -48,7 +48,7 @@
             {% if e.email_there %}<a class="btn" href="/process/inbox/{{ e.id }}/file/-1"><span class="ms" aria-hidden="true">mail</span>Open the email</a>{% endif %}
             {% for d in e.docs %}{% if d.there %}
             <a class="btn" href="/process/inbox/{{ e.id }}/file/{{ d.n }}"><span class="ms" aria-hidden="true">attach_file</span>{{ d.name }}</a>
-            <form method="post" action="/process/inbox/{{ e.id }}/to-queue/{{ d.n }}"><button class="btn" type="submit" title="It is an invoice after all: read it into the review queue"><span class="ms" aria-hidden="true">move_to_inbox</span>Read as invoice</button></form>
+            {% if not d.sheet %}<form method="post" action="/process/inbox/{{ e.id }}/to-queue/{{ d.n }}"><button class="btn" type="submit" title="It is an invoice after all: read it into the review queue"><span class="ms" aria-hidden="true">move_to_inbox</span>Read as invoice</button></form>{% endif %}
             {% endif %}{% endfor %}
             <form method="post" action="/process/inbox/{{ e.id }}/done"><button class="btn" type="submit"><span class="ms" aria-hidden="true">done_all</span>Dealt with</button></form>
           </div>
