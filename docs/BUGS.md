@@ -1487,8 +1487,8 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
 | Intake, email and command line | 14 | 12 (B-140 to B-149, B-206 to B-207) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
-| Day-one walk-through | 8 | 8 (B-197 to B-204) | 0 |
-| **Total** | **92** | **75** | **17** |
+| Day-one walk-through | 9 | 9 (B-197 to B-204, B-210) | 0 |
+| **Total** | **93** | **76** | **17** |
 
 ### Store and config
 
@@ -2291,6 +2291,16 @@ Improvements made with these fixes:
 - Second approval on one laptop: Settings → Review ("Approval and payment"), the waiting invoice's screen and the Second approval tab say it takes another person on another computer login, so one Windows login can't give it; how to test it (a second Windows account on the laptop, or a colleague over the office network); and that Send back returns it to the queue. The control is unchanged. `tests/test_sweep3_dayone.py::test_the_second_approval_says_how_to_give_it_when_one_login_cannot`
 - Exports, JD Edwards: an invoice held back for its supplier number (AN8 missing or not a JDE address number) links straight to Settings → JD Edwards E1 → Supplier address numbers (`/settings/jde#an8`), in its "Why not" cell and in the message above the list (`jde.an8_problem`). `tests/test_sweep3_dayone.py::test_an_export_held_back_for_a_supplier_number_links_to_the_address_numbers`
 - First run: the getting-started steps (Import invoices's Setup card and the review queue's welcome page) end with "Your name", a to-do linking to Settings → Review until a name is given (saved there, `AP_REVIEWER`, or a colleague's "Who are you?"), so approvals are not recorded under the computer login. `tests/test_sweep3_dayone.py::test_the_first_steps_ask_for_your_name_until_it_is_given` (and `tests/test_dashboard_sweep_fixes.py::test_getting_started_counts_only_the_steps_that_are_needed`, its counts now 1/6 and 3/6 with the new step)
+
+#### B-210 · /review decoded every waiting invoice's coding on each load: 0.23 s became 0.57 s at 5,000 waiting · medium-low
+- **Where:** `ap_coder/web/pages/review.py:140` (`attention`, also used by invoice.py's `navigation`), `ap_coder/web/pages/review.py:120` (`_to_fix`)
+- **Symptom:** since B-197 every /review load (all tabs: the Waiting tile counts "N need attention" on each) took 0.55 s, Ready 0.59 s and Approved 0.39 s with 5,000 invoices waiting.
+- **Cause:** `attention` read and decoded `ai_output`, `final_output` and `validation` (about 4 KB of JSON each) of every waiting invoice on each load, to ask `codes_to_pick` of their lines; the decoding was 0.22 s of its 0.34 s. Reading the line codes with SQLite's JSON functions instead costs as much (0.17 s): the parse is the cost.
+- **Reproduce:** review33/s/t3.py (5,000 waiting invoices, 10 lines each; /review timed) and t8.py (`attention` alone).
+- **Reproduced:** yes (`/review 0.548`, `/review?show=ready 0.595`, `/review?tab=approved 0.406`, `attention over 5000 pending: 0.341 s`)
+- **Fix:** `invoice_columns(..., decode=False)` gives the stored text; `_to_fix` remembers each invoice's answer (lines to code, errors) with the hash of that text and decodes only an invoice new or changed since it was last asked. Same rule, same answers ("Ready means Approve is open"). After: `/review 0.27`, Ready 0.26, Approved 0.18, `attention` 0.04 s (0.24 s the first time after a start).
+- **Test:** `tests/test_sweep3_dayone.py::test_the_queue_decodes_each_invoices_coding_once_not_on_every_load` (and B-197's two tests)
+- **Lesson:** Don't redo per-row work on every page load for rows that haven't changed: remember it by what it was computed from.
 
 ### Not reproduced or left as they are
 

@@ -1383,10 +1383,10 @@ class Store:
     )  # fmt: skip
 
     def invoice_columns(
-        self, columns: tuple[str, ...], status: str | None = None, ids: list[int] | None = None
+        self, columns: tuple[str, ...], status: str | None = None, ids: list[int] | None = None, decode: bool = True
     ) -> list[dict[str, Any]]:
-        """Just these columns of every invoice, or of ``ids`` (JSON ones decoded): cheaper than
-        ``get_invoice`` in a loop."""
+        """Just these columns of every invoice, or of ``ids`` (JSON ones decoded, unless ``decode`` is False: their
+        text as stored): cheaper than ``get_invoice`` in a loop."""
         unknown = set(columns) - set(self._LIGHT_COLUMNS)
         if unknown:
             raise ValueError(f"unknown columns {sorted(unknown)}")
@@ -1400,7 +1400,7 @@ class Store:
         sql = f"SELECT {', '.join(columns)} FROM invoices" + (" WHERE " + " AND ".join(where) if where else "")
         with self._conn() as conn:
             rows = [dict(r) for r in conn.execute(sql + " ORDER BY id", args)]
-        for r in rows:
+        for r in rows if decode else []:
             for key in set(columns) & set(self._JSON_COLUMNS):
                 r[key] = json.loads(r[key]) if r[key] else None
         return rows

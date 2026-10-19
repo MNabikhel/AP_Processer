@@ -101,6 +101,27 @@ def test_every_invoice_the_queue_calls_ready_can_be_approved_on_its_screen(clien
             assert check(client, inv["id"])["allow"], inv["vendor_name"]
 
 
+def test_the_queue_decodes_each_invoices_coding_once_not_on_every_load(store, monkeypatch):
+    """B-210: /review decoded the coding and checks of every waiting invoice on each load (0.23 s became 0.57 s at
+    5,000 waiting). What the lines need is remembered by the stored text, so a changed invoice is asked again."""
+    from ap_coder.web.core import reference_or_none
+    from ap_coder.web.pages.review import attention
+
+    reference, pending = reference_or_none(store), store.list_invoices(REVIEW)
+    first = attention(store, reference, pending, 0.85)
+
+    def no_decoding(*_a, **_k):
+        raise AssertionError("decoded again")
+
+    with monkeypatch.context() as m:
+        m.setattr(json, "loads", no_decoding)
+        assert attention(store, reference, pending, 0.85) == first  # nothing changed: nothing decoded
+    invoice_id = without_cost_centers(store)  # its stored coding changed: asked again
+    assert (
+        invoice_id not in first and "Pick a cost center for" in attention(store, reference, pending, 0.85)[invoice_id]
+    )
+
+
 # --- 2. Apply a cost center to every line without one ----------------------------------------------------------------
 
 

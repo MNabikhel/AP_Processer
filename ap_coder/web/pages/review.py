@@ -9,6 +9,7 @@ in one go, and the small actions of the other lists, are POSTs answered with whe
 from __future__ import annotations
 
 import datetime as dt
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -113,27 +114,51 @@ def due_note(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> t
     return f"Due {p.due:%b} {p.due.day}", ""
 
 
+_TO_FIX: dict[int, tuple[int, tuple[str, int]]] = {}  # ``_to_fix`` by invoice id: (what it was asked, the answer)
+
+
+def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str | None,
+            cost_centers: bool) -> tuple[str, int]:  # fmt: skip
+    """(what the lines still need to be approved, how many errors the checks found) of one invoice, from its stored
+    coding and checks (their JSON text). Remembered with the hash of that text: the queue asks it of every waiting
+    invoice on each load (also to count them on the other tabs), and decoding them all again took most of the
+    page's time (0.34 s at 5,000 waiting); a changed invoice is asked again."""
+    asked = hash((cost_centers, final, ai, validation))
+    known = _TO_FIX.get(invoice_id)
+    if known and known[0] == asked:
+        return known[1]
+    coded = (json.loads(final) if final else None) or (json.loads(ai) if ai else None) or {}
+    issues = ((json.loads(validation) if validation else None) or {}).get("issues") or []
+    answer = (
+        codes_to_pick(coded.get("line_items"), cost_centers).removesuffix(" to approve"),
+        sum(1 for i in issues if i.get("severity") == "error"),
+    )
+    _TO_FIX[invoice_id] = (asked, answer)
+    return answer
+
+
 def attention(store: Store, reference: ReferenceData | None, pending: list[dict[str, Any]],
               threshold: float | None = None) -> dict[int, str]:  # fmt: skip
     """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
     screen's Approve is open as it stands. The lines' codes are asked as the review screen asks (``codes_to_pick``),
     then the checks' flag (an error, or confidence under ``threshold``; None: the flag alone, without its words)."""
     cost_centers = reference is not None and uses_cost_centers(reference)
-    stored = {  # one query, not one per invoice
+    stored = {  # one query, not one per invoice; the text is decoded only for an invoice not asked before
         r["id"]: r
         for r in store.invoice_columns(
-            ("id", "validation", "ai_output", "final_output"), ids=[i["id"] for i in pending]
+            ("id", "validation", "ai_output", "final_output"), ids=[i["id"] for i in pending], decode=False
         )
     }
     out = {}
     for inv in pending:
         r = stored.get(inv["id"]) or {}
-        coded = r.get("final_output") or r.get("ai_output") or {}
-        errors = [i for i in (r.get("validation") or {}).get("issues") or [] if i.get("severity") == "error"]
+        to_pick, errors = _to_fix(
+            inv["id"], r.get("final_output"), r.get("ai_output"), r.get("validation"), cost_centers
+        )
         low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
         why = [
-            codes_to_pick(coded.get("line_items"), cost_centers).removesuffix(" to approve"),
-            f"{ui.plural(len(errors), 'error')} to fix" if errors else "",
+            to_pick,
+            f"{ui.plural(errors, 'error')} to fix" if errors else "",
             f"confidence under {threshold:.0%}" if low and inv.get("requires_review") else "",
         ]
         why = [w for w in why if w]
