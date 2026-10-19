@@ -211,3 +211,166 @@ def test_the_doctor_warns_when_iphone_photos_cannot_be_read(monkeypatch):
     checks = doctor.run_checks(Settings(), lambda: (_ for _ in ()).throw(ValueError("no data")), llm_checks=False)
     heif = next(c for c in checks if c.area == "package pillow-heif")
     assert heif.status == doctor.WARN and "HEIC" in heif.detail
+
+
+# --- B-144: an emailed statement stays on the Statements page ---------------------------------------------------
+
+
+class _NoEvents:
+    def events(self, actions=None, limit=0):
+        return []
+
+    def log_event(self, *args, **kwargs):
+        pass
+
+
+def test_an_emailed_statement_stays_listed_however_many_emails_were_sorted_after_it(tmp_path):
+    import json
+
+    from ap_coder.intake import inbox
+
+    (tmp_path / "statements").mkdir()
+    (tmp_path / "statements" / "s - stmt.pdf").write_bytes(b"%PDF-1.4")
+    stmt = {"id": "stmt01", "kind": "statement", "needs_person": False,
+            "documents": [{"name": "stmt.pdf", "kind": "statement", "file": "statements/s - stmt.pdf"}]}  # fmt: skip
+    newer = [{"id": f"inv{n:04d}", "kind": "invoice", "needs_person": False, "documents": []} for n in range(600)]
+    (tmp_path / "emails").mkdir()
+    (tmp_path / "emails" / "triage.jsonl").write_text("".join(json.dumps(e) + "\n" for e in [stmt, *newer]))
+    assert [s["id"] for s in inbox.statements(_NoEvents(), tmp_path)] == ["stmt01"]
+
+
+# --- B-145: a spreadsheet is never sent to the invoices folder ---------------------------------------------------
+
+
+def test_a_spreadsheet_set_aside_cannot_be_sent_to_the_review_queue(tmp_path):
+    import pytest
+
+    from ap_coder.intake import inbox
+
+    m = EmailMessage()
+    m["Subject"], m["From"] = "October billing", "ar@vendor.example"
+    m.set_content("Attached is our October billing.")
+    m.add_attachment(b"Item,Qty,Price\nWidgets,10,12.50\n", maintype="text", subtype="csv", filename="october.csv")
+    (tmp_path / "m.eml").write_bytes(m.as_bytes())
+    unpack(tmp_path / "m.eml")
+    (row,) = inbox.needs_person(_NoEvents(), tmp_path)
+    (doc,) = row["docs"]
+    assert doc["sheet"]  # the page offers no "Read as invoice" for it
+    with pytest.raises(ValueError, match="spreadsheet"):
+        inbox.to_queue(_NoEvents(), tmp_path, row["id"], doc["n"])
+    assert inbox.needs_person(_NoEvents(), tmp_path)[0]["docs"][0]["there"]  # still where it was
+
+
+def test_the_process_page_offers_no_read_as_invoice_for_a_spreadsheet(tmp_path):
+    from ap_coder.core.store import Store, load_sample_setup
+    from ap_coder.web.core import invoice_dir
+
+    from .webclient import client_for, post
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    m = EmailMessage()
+    m["Subject"], m["From"] = "October billing", "ar@vendor.example"
+    m.set_content("Attached is our October billing.")
+    m.add_attachment(b"Item,Qty,Price\nWidgets,10,12.50\n", maintype="text", subtype="csv", filename="october.csv")
+    (folder / "m.eml").write_bytes(m.as_bytes())
+    unpack(folder / "m.eml", folder)
+    page = client.get("/process").text
+    assert "october.csv" in page and "/to-queue/" not in page
+    from ap_coder.intake import inbox
+
+    (row,) = inbox.needs_person(store, folder)
+    answer = post(client, f"/process/inbox/{row['id']}/to-queue/0")
+    assert answer.status_code >= 400 and "spreadsheet" in answer.text
+
+
+# --- B-146: removing the demo removes the sample setup it loaded ------------------------------------------------
+
+
+def test_removing_the_demo_removes_the_sample_setup_it_loaded(tmp_path):
+    from ap_coder.coding.tax import DEFAULT_TREATMENTS
+    from ap_coder.core.store import Store
+    from ap_coder.ops.demo import load_demo, remove_demo
+
+    store = Store(tmp_path / "ap.db")
+    load_demo(store)
+    assert store.has_reference()
+    remove_demo(store)
+    assert store.list_accounts("gl_accounts") == [] and store.list_accounts("cost_centers") == []
+    assert store.get_setting("policy_notes") == "" and not store.has_reference()
+    assert {t: x.treatment for t, x in store.tax_treatments().items()} == DEFAULT_TREATMENTS
+    assert all(not x.gl_code for x in store.tax_treatments().values())
+
+
+def test_removing_the_demo_keeps_the_setup_once_the_user_changed_it(tmp_path):
+    from ap_coder.core.store import Store
+    from ap_coder.ops.demo import load_demo, remove_demo
+
+    store = Store(tmp_path / "ap.db")
+    load_demo(store)
+    rows = store.list_accounts("gl_accounts")
+    rows[0]["description"] = "Our own name for it"
+    store.save_accounts("gl_accounts", rows)
+    store.set_setting("policy_notes", "Coffee goes to 6100.")
+    remove_demo(store)
+    assert store.list_accounts("gl_accounts") == rows  # changed: kept
+    assert store.get_setting("policy_notes") == "Coffee goes to 6100."
+    assert store.list_accounts("cost_centers") == []  # not changed: removed with the demo
+
+
+# --- B-147: `process` on a folder of emails only ------------------------------------------------------------------
+
+
+def test_process_logs_the_emails_it_sorted_and_does_not_fail_when_there_was_nothing_else(tmp_path):
+    import os
+    import time
+
+    from ap_coder.core.store import Store
+    from ap_coder.intake import inbox
+    from ap_coder.ops import cli
+
+    folder = tmp_path / "invoices"
+    folder.mkdir()
+    m = EmailMessage()
+    m["Subject"], m["From"] = "Please note our new bank details", "ar@vendor.example"
+    m.set_content("Our banking details have changed. Please update your records before the next payment.")
+    (folder / "bank.eml").write_bytes(m.as_bytes())
+    os.utime(folder / "bank.eml", (time.time() - 60, time.time() - 60))
+    db = tmp_path / "ap_coder.db"
+    assert cli.main(["--db", str(db), "process", str(folder)]) == 0
+    events = Store(db).events(actions=[inbox.FRAUD_ACTION], limit=10)
+    assert len(events) == 1 and events[0]["detail"]["email"] == "bank.eml"
+
+
+# --- B-148: a picture too large to open -----------------------------------------------------------------------------
+
+
+def test_a_picture_too_large_to_open_is_said_to_be_too_large_not_damaged(tmp_path, monkeypatch):
+    import pytest
+    from PIL import Image
+
+    from ap_coder.ai.pipeline import plain_error
+    from ap_coder.intake.pictures import to_pdf
+
+    photo = tmp_path / "IMG_2026.jpg"
+    Image.new("L", (400, 300), 200).save(photo, "JPEG")
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)  # 120,000 pixels: over twice the limit, as 200 MP is
+    with pytest.raises(Image.DecompressionBombError) as caught:
+        to_pdf(photo)
+    said = plain_error(caught.value, photo)
+    assert "too large" in said and "megapixels" in said and "damaged" not in said
+
+
+# --- B-149: `evaluate` without a labels file ---------------------------------------------------------------------
+
+
+def test_evaluate_without_a_labels_file_says_so_in_one_line(tmp_path, capsys):
+    from ap_coder.ops import cli
+
+    missing = tmp_path / "labels.xlsx"
+    assert cli.main(["evaluate", "--predictions", str(tmp_path), "--ground-truth", str(missing)]) == 2
+    err = capsys.readouterr().err
+    assert "labels.xlsx" in err and "Traceback" not in err and len(err.strip().splitlines()) == 1
