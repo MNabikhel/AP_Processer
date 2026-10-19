@@ -303,14 +303,16 @@ def supply_source(coding: Any, setup: TaxSetup | None = None) -> tuple[str, str]
     idea). Neither the vendor's province nor where the goods were shipped from decides it: an Ontario vendor shipping
     from BC to our site in Alberta charges GST only. So, in order: the ship-to read on the invoice (or set by the
     reviewer); the province of the cost center the lines are coded to (one site, one province); our default ship-to
-    province; and only when none is known, the vendor's province (often the same, never sure)."""
+    province; and only when none is known, the vendor's province (often the same, never sure). A cost center not in
+    the site list (or none) is one of our home sites, in our province: a site's province decides only when every
+    line goes to it."""
     printed = getattr(coding, "ship_to_province", "") or ""
     if printed in PROVINCES:
         return printed, SUPPLY_PRINTED
     if setup is not None:
-        sites = {setup.site_provinces.get(str(getattr(li, "predicted_cost_center", "") or ""))
+        sites = {setup.site_provinces.get(str(getattr(li, "predicted_cost_center", "") or "")) or setup.our_province
                  for li in getattr(coding, "line_items", []) or []} - {None, ""}  # fmt: skip
-        if len(sites) == 1 and (site := next(iter(sites))) in PROVINCES:
+        if len(sites) == 1 and (site := next(iter(sites))) in PROVINCES and site != setup.our_province:
             return site, SUPPLY_SITE
         if setup.our_province in PROVINCES:
             return setup.our_province, SUPPLY_OURS

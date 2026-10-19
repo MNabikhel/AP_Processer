@@ -360,6 +360,24 @@ def test_place_of_supply_is_where_it_is_delivered_to_us():
     assert supply_source(_supply(), TaxSetup(TaxRateTable.load())) == ("", "")
 
 
+def test_a_line_on_an_unlisted_site_is_delivered_to_our_province():
+    """B-133: a cost center not in the site list (or none) is one of our home sites: one line to our BC site and
+    one to an Alberta site is not "every line to BC", so the place of supply stays ours, in the tax checks and in the
+    tax return alike (one rule, B-13)."""
+    from ap_coder.coding import taxreturn
+    from ap_coder.coding.tax import TaxRateTable, TaxSetup, supply_source
+
+    setup = TaxSetup(TaxRateTable.load(), our_province="AB", site_provinces={"CC400": "BC"})
+    assert supply_source(_supply(supplier="BC", centers=["CC400", "CC100"]), setup) == ("AB", "ours")
+    assert supply_source(_supply(supplier="BC", centers=["CC400", ""]), setup) == ("AB", "ours")
+    assert supply_source(_supply(supplier="ON", centers=["CC400", "CC400"]), setup) == ("BC", "site")
+    doc = {"supplier_province": "BC", "line_items": [{"predicted_cost_center": "CC400"}, {"predicted_cost_center": ""}]}
+    assert taxreturn.supply_province(doc, setup) == "AB"
+    # Without our province set, an unlisted cost center says nothing: the listed site still decides.
+    no_home = TaxSetup(TaxRateTable.load(), site_provinces={"CC400": "BC"})
+    assert supply_source(_supply(supplier="ON", centers=["CC400", "CC100"]), no_home) == ("BC", "site")
+
+
 def test_an_invoice_without_a_ship_to_is_taxed_where_we_are(ground_truth, reference):
     from dataclasses import replace
 
