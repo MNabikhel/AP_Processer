@@ -446,6 +446,8 @@ async def register_import(request: Request) -> JSONResponse:
     total = store.import_erp_register(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)
     text = f"{total:,} ERP invoices known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else ".")
+    if repeats := store.erp_register_repeats():
+        text += f" {ui.plural(repeats, 'bill')} entered more than once in the ERP: see the duplicate payment audit."
     return done(request, "/exports#register", flash_message(text, "ok", icon="receipt_long"))
 
 

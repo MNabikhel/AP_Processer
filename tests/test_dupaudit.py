@@ -132,3 +132,20 @@ def test_erp_dates_with_a_time_and_single_digit_day_or_month(tmp_path):
 
 def test_dates_already_stored_with_a_time_are_still_compared():
     assert dupaudit._days("2026/1/5 0:00", "2026-01-08") == 3
+
+
+def test_the_same_bill_entered_twice_in_the_erp_is_a_duplicate(tmp_path):
+    """The ERP register keeps one row per vendor, number and amount: a bill keyed twice in the ERP must still show
+    as a duplicate, not collapse into one row the audit can never pair."""
+    store = Store(tmp_path / "d.db")
+    row = {"vendor_name": "Acme Ltd", "invoice_number": "A-77", "invoice_date": "2026-01-05", "total": 812.5}
+    once = {"vendor_name": "Acme Ltd", "invoice_number": "A-78", "invoice_date": "2026-03-05", "total": 99.0}
+    store.import_erp_register([row, dict(row, vendor_name="ACME Limited", invoice_date="2026-02-05"), once])
+    assert store.erp_register_repeats() == 1
+    (pair,) = dupaudit.find(store)
+    assert pair.reason == dupaudit.EXACT and pair.first.source == pair.second.source == "ERP"
+    assert "entered 2 times" in pair.first.label and "A-77" in dupaudit.to_csv([pair]).decode("utf-8-sig")
+    store.import_erp_register([row, once])  # the register imported again, overlapping: still twice, not three times
+    assert store.erp_register_repeats() == 1 and "entered 2 times" in dupaudit.find(store)[0].first.label
+    store.import_erp_register([row, once], replace_all=True)  # the ERP's copy was deleted there
+    assert store.erp_register_repeats() == 0 and dupaudit.find(store) == []

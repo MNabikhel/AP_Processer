@@ -344,6 +344,19 @@ def test_the_erp_register_is_uploaded_checked_imported_and_cleared(client, busy)
     assert gone.status_code == 400 and "Upload the file again" in gone.json()["error"]
 
 
+def test_a_bill_entered_twice_in_the_erp_is_named_when_the_register_is_imported(client, busy):
+    sheet = "Supplier,Invoice,Date,Amount\nAcme Ltd,A-1,2026-01-05,100.00\nAcme Ltd,A-1,2026-02-05,100.00\n"
+    page = follow(
+        client,
+        client.post("/exports/register/upload", files={"file": ("erp.csv", sheet.encode(), "text/csv")}, headers=PAGE),
+    )
+    data = {"file": page.url.params["register"], "col_vendor_name": "Supplier", "col_invoice_number": "Invoice",
+            "col_invoice_date": "Date", "col_total": "Amount"}  # fmt: skip
+    page = follow(client, client.post("/exports/register/import", data=data, headers=PAGE))
+    assert "1 ERP invoices known" in page.text
+    assert "1 bill entered more than once in the ERP: see the duplicate payment audit." in page.text
+
+
 def test_the_duplicate_audit_and_its_csv(client, busy):
     text = client.get("/exports?audit=1").text
     pairs = dupaudit.find(busy)
