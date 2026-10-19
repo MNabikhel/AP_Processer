@@ -92,7 +92,7 @@ after the name in **`scripts\terminal.bat`** (double-click it, then type e.g.
 
 | Option (after `--installer`) | What it does |
 |---|---|
-| `--fresh-start` | moves the database, invoices and outputs into a dated `backup-…` folder inside the data folder (the `.env` settings are kept) |
+| `--fresh-start` | moves the database, invoices and outputs into a dated `backup-…` folder inside the data folder (the `.env` settings and `models/` are kept; what you set in the dashboard's Settings is in the database, so it moves too) |
 | `--yes` | no questions; keeps current answers |
 | `--no-update` | developers online only: don't check GitHub for a newer version (the offline build never does) |
 | `--data-dir <folder>` | use a different data folder |
@@ -168,7 +168,8 @@ These invoices are synthetic, so screenshots of this step are fine to share.
 
 When you're done, close the AP Coder window, double-click **`scripts\terminal.bat`** and type
 **`APProcessor.bat --installer --fresh-start`** so your real setup starts clean: the sample database, memory and invoices move to a backup folder, and your
-settings stay.
+settings file (`.env`: the LM Studio address and the like) stays. What you set in the dashboard's **Settings** while
+trying it (approval limit, exchange rates, second backup folder, automation) was kept in that database: set it again in Step 5.
 
 ## Step 5: Your setup, in the dashboard
 

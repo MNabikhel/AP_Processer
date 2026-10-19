@@ -115,6 +115,21 @@ def test_fresh_start_keeps_settings_and_backs_up_data(tmp_path):
     assert (tmp_path / ".env").exists() and list((tmp_path / "invoices").iterdir()) == []
 
 
+def test_fresh_start_keeps_the_models_ap_coder_reads(tmp_path, monkeypatch):
+    """B-173: --fresh-start moved the data folder's models/ (the table finder IT put there, or the one the setup
+    downloaded from the code alone) into the backup folder: line items were read without it from then on."""
+    from ap_coder.ops import offline
+
+    monkeypatch.setenv("AP_PRIVATE_DIR", str(tmp_path))
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / offline.TABLE_FINDER_NAME).write_bytes(b"onnx")
+    (tmp_path / "ap_coder.db").write_text("db")
+    assert tmp_path / "models" in offline.table_finder_dirs()  # (where AP Coder reads it from)
+    install.fresh_start(_yes_console(), tmp_path)
+    assert (tmp_path / "models" / offline.TABLE_FINDER_NAME).read_bytes() == b"onnx"
+    assert not (tmp_path / "ap_coder.db").exists()
+
+
 def _yes_console():
     c = install.Console(assume_yes=False)
     c.yes = lambda question, default=True: True

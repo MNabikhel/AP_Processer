@@ -276,8 +276,12 @@ def choose_data_dir(c: Console, args: argparse.Namespace) -> Path:
 
 
 def fresh_start(c: Console, data: Path) -> None:
-    """Move the database, invoices and outputs into a dated backup folder (settings and cache are kept)."""
-    keep = {".env", ".cache", "backups"}  # settings, the scanned-text cache (re-reading costs) and backups
+    """Move the database, invoices and outputs into a dated backup folder (the .env settings, cache and models are
+    kept). The settings made in the dashboard (Settings > Review, Automation, Data & backups) are in the database:
+    they go with it."""
+    # Settings, the scanned-text cache (re-reading costs), backups, and the table finder's model (IT's, or the one
+    # the setup downloaded: read from here, ap_coder/ops/offline.py:table_finder_dirs).
+    keep = {".env", ".cache", "backups", "models"}
     movable = [p for p in data.iterdir() if p.name not in keep and not p.name.startswith("backup-")]
     if not movable:
         c.ok("nothing to clear: the data folder is already empty")
