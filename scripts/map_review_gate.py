@@ -89,11 +89,20 @@ def _folder(word: str) -> str:
 def commit_dirs(command: str, cwd: Path) -> list[Path]:
     """The folder each ``git commit`` in a shell command runs in (``cd X &&``, ``git -C X``, ``$VAR``, ``env``,
     ``NAME=value``, ``bash -c '...'`` followed). The caller also checks its own folder: a guess here never lets a
-    commit through, it only adds folders to check."""
+    commit through, it only adds folders to check. A backslash is read both ways, as an escape (``my\\ repo``) and
+    as a Windows path's (``C:\\Users``): the folders of both readings are checked (B-131)."""
+    found = []
+    for folder in _commit_dirs(command, cwd, False) + _commit_dirs(command, cwd, True):
+        if folder not in found:
+            found.append(folder)
+    return found
+
+
+def _commit_dirs(command: str, cwd: Path, windows: bool) -> list[Path]:
     found, here = [], cwd
     for part in SEPARATORS.split(command):
         try:
-            words = shlex.split(part)
+            words = shlex.split(part.replace("\\", "\\\\") if windows else part)
         except ValueError:
             words = part.split()
         while words and (re.fullmatch(r"\w+=.*", words[0]) or words[0] in WRAPPERS or words[0].startswith("-")):
@@ -104,7 +113,7 @@ def commit_dirs(command: str, cwd: Path) -> list[Path]:
             here = here / _folder(words[1])
             continue
         if Path(words[0]).name in SHELLS and "-c" in words[1:-1]:
-            found += commit_dirs(words[words.index("-c") + 1], here)
+            found += _commit_dirs(words[words.index("-c") + 1], here, windows)
             continue
         if Path(words[0]).name.lower() not in ("git", "git.exe"):
             continue

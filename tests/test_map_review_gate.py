@@ -130,3 +130,21 @@ def test_input_it_cannot_read_lets_the_command_through(repo, tmp_path_factory):
     outside = tmp_path_factory.mktemp("not-a-repo")
     assert gate(outside, "--reviewed").returncode == 0
     assert gate(repo, "--commit", "git commit -m 'unbalanced").returncode == 0  # nothing changed: nothing to stop
+
+
+def test_a_windows_path_keeps_its_backslashes():
+    """B-131: shell words were split the POSIX way only, where a backslash escapes the next character, so
+    ``cd C:\\Users\\me\\repo && git commit`` looked for a folder ``C:Usersmerepo``; read both ways, an escaped space
+    (``my\\ repo``) still names its folder too."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("map_review_gate", GATE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    here = Path("/session")
+    assert here / r"C:\Users\me\repo" in module.commit_dirs(r"cd C:\Users\me\repo && git commit -am x", here)
+    assert here / r"D:\work\repo" in module.commit_dirs(r'git -C "D:\work\repo" commit -am x', here)
+    assert here / "my repo" in module.commit_dirs(r"git -C my\ repo commit -am x", here)
+    assert here / "my repo" in module.commit_dirs(r"cd my\ repo && git commit -am x", here)
+    assert module.commit_dirs(r"g\it commit -am x", here) == [here]
+    assert module.commit_dirs("git commit -m 'it works'", here) == [here]

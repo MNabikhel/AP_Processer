@@ -813,7 +813,8 @@ the code at the time of the sweep.
 | Codebase map tooling, CI and tests | 10 | 9 (B-118 to B-125, B-127) | 1 (N-76) |
 | Repeated lessons made into checks | 1 | 1 (B-126) | 0 |
 | Map review of the per-person identity (W2-02) | 2 | 2 (B-129, B-130) | 0 |
-| **Total** | **103** | **58** | **45** |
+| The review gate on Windows CI | 1 | 1 (B-131) | 0 |
+| **Total** | **104** | **59** | **45** |
 
 ### Store and config
 
@@ -1413,6 +1414,17 @@ the code at the time of the sweep.
 - **Fix:** each file runs in a copy of the caller's context (`contextvars.copy_context().run`).
 - **Test:** `tests/test_network_identity.py::test_invoices_read_in_parallel_keep_the_colleague_who_started_them`
 - **Lesson:** Don't trust a contextvar across a thread pool: copy the context into each task.
+
+#### B-131 · On Windows, a commit after `cd C:\path` passed the review gate unchecked · low
+- **Where:** `scripts/map_review_gate.py` (`commit_dirs`)
+- **Symptom:** CI on Windows: the gate's own test `cd <an unquoted Windows temp path> && git commit -am x`, run from another folder, was let through (exit 0, not 2). Git Bash also eats unquoted backslashes, so a real command like it would fail at `cd`; a quoted path was read right.
+- **Cause:** the command was split into words the POSIX way, where a backslash escapes the next character, so the folder became `C:Users...repo`, which is no repository; the gate then checked only the session's folder. Found by the new gate's own test on CI's Windows runners, before the PR merged.
+- **Reproduce:** `commit_dirs(r"cd C:\Users\me\repo && git commit -am x", Path("/session"))`.
+- **Reproduced:** yes (`/session/C:Usersmerepo`).
+- **Fix:** the command is read both ways, a backslash as an escape (`my\ repo`) and as a Windows path's, and the folders of both readings are checked. A first fix that only kept the backslashes broke escaped spaces (`git -C my\ repo commit` was no longer seen at all); the map-reviewer found it before the push.
+- **Test:** `tests/test_map_review_gate.py::test_a_windows_path_keeps_its_backslashes`
+- **Lesson:** Don't read a command line one way when it may mean two: check the folders of every reading.
+
 ### Not reproduced or left as they are
 
 - **N-32** · Store · `_env_float` (`config.py:45`) accepts `AP_REVIEW_THRESHOLD=nan` or `-1` from a hand-edited `.env`, so low confidence would never force a review. The Settings page enforces 50-99%; not run end to end; left.

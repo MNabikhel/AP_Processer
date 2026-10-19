@@ -33,7 +33,7 @@ only from the code alone (GitHub's ZIP or a checkout, no bundle; `AP_ALLOW_INTER
   `--modules` (writes `ap_coder/MODULES.md`), `--hook` (Claude Code reminder, never blocks). New files count before `git add`.
 - map_review_gate.py (D-35): `--reviewed` (the map-reviewer finished: record every changed file's staged and work-tree
   git blob, from the top folder, in git's folder); `--commit` (hook event on stdin: before a `git commit`, any changed
-  non-Markdown file not reviewed as it is exits 2). `commit_dirs()`: the folders a shell command commits in.
+  non-Markdown file not reviewed as it is exits 2). `commit_dirs()`: the folders a shell command commits in (a backslash read both ways, as an escape and as a Windows path's, B-131).
 
 ## Gotchas and decisions
 - launch.py, running.py, upgrade.py, check_deps.py, fetch_models.py, check_map.py, map_review_gate.py and install.py run before any package
@@ -57,6 +57,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - B-121: Don't take the files git tracks as all the files that exist. `tests/test_check_map.py::test_a_new_module_counts_before_it_is_added_to_git`
 - B-122: Don't let a checker crash on input it didn't expect; say what is wrong instead. `tests/test_check_map.py::test_a_new_module_counts_before_it_is_added_to_git`
 - B-123: Don't skip a whole folder in a hook without checking who works in it. `tests/test_check_map.py::test_the_hook_reminds_of_an_edit_in_an_agents_worktree_too`
+- B-131: Don't read a command line one way when it may mean two: check the folders of every reading. `tests/test_map_review_gate.py::test_a_windows_path_keeps_its_backslashes`
 
 ## Files
 - Start: `launch.py` (the one-button setup and start), `running.py` (find and stop a running AP Coder), `first_run.py` (data folder and models on first run), `check_deps.py` (missing packages), `fetch_models.py` (OCR models from the bundle).
