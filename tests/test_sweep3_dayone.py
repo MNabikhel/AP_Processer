@@ -5,6 +5,7 @@ steps and the words of the docs)."""
 from __future__ import annotations
 
 import copy
+import importlib
 import json
 from dataclasses import replace
 
@@ -16,8 +17,14 @@ from ap_coder.core.reference_data import UNASSIGNED
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.ops.demo import load_demo
 from ap_coder.web.app import create_app
+from ap_coder.web.pages import MORE_MODULES, PAGES
 
 PAGE = {"X-AP-Coder": "1"}
+
+# Every page module imported now, before `me` patches web/core.py: a module imported while it is patched would keep
+# the patched `reviewer` it imports by name, for the tests of the files that run after this one.
+for _module in [*MORE_MODULES, *(p.module for p in PAGES if p.module)]:
+    importlib.import_module(f"ap_coder.web.pages.{_module}")
 
 
 @pytest.fixture(scope="module")
@@ -154,3 +161,23 @@ def test_a_vendors_one_usual_cost_center_is_offered_for_its_lines(client, store)
     line = {**output["line_items"][0], "predicted_cost_center": other}
     store.approve_invoice(second["id"], {**output, "line_items": [line]}, "Jordan Lee")
     assert invoice_view.usual_cost_center(store, reference, vendor) == ""
+
+
+# --- 4. The second approval on one laptop -----------------------------------------------------------------------
+
+
+def test_the_second_approval_says_how_to_give_it_when_one_login_cannot(client, store):
+    from ap_coder.core.store import PENDING
+
+    store.set_setting("approval_limit", "1")
+    inv = store.list_invoices(REVIEW)[0]
+    store.approve_invoice(inv["id"], store.get_invoice(inv["id"])["ai_output"], "Jordan Lee", login="jlee")
+    assert store.get_invoice(inv["id"])["status"] == PENDING
+
+    for page in (client.get(f"/review/{inv['id']}").text, client.get("/review?tab=second").text):
+        assert "second Windows account" in page and "office network" in page and "Send back" in page
+    settings = client.get("/settings/review").text
+    assert "one Windows login" in settings and "second Windows account" in settings and "office network" in settings
+    # The control itself is unchanged: the first approver still can't give it.
+    answer = client.post(f"/review/{inv['id']}/final-approve", headers=PAGE).json()
+    assert store.get_invoice(inv["id"])["status"] == PENDING and "Not done" in client.get(answer["redirect"]).text

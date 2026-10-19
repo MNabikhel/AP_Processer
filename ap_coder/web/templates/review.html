@@ -171,7 +171,10 @@
   </section>
 
 {% elif tab == "second" %}
-  <p class="muted">{% if limit_amount %}Invoices over {{ limit_amount | money }} CAD need a second approver before they can be exported. {% endif %}The second approver must be someone other than the first.</p>
+  <p class="muted">{% if limit_amount %}Invoices over {{ limit_amount | money }} CAD need a second approver before they can be exported. {% endif %}The second approver must be someone other than the first,
+    on another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
+    with a second Windows account and open AP Coder there, or have a colleague open it from their computer over the
+    office network. Not going ahead? Send back returns an invoice to the review queue.</p>
   <section class="card list">
     {% if not awaiting %}
     {{ ui.empty_note("Nothing waiting", " Invoices over the approval limit appear here once approved.", "how_to_reg") }}
