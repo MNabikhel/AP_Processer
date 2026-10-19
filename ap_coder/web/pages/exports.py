@@ -117,7 +117,8 @@ def batch_file(store: Store, batch: int, fmt: str) -> tuple[bytes, str, str]:
     if fmt == jde.FORMAT:
         return jde_file(store, batch)
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
-    return exports.build(fmt, invoices, gl_names(store), batch, store.vendor_ids(), layout=layout(store))
+    return exports.build(fmt, invoices, gl_names(store), batch, store.vendor_ids(), layout=layout(store),
+                         tax_treatments=store.tax_treatments())  # fmt: skip
 
 
 def problem_rows(store: Store, problems: dict[int, list[str]]) -> list[dict[str, Any]]:
@@ -146,7 +147,7 @@ def layout_preview(store: Store, new: export_layout.Layout) -> str:
     """The first lines of a custom CSV in layout ``new``, from invoices ready to export (else batch 1's)."""
     sample = store.unexported_approved()[:3] or [{"id": i} for i in store.batch_invoice_ids(1)[:3]]
     invoices = store.get_invoices([i["id"] for i in sample])
-    rows = exports.custom_rows(invoices, gl_names(store), "", store.vendor_ids())
+    rows = exports.custom_rows(invoices, gl_names(store), "", store.vendor_ids(), store.tax_treatments())
     if not rows or not new.columns:
         return ""
     return export_layout.build(rows[:6], new).decode("utf-8-sig")
@@ -445,6 +446,8 @@ async def register_import(request: Request) -> JSONResponse:
     total = store.import_erp_register(rows, replace_all=bool(form.get("replace")), actor=current_reviewer())
     drop_upload(token)
     text = f"{total:,} ERP invoices known" + (f"; {ui.plural(skipped, 'row')} skipped." if skipped else ".")
+    if repeats := store.erp_register_repeats():
+        text += f" {ui.plural(repeats, 'bill')} entered more than once in the ERP: see the duplicate payment audit."
     return done(request, "/exports#register", flash_message(text, "ok", icon="receipt_long"))
 
 

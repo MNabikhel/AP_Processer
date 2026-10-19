@@ -26,6 +26,7 @@ import sqlite3
 import threading
 import time
 import unicodedata
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -127,7 +128,7 @@ CREATE INDEX IF NOT EXISTS purchase_orders_vendor ON purchase_orders (vendor_key
 CREATE TABLE IF NOT EXISTS erp_invoices (
     vendor_key TEXT NOT NULL, number_key TEXT NOT NULL, total REAL NOT NULL, vendor_name TEXT NOT NULL,
     invoice_number TEXT NOT NULL, invoice_date TEXT NOT NULL DEFAULT '', imported_at TEXT NOT NULL,
-    PRIMARY KEY (vendor_key, number_key, total));
+    copies INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (vendor_key, number_key, total));
 CREATE TABLE IF NOT EXISTS coding_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT, vendor TEXT NOT NULL DEFAULT '', contains TEXT NOT NULL DEFAULT '',
     gl_code TEXT NOT NULL, cost_center TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, created_by TEXT);
@@ -471,6 +472,11 @@ class Store:
         if "original_sha256" not in columns:
             conn.execute("ALTER TABLE invoices ADD COLUMN original_sha256 TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS invoices_original_sha ON invoices (original_sha256)")
+        # The ERP register counts a bill entered more than once in the ERP, for the duplicate audit (looked for
+        # whatever the version).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(erp_invoices)")}
+        if columns and "copies" not in columns:
+            conn.execute("ALTER TABLE erp_invoices ADD COLUMN copies INTEGER NOT NULL DEFAULT 1")
         # Vendor keys stored under older vendor-matching rules (e.g. before "Limitée" and "s.e.c." were ignored) are
         # recomputed, so the vendor's invoices, lessons, master record and POs still match (looked for whatever the
         # version: the rules are recorded on their own).
@@ -1018,25 +1024,38 @@ class Store:
     def import_erp_register(
         self, rows: list[dict[str, Any]], replace_all: bool = False, actor: str | None = None
     ) -> int:
-        """Invoices already in the ERP (``registers.rows_from_records`` output). Returns how many are stored."""
+        """Invoices already in the ERP (``registers.rows_from_records`` output). Returns how many are stored. A bill
+        listed more than once in the file (the same vendor, number and amount: entered twice in the ERP) is one row
+        that counts its ``copies``; a register imported again, overlapping the last, does not add to them."""
         now = _now()
+        keyed = [
+            ((vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"]), round(float(r["total"]), 2)), r)
+            for r in rows
+            if vendor_key(r["vendor_name"]) and _norm_number(r["invoice_number"]) and r.get("total") is not None
+        ]
+        copies = Counter(key for key, _ in keyed)
         with self._conn() as conn:
             if replace_all:
                 conn.execute("DELETE FROM erp_invoices")
             conn.executemany(
                 """INSERT INTO erp_invoices (vendor_key, number_key, total, vendor_name, invoice_number, invoice_date,
-                   imported_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key, number_key, total) DO UPDATE
-                   SET invoice_date = excluded.invoice_date, imported_at = excluded.imported_at""",
-                [
-                    (vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"]), round(float(r["total"]), 2),
-                     r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", now)
-                    for r in rows
-                    if vendor_key(r["vendor_name"]) and _norm_number(r["invoice_number"]) and r.get("total") is not None
-                ],
+                   imported_at, copies) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(vendor_key, number_key, total)
+                   DO UPDATE SET invoice_date = excluded.invoice_date, imported_at = excluded.imported_at,
+                   copies = MAX(erp_invoices.copies, excluded.copies)""",
+                [(*key, r["vendor_name"], r["invoice_number"], r.get("invoice_date") or "", now, copies[key])
+                 for key, r in keyed],
             )  # fmt: skip
             count = int(conn.execute("SELECT COUNT(*) FROM erp_invoices").fetchone()[0])
-            self._log(conn, "erp_register_imported", actor=actor, detail={"rows": len(rows), "total": count})
+            detail: dict[str, Any] = {"rows": len(rows), "total": count}
+            if repeats := sum(1 for n in copies.values() if n > 1):
+                detail["repeated"] = repeats  # bills the file lists more than once
+            self._log(conn, "erp_register_imported", actor=actor, detail=detail)
         return count
+
+    def erp_register_repeats(self) -> int:
+        """How many bills the ERP register lists more than once (entered twice in the ERP: the duplicate audit)."""
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM erp_invoices WHERE copies > 1").fetchone()[0])
 
     def erp_register_count(self) -> int:
         with self._conn() as conn:
@@ -1114,7 +1133,8 @@ class Store:
             return [
                 dict(r)
                 for r in conn.execute(
-                    "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total FROM erp_invoices"
+                    "SELECT vendor_key, vendor_name, invoice_number, number_key, invoice_date, total, copies "
+                    "FROM erp_invoices"
                 )
             ]
 

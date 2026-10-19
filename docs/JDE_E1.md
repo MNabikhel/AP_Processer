@@ -141,8 +141,9 @@ number the G/L lines 1, 2, 3 under pay item 1. The setting *Line numbering* offe
 The domestic currency (default CAD) gives VLCRRM = `D`; any other currency gives VLCRRM = `F`, VLCRCD = the
 currency and the amounts in the foreign columns (VLACR, and VNACR on the lines; VLAG / VNAA blank: E1
 converts them). VLCRR is the rate from Settings → Review → *Exchange rates* when there is one, else blank
-(E1 then uses its exchange-rate table for the G/L date). A currency not in *Currencies set up in E1* blocks
-the invoice.
+(E1 then uses its exchange-rate table for the G/L date). Those rates are CAD per unit: with a domestic currency
+other than CAD, VLCRR is the rate across CAD (USD books, a CAD invoice at USD 1.37: 0.729927), and blank without
+a rate for the domestic currency. A currency not in *Currencies set up in E1* blocks the invoice.
 
 ### Credit notes
 
@@ -258,7 +259,9 @@ each one stays covered.
 * Document type for imported vouchers (PV or a custom one), credit notes, and the **P0400047 version** run by
   R04110ZA (its processing options: tax recalculation, duplicate-invoice edit H/I, default G/L date, …).
 * Tax areas and codes per province, and how the AAIs post GST, HST, QST and PST (the C and B codes in particular).
-* Implied decimals or decimal points; gross only or taxable / tax; VNEDLN numbering.
+* Implied decimals or decimal points; gross only or taxable / tax; VNEDLN numbering; whether the line numbers
+  VLEDLN / VNEDLN, written 1, 2, 3, load as written (E1 shows EDLN with display decimals: a direct table load
+  may read 1 as 0.001 and need 1000, a table conversion does not).
 * Account mapping and subledgers; whether BUs must be right-justified (E1 stores MCU right-aligned in 12
   characters; a database load may need the padding, a table conversion does it).
 * Batch numbering and the user R04110ZA is run for; whether a batch should be limited in size.

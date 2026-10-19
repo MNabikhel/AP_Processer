@@ -134,6 +134,14 @@ QUESTIONS = [
         jde.LINE_NUMBERING,
     ),
     Question(
+        "info:edln_decimals",
+        "Amounts",
+        "Line numbers are written 1, 2, 3; E1 shows EDLN with display decimals: does your load read 1 as line 1, "
+        "or as 0.001 (a direct table load may need 1000)?",
+        "VLEDLN / VNEDLN",
+        INFO,
+    ),
+    Question(
         "dist_tax_columns",
         "Amounts",
         "Should the G/L lines carry the tax area and code too? (yes / no)",
