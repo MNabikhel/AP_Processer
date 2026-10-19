@@ -21,7 +21,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.store
 - `InvoiceCoding` (schema.py): the coding shape (and the JSON schema the models answer in).
 - Data it owns: store.py's tables `invoices`, `feedback`, `events`, `settings`, `gl_accounts`, `cost_centers`, `tax_treatments`,
   `vendors`, `export_batches`, `purchase_orders`, `po_lines`, `erp_invoices`, `coding_rules`, `invoice_capture`, `supplier_profiles`,
-  `supplier_outcomes`, `reader_outcomes`, `lessons`; queues `page_reads`, `azure_checks`, `verifications`. Status: review, approved, pending_approval, parked, rejected, failed.
+  `supplier_outcomes`, `reader_outcomes`, `lessons` (and `lesson_approvals`: each approval's part, taken back by `_forget_learning`); queues `page_reads`, `azure_checks`, `verifications`. Status: review, approved, pending_approval, parked, rejected, failed.
 - Settings: the `.env` (addresses, keys); per user `~/.ap_coder/settings.json` (`AP_USER_SETTINGS`: reviewer name, data folder, installs;
   `paths.read_user_settings()`); the `settings` table (`get_setting()` / `set_setting()`): `approval_limit`, `fx_rates`, `policy_notes`,
   `default_terms_days`, `our_province`, `site_provinces`, `touchless_processing`, `touchless_limit`, `verifier`, `insights_assumptions`, `jde_e1`,

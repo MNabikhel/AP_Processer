@@ -175,6 +175,11 @@ CREATE TABLE IF NOT EXISTS lessons (
     explained_at TEXT, retired INTEGER NOT NULL DEFAULT 0, last_invoice INTEGER, created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS lessons_vendor ON lessons (vendor_key, kind);
+CREATE TABLE IF NOT EXISTS lesson_approvals (
+    invoice_id INTEGER NOT NULL, situation TEXT NOT NULL, corrected INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 0, value TEXT NOT NULL DEFAULT '', proposed TEXT NOT NULL DEFAULT '',
+    at TEXT NOT NULL, PRIMARY KEY (invoice_id, situation));
+CREATE INDEX IF NOT EXISTS lesson_approvals_situation ON lesson_approvals (situation);
 """
 
 # The page reader's queue (``page_reads.status``). A read still "reading" after STALE_READING_HOURS was
@@ -1231,10 +1236,12 @@ class Store:
 
     @staticmethod
     def _forget_learning(conn: sqlite3.Connection, invoice_id: int) -> None:
-        """Withdraw what an invoice's approval taught: its lessons, its supplier outcomes (from a review or an
-        audit sample alike, so none keeps counting towards the supplier's autonomy) and its reader scores."""
+        """Withdraw what an invoice's approval taught: its coding memory, its lessons (what the AI is told), its
+        supplier outcomes (from a review or an audit sample alike, so none keeps counting towards the supplier's
+        autonomy) and its reader scores."""
         for table in ("feedback", "supplier_outcomes", "reader_outcomes"):
             conn.execute(f"DELETE FROM {table} WHERE invoice_id = ?", (invoice_id,))
+        Store._withdraw_lessons(conn, invoice_id)
 
     def delete_invoice(
         self, invoice_id: int, forget_lessons: bool = False, actor: str | None = None, *, keep_approved: bool = False
@@ -1270,6 +1277,7 @@ class Store:
                 })  # fmt: skip
             if forget_lessons:
                 conn.execute("DELETE FROM feedback WHERE invoice_id = ?", (invoice_id,))
+                self._withdraw_lessons(conn, invoice_id)
 
     def list_invoices_full(self) -> list[dict[str, Any]]:
         """Every invoice with its file path, status and metadata (no AI output: kept light)."""
@@ -2587,10 +2595,16 @@ class Store:
 
     def record_lesson(self, row: dict[str, Any], *, invoice_id: int | None = None, actor: str | None = None) -> None:
         """One approval's word on a situation (``lessons.outcomes``): seen, and corrected (the value AP chose, what
-        was proposed) or confirmed. A situation never corrected is only counted, never shown."""
+        was proposed) or confirmed. A situation never corrected is only counted, never shown. What ``invoice_id``'s
+        approval added is kept beside it (``lesson_approvals``), to be taken back when the approval is withdrawn."""
         now = _now()
         corrected = 1 if row.get("corrected") else 0
+        value, proposed = str(row.get("value") or "")[:300], str(row.get("proposed") or "")[:300]
         with self._conn() as conn:
+            if invoice_id is not None:  # the same invoice's word on it counts once, the latest
+                self._withdraw_lessons(conn, invoice_id, row["key"])
+            before = conn.execute("SELECT corrected FROM lessons WHERE situation = ?", (row["key"],)).fetchone()
+            confirmed = 1 if not corrected and before is not None and before["corrected"] > 0 else 0
             conn.execute(
                 """INSERT INTO lessons (situation, vendor_key, vendor_name, kind, field, pattern, value, proposed, seen,
                    corrected, since_why, confirmed, last_invoice, created_at, updated_at)
@@ -2604,9 +2618,43 @@ class Store:
                    proposed = CASE WHEN excluded.corrected = 1 THEN excluded.proposed ELSE lessons.proposed END,
                    last_invoice = excluded.last_invoice, updated_at = excluded.updated_at""",
                 (row["key"], vendor_key(row.get("vendor") or ""), row.get("vendor") or "", row.get("kind") or "invoice",
-                 row["field"], row.get("pattern") or "", str(row.get("value") or "")[:300],
-                 str(row.get("proposed") or "")[:300], corrected, corrected, invoice_id, now, now),
+                 row["field"], row.get("pattern") or "", value, proposed, corrected, corrected, invoice_id, now, now),
             )  # fmt: skip
+            if invoice_id is not None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO lesson_approvals (invoice_id, situation, corrected, confirmed, value, "
+                    "proposed, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (invoice_id, row["key"], corrected, confirmed, value, proposed, now),
+                )
+
+    @staticmethod
+    def _withdraw_lessons(conn: sqlite3.Connection, invoice_id: int, situation: str | None = None) -> None:
+        """Take back what ``invoice_id``'s approval added to the lessons (one situation's, or all): seen, corrected,
+        confirmed, and the count towards the next "why" (unless AP gave a reason since). A withdrawn correction's value
+        gives way to the latest correction still standing; with none left the lesson is no longer shown."""
+        where, args = "invoice_id = ?" + (" AND situation = ?" if situation else ""), (invoice_id,)
+        args += (situation,) if situation else ()
+        for c in conn.execute(f"SELECT * FROM lesson_approvals WHERE {where}", args).fetchall():
+            lesson = conn.execute("SELECT * FROM lessons WHERE situation = ?", (c["situation"],)).fetchone()
+            if lesson is None:
+                continue
+            value, proposed = lesson["value"], lesson["proposed"]
+            if c["corrected"]:
+                last = conn.execute(
+                    "SELECT value, proposed FROM lesson_approvals WHERE situation = ? AND invoice_id != ? "
+                    "AND corrected = 1 ORDER BY at DESC, rowid DESC LIMIT 1",
+                    (c["situation"], invoice_id),
+                ).fetchone()
+                if last is not None:
+                    value, proposed = last["value"], last["proposed"]
+            since_why = c["corrected"] if not lesson["explained_at"] or c["at"] > lesson["explained_at"] else 0
+            conn.execute(
+                "UPDATE lessons SET seen = MAX(seen - 1, 0), corrected = MAX(corrected - ?, 0), "
+                "since_why = MAX(since_why - ?, 0), confirmed = MAX(confirmed - ?, 0), value = ?, proposed = ? "
+                "WHERE id = ?",
+                (c["corrected"], since_why, c["confirmed"], value, proposed, lesson["id"]),
+            )
+        conn.execute(f"DELETE FROM lesson_approvals WHERE {where}", args)
 
     def lesson(self, situation: str) -> dict[str, Any] | None:
         with self._conn() as conn:
