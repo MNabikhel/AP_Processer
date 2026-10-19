@@ -199,6 +199,19 @@ def test_an_outlook_winmail_dat_alone_is_left_out_since_it_may_hold_the_attachme
     assert any("winmail.dat" in s for s in read_eml(m.as_bytes()).left_out)
 
 
+# --- B-207: a small fax scan named .tiff ----------------------------------------------------------------------------
+
+
+def test_a_small_tiff_scan_named_tiff_is_read_not_dropped_as_a_logo():
+    tif = _scan_tiff()
+    for name in ("fax.tiff", "scan.TIFF"):
+        m = EmailMessage()
+        m["Subject"] = "Invoice INV-78"
+        m.set_content("Invoice attached.")
+        m.add_attachment(tif, maintype="image", subtype="tiff", filename=name)
+        assert [n for n, _ in read_eml(m.as_bytes()).found] == [name], name
+
+
 # --- B-141: a forwarded email sent in base64 -------------------------------------------------------------------------
 
 

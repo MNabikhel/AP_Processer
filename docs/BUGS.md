@@ -1485,10 +1485,10 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 | AI and readers | 10 | 8 (B-174 to B-181) | 2 (N-82 to N-83) |
 | Document capture | 12 | 9 (B-182 to B-189, B-205) | 3 (N-84 to N-86) |
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
-| Intake, email and command line | 13 | 11 (B-140 to B-149, B-206) | 2 (N-88 to N-89) |
+| Intake, email and command line | 14 | 12 (B-140 to B-149, B-206 to B-207) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
 | Day-one walk-through | 8 | 8 (B-197 to B-204) | 0 |
-| **Total** | **89** | **72** | **17** |
+| **Total** | **90** | **73** | **17** |
 
 ### Store and config
 
@@ -2101,6 +2101,16 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 - **Fix:** `_not_read` marks a .txt/.htm/.html/.ics part (or an unnamed text/plain, text/html or calendar one) as the email's own text or a calendar invite unless its name mentions an invoice (`triage.mentions_invoice`), and winmail.dat (application/ms-tnef) as Outlook's formatting. `left_out` leaves out the first always and winmail.dat when the email gave a PDF, a picture or a spreadsheet (alone it may hold the attachments). A zip, Word, RTF or XML file, an HTML file named as an invoice, a damaged part and the depth/size limits still make the email wait; spreadsheets keep their own "Not for AP" path.
 - **Test:** `tests/test_sweep3_intake.py::test_exchange_footers_outlook_formatting_and_invites_do_not_make_an_invoice_email_wait` (also `test_parts_that_may_hold_an_invoice_still_make_the_email_wait`, `test_an_outlook_winmail_dat_alone_is_left_out_since_it_may_hold_the_attachments`)
 - **Lesson:** Don't make "may be an invoice" mean "anything that isn't a PDF": list what can really hold one, or every email waits.
+
+#### B-207 · A small fax scan named .tiff (not .tif) was still dropped as a logo · low
+- **Where:** `ap_coder/intake/mailbox.py:174` (`_keep`)
+- **Symptom:** a black-and-white fax page under 15 KB attached as fax.tiff or scan.TIFF was left out as "a small or inline picture, e.g. a logo"; the same file named .tif was read.
+- **Cause:** B-140's exemption checked `suffix not in (".pdf", ".tif")`, but `_kind` keeps a ".tiff" name's extension as ".tiff".
+- **Reproduce:** review33/s/t10.py: `_keep` with fax.tif, fax.tiff and scan.TIFF (5 KB, image/tiff).
+- **Reproduced:** yes (`fax.tif found`, `fax.tiff ['fax.tiff (a small or inline picture, e.g. a logo)']`, the same for scan.TIFF)
+- **Fix:** the exemption lists ".tiff" too.
+- **Test:** `tests/test_sweep3_intake.py::test_a_small_tiff_scan_named_tiff_is_read_not_dropped_as_a_logo`
+- **Lesson:** Don't compare against one spelling of an extension when the function before it keeps both.
 
 ### Setup, launcher and update
 

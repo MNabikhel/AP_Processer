@@ -171,7 +171,7 @@ def _keep(mail: Mail, name: str, content_type: str, content: bytes, inline: bool
         return
     # A TIFF is a scan or a fax, never a logo: a page in black and white is often under MIN_IMAGE_BYTES.
     small = len(content) < MIN_IMAGE_BYTES or (inline and len(content) < MAX_LOGO_BYTES)
-    if suffix not in (".pdf", ".tif") and small:
+    if suffix not in (".pdf", ".tif", ".tiff") and small:
         mail.skipped.append(f"{label} {LOGO}")
         return
     safe = safe_name(name or f"attachment{suffix}")
