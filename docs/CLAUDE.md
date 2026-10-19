@@ -30,4 +30,5 @@ is the map of its code. When a doc and the code disagree, the code wins and the 
 - For finance and AP: `SALES_TAX.md` (place of supply, taxes per line, the math, rates), `JDE_E1.md` (JD Edwards E1 Z-file export and open questions), `CODING.md` (GL coding without an AI model).
 - Design and reviews: `CAPTURE_DESIGN.md` (invoice capture, readers, confidence, touchless), `CODE_REVIEW.md` (review of the core engine), `CODE_REVIEW_WEB_AND_LAUNCHER.md` (review of the dashboard and the launcher).
 - `WHATS_NEW.md`: release notes, newest first (also shown on the Help page).
+- `sweep3_scripts.md`: sweep 3's scripts findings (B-167 to B-173), to be merged into BUGS.md.
 - `screenshots/`: dashboard screenshots used by the README (data folder).
