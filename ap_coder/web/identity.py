@@ -107,7 +107,7 @@ def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
 def is_this_computer(host: str, server: str = "") -> bool:
     """Whether a request came from this computer's own browser: a loopback address (also ``::ffff:127.0.0.1``), or,
     given ``server`` (the address the connection arrived on), that same address: the browser of the computer running
-    AP Coder opened at its own network address (``http://192.168.1.20:8501``) comes from it, not from a colleague."""
+    AP Coder opened at its own network address (``http://<its address>:8501``) comes from it, not from a colleague."""
     ip = _ip(host)
     if ip is None:
         return host == "localhost"

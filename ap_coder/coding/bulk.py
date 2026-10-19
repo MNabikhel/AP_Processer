@@ -25,10 +25,9 @@ def _needs_a_person(severity: Any, code: Any) -> bool:
     return severity in ("error", "warning") or str(code or "") in ALWAYS_A_PERSON
 
 
-def _credit_note(store: Store, invoice_id: int, grand_total: Any) -> bool:
+def _credit_note(titled: bool, grand_total: Any) -> bool:
     """A total below zero, or titled a credit note by what capture read (whatever the sign of its total): the same
     notion as the touchless gates (``supplier.touchless_gates``)."""
-    titled = bool((store.get_capture(invoice_id) or {}).get("credit_note"))
     return bool(touchless_gates(grand_total=grand_total, credit_note=titled))
 
 
@@ -36,6 +35,7 @@ def clean_candidates(store: Store) -> list[dict[str, Any]]:
     """Invoices in the queue that were clean when processed (no review flag, no errors or warnings, nothing that
     always goes to a person, not a credit note)."""
     validations = {r["id"]: r["validation"] or {} for r in store.invoice_columns(("id", "validation"), REVIEW)}
+    titled = store.credit_note_ids(REVIEW)
     candidates = []
     for inv in store.list_invoices(REVIEW):
         if inv["requires_review"]:
@@ -43,7 +43,7 @@ def clean_candidates(store: Store) -> list[dict[str, Any]]:
         issues = validations.get(inv["id"], {}).get("issues") or []
         if any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
             continue
-        if not _credit_note(store, inv["id"], inv["grand_total"]):
+        if not _credit_note(inv["id"] in titled, inv["grand_total"]):
             candidates.append(inv)
     return candidates
 
@@ -79,7 +79,7 @@ def bulk_approve(
         except ValueError:
             skipped.append((invoice_id, "the coding needs fixing by hand"))
             continue
-        if _credit_note(store, invoice_id, coding.grand_total):
+        if _credit_note(bool((store.get_capture(invoice_id) or {}).get("credit_note")), coding.grand_total):
             skipped.append((invoice_id, "it is a credit note: a credit is always applied by a person"))
             continue
         output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id)

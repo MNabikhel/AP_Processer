@@ -2032,6 +2032,16 @@ class Store:
             ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def credit_note_ids(self, status: str) -> set[int]:
+        """The invoices with ``status`` that capture read as titled a credit note, in one query (bulk approval)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT c.invoice_id FROM invoice_capture c JOIN invoices i ON i.id = c.invoice_id
+                   WHERE i.status = ? AND json_extract(c.capture_json, '$.credit_note')""",
+                (status,),
+            ).fetchall()
+        return {r[0] for r in rows}
+
     def supplier_key_for(self, vendor_name: str, gst_number: str | None = None) -> str:
         """The supplier key for an invoice, with the vendor master's ERP id when the master knows it."""
         from ..capture.supplier import supplier_key
