@@ -14,7 +14,7 @@ Reads an invoice's header fields and line items from the page, with boxes, a cal
 - `learn_from_approval()` (workflow.py): AP's approved values -> lessons, reader outcome rows, supplier outcome rows (the store suspends an autonomous supplier on a correction), template `learn()`; `on_reopen()`. An untouched bulk approval
   writes no supplier rows, and its kept values are no calibration evidence (B-101).
 - `touchless_gates()`, `should_auto_approve()`, `autonomy_status()`, `apply_template()`, `supplier_key()` (supplier.py): pure, no store.
-- `build_layout()` (layout.py), `read_fields()`, `read_line_items()`, `us_address()` (reader.py; also offline_coder.py's `provinces()`), `layout_from_transcript()` (transcript.py), `fuse()`, `calibrate()`, `evidence_key()` (confidence.py).
+- `build_layout()` (layout.py), `read_fields()`, `read_line_items()`, `us_address()` (reader.py; offline_coder.py reads the supplier's US address with it too), `layout_from_transcript()` (transcript.py), `fuse()`, `calibrate()`, `evidence_key()` (confidence.py).
 - Data: `CaptureResult.to_dict()` is saved per invoice (`Store.save_capture`); a supplier profile's "template" is `Template` JSON.
 - `calibration.json`: {"about", "runs": [benchmark configs], "evidence": {"field|readers|method|text-or-scan|flags": [cases, right]}}.
 
