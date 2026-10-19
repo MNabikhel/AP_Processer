@@ -18,15 +18,15 @@ models) only from the code alone, with no bundle (`AP_ALLOW_INTERNET=0` stops it
   (data out of a code folder into `~/APCoder`), `repoint_files()`, `clean_up()` (old `.venv`, models, folders, after the self-check).
 - `main()` (install.py): the installer, the same setup plus questions (`--yes`: none; `--help` lists the rest).
 - `problems()` (check_deps.py): extras -> requirements of pyproject.toml missing or too old, and `ap_coder` itself not installed (exit 1 from the command line).
-- `fetch()` (fetch_models.py): copy the PP-OCRv5 models (and the table finder) from the bundle's `models/` (never download
-  unless opted in); `--check` exits 1 if any is missing; also `--to`, `--from`, `--offline`, `--table-finder`. `choose_data_dir()` (first_run.py): the data folder already in use, else `~/APCoder`.
+- `fetch()` (fetch_models.py): copy the PP-OCRv5 models from the bundle's `models/` (never download unless
+  opted in; the table finder is read in place, `--table-finder` downloads it online); `--check` exits 1 if any is missing; also `--to`, `--from`, `--offline`. `choose_data_dir()` (first_run.py): the data folder already in use, else `~/APCoder`.
 - `build()` (build_offline_bundle.py): `dist/APProcessor-offline-*.zip` with code, `wheelhouse/`, `models/` and
   `bundle_manifest.json` (version, built, SHA-256 per file). `--mac`, `--platform`, `--python`, `--no-models`, `--no-current`, `--dry-run`, `--manifest-for FOLDER`.
 - `main()` (pilot_check.py): code each sample in `samples/` with no model (`check()`), compare with `samples/ground_truth/`,
   then one scan with local OCR when installed (`check_ocr()`); exit 0 when all are right. A throwaway database.
 - check_map.py: each folder's map size (warns past 50, fails past 80, bug lessons aside), Files index, Depends on / Used by against the imports (`ap_coder/` folders only),
   Interface names, bug lessons and `ap_coder/MODULES.md`; `--changed BASE`, `--modules` (writes MODULES.md), `--hook` (reminds, never blocks).
-- map_review_gate.py (D-35): `--reviewed` records every changed file's staged and work-tree blob in git's folder; `--commit`
+- map_review_gate.py (D-35): `--reviewed` records every changed non-Markdown file's staged and work-tree blob in git's folder; `--commit`
   exits 2 before a `git commit` while a changed non-Markdown file differs (`_unreviewed()`); `commit_dirs()`: where a command commits (B-131).
 
 ## Gotchas and decisions

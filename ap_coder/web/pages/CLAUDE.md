@@ -47,7 +47,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - `statements.py`: /statements, /statements/upload, /statements/emailed/{entry}/{n}, /statements/reconciliation.csv; key "statements".
 - `vendors.py`: /vendors, /vendors/save, /vendors/master/upload|import; key "vendors".
 - `purchase_orders.py`: /purchase-orders, its template.csv, upload, import, sample, status, delete; key "purchase_orders".
-- `accounts.py`: /accounts, /accounts/{table}/upload|import|save, /accounts/{table}.csv, /accounts/tax, policy, rules, sample; key "accounts".
+- `accounts.py`: /accounts, /accounts/{table}/upload|import|save, /accounts/{table}.csv, /accounts/tax, policy, rules, rules/add, sample; key "accounts".
 - `learning.py`: /learning, /learning/lessons/..., /learning/suppliers/..., /learning/memory/forget, /learning/history/..., /learning/training.zip; key "learning".
 - `spend.py`: /spend, /spend/data.xlsx; key "spend".
 - `insights.py`: /insights, /insights/business-case, /insights/assumptions; key "insights".

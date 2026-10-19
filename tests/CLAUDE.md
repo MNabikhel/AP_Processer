@@ -26,7 +26,7 @@ failing test here (docs/BUGS.md names it). Tests never touch the real data folde
 - Bug tests keep the name given in docs/BUGS.md: renaming one breaks the log's **Test:** line.
 - A lesson logged twice becomes a rule in test_code_rules.py (a check of the whole code), not a third fix.
 - test_package_data.py fails when the web app reads a file not listed in pyproject's package data.
-- The browser tests (`test_in_a_browser_...` in test_web_invoice.py and test_offline_guard.py) find Chromium with conftest `chromium_path()` (looked up once per run, never inside a running Playwright: B-127) and skip without it; CI's "Browser tests" job sets `AP_REQUIRE_BROWSER=1`, so there they must run.
+- The browser tests (names holding `in_a_browser`, which CI's `-k` selects: test_web_invoice.py, test_offline_guard.py) find Chromium with conftest `chromium_path()` (looked up once per run, never inside a running Playwright: B-127) and skip without it; CI's "Browser tests" job sets `AP_REQUIRE_BROWSER=1`, so there they must run.
 
 ### Bug lessons
 From docs/BUGS.md (one line each; the entry has the repro and the fix).
@@ -37,7 +37,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 
 ## Files
 - Helpers: `__init__.py` (makes tests a package), `conftest.py` (isolation and fixtures), `webclient.py` (dashboard client), `offline_guard.py` (network guard), `offline_flow.py` (the offline walk).
-- `fixtures/`: data folder (no CLAUDE.md): page_reader/ holds one scanned page (s212-0000) with its Markdown and truth, used by test_transcript.py and test_verifier.py.
+- `fixtures/`: data folder (no CLAUDE.md): page_reader/ holds one scanned page (s212-0000) with its Markdown and truth, used by test_transcript.py.
 - `offline_guard_site/`: data folder (no CLAUDE.md): a sitecustomize.py that installs the guard in subprocesses.
 - Store, config and core data: `test_audit.py`, `test_backups.py`, `test_data_layer_fixes.py`, `test_envfile_edge_cases.py`, `test_hardening.py`, `test_memory_store.py`, `test_park_notes.py`, `test_reference_data.py`, `test_safety.py`,
   `test_scale.py`, `test_schema.py`, `test_store_session.py`, `test_store_status_fixes.py`, `test_update_database.py`, `test_working_together.py`, `test_demo.py`, `test_help.py`.

@@ -57,6 +57,14 @@ Question 4 still needed a code search for one method's callers: the map stays at
   shadows the standard library, the `few_sql_variables` fixture, the `slow` marker, CI installing `.[dev]` only).
   All fixed. One finding went past wording: the browser tests never ran in CI (B-124); a "Browser tests" job now
   runs them with `AP_REQUIRE_BROWSER=1`. Its prompt and B-124 call it the "second" pass; its commit says "pass 3".
+- **Pass after the 50-line trim** (2026-10-19, PR #31): an independent agent checked about **375 claims** in the 9
+  maps the round-4 work touched (root, web, web/pages, scripts, tests, ops, core, erp, coding) and all 79 bug-lesson
+  test names: **4 wrong** (fetch_models copies no table finder; fixtures/page_reader is read by test_transcript.py
+  only; one browser test's name; terms.py and ai also raise check codes) and 3 imprecise (the gate records
+  non-Markdown files only; two `app.state` keys; the `/accounts/rules/add` route), all fixed. Its one doubt, that the
+  doctor's Azure dry run might run without the opt-in, does not hold: there the provider is "off" and the coder
+  stops before any client is built (`resolve_provider()`, `InvoiceCoder.client`). The map-reviewer's own pass on
+  the trim found 4 statements the cut had made false (setup downloads, the POST origin rule, `_UI_HTML`, `--yes`).
 
 ## Final review of stage 4 (PR #27, merged 2026-10-19 UTC)
 - Bug sweep 2: 8 fresh-context agents reviewed each section again and checked its CLAUDE.md against the code.

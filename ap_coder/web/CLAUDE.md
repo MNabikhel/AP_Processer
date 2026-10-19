@@ -24,7 +24,7 @@ folder, fonts from `ap_coder/static`, the logo from `ap_coder/assets`.
 - `page_png()`, `page_sizes()`, `page_words()`, `shape_fields()` (document.py): the review screen's page pictures and words, boxes as page fractions (0..1, top-left).
 - `analyse()`, `Draft` (invoice_view.py): the review screen's coding, checks and sections from the reviewer's edits.
 - `line_chart()`, `bar_chart()` (charts.py): server-drawn SVG; `render()` (minimd.py): our own help Markdown to safe HTML.
-- Data it owns: `app.state` (store, settings_factory, jobs, reader, port, shutdown_token, identity_secret; pages/invoice.py adds the drafts); flash messages and uploads in memory only.
+- Data it owns: `app.state` (store, settings_factory, jobs, reader, azure_checker, port, shutdown_token, identity_secret, server; pages/invoice.py adds the drafts); flash messages and uploads in memory only.
 
 ## Gotchas and decisions
 - Any method but GET, HEAD, OPTIONS needs `X-AP-Coder: 1`, an Origin (if sent) of this server, no cross- or same-site Sec-Fetch-Site, else 403; `/shutdown` takes the token.
