@@ -17,6 +17,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.tax` 
 - `validate_coding()` (validation.py): coding, reference and the vendor, PO, terms and duplicate findings -> a report.
 - `rules.apply()`: AP's fixed rules, after the coder (they win over it); `tax_number_findings()` (vendors.py); `payment()` (terms.py).
 - `math_check()` (taxmath.py): the invoice math again, shown under the tax lines; `bulk_approve()` (bulk.py); `draft()` (vendor_mail.py).
+- `codes_to_pick()`, `uses_cost_centers()` (review.py): the lines' GL accounts / cost centers approval still needs; the review screen's Approve and the queue's Ready both ask it.
 
 ## Gotchas and decisions
 - Place of supply: `place_of_supply()` (printed ship-to, else the cost center's site in `site_provinces` "CC=PROV" lines, else `our_province`,

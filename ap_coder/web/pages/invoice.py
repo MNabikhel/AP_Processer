@@ -56,7 +56,7 @@ from ap_coder.web.core import (
     templates,
 )
 from ap_coder.web.files import download
-from ap_coder.web.pages.review import filter_queue, sort_queue
+from ap_coder.web.pages.review import attention, filter_queue, sort_queue
 
 router = APIRouter()
 
@@ -167,8 +167,9 @@ def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str
     whole queue if this invoice isn't part of that view."""
     pending = store.list_invoices(REVIEW)
     show = query.get("show", "all")
-    shown = {"attention": [i for i in pending if i["requires_review"]],
-             "ready": [i for i in pending if not i["requires_review"]]}.get(show, pending)  # fmt: skip
+    reasons = attention(store, reference_or_none(store), pending) if show in ("attention", "ready") else {}
+    shown = {"attention": [i for i in pending if i["id"] in reasons],
+             "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)  # fmt: skip
     shown = sort_queue(filter_queue(shown, query.get("q", "")), query.get("sort", "priority"))
     ids = [i["id"] for i in shown]
     if invoice_id not in ids:
