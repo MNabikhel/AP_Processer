@@ -218,7 +218,7 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
         {"label": "Approved today", "value": f"{done_today:,}",
          "sub": f"of {total_today:,} today · {len(approved):,} approved in all",
          "bar": done_today / total_today if total_today else 0.0},
-        {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.0%}",
+        {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
          "sub": "after the first approvals" if accuracy is None else "vs 90% target",
          "delta": "" if accuracy is None else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace("-", "−"),
          "good": accuracy is not None and accuracy >= TARGET_ACCURACY},

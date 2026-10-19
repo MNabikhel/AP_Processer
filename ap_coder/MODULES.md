@@ -57,7 +57,7 @@ first lines) and every module that imports it, so a change can be followed to it
 | `erp/dupaudit.py` | Duplicate payment audit: bills that may have been approved (or posted in the ERP) twice. | web/pages/activity, web/pages/exports |
 | `erp/export_layout.py` | A CSV layout of your own, for an ERP whose import expects specific columns. | erp/exports, web/pages/exports |
 | `erp/exports.py` | ERP export files for approved invoices. | erp/jde, web/pages/exports, web/pages/search |
-| `erp/insights.py` | Insights: the business case (volume, straight-through rate, time saved, Azure cost), operations, workload. | web/pages/insights, web/pages/vendors |
+| `erp/insights.py` | Insights: the business case (volume, straight-through rate, time saved, Azure cost), operations, workload. | web/pages/activity, web/pages/insights, web/pages/learning, web/pages/vendors |
 | `erp/jde.py` | JD Edwards EnterpriseOne (E1) batch vouchers: F0411Z1 / F0911Z1 files for R04110ZA. | erp/jde_worksheet, web/pages/exports, web/pages/settings_jde |
 | `erp/jde_worksheet.py` | The JD Edwards settings worksheet: one Excel file AP sends the JDE team, and AP Coder reads back. | web/pages/settings_jde |
 | `erp/recurring.py` | Recurring vendors: who bills on a regular rhythm, when the next invoice is due, and which are late. | erp/accruals, web/pages/review, web/pages/vendors |

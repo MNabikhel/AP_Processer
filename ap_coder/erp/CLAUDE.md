@@ -16,7 +16,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.expor
 - `an8_problem()` (jde.py): a held-back reason about the supplier number (the Exports page links it to Settings → JD Edwards E1).
 - `stamped_pdf()` / `batch_zip()` (stamp.py): the approved PDFs; `rows_from_records()` (registers.py): an ERP register's rows (the register itself is in the store).
 - Reports: `build()` (accruals.py), `reconcile()` (statements.py), `find()` (dupaudit.py), `exceptions()` (controls.py), `workbook()` (spend.py),
-  `compute()` (insights.py), `detect()` (recurring.py).
+  `compute()` (insights.py), `detect()` (recurring.py); `corrected()`, `approved_as_coded()`, `AS_CODED` (insights.py): the one "approved as coded" (D-38).
 - `run()` (directory.py): a `Query` -> `Result` (the column filters, as JD Edwards' "query by example"); `find()` (search.py): the quick search.
 
 ## Gotchas and decisions

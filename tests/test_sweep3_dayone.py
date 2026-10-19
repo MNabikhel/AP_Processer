@@ -227,3 +227,46 @@ def test_optional_readers_not_set_up_are_grey_not_red(client, monkeypatch):
     assert gl.state == reading.OPTIONAL
     row = next(r for r in reader_rows(status) if r["name"] == "GL coding model")
     assert (row["label"], row["tone"]) == ("Not set up (optional)", "gray")
+
+
+# --- 7. One "approved as coded" --------------------------------------------------------------------------------------
+
+
+def test_a_change_is_a_value_the_reviewer_changed_or_a_line_added_not_a_blank_filled_in():
+    from ap_coder.erp.insights import corrected
+
+    filled = {"detail": {"changes": [{"what": "line 1 cost center", "before": "UNASSIGNED", "after": "100"},
+                                     {"what": "PO number", "before": "", "after": "PO-1"}]}}  # fmt: skip
+    added = {"detail": {"changes": [{"what": "line 4 added", "before": "", "after": "Freight · 12.00"}]}}
+    fixed = {"detail": {"changes": [{"what": "line 1 GL account", "before": "6010", "after": "1510"}]}}
+    assert not corrected(filled) and corrected(added) and corrected(fixed)
+
+
+def test_insights_learning_activity_and_the_queue_count_approved_as_coded_alike(client, store):
+    from ap_coder.erp.insights import approved_as_coded
+
+    pending = [store.get_invoice(i["id"]) for i in store.list_invoices(REVIEW)[:4]]
+    cc = store.reference_data().cost_centers.codes[0]
+    for n, inv in enumerate(pending):
+        output = copy.deepcopy(inv["ai_output"])
+        for li in output["line_items"]:  # every one: a cost center filled in where the coder left none
+            if li.get("predicted_cost_center") in ("", None, UNASSIGNED):
+                li["predicted_cost_center"] = cc
+        if n == 0:  # one: a GL account the coder chose, changed
+            coded = next(li for li in output["line_items"] if li["predicted_gl_code"] not in ("", UNASSIGNED))
+            coded["predicted_gl_code"] = next(c for c in ("6000", "6010") if c != coded["predicted_gl_code"])
+        store.approve_invoice(inv["id"], output, "Jordan Lee")
+    clean, total = approved_as_coded(store)
+    assert total >= 4 and clean <= total - 1
+    shown = f"{clean} of {total}"
+    insights = client.get("/insights").text
+    learning = client.get("/learning").text
+    activity = client.get("/activity").text
+    for page in (insights, learning):
+        assert "Approved as coded" in page and shown in page
+    assert "Approved without edits" not in learning and "with reviewer changes" not in activity
+    events = store.events(actions=["approved"], limit=1000)
+    assert f"{len(events) - (total - clean)} approved as coded, {total - clean} corrected" in activity
+
+    accuracy = store.metrics()["line_accuracy"]  # the same figure, written the same way, on the queue and Learning
+    assert f"{accuracy:.1%}" in client.get("/review").text and f"{accuracy:.1%}" in learning
