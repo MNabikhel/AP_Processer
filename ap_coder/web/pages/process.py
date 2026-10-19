@@ -385,7 +385,10 @@ def inbox_file(request: Request, entry_id: str, n: int) -> FileResponse:
 @router.post("/process/inbox/{entry_id}/to-queue/{n}")
 def inbox_to_queue(request: Request, entry_id: str, n: int) -> JSONResponse:
     store = get_store(request)
-    moved = inbox.to_queue(store, invoice_dir(store), entry_id, n, reviewer())
+    try:
+        moved = inbox.to_queue(store, invoice_dir(store), entry_id, n, reviewer())
+    except ValueError as exc:  # a spreadsheet: never read from the invoices folder
+        return refuse(str(exc))
     if moved is None:
         return refuse("That file is no longer where AP Coder put it.")
     text = f"{moved.name} is in the invoices folder: process the folder to read it into the review queue."

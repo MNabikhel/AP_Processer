@@ -126,6 +126,12 @@ def run_checks(
     v = _version("azure-ai-documentintelligence")  # optional: only for the Azure check, when it is switched on
     add("package azure-ai-documentintelligence", PASS if v else SKIP,
         v or "not installed (optional: only the Azure check needs it, when it is switched on)")  # fmt: skip
+    v = _version("pillow-heif")  # the ocr extra: without it an iPhone photo is refused, every other picture is read
+    add(
+        "package pillow-heif",
+        PASS if v else WARN,
+        v or f"not installed (iPhone photos, HEIC, can't be read): {_INSTALL_FIX}",
+    )
 
     # --- Offline readiness (OCR models, data folder, local-only dashboard) ----------------------------
     from .offline import offline_checks

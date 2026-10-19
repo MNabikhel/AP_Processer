@@ -30,6 +30,7 @@ class Attachment:
     data: bytes
     mime: str = "application/pdf"
     content_id: str = ""
+    hidden: bool = False  # PidTagAttachmentHidden, as Outlook sets it on the pictures shown in the email's text
 
 
 @dataclass
@@ -68,7 +69,10 @@ def _message_nodes(msg: Message, top: bool) -> list[_Node]:
         nodes.append(_Node("__substg1.0_10130102", msg.html.encode()))
     n = 0
     for a in msg.attachments:
-        kids = [_props(0, False), _Node("__substg1.0_37010102", a.data), _text("3707", a.name), _text("3704", a.name)]
+        props = _props(0, False)
+        if a.hidden:  # one fixed-size property: tag, flags (readable, writable), value
+            props = _Node(props.name, (props.data or b"") + struct.pack("<IIQ", 0x7FFE000B, 6, 1))
+        kids = [props, _Node("__substg1.0_37010102", a.data), _text("3707", a.name), _text("3704", a.name)]
         if a.mime:
             kids.append(_text("370E", a.mime))
         if a.content_id:
