@@ -26,7 +26,6 @@ import sqlite3
 import threading
 import time
 import unicodedata
-from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -1025,15 +1024,20 @@ class Store:
         self, rows: list[dict[str, Any]], replace_all: bool = False, actor: str | None = None
     ) -> int:
         """Invoices already in the ERP (``registers.rows_from_records`` output). Returns how many are stored. A bill
-        listed more than once in the file (the same vendor, number and amount: entered twice in the ERP) is one row
-        that counts its ``copies``; a register imported again, overlapping the last, does not add to them."""
+        listed more than once in the file with another date (the same vendor, number and amount: entered twice in the
+        ERP) is one row that counts its ``copies``; rows alike in their date too are one bill (a register listing a
+        bill once per GL line, or JD Edwards pay items), and a register imported again, overlapping the last, does not
+        add to them."""
         now = _now()
         keyed = [
             ((vendor_key(r["vendor_name"]), _norm_number(r["invoice_number"]), round(float(r["total"]), 2)), r)
             for r in rows
             if vendor_key(r["vendor_name"]) and _norm_number(r["invoice_number"]) and r.get("total") is not None
         ]
-        copies = Counter(key for key, _ in keyed)
+        dates: dict[tuple[str, str, float], set[str]] = {}
+        for key, r in keyed:
+            dates.setdefault(key, set()).add(r.get("invoice_date") or "")
+        copies = {key: len(found - {""}) or 1 for key, found in dates.items()}
         with self._conn() as conn:
             if replace_all:
                 conn.execute("DELETE FROM erp_invoices")

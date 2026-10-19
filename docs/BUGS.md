@@ -1481,14 +1481,14 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 |---|---|---|---|
 | Store and config | 10 | 9 (B-158 to B-166) | 1 (N-77) |
 | Tax and coding rules | 8 | 7 (B-132 to B-138) | 1 (N-78) |
-| Exports, ERP and reports | 11 | 8 (B-150 to B-157) | 3 (N-79 to N-81) |
+| Exports, ERP and reports | 12 | 9 (B-150 to B-157, B-208) | 3 (N-79 to N-81) |
 | AI and readers | 10 | 8 (B-174 to B-181) | 2 (N-82 to N-83) |
 | Document capture | 12 | 9 (B-182 to B-189, B-205) | 3 (N-84 to N-86) |
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
 | Intake, email and command line | 14 | 12 (B-140 to B-149, B-206 to B-207) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
 | Day-one walk-through | 8 | 8 (B-197 to B-204) | 0 |
-| **Total** | **90** | **73** | **17** |
+| **Total** | **91** | **74** | **17** |
 
 ### Store and config
 
@@ -1735,6 +1735,16 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 - **Fix:** an UNCONFIRMED entry (in the README), an Amounts question in the worksheet (free text), and the open-questions bullet in docs/JDE_E1.md (still 8 bullets, so test_jde_readiness keeps its count).
 - **Test:** `tests/test_jde_readiness.py::test_how_the_line_numbers_load_is_asked_of_the_jde_team`
 - **Lesson:** Don't leave a load assumption out of the questions list because the value looks obvious.
+
+#### B-208 · A register listing a bill once per GL line made every multi-line bill an "entered 3 times" duplicate · medium-low
+- **Where:** `ap_coder/core/store.py:1038` (`import_erp_register`), `ap_coder/erp/dupaudit.py:158` (`find`)
+- **Symptom:** since B-154, an ERP register exported one row per GL line (the bill's total repeated on each line) or with equal JD Edwards pay items showed every multi-line bill as an EXACT duplicate, "entered 3 times", and the import said the ERP holds those bills more than once.
+- **Cause:** `copies` counted every row alike in vendor, number and amount, also rows alike in their date: one bill's lines, not a bill keyed again.
+- **Reproduce:** review33/s/t2.py: import Acme Ltd A-77 812.50 2026-01-05 three times, then `erp_register_repeats()` and `dupaudit.find()`.
+- **Reproduced:** yes (`repeats 1 [Pair(reason='EXACT', ... copies=3) ...]`)
+- **Fix:** `copies` is the number of different dates the file lists the bill with (a row with no date adds none); rows alike in their date too collapse into one bill as before B-154. The register has no ERP document number column to tell two entries on the same day apart, so those still collapse.
+- **Test:** `tests/test_dupaudit.py::test_a_register_listing_a_bill_once_per_gl_line_is_not_a_bill_entered_three_times` (and B-154's `test_the_same_bill_entered_twice_in_the_erp_is_a_duplicate`)
+- **Lesson:** Don't count identical rows as repeated entries: an export at line level repeats its header on every line.
 
 ### AI and readers
 

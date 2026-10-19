@@ -149,3 +149,14 @@ def test_the_same_bill_entered_twice_in_the_erp_is_a_duplicate(tmp_path):
     assert store.erp_register_repeats() == 1 and "entered 2 times" in dupaudit.find(store)[0].first.label
     store.import_erp_register([row, once], replace_all=True)  # the ERP's copy was deleted there
     assert store.erp_register_repeats() == 0 and dupaudit.find(store) == []
+
+
+def test_a_register_listing_a_bill_once_per_gl_line_is_not_a_bill_entered_three_times(tmp_path):
+    """A register exported one row per GL line repeats the bill's vendor, number, total and date on each line (as do
+    JD Edwards pay items): that is one bill, not a duplicate. Only a repeat with another date was entered again."""
+    store = Store(tmp_path / "d.db")
+    line = {"vendor_name": "Acme Ltd", "invoice_number": "A-77", "invoice_date": "2026-01-05", "total": 812.5}
+    store.import_erp_register([line, dict(line), dict(line)])
+    assert store.erp_register_repeats() == 0 and dupaudit.find(store) == []
+    store.import_erp_register([line, dict(line), dict(line, invoice_date="2026-02-05")])  # keyed again a month later
+    assert store.erp_register_repeats() == 1 and "entered 2 times" in dupaudit.find(store)[0].first.label
