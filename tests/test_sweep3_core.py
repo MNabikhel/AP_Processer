@@ -5,6 +5,8 @@ an old database's safety copy, Excel's trailing blank rows and places abroad."""
 from __future__ import annotations
 
 import copy
+import os
+import time
 from dataclasses import replace
 
 import pytest
@@ -139,3 +141,18 @@ def test_a_plain_comma_csv_is_still_read_on_commas(tmp_path):
     assert read_csv_rows(path)[0] == {"GL Code": "6000", "Description": "Office; supplies"}
     df, _names = read_sheet("gl.csv", path.read_bytes())
     assert list(df.columns) == ["GL Code", "Description"] and df.iloc[0].tolist() == ["6000", "Office; supplies"]
+
+
+# --- B-161: a backup dated in the future -------------------------------------------------------------------------
+
+
+def test_a_backup_dated_in_the_future_does_not_stop_daily_backups(tmp_path):
+    store = Store(tmp_path / "a.db")
+    store.backup_dir().mkdir(parents=True)
+    future = store.backup_dir() / "ap_coder-20271019-090000.db"  # made the day the laptop's clock was a year ahead
+    store.backup_to(future)
+    ahead = time.time() + 365 * 86400
+    os.utime(future, (ahead, ahead))
+    made = store.auto_backup()
+    assert made is not None and made != future
+    assert store.auto_backup() is None  # still once a day

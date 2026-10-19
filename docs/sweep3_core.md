@@ -29,3 +29,13 @@
 - **Fix:** `sniff_delimiter` reads the header and the first 20 rows with Excel's quoting for each of comma, semicolon, tab and pipe, and picks the one that splits the most rows into the header's number of cells (more than one; a comma on a tie or when nothing fits); `read_csv_rows` and the dashboard's upload reader both use it (Excel's quoting is kept, B-02).
 - **Test:** `tests/test_sweep3_core.py::test_a_semicolon_csv_with_a_comma_in_its_header_is_split_on_semicolons`, `tests/test_sweep3_core.py::test_a_plain_comma_csv_is_still_read_on_commas`
 - **Lesson:** Don't guess a file's delimiter from one line: check that it fits the rows under it too.
+
+#### B-161 · A backup dated in the future stopped the daily automatic backups · low
+- **Where:** `ap_coder/core/store.py:3316` (`auto_backup`)
+- **Symptom:** after a day the laptop's clock was ahead (a backup named and dated in the future), AP Coder made no automatic backup at start-up again, for as long as that file was the newest by name.
+- **Cause:** the newest daily backup's age was compared with 20 hours, and a negative age (made "later" than now) is less than 20 hours; it was always the newest by name, so it was the only one looked at.
+- **Reproduce:** a daily backup `ap_coder-20271019-090000.db` with a modified time a year ahead, then `auto_backup()` three times.
+- **Reproduced:** yes (`auto backups made: [None, None, None]`)
+- **Fix:** each daily backup's age is looked at, and only one made between now and 20 hours ago skips the backup: one dated in the future counts as old.
+- **Test:** `tests/test_sweep3_core.py::test_a_backup_dated_in_the_future_does_not_stop_daily_backups`
+- **Lesson:** Don't trust a file time to be in the past: a negative age is not a recent one.

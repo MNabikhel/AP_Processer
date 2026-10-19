@@ -3316,9 +3316,13 @@ class Store:
     def auto_backup(self, keep: int = 14, min_hours: float = 20) -> Path | None:
         """Back up at most once a day (call it at start-up) and keep the newest ``keep`` daily copies."""
         daily = [p for p in self.list_backups() if p.stem.count("-") == 2]  # ap_coder-YYYYMMDD-HHMMSS
-        if daily:
-            age = dt.datetime.now() - dt.datetime.fromtimestamp(daily[0].stat().st_mtime)
-            if age < dt.timedelta(hours=min_hours):
+        now = dt.datetime.now()
+        for backup in daily:  # one made in the future (the clock was ahead) is old: it never stops the daily backups
+            try:
+                age = now - dt.datetime.fromtimestamp(backup.stat().st_mtime)
+            except OSError:
+                continue
+            if dt.timedelta(0) <= age < dt.timedelta(hours=min_hours):
                 return None
         if not self.path.exists():
             return None
