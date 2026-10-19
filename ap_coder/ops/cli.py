@@ -252,11 +252,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)))
 
 
-def _inputs(paths: list[str]) -> tuple[list[Path], bool] | None:
+def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], bool, int] | None:
     """The invoice files named on the command line (folders expanded, the invoices taken out of saved emails, as
     the dashboard and ``watch`` do), each invoice once: a file named twice, or two identical copies, is one invoice;
-    and whether an email could not be read (said on screen: the command then exits 1). None, said in one line, when
-    one of them is not there (a typo)."""
+    whether an email could not be read (said on screen: the command then exits 1); and how many emails were sorted
+    (each in the Activity log of ``store``, as ``watch`` logs them). None, said in one line, when one of them is not
+    there (a typo)."""
+    from ..intake.inbox import log_sorted
+
     try:
         found = discover_inputs(paths)
     except FileNotFoundError as exc:
@@ -265,7 +268,7 @@ def _inputs(paths: list[str]) -> tuple[list[Path], bool] | None:
     files = [p for p in found if p.suffix.lower() not in EMAIL_EXTENSIONS]
     emails = [p for p in found if p.suffix.lower() in EMAIL_EXTENSIONS]
     emails += [e for raw in paths if Path(raw).is_dir() for e in emails_in(Path(raw))]
-    unread = False
+    unread, sorted_emails = False, 0
     for path in dict.fromkeys(emails):
         try:
             mail = unpack(path)  # attachments saved next to the email; the email moves to emails/
@@ -279,6 +282,9 @@ def _inputs(paths: list[str]) -> tuple[list[Path], bool] | None:
         else:
             print(f"{mail.email}: {_sorted_line(mail)}", file=sys.stderr)
             files += mail.saved
+            sorted_emails += 1
+            if store is not None:
+                log_sorted(store, mail)
     unique: dict[str, Path] = {}
     for path in files:
         try:
@@ -288,7 +294,7 @@ def _inputs(paths: list[str]) -> tuple[list[Path], bool] | None:
         unique.setdefault(key, path)
     if len(unique) < len(files):
         print(f"{len(files) - len(unique)} file(s) left out: the same invoice as another file given.", file=sys.stderr)
-    return list(unique.values()), unread
+    return list(unique.values()), unread, sorted_emails
 
 
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
@@ -298,18 +304,21 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
         model_name=args.model_name,
         vision=args.vision,
     )
-    given = _inputs(args.inputs)
+    store = None if args.no_db else Store(args.db)
+    given = _inputs(args.inputs, store)
     if given is None:
         return 2
-    inputs, unread = given
+    inputs, unread, sorted_emails = given
     if not inputs:
+        if sorted_emails:  # only emails, each sorted (said above): nothing wrong, nothing else to read
+            print(f"No invoices to read: {sorted_emails} email(s) sorted.", file=sys.stderr)
+            return 1 if unread else 0
         print("No supported invoice files found.", file=sys.stderr)
         return 2
     source = reference_source(args)
     if source.startswith("BUNDLED"):
         print("NOTE: using the bundled SAMPLE GL accounts (import yours in the dashboard).", file=sys.stderr)
     reference = _load_reference(args)
-    store = None if args.no_db else Store(args.db)
     pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
     if store is not None and not args.force:
         done = [p for p in inputs if store.find_by_hash(p) is not None]
@@ -556,8 +565,11 @@ def cmd_extract(args: argparse.Namespace, settings: Settings) -> int:
     given = _inputs(args.inputs)
     if given is None:
         return 2
-    paths, unread = given
+    paths, unread, sorted_emails = given
     if not paths:
+        if sorted_emails:
+            print(f"No invoices to read: {sorted_emails} email(s) sorted.", file=sys.stderr)
+            return 1 if unread else 0
         print("No supported invoice files found.", file=sys.stderr)
         return 2
     out = Path(args.out)
