@@ -7,7 +7,7 @@ first lines) and every module that imports it, so a change can be followed to it
 
 | Module | Job | Imported by |
 |---|---|---|
-| `__init__.py` | AP Coder: reads vendor invoices on this computer (PDF text, local OCR) and codes them to GL accounts, with... | core/store, web/app, web/core, web/pages/settings, web/server |
+| `__init__.py` | AP Coder: reads vendor invoices on this computer (PDF text, local OCR) and codes them to GL accounts, with... | core/store, ops/cli, web/app, web/core, web/pages/settings, web/server |
 | `__main__.py` |  | (entry point) |
 | `ai/azure_check.py` | The Azure check: Azure AI Document Intelligence as an optional second opinion, off unless AP turns it on. | ai/pipeline, web/app, web/pages/azure |
 | `ai/evaluation.py` | Accuracy evaluation against hand-labelled ground truth. | ops/cli, ops/share_report |

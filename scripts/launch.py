@@ -1626,6 +1626,14 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
     return 1
 
 
+def older_still_running(port: int | None) -> SetupError:
+    """What ``running.take_over``'s "blocked" says: an older server on ``port``, or (None) an older watch or
+    read-pages."""
+    what = f"port {port}" if port else "python -m ap_coder watch or read-pages"
+    return SetupError(f"An older AP Coder is still running ({what}): two versions never use the same data at once.",
+                      "Close the old AP Coder window, then start again.")  # fmt: skip
+
+
 def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
     """The start holding this folder's lock serves an older AP Coder (this folder unzipped over while it ran: its
     dashboard is never this version's, so waiting for one would last half an hour): it is stopped like any older one,
@@ -1636,8 +1644,7 @@ def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
         return None
     verdict, port = running.take_over(ROOT, version, ports, paths.private_dir(), say)
     if verdict == "blocked":
-        return failed(SetupError(f"An older AP Coder is still running (port {port}): two versions never use the same "
-                                 "data at once.", "Close the old AP Coder window, then start again."))  # fmt: skip
+        return failed(older_still_running(port))
     if verdict in ("open", "newer"):
         return open_running(port)
     deadline = time.monotonic() + wait  # its start ends once its dashboard stopped
@@ -1806,8 +1813,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
         say("A newer AP Coder is already running: opening it (this older version starts nothing).")
         return open_running(port)
     if verdict == "blocked":
-        return failed(SetupError(f"An older AP Coder is still running (port {port}): two versions never use the same "
-                                 "data at once.", "Close the old AP Coder window, then start again."))  # fmt: skip
+        return failed(older_still_running(port))
 
     legacy = legacy_folders()  # (before the shortcut is pointed here: an AP Coder 0.1 shortcut names its folder)
     previous = previous_install(state, ident, legacy)

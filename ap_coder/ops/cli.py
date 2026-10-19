@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
+import datetime as dt
 import hashlib
 import json
 import logging
 import os
 import sys
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from ..ai.evaluation import evaluate
 from ..ai.extraction import DocumentExtractor
 from ..ai.labels import _prediction_files, export_labels
@@ -27,7 +30,7 @@ from ..ai.pipeline import (
 )
 from ..coding.tax import TaxSetup, load_tax_mapping
 from ..core.config import Settings
-from ..core.paths import env_path
+from ..core.paths import PROJECT_DIR, env_path
 from ..core.reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from ..core.schema import build_json_schema
 from ..core.store import Store, default_db_path, private_dir
@@ -408,7 +411,39 @@ def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folde
     return done, failed
 
 
+WORKER_FILE = ".ap_coder_worker-{pid}.json"  # in the data folder while watch or read-pages runs
+
+
+@contextlib.contextmanager
+def running_note(command: str) -> Iterator[None]:
+    """While ``watch`` or ``read-pages`` runs, ``<data folder>/.ap_coder_worker-<pid>.json`` says which AP Coder it is
+    (pid, command, folder, version, started), as the server's file does: a newer version's launcher stops an older
+    one before it updates (scripts/running.py), so old code never reads invoices into the same database. A note
+    that can't be written never stops the command."""
+    path: Path | None = private_dir() / WORKER_FILE.format(pid=os.getpid())
+    note = {"pid": os.getpid(), "command": command, "folder": str(PROJECT_DIR), "version": __version__,
+            "started": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")  # whole or not at all: the launcher may read it meanwhile
+        tmp.write_text(json.dumps(note, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        path = None
+    try:
+        yield
+    finally:
+        if path is not None:
+            with contextlib.suppress(OSError):
+                path.unlink()
+
+
 def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
+    with running_note("watch"):
+        return _watch(args, settings)
+
+
+def _watch(args: argparse.Namespace, settings: Settings) -> int:
     # Like the dashboard: without Azure the invoices are read on this computer, and coded from AP's approvals
     # (plus LM Studio when its server answers), so there is nothing to refuse here.
     store = Store(args.db)
@@ -440,7 +475,8 @@ def cmd_read_pages(args: argparse.Namespace, settings: Settings) -> int:
     invoice being read goes back in line, its pages read so far kept."""
     store = Store(args.db)
     try:
-        return _read_pages(args, settings, store)
+        with running_note("read-pages"):
+            return _read_pages(args, settings, store)
     except KeyboardInterrupt:
         print("Stopped: the invoice being read is back in line (pages already read are kept).", file=sys.stderr)
         return 130

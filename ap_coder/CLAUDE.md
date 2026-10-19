@@ -5,7 +5,7 @@ The engine of AP Coder, fully offline (Azure is an opt-in exception). The top le
 is in its folders; each has its own CLAUDE.md. Who imports each module: `MODULES.md` (generated).
 
 **Depends on:** `ap_coder/ops`
-**Used by:** `ap_coder/core`, `ap_coder/web`, `ap_coder/web/pages`
+**Used by:** `ap_coder/core`, `ap_coder/ops`, `ap_coder/web`, `ap_coder/web/pages`
 
 ## Folders
 - `core/`: the SQLite store, settings (`.env`, user settings), data folder, reference data, coding schema, learning memory's vendor key, safe cells, CSVs, audit labels, HTML pieces.

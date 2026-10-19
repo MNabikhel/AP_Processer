@@ -5,12 +5,13 @@ local OCR models, the demo with the sample invoices, the plain-English help for 
 that is safe to paste into a ticket.
 Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.cli` and the other old paths are aliases for one release.
 
-**Depends on:** `ap_coder/ai`, `ap_coder/capture`, `ap_coder/coding`, `ap_coder/core`, `ap_coder/intake`, `ap_coder/web`
+**Depends on:** `ap_coder`, `ap_coder/ai`, `ap_coder/capture`, `ap_coder/coding`, `ap_coder/core`, `ap_coder/intake`, `ap_coder/web`
 **Used by:** `ap_coder`, `ap_coder/ai`, `ap_coder/capture`, `ap_coder/erp`, `ap_coder/web`, `ap_coder/web/pages`
 
 ## Interface
 - `main()` (cli.py): argv -> exit code (`__main__.py` and the `ap-coder` script call it); `watch_once()`: the invoices
-  folder (and saved emails) once into the pipeline; `serve` runs `web/server.serve()`.
+  folder (and saved emails) once into the pipeline; `serve` runs `web/server.serve()`; `running_note()`: while `watch` or
+  `read-pages` runs, `<data>/.ap_coder_worker-<pid>.json` (pid, command, folder, version), read by scripts/running.py.
 - `internet_allowed()` (offline.py): `AP_ALLOW_INTERNET` is 1, true, yes or on; `ppocrv5_ready()`: every model file there, with the right SHA-256.
 - `run_checks()` (doctor.py): settings, reference data and LM Studio -> `Check` list (`python -m ap_coder doctor`; `--online`
   adds a dry run on the local model, and the Azure checks only with `AP_ALLOW_INTERNET=1`).

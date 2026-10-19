@@ -131,6 +131,30 @@ def test_watch_uses_the_dashboard_invoices_folder(tmp_path, monkeypatch):
     assert seen == [tmp_path / "srv" / "invoices", tmp_path / "b" / "invoices"]
 
 
+def test_watch_and_read_pages_say_in_the_data_folder_that_they_run(tmp_path, monkeypatch):
+    """B-167: an update stopped the older version's server but not its ``watch`` (nor ``read-pages``): each now
+    leaves a note in the data folder while it runs (pid, folder, version), so the launcher finds and stops it."""
+    import ap_coder
+    from ap_coder.ai import page_worker
+    from ap_coder.core import paths
+
+    data = paths.private_dir()
+    seen = []
+
+    def note(command):
+        found = [json.loads(p.read_text(encoding="utf-8")) for p in data.glob(".ap_coder_worker-*.json")]
+        seen.append(found)
+        assert found == [{"pid": os.getpid(), "command": command, "folder": str(paths.PROJECT_DIR),
+                          "version": ap_coder.__version__, "started": found[0]["started"]}]  # fmt: skip
+
+    monkeypatch.setattr(cli, "watch_once", lambda *args: note("watch") or (0, 0))
+    assert cli.main(["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "a.db"), "watch", "--once"]) == 0
+    monkeypatch.setattr(page_worker, "self_test_if_due", lambda *a, **k: note("read-pages"))
+    monkeypatch.setattr(page_worker, "ready", lambda *a, **k: ("", "no model"))
+    assert _cli(tmp_path, "read-pages", "--cache-dir", "") == 1
+    assert len(seen) == 2 and list(data.glob(".ap_coder_worker-*")) == []  # removed when each stopped
+
+
 def test_cli_labels_with_nothing_processed_writes_nothing(tmp_path, capsys):
     dest = tmp_path / "labels.xlsx"
     args = ["labels", "--predictions", str(tmp_path / "out"), "-o", str(dest)]

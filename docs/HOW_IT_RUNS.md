@@ -225,6 +225,11 @@ this folder's last, every install's last, 8501, and the one in `<data>/.ap_coder
 * **0.1 Streamlit dashboard** (no `/healthz`): recognised by its font `/app/static/InterVariable.woff2`, stopped
   through its process (`streamlit run …ap_coder…dashboard.py`); its folder (from the command line) is remembered for
   the clean-up.
+* **`watch` / `read-pages`** (`scripts/running.py:workers`): each leaves `<data>/.ap_coder_worker-<pid>.json` (pid,
+  command, folder, version) while it runs (`ap_coder/ops/cli.py:running_note`). An older one, or one from another
+  folder, is stopped (`stop_worker`: as Ctrl+C, then ended; only a process whose command line is AP Coder's
+  `watch` / `read-pages`) before the clean-up deletes the `.venv` it runs from: it would otherwise mark every new
+  invoice failed. A note whose process is gone is removed.
 * Can't be stopped: "close the old AP Coder window", waiting up to a minute, then the start stops (`blocked`).
 
 **"Updated AP Coder from X to Y"** (`previous_install`): this folder's `.venv` state names another fingerprint,
@@ -345,6 +350,7 @@ can corrupt an open SQLite database).
 | `backups/from-<folder>-<date>/` | an older install's data when the data folder had its own | `upgrade.adopt_legacy` |
 | `.env` | settings (Azure for developers, LM Studio address, reviewer…) | installer, Settings page, `adopt_legacy`, `envfile.retire` |
 | `.ap_coder_server.json` | the running server: pid, port, folder, version, token | `web/server.write_server_file` |
+| `.ap_coder_worker-<pid>.json` | a running `watch` or `read-pages`: pid, command, folder, version | `ops/cli.running_note` |
 | `.cache/extraction/`, `.cache/page_reader/` | text read from each file, OvisOCR2's readings (by SHA-256) | capture, `page_reader` |
 | `.cache/ocr/` | each scanned page's OCR, per engine (by the page image's SHA-256): a page is OCR'd once however often its invoice is read; at most 4,000, the oldest removed first | `capture/layout.ocr_cache` (the pipeline) |
 | `output/`, `share_report.md`, `share_report_key.csv`, `labels.xlsx` | command-line outputs | `ap_coder/ops/cli.py` |

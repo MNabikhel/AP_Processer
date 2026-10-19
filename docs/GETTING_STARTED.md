@@ -323,6 +323,12 @@ Run these in `scripts\terminal.bat` as `python -m ap_coder <command>`.
 | `read-pages [--minutes 240]` | have OvisOCR2 read the invoices waiting for it, then stop (Task Scheduler overnight) |
 | `schema` | the exact JSON Schema sent to Azure OpenAI (developers) |
 
+**A scheduled task after an update.** There is no command that follows the current version by itself: a task
+names one folder's `.venv`. An update unzipped **over** the old folder keeps that path. One unzipped into a **new**
+folder removes the old folder's `.venv` once it has checked itself, and the task then fails to start: open it in
+Task Scheduler and change the program and *start in* folder to the new one. An update also stops a `watch` or
+`read-pages` of the older version that is still running, so old code never reads invoices into your data.
+
 ### Two people approving (second approval)
 
 The second approval needs both people to use the same AP Coder database. The simplest set-up is one

@@ -13,6 +13,9 @@ How a running AP Coder is found:
 * AP Coder 0.1 (the Streamlit dashboard) only serves its font, ``/app/static/InterVariable.woff2``: it is stopped
   through its process, found as the owner of its port whose command line runs ``streamlit run`` on AP Coder's
   dashboard.
+* ``python -m ap_coder watch`` and ``read-pages`` leave ``<data folder>/.ap_coder_worker-<pid>.json`` (pid, command,
+  folder, version, started) while they run: an older one is stopped through its process (as Ctrl+C, then ended),
+  before the update deletes the .venv it runs from.
 
 When none of that works (another user's process, no permission), the person is asked to close the old window, and
 the start waits for it (up to a minute). Standard library only: it runs before any package is installed. Never
@@ -41,6 +44,7 @@ from ap_coder.core.paths import same_folder, version_key  # noqa: E402  (standar
 from ap_coder.ops.offline import listening as offline_listening  # noqa: E402  (standard library only)
 
 SERVER_FILE = ".ap_coder_server.json"  # in the data folder, written by `python -m ap_coder serve`
+WORKER_NOTES = ".ap_coder_worker-*.json"  # in the data folder, one per running `watch` / `read-pages`
 TOKEN_HEADER = "X-AP-Coder-Token"
 APP = "ap-coder"
 LEGACY_SIGNATURE = "/app/static/InterVariable.woff2"  # a file only AP Coder 0.1's Streamlit dashboard serves
@@ -142,7 +146,7 @@ def find(ports: list[int], data: Path | None) -> list[Server]:
     return found
 
 
-def judge(server: Server, root: Path, version: str) -> str:
+def judge(server: Server | Worker, root: Path, version: str) -> str:
     """``same`` (this folder and version: open it), ``newer`` (open it, never stop it) or ``older`` (stop it: an
     older version, or the same one from another folder)."""
     if server.legacy:
@@ -152,6 +156,90 @@ def judge(server: Server, root: Path, version: str) -> str:
     if same_folder(server.folder, root) and server.version == version:
         return "same"
     return "older"
+
+
+# --- watch and read-pages ---------------------------------------------------------------------------------------
+
+
+@dataclass
+class Worker:
+    """``python -m ap_coder watch`` or ``read-pages``, found by the note it leaves in the data folder while it runs."""
+
+    pid: int
+    command: str = ""
+    version: str = ""
+    folder: str = ""
+    note: Path | None = None
+    legacy: bool = False  # (judged like a server)
+
+    def name(self) -> str:
+        where = f" from {self.folder}" if self.folder else ""
+        return (f"AP Coder {self.version or 'of an unknown version'}{where} (python -m ap_coder {self.command}, "
+                f"process {self.pid})")  # fmt: skip
+
+
+def is_worker_process(cmd: str) -> bool:
+    """The command line of ``python -m ap_coder watch`` / ``read-pages`` (or the ``ap-coder`` script's)."""
+    text = cmd.replace("\\", "/").lower()
+    return bool(re.search(r"(-m\s+ap_coder|ap-coder(\.exe)?[\"']?)\s+(watch|read-pages)\b", text))
+
+
+def worker_running(pid: int) -> bool:
+    return pid != os.getpid() and is_worker_process(command_line(pid))
+
+
+def workers(data: Path | None) -> list[Worker]:
+    """The ``watch`` and ``read-pages`` commands running on the data folder ``data``, from the notes they leave there
+    (``<data>/.ap_coder_worker-<pid>.json``: pid, command, folder, version; ``ap_coder/ops/cli.py:running_note``).
+    A note whose process is gone (ended by force, or the computer restarted) is removed."""
+    if data is None:
+        return []
+    found = []
+    for note in sorted(data.glob(WORKER_NOTES)):
+        try:
+            record = json.loads(note.read_text(encoding="utf-8"))
+            pid = int(record["pid"])
+        except (OSError, ValueError, KeyError, TypeError):
+            record, pid = {}, None
+        if pid is None or not worker_running(pid):
+            try:
+                note.unlink()
+            except OSError:
+                pass
+            continue
+        found.append(Worker(pid, str(record.get("command") or ""), str(record.get("version") or ""),
+                            str(record.get("folder") or ""), note))  # fmt: skip
+    return found
+
+
+def ended(pid: int, timeout: float, every: float = 0.2) -> bool:
+    """Process ``pid`` (a watch or read-pages) is gone within ``timeout`` seconds."""
+    deadline = time.monotonic() + timeout
+    while worker_running(pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(every)
+    return True
+
+
+def stop_worker(worker: Worker, wait: float = STOP_WAIT) -> bool:
+    """Stop ``worker``: as Ctrl+C first (the invoice being read goes back in line), then ended. True when it is gone."""
+    gone = False
+    if not WINDOWS:
+        try:
+            os.kill(worker.pid, signal.SIGINT)
+        except OSError:
+            pass
+        gone = ended(worker.pid, min(wait, 5.0))
+    if not gone:
+        terminate(worker.pid)
+        gone = ended(worker.pid, wait)
+    if gone and worker.note is not None:  # (one ended by force could not remove its note itself)
+        try:
+            worker.note.unlink()
+        except OSError:
+            pass
+    return gone
 
 
 # --- Stopping one -----------------------------------------------------------------------------------------------
@@ -296,7 +384,8 @@ def take_over(root: Path, version: str, ports: list[int], data: Path | None,
     * ``("open", port)``: this same folder and version is running: open it (nothing to set up);
     * ``("newer", port)``: a newer version is running: open it (this older one never takes over from it);
     * ``("clear", None)``: nothing (left) running: set up and start;
-    * ``("blocked", port)``: an older one is still running after ``patience`` seconds: stop."""
+    * ``("blocked", port)``: an older one is still running after ``patience`` seconds: stop (port None: an older
+      watch or read-pages)."""
     for server in find(ports, data):
         verdict = judge(server, root, version)
         if verdict in ("same", "newer"):
@@ -309,5 +398,18 @@ def take_over(root: Path, version: str, ports: list[int], data: Path | None,
         say("  Close the old AP Coder window, then start again. (Waiting up to a minute for it to close...)")
         if not gone(server.port, patience, every=1.0):
             return "blocked", server.port
+        say("  It closed.")
+    for worker in workers(data):  # an older watch / read-pages on the same data: stopped too (a newer one is left)
+        if judge(worker, root, version) != "older":
+            continue
+        say(f"{worker.name()} is still running: stopping it, so this version takes over.")
+        if stop_worker(worker):
+            say("  Stopped it.")
+            stopped.append(worker.folder)
+            continue
+        say("  Close the window it runs in (or end its task in Task Scheduler), then start again. (Waiting up to a "
+            "minute for it to close...)")  # fmt: skip
+        if not ended(worker.pid, patience, every=1.0):
+            return "blocked", None
         say("  It closed.")
     return "clear", None
