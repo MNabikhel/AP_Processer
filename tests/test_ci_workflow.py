@@ -1,6 +1,9 @@
 """The CI workflow is one GitHub accepts: a file it rejects runs no job at all, so nothing is tested."""
 
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -37,8 +40,23 @@ CI = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
 # A check that one is gone ([ ! -e "$F/install.sh" ]) is not a run.
 RETIRED_RUN = re.compile(r"^(?!.*\[ ! -e ).*(/(install|start|terminal)\.(sh|bat)\b|(cmd\s+/c\s+\"|run:\s*|^\s*)"
                          r"(install|start|terminal)\.(sh|bat)\b)", re.MULTILINE)  # fmt: skip
+# The offline bundle leaves .github out (scripts/build_offline_bundle.py): there these tests have nothing to read.
+needs_ci = pytest.mark.skipif(not CI.is_file(), reason="no .github/workflows/ci.yml here (an offline bundle)")
 
 
+def test_the_workflow_tests_skip_where_there_is_no_workflow(tmp_path):
+    """B-171: the offline bundle leaves .github out (scripts/build_offline_bundle.py), so ``--installer --full-tests``
+    from a bundle failed these tests: each one that reads ci.yml skips when it isn't there."""
+    copy = tmp_path / "tests"
+    copy.mkdir()
+    shutil.copy(__file__, copy / "test_ci_workflow.py")
+    out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k",
+                          "not looked_up_once and not where_there_is_no_workflow", str(copy)],
+                         cwd=tmp_path, capture_output=True, text=True, encoding="utf-8")  # fmt: skip
+    assert out.returncode == 0, out.stdout[-2000:]
+
+
+@needs_ci
 def test_ci_runs_the_one_launcher_per_computer():
     """The app folder has one file to open per computer: CI runs the installer as APProcessor.bat --installer /
     APProcessor.command --installer, never the install / start scripts older versions shipped (only
@@ -61,6 +79,7 @@ def test_the_retired_run_check_catches_what_it_should():
         assert not RETIRED_RUN.search(line), line
 
 
+@needs_ci
 def test_ci_runs_the_browser_tests_and_never_lets_them_skip():
     """The tests that open the dashboard in Chromium skip on a computer without it, and CI had none: they passed by
     never running. A CI job installs Chromium and runs them with AP_REQUIRE_BROWSER=1, where a missing browser fails."""
