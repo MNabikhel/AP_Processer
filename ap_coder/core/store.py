@@ -498,8 +498,9 @@ class Store:
         """Every stored vendor key, recomputed with today's ``vendor_key``: from the vendor name kept beside it, else
         (the vendor list, whose display name may have been edited, and the supplier profiles) from the old key itself.
         Where the new key is already taken (two rows that are now the same vendor) the row already there is kept: a
-        duplicate ERP bill is dropped, two vendor list rows are merged into one (on hold if either was), anything
-        else is left as it was."""
+        duplicate ERP bill is dropped, two vendor list rows are merged into one (on hold if either was), two lessons
+        into one (counts added up), two supplier profiles into one (the stricter state), anything else is left as
+        it was."""
 
         def new_key(name: Any, old: Any) -> str:
             return vendor_key(str(name or "")) or refresh_vendor_key(str(old or ""))
@@ -523,14 +524,71 @@ class Store:
             _old, sep, rest = str(r["situation"] or "").partition("|")
             situation = f"{key}{sep}{rest}" if sep else r["situation"]
             if (key, situation) != (r["vendor_key"], r["situation"]):
-                conn.execute("UPDATE OR IGNORE lessons SET vendor_key = ?, situation = ? WHERE id = ?",
-                             (key, situation, r["id"]))  # fmt: skip
+                done = conn.execute("UPDATE OR IGNORE lessons SET vendor_key = ?, situation = ? WHERE id = ?",
+                                    (key, situation, r["id"]))  # fmt: skip
+                if not done.rowcount:  # the same situation of the same vendor twice: one lesson, counts added up
+                    Store._merge_lesson_rows(conn, r["id"], situation)
+                if situation != r["situation"]:  # each approval's part follows its lesson (B-158)
+                    conn.execute("UPDATE OR IGNORE lesson_approvals SET situation = ? WHERE situation = ?",
+                                 (situation, r["situation"]))  # fmt: skip
+                    conn.execute("DELETE FROM lesson_approvals WHERE situation = ?", (r["situation"],))
         for table, column in (("supplier_profiles", "key"), ("supplier_outcomes", "supplier_key")):
             rows = conn.execute(f"SELECT rowid AS rid, {column} AS k FROM {table} WHERE {column} LIKE 'name:%'")
             for r in rows.fetchall():
                 key = "name:" + refresh_vendor_key(r["k"][5:])
                 if key != r["k"]:
-                    conn.execute(f"UPDATE OR IGNORE {table} SET {column} = ? WHERE rowid = ?", (key, r["rid"]))
+                    done = conn.execute(f"UPDATE OR IGNORE {table} SET {column} = ? WHERE rowid = ?", (key, r["rid"]))
+                    if not done.rowcount and table == "supplier_profiles":  # one profile, the strictest state kept
+                        Store._merge_supplier_profiles(conn, r["k"], key)
+
+    @staticmethod
+    def _merge_lesson_rows(conn: sqlite3.Connection, gone_id: int, situation: str) -> None:
+        """The lesson ``gone_id`` folded into the one already at ``situation`` (the same vendor under today's rules),
+        then removed: the counts added up, the newer value and the latest reason kept, shown unless both are retired."""
+        kept = conn.execute("SELECT * FROM lessons WHERE situation = ?", (situation,)).fetchone()
+        gone = conn.execute("SELECT * FROM lessons WHERE id = ?", (gone_id,)).fetchone()
+        if kept is None or gone is None:
+            return
+        newer = gone if gone["updated_at"] > kept["updated_at"] else kept
+        reasons = [r for r in (kept, gone) if r["explanation"]]
+        reason = max(reasons, key=lambda r: r["explained_at"] or "") if reasons else kept
+        conn.execute(
+            "UPDATE lessons SET seen = ?, corrected = ?, since_why = ?, confirmed = ?, value = ?, proposed = ?, "
+            "explanation = ?, explained_by = ?, explained_at = ?, retired = ?, last_invoice = ?, updated_at = ? "
+            "WHERE id = ?",
+            (
+                kept["seen"] + gone["seen"], kept["corrected"] + gone["corrected"],
+                kept["since_why"] + gone["since_why"], kept["confirmed"] + gone["confirmed"], newer["value"],
+                newer["proposed"], reason["explanation"], reason["explained_by"], reason["explained_at"],
+                min(kept["retired"], gone["retired"]), newer["last_invoice"], newer["updated_at"], kept["id"],
+            ),
+        )  # fmt: skip
+        conn.execute("DELETE FROM lessons WHERE id = ?", (gone_id,))
+
+    @staticmethod
+    def _merge_supplier_profiles(conn: sqlite3.Connection, old: str, key: str) -> None:
+        """The supplier profile under ``old`` folded into the one under ``key`` (the same supplier under today's
+        rules), then removed: the stricter state wins (held, then suspended, supervised, touchless), with its dates
+        and audit rate, so a held supplier never goes touchless by a key change; a field blank in one is filled from
+        the other."""
+        from ..capture.supplier import AUTONOMOUS, HELD, SUPERVISED, SUSPENDED
+
+        strict = {HELD: 3, SUSPENDED: 2, SUPERVISED: 1, AUTONOMOUS: 0}
+        kept = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (key,)).fetchone()
+        gone = conn.execute("SELECT * FROM supplier_profiles WHERE key = ?", (old,)).fetchone()
+        if kept is None or gone is None:
+            return
+        state = gone if strict.get(gone["state"], 1) > strict.get(kept["state"], 1) else kept
+        conn.execute(
+            "UPDATE supplier_profiles SET state = ?, autonomous_since = ?, suspended_at = ?, audit_rate = ?, "
+            "display_name = ?, vendor_id = ?, template_json = ?, updated_at = ? WHERE key = ?",
+            (
+                state["state"], state["autonomous_since"], state["suspended_at"], state["audit_rate"],
+                kept["display_name"] or gone["display_name"], kept["vendor_id"] or gone["vendor_id"],
+                kept["template_json"] or gone["template_json"], _now(), key,
+            ),
+        )  # fmt: skip
+        conn.execute("DELETE FROM supplier_profiles WHERE key = ?", (old,))
 
     @staticmethod
     def _merge_vendor_rows(conn: sqlite3.Connection, old: str, key: str) -> None:

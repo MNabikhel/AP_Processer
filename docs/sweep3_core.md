@@ -39,3 +39,13 @@
 - **Fix:** each daily backup's age is looked at, and only one made between now and 20 hours ago skips the backup: one dated in the future counts as old.
 - **Test:** `tests/test_sweep3_core.py::test_a_backup_dated_in_the_future_does_not_stop_daily_backups`
 - **Lesson:** Don't trust a file time to be in the past: a negative age is not a recent one.
+
+#### B-162 · A held supplier could go touchless after the vendor-matching rules changed · low
+- **Where:** `ap_coder/core/store.py:497` (`_recompute_vendor_keys`; new `_merge_supplier_profiles`, `_merge_lesson_rows`)
+- **Symptom:** with profiles under both "name:energir sec" (held by an AP lead) and "name:energir", the update that recomputes vendor keys left the hold on the old key, which no invoice gives any more: the supplier's profile now read "supervised" and could be made touchless. Two lessons that became the same situation stayed apart, one under a key nothing reads.
+- **Cause:** the re-keying used `UPDATE OR IGNORE` for supplier profiles and lessons: where the new key was taken, the old row (with its hold, its counts) was silently left behind, unlike vendor list rows (B-73).
+- **Reproduce:** two profiles as above, `set_supplier_state("name:energir sec", "held", ...)`, set `vendor_key_rules` to 1 and open the store again.
+- **Reproduced:** yes (`name:energir supervised`, `name:energir sec held`; `lessons-style lookup of 'name:energir': supervised`)
+- **Fix:** a profile that collides is folded into the one under the new key, the stricter state winning (held, suspended, supervised, touchless) with its dates and audit rate, blank fields filled from the other; a lesson that collides is folded in with its counts added up (the newer value, the latest reason), and each approval's part (B-158) follows its lesson.
+- **Test:** `tests/test_sweep3_core.py::test_a_held_supplier_stays_held_when_its_key_merges_under_new_rules`, `tests/test_sweep3_core.py::test_two_lessons_that_become_one_vendor_add_up`
+- **Lesson:** Don't re-key rows with `UPDATE OR IGNORE` alone: a row left behind under a dead key takes its controls and counts with it.

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import os
+import sqlite3
 import time
 from dataclasses import replace
 
@@ -156,3 +157,43 @@ def test_a_backup_dated_in_the_future_does_not_stop_daily_backups(tmp_path):
     made = store.auto_backup()
     assert made is not None and made != future
     assert store.auto_backup() is None  # still once a day
+
+
+# --- B-162: re-keyed supplier profiles and lessons ---------------------------------------------------------------
+
+
+def _rules_changed(path):
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE settings SET value = '1' WHERE key = 'vendor_key_rules'")
+    conn.commit()
+    conn.close()
+    return Store(path)
+
+
+def test_a_held_supplier_stays_held_when_its_key_merges_under_new_rules(tmp_path):
+    store = Store(tmp_path / "a.db")
+    store.save_supplier_profile("name:energir sec", "Énergir s.e.c.", vendor_id="V-77")  # the older rules' key
+    store.save_supplier_profile("name:energir", "Energir")
+    store.set_supplier_state("name:energir sec", "held", "Lead", "keep an eye on it")
+    store = _rules_changed(store.path)
+    profiles = store.list_supplier_profiles()
+    assert [(p["key"], p["state"], p["vendor_id"]) for p in profiles] == [("name:energir", "held", "V-77")]
+
+
+def test_two_lessons_that_become_one_vendor_add_up(tmp_path):
+    store = Store(tmp_path / "a.db")
+    for key, name, invoices in (("energir sec", "Énergir s.e.c.", (1, 2)), ("energir", "Energir", (3,))):
+        row = {"key": f"{key}|invoice|invoice_number|", "vendor": name, "kind": "invoice",
+               "field": "invoice_number", "value": "A-1", "proposed": "1", "corrected": True}  # fmt: skip
+        for n in invoices:
+            store.record_lesson(row, invoice_id=n)
+    conn = sqlite3.connect(store.path)  # as the older rules keyed the first one
+    conn.execute("UPDATE lessons SET vendor_key = 'energir sec' WHERE vendor_name = 'Énergir s.e.c.'")
+    conn.commit()
+    conn.close()
+    store = _rules_changed(store.path)
+    rows = store.lessons_for("energir")
+    assert [(r["situation"], r["seen"], r["corrected"], r["since_why"]) for r in rows] == [
+        ("energir|invoice|invoice_number|", 3, 3, 3)
+    ]
+    assert store.lessons_for("energir sec") == []
