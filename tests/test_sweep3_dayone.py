@@ -291,3 +291,28 @@ def test_the_first_steps_ask_for_your_name_until_it_is_given(tmp_path, monkeypat
     paths.write_user_settings(reviewer="Pat Clerk")
     steps = {label: (state, detail) for state, label, detail in setup_steps(empty, Settings())}
     assert steps["Your name"] == ("ok", "Pat Clerk")
+
+
+# --- 10. Words: the guide's buttons, the first download --------------------------------------------------------------
+
+
+def test_the_getting_started_guide_names_the_sample_button_as_the_app_does():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    guide = (root / "docs" / "GETTING_STARTED.md").read_text(encoding="utf-8")
+    accounts = (root / "ap_coder" / "web" / "templates" / "accounts.html").read_text(encoding="utf-8")
+    assert "Load sample setup" not in guide
+    assert "*Use the sample GL accounts*" in guide and ">Use the sample GL accounts</button>" in accounts
+
+
+def test_a_batch_just_made_offers_download_not_download_again(client, store):
+    inv = store.list_invoices(REVIEW)[0]
+    store.approve_invoice(inv["id"], store.get_invoice(inv["id"])["ai_output"], "Jordan Lee")
+    answer = client.post("/exports/create", data={"fmt": "csv", "ids": [inv["id"]]}, headers=PAGE).json()
+    page = client.get(answer["redirect"]).text
+    assert "Download it below" in page and "Download again" not in page
+    from urllib.parse import parse_qs, urlsplit
+
+    batch = parse_qs(urlsplit(answer["redirect"]).query)["made"][0]
+    assert "Download again" in client.get("/exports", params={"batch": batch}).text  # picked later, from the list

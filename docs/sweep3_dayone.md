@@ -63,6 +63,26 @@ export, look around the reports). What they ran into, fixed with a failing test 
 - **Test:** `tests/test_web_invoice.py::test_in_a_browser_ten_files_chosen_to_import_are_listed_clear_of_the_process_button`
 - **Lesson:** Don't give a scroll box no edge and no gap: the row it cuts looks like it slides under the next control.
 
+#### B-203 · The getting-started guide named a button the app doesn't have · low
+- **Where:** `docs/GETTING_STARTED.md:158`
+- **Symptom:** "Reading the samples for real", step 1 said **GL accounts & tax** → *Load sample setup*; the button there (and on the Import invoices page and the welcome page) says "Use the sample GL accounts".
+- **Cause:** the button was renamed and the guide kept the old words.
+- **Reproduce:** search the guide for "Load sample setup" and the templates for it.
+- **Reproduced:** yes (`'Load sample setup' is contained here: tax** → *Load sample setup* (skip this…`)
+- **Fix:** the guide says *Use the sample GL accounts*, as the button does (the button's words read better: they say what is loaded).
+- **Test:** `tests/test_sweep3_dayone.py::test_the_getting_started_guide_names_the_sample_button_as_the_app_does`
+- **Lesson:** Don't rename a button without searching the guides for its old name.
+
+#### B-204 · A batch just created offered "Download again" for a file never downloaded · low
+- **Where:** `ap_coder/web/templates/exports.html:196` (the past batches' download button)
+- **Symptom:** after Export, the message said "Download it below", and below the "Batch 2 is ready" card the batch list, with batch 2 picked, offered "Download again".
+- **Cause:** the list's button always read "Download again", also for the batch the page had just made (`?made=` picks it in the list too).
+- **Reproduce:** approve an invoice, Export it as CSV, look at the page the export leads to.
+- **Reproduced:** yes (`assert ('Download it below' in page and 'Download again' not in page)` failed)
+- **Fix:** for the batch just made the list's button reads "Download"; a batch picked later in the list still reads "Download again".
+- **Test:** `tests/test_sweep3_dayone.py::test_a_batch_just_made_offers_download_not_download_again`
+- **Lesson:** Don't say "again" about something the page has no record of happening once.
+
 ### Improvements
 - Review screen, line grid: "Apply to all lines…" gives one GL account and / or cost center to every line that has none (lines already coded keep theirs; POST /review/<id>/fill-lines, like the other grid actions); when every past approval of the vendor used one cost center, it is pre-selected there as a suggestion (`invoice_view.usual_cost_center`; the coder itself is unchanged). `tests/test_sweep3_dayone.py::test_apply_to_all_lines_codes_only_the_lines_that_have_none`, `tests/test_sweep3_dayone.py::test_apply_to_all_lines_refuses_a_code_not_in_the_lists`, `tests/test_sweep3_dayone.py::test_a_vendors_one_usual_cost_center_is_offered_for_its_lines`, `tests/test_web_invoice.py::test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank`
 - Second approval on one laptop: Settings → Review ("Approval and payment"), the waiting invoice's screen and the Second approval tab say it takes another person on another computer login, so one Windows login can't give it; how to test it (a second Windows account on the laptop, or a colleague over the office network); and that Send back returns it to the queue. The control is unchanged. `tests/test_sweep3_dayone.py::test_the_second_approval_says_how_to_give_it_when_one_login_cannot`

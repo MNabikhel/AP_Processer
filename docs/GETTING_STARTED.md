@@ -155,7 +155,7 @@ Things to try:
 **Reading the samples for real:** first click *Remove demo invoices* if you loaded the demo (the same
 sample files would otherwise be recognised as already processed).
 
-1. **GL accounts & tax** → *Load sample setup* (skip this if you tried the demo: the sample setup is
+1. **GL accounts & tax** → *Use the sample GL accounts* (skip this if you tried the demo: the sample setup is
    already loaded).
 2. Copy the sample PDFs from `samples\` into your invoices folder (**Import invoices** →
    *Open folder* shows it). `samples\README.md` lists what each one shows: HST, GST+PST,
