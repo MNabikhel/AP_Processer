@@ -14,7 +14,8 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.cli` 
 - `internet_allowed()` (offline.py): `AP_ALLOW_INTERNET` is 1, true, yes or on; `ppocrv5_ready()`: every model file there, with the right SHA-256.
 - `run_checks()` (doctor.py): settings, reference data and LM Studio -> `Check` list (`python -m ap_coder doctor`; `--online`
   adds a dry run on the local model, and the Azure checks only with `AP_ALLOW_INTERNET=1`).
-- `load_demo()` (demo.py): the sample invoices through the whole product, without Azure.
+- `load_demo()` / `remove_demo()` (demo.py): the sample invoices through the whole product, without Azure; what it
+  loaded besides (POs, vendors, the sample setup on an empty database) is recorded in a setting and removed with it.
 - `help_for()` (help.py): a check code -> its `CheckHelp` from `CHECKS`; `build_share_report()` (share_report.py).
 
 ## Gotchas and decisions
