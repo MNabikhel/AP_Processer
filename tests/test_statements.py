@@ -75,6 +75,22 @@ def test_a_payment_word_in_a_description_does_not_turn_an_invoice_into_a_payment
     assert line.status == stm.PAYMENT
 
 
+def test_a_payment_line_with_the_invoices_number_is_a_payment():
+    """Statements often print the invoice's number on its payment line: with a payment word and the opposite sign
+    of that invoice (or the invoice already matched) it is a payment, not an invoice AP never received."""
+    statement = [
+        {"Date": "2026-09-01", "Invoice": "1001", "Description": "Brass check valves", "Amount": "500.00"},
+        {"Date": "2026-09-20", "Invoice": "1001", "Description": "Payment - thank you", "Amount": "-500.00"},
+        {"Date": "2026-09-21", "Invoice": "1002", "Description": "Payment received", "Amount": "-80.00"},
+    ]
+    cols = stm.map_columns(list(statement[0]))
+    rec = stm.reconcile(statement, cols, [_inv(7, "1001", 500.0), _inv(8, "1002", 80.0)])
+    assert sorted((li.status, li.number) for li in rec.lines) == [
+        (stm.MATCHED, "1001"), (stm.NOT_ON_STATEMENT, "1002"), (stm.PAYMENT, "1001"), (stm.PAYMENT, "1002"),
+    ]  # fmt: skip
+    assert rec.count(stm.NOT_RECEIVED) == 0
+
+
 def test_the_same_invoice_is_not_matched_twice():
     statement = [{"n": "7", "a": "10"}, {"n": "7", "a": "10"}]
     rec = stm.reconcile(statement, {"number": "n", "amount": "a"}, [_inv(1, "7", 10.0)])

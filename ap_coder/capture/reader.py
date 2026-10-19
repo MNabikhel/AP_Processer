@@ -1002,7 +1002,9 @@ def credit_printed_positive(layout: DocLayout) -> bool:
     """A credit memo (titled so at the top of its first page) whose subtotal and total are printed without a sign:
     its amounts are credits however they are printed, and AP posts credits as negative amounts. The subtotal's and
     total's own signs decide: one adjustment line printed negative ("Restocking fee -50.00") is that line's sign,
-    not the document's. With no subtotal or total found, any amount printed with a sign means the signs are printed."""
+    not the document's. With no subtotal or total found, any amount printed with a sign means the signs are printed.
+    A zero has no sign ("Balance Due $0.00": nothing left to pay), and a line that only looks like a total
+    ("Previous Balance", "Payments received") is not the credit's own: neither votes."""
     if not credit_titled(layout):
         return False
     from .normalize import find_amounts
@@ -1016,10 +1018,14 @@ def credit_printed_positive(layout: DocLayout) -> bool:
             p = plain(line.text).strip()
             if not any(rx.match(p) for f in ("subtotal", "grand_total") for rx, _ in _LABELS[f]):
                 continue
+            if any(rx.match(p) for rx in _DISTRACT["grand_total"]) and not any(
+                rx.match(p) for rx, _ in _LABELS["subtotal"]
+            ):
+                continue  # "Previous Balance": a total's label, not this credit's total (a subtotal is one of them)
             # The amount on the label's line, or in the cells beside it on its row.
             row = [line] + sorted((o for o in page.lines if o is not line and abs(o.box.cy - line.box.cy) < 0.006
                                    and o.box.x0 >= line.box.x0), key=lambda o: o.box.x0)  # fmt: skip
-            totals += next((m for m in map(money, row) if m), [])[-1:]
+            totals += [v for v in next((m for m in map(money, row) if m), [])[-1:] if v]
     if totals:
         return all(v > 0 for v in totals)
     return not any(v < 0 for line in layout.lines() for v in money(line))  # the signs are printed: read as they are

@@ -702,6 +702,7 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
 
     pages: list[PageLayout] = []
     sources: set[str] = set()
+    failed = 0  # pages OCR could not read: kept empty, and counted as not read (``DocLayout.pages_unread_locally``)
     di = layout_from_di(di_raw) if di_raw else None
     with pymupdf.open(path) as doc:
         left_out = max(0, doc.page_count - max_pages)  # never read: said so (``DocLayout.pages_left_out``)
@@ -724,16 +725,17 @@ def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr:
                     scanned.dpi = _native_dpi(page) or scanned.dpi  # the page is rendered finer than it was scanned
                     pages.append(scanned)
                     sources.add("ocr")
-                except Exception as exc:  # a page OCR cannot read is reported as empty, never fatal
+                except Exception as exc:  # a page OCR cannot read is kept empty and counted unread, never fatal
                     log.warning("%s page %d: OCR failed (%s)", path.name, number, exc)
                     pages.append(text_page)
+                    failed += 1
             elif ocr == "auto" and _looks_scanned(page):
                 raise CannotRead(NO_OCR)
             else:
                 pages.append(text_page)
                 sources.add("text")
     source = sources.pop() if len(sources) == 1 else ("mixed" if sources else "none")
-    return DocLayout(pages, source, pages_left_out=left_out)
+    return DocLayout(pages, source, pages_left_out=left_out, pages_unread_locally=failed)
 
 
 # ---------------------------------------------------------------- second read of a scan

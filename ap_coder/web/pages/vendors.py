@@ -88,10 +88,10 @@ def ask_vendor(store: Store, invoices: list[dict[str, Any]], language: str) -> l
     """Emails asking the vendor for what its invoices waiting in the queue (or parked) are missing: only what the
     vendor can fix, never the internal checks (``vendor_mail``)."""
     out = []
-    for row in invoices:
-        if row["status"] not in (REVIEW, PARKED):
-            continue
-        inv = store.get_invoice(row["id"]) or {}
+    waiting = [row for row in invoices if row["status"] in (REVIEW, PARKED)]
+    full = {inv["id"]: inv for inv in store.get_invoices([row["id"] for row in waiting])}  # one query, not one a row
+    for row in waiting:
+        inv = full.get(row["id"]) or {}
         doc = inv.get("final_output") or inv.get("ai_output") or {}
         issues = [
             i for i in ((inv.get("validation") or {}).get("issues") or []) if isinstance(i, dict) and i.get("code")

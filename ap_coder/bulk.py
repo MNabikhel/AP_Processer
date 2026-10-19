@@ -1,7 +1,8 @@
 """Bulk approval of clean invoices.
 
 An invoice qualifies only if, re-checked right now (duplicates and history may have changed since it was
-processed), it has no error and no warning and the AI's confidence is above the review threshold.
+processed), it has no error and no warning, no finding that always goes to a person (``ALWAYS_A_PERSON``: some,
+like a new vendor name, are only info) and the AI's confidence is above the review threshold.
 Everything else is skipped with the reason, and still needs a person.
 """
 
@@ -9,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .capture.supplier import ALWAYS_A_PERSON
 from .capture.workflow import learn_from_approval
 from .config import Settings
 from .pipeline import finalise_coding
@@ -17,15 +19,21 @@ from .schema import InvoiceCoding
 from .store import REVIEW, Store
 
 
+def _needs_a_person(severity: Any, code: Any) -> bool:
+    """An error, a warning, or a finding that always goes to a person whatever its severity."""
+    return severity in ("error", "warning") or str(code or "") in ALWAYS_A_PERSON
+
+
 def clean_candidates(store: Store) -> list[dict[str, Any]]:
-    """Invoices in the queue that were clean when processed (no review flag, no errors or warnings)."""
+    """Invoices in the queue that were clean when processed (no review flag, no errors or warnings, nothing that
+    always goes to a person)."""
     validations = {r["id"]: r["validation"] or {} for r in store.invoice_columns(("id", "validation"), REVIEW)}
     candidates = []
     for inv in store.list_invoices(REVIEW):
         if inv["requires_review"]:
             continue
         issues = validations.get(inv["id"], {}).get("issues") or []
-        if not any(i.get("severity") in ("error", "warning") for i in issues):
+        if not any(_needs_a_person(i.get("severity"), i.get("code")) for i in issues):
             candidates.append(inv)
     return candidates
 
@@ -47,7 +55,9 @@ def bulk_approve(
         # What was found after processing and is kept only with the invoice (the Azure check's disagreement, the page
         # reader's line items or text layer read differently): finalise_coding below does not raise it again.
         stored = [
-            i for i in (inv.get("validation") or {}).get("issues") or [] if i.get("severity") in ("error", "warning")
+            i
+            for i in (inv.get("validation") or {}).get("issues") or []
+            if _needs_a_person(i.get("severity"), i.get("code"))
         ]
         if stored:
             skipped.append((invoice_id, f"{stored[0].get('code')}: {stored[0].get('message')}"))
@@ -60,7 +70,7 @@ def bulk_approve(
             skipped.append((invoice_id, "the coding needs fixing by hand"))
             continue
         output, report = finalise_coding(coding, reference, settings, store=store, exclude_invoice_id=invoice_id)
-        blocking = [i for i in report.issues if i.severity in ("error", "warning")]
+        blocking = [i for i in report.issues if _needs_a_person(i.severity, i.code)]
         if blocking:
             skipped.append((invoice_id, f"{blocking[0].code}: {blocking[0].message}"))
             continue

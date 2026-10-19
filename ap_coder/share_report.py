@@ -37,10 +37,13 @@ def _failure_category(error: str | None) -> str:
     if not error:
         return "unknown"
     exc_type = error.split(":", 1)[0].strip()
+    # What comes before the first colon is an exception's name only when it reads as one: a plain-words message
+    # starts with the file name ("Acme invoice 4471.pdf can't be opened as a PDF: ..."), which is never printed.
+    exc_type = exc_type if exc_type.isidentifier() else ""
     for needle, category in _FAILURE_PATTERNS:
         if needle in error:
-            return f"{exc_type}/{category}"
-    return exc_type if exc_type.isidentifier() else "unknown"
+            return f"{exc_type}/{category}" if exc_type else category
+    return exc_type or "unknown"
 
 
 def _stats(values: list[float]) -> str:

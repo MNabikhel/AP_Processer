@@ -1352,9 +1352,10 @@ def touchless_gates(
     exchange rate is set for it (the limit is in CAD, so it can't be checked); ``over_approval_limit``: it needs a
     second approver; ``awaiting_page_reader``: not every reader has read it yet; ``pages_unread``: pages of it the
     page reader did not read (it reads at most AP_PAGE_READER_MAX_PAGES pages); ``pages_left_out``: pages of it the
-    local readers did not read (``CaptureResult.pages_left_out``: past the first 20); ``no_page``: a text file (.md,
-    .txt), which the page reader cannot look at, so only one reader has read it; ``model_coded_lines``: lines whose
-    account only the local chat model chose, or a weak match (neither AP's approvals nor a coding rule)."""
+    local readers did not read (``CaptureResult.pages_left_out``: past the first 20, or OCR failed on it);
+    ``no_page``: a text file (.md, .txt), which the page reader cannot look at, so only one reader has read it;
+    ``model_coded_lines``: lines whose account only the local chat model chose, or a weak match (neither AP's
+    approvals nor a coding rule)."""
     reasons: list[str] = []
     for issue in issues or []:
         reason = ALWAYS_A_PERSON.get(str(issue.get("code") or ""))

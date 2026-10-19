@@ -37,3 +37,18 @@ def test_history_is_memory_but_not_accuracy(tmp_path, ground_truth):
     assert found and found[0]["status"] == "conflict" and found[0]["history_gl"] == "6230"
 
     assert store.forget_history() == 2 and store.history_count() == 0
+
+
+def test_history_dates_are_read_not_cut_at_ten_characters(tmp_path):
+    """A date written "1/25/2026 0:00" is 2026-01-25, so the same line from an export with ISO dates is a
+    duplicate; a date that can't be read (or could be read either way) keeps its date part, never "1/5/2026 0"."""
+    cols = {"vendor_name": "V", "description": "D", "gl_code": "G", "date": "When"}
+    line = {"V": "Acme", "D": "Paper", "G": "6000"}
+    rows, _ = history.rows_from_records(
+        [{**line, "When": "1/25/2026 0:00"}, {**line, "When": "2026-01-25T00:00:00"}, {**line, "When": "soon"}], cols
+    )
+    assert [r["date"] for r in rows] == ["2026-01-25", "2026-01-25", "soon"]
+    store = Store(tmp_path / "a.db")
+    assert store.import_history(rows) == {"added": 2, "skipped": 1, "unknown_gl": 0}
+    rows, _ = history.rows_from_records([{**line, "When": "1/5/2026 0:00"}], cols)
+    assert rows[0]["date"] == "1/5/2026"

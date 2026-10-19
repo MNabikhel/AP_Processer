@@ -24,6 +24,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import unicodedata
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -161,7 +162,8 @@ CREATE INDEX IF NOT EXISTS azure_checks_status ON azure_checks (status, created_
 CREATE TABLE IF NOT EXISTS verifications (
     invoice_id INTEGER PRIMARY KEY, reason TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
     rounds INTEGER NOT NULL DEFAULT 0, seconds REAL NOT NULL DEFAULT 0, result_json TEXT,
-    error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    tries INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS verifications_status ON verifications (status, created_at);
 CREATE TABLE IF NOT EXISTS lessons (
     id INTEGER PRIMARY KEY AUTOINCREMENT, situation TEXT NOT NULL UNIQUE, vendor_key TEXT NOT NULL,
@@ -269,6 +271,19 @@ def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | N
     if s_gl is None or (gl_blank and cc_blank):
         return False
     return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
+
+
+def fold_text(value: Any) -> Any:
+    """The SQL function ``ap_fold(x)``: text without accents and its case folded ("Énergir" -> "energir"), so a
+    filter compares names as people read them. SQLite's own lower() and LIKE fold only A to Z (B-04). Plain ASCII,
+    most of what it sees, takes the quick way."""
+    if value is None:
+        return None
+    text = str(value)
+    if text.isascii():
+        return text.lower()
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
 
 
 class DatabaseTooNew(RuntimeError):
@@ -417,6 +432,10 @@ class Store:
         for column, kind in (("reader", "TEXT NOT NULL DEFAULT ''"), ("tries", "INTEGER NOT NULL DEFAULT 0")):
             if columns and column not in columns:
                 conn.execute(f"ALTER TABLE page_reads ADD COLUMN {column} {kind}")
+        # The AI reviewer's queue counts reviews the model server cut off before any answer (looked for likewise).
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(verifications)")}
+        if columns and "tries" not in columns:
+            conn.execute("ALTER TABLE verifications ADD COLUMN tries INTEGER NOT NULL DEFAULT 0")
         # A suspended supplier remembers when, so it needs a fresh clean streak since then (looked for whatever the
         # version, like the page reader's columns above).
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(supplier_profiles)")}
@@ -469,7 +488,8 @@ class Store:
         """Every stored vendor key, recomputed with today's ``vendor_key``: from the vendor name kept beside it, else
         (the vendor list, whose display name may have been edited, and the supplier profiles) from the old key itself.
         Where the new key is already taken (two rows that are now the same vendor) the row already there is kept: a
-        duplicate ERP bill is dropped, anything else is left as it was."""
+        duplicate ERP bill is dropped, two vendor list rows are merged into one (on hold if either was), anything
+        else is left as it was."""
 
         def new_key(name: Any, old: Any) -> str:
             return vendor_key(str(name or "")) or refresh_vendor_key(str(old or ""))
@@ -486,6 +506,8 @@ class Store:
                 done = conn.execute(f"UPDATE OR IGNORE {table} SET vendor_key = ? WHERE {ident} = ?", (key, r["ident"]))
                 if not done.rowcount and table == "erp_invoices":  # the same ERP bill is already there under the key
                     conn.execute("DELETE FROM erp_invoices WHERE rowid = ?", (r["ident"],))
+                elif not done.rowcount and table == "vendors":  # the same vendor twice: one row, on hold if either is
+                    Store._merge_vendor_rows(conn, r["ident"], key)
         for r in conn.execute("SELECT id, situation, vendor_name, vendor_key FROM lessons").fetchall():
             key = new_key(r["vendor_name"], r["vendor_key"])
             _old, sep, rest = str(r["situation"] or "").partition("|")
@@ -499,6 +521,33 @@ class Store:
                 key = "name:" + refresh_vendor_key(r["k"][5:])
                 if key != r["k"]:
                     conn.execute(f"UPDATE OR IGNORE {table} SET {column} = ? WHERE rowid = ?", (key, r["rid"]))
+
+    @staticmethod
+    def _merge_vendor_rows(conn: sqlite3.Connection, old: str, key: str) -> None:
+        """The vendor list row under ``old`` folded into the one under ``key`` (the same vendor under today's rules),
+        then removed: on hold if either is (a row left under a key no invoice gives any more would quietly lift the
+        hold), both rows' notes kept, a field blank in one filled from the other."""
+        kept = conn.execute("SELECT * FROM vendors WHERE vendor_key = ?", (key,)).fetchone()
+        gone = conn.execute("SELECT * FROM vendors WHERE vendor_key = ?", (old,)).fetchone()
+        if kept is None or gone is None:
+            return
+        values: dict[str, Any] = {}
+        for column in kept.keys():
+            if column in ("vendor_key", "updated_at"):
+                continue
+            a, b = kept[column], gone[column]
+            if column == "status":
+                values[column] = "on_hold" if "on_hold" in (a, b) else a
+            elif column == "notes":
+                values[column] = "; ".join(dict.fromkeys(n for n in (a, b) if n))
+            elif column == "in_master":
+                values[column] = max(a or 0, b or 0)
+            else:
+                values[column] = a if a not in (None, "") else b
+        assignments = ", ".join(f"{column} = ?" for column in values)
+        conn.execute(f"UPDATE vendors SET {assignments}, updated_at = ? WHERE vendor_key = ?",
+                     (*values.values(), _now(), key))  # fmt: skip
+        conn.execute("DELETE FROM vendors WHERE vendor_key = ?", (old,))
 
     @contextmanager
     def session(self) -> Iterator[None]:
@@ -525,6 +574,7 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
+        conn.create_function("ap_fold", 1, fold_text, deterministic=True)
         conn.execute("PRAGMA journal_mode=WAL")
         if fresh:
             conn.executescript(_SCHEMA)
@@ -961,22 +1011,19 @@ class Store:
             found: dict[int, dict[str, Any]] = {}
             for start in range(0, len(ids), 500):
                 chunk = ids[start : start + 500]
-                for r in conn.execute(
-                    f"{rows_sql} SELECT {fields} FROM rows WHERE id IN ({', '.join('?' * len(chunk))})", chunk
-                ):
+                marks = ", ".join("?" * len(chunk))  # at most 500, under SQLite's variable limit
+                for r in conn.execute(f"{rows_sql} SELECT {fields} FROM rows WHERE id IN ({marks})", chunk):
                     found[r["id"]] = dict(r)
             rows = [found[i] for i in ids if i in found]
             wanted = sorted({r["export_batch"] for r in rows if r["export_batch"]})
             batches = {}
             for start in range(0, len(wanted), 500):
                 chunk = wanted[start : start + 500]
+                marks = ", ".join("?" * len(chunk))  # at most 500, under SQLite's variable limit
                 batches.update(
                     {
                         b["id"]: b["created_at"]
-                        for b in conn.execute(
-                            f"SELECT id, created_at FROM export_batches WHERE id IN ({', '.join('?' * len(chunk))})",
-                            chunk,
-                        )
+                        for b in conn.execute(f"SELECT id, created_at FROM export_batches WHERE id IN ({marks})", chunk)
                     }
                 )
         for r in rows:
@@ -2611,7 +2658,7 @@ class Store:
             cur = conn.execute(
                 """INSERT INTO verifications (invoice_id, reason, status, created_at, updated_at)
                    VALUES (?, ?, 'waiting', ?, ?) ON CONFLICT(invoice_id) DO UPDATE SET reason = excluded.reason,
-                   status = 'waiting', error = '', updated_at = excluded.updated_at,
+                   status = 'waiting', error = '', tries = 0, updated_at = excluded.updated_at,
                    created_at = CASE WHEN verifications.status = 'waiting' THEN verifications.created_at
                                 ELSE excluded.created_at END
                    WHERE verifications.status != 'verifying' OR verifications.updated_at < ?""",
@@ -2648,18 +2695,21 @@ class Store:
 
     def finish_verification(
         self, invoice_id: int, status: str, *, result: dict[str, Any] | None = None, rounds: int = 0,
-        seconds: float = 0.0, error: str = "",
+        seconds: float = 0.0, error: str = "", tries: int | None = None,
     ) -> bool:  # fmt: skip
         """How a review ended: ``done`` (``result``), ``failed`` / ``skipped`` (``error`` says why) or ``waiting``
-        (back in line: the chat model isn't answering now)."""
+        (back in line: the chat model isn't answering now). ``tries``: reviews the model server cut off before any
+        answer (None keeps the count; a review done starts it over)."""
         if status not in (VERIFY_WAITING, VERIFY_DONE, VERIFY_FAILED, VERIFY_SKIPPED):
             raise ValueError(f"unknown review status {status!r}")
+        if tries is None and status == VERIFY_DONE:
+            tries = 0
         with self._conn() as conn:
             cur = conn.execute(
                 """UPDATE verifications SET status = ?, result_json = COALESCE(?, result_json), rounds = ?,
-                   seconds = ?, error = ?, updated_at = ? WHERE invoice_id = ?""",
+                   seconds = ?, error = ?, updated_at = ?, tries = COALESCE(?, tries) WHERE invoice_id = ?""",
                 (status, json.dumps(result, default=str) if result is not None else None,
-                 int(rounds or 0), round(float(seconds or 0), 1), (error or "")[:2000], _now(), invoice_id),
+                 int(rounds or 0), round(float(seconds or 0), 1), (error or "")[:2000], _now(), tries, invoice_id),
             )  # fmt: skip
             return cur.rowcount > 0
 
@@ -2984,12 +3034,17 @@ class Store:
                 "province": province.strip().upper()})  # fmt: skip
         return key
 
-    def delete_vendors(self, keys: list[str]) -> int:
-        """Remove vendors from the vendor list (e.g. the demo's sample vendor master)."""
+    def delete_vendors(self, keys: list[str], actor: str | None = None) -> int:
+        """Remove vendors from the vendor list (e.g. the demo's sample vendor master), logged: an on-hold vendor
+        removed lifts its hold."""
+        where, params = _in_list("vendor_key"), (json.dumps(list(keys)),)
         with self._conn() as conn:
-            return conn.execute(
-                f"DELETE FROM vendors WHERE {_in_list('vendor_key')}", (json.dumps(list(keys)),)
-            ).rowcount
+            names = [r[0] or r[1] for r in conn.execute(f"SELECT display_name, vendor_key FROM vendors WHERE {where}",
+                                                         params)]  # fmt: skip
+            count = conn.execute(f"DELETE FROM vendors WHERE {where}", params).rowcount
+            if count:
+                self._log(conn, "vendors_deleted", actor=actor, detail={"vendors": names})
+            return count
 
     def has_vendor_master(self) -> bool:
         with self._conn() as conn:
@@ -3498,7 +3553,7 @@ def load_sample_setup(store: Store, data_dir: Path = SAMPLE_DATA_DIR) -> None:
     with (data_dir / "tax_gl_mapping.csv").open(encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
             store.set_tax_treatment(row["tax_type"], row["treatment"], row.get("gl_code") or "")
-    store.set_setting("policy_notes", (data_dir / "coding_policy.md").read_text(encoding="utf-8"))
+    store.set_setting("policy_notes", (data_dir / "coding_policy.md").read_text(encoding="utf-8-sig"))
 
 
 def load_sample_vendor_master(store: Store, data_dir: Path = SAMPLE_DATA_DIR, only_new: bool = False) -> list[str]:

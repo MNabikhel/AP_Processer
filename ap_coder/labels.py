@@ -71,7 +71,8 @@ def _prediction_files(output_dir: Path) -> list[Path]:
 def _fmt_num(value: Any) -> str:
     if value is None or value == "":
         return ""
-    return f"{float(value):.2f}" if not float(value).is_integer() else f"{float(value):.0f}"
+    number = float(value)  # never rounded: a unit price of 0.125 or a quantity of 41.237 is ground truth
+    return f"{number:.0f}" if number.is_integer() else repr(number)
 
 
 def _rows_for_document(stem: str, doc: dict[str, Any], blind: bool, flagged: bool) -> list[dict[str, str]]:

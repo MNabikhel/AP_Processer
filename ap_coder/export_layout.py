@@ -3,6 +3,9 @@
 One row per GL posting line (expense lines and recoverable-tax lines), with the columns, their order and
 headers chosen on the Exports page. A column takes a field (invoice or line), or fixed text such as a
 company code or a journal name. Dates, decimal mark and delimiter follow the ERP's expectations.
+
+The file is for the ERP's loader, so text is written exactly as it is: no spreadsheet apostrophe in front of
+``+A-100`` or ``- Labour``, which would no longer match what the ERP holds.
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from .safe import csv_cell
 from .tax import currency_places
 
 FIXED = "(fixed text)"
@@ -106,5 +108,5 @@ def build(rows: list[dict[str, Any]], layout: Layout) -> bytes:
     if layout.header_row:
         writer.writerow([c.header for c in layout.columns])
     for row in rows:
-        writer.writerow([csv_cell(_value(row, c, layout)) for c in layout.columns])
+        writer.writerow([_value(row, c, layout) for c in layout.columns])
     return out.getvalue().encode("utf-8-sig")

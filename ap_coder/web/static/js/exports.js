@@ -6,10 +6,12 @@ if (form) {
   const picks = () => [...form.querySelectorAll("input.export-pick:not(:disabled)")];
   const all = document.getElementById("export-all");
   const button = document.getElementById("export-go");
-  const label = document.getElementById("export-label");
   const update = () => {
     const n = picks().filter((p) => p.checked).length;
-    label.textContent = `Export ${n.toLocaleString()} ${n === 1 ? "invoice" : "invoices"}`;
+    // Looked up each time: while the export is sent, app.js replaces the button's contents (data-busy) and puts
+    // back a copy, so a label found once would no longer be on the page.
+    const label = document.getElementById("export-label");
+    if (label) label.textContent = `Export ${n.toLocaleString()} ${n === 1 ? "invoice" : "invoices"}`;
     button.disabled = n === 0;
     if (all) all.checked = n > 0 && n === picks().length;
   };

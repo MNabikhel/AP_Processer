@@ -413,6 +413,36 @@ def test_pages_past_the_local_readers_limit_need_a_person(touchless, path, tmp_p
         "always a person: 20 of its pages were not read by OvisOCR2")  # fmt: skip
 
 
+def test_a_page_ocr_could_not_read_counts_as_unread(monkeypatch, tmp_path):
+    """A scanned page whose OCR failed was kept as an empty page and nothing said so: the capture looked complete
+    (2 pages, none left out), so no gate fired though the local readers never read page 2."""
+    import io
+
+    import pymupdf
+    from PIL import Image
+
+    from ap_coder.capture import analyze, layout
+
+    with pymupdf.open() as doc:
+        for _ in range(2):
+            png = io.BytesIO()
+            Image.new("L", (850, 1100), 255).save(png, format="PNG")
+            doc.new_page(width=612, height=792).insert_image(pymupdf.Rect(0, 0, 612, 792), stream=png.getvalue())
+        doc.save(tmp_path / "scan.pdf")
+
+    def ocr(png, number, engine=None):
+        if number == 2:
+            raise RuntimeError("onnxruntime: bad allocation")
+        return layout.PageLayout(number, 1, 1, [], [])
+
+    monkeypatch.setattr(layout, "ocr_image", ocr)
+    monkeypatch.setattr(layout, "ocr_available", lambda: True)
+    read = analyze(tmp_path / "scan.pdf", ocr=True, tables=False, second_read=False)
+    assert (read.page_count, read.pages_left_out) == (2, 1)
+    assert should_auto_approve(AUTONOMOUS, read, True, [])[1] == (
+        "always a person: 1 of its pages was not read by the local readers")  # fmt: skip
+
+
 def test_a_text_file_invoice_needs_a_person(touchless, path):
     """A .md/.txt invoice has no page for OvisOCR2 to read: only one reader read it, so a person approves it."""
     text = path.with_suffix(".txt")

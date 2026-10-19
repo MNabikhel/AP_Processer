@@ -146,6 +146,35 @@ def test_a_directory_walk_reads_each_entry_once():
     assert sum(len(e.children) for e in cf.entries) <= len(cf.entries)
 
 
+def _renumbered(raw: bytes) -> bytes:
+    """The same .msg with its directory entries in reverse order (the root stays first): a storage now comes before
+    the storage that holds it. The file format puts no order on entries, so this is still a valid file."""
+    from ap_coder.msgfile import CompoundFile
+
+    cf, out = CompoundFile(raw), bytearray(raw)
+    sectors, s = [], int.from_bytes(raw[0x30:0x34], "little")
+    while s not in (0xFFFFFFFE, 0xFFFFFFFF):
+        sectors.append(s)
+        s = cf.fat[s]
+    slots = [(sec + 1) * cf.sector + k * 128 for sec in sectors for k in range(cf.sector // 128)]
+    order = [0, *range(len(cf.entries) - 1, 0, -1)]  # new position -> old index
+    new_of = {old: new for new, old in enumerate(order)}
+    for new, old in enumerate(order):
+        entry = bytearray(raw[slots[old] : slots[old] + 128])
+        links = [int.from_bytes(entry[at : at + 4], "little") for at in (68, 72, 76)]
+        entry[68:80] = b"".join(new_of.get(x, x).to_bytes(4, "little") for x in links)
+        out[slots[new] : slots[new] + 128] = entry
+    return bytes(out)
+
+
+def test_the_order_of_directory_entries_never_drops_an_attachment():
+    inner = Message(subject="Fwd", body="older", attachments=[Attachment("INV-0.pdf", INVOICE)])
+    msg = Message(subject="Invoices", body="attached", attachments=[Attachment("INV-1.pdf", INVOICE)],
+                  attached_emails=[inner])  # fmt: skip
+    out = read_msg(_renumbered(build_msg(msg)))
+    assert [a.name for a in out.attachments] == ["INV-1.pdf", "INV-0.pdf"] and "older" in out.body
+
+
 # --- triage: no invoice lost --------------------------------------------------------------------------------------
 
 
@@ -324,6 +353,17 @@ def test_what_a_person_does_with_an_email_set_aside(tmp_path):
     assert "email_triage_done" in actions and "email_attachment_to_queue" in actions
 
 
+def test_an_open_email_stays_in_needs_a_person_however_many_were_sorted_after_it(tmp_path):
+    store = Store(tmp_path / "ap.db")
+    bank = {"id": "fraud01", "kind": "bank_change", "possible_fraud": True, "needs_person": True, "documents": []}
+    newer = [{"id": f"inv{n}", "kind": "invoice", "needs_person": False, "documents": []} for n in range(6000)]
+    (tmp_path / "emails").mkdir()
+    (tmp_path / "emails" / "triage.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [bank, *newer]))
+    assert [r["id"] for r in inbox.needs_person(store, tmp_path)] == ["fraud01"]
+    assert inbox.mark_done(store, tmp_path, "fraud01")  # and a person can still mark it done
+    assert inbox.needs_person(store, tmp_path) == []
+
+
 def test_a_path_in_the_log_never_leaves_the_invoices_folder(tmp_path):
     folder = tmp_path / "invoices"
     (folder / "emails").mkdir(parents=True)
@@ -360,3 +400,83 @@ def test_the_process_page_lists_emails_that_need_a_person(tmp_path):
     (st,) = inbox.statements(store, folder)
     answer = post(client, f"/statements/emailed/{st['id']}/{st['n']}", {"vendor": ""})
     assert answer.status_code == 200 and "/statements?" in answer.json()["redirect"]
+
+
+def _sheet_bomb() -> bytes:
+    """A small .xlsx (under 200 KB) whose shared strings unzip to about 25 MB, more than triage lets openpyxl read."""
+    import io
+    import zipfile
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    wb.active.append(["Invoice", "Amount"])
+    good = io.BytesIO()
+    wb.save(good)
+    bomb = io.BytesIO()
+    with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as z, zipfile.ZipFile(good) as src:
+        for item in src.infolist():
+            if item.filename != "xl/sharedStrings.xml":
+                z.writestr(item, src.read(item))
+        with z.open("xl/sharedStrings.xml", "w") as fh:
+            for _ in range(25):
+                fh.write(b"<si><t>a</t></si>" * 60_000)
+    return bomb.getvalue()
+
+
+def test_every_reader_of_an_uploaded_sheet_checks_its_unzipped_sizes(tmp_path, monkeypatch):
+    """W2-01: triage would not open a spreadsheet that unzips to far more (B-63), but the email was still filed as a
+    statement and Reconcile on the Statements page handed it to pandas unchecked. Every sheet that is uploaded or
+    emailed (a statement, the JDE GL map, AP line history, the JDE worksheet) is checked before a parser opens it."""
+    import openpyxl
+    import pandas as pd
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    from ap_coder.web.core import invoice_dir
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    bomb = _sheet_bomb()
+    _eml(folder / "soa.eml", "Statement of account", "Please find our statement attached.", ("soa.xlsx", bomb))
+    unpack(folder / "soa.eml", folder)
+    (st,) = inbox.statements(store, folder)
+    opened: list[str] = []
+
+    def refuse_to_open(*args, **kwargs):
+        opened.append("opened")
+        raise ValueError("opened")
+
+    monkeypatch.setattr(pd, "read_excel", refuse_to_open)
+    monkeypatch.setattr(openpyxl, "load_workbook", refuse_to_open)
+    page = {"X-AP-Coder": "1"}
+    answers = [
+        post(client, f"/statements/emailed/{st['id']}/{st['n']}", {"vendor": ""}),
+        client.post("/statements/upload", data={"vendor": ""}, files={"file": ("s.xlsx", bomb)}, headers=page),
+        client.post("/settings/jde/gl-map/import", files={"file": ("map.xlsx", bomb)}, headers=page),
+        client.post("/learning/history/upload", files={"file": ("ap.xlsx", bomb)}, headers=page),
+        client.post("/settings/jde/worksheet", files={"file": ("answers.xlsx", bomb)}, headers=page),
+    ]
+    assert opened == []
+    assert [a.status_code for a in answers] == [400] * 5, [a.text for a in answers]
+    assert all("unzips to" in a.json()["error"] for a in answers), [a.json()["error"] for a in answers]
+
+
+def test_an_emailed_statement_larger_than_an_upload_is_not_read(tmp_path, monkeypatch):
+    """W2-01: the Statements page read an emailed statement whole, with no size cap; an upload is capped at 50 MB."""
+    from ap_coder.web.pages import statements as statements_page
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    from ap_coder.web.core import invoice_dir
+
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    _eml(folder / "soa.eml", "Statement", "attached", ("soa.csv", b"Statement of account\nInvoice,Amount\nINV-1,10\n"))
+    unpack(folder / "soa.eml", folder)
+    (st,) = inbox.statements(store, folder)
+    monkeypatch.setattr(statements_page, "_MAX_BYTES", 10)
+    answer = post(client, f"/statements/emailed/{st['id']}/{st['n']}", {"vendor": ""})
+    assert answer.status_code == 400 and "larger than" in answer.json()["error"]

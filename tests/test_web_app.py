@@ -90,6 +90,16 @@ def test_static_files_fonts_and_logo_are_served_locally(client):
         assert url.startswith(("/", "#")), url  # nothing from another host
 
 
+def test_static_files_are_checked_again_on_every_use(client):
+    """app.js and invoice_viewer.js are imported without ?v= (one URL, one module): after an update a browser must ask
+    again instead of running the copy it kept. An unchanged file answers 304, so asking costs nothing."""
+    for path in ("/static/js/app.js", "/static/js/invoice_viewer.js", "/static/app.css"):
+        response = client.get(path)
+        assert response.status_code == 200 and response.headers.get("cache-control") == "no-cache", path
+        again = client.get(path, headers={"if-none-match": response.headers["etag"]})
+        assert again.status_code == 304 and again.headers.get("cache-control") == "no-cache", path
+
+
 # --- Only this computer, only AP Coder's own pages ---------------------------------------------------------------
 
 

@@ -99,11 +99,14 @@ class CompoundFile:
             raw = self._chain_bytes(first_mini_fat)
             self.mini_fat = list(struct.unpack_from(f"<{len(raw) // 4}I", raw))
         self.read = 0  # bytes of streams read so far: never much more than the file holds
-        walked: set[int] = {0}  # each entry belongs to one storage: a crafted file sharing children walks them once
-        for i, e in enumerate(self.entries):
-            if e.kind in (_STORAGE, _ROOT):
-                walked.add(i)  # never its own child
-                e.children = self._children(e.child, walked)
+        # The storages are walked as a tree from the root, so the order of the entries in the directory does not
+        # matter. Each entry belongs to one storage: a crafted file sharing children walks them once.
+        walked: set[int] = {0}
+        storages = [0]
+        while storages:
+            e = self.entries[storages.pop()]
+            e.children = self._children(e.child, walked)
+            storages += [i for i in e.children.values() if self.entries[i].kind == _STORAGE]
 
     def _raw_sector(self, n: int) -> bytes:
         if n >= self.n_sectors:

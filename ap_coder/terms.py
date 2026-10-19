@@ -60,6 +60,16 @@ def _clause(text: str, start: int, end: int) -> str:
     return text[before[-1] if before else 0 : after.start() if after else len(text)]
 
 
+def _discount_clause(text: str, start: int, end: int) -> str:
+    """The clause around a discount, for the interest words that would make it a late-payment rate. When another
+    rate follows in the same clause ("2/10 net 30 interest 1.5% per month"), the words after the discount are that
+    rate's, so the clause stops at the discount."""
+    before = [m.end() for m in _CLAUSE_END.finditer(text, 0, start)]
+    after = _CLAUSE_END.search(text, end)
+    first, last = before[-1] if before else 0, after.start() if after else len(text)
+    return text[first : end if "%" in text[end:last] else last]
+
+
 # "2/10 EOM" prints no net days: the usual reading is that the net amount is due 20 days after the discount date.
 EOM_NET_AFTER_DISCOUNT = 20
 _MONTHS = r"(?:months?|mois)\b"
@@ -135,7 +145,7 @@ def parse_terms(text: str | None) -> Terms:
     months = _net_months(text)
     for pattern in _DISCOUNT:
         for m in pattern.finditer(text):
-            if _INTEREST.search(_clause(text, m.start(), m.end())):
+            if _INTEREST.search(_discount_clause(text, m.start(), m.end())):
                 continue  # a late-payment rate ("1.5% per month on overdue accounts"), not a discount
             pct = float(m.group(1).replace(",", "."))
             days = int(m.group(2))

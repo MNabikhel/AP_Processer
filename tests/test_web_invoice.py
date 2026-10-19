@@ -22,6 +22,8 @@ from ap_coder.web import invoice_view
 from ap_coder.web.app import create_app
 from ap_coder.web.invoice_view import Draft
 
+from .conftest import chromium_path
+
 PAGE = {"X-AP-Coder": "1"}
 
 
@@ -689,18 +691,7 @@ def test_the_ai_reviewer_on_the_review_screen(client, store):
 
 
 def _chromium() -> str | None:
-    import importlib.util
-    import os
-    from pathlib import Path
-
-    if importlib.util.find_spec("playwright") is None:
-        return None
-    for root in (os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), "/opt/pw-browsers"):
-        if root:
-            found = sorted(Path(root).glob("chromium-*/chrome-linux/chrome"))
-            if found:
-                return str(found[-1])
-    return None
+    return chromium_path()
 
 
 @pytest.fixture
@@ -832,3 +823,164 @@ def test_in_a_browser_os_dark_mode_leaves_the_light_page_readable(browser, store
         assert errors == []
         page.close()
     assert len(looks["light"]) >= 2 and looks["dark"] == looks["light"]
+
+
+def _open(browser, invoice_id, path=""):
+    """A page on ``/review/<invoice_id>`` (or ``path``) once its opening check has answered; ``page.posts`` lists the
+    last part of each POST's address from then on."""
+    chromium, base = browser
+    page = chromium.new_page(viewport={"width": 1400, "height": 1000})
+    page.base = base
+    page.errors = []
+    page.on("pageerror", lambda e: page.errors.append(str(e)))
+    page.goto(base + (path or f"/review/{invoice_id}"))
+    page.wait_for_load_state("networkidle")
+    page.posts = []
+    page.on("request", lambda r: r.method == "POST" and page.posts.append(r.url.rsplit("/", 1)[-1]))
+    return page
+
+
+@pytest.mark.parametrize("where", ["park", "note"])
+def test_in_a_browser_ctrl_enter_in_another_form_never_approves(browser, client, store, where):
+    """Ctrl+Enter approves from the review form only: typed in Park's "Waiting for" box or in "Add a note", it is not
+    taken for an approval, and the invoice stays in the queue."""
+    invoice_id = clean_invoice(client, store)
+    page = _open(browser, invoice_id)
+    assert page.is_enabled("[data-approve]")
+    if where == "park":
+        page.click(".inv-actionbar summary[title^='Set it aside']")
+        page.fill(".inv-actionbar details[open] input[name=reason]", "buyer to confirm the price")
+    else:
+        page.click(".inv-notes summary")
+        page.fill(".inv-note-form input[name=text]", "asked Sam about the PO")
+    page.keyboard.press("Control+Enter")
+    page.wait_for_timeout(1200)
+    assert "approve" not in page.posts and store.get_invoice(invoice_id)["status"] != APPROVED
+    assert page.errors == []
+
+
+def test_in_a_browser_ctrl_enter_in_the_why_dialog_keeps_the_reason(browser, client, store, monkeypatch):
+    """Ctrl+Enter in "One question before saving" is its "Keep the reason and approve": the reason typed is sent."""
+    from ap_coder import lessons
+
+    asked = [{"key": "k1", "field": "invoice_number", "label": "invoice number", "pattern": "", "proposed": "A1",
+              "value": "A2", "times": 3, "explanation": ""}]  # fmt: skip
+    monkeypatch.setattr(lessons, "due_for_why", lambda store, proposed, final: asked)
+    invoice_id = clean_invoice(client, store)
+    page = _open(browser, invoice_id)
+    bodies: list[bytes] = []
+    page.on("request", lambda r: r.url.endswith("/approve") and bodies.append(r.post_data_buffer or b""))
+    page.click("[data-approve]")
+    page.wait_for_selector("dialog.inv-why textarea")
+    page.fill("dialog.inv-why textarea", "On these statements the number is the account number")
+    page.keyboard.press("Control+Enter")
+    page.wait_for_url(lambda url: f"/review/{invoice_id}" not in url, timeout=10000)
+    assert len(bodies) == 2 and b"account number" in bodies[1] and b"why_done" in bodies[1]
+    assert store.get_invoice(invoice_id)["status"] != REVIEW
+
+
+def test_in_a_browser_enter_in_a_review_field_never_approves(browser, client, store):
+    """Plain Enter in a text box of the review form is no approval (only the button and Ctrl+Enter approve)."""
+    invoice_id = clean_invoice(client, store)
+    page = _open(browser, invoice_id)
+    page.click("[form=inv][name=po_number]")
+    page.keyboard.type("4500123")
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(1200)
+    assert "approve" not in page.posts and store.get_invoice(invoice_id)["status"] == REVIEW
+    page.keyboard.press("Control+Enter")  # in a field of the review form, Ctrl+Enter approves
+    page.wait_for_url(lambda url: f"/review/{invoice_id}" not in url, timeout=10000)
+    assert store.get_invoice(invoice_id)["status"] != REVIEW and page.errors == []
+
+
+def test_in_a_browser_an_edit_typed_just_before_leaving_is_kept(browser, store):
+    """An edit typed within the check's wait before the page is left another way (Back, closing the tab) is still
+    kept as a draft."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    page = _open(browser, invoice_id, "/review")
+    page.goto(f"{page.base}/review/{invoice_id}")
+    page.wait_for_load_state("networkidle")
+    page.fill("[form=inv][name=po_number]", "PO-NEW-1")
+    page.wait_for_timeout(100)  # less than invoice.js's 450 ms
+    page.go_back()
+    page.wait_for_timeout(800)
+    page.goto(f"{page.base}/review/{invoice_id}")
+    page.wait_for_load_state("networkidle")
+    assert page.input_value("[form=inv][name=po_number]") == "PO-NEW-1"
+
+
+def test_in_a_browser_alt_arrows_in_a_text_box_stay_on_the_invoice(browser, store):
+    """Alt+←/→ in a text box moves the caret word by word (Option+arrows on a Mac); outside one they go to the
+    previous / next invoice."""
+    invoice_id = store.list_invoices(REVIEW)[1]["id"]
+    page = _open(browser, invoice_id)
+    page.click("#vendor-name")
+    page.keyboard.press("End")
+    page.keyboard.press("Alt+ArrowLeft")
+    page.wait_for_timeout(1000)
+    assert page.url.endswith(f"/review/{invoice_id}")
+    page.evaluate("() => document.activeElement.blur()")
+    page.keyboard.press("Alt+ArrowLeft")
+    page.wait_for_url(lambda url: not url.endswith(f"/review/{invoice_id}"), timeout=10000)
+
+
+VENDOR_SPELLINGS = [
+    "Agence Créative Mont-Royal S.E.N.C.", "Agence Créative Mont-Royal Incorporée", "Agence Créative Mont-Royal s.e.c.",
+    "The Northwind IT Solutions Inc.", "Northwind IT Solutions", "Mueller GmbH & Co. KG", "Œuvres Lætitia Ltée",
+    "Straße & Søn A.B.C. Corp.", "the", "The Inc", "Hydro-Québec", "  Café   Ünique,, S.A.R.L. ", "J.B. Hunt Co",
+    "Ł.Ø.ß", "İstanbul Ltd", "3M Canada Company", "a.b", "X.Y.Z.Inc", "Ⅷ Ventures LLC", "ＡＢＣ Ltd", "and and",
+    "Bell Canada & Co. Ltd. Inc.", "Société d'Énergie S.E.N.C.R.L.", "Ça va s.a.", "éa.b.c", "_a.b.", "",
+]  # fmt: skip
+
+
+def test_in_a_browser_the_vendor_key_is_the_servers(browser, client, store):
+    """The page gets each listed vendor's key from the server (memory.vendor_key), and keys the name typed with
+    invoice.js's copy of it, which gives the same keys: the line under the vendor agrees with the server's match."""
+    import json
+
+    from ap_coder.memory import vendor_key
+
+    invoice_id = next(i["id"] for i in store.list_invoices(REVIEW) if "Agence" in (i["vendor_name"] or ""))
+    text = client.get(f"/review/{invoice_id}").text
+    data = json.loads(re.search(r'id="vendor-data">(.*?)</script>', text, re.S).group(1))
+    assert data["list"] and all(v["key"] == vendor_key(v["name"]) for v in data["list"])
+    page = _open(browser, invoice_id)
+    keys = page.evaluate(
+        """async (names) => {
+             const { vendorKey } = await import(document.querySelector('script[src*="/invoice.js"]').src);
+             return names.map(vendorKey);
+           }""",
+        VENDOR_SPELLINGS,
+    )
+    assert keys == [vendor_key(n) for n in VENDOR_SPELLINGS]
+    listed = {vendor_key(v["name"]) for v in data["list"]}
+    for name in VENDOR_SPELLINGS[:4]:
+        assert vendor_key(name) in listed, name
+        page.fill("#vendor-name", name)
+        assert "In the vendor list" in page.inner_text("[data-vendor-match]"), name
+    assert page.errors == []
+
+
+def test_in_a_browser_a_refused_export_reloads_and_the_count_follows_the_ticks(browser, store):
+    """An export refused because another tab exported the same invoices meanwhile refreshes the page, as it says; and
+    after a refusal that stays on the page, the Export button's count still follows the ticks."""
+    for inv in store.list_invoices(REVIEW)[:3]:
+        store.approve_invoice(inv["id"], store.get_invoice(inv["id"])["ai_output"], "Jordan Lee")
+    ready = store.unexported_approved()
+    assert len(ready) >= 3
+    page = _open(browser, None, "/exports?fmt=csv")
+    # refused and staying on the page: nothing ticked
+    page.evaluate("() => document.querySelectorAll('input.export-pick').forEach((p) => (p.checked = false))")
+    page.evaluate("() => { const b = document.getElementById('export-go'); b.disabled = false; b.click(); }")
+    page.wait_for_timeout(800)
+    assert "create" in page.posts
+    page.locator("input.export-pick:not(:disabled)").first.check()
+    assert page.inner_text("#export-go").split("\n")[-1].strip() == "Export 1 invoice"
+    # another tab exports them meanwhile
+    store.create_export_batch([r["id"] for r in ready], "csv", actor="Other tab")
+    page.evaluate("() => (window.__before = true)")
+    page.click("#export-go")
+    page.wait_for_function("() => window.__before !== true", timeout=10000)
+    page.wait_for_load_state("networkidle")
+    assert "exported meanwhile" in page.inner_text("body")
+    assert page.locator("input.export-pick").count() == 0 and page.errors == []

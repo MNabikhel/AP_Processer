@@ -177,3 +177,11 @@ def test_net_months_are_calendar_months_never_days(text, invoice_date, due):
 def test_a_half_percent_discount_is_half_a_percent(text, pct, amount):
     p = payment({"invoice_date": "2026-09-10", "payment_terms": text, "grand_total": 10000, "subtotal": 10000})
     assert (p.terms.discount_pct, p.discount_amount) == (pct, amount)
+
+
+def test_interest_words_of_another_rate_do_not_veto_the_discount():
+    """S2-T5: with no punctuation between them, the interest words of the late-payment rate that follows belong to
+    that rate, not to the discount before it."""
+    assert parse_terms("2/10 net 30 interest 1.5% per month on overdue accounts") == Terms(30, 2.0, 10)
+    assert parse_terms("2% 10 net 30 overdue accounts 2% per month") == Terms(30, 2.0, 10)
+    assert parse_terms("Net 30 interest 2% 30 days after due date") == Terms(30)  # no later rate: still interest

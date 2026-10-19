@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from .safe import parse_amount
+from .statements import day_first_order, read_date
 
 HISTORY = "history"
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
@@ -43,6 +44,8 @@ def map_columns(headers: list[str]) -> dict[str, str]:
 def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) -> tuple[list[dict[str, Any]], int]:
     """History rows (vendor_name, description, gl_code, cost_center, amount, date). Returns (rows, skipped)."""
     rows, skipped = [], 0
+    column = columns.get("date")
+    order = day_first_order([str(rec.get(column) or "") for rec in records]) if column else None
     for rec in records:
 
         def get(target: str, rec: dict[str, Any] = rec) -> str:
@@ -57,6 +60,7 @@ def rows_from_records(records: list[dict[str, Any]], columns: dict[str, str]) ->
         if re.fullmatch(r"\d+\.0", row["gl_code"]):
             row["gl_code"] = row["gl_code"][:-2]
         row["amount"] = parse_amount(row["amount"])
-        row["date"] = row["date"][:10]
+        # YYYY-MM-DD when it can be read ("1/5/2026 0:00" too: never cut at 10 characters), else the text as it is
+        row["date"] = read_date(row["date"], order) if row["date"] else ""
         rows.append(row)
     return rows, skipped

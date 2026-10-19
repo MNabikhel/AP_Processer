@@ -438,6 +438,21 @@ CHECKS: dict[str, CheckHelp] = {
         "Check the fields it names (or the whole invoice) against the page, then approve. Have it check again from "
         "the review screen if the chat model was busy or not loaded.",
     ),
+    "AZURE_DI_DISAGREES": CheckHelp(
+        READING, "Azure reads it differently",
+        "The optional Azure Document Intelligence check (Settings → Reading) read a field differently from what "
+        "AP Coder proposes. The fields it disagrees on are named in the warning and marked Check.",
+        "Look at the page: correct the field if Azure is right (the warning goes once it matches), or approve as "
+        "it is if the proposal is right. It isn't approved without a person until they agree.",
+    ),
+    "AZURE_DI_NOT_COMPARED": CheckHelp(
+        READING, "Azure checked nothing",
+        "The invoice was sent to Azure Document Intelligence for a check, but Azure read none of the fields AP Coder "
+        "read, so nothing was compared. This happens when the Azure model in Settings → Reading is not "
+        "prebuilt-invoice (prebuilt-layout and prebuilt-read find no invoice fields), or Azure found no invoice.",
+        "Check the invoice against the page yourself, then approve. It isn't approved without a person. Set the "
+        "Azure model back to prebuilt-invoice if it was changed.",
+    ),
     "CURRENCY_NOT_FOUND": CheckHelp(
         READING, "Currency not printed",
         "The invoice shows no currency the reader could read (no code such as CAD or USD, no € or £ sign), so "

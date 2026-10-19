@@ -205,7 +205,7 @@ def _linux_port_owner(port: int) -> int | None:
     inodes = set()
     for table in ("/proc/net/tcp", "/proc/net/tcp6"):
         try:
-            lines = Path(table).read_text().splitlines()[1:]
+            lines = Path(table).read_text(encoding="ascii").splitlines()[1:]
         except OSError:
             continue
         for row in lines:

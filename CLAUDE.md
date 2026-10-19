@@ -38,9 +38,9 @@ Claude Code hook (`.claude/settings.json`) reminds you after each edit.
 ## Run and test
 - Set up: `python -m venv .venv`, activate it, `pip install -e ".[ocr,dev]"` (or double-click `APProcessor.bat` / `APProcessor.command`).
 - Run: `python -m ap_coder serve` (dashboard on http://127.0.0.1:8501, or the next free port; `--port`, `--no-browser`);
-  `python -m ap_coder doctor` (settings, reference data and LM Studio on this computer; `--online` adds a dry run
-  and Azure, only with `AP_ALLOW_INTERNET=1`); `python scripts/pilot_check.py` (reads and codes the samples, no AI model, exit 0 when all right).
-- Test: `python -m pytest -q tests` (serially; see tests/CLAUDE.md). Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.
+  `python -m ap_coder doctor` (settings, reference data and LM Studio on this computer; `--online` adds a dry run on
+  the local model and, only with `AP_ALLOW_INTERNET=1`, the Azure checks); `python scripts/pilot_check.py` (reads and codes the samples, no AI model, exit 0 when all right).
+- Test: `python -m pytest -q tests` (serially; see tests/CLAUDE.md; CI installs `.[dev]`, so the local-OCR paths run only where `.[ocr]` is installed). Lint: `ruff check ap_coder tests scripts` and `ruff format --check ap_coder tests scripts`.
 - Map: `python scripts/check_map.py`.
 
 ## Files

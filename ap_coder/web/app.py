@@ -36,6 +36,18 @@ from ap_coder.web.security import TOKEN_HEADER, LocalOnly
 CODE_FOLDER = core.WEB_DIR.parent.parent  # the folder holding ap_coder/ (the launcher checks it is its own)
 
 
+class CheckedStaticFiles(StaticFiles):
+    """The dashboard's scripts and styles, which the browser checks again on every use (``Cache-Control: no-cache``).
+    js/app.js and js/invoice_viewer.js are imported without ``?v=`` (one URL, one module): left to guess, a browser
+    keeps running its old copy for weeks after an update. An unchanged file answers 304 to its ETag, so the check
+    costs nothing."""
+
+    async def get_response(self, path: str, scope: Any) -> Any:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def default_store() -> Store:
     """The database the dashboard uses: AP_DB_PATH, else the data folder's ap_coder.db."""
     return Store(paths.env_path("AP_DB_PATH") or default_db_path())
@@ -84,7 +96,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.shutdown_token = None  # set by server.serve; without it /shutdown refuses
     app.state.server = None  # the uvicorn.Server, set by server.serve
     app.add_middleware(LocalOnly, address=address)
-    app.mount("/static", StaticFiles(directory=str(core.STATIC_DIR)), name="static")
+    app.mount("/static", CheckedStaticFiles(directory=str(core.STATIC_DIR)), name="static")
     app.mount("/fonts", StaticFiles(directory=str(core.FONTS_DIR)), name="fonts")
     app.mount("/assets", StaticFiles(directory=str(core.ASSETS_DIR)), name="assets")
 

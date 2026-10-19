@@ -95,7 +95,7 @@ export async function pollJob(url, onUpdate, everyMs = 800) {
 function submitButton(form, submitter) {
   if (submitter instanceof HTMLButtonElement) return submitter;
   return (
-    form.querySelector('button[type="submit"], button:not([type])') ||
+    form.querySelector('button[type="submit"]:not([hidden]), button:not([type]):not([hidden])') ||
     (form.id ? document.querySelector(`button[type="submit"][form="${CSS.escape(form.id)}"]`) : null)
   );
 }

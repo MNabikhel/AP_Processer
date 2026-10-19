@@ -90,6 +90,26 @@ def test_vendor_keys_stored_by_an_older_version_are_recomputed(tmp_path):
     assert JdeSettings.from_json('{"an8_overrides": {"energir sec": "77"}}').an8_overrides == {"energir": "77"}
 
 
+def test_rekeyed_vendor_rows_merge_and_on_hold_wins(tmp_path):
+    """Two vendor rows that become one vendor under today's rules are merged: an on-hold row is never left behind
+    under a key no invoice gives any more, its notes are kept and blank fields are filled."""
+    import sqlite3
+
+    path = tmp_path / "t.db"
+    store = Store(path)
+    store.save_vendor("acme", "Acme", status="active", expected_gst="123456789RT0001")
+    store.save_vendor("acme ltee", "Acme Ltée", status="on_hold", notes="bank change pending", province="QC")
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE settings SET value = '1' WHERE key = 'vendor_key_rules'")  # as an older version left it
+    store = Store(path)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT vendor_key FROM vendors").fetchall() == [("acme",)]
+    vendor = store.get_vendor(vendor_key("Acme Ltée"))
+    assert vendor["status"] == "on_hold"
+    assert vendor["notes"] == "bank change pending"
+    assert vendor["expected_gst"] == "123456789RT0001" and vendor["province"] == "QC"
+
+
 def test_select_examples_prefers_same_vendor_then_similar_lines():
     rows = [
         _row("Northwind IT Solutions Inc.", "Dell Latitude laptop", "6010"),

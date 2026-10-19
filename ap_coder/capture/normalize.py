@@ -18,12 +18,14 @@ _CURRENCY_WORDS = re.compile(r"\b(CAD|USD|EUR|GBP|CDN|CA\$|US\$|C\$)\b", re.I)
 # separator. Thousands: commas, dots, apostrophes or spaces ("1,234.56", "1.234,56", "1 234,56", "1 234.56",
 # "1 234 567"). One space group may also be a quantity set close to its price ("10 100.00" in a line item):
 # ``find_amounts`` tells them apart. "0.125" is a unit price with three decimals, never thousands, and "1.3023" one
-# with four ("1234.5678" too: four decimals are never thousands). A credit's "CR" may follow a stray point on a
-# scan ("392.99.CR").
+# with four ("1234.5678" and "12,345.6789" too: four decimals are never thousands). A credit's "CR" may follow a
+# stray point on a scan ("392.99.CR").
 _AMOUNT = re.compile(
     r"""(?P<neg1>\((?=\s*(?:[$€£]\s*)?\d)|(?<![-−–])[-−–](?=(?:[$€£]\s*)?\d))?
         \s*(?:[$€£]\s*)?
         (?P<num>\d{1,6}[.,]\d{4}(?!\d)(?![.,']\d)
+          |(?!0[,.']\d)\d{1,3}(?P<g>[,.'])\d{3}(?:(?P=g)\d{3})*(?!(?P=g))[.,]\d{4}(?!\d)(?![.,']\d)
+          |\d{1,3}(?:[   ]\d{3})+[.,]\d{4}(?!\d)(?![.,']\d)
           |(?!0[,.']\d)\d{1,3}(?:[,.']\d{3})+(?:[.,]\d{1,2})?
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+,\d{1,2}(?!\d)
           |\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:\.\d{1,2})?(?![.,]?\d)
@@ -33,7 +35,7 @@ _AMOUNT = re.compile(
     re.X,
 )
 # One space group ("1 050.00", "1 234"): 1,050.00, or a quantity 1 set close to a price 50.00.
-_ONE_SPACE_GROUP = re.compile(r"(\d{1,3})[   ](\d{3}(?:\.\d{1,2})?)")
+_ONE_SPACE_GROUP = re.compile(r"(\d{1,3})[   ](\d{3}(?:\.\d{1,2}|\.\d{4})?)")
 # A header or totals label: an amount after it is one amount ("Total Due 1 050.00", "GST 1 250.00").
 _TOTALS_LABEL = re.compile(
     r"\b(?:sub[\s-]?total|sous[\s-]?total|total|amount\s+due|balance\s+due|montant|tax(?:es)?|taxe|gst|hst|pst|"
@@ -89,7 +91,9 @@ def _number(num: str) -> float | None:
     # before it are all the other kind ("1,234.567": a unit price to three decimals, not 1,234,567).
     other = "," if last_sep >= 0 and num[last_sep] == "." else "."
     mixed = last_sep >= 0 and other in num[:last_sep] and num[last_sep] not in num[:last_sep]
-    if last_sep >= 0 and (len(num) - last_sep - 1 in (1, 2) or mixed):
+    # Four digits after a separator not used before it are decimals ("1 234.5678", "12,345.6789"): never thousands.
+    four = last_sep >= 0 and len(num) - last_sep - 1 == 4 and num[last_sep] not in num[:last_sep]
+    if last_sep >= 0 and (len(num) - last_sep - 1 in (1, 2) or mixed or four):
         whole, frac = num[:last_sep], num[last_sep + 1 :]
     else:
         whole, frac = num, ""
@@ -164,8 +168,13 @@ MONTHS = {
 }  # fmt: skip
 
 
+# Letters Unicode does not decompose: dropped with the accents, "Œuvres" became "uvres".
+_LIGATURES = str.maketrans({"œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ß": "ss"})
+
+
 def _plain(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text)
+    """Lower case, accents folded to plain letters ("Ltée" -> "ltee", "Cœur" -> "coeur")."""
+    decomposed = unicodedata.normalize("NFKD", text.translate(_LIGATURES))
     return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
 
 
@@ -448,15 +457,29 @@ def find_currency(text: str) -> str | None:
     return found[0] if found else None
 
 
+def _in_payment_note(s: str, m: re.Match[str]) -> bool:
+    """Whether the sentence ``m`` is in is a note on how the supplier may be paid ("Payments in US dollars
+    accepted"). The sentence, not the line: "All prices in Canadian dollars. Payments in USD accepted." states CAD."""
+    start = s.rfind("\n", 0, m.start()) + 1
+    end = s.find("\n", m.end())
+    before = re.split(r"[.;!?]\s", s[start : m.start()])[-1]
+    after = re.split(r"[.;!?](?:\s|$)", s[m.end() : end if end >= 0 else len(s)])[0]
+    return bool(_PAYMENT_NOTE.search(before + m.group(0) + after))
+
+
 def currency_evidence(text: str) -> tuple[str, float] | None:
     """(currency, how sure, 0-1). A statement ("All amounts in USD", "Currency: CAD", "All prices in Canadian
     dollars") or a code printed on the amounts settles it; a code anywhere else counts when it is the only one, and
-    not when it is only in a note on how the supplier may be paid ("Payments in USD accepted"). Several codes and
-    nothing to tell which the invoice is billed in ("1 USD = 1.37 CAD" in a note): the first is given, but not as
-    sure."""
+    not when it is only in a note on how the supplier may be paid ("Payments in USD accepted"). A statement in such
+    a note ("Payments in US dollars accepted") is no statement either. Several codes and nothing to tell which the
+    invoice is billed in ("1 USD = 1.37 CAD" in a note): the first is given, but not as sure."""
     s = text.upper()
-    stated = {m.group(1) or m.group(2) for m in _CURRENCY_STATEMENT.finditer(s)}
-    stated |= {"CAD" if m.group("cad") or m.group("cad2") else "USD" for m in _WORDS_STATEMENT.finditer(s)}
+    stated = {m.group(1) or m.group(2) for m in _CURRENCY_STATEMENT.finditer(s) if not _in_payment_note(s, m)}
+    stated |= {
+        "CAD" if m.group("cad") or m.group("cad2") else "USD"
+        for m in _WORDS_STATEMENT.finditer(s)
+        if not _in_payment_note(s, m)
+    }
     if len(stated) == 1:
         return stated.pop(), 0.8
     lines = [ln for ln in s.splitlines() if not _EXCHANGE.search(ln)]

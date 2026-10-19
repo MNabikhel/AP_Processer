@@ -348,19 +348,32 @@ def pdf_text(content: bytes, pages: int = 2) -> str:
         return ""
 
 
+def sheet_unzips_too_big(content: bytes) -> bool:
+    """True when an Excel workbook (.xlsx, a zip) holds a file over MAX_SHEET_PART_BYTES once unzipped, or files over
+    MAX_SHEET_BYTES together: a few KB can unzip to GB, so every reader of an emailed or uploaded workbook asks this
+    before openpyxl or pandas opens it (B-63, W2-01). A file that is not a zip (a CSV, an old .xls) is False: its
+    size on disk is what gets read. Only the zip's directory is read here, nothing is unzipped."""
+    import io
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as z:
+            sizes = [item.file_size for item in z.infolist()]
+    except (zipfile.BadZipFile, ValueError):
+        return False
+    return max(sizes, default=0) > MAX_SHEET_PART_BYTES or sum(sizes) > MAX_SHEET_BYTES
+
+
 def sheet_text(name: str, content: bytes, rows: int = 15) -> str:
     """The first rows of a CSV or Excel attachment, as text ("" when it cannot be read)."""
     try:
         if name.lower().endswith(".csv"):
             return content[:8000].decode("utf-8-sig", "replace")
         import io
-        import zipfile
 
         import openpyxl
 
-        with zipfile.ZipFile(io.BytesIO(content)) as z:  # a few KB can unzip to GB: the sizes are checked first
-            sizes = [item.file_size for item in z.infolist()]
-        if max(sizes, default=0) > MAX_SHEET_PART_BYTES or sum(sizes) > MAX_SHEET_BYTES:
+        if sheet_unzips_too_big(content):
             return ""
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
         ws = wb.worksheets[0]

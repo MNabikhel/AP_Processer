@@ -12,6 +12,8 @@ the offline jobs point every proxy at a closed port (127.0.0.1:9) to prove AP Co
 - Triggers: push to `main` and `claude/**`, pull requests, `workflow_dispatch`. A newer push cancels the older run.
 - Jobs, one line each:
   - `tests`: Ubuntu and Windows x Python 3.10, 3.12, 3.13, 3.14: `pip install -e ".[dev]"`, `ruff check`, `ruff format --check`, `pytest -q`.
+  - `browser-tests`: Ubuntu, Playwright and its Chromium installed online, then the `in_a_browser` tests with
+    `AP_REQUIRE_BROWSER=1` (a missing browser fails, never skips).
   - `codebase-map`: `python scripts/check_map.py --changed <base>` (a PR's base branch; on a push to main, the commit
     before it): the map's errors fail; a folder whose code changed without its CLAUDE.md is a warning in the log.
   - `windows-installer`: `APProcessor.bat --installer --yes ...` twice (second run reuses .venv and packages), self-test, `/healthz`, `--fresh-start` keeps `.env`.
@@ -33,4 +35,4 @@ the offline jobs point every proxy at a closed port (127.0.0.1:9) to prove AP Co
 - Env names are case-insensitive on GitHub: the lower-case proxy copies are set in the step's bash script, never in `env:`.
 
 ## Files
-- `ci.yml`: the one CI workflow (eight jobs, above).
+- `ci.yml`: the one CI workflow (nine jobs, above).

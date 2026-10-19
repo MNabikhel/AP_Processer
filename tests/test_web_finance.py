@@ -172,7 +172,20 @@ def test_the_ready_list_and_a_new_batch(client, busy):
     assert busy.batch_invoice_ids(batch) == [ready[0]["id"]]
     # the same invoice cannot go out twice
     again = client.post("/exports/create", data={"fmt": "xlsx", "ids": [ready[0]["id"]]}, headers=PAGE)
-    assert again.status_code == 400 and "exported meanwhile" in again.json()["error"]
+    assert again.status_code == 200 and "exported meanwhile" in follow(client, again).text
+    assert len(busy.export_batches()) == 1
+
+
+def test_an_export_refused_as_exported_meanwhile_refreshes_the_page(client, busy):
+    """It says "The page is refreshed": the answer goes to the Exports page again (in the same format), where the
+    invoices exported meanwhile are no longer listed."""
+    ready = [r["id"] for r in busy.unexported_approved()]
+    busy.create_export_batch(ready, "csv", actor="Other tab")
+    answer = client.post("/exports/create", data={"fmt": "csv", "ids": ready}, headers=PAGE).json()
+    assert answer["ok"] and answer["redirect"].startswith("/exports?fmt=csv")
+    page = client.get(answer["redirect"]).text
+    assert "exported meanwhile" in page and "The page is refreshed" in page
+    assert not any(f'name="ids" value="{i}"' in page for i in ready)
 
 
 def _batch(client, store, fmt="xlsx"):

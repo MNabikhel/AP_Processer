@@ -46,6 +46,15 @@ only from the code alone (GitHub's ZIP or a checkout, no bundle; `AP_ALLOW_INTER
   to them with a real double-click or the CI jobs.
 - The data folder's `.ap_coder_server.json` holds the shutdown token: never print it.
 
+### Bug lessons
+From docs/BUGS.md (one line each; the entry has the repro and the fix).
+- B-118: Don't let an existence check be satisfied by any match anywhere. `tests/test_check_map.py::test_an_interface_name_must_be_in_the_module_or_file_it_names`
+- B-119: Don't parse source text in a way stricter than the interpreter that runs it. `tests/test_check_map.py::test_a_source_file_with_a_byte_order_mark_is_read_like_python_reads_it`
+- B-120: Don't swallow a tool's error and report that nothing changed. `tests/test_check_map.py::test_a_base_git_cannot_compare_with_is_said_not_passed_over`
+- B-121: Don't take the files git tracks as all the files that exist. `tests/test_check_map.py::test_a_new_module_counts_before_it_is_added_to_git`
+- B-122: Don't let a checker crash on input it didn't expect; say what is wrong instead. `tests/test_check_map.py::test_a_new_module_counts_before_it_is_added_to_git`
+- B-123: Don't skip a whole folder in a hook without checking who works in it. `tests/test_check_map.py::test_the_hook_reminds_of_an_edit_in_an_agents_worktree_too`
+
 ## Files
 - Start: `launch.py` (the one-button setup and start), `running.py` (find and stop a running AP Coder), `first_run.py` (data folder and models on first run), `check_deps.py` (missing packages), `fetch_models.py` (OCR models from the bundle).
 - Install and update: `install.py` (the installer's questions), `upgrade.py` (update over older installs), `terminal.bat` (a Windows prompt with .venv first on PATH).

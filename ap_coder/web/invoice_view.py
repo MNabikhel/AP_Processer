@@ -37,7 +37,15 @@ from ap_coder.review import coding_from_inputs, is_blank, split_line, to_number
 from ap_coder.schema import PROVINCE_VALUES, InvoiceCoding
 from ap_coder.store import Store, suggestion_kept
 from ap_coder.suggest import suggest_gl
-from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, TAX_TYPES, province_label
+from ap_coder.tax import (
+    OUTSIDE_CANADA,
+    PLACE_OF_SUPPLY,
+    PROVINCE_NAMES,
+    TAX_TYPES,
+    place_of_supply,
+    province_label,
+    stored_supply,
+)
 from ap_coder.taxmath import math_check  # noqa: F401 - the review screen's math, shown with the tax lines
 from ap_coder.terms import describe as terms_describe
 from ap_coder.terms import payment
@@ -389,9 +397,8 @@ def supply_line(header: dict[str, Any], lines: list[dict[str, Any]], setup: Any)
     if not province and coding.ship_to_province == OUTSIDE_CANADA:
         return {"province": OUTSIDE_CANADA, "label": "Outside Canada", "why": "delivered outside Canada: no Canadian "
                 "sales tax", "open": False}  # fmt: skip
-    ours = getattr(setup, "our_province", "")
-    why = {
-        SUPPLY_PRINTED: "your province (Settings)" if province == ours else "the ship-to on the invoice",
+    why = {  # the ship-to field holds only what is printed or set by the reviewer (pipeline.finalise_coding)
+        SUPPLY_PRINTED: "the ship-to on the invoice",
         SUPPLY_SITE: "the province of the cost center the lines are coded to",
         SUPPLY_OURS: "your province (Settings): no ship-to printed",
         SUPPLY_VENDOR: "only the vendor's province: set where it is delivered to you",
@@ -722,9 +729,9 @@ def due_text(coding: dict[str, Any], default_days: int, vendor_terms: str = "") 
 
 
 def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: list[Any], default_days: int,
-            vendor_terms: str) -> dict[str, Any]:  # fmt: skip
+            vendor_terms: str, setup: Any = None) -> dict[str, Any]:  # fmt: skip
     """The invoice at a glance: supplier, number, dates, status, confidence and the amount."""
-    supply = coding.ship_to_province or coding.supplier_province
+    supply = place_of_supply(coding, setup)
     meta = [
         (f"Invoice {coding.invoice_number}", "Invoice number"),
         (f"Issued {coding.invoice_date}" if coding.invoice_date else "", "Invoice date"),
@@ -755,7 +762,7 @@ def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: lis
 
 def stored_summary(inv: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
     """The header of an invoice that is not being reviewed (approved, parked, rejected...): as stored."""
-    supply = doc.get("ship_to_province") or doc.get("supplier_province") or ""
+    supply = stored_supply(doc)
     meta = [
         (f"Invoice {doc.get('invoice_number') or inv.get('invoice_number') or '—'}", "Invoice number"),
         (f"Issued {doc['invoice_date']}" if doc.get("invoice_date") else "", "Invoice date"),
@@ -879,7 +886,7 @@ def tax_check(coding: InvoiceCoding, reference: ReferenceData) -> list[dict[str,
     rows = []
     for t in coding.tax_lines:
         expected = round(t.taxable_amount * t.rate, 2)
-        prov = t.province or coding.ship_to_province or coding.supplier_province
+        prov = t.province or place_of_supply(coding, reference.tax)
         official = reference.tax.rates.rate_for(t.tax_type, prov if prov in PROVINCE_NAMES else "", on)
         treat = reference.tax.treatment(t.tax_type)
         gl = treat.gl_code if treat.needs_gl else "expense lines"
@@ -1012,6 +1019,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     lines_n = len(coding.line_items)
     _, rule_changes = rules.apply(coding, store.coding_rules())
     doc = coding.model_dump()
+    if PLACE_OF_SUPPLY in output:  # worked out, no ship-to printed: the vendor is told where it is delivered
+        doc[PLACE_OF_SUPPLY] = output[PLACE_OF_SUPPLY]
     mail = None
     if vendor_mail.points(doc, report.issues):
         chosen = draft.mail_lang if draft.mail_lang in vendor_mail.LANGUAGES else vendor_mail.suggested_language(doc)
@@ -1025,7 +1034,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "ok": True,
         "problems": [],
         "amount_line": _amount_line(header),
-        "summary": summary(coding, report, errors, warnings, default_days, terms),
+        "summary": summary(coding, report, errors, warnings, default_days, terms, reference.tax),
         "checks": checks_summary(report, errors, warnings),
         "details": checks_details(report),
         "rules_applied": [rules.describe(c) for c in meta.get("rules_applied") or []],

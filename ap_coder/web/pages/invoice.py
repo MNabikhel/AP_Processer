@@ -14,8 +14,9 @@ page viewer ``static/js/invoice_viewer.js``.
 Routes (all under ``/review/<id>``): GET the screen, ``page/<n>.png`` (a page's picture), ``words`` (the words on
 the pages, to teach a field), ``reader`` (OvisOCR2's progress on it), ``approved.pdf``; POST ``check``,
 ``approve``, ``park``, ``reject``, ``note``, ``teach``, ``split``, ``apply-rules``, ``po-coding``,
-``suggestion``, ``read-pages``, ``start-over``, ``resume`` (a parked invoice), ``restore`` (a rejected one),
-``correct`` (an approved one). Delete, final approval and send back are the queue's own POSTs (``pages/review.py``).
+``suggestion``, ``vendor`` (add the printed vendor), ``read-pages``, ``review-again`` (the AI reviewer),
+``start-over``, ``resume`` (a parked invoice), ``restore`` (a rejected one), ``correct`` (an approved one).
+Delete, final approval and send back are the queue's own POSTs (``pages/review.py``).
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from markupsafe import Markup
 from ap_coder import stamp, ui
 from ap_coder.capture.confidence import LABELS
 from ap_coder.capture.workflow import learn_from_approval, on_reopen, taught_message
-from ap_coder.memory import ACCEPTED
+from ap_coder.memory import ACCEPTED, vendor_key
 from ap_coder.reference_data import ReferenceData
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
 from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES
@@ -328,7 +329,6 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
     computed = None
     try:
         if float(start.get("grand_total") or 0) > 0:  # a credit note has no due date
-            from ap_coder.memory import vendor_key
             from ap_coder.terms import payment
 
             computed = payment({**start, **draft.header}, store.default_terms_days(),
@@ -347,13 +347,15 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
 
 
 def vendor_options(store: Store) -> dict[str, Any]:
-    """The vendor list the review screen picks from: each vendor's name, ERP ID and tax numbers (the screen says
-    whether the name typed is in it, and which vendor a printed GST/HST number belongs to)."""
+    """The vendor list the review screen picks from: each vendor's name, its key (memory.vendor_key, which the name
+    typed is compared with), ERP ID and tax numbers (the screen says whether the name typed is in it, and which
+    vendor a printed GST/HST number belongs to)."""
     choices = store.vendor_choices()
     return {
         "enforced": store.has_vendor_master(),  # with a vendor master, an invoice's vendor must be in the list
-        "list": [{"name": v.get("display_name") or "", "id": v.get("erp_id") or "", "gst": v.get("expected_gst") or "",
-                  "qst": v.get("qst_number") or "", "pst": v.get("pst_number") or "", "added": v.get("in_master") == 2}
+        "list": [{"name": v["display_name"], "key": vendor_key(v["display_name"]), "id": v.get("erp_id") or "",
+                  "gst": v.get("expected_gst") or "", "qst": v.get("qst_number") or "",
+                  "pst": v.get("pst_number") or "", "added": v.get("in_master") == 2}
                  for v in choices if v.get("display_name")],
     }  # fmt: skip
 
@@ -378,7 +380,7 @@ def add_vendor(
     except ValueError as exc:
         return refuse(str(exc))
     return message(f"Added {name} to the vendor list. Set it up in JD Edwards before it is paid: its invoices need a "
-                   "person until then.", "ok", icon="person_add", vendor=name)  # fmt: skip
+                   "person until then.", "ok", icon="person_add", vendor=name, key=vendor_key(name))  # fmt: skip
 
 
 def _mode(inv: dict[str, Any], reference: ReferenceData | None) -> str:

@@ -31,7 +31,8 @@ def test_custom_layout_formats_dates_decimals_and_fixed_text():
     lines = data.decode("utf-8-sig").splitlines()
     assert name == "ap_coder_export_3_custom.csv" and mime == "text/csv"
     assert lines[0] == "Company;Vendor;Doc;Date;Due;Account;Amount;Text"
-    assert lines[1] == "FAB01;V10023;NW-2026-0912;14/09/2026;14/10/2026;6010;4350,00;'=Laptops"
+    # no apostrophe: the file is for the ERP's loader, not Excel (E2-2)
+    assert lines[1] == "FAB01;V10023;NW-2026-0912;14/09/2026;14/10/2026;6010;4350,00;=Laptops"
     assert lines[2].endswith(";2310;565,50;HST 13% (recoverable)")
 
 
@@ -58,3 +59,16 @@ def test_yen_amounts_have_no_decimals():
     data, _, _ = exports.build("custom", [inv], {}, 3, {}, layout)
     rows = data.decode("utf-8-sig").splitlines()[1:]
     assert rows[0].startswith("4350,") and ".00" not in "\n".join(rows)
+
+
+def test_custom_csv_keeps_text_exactly_as_typed():
+    """The custom CSV is for an ERP loader (E2-2): no spreadsheet apostrophe, so the ERP sees the invoice
+    number the supplier printed."""
+    inv = _invoice()
+    lines = inv["final_output"]["gl_distribution"]
+    inv["final_output"]["invoice_number"] = "+A-100"
+    lines[1]["description"] = "- Labour"
+    lines.append(dict(lines[0], line_number=2, description="=1+1"))
+    layout = el.Layout([el.Column("Doc", "invoice_number"), el.Column("Text", "description")])
+    text = exports.build("custom", [inv], {}, 3, {}, layout)[0].decode("utf-8-sig")
+    assert sorted(text.splitlines()[1:]) == ["+A-100,- Labour", "+A-100,=1+1", "+A-100,=Laptops"]

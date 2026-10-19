@@ -471,6 +471,17 @@ def test_canadian_dollars_stated_in_words_win_over_a_code_in_a_payment_note():
     assert capture.fields["currency"].value == "CAD"
 
 
+def test_a_currency_in_words_in_a_payment_note_is_not_a_statement():
+    """ "Payments in US dollars accepted" says how the supplier may be paid, as "Payments in USD accepted" does: the
+    code printed on the total ("CAD 1,050.00") decides. Read as a statement, a Canadian invoice was read as USD."""
+    from ap_coder.capture.normalize import currency_evidence
+
+    for note in ("Payments in US dollars accepted.", "Paiements en dollars américains acceptés.",
+                 "We accept payment in U.S. dollars", "Remit in Canadian dollars or US dollars"):  # fmt: skip
+        assert currency_evidence(f"Total Due CAD 1,050.00\n{note}") == ("CAD", 0.8), note
+    assert currency_evidence("Total Due $1,050.00\nAll amounts in US dollars. Remit to Box 12.") == ("USD", 0.8)
+
+
 def test_a_registration_number_read_only_in_the_bill_to_block_is_not_verified():
     """The customer's GST/HST number printed in the "Client:" block, and no number of the supplier's: a valid check
     digit shows the number is well formed, not whose it is. Verified, input tax credits were claimed on it."""
@@ -535,6 +546,21 @@ def test_a_credit_note_printed_positive_with_one_negative_adjustment_is_still_a_
     assert not [c["code"] for c in capture.checks if not c["ok"] and c["code"] in ("TOTALS_ADD_UP", "TAX_RATE")]
 
 
+def test_a_zero_or_a_total_lookalike_does_not_vote_on_a_credit_notes_sign():
+    """A CREDIT NOTE printed positive that also prints "Balance Due $0.00" (nothing left to pay) is still a credit:
+    a zero has no sign, and a line that only looks like a total ("Previous Balance") is not the credit's own."""
+    from ap_coder.capture.reader import credit_printed_positive
+    from ap_coder.capture.transcript import layout_from_transcript
+
+    total = "<tr><td>Total Credit (CAD)</td><td>$2,260.00</td></tr>"
+    for extra in ("<tr><td>Balance Due</td><td>$0.00</td></tr>", "<tr><td>Amount Due</td><td>0.00</td></tr>",
+                  "<tr><td>Previous Balance</td><td>-1,200.00</td></tr>"):  # fmt: skip
+        text = _POSITIVE_CREDIT_NOTE.replace(total, total + "\n" + extra)
+        assert credit_printed_positive(layout_from_transcript([text])), extra
+        got = {f: _read(text).fields[f].value for f in ("subtotal", "hst_amount", "grand_total")}
+        assert got == {"subtotal": -2000.0, "hst_amount": -260.0, "grand_total": -2260.0}, (extra, got)
+
+
 def test_a_field_that_failed_a_check_does_not_show_its_measured_confidence():
     """A total that does not add up is marked down (x0.3); the calibration's measure of its evidence pattern, which
     does not record the failure, must not put it back up (it showed 0.918 beside "check failed")."""
@@ -551,3 +577,16 @@ def test_a_price_to_four_decimals_with_four_digits_before_the_point_is_one_numbe
     assert parse_amount("1234.5678") == 1234.5678
     assert [v for v, _, _ in find_amounts("Fuel 1234.5678 L")] == [1234.5678]
     assert parse_amount("1.3023") == 1.3023 and parse_amount("1,234.56") == 1234.56
+
+
+def test_a_grouped_amount_to_four_decimals_is_one_number():
+    """ "12,345.6789", "1.234,5678" and "1 234.5678" are each one number, not a number to three decimals and a stray
+    digit, or a 1 and a price; a quantity set close to a four-decimal price still splits when it is one."""
+    from ap_coder.capture.normalize import find_amounts, parse_amount
+
+    for text, value in (("12,345.6789", 12345.6789), ("1.234,5678", 1234.5678), ("1 234.5678", 1234.5678),
+                        ("1'234.5678", 1234.5678), ("1,234,567.1234", 1234567.1234)):  # fmt: skip
+        assert parse_amount(text) == value, text
+        assert [v for v, _, _ in find_amounts(f"Fuel {text} L")] == [value], text
+    assert [v for v, _, _ in find_amounts("Bolts 2 250.5000 501.00")] == [2, 250.5, 501.0]
+    assert parse_amount("1,234.56") == 1234.56 and parse_amount("1.3023") == 1.3023

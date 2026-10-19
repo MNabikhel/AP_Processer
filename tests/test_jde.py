@@ -552,6 +552,56 @@ def test_a_jde_batch_downloads_again_with_the_same_vouchers(db):
     assert store.batch_invoice_ids(batch["id"]) == [northwind["id"]]
 
 
+def _one_jde_batch(store, send_due_date=True, **final_changes):
+    """A JD Edwards batch of the demo's Northwind invoice (its coding changed by ``final_changes`` first)."""
+    from ap_coder.demo import load_demo
+
+    from .webclient import client_for, follow, post
+
+    load_demo(store)
+    northwind = next(i for i in store.unexported_approved() if i["vendor_name"].startswith("Northwind"))
+    if final_changes:
+        with store._conn() as conn:
+            final = json.loads(conn.execute("SELECT final_output FROM invoices WHERE id = ?",
+                                            (northwind["id"],)).fetchone()[0])  # fmt: skip
+            conn.execute("UPDATE invoices SET final_output = ? WHERE id = ?",
+                         (json.dumps({**final, **final_changes}), northwind["id"]))  # fmt: skip
+    settings = jde.load(store)
+    settings.an8_overrides = {vendor_key(northwind["vendor_name"]): "10023"}
+    settings.send_due_date = send_due_date
+    jde.save(store, settings)
+    client = client_for(store)
+    follow(client, post(client, "/exports/create", {"fmt": jde.FORMAT, "ids": [northwind["id"]]}))
+    (batch,) = store.export_batches()
+    return client, settings, batch["id"], northwind["id"]
+
+
+def test_a_due_date_jde_cannot_hold_leaves_vlddj_blank_in_a_batch_downloaded_again(db):
+    """The batch was made with "send due date" off; switched on later, a due date of 3026 must not break the file."""
+    store = Store(db)
+    client, settings, batch, inv_id = _one_jde_batch(store, send_due_date=False, due_date="3026-10-14")
+    settings.send_due_date = True
+    jde.save(store, settings)
+    answer = client.get(f"/exports/batches/{batch}/download")
+    assert answer.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(answer.content)) as zf:
+        (head,) = _csv(zf.read(jde.HEADER_FILE))
+        readme = zf.read("README.txt").decode()
+    assert head["VLEDTN"] == f"APC{inv_id}" and head["VLDDJ"] == ""
+    assert "check before loading" in readme and "due date 3026-10-14" in readme
+
+
+def test_a_jde_batch_is_not_downloaded_while_a_setting_stops_every_export(db):
+    """A Z-file with no User ID cannot load, and its own dry run says so: the download says what to fix instead."""
+    store = Store(db)
+    client, settings, batch, _inv_id = _one_jde_batch(store)
+    settings.user = ""
+    jde.save(store, settings)
+    answer = client.get(f"/exports/batches/{batch}/download")
+    assert answer.status_code == 409 and "User ID" in answer.text and "Settings" in answer.text
+    assert client.get(f"/exports/batches/{batch}/download?fmt=xlsx").status_code == 200  # other formats still go
+
+
 def test_settings_page_jde_tab(db):
     from .test_web_settings import general_form
     from .webclient import client_for, follow, post

@@ -21,7 +21,7 @@ from ap_coder import recurring, ui
 from ap_coder.bulk import bulk_approve, clean_candidates
 from ap_coder.memory import vendor_key
 from ap_coder.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
-from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label
+from ap_coder.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.terms import DUE_SOON_DAYS, payment
 from ap_coder.web.core import (
     TARGET_ACCURACY,
@@ -123,7 +123,7 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float) -> l
     for inv in shown:
         ai = outputs.get(inv["id"], {})
         due, tone = due_note(ai, default_days, terms.get(vendor_key(ai.get("vendor_name") or ""), ""))
-        prov = ai.get("ship_to_province") or ai.get("supplier_province") or ""
+        prov = stored_supply(ai)
         confidence = max(0.0, min(1.0, inv.get("adjusted_confidence") or 0.0))
         rows.append({
             "id": inv["id"],

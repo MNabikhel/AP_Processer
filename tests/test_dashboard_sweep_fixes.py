@@ -12,7 +12,7 @@ from ap_coder.web.core import STATIC_DIR
 
 from .conftest import SAMPLE_STEM, SAMPLES
 from .test_web_invoice import check, form_of
-from .webclient import add_clean, client_for, follow, gt, post, web_settings
+from .webclient import add_clean, client_for, follow, gt, known_vendors, post, web_settings
 
 
 @pytest.fixture
@@ -224,6 +224,7 @@ def test_counts_of_one_read_as_sentences(client, store):
     """Seen in the browser: "1 wait for a second approval" after a bulk approval, "Pick a cost center for line 1, 2,
     3, 4" on the approve bar, "1 invoice cannot go to JD Edwards yet and are left out" on Exports."""
     store.set_setting("approval_limit", "5000.00")
+    known_vendors(store, SAMPLE_STEM, "laurentides_QC_TPS_TVQ_SIL-4471")
     ids = [add_clean(store), add_clean(store, "laurentides_QC_TPS_TVQ_SIL-4471")]  # 18,017.85 CAD is over the limit
     page = follow(client, post(client, "/review/bulk-approve", {"ids": ids}))
     assert "Approved 2 invoices; 1 waits for a second approval." in page

@@ -27,6 +27,7 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from pathlib import Path
@@ -159,9 +160,11 @@ def read_eml(raw: bytes) -> Mail:
         raise UnreadableEmail(f"the email is larger than {MAX_EMAIL_BYTES // 1_000_000} MB")
     if raw.count(b"\n--") > MAX_BOUNDARY_LINES:  # parsing is the slow part: thousands of parts are refused before it
         raise UnreadableEmail(f"it has more than {MAX_BOUNDARY_LINES} parts")
+    if raw.lower().count(b"message/rfc822") > MAX_PARTS:  # the parser recurses once a forwarded email (B-128)
+        raise UnreadableEmail("it holds too many emails forwarded inside each other")
     try:
         msg = email.message_from_bytes(raw, policy=email.policy.default)
-    except RecursionError:
+    except RecursionError:  # last resort only: at this depth even clean-up code fails (B-128)
         raise UnreadableEmail("it holds too many emails forwarded inside each other") from None
     assert isinstance(msg, EmailMessage)
     mail = Mail(str(msg.get("Subject") or ""), str(msg.get("From") or ""))
@@ -334,14 +337,17 @@ def unpack(path: Path, folder: Path | None = None) -> Unpacked:
     return result
 
 
-def triage_log(folder: Path, limit: int = 500) -> list[dict]:
-    """The emails sorted in ``folder`` (newest first), from ``emails/triage.jsonl``; a damaged line is skipped."""
+def triage_log(folder: Path, limit: int = 500, keep: Callable[[dict], bool] | None = None) -> list[dict]:
+    """The emails sorted in ``folder`` (newest first), from ``emails/triage.jsonl``; a damaged line is skipped.
+
+    Without ``keep``, only the end of the log is read (the most recent emails). With ``keep``, the whole log is
+    read and ``limit`` counts only the entries ``keep`` accepts, so an older entry that is still open is found."""
     log = folder / DONE_FOLDER / TRIAGE_LOG
     try:
         with log.open("rb") as fh:
-            fh.seek(0, 2)
-            size = fh.tell()
-            fh.seek(max(0, size - 4_000_000))
+            if keep is None:
+                fh.seek(0, 2)
+                fh.seek(max(0, fh.tell() - 4_000_000))
             lines = fh.read().decode("utf-8", "replace").splitlines()
     except OSError:
         return []
@@ -351,7 +357,7 @@ def triage_log(folder: Path, limit: int = 500) -> list[dict]:
             entry = json.loads(line)
         except ValueError:
             continue
-        if isinstance(entry, dict) and entry.get("id"):
+        if isinstance(entry, dict) and entry.get("id") and (keep is None or keep(entry)):
             out.append(entry)
         if len(out) >= limit:
             break

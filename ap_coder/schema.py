@@ -19,10 +19,10 @@ import re
 import unicodedata
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .reference_data import UNASSIGNED, ReferenceData
-from .tax import OUTSIDE_CANADA, PROVINCE_NAMES, PROVINCES, TAX_TYPES
+from .tax import OUTSIDE_CANADA, PLACE_OF_SUPPLY, PROVINCE_NAMES, PROVINCES, TAX_TYPES
 
 SCHEMA_NAME = "ap_invoice_coding"
 
@@ -376,6 +376,15 @@ class InvoiceCoding(BaseModel):
     grand_total: float
     confidence_score: float = Field(ge=0, le=1)
     line_items: list[LineItem]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_worked_out(cls, data: Any) -> Any:
+        # A stored invoice keeps the place of supply worked out when no ship-to is printed beside the coding
+        # (pipeline.finalise_coding); it is worked out again from the lines each time, so it is dropped here.
+        if isinstance(data, dict) and PLACE_OF_SUPPLY in data:
+            data = {k: v for k, v in data.items() if k != PLACE_OF_SUPPLY}
+        return data
 
     @field_validator("invoice_date")
     @classmethod

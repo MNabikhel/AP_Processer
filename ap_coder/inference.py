@@ -32,7 +32,12 @@ _TEXT_ONLY_PREFIXES = ("o1-mini", "o3-mini", "gpt-35", "gpt-3.5")
 
 
 class CodingError(RuntimeError):
-    """The model could not produce a valid coding for the invoice."""
+    """The model could not produce a valid coding for the invoice. ``temporary``: the model server's trouble (it
+    stopped, or gave no answer in time), not the invoice's: asking again later may well work."""
+
+    def __init__(self, message: str = "", *, temporary: bool = False) -> None:
+        super().__init__(message)
+        self.temporary = temporary
 
 
 @dataclass(frozen=True)
@@ -355,12 +360,14 @@ class InvoiceCoder:
         if isinstance(exc, openai.APITimeoutError):
             return CodingError(
                 f"The local model took longer than {timeout or llm.timeout_seconds:.0f}s. LM Studio may still be "
-                "loading it; try again, or allow longer with AP_LLM_TIMEOUT_SECONDS."
+                "loading it; try again, or allow longer with AP_LLM_TIMEOUT_SECONDS.",
+                temporary=True,
             )
         if isinstance(exc, (openai.APIConnectionError, ConnectionError)):
             local_llm.forget_status()
             return CodingError(
-                f"The local model isn't answering at {llm.base_url}. In LM Studio: Developer tab → Start server."
+                f"The local model isn't answering at {llm.base_url}. In LM Studio: Developer tab → Start server.",
+                temporary=True,
             )
         if local_llm.context_overflow(exc):
             return CodingError(

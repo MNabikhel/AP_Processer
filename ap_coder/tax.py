@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -126,6 +127,8 @@ class TaxRateTable:
             text = (row.get("rate") or "").strip()
             try:
                 rate = float(text.rstrip("%").strip().replace(",", "."))
+                if not math.isfinite(rate):  # float() reads "nan" and "inf": not a rate either
+                    raise ValueError(text)
             except ValueError:
                 raise ValueError(f"{where}: rate {row.get('rate')!r} is not a number") from None
             # "0.5%" is half a percent: a rate written with % is always a percentage; without it, 5 means 5%.
@@ -281,6 +284,15 @@ def regime_on(province: str, on: dt.date | None, rates: TaxRateTable) -> frozens
 
 # Where a place of supply came from (``supply_source``), as the review screen says it.
 SUPPLY_PRINTED, SUPPLY_SITE, SUPPLY_OURS, SUPPLY_VENDOR = "printed", "site", "ours", "vendor"
+# The key of a stored invoice (``pipeline.finalise_coding``) that holds the place of supply worked out when no ship-to
+# is printed: kept beside ``ship_to_province`` (what is printed or set by the reviewer), never written into it.
+PLACE_OF_SUPPLY = "place_of_supply"
+
+
+def stored_supply(doc: dict[str, Any]) -> str:
+    """The place of supply of a stored invoice: the ship-to printed, else the one worked out when it was coded, else
+    the vendor's province."""
+    return str(doc.get("ship_to_province") or doc.get(PLACE_OF_SUPPLY) or doc.get("supplier_province") or "")
 
 
 def supply_source(coding: Any, setup: TaxSetup | None = None) -> tuple[str, str]:

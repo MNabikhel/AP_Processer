@@ -37,12 +37,12 @@ def _file(folder: Path, rel: str) -> Path | None:
 
 
 def needs_person(store: Any, folder: Path, limit: int = 100) -> list[dict[str, Any]]:
-    """The emails a person still has to look at, possible fraud first, newest first."""
+    """The emails a person still has to look at, possible fraud first, newest first. The whole log is searched, and
+    the ``limit`` applies after possible fraud is put first: an email nobody marked done stays here however many
+    emails were sorted after it."""
     finished = done_ids(store)
     rows = []
-    for entry in triage_log(folder):
-        if not entry.get("needs_person") or entry["id"] in finished:
-            continue
+    for entry in triage_log(folder, 1_000_000, keep=lambda e: bool(e.get("needs_person")) and e["id"] not in finished):
         docs = []
         for n, d in enumerate(entry.get("documents") or []):
             if d.get("kind") in (*triage.QUEUE_KINDS, triage.STATEMENT):
@@ -50,9 +50,7 @@ def needs_person(store: Any, folder: Path, limit: int = 100) -> list[dict[str, A
             docs.append({**d, "n": n, "label": triage.LABELS.get(d.get("kind", ""), d.get("kind", "")),
                          "there": _file(folder, d.get("file", "")) is not None})  # fmt: skip
         rows.append({**entry, "docs": docs, "email_there": _file(folder, entry.get("email", "")) is not None})
-        if len(rows) >= limit:
-            break
-    return sorted(rows, key=lambda r: not r.get("possible_fraud"))
+    return sorted(rows, key=lambda r: not r.get("possible_fraud"))[:limit]
 
 
 def statements(store: Any, folder: Path, limit: int = 50) -> list[dict[str, Any]]:
@@ -73,7 +71,8 @@ def statements(store: Any, folder: Path, limit: int = 50) -> list[dict[str, Any]
 
 
 def entry(folder: Path, entry_id: str) -> dict[str, Any] | None:
-    return next((e for e in triage_log(folder, limit=5000) if e.get("id") == entry_id), None)
+    """Email ``entry_id`` of the triage log, however old (an email still shown as open can always be acted on)."""
+    return next(iter(triage_log(folder, limit=1, keep=lambda e: e.get("id") == entry_id)), None)
 
 
 def file_of(folder: Path, entry_id: str, n: int) -> Path | None:

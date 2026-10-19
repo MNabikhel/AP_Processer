@@ -205,7 +205,7 @@ def load_reference_data(
 ) -> ReferenceData:
     from .tax import TaxRateTable
 
-    notes = parse_policy_notes(Path(policy_notes).read_text(encoding="utf-8")) if policy_notes else []
+    notes = parse_policy_notes(Path(policy_notes).read_text(encoding="utf-8-sig")) if policy_notes else []
     treatments: dict[str, TaxTreatment] = load_tax_mapping(tax_mapping) if tax_mapping else {}
     rates = TaxRateTable.load(tax_rates) if tax_rates else TaxRateTable.load()
     return ReferenceData(

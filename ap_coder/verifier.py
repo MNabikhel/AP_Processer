@@ -37,6 +37,7 @@ SETTING = "verifier"  # Settings → Reading, as JSON: {"on", "rounds", "minutes
 DEFAULT_ROUNDS, MAX_ROUNDS = 3, 6
 DEFAULT_MINUTES, MAX_MINUTES = 5.0, 30.0
 MAX_PAGES = 3  # page images sent: the header, the lines, the totals
+MAX_TRIES = 3  # reviews the model server cut off before any answer, before an invoice leaves the line as failed
 MAX_LINES = 60  # an invoice with more lines than this is not reviewed (it would not fit the model): a person checks it
 DESCRIPTION_CHARS = 160  # of each line's description, as it is shown
 NAME = "AI reviewer"
@@ -150,7 +151,8 @@ def proposal(output: dict[str, Any], vendor: dict[str, Any] | None, gl_names: di
     out["taxes"] = [{"tax": t.get("tax_type"), "province": t.get("province") or "", "rate": t.get("rate"),
                      "on": _shown(t.get("taxable_amount")), "amount": _shown(t.get("tax_amount"))}
                     for t in output.get("tax_lines") or []]  # fmt: skip
-    out["place_of_supply"] = output.get("ship_to_province") or ""
+    # the ship-to printed, else the place of supply worked out from where it is delivered to us (pipeline)
+    out["place_of_supply"] = output.get("ship_to_province") or output.get("place_of_supply") or ""
     if vendor:
         out["vendor_list"] = {k: v for k, v in {
             "name": vendor.get("display_name"), "erp_id": vendor.get("erp_id"), "gst_hst": vendor.get("expected_gst"),
@@ -160,10 +162,12 @@ def proposal(output: dict[str, Any], vendor: dict[str, Any] | None, gl_names: di
         from .schema import InvoiceCoding
         from .taxmath import math_check
 
+        # A stored proposal carries its GL distribution too, which InvoiceCoding doesn't take.
+        coding = InvoiceCoding.model_validate({k: v for k, v in output.items() if k != "gl_distribution"})
         out["math"] = [f"{'OK' if r['ok'] else 'WRONG'}: {r['what']}: {r['detail']}"
-                       for r in math_check(InvoiceCoding.model_validate(output))["rows"]]  # fmt: skip
-    except Exception:  # noqa: BLE001 - the math is a help, never a reason not to ask
-        pass
+                       for r in math_check(coding)["rows"]]  # fmt: skip
+    except Exception as exc:  # noqa: BLE001 - the math is a help, never a reason not to ask
+        log.warning("%s: the math is not shown (%s: %s)", NAME, type(exc).__name__, str(exc)[:200])
     return out
 
 
@@ -255,7 +259,8 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
     ``seconds`` in all. Round 1 is everything; after a confident round the next is what it disputed, with its
     earlier answers; after a round it was not confident of, everything again (what it was unsure of, or never
     answered, is not dropped). A dispute it keeps on a second look while confident is a disagreement; one it drops is
-    resolved. Agreed means every field and every line was answered "agree" in a round it was confident of."""
+    resolved. Agreed means every field and every line was answered "agree" in a round it was confident of. The model
+    server failing on the first question (``temporary``: stopped, no answer in time) is raised: that is no review."""
     start = clock()
     all_fields = list(FIELDS)
     all_lines = [li["line_number"] for li in shown["lines"] if isinstance(li.get("line_number"), int)]
@@ -275,6 +280,8 @@ def review(ask: Callable[[str, list[str], list[int]], dict[str, Any]], shown: di
         try:
             data = ask(question(shown, fields, lines, earlier), fields, lines)
         except Exception as exc:  # noqa: BLE001 - a reply it couldn't give counts as not sure
+            if not done and getattr(exc, "temporary", False):
+                raise  # the server stopped or ran out of time before any answer: no review, the caller postpones it
             why = f"no usable answer ({str(exc)[:160]})"
             done += 1
             break
@@ -531,7 +538,14 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         shown["lessons"] = learned
     budget, started = cfg.minutes * 60, clock()
     ask = ask_model(coder, images, seconds_left=lambda: budget - (clock() - started))
-    found = review(ask, shown, rounds=cfg.rounds, seconds=budget, clock=clock)
+    try:
+        found = review(ask, shown, rounds=cfg.rounds, seconds=budget, clock=clock)
+    except CodingError as exc:
+        if not exc.temporary:
+            raise
+        if store.restoring() or store.row_identity(iid) != identity:
+            return Outcome(iid, "skipped", "not applied: a backup was restored meanwhile")
+        return _postpone_or_fail(store, row, str(exc)[:300])
     fields = {f: {"value": shown["fields"].get(f), **v} for f, v in found.fields.items()}
     result = {**found.to_dict(), "fields": fields, "model": model, "proposal": digest(output),
               "at": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
@@ -543,6 +557,21 @@ def _verify(settings: Any, store: Any, row: dict[str, Any], cfg: ReviewerSetting
         "status": found.status, "rounds": found.rounds, "seconds": found.seconds, "fields": sorted(found.fields),
         "lines": sorted(found.lines)})  # fmt: skip
     return Outcome(iid, found.status, found.summary or found.why, approved, found.rounds, found.seconds)
+
+
+def _postpone_or_fail(store: Any, row: dict[str, Any], problem: str) -> Outcome:
+    """The model server stopped, or gave no answer in time, before the reviewer answered at all: that is the server's
+    trouble, not the reviewer's verdict. Back in line (still held), or failed once it happened MAX_TRIES times."""
+    iid = int(row["invoice_id"])
+    tries = int(row.get("tries") or 0) + 1
+    if tries >= MAX_TRIES:
+        message = (f"the chat model didn't answer {tries} times ({problem}); have it check again from the review "
+                   "screen once LM Studio is running with the model loaded")  # fmt: skip
+        store.finish_verification(iid, "failed", error=message, tries=tries)
+        return Outcome(iid, "failed", message)
+    message = f"{problem}: reviewed again later (try {tries} of {MAX_TRIES})"
+    store.finish_verification(iid, "waiting", error=message, tries=tries)
+    return Outcome(iid, "postponed", message)
 
 
 def _fold_in(store: Any, inv: dict[str, Any], result: dict[str, Any], *, expect: Any = None) -> bool:

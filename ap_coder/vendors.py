@@ -236,7 +236,9 @@ def vendor_findings(
     if not key:
         return []
     findings: list[tuple[str, str, str]] = []
-    master = store.get_vendor(key)
+    # The vendor's own row (a hold AP put on the name) and the master vendor it is matched to (by name, or by its
+    # GST/HST number below): each carries its own controls, so both are checked for a hold.
+    own = master = store.get_vendor(key)
     if master and master.get("in_master") == ADDED_HERE:
         findings.append(
             (ERROR, "VENDOR_ADDED_HERE",
@@ -276,8 +278,10 @@ def vendor_findings(
              f"invoice #{other['id']} from {other['vendor_name']} has the same number and total: the same bill "
              "under two vendor names?")
         )  # fmt: skip
-    if master and master.get("status") == ON_HOLD:
-        note = f": {master['notes']}" if master.get("notes") else ""
+    held = [v for v in (own, master) if v and v.get("status") == ON_HOLD]
+    if held:
+        notes = list(dict.fromkeys(v["notes"] for v in held if v.get("notes")))
+        note = f": {'; '.join(notes)}" if notes else ""
         findings.append((ERROR, "VENDOR_ON_HOLD", f"this vendor is on hold in the vendor list{note}"))
 
     history = [h for h in store.vendor_invoices(key) if h["id"] != exclude_invoice_id]

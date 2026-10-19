@@ -95,6 +95,7 @@ def test_registration_numbers():
 def test_ids_and_names_compare_loosely():
     assert norm_id("INV-2026/0912") == norm_id("inv 2026 0912")
     assert norm_name("Services Informatiques Laurentides Inc.") == norm_name("SERVICES INFORMATIQUES LAURENTIDES")
+    assert norm_name("Les Œuvres du Cœur Ltée") == norm_name("LES OEUVRES DU COEUR") == "les oeuvres du coeur"
     assert same_value("grand_total", "2 759,40 $", 2759.4)
     assert same_value("invoice_date", "Oct 1, 2026", "2026-10-01")
     assert not same_value("invoice_number", "NW-0912", "NW-0921")

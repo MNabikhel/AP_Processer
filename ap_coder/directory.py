@@ -4,7 +4,8 @@ Each column has a filter box. What is typed there is read by the column's kind:
 
 * text (vendor, invoice #, PO, GL account, people...): ``north`` contains "north"; ``north*`` starts with it,
   ``*0912`` ends with it (``*`` is any run of characters, ``?`` one character); ``=TELUS`` is exactly that;
-  ``!credit`` does not contain it. Case and accents are ignored as SQLite's ``LIKE`` does (ASCII letters).
+  ``!credit`` does not contain it. Case and accents are ignored ("energir" finds "Énergir"): both sides are
+  compared through the SQL function ``ap_fold`` that store.py gives each connection.
 * amounts: ``1250``, ``>1000``, ``<=500``, ``100..250`` (a range, both ends included), ``!0``.
 * dates: ``2026-09-14``, ``>2026-09-01``, ``2026-09`` (the month), ``2026`` (the year), ``2026-07..2026-09``.
 * numbers (AP Coder #, export batch): like amounts; ``*`` alone is "has one", ``!*`` "has none".
@@ -27,8 +28,10 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode
 
 from .safe import parse_amount
+from .store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, fold_text
 
 TEXT, MONEY, DATE, NUMBER, STATUS, WHERE = "text", "money", "date", "number", "status", "where"
+STATUSES = (REVIEW, PARKED, PENDING, APPROVED, REJECTED, FAILED)
 PAGE_SIZE = 100
 EXPORT_LIMIT = 50_000
 PRESETS_SETTING = "directory_presets"
@@ -178,10 +181,13 @@ def _text(sql: str, typed: str) -> tuple[str, list[Any]]:
     if value in ("", "*"):
         has = f"COALESCE(CAST({sql} AS TEXT), '') != ''"
         return (f"NOT ({has})", []) if op in ("!", "!=", "<>") else (has, [])
+    # The column through ap_fold, what is typed through the same fold_text: accents and case of any letter are
+    # ignored, not only A to Z. Folded before the wildcards are read, so a fullwidth ％ never becomes SQL's %.
+    value = fold_text(value)
     if op == "=" and not any(c in value for c in "*?"):
-        return f"LOWER(COALESCE(CAST({sql} AS TEXT), '')) = LOWER(?)", [value]
+        return f"ap_fold(COALESCE(CAST({sql} AS TEXT), '')) = ?", [value]
     pattern = _like(value) if any(c in value for c in "*?") else f"%{_like(value)}%"
-    clause = f"COALESCE(CAST({sql} AS TEXT), '') LIKE ? ESCAPE '\\'"
+    clause = f"ap_fold(COALESCE(CAST({sql} AS TEXT), '')) LIKE ? ESCAPE '\\'"
     if op in ("!", "!=", "<>"):
         return f"NOT ({clause})", [pattern]
     if op in (">", "<", ">=", "<="):
@@ -257,8 +263,12 @@ def condition(key: str, typed: str) -> tuple[str, list[Any]]:
     if col.kind == WHERE:
         raise FilterError("“Where it stands” can't be filtered: filter on Status instead.")
     if col.kind == STATUS:
-        statuses = [s.strip().lower() for s in typed.split(",") if s.strip()]
-        return f"status IN ({', '.join('?' * len(statuses))})", statuses
+        # Only real statuses, each once: the list comes from the address and could be any length (B-126).
+        statuses = list(dict.fromkeys(s.strip().lower() for s in typed.split(",") if s.strip()))
+        unknown = [s for s in statuses if s not in STATUSES]
+        if unknown or not statuses:
+            raise FilterError(f"“{(unknown or [typed])[0]}” is not a status: pick one from the list.")
+        return f"status IN ({', '.join('?' * len(statuses))})", statuses  # at most len(STATUSES)
     if key == "gl":  # any one line's account ("6*": a line coded to a 6000 account)
         sql, params = _text(_LINE_GL, typed.lstrip("!"))
         each = f"EXISTS (SELECT 1 FROM json_each(doc, '$.line_items') AS l WHERE {sql})"
