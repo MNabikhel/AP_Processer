@@ -70,9 +70,10 @@ Question 4 still needed a code search for one method's callers: the map stays at
 A fresh agent read only the CLAUDE.md files, MODULES.md, decisions.md and BUGS.md; each answer was graded in the code.
 1. A second approval refused on the office network: right on D-34 (a colleague's address stands for their login) and
    the routes; it could not name the function. It is `Store.final_approve()`: another name (any case) and another
-   login than the first `approved` event's `detail.login`. Fix: a core map line.
+   login than the latest `approved` event's `detail.login`; the review screen and the second-approval tab repeat the
+   check (`_second()` in web/pages/review.py). Fix: a core map line naming all three.
 2. A new plain-CSV ERP export: right (erp/exports.py `build()`, D-28 text as typed, the tests to copy); it could not
-   find the list of formats. Fix: the erp map names `FORMATS` and the Exports page's labels.
+   find the list of formats. Fix: the erp map names `FORMATS`, `build()`'s branch and the page's `SHORT_FORMATS` tabs.
 3. Where the review gate stops a commit, and renaming the map-reviewer: right (the settings.json matcher must follow
    the `name:`). Fix: the scripts map names `_unreviewed()`, the comparison.
 4. A required argument on `Store.events()`: guessed most callers and named the right tests, but missed
@@ -80,11 +81,11 @@ A fresh agent read only the CLAUDE.md files, MODULES.md, decisions.md and BUGS.m
    now says so and how to search (MODULES.md lists imports, not a store handed in, as intake/inbox.py gets it).
 5. Whose GST number on a scan, and a bad check digit: right on capture (bill-to reading capped below verified,
    B-44; `GST_NUMBER_VALID`). Missing: coding's code. Fix: the coding map names `GST_NUMBER_CHECK_DIGIT` (with
-   `_MISSING`, `_FORMAT`, all askable of the vendor) and taxreturn.py's claim at risk.
-To keep the root map at 60 lines, two of its lines were shortened (the checker's list, the cold-start rule).
+   `GST_HST_NUMBER_MISSING`, `GST_HST_NUMBER_FORMAT`, all askable of the vendor) and taxreturn.py's claim at risk.
+To keep the root map under 60 lines, two of its lines were shortened (the checker's list, the cold-start rule).
 
 ## Next checks
-- A cold-start round every 3 months (root CLAUDE.md): add it here as round 4, 5... with its 5 questions, the verdicts
+- A cold-start round every 3 months (root CLAUDE.md): add it here as round 5, 6... with its 5 questions, the verdicts
   and the fixes. The map-reviewer says when the last one is older than that.
 
 ## Not recoverable
