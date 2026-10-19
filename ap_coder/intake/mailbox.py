@@ -13,9 +13,10 @@ The email moves to ``emails/`` (or ``emails/needs a person/``) so it is unpacked
 added to ``emails/triage.jsonl`` (``triage_log``): what the email was, and why.
 
 Signature logos and other small inline pictures are left out: an image referenced from the email's own
-text (a Content-ID) or smaller than ``MIN_IMAGE_BYTES`` is not an invoice. Any other attachment left out (a zip, a
-Word file, one that cannot be read) makes the email wait for a person, with the reason (``Mail.left_out``). An email
-attached as a file (.eml, .msg) is opened like a forwarded one.
+text (a Content-ID) or smaller than ``MIN_IMAGE_BYTES`` is not an invoice, nor is Exchange's ATT00001.htm, a calendar
+invite or Outlook's winmail.dat next to the invoice. Any other attachment left out (a zip, a Word file, one that
+cannot be read) makes the email wait for a person, with the reason (``Mail.left_out``). An email attached as a file
+(.eml, .msg) is opened like a forwarded one.
 
 An email that cannot be read (damaged, far too large, or emails forwarded inside each other hundreds of
 times) moves to ``emails/could not read`` with the reason, so it never stops the other files.
@@ -50,6 +51,11 @@ MAX_PARTS = 500  # attachments and text parts read from one email
 MAX_BOUNDARY_LINES = 5_000  # lines starting "--" (each part has one): an email with more is not parsed at all
 LOGO = "(a small or inline picture, e.g. a logo)"
 SIGNATURE = "(a digital signature or contact card)"
+NO_INVOICE = "(the email's own text or a calendar invite)"
+OUTLOOK_FORMATTING = "(Outlook's formatting, winmail.dat)"  # it holds the attachments when nothing else came
+_NO_INVOICE_TYPES = {"text/plain", "text/html", "text/calendar", "application/ics"}
+_NO_INVOICE_SUFFIXES = {".txt", ".htm", ".html", ".ics"}
+_TNEF_TYPES = {"application/ms-tnef", "application/vnd.ms-tnef"}
 _SIGNATURE_TYPES = {"application/pkcs7-signature", "application/x-pkcs7-signature", "application/pgp-signature",
                     "application/pgp-keys", "text/vcard", "text/x-vcard"}  # fmt: skip
 _SIGNATURE_SUFFIXES = {".p7s", ".asc", ".sig", ".vcf"}
@@ -90,8 +96,14 @@ class Mail:
 
     @property
     def left_out(self) -> list[str]:
-        """The attachments left out that may be an invoice (all but logos and signatures): a person must look."""
-        return [s for s in self.skipped if not s.endswith((LOGO, SIGNATURE))]
+        """The attachments left out that may be an invoice (all but logos, signatures, the email's own text and
+        calendar invites; Outlook's winmail.dat only when nothing else came, as it then holds the attachments): a
+        person must look."""
+        kept = bool(self.found or self.sheets)
+        return [
+            s for s in self.skipped
+            if not s.endswith((LOGO, SIGNATURE, NO_INVOICE)) and not (kept and s.endswith(OUTLOOK_FORMATTING))
+        ]  # fmt: skip
 
     def add(self, inner: Mail) -> None:
         """Add what an email attached to this one holds (its words, its attachments)."""
@@ -152,7 +164,7 @@ def _keep(mail: Mail, name: str, content_type: str, content: bytes, inline: bool
         return
     suffix = _kind(name, content_type, content)
     if not suffix:
-        mail.skipped.append(f"{label} (not a PDF or image)")
+        mail.skipped.append(f"{label} {_not_read(name, content_type)}")
         return
     if suffix == ".pdf" and not content.lstrip()[:1024].startswith(b"%PDF") and b"%PDF" not in content[:1024]:
         mail.skipped.append(f"{label} (named as a PDF but is not one)")
@@ -166,6 +178,19 @@ def _keep(mail: Mail, name: str, content_type: str, content: bytes, inline: bool
     if Path(safe).suffix.lower() != suffix:  # keep a type the invoices folder picks up
         safe = f"{safe if Path(safe).suffix.lower() not in DOCUMENT_EXTENSIONS else Path(safe).stem}{suffix}"
     mail.found.append((safe, content))
+
+
+def _not_read(name: str, content_type: str) -> str:
+    """Why an attachment that is not a PDF, a picture or a spreadsheet is left out. Exchange's ATT00001.htm (a
+    footer), a text or HTML copy of the email, a calendar invite and winmail.dat hold no invoice of their own (an
+    HTML file named as an invoice may be one); anything else (a zip, a Word or XML file ...) may."""
+    ext = Path(name).suffix.lower()
+    if content_type in _TNEF_TYPES or name.lower() == "winmail.dat":
+        return OUTLOOK_FORMATTING
+    plain = ext in _NO_INVOICE_SUFFIXES or (not ext and content_type in _NO_INVOICE_TYPES)
+    if plain and not triage.mentions_invoice(Path(name).stem):
+        return NO_INVOICE
+    return "(not a PDF or image)"
 
 
 def attachments(raw: bytes) -> tuple[str, list[tuple[str, bytes]], list[str]]:

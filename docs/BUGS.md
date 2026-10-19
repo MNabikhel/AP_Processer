@@ -1485,10 +1485,10 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 | AI and readers | 10 | 8 (B-174 to B-181) | 2 (N-82 to N-83) |
 | Document capture | 12 | 9 (B-182 to B-189, B-205) | 3 (N-84 to N-86) |
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
-| Intake, email and command line | 12 | 10 (B-140 to B-149) | 2 (N-88 to N-89) |
+| Intake, email and command line | 13 | 11 (B-140 to B-149, B-206) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
 | Day-one walk-through | 8 | 8 (B-197 to B-204) | 0 |
-| **Total** | **88** | **71** | **17** |
+| **Total** | **89** | **72** | **17** |
 
 ### Store and config
 
@@ -2091,6 +2091,16 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 - **Fix:** a one-line message naming the file and `python -m ap_coder labels`, exit 2.
 - **Test:** `tests/test_sweep3_intake.py::test_evaluate_without_a_labels_file_says_so_in_one_line`
 - **Lesson:** Don't hand a default path to a loader without checking the file is there: a first run has none.
+
+#### B-206 · Exchange's ATT00001.htm, winmail.dat or a calendar invite made every invoice email wait for a person · medium
+- **Where:** `ap_coder/intake/mailbox.py:98` (`Mail.left_out`), `ap_coder/intake/mailbox.py:183` (`_not_read`)
+- **Symptom:** since B-140, an ordinary invoice email with Exchange's ATT00001.htm / ATT00001.txt footer, Outlook's winmail.dat or a calendar invite went to `emails/needs a person/` with "left out, not read: ATT00001.txt ... an invoice in it must be added by hand".
+- **Cause:** `Mail.left_out` counted every skipped part but logos and signatures, also those that never hold an invoice.
+- **Reproduce:** review33/s/t1.py: an email with INV1234.pdf plus one of those parts, then `mailbox.unpack()`.
+- **Reproduced:** yes (`ATT00001.txt needs_person=True ... reasons=['left out, not read: ATT00001.txt (not a PDF or image). ...']`, the same for .htm, winmail.dat and invite.ics)
+- **Fix:** `_not_read` marks a .txt/.htm/.html/.ics part (or an unnamed text/plain, text/html or calendar one) as the email's own text or a calendar invite unless its name mentions an invoice (`triage.mentions_invoice`), and winmail.dat (application/ms-tnef) as Outlook's formatting. `left_out` leaves out the first always and winmail.dat when the email gave a PDF, a picture or a spreadsheet (alone it may hold the attachments). A zip, Word, RTF or XML file, an HTML file named as an invoice, a damaged part and the depth/size limits still make the email wait; spreadsheets keep their own "Not for AP" path.
+- **Test:** `tests/test_sweep3_intake.py::test_exchange_footers_outlook_formatting_and_invites_do_not_make_an_invoice_email_wait` (also `test_parts_that_may_hold_an_invoice_still_make_the_email_wait`, `test_an_outlook_winmail_dat_alone_is_left_out_since_it_may_hold_the_attachments`)
+- **Lesson:** Don't make "may be an invoice" mean "anything that isn't a PDF": list what can really hold one, or every email waits.
 
 ### Setup, launcher and update
 

@@ -143,6 +143,62 @@ def test_emails_attached_as_files_inside_each_other_are_opened_only_so_deep():
     assert mail.found == [] and any("levels deep" in s for s in mail.skipped)
 
 
+# --- B-206: the parts that come with ordinary invoice emails are not "left out" ----------------------------------
+
+
+def _invoice_with(*extra: tuple[str, str, str, bytes]) -> EmailMessage:
+    m = EmailMessage()
+    m["Subject"], m["From"] = "Invoice INV-12", "ar@vendor.example"
+    m.set_content("Please find attached invoice INV-12.")
+    m.add_attachment(
+        _pdf("INVOICE No: INV-12  Total 50.00"), maintype="application", subtype="pdf", filename="INV-12.pdf"
+    )
+    for name, maintype, subtype, data in extra:
+        m.add_attachment(data, maintype=maintype, subtype=subtype, filename=name)
+    return m
+
+
+def test_exchange_footers_outlook_formatting_and_invites_do_not_make_an_invoice_email_wait(tmp_path):
+    """Exchange adds ATT00001.htm / ATT00001.txt (a footer), Outlook winmail.dat (its formatting), a vendor a calendar
+    invite: none holds an invoice, so the email is filed like any invoice email."""
+    for n, part in enumerate([
+        ("ATT00001.txt", "text", "plain", b"Thanks"),
+        ("ATT00001.htm", "text", "html", b"<p>Thanks</p>"),
+        ("winmail.dat", "application", "ms-tnef", b"\x78\x9f\x3e\x22" + b"x" * 100),
+        ("invite.ics", "text", "calendar", b"BEGIN:VCALENDAR"),
+    ]):  # fmt: skip
+        path = tmp_path / f"m{n}.eml"
+        path.write_bytes(_invoice_with(part).as_bytes())
+        result = unpack(path)
+        assert [p.name for p in result.saved] == [f"m{n} - INV-12.pdf"], part[0]
+        assert not result.triage.needs_person and not result.triage.left_out, (part[0], result.triage.reasons)
+        assert (tmp_path / "emails" / f"m{n}.eml").exists()
+
+
+def test_parts_that_may_hold_an_invoice_still_make_the_email_wait(tmp_path):
+    """A Word file, an XML (UBL) invoice, an HTML file named as an invoice, an RTF: a person must look."""
+    for n, part in enumerate([
+        ("terms.docx", "application", "vnd.openxmlformats-officedocument.wordprocessingml.document", b"PK doc"),
+        ("INV-13.xml", "application", "xml", b"<Invoice/>"),
+        ("Invoice INV-14.html", "text", "html", b"<h1>Invoice INV-14</h1>"),
+        ("INV-15.rtf", "application", "rtf", b"{\\rtf1 Invoice}"),
+    ]):  # fmt: skip
+        path = tmp_path / f"w{n}.eml"
+        path.write_bytes(_invoice_with(part).as_bytes())
+        result = unpack(path)
+        assert result.triage.needs_person and any(part[0] in s for s in result.triage.left_out), part[0]
+
+
+def test_an_outlook_winmail_dat_alone_is_left_out_since_it_may_hold_the_attachments():
+    m = EmailMessage()
+    m["Subject"] = "Invoice INV-16"
+    m.set_content("Invoice attached.")
+    m.add_attachment(
+        b"\x78\x9f\x3e\x22" + b"x" * 100, maintype="application", subtype="ms-tnef", filename="winmail.dat"
+    )
+    assert any("winmail.dat" in s for s in read_eml(m.as_bytes()).left_out)
+
+
 # --- B-141: a forwarded email sent in base64 -------------------------------------------------------------------------
 
 

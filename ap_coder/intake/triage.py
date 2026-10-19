@@ -244,6 +244,11 @@ class EmailTriage:
         return LABELS[self.kind]
 
 
+def mentions_invoice(text: str) -> bool:
+    """The text (a file name, say) names an invoice, a bill, a credit note or a statement."""
+    return bool(_find(_INVOICE_MENTION, fold(text.replace("_", " ").replace("-", " "))))
+
+
 def _find(pattern: re.Pattern[str], text: str) -> str:
     m = pattern.search(text)
     return m.group(0) if m else ""
