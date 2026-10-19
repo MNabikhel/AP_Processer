@@ -243,6 +243,22 @@ def test_a_colleague_who_changes_their_name_keeps_their_edits_and_can_start_over
     assert not any(invoice_id in drafts for drafts in app.state.person_drafts.values())
 
 
+def test_a_link_from_another_site_keeps_who_the_colleague_is(app):
+    """B-193: the name cookie was SameSite=Strict, so a link to the dashboard from another site (the intranet, a
+    webmail) came without it and asked "Who are you?" again. Lax sends it on such a link (a GET, which never changes
+    anything); a POST from another site is still refused by the header and origin checks (web/security.py)."""
+    client = colleague(app, "10.0.0.5")
+    answer = client.post("/who", data={"name": "Ana"}, headers=PAGE)
+    cookie = answer.headers["set-cookie"].lower()
+    assert "samesite=lax" in cookie and "httponly" in cookie
+    refused = client.post(
+        "/review/bulk-approve",
+        data={},
+        headers={**PAGE, "Origin": "http://example.com", "Sec-Fetch-Site": "cross-site"},
+    )
+    assert refused.status_code == 403
+
+
 def test_an_ipv4_mapped_loopback_address_is_this_computer():
     assert identity.is_this_computer("::ffff:127.0.0.1")
     assert not identity.is_this_computer("::ffff:10.0.0.5")

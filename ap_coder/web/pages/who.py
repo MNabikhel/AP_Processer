@@ -36,6 +36,8 @@ def who_save(request: Request, name: str = Form(""), next: str = Form("/review")
     if found is not None and found.name != cleaned:
         rename_drafts(request, found, cleaned)  # their unsaved edits on the review screen stay theirs
     answer = done(request, next or "/review", f"Thanks, {cleaned}. Your approvals are now in your name.")
+    # Lax, not Strict: a link from another site (the intranet, a webmail) still knows who they are. That opens a page
+    # only (a GET never changes anything); a POST from another site is refused by LocalOnly (web/security.py).
     answer.set_cookie(identity.COOKIE, identity.cookie_value(request.app.state.identity_secret, cleaned),
-                      max_age=COOKIE_DAYS * 86400, httponly=True, samesite="strict", path="/")  # fmt: skip
+                      max_age=COOKIE_DAYS * 86400, httponly=True, samesite="lax", path="/")  # fmt: skip
     return answer

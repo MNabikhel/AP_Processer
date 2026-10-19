@@ -48,3 +48,19 @@
 - **Test:** `tests/test_network_identity.py::test_two_colleagues_who_give_one_name_on_two_computers_keep_their_own_edits`,
   `tests/test_network_identity.py::test_a_colleague_who_changes_their_name_keeps_their_edits_and_can_start_over`
 - **Lesson:** Don't key a person's state by the name they typed alone: a name is neither unique nor fixed.
+
+#### B-193 · A link from another site to the dashboard asked a colleague "Who are you?" again · low
+- **Where:** `ap_coder/web/pages/who.py:36` (`who_save`)
+- **Symptom:** a colleague who gave their name follows a link to AP Coder from another site (the intranet, a webmail)
+  and is asked "Who are you?" again; typing the address works.
+- **Cause:** the signed name cookie was `SameSite=Strict`, which the browser leaves out of a navigation started on
+  another site.
+- **Reproduce:** in Chromium, give a name on `http://<server>:<port>/who`, then click a link to `/review` on a page
+  served from another origin.
+- **Reproduced:** yes (`link from another site: .../who?next=%2Freview True False`)
+- **Fix:** `SameSite=Lax`: the cookie comes with a top-level GET from a link (a GET never changes anything); a POST
+  from another site is still refused by LocalOnly (header `X-AP-Coder`, Origin, Sec-Fetch-Site).
+- **Test:** `tests/test_network_identity.py::test_a_link_from_another_site_keeps_who_the_colleague_is` (the cookie's
+  attributes, and a cross-site POST still 403; the sweep's browser repro used the server's own address, which B-190
+  now counts as this computer)
+- **Lesson:** Don't make a login cookie Strict when the CSRF defence is already elsewhere: it only breaks incoming links.
