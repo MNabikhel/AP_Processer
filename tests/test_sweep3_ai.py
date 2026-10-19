@@ -9,7 +9,7 @@ from dataclasses import replace
 
 from ap_coder.ai import page_worker
 from ap_coder.ai.offline_coder import bank_details, code_from_capture
-from ap_coder.ai.pipeline import InvoicePipeline
+from ap_coder.ai.pipeline import InvoicePipeline, invoice_files
 from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
 from ap_coder.coding.validation import validate_coding
 from ap_coder.coding.vendors import same_bank_account
@@ -116,3 +116,10 @@ def test_an_unlisted_charge_is_labelled_from_its_own_figure_not_part_of_another(
     text = "Acme\nCalgary AB T2P 1A1\nWidgets\n1\n1,250.00\n1,250.00\nDelivery charge\n50.00\nSubtotal\n1,300.00\n"
     coding = code_from_capture(capture, reference, [], text=text).coding
     assert coding.line_items[1].description == "Delivery charge"
+
+
+def test_hidden_files_and_lock_files_in_the_invoices_folder_are_not_invoices(tmp_path):
+    # A Mac copies "._inv.pdf" (its file details) beside "inv.pdf" onto a shared or USB drive; Office leaves "~$" locks.
+    for name in ("inv.pdf", "._inv.pdf", ".hidden.pdf", "~$notes.txt", "scan.png"):
+        (tmp_path / name).write_bytes(b"x")
+    assert [p.name for p in invoice_files(tmp_path)] == ["inv.pdf", "scan.png"]
