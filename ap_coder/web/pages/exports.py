@@ -131,6 +131,7 @@ def problem_rows(store: Store, problems: dict[int, list[str]]) -> list[dict[str,
                 "vendor": inv.get("vendor_name") or "",
                 "number": inv.get("invoice_number") or "",
                 "reasons": list(reasons),
+                "an8": any(jde.an8_problem(r) for r in reasons),  # linked to Settings → JD Edwards E1
             }
         )
     return rows

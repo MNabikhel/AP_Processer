@@ -181,3 +181,16 @@ def test_the_second_approval_says_how_to_give_it_when_one_login_cannot(client, s
     # The control itself is unchanged: the first approver still can't give it.
     answer = client.post(f"/review/{inv['id']}/final-approve", headers=PAGE).json()
     assert store.get_invoice(inv["id"])["status"] == PENDING and "Not done" in client.get(answer["redirect"]).text
+
+
+# --- 5. JD Edwards: a missing supplier number links to where it is set ---------------------------------------------
+
+
+def test_an_export_held_back_for_a_supplier_number_links_to_the_address_numbers(client, store):
+    cascade = next(i for i in store.list_invoices(REVIEW) if "Cascade" in (i["vendor_name"] or ""))  # no ERP ID
+    store.approve_invoice(cascade["id"], store.get_invoice(cascade["id"])["ai_output"], "Jordan Lee")
+    page = client.get("/exports?fmt=jde").text
+    assert "no JDE supplier number (AN8)" in page
+    held = page[page.index("cannot go to JD Edwards yet") :]
+    assert 'href="/settings/jde#an8"' in held and "Supplier address numbers" in held
+    assert 'id="an8"' in client.get("/settings/jde").text

@@ -58,12 +58,15 @@
     {% set one = problems | length == 1 %}
     {{ problems | length | plural("invoice") }} cannot go to JD Edwards yet and {{ "is" if one else "are" }} left out of the
     batch: fix {{ "it" if one else "them" }} (the mapping in Settings → JD Edwards E1, the vendor master's ERP ID, or the
-    invoice) and export {{ "it" if one else "them" }} later.</div></div>
+    invoice) and export {{ "it" if one else "them" }} later.
+    {% if problems | selectattr("an8") | list %}<a href="/settings/jde#an8">Set the missing supplier numbers in Settings
+      → JD Edwards E1 → Supplier address numbers</a>.{% endif %}</div></div>
   <div class="table-wrap">
     <table class="apc-table">
       <thead><tr><th>#</th><th>Vendor</th><th>Invoice #</th><th>Why not</th></tr></thead>
       <tbody>{% for p in problems %}<tr><td><b>{{ p.id }}</b></td><td>{{ p.vendor }}</td><td>{{ p.number }}</td>
-        <td class="w">{% for reason in p.reasons %}<div>{{ reason }}</div>{% endfor %}</td></tr>{% endfor %}</tbody>
+        <td class="w">{% for reason in p.reasons %}<div>{{ reason }}</div>{% endfor %}
+          {% if p.an8 %}<a class="small" href="/settings/jde#an8">Supplier address numbers</a>{% endif %}</td></tr>{% endfor %}</tbody>
     </table>
   </div>
   {% endif %}
