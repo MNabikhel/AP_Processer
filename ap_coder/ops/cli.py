@@ -606,6 +606,10 @@ def cmd_labels(args: argparse.Namespace) -> int:
 
 
 def cmd_evaluate(args: argparse.Namespace) -> int:
+    if not Path(args.ground_truth).exists():
+        print(f"No labels file at {args.ground_truth}: make one with `python -m ap_coder labels` and have AP "
+              "correct it, or give the path of yours with --ground-truth.", file=sys.stderr)  # fmt: skip
+        return 2
     report = evaluate(args.predictions, args.ground_truth, target=args.target)
     data = report.to_dict()
     if not args.show_mismatches:
