@@ -20,19 +20,19 @@ centers, checks GST/HST/PST/QST and the math, and learns from what AP approves. 
 
 ## How to navigate
 Read this file, then the CLAUDE.md of the folder you will change, then the code. Each folder's **Used by:** line
-names the folders that import or read it: those are what else to check when its interface changes.
+names the folders that import or read it: those are what else to check when its interface changes. The maps stop at
+modules: who calls one function, search the code (`grep -rn "\.events(" ap_coder scripts`), since `ap_coder/MODULES.md`
+lists imports, not an object handed in (intake/inbox.py is given the store).
 
 ## The rule
 Any change to a folder's interface, dependencies or files means updating its CLAUDE.md in the same change, and
-checking every folder in its **Used by:** line. Run `python scripts/check_map.py` before committing (it checks the
-size, the Files index, Depends on / Used by against the imports for `ap_coder/` packages, Interface names, bug
-lessons and `ap_coder/MODULES.md`), and run the map-reviewer agent
+checking every folder in its **Used by:** line. Run `python scripts/check_map.py` before committing (size, Files
+index, Depends on / Used by against imports, Interface names, bug lessons, MODULES.md) and the map-reviewer agent
 (`.claude/agents/map-reviewer.md`) on the change. CI runs the same checker (the "Codebase map" job). Claude Code
 hooks (`.claude/settings.json`) remind you after each edit and stop a `git commit` of code the map-reviewer hasn't
 reviewed as it is (Markdown-only edits after its review pass; `scripts/map_review_gate.py`, D-35).
 Keep each CLAUDE.md near 50 lines (the checker warns past 60, fails past 80, bug lessons aside): one that grows flags a folder to split.
-Every 3 months, run a cold-start round (5 questions, maps only) and add it to `docs/MAP_CHECKS.md`; the map-reviewer
-says when the last one is older.
+Every 3 months, a cold-start round (5 questions, maps only) goes in `docs/MAP_CHECKS.md`; the map-reviewer says when.
 
 ## Standing rules
 - Fully offline at run time: nothing connects to the internet unless `AP_ALLOW_INTERNET=1` (developers, the bundle

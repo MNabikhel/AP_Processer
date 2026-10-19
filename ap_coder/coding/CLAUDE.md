@@ -13,6 +13,7 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.tax` 
 - `check_taxes()` (tax.py): coding, `TaxSetup` -> `TaxFinding` list; `build_gl_distribution()`: (coding, `TaxSetup`) ->
   posting lines that add up to the total (tax spread in whole units for a currency without cents, e.g. JPY); `supply_source()`: (province, where it came from), the one place-of-supply rule; `place_of_supply()` gives its province (B-13).
 - GST/HST number: `valid_gst_number()`, `gst_check_digit_ok()` (tax.py; taxreturn.py uses them); capture's `normalize.luhn_ok()` repeats the check digit: change both.
+  `check_taxes()` warns `GST_HST_NUMBER_MISSING`, `_FORMAT`, `GST_NUMBER_CHECK_DIGIT` (all in `vendor_mail.ASKABLE`); taxreturn.py puts the claim at risk.
 - `validate_coding()` (validation.py): coding, reference and the vendor, PO, terms and duplicate findings -> a report.
 - `rules.apply()`: AP's fixed rules, after the coder (they win over it); `tax_number_findings()` (vendors.py); `payment()` (terms.py).
 - `math_check()` (taxmath.py): the invoice math again, shown under the tax lines; `bulk_approve()` (bulk.py); `draft()` (vendor_mail.py).

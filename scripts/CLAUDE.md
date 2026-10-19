@@ -33,7 +33,7 @@ only from the code alone (GitHub's ZIP or a checkout, no bundle; `AP_ALLOW_INTER
   `--modules` (writes `ap_coder/MODULES.md`), `--hook` (Claude Code reminder, never blocks). New files count before `git add`.
 - map_review_gate.py (D-35): `--reviewed` (the map-reviewer finished: record every changed file's staged and work-tree
   git blob, from the top folder, in git's folder); `--commit` (hook event on stdin: before a `git commit`, any changed
-  non-Markdown file not reviewed as it is exits 2). `commit_dirs()`: the folders a shell command commits in (a backslash read both ways, as an escape and as a Windows path's, B-131).
+  non-Markdown file not reviewed as it is exits 2; `_unreviewed()` compares). `commit_dirs()`: the folders a shell command commits in (a backslash read both ways, as an escape and as a Windows path's, B-131).
 
 ## Gotchas and decisions
 - launch.py, running.py, upgrade.py, check_deps.py, fetch_models.py, check_map.py, map_review_gate.py and install.py run before any package

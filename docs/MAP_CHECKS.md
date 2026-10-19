@@ -66,6 +66,23 @@ Question 4 still needed a code search for one method's callers: the map stays at
 - The final pass and round 3 above were the last check of the maps: 0 checker errors, one warning (core map at
   76 lines, resolved by stage 5's grouping).
 
+## Cold-start round 4 (2026-10-19, after PR #30; the first 3-monthly round, run early)
+A fresh agent read only the CLAUDE.md files, MODULES.md, decisions.md and BUGS.md; each answer was graded in the code.
+1. A second approval refused on the office network: right on D-34 (a colleague's address stands for their login) and
+   the routes; it could not name the function. It is `Store.final_approve()`: another name (any case) and another
+   login than the first `approved` event's `detail.login`. Fix: a core map line.
+2. A new plain-CSV ERP export: right (erp/exports.py `build()`, D-28 text as typed, the tests to copy); it could not
+   find the list of formats. Fix: the erp map names `FORMATS` and the Exports page's labels.
+3. Where the review gate stops a commit, and renaming the map-reviewer: right (the settings.json matcher must follow
+   the `name:`). Fix: the scripts map names `_unreviewed()`, the comparison.
+4. A required argument on `Store.events()`: guessed most callers and named the right tests, but missed
+   ai/training_export.py and `final_approve()` itself. As in round 3, the maps stay at module level; the root map
+   now says so and how to search (MODULES.md lists imports, not a store handed in, as intake/inbox.py gets it).
+5. Whose GST number on a scan, and a bad check digit: right on capture (bill-to reading capped below verified,
+   B-44; `GST_NUMBER_VALID`). Missing: coding's code. Fix: the coding map names `GST_NUMBER_CHECK_DIGIT` (with
+   `_MISSING`, `_FORMAT`, all askable of the vendor) and taxreturn.py's claim at risk.
+To keep the root map at 60 lines, two of its lines were shortened (the checker's list, the cold-start rule).
+
 ## Next checks
 - A cold-start round every 3 months (root CLAUDE.md): add it here as round 4, 5... with its 5 questions, the verdicts
   and the fixes. The map-reviewer says when the last one is older than that.
