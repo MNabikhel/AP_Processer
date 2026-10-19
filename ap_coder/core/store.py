@@ -182,7 +182,6 @@ CREATE INDEX IF NOT EXISTS lessons_vendor ON lessons (vendor_key, kind);
 # reading it (``page_worker.READER_ID``), so a read whose process is gone is put back in line at once
 # (``release_page_reads``); ``tries``: reads cut off by the model server since it was put in line.
 PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED = "waiting", "reading", "done", "failed", "skipped"
-PAGE_READ_STATUSES = (PAGE_WAITING, PAGE_READING, PAGE_DONE, PAGE_FAILED, PAGE_SKIPPED)
 STALE_READING_HOURS = 2
 _IN_LINE = "(status = 'waiting' OR (status = 'reading' AND updated_at < ?))"  # ? = _stale_before()
 

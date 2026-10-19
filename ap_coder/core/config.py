@@ -17,7 +17,6 @@ from . import envfile, paths
 log = logging.getLogger(__name__)
 DEFAULT_AOAI_API_VERSION = "2024-10-21"  # first GA version with strict Structured Outputs
 DEFAULT_LLM_BASE_URL = "http://127.0.0.1:1234/v1"  # LM Studio's local server (Ollama: http://127.0.0.1:11434/v1)
-LLM_PROVIDERS = ("auto", "local", "azure", "off")
 LLM_VISION_MODES = ("auto", "on", "off")
 # Settings an older AP Coder had, read no more: every invoice is read the same way now (an old .env that still has
 # them works as before, they are simply ignored).

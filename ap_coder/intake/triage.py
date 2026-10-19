@@ -33,7 +33,6 @@ INVOICE, CREDIT, STATEMENT, REMINDER, BANK_CHANGE, NOT_FOR_AP = (
     "bank_change",
     "not_for_ap",
 )
-KINDS = (INVOICE, CREDIT, STATEMENT, REMINDER, BANK_CHANGE, NOT_FOR_AP)
 LABELS = {
     INVOICE: "Invoice",
     CREDIT: "Credit note",

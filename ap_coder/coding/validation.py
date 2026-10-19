@@ -18,6 +18,7 @@ from ..ai.extraction import ExtractionResult
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import InvoiceCoding
 from .tax import build_gl_distribution, check_taxes
+from .vendors import norm_tax_number  # letters and digits, lower case
 
 ERROR, WARNING, INFO = "error", "warning", "info"  # info: worth knowing, no penalty
 _ERROR_PENALTY = 0.6
@@ -65,10 +66,6 @@ def _close(a: float, b: float, tolerance: float = _CENT_TOLERANCE) -> bool:
 def _rounding_tolerance(line_count: int) -> float:
     """Totals may differ from the line sum by up to a cent of rounding per line."""
     return max(_CENT_TOLERANCE, 0.01 * line_count)
-
-
-def _norm_id(value: Any) -> str:
-    return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
 
 
 def validate_coding(
@@ -232,7 +229,7 @@ def _cross_check(coding: InvoiceCoding, extraction: ExtractionResult, add: Any, 
         return
 
     di_id = (fields.get("InvoiceId") or {}).get("value")
-    if di_id and _norm_id(di_id) != _norm_id(coding.invoice_number):
+    if di_id and norm_tax_number(di_id) != norm_tax_number(coding.invoice_number):
         add(
             WARNING,
             "DI_INVOICE_ID_DIFFERS",

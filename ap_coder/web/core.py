@@ -60,8 +60,8 @@ TARGET_ACCURACY = 0.90
 # The HTML builders of ap_coder/core/ui.py that a template may call (each escapes the text it is given). The text
 # helpers (money, plural, time_ago, initials) are filters instead, so their output is escaped like any text.
 _UI_HTML = {
-    "avatar", "breadcrumbs", "check", "empty_note", "empty_state", "icon", "kbd", "kv", "meter", "page_header",
-    "pill", "progress", "recent_row", "ring", "section_title", "sparkline", "split_bar", "status", "step",
+    "avatar", "breadcrumbs", "check", "empty_note", "empty_state", "icon", "kbd",
+    "pill", "recent_row", "ring", "section_title", "sparkline", "status", "step",
     "subhead", "supplier_row", "tax_chip", "tile", "tiles", "timeline", "vendor_row",
 }  # fmt: skip
 

@@ -11,21 +11,13 @@ def test_all_text_is_escaped():
     inv = {"id": 1, "vendor_name": evil, "invoice_number": evil, "invoice_date": "2026-01-01", "grand_total": 1,
            "currency": evil, "adjusted_confidence": 0.9, "requires_review": 0, "file_name": "x.pdf"}  # fmt: skip
     outputs = [
-        ui.queue_card(inv, ["GST"], evil),
         ui.check("error", evil, evil, evil),
         ui.pill(evil),
-        ui.page_header(evil, evil, evil),
-        ui.invoice_hero(evil, [("event", evil)], [], 0.5, 10, evil),
-        ui.split_bar([(evil, 5.0)]),
         ui.vendor_row(evil, 3, 0.5, 1),
-        ui.sidebar_profile(evil, 1, 2),
-        ui.sidebar_profile(evil, 1, 2, evil, "ok", evil),
-        ui.page_header(evil, evil, evil, crumbs=[evil, evil]),
         ui.breadcrumbs([evil]),
         ui.section_title(evil, evil),
         ui.status(evil, evil),
         ui.empty_note(evil, evil),
-        ui.kv([(evil, evil)]),
         ui.step("ok", evil, evil),
         ui.empty_state(evil, evil),
         ui.recent_row({**inv, "status": evil}),
@@ -55,13 +47,6 @@ def test_ring_clamps_and_labels():
     assert "--p:0.0000" in ui.ring(-1)
     assert ">81%<" in ui.ring(0.81)
     assert ">3/4<" in ui.ring(0.75, label="3/4")
-
-
-def test_split_bar_folds_small_segments_into_other():
-    segments = [(f"GL {i}", float(10 - i)) for i in range(8)]
-    html = ui.split_bar(segments, max_segments=4)
-    assert html.count("<i style=") == 4 and "Other" in html
-    assert "GL 0" in html and "GL 7" not in html
 
 
 def test_initials_and_stable_avatar_colours():

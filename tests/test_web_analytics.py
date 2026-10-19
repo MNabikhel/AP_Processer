@@ -342,7 +342,9 @@ def test_charts_are_valid_accessible_svg():
                              target=(0.9, "90% target"))  # fmt: skip
     stacked = charts.bar_chart(["Jan", "Feb"], [charts.Series("A", [5, -2]), charts.Series("B", [3, 4], "#eb6834")],
                                title="Stacked", mode="stacked")  # fmt: skip
-    grouped = charts.grouped_bar_chart(["Q1"], [charts.Series("A", [1200]), charts.Series("B", [900])], title="Group")
+    grouped = charts.bar_chart(
+        ["Q1"], [charts.Series("A", [1200]), charts.Series("B", [900])], title="Group", mode="grouped"
+    )
     for chart in (line, stacked, grouped):
         assert isinstance(chart, Markup)
         root = ET.fromstring(str(chart))

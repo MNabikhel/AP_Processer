@@ -25,6 +25,8 @@ Grouped here from the flat `ap_coder/` (docs/decisions.md D-33): `ap_coder.tax` 
 - A worked-out `place_of_supply` sits beside `ship_to_province`, never in it; the model drops it.
 - A check that must always reach a person goes in `capture/supplier.ALWAYS_A_PERSON` (else bulk.py approves an info-level one unseen); one a vendor can fix in `vendor_mail.ASKABLE` (never a fraud or hold code).
 - tax.py's `DEFAULT_RATES_PATH` is `data/` at the project root: `Path(__file__)` is one folder deeper since the grouping.
+- `norm_tax_number()` (vendors.py) also compares the invoice number in validation.py's DI check: keep it "letters and
+  digits, lower case".
 
 ### Bug lessons
 From docs/BUGS.md (one line each; the entry has the repro and the fix).

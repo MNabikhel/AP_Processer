@@ -113,6 +113,7 @@ TOUCHPOINTS = {
     "scripts/running.py": "the dashboard on 127.0.0.1 (no proxy)",
     "scripts/fetch_models.py": "model download only with AP_ALLOW_INTERNET=1 (else copied from models/)",
     "scripts/check_map.py": "git ls-files / git diff on this checkout only (no network)",
+    "scripts/map_review_gate.py": "git diff / ls-files / hash-object on this checkout only (no network)",
     "scripts/check_deps.py": "urllib.request.url2pathname only (a file: URL), no connection",
     "scripts/install.py": "git fetch/pull only with AP_ALLOW_INTERNET=1",
     "scripts/build_offline_bundle.py": "the bundle builder (online by design: it sets AP_ALLOW_INTERNET=1 itself)",

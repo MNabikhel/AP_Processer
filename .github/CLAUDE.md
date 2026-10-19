@@ -5,7 +5,7 @@ There are no issue templates, no Dependabot file and no release workflow. The ap
 it is fully offline at run time (Azure is an opt-in exception).
 
 **Depends on:** `scripts`, `scripts/ci`, `tests`, `ap_coder`
-**Used by:** GitHub Actions (on every push to `main` and `claude/**`, every pull request, and by hand)
+**Used by:** GitHub Actions (on every push to `main`, every pull request, and by hand)
 
 ## Interface
 - `workflows/ci.yml` is the one workflow; what each job runs and how to read a failure is in `.github/workflows/CLAUDE.md`.
