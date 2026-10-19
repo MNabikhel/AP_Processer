@@ -8,6 +8,13 @@ has a short tour, and the [pilot plan](PILOT_PLAN.md) suggests four weeks to a d
 Your existing data is safe. On first start the database upgrades itself (schema version 15), and a
 backup of the database is made automatically once a day when AP Coder starts (the newest 14 are kept).
 
+## This release: colleagues on the office network each approve in their own name
+
+When AP Coder is shared on the office network (`AP_DASHBOARD_ADDRESS=0.0.0.0`), a colleague opening it from another
+computer gives their name once, on a "Who are you?" page. Their approvals and changes are recorded in that name and
+with their computer's address, their unsaved edits on the review screen are their own, and they can give the second
+approval of an invoice someone else approved first. On the computer running AP Coder nothing changes.
+
 ## This release: a bug sweep (72 bugs fixed)
 
 A review of every part of AP Coder, section by section, each finding reproduced, given a test, then fixed. The full log,

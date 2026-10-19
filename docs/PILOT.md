@@ -335,7 +335,10 @@ itself (and makes its `.venv` again with it).
   downloader never runs, and a damaged model file counts as missing instead of being fetched again), the
   installer runs no `git fetch` / `git pull`, and APProcessor.bat never installs Python with `winget`.
 - The dashboard listens only on this laptop (`127.0.0.1`); other computers cannot open it. To share it
-  on the office network on purpose, set `AP_DASHBOARD_ADDRESS=0.0.0.0` before starting.
+  on the office network on purpose, set `AP_DASHBOARD_ADDRESS=0.0.0.0` before starting. A colleague
+  opening it from another computer is asked "Who are you?" once: their approvals, rejections and other
+  changes are then recorded in their name, with their computer's address, so they can give the second
+  approval of an invoice someone else approved first. After AP Coder restarts, they give their name again.
 - The dashboard is AP Coder's own small web server (FastAPI): no usage statistics, no outside service;
   fonts, icons and scripts come from the app, not the internet. It answers only requests addressed to this
   laptop and changes nothing for a page that is not its own.

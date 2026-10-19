@@ -39,7 +39,7 @@ from ap_coder.core.memory import ACCEPTED, vendor_key
 from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
 from ap_coder.erp import stamp
-from ap_coder.web import document
+from ap_coder.web import document, identity
 from ap_coder.web import invoice_view as view
 from ap_coder.web.core import (
     done,
@@ -66,32 +66,54 @@ NAV_PARAMS = ("show", "q", "sort")  # the queue's view, carried along so Previou
 
 
 # --- Drafts: edits not approved yet --------------------------------------------------------------------------------
-# Kept in memory for the dashboard's lifetime, per invoice (one dashboard serves one person on this computer).
+# Kept in memory for the dashboard's lifetime, per invoice and per person: this computer's in
+# ``app.state.invoice_drafts``, each colleague's on the office network (web/identity.py) in
+# ``app.state.person_drafts[<their name>]``, so one person's edits never open on another's screen.
 
 _drafts_lock = threading.Lock()
 
 
-def _drafts(request: Request) -> dict[int, dict[str, Any]]:
+def _all_drafts(request: Request) -> list[dict[int, dict[str, Any]]]:
     state = request.app.state
     with _drafts_lock:
         if not hasattr(state, "invoice_drafts"):
             state.invoice_drafts = {}
-        return state.invoice_drafts
+        if not hasattr(state, "person_drafts"):
+            state.person_drafts = {}
+        return [state.invoice_drafts, *state.person_drafts.values()]
+
+
+def _drafts(request: Request) -> dict[int, dict[str, Any]]:
+    """The edits of the person asking: this computer's, or a colleague's on the office network."""
+    _all_drafts(request)
+    found = identity.person()
+    if found is None:
+        return request.app.state.invoice_drafts
+    with _drafts_lock:
+        return request.app.state.person_drafts.setdefault(found.name.casefold(), {})
 
 
 def unsaved_edits(request: Request) -> set[int]:
-    """The invoices with edits on their review screen not approved yet (bulk approval would approve them without
+    """The invoices with edits on someone's review screen not approved yet (bulk approval would approve them without
     the edits, so it leaves them alone)."""
-    return set(_drafts(request))
+    return {invoice_id for drafts in _all_drafts(request) for invoice_id in drafts}
 
 
 def forget_draft(request: Request, invoice_id: int) -> None:
+    """Drop the edits of the person asking (Start over)."""
     _drafts(request).pop(invoice_id, None)
+
+
+def forget_everyones_draft(request: Request, invoice_id: int) -> None:
+    """Drop everyone's edits of an invoice that was approved, rejected, deleted or reopened: they no longer apply."""
+    for drafts in _all_drafts(request):
+        drafts.pop(invoice_id, None)
 
 
 def forget_all_drafts(request: Request) -> None:
     """After a restore the invoices are the backup's (and their numbers are given again): no edit applies to them."""
-    _drafts(request).clear()
+    for drafts in _all_drafts(request):
+        drafts.clear()
 
 
 def _reader_at(inv: dict[str, Any]) -> str:
@@ -529,7 +551,7 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
         answer = str(form.get(f"why::{item['key']}") or "").strip()  # was counted: the count starts again from 0
         if answer and store.explain_lesson(item["key"], answer, actor=me, invoice_id=invoice_id):
             explained += 1
-    forget_draft(request, invoice_id)
+    forget_everyones_draft(request, invoice_id)
     vendor = analysis.coding.vendor_name.rstrip(".")
     waits = (store.get_invoice(invoice_id) or {}).get("status") == PENDING
     messages = []
@@ -594,7 +616,7 @@ def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str 
         store.reject_invoice(invoice_id, reviewer(), reason.strip())
     except ValueError as exc:
         return changed_meanwhile(request, invoice_id, exc)
-    forget_draft(request, invoice_id)
+    forget_everyones_draft(request, invoice_id)
     return done(request, after, flash_message(f"Invoice #{invoice_id} rejected.", "ok", icon="block"))
 
 
@@ -803,6 +825,6 @@ def correct(request: Request, invoice_id: int, reason: str = Form("")) -> JSONRe
     except ValueError as exc:  # exported meanwhile, say: nothing reopened, no vendor suspended
         return changed_meanwhile(request, invoice_id, exc)
     on_reopen(store, invoice_id, me, reason.strip(), before=before)
-    forget_draft(request, invoice_id)
+    forget_everyones_draft(request, invoice_id)
     return done(request, f"/review/{invoice_id}", flash_message("Reopened: correct it and approve it again.", "ok",
                                                                 icon="undo"))  # fmt: skip

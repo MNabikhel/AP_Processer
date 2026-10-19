@@ -13,17 +13,18 @@ The shared helpers (render, done/refuse, jobs, files) are in `ap_coder/web`; the
 - `render_tab()`, `save_env()` (settings.py): draw a Settings tab; write .env changes, apply them to os.environ, log `settings_changed`.
 - `reading_context()`, `automation_context()`, `jde_context()`: each Settings tab's template context. `card()` (azure.py): the Azure card, set as the `azure_check_card` template global.
 - Shared between pages: `filter_queue()`, `sort_queue()` (review.py, used by invoice.py), `tax_types_mapped()` (process.py, used by accounts.py), `day()` (month_end.py, used by sales_tax.py);
-  `setup_steps()`, `process_files()`, `JOB` (process.py) and `unsaved_edits()`, `forget_draft()` (invoice.py), used by review.py; `forget_all_drafts()` (invoice.py, used by settings.py);
+  `setup_steps()`, `process_files()`, `JOB` (process.py) and `unsaved_edits()`, `forget_everyones_draft()` (invoice.py), used by review.py; `forget_all_drafts()` (invoice.py, used by settings.py);
   `env_path()`, `save_env()`, `saved_line()` (settings.py, used by settings_reading.py); `HOW_IT_READS` (settings_reading.py, used by help.py); `confidence_pct()` (review.py, used by web/invoice_view.py).
 - Jobs started here: "process" (process.py, also review.py's retry; polled at /process/status), "settings-doctor" (settings_reading.py, the developer build's Azure connection test), "azure-test" (azure.py). The self-test runs in page_worker, polled at GET /settings/reading/self-test.
 
 ## Gotchas and decisions
 - A new page: add `module="<name>"` to its `Page` in `PAGES`; a page without a module gets the placeholder template.
-- Routes with no rail entry go in `MORE_MODULES` ("invoice", "azure"), included first so their fixed paths beat `/settings/{tab}`.
+- Routes with no rail entry go in `MORE_MODULES` ("invoice", "azure", "who"), included first so their fixed paths beat `/settings/{tab}`.
 - The settings_*.py routers are not in `PAGES`: settings.py includes them into its own router (`_include_tabs`).
 - `render()`'s page key highlights the rail: the invoice screen uses "review", the Azure check page "settings".
 - Every POST needs the header `X-AP-Coder: 1` (checked by web/security.py before any route runs) and answers JSON, never an HTML page.
-- The review screen's unsaved edits live in memory (`app.state.invoice_drafts`, invoice.py): a restart loses them; bulk approval skips those invoices.
+- The review screen's unsaved edits live in memory, per person (`app.state.invoice_drafts` here, `person_drafts[name.casefold()]` per colleague, so two who give one name share them; invoice.py):
+  a restart loses them; bulk approval skips an invoice anyone is editing; approve, reject, reopen and delete drop everyone's, Start over only the asker's.
 
 ### Bug lessons
 From docs/BUGS.md (one line each; the entry has the repro and the fix).
@@ -54,9 +55,10 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - `spend.py`: /spend, /spend/data.xlsx; key "spend".
 - `insights.py`: /insights, /insights/business-case, /insights/assumptions; key "insights".
 - `activity.py`: /activity, /activity/events.csv, /activity/controls-report, /activity/duplicates.csv; key "activity".
-- `settings.py`: /settings (the Reading tab), /settings/{tab}, /settings/review (GET the tab via `review_context()`; POST: reviewer name to the per-user settings file, threshold and constrain-codes to the .env; /approval: limit, terms, FX, why_after, and /supply: provinces, with `set_setting()`), /settings/data/... (open-folder, backup, backup-copy, backups/{name}, restore); key "settings".
+- `settings.py`: /settings (the Reading tab), /settings/{tab}, /settings/review (GET the tab via `review_context()`; POST: reviewer name to the per-user settings file (a colleague on the network is refused: /who), threshold and constrain-codes to the .env; /approval: limit, terms, FX, why_after, and /supply: provinces, with `set_setting()`), /settings/data/... (open-folder, backup, backup-copy, backups/{name}, restore); key "settings".
 - `settings_reading.py`: /settings/reading/... (reviewer: the AI reviewer's on/rounds/minutes; check, self-test, load-model, azure, azure-test); key "settings".
 - `settings_automation.py`: /settings/automation/touchless, /settings/automation/limit; key "settings".
 - `settings_jde.py`: /settings/jde, its gl-map(/import), tax-map, an8, worksheet(.xlsx); key "settings".
 - `azure.py`: /settings/azure-check (page, save) and /settings/azure-check/test; key "settings".
 - `help.py`: /help; key "help".
+- `who.py`: /who (GET the "Who are you?" page; POST sets the signed name cookie of a colleague on the network, web/identity.py); no rail key.

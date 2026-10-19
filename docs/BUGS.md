@@ -807,12 +807,13 @@ the code at the time of the sweep.
 | Exports, ERP and reports | 14 | 8 (B-85 to B-92) | 6 (N-41 to N-46) |
 | AI and readers | 9 | 5 (B-93 to B-97) | 4 (N-47 to N-50) |
 | Document capture | 13 | 7 (B-98 to B-104) | 6 (N-51 to N-56) |
-| Web routes | 9 | 3 (B-105 to B-107) | 6 (N-57 to N-62) |
+| Web routes | 9 | 3 (B-105 to B-107) | 6 (N-57 to N-62; N-57 done since, D-34) |
 | Front end | 13 | 8 (B-108 to B-115) | 5 (N-63 to N-67) |
 | Intake, CLI and launch | 11 | 3 (B-116, B-117, B-128) | 8 (N-68 to N-75) |
 | Codebase map tooling, CI and tests | 10 | 9 (B-118 to B-125, B-127) | 1 (N-76) |
 | Repeated lessons made into checks | 1 | 1 (B-126) | 0 |
-| **Total** | **101** | **56** | **45** |
+| Map review of the per-person identity (W2-02) | 2 | 2 (B-129, B-130) | 0 |
+| **Total** | **103** | **58** | **45** |
 
 ### Store and config
 
@@ -1392,6 +1393,26 @@ the code at the time of the sweep.
 - **Fix:** the lookup is made once per run (`functools.cache`), the first time outside a running Playwright; the folders searched are a list (`BROWSER_ROOTS`) a test can change.
 - **Test:** `tests/test_ci_workflow.py::test_the_browser_is_looked_up_once_not_inside_a_running_playwright`
 - **Lesson:** Don't let a fallback be the path only CI takes: make a test run it locally.
+
+#### B-129 · A change made from the office network lost what it changed from · medium
+- **Where:** `ap_coder/core/store.py` (`_log`, with `EVENT_ORIGIN` from the W2-02 change before it was merged)
+- **Symptom:** a colleague who changed the touchless limit, a supplier's touchless state, or opened an invoice whose file had moved left an event whose "from" was their computer's address instead of the old value; the Activity page showed "10.0.0.5 → 2500".
+- **Cause:** the colleague's address was added to every event as `detail["from"]`, a key several events already use for the old value. Found by the map-reviewer agent before the PR.
+- **Reproduce:** set `EVENT_ORIGIN` to "192.168.1.20", call `store.set_touchless_limit(1234.0, "Ana")`, read the `settings_changed` event.
+- **Reproduced:** yes (`{"keys": ["touchless_limit"], "from": "192.168.1.20", "to": 1234.0}`).
+- **Fix:** the address goes under its own key, `detail["address"]`.
+- **Test:** `tests/test_network_identity.py::test_a_colleagues_address_never_replaces_what_an_event_itself_records`
+- **Lesson:** Don't add a field to every record under a name some records already use: pick a key nothing else writes.
+
+#### B-130 · Invoices a colleague processed in parallel were recorded as nobody's · low
+- **Where:** `ap_coder/ai/pipeline.py` (`process_many`)
+- **Symptom:** with more than one worker, invoices read by a colleague's "Process" job had no address on their events.
+- **Cause:** the job thread copied the request's context, but `ThreadPoolExecutor` threads do not carry contextvars. Found by the map-reviewer agent before the PR.
+- **Reproduce:** set `EVENT_ORIGIN`, call `process_many` with three files and `workers=3`, and read `EVENT_ORIGIN` inside `process`.
+- **Reproduced:** yes (`[None, None, None]`).
+- **Fix:** each file runs in a copy of the caller's context (`contextvars.copy_context().run`).
+- **Test:** `tests/test_network_identity.py::test_invoices_read_in_parallel_keep_the_colleague_who_started_them`
+- **Lesson:** Don't trust a contextvar across a thread pool: copy the context into each task.
 ### Not reproduced or left as they are
 
 - **N-32** · Store · `_env_float` (`config.py:45`) accepts `AP_REVIEW_THRESHOLD=nan` or `-1` from a hand-edited `.env`, so low confidence would never force a review. The Settings page enforces 50-99%; not run end to end; left.
@@ -1419,7 +1440,7 @@ the code at the time of the sweep.
 - **N-54** · Capture · `VENDOR_NAME_MATCH` is a plain substring test ("bell" is in "bellwether"). A misuse is caught by the coding and the page disagreeing; not shown to be harmful.
 - **N-55** · Capture · a blank-looking page with a hidden text layer is left out of `text_layer_check`. Safe: `made_up("")` counts it as not read, which fires the "pages not read by OvisOCR2" gate.
 - **N-56** · Capture · the other places that rebuild a `DocLayout` (`straightened`, the tables-only layout, `second_read_layout`) drop `pages_left_out`. No effect on the gate today, because `analyze` builds the final capture from the original layout; left.
-- **N-57** · Web routes · W2-02: the dashboard shared on the network (`AP_DASHBOARD_ADDRESS=0.0.0.0`) records every action as the server's user, so a colleague's second approval is refused and review drafts are shared. Left open: the user chose a per-person identity, to come in its own PR.
+- **N-57** · Web routes · W2-02: the dashboard shared on the network (`AP_DASHBOARD_ADDRESS=0.0.0.0`) records every action as the server's user, so a colleague's second approval is refused and review drafts are shared. The user chose a per-person identity: done in its own PR (D-34, `tests/test_network_identity.py`).
 - **N-58** · Web routes · `security.host_allowed` calls `socket.getfqdn()` (a DNS lookup) in the async middleware when listening on 0.0.0.0, so a slow DNS could freeze every request. Needs a real network; not tried.
 - **N-59** · Web routes · up to 24 uploads of 50 MB wait in memory (about 1.2 GB), and `process_upload` and `learning.history_upload` read a whole file with no cap. Not measured; left.
 - **N-60** · Web routes · `Job._run` catches only `Exception`, so a `BaseException` would leave a job "running" forever. Read in the code only.

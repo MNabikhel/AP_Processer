@@ -273,8 +273,9 @@ the approved fields) to fine-tune a vision model on them later.
 The dashboard is a local web app, hosted the same way as CloseDesk: a small FastAPI server (run by uvicorn) on
 this computer, at `http://127.0.0.1:8501`, opened in your usual browser. Nothing is installed in the browser and
 nothing is served to the network: it listens on `127.0.0.1` only (set `AP_DASHBOARD_ADDRESS=0.0.0.0` to let
-colleagues on the office network open it), refuses requests addressed to any other name, and only its own pages
-can change anything. The launcher starts it (`python -m ap_coder serve`), opens the browser once it answers, and
+colleagues on the office network open it; each of them gives their name once, on a "Who are you?" page, and their
+approvals and changes are recorded in that name and with their computer's address), refuses requests addressed to
+any other name, and only its own pages can change anything. The launcher starts it (`python -m ap_coder serve`), opens the browser once it answers, and
 on the next double-click finds it through `GET /healthz` and opens it instead of starting a second copy. An update
 stops the running one cleanly (`POST /shutdown`, with a token only this computer's data folder holds) before the new
 version takes over. Fonts, icons and scripts all come from the app; nothing is loaded from the internet.

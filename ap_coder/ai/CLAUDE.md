@@ -50,6 +50,7 @@ From docs/BUGS.md (one line each; the entry has the repro and the fix).
 - B-95: Don't silence a helper's exception without a log line. `tests/test_verifier.py::test_the_reviewer_is_shown_the_math`
 - B-96: Don't let the strict path fall back to scanning prose for JSON. `tests/test_local_llm.py::test_a_strict_reply_is_the_whole_answer_not_json_found_in_prose`
 - B-103: Don't assume Unicode decomposition folds every letter. `tests/test_evaluation.py::test_ligatures_and_sharp_s_fold_to_their_letters`
+- B-130: Don't trust a contextvar across a thread pool: copy the context into each task. `tests/test_network_identity.py::test_invoices_read_in_parallel_keep_the_colleague_who_started_them`
 
 ## Files
 - `__init__.py`: the package docstring only.

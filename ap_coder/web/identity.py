@@ -1,0 +1,152 @@
+"""Who is using the dashboard, when it is shared on the office network (W2-02, docs/decisions.md D-34).
+
+On this computer (the default, 127.0.0.1) the person is the one logged in here, as always: ``core.reviewer()`` and
+``core.login()``. When AP Coder listens on the network (``AP_DASHBOARD_ADDRESS=0.0.0.0``), a browser on another
+computer gives its name once, on the "Who are you?" page (``pages/who.py``). The name is kept in a cookie the server
+signs with a secret made when it starts, so it cannot be made up or changed in the browser; after a restart each
+colleague gives their name again. For each request, ``Identity`` (ASGI middleware) puts the person in ``PERSON``:
+
+* ``core.reviewer()`` is then their name, and ``core.login()`` ``network <their address>``, so a second approval
+  from the same computer as the first is refused, whatever name it gives;
+* every event the store records names them (``actor``) and their address (``detail["address"]``,
+  ``store.EVENT_ORIGIN``);
+* the review screen keeps their unsaved edits apart (``pages/invoice.py``).
+
+A browser on another computer without a valid cookie sees only the "Who are you?" page (a page asked for is sent
+there; an action is refused), the styles and scripts, and ``/healthz``.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import contextvars
+import hashlib
+import hmac
+import ipaddress
+import unicodedata
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import quote
+
+from starlette.responses import JSONResponse, RedirectResponse
+
+from ap_coder.core.store import EVENT_ORIGIN
+
+COOKIE = "ap_coder_person"
+MAX_NAME = 60  # characters kept of a name
+WHO_PATH = "/who"
+OPEN_PATHS = ("/healthz", WHO_PATH)  # answered to a browser that has not said who it is
+OPEN_PREFIXES = ("/static/", "/fonts/", "/assets/")
+THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
+
+
+@dataclass(frozen=True)
+class Person:
+    """A colleague on another computer: the name they gave and the address their browser came from."""
+
+    name: str
+    address: str
+
+
+PERSON: contextvars.ContextVar[Person | None] = contextvars.ContextVar("ap_coder_person", default=None)
+
+
+def person() -> Person | None:
+    """The colleague behind the request being answered; None on this computer (or outside a request)."""
+    return PERSON.get()
+
+
+def network_login(address: str) -> str:
+    """What stands for a computer login for a colleague: their computer's address."""
+    return f"network {address}"
+
+
+def clean_name(text: str) -> str:
+    """A name as given, without control characters or runs of spaces, at most ``MAX_NAME`` characters."""
+    kept = "".join(" " if unicodedata.category(c).startswith(("C", "Z")) else c for c in str(text or ""))
+    return " ".join(kept.split())[:MAX_NAME].strip()
+
+
+def encode_name(name: str) -> str:
+    return base64.urlsafe_b64encode(name.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _signature(secret: bytes, encoded: str) -> str:
+    return hmac.new(secret, encoded.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def cookie_value(secret: bytes, name: str) -> str:
+    """``<name, base64>.<HMAC-SHA256 of it>``: only this start of the server could have made it."""
+    encoded = encode_name(name)
+    return f"{encoded}.{_signature(secret, encoded)}"
+
+
+def name_from_cookie(secret: bytes, value: str | None) -> str | None:
+    """The name a cookie holds, or None when it was not made by this start of the server (made up, changed, old)."""
+    encoded, _, signature = str(value or "").partition(".")
+    if not encoded or not signature or not hmac.compare_digest(signature, _signature(secret, encoded)):
+        return None
+    try:
+        name = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+    return clean_name(name) or None
+
+
+def is_this_computer(host: str) -> bool:
+    """Whether a request came from this computer's own browser (a loopback address)."""
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
+def _cookies(headers: list[tuple[bytes, bytes]]) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for key, value in headers:
+        if key.lower() == b"cookie":
+            for part in value.decode("latin-1").split(";"):
+                name, _, kept = part.strip().partition("=")
+                found.setdefault(name, kept)
+    return found
+
+
+class Identity:
+    """ASGI middleware: puts the colleague of each request in ``PERSON`` (and their address in the store's
+    ``EVENT_ORIGIN``); a browser on another computer that has not said who it is goes to the "Who are you?" page."""
+
+    def __init__(self, app: Any, secret: bytes, address: str = "127.0.0.1") -> None:
+        self.app = app
+        self.secret = secret
+        self.network = str(address or "").strip().strip("[]").lower() not in THIS_COMPUTER
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        client = (scope.get("client") or ("", 0))[0] or ""
+        if scope["type"] != "http" or not self.network or is_this_computer(client):
+            await self.app(scope, receive, send)
+            return
+        name = name_from_cookie(self.secret, _cookies(scope.get("headers") or []).get(COOKIE))
+        if name is None:
+            path = scope.get("path") or ""
+            if path in OPEN_PATHS or path.startswith(OPEN_PREFIXES):
+                await self.app(scope, receive, send)
+                return
+            if scope.get("method", "GET") in ("GET", "HEAD"):
+                query = (scope.get("query_string") or b"").decode("latin-1")
+                wanted = path + (f"?{query}" if query else "")
+                response: Any = RedirectResponse(f"{WHO_PATH}?next={quote(wanted, safe='')}", status_code=303)
+            else:
+                response = JSONResponse(
+                    {"ok": False, "error": "Tell AP Coder who you are first (the Who are you? page, /who)."},
+                    status_code=403,
+                )
+            response.headers["Cache-Control"] = "no-store"
+            await response(scope, receive, send)
+            return
+        tokens = PERSON.set(Person(name, client)), EVENT_ORIGIN.set(client)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            PERSON.reset(tokens[0])
+            EVENT_ORIGIN.reset(tokens[1])
