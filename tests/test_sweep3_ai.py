@@ -1,8 +1,13 @@
 """Sweep 3, the ai folder: credit notes, learning past the history cap, banking lines, the page reader's test mark,
 unlisted charges and the files a folder of invoices holds."""
 
+import datetime as dt
+import json
+import subprocess
+import sys
 from dataclasses import replace
 
+from ap_coder.ai import page_worker
 from ap_coder.ai.offline_coder import bank_details, code_from_capture
 from ap_coder.ai.pipeline import InvoicePipeline
 from ap_coder.capture.types import VERIFIED, CaptureResult, FieldResult, LineReading
@@ -76,3 +81,23 @@ def test_a_banking_line_that_quotes_the_invoice_number_keeps_only_the_account():
         "EFT (quote the invoice number): Transit 12345 Inst 001 Account 1234567"
     )
     assert bank_details("IBAN GB29 NWBK 6016 1331 9268 19, invoice 4471") == "IBAN GB29 NWBK 6016 1331 9268 19"
+
+
+def test_a_self_test_mark_whose_process_id_another_program_now_has_is_not_under_way(tmp_path):
+    # A dashboard killed during OvisOCR2's self-test left its mark; its process id now belongs to another program.
+    store = Store(tmp_path / "ap.db")
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        started = (dt.datetime.now() - dt.timedelta(days=3)).isoformat(timespec="seconds")
+        store.set_setting(page_worker.TESTING_KEY, json.dumps({"model": "ovisocr2", "started": started,
+                          "pid": other.pid, "reader": f"{other.pid}:deadbeef", "done": 0, "pages": 2}))  # fmt: skip
+        assert page_worker.test_under_way(store) is None
+        assert page_worker.self_test(store, "ovisocr2")[0] == "pending"
+        # A test another process runs now, noted minutes ago, is under way.
+        now = dt.datetime.now().isoformat(timespec="seconds")
+        store.set_setting(page_worker.TESTING_KEY, json.dumps({"model": "ovisocr2", "started": started,
+                          "updated": now, "reader": f"{other.pid}:cafe", "done": 1, "pages": 2}))  # fmt: skip
+        assert page_worker.test_under_way(store)["done"] == 1
+    finally:
+        other.kill()
+        other.wait()
