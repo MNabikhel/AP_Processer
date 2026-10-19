@@ -848,7 +848,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             continue
         if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
             continue
-        if _POSTAL_CODE.search(text) or _US_ADDRESS.search(text) or _CONTACT.search(p):
+        if _POSTAL_CODE.search(text) or us_address(text) or _CONTACT.search(p):
             continue  # an address, e-mail or web line
         heading = (
             len(p.split()) <= 2
@@ -1409,9 +1409,24 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
 # ---------------------------------------------------------------- entry point
 
 
-_US_ADDRESS = re.compile(
-    r",?\s(?:A[LKZR]|C[AOT]|DE|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\s+\d{5}(?:-\d{4})?\b"
+# A state and ZIP code after a city, a comma or at the start of a line ("Seattle, WA 98101", "Boise ID 83702", "WA
+# 98101"); not after a label: "Order ID 77812", "Store IN 46204" are a label's numbers, not Idaho or Indiana.
+_ID_LABEL_WORDS = (
+    "order|vendor|supplier|store|job|ticket|customer|cust|client|account|acct|member|employee|tax|ref|reference|batch|"
+    "lot|work|purchase|transaction|tracking|user|invoice|inv|document|doc|file|case|project|contract|site|location|"
+    "unit|item|product|part|serial|payment|po|no|number|box|route|shipment|delivery|quote|receipt|confirmation"
 )
+_US_ADDRESS = re.compile(
+    r"(?:^\s*|,\s*|(?<![A-Za-z])(?!(?i:" + _ID_LABEL_WORDS + r")\s)[A-Za-z][A-Za-z.'-]*\s+)"
+    r"(?:A[LKZR]|C[AOT]|DE|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])"
+    r"\s+\d{5}(?:-\d{4})?\b",
+    re.M,
+)
+
+
+def us_address(text: str) -> bool:
+    """``text`` holds a US address's state and ZIP code (``offline_coder.provinces`` reads the supplier's with it)."""
+    return bool(_US_ADDRESS.search(text))
 
 
 def _us_vendor(layout: DocLayout) -> bool:
@@ -1419,7 +1434,7 @@ def _us_vendor(layout: DocLayout) -> bool:
     if not layout.pages:
         return False
     for line in layout.pages[0].lines:
-        if line.box.cy < 0.3 and not _in_bill_to(layout, line) and _US_ADDRESS.search(line.text):
+        if line.box.cy < 0.3 and not _in_bill_to(layout, line) and us_address(line.text):
             return True
     return False
 
@@ -1439,8 +1454,11 @@ def read_fields(layout: DocLayout, received: dt.date | None = None) -> dict[str,
     in (it settles a 03/04/2026 the page itself does not: invoices arrive days after their date)."""
     text = layout.text()
     order = infer_day_first(text)
-    if order is None and (_us_vendor(layout) or (find_currency(text) == "USD" and not _canadian_vendor(layout))):
-        order = False  # US invoices print month first (a Canadian supplier billing in USD need not)
+    # US invoices print month first. A Canadian supplier need not, whatever its currency or a US line on its letterhead
+    # (a warehouse, a label's number read as a ZIP code): its Canadian postal code or GST/HST number tells.
+    canadian = _canadian_vendor(layout) or any(valid for *_, valid in find_gst_numbers(text))
+    if order is None and not canadian and (_us_vendor(layout) or find_currency(text) == "USD"):
+        order = False
     if order is not None:
         return _read_with_order(layout, order)
     cands = _read_with_order(layout, None)

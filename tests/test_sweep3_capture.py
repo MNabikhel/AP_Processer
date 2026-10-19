@@ -7,6 +7,7 @@ import datetime as dt
 from pathlib import Path
 
 from ap_coder.capture import analyze
+from ap_coder.capture.types import VERIFIED
 from tests.test_capture_edge_cases import _ACME, TODAY, _pdf
 
 
@@ -40,3 +41,32 @@ def test_several_currency_codes_are_given_in_page_order():
 
     assert currency_evidence("We accept USD and CAD") == ("USD", 0.5)
 
+
+def test_an_order_id_is_not_a_us_address_and_a_calgary_suppliers_date_is_not_read_month_first(tmp_path):
+    """ "Order ID 77812" is no Idaho ZIP code: a Calgary supplier's 03/04/2026 is not verified as March 4."""
+    lines = _NO_DATE + [(380, 105, "Order ID 77812"), (380, 135, "Invoice Date:"), (460, 135, "03/04/2026"),
+                        (380, 150, "Due Date:"), (460, 150, "03/05/2026")]  # fmt: skip
+    capture = _read(_pdf(tmp_path, lines), today=dt.date(2026, 4, 10))
+    date = capture.fields["invoice_date"]
+    assert not (date.value == "2026-03-04" and date.status == VERIFIED), date
+
+
+def test_a_label_with_an_id_is_not_a_us_address():
+    from ap_coder.ai.offline_coder import OUTSIDE_CANADA, provinces
+    from ap_coder.capture.reader import us_address
+
+    for text in ("Order ID 77812", "Vendor ID 12345", "Store IN 46204", "Job ID 83702", "Ticket OR 97201"):
+        assert not us_address(text), text
+    for text in ("400 Pine St, Seattle, WA 98101", "Boise ID 83702", "WA 98101-1234", "Austin, TX 78701"):
+        assert us_address(text), text
+    assert provinces("Order ID 77812\nAcme Supply Ltd.\n12 Main St, Calgary, AB T2P 1A1")[0] == "AB"
+    assert provinces("Acme Inc.\n400 Pine St, Seattle, WA 98101")[0] == OUTSIDE_CANADA
+
+
+def test_a_canadian_supplier_billing_in_us_dollars_is_not_read_month_first(tmp_path):
+    """A US-looking line on a Canadian supplier's letterhead (its US warehouse) does not make its dates month first."""
+    lines = _NO_DATE + [(60, 105, "Warehouse: 400 Pine St, Seattle, WA 98101"), (380, 135, "Invoice Date:"),
+                        (460, 135, "03/04/2026"), (380, 150, "Due Date:"), (460, 150, "03/05/2026")]  # fmt: skip
+    capture = _read(_pdf(tmp_path, lines), today=dt.date(2026, 4, 10))
+    date = capture.fields["invoice_date"]
+    assert not (date.value == "2026-03-04" and date.status == VERIFIED), date
