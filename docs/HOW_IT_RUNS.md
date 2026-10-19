@@ -9,6 +9,9 @@ this file is wrong.
 AP Coder is an **offline** build: nothing it runs connects to the internet unless a developer or the bundle builder
 sets `AP_ALLOW_INTERNET=1` (`ap_coder/ops/offline.py:internet_allowed`). The one exception, by design, is the optional
 Azure check, which AP switches on in Settings (it is off by default; [section 10](#10-the-network-every-place-and-its-gate)).
+The setup is offline too from the offline bundle; from the code alone (GitHub's ZIP or a git checkout: no
+`bundle_manifest.json`, `wheelhouse/` or `models/`) it downloads its packages and OCR models once, unless
+`AP_ALLOW_INTERNET=0` (`scripts/launch.py:plain_download`); the dashboard it starts stays offline.
 
 Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 [2 Flowchart](#2-the-launcher-at-a-glance) ·
@@ -115,7 +118,8 @@ launchers never pick one older than 3.11. Python is never installed by the offli
    given arguments, prints a hint and exits 9009 instead of opening the Store. A Python older than 3.11 is
    remembered (`OLDPY`) so the message says *"Python 3.10 is installed, but AP Coder needs 3.11 or newer"*, not
    "not installed".
-6. Only with `AP_ALLOW_INTERNET=1` and `winget` present: `:installpython` offers `winget install Python.Python.3.12
+6. From the code alone (no `bundle_manifest.json`, `wheelhouse\` or `models\`), or with `AP_ALLOW_INTERNET=1`, and
+   never with `AP_ALLOW_INTERNET=0`; `winget` present: `:installpython` offers `winget install Python.Python.3.12
    --scope user`, then searches again.
 7. None: the message says to ask IT for Python 3.12 from python.org with *Add python.exe to PATH*; `:fail` pauses
    (unless `AP_NO_PAUSE`) and exits 1.
@@ -173,7 +177,8 @@ What the .venv has been through is kept in `.venv/ap_coder_launcher.json` (`STAT
    itself is installed (editable) *from this folder* (read from pip's `direct_url.json`, network shares included).
    Nothing missing: "Packages: all N in place", nothing runs.
 2. **Where from** (`pip_source`): the offline bundle's `wheelhouse/` with `--no-index --find-links` (never the
-   internet). Without one: PyPI only with `AP_ALLOW_INTERNET=1`, else nowhere (`without_wheelhouse`: AP Coder still
+   internet). Without one: PyPI from the code alone (`setup_online`, unless `AP_ALLOW_INTERNET=0`) or with
+   `AP_ALLOW_INTERNET=1`; else (a bundle missing its wheelhouse) nowhere (`without_wheelhouse`: AP Coder still
    starts when its core packages are there, and says what is missing; core missing stops with "unzip the full
    offline bundle").
 3. **The wheelhouse folder** (`wheelhouse_dir`): `wheelhouse/`, or the one folder of wheels inside it (a wheelhouse
@@ -364,9 +369,9 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 
 | # | Where (file:function) | What it contacts | Gate |
 | --- | --- | --- | --- |
-| 1 | `scripts/launch.py:pip_install` / `pip_source` | pip: the `wheelhouse/` folder (`--no-index`) | PyPI only with `AP_ALLOW_INTERNET=1`; the Azure extra never from PyPI |
-| 2 | `APProcessor.bat:installpython` | winget (Python 3.12 from the internet) | only with `AP_ALLOW_INTERNET=1`, and asked |
-| 3 | `scripts/fetch_models.py:download` | www.modelscope.cn (OCR, table finder models) | raises without `AP_ALLOW_INTERNET=1` |
+| 1 | `scripts/launch.py:pip_install` / `pip_source` | pip: the `wheelhouse/` folder (`--no-index`) | PyPI from the code alone (no bundle: `scripts/launch.py:setup_online`) or with `AP_ALLOW_INTERNET=1`; never with `AP_ALLOW_INTERNET=0`; the Azure extra never from PyPI |
+| 2 | `APProcessor.bat:installpython` | winget (Python 3.12 from the internet) | from the code alone or with `AP_ALLOW_INTERNET=1`, never with `AP_ALLOW_INTERNET=0`; when no Python is found, and asked |
+| 3 | `scripts/fetch_models.py:download` | www.modelscope.cn (OCR, table finder models) | raises without `AP_ALLOW_INTERNET=1`; the launcher sets it for this step only from the code alone (`scripts/launch.py:ensure_models`, `setup_downloads`), never with `AP_ALLOW_INTERNET=0` |
 | 4 | `scripts/install.py:update_code` | `git fetch` / `git pull` of a checkout | only with `AP_ALLOW_INTERNET=1` |
 | 5 | `scripts/build_offline_bundle.py` | PyPI, modelscope | IT's online computer; sets the opt-in for itself |
 | 6 | `scripts/running.py:health`, `ask_to_stop`, `legacy_dashboard` | `127.0.0.1:<port>` only | never through a proxy (`ProxyHandler({})`) |
