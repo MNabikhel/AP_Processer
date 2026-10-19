@@ -1487,8 +1487,8 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
 | Intake, email and command line | 14 | 12 (B-140 to B-149, B-206 to B-207) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
-| Day-one walk-through | 10 | 10 (B-197 to B-204, B-210 to B-211) | 0 |
-| **Total** | **94** | **77** | **17** |
+| Day-one walk-through | 11 | 11 (B-197 to B-204, B-210 to B-212) | 0 |
+| **Total** | **95** | **78** | **17** |
 
 ### Store and config
 
@@ -2311,6 +2311,16 @@ Improvements made with these fixes:
 - **Fix:** both ask `review.attention()` for an invoice waiting in the queue (the checks' flag only for one approved on its own or not saved), so "ready" means Approve is open everywhere. Insights' "Sent for a closer look: N% of processed invoices" is the checks' flag on every invoice ever processed (approved ones too), a different figure on purpose: it now reads "Flagged by the checks when processed" (also in the pilot report), so it no longer reads as the queue's Needs attention.
 - **Test:** `tests/test_web_process.py::test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready`
 - **Lesson:** Don't fix "one rule for one question" in the main screen only: search for every other place that answers it.
+
+#### B-212 · Activity counted approvals, not invoices approved: "4 approvals: 4 approved as coded" for 3 · low
+- **Where:** `ap_coder/web/pages/activity.py:160` (`activity_page`, the "Invoices approved" tile)
+- **Symptom:** three invoices approved, one of them sent back and approved again: Insights and Learning said "Approved as coded … 3 of 3", Activity "Invoices approved 3 · 4 approvals: 4 approved as coded, 0 corrected"; an approval taken back and not given again still counted as an invoice approved.
+- **Cause:** B-201 gave Activity the same rule for a change (`insights.corrected`) but applied it to every `approved` event in the trail, where Insights and Learning count each invoice's standing approval once (`insights.latest_approvals`, D-39).
+- **Reproduce:** demo data; approve three invoices; reopen one and approve it again, reopen another; open /activity.
+- **Reproduced:** yes (`Invoices approved 5 · 6 approvals: 5 approved as coded, 1 corrected` against `approved_as_coded` = 3 of 4)
+- **Fix:** the tile is `insights.approved_as_coded()`: "Invoices approved N · X approved as coded, Y corrected", the figures Insights and Learning show. The events themselves are still all listed below.
+- **Test:** `tests/test_sweep3_dayone.py::test_activity_counts_each_invoices_standing_approval_once_as_insights_does` (and `test_insights_learning_activity_and_the_queue_count_approved_as_coded_alike`)
+- **Lesson:** Don't share the rule but not the population: the same figure needs the same rows as well as the same test.
 
 ### Not reproduced or left as they are
 

@@ -293,6 +293,27 @@ def test_insights_learning_activity_and_the_queue_count_approved_as_coded_alike(
     assert f"{accuracy:.1%}" in client.get("/review").text and f"{accuracy:.1%}" in learning
 
 
+def test_activity_counts_each_invoices_standing_approval_once_as_insights_does(client, store):
+    """An approval taken back (reopened, or sent back from the second approval) and given again is one invoice
+    approved, not two approvals; one taken back and not given again is none."""
+    from ap_coder.erp.insights import approved_as_coded
+
+    pending = [store.get_invoice(i["id"]) for i in store.list_invoices(REVIEW)[:3]]
+    for inv in pending:
+        store.approve_invoice(inv["id"], inv["ai_output"], "Jordan Lee")
+    again, back = pending[0], pending[1]
+    store.reopen(again["id"], "Jordan Lee", "a second look")
+    store.approve_invoice(again["id"], again["ai_output"], "Jordan Lee")
+    store.reopen(back["id"], "Jordan Lee", "wrong vendor")
+    clean, total = approved_as_coded(store)
+    activity = client.get("/activity").text
+    assert f"{clean} approved as coded, {total - clean} corrected" in activity
+    assert (
+        "approvals:" not in activity
+        and f'Invoices approved</div><div class="value">{total}</div>' in activity.replace("'", '"')
+    )
+
+
 # --- 9. First run: your name ----------------------------------------------------------------------------------------
 
 
