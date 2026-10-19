@@ -310,7 +310,9 @@ def supply_source(coding: Any, setup: TaxSetup | None = None) -> tuple[str, str]
     if printed in PROVINCES:
         return printed, SUPPLY_PRINTED
     if setup is not None:
-        sites = {setup.site_provinces.get(str(getattr(li, "predicted_cost_center", "") or "")) or setup.our_province
+        # A cost center whatever its case or spaces: "cc400=BC" typed in Settings is cost center CC400.
+        listed = {str(code).strip().upper(): province for code, province in setup.site_provinces.items()}
+        sites = {listed.get(str(getattr(li, "predicted_cost_center", "") or "").strip().upper()) or setup.our_province
                  for li in getattr(coding, "line_items", []) or []} - {None, ""}  # fmt: skip
         if len(sites) == 1 and (site := next(iter(sites))) in PROVINCES and site != setup.our_province:
             return site, SUPPLY_SITE

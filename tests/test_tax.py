@@ -378,6 +378,16 @@ def test_a_line_on_an_unlisted_site_is_delivered_to_our_province():
     assert supply_source(_supply(supplier="ON", centers=["CC400", "CC100"]), no_home) == ("BC", "site")
 
 
+def test_a_site_typed_in_lower_case_is_still_that_cost_center():
+    """B-134: "cc400=BC" typed in Settings → Review is cost center CC400 (cost centers compare as the JD Edwards
+    mapping does, whatever their case): its lines are delivered to BC, not silently to our province."""
+    from ap_coder.coding.tax import TaxRateTable, TaxSetup, supply_source
+
+    setup = TaxSetup(TaxRateTable.load(), our_province="AB", site_provinces={"cc400 ": "BC"})
+    assert supply_source(_supply(supplier="ON", centers=["CC400"]), setup) == ("BC", "site")
+    assert supply_source(_supply(supplier="ON", centers=[" Cc400"]), setup) == ("BC", "site")
+
+
 def test_an_invoice_without_a_ship_to_is_taxed_where_we_are(ground_truth, reference):
     from dataclasses import replace
 
