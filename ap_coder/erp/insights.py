@@ -342,7 +342,7 @@ def report_html(s: dict[str, Any], organisation: str = "") -> str:
         row("Net benefit", f"{_money(net)} / month", "th"),
         "</table><h2>Pilot so far</h2><table>",
         row("Approved", f"{s['approved']} ({s['approved_clean']} as coded, {s['approved_changed']} corrected)"),
-        row("Sent for a closer look by the checks", _pct(s["needs_attention_rate"])),
+        row("Flagged by the checks when processed", _pct(s["needs_attention_rate"])),
         row("Could not be read", str(s["failed"])),
         row(
             "Duplicate invoices stopped (flagged, then rejected)",

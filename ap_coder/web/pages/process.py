@@ -19,11 +19,12 @@ from starlette.concurrency import run_in_threadpool
 from ap_coder.ai import page_reader
 from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS
 from ap_coder.ai.local_llm import provider_status
-from ap_coder.ai.pipeline import InvoicePipeline, invoice_files
+from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files
 from ap_coder.capture.layout import ocr_available
 from ap_coder.coding.tax import TAX_TYPES
 from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
+from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.intake import inbox
 from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, Unpacked, emails_in, safe_name, unpack, unpack_folder
@@ -40,12 +41,14 @@ from ap_coder.web.core import (
     message,
     open_folder,
     reading_status_or_none,
+    reference_or_none,
     refuse,
     render,
     reviewer,
     short_path,
 )
 from ap_coder.web.jobs import Job
+from ap_coder.web.pages.review import attention
 
 router = APIRouter()
 
@@ -191,6 +194,17 @@ def queued_note(settings: Settings, store: Store, queued: int) -> str:
 # --- Reading and coding (the background job) ------------------------------------------------------------------------
 
 
+def needs_attention(store: Store, reference: ReferenceData | None, result: PipelineResult) -> bool:
+    """Whether the import list says "needs attention" of a processed invoice: as the review queue says it
+    (``review.attention``: its Approve isn't open as it stands, B-197) for one waiting there; the checks' flag for one
+    that isn't (approved on its own, or not saved)."""
+    invoice_id = getattr(result, "invoice_id", None)
+    inv = store.get_invoice(invoice_id) if invoice_id is not None else None
+    if inv is None or inv["status"] != REVIEW:
+        return bool(result.report and result.report.requires_review)
+    return inv["id"] in attention(store, reference, [inv])
+
+
 def process_files(store: Store, settings: Settings, paths: list[Path], *, already: list[Path] | None = None,
                   emails: list[Unpacked] | None = None, notes: list[dict[str, Any]] | None = None,
                   folder_emails: bool = False) -> Any:  # fmt: skip
@@ -213,15 +227,16 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
         job.step(0, len(todo), "Starting")
         ok = 0
         waiting = store.page_reads_waiting()
-        pipeline = None
+        pipeline = reference = None
         if todo:
-            pipeline = InvoicePipeline(settings, store.reference_data(), cache_dir=cache_dir(store), store=store)
+            reference = store.reference_data()
+            pipeline = InvoicePipeline(settings, reference, cache_dir=cache_dir(store), store=store)
         for n, path in enumerate(todo, start=1):
             job.step(n - 1, len(todo), f"Reading and coding {path.name} ({n}/{len(todo)})", stage="reading")
             result = pipeline.process(path)
             if result.ok:
                 ok += 1
-                attention = bool(result.report and result.report.requires_review)
+                attention = needs_attention(store, reference, result)
                 name = result.output.get("vendor_name") or path.name
                 job.log(f"{name}: {'needs attention' if attention else 'ready'}", "warn" if attention else "ok",
                         "flag" if attention else "check_circle")  # fmt: skip
@@ -290,6 +305,9 @@ def process_page(request: Request) -> HTMLResponse:
     steps = setup_steps(store, settings)
     needed = [s for s, _, _ in steps if s != "opt"]
     recent = sorted(store.list_invoices(), key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
+    waiting = [i for i in recent if i["status"] == REVIEW]
+    reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
+    recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
     return render(
         request, "process.html", "process",
         steps=steps,

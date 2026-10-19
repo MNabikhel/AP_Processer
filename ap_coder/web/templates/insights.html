@@ -54,7 +54,7 @@
         <div class="an-meter" aria-hidden="true"><i style="width: {{ (i.n / biggest_issue * 100) | round | int }}%; background: {{ issue_color }}"></i></div></li>
       {% endfor %}
     </ul>
-    <p class="muted">Sent for a closer look: {{ attention }} of processed invoices.</p>
+    <p class="muted">Flagged by the checks when processed: {{ attention }} of invoices.</p>
     {% if stopped %}{{ ui.pill(stopped, "ok", "shield") }}{% endif %}
     {% else %}
     <p class="muted">No errors or warnings so far.</p>

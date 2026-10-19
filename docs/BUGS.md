@@ -1487,8 +1487,8 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
 | Intake, email and command line | 14 | 12 (B-140 to B-149, B-206 to B-207) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
-| Day-one walk-through | 9 | 9 (B-197 to B-204, B-210) | 0 |
-| **Total** | **93** | **76** | **17** |
+| Day-one walk-through | 10 | 10 (B-197 to B-204, B-210 to B-211) | 0 |
+| **Total** | **94** | **77** | **17** |
 
 ### Store and config
 
@@ -2301,6 +2301,16 @@ Improvements made with these fixes:
 - **Fix:** `invoice_columns(..., decode=False)` gives the stored text; `_to_fix` remembers each invoice's answer (lines to code, errors) with the hash of that text and decodes only an invoice new or changed since it was last asked. Same rule, same answers ("Ready means Approve is open"). After: `/review 0.27`, Ready 0.26, Approved 0.18, `attention` 0.04 s (0.24 s the first time after a start).
 - **Test:** `tests/test_sweep3_dayone.py::test_the_queue_decodes_each_invoices_coding_once_not_on_every_load` (and B-197's two tests)
 - **Lesson:** Don't redo per-row work on every page load for rows that haven't changed: remember it by what it was computed from.
+
+#### B-211 · Import invoices said "ready" of invoices the queue lists as "Needs attention" · medium
+- **Where:** `ap_coder/web/pages/process.py:197` (`needs_attention`, used by `process_files`; `process_page`'s Recently processed); `ap_coder/core/ui.py:300` (`recent_row`)
+- **Symptom:** the sample setup, LM Studio not running, the ten samples imported: the result list said "Pacific Office Supply Ltd.: ready" (and Harbourview, both Northwinds) and Recently processed showed "In queue", while the review queue showed each as "Needs attention · Pick a cost center for lines 1, 2, 3".
+- **Cause:** the import list and the Recently processed pill still used the checks' stored flag (`requires_review`); a line without a cost center is only a warning there. B-197 gave the queue one rule (`review.attention`: Approve open as it stands) but left these two places on the old one.
+- **Reproduce:** sample setup; chat model at an address nothing answers (weak matches coded, cost centers blank); upload the ten samples; compare the job's lines with `attention()`.
+- **Reproduced:** yes (`AssertionError: (['Pacific Office Supply Ltd.: ready'], 'Pick a cost center for lines 1, 2, 3')`)
+- **Fix:** both ask `review.attention()` for an invoice waiting in the queue (the checks' flag only for one approved on its own or not saved), so "ready" means Approve is open everywhere. Insights' "Sent for a closer look: N% of processed invoices" is the checks' flag on every invoice ever processed (approved ones too), a different figure on purpose: it now reads "Flagged by the checks when processed" (also in the pilot report), so it no longer reads as the queue's Needs attention.
+- **Test:** `tests/test_web_process.py::test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready`
+- **Lesson:** Don't fix "one rule for one question" in the main screen only: search for every other place that answers it.
 
 ### Not reproduced or left as they are
 
