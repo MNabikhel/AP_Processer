@@ -443,7 +443,13 @@ _WORDS_STATEMENT = re.compile(
 _PAYMENT_NOTE = re.compile(r"ACCEPT|PAYMENTS?\s+(?:IN|EN)\b|PAIEMENTS?\s+EN\b|REMIT|\bWIRE|VIREMENT|ACCOUNT|COMPTE")
 # A code printed on an amount: "CAD 1,050.00", "$1,050.00 USD", "TOTALCAD1,050.00".
 _CODE_ON_AMOUNT = re.compile(_CODE + r"\s*\$?\s*\d|\d[.,]\d{2}\s*\$?\s*" + _CODE)
-_EXCHANGE = re.compile(r"EXCHANGE|\bRATE\b|\bTAUX\b|CONVERSION|=")
+_EXCHANGE = re.compile(r"EXCHANGE|\bRATE\b|\bTAUX\b|CONVERSION|[EÉ]QUIVALEN|=")
+# The label of the invoice's total, printed with its code ("Total USD", "Amount Due (CAD)", "Montant dû CAD"): the
+# code is on the total's amount, though the layout may read the label and the amount in two columns.
+_TOTAL_LABEL = re.compile(
+    r"^\W*(?:GRAND\s+|INVOICE\s+)?TOTAL\b|AMOUNT\s+DUE|BALANCE\s+DUE|TOTAL\s+(?:DUE|PAYABLE)|MONTANT\s+(?:TOTAL|D[UÛ]|[AÀ]\s+PAYER)"
+    r"|TOTAL\s+[AÀ]\s+PAYER"
+)
 
 
 def find_currency(text: str) -> str | None:
@@ -462,12 +468,19 @@ def _in_payment_note(s: str, m: re.Match[str]) -> bool:
     return bool(_PAYMENT_NOTE.search(before + m.group(0) + after))
 
 
+def _codes_in_order(text: str) -> list[str]:
+    """The currency codes in ``text``, each once, in the order they are printed."""
+    return list(dict.fromkeys(m.group(1) for m in re.finditer(_CODE, text)))
+
+
 def currency_evidence(text: str) -> tuple[str, float] | None:
     """(currency, how sure, 0-1). A statement ("All amounts in USD", "Currency: CAD", "All prices in Canadian
-    dollars") or a code printed on the amounts settles it; a code anywhere else counts when it is the only one, and
-    not when it is only in a note on how the supplier may be paid ("Payments in USD accepted"). A statement in such
-    a note ("Payments in US dollars accepted") is no statement either. Several codes and nothing to tell which the
-    invoice is billed in ("1 USD = 1.37 CAD" in a note): the first is given, but not as sure."""
+    dollars") or a code printed on the total's label ("Total USD", its amount in the next column) or on the amounts
+    settles it; a code anywhere else counts when it is the only one, and not when it is only in a note on how the
+    supplier may be paid ("Payments in USD accepted"). A statement in such a note ("Payments in US dollars accepted")
+    is no statement either, and a code on an exchange or equivalent note ("CAD equivalent: CAD 1,438.50") is not on the
+    invoice's amounts. Several codes and nothing to tell which the invoice is billed in ("1 USD = 1.37 CAD" in a note):
+    the first printed is given, but not as sure."""
     s = text.upper()
     stated = {m.group(1) or m.group(2) for m in _CURRENCY_STATEMENT.finditer(s) if not _in_payment_note(s, m)}
     stated |= {
@@ -478,15 +491,20 @@ def currency_evidence(text: str) -> tuple[str, float] | None:
     if len(stated) == 1:
         return stated.pop(), 0.8
     lines = [ln for ln in s.splitlines() if not _EXCHANGE.search(ln)]
+    on_total = {m.group(1) for ln in lines if _TOTAL_LABEL.search(ln) and not _PAYMENT_NOTE.search(ln)
+                for m in re.finditer(_CODE, ln)}  # fmt: skip
+    if len(on_total) == 1:
+        return on_total.pop(), 0.8
     on_amounts = {m.group(1) or m.group(2) for ln in lines for m in _CODE_ON_AMOUNT.finditer(ln)}
     if len(on_amounts) == 1:
         return on_amounts.pop(), 0.8
-    # A code anywhere else; one only in a note on how the supplier may be paid is a guess, not as sure.
+    # A code anywhere else, the first printed first; one only in a note on how the supplier may be paid is a guess,
+    # not as sure.
     rest = "\n".join(ln for ln in s.splitlines() if not _PAYMENT_NOTE.search(ln))
-    codes = [code for code in CURRENCIES if re.search(rf"(?<![A-Z]){code}(?![A-Z])", rest)]
+    codes = _codes_in_order(rest)
     if codes:
         return codes[0], 0.8 if len(codes) == 1 else 0.5
-    codes = [code for code in CURRENCIES if re.search(rf"(?<![A-Z]){code}(?![A-Z])", s)]
+    codes = _codes_in_order(s)
     if codes:
         return codes[0], 0.5
     if re.search(r"\bUS\$|\bUS\s?DOLLARS?\b|\$\s?US\b", s):

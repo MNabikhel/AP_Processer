@@ -136,6 +136,7 @@ LABELS: dict[str, list[tuple[str, float]]] = {
     "payment_terms": [
         (r"payment\s*terms", 1.0), (r"terms(?:\s*of\s*payment)?\b", 0.9), (r"conditions\s*(?:de\s*)?(?:paiement|reglement)", 1.0),
         (r"modalites\s*(?:de\s*)?paiement", 1.0), (r"conditions\b", 0.6), (r"termes\b", 0.8),
+        (r"modalites(?!\s*(?:(?:de|du)(?![a-z])|d\s*'))", 0.8),  # "Modalités : Net 30", not "Modalités de livraison"
     ],
 }  # fmt: skip
 
@@ -344,6 +345,9 @@ def _id_from(text: str, offset: int) -> tuple[str, int, int] | None:
         elif re.fullmatch(r" ?- ?", gap) and nxt.group(0)[:1].isdigit() and len(value) <= 4 and value.isupper():
             # OCR's space beside the hyphen of "PO-20203": "PO -20203" is the one number.
             value, end = value + "-" + nxt.group(0), nxt.end()
+    elif re.fullmatch(r"\d{1,3}", value) and re.fullmatch(r"(?: \d{3})+\s*", rest[b:]):
+        # "No de facture 123 456": a number printed in groups of three, alone after its label, is one number.
+        value = rest[a:].rstrip()
     if not any(c.isdigit() for c in value):
         return None
     value = value.strip(".-/")
@@ -478,6 +482,9 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             ):
                 return None
         amounts = _amounts_in(cleaned)
+        if field in _TAX_FIELDS or field == "tax_total":
+            # "HST 13% on $1,000.00": the amount the tax is charged on, not the tax (further right, or the next column)
+            amounts = [x for x in amounts if not _TAX_BASE.search(cleaned[: x[1]])]
         if not amounts:
             return None
         money = [a for a in amounts if looks_like_money(cleaned[a[1] : a[2]])]
@@ -621,6 +628,17 @@ def _own_label(line: Line, field: str) -> bool:
     return any(h.field == field for h in _label_hits(line))
 
 
+def _after_another_label(line: Line, got: Reading) -> bool:
+    """``got``, read from ``line`` for a label on another line, comes after a label of its own on ``line``
+    ("Delivery Date: Sep 20, 2026"): it is that label's value."""
+    at = line.text.find(str(got.raw))
+    before = plain(line.text[: max(at, 0)]).strip()
+    if at <= 0 or not before:
+        return False
+    return bool(_LABEL_SHAPE.search(before) or before.endswith(":") or any(
+        h.field != got.field and h.end <= at for h in _label_hits(line)))  # fmt: skip
+
+
 def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
     """For each label: the value after it on the same line, else just right of it, else just below it
     (header grids print a row of labels over a row of values)."""
@@ -646,6 +664,9 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
             if _under_another_label(lines, other, line):
                 break  # a header grid's value, under its own label ("Order No." over "SO-28797"): look below
             got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
+            if got and _after_another_label(other, got):
+                got = None
+                break  # "Delivery Date: Sep 20, 2026": that label's value, not this one's
             if got:
                 got.score *= 1.0 - min(other.box.x0 - line.box.x1, 0.4) * 0.5
                 break
@@ -655,6 +676,9 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
                 if _own_label(other, field):
                     break
                 got = _value_reading(field, other, 0, 0.85 * hit.strength, "label-below")
+                if got and _after_another_label(other, got):
+                    got = None
+                    break  # "Due Date: Upon Receipt" over "Delivery Date: Sep 20, 2026": not the due date
                 if got:
                     break
                 if _label_hits(other) or _LABEL_SHAPE.search(plain(other.text).strip()):
@@ -848,7 +872,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             continue
         if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
             continue
-        if _POSTAL_CODE.search(text) or _US_ADDRESS.search(text) or _CONTACT.search(p):
+        if _POSTAL_CODE.search(text) or us_address(text) or _CONTACT.search(p):
             continue  # an address, e-mail or web line
         heading = (
             len(p.split()) <= 2
@@ -884,6 +908,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
 # ---------------------------------------------------------------- totals solver
 
 _TAX_FIELDS = ("gst_amount", "hst_amount", "pst_amount", "qst_amount")
+_TAX_BASE = re.compile(r"(?i)\b(?:on|sur)\s*\$?\s*$")  # "13% on $1,000.00", "5 % sur 1 000,00 $"
 _RATES = {
     "gst_amount": (0.05,),
     "hst_amount": (0.13, 0.14, 0.15),
@@ -1409,9 +1434,24 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
 # ---------------------------------------------------------------- entry point
 
 
-_US_ADDRESS = re.compile(
-    r",?\s(?:A[LKZR]|C[AOT]|DE|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\s+\d{5}(?:-\d{4})?\b"
+# A state and ZIP code after a city, a comma or at the start of a line ("Seattle, WA 98101", "Boise ID 83702", "WA
+# 98101"); not after a label: "Order ID 77812", "Store IN 46204" are a label's numbers, not Idaho or Indiana.
+_ID_LABEL_WORDS = (
+    "order|vendor|supplier|store|job|ticket|customer|cust|client|account|acct|member|employee|tax|ref|reference|batch|"
+    "lot|work|purchase|transaction|tracking|user|invoice|inv|document|doc|file|case|project|contract|site|location|"
+    "unit|item|product|part|serial|payment|po|no|number|box|route|shipment|delivery|quote|receipt|confirmation"
 )
+_US_ADDRESS = re.compile(
+    r"(?:^\s*|,\s*|(?<![A-Za-z])(?!(?i:" + _ID_LABEL_WORDS + r")\s)[A-Za-z][A-Za-z.'-]*\s+)"
+    r"(?:A[LKZR]|C[AOT]|DE|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])"
+    r"\s+\d{5}(?:-\d{4})?\b",
+    re.M,
+)
+
+
+def us_address(text: str) -> bool:
+    """``text`` holds a US address's state and ZIP code (``offline_coder.provinces`` reads the supplier's with it)."""
+    return bool(_US_ADDRESS.search(text))
 
 
 def _us_vendor(layout: DocLayout) -> bool:
@@ -1419,7 +1459,7 @@ def _us_vendor(layout: DocLayout) -> bool:
     if not layout.pages:
         return False
     for line in layout.pages[0].lines:
-        if line.box.cy < 0.3 and not _in_bill_to(layout, line) and _US_ADDRESS.search(line.text):
+        if line.box.cy < 0.3 and not _in_bill_to(layout, line) and us_address(line.text):
             return True
     return False
 
@@ -1439,8 +1479,11 @@ def read_fields(layout: DocLayout, received: dt.date | None = None) -> dict[str,
     in (it settles a 03/04/2026 the page itself does not: invoices arrive days after their date)."""
     text = layout.text()
     order = infer_day_first(text)
-    if order is None and (_us_vendor(layout) or (find_currency(text) == "USD" and not _canadian_vendor(layout))):
-        order = False  # US invoices print month first (a Canadian supplier billing in USD need not)
+    # US invoices print month first. A Canadian supplier need not, whatever its currency or a US line on its letterhead
+    # (a warehouse, a label's number read as a ZIP code): its Canadian postal code or GST/HST number tells.
+    canadian = _canadian_vendor(layout) or any(valid for *_, valid in find_gst_numbers(text))
+    if order is None and not canadian and (_us_vendor(layout) or find_currency(text) == "USD"):
+        order = False
     if order is not None:
         return _read_with_order(layout, order)
     cands = _read_with_order(layout, None)
@@ -1568,6 +1611,12 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
             readings += got
         cands[field] = readings
+    if not cands.get("payment_terms"):
+        # "Due Date: Upon Receipt" (no date): the terms, printed where the due date goes.
+        for hit in hits.get("due_date", []):
+            terms = _value_reading("payment_terms", hit.line, hit.end, 0.95 * hit.strength, "label-inline")
+            if terms and terms.value == "Due on receipt":
+                cands.setdefault("payment_terms", []).append(terms)
     if credit_printed_positive(layout):
         for field in AMOUNT_FIELDS:
             for r in cands.get(field, []):

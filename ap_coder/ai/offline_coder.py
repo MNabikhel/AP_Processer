@@ -19,7 +19,7 @@ from typing import Any
 
 from ..capture import analyze, build_layout
 from ..capture.bridge import vendor_record
-from ..capture.reader import _US_ADDRESS
+from ..capture.reader import us_address
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout
 from ..capture.workflow import local_evidence, supplier_for
 from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
@@ -112,7 +112,7 @@ def provinces(text: str) -> tuple[str, str]:
             after_label = True
             pending.append("bill")
         m = _PROVINCE_AT.search(line)
-        where = m.group(1) if m else (OUTSIDE_CANADA if _US_ADDRESS.search(line) else "")
+        where = m.group(1) if m else (OUTSIDE_CANADA if us_address(line) else "")
         if not where:
             continue
         if not supplier and not after_label:
