@@ -344,6 +344,9 @@ def _id_from(text: str, offset: int) -> tuple[str, int, int] | None:
         elif re.fullmatch(r" ?- ?", gap) and nxt.group(0)[:1].isdigit() and len(value) <= 4 and value.isupper():
             # OCR's space beside the hyphen of "PO-20203": "PO -20203" is the one number.
             value, end = value + "-" + nxt.group(0), nxt.end()
+    elif re.fullmatch(r"\d{1,3}", value) and re.fullmatch(r"(?: \d{3})+\s*", rest[b:]):
+        # "No de facture 123 456": a number printed in groups of three, alone after its label, is one number.
+        value = rest[a:].rstrip()
     if not any(c.isdigit() for c in value):
         return None
     value = value.strip(".-/")

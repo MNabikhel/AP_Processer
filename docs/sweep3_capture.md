@@ -29,3 +29,13 @@
 - **Fix:** A value right of or below a label is not taken when it comes after another label on its own line (`_after_another_label`: a label shape, a colon, or another field's label before it). A due-date label followed by "Upon Receipt" gives the payment terms "Due on receipt" when no terms label was read.
 - **Test:** `tests/test_sweep3_capture.py::test_due_upon_receipt_does_not_take_the_delivery_date_below_it`
 - **Lesson:** Don't take a value from a neighbouring line without checking it isn't already another label's value.
+
+#### B-185 · An invoice number printed in groups of three is cut at the first space · medium
+- **Where:** `ap_coder/capture/reader.py:328` (`_id_from`)
+- **Symptom:** "No de facture 123 456" is read as invoice number 123, verified (the page reader's transcription, read by the same rules, agrees).
+- **Cause:** An identifier ended at the first space unless a short prefix of letters came before it ("INV 4471"); digit groups set apart the French way were never joined.
+- **Reproduce:** the Acme invoice with "No de facture" and "123 456" in the next column, `analyze(..., page_text=[...])`.
+- **Reproduced:** yes (`{'invoice_number': ('123', 'verified', 0.998)}`)
+- **Fix:** A number of one to three digits followed only by groups of three digits, each one space apart, with nothing else after it on the line, is read whole ("123 456"; compared without spaces).
+- **Test:** `tests/test_sweep3_capture.py::test_an_invoice_number_in_french_digit_groups_is_read_whole`
+- **Lesson:** Don't end a number at a space before checking whether the space is part of how the number is printed.

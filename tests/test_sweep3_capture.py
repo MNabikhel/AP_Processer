@@ -83,3 +83,10 @@ def test_due_upon_receipt_does_not_take_the_delivery_date_below_it(tmp_path):
     na = _NO_NUMBER + [(380, 110, "Invoice #: AC-1001"), (380, 122, "Invoice Date: Sep 14, 2026"),
                        (380, 134, "Due Date: N/A"), (380, 146, "Delivery Date: Sep 20, 2026")]  # fmt: skip
     assert _read(_pdf(tmp_path, na, "na.pdf")).fields["due_date"].value != "2026-09-20"
+
+
+def test_an_invoice_number_in_french_digit_groups_is_read_whole(tmp_path):
+    """ "No de facture 123 456": the number is 123 456, not 123."""
+    lines = _NO_NUMBER + [(380, 120, "No de facture"), (470, 120, "123 456")]
+    fr = _read(_pdf(tmp_path, lines)).fields["invoice_number"]
+    assert fr.value.replace(" ", "") == "123456", fr
