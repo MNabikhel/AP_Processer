@@ -1,7 +1,7 @@
 # Bug log
 
 Every bug found by a bug sweep: what went wrong, how to reproduce it, the fix, the test that keeps it fixed, and the lesson
-("don't do this again"). Each lesson is also a line in the "### Bug lessons" list of the CLAUDE.md of the folder its fix is in.
+("don't do this again"). B-118 to B-123 and B-131 were bugs in the codebase-map tools, which were removed later (decisions D-38).
 A suspicion that could not be reproduced is logged as "not reproduced" and left as it is, never fixed blindly.
 
 How to add one: next number, its section, all fields; the test first (it fails), then the fix.
