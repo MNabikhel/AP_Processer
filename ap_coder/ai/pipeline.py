@@ -6,6 +6,7 @@ import contextlib
 import contextvars
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -156,7 +157,7 @@ def finalise_coding(
     return output, report
 
 
-DAMAGED_PICTURE = ("UnidentifiedImageError", "DecompressionBombError")
+DAMAGED_PICTURE = ("UnidentifiedImageError",)
 DAMAGED_PDF = ("FileDataError", "EmptyFileError")
 
 
@@ -165,6 +166,12 @@ def plain_error(exc: Exception, path: Path) -> str:
     technical detail is in the log), anything else as the error it is."""
     name = type(exc).__name__
     kind = path.suffix.lstrip(".").upper() or "picture"
+    if name == "DecompressionBombError":  # Pillow's guard: over ~179 million pixels (a phone's 200 MP mode)
+        pixels = re.search(r"\((\d+) pixels\)", str(exc))
+        megapixels = int(pixels.group(1)) / 1e6 if pixels else 0.0
+        size = f" ({megapixels:,.{0 if megapixels >= 10 else 1}f} megapixels)" if pixels else ""
+        return (f"{path.name} is too large a picture{size} to be opened safely. Take the photo at the phone's normal "
+                "resolution (12 megapixels is plenty), or scan the page.")  # fmt: skip
     if name in DAMAGED_PICTURE or (name == "OSError" and "image file" in str(exc)):
         return (f"{path.name} can't be opened as a picture: the file is damaged or not really a {kind}. Ask the "
                 "vendor for a new copy, or scan it again.")  # fmt: skip
