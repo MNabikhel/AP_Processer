@@ -2378,7 +2378,7 @@ Improvements made with these fixes:
 
 ## Sweep 4 (real-world testing), October 2026
 
-The findings Sweep 3 left (N-77 to N-93) were looked at again with real-world use in mind: each one a pilot tester or AP user could hit, and that could be fixed without changing how the app is used, got a failing test first, then the fix.
+The 17 findings Sweep 3 left (N-77 to N-93) were looked at again with real-world use in mind: each one a pilot tester or AP user could hit, and that could be fixed without changing how the app is used, got a failing test first, then the fix. 9 were fixed (B-216 to B-224); 8 are left, each with its reason under *Looked at again and left*.
 
 ### Logged issues fixed
 
@@ -2471,3 +2471,14 @@ The findings Sweep 3 left (N-77 to N-93) were looked at again with real-world us
 - **Fix:** the layout has a "Byte-order mark (for Excel)" box beside "Header row", ticked by default and for every layout saved before, so nothing changes until AP unticks it for a loader that reads the first header wrong. The ERP CSV and the other downloads for Excel keep the mark; the JD Edwards files keep none (docs/JDE_E1.md).
 - **Test:** `tests/test_export_layout.py::test_the_custom_csv_can_leave_out_the_byte_order_mark_for_a_database_loader`, `tests/test_web_finance.py::test_the_custom_layout_keeps_or_leaves_out_the_byte_order_mark`
 - **Lesson:** When neither of two encodings is right for every reader, make it a choice of the layout that writes for that reader, with today's behaviour as the default.
+
+### Looked at again and left
+
+- **N-77** · A lesson an approval made before B-158 added still can't be taken back: nothing recorded which approval added what, and rebuilding the lessons would replay every past approval in order.
+- **N-80** · The duplicate audit keeps treating an exported invoice and an ERP row with its number and amount as one bill whatever the ERP calls the vendor ("BELL CANADA" for "Bell Mobility Inc."). Search's rule (B-152: the same vendor or the ERP's short name) would flag every exported invoice whose vendor the ERP names otherwise; a different vendor's bill with the same number and the same amount to the cent is far rarer than that false alarm.
+- **N-84** · The page reader's transcript read by the same rules as the page: making it an independent reader is a design change of fusion, not a fix.
+- **N-85** · A US supplier's day/month order: marking it ambiguous would send every US invoice dated on day 1 to 12 to a person; a policy choice.
+- **N-90** · A `watch` / `read-pages` of a version before B-167 leaves no note, so the first update from it can't find it without scanning every process. docs/UPGRADING.md (*What it cannot do*) now says to close it before that one update, and that what it fails shows with **Retry**.
+- **N-91** · An invoice that failed (for a missing module or anything else) is not read again by `watch` on its own: it shows as failed in the review queue with **Retry**, and an automatic retry rule would fail it again at every check while the install is broken. Since B-167 nothing fails that way after an update.
+- **N-92** · An older `watch` run by another computer account can't be ended by this one (Windows lets only that account or an administrator end it); the start already says to close its window or end its task in Task Scheduler.
+- **N-93** · Two accounts sharing one folder on macOS/Linux: the file permissions are the system's; sharing one folder between accounts is documented for Windows only.
