@@ -2392,3 +2392,14 @@ Found by reading a hard corpus of 150 synthetic Canadian invoices with exact tru
 - **Test:** `tests/test_sweep4_layouts.py::test_a_grid_that_prints_each_label_under_its_value`, `::test_a_grid_of_labels_over_values_is_still_read_below`
 - **Hard corpus (digital):** 93.9% / 80.0% → 99.4% / 96.0%; labels_under 66.7% / 0% → 100% / 100%; no silent error 90% → 100%.
 - **Lesson:** Don't assume a label reads left to right and top to bottom: which side of a value its label sits on is the page's convention, and the gaps show it.
+
+#### B-281 · Compact dates with a month name ("12APR26", "Oct-15-26") are not read · medium
+- **Where:** `ap_coder/capture/normalize.py` (`parse_dates`), `ap_coder/capture/supplier.py` (`date_candidates`)
+- **Symptom:** "Billing Date 12APR26", "Please pay by 27APR26", "Date 24NOV25": the invoice and due dates missing.
+- **Cause:** Dates with a month name needed a four-digit year or spaces and dashes around the month ("15-Oct-26"); a day, month and two-digit year run together, or a month, day and year joined by dashes, matched no pattern. The supplier template's date reader needed a four-digit year too.
+- **Reproduce:** `parse_date("12APR26")`, `parse_date("Oct-15-26")`.
+- **Reproduced:** yes (`None`, `None`)
+- **Fix:** Two more patterns: day, month and two-digit year run together ("15OCT26") and month-day-year by dashes ("Oct-15-26", "Sept-05-2026"), never inside a longer number ("INV-12MAR26" stays an invoice number). The template's reader takes a two-digit year printed last.
+- **Test:** `tests/test_sweep4_layouts.py::test_compact_dates_with_a_month_name`
+- **Hard corpus (digital):** 99.4% / 96.0% → 100% / 100%; date_odd 95.4% / 71.4% → 100% / 100%.
+- **Lesson:** Don't let a date pattern assume the spaces and the century are printed: supplier systems print what fits in seven characters.

@@ -72,3 +72,27 @@ def test_a_grid_of_labels_over_values_is_still_read_below(tmp_path):
         "2026-09-14",
         "PO-5521",
     )
+
+
+def test_compact_dates_with_a_month_name(tmp_path):
+    """ "12APR26" (day, month and two-digit year run together) and "Oct-15-26" (month, day and year by dashes) were
+    not read as dates at all; a number with such a date inside it is still a number."""
+    from ap_coder.capture.normalize import parse_date, parse_dates
+    from ap_coder.capture.supplier import parse_date as template_date
+
+    assert parse_date("12APR26") == "2026-04-12"
+    assert parse_date("Billing Date: 24NOV25") == "2025-11-24"
+    assert parse_date("Oct-15-26") == "2026-10-15"
+    assert parse_date("Sept-05-2026") == "2026-09-05"
+    assert parse_dates("INV-12MAR26") == [] and parse_dates("SKU 12ABC26") == []
+    assert (template_date("12APR26"), template_date("Oct-15-26")) == ("2026-04-12", "2026-10-15")
+    lines = _VENDOR + [
+        (380, 150, "Invoice No:"), (460, 150, "INV-12MAR26"), (380, 165, "Invoice Date:"), (460, 165, "12APR26"),
+        (380, 180, "Due Date:"), (460, 180, "Oct-15-26"),
+    ] + _TABLE  # fmt: skip
+    got = _read(_pdf(tmp_path, lines)).fields
+    assert (got["invoice_number"].value, got["invoice_date"].value, got["due_date"].value) == (
+        "INV-12MAR26",
+        "2026-04-12",
+        "2026-10-15",
+    )

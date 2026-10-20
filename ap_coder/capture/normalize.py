@@ -218,6 +218,10 @@ _SPECK_BY_SEP = re.compile(
 
 
 _WORDY_DMY_DASH = re.compile(r"\b(\d{1,2})[-\s]([a-z]{3,9})[-\s](\d{2,4})\b")
+# Compact forms: "Oct-15-26" (the month, day and year by dashes) and "15OCT26" (all run together, a two-digit year).
+# Not inside a number ("INV-12MAR26", "PO-OCT-15-26").
+_WORDY_MDY_DASH = re.compile(r"(?<![\w/-])([a-z]{3,9})\.?-(\d{1,2})-(\d{2}|\d{4})(?![\w/-])")
+_GLUED_DMY = re.compile(r"(?<![\w/-])(\d{1,2})([a-z]{3,4})(\d{2})(?![\w/-])")
 
 
 def _make(y: int, m: int, d: int) -> dt.date | None:
@@ -244,7 +248,8 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
         if d:
             found.append((d, m.start(), m.end(), False))
             taken.append(m.span())
-    for rx, order in ((_WORDY_MDY, "mdy"), (_WORDY_DMY, "dmy"), (_WORDY_DMY_DASH, "dmy")):
+    for rx, order in ((_WORDY_MDY, "mdy"), (_WORDY_DMY, "dmy"), (_WORDY_DMY_DASH, "dmy"), (_WORDY_MDY_DASH, "mdy"),
+                      (_GLUED_DMY, "dmy")):  # fmt: skip
         for m in rx.finditer(s):
             if not free(*m.span()):
                 continue
