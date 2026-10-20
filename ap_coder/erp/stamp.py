@@ -14,7 +14,9 @@ from typing import Any
 
 from ..ai.extraction import DOCUMENT_EXTENSIONS
 from ..capture.layout import HEIF_EXTENSIONS
+from ..coding.tax import TaxTreatment
 from ..core.store import APPROVED
+from .exports import distribution
 
 GREEN, INK, MUTED, LINE = (0.07, 0.55, 0.33), (0.08, 0.13, 0.2), (0.36, 0.39, 0.45), (0.85, 0.88, 0.92)
 FONT, BOLD, FALLBACK = "helv", "hebo", "fallback"
@@ -107,7 +109,9 @@ def _stamp(page: Any, inv: dict[str, Any]) -> None:
         _put(page, (rect.x0 + 9, rect.y0 + 31 + 11 * n), _fit(text, 7.5, width - 16), 7.5)
 
 
-def _coding_pages(doc: Any, inv: dict[str, Any], gl_names: dict[str, str]) -> None:
+def _coding_pages(
+    doc: Any, inv: dict[str, Any], gl_names: dict[str, str], tax_treatments: dict[str, TaxTreatment] | None = None
+) -> None:
     final = inv.get("final_output") or {}
     currency = final.get("currency") or ""
     page = doc.new_page(width=PAGE_W, height=PAGE_H)
@@ -153,7 +157,7 @@ def _coding_pages(doc: Any, inv: dict[str, Any], gl_names: dict[str, str]) -> No
 
     header()
     total = 0.0
-    for e in final.get("gl_distribution") or []:
+    for e in distribution(final, tax_treatments):  # an invoice approved by an older version: built again
         if y > PAGE_H - MARGIN - 30:
             page = doc.new_page(width=PAGE_W, height=PAGE_H)
             y = MARGIN
@@ -180,8 +184,11 @@ def can_stamp(inv: dict[str, Any] | None) -> bool:
     return bool(inv) and inv.get("status") == APPROVED
 
 
-def stamped_pdf(inv: dict[str, Any], gl_names: dict[str, str] | None = None) -> bytes:
-    """The approved invoice ``inv`` (a ``Store.get_invoice`` row) as a stamped PDF with its coding page.
+def stamped_pdf(
+    inv: dict[str, Any], gl_names: dict[str, str] | None = None, tax_treatments: dict[str, TaxTreatment] | None = None
+) -> bytes:
+    """The approved invoice ``inv`` (a ``Store.get_invoice`` row) as a stamped PDF with its coding page
+    (``tax_treatments``: ``Store.tax_treatments()``, for an invoice approved with no stored posting lines).
 
     Raises ``ValueError`` when the invoice is not fully approved (see ``can_stamp``).
     """
@@ -192,7 +199,7 @@ def stamped_pdf(inv: dict[str, Any], gl_names: dict[str, str] | None = None) -> 
     try:
         if doc.page_count:
             _stamp(doc[0], inv)
-        _coding_pages(doc, inv, gl_names)
+        _coding_pages(doc, inv, gl_names, tax_treatments)
         if any(FALLBACK in f[4] for page in doc for f in page.get_fonts()):
             doc.subset_fonts()  # only the characters used: keeps the file small
         return doc.tobytes(garbage=3, deflate=True)
@@ -207,7 +214,10 @@ def file_name(inv: dict[str, Any]) -> str:
     return f"{safe or 'invoice'} - approved.pdf"
 
 
-def batch_zip(invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None) -> bytes:
+def batch_zip(
+    invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = None,
+    tax_treatments: dict[str, TaxTreatment] | None = None,
+) -> bytes:  # fmt: skip
     """The stamped PDFs of ``invoices`` in one ZIP. Invoices not fully approved are left out (see ``can_stamp``)."""
     out = io.BytesIO()
     names: set[str] = set()
@@ -217,5 +227,5 @@ def batch_zip(invoices: list[dict[str, Any]], gl_names: dict[str, str] | None = 
             if name.casefold() in names:  # Windows: "ACME" and "Acme" are the same file
                 name = name.replace(" - approved.pdf", f" (#{inv['id']}) - approved.pdf")
             names.add(name.casefold())
-            z.writestr(name, stamped_pdf(inv, gl_names))
+            z.writestr(name, stamped_pdf(inv, gl_names, tax_treatments))
     return out.getvalue()

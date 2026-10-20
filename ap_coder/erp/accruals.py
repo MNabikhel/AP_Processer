@@ -25,6 +25,7 @@ from ..core.memory import vendor_key
 from ..core.safe import csv_row
 from ..core.store import APPROVED, PARKED, PENDING, REVIEW, Store
 from . import recurring
+from .exports import distribution
 
 RECEIVED, NOT_IN_ERP, RECURRING = "Received, not invoiced", "Invoice not in the ERP yet", "Expected recurring invoice"
 SOURCES = (RECEIVED, NOT_IN_ERP, RECURRING)
@@ -100,6 +101,7 @@ def _not_in_erp(store: Store, period_end: dt.date) -> list[Accrual]:
     # A copy flagged as a duplicate of a bill already in the ERP (exported) or already accrued is not accrued
     # again; one flagged as already in the ERP's invoice register is in the ERP.
     counted = {_bill(r["final_output"] or {}) for r in rows if r["id"] in exported}
+    treatments = store.tax_treatments()
     out = []
     for r in rows:
         if r["status"] not in (REVIEW, PARKED, PENDING, APPROVED) or r["id"] in exported:
@@ -112,7 +114,7 @@ def _not_in_erp(store: Store, period_end: dt.date) -> list[Accrual]:
             continue
         counted.add(bill)
         by_gl: dict[tuple[str, str], float] = defaultdict(float)
-        for e in doc.get("gl_distribution") or []:
+        for e in distribution(doc, treatments):  # an invoice coded by an older version: built again
             if e.get("kind") == "expense" or e.get("non_recoverable_tax"):  # a cost; recoverable tax is not
                 by_gl[(e.get("gl_code") or "", e.get("cost_center") or "")] += float(e.get("amount") or 0)
         state = {REVIEW: "in review", PARKED: "parked", PENDING: "waiting for a second approval",

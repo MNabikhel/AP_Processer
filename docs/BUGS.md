@@ -2359,19 +2359,126 @@ Improvements made with these fixes:
 ### Not reproduced or left as they are
 
 - **N-77** · Store and config · B-158 can only take back an approval's part of a lesson recorded from this version on (`lesson_approvals`): an approval made before the update and withdrawn after it still leaves its counts and value in `lessons` (nothing recorded which approval added what; rebuilding the lessons from past approvals would need each approval's proposed and final coding replayed in order, a bigger change than the fix).
-- **N-78** · Tax and coding rules · Discount terms written with prox or weeks ("2/10th prox net 30th", "2% 10th prox", "2% 2 weeks net 30") still give no discount (the due date is the default or the prox day): the discount date model has only days from the invoice or month end; rare, left for a design of prox discounts.
-- **N-79** · Exports, ERP and reports · The ERP CSV export (`ap_coder/erp/exports.py` `build_csv`) and the Custom CSV (`export_layout.build`) are written with a UTF-8 byte-order mark ("Excel shows accents correctly"), while the JDE Z-files are deliberately without one (docs/JDE_E1.md). D-28 / B-92 decided only the quoting, not the BOM. A loader that reads plain UTF-8 (SQL*Loader, a bulk insert) sees the first header as "﻿Batch"; but some Windows import tools need the BOM to read UTF-8 at all. Which one the pilot's ERP wants is a choice (a setting, or a D-NN), not a bug fix: left as it is.
+- **N-78** · Tax and coding rules · Discount terms written with prox or weeks ("2/10th prox net 30th", "2% 10th prox", "2% 2 weeks net 30") still give no discount (the due date is the default or the prox day): the discount date model has only days from the invoice or month end; rare, left for a design of prox discounts. Fixed in Sweep 4 (B-216).
+- **N-79** · Exports, ERP and reports · The ERP CSV export (`ap_coder/erp/exports.py` `build_csv`) and the Custom CSV (`export_layout.build`) are written with a UTF-8 byte-order mark ("Excel shows accents correctly"), while the JDE Z-files are deliberately without one (docs/JDE_E1.md). D-28 / B-92 decided only the quoting, not the BOM. A loader that reads plain UTF-8 (SQL*Loader, a bulk insert) sees the first header as "﻿Batch"; but some Windows import tools need the BOM to read UTF-8 at all. Which one the pilot's ERP wants is a choice (a setting, or a D-NN), not a bug fix: left as it is. Fixed in Sweep 4 (B-224).
 - **N-80** · Exports, ERP and reports · `dupaudit._same_bill` treats an exported invoice and an ERP-register row with the same number as the same bill when the vendor OR the amount agrees; the audit only compares rows with equal amounts, so another vendor's bill with the same number and amount is never flagged OTHER_VENDOR once ours is exported. That is the documented choice (the ERP's own name for the vendor, `test_an_exported_invoice_is_not_its_own_duplicate_in_the_erp`); quick search (B-152) now asks for the same vendor or the ERP's short name. Aligning the audit is a decision about false alarms, left.
-- **N-81** · Exports, ERP and reports · Besides the exports (B-151), `spend.py`, `accruals.py` and `stamp.py` also read only a stored `gl_distribution`, so an invoice approved by an older version has no lines in the spend report, the accrual detail or the stamp's posting table. They could use `exports.distribution()`; outside this finding's scope, left.
-- **N-82** · AI and readers · `page_worker.reader_alive` (an invoice's "being read" mark) has the same reused-process-id weakness as the self-test mark (B-177), but there the store's `STALE_READING_HOURS` (2 hours) already puts a stale read back in line, so it only delays; left as is.
-- **N-83** · AI and readers · `Store.learning_rows` (B-175) gives an old vendor's invoice a list of its own, so the suggestion index (one slot) is rebuilt when invoices of such vendors alternate in a batch (about 0.3 s at 50,000 lessons); a per-vendor index would avoid it, a bigger change than this fix.
+- **N-81** · Exports, ERP and reports · Besides the exports (B-151), `spend.py`, `accruals.py` and `stamp.py` also read only a stored `gl_distribution`, so an invoice approved by an older version has no lines in the spend report, the accrual detail or the stamp's posting table. They could use `exports.distribution()`; outside this finding's scope, left. Fixed in Sweep 4 (B-217).
+- **N-82** · AI and readers · `page_worker.reader_alive` (an invoice's "being read" mark) has the same reused-process-id weakness as the self-test mark (B-177), but there the store's `STALE_READING_HOURS` (2 hours) already puts a stale read back in line, so it only delays; left as is. Fixed in Sweep 4 (B-218).
+- **N-83** · AI and readers · `Store.learning_rows` (B-175) gives an old vendor's invoice a list of its own, so the suggestion index (one slot) is rebuilt when invoices of such vendors alternate in a batch (about 0.3 s at 50,000 lessons); a per-vendor index would avoid it, a bigger change than this fix. Fixed in Sweep 4 (B-219).
 - **N-84** · Document capture · The page reader's transcription is read by the same rule reader as the page (`capture/__init__.py` `_page_reader`, `transcript.py`), so a rule-parsing mistake (B-183, B-184, B-185 here) appears in both readings and fusion counts it as two independent readers agreeing (verified). Making the transcript an independent reader needs its own parsing or a fusion rule that discounts agreement on the same rule path; a design change, not a bug fix.
 - **N-85** · Document capture · A day/month order taken only from a real US supplier address (`read_fields`, B-183) still settles 03/04/2026 without the ambiguous mark, as docs/CAPTURE_DESIGN.md describes. Marking it ambiguous (or likely at best) would send every US invoice dated on day 1 to 12 to a person; a policy choice, left. B-183 removed the false addresses and the Canadian suppliers from that path.
-- **N-86** · Document capture · An invoice number in groups of three followed by more text on its line ("No de facture 123 456 Date ...") is still cut at the first space (B-185 joins it only when nothing follows); capping its confidence would need a new method name, which changes calibration keys. Left.
-- **N-87** · Web routes · B-192 keys a colleague's drafts by (name, address): a colleague whose computer gets a new address
-- **N-88** · Intake, email and command line · A photo over Pillow's ~179 MP limit is still refused (B-148 only words it truthfully). Reading it would mean raising `Image.MAX_IMAGE_PIXELS`, which is process-wide and shared by the reading threads, or decoding JPEGs at a reduced size (`draft`); either is a decision about memory on a laptop, not a bug fix.
-- **N-89** · Intake, email and command line · A .msg picture's Content-ID referenced only from an RTF body (no HTML stream) counts as inline only when Outlook marked it hidden: the compressed RTF is not decompressed to look for `cid:`.
+- **N-86** · Document capture · An invoice number in groups of three followed by more text on its line ("No de facture 123 456 Date ...") is still cut at the first space (B-185 joins it only when nothing follows); capping its confidence would need a new method name, which changes calibration keys. Left. Fixed in Sweep 4 (B-220).
+- **N-87** · Web routes · B-192 keys a colleague's drafts by (name, address): a colleague whose computer gets a new address loses them (and bulk approval skips those invoices) until a restart. Fixed in Sweep 4 (B-221).
+- **N-88** · Intake, email and command line · A photo over Pillow's ~179 MP limit is still refused (B-148 only words it truthfully). Reading it would mean raising `Image.MAX_IMAGE_PIXELS`, which is process-wide and shared by the reading threads, or decoding JPEGs at a reduced size (`draft`); either is a decision about memory on a laptop, not a bug fix. Fixed in Sweep 4 (B-222).
+- **N-89** · Intake, email and command line · A .msg picture's Content-ID referenced only from an RTF body (no HTML stream) counts as inline only when Outlook marked it hidden: the compressed RTF is not decompressed to look for `cid:`. Fixed in Sweep 4 (B-223).
 - **N-90** · Setup, launcher and update · B-167 finds a running `watch` / `read-pages` by the note it leaves; one started by a version from before the fix leaves none, so the first update from such a version still can't stop it (finding it would mean scanning every process and telling which data folder it uses). Stop it by hand before that one update (worth a line in WHATS_NEW / UPGRADING when released).
 - **N-91** · Setup, launcher and update · `watch` still treats an invoice that failed for a missing module as seen (no retry). Not changed, as the finding suggested: with the older watcher stopped, nothing fails that way; a retry rule for failures is a design choice.
 - **N-92** · Setup, launcher and update · an older `watch` / `read-pages` run by another computer account (or a scheduled task under one) can't be ended by this account: the start waits a minute ("close the window it runs in, or end its task in Task Scheduler"), then stops. Worker notes don't carry the account (B-168 covers servers only).
 - **N-93** · Setup, launcher and update · two accounts sharing one folder on macOS/Linux: the server file is mode 0600 and the code folder's lock file belongs to the first account, so the second account's start can't read the token or take the lock; it now relies on `/healthz`'s `user` (B-168). Sharing one folder between accounts is documented for Windows only.
+
+## Sweep 4 (real-world testing), October 2026
+
+The 17 findings Sweep 3 left (N-77 to N-93) were looked at again with real-world use in mind: each one a pilot tester or AP user could hit, and that could be fixed without changing how the app is used, got a failing test first, then the fix. 9 were fixed (B-216 to B-224); 8 are left, each with its reason under *Looked at again and left*.
+
+### Logged issues fixed
+
+#### B-216 · Discount terms written with prox or weeks gave no discount · low-medium
+- **Where:** `ap_coder/coding/terms.py:135` (`_prox_discount`, `parse_terms`, `payment`)
+- **Symptom:** "2/10th prox net 30th", "2% 10th prox" and "2% 2 weeks net 30" printed on an invoice showed no early-payment discount (no "2% off until ...", no DISCOUNT_AVAILABLE), so AP could miss it; "2/10th prox net 30th" was not even read as terms (the default 30 days).
+- **Cause:** the discount model counted only days from the invoice date or the month end; the weeks pattern was kept out of the discount on purpose (B-136) so 2 weeks was never 2 days, but nothing turned it into 14.
+- **Reproduce:** `payment({"invoice_date": "2026-09-10", "payment_terms": "2/10th prox net 30th", "grand_total": 113, "subtotal": 100})`, and the same with "2% 10th prox" and "2% 2 weeks net 30".
+- **Reproduced:** yes (`discount_pct=None, discount_by=None`, due 2026-10-10 for each)
+- **Fix:** weeks are counted as days before the terms are read ("2% 2 weeks" is "2% 14 days"); a discount by a day of the next month ("2/10th prox", "2% 10 prox") is kept in a new `Terms.discount_prox_day` and runs to that day of the next month; the net is a later prox day ("net 25th prox", or "net 30th" after a prox discount), net days from the invoice ("net 30"), or, when none is printed, the discount's own day (as before). A late-payment rate is still never a discount.
+- **Test:** `tests/test_terms.py::test_discount_terms_in_prox_or_weeks_give_the_discount`, `tests/test_terms.py::test_a_prox_late_payment_rate_is_still_no_discount`
+- **Lesson:** Don't leave a unit out of a pattern only to stop a misreading: convert it, so the reading is right as well as not wrong.
+
+#### B-217 · An invoice approved by an older version had no lines in the spend report, the accruals or the stamp · low
+- **Where:** `ap_coder/erp/spend.py:34` (`lines`, `workbook`), `ap_coder/erp/accruals.py:97` (`_not_in_erp`), `ap_coder/erp/stamp.py:112` (`_coding_pages`, `stamped_pdf`, `batch_zip`)
+- **Symptom:** an approved invoice with no stored `gl_distribution` (approved before the distribution was stored) was missing from the spend report and the full data workbook's "Posting" sheet, accrued nothing while approved but not exported, and its approved PDF showed an empty posting table with a 0.00 total; the CSV and JD Edwards files of the same invoice had its lines (B-151).
+- **Cause:** B-151 gave the exports a fallback (`exports.distribution()`); these three read only the stored `gl_distribution`.
+- **Reproduce:** approve the Northwind ground truth (no `gl_distribution`) in a store with the sample setup, then `spend.lines()`, `accruals.build(store, 2026-12-31)` and `stamp.stamped_pdf(...)`.
+- **Reproduced:** yes (`spend.lines: []`, no NOT_IN_ERP accrual, no posting lines on the coding page)
+- **Fix:** all three use `exports.distribution()` with the store's tax treatments (`stamped_pdf` / `batch_zip` take them from the invoice page, quick search and the batch ZIP), so the lines are built again from the coding with the tax setup's accounts.
+- **Test:** `tests/test_sweep4.py::test_an_invoice_approved_without_a_stored_distribution_is_in_the_spend_report`, `tests/test_sweep4.py::test_an_invoice_approved_without_a_stored_distribution_is_in_the_accrual_detail`, `tests/test_sweep4.py::test_an_invoice_approved_without_a_stored_distribution_has_its_posting_on_the_stamp`
+- **Lesson:** When a fallback goes into one helper, move every reader of the stored field onto it at the same time.
+
+#### B-218 · An invoice whose reader died stayed "being read" for two hours once its process id was reused · low
+- **Where:** `ap_coder/ai/page_worker.py:52` (`_process_started`, `READER_ID`, `reader_alive`)
+- **Symptom:** after a dashboard (or `read-pages`) was killed while OvisOCR2 read an invoice, the invoice showed "being read" and the page reader skipped it for up to two hours when another program had since taken that process id (Windows reuses process ids often).
+- **Cause:** another process's "being read" mark was judged by its process id alone (the same weakness B-177 fixed for the self-test mark); only `STALE_READING_HOURS` put it back in line.
+- **Reproduce:** mark an invoice as being read with the pid of a running `sleep` and any token, then `release_interrupted(store)`.
+- **Reproduced:** yes (`released: 0`, the invoice still `reading`)
+- **Fix:** `READER_ID` also notes when its process started (Linux `/proc/<pid>/stat`, Windows `GetProcessTimes`, macOS `ps -o lstart`); a mark whose process id now has another start is not alive, so the invoice is read again at once. A mark from an older version (no start noted), or a start that can't be told, is judged by the process id as before.
+- **Test:** `tests/test_sweep4.py::test_a_reading_mark_whose_process_id_another_program_now_has_goes_back_in_line`
+- **Lesson:** A process id names a process only together with its start time: note both in a mark another process checks.
+
+#### B-219 · Past 50,000 lessons, invoices of an old vendor and of others in turn rebuilt the suggestion index each time · low
+- **Where:** `ap_coder/core/memory.py:149` (`RowsCache`), used by `ap_coder/ai/suggest.py` (`_memory`) and `memory.aggregate`
+- **Symptom:** in a batch where invoices of a vendor whose history was imported first alternate with other vendors' invoices, each invoice waited for the GL suggestion index to be built again (about 0.3 s at 50,000 lessons, more on a slow laptop).
+- **Cause:** B-175 gives an old vendor's invoice a list of its own (`Store.learning_rows`); the index cache kept one list only, so each change of list rebuilt it.
+- **Reproduce:** 1 history row for Northwind, then 30 for other vendors, the read cap at 20; `suggest_gl` for Northwind, another vendor, Northwind, another, Northwind with `store.learning_rows(vendor)`.
+- **Reproduced:** yes (`builds: 5`)
+- **Fix:** `RowsCache` keeps the latest two lists (the shared one and the old vendor's), the most recent first; a list seen again is found by the same row objects or by what they say, as before. The second index is the only memory added (about 40 MB at 50,000 lessons).
+- **Test:** `tests/test_sweep4.py::test_invoices_of_an_old_vendor_and_others_in_turn_share_the_suggestion_indexes`
+- **Lesson:** When a fix gives some callers their own variant of a shared input, give the cache in front of it room for that variant.
+
+#### B-220 · An invoice number in groups of three was still cut when more text followed it on its line · low-medium
+- **Where:** `ap_coder/capture/reader.py:331` (`_id_from`, `_DIGIT_GROUPS`)
+- **Symptom:** "No de facture 123 456 Page 1 de 1" (or "... 123 456 Date ...", common when a scan merges the columns of a French-Canadian invoice header) was read as invoice number 123, verified.
+- **Cause:** B-185 joined the digit groups only when nothing followed them on the line.
+- **Reproduce:** `_id_from(" 123 456 Date 2026-09-14", 0)`; the Acme test invoice with "No de facture 123 456 Page 1 de 1" on one line.
+- **Reproduced:** yes (`'123'`)
+- **Fix:** the groups of three are joined when the line ends after them or a word follows them; another figure after them ("123 456 2026-09-14") or a group that is not three digits still leaves the first number alone, as before. The method name and confidence are unchanged (no calibration key moves): the join is as sure as B-185's.
+- **Test:** `tests/test_sweep4.py::test_an_invoice_number_in_digit_groups_with_more_text_after_it_is_read_whole`
+- **Lesson:** When a rule needs "nothing after it" to be safe, ask what may safely follow instead: a word is not part of a number.
+
+#### B-221 · A colleague whose computer got a new address lost their unsaved edits, and bulk approval skipped the invoice · low-medium
+- **Where:** `ap_coder/web/pages/invoice.py:99` (`_draft_key`, `rename_drafts`), `ap_coder/web/identity.py:88` (`cookie_value`, `from_cookie`, `Person`), `ap_coder/web/pages/who.py:29` (`who_save`)
+- **Symptom:** a colleague on the office network edits an invoice, then their laptop moves from Wi-Fi to cable (or the network renews its address): the review screen no longer shows their edits, Start over can't drop them, and bulk approval skips that invoice ("it has edits open on its review screen") until AP Coder restarts.
+- **Cause:** B-192 kept each colleague's drafts by (name, address), and the address is the network's to change.
+- **Reproduce:** colleague "Ana" at 10.0.0.6 posts `/review/{id}/check` with a PO; the same browser (same cookie) opens `/review/{id}` from 10.0.0.16, then presses Start over.
+- **Reproduced:** yes (the PO is not on her screen; the draft is still held after Start over)
+- **Fix:** the signed name cookie also carries an id of the browser, made when it first gives its name and kept when it gives a new one; drafts are kept by (name, case aside, browser id), so two browsers that give one name still keep their own edits (B-192) and a new address changes nothing. A cookie without an id (none can outlive a restart, the secret is new each start) is still kept by address.
+- **Test:** `tests/test_network_identity.py::test_a_colleague_whose_computer_gets_a_new_address_keeps_their_edits_and_can_start_over`
+- **Lesson:** Don't key a person's state by their network address: give the browser an id of its own.
+
+#### B-222 · A photo from a phone's 200 MP mode was refused instead of read · low
+- **Where:** `ap_coder/intake/pictures.py:149` (`_within_pixel_limit`, `image_to_pdf`)
+- **Symptom:** an invoice photographed in a phone's 200-megapixel mode failed with "the picture is too large (200 megapixels) ..." (B-148): AP had to ask for it again or retake it.
+- **Cause:** Pillow refuses a picture over twice its limit (about 179 million pixels) before decoding it; raising `Image.MAX_IMAGE_PIXELS` would lift the guard for every reading thread.
+- **Reproduce:** an 800 x 600 JPEG with `Image.MAX_IMAGE_PIXELS` at 40,000 (480,000 pixels: over twice the limit, as 200 MP is over 179 MP) through `to_pdf()`.
+- **Reproduced:** yes (`DecompressionBombError: Image size (480000 pixels) exceeds limit of 80000 pixels`)
+- **Fix:** a JPEG over twice the limit is opened from its header alone and decoded at the smallest reduction JPEG offers (half, a quarter or an eighth: a 200 MP photo at half, 50 MP, less memory than a 179 MP photo Pillow accepts today) that brings it under the limit, then re-encoded as a high-quality JPEG with its EXIF and its resolution scaled, so the page keeps its size. The photo is kept in `originals/` as it came. The guard is not touched; a PNG, TIFF or HEIC that large, or a JPEG too large even at an eighth, is still refused in plain words.
+- **Test:** `tests/test_sweep4.py::test_a_jpeg_photo_too_large_to_open_is_read_at_a_smaller_size`
+- **Lesson:** A safety limit on decoded size can often be met by decoding smaller, not by refusing or by lifting the limit.
+
+#### B-223 · A signature picture an Outlook email showed only in its rich text went to the queue as an invoice · low
+- **Where:** `ap_coder/intake/msgfile.py:215` (`decompress_rtf`, `_rtf`, `_message`), `ap_coder/bench/msgwriter.py` (`Message.rtf`)
+- **Symptom:** a .msg with no HTML stream (an HTML email Outlook or Exchange kept as compressed RTF, with the HTML inside it) showing a signature logo by its Content-ID: the logo, not marked hidden, was taken for a scanned invoice and put in the queue.
+- **Cause:** B-142 counts a picture with a Content-ID as inline only when it is hidden or its `cid:` is in the HTML body; the compressed RTF body was never decompressed to look there.
+- **Reproduce:** `build_msg(Message(rtf=r'{\rtf1\ansi\fromhtml1 {\*\htmltag84 <img src="cid:image001.jpg@01DA">}...}', attachments=[image001.jpg with that Content-ID, scan.jpg]))` through `read_msg_mail()`.
+- **Reproduced:** yes (`found: ['image001.jpg', 'scan.jpg']`)
+- **Fix:** `decompress_rtf` reads PidTagRtfCompressed (MS-OXRTFCP, "LZFu" or stored as it is, bounded at 20 MB; standard library only, as the rest of the .msg reader); a picture whose `cid:` is not in the HTML is looked for in the RTF too (read once per message, only then). A damaged RTF body counts as none. The test writer (`bench/msgwriter.py`) can now write an RTF body.
+- **Test:** `tests/test_sweep4.py::test_a_picture_an_outlook_email_shows_only_in_its_rich_text_is_a_logo`, `tests/test_sweep4.py::test_compressed_rtf_is_read_as_outlook_writes_it`
+- **Lesson:** When a rule looks for a link in "the text", look in every form the text is kept in.
+
+#### B-224 · The custom CSV for an ERP's loader always began with a byte-order mark · low
+- **Where:** `ap_coder/erp/export_layout.py:137` (`build`, `Layout.byte_order_mark`), `ap_coder/web/pages/exports.py:157` (`layout_from_form`), `ap_coder/web/templates/exports.html`
+- **Symptom:** an ERP loader that reads plain UTF-8 (SQL*Loader, a bulk insert) given the Custom CSV took its first header as "Vendor" with an invisible character in front of it (U+FEFF) and refused the file or the column; nothing in the layout could change that, though the layout is the one export made "for the ERP's loader".
+- **Cause:** `export_layout.build` always encoded with `utf-8-sig`; D-28 / B-92 decided the quoting only, and some Windows tools need the mark, so neither choice is wrong for every ERP.
+- **Reproduce:** `exports.build("custom", [invoice], ..., layout)` with any layout: the file starts with `EF BB BF`.
+- **Reproduced:** yes (`data[:3] == b'\xef\xbb\xbf'` for every layout)
+- **Fix:** the layout has a "Byte-order mark (for Excel)" box beside "Header row", ticked by default and for every layout saved before, so nothing changes until AP unticks it for a loader that reads the first header wrong. The ERP CSV and the other downloads for Excel keep the mark; the JD Edwards files keep none (docs/JDE_E1.md).
+- **Test:** `tests/test_export_layout.py::test_the_custom_csv_can_leave_out_the_byte_order_mark_for_a_database_loader`, `tests/test_web_finance.py::test_the_custom_layout_keeps_or_leaves_out_the_byte_order_mark`
+- **Lesson:** When neither of two encodings is right for every reader, make it a choice of the layout that writes for that reader, with today's behaviour as the default.
+
+### Looked at again and left
+
+- **N-77** · A lesson an approval made before B-158 added still can't be taken back: nothing recorded which approval added what, and rebuilding the lessons would replay every past approval in order.
+- **N-80** · The duplicate audit keeps treating an exported invoice and an ERP row with its number and amount as one bill whatever the ERP calls the vendor ("BELL CANADA" for "Bell Mobility Inc."). Search's rule (B-152: the same vendor or the ERP's short name) would flag every exported invoice whose vendor the ERP names otherwise; a different vendor's bill with the same number and the same amount to the cent is far rarer than that false alarm.
+- **N-84** · The page reader's transcript read by the same rules as the page: making it an independent reader is a design change of fusion, not a fix.
+- **N-85** · A US supplier's day/month order: marking it ambiguous would send every US invoice dated on day 1 to 12 to a person; a policy choice.
+- **N-90** · A `watch` / `read-pages` of a version before B-167 leaves no note, so the first update from it can't find it without scanning every process. docs/UPGRADING.md (*What it cannot do*) now says to close it before that one update, and that what it fails shows with **Retry**.
+- **N-91** · An invoice that failed (for a missing module or anything else) is not read again by `watch` on its own: it shows as failed in the review queue with **Retry**, and an automatic retry rule would fail it again at every check while the install is broken. Since B-167 nothing fails that way after an update.
+- **N-92** · An older `watch` run by another computer account can't be ended by this one (Windows lets only that account or an administrator end it); the start already says to close its window or end its task in Task Scheduler.
+- **N-93** · Two accounts sharing one folder on macOS/Linux: the file permissions are the system's; sharing one folder between accounts is documented for Windows only.

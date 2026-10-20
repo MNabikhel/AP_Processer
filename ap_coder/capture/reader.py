@@ -324,6 +324,8 @@ def _min_conf(words: list[Word]) -> float:
 
 _SEP = re.compile(r"^[\s:#.\-–—=|]*(?:(?:no|n°|nº|#|number)\b\.?\s*[:#]?\s*)?")
 _ID_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_/.]*[A-Za-z0-9]|[A-Za-z0-9]")
+# Groups of three digits after the first one ("123 456"), with nothing after them on the line or a word next.
+_DIGIT_GROUPS = re.compile(r"(?: \d{3})+(?=\s*$|\s+[^\W\d_])")
 
 
 def _id_from(text: str, offset: int) -> tuple[str, int, int] | None:
@@ -345,9 +347,10 @@ def _id_from(text: str, offset: int) -> tuple[str, int, int] | None:
         elif re.fullmatch(r" ?- ?", gap) and nxt.group(0)[:1].isdigit() and len(value) <= 4 and value.isupper():
             # OCR's space beside the hyphen of "PO-20203": "PO -20203" is the one number.
             value, end = value + "-" + nxt.group(0), nxt.end()
-    elif re.fullmatch(r"\d{1,3}", value) and re.fullmatch(r"(?: \d{3})+\s*", rest[b:]):
-        # "No de facture 123 456": a number printed in groups of three, alone after its label, is one number.
-        value = rest[a:].rstrip()
+    elif re.fullmatch(r"\d{1,3}", value) and (groups := _DIGIT_GROUPS.match(rest, b)):
+        # "No de facture 123 456": a number printed in groups of three, alone after its label or before the next
+        # words on its line ("123 456 Date ..."), is one number.
+        value = rest[a : groups.end()]
     if not any(c.isdigit() for c in value):
         return None
     value = value.strip(".-/")

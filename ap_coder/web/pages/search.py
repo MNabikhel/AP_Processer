@@ -203,7 +203,8 @@ def approved_pdf(request: Request, invoice_id: int) -> Response:
     names = (
         {row["gl_code"]: row.get("description", "") for row in reference.chart_of_accounts.rows} if reference else {}
     )
-    return download(stamp.stamped_pdf(inv, names), stamp.file_name(inv), "application/pdf")
+    pdf = stamp.stamped_pdf(inv, names, store.tax_treatments())
+    return download(pdf, stamp.file_name(inv), "application/pdf")
 
 
 @router.post("/search/{invoice_id:int}/unpark")

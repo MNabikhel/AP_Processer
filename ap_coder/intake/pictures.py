@@ -6,7 +6,9 @@ arrives by upload, in the invoices folder or attached to an email is made into a
 upright as the photo's EXIF says, at the resolution it was taken or scanned at. The invoice is then stored,
 read, shown and stamped as that PDF.
 
-Nothing is recompressed that need not be: a JPEG goes into the PDF as it is (a photo taken sideways is turned
+Nothing is recompressed that need not be: a JPEG goes into the PDF as it is (unless it is over twice Pillow's
+pixel limit, a phone's 200 MP mode: it is then decoded at half, a quarter or an eighth of its size, the page keeping
+its size, and re-encoded: :func:`_within_pixel_limit`) (a photo taken sideways is turned
 by the page's rotation, not by re-encoding it), a PNG, TIFF or BMP losslessly. Only an iPhone photo, which a
 PDF can't hold as it is, is re-encoded, as a high-quality JPEG; and a phone photo of a page lying on a desk,
 which is flattened as a scanner app would (the page cut out of the desk and squared up: ``flatten_photo``), so
@@ -144,6 +146,40 @@ def _encoded(frame: Any, source: Path, raw: bytes, single: bool) -> tuple[bytes,
     return buf.getvalue(), 0, frame
 
 
+def _within_pixel_limit(raw: bytes) -> bytes:
+    """``raw``, or for a JPEG over twice Pillow's limit (which Pillow refuses to open: a phone's 200 MP mode) the
+    same photo decoded at the smallest reduction JPEG allows (half, a quarter, an eighth) that brings it under the
+    limit, as a high-quality JPEG with its EXIF and its resolution scaled to match (the page keeps its size). A
+    picture too large even at an eighth, or any other kind, is left as it is (and refused)."""
+    from PIL import Image, JpegImagePlugin
+
+    limit = Image.MAX_IMAGE_PIXELS
+    if not limit or raw[:3] != b"\xff\xd8\xff":
+        return raw
+    try:
+        img = JpegImagePlugin.JpegImageFile(io.BytesIO(raw))  # the header only: Image.open would refuse it
+    except Exception:  # noqa: BLE001 - not a JPEG Pillow can read: as it is (and its own error later)
+        return raw
+    with img:
+        width, height = img.size
+        if width * height <= 2 * limit:
+            return raw
+        scale = next((f for f in (2, 4, 8) if width * height <= limit * f * f), 0)
+        if not scale or img.mode not in ("RGB", "L", "CMYK"):
+            return raw
+        img.draft(img.mode, (width // scale, height // scale))  # decoded at that size: never at full size
+        img.load()
+        extra: dict[str, Any] = {"exif": img.info["exif"]} if img.info.get("exif") else {}
+        dpi = img.info.get("dpi")
+        with contextlib.suppress(TypeError, ValueError, IndexError, ZeroDivisionError):
+            extra["dpi"] = (float(dpi[0]) * img.width / width, float(dpi[1]) * img.height / height)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=FLAT_QUALITY, subsampling=0, **extra)
+    log.info("a %d x %d photo, over the %d-megapixel limit, was read at 1/%d of its size", width, height,
+             2 * limit // 1_000_000, scale)  # fmt: skip
+    return buf.getvalue()
+
+
 def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any] | None = None) -> int:
     """Write ``source`` (a picture) as a PDF at ``target``: one page a picture (every frame of a multi-page TIFF),
     upright, at its resolution. ``note`` is recorded in the PDF (:func:`original_of`). Returns the page count.
@@ -152,7 +188,7 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
     from PIL import ImageSequence
 
     source, target = Path(source), Path(target)
-    raw = source.read_bytes()
+    raw = _within_pixel_limit(source.read_bytes())
     doc = pymupdf.open()
     try:
         with open_image(io.BytesIO(raw), source.name) as img:
