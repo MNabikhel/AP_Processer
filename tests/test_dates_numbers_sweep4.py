@@ -272,8 +272,11 @@ def test_a_title_glued_to_a_number_with_slashes_beats_a_customer_reference():
 
 
 def test_a_date_after_a_failed_one_is_read_and_a_time_may_be_the_next_piece_of_the_row():
-    # "ORD#94-REG#19-21/05/2018 11:59:48": "19-21/05" is no date, the date starts at the next number.
-    assert parse_date("ORD#94-REG#19-21/05/201811:59:48") == "2018-05-21"
+    # "31/31/2020 05/06/2020": the first is no date; the next word is read.
+    assert parse_date("31/31/2020 05/06/2020", prefer_day_first=True) == "2020-06-05"
+    # But no date is pulled out of a reference's run of numbers ("45/13/12/2026" is no 2026-12-13).
+    assert parse_date("Ref 45/13/12/2026") is None
+    assert parse_date("ORD#94-REG#19-21/05/2018") is None
     # A receipt's "12/22/17 | 14:40:29": the time printed apart from the date, on its row.
     layout = _scan([(0.37, 0.03, "Walmart Supercentre"), (0.30, 0.72, "12/22/17"), (0.52, 0.72, "14:40:29")])
     assert _top(layout, "invoice_date").value == "2017-12-22"
@@ -285,12 +288,13 @@ def test_a_header_row_printed_across_the_page_reads_its_value_at_the_right_margi
     layout = _scan(
         [(0.04, 0.30, "N°Facture"), (0.77, 0.30, "INV-81250"), (0.04, 0.35, "Date"), (0.79, 0.35, "11/4/2025")]
     )
-    number, date = _top(layout, "invoice_number"), _top(layout, "invoice_date")
+    number = _top(layout, "invoice_number")
     assert number.value == "INV-81250" and number.method == "label-far-right"
-    assert date.value == "2025-04-11"
+    # Not a date: alone across the page it may as well be the due date.
+    assert _top(layout, "invoice_date") is None
     # Not when the row holds more than the value, nor a value near the label (looked at beside it already).
-    busy = _scan([(0.04, 0.30, "Date"), (0.55, 0.30, "Ship Via"), (0.79, 0.30, "11/4/2025")])
-    assert _top(busy, "invoice_date") is None
+    busy = _scan([(0.04, 0.30, "N°Facture"), (0.55, 0.30, "Ship Via"), (0.79, 0.30, "INV-81250")])
+    assert _top(busy, "invoice_number") is None
 
 
 def test_a_date_alone_beside_the_title_is_the_invoice_date_but_a_labelled_one_comes_first():
@@ -324,3 +328,90 @@ def test_a_date_read_without_a_label_is_checked_however_many_readers_see_it():
     by_source = {"rules": read_fields(layout), "ocr2": read_fields(layout)}
     got = fuse(by_source, [], layout_source="ocr", fields=("invoice_date",))[0]["invoice_date"]
     assert got.value == "2019-06-22" and got.status == "check"
+
+
+# Ordinary Canadian invoices (an independent review of this work): each was read wrong, most of them *likely*.
+_MAPLE = [(40, 40, "Maple Fasteners Ltd", 14), (40, 54, "Toronto ON M5V 2T6")]
+_HST = [(380, 600, "Subtotal"), (500, 600, "$1,000.00"), (380, 615, "HST 13%"), (500, 615, "$130.00"),
+        (380, 630, "Total"), (500, 630, "$1,130.00")]  # fmt: skip
+
+
+def _maple(tmp_path, items):
+    return _read(_pdf(tmp_path, [*_MAPLE, *items, *_HST])).fields
+
+
+def test_a_receipt_date_is_not_the_invoice_date_when_the_invoice_prints_its_date(tmp_path):
+    # On a Canadian invoice "Receipt Date" is the day the goods came in: it gave 2026-10-05, likely.
+    f = _maple(tmp_path, [(400, 60, "Invoice # 20417"), (400, 72, "Date: 2026-10-01"),
+                          (400, 84, "Receipt Date: 2026-10-05")])  # fmt: skip
+    assert f["invoice_date"].value == "2026-10-01"
+
+
+def test_a_receipt_number_is_not_the_invoice_number_beside_the_invoices_own(tmp_path):
+    # "INVOICE / No. 20417" and lower, a payment's "Receipt No: 556677": it gave 556677, likely.
+    f = _maple(tmp_path, [(400, 40, "INVOICE", 16), (400, 60, "No. 20417"), (400, 72, "Date: 2026-10-01"),
+                          (40, 300, "Receipt No: 556677")])  # fmt: skip
+    assert f["invoice_number"].value == "20417"
+
+
+def test_a_customers_numero_is_not_the_invoice_number(tmp_path):
+    # "FACTURE" with "Client / Numéro : C-4471": the customer's number was read as the invoice's, likely.
+    path = _pdf(tmp_path, [(40, 40, "Les Entreprises Gagnon", 14), (40, 54, "Montréal QC H3B 4W8"),
+                           (300, 90, "FACTURE", 14), (40, 150, "Client"), (40, 162, "Numéro : C-4471"),
+                           (300, 110, "Date : 2026-10-01"), *_HST])  # fmt: skip
+    f = _read(path).fields
+    assert f["invoice_number"].value != "C-4471"
+
+
+def test_a_weak_label_is_never_likely_on_a_real_labels_record(tmp_path):
+    f = _maple(tmp_path, [(300, 90, "FACTURE", 14), (300, 110, "Numéro : AB-20417"), (300, 122, "Date : 2026-10-01")])
+    assert f["invoice_number"].value == "AB-20417" and f["invoice_number"].status == "check"
+
+
+def test_a_bare_title_does_not_read_a_value_across_the_page(tmp_path):
+    # "INVOICE" at the left margin, a GST number or a customer number alone at the right: they were taken over
+    # "No. 20417".
+    for far in ("R123456789", "C-10045"):
+        f = _maple(tmp_path, [(30, 90, "INVOICE", 16), (450, 90, far), (30, 112, "No. 20417"),
+                              (30, 124, "Date: 2026-10-01")])  # fmt: skip
+        assert f["invoice_number"].value == "20417", far
+
+
+def test_an_unlabelled_date_never_outranks_a_labelled_one(tmp_path):
+    # A service call's "Time in: 2026-03-02 08:15" and a "Payment received 2026-04-15 14:22" stamp came before the
+    # labelled "Date: 03/04/2026"; a credit note's body "Invoice # 20417 dated 2026-08-15" before its "Date:".
+    for line in ("Time in: 2026-03-02 08:15", "Payment received 2026-04-15 14:22 VISA"):
+        f = _maple(tmp_path, [(400, 60, "Invoice # 20417"), (400, 72, "Date: 03/04/2026"), (40, 200, line)])
+        assert f["invoice_date"].value == "2026-04-03", line
+    f = _maple(tmp_path, [(300, 70, "CREDIT NOTE", 14), (300, 90, "Credit Note # CN-88"),
+                          (300, 102, "Date: 2026-10-01"), (40, 200, "Invoice # 20417 dated 2026-08-15")])  # fmt: skip
+    assert f["invoice_date"].value == "2026-10-01"
+    # With no labelled date, a stamp of what else happened ("Completed ...") is no invoice date either.
+    f = _maple(tmp_path, [(400, 60, "Invoice # 20417"), (40, 200, "Completed 2026-03-02 16:15")])
+    assert f["invoice_date"].value is None
+
+
+def test_a_label_starting_with_invoice_is_not_the_title(tmp_path):
+    # "Invoice Due Date | Nov 1, 2026" read as a date beside the title: the invoice date.
+    f = _maple(tmp_path, [(300, 90, "Invoice Due Date"), (480, 90, "Nov 1, 2026"), (300, 102, "Invoice # 20417")])
+    assert f["invoice_date"].value != "2026-11-01"
+    layout = _scan([(0.1, 0.1, "Invoice Period Ending"), (0.7, 0.1, "Sep 30, 2026")])
+    assert _top(layout, "invoice_date") is None
+
+
+def test_a_canadian_page_with_a_us_address_keeps_its_date_order(tmp_path):
+    # A Canadian supplier whose address is in the footer, shipping to Buffalo, NY: "Date: 03/04/2026" was turned month
+    # first. A postal code or a Canadian tax anywhere on the page is something Canadian.
+    f = _read(_pdf(tmp_path, [(40, 40, "Maple Fasteners Ltd", 14), (400, 60, "Invoice # 20417"),
+                              (400, 72, "Date: 03/04/2026"), (40, 120, "Ship To"), (40, 132, "Acme Corp"),
+                              (40, 144, "Buffalo, NY 14201"), *_HST,
+                              (40, 760, "55 King St W, Toronto ON M5V 2T6")])).fields  # fmt: skip
+    assert f["invoice_date"].value == "2026-04-03"
+    # "CA 90210" alone may be Canada's abbreviation: no US address.
+    layout = _scan([(0.1, 0.1, "Date: 03/04/2026"), (0.1, 0.2, "Ship to: Vancouver CA 90210")])
+    assert _top(layout, "invoice_date").value == "2026-04-03"
+
+
+def test_a_name_like_a_month_is_not_a_month():
+    assert parse_date("Marco 12, 2026") is None
+    assert parse_date("12 de março de 2020") == "2020-03-12"

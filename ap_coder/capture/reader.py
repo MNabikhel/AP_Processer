@@ -187,6 +187,8 @@ class _LabelHit:
     end: int  # character offset in the line text where the value may start
     label_text: str
     start: int = 0  # where the label's box starts: a label after another label on the line starts there
+    weak: bool = False  # one of ``WEAK_LABELS``
+    fallback: bool = False  # read only when no other label for its field is on the document
 
 
 # Labels seen on real invoices (sweep 4): an English variant, and the German, Dutch, Italian, Spanish and French
@@ -206,16 +208,12 @@ MORE_LABELS: dict[str, list[tuple[str, float]]] = {
         (r"(?:[a-z]*rechnung(?:skorrektur)?|gutschrift|factuur)\s*(?:\(\d{3}\)\s*)?(?:nr\b\.?|#|nummer)", 0.9),
         # A French credit note's title with its number ("Avoir AV-2017-0005", "Avoir n° 12"), as "Note de crédit 051527-CR".
         (r"(?:no|n\s?°|nº|numero)\.?\s*(?:de\s*)?(?:l'?\s*)?avoir|avoir(?=\s*[:#]?\s*(?:n\s?[°º]\.?\s*)?[a-z]{0,4}-?\d)", 0.6),
-        (r"nr\b\.?(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35),  # "Nr. 471102" beside its title, as "No. 4471"
-        # A receipt's or a hotel bill's own number: "Receipt Number 334567", "Receipt # No.: 9876", "Folio Number: 12345".
-        (rf"receipt\s*(?:{_NO}|id\b)", 0.8), (rf"folio\s*{_NO}", 0.7),
         (rf"(?:cash|tax|sales|commercial)\s*inv(?:oice)?\.?\s*{_NO}", 0.95),  # "Cash Inv No.: 7803F712", "Tax Invoice No."
-        (r"factuur\b(?!\s*(?:datum|adres|totaal|bedrag|nummer))", 0.45), (r"numero\s*:(?!\s*\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4})", 0.45),  # "NUMERO: ABC12345", not a phone number
     ],
     "invoice_date": [
         (r"rechnungsdatum", 1.0), (r"factuur\s*datum", 1.0), (r"data\s*(?:della\s*)?fattura", 0.95),
         (r"fecha\s*(?:de\s*(?:la\s*)?)?(?:factura|emision)", 0.95), (r"beleg\s*-?\s*datum", 0.8), (r"datum\b", 0.55),
-        (r"receipt\s*date", 0.9), (r"data\s*(?:da|de)\s*emissao", 0.95), (r"fecha\b", 0.55),
+        (r"data\s*(?:da|de)\s*emissao", 0.95),
     ],
     "due_date": [
         (r"fallig(?:keit|keitsdatum)?(?:\s*am)?\b", 0.9), (r"zahlbar\s*bis", 0.9), (r"vervaldatum", 1.0),
@@ -253,6 +251,23 @@ MORE_LABELS: dict[str, list[tuple[str, float]]] = {
 }  # fmt: skip
 for _field, _pats in MORE_LABELS.items():
     LABELS[_field] = [*LABELS[_field], *_pats]
+
+# Weak labels (sweep 4): words that name the invoice's number or date on some documents and something else on others.
+# A value read after one is its own evidence pattern ("weak-label-..."): never verified or likely on a real label's
+# measured record. A fallback one (``True``) is read only when no other label for the field is on the document: on a
+# Canadian invoice "Receipt Date" is the day the goods came in, "Receipt No." a payment's receipt.
+WEAK_LABELS: dict[str, list[tuple[str, float, bool]]] = {
+    "invoice_number": [
+        (r"nr\b\.?(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35, False),  # "Nr. 471102" beside its title, as "No. 4471"
+        # A receipt's or a hotel bill's own number: "Receipt Number 334567", "Receipt # No.: 9876", "Folio Number: 12345".
+        (rf"receipt\s*(?:{_NO}|id\b)", 0.8, True), (rf"folio\s*{_NO}", 0.7, True),
+        (r"factuur\b(?!\s*(?:datum|adres|totaal|bedrag|nummer))", 0.45, False),
+        (r"numero\s*:(?!\s*\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4})", 0.45, False),  # "NUMERO: ABC12345", not a phone
+    ],
+    "invoice_date": [(r"receipt\s*date", 0.9, True), (r"fecha\b", 0.55, False)],
+}  # fmt: skip
+for _field, _weak in WEAK_LABELS.items():
+    LABELS[_field] = [*LABELS[_field], *((rx, st) for rx, st, _fb in _weak)]
 DISTRACTORS["tax_total"] += [r"btw\s*[a-z]{2}\s*\d", r"btw\s*prijs", r"u\.?\s?st\.?\s*[.-]?\s*id", r"btw\s*-?\s*(?:nr|nummer|id)", r"tva\s*intra",
                              r"(?:n\s?[°º]|no\b\.?|numero)\s*(?:de\s*)?tva", r"vat\s*(?:no\b|reg|number|id\b|#)"]  # fmt: skip
 DISTRACTORS["grand_total"] += [r"totaal\s*excl", r"totale\s*imponibile"]
@@ -262,13 +277,20 @@ DISTRACTORS["invoice_number"] += [r"invoice\s*sub\s*-?\s*total",  # "Invoice Sub
                                   r"(?:ursprungs|bezugs)\s*(?:rechnung|beleg)"]  # fmt: skip
 
 
-def _compile() -> dict[str, list[tuple[re.Pattern[str], float]]]:
+@functools.cache
+def _label_rx(rx: str) -> re.Pattern[str]:
     # A label ends where letters end, even when OCR glued it to its value ("Dated25/05/2025", "No.033"):
     # every word boundary in the table means "no letter follows".
-    return {f: [(re.compile(rx.replace(r"\b", r"(?![a-z])")), s) for rx, s in pats] for f, pats in LABELS.items()}
+    return re.compile(rx.replace(r"\b", r"(?![a-z])"))
+
+
+def _compile() -> dict[str, list[tuple[re.Pattern[str], float]]]:
+    return {f: [(_label_rx(rx), s) for rx, s in pats] for f, pats in LABELS.items()}
 
 
 _LABELS = _compile()
+_WEAK = {_label_rx(rx) for weak in WEAK_LABELS.values() for rx, _s, _fb in weak}
+_FALLBACK = {_label_rx(rx) for weak in WEAK_LABELS.values() for rx, _s, fb in weak if fb}
 _DISTRACT = {f: [re.compile(rx) for rx in pats] for f, pats in DISTRACTORS.items()}
 
 
@@ -371,7 +393,9 @@ def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None 
                     for hit_field in ("pst_amount", "qst_amount"):
                         hits.append(_LabelHit(hit_field, line, strength, end, text[st:end], box_start))
                 else:
-                    hits.append(_LabelHit(field, line, strength, end, label_text, box_start))
+                    hits.append(
+                        _LabelHit(field, line, strength, end, label_text, box_start, rx in _WEAK, rx in _FALLBACK)
+                    )
                 break
             else:
                 continue
@@ -1122,7 +1146,7 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = Fals
     return out
 
 
-_HEADER_IDS_AND_DATES = ("invoice_number", "invoice_date", "due_date", "po_number")
+_HEADER_IDS_AND_DATES = ("invoice_number",)  # a date or PO alone across the page may be the due date, an account
 
 
 def _far_right_header(field: str, hit: _LabelHit, lines: list[Line]) -> Reading | None:
@@ -1130,8 +1154,8 @@ def _far_right_header(field: str, hit: _LabelHit, lines: list[Line]) -> Reading 
     than ``MAX_RIGHT``). Only for a label with nothing after it, and a row that holds the value and nothing else: its own
     method ("label-far-right"), weaker than a value beside its label."""
     line = hit.line
-    if plain(line.text[hit.end :]).strip(" :#.-"):
-        return None
+    if hit.strength < 0.55 or hit.weak or plain(line.text[hit.end :]).strip(" :#.-"):
+        return None  # a bare title ("INVOICE", "FACTURE") is no label for a value across the page
     row = [
         o
         for o in lines
@@ -1145,7 +1169,12 @@ def _far_right_header(field: str, hit: _LabelHit, lines: list[Line]) -> Reading 
     got = _value_reading(field, row[0], 0, 0.75 * hit.strength, "label-far-right")
     if got is None or plain(row[0].text).strip(" :#.") != plain(str(got.raw)).strip(" :#."):
         return None  # the row holds more than the value
+    if field in ("invoice_number", "po_number") and _REGISTRATION_SHAPE.fullmatch(str(got.value)):
+        return None  # "R123456789", "123456789 RT0001": a GST/HST or business number, not the invoice's
     return got
+
+
+_REGISTRATION_SHAPE = re.compile(r"(?i)R?\s?\d{9}(?:\s?(?:RT|RP|TQ)\s?\d{4})?|\d{10}(?:\s?TQ\s?\d{4})?")
 
 
 # ---------------------------------------------------------------- pattern-only fields
@@ -2576,8 +2605,7 @@ def _read_fields_on(layout: DocLayout, received: dt.date | None) -> dict[str, li
                 for r in out.get(f, []):
                     r.method += "+received"
             return out
-    if (not canadian and not dotted and layout.pages
-            and any(us_address(_STATE_COMMA.sub("", ln.text)) for ln in layout.pages[0].lines)):  # fmt: skip
+    if not canadian and not dotted and layout.pages and _us_page(layout.pages[0]):
         # Nothing settles 9/10/2020, but the page prints a US address (the customer's, or the supplier's where the
         # reader does not take it for the supplier's) and nothing Canadian: US invoices print the month first. Shown
         # month first, still as ambiguous (a person checks it).
@@ -2597,6 +2625,22 @@ def _dotted_dates(text: str) -> bool:
 
 
 _NUMERIC_DATE = re.compile(r"(?<!\d)(?<!\d[.,/-])(\d{1,2})[-/.]\d{1,2}[-/.](?:\d{4}|\d{2})(?!\d)(?![.,/-]\d)")
+
+
+def _us_page(page: PageLayout) -> bool:
+    """The page prints a US address (a state and ZIP code, not "CA 12345" alone: that may be Canada) and nothing Canadian
+    anywhere: no postal code or province, no GST/HST, PST, QST, TPS or TVQ."""
+    text = "\n".join(ln.text for ln in page.lines)
+    if _POSTAL_CODE.search(text) or _CANADIAN_TAX.search(text):
+        return False
+    for ln in page.lines:
+        found = _US_ADDRESS.search(_STATE_COMMA.sub("", ln.text))
+        if found and not re.search(r"(?<![A-Za-z])CA\s+\d{5}", found.group(0)):
+            return True
+    return False
+
+
+_CANADIAN_TAX = re.compile(r"(?<![A-Za-z])(?:GST|HST|PST|QST|TPS|TVQ|TVH|TVP)(?![A-Za-z])")
 _STATE_COMMA = re.compile(r"(?<=\b[A-Z]{2}),(?=\s*\d{5}\b)")  # "Walnut, WY, 98432": the comma before the ZIP code
 
 
@@ -2713,6 +2757,12 @@ def _dated_number(hit: _LabelHit, lines: list[Line]) -> Reading | None:
 _TIME_AFTER = re.compile(r"[\s_,.@-]*(?:a\s+|at\s+|à\s+)?\d{1,2}\s?:\s?\d(?:\d(?::\d\d)?(?:\s?[ap]\.?m\.?)?)?", re.I)
 
 
+# A dated line that says what else happened then: a service call's times, a payment, a delivery, a period.
+_NOT_ISSUED = re.compile(
+    r"(?<![a-z])(?:received|recu|paid|payee?|payment|paiement|completed|complete|termine|time\s*(?:in|out)|"
+    r"arrival|arrive|depart(?:ure)?|call|appel|delivered|delivery|livre|livraison|shipped|ship|expedie|period|"
+    r"periode|ending|ended|from|to|du|au|thru|through|start|end)(?![a-z])"
+)
 STAMP_MARGIN = (
     0.04  # a stamp printed this close to the top of the page (fraction of its height) is a printer's or a fax's
 )
@@ -2739,8 +2789,10 @@ def _stamped_dates(layout: DocLayout) -> list[Reading]:
         ):
             continue  # no time after the date, on its line or as the next piece of its row ("12/22/17 | 14:40:29")
         before = plain(line.text[:a])
-        if any(rx.search(before) for rx in _DISTRACT["invoice_date"]) or any(
-            h.field in ("due_date", "invoice_number", "po_number") for h in _label_hits(line)
+        if (
+            _NOT_ISSUED.search(plain(line.text))
+            or any(rx.search(before) for rx in _DISTRACT["invoice_date"])
+            or any(h.field in ("due_date", "invoice_number", "po_number") for h in _label_hits(line))
         ):
             continue
         words = _span_words(line, a, b)
@@ -2753,6 +2805,7 @@ def _stamped_dates(layout: DocLayout) -> list[Reading]:
 _DOC_TITLE = re.compile(
     r"(?:[a-z]*rechnung|(?:tax\s*|sales\s*|commercial\s*)?invoice|facture|factuur|fattura|factura|gutschrift|"
     r"credit\s*note|note\s*de\s*credit|avoir)(?![a-z])"
+    r"(?!\s*(?:due|period|periode|total|totale|amount|montant|date|datum|balance|solde|no\b|number|nr|#|ref|to\b|a\b))"
 )
 
 
@@ -2764,7 +2817,8 @@ def _title_dates(layout: DocLayout) -> list[Reading]:
         return []
     lines = layout.pages[0].lines
     for line in sorted(lines, key=lambda ln: ln.box.y0):
-        if line.box.cy > 0.5 or not _DOC_TITLE.match(plain(line.text).strip()) or parse_dates(line.text):
+        title = plain(line.text).strip()
+        if line.box.cy > 0.5 or not _DOC_TITLE.match(title) or parse_dates(line.text) or _NOT_ISSUED.search(title):
             continue
         right = _right_of(lines, line)[:1]
         found = parse_dates(right[0].text, prefer_day_first=_DAY_FIRST.get()) if right else []
@@ -2776,6 +2830,27 @@ def _title_dates(layout: DocLayout) -> list[Reading]:
         return [Reading("invoice_date", d.isoformat(), right[0].text[a:b], _boxes(words),
                         0.5 * (0.6 if ambiguous else 1.0) * _min_conf(words), method)]  # fmt: skip
     return []
+
+
+_CUSTOMER_HEADING = re.compile(
+    r"^(?:client|customer|cust\.?|compte|account|acheteur|buyer|bill(?:ed)?\s*to|sold\s*to|ship\s*to|"
+    r"facturee?\s*a|vendu\s*a)(?![a-z])"
+)
+
+
+def _customer_line(layout: DocLayout, line: Line, by_page: dict[int, list[Line]]) -> bool:
+    """``line`` is in the customer's block: a bill-to region, or a customer heading one or two lines above it."""
+    if _in_bill_to(layout, line) or _CUSTOMER_HEADING.match(plain(line.text).strip()):
+        return True
+    h = max(line.box.height, 0.008)
+    return any(
+        o is not line
+        and o.box.cy < line.box.cy
+        and line.box.y0 - o.box.y1 <= 2.5 * h
+        and _aligned(line.box, o.box)
+        and _CUSTOMER_HEADING.match(plain(o.text).strip())
+        for o in by_page.get(line.box.page, [])
+    )
 
 
 def _table_header_line(line: Line, page_lines: list[Line]) -> bool:
@@ -2811,8 +2886,17 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     for field, fhits in hits.items():
         page_lines = by_page
         readings: list[Reading] = []
+        fallback: list[Reading] = []
         for hit in fhits:
+            if hit.weak and field == "invoice_number" and _customer_line(layout, hit.line, by_page):
+                continue  # "Client / Numéro : C-4471": the customer's number, under the customer's heading
             got = _labelled([hit], page_lines.get(hit.line.box.page, []), hit.line.box.page in under)
+            if hit.weak:
+                for r in got:
+                    r.method = "weak-" + r.method  # measured apart: never on a real label's record
+            if hit.fallback:
+                fallback += got
+                continue
             if field == "other_charges" and _DISCOUNT.match(plain(hit.label_text)):
                 for r in got:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
@@ -2820,15 +2904,21 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             if field in ("pst_amount", "qst_amount") and _PST_OR_QST.search(hit.label_text):
                 for r in got:
                     r.method += EITHER_TAX
-            if field == "invoice_number" and any(r.method == "label-inline" for r in got):
+            if field == "invoice_number" and any(r.method.endswith("label-inline") for r in got):
                 dated = _dated_number(hit, page_lines.get(hit.line.box.page, []))
                 if dated:
                     number_dates.append(dated)
             readings += got
-        cands[field] = readings
-    if number_dates:
-        cands.setdefault("invoice_date", []).extend(number_dates)
-    cands.setdefault("invoice_date", []).extend(_stamped_dates(layout) + _title_dates(layout))
+        cands[field] = readings or fallback  # "Receipt Date" only when no other date label reads a value
+    unlabelled = number_dates + _stamped_dates(layout) + _title_dates(layout)
+    labelled = cands.get("invoice_date") or []
+    if labelled and unlabelled:
+        # A date read with no label of its own ranks below every labelled one: "Invoice # 20417 dated 2026-08-15" in
+        # a credit note's body, a receipt's stamp, a date beside the title are not over "Date: 2026-10-01".
+        below = 0.5 * min(r.score for r in labelled)
+        for r in unlabelled:
+            r.score = min(r.score, below)
+    cands.setdefault("invoice_date", []).extend(unlabelled)
     if not cands.get("payment_terms"):
         # "Due Date: Upon Receipt" (no date): the terms, printed where the due date goes.
         for hit in hits.get("due_date", []):

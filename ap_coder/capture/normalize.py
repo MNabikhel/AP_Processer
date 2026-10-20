@@ -171,7 +171,7 @@ MONTHS = {
 MONTHS.update({
     "januar": 1, "januari": 1, "enero": 1, "ene": 1, "gennaio": 1, "janeiro": 1,
     "februar": 2, "februari": 2, "febrero": 2, "febbraio": 2, "fevereiro": 2,
-    "marz": 3, "maerz": 3, "maart": 3, "mrt": 3, "marzo": 3, "marco": 3,
+    "marz": 3, "maerz": 3, "maart": 3, "mrt": 3, "marzo": 3,
     "abril": 4, "abr": 4, "aprile": 4,
     "mei": 5, "mayo": 5, "maggio": 5, "maio": 5,
     "juni": 6, "junio": 6, "giugno": 6, "junho": 6,
@@ -290,6 +290,8 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
                 mon, day, year = MONTHS.get(m.group(1)), int(m.group(2)), int(m.group(3))
             else:
                 day, mon, year = int(m.group(1)), MONTHS.get(m.group(2)), int(m.group(3))
+                if m.group(2) == "marco" and " de " in m.group(0):
+                    mon = 3  # Portuguese "12 de março de 2020"; "Marco 12, 2026" is a name, not March
             if not mon:
                 continue
             d = _make(year, mon, day)
@@ -311,8 +313,9 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
         elif dmy or mdy:
             found.append((dmy or mdy, m.start(), m.end(), False))  # type: ignore[arg-type]
         else:
-            # No date: "REG#19-21/05/2018" read "19-21/05" first. The date may start at the next number.
-            pos = m.start() + 1
+            # No date: "45/13/12/2026" in a reference is no date either. A date may start at the next word only.
+            nxt = re.search(r"\s\S", s[m.start() : m.end()])
+            pos = m.start() + nxt.end() - 1 if nxt else m.end()
             continue
         taken.append(m.span())
     return sorted(found, key=lambda x: x[1])
