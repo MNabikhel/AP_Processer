@@ -207,7 +207,15 @@ Three rules sit on top, because the benchmark is synthetic and real invoices wil
   totals add up, the tax is the official rate, the GST/HST number's check digit, the vendor master,
   and the due date = invoice date + the payment terms;
 - a date that reads both ways (03/04/2026) and that nothing on the page resolves stays at *check*.
-  The order is taken from the document's other dates, a US supplier address, or the terms.
+  The order is taken from the document's other dates, a US supplier address, or the terms;
+- a value found by wording the benchmark never prints (terms stated in a footer sentence, a German
+  or Spanish label, a PO under "Your reference", a due date in a sentence) keeps the reader's own
+  score, not its reading family's measured record: *check* however many OCR reads agree, *likely* at
+  most when a check on other fields confirms it (D-45).
+
+Terms are read in the short form the app counts the due date from ("Net 30", "2% 10 Net 30", "Net 30
+EOM", "Net 10 prox", "Net 1 month", "2% 10 days", "Due on receipt"): the reader hands the printed
+terms to the app's own terms parser (`coding.terms.parse_terms`) and writes back what it read.
 
 ## Accuracy on the benchmark
 

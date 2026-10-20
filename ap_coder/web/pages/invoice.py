@@ -288,6 +288,7 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
     original = (inv.get("meta") or {}).get("original") or {}
     return {
         "file_name": inv.get("file_name") or path.name,
+        "kind": view.document_kind(capture.layout_source) if capture is not None else None,
         "viewer": viewer_data(inv, capture, sizes) if sizes else None,
         "teachable": editable and bool(sizes) and capture is not None,
         "teach_fields": [(f, LABELS.get(f, f)) for f in view.TEACHABLE],

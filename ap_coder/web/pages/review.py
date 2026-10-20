@@ -46,6 +46,7 @@ from ap_coder.web.core import (
     render,
     reviewer,
 )
+from ap_coder.web.invoice_view import document_kind
 
 router = APIRouter()
 
@@ -186,6 +187,7 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
         r["id"]: r["final_output"] or r["ai_output"] or {}
         for r in store.invoice_columns(("id", "ai_output", "final_output"), ids=ids)
     }
+    sources = store.layout_sources(ids)
     default_days = store.default_terms_days()
     terms = store.all_vendor_terms()  # read once, not once per row
     rows = []
@@ -211,6 +213,7 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
             "currency": inv.get("currency") or "",
             "due": due,
             "due_tone": tone,
+            "kind": document_kind(sources.get(inv["id"], "")),
         })  # fmt: skip
     return rows
 

@@ -166,6 +166,22 @@ MONTHS = {
     "nov": 11, "november": 11, "novembre": 11,
     "dec": 12, "december": 12, "decembre": 12,
 }  # fmt: skip
+# The months as German, Dutch, Spanish, Italian and Portuguese invoices print them ("24. Januar 2014", "29 maart
+# 2014", "10 de febrero de 2022"), accents off. Not their short forms that are English words ("set", "out", "ago").
+MONTHS.update({
+    "januar": 1, "januari": 1, "enero": 1, "ene": 1, "gennaio": 1, "janeiro": 1,
+    "februar": 2, "februari": 2, "febrero": 2, "febbraio": 2, "fevereiro": 2,
+    "marz": 3, "maerz": 3, "maart": 3, "mrt": 3, "marzo": 3,
+    "abril": 4, "abr": 4, "aprile": 4,
+    "mei": 5, "mayo": 5, "maggio": 5, "maio": 5,
+    "juni": 6, "junio": 6, "giugno": 6, "junho": 6,
+    "juli": 7, "julio": 7, "luglio": 7, "julho": 7,
+    "augustus": 8, "agosto": 8,
+    "septiembre": 9, "setiembre": 9, "settembre": 9, "setembro": 9,
+    "oktober": 10, "okt": 10, "octubre": 10, "ottobre": 10, "outubro": 10,
+    "noviembre": 11, "novembro": 11,
+    "dezember": 12, "dez": 12, "diciembre": 12, "dic": 12, "dicembre": 12, "dezembro": 12,
+})  # fmt: skip
 
 
 # Letters Unicode does not decompose: dropped with the accents, "Œuvres" became "uvres".
@@ -178,12 +194,25 @@ def _plain(text: str) -> str:
     return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
 
 
-_ISO = re.compile(r"\b(20\d{2}|19\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b")
-_NUMERIC = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b")
+# A receipt's date and time as OCR runs them together: "6/10/201913:59", "2018-02-1514:33:37", "27Mar201818:46",
+# "2/25/125:21PM" (the year 12, then 5:21). The date ends where a time begins.
+_TIME_NEXT = r"(?=_?\d{1,2}:\d)"
+_ISO = re.compile(rf"\b(20\d{{2}}|19\d{{2}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?:\b|{_TIME_NEXT})")
+_NUMERIC = re.compile(
+    rf"\b(\d{{1,2}})[-/.](\d{{1,2}})[-/.](\d{{4}}{_TIME_NEXT}|\d{{2}}{_TIME_NEXT}|\d{{2}}\b|\d{{4}}\b)"
+)
 # Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
-# Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026".
-_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?(?:\s*[,.]){0,2}\s*(\d{4})\b")
-_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*([a-z]{3,9})(?:\s*[,.]){0,2}\s*(\d{4})\b")
+# Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026"; a receipt's slashes:
+# "Jun14/2017", "Jul/15/2017".
+_WORDY_MDY = re.compile(
+    rf"\b([a-z]{{3,9}})\.?[\s/-]*(\d{{1,2}})(?:st|nd|rd|th)?(?:\s*[,./]){{0,2}}\s*(\d{{4}})(?:\b|{_TIME_NEXT})"
+)
+# Spanish and Portuguese put "de" between the parts: "10 de febrero de 2022".
+_WORDY_DMY = re.compile(
+    r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*(?:de\s+)?([a-z]{3,9})(?:\s*[,.]){0,2}\s*(?:del?\s+)?(\d{4})(?:\b|"
+    + _TIME_NEXT
+    + ")"
+)
 # OCR reads letters of a month as digits ("0ct", "Ju1", "N0v"); fixed in place, same length.
 _OCR_MONTHS = [
     (re.compile(r"0ct"), "oct"),
@@ -196,6 +225,8 @@ _OCR_MONTHS = [
     (re.compile(r"(?<![a-z])eeb(?=[\s.,]*\d)"), "feb"),  # OCR's E for F: "15Eeb.2025"
     # French "1er" (the first) as OCR reads it, "ler" or "ier": "ler octobre 2026" (same length, so offsets hold)
     (re.compile(r"(?<![a-z\d])[li]er(?=\s+(?:janv|fevr|mars|avr|mai|juin|juil|aout|sept|oct|nov|dec))"), "1er"),
+    # "le 9 septembre 2025" as OCR glues it: "le9 septembre" (same length: the e becomes the space)
+    (re.compile(r"(?<![a-z])le(?=\d{1,2}\s*[a-z]{3})"), "l "),
 ]
 
 
@@ -227,6 +258,8 @@ _GLUED_DMY = re.compile(r"(?<![\w/-])(\d{1,2})([a-z]{3,4})(\d{2})(?![\w/-])")
 def _make(y: int, m: int, d: int) -> dt.date | None:
     if y < 100:
         y += 2000
+    if not 1900 <= y <= 2099:
+        return None  # no invoice is dated 1011 ("02/15/1011:10AM" is the year 10 run into the time 11:10)
     try:
         return dt.date(y, m, d)
     except ValueError:
@@ -257,13 +290,17 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
                 mon, day, year = MONTHS.get(m.group(1)), int(m.group(2)), int(m.group(3))
             else:
                 day, mon, year = int(m.group(1)), MONTHS.get(m.group(2)), int(m.group(3))
+                if m.group(2) == "marco" and " de " in m.group(0):
+                    mon = 3  # Portuguese "12 de março de 2020"; "Marco 12, 2026" is a name, not March
             if not mon:
                 continue
             d = _make(year, mon, day)
             if d:
                 found.append((d, m.start(), m.end(), False))
                 taken.append(m.span())
-    for m in _NUMERIC.finditer(s):
+    pos = 0
+    while m := _NUMERIC.search(s, pos):
+        pos = m.end()
         if not free(*m.span()):
             continue
         a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -276,6 +313,9 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
         elif dmy or mdy:
             found.append((dmy or mdy, m.start(), m.end(), False))  # type: ignore[arg-type]
         else:
+            # No date: "45/13/12/2026" in a reference is no date either. A date may start at the next word only.
+            nxt = re.search(r"\s\S", s[m.start() : m.end()])
+            pos = m.start() + nxt.end() - 1 if nxt else m.end()
             continue
         taken.append(m.span())
     return sorted(found, key=lambda x: x[1])

@@ -39,6 +39,7 @@ from .types import (
     PART_OF_TERMS,
     RIVAL_NAME,
     TWO_SUBTOTALS,
+    UNMEASURED,
     Box,
     DocLayout,
     Line,
@@ -187,6 +188,8 @@ class _LabelHit:
     end: int  # character offset in the line text where the value may start
     label_text: str
     start: int = 0  # where the label's box starts: a label after another label on the line starts there
+    weak: bool = False  # one of ``WEAK_LABELS``
+    fallback: bool = False  # read only when no other label for its field is on the document
 
 
 # Labels seen on real invoices (sweep 4): an English variant, and the German, Dutch, Italian, Spanish and French
@@ -201,11 +204,17 @@ MORE_LABELS: dict[str, list[tuple[str, float]]] = {
     "invoice_number": [
         (r"rechnungs\s*-?\s*(?:nummer|nr\b\.?)", 1.0), (r"factuur\s*-?\s*(?:nummer|nr\b\.?)", 1.0),
         (r"(?:numero|n\.?)\s*(?:de\s*)?factura|factura\s*(?:n\s?[°ºo]\.?|numero)", 0.95),
-        (r"fattura\s*(?:n\s?[°ºo]\.?|numero)|numero\s*(?:di\s*)?fattura", 0.95), (r"belegnummer", 0.8),
+        (r"fattura\s*(?:n\s?[°ºo]\.?|numero)|numero\s*(?:di\s*)?fattura", 0.95), (r"beleg\s*-?\s*(?:nummer|nr\b\.?)", 0.8),
+        # The title with its number: "Rechnung Nr. 42", "Handelsrechnung (380) Nr. 471102 vom ...", "Rechnung # RE-1/499".
+        (r"(?:[a-z]*rechnung(?:skorrektur)?|gutschrift|factuur)\s*(?:\(\d{3}\)\s*)?(?:nr\b\.?|#|nummer)", 0.9),
+        # A French credit note's title with its number ("Avoir AV-2017-0005", "Avoir n° 12"), as "Note de crédit 051527-CR".
+        (r"(?:no|n\s?°|nº|numero)\.?\s*(?:de\s*)?(?:l'?\s*)?avoir|avoir(?=\s*[:#]?\s*(?:n\s?[°º]\.?\s*)?[a-z]{0,4}-?\d)", 0.6),
+        (rf"(?:cash|tax|sales|commercial)\s*inv(?:oice)?\.?\s*{_NO}", 0.95),  # "Cash Inv No.: 7803F712", "Tax Invoice No."
     ],
     "invoice_date": [
-        (r"rechnungsdatum", 1.0), (r"factuurdatum", 1.0), (r"data\s*(?:della\s*)?fattura", 0.95),
-        (r"fecha\s*(?:de\s*(?:la\s*)?)?(?:factura|emision)", 0.95), (r"belegdatum", 0.8), (r"datum\b", 0.55),
+        (r"rechnungsdatum", 1.0), (r"factuur\s*datum", 1.0), (r"data\s*(?:della\s*)?fattura", 0.95),
+        (r"fecha\s*(?:de\s*(?:la\s*)?)?(?:factura|emision)", 0.95), (r"beleg\s*-?\s*datum", 0.8), (r"datum\b", 0.55),
+        (r"data\s*(?:da|de)\s*emissao", 0.95),
     ],
     "due_date": [
         (r"fallig(?:keit|keitsdatum)?(?:\s*am)?\b", 0.9), (r"zahlbar\s*bis", 0.9), (r"vervaldatum", 1.0),
@@ -243,24 +252,74 @@ MORE_LABELS: dict[str, list[tuple[str, float]]] = {
 }  # fmt: skip
 for _field, _pats in MORE_LABELS.items():
     LABELS[_field] = [*LABELS[_field], *_pats]
+
+# Weak labels (sweep 4): words that name the invoice's number or date on some documents and something else on others.
+# A value read after one is its own evidence pattern ("weak-label-..."): never verified or likely on a real label's
+# measured record. A fallback one (``True``) is read only when no other label for the field is on the document: on a
+# Canadian invoice "Receipt Date" is the day the goods came in, "Receipt No." a payment's receipt.
+WEAK_LABELS: dict[str, list[tuple[str, float, bool]]] = {
+    "invoice_number": [
+        (r"nr\b\.?(?=\s*:?\s*[a-z]{0,3}-?\d)", 0.35, False),  # "Nr. 471102" beside its title, as "No. 4471"
+        # A receipt's or a hotel bill's own number: "Receipt Number 334567", "Receipt # No.: 9876", "Folio Number: 12345".
+        (rf"receipt\s*(?:{_NO}|id\b)", 0.8, True), (rf"folio\s*{_NO}", 0.7, True),
+        (r"factuur\b(?!\s*(?:datum|adres|totaal|bedrag|nummer))", 0.45, False),
+        (r"numero\s*:(?!\s*\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4})", 0.45, False),  # "NUMERO: ABC12345", not a phone
+    ],
+    "invoice_date": [(r"receipt\s*date", 0.9, True), (r"fecha\b", 0.55, False)],
+}  # fmt: skip
+for _field, _weak in WEAK_LABELS.items():
+    LABELS[_field] = [*LABELS[_field], *((rx, st) for rx, st, _fb in _weak)]
+# Labels for the terms, the PO and the due date seen on real invoices (sweep 4) that the benchmark never prints: a
+# value read by one is marked ``UNMEASURED`` (a person checks it). Tried after all the labels above.
+UNMEASURED_LABELS: dict[str, list[tuple[str, float]]] = {
+    "payment_terms": [
+        (r"condicion(?:es)?\s*de\s*pago", 0.9), (r"(?:termini|condizioni)\s*(?:di\s*)?pagamento", 0.9),
+        (r"zahlungs\s*-?\s*(?:bedingungen|konditionen|ziel)", 0.85), (r"betalings\s*-?\s*(?:voorwaarden|termijn|conditie)s?", 0.85),
+    ],
+    # German: the customer's order ("Bestellung: B123456789", "Bestell-Nr"), not its date ("Bestellung vom 01.03.").
+    "po_number": [
+        (r"(?:ihre\s*)?bestellung(?:\s*(?:nr\b\.?|nummer))?(?!\s*vom)", 0.85), (r"(?:ihre\s*)?bestell\s*-?\s*(?:nr\b\.?|nummer)", 0.85),
+    ],
+    # "Invoice Due Date" (a grid's heading), Canada Post's "Your payment is due by", Amazon's "TOTAL AMOUNT DUE ON
+    # August 3, 2014", Dutch and German labels ("Zahlungsziel" may be the terms instead: only a date is read).
+    "due_date": [
+        (r"invoice\s*due\s*date", 0.95), (r"(?:your\s*)?payment\s*is\s*due\s*(?:by|on)\b", 0.9),
+        (r"(?:total\s*)?(?:amount|balance)\s*due\s*(?:on|by)\b(?![^|]*(?:deliver|account|as\s*of|discount|after|livraison))", 0.85), (r"vervaldag", 0.95), (r"falligkeitstag", 0.9),
+        (r"zahlungsziel", 0.8),
+    ],
+}  # fmt: skip
+for _field, _pats in UNMEASURED_LABELS.items():
+    LABELS[_field] = [*LABELS[_field], *_pats]
+_UNMEASURED_LABEL = {f: re.compile("|".join(f"(?:{rx})" for rx, _s in pats)) for f, pats in UNMEASURED_LABELS.items()}
 DISTRACTORS["tax_total"] += [r"btw\s*[a-z]{2}\s*\d", r"btw\s*prijs", r"u\.?\s?st\.?\s*[.-]?\s*id", r"btw\s*-?\s*(?:nr|nummer|id)", r"tva\s*intra",
                              r"(?:n\s?[°º]|no\b\.?|numero)\s*(?:de\s*)?tva", r"vat\s*(?:no\b|reg|number|id\b|#)"]  # fmt: skip
 DISTRACTORS["grand_total"] += [r"totaal\s*excl", r"totale\s*imponibile"]
-DISTRACTORS["invoice_number"] += [r"invoice\s*sub\s*-?\s*total"]  # "Invoice Subtotal 1020.58" is no invoice number
+DISTRACTORS["invoice_number"] += [r"invoice\s*sub\s*-?\s*total",  # "Invoice Subtotal 1020.58" is no invoice number
+                                  # A credit note's "Facture liée FA-2017-0010" / "Ursprungsbeleg-Nr": the invoice it credits.
+                                  r"facture\s*(?:liee|associee|initiale|concernee|corrigee|de\s*reference)",
+                                  r"(?:ursprungs|bezugs)\s*(?:rechnung|beleg)"]  # fmt: skip
+
+
+@functools.cache
+def _label_rx(rx: str) -> re.Pattern[str]:
+    # A label ends where letters end, even when OCR glued it to its value ("Dated25/05/2025", "No.033"):
+    # every word boundary in the table means "no letter follows".
+    return re.compile(rx.replace(r"\b", r"(?![a-z])"))
 
 
 def _compile() -> dict[str, list[tuple[re.Pattern[str], float]]]:
-    # A label ends where letters end, even when OCR glued it to its value ("Dated25/05/2025", "No.033"):
-    # every word boundary in the table means "no letter follows".
-    return {f: [(re.compile(rx.replace(r"\b", r"(?![a-z])")), s) for rx, s in pats] for f, pats in LABELS.items()}
+    return {f: [(_label_rx(rx), s) for rx, s in pats] for f, pats in LABELS.items()}
 
 
 _LABELS = _compile()
+_WEAK = {_label_rx(rx) for weak in WEAK_LABELS.values() for rx, _s, _fb in weak}
+_FALLBACK = {_label_rx(rx) for weak in WEAK_LABELS.values() for rx, _s, fb in weak if fb}
 _DISTRACT = {f: [re.compile(rx) for rx in pats] for f, pats in DISTRACTORS.items()}
 
 
 _OCR_LABEL_GAP = re.compile(r"(?<=[a-z]{2})[.·_-](?=[a-z]{2})")
 _OCR_LABEL_ONE = re.compile(r"(?<=[a-z]{3})1(?![\d.,])")  # a 1 OCR read for the l ending a word: "tota1", "subtota1"
+_OCR_LABEL_ZERO = re.compile(r"(?<=[a-z]{2})0(?=[a-z]{2})")  # a 0 OCR read for the o inside a word: "inv0ice"
 _OCR_WORD_SPECK = re.compile(r"(?<=[a-z]{2})[.·]\s+(?=[a-z]{2})")
 
 
@@ -268,7 +327,11 @@ def _label_hits(line: Line) -> list[_LabelHit]:
     """Labels that start a line or follow a separator inside it ("... | Date: ...")."""
     # OCR puts dots, dashes or middots between label words ("Total.before tax", "Bon·de commande").
     text = _OCR_LABEL_ONE.sub("l", _OCR_LABEL_GAP.sub(" ", plain(line.text)))  # OCR's "Tota1" (same length)
+    text = _OCR_LABEL_ZERO.sub("o", text)  # OCR's "INV0ICE" (same length)
     starts = [0] + [m.end() for m in re.finditer(r"(?:\s{2,}|\s\|\s|[,;]\s)", text)]
+    page_no = _PAGE_NUMBER.match(text)
+    if page_no:
+        starts.append(page_no.end())  # "Page 1/2 Invoice date 2025-06-21": OCR ran the page number into the label
     first = list(starts)
     hits = _hits_at(line, text, starts)
     # A header row of bilingual labels set one space apart ("Date of issue / Date de facturation Payment Terms /
@@ -292,10 +355,17 @@ def _label_hits(line: Line) -> list[_LabelHit]:
         seen = {h.field for h in hits}
         hits += [h for h in _hits_at(line, text, after_colon, chained=set(after_colon))
                  if "/" in h.label_text and h.field not in seen]  # fmt: skip
+    if len(text) != len(line.text):
+        # "Fittings ½ in., PO # 4500123456": "½" is three characters in plain text; the value is read from the line.
+        at = plain_with_offsets(line.text)[1]
+        for h in hits:
+            h.start, h.end = at[min(h.start, len(at) - 1)], at[min(h.end, len(at) - 1)]
     return hits
 
 
 _NEXT_WORD = re.compile(r"\s+(?=[a-z])")
+_GLUED_NUMBER = re.compile(r"[A-Z]{1,4}[-/]?\d")
+_PAGE_NUMBER = re.compile(r"(?:page|seite|pagina)\s*[\dl]{1,3}\s*(?:/|of|de|sur|von)\s*\d{1,3}\s+(?=[a-z])")
 _PST_OR_QST = re.compile(rf"\s*/\s*(?:{_A('qst')}|{_A('tvq')})")
 # The supplier's QST or PST registration number, as printed beside its label: the province's tax it charges.
 _QST_REG = re.compile(
@@ -316,7 +386,11 @@ def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None 
                 # A label must end on a word boundary (avoids "Totalement", "Dated").
                 # (A label glued to a number is fine: OCR drops spaces, "GST5%", "Net30".)
                 if m.end() < len(text) and text[m.end() - 1].isalpha() and text[m.end()].isalpha():
-                    continue
+                    # Unless OCR glued a title to its number: "AvoirAV-2017-0005" (lower case, then the number's
+                    # capitals and a digit).
+                    glued = field in ("invoice_number", "po_number") and line.text[m.end() - 1 : m.end()].islower()
+                    if not (glued and _GLUED_NUMBER.match(line.text, m.end())):
+                        continue
                 end = m.end()
                 # "Invoice No. / No facture: 123": the value follows the second (translated) label.
                 for _ in range(2):
@@ -347,7 +421,9 @@ def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None 
                     for hit_field in ("pst_amount", "qst_amount"):
                         hits.append(_LabelHit(hit_field, line, strength, end, text[st:end], box_start))
                 else:
-                    hits.append(_LabelHit(field, line, strength, end, label_text, box_start))
+                    hits.append(
+                        _LabelHit(field, line, strength, end, label_text, box_start, rx in _WEAK, rx in _FALLBACK)
+                    )
                 break
             else:
                 continue
@@ -399,7 +475,8 @@ def _min_conf(words: list[Word]) -> float:
     return min((w.conf for w in words), default=1.0)
 
 
-_SEP = re.compile(r"^[\s:#.\-–—=|]*(?:(?:no|n°|nº|#|number)\b\.?\s*[:#]?\s*)?")
+# After the label, its "No." / "No:" too: "Receipt # No.: 9876" (capitals, so with its point or colon: "NO-4471" is a number).
+_SEP = re.compile(r"^[\s:#.\-–—=|]*(?:(?:no|n°|nº|#|number)\b\.?\s*[:#]?\s*|(?i:no)(?:\.\s*:?|\s*:)\s*)?")
 _ID_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_/.]*[A-Za-z0-9]|[A-Za-z0-9]")
 # Groups of three digits after the first one ("123 456"), with nothing after them on the line or a word next.
 _DIGIT_GROUPS = re.compile(r"(?: \d{3})+(?=\s*$|\s+[^\W\d_])")
@@ -444,6 +521,12 @@ _GLUED_LABEL = re.compile(
 def _unglue_label(value: str) -> str:
     rest = _GLUED_LABEL.sub("", value, count=1)
     return rest if rest != value and len(rest) >= 1 and any(c.isdigit() for c in rest) else value
+
+
+def _unglue_next_word(value: str) -> str:
+    """OCR ran the number into the next word on its line: "1128461Cashier" (from "1128461 Cashier: Thandar")."""
+    m = re.fullmatch(r"(.*\d)([A-Z][a-z]{3,}\S*)", value)
+    return m.group(1) if m and len(norm_id(m.group(1))) >= 2 else value
 
 
 def _ocr_id_fix(value: str) -> str:
@@ -505,6 +588,14 @@ _LABEL_WORDS = {"invoice", "facture", "number", "numero", "date", "total", "amou
                 "account", "customer", "client", "reference", "receipt", "statement", "credit"}  # fmt: skip
 
 
+# A due date's label and its date are in one sentence; a discount's deadline is no due date.
+_SENTENCE_BREAK = re.compile(r"[.;!?]\s+[A-Z]")
+_DUE_DISCOUNT = re.compile(r"discount|escompte|skonto")
+_RATE_CLAUSE = re.compile(
+    r"[,;]\s*\d{1,2}(?:[.,]\d{1,2})?\s*%"
+)  # "..., 2% Skonto innerhalb 10 Tagen": a clause of its own
+
+
 def _value_reading(field: str, line: Line, start: int, base: float, method: str) -> Reading | None:
     """Read ``field`` from ``line.text[start:]``."""
     text = line.text
@@ -528,8 +619,12 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None  # a label OCR misread ("INVO1CE"), not its value
         if re.fullmatch(r"(?i)net-?\d{1,3}(?:days?|jours?)?", value):
             return None  # "Net30days": the terms (OCR ran them together), not a number
+        if field == "po_number" and re.fullmatch(r"(?i)net\s?-?\d{1,3}(?:\s?(?:days?|jours?))?", value):
+            return None  # "Net 30" under the next column of a tight grid: the terms, not a purchase order
         if re.fullmatch(r"(?i)page-?\d{1,3}", value):
             return None  # "Page - 1" (OCR's spaces beside the hyphen joined), not a number
+        if re.fullmatch(r"\d{1,4}[.)][A-Za-z]{3,}.*", value):
+            return None  # "15.Dumplings": a receipt's item number run into its description, not a number
         if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
             base *= 0.5  # "PO-636.19": a dot OCR put inside the number, or a price; not to be trusted alone
         if field == "po_number" and (
@@ -540,7 +635,7 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None
         words = _span_words(line, a, b)
         if any(w.source not in _AS_PRINTED for w in words):
-            value = _ocr_id_fix(_unglue_label(value))
+            value = _ocr_id_fix(_unglue_label(_unglue_next_word(value)))
         return Reading(field, value, value, _boxes(words), base * _min_conf(words), method)
     if field in ("invoice_date", "due_date"):
         found = parse_dates(rest, prefer_day_first=_DAY_FIRST.get())
@@ -549,6 +644,10 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         d, a, b, ambiguous = found[0]
         if a > 30:  # the date must be close to its label
             return None
+        if field == "due_date" and (
+            _SENTENCE_BREAK.search(rest[:a]) or _DUE_DISCOUNT.search(_RATE_CLAUSE.split(plain(rest))[0])
+        ):
+            return None  # "Payment is due by the 15th. Next service 2026-12-01", "Please pay by ... to take the 2% discount"
         words = _span_words(line, start + a, start + b)
         raw = rest[a:b]
         return Reading(field, d.isoformat(), raw, _boxes(words), base * (0.6 if ambiguous else 1.0) * _min_conf(words),
@@ -631,13 +730,173 @@ _ON_RECEIPT = re.compile(
 )
 
 
+# Terms as printed, put in the words the terms parser (``coding.terms.parse_terms``) reads, on plain text (accents off):
+# OCR's specks and glued words, and other languages' days, discount and "at once" ("14 Tage netto", "30 días",
+# "50 gg DF", "3% Skonto innerhalb 10 Tagen", "zahlbar sofort").
+_TERMS_WORDS = [
+    (re.compile(r"(?<=\d)\s*(?:tag(?:en|e)(?=netto)|(?:tag(?:en|e)|dias|giorni|gg|dagen)(?![a-z]))"), " days "),
+    (re.compile(r"(?<=\d)\s*j(?![a-z])"), " jours"),  # "solde à 30 j"
+    (re.compile(r"(?<=\d)\s*(?=(days?|jours?))\1(?=[a-z])"), r" \1 "),  # OCR's "15jourssuivant la datedelafacture"
+    (re.compile(r"(?<![a-z])skonto(?![a-z])"), "discount"),
+    (re.compile(r"(?<![a-z])(?:innerhalb|binnen)(?:\s*von)?(?![a-z])"), "within"),
+    (re.compile(r"(?<![a-z])bei\s*zahlung(?![a-z])"), "if paid"),
+    (re.compile(r"(?<![a-z])(?:df\s*fm|dffm|fine\s*mese|fin\s*de\s*mes)(?![a-z])"), " eom "),
+    (
+        re.compile(r"zahlbar\s*sofort|sofort\s*(?:zahlbar|fallig)|paiement\s*immediat|payable\s*immediatement"),
+        "due on receipt",
+    ),  # fmt: skip
+    (re.compile(r"(?<![a-z])net[\s.:]+(?=\d)"), "net "),  # "Net: 30", "Net.30"
+    (re.compile(r"(?<=on)[\s.]*(?=receipt)"), " "),  # "on.receipt", "uponreceipt"
+    (
+        re.compile(r"(?:(?<![a-z])a|des|sur)[\s.]*(?=reception)"),
+        " a ",
+    ),  # also OCR's "Payablesurréception"  # "à.réception", "dès réception"
+]
+# "Bei Zahlung innerhalb 14 Tagen gewähren wir 2,0% Skonto": the discount's days printed before its rate.
+_DAYS_THEN_RATE = re.compile(
+    r"within\s*(\d{1,2})\s*days\b[^%\d]{0,40}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%\s*discount(?!\s*(?:if\s*paid\s*)?(?:within\s*)?\d)"
+)  # but not "zahlbar innerhalb 30 Tagen netto, 2% Skonto innerhalb 10 Tagen": that rate has its own days
+
+
+# Where the terms phrase ends on its line: a sentence's end ("Net 30 days. Statements are issued at the end of the
+# month."), a wide gap, or another label ("Ship Via: UPS 2 Day", "Lead time 2 weeks", "Freight: 2 Day").
+_TERMS_SENTENCE_END = re.compile(r"(?<=[\w)%])[.;!?](?=\s+[A-Z])(?!\s+(?i:net|n\s*/)(?![a-z]))")
+_TERMS_NEXT_LABEL = re.compile(
+    r"\s{2,}(?!\s|(?i:net|n\s*/|\d))|(?<=\S)\s+(?=[A-Z][A-Za-z.#/'-]*(?: [A-Za-z#][A-Za-z.#/'-]*)?\s?:)"
+    r"|(?<=\S)\s+(?=(?i:ship(?:ping)?\s*(?:via|date)|lead\s*time|freight|(?<!on )deliver(?:y|ed)|livraison|statements?|"
+    r"f\.?o\.?b|(?:sales\s*)?rep|carrier|due\s*date|customer|account|p\.?o\.?\s*(?:#|no|number))(?![a-z]))"
+)
+_TERMS_LABEL_WORDS = re.compile(r"(?i)\s*(?:payment\s*)?terms?(?:\s*of\s*payment)?\s*:|\s*conditions?\b[^:]{0,30}:")
+# A discount stated in a sentence of its own, after or before the net terms: "2% discount if paid within 10 days".
+_DISCOUNT_SENTENCE = re.compile(r"(?i)^\W*\d{1,2}(?:[.,]\d{1,2})?\s*%\s*(?:discount|escompte|skonto)")
+# End of month, said of the net days themselves ("Net 30 EOM", "30 days end of month", "Net 30 days from end of
+# month", "within 30 days of month end", "2/10 EOM", "Net EOM"): not a month's end said of something else
+# ("Statements are issued at the end of the month").
+_EOM_WORDS = r"(?:eom|e\.o\.m\.?|end\s*of\s*(?:the\s*)?month|month\s*end|fin\s*de\s*mois)"
+_EOM_ATTACHED = re.compile(
+    r"\d{1,3}(?:st|nd|rd|th)?\s*(?:days?|jours?|months?|mois)?\s*(?:net\s*)?"
+    r"(?:(?:from|after|of|following)\s*(?:the\s*)?(?:invoice\s*date\s*)?)?"
+    + _EOM_WORDS
+    + r"|(?:^|\bnet|\bdue)\W*"
+    + _EOM_WORDS
+    + r"|"
+    + _EOM_WORDS
+    + r"\s*(?:net\s*)?\d"
+)
+_EOM_ANY = re.compile(_EOM_WORDS)
+# Due on receipt (or paid ahead): days elsewhere on the line are not its net days, unless the net days are printed
+# with it ("Net 30 days upon receipt of invoice").
+_AT_ONCE = re.compile(
+    r"(?:up)?on\s*receipt|a\s*reception|\bc\.?o\.?d\b|cash\s*on\s*delivery|comptant|immediate|due\s*now"
+)
+_PREPAID = re.compile(r"(?<![a-z])pre-?paid(?![a-z])")
+_NET_PRINTED = re.compile(r"\bn(?:et)?\s*/?\s*\d|\d{1,3}\s*(?:days?|jours?)\s*net")
+# A net day of the next month ("Net 10th prox"), or net months: not the net days of OCR's run-together discount.
+# "2% 10 net 1 month": the discount's days stated as days, so the net is read as months, not as 1 day.
+_RATE_THEN_MONTHS = re.compile(
+    r"(\d{1,2}(?:[.,]\d{1,2})?\s*%\s*\d{1,2})(?!\s*(?:days?|jours?))\s*[,;]?\s*(?=n(?:et)?\s*/?\s*\d{1,2}\s*(?:months?|mois))"
+)
+# "Net 15th following (month)": the 15th of the next month, as "15 prox".
+_FOLLOWING = re.compile(r"(\d{1,2})(?:st|nd|rd|th)\s*(?:of\s*(?:the\s*)?)?following(?:\s*month)?(?![a-z])")
+_AFTER_NET_NUMBER = re.compile(r"\s*(?:st|nd|rd|th|months?|mois|weeks?|wks?|semaines?|prox)(?![a-z])")
+
+
+# OCR runs a row's words together ("Net30Freight:2Day", "Net30ShipVia:UPS2Day", "Net10thprox", "Net 1Oth prox"): the
+# words are set apart again where figures and letters meet (an ordinal's "th" stays with its number).
+_UNGLUE = [
+    (re.compile(r"(?<=\d)[Oo](?=\d|th)"), "0"),
+    (re.compile(r"(\d(?:st|nd|rd|th))(?=[A-Za-z])"), r"\1 "),
+    (re.compile(r"(?<=\d)(?=[A-Za-z])(?!(?:st|nd|rd|th)(?![A-Za-z]))"), " "),
+    (re.compile(r"(?<=[A-Za-z])(?=\d)"), " "),
+]
+# "Net 30th" with no month after it: OCR's or the printer's "th" on the net days.
+_NET_ORDINAL_DAYS = re.compile(r"\bnet\s*(\d{1,3})(?:st|nd|rd|th)(?!\s*(?:prox|following|of|month))")
+
+
+def _terms_phrase(text: str) -> str:
+    """The terms phrase at the start of ``text`` (a terms label's value, or a sentence): up to the next sentence, wide
+    gap or label, with a discount stated in the next sentence."""
+    text = unicodedata.normalize("NFKC", text)  # a speck read as a middle dot is a space later, not a gap
+    for rx, sub in _UNGLUE:
+        text = rx.sub(sub, text)
+    label = _TERMS_LABEL_WORDS.match(text)
+    start = label.end() if label else 0
+    sentences = []
+    pos = start
+    for m in _TERMS_SENTENCE_END.finditer(text, start):
+        sentences.append(text[pos : m.start()])
+        pos = m.end()
+    sentences.append(text[pos:])
+    first = _clip_at_label(sentences[0])
+    rest = [_clip_at_label(x) for x in sentences[1:] if _DISCOUNT_SENTENCE.match(x)]
+    return ". ".join([first, *rest[:1]]) if first.strip() else first
+
+
+def _clip_at_label(text: str) -> str:
+    m = _TERMS_NEXT_LABEL.search(text.strip())
+    return text.strip()[: m.start()] if m else text.strip()
+
+
 def _terms(text: str) -> str | None:
+    """The terms printed in ``text``, in the short form the app counts the due date from ("Net 30", "2% 10 Net 30",
+    "Net 30 EOM", "Net 10 prox", "Net 1 month", "2% 10 days", "Due on receipt"): what ``parse_terms`` reads in the
+    terms phrase, written so that it reads the same in the short form."""
+    from ..coding.terms import parse_terms
+
     # OCR's full-width comma ("2%10，Net30") and a speck read as a middle dot ("Net·30")
-    text = unicodedata.normalize("NFKC", text).replace("·", " ")
-    for rx, fmt in _TERMS:
-        m = rx.search(text)
-        if m:
-            return fmt.format(*m.groups())
+    text = plain(_terms_phrase(text))
+    # "2%10,.Net45", "2.10 net 30": a rate, its days and the net days as OCR runs them together.
+    text = _TERMS[0][0].sub(
+        lambda m: (
+            m.group(0) if _AFTER_NET_NUMBER.match(text, m.end()) else f" {m.group(1)}% {m.group(2)} net {m.group(3)} "
+        ),
+        text,
+    )
+    for rx, words in _TERMS_WORDS:
+        text = rx.sub(words, text)
+    text = _DAYS_THEN_RATE.sub(lambda m: f"{m.group(2)}% discount within {m.group(1)} days", text)
+    text = _RATE_THEN_MONTHS.sub(r"\1 days, ", text)
+    text = _FOLLOWING.sub(r"\1 prox", text)
+    if "prox" not in text:
+        text = _NET_ORDINAL_DAYS.sub(r"net \1", text)
+    if not _NET_PRINTED.search(text):
+        if _AT_ONCE.search(text):
+            return "Due on receipt"
+        if _PREPAID.search(text):
+            return None
+    text = _EOM_ANY.sub(" eom " if _EOM_ATTACHED.search(text) else " ", text)  # "month end" too, as "EOM"
+    t = parse_terms(text)
+    if t.discount_days is not None and not t.prox_day and not t.discount_prox_day:
+        from ..coding.terms import _prox_day
+
+        if day := _prox_day(text):  # "2% 10 days, Net 10th prox": the app counts no discount with prox net days
+            return f"Net {day} prox"
+    return _terms_form(t)
+
+
+def _terms_form(t) -> str | None:  # noqa: ANN001 - a coding.terms.Terms
+    """``t`` written as short terms that ``parse_terms`` reads back as ``t``."""
+    if t.on_receipt:
+        return "Due on receipt"
+    eom = " EOM" if t.eom else ""
+    rate = f"{t.discount_pct:g}%" if t.discount_pct else ""
+    if rate and t.discount_prox_day:
+        if t.prox_day == t.discount_prox_day:
+            return f"{rate} {t.discount_prox_day} prox"
+        return f"{rate} {t.discount_prox_day} prox, Net " + (f"{t.prox_day} prox" if t.prox_day else f"{t.net_days}")
+    if t.prox_day:
+        return f"Net {t.prox_day} prox"
+    if t.net_months:
+        net = f"Net {t.net_months} month{'s' if t.net_months > 1 else ''}{eom}"
+        return f"{rate} {t.discount_days} days, {net}" if rate and t.discount_days is not None else net
+    if rate and t.discount_days is not None:
+        return (
+            f"{rate} {t.discount_days} days"
+            if t.net_days is None
+            else f"{rate} {t.discount_days} Net {t.net_days}{eom}"
+        )
+    if t.net_days is not None:
+        return "Due EOM" if t.net_days == 0 and t.eom else f"Net {t.net_days}{eom}"
     return None
 
 
@@ -836,6 +1095,7 @@ def _registration_line(line: Line, hit: _LabelHit) -> bool:
 
 # "zzgl. Versandkosten 5,80 7", "abzgl. Sondernachlass 10% von 147,30 -14,73": "plus" and "less" open the lines of a
 # totals block (the charge, its base, its VAT rate), never a product's row.
+_OWN_VALUE = re.compile(r"[\s:#.]*[A-Za-z]{0,3}[-.]?\d")  # a label's value printed after it on its line
 _TOTALS_BLOCK_WORD = re.compile(r"(?:zzgl|abzgl|zuzuglich|abzuglich)(?![a-z])")
 
 
@@ -861,8 +1121,8 @@ def _after_another_label(line: Line, got: Reading) -> bool:
     ("Delivery Date: Sep 20, 2026"): it is that label's value."""
     at = line.text.find(str(got.raw))
     before = plain(line.text[: max(at, 0)]).strip()
-    if at <= 0 or not before:
-        return False
+    if at <= 0 or not re.search(r"[a-z]", before):
+        return False  # nothing before it, or only the colon of the label on its left (": RK21012345")
     return bool(_LABEL_SHAPE.search(before) or before.endswith(":") or any(
         h.field != got.field and h.end <= at for h in _label_hits(line)))  # fmt: skip
 
@@ -1019,6 +1279,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = Fals
         if inline:
             out.append(inline)
             continue
+        if field in ("invoice_number", "po_number") and _OWN_VALUE.match(rest):
+            continue  # "NO.4 &6,": the label's value is printed after it and is no number; the next line's is not its
         if field in _TAX_OR_TOTAL and re.fullmatch(r"\s*[(\[]?\s*%\s*[)\]]?\s*", line.text[hit.end :]):
             continue  # "USt. %", "Tax [%]": the heading of a column of rates, not of the tax
         if field in AMOUNT_FIELDS and _totals_heading_row(lines, line):
@@ -1079,9 +1341,42 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = Fals
                     break
                 if _label_hits(other) or _LABEL_SHAPE.search(plain(other.text).strip()):
                     break  # the next row down is another label ("Account #"): this label has no value under it
+        if got is None and field in _HEADER_IDS_AND_DATES:
+            got = _far_right_header(field, hit, lines)
         if got is not None:
             out.append(got)
     return out
+
+
+_HEADER_IDS_AND_DATES = ("invoice_number",)  # a date or PO alone across the page may be the due date, an account
+
+
+def _far_right_header(field: str, hit: _LabelHit, lines: list[Line]) -> Reading | None:
+    """A header row printed across the page: "Date" at the left margin, "11/4/2025" alone at the right one (further
+    than ``MAX_RIGHT``). Only for a label with nothing after it, and a row that holds the value and nothing else: its own
+    method ("label-far-right"), weaker than a value beside its label."""
+    line = hit.line
+    if hit.strength < 0.55 or hit.weak or plain(line.text[hit.end :]).strip(" :#.-"):
+        return None  # a bare title ("INVOICE", "FACTURE") is no label for a value across the page
+    row = [
+        o
+        for o in lines
+        if o is not line
+        and o.box.page == line.box.page
+        and o.box.x0 >= line.box.x1 - 0.002
+        and abs(o.box.cy - line.box.cy) < 0.25 * min(line.box.height, o.box.height)
+    ]
+    if len(row) != 1 or not MAX_RIGHT < row[0].box.x0 - line.box.x1 <= FAR_RIGHT or _label_hits(row[0]):
+        return None  # nearer, the value beside the label was looked at already (and may be another label's)
+    got = _value_reading(field, row[0], 0, 0.75 * hit.strength, "label-far-right")
+    if got is None or plain(row[0].text).strip(" :#.") != plain(str(got.raw)).strip(" :#."):
+        return None  # the row holds more than the value
+    if field in ("invoice_number", "po_number") and _REGISTRATION_SHAPE.fullmatch(str(got.value)):
+        return None  # "R123456789", "123456789 RT0001": a GST/HST or business number, not the invoice's
+    return got
+
+
+_REGISTRATION_SHAPE = re.compile(r"(?i)R?\s?\d{9}(?:\s?(?:RT|RP|TQ)\s?\d{4})?|\d{10}(?:\s?TQ\s?\d{4})?")
 
 
 # ---------------------------------------------------------------- pattern-only fields
@@ -2484,7 +2779,10 @@ def _read_fields_on(layout: DocLayout, received: dt.date | None) -> dict[str, li
     # US invoices print month first. A Canadian supplier need not, whatever its currency or a US line on its letterhead
     # (a warehouse, a label's number read as a ZIP code): its Canadian postal code or GST/HST number tells.
     canadian = _canadian_vendor(layout) or any(valid for *_, valid in find_gst_numbers(text))
-    if order is None and not canadian and (_us_vendor(layout) or find_currency(text) == "USD"):
+    # Dates printed with points (05.03.2018) are Europe's, day first: the US does not print them so ("DE 80333
+    # München" reads as a Delaware ZIP code, a German supplier's invoice may be in US dollars).
+    dotted = _dotted_dates(text)
+    if order is None and not canadian and not dotted and (_us_vendor(layout) or find_currency(text) == "USD"):
         order = False
     if order is not None:
         return _read_with_order(layout, order)
@@ -2509,7 +2807,43 @@ def _read_fields_on(layout: DocLayout, received: dt.date | None) -> dict[str, li
                 for r in out.get(f, []):
                     r.method += "+received"
             return out
+    if not canadian and not dotted and layout.pages and _us_page(layout.pages[0]):
+        # Nothing settles 9/10/2020, but the page prints a US address (the customer's, or the supplier's where the
+        # reader does not take it for the supplier's) and nothing Canadian: US invoices print the month first. Shown
+        # month first, still as ambiguous (a person checks it).
+        out = options[False]
+        for f in ("invoice_date", "due_date"):
+            for r in out.get(f, []):
+                if any(amb for *_, amb in parse_dates(str(r.raw))[:1]) and "ambiguous" not in r.method:
+                    r.method += "-ambiguous"
+        return out
     return cands
+
+
+def _dotted_dates(text: str) -> bool:
+    """The page's numeric dates (day, month and year) are printed with points: 05.03.2018."""
+    seps = [m.group(0)[len(m.group(1))] for m in _NUMERIC_DATE.finditer(text)]
+    return bool(seps) and seps.count(".") > len(seps) / 2
+
+
+_NUMERIC_DATE = re.compile(r"(?<!\d)(?<!\d[.,/-])(\d{1,2})[-/.]\d{1,2}[-/.](?:\d{4}|\d{2})(?!\d)(?![.,/-]\d)")
+
+
+def _us_page(page: PageLayout) -> bool:
+    """The page prints a US address (a state and ZIP code, not "CA 12345" alone: that may be Canada) and nothing Canadian
+    anywhere: no postal code or province, no GST/HST, PST, QST, TPS or TVQ."""
+    text = "\n".join(ln.text for ln in page.lines)
+    if _POSTAL_CODE.search(text) or _CANADIAN_TAX.search(text):
+        return False
+    for ln in page.lines:
+        found = _US_ADDRESS.search(_STATE_COMMA.sub("", ln.text))
+        if found and not re.search(r"(?<![A-Za-z])CA\s+\d{5}", found.group(0)):
+            return True
+    return False
+
+
+_CANADIAN_TAX = re.compile(r"(?<![A-Za-z])(?:GST|HST|PST|QST|TPS|TVQ|TVH|TVP)(?![A-Za-z])")
+_STATE_COMMA = re.compile(r"(?<=\b[A-Z]{2}),(?=\s*\d{5}\b)")  # "Walnut, WY, 98432": the comma before the ZIP code
 
 
 def _received_fit(cands: dict[str, list[Reading]], received: dt.date) -> float:
@@ -2559,7 +2893,7 @@ _DISCOUNT = re.compile(r".*(discount|escompte|rabais|remise|abschlag|rabatt|abzg
 
 
 _GLUED_TITLE = re.compile(
-    r"^(?:(?i:tax|sales)\s*)?(?i:invoice|facture)\s*(?:(?i:n°|no)\.?\s*|#\s*)?([A-Z]{0,4}-?\d[\w/-]*)$"
+    r"^(?:(?i:tax|sales)\s*)?(?i:invoice|facture)\s*(?:(?i:n°|no)\.?\s*|#\s*)?([A-Z]{0,4}[-/]?\d[\w/-]*)$"
 )
 
 
@@ -2578,6 +2912,149 @@ def _glued_title_numbers(layout: DocLayout) -> list[Reading]:
             out.append(Reading("invoice_number", m.group(1), m.group(1), [line.box], 0.75 * _min_conf(line.words),
                                "glued-title"))  # fmt: skip
     return out
+
+
+# "Facture n° 562044387 du 02 juillet 2015", "Rechnung Nr. 471102 vom 05.03.2018", "Invoice # RE-508 issued at
+# 2020-11-21": the word that dates the document, right after its number.
+_DATED_WORD = re.compile(r"\s*[,;]?\s*(?:vom|von|du|dated|issued(?:\s*(?:on|at))?|del|dd\.?)(?![a-z])\s*:?")
+_PERIOD_AFTER = re.compile(r"\s*(?:-|–|au|to|bis|al|through|thru)(?![a-z])")
+
+
+def _dated_number(hit: _LabelHit, lines: list[Line]) -> Reading | None:
+    """The invoice date printed right after the invoice number its label reads on the line ("Nr. 471102 vom
+    05.03.2018"), or in the next pieces of the row ("Nr. 471102 | vom | 05.03.2018"). Not a period's first day
+    ("du 01/03/2026 au 31/03/2026"). Its own method ("number-dated"): it is measured apart from labelled dates."""
+    line = hit.line
+    got = _id_from(line.text[hit.end :], hit.end)
+    if not got:
+        return None
+    pieces = [(line, got[2])] + [(other, 0) for other in _right_of(lines, line)[:2]]
+    dated = False
+    for piece, start in pieces:
+        rest = piece.text[start:]
+        if not dated:
+            m = _DATED_WORD.match(plain(rest))
+            if not m:
+                if rest.strip():
+                    return None
+                continue  # the number ends its piece of the row: the word may be in the next one
+            dated, start = True, start + m.end()
+            rest = piece.text[start:]
+            if not rest.strip():
+                continue
+        found = parse_dates(rest, prefer_day_first=_DAY_FIRST.get())
+        if not found or rest[: found[0][1]].strip(" :,"):
+            return None
+        d, a, b, ambiguous = found[0]
+        if _PERIOD_AFTER.match(plain(rest[b:])) and parse_dates(rest[b:]):
+            return None  # "du 01/03/2026 au 31/03/2026": a period, not the invoice's date
+        words = _span_words(piece, start + a, start + b)
+        method = "number-dated" + ("-ambiguous" if ambiguous else "")
+        return Reading("invoice_date", d.isoformat(), rest[a:b], _boxes(words),
+                       0.85 * hit.strength * (0.6 if ambiguous else 1.0) * _min_conf(words), method)  # fmt: skip
+    return None
+
+
+# A time after a date: "6/10/2019 13:59", "2015-08-23 20:45:57", OCR's "Ju1/15/2017_12:25".
+_TIME_AFTER = re.compile(r"[\s_,.@-]*(?:a\s+|at\s+|à\s+)?\d{1,2}\s?:\s?\d(?:\d(?::\d\d)?(?:\s?[ap]\.?m\.?)?)?", re.I)
+
+
+# A dated line that says what else happened then: a service call's times, a payment, a delivery, a period.
+_NOT_ISSUED = re.compile(
+    r"(?<![a-z])(?:received|recu|paid|payee?|payment|paiement|completed|complete|termine|time\s*(?:in|out)|"
+    r"arrival|arrive|depart(?:ure)?|call|appel|delivered|delivery|livre|livraison|shipped|ship|expedie|period|"
+    r"periode|ending|ended|from|to|du|au|thru|through|start|end|labou?r|main\s*d'?\s*oeuvre|generated|genere|created|"
+    r"cree|run|report|rapport|log|journal|printed|imprime)(?![a-z])"
+)
+STAMP_MARGIN = (
+    0.04  # a stamp printed this close to the top of the page (fraction of its height) is a printer's or a fax's
+)
+_FAX_HEADER = re.compile(r"(?<![a-z])(?:from|to|fax|de|a)\s*:|(?<![a-z])p\.\s?\d{1,3}(?!\d)|page\s*\d")
+
+
+def _stamped_dates(layout: DocLayout) -> list[Reading]:
+    """A receipt's date and time, printed with no label ("6/10/2019 13:59", "27Mar2018 18:46"): when it was issued.
+    The topmost one on each page, outranked by any labelled date ("date-time": measured apart, never verified on a
+    labelled date's record). Not after another date's label ("Printed", "Due", "Ship date")."""
+    out: dict[int, Reading] = {}
+    lines = sorted(layout.lines(), key=lambda ln: (ln.box.page, ln.box.y0))
+    for line in lines:
+        page = line.box.page
+        if (page in out or line.box.y0 < STAMP_MARGIN or line.box.y1 > 1 - STAMP_MARGIN
+                or _FAX_HEADER.search(plain(line.text))):  # fmt: skip
+            continue  # a printer's or a fax's stamp in the page's top margin ("SEP-13-2025 11:26 FROM: ..."), not the date
+        found = parse_dates(line.text, prefer_day_first=_DAY_FIRST.get())
+        if not found:
+            continue
+        d, a, b, ambiguous = found[0]
+        if not _TIME_AFTER.match(line.text, b) and not (
+            not line.text[b:].strip()
+            and any(_TIME_AFTER.fullmatch(o.text.split()[0]) for o in _right_of(lines, line)[:1] if o.text.split())
+        ):
+            continue  # no time after the date, on its line or as the next piece of its row ("12/22/17 | 14:40:29")
+        before = plain(line.text[:a])
+        if (
+            _NOT_ISSUED.search(plain(line.text))
+            or any(rx.search(before) for rx in _DISTRACT["invoice_date"])
+            or any(h.field in ("due_date", "invoice_number", "po_number") for h in _label_hits(line))
+        ):
+            continue
+        words = _span_words(line, a, b)
+        method = "date-time" + ("-ambiguous" if ambiguous else "")
+        out[page] = Reading("invoice_date", d.isoformat(), line.text[a:b], _boxes(words),
+                            0.45 * (0.6 if ambiguous else 1.0) * _min_conf(words), method)  # fmt: skip
+    return list(out.values())
+
+
+_DOC_TITLE = re.compile(
+    r"(?:[a-z]*rechnung|(?:tax\s*|sales\s*|commercial\s*)?invoice|facture|factuur|fattura|factura|gutschrift|"
+    r"credit\s*note|note\s*de\s*credit|avoir)(?![a-z])"
+    r"(?!\s*(?:due|period|periode|total|totale|amount|montant|date|datum|balance|solde|no\b|number|nr|#|ref|to\b|a\b))"
+)
+
+
+def _title_dates(layout: DocLayout) -> list[Reading]:
+    """The date printed alone beside the document's title, on its row: "Beitragsrechnung | 24. Januar 2014",
+    "INVOICE | March 3, 2026". The first page's first such date; its own method ("title-dated"), weaker than a
+    labelled date."""
+    if not layout.pages:
+        return []
+    lines = layout.pages[0].lines
+    for line in sorted(lines, key=lambda ln: ln.box.y0):
+        title = plain(line.text).strip()
+        if line.box.cy > 0.5 or not _DOC_TITLE.match(title) or parse_dates(line.text) or _NOT_ISSUED.search(title):
+            continue
+        right = _right_of(lines, line)[:1]
+        found = parse_dates(right[0].text, prefer_day_first=_DAY_FIRST.get()) if right else []
+        if not found or right[0].text[: found[0][1]].strip() or right[0].text[found[0][2] :].strip(" ."):
+            continue  # nothing beside the title, or more than a date
+        d, a, b, ambiguous = found[0]
+        words = _span_words(right[0], a, b)
+        method = "title-dated" + ("-ambiguous" if ambiguous else "")
+        return [Reading("invoice_date", d.isoformat(), right[0].text[a:b], _boxes(words),
+                        0.5 * (0.6 if ambiguous else 1.0) * _min_conf(words), method)]  # fmt: skip
+    return []
+
+
+_CUSTOMER_HEADING = re.compile(
+    r"^(?:client|customer|cust\.?|compte|account|acheteur|buyer|bill(?:ed)?\s*to|sold\s*to|ship\s*to|"
+    r"facturee?\s*a|vendu\s*a)(?![a-z])"
+)
+
+
+def _customer_line(layout: DocLayout, line: Line, by_page: dict[int, list[Line]]) -> bool:
+    """``line`` is in the customer's block: a bill-to region, or a customer heading one or two lines above it."""
+    if _in_bill_to(layout, line) or _CUSTOMER_HEADING.match(plain(line.text).strip()):
+        return True
+    h = max(line.box.height, 0.008)
+    return any(
+        o is not line
+        and o.box.cy < line.box.cy
+        and line.box.y0 - o.box.y1 <= 2.5 * h
+        and _aligned(line.box, o.box)
+        and _CUSTOMER_HEADING.match(plain(o.text).strip())
+        for o in by_page.get(line.box.page, [])
+    )
 
 
 def _table_header_line(line: Line, page_lines: list[Line]) -> bool:
@@ -2609,11 +3086,24 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                     continue  # "Total" over the line-items' amount column is not the invoice total
             hits.setdefault(hit.field, []).append(hit)
     cands: dict[str, list[Reading]] = {}
+    number_dates: list[Reading] = []
     for field, fhits in hits.items():
         page_lines = by_page
         readings: list[Reading] = []
+        fallback: list[Reading] = []
         for hit in fhits:
+            if hit.weak and field == "invoice_number" and _customer_line(layout, hit.line, by_page):
+                continue  # "Client / Numéro : C-4471": the customer's number, under the customer's heading
             got = _labelled([hit], page_lines.get(hit.line.box.page, []), hit.line.box.page in under)
+            if field in _UNMEASURED_LABEL and _UNMEASURED_LABEL[field].match(hit.label_text):
+                for r in got:
+                    r.method += UNMEASURED
+            if hit.weak:
+                for r in got:
+                    r.method = "weak-" + r.method  # measured apart: never on a real label's record
+            if hit.fallback:
+                fallback += got
+                continue
             if field == "other_charges" and _DISCOUNT.match(plain(hit.label_text)):
                 for r in got:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
@@ -2621,8 +3111,21 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             if field in ("pst_amount", "qst_amount") and _PST_OR_QST.search(hit.label_text):
                 for r in got:
                     r.method += EITHER_TAX
+            if field == "invoice_number" and any(r.method.endswith("label-inline") for r in got):
+                dated = _dated_number(hit, page_lines.get(hit.line.box.page, []))
+                if dated:
+                    number_dates.append(dated)
             readings += got
-        cands[field] = readings
+        cands[field] = readings or fallback  # "Receipt Date" only when no other date label reads a value
+    unlabelled = number_dates + _stamped_dates(layout) + _title_dates(layout)
+    labelled = cands.get("invoice_date") or []
+    if labelled and unlabelled:
+        # A date read with no label of its own ranks below every labelled one: "Invoice # 20417 dated 2026-08-15" in
+        # a credit note's body, a receipt's stamp, a date beside the title are not over "Date: 2026-10-01".
+        below = 0.5 * min(r.score for r in labelled)
+        for r in unlabelled:
+            r.score = min(r.score, below)
+    cands.setdefault("invoice_date", []).extend(unlabelled)
     if not cands.get("payment_terms"):
         # "Due Date: Upon Receipt" (no date): the terms, printed where the due date goes.
         for hit in hits.get("due_date", []):
@@ -2637,6 +3140,12 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             if terms:
                 cands.setdefault("payment_terms", []).append(terms)
                 break
+    if not cands.get("payment_terms"):
+        cands["payment_terms"] = _terms_sentences(lines)
+    if not cands.get("due_date"):
+        cands["due_date"] = _due_sentences(lines)
+    if not cands.get("po_number") and by_page:
+        cands["po_number"] = _po_mentions(by_page[min(by_page)]) or _po_as_your_reference(by_page, under)
     if credit_printed_positive(layout):
         for field in AMOUNT_FIELDS:
             for r in cands.get(field, []):
@@ -2673,6 +3182,173 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         readings.sort(key=lambda r: -r.score) if field not in AMOUNT_FIELDS else None
         cands[field] = _dedupe(readings)
     return cands
+
+
+# Terms printed as a sentence with no label (plain text): "15 days from date of invoice.", "15 jours suivant la date de
+# la facture.", "Payment is due within 45 days", "Please remit payment upon receipt", "Zahlbar innerhalb 30 Tagen
+# netto", "14 Tage netto", "2% Skonto", "Die Rechnung ist sofort fällig". Days in a sentence about something else
+# ("discrepancies must be reported within 90 days of the invoice date") are not: the sentence starts with the days,
+# or says the payment is due within them.
+_TERMS_SENTENCE = re.compile(
+    r"^\W*(?:net\s*)?\d{1,3}\s*(?:days?|jours?)\s*(?:nets?\s*)?(?:from|after|of|suivant|apres|a\s*compter\s*de)\s*(?:the\s*|la\s*)?"
+    r"(?:date\s*(?:of|de)\s*(?:the\s*|la\s*)?)?(?:invoice|factur)"
+    r"|(?:payable|due|payment\s*(?:is\s*)?(?:due|required)|pay\s*in\s*full|paiement)\s*(?:in\s*full\s*)?(?:within|dans\s*les|sous)"
+    r"\s*\d{1,3}\s*(?:days?|jours?)|payable\s*a\s*\d{1,3}\s*jours"
+    r"|remit\s*payment\s*(?:up)?on\s*receipt"
+    r"|zahlbar\s*(?:innerhalb|binnen)\s*(?:von\s*)?\d{1,3}\s*tag|(?<![a-z\d])\d{1,3}\s*tag(?:en|e)\s*(?:rein\s*)?netto"
+    r"|\d(?:[.,]\d{1,2})?\s*%\s*skonto|skonto\w*\s*:?\s*\d(?:[.,]\d{1,2})?\s*%"
+    r"|zahlbar\s*sofort|sofort\s*(?:zahlbar|fallig)|ist\s*sofort\s*fallig"
+)  # fmt: skip
+# Where a sentence ends: ".", "!", "?" or ";" (a full stop between two digits is a date's or an amount's).
+_SENTENCE_END = re.compile(r"[!?;]|\.(?!\d)|(?<!\d)\.")
+# A sentence about something other than paying the invoice: its days are a warranty's, a claim's, a return's, a
+# holdback's, a statement's or an interest charge's (plain text).
+_NOT_TERMS = re.compile(
+    r"warrant|guarant|garanti|return|retour|claim|reclamation|holdback|retenue|completion|achevement|dispute|"
+    r"discrepanc|restocking|statement|releve|valid|einwand|beanstand"
+)
+# Interest or late charges: a sentence that starts with the days and speaks of them counts the days to the charge.
+_LATE_WORDS = re.compile(r"interest|interet|zinsen|per\s*month|par\s*mois|overdue|late|retard|souffrance|past\s*due")
+
+
+def plain_with_offsets(text: str) -> tuple[str, list[int]]:
+    """``plain(text)`` and, for each of its characters, where it comes from in ``text`` (one more for the end): "½",
+    "™" and "…" are one character in ``text`` and several in ``plain(text)``."""
+    out, index = [], []
+    for i, ch in enumerate(text):
+        p = plain(ch)
+        out.append(p)
+        index += [i] * len(p)
+    return "".join(out), [*index, len(text)]
+
+
+def _sentences(text: str) -> list[tuple[int, int]]:
+    starts = [0] + [m.end() for m in _SENTENCE_END.finditer(text)]
+    return list(zip(starts, [*starts[1:], len(text)], strict=True))
+
+
+def _terms_sentences(lines: list[Line]) -> list[Reading]:
+    """The terms in the first sentence on the invoice that states them, read for a person to check: one reading, or
+    none when two sentences state different terms. A discount stated in the sentence before or after belongs to
+    them."""
+    from .normalize import normalize_value
+
+    found: list[Reading] = []
+    for line in lines:
+        text, at = plain_with_offsets(line.text)
+        spans = _sentences(text)
+        for k, (a, b) in enumerate(spans):
+            sentence = text[a:b].strip()
+            m = _TERMS_SENTENCE.search(sentence)
+            if not m or _NOT_TERMS.search(sentence):
+                continue  # "90 days from date of invoice: warranty", "Holdback of 10% is payable within 60 days..."
+            if m.start() == 0 and sentence[:1].isdigit() and _LATE_WORDS.search(sentence):
+                continue  # "30 days from date of invoice, interest at 2% per month is charged"
+            near = [text[x:y].strip() for x, y in spans[max(k - 1, 0) : k] + spans[k + 1 : k + 2]]
+            discount = next((x for x in near if _DISCOUNT_SENTENCE.match(x)), "")
+            value = _terms(f"{sentence.rstrip('.')}. {discount}" if discount else sentence)
+            if value:
+                words = _span_words(line, at[a], at[b])
+                method = "sentence" + UNMEASURED + (PART_OF_TERMS if _DEPOSIT.search(sentence) else "")
+                found.append(Reading("payment_terms", value, line.text[at[a] : at[b]].strip(), _boxes(words),
+                                     0.6 * _min_conf(words), method))  # fmt: skip
+    values = {normalize_value("payment_terms", r.value) for r in found}
+    return found[:1] if len(values) == 1 else []
+
+
+# A PO label inside a line, after other words (plain text): "York University Purchase Order Number: PO12345" (OCR may
+# glue it: "UniversityPurchaseOrderNumber:PO12345"), "Rechnung gemäß Bestellung Nr. 2013-471331 vom 01.03.2013". With
+# its "number", so "PO Box" and a "purchase order" in a sentence are not.
+_PO_MENTION = re.compile(
+    r"(?:purchase\s*order|(?<![a-z])p\.?\s?o\.?)\s*(?:number|no(?![a-z])\.?|#|n\s?°)\s*[:#]?"
+    r"|(?<![a-z])bestell(?:ung)?\s*-?\s*(?:nr(?![a-z])\.?|nummer)\s*[:#]?"
+    r"|(?<![a-z])bon\s*de\s*commande\s*(?:n\s?[o°]|numero)(?![a-z])\.?\s*[:#]?"
+)
+# "Your reference" / "Votre référence": European invoices give the customer's order number so, but it may be another
+# reference of the customer's. Read only when no PO label gives one.
+_YOUR_REFERENCE = re.compile(r"(?:your|votre)\s*ref(?:erence)?(?![a-z])\.?")
+_ASKS_FOR_PO = re.compile(
+    r"(?:quote|reference|indicate|include|mention|show|rappeler|indiquer)\s*(?:the\s*|your\s*|our\s*|this\s*|le\s*|votre\s*)?$"
+)
+_PHONE_SHAPE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]\d{4}")
+
+
+def _a_plain_po(r: Reading) -> bool:
+    """A number read for the PO without a PO label: one token, not a phone number ("call 416-555-1212")."""
+    value = str(r.value)
+    return not re.search(r"\s", value) and not _PHONE_SHAPE.search(value) and not _looks_like_phone_or_postal(value)
+
+
+def _po_mentions(page_lines: list[Line]) -> list[Reading]:
+    """The PO named mid-line on the first page, for a person to check; none when two different ones are (the order
+    of each line item: "* Bestellung Nr. ORDER84359 Zeile 1")."""
+    from .normalize import normalize_value
+
+    found = []
+    for line in page_lines:
+        text, at = plain_with_offsets(line.text)
+        for m in _PO_MENTION.finditer(text):
+            if m.start() == 0 or _ASKS_FOR_PO.search(text[: m.start()]):
+                continue  # a label starting its line (read as one), or "Please quote PO number ... with payment"
+            got = _value_reading("po_number", line, at[m.end()], 0.55, "mention" + UNMEASURED)
+            if got and _a_plain_po(got):
+                found.append(got)
+    return found[:1] if len({normalize_value("po_number", r.value) for r in found}) == 1 else []
+
+
+def _po_as_your_reference(by_page: dict[int, list[Line]], under: set[int]) -> list[Reading]:
+    """The customer's reference read as the PO, for a person to check; none when two different ones are printed."""
+    from .normalize import normalize_value
+
+    found = []
+    for page, page_lines in by_page.items():
+        for line in page_lines:
+            text, at = plain_with_offsets(line.text)
+            m = _YOUR_REFERENCE.match(text)
+            if m:
+                hit = _LabelHit("po_number", line, 0.6, at[m.end()], text[: m.end()])
+                for r in _labelled([hit], page_lines, page in under):
+                    if _a_plain_po(r):
+                        r.method += UNMEASURED
+                        found.append(r)
+    return found[:1] if len({normalize_value("po_number", r.value) for r in found}) == 1 else []
+
+
+# A due date stated in a sentence (plain text): "Bitte überweisen Sie bis zum 09.06.2014", "Zahlbar innerhalb 30 Tagen
+# netto bis 04.04.2013" (the net amount's date: not the discount's "3% Skonto ... bis 15.03.2013"), "Payment is due by
+# October 15, 2026", "Payable avant le 15 octobre 2026". The date follows the words, in the same sentence.
+_DUE_SENTENCE = re.compile(
+    r"(?:netto|ohne\s*(?:abzug|abschlag))\s*bis\s*(?:zum\s*)?"
+    r"|(?:uberweisen|zahlen|begleichen)\s*sie\s*(?:[a-z]+\s*){0,3}?bis\s*(?:zum\s*)?"
+    r"|(?:payment|amount|balance|total)\s*(?:is\s*)?due\s*(?:on|by)\s*|please\s*pay\s*(?:on\s*or\s*)?(?:by|before)\s*"
+    r"|(?:payable|a\s*payer)\s*(?:avant|au\s*plus\s*tard)\s*(?:le\s*)?"
+)  # fmt: skip
+# A date in such a sentence that is not the one to pay by: a balance as of a day, a discount's deadline, a delivery,
+# a later charge.
+_NOT_DUE = re.compile(
+    r"as\s*of|on\s*account|discount|escompte|rabatt|deliver|livraison|interest|interet|after|apres|through|"
+    r"until|valid|service|quote"
+)
+
+
+def _due_sentences(lines: list[Line]) -> list[Reading]:
+    """The due date a sentence on the invoice states, for a person to check; none when two sentences state different
+    ones."""
+    found = []
+    for line in lines:
+        text, at = plain_with_offsets(line.text)
+        for a, b in _sentences(text):
+            sentence = text[a:b]
+            if _NOT_DUE.search(sentence):
+                continue
+            for m in _DUE_SENTENCE.finditer(sentence):
+                dates = parse_dates(line.text[at[a + m.end()] : at[b]], prefer_day_first=_DAY_FIRST.get())
+                if not dates or dates[0][1] > 2:
+                    continue  # the date must follow the words, before the sentence ends ("due by the 15th. Next...")
+                got = _value_reading("due_date", line, at[a + m.end()], 0.6, "sentence" + UNMEASURED)
+                if got:
+                    found.append(got)
+    return found[:1] if len({r.value for r in found}) == 1 else []
 
 
 def _negative_totals(cands: dict[str, list[Reading]]) -> bool:
