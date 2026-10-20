@@ -31,9 +31,11 @@ from .types import Box, DocLayout, Line, PageLayout, Word
 log = logging.getLogger(__name__)
 
 HEIF_EXTENSIONS = {".heic", ".heif"}  # an iPhone's photos
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} | HEIF_EXTENSIONS
+ONE_FRAME_EXTENSIONS = {".gif", ".webp"}  # a picture that may be animated: its first frame is the page
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} | HEIF_EXTENSIONS | ONE_FRAME_EXTENSIONS
 MIN_TEXT_WORDS = 5  # fewer words than this on a page means it is a scan
 OCR_DPI = 200
+READ_PAGES = 20  # a file's pages read on this computer (``build_layout``): the rest are said not read (B-267)
 OCR_MAX_SIDE = 2400
 NO_OCR = "OCR isn't installed on this computer, so a scan or a photo can't be read: run APProcessor.bat"
 # The OCR model also reads Chinese, and now and then prints a percent sign as 号 ("GST@5号", "(9,975号)").
@@ -44,7 +46,8 @@ NO_HEIF = ("this iPhone photo (HEIC) can't be opened: the photo add-on (pillow-h
 
 class CannotRead(RuntimeError):
     """The file can't be read on this computer, for a reason AP can act on (said in plain words): OCR or the photo
-    add-on isn't installed. Never an empty reading: an invoice with nothing read would look like a blank one."""
+    add-on isn't installed, a PDF with no pages, a web page saved as an invoice. Never an empty reading: an invoice
+    with nothing read would look like a blank one."""
 
 
 _heif_registered: bool | None = None
@@ -527,6 +530,9 @@ def _upright_turn(result: Any, width: float, height: float) -> int:
     return 180 if _label_side(result) <= -2 else 0  # an upright page never scores below 0 (1,300 benchmark scans)
 
 
+MAX_TILT = 0.15  # about 8.5 degrees (down per across): a scan fed askew is straightened; more is a page turned
+
+
 def _skew(result: Any, width: float, height: float) -> float:
     """The page's tilt from the OCR's text lines (each a four-cornered box along its text): the median slope of the
     long ones' top edges, as fractions of the page (down per across); 0 when there are too few to tell."""
@@ -543,7 +549,7 @@ def _skew(result: Any, width: float, height: float) -> float:
     if len(slopes) < 5:
         return 0.0
     slope = statistics.median(slopes)
-    return slope * width / max(height, 1.0) if abs(slope) <= 0.07 else 0.0  # within 4 degrees: a tilt, not a turn
+    return slope * width / max(height, 1.0) if abs(slope) <= MAX_TILT else 0.0  # a tilt, not a turn
 
 
 def _split_ocr_line(text: str, x0: float, y0: float, x1: float, y1: float, score: float, width: float,
@@ -689,7 +695,7 @@ def _looks_scanned(page: Any) -> bool:
 
 
 def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr: str | bool = "auto",
-                 max_pages: int = 20) -> DocLayout:  # fmt: skip
+                 max_pages: int = READ_PAGES) -> DocLayout:  # fmt: skip
     """The words of ``path``. ``ocr``: "auto" (scanned pages only), True (force OCR on every page), False (never).
 
     With "auto", a photo or a scanned page on a computer without OCR raises ``CannotRead`` ("OCR isn't installed"),
@@ -795,7 +801,7 @@ def _second_image(png_bytes: bytes) -> bytes:
     return png_bytes if second_engine_name() != _engine_name() else _prepared(png_bytes)
 
 
-def second_read_layout(path: str | Path, max_pages: int = 20) -> DocLayout | None:
+def second_read_layout(path: str | Path, max_pages: int = READ_PAGES) -> DocLayout | None:
     """An independent second OCR of a scanned invoice, from a straightened, enlarged copy of each page.
     Its boxes are fractions of the page like the first read's (the straightening moves them by at most
     a few thousandths). None for a text PDF or when OCR is not installed."""

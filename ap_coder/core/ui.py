@@ -351,10 +351,14 @@ def supplier_row(name: str, sub: str, state: str, progress: float, explanation: 
     )
 
 
-def step(state: str, label: str, detail: str) -> str:
+def step(state: str, label: str, detail: str, href: str = "") -> str:
+    """One row of a checklist. ``href``: where the step is done; a step not done yet links there."""
     mark = {"ok": "✓", "todo": "!", "bad": "✕", "wait": "…"}.get(state, "•")
+    name = esc(label)
+    if href and state != "ok":
+        name = f'<a href="{esc(href)}">{name}<span class="ms" aria-hidden="true">chevron_right</span></a>'
     return (
-        f"<div class='apc-step'><span class='dot {state}' aria-hidden='true'>{mark}</span>{esc(label)}"
+        f"<div class='apc-step'><span class='dot {state}' aria-hidden='true'>{mark}</span>{name}"
         f"<span class='state'>{esc(detail)}</span></div>"
     )
 

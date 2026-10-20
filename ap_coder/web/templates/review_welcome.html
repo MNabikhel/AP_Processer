@@ -5,7 +5,9 @@
   <div class="apc-eyebrow">Welcome</div>
   <h1 class="apc-title">{{ greeting }}</h1>
   <div class="apc-sub">A few quick steps and you're reviewing.</div>
-</div></header>
+</div>
+<div class="aside"><a class="btn" href="/help/quick-start"><span class="ms" aria-hidden="true">print</span>Quick start (one page to print)</a></div>
+</header>
 {% endblock %}
 {% block content %}
 <div class="narrow">
@@ -20,21 +22,17 @@
     </div>
   </section>
   {% endif %}
+  {% if not (waiting and next and next.sample) %}{% include "_next_step.html" %}{% endif %}{# (waiting: said above) #}
   {% set demo_first = not waiting and not demo_count %}{# a first look: the demo invoices are the quickest start #}
   {% if demo_first %}{% include "_demo_card.html" %}{% endif %}
   <section class="card">
     <div class="card-head">
       <div><h4><span class="ms" aria-hidden="true">flag</span> Getting started</h4>
-        <p class="muted">Finish these steps and invoices will start arriving in your review queue.</p></div>
+        <p class="muted">Finish these steps and invoices will start arriving in your review queue. Click a step to do
+          it.</p></div>
       {{ ui.ring(ring_value, size=60, stroke=6, label=ring_label) }}
     </div>
-    <div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail) }}{% endfor %}</div>
-    <div class="row">
-      {% if not chat_ready %}<span class="muted"><span class="ms" aria-hidden="true">info</span> Optional: start LM Studio's server, then check Settings → Reading.</span>{% endif %}
-      <a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>GL accounts &amp; tax</a>
-      <a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Import invoices</a>
-      {% if name_todo %}<a class="btn" href="/settings/review"><span class="ms" aria-hidden="true">badge</span>Your name</a>{% endif %}
-    </div>
+    <div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail, step_links.get(label, "")) }}{% endfor %}</div>
   </section>
   {% if not demo_first %}{% include "_demo_card.html" %}{% endif %}
 </div>

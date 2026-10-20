@@ -1,0 +1,17 @@
+{# The one thing to do next on a new laptop (pages/process.py next_step): the welcome page and Import invoices. #}
+{% if next %}
+<section class="card next-step" aria-labelledby="next-step-title">
+  <div class="apc-eyebrow">Next step</div>
+  <h4 id="next-step-title"><span class="ms" aria-hidden="true">{{ next.icon }}</span> {{ next.title }}</h4>
+  <p class="muted">{{ next.text }}</p>
+  <div class="row">
+    <a class="btn primary" href="{{ next.href }}"><span class="ms" aria-hidden="true">arrow_forward</span>{{ next.button }}</a>
+    {% if next.sample %}
+    <form method="post" action="/review/sample-gl">
+      <input type="hidden" name="back" value="{{ where }}">
+      <button class="btn" type="submit"><span class="ms" aria-hidden="true">science</span>Use the sample GL accounts for now</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% endif %}

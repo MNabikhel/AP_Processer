@@ -509,11 +509,11 @@ processing is off, and neither vendor has a record yet.
 
 ## Pictures become PDFs, and line items read with the table finder
 
-**Every invoice is a PDF** (`ap_coder/intake/pictures.py`). A JPEG, PNG, iPhone HEIC/HEIF, TIFF (every frame) or BMP that
-comes in (upload, invoices folder, email attachment, `process`/`watch`) is made into a PDF first
+**Every invoice is a PDF** (`ap_coder/intake/pictures.py`). A JPEG, PNG, iPhone HEIC/HEIF, TIFF (every frame), BMP, WEBP or GIF
+(its first frame: B-264) that comes in (upload, invoices folder, email attachment, `process`/`watch`) is made into a PDF first
 (`InvoicePipeline.process`): one page a picture, upright as its EXIF says, at its resolution (a believable DPI gives
-the page its size, else a letter-sized page). A JPEG goes in as it is, turned by the page's `/Rotate`; PNG, TIFF and
-BMP losslessly; HEIC (which a PDF can't hold) as a quality-95 JPEG. The invoice is stored, read, shown and stamped as
+the page its size, else a letter-sized page). A JPEG goes in as it is, turned by the page's `/Rotate`; PNG, TIFF,
+BMP, WEBP and GIF losslessly; HEIC (which a PDF can't hold) as a quality-95 JPEG. The invoice is stored, read, shown and stamped as
 the PDF; the picture moves to `originals/` beside it, and the PDF's metadata records its name, SHA-256 and where it
 was kept (`intake.original_of`). `invoices.original_sha256` keeps the picture's hash, so `Store.find_by_hash` finds
 the same photo sent twice (upload, folder or `watch`). OCR of a converted page reads the picture's own pixels
@@ -564,6 +564,22 @@ the sum of the rows above it, when those add up to the subtotal (`capture._to_su
 Camelot (CloseDesk's other table reader) is not used: it installs from wheels for Python 3.11-3.14 on Windows and
 macOS, but it needs `opencv-python-headless`, which can't sit beside the `opencv-python` the OCR engines need (both
 are the `cv2` module), and adds about 45 MB a platform to the bundle.
+
+**Lines with no headings to go by prove themselves** (D-41, sweep 4). A table found whose headings can't be read is
+read by its amount column (`reader._headerless_rows`) only when the rows add up: to a row under them printing their sum
+(whatever its wording, "Positionssumme", "Summe netto": the rows end there), to the subtotal or the total less the
+taxes, or to an amount printed elsewhere on the invoice; rows naming a tax or a total in any language are no lines,
+and a box that stops short of the rows' last amount on the page is not read at all. A receipt (no headings, no table:
+"BATH TOWEL 002215445066 $7.97J") is read by `reader.listed_items` when nothing else adds up: the amounts in the column
+right above the subtotal, read upward until they add up to it exactly. A summary of charges (Canada Post: "Subtotal |
+GST | HST | PST/QST | Total") gives each service at its amount before tax (`reader._charges_summary`), checked
+against the subtotal under its column. Also: "Net price", "Net worth" and "Extension" are headings, a tax's heading
+run into the amount's is another column, a row with no words printing the lines' sum ends them, page subtotals and
+balances brought forward are no lines, a description wrapped under its row is read whole, and a discount printed
+without its minus is taken off when that makes the lines add up. On 128 real invoices and receipts the line count
+came out exactly right on 65 (was 40), every line right on 63 (was 29), and wrong lines fell from 234 to 3; on the
+150 hard generated invoices, 124 (was 117), 122 (was 112) and 100 to 53 (most of those left on one page OCR read
+upside down).
 
 **In tandem with OvisOCR2** (`capture/line_items.py`). Once OvisOCR2 has read the invoice, its table is compared row
 by row with the page's readings: the same amount, the same quantity when both read one, and descriptions at least

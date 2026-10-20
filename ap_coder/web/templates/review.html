@@ -2,6 +2,11 @@
 {% block subtitle %}{{ lead }}{% endblock %}
 {% block aside %}<a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Import invoices</a>{% endblock %}
 {% block content %}
+{% if unnamed %}
+<div class="flash info" role="status"><span class="ms" aria-hidden="true">badge</span>
+  <div>Approvals are recorded under {{ unnamed }} (this computer's login) until you add your name.
+    <a href="/settings/review">Add your name <span class="ms" aria-hidden="true">arrow_forward</span></a></div></div>
+{% endif %}
 <div class="rq-kpis apc-anim" role="group" aria-label="The queue at a glance">
   {% for k in kpis %}
   <div class="rq-kpi">

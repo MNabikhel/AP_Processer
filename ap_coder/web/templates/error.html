@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{# A page not found (404), or an error no page expected (500, web/errors.py: what to do, the details folded away). #}
 {% block header %}
 <header class="apc-head apc-anim"><div>
   {{ ui.breadcrumbs(["AP Coder"]) }}
@@ -8,6 +9,17 @@
 {% block content %}
 <section class="card">
   {{ ui.empty_state("Nothing here" if code == 404 else "That didn't work", detail) }}
-  <div class="row center"><a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a></div>
+  {% if what_to_do %}<p class="center"><b>What to do:</b> {{ what_to_do }}</p>{% endif %}
+  <div class="row center">
+    <a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>
+    {% if code != 404 %}<a class="btn" href="/help/report"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>{% endif %}
+  </div>
+  {% if error_text %}
+  <details class="muted small">
+    <summary>Details for IT</summary>
+    <p><code>{{ error_text }}</code></p>
+    {% if error_log %}<p>The full details are in <code>{{ error_log }}</code>.</p>{% endif %}
+  </details>
+  {% endif %}
 </section>
 {% endblock %}

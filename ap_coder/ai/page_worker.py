@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import secrets
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -46,9 +47,38 @@ TEST_STALE_HOURS = 1.0
 FIGURES_KEY = "page_reader_figures"  # running totals of figures compared: {"digital": [same, figures], "scans": ...}
 MAX_TRIES = 3  # reads cut off by the model server before an invoice leaves the queue as failed
 BLANK_WORDS = 3  # a page OCR finds fewer words on than this is blank: the page reader isn't shown it
-# This process, as it marks the invoice it reads (``store.next_page_read``): its id, and a token of its own, so a
-# process id used again by another program later is not taken for it.
-READER_ID = f"{os.getpid()}:{secrets.token_hex(4)}"
+
+
+def _process_started(pid: int) -> str:
+    """When the process with this id started, as the system notes it ("" when there is none, or it can't be told):
+    a process id used again by another program later has another start."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return ""
+            try:
+                times = [ctypes.c_ulonglong() for _ in range(4)]  # created, exited, kernel and user time
+                if not kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+                    return ""
+                return str(times[0].value)
+            finally:
+                kernel32.CloseHandle(handle)
+        stat = Path(f"/proc/{pid}/stat")
+        if stat.parent.parent.joinpath("self").exists():  # Linux: clock ticks since start-up, after the name
+            return stat.read_text(encoding="utf-8", errors="replace").rpartition(")")[2].split()[19]
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+        return "_".join(out.stdout.split())  # macOS: "Tue_Oct_20_09:15:02_2026"
+    except (OSError, IndexError, ValueError, subprocess.SubprocessError):
+        return ""
+
+
+# This process, as it marks the invoice it reads (``store.next_page_read``): its id, a token of its own and when it
+# started, so a process id used again by another program later is not taken for it.
+READER_ID = f"{os.getpid()}:{secrets.token_hex(4)}:{_process_started(os.getpid())}"
 
 
 def saved_tests(store: Any) -> dict[str, dict[str, Any]]:
@@ -561,13 +591,18 @@ def _pid_alive(pid: int) -> bool:
 def reader_alive(reader: str) -> bool:
     """Whether the process that marked an invoice as being read (``READER_ID``) is still reading it. This process
     calls it between readings only, so a mark of its own is left over (a reading cut short); another process's mark
-    stands while that process runs (``read-pages`` beside the dashboard)."""
-    pid, _, _token = (reader or "").partition(":")
+    stands while that process runs (``read-pages`` beside the dashboard) and has the start the mark noted (another
+    start: the process id is now another program's)."""
+    pid, _, rest = (reader or "").partition(":")
+    started = rest.partition(":")[2]  # "" in a mark of an older AP Coder: judged by its process id alone
     try:
         number = int(pid)
     except ValueError:
         return False  # marked by an older AP Coder, or not at all
-    return number != os.getpid() and _pid_alive(number)
+    if number == os.getpid() or not _pid_alive(number):
+        return False
+    now = _process_started(number) if started else ""
+    return not now or now == started  # another start: its process id is now another program's
 
 
 def release_interrupted(store: Any) -> int:

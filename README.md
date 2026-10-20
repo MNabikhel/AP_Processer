@@ -26,7 +26,7 @@ the code, so updates never touch it) and one desktop shortcut. Every start then 
 
 ```
 AP Coder readiness:
-  [OK] Python 3.12.10 (.venv)
+  [OK] Python 3.12.10
   [OK] Packages: all 15 in place
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
@@ -52,7 +52,9 @@ while you work; close it to stop AP Coder.
 This is an offline enterprise build: AP Coder itself never connects to the internet; only the setup from GitHub's
 ZIP downloads its packages and models, once. For IT (the offline bundle, `--installer`, what CI checks on clean
 Windows and Mac machines): [docs/PILOT.md](docs/PILOT.md). Real data, step by step:
-[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md). Updating from an older version: [docs/UPGRADING.md](docs/UPGRADING.md).
+[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md); its one-page summary for the pilot tester, to print:
+[docs/QUICK_START.md](docs/QUICK_START.md) (also under Help → Quick start). Updating from an older version:
+[docs/UPGRADING.md](docs/UPGRADING.md).
 
 ## Screens
 
@@ -519,7 +521,8 @@ scripts/             launch.py (the launcher: set up, start the dashboard, open 
                      sample invoice generator; ci/old_versions.py (installs each older version and checks the
                      update over it)
 APProcessor.bat      the one-click launcher (Mac/Linux: APProcessor.command)
-docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), HOW_IT_RUNS.md
+docs/                PILOT.md (offline pilot), GETTING_STARTED.md (step by step on enterprise data), QUICK_START.md
+                     (the pilot tester's one printable page), HOW_IT_RUNS.md
                      (launcher, update, server, files, network), UPGRADING.md (from each older version),
                      WHATS_NEW.md, PILOT_PLAN.md, CODING.md (GL coding without an AI model), SALES_TAX.md
                      (place of supply, taxes per line, the math), screenshots/

@@ -243,6 +243,27 @@ def test_a_colleague_who_changes_their_name_keeps_their_edits_and_can_start_over
     assert not any(invoice_id in drafts for drafts in app.state.person_drafts.values())
 
 
+def test_a_colleague_whose_computer_gets_a_new_address_keeps_their_edits_and_can_start_over(app, store):
+    """B-221: the drafts were kept by (name, address), so after the office network gave a colleague's computer a new
+    address (Wi-Fi to cable, a lease renewed) their edits were no one's: not on their screen, not dropped by Start
+    over, and bulk approval skipped the invoice until AP Coder restarted. The name cookie now names the browser."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    ana = colleague(app, "10.0.0.6", "Ana")
+    ana.post(f"/review/{invoice_id}/check", data={"po_number": "PO-ANA-2"}, headers=PAGE)
+    moved = TestClient(app, base_url="http://localhost", client=("10.0.0.16", 50000), follow_redirects=False)
+    moved.cookies = ana.cookies
+    assert "PO-ANA-2" in moved.get(f"/review/{invoice_id}").text
+    moved.post(f"/review/{invoice_id}/start-over", headers=PAGE)
+    assert not any(invoice_id in drafts for drafts in app.state.person_drafts.values())
+    # Two browsers that give one name still keep their own edits (B-192), on one address or two.
+    mike_a, mike_b = colleague(app, "10.0.0.5", "Mike"), colleague(app, "10.0.0.5", "Mike")
+    mike_a.post(f"/review/{invoice_id}/check", data={"po_number": "PO-TYPED-BY-A"}, headers=PAGE)
+    assert "PO-TYPED-BY-A" not in mike_b.get(f"/review/{invoice_id}").text
+    # A new name on /who keeps the browser, and its edits.
+    assert mike_a.post("/who", data={"name": "Mike Roy"}, headers=PAGE).json()["ok"]
+    assert "PO-TYPED-BY-A" in mike_a.get(f"/review/{invoice_id}").text
+
+
 def test_a_link_from_another_site_keeps_who_the_colleague_is(app):
     """B-193: the name cookie was SameSite=Strict, so a link to the dashboard from another site (the intranet, a
     webmail) came without it and asked "Who are you?" again. Lax sends it on such a link (a GET, which never changes
