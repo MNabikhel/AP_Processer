@@ -241,8 +241,9 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
 
 
 def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, Any]],
-         approved: list[dict[str, Any]]) -> list[dict[str, Any]]:  # fmt: skip
-    """The four figures at the top: waiting, approved today, coding accuracy, lessons learned."""
+         approved: list[dict[str, Any]], awaiting: list[dict[str, Any]] = ()) -> list[dict[str, Any]]:  # fmt: skip
+    """The four figures at the top: waiting, approved today, coding accuracy, lessons learned. Approved today counts
+    this reviewer's approvals, a first approval waiting for its second (``awaiting``) included, and says so."""
     metrics = store.metrics()
     done_today = approved_today(store)
     total_today = done_today + len(pending)
@@ -251,7 +252,9 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     return [
         {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
-         "sub": f"of {total_today:,} today · {len(approved):,} approved in all",
+         "sub": f"of {total_today:,} today · "
+                + (f"{len(awaiting):,} waiting for a second approval · " if awaiting else "")
+                + f"{len(approved):,} fully approved in all",
          "bar": done_today / total_today if total_today else 0.0},
         {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
          "sub": "after the first approvals" if accuracy is None else "vs 90% target",
@@ -307,7 +310,8 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
         tab = "review"
 
     context: dict[str, Any] = {"tab": tab, "tabs": tabs, "lead": lead, "show": show, "q": q, "sort": sort,
-                               "kpis": kpis(store, pending, flagged, approved), "today": today_pills(store, invoices),
+                               "kpis": kpis(store, pending, flagged, approved, awaiting),
+                               "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     if tab == "review":
         shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)

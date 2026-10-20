@@ -1487,8 +1487,8 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
 | Intake, email and command line | 14 | 12 (B-140 to B-149, B-206 to B-207) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
-| Day-one walk-through | 11 | 11 (B-197 to B-204, B-210 to B-212) | 0 |
-| **Total** | **95** | **78** | **17** |
+| Day-one walk-through | 12 | 12 (B-197 to B-204, B-210 to B-213) | 0 |
+| **Total** | **96** | **79** | **17** |
 
 ### Store and config
 
@@ -2285,6 +2285,16 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 - **Fix:** for the batch just made the list's button reads "Download"; a batch picked later in the list still reads "Download again".
 - **Test:** `tests/test_sweep3_dayone.py::test_a_batch_just_made_offers_download_not_download_again`
 - **Lesson:** Don't say "again" about something the page has no record of happening once.
+
+#### B-213 · "Approved today 2 … 1 approved in all" did not say that one waited for its second approval · low
+- **Where:** `ap_coder/web/pages/review.py` (`kpis`)
+- **Symptom:** with an approval limit set, the queue's Approved today tile counted the reviewer's first approval of an invoice still waiting for its second, next to "1 approved in all": the two numbers seemed to disagree.
+- **Cause:** the tile counts this reviewer's approvals today (first approvals waiting included, by design), but its line under the figure counted only fully approved invoices and never mentioned the waiting ones.
+- **Reproduce:** limit 5,000; approve one invoice under it and one over it; open the queue.
+- **Reproduced:** yes ("Approved today 2 … 1 approved in all").
+- **Fix:** the line now reads "of N today · 1 waiting for a second approval · 1 fully approved in all".
+- **Test:** `tests/test_sweep3_dayone.py::test_the_approved_today_tile_says_how_many_wait_for_a_second_approval`
+- **Lesson:** Don't put two counts side by side that count different things without saying what each counts.
 
 Improvements made with these fixes:
 - Review screen, line grid: "Apply to all lines…" gives one GL account and / or cost center to every line that has none (lines already coded keep theirs; POST /review/<id>/fill-lines, like the other grid actions); when every past approval of the vendor used one cost center, it is pre-selected there as a suggestion (`invoice_view.usual_cost_center`; the coder itself is unchanged). `tests/test_sweep3_dayone.py::test_apply_to_all_lines_codes_only_the_lines_that_have_none`, `tests/test_sweep3_dayone.py::test_apply_to_all_lines_refuses_a_code_not_in_the_lists`, `tests/test_sweep3_dayone.py::test_a_vendors_one_usual_cost_center_is_offered_for_its_lines`, `tests/test_web_invoice.py::test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank`
