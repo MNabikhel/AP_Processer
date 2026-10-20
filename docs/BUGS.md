@@ -2472,6 +2472,16 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **Test:** `tests/test_unusual_files.py::test_the_invoices_folder_says_which_files_it_does_not_read`, `::test_process_on_a_folder_names_the_files_it_leaves_out`
 - **Lesson:** Don't filter what a person put somewhere without telling them: a file passed over in silence looks lost.
 
+#### B-269 · An upload of a photo kind AP Coder doesn't read said "AP Coder reads … photos" of a photo · low
+- **Where:** `ap_coder/web/pages/process.py` (`_save_and_start`)
+- **Symptom:** uploading an AVIF photo (a recent phone's or browser's format) or a JPEG 2000 scan gave "photo.avif was not read: AP Coder reads PDFs, scans, photos and saved emails (.eml, .msg)": it is a photo, so the message contradicts itself and doesn't say what to do.
+- **Cause:** the message named the kinds read in general words, not the picture types.
+- **Reproduce:** upload `photo.avif` (and `invoice.jp2`).
+- **Reproduced:** yes (the message above).
+- **Fix:** "photo.avif was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, BMP, WEBP, GIF) and saved emails (.eml, .msg). Save it as PDF or JPEG to have it read."
+- **Test:** `tests/test_unusual_files.py::test_an_upload_of_a_picture_kind_not_read_says_which_kinds_are`
+- **Lesson:** Don't describe what is accepted in words the refused file also fits: name the types, and what to do.
+
 #### Unusual files left as they are
 
 - **N-94** · A long scan takes minutes: a 300-page scan whose pages all differ took 435 s through the pipeline and 462 s by upload, a 250-page fax TIFF 285 s and 415 s (each at a load of 40 on 4 cores, several test runs sharing the computer; a one-page scan took 15 to 25 s under the same load). Both OCR reads (`build_layout`, then `second_read_layout` in `capture_invoice`) read up to 20 pages each, so it is bounded, and the job shows "Reading and coding … (1/1)" meanwhile, never stuck; but it gives no progress per page. Reading the second OCR pass only on the pages that hold the header and totals, or a per-page progress line, are design choices about reading, not a fix: left. B-267 now says on the review screen that only 20 pages were read.

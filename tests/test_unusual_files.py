@@ -344,3 +344,18 @@ def test_process_on_a_folder_names_the_files_it_leaves_out(tmp_path, capsys):
     err = capsys.readouterr().err
     assert code == 2
     assert "Left out, not a kind AP Coder reads (save as PDF or JPEG): scan.jp2" in err
+
+
+def test_an_upload_of_a_picture_kind_not_read_says_which_kinds_are(tmp_path):
+    from .webclient import PAGE, client_for
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    files = [("files", ("photo.avif", b"\x00\x00\x00\x1cftypavif", "image/avif"))]
+    job = client.app.state.jobs.get("process")
+    assert client.post("/process/upload", files=files, headers=PAGE).json()["ok"]
+    assert job.wait(60)
+    texts = [m["text"] for m in client.get("/process/status").json()["result"]["messages"]]
+    assert ("photo.avif was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, BMP, WEBP, GIF) and saved "
+            "emails (.eml, .msg). Save it as PDF or JPEG to have it read.") in texts  # fmt: skip

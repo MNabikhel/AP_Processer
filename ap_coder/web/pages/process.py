@@ -383,8 +383,9 @@ def _save_and_start(request: Request, received: list[tuple[str, bytes]]) -> JSON
     saved, mails, notes = [], [], []
     for name, content in received:
         if Path(name).suffix.lower() not in ACCEPT:
-            notes.append(flash_message(f"{name} was not read: AP Coder reads PDFs, scans, photos and saved emails "
-                                       "(.eml, .msg).", "warn"))  # fmt: skip
+            notes.append(flash_message(f"{name} was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, "
+                                       "BMP, WEBP, GIF) and saved emails (.eml, .msg). Save it as PDF or JPEG to have "
+                                       "it read.", "warn"))  # fmt: skip
             continue
         try:  # one file that cannot be saved (a name Windows refuses, disk full) is said and skipped
             target = save_upload(folder, name, content)
