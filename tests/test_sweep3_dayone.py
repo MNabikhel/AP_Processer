@@ -394,3 +394,25 @@ def test_serve_with_no_browser_does_not_say_it_opens_in_your_browser(monkeypatch
     assert "http://127.0.0.1:8642" in said and "opens in your browser" not in said and "Ctrl+C" in said
     cli.cmd_serve(cli.build_parser().parse_args(["--db", db, "serve", "--port", "8642"]))
     assert "opens in your browser" in capsys.readouterr().err
+
+
+def test_the_approved_today_tile_says_how_many_wait_for_a_second_approval():
+    """ "Approved today 2 … 1 approved in all" puzzled the pilot tester: one of the two waited for its second
+    approval. The tile still counts this reviewer's approvals today, and says how many of them wait."""
+    from ap_coder.web.pages.review import kpis
+
+    class FakeStore:
+        def metrics(self):
+            return {"line_accuracy": None, "lines_corrected": 0, "lines_reviewed": 0}
+
+    import ap_coder.web.pages.review as review_page
+
+    original = review_page.approved_today
+    review_page.approved_today = lambda store: 2
+    try:
+        tile = kpis(FakeStore(), [], [], [{"id": 1}], awaiting=[{"id": 2}])[1]
+    finally:
+        review_page.approved_today = original
+    assert tile["value"] == "2"
+    assert "1 waiting for a second approval" in tile["sub"]
+    assert "1 fully approved in all" in tile["sub"]
