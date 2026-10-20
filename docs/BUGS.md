@@ -2375,3 +2375,21 @@ Improvements made with these fixes:
 - **N-91** · Setup, launcher and update · `watch` still treats an invoice that failed for a missing module as seen (no retry). Not changed, as the finding suggested: with the older watcher stopped, nothing fails that way; a retry rule for failures is a design choice.
 - **N-92** · Setup, launcher and update · an older `watch` / `read-pages` run by another computer account (or a scheduled task under one) can't be ended by this account: the start waits a minute ("close the window it runs in, or end its task in Task Scheduler"), then stops. Worker notes don't carry the account (B-168 covers servers only).
 - **N-93** · Setup, launcher and update · two accounts sharing one folder on macOS/Linux: the server file is mode 0600 and the code folder's lock file belongs to the first account, so the second account's start can't read the token or take the lock; it now relies on `/healthz`'s `user` (B-168). Sharing one folder between accounts is documented for Windows only.
+
+## Sweep 4 (real-world testing), October 2026
+
+### First launch
+
+A fresh copy of the code (`git archive`), its own home folder and `AP_ALLOW_INTERNET=0`, started with
+`scripts/launch.py` as a double-click does, then the first hour in Chromium: welcome, name, GL accounts, the first
+invoices, the first approval, the first export and Help, read as a pilot tester with no developer knowledge would.
+
+#### B-240 · The AP Coder window filled with technical lines once a scan was read · medium
+- **Where:** `ap_coder/ops/cli.py:745` (`main`: `logging.basicConfig(level=WARNING)`)
+- **Symptom:** the black window the tester keeps open printed `2026-10-20 03:31:57,765 INFO ap_coder.ai.pipeline: local model could not suggest accounts (The local model isn't answering at http://127.0.0.1:1234/v1 …); left for AP` for every invoice processed, and `INFO ap_coder.ai.page_worker: AI reviewer: invoice 1 postponed (0 round(s), 0 s)` every minute, though `serve` runs without `-v`.
+- **Cause:** importing rapidocr (the OCR engine) sets the root logger to INFO; the window's handler had no level of its own, so the root logger's level was the only filter.
+- **Reproduce:** `logging.basicConfig(level=logging.WARNING)`, then `import rapidocr`: `logging.getLogger().level` is 20; or start AP Coder and process an invoice without LM Studio.
+- **Reproduced:** yes (the lines above in the launcher's window; `before 30 … after rapidocr 20`)
+- **Fix:** `configure_logging()` sets the level on the window's own handler as well, so a library changing the root logger no longer changes what the window shows; `-v` still shows everything.
+- **Test:** `tests/test_sweep4_first_launch.py::test_the_window_shows_warnings_only_even_after_the_ocr_engine_turns_the_root_logger_to_info`
+- **Lesson:** Don't let the root logger's level be the only filter of what a person sees: a library may change it.
