@@ -52,6 +52,10 @@ RIVAL_NAME = "+rival-name"
 # Added to a subtotal when the totals add up with another subtotal printed too (before and after the discounts and
 # charges): never verified.
 TWO_SUBTOTALS = "+two-subtotals"
+# Added to a reading found by wording the benchmark never prints (terms in a footer sentence, a German or Spanish
+# label, "Your reference" for the PO): the measured record of its reading's family ("label-inline") is not its
+# own, so it keeps the reader's own score and is never verified on its own.
+UNMEASURED = "+unmeasured"
 STATUSES = (VERIFIED, LIKELY, CHECK, MISSING)
 
 

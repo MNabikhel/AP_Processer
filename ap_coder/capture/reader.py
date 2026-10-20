@@ -39,6 +39,7 @@ from .types import (
     PART_OF_TERMS,
     RIVAL_NAME,
     TWO_SUBTOTALS,
+    UNMEASURED,
     Box,
     DocLayout,
     Line,
@@ -243,6 +244,17 @@ MORE_LABELS: dict[str, list[tuple[str, float]]] = {
 }  # fmt: skip
 for _field, _pats in MORE_LABELS.items():
     LABELS[_field] = [*LABELS[_field], *_pats]
+# Labels for the terms, the PO and the due date seen on real invoices (sweep 4) that the benchmark never prints: a
+# value read by one is marked ``UNMEASURED`` (a person checks it). Tried after all the labels above.
+UNMEASURED_LABELS: dict[str, list[tuple[str, float]]] = {
+    "payment_terms": [
+        (r"condicion(?:es)?\s*de\s*pago", 0.9), (r"(?:termini|condizioni)\s*(?:di\s*)?pagamento", 0.9),
+        (r"zahlungs\s*-?\s*(?:bedingungen|konditionen|ziel)", 0.85), (r"betalings\s*-?\s*(?:voorwaarden|termijn|conditie)s?", 0.85),
+    ],
+}  # fmt: skip
+for _field, _pats in UNMEASURED_LABELS.items():
+    LABELS[_field] = [*LABELS[_field], *_pats]
+_UNMEASURED_LABEL = {f: re.compile("|".join(f"(?:{rx})" for rx, _s in pats)) for f, pats in UNMEASURED_LABELS.items()}
 DISTRACTORS["tax_total"] += [r"btw\s*[a-z]{2}\s*\d", r"btw\s*prijs", r"u\.?\s?st\.?\s*[.-]?\s*id", r"btw\s*-?\s*(?:nr|nummer|id)", r"tva\s*intra",
                              r"(?:n\s?[°º]|no\b\.?|numero)\s*(?:de\s*)?tva", r"vat\s*(?:no\b|reg|number|id\b|#)"]  # fmt: skip
 DISTRACTORS["grand_total"] += [r"totaal\s*excl", r"totale\s*imponibile"]
@@ -650,7 +662,9 @@ _TERMS_WORDS = [
     (re.compile(r"(?<![a-z])(?:a|des|sur)[\s.]*(?=reception)"), "a "),  # "à.réception", "dès réception"
 ]
 # "Bei Zahlung innerhalb 14 Tagen gewähren wir 2,0% Skonto": the discount's days printed before its rate.
-_DAYS_THEN_RATE = re.compile(r"within\s*(\d{1,2})\s*days\b[^%\d]{0,40}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%\s*discount")
+_DAYS_THEN_RATE = re.compile(
+    r"within\s*(\d{1,2})\s*days\b[^%\d]{0,40}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%\s*discount(?!\s*(?:if\s*paid\s*)?(?:within\s*)?\d)"
+)  # but not "zahlbar innerhalb 30 Tagen netto, 2% Skonto innerhalb 10 Tagen": that rate has its own days
 
 
 def _terms(text: str) -> str | None:
@@ -2668,6 +2682,9 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         readings: list[Reading] = []
         for hit in fhits:
             got = _labelled([hit], page_lines.get(hit.line.box.page, []), hit.line.box.page in under)
+            if field in _UNMEASURED_LABEL and _UNMEASURED_LABEL[field].match(hit.label_text):
+                for r in got:
+                    r.method += UNMEASURED
             if field == "other_charges" and _DISCOUNT.match(plain(hit.label_text)):
                 for r in got:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
@@ -2691,6 +2708,8 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             if terms:
                 cands.setdefault("payment_terms", []).append(terms)
                 break
+    if not cands.get("payment_terms"):
+        cands["payment_terms"] = _terms_sentences(lines)
     if credit_printed_positive(layout):
         for field in AMOUNT_FIELDS:
             for r in cands.get(field, []):
@@ -2727,6 +2746,44 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         readings.sort(key=lambda r: -r.score) if field not in AMOUNT_FIELDS else None
         cands[field] = _dedupe(readings)
     return cands
+
+
+# Terms printed as a sentence with no label (plain text): "15 days from date of invoice.", "15 jours suivant la date de
+# la facture.", "Payment is due within 45 days", "Please remit payment upon receipt", "Zahlbar innerhalb 30 Tagen
+# netto", "14 Tage netto", "2% Skonto", "Die Rechnung ist sofort fällig". Days in a sentence about something else
+# ("discrepancies must be reported within 90 days of the invoice date") are not: the sentence starts with the days,
+# or says the payment is due within them.
+_TERMS_SENTENCE = re.compile(
+    r"^\W*(?:net\s*)?\d{1,3}\s*(?:days?|jours?)\s*(?:nets?\s*)?(?:from|after|of|suivant|apres|a\s*compter\s*de)\s*(?:the\s*|la\s*)?"
+    r"(?:date\s*(?:of|de)\s*(?:the\s*|la\s*)?)?(?:invoice|factur)"
+    r"|(?:payable|due|payment\s*(?:is\s*)?(?:due|required)|pay\s*in\s*full|paiement)\s*(?:in\s*full\s*)?(?:within|dans\s*les|sous)"
+    r"\s*\d{1,3}\s*(?:days?|jours?)|payable\s*a\s*\d{1,3}\s*jours"
+    r"|remit\s*payment\s*(?:up)?on\s*receipt"
+    r"|zahlbar\s*(?:innerhalb|binnen)\s*(?:von\s*)?\d{1,3}\s*tag|(?<![a-z\d])\d{1,3}\s*tag(?:en|e)\s*(?:rein\s*)?netto"
+    r"|\d(?:[.,]\d{1,2})?\s*%\s*skonto|skonto\w*\s*:?\s*\d(?:[.,]\d{1,2})?\s*%"
+    r"|zahlbar\s*sofort|sofort\s*(?:zahlbar|fallig)|ist\s*sofort\s*fallig"
+)  # fmt: skip
+# Where a sentence ends: ".", "!", "?" or ";" (a full stop between two digits is a date's or an amount's).
+_SENTENCE_END = re.compile(r"[!?;]|\.(?!\d)|(?<!\d)\.")
+
+
+def _terms_sentences(lines: list[Line]) -> list[Reading]:
+    """The terms in the first sentence on the invoice that states them, read for a person to check: one reading, or
+    none when two sentences state different terms."""
+    from .normalize import normalize_value
+
+    found: list[Reading] = []
+    for line in lines:
+        text = plain(line.text)
+        starts = [0] + [m.end() for m in _SENTENCE_END.finditer(text)]
+        for a, b in zip(starts, [*starts[1:], len(text)], strict=True):
+            value = _terms(text[a:b]) if _TERMS_SENTENCE.search(text[a:b].strip()) else None
+            if value:
+                words = _span_words(line, a, b)
+                found.append(Reading("payment_terms", value, line.text[a:b].strip(), _boxes(words),
+                                     0.6 * _min_conf(words), "sentence" + UNMEASURED))  # fmt: skip
+    values = {normalize_value("payment_terms", r.value) for r in found}
+    return found[:1] if len(values) == 1 else []
 
 
 def _negative_totals(cands: dict[str, list[Reading]]) -> bool:

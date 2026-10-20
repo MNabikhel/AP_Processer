@@ -3131,3 +3131,31 @@ corpus is not in the repo). B- numbers start at B-372 and N- numbers at N-121, a
 - **Test:** `tests/test_terms_po_sweep4.py::test_terms_are_read_in_the_form_the_app_counts_the_due_date_from`,
   `tests/test_terms_po_sweep4.py::test_eom_terms_on_an_invoice_are_kept_and_checked_against_the_due_date`
 - **Lesson:** Don't keep two readers of the same text: the one that reads less hands the other a different value.
+
+#### B-373 · Terms printed as a sentence, or under a Spanish, Italian, German or Dutch label, were not read · medium
+- **Where:** `ap_coder/capture/reader.py` (`_terms`, new `_TERMS_WORDS`, `UNMEASURED_LABELS`, `_terms_sentences`);
+  `ap_coder/capture/types.py` (new `UNMEASURED`); `ap_coder/capture/confidence.py` (`fuse`)
+- **Symptom:** Canada Post prints its terms with no label, in the remittance slip: "15 days from date of invoice. Late
+  payment fees at 18% per annum..." (French: "15 jours suivant la date de la facture."); York University's sample
+  "Please remit payment upon receipt."; German invoices "Zahlungsbedingungen 14 Tage netto", "Zahlbar innerhalb 30
+  Tagen netto bis 04.07.2018, 3% Skonto innerhalb 10 Tagen bis 15.06.2018", "Die Rechnung ist sofort fällig";
+  Spanish "CONDICIÓN DE PAGO: 30 DÍAS FECHA FACTURA"; Italian "Termini di Pagamento" over "50 GG DF". All missing:
+  the terms were right on 4 of the 36 invoices that print them.
+- **Cause:** terms were read only after an English or French label ("Terms", "Conditions de paiement"), or from a
+  note saying "payable on receipt"; days were only "days", "jours" or "j".
+- **Reproduce:** a PDF with "15 days from date of invoice." in its footer and no terms label; `analyze()`.
+- **Reproduced:** yes (`payment_terms` missing)
+- **Fix:** labels "Condición de pago", "Termini/Condizioni di pagamento", "Zahlungsbedingungen/-ziel/-konditionen",
+  "Betalingsvoorwaarden/-termijn"; days also "días", "giorni"/"gg", "Tage(n)", "dagen", a discount also "Skonto"
+  (with its days before or after its rate), "zahlbar sofort"/"sofort fällig"/"paiement immédiat" due on receipt, and
+  "DFFM"/"fine mese" end of month. With no labelled terms, a sentence that states them: one that starts with the
+  days and counts them from the invoice's date, one that says the payment is due or payable within them, "remit
+  payment upon receipt", German "zahlbar innerhalb", "Tage netto", "Skonto", "sofort fällig"; two sentences that
+  state different terms give none. Days in a sentence about something else ("discrepancies must be communicated
+  within 90 days of the invoice date", returns, objections, interest) are not terms. All of this is wording the
+  benchmark never prints, so each reading is marked `UNMEASURED`: it keeps its own score (a sentence 0.6) and is
+  never verified (D-44).
+- **Test:** `tests/test_terms_po_sweep4.py::test_terms_printed_in_other_words_are_read_for_a_person_to_check`,
+  `tests/test_terms_po_sweep4.py::test_days_in_a_note_that_is_not_the_terms_are_not_read_as_terms`
+- **Lesson:** Don't wait for a label the supplier never prints: the terms are a sentence anyone can recognise, as
+  long as the sentence is about paying.

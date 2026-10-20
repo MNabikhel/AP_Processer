@@ -42,6 +42,7 @@ from .types import (
     PART_OF_TERMS,
     RIVAL_NAME,
     TWO_SUBTOTALS,
+    UNMEASURED,
     VERIFIED,
     FieldResult,
     LineReading,
@@ -534,6 +535,10 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if any(PART_OF_TERMS in r.method for _, r in g.readings):
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("the terms ask for a deposit first: these days are only the balance's")
+        if all(UNMEASURED in r.method for _, r in g.readings):
+            # Wording the benchmark never prints: its reading's family has a measured record, this wording not.
+            conf = min(conf, max(0.0, min(raw, SINGLE_READER_CAP)))
+            reasons.append("read from wording the test invoices do not print: a person checks it")
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
         # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
         unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []
