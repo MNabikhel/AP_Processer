@@ -2036,6 +2036,18 @@ class Store:
             ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def layout_sources(self, ids: list[int]) -> dict[int, str]:
+        """{invoice id: how its pages were read} ("text", "ocr", "di", "mixed"), in one query; an invoice with no
+        capture is left out."""
+        if not ids:
+            return {}
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT invoice_id, layout_source FROM invoice_capture WHERE {_in_list('invoice_id')}",
+                (json.dumps([int(i) for i in ids]),),
+            ).fetchall()
+        return {int(r[0]): str(r[1] or "") for r in rows}
+
     def credit_note_ids(self, status: str) -> set[int]:
         """The invoices with ``status`` that capture read as titled a credit note, in one query (bulk approval)."""
         with self._conn() as conn:
@@ -2461,6 +2473,18 @@ class Store:
         order = {"verified": 0, "likely": 1, "check": 2}
         scores = [{"status": r["status"], **self._score(r)} for r in rows]
         return sorted(scores, key=lambda r: order.get(r["status"], 9))
+
+    def fused_kind_scorecard(self) -> dict[str, dict[str, Any]]:
+        """How often the value AP saw was the one AP approved, by how the invoice came in: {"text": vendor PDFs (their
+        text inside), "scan": scans and photos (read with OCR)} -> {fields, agreed, rate, invoices}."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT CASE WHEN layout_source = 'text' THEN 'text' ELSE 'scan' END kind, COUNT(*) fields,
+                          SUM(correct) agreed, COUNT(DISTINCT invoice_id) invoices
+                   FROM reader_outcomes WHERE reader = 'fused' AND layout_source IN ('text', 'ocr', 'di', 'mixed')
+                   GROUP BY kind"""
+            ).fetchall()
+        return {r["kind"]: self._score(r) for r in rows}
 
     def evidence_counts(self) -> dict[str, tuple[int, int]]:
         """{evidence key: (values, right)}: how often each pattern of readers and checks

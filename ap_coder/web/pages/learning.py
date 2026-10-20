@@ -370,6 +370,17 @@ def readers_context(store: Store, pick: str | None) -> dict[str, Any]:
         if verified
         else ui.tile("Verified values right", "—", hint="no value shown as verified yet")
     )  # fmt: skip
+    # Vendor PDFs (their text inside) and scans or photos (read with OCR) apart: a phone photo now and then should
+    # not hide how well the vendor PDFs, most of what comes in, are read.
+    kinds = store.fused_kind_scorecard()
+    for key, title in (("text", "Vendor PDFs read right"), ("scan", "Scans and photos read right")):
+        k = kinds.get(key)
+        tiles.append(
+            ui.tile(title, f"{k['rate']:.1%}", tone="green",
+                    hint=f"{ui.plural(k['fields'], 'field')} on {ui.plural(k['invoices'], 'invoice')}")
+            if k and k["rate"] is not None
+            else ui.tile(title, "—", hint="none approved yet")
+        )  # fmt: skip
     pick = pick if pick in scores else labels[0]
     fields = added([row for reader in scores[pick]["readers"] for row in store.reader_field_scorecard(reader)],
                    lambda r: r["field"])  # fmt: skip

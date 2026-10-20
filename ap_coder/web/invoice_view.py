@@ -434,6 +434,26 @@ def grid(reference: ReferenceData, draft: Draft) -> dict[str, Any]:
 
 # --- Capture (what was read from the page) -----------------------------------------------------------------------
 
+# How the invoice came in, from how its pages were read: a vendor's own PDF has its text inside and is read as printed;
+# a scan or photo (or a picture saved as a PDF) is read with OCR, so its values deserve a closer look.
+DOCUMENT_KINDS = {
+    "text": ("Vendor PDF", "ok", "picture_as_pdf", "The PDF has its text inside: read exactly as printed."),
+    "scan": ("Scan or photo", "warn", "photo_camera",
+             "A picture of the invoice, read with OCR (reading the letters off the image): check its values closely."),
+    "mixed": ("Partly scanned", "warn", "photo_camera",
+              "Some pages have their text inside; the others are pictures, read with OCR: check their values closely."),
+}  # fmt: skip
+
+
+def document_kind(layout_source: str) -> dict[str, str] | None:
+    """{key, label, tone, icon, title} for how the pages were read (``CaptureResult.layout_source``); None when they
+    were not read (no capture, or nothing on the page)."""
+    key = {"text": "text", "ocr": "scan", "di": "scan", "mixed": "mixed"}.get(layout_source or "")
+    if key is None:
+        return None
+    label, tone, icon, title = DOCUMENT_KINDS[key]
+    return {"key": key, "label": label, "tone": tone, "icon": icon, "title": title}
+
 
 def capture_of(store: Store, invoice_id: int) -> CaptureResult | None:
     raw = store.get_capture(invoice_id)

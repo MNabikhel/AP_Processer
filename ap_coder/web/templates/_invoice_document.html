@@ -3,7 +3,8 @@
 {% import "_invoice_live.html" as live_ui %}
 <section class="card flush inv-doc" aria-label="Document">
   <div class="inv-doc-head">
-    <div class="rvw-doc-head"><b>Document</b><span class="file" title="{{ doc.file_name }}">{{ doc.file_name }}</span></div>
+    <div class="rvw-doc-head"><b>Document</b><span class="file" title="{{ doc.file_name }}">{{ doc.file_name }}</span>
+      {% if doc.kind %}<span class="apc-pill {{ doc.kind.tone }} doc-kind" title="{{ doc.kind.title }}"><span class="ms" aria-hidden="true">{{ doc.kind.icon }}</span>{{ doc.kind.label }}</span>{% endif %}</div>
     {% if doc.teachable %}
     <details class="pop" data-teach>
       <summary class="btn sm" title="Show AP Coder where a field is printed: it learns it for this supplier."><span class="ms" aria-hidden="true">touch_app</span>Teach a field</summary>

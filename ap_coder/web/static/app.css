@@ -379,6 +379,8 @@ kbd.apc-kbd {font-family: inherit; font-size: 11.5px; font-weight: 500; color: v
   color: var(--rv-muted); border-bottom: 0;}
 .rq-row .c-vendor {display: flex; align-items: center; gap: 10px;}
 .rq-row .who {min-width: 0;}
+.rq-row .who .kind {display: flex; align-items: center; gap: 3px; font-size: 11.5px; color: var(--lg-warning);}
+.rq-row .who .kind .ms {font-size: 13px;}
 .rq-row .name {font-weight: 500; color: var(--rv-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
 .rq-row .due {font-size: 12px; color: var(--rv-subtle); margin-top: 1px; white-space: nowrap;}
 .rq-row .due.err {color: var(--rv-danger);} .rq-row .due.warn {color: var(--rv-warning);}

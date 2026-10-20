@@ -49,6 +49,8 @@
 .rvw-doc-head .file {color: var(--rv-subtle); font-weight: 400; font-size: 12.5px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; min-width: 0;}
 .rvw-doc-head .file::before {content: "·"; margin-right: 6px;}
+.rvw-doc-head .doc-kind {flex: none; font-weight: 500; font-size: 11.5px;}
+.rvw-doc-head .doc-kind .ms {font-size: 13px;}
 .rvw-hint {display: inline-flex; color: var(--rv-subtle); cursor: help;}
 .rvw-hint .ms {font-size: 15px;}
 .rvw-hint:hover {color: var(--rv-text);}
