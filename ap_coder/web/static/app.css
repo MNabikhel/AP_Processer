@@ -649,3 +649,5 @@ details.tech summary {cursor: pointer; font-size: 13px; color: var(--lg-muted); 
 /* The welcome page and Import invoices: the one thing to do next (templates/_next_step.html). */
 .card.next-step {border-color: var(--lg-accent-line); box-shadow: inset 3px 0 0 var(--lg-accent);}
 .card.next-step h4 {font-size: 15px;}
+.apc-step > a {white-space: nowrap; display: inline-flex; align-items: center;}
+.apc-step > a .ms {font-size: 18px;}
