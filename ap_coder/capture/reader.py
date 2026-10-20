@@ -34,6 +34,10 @@ from .normalize import (
 from .types import (
     AMOUNT_FIELDS,
     BILL_TO_READING,
+    EITHER_TAX,
+    PART_OF_TERMS,
+    RIVAL_NAME,
+    TWO_SUBTOTALS,
     Box,
     DocLayout,
     Line,
@@ -184,6 +188,66 @@ class _LabelHit:
     start: int = 0  # where the label's box starts: a label after another label on the line starts there
 
 
+# Labels seen on real invoices (sweep 4): an English variant, and the German, Dutch, Italian, Spanish and French
+# (France) words for the totals, the invoice's number and its dates. Tried after the labels above. (Plain text:
+# accents off, "fällig" is "fallig".)
+_RATE_FIRST = r"\d{1,2}(?:[.,]\d{1,3})?\s*%\s*"  # a receipt's "13%HST", "15.00%HST:", "5% GST"
+MORE_LABELS: dict[str, list[tuple[str, float]]] = {
+    "hst_amount": [(rf"{_RATE_FIRST}(?:{_A('hst')}|{_A('tvh')})", 0.95)],
+    "gst_amount": [(rf"{_RATE_FIRST}(?:{_A('gst')}|{_A('tps')})(?!\s*/\s*(?:hst|tvh))", 0.95)],
+    "pst_amount": [(rf"{_RATE_FIRST}(?:{_A('pst')}|{_A('rst')}|{_A('tvp')})", 0.95)],
+    "qst_amount": [(rf"{_RATE_FIRST}(?:{_A('qst')}|{_A('tvq')})", 0.95)],
+    "invoice_number": [
+        (r"rechnungs\s*-?\s*(?:nummer|nr\b\.?)", 1.0), (r"factuur\s*-?\s*(?:nummer|nr\b\.?)", 1.0),
+        (r"(?:numero|n\.?)\s*(?:de\s*)?factura|factura\s*(?:n\s?[°ºo]\.?|numero)", 0.95),
+        (r"fattura\s*(?:n\s?[°ºo]\.?|numero)|numero\s*(?:di\s*)?fattura", 0.95), (r"belegnummer", 0.8),
+    ],
+    "invoice_date": [
+        (r"rechnungsdatum", 1.0), (r"factuurdatum", 1.0), (r"data\s*(?:della\s*)?fattura", 0.95),
+        (r"fecha\s*(?:de\s*(?:la\s*)?)?(?:factura|emision)", 0.95), (r"belegdatum", 0.8), (r"datum\b", 0.55),
+    ],
+    "due_date": [
+        (r"fallig(?:keit|keitsdatum)?(?:\s*am)?\b", 0.9), (r"zahlbar\s*bis", 0.9), (r"vervaldatum", 1.0),
+        (r"(?:data\s*di\s*)?scadenza", 0.9), (r"(?:fecha\s*de\s*)?vencimiento", 0.9),
+    ],
+    "subtotal": [
+        (r"(?:invoice|order)\s*sub\s*-?\s*total", 1.0), (r"rechnungssumme\s*(?:netto|ohne\s*u\.?\s?st|exkl|excl)", 0.9),
+        (r"netto\s*-?\s*summe|summe\s*netto|zwischensumme|gesamt\s*netto|netto\s*gesamt|nettobetrag\s*gesamt", 0.95),
+        (r"netto\b", 0.6), (r"subtotaal", 1.0), (r"totaal\s*excl\b\.?(?:\s*btw)?", 0.95), (r"(?:totale\s*)?imponibile", 0.9),
+        (r"base\s*imponible", 0.9), (r"montant\s*h\.?\s?t\b\.?", 0.9), (r"total\s*h\.?\s?t\b\.?", 0.9),
+        (r"net\s*worth", 0.85), (r"positionssumme|summe\s*(?:der\s*)?positionen", 1.0),
+        (r"(?:totaal\s*)?excl(?:\.|usief)?\s*btw", 0.95),
+    ],
+    "other_charges": [
+        (r"(?:gesamtbetrag\s*der\s*)?zuschlage?\b", 0.85), (r"(?:gesamtbetrag\s*der\s*)?abschlage?\b|rabatt\b", 0.85),
+        (r"(?:zzgl\.?|zuzuglich)\s*(?:versand|fracht|porto|verpackung)\w*|versandkosten|frachtkosten", 0.85),
+        (r"(?:abzgl\.?|abzuglich)\s*\w+|sondernachlass|nachlass\b", 0.85),
+    ],
+    "tax_total": [
+        (r"(?:summe\s*)?(?:mwst|mehrwertsteuer|umsatzsteuer(?!\s*-?\s*(?:aufschl|id))|u\.?\s?st\b\.?(?!\s*[.-]?\s*(?:id|nr)))", 0.85),
+        (r"steuerbetrag", 0.8), (r"steuerbasisbetrag", 0.7),
+        (r"(?:zzgl\.?|zuzuglich)\s*(?:umsatzsteuer|mehrwertsteuer|mwst|u\.?\s?st\b)", 0.85), (r"btw\b(?!\s*-?\s*(?:nr|nummer|id))", 0.85), (r"iva\b", 0.7), (r"imposta(?:\s*iva)?", 0.9),
+        (r"(?:total\s*|montant\s*)?t\.?v\.?a\b\.?(?!\s*intra)", 0.85), (r"(?:total\s*)?vat\b(?:\s*amount)?", 0.85),
+    ],
+    "grand_total": [
+        (r"rechnungssumme\s*(?:brutto|inkl)", 1.0),
+        (r"brutto\s*-?\s*summe|summe\s*brutto|bruttobetrag|gesamt\s*brutto|brutto\s*gesamt", 1.0),
+        (r"gesamtbetrag(?!\s*der\s*(?:zu|ab)schl)|gesamtsumme|rechnungsbetrag|zahlbetrag|endbetrag", 0.95),
+        (r"zu\s*zahlen(?:der\s*betrag)?", 0.9), (r"brutto\b", 0.75),
+        (r"totaal(?:\s*(?:incl\b\.?(?:\s*btw)?|bedrag|te\s*betalen))?", 0.9), (r"te\s*betalen", 0.9),
+        (r"totale(?:\s*(?:documento|fattura|da\s*pagare))?", 0.9), (r"total\s*a\s*pagar|importe\s*total", 1.0),
+        (r"total\s*t\.?\s?t\.?\s?c\b\.?|montant\s*t\.?\s?t\.?\s?c\b\.?|net\s*a\s*payer", 1.0),
+        (r"gross\s*(?:worth|total|amount)", 0.9),
+    ],
+}  # fmt: skip
+for _field, _pats in MORE_LABELS.items():
+    LABELS[_field] = [*LABELS[_field], *_pats]
+DISTRACTORS["tax_total"] += [r"btw\s*[a-z]{2}\s*\d", r"btw\s*prijs", r"u\.?\s?st\.?\s*[.-]?\s*id", r"btw\s*-?\s*(?:nr|nummer|id)", r"tva\s*intra",
+                             r"(?:n\s?[°º]|no\b\.?|numero)\s*(?:de\s*)?tva", r"vat\s*(?:no\b|reg|number|id\b|#)"]  # fmt: skip
+DISTRACTORS["grand_total"] += [r"totaal\s*excl", r"totale\s*imponibile"]
+DISTRACTORS["invoice_number"] += [r"invoice\s*sub\s*-?\s*total"]  # "Invoice Subtotal 1020.58" is no invoice number
+
+
 def _compile() -> dict[str, list[tuple[re.Pattern[str], float]]]:
     # A label ends where letters end, even when OCR glued it to its value ("Dated25/05/2025", "No.033"):
     # every word boundary in the table means "no letter follows".
@@ -231,6 +295,13 @@ def _label_hits(line: Line) -> list[_LabelHit]:
 
 
 _NEXT_WORD = re.compile(r"\s+(?=[a-z])")
+_PST_OR_QST = re.compile(rf"\s*/\s*(?:{_A('qst')}|{_A('tvq')})")
+# The supplier's QST or PST registration number, as printed beside its label: the province's tax it charges.
+_QST_REG = re.compile(
+    r"(?<![a-z])(?:q\.?s\.?t|t\.?v\.?q)(?![a-z])[\s.:#]*(?:(?:no|n°|reg|registration)\.?[\s:#]*)?\d{10}"
+)
+_PST_REG = re.compile(r"(?<![a-z])(?:p\.?s\.?t|r\.?s\.?t|t\.?v\.?p)(?![a-z])[\s.:#-]*(?:(?:no|n°|reg|registration)\.?[\s:#]*)?"
+                      r"(?:pst-?)?\d[\d-]{5,12}\d(?![\d.,%])")  # fmt: skip
 
 
 def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None = None) -> list[_LabelHit]:
@@ -266,9 +337,14 @@ def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None 
                 box_start = st if chained and st in chained else 0
                 if _distracted(field, text[st:]):
                     continue
+                both = _PST_OR_QST.match(text, end) if field == "pst_amount" else None
                 if field == "hst_amount" and "/" in label_text:
                     for hit_field in _combined_tax_fields(text):
                         hits.append(_LabelHit(hit_field, line, strength, end, label_text, box_start))
+                elif both:  # "PST/QST", "TVP/TVQ": one column for whichever the province charges
+                    end = both.end()
+                    for hit_field in ("pst_amount", "qst_amount"):
+                        hits.append(_LabelHit(hit_field, line, strength, end, text[st:end], box_start))
                 else:
                     hits.append(_LabelHit(field, line, strength, end, label_text, box_start))
                 break
@@ -507,8 +583,16 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None
         a = plain(rest).find(plain(value)[:6]) if value else 0
         words = _span_words(line, start + max(a, 0), start + max(a, 0) + len(value))
+        if _DEPOSIT.search(plain(rest)):
+            method += PART_OF_TERMS  # "30% d'acompte, solde à 30 j": the net days are only the balance's
         return Reading(field, value, value, _boxes(words), base * _min_conf(words), method)
     return None
+
+
+# Terms that ask for part of the amount first (a deposit): "Net 30" is only the balance's terms.
+_DEPOSIT = re.compile(
+    r"acompte|deposit|down\s*payment|advance\s*payment|anzahlung|\d\s*%\s*(?:a|à|on|upon|at)\s*(?:la\s*)?(?:commande|order|signature)"
+)
 
 
 def _amounts_in(text: str) -> list[tuple[float, int, int]]:
@@ -611,6 +695,11 @@ def _label_box(hit: _LabelHit) -> Box:
     return union_all([w.box for w in words]) or hit.line.box
 
 
+# "TPS (824373609RT0001)  $3.82": a receipt prints the supplier's number in brackets after the tax's label, its amount
+# further right.
+_BRACKETED_REG = re.compile(r"\s*[(（\[]\s*\d{9,10}\s*(?:RT|TQ)\s*\d{4}\s*[)）\]]\s*$", re.I)
+
+
 def _registration_line(line: Line, hit: _LabelHit) -> bool:
     after = line.text[hit.end :]
     return bool(
@@ -619,6 +708,11 @@ def _registration_line(line: Line, hit: _LabelHit) -> bool:
         or find_qst_numbers(after)
         or find_pst_numbers(f"PST {after[:40]}")
     )
+
+
+# "zzgl. Versandkosten 5,80 7", "abzgl. Sondernachlass 10% von 147,30 -14,73": "plus" and "less" open the lines of a
+# totals block (the charge, its base, its VAT rate), never a product's row.
+_TOTALS_BLOCK_WORD = re.compile(r"(?:zzgl|abzgl|zuzuglich|abzuglich)(?![a-z])")
 
 
 def _table_row(lines: list[Line], line: Line) -> bool:
@@ -649,19 +743,165 @@ def _after_another_label(line: Line, got: Reading) -> bool:
         h.field != got.field and h.end <= at for h in _label_hits(line)))  # fmt: skip
 
 
+_TOTALS_ROW_FIELDS = (*AMOUNT_FIELDS,)
+COLUMN_GAP = 0.15  # a column of amounts ends at a gap taller than this (fraction of the page)
+_AMOUNT_PART = re.compile(r"^[$€£]?-?[\d.,]+\$?$|^[$€£]$")
+
+
+def _totals_heading_row(lines: list[Line], line: Line) -> bool:
+    """``line`` is one of three or more total labels printed side by side with nothing after them ("Subtotal | GST |
+    HST | Total"): the headings of a summary table, one row per kind of charge under them."""
+    if line.box.height <= 0:
+        return False
+    beside = 0
+    for other in lines:
+        if other is line or other.box.page != line.box.page or abs(other.box.cy - line.box.cy) > 0.5 * line.box.height:
+            continue
+        hits = [h for h in _label_hits(other) if h.field in _TOTALS_ROW_FIELDS]
+        if hits and not any(_value_reading(h.field, other, h.end, 1.0, "x") for h in hits):
+            beside += 1
+    return beside >= 2
+
+
+def _column_below(lines: list[Line], line: Line, label_box: Box) -> list[tuple[float, list[Word]]] | None:
+    """The amounts printed under a summary table's heading, top to bottom: in each line below, the words under the
+    heading (their boxes overlap its width) when they print one amount. ``None`` when text that is no amount is
+    printed under it first (another table, a note: no column of figures). A line far taller than the heading (a
+    watermark, a logo) is passed over; the column ends at a gap taller than ``COLUMN_GAP``."""
+    out: list[tuple[float, list[Word]]] = []
+    last = line.box.y1
+    for other in sorted(lines, key=lambda ln: ln.box.y0):
+        if other is line or other.box.page != line.box.page or other.box.y0 < line.box.y1 - 0.2 * line.box.height:
+            continue
+        if other.box.height > 3 * max(line.box.height, 0.008):
+            continue
+        idx = [i for i, w in enumerate(other.words) if min(w.box.x1, label_box.x1) - max(w.box.x0, label_box.x0) > 0]
+        if not idx:
+            continue
+        a, b = idx[0], idx[-1]
+        # The rest of an amount that sticks out of the heading's width: "1 936,72 $" under "Total".
+        while (
+            a > 0
+            and _AMOUNT_PART.match(other.words[a - 1].text)
+            and other.words[a].box.x0 - other.words[a - 1].box.x1 < 0.012
+        ):
+            a -= 1
+        while (b + 1 < len(other.words) and _AMOUNT_PART.match(other.words[b + 1].text)
+               and other.words[b + 1].box.x0 - other.words[b].box.x1 < 0.012):  # fmt: skip
+            b += 1
+        under = other.words[a : b + 1]
+        if other.box.y0 - last > COLUMN_GAP:
+            break
+        text = " ".join(w.text for w in under)
+        amounts = _amounts_in(text)
+        if len(amounts) != 1 or not looks_like_money(text) or re.sub(r"[\d\s$€£.,()\-–+]", "", text):
+            return out or None
+        out.append((round(amounts[0][0], 2), under))
+        last = other.box.y1
+    return out
+
+
+def _column_foot(field: str, hit: _LabelHit, lines: list[Line]) -> list[Reading]:
+    """A summary table's column: its foot when it is the sum of the rows above it (one row: the row, printed again
+    as the foot, or alone). A column of rows with no foot that sums them has no invoice total in it."""
+    label_box = _label_box(hit)
+    column = _column_below(lines, hit.line, label_box)
+    if not column:
+        return []
+    *rows, (foot, words) = column
+    if rows and abs(round(sum(v for v, _ in rows), 2) - foot) > 0.011:
+        return []
+    raw = " ".join(w.text for w in words)
+    return [Reading(field, foot, raw, _boxes(words), 0.95 * hit.strength * _min_conf(words), "label-column-foot")]
+
+
+_TAX_OR_TOTAL = ("gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total")
+_RIGHTMOST = (
+    *_TAX_OR_TOTAL,
+    "grand_total",
+    "other_charges",
+)  # a row of figures after the label: the last one is the field's
+
+
+def _rightmost_tax(field: str, hit: _LabelHit, lines: list[Line], first: Line) -> Reading | None:
+    """A tax's row printed in cells, its base first and the tax last ("Umsatzsteuer (S) | 275,00 | 7 | 19,25"): the
+    rightmost amount printed as money, further right than ``first`` with no label between them."""
+    best = None
+    row = [
+        o
+        for o in lines
+        if o.box.page == first.box.page
+        and o.box.x0 > first.box.x0
+        and min(first.box.y1, o.box.y1) - max(first.box.y0, o.box.y0) > 0.5 * min(first.box.height, o.box.height)
+    ]
+    label = hit.line.box
+    for other in sorted(row, key=lambda o: o.box.x0):
+        if _label_hits(other):
+            break
+        far = other.box.x0 - label.x1
+        if far > FAR_RIGHT or (
+            far > MAX_RIGHT and abs(other.box.cy - label.cy) >= 0.25 * min(label.height, other.box.height)
+        ):
+            break  # so far across, only a figure level with the label is its (a tilted scan pairs it with the next row)
+        got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
+        if got and looks_like_money(str(got.raw)):
+            got.score *= 1.0 - min(other.box.x0 - hit.line.box.x1, 0.4) * 0.5
+            best = got
+    return best
+
+
+FAR_RIGHT = 0.85  # a totals label at the left margin, its amount at the right one (fraction of the page width)
+
+
+def _far_right(field: str, hit: _LabelHit, lines: list[Line]) -> Reading | None:
+    """A totals row printed across the page ("Subtotal ........ $3,050" with the label at the left margin and the
+    amount at the right one, further than ``MAX_RIGHT``): its amount printed as money, when the row holds only figures
+    (a tax's row may print its base and rate before it: the tax is the last one)."""
+    line = hit.line
+    # Level with the label (a quarter of a line): so far across, a scan's tilt puts the next row's amount beside it.
+    row = [
+        o
+        for o in lines
+        if o is not line
+        and o.box.page == line.box.page
+        and o.box.x0 >= line.box.x1 - 0.002
+        and abs(o.box.cy - line.box.cy) < 0.25 * min(line.box.height, o.box.height)
+    ]
+    if not row or any(re.sub(r"[\d\s$€£.,()%\-–+]", "", o.text) or o.box.x0 - line.box.x1 > FAR_RIGHT for o in row):
+        return None  # something else than figures on the row, or too far
+    money = [
+        o for o in sorted(row, key=lambda o: o.box.x0) if len(_amounts_in(o.text)) == 1 and looks_like_money(o.text)
+    ]
+    if not money or (len(money) > 1 and field not in _RIGHTMOST):
+        return None
+    other = money[-1]  # a tax's row: its base, its rate, the tax last
+    got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
+    if got:
+        got.score *= 0.8
+    return got
+
+
 def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
     """For each label: the value after it on the same line, else just right of it, else just below it
     (header grids print a row of labels over a row of values)."""
     out: list[Reading] = []
     for hit in field_hits:
         field, line = hit.field, hit.line
+        rest = line.text[hit.end :]
+        if field in _TAX_OR_TOTAL and len(re.findall(r"[a-z]{3,}", plain(rest))) >= 3 and not looks_like_money(rest):
+            continue  # "VAT 0% - export of goods outside the EU": a note about the tax, no amount of it
         inline = _value_reading(field, line, hit.end, 0.95 * hit.strength, "label-inline")
         if inline:
             out.append(inline)
             continue
-        if field in AMOUNT_FIELDS and _registration_line(line, hit):
+        if field in _TAX_OR_TOTAL and re.fullmatch(r"\s*[(\[]?\s*%\s*[)\]]?\s*", line.text[hit.end :]):
+            continue  # "USt. %", "Tax [%]": the heading of a column of rates, not of the tax
+        if field in AMOUNT_FIELDS and _totals_heading_row(lines, line):
+            out += _column_foot(field, hit, lines)
+            continue
+        if field in AMOUNT_FIELDS and _registration_line(line, hit) and not _BRACKETED_REG.match(line.text[hit.end :]):
             continue  # "GST/HST Reg. No.: 988130969 RT0003": the number's label, not the tax amount's
-        if field == "other_charges" and _table_row(lines, line):
+        if field == "other_charges" and not _TOTALS_BLOCK_WORD.match(hit.label_text) and _table_row(lines, line):
             continue  # "Shipping cartons 18x12x12 | 100 | 47.04 | 4,704.00": a product, not the freight
         got = None
         for other in _right_of(lines, line)[:2]:
@@ -679,7 +919,17 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
                 break  # "Delivery Date: Sep 20, 2026": that label's value, not this one's
             if got:
                 got.score *= 1.0 - min(other.box.x0 - line.box.x1, 0.4) * 0.5
+                rightmost = _rightmost_tax(field, hit, lines, other) if field in _RIGHTMOST else None
+                if rightmost is not None:
+                    got.score *= 0.85
+                    out.append(got)
+                    got = rightmost
                 break
+        if got is None and field in AMOUNT_FIELDS:
+            got = _far_right(field, hit, lines)
+        if got is None and field in _RIGHTMOST:
+            # "abzgl. Sondernachlass | 10% | von | 147,30 | -14,73": words and a base before the amount.
+            got = _rightmost_tax(field, hit, lines, line)
         if got is None:
             lb = _label_box(hit)
             for other in _below(lines, line, lb)[:3]:
@@ -780,7 +1030,7 @@ def _in_bill_to(layout: DocLayout, line: Line) -> bool:
 
 
 _COMPANY = re.compile(r"\b(inc|lnc|ltd|ltee|itee|limited|limitee|llc|llp|lp|l\.p|ulc|plc|corp|corporation|co\.|company|cie|enr|"
-                      r"s\.?e\.?n\.?c|products|"
+                      r"s\.?e\.?n\.?c|s\.e\.c|products|gmbh|ag|kg|b\.v|n\.v|s\.a\.?s?|sarl|eurl|sas|s\.r\.l|s\.p\.a|sdn\.?\s*bhd|bhd|pvt|pte|"
                       r"group|groupe|services|solutions|supply|supplies|industries|technologies|consulting|"
                       r"distribution|holdings|partners|associates|enterprises|entreprises)\b\.?", re.I)  # fmt: skip
 _NOT_NAME = re.compile(r"^(invoice|facture|credit\s*memo|debit\s*(?:note|memo)|avis\s*de\s*credit|(?:sales|tax|commercial|proforma|pro\s*forma)\s*invoice|please\s*pay|your\b|votre\b|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
@@ -853,11 +1103,195 @@ _TITLE_PREFIX = re.compile(
 )
 
 
+# Lines at the top of a page that are no supplier's name, however they are printed (sweep 4, real invoices): a
+# document's title or a section's heading ("SAMPLE INVOICE WITH REQUIRED INFORMATION", "Summary of charges",
+# "Sommaire des frais"), a form's placeholder ("Company Name", "Address Line1"), a receipt's staff or table line
+# ("Server: Bhomik", "Table 23"), a field's label with its value ("Guest Name: Sanjay"), and a city or province
+# printed alone ("VAUGHAN ON", "Montreal,Quebec", "Toronto").
+_TITLE_WORDS = re.compile(
+    r"(?<![a-z])(?:invoices?|invoicing|facture|facturation|receipt|recu|statement|summary|sommaire|details|"
+    r"requirements|rechnung(?:en)?|gutschrift|factura|fattura|factuur|bon\s+de\s+commande|purchase\s+order|quotation|"
+    r"soumission|estimate|devis|charges|frais|contact(?:ez)?|renseignements|information|inquiries|questions|"
+    r"thank\s+you|merci|important|message|notice)(?![a-z])"
+)
+_PLACEHOLDER = re.compile(
+    r"^(?:(?:registered\s+)?(?:company|business|vendor|supplier|legal)\s+name|address(?:\s*line\s*\d*)?|"
+    r"postal\s+code|city|province|phone|logo|your\s+(?:company|logo|name))\b"
+)
+_STAFF = re.compile(
+    r"^(?:server|cashier|caissiere?|serveu(?:r|se)|table|tbl|guests?|host|clerk|operator|register|till|"
+    r"trans(?:action)?|chk|check\s*#|check\s*(?:in|out)|cover|station|terminal|store\s*#|order\s*#)(?![a-z])"
+)
+_FIELD_AND_VALUE = re.compile(r"^[a-z][a-z .'/#-]{1,24}:\s*\S")
+# A receipt's other words: "SEE BACK", "SALE", "PROMO****", "Welcome", "Customer copy"; a slogan ("always more for
+# less!"); a line item ("+MASHED POTATO").
+_RECEIPT_WORDS = re.compile(
+    r"^(?:see\s+back|sale|promo|welcome|bienvenue|thank|merci|customer\s+copy|copie\s+client|duplicate|reprint|"
+    r"approved|approuvee?|void|annule)(?![a-z])|!\s*$|^[+=]"
+)
+_PROVINCES = (
+    r"ontario|quebec|british\s+columbia|alberta|manitoba|saskatchewan|nova\s+scotia|new\s+brunswick|"
+    r"newfoundland(?:\s+and\s+labrador)?|prince\s+edward\s+island|yukon|nunavut|northwest\s+territories"
+)
+_CITIES = (
+    r"toronto|montreal|vancouver|calgary|edmonton|ottawa|winnipeg|quebec(?:\s+city)?|hamilton|kitchener|london|"
+    r"victoria|halifax|oshawa|windsor|saskatoon|regina|st\.?\s+john'?s|barrie|kelowna|abbotsford|sherbrooke|"
+    r"guelph|kingston|moncton|trois-rivieres|saguenay|levis|laval|gatineau|longueuil|mississauga|brampton|"
+    r"markham|vaughan|richmond(?:\s+hill)?|burnaby|surrey|oakville|burlington|scarborough|north\s+york|"
+    r"etobicoke|waterloo|whitby|ajax|pickering|thornhill|concord|woodbridge|brossard|terrebonne|"
+    r"repentigny|boucherville|dorval|pointe-claire|saint-laurent|anjou|lachine|verdun|montreal-nord"
+)
+_COUNTRIES = (
+    r"canada|usa|u\.s\.a\.?|united\s+states(?:\s+of\s+america)?|united\s+kingdom|deutschland|germany|france|"
+    r"espana|spain|italia|italy|nederland|netherlands|belgique|belgie|osterreich|schweiz|suisse|portugal|mexico"
+)
+_PLACE = re.compile(
+    rf"^(?:(?:{_CITIES})(?:\s*,?\s*(?:{_PROVINCES}|on|qc|bc|ab|mb|sk|ns|nb|nl|pe|yt|nt|nu|{_COUNTRIES}))?|"
+    rf"(?:[a-z.'-]+\s*){{1,3}},?\s*(?:{_PROVINCES}|on|qc|bc|ab|mb|sk|ns|nb|nl|pe|yt|nt|nu)|"
+    rf"(?:[a-z.'-]+\s*){{1,3}},\s*(?:{_COUNTRIES})|"
+    rf"(?:{_PROVINCES}|{_COUNTRIES}))"
+    r"\s*[.,]?$"
+)
+# A street address: "15Wertheim Court", "70 La Gauchetiere Ouest, 2etage", "Jalan SS 15/4B".
+_ADDRESS_LINE = re.compile(
+    r"^(?:\d+[a-z]?[\s,-]*(?:[a-z.'-]+\s+){0,4}(?:rue|boul|blvd|ave|av|avenue|st|street|rd|road|chemin|ch|route|hwy|"
+    r"dr|drive|way|cres|crescent|pkwy|court|ct|lane|ln|place|pl|ouest|est|nord|sud|west|east|north|south|square|sq)"
+    r"(?![a-z])|(?:jalan|jln|lorong)(?![a-z]))"
+)
+_GLUED_TITLE_WORDS = re.compile(r"invoice|facture|renseignements|summary|sommaire|statement|account|question")
+_CURRENCY_CODE = re.compile(r"^(?:eur|usd|cad|gbp|chf|aud|jpy|inr|myr|idr|sgd|nzd|mxn)$")
+_LIST_ITEM = re.compile(r"^\(?\d{1,2}[.)]\s")  # "2. Vendor's FULL LEGAL NAME, remit": a numbered note
+# A legal form OCR glued to the name: "CONTOSOLTD.", "AcmeInc".
+_GLUED_FORM = re.compile(r"[a-z]{3}(?:ltd|inc|llc|gmbh|ltee|corp)\b\.?", re.I)
+
+
+def _not_a_name(text: str) -> bool:
+    """``text`` is a title, heading, placeholder, staff line, field label with its value, a sentence or a place."""
+    p = plain(text).strip()
+    if _PLACEHOLDER.match(p) or _STAFF.match(p) or _PLACE.match(p) or _LIST_ITEM.match(p) or _CURRENCY_CODE.match(p):
+        return True
+    if _RECEIPT_WORDS.search(p) or _ADDRESS_LINE.match(p):
+        return True
+    if any(len(w) > 14 for w in p.split()) and _GLUED_TITLE_WORDS.search(p):
+        return True  # OCR's words run together: "Questionsaboutyourinvoice/account", "Renseignementsgeneraux"
+    words = p.split()
+    if len(words) > 8:
+        return True  # a sentence of the page's notes, not a name
+    if _COMPANY.search(p):
+        return False  # "Chinook Courier & Office Services Ltd."
+    if len(words) >= 4 and (text.strip()[:1].islower() or (p.endswith(".") and len(words[-1].strip(".")) > 4)):
+        return True  # a sentence ("Thank you for your business."), not "Bluewater Equipment Rentals Co."
+    return bool(_TITLE_WORDS.search(p) or _FIELD_AND_VALUE.match(p))
+
+
+# The supplier's own label: "From:", "Seller", "Verkäufer", "Lieferant", "Fournisseur". Its value (after it, or on the
+# line below) is the supplier's name.
+_SELLER_LABEL = re.compile(
+    r"^(?:from|seller|vendor|supplier|sold\s+by|issued\s+by|bill(?:ed)?\s+from|verkaufer|lieferant|"
+    r"rechnungsersteller|leistungserbringer|fournisseur|vendeur|emetteur|leverancier|proveedor|fornitore)"
+    r"(?![a-z])\s*:?\s*"
+)
+_SENDER_SPLIT = re.compile(r"\s+[•·|–-]\s+")
+_SELLER_NOT = re.compile(r"^(?:#|no\b|nr\b|n°|number|id\b|code\b|num)|^\d")  # "Vendor # 4471", "Supplier ID"
+# The supplier named with its registration numbers: "Canada Post registration nos.: HST/GST 119321495", "Numéros
+# d'enregistrement de Postes Canada TVH/TPS 119321495".
+_REG_NAMED_EN = re.compile(
+    r"^(?P<name>[A-Z][\w&'’.\- ]{1,60}?)\s*(?:'s\s+)?(?:(?:gst|hst|tps|tvh|qst|tvq)[\s/]*)*"
+    r"(?:registration|reg\.)\s*(?:nos?\.?|numbers?|#)?\s*:?\s*(?:gst|hst|tps|tvh|qst|tvq|bn|business)",
+    re.I,
+)
+_REG_NAMED_FR = re.compile(
+    r"^num[ée]ros?\s+d['’]\s*(?:enregistrement|inscription)\s+(?:de\s+la\s+|de\s+l['’]|du\s+|des\s+|de\s+)"
+    r"(?P<name>[A-Z][\w&'’.\- ]{1,60}?)\s*:?\s*(?:gst|hst|tps|tvh|qst|tvq)",
+    re.I,
+)
+
+
+def _seller_named(page: PageLayout) -> list[Reading]:
+    """The supplier's name where the page gives it as such: after a seller's label ("From: Lions and Co.", or on
+    the line under "Verkäufer"), or with its registration numbers ("Canada Post registration nos.: HST/GST ...")."""
+    out: list[Reading] = []
+    for line in page.lines:
+        text = line.text.strip()
+        p = plain(text)
+        for rx in (_REG_NAMED_EN, _REG_NAMED_FR):
+            m = rx.match(text)
+            if m:
+                name = m.group("name").strip(" .,:;")
+                a = line.text.find(name)
+                if _name_like(name) and a >= 0:
+                    words = _span_words(line, a, a + len(name))
+                    out.append(Reading("vendor_name", name, name, _boxes(words), 0.85 * _min_conf(words),
+                                       "registration-line"))  # fmt: skip
+                break
+        parts = _SENDER_SPLIT.split(text)
+        if len(parts) >= 3 and page.number == 1 and line.box.cy < 0.4:
+            # The sender's line over the window of the envelope: "Hetzner Online GmbH • Industriestr. 25 • 91710
+            # Gunzenhausen". Its first part is the supplier when it is a company's name.
+            name = parts[0].strip()
+            if _name_like(name) and _COMPANY.search(plain(name)):
+                words = _span_words(line, 0, len(line.text.split(name, 1)[0]) + len(name))
+                out.append(Reading("vendor_name", name, name, _boxes(words), 0.9 * _min_conf(words), "sender-line"))
+            continue
+        m = _SELLER_LABEL.match(p)
+        if not m or _SELLER_NOT.match(p[m.end() :]) or (m.end() < len(p) and ":" not in p[: m.end()]):
+            continue  # "Vendor # 4471"; "Lieferant GmbH" (a name that starts with the word), not "Lieferant: ..."
+        rest = text[m.end() :].strip(" :")
+        if rest:
+            if _name_like(rest):
+                words = _span_words(line, len(text) - len(rest), len(text))
+                out.append(Reading("vendor_name", rest, rest, _boxes(words), 0.85 * _min_conf(words), "seller-label"))
+            continue
+        got = _under_seller_label(page, line)
+        if got is not None:
+            name, box, conf = got
+            out.append(Reading("vendor_name", name, name, [box], 0.85 * conf, "seller-label"))
+    return out
+
+
+_NAME_LABEL = re.compile(r"^(?:name|firma|firmenname|company(?:\s*name)?|raison\s*sociale|nom)\s*:?$")
+
+
+def _under_seller_label(page: PageLayout, label: Line) -> tuple[str, Box, float] | None:
+    """The name under a seller's label: the first line below it (left edges lined up) that could be a name, past the
+    seller's own fields printed first ("Nummer : 12345676"); "Name:" gives the value beside it."""
+    h = max(label.box.height, 0.008)
+    below = sorted((ln for ln in page.lines if ln is not label and 0 <= ln.box.y0 - label.box.y1 + 0.2 * h <= 6 * h
+                    and abs(ln.box.x0 - label.box.x0) < 0.03), key=lambda ln: ln.box.y0)  # fmt: skip
+    for nxt in below[:4]:
+        p = plain(nxt.text).strip()
+        beside = _right_of(page.lines, nxt)
+        if _NAME_LABEL.match(p):
+            if beside and _name_like(beside[0].text.strip(" :")):
+                return beside[0].text.strip(" :"), beside[0].box, _min_conf(beside[0].words)
+            return None
+        if p.endswith(":") or (beside and beside[0].text.lstrip().startswith(":")) or _label_hits(nxt):
+            continue  # one of the seller's fields: "Nummer : 12345676", "Globale Nummer:"
+        name = nxt.text.strip()
+        return (name, nxt.box, _min_conf(nxt.words)) if _name_like(name) else None
+    return None
+
+
+def _name_like(name: str) -> bool:
+    """``name`` could be a supplier's name: a few words, letters, no address, contact or label."""
+    p = plain(name)
+    return (
+        2 < len(name) < 70
+        and sum(c.isalpha() for c in name) >= 3
+        and sum(c.isdigit() for c in name) <= 3
+        and not _NOT_NAME.match(p)
+        and not _not_a_name(name)
+        and not _CONTACT.search(p)
+        and not _POSTAL_CODE.search(name)
+        and not us_address(name)
+    )
+
+
 def _vendor_names(layout: DocLayout) -> list[Reading]:
     if not layout.pages:
         return []
     page = layout.pages[0]
-    out: list[Reading] = []
+    out: list[Reading] = [r for pg in layout.pages[:2] for r in _seller_named(pg)]
     heights = sorted((ln.box.height for ln in page.lines), reverse=True)
     tall = heights[min(2, len(heights) - 1)] if heights else 0.0
     customer_names = {plain(ln.text.strip()) for ln in layout.lines() if _in_bill_to(layout, ln)}
@@ -882,6 +1316,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             continue
         if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
             continue
+        if _not_a_name(text) or _SELLER_LABEL.fullmatch(p):
+            continue  # a title, heading, placeholder, staff line, place, or the seller's label itself
         if _POSTAL_CODE.search(text) or us_address(text) or _CONTACT.search(p):
             continue  # an address, e-mail or web line
         heading = (
@@ -895,7 +1331,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
         if letters < 3:
             continue
         score = 0.35
-        if _COMPANY.search(p):
+        if _COMPANY.search(p) or (_GLUED_FORM.search(p) and any(w.source not in _AS_PRINTED for w in line.words)):
             score += 0.35
         if line.box.height >= tall * 0.95:
             score += 0.15
@@ -911,8 +1347,41 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             text = _ocr_name_fix(text)
         out.append(Reading("vendor_name", text, text, [union_all([w.box for w in words])] if words else [line.box],
                            min(score, 0.95) * _min_conf(line.words), "top-of-page"))  # fmt: skip
+    for sender in [r for r in out if r.method == "sender-line" and r.boxes]:
+        # The address block under the sender's line is the customer's, shown through the envelope's window.
+        sb = sender.boxes[0]
+        for r in out:
+            b = r.boxes[0] if r.boxes else None
+            if r.method == "top-of-page" and b and b.page == sb.page and 0 < b.y0 - sb.y1 < 0.12 and b.x0 < sb.x1:
+                r.score *= 0.5
+    for pg in layout.pages[1:2]:
+        # "... cheque or money order payable to Canada Post Corporation;" in the payment notes on the back: a
+        # company's name only (notes say "payable to your bank" too).
+        for line in pg.lines:
+            m = _REMIT.search(plain(line.text))
+            name = line.text[m.end() :].strip(" :.,;") if m else ""
+            if m and _name_like(name) and _COMPANY.search(plain(name)):
+                words = _span_words(line, m.end(), len(line.text))
+                out.append(Reading("vendor_name", name, name, _boxes(words), 0.8 * _min_conf(words), "remit-to"))
     out.sort(key=lambda r: -r.score)
+    # A rival: another name at the top of the page (a letterhead's brand and the operator's legal name).
+    rivals = [r for r in out[1:] if not _same_name(r.value, out[0].value) and r.method == "top-of-page"]
+    if out and out[0].method == "top-of-page" and rivals and rivals[0].score >= RIVAL_SHARE * out[0].score:
+        # "CANADIAN TIRE 235" over "Gestions Daniel Picard Inc": a store's brand and its operator's legal name, or a
+        # name and another line of the letterhead. Which one is the supplier the page does not say.
+        out[0].method += RIVAL_NAME
     return out
+
+
+RIVAL_SHARE = 0.6  # a second name scored this close to the first one is its rival
+
+
+def _same_name(a: str, b: str) -> bool:
+    """Two readings of one name: one inside the other, or an OCR slip apart ("ANADIANTIRE235", "CANADIAN TIRE235")."""
+    from difflib import SequenceMatcher
+
+    x, y = re.sub(r"[^a-z0-9]", "", plain(str(a))), re.sub(r"[^a-z0-9]", "", plain(str(b)))
+    return bool(x and y) and (x in y or y in x or SequenceMatcher(None, x, y).ratio() >= 0.85)
 
 
 # ---------------------------------------------------------------- totals solver
@@ -932,16 +1401,31 @@ def _where(r: Reading) -> tuple:
     return (b.page, round(b.x0, 3), round(b.y0, 3)) if b else (id(r),)
 
 
+def _summed(readings: list[Reading], same_sign: bool = True) -> list[Reading]:
+    """Two amounts of one kind on rows of their own, with no total of them printed: a tax charged at two rates
+    ("USt. 7% 19,25", "USt. 19% 37,62"), or charges and discounts ("Gesamtbetrag der Zuschläge 5,80", "... der
+    Abschläge -9,07"). Their sum, as one more option for the solver to try."""
+    out = []
+    for i, a in enumerate(readings):
+        for b in readings[i + 1 :]:
+            if a.boxes and b.boxes and _where(a)[:1] == _where(b)[:1] and abs(a.boxes[0].cy - b.boxes[0].cy) > 0.005:
+                if a.value and b.value and (not same_sign or (a.value > 0) == (b.value > 0)):
+                    out.append(Reading(a.field, round(a.value + b.value, 2), f"{a.raw} + {b.raw}",
+                                       [*a.boxes, *b.boxes], 0.9 * min(a.score, b.score), a.method + "+summed"))  # fmt: skip
+    return out[:3]
+
+
 def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> dict[str, list[Reading]]:
     """Re-rank amount candidates so that the subtotal, taxes and total that add up come first."""
     top = {f: sorted(cands.get(f, []), key=lambda r: -r.score)[:4] for f in AMOUNT_FIELDS}
     subs = top["subtotal"] or [None]
     totals = top["grand_total"] or [None]
     tax_options = {f: [*top[f], None] for f in _TAX_FIELDS}
-    charge_options = [*top["other_charges"][:2], None]
+    charge_options = [*top["other_charges"][:2], *_summed(top["other_charges"][:3], same_sign=False), None]
     # A sales tax that is no GST/HST/PST/QST ("WA Sales Tax 10.35%"): only its total is printed.
-    total_tax_options = [*top["tax_total"][:2], None]
+    total_tax_options = [*top["tax_total"][:4], *_summed(top["tax_total"]), None]
     best = None
+    balanced: set[float] = set()  # the subtotals some combination adds up with
     for sub, total, charge, total_tax in product(subs, totals, charge_options, total_tax_options):
         extra = charge.value if charge else 0.0
         for taxes in product(*tax_options.values()):
@@ -971,9 +1455,17 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
                         for base in {sub.value, sub.value + extra}  # taxed with or without the freight
                     ):
                         bonus += 0.3
+            if sub and bonus >= 3.0:
+                balanced.add(round(sub.value, 2))
             if best is None or score + bonus > best[0]:
                 chosen_taxes = dict(zip(tax_options, taxes, strict=True))
-                best = (score + bonus, sub, total, {**chosen_taxes, "other_charges": charge}, bonus)
+                best = (
+                    score + bonus,
+                    sub,
+                    total,
+                    {**chosen_taxes, "other_charges": charge, "tax_total": total_tax},
+                    bonus,
+                )
     if best is None:
         return cands
     _, sub, total, taxes, bonus = best
@@ -990,6 +1482,10 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
         if bonus >= 3.0:
             r.score = min(1.0, r.score + 0.15)
             r.method += "+adds-up"
+            if f == "subtotal" and len(balanced) > 1:
+                # "Zwischensumme 202,76 ... Rechnungssumme Netto 193,83": the totals add up with either, with the
+                # discount and freight between them or without. Which one is the subtotal is AP's convention.
+                r.method += TWO_SUBTOTALS
         rest = [x for x in cands.get(f, []) if x is not r]
         out[f] = [r, *sorted(rest, key=lambda x: -x.score)]
     return out
@@ -1863,7 +2359,7 @@ def _date_fit(cands: dict[str, list[Reading]]) -> int:
     return 2 if days in (0, 7, 10, 14, 15, 20, 21, 30, 45, 60, 90) else 1
 
 
-_DISCOUNT = re.compile(r".*(discount|escompte|rabais|remise)")
+_DISCOUNT = re.compile(r".*(discount|escompte|rabais|remise|abschlag|rabatt|abzgl|abzuglich|nachlass)")
 
 
 _GLUED_TITLE = re.compile(
@@ -1901,6 +2397,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     for ln in lines:
         by_page.setdefault(ln.box.page, []).append(ln)
     hits: dict[str, list[_LabelHit]] = {}
+    discounts: list[Reading] = []
     for ln in lines:
         in_table_head = None
         for hit in _label_hits(ln):
@@ -1919,6 +2416,10 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             if field == "other_charges" and _DISCOUNT.match(plain(hit.label_text)):
                 for r in got:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
+                    discounts.append(r)
+            if field in ("pst_amount", "qst_amount") and _PST_OR_QST.search(hit.label_text):
+                for r in got:
+                    r.method += EITHER_TAX
             readings += got
         cands[field] = readings
     if not cands.get("payment_terms"):
@@ -1939,6 +2440,11 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         for field in AMOUNT_FIELDS:
             for r in cands.get(field, []):
                 r.value = -r.value if r.value else r.value
+    elif discounts and _negative_totals(cands):
+        # A credit note printed with negative totals ("Positionssumme -7,90") and its discount as printed (0,23): the
+        # discount lowers the credit, it is added to it.
+        for r in discounts:
+            r.value = abs(r.value)
     # Totals: the lowest "total" on the last page with one is usually the invoice total.
     if cands.get("grand_total"):
         last_page = max(r.boxes[0].page for r in cands["grand_total"] if r.boxes)
@@ -1952,6 +2458,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                 r.score -= 0.03 * (r.boxes[0].page - 1) + 0.01 * r.boxes[0].cy
     cands.setdefault("invoice_number", []).extend(_glued_title_numbers(layout))
     cands.update(_registration_numbers(layout))
+    _settle_pst_or_qst(cands, plain(layout.text()))
     cands["vendor_name"] = _vendor_names(layout)
     currency = currency_evidence(layout.text())
     if currency:
@@ -1965,6 +2472,29 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         readings.sort(key=lambda r: -r.score) if field not in AMOUNT_FIELDS else None
         cands[field] = _dedupe(readings)
     return cands
+
+
+def _negative_totals(cands: dict[str, list[Reading]]) -> bool:
+    """The subtotal and total read are printed negative (a credit note's)."""
+    tops = [r.value for f in ("subtotal", "grand_total") for r in cands.get(f, [])[:2] if r.value]
+    return bool(tops) and all(v < 0 for v in tops)
+
+
+def _settle_pst_or_qst(cands: dict[str, list[Reading]], text: str) -> None:
+    """An amount under a "PST/QST" (or "TVP/TVQ") label is the QST when the supplier prints a QST registration number
+    and no PST one, and the PST the other way round. Otherwise both stay proposed, marked ``EITHER_TAX``: the totals
+    solver picks one by its rate, and it is never verified."""
+    either = {f: [r for r in cands.get(f, []) if EITHER_TAX in r.method] for f in ("pst_amount", "qst_amount")}
+    if not either["pst_amount"] and not either["qst_amount"]:
+        return
+    qst = bool(cands.get("qst_registration_number")) or bool(_QST_REG.search(text))
+    pst = bool(cands.get("pst_registration_number")) or bool(_PST_REG.search(text))
+    if qst == pst:
+        return
+    keep, drop = ("qst_amount", "pst_amount") if qst else ("pst_amount", "qst_amount")
+    cands[drop] = [r for r in cands.get(drop, []) if EITHER_TAX not in r.method]
+    for r in either[keep]:
+        r.method = r.method.replace(EITHER_TAX, "")
 
 
 def _dedupe(readings: list[Reading]) -> list[Reading]:
