@@ -2411,3 +2411,13 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **Fix:** a PDF with no pages is refused before it is read: "statement.pdf has no pages in it: the file is empty or was not saved completely. Ask the vendor for a new copy." (Failed / rejected; the file stays in the folder.) A password-protected PDF is still worded as such (a test now guards that message, and that a PDF with only an owner password is opened with the empty user password).
 - **Test:** `tests/test_unusual_files.py::test_a_pdf_with_no_pages_is_refused_in_plain_words_not_queued_blank`, `::test_a_password_protected_pdf_says_so_and_one_with_only_an_owner_password_is_read`
 - **Lesson:** Don't let "read nothing" pass as "read an invoice with nothing on it": check there is something to read first.
+
+#### B-263 · A text invoice saved as "Unicode" by Notepad was read as "ÿþI N V O I C E", and a binary file named .txt went to the queue as an invoice of garbage · medium-low
+- **Where:** `ap_coder/ai/extraction.py` (`result_from_text`)
+- **Symptom:** a .txt invoice saved by Notepad as "Unicode" (UTF-16) went to the queue with the vendor "ÿþI\x00N\x00V\x00…" and nothing else read; a binary file with a .txt name went to the queue as "needs attention", its vendor a run of control characters shown in the import list.
+- **Cause:** a text file was decoded as UTF-8, else Windows-1252 with replacement: UTF-16 became every other character a NUL, and anything at all was taken as text.
+- **Reproduce:** the invoice text saved as UTF-16 (with its byte-order mark) and 4 KB of random bytes, each as a .txt, through the three ways in.
+- **Reproduced:** yes (`vendor=ÿþI N V O I C E`, `binary_garbage.txt … needs attention`).
+- **Fix:** a text file starting with a UTF-16 byte-order mark (either order) is decoded as UTF-16; one that still holds a NUL or more than 5% control characters is refused: "scan.txt isn't a text file: it holds something else under a .txt name. Ask the vendor for the invoice as a PDF."
+- **Test:** `tests/test_unusual_files.py::test_a_text_invoice_saved_as_unicode_is_read_as_its_text`, `::test_a_txt_file_that_is_not_text_is_refused_in_plain_words`
+- **Lesson:** Don't decode with `errors="replace"` and call the result text: check it looks like text before reading it.

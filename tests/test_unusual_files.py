@@ -153,3 +153,34 @@ def test_a_password_protected_pdf_says_so_and_one_with_only_an_owner_password_is
                             "without one.")  # fmt: skip
     opened = pipe.process(folder / "print only.pdf")  # an empty user password: opened without asking
     assert opened.ok and opened.output["grand_total"] == 18017.85
+
+
+# --- B-263: a text file saved as "Unicode" by Notepad, or one that is not text at all --------------------------------
+
+TEXT_INVOICE = (
+    "INVOICE\nAcme Supply Ltd\nInvoice No: A-1001\nDate: 2026-10-01\nSubtotal: 100.00\nGST 5%: 5.00\nTotal: 105.00\n"
+)
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-be"])
+def test_a_text_invoice_saved_as_unicode_is_read_as_its_text(pipeline, encoding):
+    store, pipe, folder = pipeline
+    text = folder / "invoice.txt"
+    text.write_bytes(
+        TEXT_INVOICE.encode(encoding) if encoding == "utf-16" else b"\xfe\xff" + TEXT_INVOICE.encode(encoding)
+    )
+    result = pipe.process(text)
+    assert result.ok, result.error
+    assert result.extraction.content == TEXT_INVOICE
+    assert "\x00" not in str(result.output["vendor_name"]) and result.output["grand_total"] == 105.0
+
+
+def test_a_txt_file_that_is_not_text_is_refused_in_plain_words(pipeline):
+    store, pipe, folder = pipeline
+    junk = folder / "scan.txt"
+    junk.write_bytes(bytes(range(256)) * 8)  # a program's binary file saved with a .txt name
+    result = pipe.process(junk)
+    assert not result.ok
+    assert result.error == ("scan.txt isn't a text file: it holds something else under a .txt name. Ask the vendor for "
+                            "the invoice as a PDF.")  # fmt: skip
+    assert store.get_invoice(result.invoice_id)["status"] == FAILED and junk.exists()
