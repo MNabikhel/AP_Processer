@@ -3,6 +3,7 @@
 import datetime as dt
 import io
 import json
+import struct
 import subprocess
 import sys
 
@@ -143,3 +144,32 @@ def test_a_jpeg_photo_too_large_to_open_is_read_at_a_smaller_size(tmp_path, monk
     Image.new("L", (800, 600), 200).save(big, "PNG")
     with pytest.raises(Image.DecompressionBombError):
         to_pdf(big)
+
+
+def test_a_picture_an_outlook_email_shows_only_in_its_rich_text_is_a_logo():
+    """B-223: a .msg that holds its text only as compressed RTF (an HTML email kept as RTF, no HTML stream) showed a
+    signature picture by its Content-ID; the RTF was never read, so the logo went to the queue as an invoice."""
+    from ap_coder.bench.msgwriter import Attachment, Message, build_msg
+    from ap_coder.intake.mailbox import read_msg_mail
+    from tests.test_sweep3_intake import _scan_jpeg
+
+    jpg = _scan_jpeg()
+    rtf = r'{\rtf1\ansi\fromhtml1 {\*\htmltag84 <img src="cid:image001.jpg@01DA">}\htmlrtf Thanks\htmlrtf0 }'
+    msg = Message(subject="Invoice INV-80", body="Invoice attached.", rtf=rtf,
+                  attachments=[Attachment("image001.jpg", jpg, "image/jpeg", "image001.jpg@01DA"),
+                               Attachment("scan.jpg", jpg, "image/jpeg", "f_lx3abc2")])  # fmt: skip
+    mail = read_msg_mail(build_msg(msg))
+    assert [n for n, _ in mail.found] == ["scan.jpg"] and any("image001.jpg" in s for s in mail.skipped)
+
+
+def test_compressed_rtf_is_read_as_outlook_writes_it():
+    """B-223: MS-OXRTFCP's own example of a compressed RTF body (LZFu), and one stored as it is (MELA)."""
+    from ap_coder.intake.msgfile import decompress_rtf
+
+    example = bytes.fromhex(
+        "2d 00 00 00 2b 00 00 00 4c 5a 46 75 f1 c5 c7 a7 03 00 0a 00 72 63 70 67 31 32 35 42 32 0a f3 20 68 65 6c 09"
+        " 00 20 62 77 05 b0 6c 64 7d 0a 80 0f a0"
+    )
+    assert decompress_rtf(example) == b"{\\rtf1\\ansi\\ansicpg1252\\pard hello world}\r\n"
+    raw = b"{\\rtf1 plain}"
+    assert decompress_rtf(struct.pack("<IIII", len(raw) + 12, len(raw), 0x414C454D, 0) + raw) == raw

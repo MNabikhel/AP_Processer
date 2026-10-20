@@ -25,11 +25,19 @@ MAX_DEPTH = 20  # emails attached to emails attached to emails ...
 MAX_ATTACHMENTS = 500
 
 # Property tags (MS-OXPROPS): the stream "__substg1.0_<tag><type>" holds the value.
-SUBJECT, BODY, HTML_BODY = "0037", "1000", "1013"
+SUBJECT, BODY, HTML_BODY, RTF_COMPRESSED = "0037", "1000", "1013", "1009"
 SENDER_NAME, SENDER_EMAIL, SENDER_SMTP, SENT_REPRESENTING = "0C1A", "0C1F", "5D01", "0065"
 ATTACH_DATA, ATTACH_NAME, ATTACH_LONG_NAME, ATTACH_MIME, ATTACH_CONTENT_ID = "3701", "3704", "3707", "370E", "3712"
 ATTACH_HIDDEN = 0x7FFE000B  # PidTagAttachmentHidden (a boolean): Outlook hides the pictures shown in the text
 _ATTACH_PREFIX, _RECIP_PREFIX = "__attach_version1.0_", "__recip_version1.0_"
+MAX_RTF_BYTES = 20_000_000  # a rich-text body decompressed: at most this long
+# MS-OXRTFCP: the dictionary of compressed RTF starts with these 207 bytes.
+_RTF_START = (
+    b"{\\rtf1\\ansi\\mac\\deff0\\deftab720{\\fonttbl;}{\\f0\\fnil \\froman \\fswiss \\fmodern \\fscript "
+    b"\\fdecor MS Sans SerifSymbolArialTimes New RomanCourier{\\colortbl\\red0\\green0\\blue0\r\n\\par "
+    b"\\pard\\plain\\f0\\fs20\\b\\i\\u\\tab\\tx"
+)
+_LZFU, _MELA = 0x75465A4C, 0x414C454D  # compressed, and stored as it is
 
 
 class MsgError(ValueError):
@@ -204,6 +212,58 @@ def _html(cf: CompoundFile, storage: int) -> str:
     return _text(cf, storage, HTML_BODY)
 
 
+def decompress_rtf(data: bytes) -> bytes:
+    """A compressed RTF body (PidTagRtfCompressed, MS-OXRTFCP) as RTF. Raises ``MsgError`` for one that is damaged
+    or too large."""
+    if len(data) < 16:
+        raise MsgError("its rich text is damaged")
+    size, raw_size, kind = struct.unpack_from("<III", data, 0)
+    if raw_size > MAX_RTF_BYTES:
+        raise MsgError("its rich text is too large")
+    body = data[16 : 4 + size]
+    if kind == _MELA:
+        return body[:raw_size]
+    if kind != _LZFU:
+        raise MsgError("its rich text is in an unknown format")
+    window = bytearray(_RTF_START.ljust(4096, b"\0"))
+    pos, out, i = len(_RTF_START), bytearray(), 0
+    while i < len(body) and len(out) < raw_size:
+        flags, i = body[i], i + 1
+        for bit in range(8):
+            if i >= len(body) or len(out) >= raw_size:
+                break
+            if flags >> bit & 1:  # a reference: 12 bits of offset in the dictionary, 4 of length (from 2)
+                if i + 1 >= len(body):
+                    break
+                ref, i = body[i] << 8 | body[i + 1], i + 2
+                offset = ref >> 4
+                if offset == pos:  # the end
+                    return bytes(out)
+                chunk = bytearray()
+                for k in range((ref & 0xF) + 2):
+                    chunk.append(window[(offset + k) % 4096])
+                    window[pos] = chunk[-1]
+                    pos = (pos + 1) % 4096
+            else:
+                chunk, i = body[i : i + 1], i + 1
+                window[pos] = chunk[0]
+                pos = (pos + 1) % 4096
+            out += chunk
+    return bytes(out[:raw_size])
+
+
+def _rtf(cf: CompoundFile, storage: int) -> str:
+    """The rich-text body of the message in ``storage``, as text ("" when it has none, or it can't be read): an
+    HTML email Outlook kept as RTF holds its HTML in it, ``cid:`` links to its pictures included."""
+    i = cf.entries[storage].children.get(f"__SUBSTG1.0_{RTF_COMPRESSED}0102")
+    if i is None:
+        return ""
+    try:
+        return decompress_rtf(cf.stream(i)).decode("latin-1")
+    except (MsgError, struct.error):
+        return ""
+
+
 def _hidden(cf: CompoundFile, storage: int) -> bool:
     """PidTagAttachmentHidden of the attachment in ``storage``: its fixed-size properties stream holds 8 bytes of
     header, then 16 bytes per property (tag, flags, value)."""
@@ -229,6 +289,7 @@ def _message(cf: CompoundFile, storage: int, out: MsgEmail, depth: int) -> None:
     while stack:
         node, level = stack.pop()
         html_body: str | None = None  # read once, only when an attachment has a Content-ID
+        rtf_body: str | None = None  # likewise, when the HTML does not show it
         for key, i in sorted(cf.entries[node].children.items()):
             if not key.startswith(_ATTACH_PREFIX.upper()) or cf.entries[i].kind != _STORAGE:
                 continue
@@ -258,7 +319,12 @@ def _message(cf: CompoundFile, storage: int, out: MsgEmail, depth: int) -> None:
             if content_id:
                 if html_body is None:
                     html_body = _html(cf, node)
-                inline = _hidden(cf, i) or f"cid:{content_id}".lower() in html_body.lower()
+                cid = f"cid:{content_id}".lower()
+                inline = _hidden(cf, i) or cid in html_body.lower()
+                if not inline:  # an HTML email Outlook kept as RTF only: its HTML is in the RTF
+                    if rtf_body is None:
+                        rtf_body = _rtf(cf, node).lower()
+                    inline = cid in rtf_body
             out.attachments.append(MsgAttachment(name, _text(cf, i, ATTACH_MIME).lower(), content_id,
                                                  cf.stream(data_i), inline))  # fmt: skip
 
