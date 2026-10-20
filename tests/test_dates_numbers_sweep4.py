@@ -269,3 +269,33 @@ def test_a_title_glued_to_a_number_with_slashes_beats_a_customer_reference():
     # neither reading was strong, and "Reference: | CUSTREF123" (the customer's reference) was taken for the number.
     layout = _scan([(0.05, 0.25, "InvoiceINV/2023/03/0008"), (0.67, 0.29, "Reference:"), (0.67, 0.31, "CUSTREF123")])
     assert _top(layout, "invoice_number").value == "INV/2023/03/0008"
+
+
+def test_a_date_after_a_failed_one_is_read_and_a_time_may_be_the_next_piece_of_the_row():
+    # "ORD#94-REG#19-21/05/2018 11:59:48": "19-21/05" is no date, the date starts at the next number.
+    assert parse_date("ORD#94-REG#19-21/05/201811:59:48") == "2018-05-21"
+    # A receipt's "12/22/17 | 14:40:29": the time printed apart from the date, on its row.
+    layout = _scan([(0.37, 0.03, "Walmart Supercentre"), (0.30, 0.72, "12/22/17"), (0.52, 0.72, "14:40:29")])
+    assert _top(layout, "invoice_date").value == "2017-12-22"
+
+
+def test_a_header_row_printed_across_the_page_reads_its_value_at_the_right_margin():
+    # "N°Facture ........ INV-81250" and "Date ........ 11/4/2025": the label at the left margin, the value alone at
+    # the right one, further than a value is looked for beside its label.
+    layout = _scan(
+        [(0.04, 0.30, "N°Facture"), (0.77, 0.30, "INV-81250"), (0.04, 0.35, "Date"), (0.79, 0.35, "11/4/2025")]
+    )
+    number, date = _top(layout, "invoice_number"), _top(layout, "invoice_date")
+    assert number.value == "INV-81250" and number.method == "label-far-right"
+    assert date.value == "2025-04-11"
+    # Not when the row holds more than the value, nor a value near the label (looked at beside it already).
+    busy = _scan([(0.04, 0.30, "Date"), (0.55, 0.30, "Ship Via"), (0.79, 0.30, "11/4/2025")])
+    assert _top(busy, "invoice_date") is None
+
+
+def test_a_date_alone_beside_the_title_is_the_invoice_date_but_a_labelled_one_comes_first():
+    layout = _scan([(0.12, 0.34, "Beitragsrechnung"), (0.71, 0.34, "24. Januar 2014")])
+    got = _top(layout, "invoice_date")
+    assert got.value == "2014-01-24" and got.method == "title-dated"
+    labelled = _scan([(0.1, 0.1, "INVOICE"), (0.7, 0.1, "March 3, 2026"), (0.1, 0.2, "Invoice Date: 2026-03-04")])
+    assert _top(labelled, "invoice_date").value == "2026-03-04"

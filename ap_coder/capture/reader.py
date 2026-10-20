@@ -314,7 +314,7 @@ def _label_hits(line: Line) -> list[_LabelHit]:
 
 
 _NEXT_WORD = re.compile(r"\s+(?=[a-z])")
-_GLUED_NUMBER = re.compile(r"[A-Z]{1,4}[-/.]?\d")
+_GLUED_NUMBER = re.compile(r"[A-Z]{1,4}[-/]?\d")
 _PAGE_NUMBER = re.compile(r"(?:page|seite|pagina)\s*[\dl]{1,3}\s*(?:/|of|de|sur|von)\s*\d{1,3}\s+(?=[a-z])")
 _PST_OR_QST = re.compile(rf"\s*/\s*(?:{_A('qst')}|{_A('tvq')})")
 # The supplier's QST or PST registration number, as printed beside its label: the province's tax it charges.
@@ -1114,9 +1114,37 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = Fals
                     break
                 if _label_hits(other) or _LABEL_SHAPE.search(plain(other.text).strip()):
                     break  # the next row down is another label ("Account #"): this label has no value under it
+        if got is None and field in _HEADER_IDS_AND_DATES:
+            got = _far_right_header(field, hit, lines)
         if got is not None:
             out.append(got)
     return out
+
+
+_HEADER_IDS_AND_DATES = ("invoice_number", "invoice_date", "due_date", "po_number")
+
+
+def _far_right_header(field: str, hit: _LabelHit, lines: list[Line]) -> Reading | None:
+    """A header row printed across the page: "Date" at the left margin, "11/4/2025" alone at the right one (further
+    than ``MAX_RIGHT``). Only for a label with nothing after it, and a row that holds the value and nothing else: its own
+    method ("label-far-right"), weaker than a value beside its label."""
+    line = hit.line
+    if plain(line.text[hit.end :]).strip(" :#.-"):
+        return None
+    row = [
+        o
+        for o in lines
+        if o is not line
+        and o.box.page == line.box.page
+        and o.box.x0 >= line.box.x1 - 0.002
+        and abs(o.box.cy - line.box.cy) < 0.25 * min(line.box.height, o.box.height)
+    ]
+    if len(row) != 1 or not MAX_RIGHT < row[0].box.x0 - line.box.x1 <= FAR_RIGHT or _label_hits(row[0]):
+        return None  # nearer, the value beside the label was looked at already (and may be another label's)
+    got = _value_reading(field, row[0], 0, 0.75 * hit.strength, "label-far-right")
+    if got is None or plain(row[0].text).strip(" :#.") != plain(str(got.raw)).strip(" :#."):
+        return None  # the row holds more than the value
+    return got
 
 
 # ---------------------------------------------------------------- pattern-only fields
@@ -2681,7 +2709,7 @@ def _dated_number(hit: _LabelHit, lines: list[Line]) -> Reading | None:
 
 
 # A time after a date: "6/10/2019 13:59", "2015-08-23 20:45:57", OCR's "Ju1/15/2017_12:25".
-_TIME_AFTER = re.compile(r"[\s_,.@-]*(?:a\s+|at\s+|à\s+)?\d{1,2}\s?:\s?\d")
+_TIME_AFTER = re.compile(r"[\s_,.@-]*(?:a\s+|at\s+|à\s+)?\d{1,2}\s?:\s?\d(?:\d(?::\d\d)?(?:\s?[ap]\.?m\.?)?)?", re.I)
 
 
 def _stamped_dates(layout: DocLayout) -> list[Reading]:
@@ -2689,7 +2717,8 @@ def _stamped_dates(layout: DocLayout) -> list[Reading]:
     The topmost one on each page, outranked by any labelled date ("date-time": measured apart, never verified on a
     labelled date's record). Not after another date's label ("Printed", "Due", "Ship date")."""
     out: dict[int, Reading] = {}
-    for line in sorted(layout.lines(), key=lambda ln: (ln.box.page, ln.box.y0)):
+    lines = sorted(layout.lines(), key=lambda ln: (ln.box.page, ln.box.y0))
+    for line in lines:
         page = line.box.page
         if page in out:
             continue
@@ -2697,8 +2726,11 @@ def _stamped_dates(layout: DocLayout) -> list[Reading]:
         if not found:
             continue
         d, a, b, ambiguous = found[0]
-        if not _TIME_AFTER.match(line.text, b):
-            continue
+        if not _TIME_AFTER.match(line.text, b) and not (
+            not line.text[b:].strip()
+            and any(_TIME_AFTER.fullmatch(o.text.split()[0]) for o in _right_of(lines, line)[:1] if o.text.split())
+        ):
+            continue  # no time after the date, on its line or as the next piece of its row ("12/22/17 | 14:40:29")
         before = plain(line.text[:a])
         if any(rx.search(before) for rx in _DISTRACT["invoice_date"]) or any(
             h.field in ("due_date", "invoice_number", "po_number") for h in _label_hits(line)
@@ -2709,6 +2741,34 @@ def _stamped_dates(layout: DocLayout) -> list[Reading]:
         out[page] = Reading("invoice_date", d.isoformat(), line.text[a:b], _boxes(words),
                             0.45 * (0.6 if ambiguous else 1.0) * _min_conf(words), method)  # fmt: skip
     return list(out.values())
+
+
+_DOC_TITLE = re.compile(
+    r"(?:[a-z]*rechnung|(?:tax\s*|sales\s*|commercial\s*)?invoice|facture|factuur|fattura|factura|gutschrift|"
+    r"credit\s*note|note\s*de\s*credit|avoir)(?![a-z])"
+)
+
+
+def _title_dates(layout: DocLayout) -> list[Reading]:
+    """The date printed alone beside the document's title, on its row: "Beitragsrechnung | 24. Januar 2014",
+    "INVOICE | March 3, 2026". The first page's first such date; its own method ("title-dated"), weaker than a
+    labelled date."""
+    if not layout.pages:
+        return []
+    lines = layout.pages[0].lines
+    for line in sorted(lines, key=lambda ln: ln.box.y0):
+        if line.box.cy > 0.5 or not _DOC_TITLE.match(plain(line.text).strip()) or parse_dates(line.text):
+            continue
+        right = _right_of(lines, line)[:1]
+        found = parse_dates(right[0].text, prefer_day_first=_DAY_FIRST.get()) if right else []
+        if not found or right[0].text[: found[0][1]].strip() or right[0].text[found[0][2] :].strip(" ."):
+            continue  # nothing beside the title, or more than a date
+        d, a, b, ambiguous = found[0]
+        words = _span_words(right[0], a, b)
+        method = "title-dated" + ("-ambiguous" if ambiguous else "")
+        return [Reading("invoice_date", d.isoformat(), right[0].text[a:b], _boxes(words),
+                        0.5 * (0.6 if ambiguous else 1.0) * _min_conf(words), method)]  # fmt: skip
+    return []
 
 
 def _table_header_line(line: Line, page_lines: list[Line]) -> bool:
@@ -2761,7 +2821,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         cands[field] = readings
     if number_dates:
         cands.setdefault("invoice_date", []).extend(number_dates)
-    cands.setdefault("invoice_date", []).extend(_stamped_dates(layout))
+    cands.setdefault("invoice_date", []).extend(_stamped_dates(layout) + _title_dates(layout))
     if not cands.get("payment_terms"):
         # "Due Date: Upon Receipt" (no date): the terms, printed where the due date goes.
         for hit in hits.get("due_date", []):

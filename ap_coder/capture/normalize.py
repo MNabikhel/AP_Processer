@@ -294,7 +294,9 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
             if d:
                 found.append((d, m.start(), m.end(), False))
                 taken.append(m.span())
-    for m in _NUMERIC.finditer(s):
+    pos = 0
+    while m := _NUMERIC.search(s, pos):
+        pos = m.end()
         if not free(*m.span()):
             continue
         a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -307,6 +309,8 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
         elif dmy or mdy:
             found.append((dmy or mdy, m.start(), m.end(), False))  # type: ignore[arg-type]
         else:
+            # No date: "REG#19-21/05/2018" read "19-21/05" first. The date may start at the next number.
+            pos = m.start() + 1
             continue
         taken.append(m.span())
     return sorted(found, key=lambda x: x[1])

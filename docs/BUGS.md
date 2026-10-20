@@ -3109,8 +3109,11 @@ Dutch and English invoices, scanned and photographed receipts), read with OCR on
 table finder's model on. None of the corpus is in the repo: each test makes its own page. Most of what was missing
 was printed in ways the labels did not know: a German invoice's title that carries its number and date ("Rechnung
 Nr. 471102 vom 05.03.2018"), "Facture n° 562044 du 2 juillet 2015", "Beleg-Nr | : RK21012345", other languages'
-month names, a receipt's "Receipt Number", a page number run into the label. Those are read now; a date read from
-after the number (`number-dated`) is measured apart from labelled dates, so it is never verified on their record.
+month names, a receipt's "Receipt Number" and its unlabelled date and time ("6/10/2019 13:59", which OCR often runs
+together: "27Mar201818:46"), a header row printed across the page ("Date ........ 11/4/2025"), a date alone beside
+the title ("Beitragsrechnung | 24. Januar 2014"), a page number run into the label. Those are read now. What is read
+without a label of its own (`number-dated`, `date-time`, `title-dated`, `label-far-right`) is weaker than a labelled
+value, so a labelled date or number comes first, and is measured apart: never verified on a labelled value's record.
 
 #### B-353 · A credit note's own number was not read: the invoice it credits was taken for it · medium
 - **Where:** `ap_coder/capture/reader.py` (`MORE_LABELS["invoice_number"]`, `DISTRACTORS["invoice_number"]`, `_hits_at`)
@@ -3218,7 +3221,7 @@ after the number (`number-dated`) is measured apart from labelled dates, so it i
   the weak "Invoice" label, and the two reads agreed on the reference.
 - **Reproduce:** OCR lines "InvoiceINV/2023/03/0008", "Reference:" over "CUSTREF123".
 - **Reproduced:** yes (`invoice_number CUSTREF123`)
-- **Fix:** a number glued to its title may have a slash or a point after its letters ("INV/2023/03/0008",
-  "INV.25146"), and a label glued to such a number is read too.
+- **Fix:** a number glued to its title may have a slash after its letters ("INV/2023/03/0008"),
+  and a label glued to such a number is read too.
 - **Test:** `tests/test_dates_numbers_sweep4.py::test_a_title_glued_to_a_number_with_slashes_beats_a_customer_reference`
 - **Lesson:** Numbers are written with slashes as often as with hyphens; a pattern for one is a pattern for both.
