@@ -17,6 +17,7 @@ from ..coding.tax import PLACE_OF_SUPPLY
 from ..core.reference_data import ReferenceData
 from ..core.safe import neutralise_sheet, xlsx_row
 from ..core.store import APPROVED, FAILED, Store
+from .exports import distribution
 
 
 @dataclass
@@ -33,13 +34,14 @@ class SpendLine:
 def lines(store: Store, start: dt.date, end: dt.date) -> list[SpendLine]:
     """Expense postings of approved invoices dated from ``start`` to ``end`` (inclusive)."""
     first, last = start.isoformat(), end.isoformat()
+    treatments = store.tax_treatments()
     out = []
     for r in store.invoice_columns(("id", "final_output"), APPROVED):
         doc = r["final_output"] or {}
         date = str(doc.get("invoice_date") or "")
         if not (first <= date <= last):
             continue
-        for e in doc.get("gl_distribution") or []:
+        for e in distribution(doc, treatments):  # an invoice approved by an older version: built again
             # Expense lines, and non-recoverable tax posted to its own GL account (a cost too).
             if e.get("kind") != "expense" and not e.get("non_recoverable_tax"):
                 continue
@@ -140,6 +142,7 @@ def workbook(store: Store, reference: ReferenceData | None) -> bytes:
     columns = ("id", "status", "reviewer", "reviewed_at", "second_reviewer", "second_reviewed_at", "export_batch",
                "created_at", "due_date", "ai_output", "final_output")  # fmt: skip
     rows = [r for r in store.invoice_columns(columns) if r["status"] != FAILED]
+    treatments = store.tax_treatments()
     wb = Workbook()
     sheets = {
         "Invoices": [label for _, label in INVOICE_COLUMNS],
@@ -180,7 +183,7 @@ def workbook(store: Store, reference: ReferenceData | None) -> bytes:
                     ]
                 )
             )
-        for e in doc.get("gl_distribution") or []:
+        for e in distribution(doc, treatments):
             gl = e.get("gl_code") or ""
             ws_by_name["Posting"].append(
                 xlsx_row(

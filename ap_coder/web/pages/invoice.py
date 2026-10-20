@@ -504,7 +504,7 @@ def approved_pdf(request: Request, invoice_id: int) -> Response:
     names = {row[reference.chart_of_accounts.key_column]: row.get("description", "")
              for row in reference.chart_of_accounts.rows} if reference is not None else {}  # fmt: skip
     try:
-        pdf = stamp.stamped_pdf(inv, names)
+        pdf = stamp.stamped_pdf(inv, names, store.tax_treatments())
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     # (files.download: a vendor named "Bœuf" is not Latin-1, the only characters a plain filename= header takes)

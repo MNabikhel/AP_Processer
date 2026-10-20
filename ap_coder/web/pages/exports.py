@@ -373,7 +373,7 @@ def approved_pdfs(request: Request, batch: int) -> Response:
     store = get_store(request)
     live_batch(store, batch)
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
-    data = stamp.batch_zip(invoices, gl_names(store))
+    data = stamp.batch_zip(invoices, gl_names(store), store.tax_treatments())
     return download(data, f"ap_coder_batch_{batch}_approved_pdfs.zip", "application/zip")
 
 
