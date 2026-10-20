@@ -2391,3 +2391,13 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **Fix:** a file coming in is renamed to the extension its first bytes say (PDF, PNG, JPEG, TIFF, BMP, HEIC) when its name says another, then read as usual (a picture made into a PDF and kept in `originals/`); a web page is refused: "invoice.pdf is a web page saved with a .pdf name, not the invoice itself: open the vendor's email or portal and download the invoice again (as a PDF)." A file that can't be renamed is read under its own name as before.
 - **Test:** `tests/test_unusual_files.py::test_a_pdf_named_as_a_photo_is_read_as_the_pdf_it_is`, `::test_a_picture_named_as_a_pdf_is_made_into_a_pdf_and_kept`, `::test_a_web_page_saved_as_a_pdf_is_refused_in_plain_words`
 - **Lesson:** Don't trust a file's extension for what it holds: look at its first bytes before choosing a reader.
+
+#### B-261 · A multi-page TIFF with a colour page last failed: "ValueError: unrecognized image mode" · medium
+- **Where:** `ap_coder/intake/pictures.py` (`image_to_pdf`)
+- **Symptom:** a scan saved as one TIFF, black-and-white pages then an 8-bit colour (palette) page, failed in all three ways in with "ValueError: unrecognized image mode" in the Failed list: a technical message, and the invoice was not read.
+- **Cause:** `image_to_pdf` asks the TIFF how many pages it has (`n_frames`), which reads up to the last page; Pillow (12.3) then keeps that page's palette when it goes back to the first, and a black-and-white page with a palette can't be loaded.
+- **Reproduce:** a four-page TIFF (Group 4, LZW, JPEG, PackBits; the last a palette page) through `intake.to_pdf`.
+- **Reproduced:** yes (`ValueError: unrecognized image mode` from `frame.load()`).
+- **Fix:** a page that is not a palette page drops the palette left from another page before it is loaded; all four pages become the PDF.
+- **Test:** `tests/test_unusual_files.py::test_a_multi_page_tiff_with_a_palette_page_is_made_into_a_pdf`
+- **Lesson:** Don't assume a multi-page picture's pages share one mode: test one whose pages differ.

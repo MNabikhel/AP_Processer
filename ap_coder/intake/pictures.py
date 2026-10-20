@@ -211,6 +211,8 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
             for i, frame in enumerate(ImageSequence.Iterator(img)):
                 if i >= MAX_FRAMES:
                     break
+                if frame.mode not in ("P", "PA"):  # counting the pages read the last one: its palette is not this
+                    frame.palette = None  # page's (Pillow keeps it, and a black-and-white page then can't load)
                 frame.load()
                 data, turn, shown = _encoded(frame, source, raw, frames == 1)
                 width, height = shown.size

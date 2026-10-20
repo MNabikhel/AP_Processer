@@ -7,11 +7,13 @@ from __future__ import annotations
 import dataclasses as dc
 import io
 
+import pymupdf
 import pytest
 from PIL import Image, ImageDraw
 
 from ap_coder.capture import layout
 from ap_coder.core.store import FAILED, Store, load_sample_setup
+from ap_coder.intake import pictures as intake
 
 from .conftest import SAMPLES
 
@@ -92,3 +94,22 @@ def test_a_web_page_saved_as_a_pdf_is_refused_in_plain_words(pipeline):
     assert "invoice.pdf is a web page saved with a .pdf name" in result.error
     assert "download the invoice again" in result.error
     assert page.exists() and store.get_invoice(result.invoice_id)["status"] == FAILED
+
+
+# --- B-261: a multi-page TIFF whose last page has a colour palette --------------------------------------------------
+
+
+def test_a_multi_page_tiff_with_a_palette_page_is_made_into_a_pdf(tmp_path):
+    from PIL import TiffImagePlugin
+
+    scan = tmp_path / "fax and colour page.tif"
+    pages = [Image.new("1", (400, 500), 1), Image.new("L", (400, 500), 255), Image.new("RGB", (400, 500), "white")]
+    pages.append(pages[2].convert("P"))  # a scanner's 8-bit colour page last
+    with TiffImagePlugin.AppendingTiffWriter(scan, new=True) as tf:
+        for page, compression in zip(pages, ("group4", "tiff_lzw", "jpeg", "packbits"), strict=True):
+            page.save(tf, "TIFF", compression=compression, dpi=(200, 200))
+            tf.newFrame()
+    converted = intake.to_pdf(scan)
+    with pymupdf.open(converted.pdf) as doc:
+        assert doc.page_count == 4
+    assert (tmp_path / "originals" / scan.name).exists()
