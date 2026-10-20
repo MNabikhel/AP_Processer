@@ -415,3 +415,33 @@ def test_a_canadian_page_with_a_us_address_keeps_its_date_order(tmp_path):
 def test_a_name_like_a_month_is_not_a_month():
     assert parse_date("Marco 12, 2026") is None
     assert parse_date("12 de março de 2020") == "2020-03-12"
+
+
+def test_a_weak_label_stays_checked_however_many_readers_agree():
+    # Two OCR reads of a scan agreeing on "Receipt No: 556677" made it likely (0.97): a weak label is checked.
+    from ap_coder.capture.confidence import fuse
+
+    for rows, field, value in (
+        ([(0.1, 0.05, "Contoso Café"), (0.1, 0.2, "Receipt No: 556677"), (0.1, 0.25, "Date: 2026-10-01")],
+         "invoice_number", "556677"),
+        ([(0.1, 0.05, "Gagnon inc."), (0.5, 0.2, "Numéro : 4471"), (0.1, 0.25, "Date : 2026-10-01")],
+         "invoice_number", "4471"),
+        ([(0.1, 0.05, "Contoso"), (0.1, 0.2, "Receipt Date: 2026-10-05"), (0.1, 0.25, "Invoice # 20417")],
+         "invoice_date", "2026-10-05"),
+    ):  # fmt: skip
+        layout = _scan(rows)
+        by_source = {"rules": read_fields(layout), "ocr2": read_fields(layout)}
+        got = fuse(by_source, [], layout_source="ocr", fields=(field,))[0][field]
+        assert got.value == value and got.status == "check", (value, got.status, got.confidence)
+
+
+def test_a_work_log_or_report_stamp_is_not_the_invoice_date():
+    # "2026-03-01 09:12 Labour - J. Smith" (a work order's time line) and a report's footer "Generated 2026-10-20
+    # 14:33 by SAP" are no invoice date.
+    for rows in (
+        [(0.1, 0.2, "Invoice # 20417"), (0.1, 0.4, "2026-03-01 09:12 Labour - J. Smith")],
+        [(0.1, 0.2, "Invoice # 20417"), (0.1, 0.97, "Generated 2026-10-20 14:33 by SAP")],
+        [(0.1, 0.2, "Invoice # 20417"), (0.1, 0.975, "2026-10-20 14:33")],
+        [(0.1, 0.2, "Invoice # 20417"), (0.1, 0.5, "Imprimé le 2026-10-20 14:33")],
+    ):
+        assert _top(_scan(rows), "invoice_date") is None, rows

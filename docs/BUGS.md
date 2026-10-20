@@ -3329,3 +3329,50 @@ made for: B-361 to B-367. Each was fixed with its test first.
 - **Fix:** a date is looked for again only from the next word; "marco" is March only in "12 de março de 2020".
 - **Test:** `tests/test_dates_numbers_sweep4.py::test_a_date_after_a_failed_one_is_read_and_a_time_may_be_the_next_piece_of_the_row`, `tests/test_dates_numbers_sweep4.py::test_a_name_like_a_month_is_not_a_month`
 - **Lesson:** A pattern loosened for one OCR slip finds dates in every reference; loosen it only where words part.
+
+#### B-368 · On a scan, a weak label's value was likely when the two OCR reads agreed · medium
+- **Where:** `ap_coder/capture/confidence.py` (`fuse`, new `WEAK_LABEL_METHOD`)
+- **Symptom:** a scanned receipt's "Receipt No: 556677" came back *likely* (0.97), "Receipt Date: 2026-10-05"
+  *likely* (0.98) and "Numéro : 4471" *likely* (0.91), against D-44 (B-362 made them check on text PDFs only).
+- **Cause:** B-362 gave the weak labels' values a method of their own with no measured record, so their confidence was
+  the readers' combined score; two OCR reads agreeing lift that past "likely".
+- **Reproduce:** a scan layout read by "rules" and "ocr2" alike, `fuse(..., layout_source="ocr")`.
+- **Reproduced:** yes (`556677 likely 0.97`)
+- **Fix:** a value read only after weak labels (`weak-...`) is held to check however many readers agree, with the
+  reason: the word also names other numbers or dates.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_weak_label_stays_checked_however_many_readers_agree`
+- **Lesson:** Two readers agreeing confirms what is printed, not what it is; a cap on meaning must not depend on the
+  number of readers.
+
+#### B-369 · A work order's time line or a report's footer stamp was read as the invoice date · low
+- **Where:** `ap_coder/capture/reader.py` (`_NOT_ISSUED`, `_stamped_dates`)
+- **Symptom:** "2026-03-01 09:12 Labour - J. Smith" (a technician's time on a work order) and "Generated 2026-10-20
+  14:33 by SAP" at the foot of the page came back as the invoice date (*check*), on an invoice that prints no date
+  label.
+- **Cause:** a date with a time, unlabelled, is a receipt's stamp; a stamp printed for another reason was not told
+  apart unless it said received, paid, delivered and the like (B-364), and only the page's top edge was skipped.
+- **Reproduce:** OCR lines "Invoice # 20417" and "2026-03-01 09:12 Labour - J. Smith".
+- **Reproduced:** yes (`invoice_date 2026-03-01 date-time`)
+- **Fix:** labour (main-d'oeuvre), generated (généré), created (créé), run, report (rapport), log (journal) and printed
+  (imprimé) mark a line as another event's; a stamp along the page's bottom edge is a printer's or a report's, like
+  one along its top.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_work_log_or_report_stamp_is_not_the_invoice_date`
+- **Lesson:** An unlabelled date is the issue date only when nothing on its line says what else it dates.
+
+#### Left as they are (dates and invoice numbers)
+
+- **N-102** · A Canadian-looking supplier (a ".ca" address, "Ltée" or "Inc.") with no postal code, province or
+  Canadian tax on the page, whose page prints a US address: an unsettled date (03/04/2026) is shown month first
+  (B-354), still *check*. Those signs are weak (US companies use them too) and the date is checked either way: left.
+- **N-103** · "Invoice # 20417" (the invoice a credit note credits, printed with no "Re:" or "Original") beside
+  "Credit Memo # CM-1029" gives 20417, *likely*. Already so before this work: "Invoice #" is a stronger label than a
+  credit memo's, and nothing on that line says it is the credited invoice. Telling them apart needs the document's
+  title weighed against the labels; left for the credit-note work.
+- **N-104** · "Account No: 55123   Invoice No: 20417" on one line gives no invoice number. Already so before this work:
+  the line comes as one run of words, and a label after another label's value on its line is read only when it is a
+  bilingual one ("Issued / Date de facturation"). Reading any strong label there risks a total's or a note's words: left.
+- **N-105** · "Invoice Date: Oct 1/26" (month, day and a two-digit year after a slash) is not read. Read as a date,
+  "Mar 3/4" or "Unit Oct 1/26" would give years like 2004 from a fraction; left until a real invoice shows the form.
+- **N-106** · A US supplier (WA 98101 in its letterhead) with an ambiguous date gets it month first and *likely*,
+  through the older supplier-address rule (`_us_vendor`, before this work), not B-354's (which is checked). A US
+  supplier prints month first nearly always; left as it was.

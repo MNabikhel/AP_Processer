@@ -2761,7 +2761,8 @@ _TIME_AFTER = re.compile(r"[\s_,.@-]*(?:a\s+|at\s+|à\s+)?\d{1,2}\s?:\s?\d(?:\d(
 _NOT_ISSUED = re.compile(
     r"(?<![a-z])(?:received|recu|paid|payee?|payment|paiement|completed|complete|termine|time\s*(?:in|out)|"
     r"arrival|arrive|depart(?:ure)?|call|appel|delivered|delivery|livre|livraison|shipped|ship|expedie|period|"
-    r"periode|ending|ended|from|to|du|au|thru|through|start|end)(?![a-z])"
+    r"periode|ending|ended|from|to|du|au|thru|through|start|end|labou?r|main\s*d'?\s*oeuvre|generated|genere|created|"
+    r"cree|run|report|rapport|log|journal|printed|imprime)(?![a-z])"
 )
 STAMP_MARGIN = (
     0.04  # a stamp printed this close to the top of the page (fraction of its height) is a printer's or a fax's
@@ -2777,7 +2778,8 @@ def _stamped_dates(layout: DocLayout) -> list[Reading]:
     lines = sorted(layout.lines(), key=lambda ln: (ln.box.page, ln.box.y0))
     for line in lines:
         page = line.box.page
-        if page in out or line.box.y0 < STAMP_MARGIN or _FAX_HEADER.search(plain(line.text)):
+        if (page in out or line.box.y0 < STAMP_MARGIN or line.box.y1 > 1 - STAMP_MARGIN
+                or _FAX_HEADER.search(plain(line.text))):  # fmt: skip
             continue  # a printer's or a fax's stamp in the page's top margin ("SEP-13-2025 11:26 FROM: ..."), not the date
         found = parse_dates(line.text, prefer_day_first=_DAY_FIRST.get())
         if not found:
