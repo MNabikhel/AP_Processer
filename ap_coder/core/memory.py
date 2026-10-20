@@ -147,27 +147,35 @@ def _fingerprint(rows: list[dict[str, Any]]) -> int:
 
 
 class RowsCache:
-    """One value worked out from a list of feedback rows, kept while the same rows come back: the lines of an
+    """A value worked out from a list of feedback rows, kept while the same rows come back: the lines of an
     invoice, its checks and its review screen all read the same history. The same row objects are recognised at
     once; rows read again from the database by what they say (a few milliseconds for tens of thousands). Rows
-    are read, never changed in place."""
+    are read, never changed in place. The latest ``slots`` lists are kept: past the memory read cap an old
+    vendor's invoice has a list of its own (``Store.learning_rows``), and invoices of it and of other vendors in
+    turn would otherwise rebuild the value each time."""
 
-    def __init__(self) -> None:
-        self._slot: tuple[list[dict[str, Any]], int, Any, Any] | None = None
+    def __init__(self, slots: int = 2) -> None:
+        self._size = max(1, slots)
+        self._slots: tuple[tuple[list[dict[str, Any]], int, Any, Any], ...] = ()  # the latest first
 
     def get(self, rows: list[dict[str, Any]], extra: Any, build: Callable[[], Any]) -> Any:
-        slot = self._slot  # one read: another thread may replace it meanwhile
+        slots = self._slots  # one read: another thread may replace them meanwhile
         fingerprint = None
-        if slot is not None and slot[2] == extra and len(slot[0]) == len(rows):
-            if all(map(operator.is_, slot[0], rows)):  # the same rows (in the same order), in any list
-                return slot[3]
-            fingerprint = _fingerprint(rows)
-            if fingerprint == slot[1]:
-                self._slot = (list(rows), fingerprint, extra, slot[3])
-                return slot[3]
+        for slot in slots:
+            if slot[2] == extra and len(slot[0]) == len(rows) and all(map(operator.is_, slot[0], rows)):
+                return self._keep(slots, slot, slot)  # the same rows (in the same order), in any list
+        for slot in slots:
+            if slot[2] == extra and len(slot[0]) == len(rows):
+                fingerprint = _fingerprint(rows) if fingerprint is None else fingerprint
+                if fingerprint == slot[1]:
+                    return self._keep(slots, slot, (list(rows), fingerprint, extra, slot[3]))
         value = build()
-        self._slot = (list(rows), _fingerprint(rows) if fingerprint is None else fingerprint, extra, value)
-        return value
+        fresh = (list(rows), _fingerprint(rows) if fingerprint is None else fingerprint, extra, value)
+        return self._keep(slots, None, fresh)
+
+    def _keep(self, slots: tuple, old: Any, new: tuple) -> Any:
+        self._slots = (new, *(s for s in slots if s is not old))[: self._size]
+        return new[3]
 
 
 _AGGREGATED = RowsCache()

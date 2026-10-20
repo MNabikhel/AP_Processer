@@ -78,3 +78,25 @@ def test_a_reading_mark_whose_process_id_another_program_now_has_goes_back_in_li
         other.kill()
         other.wait()
     assert page_worker.READER_ID.count(":") == 2 and page_worker.reader_alive(page_worker.READER_ID) is False
+
+
+def test_invoices_of_an_old_vendor_and_others_in_turn_share_the_suggestion_indexes(tmp_path, reference, monkeypatch):
+    """B-219: past the memory read cap, an old vendor's invoice gets a list of its own (B-175); invoices of it and of
+    other vendors in turn rebuilt the suggestion index each time (about 0.3 s at 50,000 lessons)."""
+    from ap_coder.ai import suggest
+    from ap_coder.core import store as store_mod
+
+    store = Store(tmp_path / "ap.db")
+    store.import_history([{"vendor_name": "Northwind IT Solutions Inc.", "description": "Dell Latitude laptop",
+                           "gl_code": "6010", "amount": 100.0, "date": "2025-01-01"}])  # fmt: skip
+    store.import_history([{"vendor_name": f"Zenith Freight {i}", "description": f"Freight charge lot {i}",
+                           "gl_code": "5100", "amount": 10.0, "date": "2025-06-01"} for i in range(30)])  # fmt: skip
+    monkeypatch.setattr(store_mod, "FEEDBACK_READ", 20)
+    monkeypatch.setattr(suggest, "_MEMORY", suggest.RowsCache())
+    builds = []
+    build = suggest._build_memory
+    monkeypatch.setattr(suggest, "_build_memory", lambda *a: builds.append(1) or build(*a))
+    for vendor in ["Northwind IT Solutions Inc.", "Zenith Freight 29", "Northwind IT Solutions Inc.",
+                   "Zenith Freight 28", "Northwind IT Solutions Inc."]:  # fmt: skip
+        suggest.suggest_gl("Dell Latitude laptop", vendor, store.learning_rows(vendor), reference)
+    assert len(builds) == 2  # Northwind's own list, and the shared one
