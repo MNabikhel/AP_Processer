@@ -230,3 +230,34 @@ def test_the_upload_takes_a_webp_photo(tmp_path, monkeypatch):
     assert not any("was not read" in m["text"] for m in snap["result"]["messages"]), snap
     assert snap["result"]["processed"] == 1
     assert ".webp" in client.get("/process").text  # the file picker offers it
+
+
+# --- B-265: the folder pick-up and a file still being written --------------------------------------------------------
+
+
+def test_the_folder_pick_up_leaves_a_pdf_still_being_written_for_next_time(tmp_path):
+    from ap_coder.web.core import invoice_dir
+
+    from .webclient import PAGE, client_for
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    raw = (SAMPLES / "harbourview_NS_HST_HPS-2026-0347.pdf").read_bytes()
+    growing = folder / "scanner output.pdf"
+    growing.write_bytes(raw[: len(raw) // 2])  # the scanner has written half of it so far
+    (folder / "done.pdf").write_bytes(SAMPLE.read_bytes())  # just copied in, complete: read now
+    job = client.app.state.jobs.get("process")
+    assert client.post("/process/folder", headers=PAGE).json()["ok"]
+    assert job.wait(180)
+    snap = client.get("/process/status").json()
+    assert snap["result"]["processed"] == 1 and [i["file_name"] for i in store.list_invoices()] == ["done.pdf"]
+    note = next(m for m in snap["result"]["messages"] if m["tone"] == "warn")
+    assert "still being saved" in note["text"] and "picked up next time" in note["text"]
+    assert note["details"] == ["scanner output.pdf"]
+    growing.write_bytes(raw)  # finished
+    assert client.post("/process/folder", headers=PAGE).json()["ok"]
+    assert job.wait(180)
+    assert sorted(i["file_name"] for i in store.list_invoices()) == ["done.pdf", "scanner output.pdf"]

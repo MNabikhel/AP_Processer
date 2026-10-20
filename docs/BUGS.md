@@ -2431,3 +2431,13 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **Fix:** WEBP and GIF are pictures like the others: made into a PDF on arrival (losslessly), the picture kept in `originals/`. An animated one gives its first frame, the page it shows, not a page per frame. JPEG 2000, AVIF and Photoshop files are still refused at upload in plain words (rare for invoices).
 - **Test:** `tests/test_unusual_files.py::test_a_webp_or_gif_picture_in_the_invoices_folder_is_read_as_a_pdf`, `::test_the_upload_takes_a_webp_photo`
 - **Lesson:** Don't keep a list of accepted types narrower than what the reader behind it reads: the person sees only "not read".
+
+#### B-265 · "Process the folder" read a PDF the scanner was still writing: half an invoice stored, the whole one read again later as another · medium
+- **Where:** `ap_coder/web/pages/process.py` (`process_folder`, `still_being_saved`), `ap_coder/intake/pictures.py` (`looks_incomplete`)
+- **Symptom:** a scan still being saved into the invoices folder (its first 4 KB written) when the pilot tester clicked "Process the folder" was read as it stood: PyMuPDF repaired what was there, and it went to the queue with the vendor read but no total ("subtotal + tax = 14050.00 but grand_total = 0.00"). Once the scanner finished, the complete file (another SHA-256) was offered and read again: two invoices for one.
+- **Cause:** the folder pick-up left out only files it could not open; on macOS (and for many Windows scanners) a file being written can be opened, and the `watch` command's 5-second settle time was not used there.
+- **Reproduce:** half of a sample PDF in the invoices folder, `POST /process/folder`; then the whole file.
+- **Reproduced:** yes (`still_being_written.pdf: needs attention`, `total=0.0`, in all three ways in).
+- **Fix:** a file changed in the last minute whose end is missing (a PDF without "%%EOF", a JPEG without its end marker, a PNG without its end chunk, or an empty file) is left for next time with the message already used for a locked file: "1 file could not be opened (still being saved, or open in another program): picked up next time." A complete file is read at once, however new. (A file that is still cut off after a minute is read, with a warning: B-266.)
+- **Test:** `tests/test_unusual_files.py::test_the_folder_pick_up_leaves_a_pdf_still_being_written_for_next_time`
+- **Lesson:** Don't take "it opens" for "it is finished": check the file's end is there before reading one that has just changed.

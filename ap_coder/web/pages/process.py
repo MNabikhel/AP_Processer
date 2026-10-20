@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -28,6 +29,7 @@ from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.intake import inbox
 from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, Unpacked, emails_in, safe_name, unpack, unpack_folder
+from ap_coder.intake.pictures import looks_incomplete
 from ap_coder.web import identity
 from ap_coder.web.core import (
     cache_dir,
@@ -53,6 +55,7 @@ from ap_coder.web.pages.review import attention
 router = APIRouter()
 
 JOB = "process"
+STILL_SAVING_SECONDS = 60  # a file changed this recently whose end is missing is still being written
 ACCEPT = sorted(SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS)  # what the upload takes: PDFs, scans, photos, saved emails
 
 
@@ -288,6 +291,17 @@ def not_processed(store: Store, files: list[Path]) -> tuple[list[Path], list[Pat
     return new, unreadable
 
 
+def still_being_saved(path: Path, now: float | None = None) -> bool:
+    """Changed in the last minute and its end missing (``intake.looks_incomplete``): a scanner or a download is still
+    writing it. Read now, half an invoice would be stored (and the whole one read again later as another). A file
+    that is complete is read at once, however new."""
+    try:
+        recent = abs((time.time() if now is None else now) - path.stat().st_mtime) < STILL_SAVING_SECONDS
+        return recent and looks_incomplete(path)
+    except OSError:  # gone or locked meanwhile: next time
+        return True
+
+
 def folder_files(store: Store) -> list[dict[str, Any]]:
     """The files in the invoices folder not processed yet (saved emails too: their attachments are read)."""
     folder = invoice_dir(store)
@@ -389,6 +403,8 @@ def process_folder(request: Request) -> JSONResponse:
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
     files, unreadable = not_processed(store, invoice_files(folder) if folder.exists() else [])
+    saving = [p for p in files if still_being_saved(p)]  # a scanner or a download still writing it (B-265)
+    files, unreadable = [p for p in files if p not in saving], unreadable + saving
     todo, already = split_new(store, files)
     notes = [flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, or open in "
                            "another program): picked up next time.", "warn", [p.name for p in unreadable])]  # fmt: skip

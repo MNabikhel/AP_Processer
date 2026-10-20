@@ -91,6 +91,21 @@ def content_kind(path: str | Path) -> str:
     return ""
 
 
+def looks_incomplete(path: str | Path) -> bool:
+    """A file whose end is missing: empty, a PDF without its closing "%%EOF", a JPEG without its end marker or a PNG
+    without its end chunk (still being written by a scanner or a download, or cut off). Other kinds: False."""
+    path = Path(path)
+    size = path.stat().st_size
+    if not size:
+        return True
+    kind = content_kind(path)
+    with open(path, "rb") as fh:
+        fh.seek(max(0, size - 1024))
+        tail = fh.read()
+    end = {".pdf": b"%%EOF", ".jpg": b"\xff\xd9", ".png": b"IEND"}.get(kind)
+    return end is not None and end not in tail
+
+
 def as_its_kind(path: str | Path) -> Path:
     """``path`` renamed to the extension its content has when it is a PDF or a picture named as another (a PDF saved
     as ".jpg", a phone's PNG as ".pdf"), so it is read, kept and stamped as what it is. As it was when its name is
