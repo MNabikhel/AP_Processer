@@ -17,7 +17,7 @@ from .confidence import LABELS, TAX_FIELDS, fuse
 from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available
 from .locate import locate
 from .normalize import find_amounts
-from .reader import _table_header_line, credit_titled, read_fields, read_line_items
+from .reader import _table_header_line, credit_titled, listed_items, read_fields, read_line_items
 from .types import (
     AMOUNT_FIELDS,
     CHECK,
@@ -191,7 +191,8 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
     """The line items read from the page itself, and every reading of them, best first: the words inside the tables
     the table finder found (``tables``: True finds them now, a {page: boxes} dict found before, None/False: not
     looked for), the words under the column headings across the page (``words``, the reading as before) and the
-    PDF's table from its text layer. The first reading that adds up to the subtotal is kept, else the first one
+    PDF's table from its text layer. The first reading that adds up to the subtotal is kept, else the amounts
+    listed above the subtotal when they add up to it (a receipt, ``reader.listed_items``), else the first one
     found inside a table, else the words across the page. The PDF's table is last: it is a second reading of the
     same text, there to be compared with OvisOCR2's when the others read the lines differently from it. A reading
     that ran on into the totals under the table is cut at its subtotal row first (``_to_subtotal``)."""
@@ -212,6 +213,9 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
     adds = [r for r in readings if targets and _adds_up(r, targets)]
     if adds:
         return adds[0], [adds[0], *[r for r in readings if r is not adds[0]]]
+    listed = _labelled(listed_items(layout, targets), "listed")  # no reading adds up: a receipt's list of amounts
+    if listed:
+        return listed, [listed, *readings]
     return (in_tables or words), readings
 
 

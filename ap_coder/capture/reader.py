@@ -1514,6 +1514,79 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
     return items
 
 
+LISTED_COLUMN = 0.06  # an item's amount ends this close to the subtotal's amount (fraction of the page width)
+LISTED_MAX = 150  # amounts looked at above the subtotal
+_LISTED_FLAG = re.compile(r"^[\s*-]*(?:[a-z]{1,2}\b)?[\s*]*$", re.I)  # a receipt's tax flag after the amount: "J", "*"
+
+
+def listed_items(layout: DocLayout, targets: list[float]) -> list[LineReading]:
+    """The lines of a bill that prints no column headings (a till receipt, a short bill): the amounts in the column
+    right above its subtotal (or total), each with the words on its row (product codes left out), read upward from
+    the subtotal until they add up to one of ``targets`` (the subtotal, the total less the taxes). None when they
+    never add up exactly: amounts in a column are a guess, kept only when the bill proves them."""
+    if not targets:
+        return []
+    for page in straightened(layout).pages:
+        ends = [ln for ln in page.lines
+                if any(rx.match(plain(ln.text).strip()) for f in ("subtotal", "grand_total") for rx, _ in _LABELS[f])]  # fmt: skip
+        if not ends:
+            continue
+        end = min(ends, key=lambda ln: ln.box.y0)
+        height = max(end.box.height, 0.004)
+        found: list[tuple[float, float, float, Line, int]] = []  # (middle, right end, amount, line, where it starts)
+        for line in page.lines:
+            amounts = [(v, a, b) for v, a, b in _amounts_in(line.text) if _printed_as_money(line.text[a:b])]
+            if not amounts or not _LISTED_FLAG.match(line.text[amounts[-1][2] :]):
+                continue  # no amount at the line's end
+            value, a, b = amounts[-1]
+            box = union_all([w.box for w in _span_words(line, a, b)]) or line.box
+            found.append((box.cy, box.x1, value, line, a))
+        # The subtotal's own amount: on the label's row, right of it.
+        mine = [f for f in found if abs(f[0] - end.box.cy) < 0.7 * height and f[1] > end.box.x0]
+        right = min(mine, key=lambda f: f[1] - end.box.x1)[1] if mine else None
+        above = sorted((f for f in found if f[0] < end.box.cy - 0.7 * height), key=lambda f: -f[0])[:LISTED_MAX]
+        if right is None:
+            if not above:
+                continue
+            right = statistics.median(f[1] for f in above)
+        column = [f for f in above if abs(f[1] - right) <= LISTED_COLUMN]
+        total = 0.0
+        for k, (_cy, _x1, value, _line, _a) in enumerate(column, 1):
+            total += value
+            if any(abs(round(total, 2) - t) <= 0.011 for t in targets):
+                lines = _listed_lines(page, list(reversed(column[:k])), {id(f[3]) for f in found}, height)
+                # Amounts that name a tax or a total ("Montant HT", "TVA", "Remise totale") are the bill's totals,
+                # not its items; one amount with no words is the subtotal printed twice.
+                if any(_TAX_ROW.search(plain(li.description)) for li in lines) or (
+                    len(lines) == 1 and not lines[0].description
+                ):
+                    break
+                return lines
+    return []
+
+
+def _listed_lines(page: PageLayout, rows: list[tuple[float, float, float, Line, int]], priced: set[int],
+                  height: float) -> list[LineReading]:  # fmt: skip
+    """The listed items: each amount, and the words left of it on its row that aren't a number (a product code); a
+    line of words beside two amounts' rows goes with the nearer one."""
+    words: dict[int, list[Line]] = {}
+    for ln in page.lines:
+        if id(ln) in priced:
+            continue
+        near = [(abs(ln.box.cy - cy), k) for k, (cy, _x1, _v, line, _a) in enumerate(rows)
+                if abs(ln.box.cy - cy) < 0.7 * height and ln.box.x1 <= line.box.x0 + 0.01]  # fmt: skip
+        if near:
+            words.setdefault(min(near)[1], []).append(ln)
+    out = []
+    for k, (_cy, _x1, amount, line, at) in enumerate(rows):
+        row = sorted(words.get(k, []), key=lambda ln: ln.box.x0)
+        parts = [ln.text for ln in row] + [line.text[:at]]
+        text = " ".join(w for part in parts for w in part.split() if not _FIGURE.fullmatch(w))
+        box = union_all([ln.box for ln in [*row, line]])
+        out.append(LineReading(text.strip(), None, None, amount, [box] if box else [], 0.6))
+    return out
+
+
 # ---------------------------------------------------------------- entry point
 
 

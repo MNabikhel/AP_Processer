@@ -1,9 +1,11 @@
 """Line items on real-world and hard invoices (sweep 4): page subtotals and balances carried from page to page, and
 the other rows a line table prints that are no lines. Small generated pages: one table each."""
 
-from ap_coder.capture import layout
-from ap_coder.capture.reader import read_line_items
-from ap_coder.capture.types import Box, DocLayout, PageLayout, Word
+from pathlib import Path
+
+from ap_coder.capture import _page_lines, layout
+from ap_coder.capture.reader import listed_items, read_line_items
+from ap_coder.capture.types import Box, DocLayout, FieldResult, PageLayout, Word
 
 
 def _words(*cells: tuple[str, float, float, float]) -> list[Word]:
@@ -104,3 +106,43 @@ def test_rows_read_by_their_amounts_are_kept_only_when_they_add_up():
               ("Steuerbetrag", 0.50, 0.62, 0.49), ("56,87", 0.86, 0.90, 0.49),
               ("Bruttosumme", 0.50, 0.62, 0.52), ("529,87", 0.85, 0.90, 0.52)]  # fmt: skip
     assert _table_rows(totals, Box(1, 0.45, 0.37, 0.92, 0.54)) == []
+
+
+# A till receipt: no column headings, each item's amount at the right with its tax flag ("J"), a product code between.
+RECEIPT = [("Walmart Supercentre", 0.37, 0.60, 0.04),
+           ("GR MN 6PK", 0.13, 0.29, 0.19), ("085430100956", 0.36, 0.58, 0.19), ("$12.97", 0.66, 0.76, 0.19),
+           ("BATH TOWEL", 0.12, 0.30, 0.21), ("002215445066", 0.36, 0.58, 0.21), ("$7.97J", 0.68, 0.79, 0.21),
+           ("OPP BT 896400119106", 0.12, 0.58, 0.23), ("$4.00 J", 0.68, 0.79, 0.23),
+           ("OPP BT", 0.12, 0.24, 0.25), ("896400119105", 0.36, 0.58, 0.25), ("$4.00J", 0.68, 0.78, 0.25),
+           ("COUPON", 0.12, 0.24, 0.27), ("1.00-", 0.70, 0.77, 0.27),
+           ("$27.94", 0.66, 0.77, 0.30), ("SUBTOTAL", 0.46, 0.60, 0.302),
+           ("GST 5%", 0.42, 0.53, 0.32), ("$1.40", 0.68, 0.77, 0.32),
+           ("TOTAL", 0.51, 0.60, 0.34), ("$29.34", 0.66, 0.77, 0.34),
+           ("VISA TEND", 0.42, 0.60, 0.36), ("$29.34", 0.66, 0.77, 0.36),
+           ("#ITEMS SOLD 4", 0.22, 0.77, 0.40)]  # fmt: skip
+RECEIPT_ITEMS = [("GR MN 6PK", 12.97), ("BATH TOWEL", 7.97), ("OPP BT", 4.0), ("OPP BT", 4.0), ("COUPON", -1.0)]
+
+
+def test_a_receipts_items_are_the_amounts_above_its_subtotal_that_add_up_to_it():
+    """A receipt prints no column headings: its items are the amounts in the column right above the subtotal, each
+    with the words on its row (the product code left out), read up from the subtotal until they add up to it (a
+    coupon taken off too). Kept only when they add up: to the subtotal, or the total less the tax."""
+    doc = _layout(_words(*RECEIPT), source="ocr")
+    assert read_line_items(doc) == []  # no headings: the reader under the headings reads nothing
+    items = listed_items(doc, [27.94])
+    assert [(li.description, li.amount) for li in items] == RECEIPT_ITEMS
+    assert listed_items(doc, [999.0]) == [] and listed_items(doc, []) == []
+    fields = {"subtotal": FieldResult("subtotal", 27.94, 0.9, "likely")}
+    chosen, _readings = _page_lines(Path("receipt.png"), doc, fields, [], False)
+    assert [(li.description, li.amount) for li in chosen] == RECEIPT_ITEMS
+
+
+def test_a_bills_totals_above_its_total_are_not_listed_items():
+    """Amounts above the total that add up to it but name the bill's totals ("Montant HT", "Remise totale", "TVA"),
+    or the subtotal printed once more with no words, are no items."""
+    summary = _words(("Montant HT", 0.50, 0.65, 0.60), ("1 000,00", 0.80, 0.90, 0.60),
+                     ("TVA 20 %", 0.50, 0.62, 0.62), ("200,00", 0.84, 0.90, 0.62),
+                     ("TOTAL", 0.50, 0.58, 0.66), ("1 200,00", 0.80, 0.90, 0.66))  # fmt: skip
+    assert listed_items(_layout(summary, source="ocr"), [1200.0]) == []
+    again = _words(("1,200.00", 0.80, 0.90, 0.62), ("TOTAL", 0.50, 0.58, 0.66), ("1,200.00", 0.80, 0.90, 0.66))
+    assert listed_items(_layout(again, source="ocr"), [1200.0]) == []
