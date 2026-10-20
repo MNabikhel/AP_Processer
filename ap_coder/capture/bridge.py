@@ -62,10 +62,12 @@ def vendor_record(store: Any, vendor_name: str | None) -> dict[str, Any] | None:
 
 def review_issues(capture: CaptureResult, assumed_currency: str | None = None) -> list[tuple[str, str, str]]:
     """(severity, code, message) for the review screen: header fields the readers could not confirm, totals that
-    don't add up as printed, a PDF whose hidden text is not what its page shows, and a currency the page does not
-    show (the coding's is then assumed: ``assumed_currency``, e.g. USD for a supplier with a US address)."""
+    don't add up as printed, a PDF whose hidden text is not what its page shows, a currency the page does not show
+    (the coding's is then assumed: ``assumed_currency``, e.g. USD for a supplier with a US address), and pages the
+    local readers did not read (past ``layout.READ_PAGES``, or OCR failed on them)."""
     from ..coding.validation import INFO, WARNING, currency_not_found
     from .confidence import LABELS
+    from .layout import READ_PAGES
 
     out: list[tuple[str, str, str]] = []
     unsure = [f for f in capture.fields.values() if f.status == CHECK]
@@ -84,6 +86,11 @@ def review_issues(capture: CaptureResult, assumed_currency: str | None = None) -
     if currency is not None and not currency_read(currency):
         issue = currency_not_found(str(assumed_currency or currency.value or ""))
         out.append((issue.severity, issue.code, issue.message))
+    if capture.pages_left_out > 0:  # nothing on those pages is in what the screen shows as read
+        read, total = max(0, capture.page_count - capture.pages_left_out), capture.page_count
+        out.append((WARNING, "PAGES_NOT_READ", f"only {read} of its {total} pages were read (a file's first "
+                    f"{READ_PAGES} pages are read, and a page OCR can't read is left out): check the other pages "
+                    "yourself before approving"))  # fmt: skip
     return out
 
 

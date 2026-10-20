@@ -15,6 +15,7 @@ SOURCES = [
     "capture/bridge.py",
     "ai/verifier.py",
     "ai/azure_check.py",
+    "ai/pipeline.py",
 ]
 
 

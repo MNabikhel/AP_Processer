@@ -20,7 +20,7 @@ from ..core.config import DocumentIntelligenceSettings
 
 log = logging.getLogger(__name__)
 
-DOCUMENT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".heif", ".heic"}
+DOCUMENT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".heif", ".heic", ".webp", ".gif"}
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt"}
 SUPPORTED_EXTENSIONS = DOCUMENT_EXTENSIONS | TEXT_EXTENSIONS
 
@@ -147,14 +147,28 @@ def result_from_raw(source: str | Path, raw: dict[str, Any]) -> ExtractionResult
     )
 
 
+NOT_TEXT = (
+    "{name} isn't a text file: it holds something else under a {ext} name. Ask the vendor for the invoice as a PDF."
+)
+
+
 def result_from_text(path: str | Path) -> ExtractionResult:
-    """Treat a .md/.txt file as already-extracted content (skips Document Intelligence)."""
+    """Treat a .md/.txt file as already-extracted content (skips Document Intelligence). Raises ``CannotRead`` for
+    a file under a text name that is not text."""
     path = Path(path)
     data = path.read_bytes()
-    try:
-        content = data.decode("utf-8-sig")  # -sig: a byte-order mark is not part of the text
-    except UnicodeDecodeError:  # saved as "ANSI" by a Windows program
-        content = data.decode("cp1252", errors="replace")
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):  # saved as "Unicode" by Notepad (UTF-16, its byte-order mark)
+        content = data.decode("utf-16", errors="replace")
+    else:
+        try:
+            content = data.decode("utf-8-sig")  # -sig: a byte-order mark is not part of the text
+        except UnicodeDecodeError:  # saved as "ANSI" by a Windows program
+            content = data.decode("cp1252", errors="replace")
+    control = sum(1 for c in content if c < " " and c not in "\t\n\r\f")
+    if "\x00" in content or control > 0.05 * len(content):  # not text: read, it would be an invoice of garbage
+        from ..capture.layout import CannotRead
+
+        raise CannotRead(NOT_TEXT.format(name=path.name, ext=path.suffix.lower()))
     return ExtractionResult(
         source=str(path),
         model_id="pre-extracted",

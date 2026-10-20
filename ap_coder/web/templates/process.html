@@ -103,6 +103,10 @@
       </div>
       <p class="muted">Copy invoices into this folder, or have a scanner or mail rule save them there. New files are listed
         here, ready to process.</p>
+      {% if not_read %}
+      <p class="muted"><span class="ms" aria-hidden="true">warning</span>
+        Not read from this folder: {{ not_read | join(", ") }}. Save them as PDF (or JPEG) to have them read.</p>
+      {% endif %}
       {% if not files %}
       {{ ui.empty_note("No new files", "Everything in the folder has been processed.", "done_all") }}
       {% else %}

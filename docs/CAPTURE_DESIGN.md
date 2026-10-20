@@ -509,11 +509,11 @@ processing is off, and neither vendor has a record yet.
 
 ## Pictures become PDFs, and line items read with the table finder
 
-**Every invoice is a PDF** (`ap_coder/intake/pictures.py`). A JPEG, PNG, iPhone HEIC/HEIF, TIFF (every frame) or BMP that
-comes in (upload, invoices folder, email attachment, `process`/`watch`) is made into a PDF first
+**Every invoice is a PDF** (`ap_coder/intake/pictures.py`). A JPEG, PNG, iPhone HEIC/HEIF, TIFF (every frame), BMP, WEBP or GIF
+(its first frame: B-264) that comes in (upload, invoices folder, email attachment, `process`/`watch`) is made into a PDF first
 (`InvoicePipeline.process`): one page a picture, upright as its EXIF says, at its resolution (a believable DPI gives
-the page its size, else a letter-sized page). A JPEG goes in as it is, turned by the page's `/Rotate`; PNG, TIFF and
-BMP losslessly; HEIC (which a PDF can't hold) as a quality-95 JPEG. The invoice is stored, read, shown and stamped as
+the page its size, else a letter-sized page). A JPEG goes in as it is, turned by the page's `/Rotate`; PNG, TIFF,
+BMP, WEBP and GIF losslessly; HEIC (which a PDF can't hold) as a quality-95 JPEG. The invoice is stored, read, shown and stamped as
 the PDF; the picture moves to `originals/` beside it, and the PDF's metadata records its name, SHA-256 and where it
 was kept (`intake.original_of`). `invoices.original_sha256` keeps the picture's hash, so `Store.find_by_hash` finds
 the same photo sent twice (upload, folder or `watch`). OCR of a converted page reads the picture's own pixels

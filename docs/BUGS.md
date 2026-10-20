@@ -2538,3 +2538,114 @@ invoices, the first approval, the first export and Help, read as a pilot tester 
 - **Fix:** a server that ends with an error code adds "✗ AP Coder stopped on its own (code N); the lines above may say why. What to do: double-click AP Coder again. If it happens again, use Help → Report a problem, and send IT the log …". A stop asked for (an update taking over, Ctrl+C) says nothing, as before.
 - **Test:** `tests/test_sweep4_first_launch.py::test_a_dashboard_that_stops_on_its_own_says_so_and_what_to_do`
 - **Lesson:** Don't let a promise ("the message above says what to do") depend on every path having printed one.
+
+### Unusual files
+
+A robustness corpus (about 120 files: public PDF and picture test files from pdf.js and Pillow, and files made from a sample invoice: encrypted, empty, cut off, outlined text, huge pages, 300 pages, forms and attachments, PDF/A, CCITT scans, CMYK and 16-bit pictures, multi-page TIFFs, GIF, WEBP, HEIC, tiny pictures, wrong extensions, Unicode and very long names, read-only files, a file still being written) was run through the pipeline (`process_many` on the invoices folder), the dashboard upload and `python -m ap_coder process`. No file crashed, none showed a traceback on the review screen and none was lost; a text PDF took 1 to 4 s and a one-page scan or photo 15 to 25 s (55 to 90 s on the second run, the computer then shared by other test runs at a load of 78 on 4 cores); only long scans ran for minutes (N-94). The findings below are files read wrongly or refused with a message that did not say what to do. Each test makes its own fixture (`tests/test_unusual_files.py`).
+
+#### B-260 · A PDF named ".jpg" was refused, a picture named ".pdf" could not be stamped, a web page named ".pdf" went to the queue as a blank invoice · medium
+- **Where:** `ap_coder/ai/pipeline.py` (`_as_pdf`), `ap_coder/intake/pictures.py` (`content_kind`, `as_its_kind`)
+- **Symptom:** a PDF saved as `scan from vendor.jpg` failed with "can't be opened as a picture: the file is damaged or not really a JPG"; a phone's PNG saved as `invoice 77.pdf` was read (PyMuPDF looks at the content) but stayed a PNG named .pdf, so its approval stamp failed ("is no PDF", `stamp.stamped_pdf`); a vendor portal's sign-in page saved as `invoice.pdf` was read as a one-page invoice with nothing on it and went to the queue.
+- **Cause:** every reader chose by the file's extension, never by its content.
+- **Reproduce:** the sample PDF copied to `pdf_named.jpg`, a PNG to `png_named.pdf`, an HTML page to `vendor_portal_login.pdf`, each through the three ways in.
+- **Reproduced:** yes (`pdf_named.jpg can't be opened as a picture…`; `ValueError: is no PDF` from `stamped_pdf`; `vendor_portal_login.pdf: needs attention`, vendor and number empty).
+- **Fix:** a file coming in is renamed to the extension its first bytes say (PDF, PNG, JPEG, TIFF, BMP, HEIC) when its name says another, then read as usual (a picture made into a PDF and kept in `originals/`); a web page is refused: "invoice.pdf is a web page saved with a .pdf name, not the invoice itself: open the vendor's email or portal and download the invoice again (as a PDF)." A file that can't be renamed is read under its own name as before.
+- **Test:** `tests/test_unusual_files.py::test_a_pdf_named_as_a_photo_is_read_as_the_pdf_it_is`, `::test_a_picture_named_as_a_pdf_is_made_into_a_pdf_and_kept`, `::test_a_web_page_saved_as_a_pdf_is_refused_in_plain_words`
+- **Lesson:** Don't trust a file's extension for what it holds: look at its first bytes before choosing a reader.
+
+#### B-261 · A multi-page TIFF with a colour page last failed: "ValueError: unrecognized image mode" · medium
+- **Where:** `ap_coder/intake/pictures.py` (`image_to_pdf`)
+- **Symptom:** a scan saved as one TIFF, black-and-white pages then an 8-bit colour (palette) page, failed in all three ways in with "ValueError: unrecognized image mode" in the Failed list: a technical message, and the invoice was not read.
+- **Cause:** `image_to_pdf` asks the TIFF how many pages it has (`n_frames`), which reads up to the last page; Pillow (12.3) then keeps that page's palette when it goes back to the first, and a black-and-white page with a palette can't be loaded.
+- **Reproduce:** a four-page TIFF (Group 4, LZW, JPEG, PackBits; the last a palette page) through `intake.to_pdf`.
+- **Reproduced:** yes (`ValueError: unrecognized image mode` from `frame.load()`).
+- **Fix:** a page that is not a palette page drops the palette left from another page before it is loaded; all four pages become the PDF.
+- **Test:** `tests/test_unusual_files.py::test_a_multi_page_tiff_with_a_palette_page_is_made_into_a_pdf`
+- **Lesson:** Don't assume a multi-page picture's pages share one mode: test one whose pages differ.
+
+#### B-262 · A PDF with no pages went to the review queue as a blank invoice · medium-low
+- **Where:** `ap_coder/ai/pipeline.py` (`_check_pdf`, called by `_process`)
+- **Symptom:** a PDF with no page in it (a program that saved before writing a page; pdf.js's `bug1020226.pdf`) was "read and coded" and waited in the queue as "needs attention" with an empty vendor and number and no page to show (its page image 404).
+- **Cause:** nothing checked the page count: the readers read zero pages and the coder made an invoice of nothing.
+- **Reproduce:** a hand-written PDF whose page tree is empty (`/Count 0`), through the three ways in.
+- **Reproduced:** yes (`zero_pages.pdf: needs attention`, vendor and invoice number empty, `/review/1/page/1.png` 404).
+- **Fix:** a PDF with no pages is refused before it is read: "statement.pdf has no pages in it: the file is empty or was not saved completely. Ask the vendor for a new copy." (Failed / rejected; the file stays in the folder.) A password-protected PDF is still worded as such (a test now guards that message, and that a PDF with only an owner password is opened with the empty user password).
+- **Test:** `tests/test_unusual_files.py::test_a_pdf_with_no_pages_is_refused_in_plain_words_not_queued_blank`, `::test_a_password_protected_pdf_says_so_and_one_with_only_an_owner_password_is_read`
+- **Lesson:** Don't let "read nothing" pass as "read an invoice with nothing on it": check there is something to read first.
+
+#### B-263 · A text invoice saved as "Unicode" by Notepad was read as "ÿþI N V O I C E", and a binary file named .txt went to the queue as an invoice of garbage · medium-low
+- **Where:** `ap_coder/ai/extraction.py` (`result_from_text`)
+- **Symptom:** a .txt invoice saved by Notepad as "Unicode" (UTF-16) went to the queue with the vendor "ÿþI\x00N\x00V\x00…" and nothing else read; a binary file with a .txt name went to the queue as "needs attention", its vendor a run of control characters shown in the import list.
+- **Cause:** a text file was decoded as UTF-8, else Windows-1252 with replacement: UTF-16 became every other character a NUL, and anything at all was taken as text.
+- **Reproduce:** the invoice text saved as UTF-16 (with its byte-order mark) and 4 KB of random bytes, each as a .txt, through the three ways in.
+- **Reproduced:** yes (`vendor=ÿþI N V O I C E`, `binary_garbage.txt … needs attention`).
+- **Fix:** a text file starting with a UTF-16 byte-order mark (either order) is decoded as UTF-16; one that still holds a NUL or more than 5% control characters is refused: "scan.txt isn't a text file: it holds something else under a .txt name. Ask the vendor for the invoice as a PDF."
+- **Test:** `tests/test_unusual_files.py::test_a_text_invoice_saved_as_unicode_is_read_as_its_text`, `::test_a_txt_file_that_is_not_text_is_refused_in_plain_words`
+- **Lesson:** Don't decode with `errors="replace"` and call the result text: check it looks like text before reading it.
+
+#### B-264 · A WEBP or GIF invoice was refused at upload as if it were not a photo, and passed over in silence in the invoices folder · medium-low
+- **Where:** `ap_coder/capture/layout.py` (`IMAGE_EXTENSIONS`), `ap_coder/ai/extraction.py` (`DOCUMENT_EXTENSIONS`), `ap_coder/intake/pictures.py` (`image_to_pdf`)
+- **Symptom:** a photo saved from a chat app or a browser as `.webp` (or a `.gif`) was refused on upload with "photo.webp was not read: AP Coder reads PDFs, scans, photos and saved emails", though it is a photo; dropped in the invoices folder it was never listed, read or mentioned, and `python -m ap_coder process` said "No supported invoice files found."
+- **Cause:** the picture types were a fixed list without WEBP and GIF, although Pillow (already used for every picture) reads both.
+- **Reproduce:** a WEBP and an animated GIF of a page, through the three ways in.
+- **Reproduced:** yes (the upload message above; the folder's file list and `invoice_files` without them; exit 2 from `process`).
+- **Fix:** WEBP and GIF are pictures like the others: made into a PDF on arrival (losslessly), the picture kept in `originals/`. An animated one gives its first frame, the page it shows, not a page per frame. JPEG 2000, AVIF and Photoshop files are still refused at upload in plain words (rare for invoices).
+- **Test:** `tests/test_unusual_files.py::test_a_webp_or_gif_picture_in_the_invoices_folder_is_read_as_a_pdf`, `::test_the_upload_takes_a_webp_photo`
+- **Lesson:** Don't keep a list of accepted types narrower than what the reader behind it reads: the person sees only "not read".
+
+#### B-265 · "Process the folder" read a PDF the scanner was still writing: half an invoice stored, the whole one read again later as another · medium
+- **Where:** `ap_coder/web/pages/process.py` (`process_folder`, `still_being_saved`), `ap_coder/intake/pictures.py` (`looks_incomplete`)
+- **Symptom:** a scan still being saved into the invoices folder (its first 4 KB written) when the pilot tester clicked "Process the folder" was read as it stood: PyMuPDF repaired what was there, and it went to the queue with the vendor read but no total ("subtotal + tax = 14050.00 but grand_total = 0.00"). Once the scanner finished, the complete file (another SHA-256) was offered and read again: two invoices for one.
+- **Cause:** the folder pick-up left out only files it could not open; on macOS (and for many Windows scanners) a file being written can be opened, and the `watch` command's 5-second settle time was not used there.
+- **Reproduce:** half of a sample PDF in the invoices folder, `POST /process/folder`; then the whole file.
+- **Reproduced:** yes (`still_being_written.pdf: needs attention`, `total=0.0`, in all three ways in).
+- **Fix:** a file changed in the last minute whose end is missing (a PDF without "%%EOF", a JPEG without its end marker, a PNG without its end chunk, or an empty file) is left for next time with the message already used for a locked file: "1 file could not be opened (still being saved, or open in another program): picked up next time." A complete file is read at once, however new. (A file that is still cut off after a minute is read, with a warning: B-266.)
+- **Test:** `tests/test_unusual_files.py::test_the_folder_pick_up_leaves_a_pdf_still_being_written_for_next_time`
+- **Lesson:** Don't take "it opens" for "it is finished": check the file's end is there before reading one that has just changed.
+
+#### B-266 · A PDF cut off in a download went to the queue with nothing to say part of it was missing · medium-low
+- **Where:** `ap_coder/ai/pipeline.py` (`_cut_off`, `_process`), `ap_coder/capture/supplier.py` (`ALWAYS_A_PERSON`)
+- **Symptom:** the first 40% of an invoice PDF (a browser download that stopped, an email attachment cut short) was read as an invoice: PyMuPDF repairs what is there, so the header and some lines were read but not the total, and the review screen showed only "subtotal + tax = 4350.00 but grand_total = 0.00". Nothing said the file itself was incomplete, so the pilot tester would correct the figures from a page that is not all there; a cut-off file whose figures happened to add up could have been approved without a person.
+- **Cause:** nothing looked at whether the file ended as a PDF ends.
+- **Reproduce:** the sample PDF cut at 40% (and at its last 300 bytes), through the three ways in.
+- **Reproduced:** yes (`truncated_40pct.pdf … total=0.0`, no word of the file; PyMuPDF's `is_repaired` true, no "%%EOF" in the last kilobyte).
+- **Fix:** a PDF without "%%EOF" in its last kilobyte is still read and shown, with a warning on the review screen (and its entry in Help, "File cut off"): "download.pdf looks cut off (its end is missing: it was still downloading or being saved when it came in), so part of the invoice may be missing. Compare it with the vendor's copy, or ask the vendor for a new one." It is never approved without a person ("the file looks cut off", listed in Settings → Automation). Across the pdf.js test files and the ten samples no complete PDF gets the warning.
+- **Test:** `tests/test_unusual_files.py::test_a_pdf_cut_off_is_read_with_a_warning_and_never_approved_without_a_person`
+- **Lesson:** Don't let a reader's silent repair stand for a whole file: when a file had to be repaired, say so to the person.
+
+#### B-267 · A 300-page PDF was read from its first 20 pages with nothing on the review screen to say so · medium-low
+- **Where:** `ap_coder/capture/bridge.py` (`review_issues`), `ap_coder/capture/layout.py` (`READ_PAGES`)
+- **Symptom:** a 300-page file (a statement with the invoice on page 140, several invoices scanned as one file) was read from its first 20 pages only, as designed, but the review screen said nothing of it: the fields, lines and totals looked like a reading of the whole file. `CaptureResult.pages_left_out` (280) kept it from touchless approval, but that reason is never shown on the review screen.
+- **Cause:** the pages left out were passed to the touchless gates only, not to the review report.
+- **Reproduce:** the sample's two pages repeated to 300 (text) and a 300-page scan whose pages all differ, through the three ways in.
+- **Reproduced:** yes (`capture.page_count` 300, `pages_left_out` 280; no mention on `/review/1`).
+- **Fix:** a warning on the review screen: "only 20 of its 300 pages were read (a file's first 20 pages are read, and a page OCR can't read is left out): check the other pages yourself before approving", with its entry in Help ("Pages not read"). Time stays bounded by the 20 pages read: 2 s for the 300 text pages; for scans each page read costs an OCR (the 250-page fax took 285 s here, with the computer shared by several test runs at a load of 40 on 4 cores; see N-94).
+- **Test:** `tests/test_unusual_files.py::test_a_300_page_pdf_says_on_the_review_screen_that_only_its_first_pages_were_read`
+- **Lesson:** Don't keep a limit silent: what isn't read must be said where the person checks what was.
+
+#### B-268 · A file in the invoices folder of a kind AP Coder doesn't read was never mentioned · low
+- **Where:** `ap_coder/ai/pipeline.py` (`other_files`), `ap_coder/web/pages/process.py` (`process_folder`, `process_page`, `not_read_here`), `ap_coder/web/templates/process.html`, `ap_coder/ops/cli.py` (`_inputs`)
+- **Symptom:** a JPEG 2000 scan (`.jp2`), an AVIF photo or a Photoshop file dropped in the invoices folder was not listed on Import invoices, not read and not mentioned anywhere: to the pilot tester the invoice was lost. `python -m ap_coder process <folder>` said only "No supported invoice files found."
+- **Cause:** the folder is listed through the readable kinds only; anything else was filtered out without a word (the upload, by contrast, says "was not read").
+- **Reproduce:** `scan.jp2` and `layout.psd` beside a PDF in the invoices folder; open Import invoices, process the folder; `process` on a folder holding only `scan.jp2`.
+- **Reproduced:** yes (only the PDF listed and read; no message).
+- **Fix:** Import invoices says under the folder "Not read from this folder: layout.psd, scan.jp2. Save them as PDF (or JPEG) to have them read."; processing the folder adds "2 files in the invoices folder are not a kind AP Coder reads (PDFs, scans, photos and saved emails): save them as PDF (or JPEG) to have them read." with their names; `process` prints "Left out, not a kind AP Coder reads (save as PDF or JPEG): scan.jp2". Hidden files, README files, Office lock files, `desktop.ini` / `Thumbs.db` and downloads still arriving (`.part`, `.crdownload`, `.tmp`…) are not mentioned.
+- **Test:** `tests/test_unusual_files.py::test_the_invoices_folder_says_which_files_it_does_not_read`, `::test_process_on_a_folder_names_the_files_it_leaves_out`
+- **Lesson:** Don't filter what a person put somewhere without telling them: a file passed over in silence looks lost.
+
+#### B-269 · An upload of a photo kind AP Coder doesn't read said "AP Coder reads … photos" of a photo · low
+- **Where:** `ap_coder/web/pages/process.py` (`_save_and_start`)
+- **Symptom:** uploading an AVIF photo (a recent phone's or browser's format) or a JPEG 2000 scan gave "photo.avif was not read: AP Coder reads PDFs, scans, photos and saved emails (.eml, .msg)": it is a photo, so the message contradicts itself and doesn't say what to do.
+- **Cause:** the message named the kinds read in general words, not the picture types.
+- **Reproduce:** upload `photo.avif` (and `invoice.jp2`).
+- **Reproduced:** yes (the message above).
+- **Fix:** "photo.avif was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, BMP, WEBP, GIF) and saved emails (.eml, .msg). Save it as PDF or JPEG to have it read."
+- **Test:** `tests/test_unusual_files.py::test_an_upload_of_a_picture_kind_not_read_says_which_kinds_are`
+- **Lesson:** Don't describe what is accepted in words the refused file also fits: name the types, and what to do.
+
+#### Unusual files left as they are
+
+- **N-94** · A long scan takes minutes: a 300-page scan whose pages all differ took 435 s through the pipeline and 462 s by upload, a 250-page fax TIFF 285 s and 415 s (at a load of 40 on 4 cores, several test runs sharing the computer; a one-page scan took 15 to 25 s under the same load); run again at a load of 78, the 300-page scan passed the harness's 600 s limit, and a 4-page TIFF took 173 to 218 s. Both OCR reads (`build_layout`, then `second_read_layout` in `capture_invoice`) read up to 20 pages each, so it is bounded, and the job shows "Reading and coding … (1/1)" meanwhile, never stuck; but it gives no progress per page. Reading the second OCR pass only on the pages that hold the header and totals, or a per-page progress line, are design choices about reading, not a fix: left. B-267 now says on the review screen that only 20 pages were read.
+- **N-95** · A page far larger than the invoice on it (the invoice drawn on a 200-inch page, or in the corner of a sheet 30 times its size) is read in 2 to 9 s and the vendor found, but not the total (`grand_total` 0.00, "subtotal + tax = 14050.00 but grand_total = 0.00" on the review screen, so it is never missed). The reading rules work in fractions of the page; rare for an invoice, a reading question rather than a file one: left.
+- **N-96** · Every picture made from the same 200-dpi render of the sample (CMYK JPEG and TIFF, 16-bit grey and 48-bit colour PNG and TIFF, Group 3 fax, Group 4 CCITT in a PDF, HEIC, BMP, 32-bit BMP, WEBP, outlined text with no text layer) is read alike: vendor and subtotal found, total not, with the same "subtotal + tax" warning. The formats are handled the same way; the total is an OCR reading matter for the reading sweep, not these files.
+- **N-97** · A read-only file could not be tested as such here: the tests run as root, which writes to read-only files. The code paths that write next to an invoice (`to_pdf` moving a picture to `originals/`, `as_its_kind` renaming a misnamed file, `turn_upright`) each catch the `OSError` and read the file where it is.
