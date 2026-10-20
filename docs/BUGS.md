@@ -2393,3 +2393,13 @@ invoices, the first approval, the first export and Help, read as a pilot tester 
 - **Fix:** `configure_logging()` sets the level on the window's own handler as well, so a library changing the root logger no longer changes what the window shows; `-v` still shows everything.
 - **Test:** `tests/test_sweep4_first_launch.py::test_the_window_shows_warnings_only_even_after_the_ocr_engine_turns_the_root_logger_to_info`
 - **Lesson:** Don't let the root logger's level be the only filter of what a person sees: a library may change it.
+
+#### B-241 · A page that failed showed the bare text "Internal Server Error" · medium
+- **Where:** `ap_coder/web/app.py:168` (only `HTTPException` had a handler)
+- **Symptom:** any error a page did not expect (a locked database, a damaged file) answered with a white page reading `Internal Server Error`: no menu, no way back, nothing on what to do; a form sent from a page said only "That didn't work (500)."; the window printed a traceback.
+- **Cause:** the dashboard drew its own page for "not found" only; everything else fell through to Starlette's default answer.
+- **Reproduce:** a route that raises `RuntimeError("database is locked")`; GET it with `Accept: text/html`.
+- **Reproduced:** yes (`500 text/plain; charset=utf-8 'Internal Server Error'`)
+- **Fix:** `web/errors.py`: the dashboard's own error page, with the menu, "What to do: go back and try again; if it happens again, Help → Report a problem", and "Details for IT" folded away (the error in one line, and where the full details are). The traceback goes to `~/.ap_coder/logs/dashboard-errors.log`, the window says one line. A form gets `{"ok": false, "error": …}` with the same advice; when the page frame itself can't be drawn (it reads the database), a plain page says the same.
+- **Test:** `tests/test_sweep4_first_launch.py::test_a_page_that_fails_says_what_to_do_in_the_dashboard_with_the_details_folded_away`, `…::test_a_page_that_fails_still_answers_when_the_page_frame_itself_fails`
+- **Lesson:** Don't leave the unexpected error to the framework's default: it is the one page a person most needs help on.
