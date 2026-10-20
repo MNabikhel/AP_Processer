@@ -340,7 +340,7 @@ def _read_straight(layout: DocLayout, received: dt.date | None) -> dict[str, lis
     amount at the other end of the row stay on one row (on a page scanned at 4 degrees, "GST" sat level with the
     subtotal's amount); each reading's boxes are then put back where the words are printed on the page as scanned.
     A line is moved whole, not word by word: a title's words would come apart."""
-    from .layout import group_lines
+    from .layout import TIGHT_FROM, group_lines
     from .types import PageLayout, Word
 
     skews = {page.number: page.skew for page in layout.pages if abs(page.skew) >= STRAIGHTEN_FROM}
@@ -351,11 +351,15 @@ def _read_straight(layout: DocLayout, received: dt.date | None) -> dict[str, lis
         if page.number not in skews:
             pages.append(page)
             continue
+        # Steeply tilted, OCR's words follow the tilt (``layout.TIGHT_FROM``): each moved on its own. Else a word's
+        # box is its whole OCR line's: the line is moved as one piece.
+        each = abs(page.skew * page.height / max(page.width, 1.0)) >= TIGHT_FROM
+        pieces = [[w] for w in page.words] if each else [line.words for line in page.lines]
         words = []
-        for line in page.lines:
-            dy = -page.skew * (line.box.cx - 0.5)
+        for piece in pieces:
+            dy = -page.skew * (union_all([w.box for w in piece]).cx - 0.5)
             words += [Word(w.text, Box(w.box.page, w.box.x0, w.box.y0 + dy, w.box.x1, w.box.y1 + dy), w.conf, w.source)
-                      for w in line.words]  # fmt: skip
+                      for w in piece]  # fmt: skip
         pages.append(PageLayout(page.number, page.width, page.height, words, group_lines(words, page.number),
                                 page.rotation, 0.0, page.turn, page.dpi))  # fmt: skip
     straight = DocLayout(pages, layout.source, layout.pages_left_out, layout.pages_unread_locally)

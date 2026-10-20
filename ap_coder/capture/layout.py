@@ -420,15 +420,18 @@ def ocr_image(png_bytes: bytes, number: int, engine: str | None = None) -> PageL
         result = _turned(result, turn, width, height)
         if turn != 180:
             width, height = height, width
+    skew = _skew(result or [], width, height)
+    tilted = abs(skew * height / max(width, 1.0)) >= TIGHT_FROM
     words: list[Word] = []
     for quad, text, score in result or []:
         xs = [p[0] for p in quad]
         ys = [p[1] for p in quad]
         x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
         text = _OCR_PERCENT.sub("%", str(text))
-        words.extend(_split_ocr_line(text, x0, y0, x1, y1, float(score), width, height, number))
+        edges = _edges(quad) if tilted else None
+        words.extend(_split_ocr_line(text, x0, y0, x1, y1, float(score), width, height, number, edges))
     page = PageLayout(number, float(width), float(height), words, group_lines(words, number))
-    page.skew = _skew(result or [], width, height)
+    page.skew = skew
     page.turn = turn
     page.dpi = stated or round(max(width, height) / 11, 1)  # else a letter page's long side
     return page
@@ -623,8 +626,31 @@ def _skew(result: Any, width: float, height: float) -> float:
     return slope * width / max(height, 1.0) if abs(slope) <= SKEW_MAX else 0.0  # a tilt, not a turn
 
 
+TIGHT_FROM = 0.03  # on a page tilted more than this (down per across, in pixels: about 1.7 degrees), words follow it
+
+
+def _edges(quad: Any) -> Any:
+    """For an OCR line's four corners (top left, top right, bottom right, bottom left), a function giving the line's top
+    and bottom at a point across it; None when the corners are not in that order."""
+    try:
+        (ax, ay), (bx, by), (cx, cy), (dx, dy) = ((float(p[0]), float(p[1])) for p in quad[:4])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if bx - ax < 1 or cx - dx < 1 or dy <= ay or cy <= by:
+        return None
+
+    def at(x: float) -> tuple[float, float]:
+        return ay + (x - ax) * (by - ay) / (bx - ax), dy + (x - dx) * (cy - dy) / (cx - dx)
+
+    return at
+
+
 def _split_ocr_line(text: str, x0: float, y0: float, x1: float, y1: float, score: float, width: float,
-                    height: float, number: int) -> list[Word]:  # fmt: skip
+                    height: float, number: int, edges: Any = None) -> list[Word]:  # fmt: skip
+    """An OCR line's words, the line's box shared among them by length. ``edges`` (on a tilted page): the line's top
+    and bottom across it (``_edges``), so each word's box is as high as the print where it stands, not the whole tilted
+    line's: on a page tilted 5 degrees, a long line's box reached down over the next line, and the two were read as
+    one."""
     parts = text.split()
     if not parts:
         return []
@@ -634,7 +660,13 @@ def _split_ocr_line(text: str, x0: float, y0: float, x1: float, y1: float, score
     for p in parts:
         a = x0 + (x1 - x0) * pos / total
         b = x0 + (x1 - x0) * (pos + len(p)) / total
-        out.append(Word(p, Box(number, a / width, y0 / height, b / width, y1 / height), score, "ocr"))
+        top, bottom = y0, y1
+        if edges is not None:
+            (ta, ba), (tb, bb) = edges(a), edges(b)
+            top, bottom = max(y0, min(ta, tb)), min(y1, max(ba, bb))
+            if bottom <= top:
+                top, bottom = y0, y1
+        out.append(Word(p, Box(number, a / width, top / height, b / width, bottom / height), score, "ocr"))
         pos += len(p) + 1
     return out
 

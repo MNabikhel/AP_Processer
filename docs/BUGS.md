@@ -2445,3 +2445,23 @@ table finder's model on. None of the corpus is in the repo: each test makes its 
   so the vendor was taken from a salesperson's name (*likely*, h-0008).
 - **Test:** `tests/test_photo_scan_quality.py::test_a_scan_fed_askew_reads_each_label_with_its_own_amount`
 - **Lesson:** Don't straighten only part of the reading: every reader that pairs things across a row needs it.
+
+#### B-303 · On a page scanned at 5 degrees, a long line's box covered the line under it: the two were read as one · medium
+- **Where:** `ap_coder/capture/layout.py` (`ocr_image`, `_split_ocr_line`, new `_edges`, `TIGHT_FROM`);
+  `ap_coder/capture/__init__.py` (`_read_straight`)
+- **Symptom:** after B-302, a scan tilted 5 degrees (h-0008) still read its vendor as "K. Singh" (*likely*, a
+  salesperson): its name in large print and the address under it were one line, "1880 Industrial Pkwy Kingsway
+  Mechanical Limited"; on others a due date or the terms were missed for the same reason.
+- **Cause:** an OCR line's words were given the box around the whole line. On a tilted page that box is as tall as
+  the print plus the tilt over the line's length (a 600-pixel line at 5 degrees: 50 pixels more), and it reached
+  over the next line down.
+- **Fix:** on a page tilted more than about 1.7 degrees, each word's box follows the OCR line's top and bottom edges
+  where the word stands (the line's four corners), so it is as high as the print there. The reader then moves each
+  word on its own to the straightened page (B-302 moves whole lines, right while a word's box was its line's). Pages
+  tilted less, as the benchmark's scans (at most 1.5 degrees), are read as before.
+- **Measured:** scans 93.8% → 95.1% of fields right, 72.7% → 81.8% fully right, no silent error 95.5% → 100%; other
+  pictures unchanged; bench (60, seed 3, half scans) 99.8%, verified 100%. On such a page the lines as formed on the
+  tilted page (not read by the rule reader) may now break a long line in two; the rule reader and the line items read
+  the page straightened.
+- **Test:** `tests/test_photo_scan_quality.py::test_on_a_steeply_tilted_scan_two_lines_close_together_stay_apart`
+- **Lesson:** Don't give a part the box of its whole when the whole is tilted: the box grows with the tilt.

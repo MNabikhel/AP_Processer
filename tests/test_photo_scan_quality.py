@@ -147,3 +147,31 @@ def test_a_scan_fed_askew_reads_each_label_with_its_own_amount(tmp_path):
     assert fields["grand_total"].value == 2229.33
     box = fields["subtotal"].boxes[0]
     assert box.x0 > 0.8 and box.y0 < 900 / 1700  # where it is printed: right, and higher than its label's row
+
+
+def test_on_a_steeply_tilted_scan_two_lines_close_together_stay_apart(monkeypatch):
+    """Sweep 4: on a page scanned at 5 degrees, the box around a long OCR line (the vendor's name in large print)
+    reached down over the address under it, and the two were one line: "1880 Industrial Pkwy Kingsway Mechanical
+    Limited" (h-0008, the vendor then taken from a salesperson's name). Each word's box now follows the tilted line."""
+    quads = [  # as OCR gave them on that page: four corners, text (the page 1700 x 2200)
+        ([[190, 54], [807, 105], [804, 153], [187, 102]], "Kingsway Mechanical Limited"),
+        ([[185, 121], [415, 143], [412, 176], [182, 154]], "1880 Industrial Pkwy"),
+        ([[179, 159], [415, 179], [412, 212], [176, 192]], "Surrey, BC V7B 1G6"),
+        ([[1288, 152], [1673, 183], [1669, 234], [1284, 203]], "TAX INVOICE"),
+        ([[177, 196], [528, 227], [525, 257], [174, 226]], "250-555-2973 F: 250-555-9318"),
+        ([[1007, 212], [1207, 230], [1204, 263], [1004, 245]], "Invoice Number:"),
+        ([[173, 235], [442, 258], [439, 287], [170, 264]], "BC PST# PST-3634-7542"),
+    ]
+    result = [[q, t, 0.97] for q, t in quads]
+    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: result)
+    png = io.BytesIO()
+    Image.new("RGB", (1700, 2200), "white").save(png, "PNG")
+    page = layout.ocr_image(png.getvalue(), 1)
+    assert not any("Kingsway" in ln.text and "1880" in ln.text for ln in page.lines)
+    name = next(w for w in page.words if w.text == "Kingsway")
+    assert name.box.y1 < 125 / 2200  # its box ends where the print ends there, not at the tilted line's lowest corner
+    from ap_coder.capture import _read_straight
+    from ap_coder.capture.types import DocLayout
+
+    vendor = _read_straight(DocLayout([page], "ocr"), None)["vendor_name"][0]
+    assert vendor.value == "Kingsway Mechanical Limited"  # read straightened, the name's words in one line again
