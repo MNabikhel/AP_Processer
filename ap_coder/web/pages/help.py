@@ -53,6 +53,53 @@ def whats_new() -> Any:
     return minimd.render(text, top=5)
 
 
+def setup_report(store: Any) -> str:
+    """The doctor's report (``python -m ap_coder doctor``, offline, without asking LM Studio): safe to paste."""
+    from ap_coder.core.config import Settings
+    from ap_coder.ops.cli import _load_reference, build_parser
+    from ap_coder.ops.doctor import format_checks, run_checks
+
+    args = build_parser().parse_args(["--db", str(store.path), "doctor"])
+    try:
+        checks = run_checks(Settings.from_env(), lambda: _load_reference(args), online=False, llm_checks=False)
+    except Exception as exc:  # noqa: BLE001 - the page that reports problems must not be one
+        return f"## AP Coder doctor report\n\nThe checks could not run: {type(exc).__name__}: {exc}"
+    return format_checks(checks)
+
+
+def activity_report(store: Any, include_codes: bool) -> str:
+    """The share report (``python -m ap_coder share-report``): counts and accuracy, no vendor names, amounts or
+    file names. Invoices are doc-01, doc-02...; which file each one is stays in the data folder's key file."""
+    from ap_coder.ops.share_report import build_share_report
+
+    data = data_dir(store)
+    try:
+        return build_share_report(data / "output", None, include_codes, key_file=data / "share_report_key.csv",
+                                  db_path=store.path)  # fmt: skip
+    except FileNotFoundError:
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return f"## AP Coder run summary\n\nThe summary could not be made: {type(exc).__name__}: {exc}"
+
+
+@router.get("/help/report", response_class=HTMLResponse)
+def report_page(request: Request, codes: bool = False) -> HTMLResponse:
+    """Report a problem: what to write, and the two reports to copy (no command line)."""
+    store = get_store(request)
+    logs = paths.user_settings_path().parent / "logs"
+    return render(
+        request,
+        "help_report.html",
+        "help",
+        title="Report a problem",
+        setup=setup_report(store),
+        activity=activity_report(store, codes),
+        codes=codes,
+        key_file=short_path(data_dir(store) / "share_report_key.csv"),
+        logs=[short_path(logs / "launch.log"), short_path(logs / "dashboard-errors.log")],
+    )
+
+
 def link(key: str) -> dict[str, str] | None:
     page = BY_KEY.get(key)
     return {"path": page.path, "title": page.title} if page else None

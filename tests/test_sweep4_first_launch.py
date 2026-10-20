@@ -297,3 +297,55 @@ def test_the_server_window_does_not_repeat_the_address_with_ctrl_c(launch, monke
     launch.start_dashboard([], {})
     out = capsys.readouterr().out
     assert "Ctrl+C" not in out and "AP Coder is running at http://127.0.0.1:8501" in out
+
+
+# --- The dashboard -------------------------------------------------------------------------------------------------
+
+
+def _client(store):
+    s = Settings()
+    app = create_app(replace(s, llm=replace(s.llm, provider="off")), store, start_reader=False)
+    return TestClient(app, base_url="http://localhost")
+
+
+@pytest.fixture
+def fresh(tmp_path):
+    """A new laptop: nothing imported, nothing processed."""
+    return Store(tmp_path / "private" / "ap_coder.db")
+
+
+@pytest.fixture
+def demo_db(tmp_path_factory):
+    from ap_coder.ops.demo import load_demo
+
+    path = tmp_path_factory.mktemp("demo") / "private" / "ap_coder.db"
+    load_demo(Store(path), Settings())
+    return path
+
+
+# --- Reporting a problem, without a command line ---------------------------------------------------------------
+
+
+def test_report_a_problem_gives_both_reports_to_copy_without_a_command_line(demo_db, tmp_path, monkeypatch):
+    """Help (and the guides) asked the tester to open scripts\\terminal.bat and type `python -m ap_coder doctor` and
+    `python -m ap_coder share-report`: the reports a problem report needs were behind a command line."""
+    import shutil
+
+    target = tmp_path / "private" / "ap_coder.db"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(demo_db, target)
+    client = _client(Store(target))
+    text = client.get("/help/report").text
+    assert "Report a problem" in text and "Describe it in words" in text
+    assert "AP Coder doctor report" in text  # the setup report, as `doctor` writes it
+    assert "AP Coder run summary (redacted)" in text  # the share report, as `share-report` writes it
+    assert "data-copy-from" in text and "python -m" not in text and "terminal.bat" not in text
+    assert "dashboard-errors.log" in text and "launch.log" in text  # where the details of a failure are
+    assert "-> " not in text.split("AP Coder run summary")[1].split("</textarea>")[0]  # no GL codes unless asked
+    help_page = client.get("/help").text
+    assert 'href="/help/report"' in help_page
+
+
+def test_report_a_problem_on_a_new_laptop_says_there_is_nothing_to_summarise_yet(fresh):
+    text = _client(fresh).get("/help/report").text
+    assert "AP Coder doctor report" in text and "No invoices processed yet" in text

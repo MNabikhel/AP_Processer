@@ -95,3 +95,5 @@ details.st-danger > summary {color: var(--lg-danger);}
 .hp-faq details:last-child {border-bottom: none;}
 .hp-faq summary {cursor: pointer; font-weight: 500; font-size: 13.5px;}
 .hp-faq p {margin: 8px 0 4px; color: var(--lg-muted); font-size: 13.5px; line-height: 1.5;}
+.hp-report {width: 100%; box-sizing: border-box; margin-top: 8px; font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px; line-height: 1.45; white-space: pre; resize: vertical;}
