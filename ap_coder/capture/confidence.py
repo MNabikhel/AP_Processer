@@ -42,6 +42,7 @@ from .types import (
     PART_OF_TERMS,
     RIVAL_NAME,
     TWO_SUBTOTALS,
+    UNMEASURED,
     VERIFIED,
     FieldResult,
     LineReading,
@@ -60,6 +61,7 @@ SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE", "DUE_MATCHES_TER
 # Checks that only show a value is reasonable, not that it is the printed one: passing them confirms nothing.
 WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE"}
 LIKELY_AT = 0.85
+UNMEASURED_CAP = 0.8  # a value read only by wording the benchmark never prints (``UNMEASURED``), no check confirming
 REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
 SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
 # Values read with no label of their own (``reader``: a receipt's date and time, a date beside the title): checked.
@@ -217,11 +219,16 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
         ok = inv <= due <= inv + dt.timedelta(days=400)
         checks.append({"code": "DUE_AFTER_INVOICE", "ok": ok, "fields": ["due_date", "invoice_date"],
                        "detail": f"due {due} vs invoice {inv}"})  # fmt: skip
-        net = re.search(r"net\s*(\d{1,3})", str(values.get("payment_terms") or ""), re.I)
-        if net:
-            ok = (due - inv).days == int(net.group(1))
-            checks.append({"code": "DUE_MATCHES_TERMS", "ok": ok, "fields": ["due_date", "invoice_date", "payment_terms"],
-                           "detail": f"invoice date + {net.group(1)} days {'=' if ok else '≠'} due date"})  # fmt: skip
+        by_terms = _due_by_terms(inv, values.get("payment_terms"))
+        if by_terms:
+            ok = by_terms == due
+            # "Net 30 EOM", "Net 10 prox": the same due date from any day of the invoice's month, so the invoice's own
+            # day is not confirmed by it.
+            month_only = _counts_from_month(values.get("payment_terms"))
+            fields = ["due_date", "payment_terms"] if month_only else ["due_date", "invoice_date", "payment_terms"]
+            checks.append({"code": "DUE_MATCHES_TERMS", "ok": ok, "fields": fields,
+                           "detail": f"invoice date + {(by_terms - inv).days} days ({values['payment_terms']}) "
+                                     f"{'=' if ok else '≠'} due date"})  # fmt: skip
     inv_no, po = values.get("invoice_number"), values.get("po_number")
     if inv_no and po and normalize_value("invoice_number", inv_no) == normalize_value("po_number", po):
         checks.append({"code": "INVOICE_NOT_PO", "ok": False, "fields": ["invoice_number", "po_number"],
@@ -240,6 +247,25 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
             checks.append({"code": "VENDOR_NAME_MATCH", "ok": ok, "fields": ["vendor_name"],
                            "detail": "supplier name " + ("matches" if ok else "differs from") + " the vendor master"})  # fmt: skip
     return checks
+
+
+def _due_by_terms(invoice_date: dt.date, terms: Any) -> dt.date | None:
+    """The due date the terms give, counted as the app counts it ("Net 30 EOM" from the end of the month, "Net 10
+    prox" on the 10th of the next month); None for terms with no net days, or due on receipt."""
+    from ..coding.terms import parse_terms, payment
+
+    t = parse_terms(str(terms or ""))
+    if t.net_days is None or t.on_receipt:
+        return None
+    p = payment({"invoice_date": invoice_date.isoformat(), "payment_terms": str(terms)})
+    return p.due if p.source == "terms" else None
+
+
+def _counts_from_month(terms: Any) -> bool:
+    from ..coding.terms import parse_terms
+
+    t = parse_terms(str(terms or ""))
+    return bool(t.eom or t.prox_day)
 
 
 def _date(v: Any) -> dt.date | None:
@@ -535,6 +561,15 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if any(PART_OF_TERMS in r.method for _, r in g.readings):
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("the terms ask for a deposit first: these days are only the balance's")
+        if all(UNMEASURED in r.method for _, r in g.readings):
+            # Wording the benchmark never prints: its reading's family has a measured record, this wording not. Two
+            # OCR reads of a scan see the same pixels: however many agree, only a check on other fields lifts it.
+            if n_conf and field not in failed:
+                conf = min(conf, max(0.0, min(raw, SINGLE_READER_CAP)))
+                reasons.append("read from wording the test invoices do not print, and confirmed by the other fields")
+            else:
+                conf = min(conf, max(0.0, min(raw, UNMEASURED_CAP)))
+                reasons.append("read from wording the test invoices do not print: a person checks it")
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
         # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
         unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []
