@@ -3685,3 +3685,139 @@ a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the a
 - **N-126** · A discount in days with net days on a day of the next month ("2% 10 days, Net 10th prox") is read as
   "Net 10 prox": the due date is kept and the early-payment discount dropped, since the app's terms form cannot
   hold both (B-377). A person adds the discount if it is wanted. Left until the terms form can.
+
+### Learning from approvals
+
+Found by reading the later invoices of the 15 repeat vendors among the sweep 4 real invoices (47 invoices after a
+vendor's first, 370 printed fields) twice: with the template learned from the vendor's earlier invoices as AP approved
+them, and without one. Learning helped (fields right 291 → 297) but replaced a correct, labelled reading with a wrong
+one 9 times and marked 12 right values down (verified to likely, likely to check), all where the vendor's layout had
+changed. Each fix has a small generated fixture in `tests/test_learning_sweep4.py` (the corpus is not in the repo).
+
+Measured after B-387 to B-393: fields right with learning 297 → 304 of 370 (291 without); wrong and shown likely or
+verified 5 → 6 (6 without: the same values the rule reader alone shows so); fields worse with learning than without
+21 → 2 (N-127, N-128). Learning benchmark (12 suppliers × 30, seed 5): accuracy 100% as before, none wrong among the
+invoices that would go touchless, which rose from 29/57/61/58% to 69/82/78/86% (invoices 2-5, 6-10, 11-20, 21-30).
+Benchmark (60, seed 3, 50% scans) and the hard corpus (150) unchanged: no template there, and the same values and
+confidences (99.8% fields, verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
+
+#### B-387 · A template reading taken without its label replaced a value the page's own label gave · high
+- **Where:** `ap_coder/capture/supplier.py` (`_apply_variant`); `ap_coder/capture/types.py` (new `UNANCHORED`);
+  `ap_coder/capture/confidence.py` (`fuse`, new `_unanchored_fill_only`, `_totals_that_add_up`)
+- **Symptom:** When the label a field was learned by is not on the page, the template reads whatever is printed where
+  the value used to be. That reading counted as a full template reading (the template is trusted above the rule
+  reader) and beat the rule reader's value: a receipt's "Receipt" as the supplier, 299.97 against a receipt's verified
+  total of 2,516.28 (marked down to likely). A subtotal filled so also made a coincidental sum add up with the rule
+  reader's runner-up tax ("-7,90 + 0,03 - 0,92 = -8,79", the printed tax is -1,12), shown likely.
+- **Cause:** `apply_template` marked readings found by their label and readings found by position alike
+  (`method="template"`); only the score differed, and fusion weighs the reader, not how it read.
+- **Reproduce:** a template learned with "Invoice No:"; the next invoice prints "Ref" instead; fuse with a rule reading
+  of another number.
+- **Reproduced:** yes (the template's number won)
+- **Fix:** a reading at the learned spot without its label is marked `template+unanchored` (the calibration reads it
+  by its family, "template"). It only fills a field no other reader read, at *check*, or agrees with another reader's
+  first choice (or a candidate that reader scored as high: a tie it settles); otherwise it is dropped. It never makes
+  the totals add up by changing another field.
+- **Test:** `tests/test_learning_sweep4.py::test_a_reading_at_the_learned_spot_without_its_label_does_not_beat_a_labelled_reading`,
+  `tests/test_learning_sweep4.py::test_a_template_reading_without_its_label_does_not_re_decide_the_other_totals`
+- **Lesson:** Don't weigh a reader by its name alone: how it read (by its label, or where the value used to be) is
+  the evidence.
+
+#### B-388 · A value printed twice was learned at the wrong label · high
+- **Where:** `ap_coder/capture/supplier.py` (`learn`, `_best_span`, new `_read_where`)
+- **Symptom:** On a vendor's first invoices the delivery date was the invoice date: the template learned the invoice
+  date at "Liefer- und Leistungsdatum:" and read the delivery date as the invoice date once they differed (2018-06-03
+  for 2018-06-05). A credit note dated and due the same day printed the date once: the due date was learned at "Date
+  de facture" and the next invoice's date was read as its due date (2017-11-05 by the template over the verified
+  2017-12-05). A credit note without tax taught the total at "Total HT" (and a partial invoice at "Zahlbetrag"): the
+  template's rival marked the next invoice's verified total down.
+- **Cause:** `learn` looked for the approved value on the page and, of several places, took the one near where it was
+  learned before, then by any label, then the first (the last for amounts): not the field's label, and the same words
+  for two fields.
+- **Reproduce:** two invoices with "Delivery Date:" and "Invoice Date:" both 05.06.2018 learned; a third with another
+  delivery date.
+- **Reproduced:** yes (`2018-06-03`)
+- **Fix:** of several places, the template learns the value where the rule reader reads that field, when it reads
+  that value; words learned for a field so (or clicked by the reviewer) are not learned for another field in the same
+  approval. A value printed once for two fields teaches the one the reader reads there.
+- **Test:** `tests/test_learning_sweep4.py::test_a_date_printed_twice_is_learned_where_the_reader_reads_it`,
+  `tests/test_learning_sweep4.py::test_one_printed_date_does_not_teach_two_fields`
+- **Lesson:** Don't learn from where a value happens to be printed: learn from where the page says it is.
+
+#### B-389 · The supplier's name printed again was learned as the name's label · medium
+- **Where:** `ap_coder/capture/supplier.py` (`learn`, new `_name_again`)
+- **Symptom:** "CONTOSOLTD." (the logo, glued by OCR) over "CONTOSO" in the address block: the template learned the
+  name with the logo as its label, and on the next invoices read the words under the logo as the supplier ("Calle de",
+  "Rua de", "Francesco"; read by its label, so trusted over the rule reader).
+- **Cause:** any words left of or above a value can be its anchor; for the supplier's name they were the name itself.
+- **Reproduce:** learn "CONTOSO LTD." from a page printing "CONTOSOLTD." over "CONTOSO".
+- **Reproduced:** yes (an anchor "CONTOSOLTD.")
+- **Fix:** an anchor that holds the supplier's name is not kept: the name is learned by its position (B-387 applies).
+- **Test:** `tests/test_learning_sweep4.py::test_the_suppliers_name_printed_again_is_not_a_label`
+- **Lesson:** Don't take a second printing of a value for its label.
+
+#### B-390 · A tax rate was read as the tax amount · medium
+- **Where:** `ap_coder/capture/supplier.py` (`_apply_variant`)
+- **Symptom:** "Sales Tax 3%   $311.25": the template read 3.00 as the total tax where the amount was learned (this
+  vendor's statements print the rate there), and the totals check failed.
+- **Cause:** an amount field took any text that parses as a number.
+- **Reproduce:** learn "Sales Tax $10.00"; apply to "Sales Tax 3% $311.25".
+- **Reproduced:** yes (`3.0`)
+- **Fix:** a value with a % sign is a rate, never an amount.
+- **Test:** `tests/test_learning_sweep4.py::test_a_tax_rate_is_not_read_as_the_tax_amount`
+- **Lesson:** Don't let "it parses as a number" stand for "it is an amount".
+
+#### B-391 · The learned day/month order was applied to dates printed another way · medium
+- **Where:** `ap_coder/capture/supplier.py` (`_apply_variant`)
+- **Symptom:** Day first was learned from a till receipt's "10-06-19"; another receipt of the vendor printed
+  "6/10/2019" (month first) and the template read it as 2019-10-06, agreeing with the rule reader's unsure reading.
+- **Cause:** the variant's date order applied to every ambiguous date it read; with no order learned, an ambiguous date
+  came back unparsed.
+- **Reproduce:** learn 2019-06-10 from "10-06-19"; apply to "6/10/2019".
+- **Reproduced:** yes (`2019-10-06`)
+- **Fix:** the learned order settles a date that reads both ways only when it is printed in the form it was learned
+  from ("07-06-19"); otherwise the template does not read it and the page's other evidence decides.
+- **Test:** `tests/test_learning_sweep4.py::test_the_learned_date_order_holds_only_for_dates_printed_the_same_way`
+- **Lesson:** Don't carry an order learned from one form of a date to another form.
+
+#### B-392 · Runner-ups that added up replaced amounts two readers chose first · high
+- **Where:** `ap_coder/capture/confidence.py` (`_totals_that_add_up`)
+- **Symptom:** subtotal 100,00 and total 110,00, each the first choice of both the rule reader and the template; the
+  IVA row (8,00) was a runner-up of each for both, and "8 = 8" added up: both were replaced by 8.00.
+- **Cause:** when the first choices do not add up, any combination of the top two candidates that does was taken,
+  whatever the readers' agreement on the values it replaced.
+- **Reproduce:** fuse the readings above.
+- **Reproduced:** yes (`8.0, 8.0`)
+- **Fix:** a value no reader chose first does not replace one two readers chose first.
+- **Test:** `tests/test_learning_sweep4.py::test_runner_ups_that_add_up_do_not_replace_amounts_two_readers_chose`
+- **Lesson:** Don't let a sum that balances by itself (subtotal = total) outvote two readers.
+
+#### B-393 · The template agreeing, or offering a rival, made a right value less certain · low
+- **Where:** `ap_coder/capture/confidence.py` (`fuse`)
+- **Symptom:** A supplier's name the rule reader read with a rival name under it was likely; with the template agreeing
+  it was *check* (5 vendors' names). A total that adds up was verified; with the template's rival (its old spot) it
+  was likely.
+- **Cause:** the evidence pattern with the template is not measured yet where the one without it is, so the agreeing
+  reader fell back to the raw score; and the template's rival counted as a contest though the totals settled it.
+- **Reproduce:** fuse the rule reader's name with a rival and the template's agreeing reading.
+- **Reproduced:** yes (check)
+- **Fix:** the template agreeing never leaves a value less certain than the other readers alone would (as for the page
+  reader; this floor stays below verified); a rival only the template read does not contest an amount the totals add
+  up with (the reason names it).
+- **Test:** `tests/test_learning_sweep4.py::test_the_template_agreeing_never_makes_a_value_less_certain`,
+  `tests/test_learning_sweep4.py::test_a_template_rival_does_not_mark_down_an_amount_the_totals_confirm`
+- **Lesson:** Don't let one more agreeing reader cost confidence.
+
+#### Left as they are (learning from approvals)
+
+- **N-127** · `i2d_qualityhosting`: the template fills the subtotal 34.73 (as the corpus has it); the totals check then
+  fails (34.73 + tax 3.89 ≠ 34.73: the printed subtotal is the gross) and marks the total down from likely to check.
+  The template read what is printed; the check is right to ask.
+- **N-128** · A German terms sentence ("Skontovereinbarung: 2% bei Zahlung innerhalb 10 Tagen nach Rechnungsdatum"):
+  the template reads the part it learned ("10 Tagen nach Rechnungsdatum", at check) where the rule reader writes the
+  short form ("2% 10 days", also check). Left with B-372's terms work.
+- **N-129** · `zf1_extended_warenrechnung`: since B-388 the total is learned where the rule reader read it on the
+  vendor's earlier invoice, and on this layout that spot holds another amount; the template no longer offers 518.99
+  against the reader's 382.47 (check either way). Learning where the reader reads repeats the reader's choice of
+  label; learning only dates so kept this one (305 right) but brought back a verified total marked down by a rival
+  (B-388's "Zahlbetrag"): left as one rule for every field.

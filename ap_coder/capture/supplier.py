@@ -42,6 +42,7 @@ from .types import (
     DATE_FIELDS,
     FIELDS,
     MISSING,
+    UNANCHORED,
     VERIFIED,
     Box,
     CaptureResult,
@@ -621,27 +622,45 @@ def learn(
     confirmed: ``{field: (value, boxes or None)}``.
 
     ``boxes`` are the words the reviewer clicked (teach-by-click) and are authoritative; without them the
-    value is looked for on the page. A value that cannot be found on the page teaches nothing."""
+    value is looked for on the page. A value that cannot be found on the page teaches nothing.
+
+    A value printed more than once (an invoice date that is also the delivery date) is learned where the rule
+    reader reads the field, when it reads that value; and words learned for one field this way are not learned
+    for another one (a date printed once that is both the invoice and the due date teaches the invoice date)."""
     if isinstance(template, dict):
         template = Template.from_dict(template)
     template = template or Template()
     when = when or _now()
-    learned = 0
+    items = []
     for name, item in confirmed.items():
         value, boxes = item if isinstance(item, tuple) else (item, None)
-        if value is None or value == "" or name not in FIELDS:
-            continue
+        if value is not None and value != "" and name in FIELDS:
+            items.append((name, value, boxes))
+    read = _read_where(layout, items)
+    # First the values the reviewer clicked or the rule reader read where they are printed, then the rest, on words
+    # not taken by those.
+    items.sort(key=lambda it: not (it[2] or read.get(it[0])))
+    taken: set[int] = set()
+    learned = 0
+    for name, value, boxes in items:
         variants = template.fields.setdefault(name, [])
-        hit = _taught(layout, boxes, name, value) if boxes else _best_span(layout, name, value, variants)
+        if boxes:
+            hit = _taught(layout, boxes, name, value)
+        else:
+            hit = _best_span(layout, name, value, variants, read.get(name, []), taken)
         if hit is None:
             continue
         page_no, words, raw, order = hit
+        if boxes or _read_here(words, read.get(name, [])):
+            taken |= {id(w) for w in words}
         page = _page(layout, page_no)
         rows = _rows(page.words) if page is not None else []
         vbox = union_all(boxes) if boxes else _span_box(words)  # a taught box is authoritative
         if vbox is None:
             continue
         anchor = _make_anchor(rows, words) if words else None
+        if anchor is not None and name == "vendor_name" and _name_again(anchor.text, value):
+            anchor = None  # the name printed again (a logo over the address) is not its label
         _update_variants(variants, _page_ref(layout, page_no), _box4(vbox), anchor, raw, order, when)
         learned += 1
     if learned:
@@ -669,14 +688,60 @@ def _taught(
     return box.page, words, raw, (orders[0] if len(orders) == 1 and orders[0] in ("dmy", "mdy") else None)
 
 
+def _same_value(name: str, a: Any, b: Any) -> bool:
+    if name in AMOUNT_FIELDS:  # a credit printed without its sign is the same amount
+        x, y = parse_amount(a), parse_amount(b)
+        return x is not None and y is not None and abs(abs(x) - abs(y)) < 0.005
+    key = compare_key(name, a)
+    return key is not None and key == compare_key(name, b)
+
+
+def _read_where(layout: DocLayout, items: list[tuple[str, Any, Any]]) -> dict[str, list[Box]]:
+    """{field: the boxes of the rule reader's readings of the confirmed value}: where the page's own label says the
+    value is printed."""
+    try:
+        from .reader import read_fields
+
+        readings = read_fields(layout)
+    except Exception:  # the reader only helps choose where to learn: never fatal
+        return {}
+    out: dict[str, list[Box]] = {}
+    for name, value, boxes in items:
+        if boxes:
+            continue
+        found = [b for r in readings.get(name, []) if r.boxes and _same_value(name, r.value, value) for b in r.boxes]
+        if found:
+            out[name] = found
+    return out
+
+
+def _read_here(words: list[Word], boxes: list[Box]) -> bool:
+    return any(
+        w.box.page == b.page and w.box.cx >= b.x0 and w.box.cx <= b.x1 and w.box.cy >= b.y0 and w.box.cy <= b.y1
+        for w in words
+        for b in boxes
+    )
+
+
+def _name_again(text: str, value: Any) -> bool:
+    """``text`` holds the supplier's name ``value`` itself ("CONTOSOLTD." over "CONTOSO")."""
+    name = _compact(vendor_key(str(value)))
+    return len(name) >= 3 and name in _compact(text)
+
+
 def _best_span(
-    layout: DocLayout, name: str, value: Any, variants: list[Variant]
-) -> tuple[int, list[Word], str, str | None] | None:
+    layout: DocLayout, name: str, value: Any, variants: list[Variant], read: list[Box] | None = None,
+    taken: set[int] | None = None,
+) -> tuple[int, list[Word], str, str | None] | None:  # fmt: skip
+    """Where on the page to learn ``value``: where the rule reader read it (``read``), else near where it was
+    learned before, by a label, and not on words another field was learned at this time (``taken``)."""
     spans = _find_spans(layout, name, value)
+    if not read and taken:
+        spans = [s for s in spans if not taken & {id(w) for w in s[1]}]
     if not spans:
         return None
 
-    def rank(item: tuple[int, tuple[int, list[Word], str]]) -> tuple[float, float]:
+    def rank(item: tuple[int, tuple[int, list[Word], str]]) -> tuple[bool, float, float]:
         pos, (page_no, words, _) = item
         box = _box4(_span_box(words))
         ref = _page_ref(layout, page_no)
@@ -686,7 +751,7 @@ def _best_span(
         label = 1.0 if found and _looks_like_label(_join(found[0])) else 0.5 if found else 0.0
         # Totals are at the bottom: of equal amounts, the last one; for the rest, the first one.
         order = pos / len(spans) if name in AMOUNT_FIELDS else -pos / len(spans)
-        return (2 * near + label, order)
+        return (_read_here(words, read or []), 2 * near + label, order)
 
     _, (page_no, words, order) = max(enumerate(spans), key=rank)
     return page_no, words, _join(words), (order if order in ("dmy", "mdy") else None)
@@ -890,20 +955,29 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
 
             if sum(c.isdigit() for c in raw) >= 9 and not looks_like_money(raw):
                 return  # a registration or account number ("GST Reg. No. 123456782"), not an amount
+            if "%" in raw:
+                return  # a rate ("Sales Tax 3%"), not an amount
             mark = _credit_mark(rows, words)
             if mark is not None:  # "$1,370.34 CR": the sign is printed beside the amount
                 words, raw = [*words, mark], f"{raw} {mark.text}"
-        value = normalize_value(name, raw, variant.date_order)
+        order = variant.date_order
+        if name in DATE_FIELDS and len({iso for iso, _ in date_candidates(raw)}) > 1:
+            # 06/10/2019 reads both ways: the order learned holds for dates printed as the ones it was learned from
+            # ("10-06-19"), not for another form ("6/10/2019", another till's).
+            if not order or _collapsed(value_shape(raw)) not in {_collapsed(p) for p in variant.shape.patterns}:
+                return
+        value = normalize_value(name, raw, order)
         if value is None or value == "":
             return
         conf = min((w.conf for w in words), default=1.0)
         score = (base * (0.6 + 0.4 * geometry) + SHAPE_WEIGHT * shape) * experience * conf - 0.005 * (len(words) - 1)
-        reading = Reading(name, value, raw, [w.box for w in words], round(min(score, 0.99), 4), "template")
+        reading = Reading(name, value, raw, [w.box for w in words], round(min(score, 0.99), 4), method)
         # Of nested spans that fit alike, the longer is the value: "2 074,06", not its tail "074,06".
         rank = (variant.shape.fit(raw), shape, len(words), reading.score)
         found.append((reading, {id(w) for w in words}, rank))
 
     hits = _anchor_hits(rows, variant.anchor) if variant.anchor else []
+    method = "template" if hits else "template" + UNANCHORED  # without its label: read where the value used to be
     if hits:
         learned = variant.anchor.box
         abox, awords, glued, sim, _whole = min(

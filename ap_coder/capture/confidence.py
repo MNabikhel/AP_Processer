@@ -42,6 +42,7 @@ from .types import (
     PART_OF_TERMS,
     RIVAL_NAME,
     TWO_SUBTOTALS,
+    UNANCHORED,
     UNMEASURED,
     VERIFIED,
     FieldResult,
@@ -55,6 +56,7 @@ RELIABILITY = {"rules": 0.85, "template": 0.92, "di": 0.85, "ai": 0.8, "ocr": 0.
 PAGE_READERS = ("rules", "ocr", "ocr2", "template", "di")
 VERIFIED_AT = 0.985
 SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
+NEAR_TIE = 0.02  # a reader's candidates scoring within this of its first choice: it could not tell them apart
 # Checks whose failure has innocent explanations (exempt lines, shipping not taxed, line items the
 # reader could not separate): they lower confidence but do not force a field to "check".
 SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE", "DUE_MATCHES_TERMS"}
@@ -376,6 +378,35 @@ def _page_reader_differs(
     return None
 
 
+def _unanchored_fill_only(field: str, per_source: dict[str, list[Reading]]) -> None:
+    """The template's readings taken where the value was learned, its label not found on this page (``UNANCHORED``),
+    only fill a field the other readers left empty, or agree with one of their first choices: the layout may have
+    changed, and what is printed at the old spot does not replace what another reader read. Changes ``per_source``."""
+    template = per_source.get("template") or []
+    if not any(UNANCHORED in r.method for r in template):
+        return
+    # A reader's first choice, and what it scored as high (a tie the template may settle).
+    firsts = {
+        _key(field, r.value)
+        for s, cands in per_source.items()
+        if s != "template" and cands
+        for r in cands
+        if r.score >= cands[0].score - NEAR_TIE
+    }
+    firsts.discard(None)
+    if not firsts:
+        return
+    kept = [r for r in template if UNANCHORED not in r.method or _key(field, r.value) in firsts]
+    if kept:
+        per_source["template"] = kept
+    else:
+        del per_source["template"]
+
+
+def _unanchored(g: _Group | None) -> bool:
+    return g is not None and all(UNANCHORED in r.method for _, r in g.readings)
+
+
 def _whole_first_word(groups: list[_Group]) -> None:
     """One OCR engine missed the start of the name ("ipements Saint-Laurent" for "Équipements Saint-Laurent", an
     accented capital it could not see): the reading that has the whole first word goes first. The two still
@@ -402,6 +433,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     all_groups: dict[str, list[_Group]] = {}
     for field in fields:
         per_source = {s: cands.get(field, []) for s, cands in by_source.items() if cands.get(field)}
+        _unanchored_fill_only(field, per_source)
         groups = _groups(field, per_source)
         if field == "vendor_name":
             _whole_first_word(groups)
@@ -427,6 +459,15 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                     )
             else:
                 failed.setdefault(f, []).append(c["detail"])
+    template_rival: dict[str, Any] = {}
+    adds_up = {f for c in checks if c["ok"] and c["code"] == "TOTALS_ADD_UP" for f in c["fields"]}
+    for f in AMOUNT_FIELDS:
+        rival = all_groups[f][1] if f in contest else None
+        if rival and f in adds_up and f not in failed and all(s == "template" for s, _ in rival.readings):
+            # The supplier's template read another amount (its learned spot, as the layout was): the totals add up with
+            # this one, read on the page by another reader. The arithmetic settles it: no contest.
+            template_rival[f] = rival.value
+            del contest[f]
 
     results: dict[str, FieldResult] = {}
     for field in fields:
@@ -445,6 +486,8 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             raw *= 1.0 - 0.8 * min(contest[field], 1.0)
             other = all_groups[field][1]
             reasons.append(f"another reading: {other.value}")
+        elif field in template_rival:
+            reasons.append(f"the supplier's template read {template_rival[field]}: the totals add up with this one")
         n_conf = confirmed.get(field, 0)
         if n_conf and field not in failed:
             raw = 1.0 - (1.0 - raw) * (0.15 ** min(n_conf, 3))
@@ -468,6 +511,16 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                                    contested=contest.get(field, 0.0) > 0.25,
                                    confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
             conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), without, local_evidence))
+        if "template" in sources and len(sources) > 1:
+            # Likewise the supplier's template agreeing: the pattern without it may be measured (the rule reader's
+            # name with a rival name under it), the one with it not yet. Agreeing never makes the value less certain
+            # than the other readers alone would (a lone reader is capped below verified: so is this floor).
+            others = [r for s, r in g.readings if s != "template"]
+            method = max(others, key=lambda r: (bool(r.boxes), r.score)).method
+            without = evidence_key(field, [s for s in sources if s != "template"], method, layout_source=layout_source,
+                                   contested=contest.get(field, 0.0) > 0.25,
+                                   confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
+            conf = max(conf, min(calibrate(max(0.0, min(raw, 1.0)), without, local_evidence), SINGLE_READER_CAP))
         if len(sources) > 1:
             # Readers that agree each describe the same evidence their own way (the supplier template's "template",
             # the rule reader's "label-right+adds-up"); which reading ranks first is chance, so the description
@@ -555,6 +608,11 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # agree on what is printed after one, which number it is the page does not say: a person checks it.
             conf = min(conf, UNLABELLED_CAP)
             reasons.append("read after a word that also names other numbers or dates (a receipt's, a customer's)")
+        if all(UNANCHORED in r.method for _, r in g.readings):
+            # Read by the supplier's template where the value used to be, its label not on this page: what is
+            # printed there now may be something else. A person checks it.
+            conf = min(conf, UNLABELLED_CAP)
+            reasons.append("read where this supplier's value was before, without its label on this page")
         if any(TWO_SUBTOTALS in r.method for _, r in g.readings):
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("the totals add up with another subtotal printed too (before or after the charges)")
@@ -681,12 +739,22 @@ def _totals_that_add_up(chosen: dict[str, Any], all_groups: dict[str, list[Any]]
                 for f, g in zip(_TOTAL_PARTS, parts, strict=True)
             ):
                 continue  # dropping a tax the readers agreed on is not "adding up"
+            if any(
+                g is not None and g is not chosen.get(f) and not g.top and len(getattr(chosen.get(f), "top", ())) >= 2
+                for f, g in (("grand_total", total), *zip(_TOTAL_PARTS, parts, strict=True))
+            ):
+                continue  # what no reader chose first does not replace what two chose first (the "8,00" row below)
             if (
                 parts[-1] is None
                 and chosen.get("tax_total") is not None
                 and not any(g is not None for g in parts[2:-1])
             ):
                 continue  # nor is dropping the total tax ("Total 889.20" read for the total of 889.20 + VAT 88.92)
+            picked = (("grand_total", total), *zip(_TOTAL_PARTS, parts, strict=True))
+            if any(_unanchored(g) for _, g in picked) and any(
+                g is not chosen.get(f) for f, g in picked if not _unanchored(g)
+            ):
+                continue  # a template reading without its label fills a field; it does not re-decide the others
             strength = total.strength() + sum(g.strength() for g in parts if g is not None)
             if strength > best_strength:
                 best, best_strength = (total, parts), strength
