@@ -74,6 +74,7 @@ _TABLE = [
         ("Net 60 jours", "Net 60"),
         ("30 jours net", "Net 30"),
         ("solde à 30 j", "Net 30"),
+        ("15jourssuivant la datedelafacture", "Net 15"),  # OCR's words run together
         ("Due on receipt", "Due on receipt"),
         ("Upon receipt", "Due on receipt"),
         ("Payable sur réception", "Due on receipt"),

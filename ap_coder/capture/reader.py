@@ -660,6 +660,7 @@ _ON_RECEIPT = re.compile(
 _TERMS_WORDS = [
     (re.compile(r"(?<=\d)\s*(?:tag(?:en|e)(?=netto)|(?:tag(?:en|e)|dias|giorni|gg|dagen)(?![a-z]))"), " days "),
     (re.compile(r"(?<=\d)\s*j(?![a-z])"), " jours"),  # "solde à 30 j"
+    (re.compile(r"(?<=\d)\s*(?=(days?|jours?))\1(?=[a-z])"), r" \1 "),  # OCR's "15jourssuivant la datedelafacture"
     (re.compile(r"(?<![a-z])skonto(?![a-z])"), "discount"),
     (re.compile(r"(?<![a-z])(?:innerhalb|binnen)(?:\s*von)?(?![a-z])"), "within"),
     (re.compile(r"(?<![a-z])bei\s*zahlung(?![a-z])"), "if paid"),

@@ -3148,7 +3148,8 @@ corpus is not in the repo). B- numbers start at B-372 and N- numbers at N-121, a
 - **Fix:** labels "Condición de pago", "Termini/Condizioni di pagamento", "Zahlungsbedingungen/-ziel/-konditionen",
   "Betalingsvoorwaarden/-termijn"; days also "días", "giorni"/"gg", "Tage(n)", "dagen", a discount also "Skonto"
   (with its days before or after its rate), "zahlbar sofort"/"sofort fällig"/"paiement immédiat" due on receipt, and
-  "DFFM"/"fine mese" end of month. With no labelled terms, a sentence that states them: one that starts with the
+  "DFFM"/"fine mese" end of month; days OCR glued to the next word ("15jourssuivant la datedelafacture") are
+  read as days. With no labelled terms, a sentence that states them: one that starts with the
   days and counts them from the invoice's date, one that says the payment is due or payable within them, "remit
   payment upon receipt", German "zahlbar innerhalb", "Tage netto", "Skonto", "sofort fällig"; two sentences that
   state different terms give none. Days in a sentence about something else ("discrepancies must be communicated
