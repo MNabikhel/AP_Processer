@@ -3,6 +3,10 @@
 import { toast } from "./app.js";
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-print]")) {
+    window.print();
+    return;
+  }
   const button = event.target.closest("[data-copy-from]");
   if (!button) return;
   const box = document.getElementById(button.dataset.copyFrom);

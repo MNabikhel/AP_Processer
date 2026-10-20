@@ -56,6 +56,17 @@ input[type="file"] {font: 13px Inter, system-ui, sans-serif; color: var(--lg-mut
 .st-md ul, .st-md ol {margin: 0 0 10px; padding-left: 20px; font-size: 13.5px; line-height: 1.5;}
 .st-md li + li {margin-top: 4px;}
 .st-md p {font-size: 13.5px; line-height: 1.5;}
+/* Help → Quick start: docs/QUICK_START.md */
+.qs-doc > * + * {margin-top: 0;}
+.qs-doc h2 {font-size: 16px; font-weight: 600; margin: 20px 0 6px;}
+.qs-doc > p:first-child {color: var(--lg-muted);}
+@media print {  /* one sheet of paper */
+  .qs-doc h2 {break-after: avoid; font-size: 14.5px; margin: 14px 0 4px;}
+  .qs-doc ul, .qs-doc ol {margin: 0 0 4px;}
+  .qs-doc li, .qs-doc p {break-inside: avoid; font-size: 12.5px; line-height: 1.4;}
+  .qs-doc p {margin: 0 0 4px;}
+  .qs-doc li + li {margin-top: 2px;}
+}
 
 /* A card or a section that opens: <details class="card st-dev"> / <details class="st-details"> */
 details.st-dev > summary, details.st-details > summary {cursor: pointer; display: flex; align-items: center; gap: 8px;

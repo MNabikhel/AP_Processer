@@ -4,10 +4,12 @@ Import pages, and the dashboard's words)."""
 
 from __future__ import annotations
 
+import html
 import importlib.util
 import io
 import json
 import logging
+import re
 import sys
 from dataclasses import replace
 from types import SimpleNamespace
@@ -349,3 +351,56 @@ def test_report_a_problem_gives_both_reports_to_copy_without_a_command_line(demo
 def test_report_a_problem_on_a_new_laptop_says_there_is_nothing_to_summarise_yet(fresh):
     text = _client(fresh).get("/help/report").text
     assert "AP Coder doctor report" in text and "No invoices processed yet" in text
+
+
+# --- The Quick start: one printable page, in the docs and in the dashboard -----------------------------------------
+
+QUICK_START = ROOT / "docs" / "QUICK_START.md"
+
+
+def _dashboard_words(*clients) -> str:
+    """Every word the dashboard shows: the pages of the first hour as drawn, and its templates and page modules (a
+    button shown only after an action), HTML entities read. Not the Quick start page itself."""
+    web = ROOT / "ap_coder" / "web"
+    files = [*web.glob("templates/*.html"), *web.glob("pages/*.py"), *web.glob("*.py"), *web.glob("static/js/*.js")]
+    texts = [f.read_text(encoding="utf-8") for f in files if f.name != "help_quick_start.html"]
+    for client in clients:
+        for url in ("/review", "/process", "/accounts", "/settings/review", "/settings/reading", "/exports", "/help"):
+            texts.append(client.get(url).text)
+    return re.sub(r"\s+", " ", html.unescape("\n".join(texts)))
+
+
+def test_the_quick_start_names_only_buttons_and_pages_the_dashboard_has(fresh, demo_db):
+    """Bold in the Quick start is the name of a page or a button, word for word (B-203: a guide named a button the
+    app doesn't have). "N" stands for a number the button shows."""
+    text = QUICK_START.read_text(encoding="utf-8")
+    named = [re.sub(r"\s+", " ", n) for n in re.findall(r"\*\*(.+?)\*\*", text, re.S)]
+    assert len(named) > 20
+    words = _dashboard_words(_client(fresh), _client(Store(demo_db)))
+    missing = [n for n in named if not all(part in words for part in re.split(r"\s+N\b\s*", n) if part)]
+    assert missing == []
+
+
+def test_the_quick_start_is_one_short_page_in_plain_words():
+    text = QUICK_START.read_text(encoding="utf-8")
+    assert len(text.split()) < 750  # one printed page, give or take
+    for heading in ("## Install", "## Start", "## The first six steps", "## Where things are", "## When you are stuck",
+                    "## Reporting a problem"):  # fmt: skip
+        assert heading in text
+    assert len(re.findall(r"(?m)^[1-6]\. ", text)) == 6
+    for jargon in ("python", "venv", "pip ", "AP_", ".env", "terminal.bat", "manager"):
+        assert jargon not in text, jargon
+
+
+def test_the_quick_start_is_a_printable_page_under_help(fresh):
+    client = _client(fresh)
+    page = client.get("/help/quick-start")
+    assert page.status_code == 200
+    text = html.unescape(page.text)
+    assert "<h2>The first six steps</h2>" in text
+    assert "<ol>" in page.text and "Save review settings" in text and "Report a problem" in text
+    assert "data-print" in page.text  # the Print button
+    css = client.get("/static/app.css").text
+    assert "@media print" in css and ".rail" in css.split("@media print", 1)[1]  # printed without the menu
+    assert 'href="/help/quick-start"' in client.get("/help").text
+    assert 'href="/help/quick-start"' in client.get("/review").text  # the welcome page

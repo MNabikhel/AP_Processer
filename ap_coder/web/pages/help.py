@@ -53,6 +53,22 @@ def whats_new() -> Any:
     return minimd.render(text, top=5)
 
 
+def quick_start_doc() -> Any:
+    """docs/QUICK_START.md as HTML, without its own title ("" when the file isn't there)."""
+    doc = paths.PROJECT_DIR / "docs" / "QUICK_START.md"
+    if not doc.is_file():
+        return ""
+    text = doc.read_text(encoding="utf-8")
+    text = text.split("\n", 1)[1] if text.startswith("# ") else text
+    return minimd.render(text, top=1)  # "## Install" is a section of the page: h2
+
+
+@router.get("/help/quick-start", response_class=HTMLResponse)
+def quick_start_page(request: Request) -> HTMLResponse:
+    """The pilot tester's one-page Quick start (docs/QUICK_START.md), to read or print."""
+    return render(request, "help_quick_start.html", "help", doc=quick_start_doc())
+
+
 def setup_report(store: Any) -> str:
     """The doctor's report (``python -m ap_coder doctor``, offline, without asking LM Studio): safe to paste."""
     from ap_coder.core.config import Settings

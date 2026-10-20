@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block head %}<link rel="stylesheet" href="/static/settings.css?v={{ static_version }}">{% endblock %}
-{% block aside %}<a class="btn" href="/help/report"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>
+{% block aside %}<a class="btn primary" href="/help/quick-start"><span class="ms" aria-hidden="true">print</span>Quick start</a>
+<a class="btn" href="/help/report"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>
 <a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>{% endblock %}
 {% block content %}
 {% if news %}

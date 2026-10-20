@@ -12,6 +12,9 @@ reports, and you can read both before sending:
 |---|---|---|---|
 | **Doctor report** | **Help → Report a problem** → *The setup report* → **Copy** (or `python -m ap_coder doctor --online`) | pass/fail of setup, package versions, row counts and column *names*, tax setup status | keys, endpoint URLs, codes, account names |
 | **Share report** | **Help → Report a problem** → *The activity summary* → **Copy** (or `python -m ap_coder share-report`) | counts, confidence buckets, issue codes, accuracy %, token usage | vendor names, amounts, descriptions, file names, invoice numbers |
+
+The pilot tester's one-page summary of this guide, to print, is [QUICK_START.md](QUICK_START.md); in the dashboard,
+**Help → Quick start → Print**.
 Invoices appear in the share report as `doc-01`, `doc-02`, … The file
 `share_report_key.csv` in your data folder maps them back to file names and stays on your machine. If I ask
 about `doc-07`, you can look it up there.
