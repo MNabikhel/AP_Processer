@@ -61,6 +61,7 @@ SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE", "DUE_MATCHES_TER
 # Checks that only show a value is reasonable, not that it is the printed one: passing them confirms nothing.
 WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE"}
 LIKELY_AT = 0.85
+UNMEASURED_CAP = 0.8  # a value read only by wording the benchmark never prints (``UNMEASURED``), no check confirming
 REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
 SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
 
@@ -547,9 +548,14 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("the terms ask for a deposit first: these days are only the balance's")
         if all(UNMEASURED in r.method for _, r in g.readings):
-            # Wording the benchmark never prints: its reading's family has a measured record, this wording not.
-            conf = min(conf, max(0.0, min(raw, SINGLE_READER_CAP)))
-            reasons.append("read from wording the test invoices do not print: a person checks it")
+            # Wording the benchmark never prints: its reading's family has a measured record, this wording not. Two
+            # OCR reads of a scan see the same pixels: however many agree, only a check on other fields lifts it.
+            if n_conf and field not in failed:
+                conf = min(conf, max(0.0, min(raw, SINGLE_READER_CAP)))
+                reasons.append("read from wording the test invoices do not print, and confirmed by the other fields")
+            else:
+                conf = min(conf, max(0.0, min(raw, UNMEASURED_CAP)))
+                reasons.append("read from wording the test invoices do not print: a person checks it")
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
         # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
         unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []

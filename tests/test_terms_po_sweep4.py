@@ -384,3 +384,78 @@ def test_your_reference_that_is_a_phone_number_or_words_is_no_po(tmp_path, line)
 )
 def test_a_label_after_a_character_written_as_several_reads_its_whole_value(tmp_path, line, field, value):
     assert _read(_pdf(tmp_path, [*_HEAD, (60, 300, line), *_TABLE]))[field].value == value
+
+
+# ---------------------------------------------------------------- re-review: scans (OCR joins a row's words)
+
+
+@pytest.mark.parametrize(
+    "printed, read",
+    [
+        ("Net30Freight:2Day", "Net 30"),
+        ("Net30Lead time2weeks", "Net 30"),
+        ("Net45Rep:12", "Net 45"),
+        ("Net30ShipVia:UPS2Day", "Net 30"),
+        ("Net 30 Ship Via: UPS 2 Day", "Net 30"),
+        ("Payablesurréception", "Due on receipt"),
+        ("Dueonreceipt", "Due on receipt"),
+        ("Dueuponreceipt", "Due on receipt"),
+        ("Net30th", "Net 30"),
+        ("2%10 days,Net10thprox", "Net 10 prox"),
+        ("2% 10 days, Net 1Oth prox", "Net 10 prox"),  # OCR's O for a zero
+        ("EOM   Net 30", "Net 30 EOM"),
+    ],
+)
+def test_terms_ocr_ran_together_are_read_as_printed(printed, read):
+    assert _terms(printed) == read
+
+
+def test_please_quote_the_po_number_is_an_instruction_not_a_po(tmp_path):
+    line = (60, 600, "Please quote PO number 4500 and invoice NS-20418 with payment.")
+    assert _read(_pdf(tmp_path, [*_HEAD, line, *_TABLE]))["po_number"].value is None
+
+
+def _reading(field, value, method, score=0.95):
+    from ap_coder.capture.types import Box, Reading
+
+    return Reading(field, value, str(value), [Box(1, 0.1, 0.1, 0.2, 0.12)], score, method)
+
+
+def test_two_ocr_reads_of_unmeasured_wording_stay_checked():
+    # On a scan the rule reader reads both OCR passes: two "readers" of the same pixels agreeing on "ACCT-1015" after
+    # "Your Reference" made it likely. Wording the benchmark never prints stays checked however many reads agree.
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import CHECK, UNMEASURED
+
+    po = {"po_number": [_reading("po_number", "ACCT-1015", "label-right" + UNMEASURED)]}
+    got, _ = fuse({"rules": po, "ocr2": po}, [], layout_source="ocr", today=TODAY)
+    assert got["po_number"].status == CHECK and got["po_number"].confidence <= 0.8
+
+
+def test_unmeasured_terms_confirmed_by_the_due_date_may_be_likely():
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import LIKELY, UNMEASURED
+
+    cands = {
+        "invoice_date": [_reading("invoice_date", "2026-09-15", "label-right")],
+        "due_date": [_reading("due_date", "2026-10-15", "label-right")],
+        "payment_terms": [_reading("payment_terms", "Net 30", "sentence" + UNMEASURED, 0.6)],
+    }
+    got, _ = fuse({"rules": cands, "ocr2": cands}, [], layout_source="ocr", today=TODAY)
+    terms = got["payment_terms"]
+    assert terms.status == LIKELY
+    assert not any("a person checks it" in r for r in terms.reasons)
+
+
+def test_terms_in_the_next_column_of_a_tight_grid_are_no_po(tmp_path):
+    # A header grid whose columns are as wide as their text plus 10 points: the PO label's value was taken from the
+    # terms column ("Net 30", likely).
+    import pymupdf
+
+    heads = ["Customer ID", "Terms", "Ship Via", "PO#", "Due Date"]
+    vals = ["C-1015", "Net 30", "UPS 2 Day", "4500123456", "2026-11-14"]
+    grid, x = [], 60.0
+    for h, v in zip(heads, vals, strict=True):
+        grid += [(x, 190, h, 9), (x, 203, v, 9)]
+        x += max(pymupdf.get_text_length(h, fontsize=9), pymupdf.get_text_length(v, fontsize=9)) + 10
+    assert _read(_pdf(tmp_path, [*_HEAD, *grid, *_TABLE]))["po_number"].value != "Net 30"

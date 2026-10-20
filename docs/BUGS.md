@@ -3161,7 +3161,7 @@ a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the a
   state different terms give none. Days in a sentence about something else ("discrepancies must be communicated
   within 90 days of the invoice date", returns, objections, interest) are not terms. All of this is wording the
   benchmark never prints, so each reading is marked `UNMEASURED`: it keeps its own score (a sentence 0.6) and is
-  never verified (D-45).
+  never verified (D-45; on scans capped at check unless a check on other fields confirms it, B-384).
 - **Test:** `tests/test_terms_po_sweep4.py::test_terms_printed_in_other_words_are_read_for_a_person_to_check`,
   `tests/test_terms_po_sweep4.py::test_days_in_a_note_that_is_not_the_terms_are_not_read_as_terms`
 - **Lesson:** Don't wait for a label the supplier never prints: the terms are a sentence anyone can recognise, as
@@ -3208,7 +3208,7 @@ a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the a
   "Vervaldag", "Fälligkeitstag", "Zahlungsziel" (only a date is read under it: it may give the terms instead); with
   no due-date label, a date right after "netto bis", "ohne Abzug bis", "überweisen Sie ... bis zum", "payment is due
   by", "please pay by/before", "payable avant le" (the net amount's date, never a discount's "Skonto ... bis"); two
-  sentences that state different dates give none. Each reading is marked `UNMEASURED` (D-45). Where the terms are
+  sentences that state different dates give none. Each reading is marked `UNMEASURED` (D-45; on scans capped at check unless a check on other fields confirms it, B-384). Where the terms are
   read too, the due-date check (B-372) can confirm both.
 - **Test:** `tests/test_terms_po_sweep4.py::test_due_dates_under_other_labels_or_in_a_sentence_are_read_for_a_person_to_check`,
   `tests/test_terms_po_sweep4.py::test_a_date_in_a_note_that_is_not_about_the_due_date_is_not_read_as_it`
@@ -3330,6 +3330,62 @@ a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the a
 - **Test:** `tests/test_terms_po_sweep4.py::test_eom_terms_matching_the_due_date_do_not_confirm_the_invoice_date`
 - **Lesson:** Don't let a check confirm a field it cannot tell apart from its neighbours.
 
+#### B-383 · On scans, terms OCR ran together with the next label were read with that label's days: "Net30Freight:2Day" as Net 2 · high
+- **Where:** `ap_coder/capture/reader.py` (`_terms_phrase`, new `_UNGLUE`, `_NET_ORDINAL_DAYS`, `_TERMS_NEXT_LABEL`,
+  `_TERMS_WORDS`)
+- **Symptom:** found by a second review on scans of B-376's cases: OCR joins a row's words, so the terms phrase had no
+  space to end at. "Terms:Net30Freight:2Day" and "Net30ShipVia:UPS2Day" read as Net 2, "Net30Lead time2weeks" as Net
+  14, "Net45Rep:12" as nothing, "Payablesurréception" and "Net30th" as nothing; "2%10 days,Net10thprox" and "Net 1Oth
+  prox" (O for a zero) as 2% 10 Net 10 and 2% 10 Net 1; "EOM   Net 30" in one run as Due EOM.
+- **Cause:** B-376 ended the phrase at a space before the next label; OCR leaves none. The "sur"/"à réception" words
+  had to stand apart; an ordinal net ("Net 30th") was read only before "prox"; a wide gap ended the phrase even when
+  the net days followed it.
+- **Reproduce:** `_terms("Net30Freight:2Day")`; a scanned invoice with "Terms: Net 30 Freight: 2 Day" on one row.
+- **Reproduced:** yes (`Net 2`)
+- **Fix:** figures and letters run together are set apart before the phrase is cut ("Net 30 Freight: 2 Day", an
+  ordinal's "th" kept with its number and set apart from "prox"), an O between figures or before "th" is a zero,
+  "sur"/"des" glued to "réception" are read, "Net 30th" with no prox, month or following is Net 30, and a wide gap
+  followed by the net days ("EOM   Net 30") does not end the phrase.
+- **Test:** `tests/test_terms_po_sweep4.py::test_terms_ocr_ran_together_are_read_as_printed`
+- **Lesson:** Don't rely on spaces in OCR text: a scan's row is one run of words.
+
+#### B-384 · On scans, a value read only through unmeasured wording reached likely: two OCR reads counted as two readers · high
+- **Where:** `ap_coder/capture/confidence.py` (`fuse`, new `UNMEASURED_CAP`)
+- **Symptom:** "Your Reference: ACCT-1015" (a customer's account) read as the PO, *likely* 0.97, on a scan: the rule
+  reader read it on both OCR passes, and two readers agreeing lifted it over the 0.85 of likely; B-373 to B-375's
+  readings were meant to stay *check*.
+- **Cause:** D-45's cap took the readers' own combined score, and two reads of the same pixels combine as two readers.
+- **Reproduce:** `fuse({"rules": po, "ocr2": po}, ...)` with a "label-right+unmeasured" reading; its status.
+- **Reproduced:** yes (`likely`, 0.97)
+- **Fix:** a value read only through unmeasured wording is capped at 0.8 (*check*) however many OCR reads agree, as a
+  value after a weak label (B-368); only a check on other fields (the due date = invoice date + the terms) lifts it,
+  to likely at most, and then its reason says it was confirmed instead of "a person checks it".
+- **Test:** `tests/test_terms_po_sweep4.py::test_two_ocr_reads_of_unmeasured_wording_stay_checked`,
+  `tests/test_terms_po_sweep4.py::test_unmeasured_terms_confirmed_by_the_due_date_may_be_likely`
+- **Lesson:** Don't count two reads of one page as two witnesses.
+
+#### B-385 · "Please quote PO number 4500 and invoice ... with payment" read 4500 as the PO · low
+- **Where:** `ap_coder/capture/reader.py` (`_po_mentions`, new `_ASKS_FOR_PO`)
+- **Symptom:** an instruction to quote the PO with the payment gave the PO "4500" (*check*).
+- **Cause:** a PO label mid-line was read wherever it stood.
+- **Reproduce:** a PDF with that sentence and no PO label; `analyze()`.
+- **Reproduced:** yes (`po_number 4500`)
+- **Fix:** a PO label after "quote", "reference", "indicate", "include", "mention", "show" (or French "rappeler",
+  "indiquer") is an instruction, not a PO.
+- **Test:** `tests/test_terms_po_sweep4.py::test_please_quote_the_po_number_is_an_instruction_not_a_po`
+- **Lesson:** Don't read a label inside a sentence that asks for the value.
+
+#### B-386 · In a tight header grid the PO label took "Net 30" from the terms column, likely · low
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`)
+- **Symptom:** "Customer ID | Terms | Ship Via | PO# | Due Date" with columns as wide as their text plus 6 to 10
+  points: the PO read "Net 30" (*likely*); found by the re-review, as it was before this sweep.
+- **Cause:** "Net" and "30" make an identifier (a short word and a number); only "Net30days" run together was refused.
+- **Reproduce:** the grid of `test_terms_in_the_next_column_of_a_tight_grid_are_no_po`; `analyze()`.
+- **Reproduced:** yes (`po_number Net 30 likely`)
+- **Fix:** "Net 30", "Net 30 days" is never a PO (only for the PO, leaving the invoice number's reading as it is).
+- **Test:** `tests/test_terms_po_sweep4.py::test_terms_in_the_next_column_of_a_tight_grid_are_no_po`
+- **Lesson:** Don't let terms pass as an identifier because they hold a number.
+
 #### Left as they are (terms, PO numbers and due dates)
 
 - **N-121** · The corpus writes German terms as the whole printed sentence, dates included ("Zahlbar innerhalb 30
@@ -3351,3 +3407,6 @@ a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the a
   date on the same invoices ("Rechnungs-Nr : 471102", "Leistungs-Datum : 05.08.2013"); B-374 lets a cell holding the
   label's colon be read only for the PO, due date and terms, so as not to change how the invoice number and date are
   read in this change. The same rule likely helps them.
+- **N-126** · A discount in days with net days on a day of the next month ("2% 10 days, Net 10th prox") is read as
+  "Net 10 prox": the due date is kept and the early-payment discount dropped, since the app's terms form cannot
+  hold both (B-377). A person adds the discount if it is wanted. Left until the terms form can.

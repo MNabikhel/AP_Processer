@@ -564,6 +564,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None  # a label OCR misread ("INVO1CE"), not its value
         if re.fullmatch(r"(?i)net-?\d{1,3}(?:days?|jours?)?", value):
             return None  # "Net30days": the terms (OCR ran them together), not a number
+        if field == "po_number" and re.fullmatch(r"(?i)net\s?-?\d{1,3}(?:\s?(?:days?|jours?))?", value):
+            return None  # "Net 30" under the next column of a tight grid: the terms, not a purchase order
         if re.fullmatch(r"(?i)page-?\d{1,3}", value):
             return None  # "Page - 1" (OCR's spaces beside the hyphen joined), not a number
         if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
@@ -688,7 +690,10 @@ _TERMS_WORDS = [
     ),  # fmt: skip
     (re.compile(r"(?<![a-z])net[\s.:]+(?=\d)"), "net "),  # "Net: 30", "Net.30"
     (re.compile(r"(?<=on)[\s.]*(?=receipt)"), " "),  # "on.receipt", "uponreceipt"
-    (re.compile(r"(?<![a-z])(?:a|des|sur)[\s.]*(?=reception)"), "a "),  # "à.réception", "dès réception"
+    (
+        re.compile(r"(?:(?<![a-z])a|des|sur)[\s.]*(?=reception)"),
+        " a ",
+    ),  # also OCR's "Payablesurréception"  # "à.réception", "dès réception"
 ]
 # "Bei Zahlung innerhalb 14 Tagen gewähren wir 2,0% Skonto": the discount's days printed before its rate.
 _DAYS_THEN_RATE = re.compile(
@@ -700,7 +705,7 @@ _DAYS_THEN_RATE = re.compile(
 # month."), a wide gap, or another label ("Ship Via: UPS 2 Day", "Lead time 2 weeks", "Freight: 2 Day").
 _TERMS_SENTENCE_END = re.compile(r"(?<=[\w)%])[.;!?](?=\s+[A-Z])(?!\s+(?i:net|n\s*/)(?![a-z]))")
 _TERMS_NEXT_LABEL = re.compile(
-    r"\s{2,}|(?<=\S)\s+(?=[A-Z][A-Za-z.#/'-]*(?: [A-Za-z#][A-Za-z.#/'-]*)?\s?:)"
+    r"\s{2,}(?!\s|(?i:net|n\s*/|\d))|(?<=\S)\s+(?=[A-Z][A-Za-z.#/'-]*(?: [A-Za-z#][A-Za-z.#/'-]*)?\s?:)"
     r"|(?<=\S)\s+(?=(?i:ship(?:ping)?\s*(?:via|date)|lead\s*time|freight|(?<!on )deliver(?:y|ed)|livraison|statements?|"
     r"f\.?o\.?b|(?:sales\s*)?rep|carrier|due\s*date|customer|account|p\.?o\.?\s*(?:#|no|number))(?![a-z]))"
 )
@@ -739,10 +744,24 @@ _FOLLOWING = re.compile(r"(\d{1,2})(?:st|nd|rd|th)\s*(?:of\s*(?:the\s*)?)?follow
 _AFTER_NET_NUMBER = re.compile(r"\s*(?:st|nd|rd|th|months?|mois|weeks?|wks?|semaines?|prox)(?![a-z])")
 
 
+# OCR runs a row's words together ("Net30Freight:2Day", "Net30ShipVia:UPS2Day", "Net10thprox", "Net 1Oth prox"): the
+# words are set apart again where figures and letters meet (an ordinal's "th" stays with its number).
+_UNGLUE = [
+    (re.compile(r"(?<=\d)[Oo](?=\d|th)"), "0"),
+    (re.compile(r"(\d(?:st|nd|rd|th))(?=[A-Za-z])"), r"\1 "),
+    (re.compile(r"(?<=\d)(?=[A-Za-z])(?!(?:st|nd|rd|th)(?![A-Za-z]))"), " "),
+    (re.compile(r"(?<=[A-Za-z])(?=\d)"), " "),
+]
+# "Net 30th" with no month after it: OCR's or the printer's "th" on the net days.
+_NET_ORDINAL_DAYS = re.compile(r"\bnet\s*(\d{1,3})(?:st|nd|rd|th)(?!\s*(?:prox|following|of|month))")
+
+
 def _terms_phrase(text: str) -> str:
     """The terms phrase at the start of ``text`` (a terms label's value, or a sentence): up to the next sentence, wide
     gap or label, with a discount stated in the next sentence."""
     text = unicodedata.normalize("NFKC", text)  # a speck read as a middle dot is a space later, not a gap
+    for rx, sub in _UNGLUE:
+        text = rx.sub(sub, text)
     label = _TERMS_LABEL_WORDS.match(text)
     start = label.end() if label else 0
     sentences = []
@@ -781,6 +800,8 @@ def _terms(text: str) -> str | None:
     text = _DAYS_THEN_RATE.sub(lambda m: f"{m.group(2)}% discount within {m.group(1)} days", text)
     text = _RATE_THEN_MONTHS.sub(r"\1 days, ", text)
     text = _FOLLOWING.sub(r"\1 prox", text)
+    if "prox" not in text:
+        text = _NET_ORDINAL_DAYS.sub(r"net \1", text)
     if not _NET_PRINTED.search(text):
         if _AT_ONCE.search(text):
             return "Due on receipt"
@@ -2953,6 +2974,9 @@ _PO_MENTION = re.compile(
 # "Your reference" / "Votre référence": European invoices give the customer's order number so, but it may be another
 # reference of the customer's. Read only when no PO label gives one.
 _YOUR_REFERENCE = re.compile(r"(?:your|votre)\s*ref(?:erence)?(?![a-z])\.?")
+_ASKS_FOR_PO = re.compile(
+    r"(?:quote|reference|indicate|include|mention|show|rappeler|indiquer)\s*(?:the\s*|your\s*|our\s*|this\s*|le\s*|votre\s*)?$"
+)
 _PHONE_SHAPE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]\d{4}")
 
 
@@ -2971,8 +2995,8 @@ def _po_mentions(page_lines: list[Line]) -> list[Reading]:
     for line in page_lines:
         text, at = plain_with_offsets(line.text)
         for m in _PO_MENTION.finditer(text):
-            if m.start() == 0:
-                continue  # a label starting its line: read as one
+            if m.start() == 0 or _ASKS_FOR_PO.search(text[: m.start()]):
+                continue  # a label starting its line (read as one), or "Please quote PO number ... with payment"
             got = _value_reading("po_number", line, at[m.end()], 0.55, "mention" + UNMEASURED)
             if got and _a_plain_po(got):
                 found.append(got)
