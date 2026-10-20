@@ -3170,3 +3170,55 @@ after the number (`number-dated`) is measured apart from labelled dates, so it i
   year and the hour.
 - **Test:** `tests/test_dates_numbers_sweep4.py::test_a_year_run_into_the_time_is_not_read_as_the_year`
 - **Lesson:** Bound what a value can be: no invoice is dated a thousand years ago.
+
+#### B-357 · An invoice number OCR ran into the next word was read with it: "1128461Cashier" · low
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`, new `_unglue_next_word`)
+- **Symptom:** a scanned receipt's "INV No.: 1128461 Cashier: Thandar", which OCR read without the space, came back
+  with the invoice number "1128461Cashier" (*check*).
+- **Cause:** a number is read up to the next space; OCR left none.
+- **Reproduce:** an OCR line "INV No.:1128461Cashier:Thandar".
+- **Reproduced:** yes (`invoice_number 1128461Cashier`)
+- **Fix:** on OCR's words, a number followed by a capitalised word of four letters or more ends before the word.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_an_invoice_number_run_into_the_next_word_is_cut_at_the_word`
+- **Lesson:** OCR's lost spaces join a value to its neighbour on either side; undo both.
+
+#### B-358 · A receipt's item number and description were read as the invoice number: "15.Dumplings" · low
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`)
+- **Symptom:** a restaurant receipt's first item, "15.Dumplings au porc et nappa", printed a few lines under the
+  guest's "#1", came back as the invoice number "15.Dumplings" (*check*).
+- **Cause:** the value under a label is read as a number when it has a digit; an item's number run into its name
+  ("15." then "Dumplings") has one.
+- **Reproduce:** OCR lines "#1", "2015-08-23 20:45:57 Waiter", "15.Dumplings au porc et nappa | $7.95", close
+  together; or "Bill No." over "15.Dumplings au porc et nappa".
+- **Reproduced:** yes (`invoice_number 15.Dumplings label-below`)
+- **Fix:** a short number with a point or bracket run into a word ("15.Dumplings", "3)Coffee") is no invoice or PO
+  number.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_receipts_item_number_is_not_its_number`
+- **Lesson:** A number that starts a line of words is the line's number, not the document's.
+
+#### B-359 · A label whose own value is no number took the value of a line under it: a postal code · low
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, new `_OWN_VALUE`)
+- **Symptom:** a receipt's address "GROUND FLOOR, NO.4 &6," gave the invoice number 47500 (*check*): the postal
+  code two lines down ("47500 SUBANG JAYA").
+- **Cause:** "No." followed by a value on its own line ("4", too short to be a number) was treated as a label with
+  nothing after it, whose value is looked for to the right and below.
+- **Reproduce:** OCR lines "GROUND FLOOR, NO.4 &6,", "JALAN SS 15/4B,", "47500 SUBANG JAYA, SELANGOR".
+- **Reproduced:** yes (`invoice_number 47500 label-below`)
+- **Fix:** an invoice-number or PO label followed on its line by a value of its own that is not a number gives
+  nothing; its value is not looked for elsewhere.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_label_whose_value_is_printed_after_it_does_not_take_the_next_lines`
+- **Lesson:** A label that has a value beside it, however bad, does not own the next line's.
+
+#### B-360 · "InvoiceINV/2023/03/0008" not read: the customer's reference was taken for the invoice number · medium
+- **Where:** `ap_coder/capture/reader.py` (`_GLUED_TITLE`, `_GLUED_NUMBER`)
+- **Symptom:** a scan of an invoice titled "Invoice INV/2023/03/0008" came back with the invoice number CUSTREF123
+  (*check*), read under "Reference:" (the customer's reference).
+- **Cause:** the second OCR read the title glued to its number ("InvoiceINV/2023/03/0008"); a glued title was read
+  only when its number had a hyphen or none after its letters, not a slash. Only the first read had the number, under
+  the weak "Invoice" label, and the two reads agreed on the reference.
+- **Reproduce:** OCR lines "InvoiceINV/2023/03/0008", "Reference:" over "CUSTREF123".
+- **Reproduced:** yes (`invoice_number CUSTREF123`)
+- **Fix:** a number glued to its title may have a slash or a point after its letters ("INV/2023/03/0008",
+  "INV.25146"), and a label glued to such a number is read too.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_title_glued_to_a_number_with_slashes_beats_a_customer_reference`
+- **Lesson:** Numbers are written with slashes as often as with hyphens; a pattern for one is a pattern for both.

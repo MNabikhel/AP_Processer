@@ -194,14 +194,24 @@ def _plain(text: str) -> str:
     return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
 
 
-_ISO = re.compile(r"\b(20\d{2}|19\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b")
-_NUMERIC = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b")
+# A receipt's date and time as OCR runs them together: "6/10/201913:59", "2018-02-1514:33:37", "27Mar201818:46",
+# "2/25/125:21PM" (the year 12, then 5:21). The date ends where a time begins.
+_TIME_NEXT = r"(?=_?\d{1,2}:\d)"
+_ISO = re.compile(rf"\b(20\d{{2}}|19\d{{2}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?:\b|{_TIME_NEXT})")
+_NUMERIC = re.compile(
+    rf"\b(\d{{1,2}})[-/.](\d{{1,2}})[-/.](\d{{4}}{_TIME_NEXT}|\d{{2}}{_TIME_NEXT}|\d{{2}}\b|\d{{4}}\b)"
+)
 # Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
-# Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026".
-_WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?(?:\s*[,.]){0,2}\s*(\d{4})\b")
+# Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026"; a receipt's slashes:
+# "Jun14/2017", "Jul/15/2017".
+_WORDY_MDY = re.compile(
+    rf"\b([a-z]{{3,9}})\.?[\s/-]*(\d{{1,2}})(?:st|nd|rd|th)?(?:\s*[,./]){{0,2}}\s*(\d{{4}})(?:\b|{_TIME_NEXT})"
+)
 # Spanish and Portuguese put "de" between the parts: "10 de febrero de 2022".
 _WORDY_DMY = re.compile(
-    r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*(?:de\s+)?([a-z]{3,9})(?:\s*[,.]){0,2}\s*(?:del?\s+)?(\d{4})\b"
+    r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*(?:de\s+)?([a-z]{3,9})(?:\s*[,.]){0,2}\s*(?:del?\s+)?(\d{4})(?:\b|"
+    + _TIME_NEXT
+    + ")"
 )
 # OCR reads letters of a month as digits ("0ct", "Ju1", "N0v"); fixed in place, same length.
 _OCR_MONTHS = [
@@ -247,7 +257,7 @@ def _make(y: int, m: int, d: int) -> dt.date | None:
     if y < 100:
         y += 2000
     if not 1900 <= y <= 2099:
-        return None  # "02/15/1011:10AM": OCR ran the year into the time; no invoice is dated 1011
+        return None  # no invoice is dated 1011 ("02/15/1011:10AM" is the year 10 run into the time 11:10)
     try:
         return dt.date(y, m, d)
     except ValueError:
@@ -288,8 +298,6 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
         if not free(*m.span()):
             continue
         a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        if len(m.group(3)) == 4 and not 1900 <= y <= 2099 and s[m.end() : m.end() + 1] == ":":
-            y = int(m.group(3)[:2])  # "02/15/1011:10AM": the year 10, then the time 11:10 (OCR lost the space)
         dmy, mdy = _make(y, b, a), _make(y, a, b)
         if dmy and mdy and dmy != mdy:
             if prefer_day_first is None:

@@ -203,3 +203,69 @@ def test_a_year_run_into_the_time_is_not_read_as_the_year():
     # A receipt's "02/15/10 11:10AM" as OCR read it: "02/15/1011:10AM". It was read as 1011-02-15 (check).
     assert parse_date("02/15/1011:10AM") == "2010-02-15"
     assert parse_date("Date 15/02/1011") is None  # no invoice is dated 1011
+
+
+def test_a_date_run_into_its_time_is_read():
+    # OCR drops the space between a receipt's date and time.
+    assert parse_date("27Mar201818:46") == "2018-03-27"
+    assert parse_date("2018-02-1514:33:37") == "2018-02-15"
+    assert parse_date("12/29/20149:54:44PM") == "2014-12-29"
+    assert parse_date("2/25/125:21PM0204") == "2012-02-25"
+    assert parse_date("Jun14/201718:0:41#1056651") == "2017-06-14"
+    assert parse_date("Ju1/15/2017_12:25") == "2017-07-15"
+    assert parse_date("1/2/2026 10:30", prefer_day_first=True) == "2026-02-01"  # a date and time apart: as before
+
+
+def test_a_receipts_unlabelled_date_and_time_is_its_date_but_a_labelled_date_comes_first():
+    # "6/10/2019 13:59" under the store's address, no "Date" printed: when the receipt was issued.
+    receipt = _scan([(0.37, 0.09, "Contoso"), (0.18, 0.26, "Redmond, WA 98052"), (0.18, 0.40, "6/10/2019 13:59"),
+                     (0.18, 0.44, "Sales Associate: Paul"), (0.27, 0.74, "Sub-Total"),
+                     (0.55, 0.74, "$1098.99")])  # fmt: skip
+    got = _top(receipt, "invoice_date")
+    assert got.value == "2019-06-10" and got.method.startswith("date-time")
+    # An invoice with its date labelled: the stamp of a printout or a call log does not outrank it.
+    invoice = _scan([(0.1, 0.05, "Printed 2026-10-20 14:33"), (0.1, 0.10, "Invoice Date: 2026-10-01"),
+                     (0.1, 0.5, "2026-09-12 10:32 Call to 555-0101")])  # fmt: skip
+    assert _top(invoice, "invoice_date").value == "2026-10-01"
+    # A stamp after another date's label is that date's.
+    due = _scan([(0.1, 0.10, "Due Date 2026-11-01 17:00")])
+    assert _top(due, "invoice_date") is None
+
+
+def test_receipt_and_cash_invoice_labels_and_ocr_zero_in_a_label():
+    layout = _scan([(0.4, 0.21, "Cash Inv No.:7803F712"), (0.29, 0.14, "INV0ICE 86907-1")])
+    found = [r.value for r in read_fields(layout)["invoice_number"]]
+    assert "7803F712" in found and "86907-1" in found
+    assert _top(_scan([(0.66, 0.13, "FECHA:31-10-21")]), "invoice_date").value == "2021-10-31"
+    assert _top(_scan([(0.25, 0.15, "Data da Emissão: 12/03/2020")]), "invoice_date").value == "2020-03-12"
+
+
+def test_an_invoice_number_run_into_the_next_word_is_cut_at_the_word():
+    # "INV No.:1128461Cashier:Thandar": OCR lost the space after the number; it was read "1128461Cashier".
+    layout = _scan([(0.26, 0.16, "RESTORAN WAN SHENG"), (0.06, 0.39, "INV No.:1128461Cashier:Thandar")])
+    assert _top(layout, "invoice_number").value == "1128461"
+
+
+def test_a_receipts_item_number_is_not_its_number():
+    # A receipt's first item "15.Dumplings au porc" under "#1" (the guest): read as the invoice number "15.Dumplings".
+    layout = _scan([(0.27, 0.05, "Restaurant Ethan"), (0.21, 0.24, "#1"), (0.21, 0.258, "2015-08-23 20:45:57 Waiter"),
+                    (0.21, 0.276, "15.Dumplings au porc et nappa"), (0.65, 0.276, "$7.95")])  # fmt: skip
+    assert _top(layout, "invoice_number") is None
+    # Under a label of its own as well.
+    other = _scan([(0.21, 0.24, "Bill No."), (0.21, 0.258, "15.Dumplings au porc et nappa")])
+    assert _top(other, "invoice_number") is None
+
+
+def test_a_label_whose_value_is_printed_after_it_does_not_take_the_next_lines():
+    # "GROUND FLOOR, NO.4 &6," (an address): "No." with its own value "4", no number; the postal code two lines down
+    # ("47500 SUBANG JAYA") was read as the invoice number.
+    layout = _scan([(0.04, 0.30, "GROUND FLOOR, NO.4 &6,"), (0.04, 0.32, "JALAN SS 15/4B,"),
+                    (0.04, 0.34, "47500 SUBANG JAYA, SELANGOR")])  # fmt: skip
+    assert _top(layout, "invoice_number") is None
+
+
+def test_a_title_glued_to_a_number_with_slashes_beats_a_customer_reference():
+    # The second OCR read "Invoice INV/2023/03/0008" as "InvoiceINV/2023/03/0008", the first as "Invoice.INV/...":
+    # neither reading was strong, and "Reference: | CUSTREF123" (the customer's reference) was taken for the number.
+    layout = _scan([(0.05, 0.25, "InvoiceINV/2023/03/0008"), (0.67, 0.29, "Reference:"), (0.67, 0.31, "CUSTREF123")])
+    assert _top(layout, "invoice_number").value == "INV/2023/03/0008"
