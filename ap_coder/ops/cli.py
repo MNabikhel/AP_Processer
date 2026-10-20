@@ -25,6 +25,7 @@ from ..ai.pipeline import (
     PipelineResult,
     discover_inputs,
     invoice_files,
+    other_files,
     output_stems,
     write_outputs,
 )
@@ -269,6 +270,9 @@ def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], b
     except FileNotFoundError as exc:
         print(f"Not found: {exc}. Give an invoice file or a folder of them.", file=sys.stderr)
         return None
+    others = [p.name for raw in paths if Path(raw).is_dir() for p in other_files(Path(raw), EMAIL_EXTENSIONS)]
+    if others:  # never passed over in silence (B-268)
+        print(f"Left out, not a kind AP Coder reads (save as PDF or JPEG): {', '.join(others)}", file=sys.stderr)
     files = [p for p in found if p.suffix.lower() not in EMAIL_EXTENSIONS]
     emails = [p for p in found if p.suffix.lower() in EMAIL_EXTENSIONS]
     emails += [e for raw in paths if Path(raw).is_dir() for e in emails_in(Path(raw))]

@@ -2461,3 +2461,13 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **Fix:** a warning on the review screen: "only 20 of its 300 pages were read (a file's first 20 pages are read, and a page OCR can't read is left out): check the other pages yourself before approving", with its entry in Help ("Pages not read"). Time stays bounded by the 20 pages read: 2 s for the 300 text pages; for scans each page read costs an OCR (the 250-page fax took 285 s here, with the computer shared by several test runs at a load of 40 on 4 cores; see N-94).
 - **Test:** `tests/test_unusual_files.py::test_a_300_page_pdf_says_on_the_review_screen_that_only_its_first_pages_were_read`
 - **Lesson:** Don't keep a limit silent: what isn't read must be said where the person checks what was.
+
+#### B-268 · A file in the invoices folder of a kind AP Coder doesn't read was never mentioned · low
+- **Where:** `ap_coder/ai/pipeline.py` (`other_files`), `ap_coder/web/pages/process.py` (`process_folder`, `process_page`, `not_read_here`), `ap_coder/web/templates/process.html`, `ap_coder/ops/cli.py` (`_inputs`)
+- **Symptom:** a JPEG 2000 scan (`.jp2`), an AVIF photo or a Photoshop file dropped in the invoices folder was not listed on Import invoices, not read and not mentioned anywhere: to the pilot tester the invoice was lost. `python -m ap_coder process <folder>` said only "No supported invoice files found."
+- **Cause:** the folder is listed through the readable kinds only; anything else was filtered out without a word (the upload, by contrast, says "was not read").
+- **Reproduce:** `scan.jp2` and `layout.psd` beside a PDF in the invoices folder; open Import invoices, process the folder; `process` on a folder holding only `scan.jp2`.
+- **Reproduced:** yes (only the PDF listed and read; no message).
+- **Fix:** Import invoices says under the folder "Not read from this folder: layout.psd, scan.jp2. Save them as PDF (or JPEG) to have them read."; processing the folder adds "2 files in the invoices folder are not a kind AP Coder reads (PDFs, scans, photos and saved emails): save them as PDF (or JPEG) to have them read." with their names; `process` prints "Left out, not a kind AP Coder reads (save as PDF or JPEG): scan.jp2". Hidden files, README files, Office lock files, `desktop.ini` / `Thumbs.db` and downloads still arriving (`.part`, `.crdownload`, `.tmp`…) are not mentioned.
+- **Test:** `tests/test_unusual_files.py::test_the_invoices_folder_says_which_files_it_does_not_read`, `::test_process_on_a_folder_names_the_files_it_leaves_out`
+- **Lesson:** Don't filter what a person put somewhere without telling them: a file passed over in silence looks lost.

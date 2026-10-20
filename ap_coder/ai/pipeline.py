@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,6 +95,24 @@ def invoice_files(folder: Path) -> list[Path]:
     )
     documents = {c.stem.lower() for c in files if c.suffix.lower() not in TEXT_EXTENSIONS}
     return [c for c in files if c.suffix.lower() not in TEXT_EXTENSIONS or c.stem.lower() not in documents]
+
+
+NOT_A_FILE_TO_MENTION = {"desktop.ini", "thumbs.db"}  # Windows' own, in any folder
+STILL_ARRIVING = {".part", ".partial", ".crdownload", ".download", ".tmp"}  # a copy or a download not finished
+
+
+def other_files(folder: Path, also: Collection[str] = ()) -> list[Path]:
+    """The files in ``folder`` (not its subfolders) that are not a kind AP Coder reads, nor one of the extensions
+    ``also`` (saved emails): said to the person, never passed over in silence. Hidden files, README files, Office
+    lock files, Windows' own files and downloads still arriving are not mentioned."""
+    return sorted(
+        c
+        for c in folder.iterdir()
+        if c.is_file()
+        and c.suffix.lower() not in SUPPORTED_EXTENSIONS | set(also) | STILL_ARRIVING
+        and c.name.lower() not in NOT_A_FILE_TO_MENTION
+        and not c.name.lower().startswith(("readme", ".", "~$"))
+    )
 
 
 def discover_inputs(paths: list[str | Path]) -> list[Path]:

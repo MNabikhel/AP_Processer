@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from ap_coder.ai import page_reader
 from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS
 from ap_coder.ai.local_llm import provider_status
-from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files
+from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files, other_files
 from ap_coder.capture.layout import ocr_available
 from ap_coder.coding.tax import TAX_TYPES
 from ap_coder.core import paths, ui
@@ -291,6 +291,14 @@ def not_processed(store: Store, files: list[Path]) -> tuple[list[Path], list[Pat
     return new, unreadable
 
 
+def not_read_here(folder: Path) -> list[str]:
+    """The names of the files in the invoices folder of a kind AP Coder does not read (B-268)."""
+    try:
+        return [p.name for p in other_files(folder, EMAIL_EXTENSIONS)] if folder.exists() else []
+    except OSError:
+        return []
+
+
 def still_being_saved(path: Path, now: float | None = None) -> bool:
     """Changed in the last minute and its end missing (``intake.looks_incomplete``): a scanner or a download is still
     writing it. Read now, half an invoice would be stored (and the whole one read again later as another). A file
@@ -340,6 +348,7 @@ def process_page(request: Request) -> HTMLResponse:
         recent=recent,
         recent_waiting=any(i["status"] == REVIEW for i in recent),
         files=folder_files(store),
+        not_read=not_read_here(invoice_dir(store)),
         set_aside=inbox.needs_person(store, invoice_dir(store)),
         folder=short_path(invoice_dir(store)),
         accept=",".join(ACCEPT),
@@ -406,9 +415,18 @@ def process_folder(request: Request) -> JSONResponse:
     saving = [p for p in files if still_being_saved(p)]  # a scanner or a download still writing it (B-265)
     files, unreadable = [p for p in files if p not in saving], unreadable + saving
     todo, already = split_new(store, files)
-    notes = [flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, or open in "
-                           "another program): picked up next time.", "warn", [p.name for p in unreadable])]  # fmt: skip
-    work = process_files(store, settings, todo, already=already, folder_emails=True, notes=notes if unreadable else [])
+    notes = []
+    if unreadable:
+        notes.append(flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, or "
+                                   "open in another program): picked up next time.", "warn",
+                                   [p.name for p in unreadable]))  # fmt: skip
+    others = not_read_here(folder)
+    if others:
+        are = "are" if len(others) > 1 else "is"
+        notes.append(flash_message(f"{ui.plural(len(others), 'file')} in the invoices folder {are} not a kind AP Coder "
+                                   "reads (PDFs, scans, photos and saved emails): save them as PDF (or JPEG) to have "
+                                   "them read.", "warn", others))  # fmt: skip
+    work = process_files(store, settings, todo, already=already, folder_emails=True, notes=notes)
     return _start(request, work, len(todo))
 
 

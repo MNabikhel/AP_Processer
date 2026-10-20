@@ -302,3 +302,45 @@ def test_a_300_page_pdf_says_on_the_review_screen_that_only_its_first_pages_were
     assert issue.message == ("only 20 of its 300 pages were read (a file's first 20 pages are read, and a page OCR "
                              "can't read is left out): check the other pages yourself before approving")  # fmt: skip
     assert not any(i.code == "PAGES_NOT_READ" for i in pipe.process(SAMPLE).report.issues)
+
+
+# --- B-268: a file in the invoices folder of a kind AP Coder does not read ------------------------------------------
+
+
+def test_the_invoices_folder_says_which_files_it_does_not_read(tmp_path):
+    from ap_coder.web.core import invoice_dir
+
+    from .webclient import PAGE, client_for
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    folder = invoice_dir(store)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "invoice.pdf").write_bytes(SAMPLE.read_bytes())
+    (folder / "scan.jp2").write_bytes(b"\x00\x00\x00\x0cjP  \r\n\x87\n")
+    (folder / "layout.psd").write_bytes(b"8BPS")
+    (folder / ".DS_Store").write_bytes(b"\x00")  # the computer's own: never mentioned
+    page = client.get("/process").text
+    assert "Not read from this folder: layout.psd, scan.jp2." in page
+    assert "Save them as PDF (or JPEG) to have them read." in page
+    job = client.app.state.jobs.get("process")
+    assert client.post("/process/folder", headers=PAGE).json()["ok"]
+    assert job.wait(180)
+    note = next(m for m in client.get("/process/status").json()["result"]["messages"] if "kind" in m["text"])
+    assert note["text"] == ("2 files in the invoices folder are not a kind AP Coder reads (PDFs, scans, photos and "
+                            "saved emails): save them as PDF (or JPEG) to have them read.")  # fmt: skip
+    assert note["details"] == ["layout.psd", "scan.jp2"] and note["tone"] == "warn"
+
+
+def test_process_on_a_folder_names_the_files_it_leaves_out(tmp_path, capsys):
+    from ap_coder.ops import cli
+
+    folder = tmp_path / "in"
+    folder.mkdir()
+    (folder / "scan.jp2").write_bytes(b"\x00\x00\x00\x0cjP  \r\n\x87\n")
+    code = cli.main(["--env-file", str(tmp_path / "none.env"), "--db", str(tmp_path / "a.db"), "process", str(folder),
+                     "--out", str(tmp_path / "out")])  # fmt: skip
+    err = capsys.readouterr().err
+    assert code == 2
+    assert "Left out, not a kind AP Coder reads (save as PDF or JPEG): scan.jp2" in err
