@@ -202,11 +202,11 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
 
         tables = find_tables(path, max_pages=len(layout.pages) or 1)
     found = tables if isinstance(tables, dict) else None
-    in_tables = _labelled(read_line_items(layout, found), "table") if found else []
+    targets = _line_targets(fields)
+    in_tables = _labelled(read_line_items(layout, found, targets), "table") if found else []
     text_table: list[LineReading] = []
     if layout.source == "text":
         text_table = _labelled(text_table_items(path, layout, found), "text table")
-    targets = _line_targets(fields)
     in_tables, words, text_table = (_to_subtotal(r, targets) for r in (in_tables, words, text_table))
     readings = [r for r in (in_tables, words, text_table) if r]
     adds = [r for r in readings if targets and _adds_up(r, targets)]
