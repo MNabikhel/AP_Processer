@@ -2975,3 +2975,22 @@ table finder's model on. None of the corpus is in the repo: each test makes its 
   the page straightened.
 - **Test:** `tests/test_photo_scan_quality.py::test_on_a_steeply_tilted_scan_two_lines_close_together_stay_apart`
 - **Lesson:** Don't give a part the box of its whole when the whole is tilted: the box grows with the tilt.
+
+#### Left as they are (photos and poor scans)
+
+- **N-98** · Softening a black-and-white page before OCR (a 3 × 3 blur: a fax's strokes are jagged and broken, and the
+  OCR models were trained on grey print) made the first engine read 87.0% of the values printed on 16 faxes against
+  83.9%, but no more fields came out right; softened for both engines, both read a fax's "Solutions" as
+  "Solutlons" and agreed on it (a vendor name shown as *verified* wrongly). Not done. Faxes stay at 80.5% of fields
+  right, 25% fully right: most of what is left is the rule reader's (labels under their values, credits printed
+  positive) and OCR's broken characters on 100-dpi rows.
+- **N-99** · On a real photo of a German invoice tilted 3 degrees (`drv_de_hetzner_photo`), the logo "HETZNER" and
+  the small "ONLINE" under it were one line only because their boxes happened to overlap; read straightened
+  (B-303) they are two, and the vendor became the customer's name (*likely*). A logo in two OCR lines is a vendor
+  reading question (the logo's parts are not joined), left for the rule reader.
+- **N-100** · A page turned upside down is now read upright by its letters (B-301), also the real
+  `drv_ca_yorku_upsidedown` (York University's annotated sample invoice, turned): upright, its side panel's
+  "2. Vendor's FULL LEGAL NAME" is read as the vendor (*check*) and the invoice number is not found, which the
+  page read as it lay happened to get right. Reading an annotated explainer is not an invoice question: left.
+- **N-101** · Speckled scans (12) read 85.6% of fields right, as before: a median filter removed specks but also
+  thin strokes (75.3% of printed values read, against 79.0%), and a blur did nothing. Left.
