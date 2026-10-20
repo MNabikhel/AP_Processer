@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -180,6 +181,21 @@ def _to_subtotal(items: list[LineReading], targets: list[float]) -> list[LineRea
     return items
 
 
+_DISCOUNT_LINE = re.compile(r"\b(?:discount|escompte|rabais|remise|rebate|coupon)", re.I)
+
+
+def _discounts_taken_off(items: list[LineReading], targets: list[float]) -> list[LineReading]:
+    """``items`` with a discount's line printed without its sign ("Discount 5%  2,689.02", OCR's lost "-" or
+    brackets) taken off, when that, and not adding it, makes the lines add up to the subtotal."""
+    if not targets or _adds_up(items, targets):
+        return items
+    off = [LineReading(li.description, li.quantity, li.unit_price, -li.amount, list(li.boxes), li.score, li.source,
+                       list(li.agreed))
+           if li.amount and li.amount > 0 and li.quantity is None and _DISCOUNT_LINE.search(li.description) else li
+           for li in items]  # fmt: skip
+    return off if off != items and _adds_up(off, targets) else items
+
+
 def _labelled(items: list[LineReading], source: str) -> list[LineReading]:
     for li in items:
         li.source = li.source or source
@@ -208,7 +224,8 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
     text_table: list[LineReading] = []
     if layout.source == "text":
         text_table = _labelled(text_table_items(path, layout, found), "text table")
-    in_tables, words, text_table = (_to_subtotal(r, targets) for r in (in_tables, words, text_table))
+    in_tables, words, text_table = (_discounts_taken_off(_to_subtotal(r, targets), targets)
+                                    for r in (in_tables, words, text_table))  # fmt: skip
     readings = [r for r in (in_tables, words, text_table) if r]
     adds = [r for r in readings if targets and _adds_up(r, targets)]
     if adds:

@@ -2433,3 +2433,33 @@ the lines adding up, and how alike the descriptions read.
 - **Fix:** a row with no amount right under a line item (within 1.2 text heights), whose words all sit in the description's column (from its heading, else the page's left, to the next heading) and are neither an amount printed as money nor a total's label, is the rest of that line's description. Real corpus, descriptions of the lines found: 0.80 → 0.85 alike (with B-343).
 - **Test:** `tests/test_line_items_sweep4.py::test_a_description_wrapped_onto_the_lines_under_its_row_is_read_whole`
 - **Lesson:** Two readers of the same table should share their row rules: the wrapped-description rule existed in one of them only.
+
+#### B-345 · A page scanned more than 4 degrees off was not straightened: its table read a row off, or not at all · medium
+- **Where:** `ap_coder/capture/layout.py` (`_skew`, `MAX_TILT`)
+- **Symptom:** on a three-page scanned long table fed 4.9 degrees askew, the column headings of page 1 were not found ("Description" sat five rows above "Line Total") and only 30 of its 57 lines came back; a landscape scan at 5 degrees gave no lines at all.
+- **Cause:** the page's tilt (`PageLayout.skew`, used only to straighten the rows of the line table) was taken as zero past a slope of 0.07 (4 degrees), there to tell a tilt from a page turned a quarter; a scanner fed by hand or a phone held askew easily passes 4 degrees, and at 5 degrees a row's description sits more than three rows from its amount across a letter page.
+- **Reproduce:** OCR text lines sloping 5 degrees: `_skew` gave 0.0.
+- **Reproduced:** yes.
+- **Fix:** a slope up to 0.15 (about 8.5 degrees) is a tilt, straightened; a page turned a quarter (text running down it) is still not. Hard corpus scans: the 57-line table 30 → 56 lines right; the two landscape scans 0 → 3 of 3 and 0 → 5 of 6.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_scan_tilted_five_degrees_is_straightened`
+- **Lesson:** A threshold set from the scans at hand (under 4 degrees) is not the world's: give a margin to what a person will feed the scanner.
+
+#### B-346 · A discount line printed without its minus was added to the lines instead of taken off · low
+- **Where:** `ap_coder/capture/__init__.py` (`_discounts_taken_off`, `_page_lines`)
+- **Symptom:** "Promotional discount 15%  600.51" (the minus lost by OCR, or the discount printed in a column of its own) was coded as a charge of +600.51: the lines came to 1,201.02 more than the subtotal and the invoice failed `LINES_ADD_UP`.
+- **Cause:** a line's amount is read as printed; nothing used the subtotal to settle the sign of a discount's line.
+- **Reproduce:** lines 100.00, 50.00 and "Discount 5% 7.50" under a subtotal of 142.50.
+- **Reproduced:** yes (+7.50).
+- **Fix:** when the lines don't add up to the subtotal but do with each discount's line (discount, escompte, rabais, remise, rebate, coupon; no quantity) taken off, it is taken off. Hard corpus: the 10-line scan with a discount now right on every line.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_discount_printed_without_its_sign_is_taken_off_when_that_adds_up`
+- **Lesson:** The subtotal is the proof of every line's sign as well as its amount.
+
+#### B-347 · Header text read off an upside-down page came back as line items with phone and customer numbers for amounts · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_line_items`)
+- **Symptom:** a credit note scanned upside down gave six "lines" such as "Cust.ID: Billed To 774,320.00" and "#O T:1-899-555-4176 -9,692.00".
+- **Cause:** a row's amount is any number under the amount's heading; the rule that drops numbers not printed as money ("12", "5%") only applied when at least two lines' amounts were printed as money, so a reading with none at all kept every row.
+- **Reproduce:** under the column headings, "Cust. ID: Billed To 774320" and "Ordered: www.liberty.com -9692".
+- **Reproduced:** yes (two lines).
+- **Fix:** a reading in which not one amount is printed as money (two decimals or a currency sign) is no line table, unless its rows add up to the subtotal or the total less taxes. Hard corpus: that credit note's wrong lines 6 → 0 (it is coded as one line for its subtotal).
+- **Test:** `tests/test_line_items_sweep4.py::test_a_table_with_no_amount_printed_as_money_is_no_line_table`
+- **Lesson:** A rule that needs a majority must also say what happens when there is no majority at all.

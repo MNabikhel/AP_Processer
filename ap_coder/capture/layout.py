@@ -527,6 +527,9 @@ def _upright_turn(result: Any, width: float, height: float) -> int:
     return 180 if _label_side(result) <= -2 else 0  # an upright page never scores below 0 (1,300 benchmark scans)
 
 
+MAX_TILT = 0.15  # about 8.5 degrees (down per across): a scan fed askew is straightened; more is a page turned
+
+
 def _skew(result: Any, width: float, height: float) -> float:
     """The page's tilt from the OCR's text lines (each a four-cornered box along its text): the median slope of the
     long ones' top edges, as fractions of the page (down per across); 0 when there are too few to tell."""
@@ -543,7 +546,7 @@ def _skew(result: Any, width: float, height: float) -> float:
     if len(slopes) < 5:
         return 0.0
     slope = statistics.median(slopes)
-    return slope * width / max(height, 1.0) if abs(slope) <= 0.07 else 0.0  # within 4 degrees: a tilt, not a turn
+    return slope * width / max(height, 1.0) if abs(slope) <= MAX_TILT else 0.0  # a tilt, not a turn
 
 
 def _split_ocr_line(text: str, x0: float, y0: float, x1: float, y1: float, score: float, width: float,

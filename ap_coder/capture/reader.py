@@ -1522,6 +1522,12 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
     # services subject to GST 5%", "4 of 12 hours cancelled") that reaches the amount column.
     if sum(money) >= 2 and not all(money):
         items = [li for li, m in zip(items, money, strict=True) if m]
+    # Not one amount printed as money ("774320", "-9692": a customer number, a phone number read from a page upside
+    # down): no line table, unless the rows add up to what the lines should.
+    if len(items) >= 2 and not any(money):
+        total = round(sum(li.amount or 0.0 for li in items), 2)
+        if not any(abs(total - t) <= 0.02 for t in targets or []):
+            return []
     # A last row with no words of its own whose amount is the sum of the rows above: the table's total row, its label
     # read as no label (OCR runs "Total before tax" together).
     if len(items) >= 3 and not items[-1].description.strip() and items[-1].amount is not None:
@@ -1568,6 +1574,9 @@ def _wrapped(segs: list[Line], cols: dict[str, Box], bottom: float) -> bool:
     )
 
 
+_RUNNING = re.compile(
+    r"brought\s*forward|carried\s*forward|balance\s*forward|report|ubertrag|page\s*(?:sub\s*-?\s*)?total"
+)
 LISTED_COLUMN = 0.06  # an item's amount ends this close to the subtotal's amount (fraction of the page width)
 LISTED_MAX = 150  # amounts looked at above the subtotal
 _LISTED_FLAG = re.compile(r"^[\s*-]*(?:[a-z]{1,2}\b)?[\s*]*$", re.I)  # a receipt's tax flag after the amount: "J", "*"
@@ -1609,11 +1618,12 @@ def listed_items(layout: DocLayout, targets: list[float]) -> list[LineReading]:
             total += value
             if any(abs(round(total, 2) - t) <= 0.011 for t in targets):
                 lines = _listed_lines(page, list(reversed(column[:k])), {id(f[3]) for f in found}, height)
-                # Amounts that name a tax or a total ("Montant HT", "TVA", "Remise totale") are the bill's totals,
-                # not its items; one amount with no words is the subtotal printed twice.
-                if any(_TAX_ROW.search(plain(li.description)) for li in lines) or (
-                    len(lines) == 1 and not lines[0].description
-                ):
+                # Amounts that name a tax, a total or a balance carried from another page ("Montant HT", "TVA",
+                # "Remise totale", "Balance brought forward") are sums, not items; one amount with no words is the
+                # subtotal printed twice.
+                if any(
+                    _TAX_ROW.search(plain(li.description)) or _RUNNING.search(plain(li.description)) for li in lines
+                ) or (len(lines) == 1 and not lines[0].description):
                     break
                 return lines
     return []

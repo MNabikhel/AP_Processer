@@ -185,3 +185,42 @@ def test_a_summary_row_with_no_words_under_the_lines_is_no_line():
                    ("10%", 0.50, 0.53, 0.31), ("1,635.55", 0.62, 0.70, 0.31), ("163.56", 0.74, 0.80, 0.31),
                    ("1,799.11", 0.84, 0.90, 0.31))  # fmt: skip
     assert [a for *_r, a in _read(words)] == [1355.05, 280.5]
+
+
+def test_a_scan_tilted_five_degrees_is_straightened():
+    """A page scanned 5 degrees off (a hand-fed scanner, a phone held askew) is a tilt to straighten, not a turn: at
+    5 degrees a row's description sits more than three rows above or below its amount at the other end of the table.
+    A page turned a quarter (text running down the page) is not straightened."""
+    import math
+
+    from ap_coder.capture.layout import _skew
+
+    slope = math.tan(math.radians(5))
+    lines = [([[0, 100 + 40 * i], [400, 100 + 40 * i + 400 * slope], [400, 120 + 40 * i + 400 * slope],
+               [0, 120 + 40 * i]], "some text here", 0.9) for i in range(8)]  # fmt: skip
+    assert abs(_skew(lines, 1000, 1300) - slope * 1000 / 1300) < 1e-6
+    turned = [([[0, 0], [100, 50], [100, 70], [0, 20]], "sideways text", 0.9)] * 8
+    assert _skew(turned, 1000, 1300) == 0.0
+
+
+def test_a_discount_printed_without_its_sign_is_taken_off_when_that_adds_up():
+    """ "Discount 5%  2,689.02" with its minus lost (OCR, or printed in a column of its own): taken off, when the
+    lines then add up to the subtotal; left as printed otherwise."""
+    from ap_coder.capture import _discounts_taken_off
+    from ap_coder.capture.types import LineReading
+
+    lines = [LineReading("Bolts", 2.0, 50.0, 100.0), LineReading("Nuts", 5.0, 10.0, 50.0),
+             LineReading("Discount 5%", None, None, 7.5)]  # fmt: skip
+    assert [li.amount for li in _discounts_taken_off(lines, [142.5])] == [100.0, 50.0, -7.5]
+    assert [li.amount for li in _discounts_taken_off(lines, [157.5])] == [100.0, 50.0, 7.5]  # it adds up as printed
+    assert [li.amount for li in _discounts_taken_off(lines, [999.0])] == [100.0, 50.0, 7.5]
+
+
+def test_a_table_with_no_amount_printed_as_money_is_no_line_table():
+    """Rows whose "amounts" are none of them printed as money ("774320", "-9692": a customer number and a phone
+    number under headings read off a page upside down) are no line items, unless they add up to the subtotal."""
+    words = _words(*HEADINGS, ("Cust. ID: Billed To", 0.10, 0.30, 0.24), ("774320", 0.85, 0.90, 0.24),
+                   ("Ordered: www.liberty.com", 0.10, 0.34, 0.27), ("-9692", 0.86, 0.90, 0.27))  # fmt: skip
+    assert _read(words) == []
+    doc = _layout(words)
+    assert len(read_line_items(doc, {1: [Box(1, 0.05, 0.15, 0.95, 0.30)]}, targets=[764628.0])) == 2
