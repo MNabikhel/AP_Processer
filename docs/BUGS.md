@@ -3101,3 +3101,33 @@ table finder's model on. None of the corpus is in the repo: each test makes its 
   page read as it lay happened to get right. Reading an annotated explainer is not an invoice question: left.
 - **N-101** · Speckled scans (12) read 85.6% of fields right, as before: a median filter removed specks but also
   thin strokes (75.3% of printed values read, against 79.0%), and a blur did nothing. Left.
+
+### Reading: terms, PO numbers and due dates
+
+Found on the 135 real invoices and receipts of sweep 4 (Canada Post, York University's sample, Azure's and invoice2data's
+samples, French Factur-X and German ZUGFeRD invoices): payment terms were right on 4 of 36 that print them, PO numbers
+on 5 of 21, due dates on 32 of 47. Each fix has a small generated fixture in `tests/test_terms_po_sweep4.py` (the
+corpus is not in the repo). B- numbers start at B-372 and N- numbers at N-121, apart from the numbers another sweep
+4 change takes at the same time.
+
+#### B-372 · Terms whose meaning the short form dropped: "Net 30 EOM" read as "Net 30", "Net 2 weeks" as "Net 2" · high
+- **Where:** `ap_coder/capture/reader.py` (`_terms`, new `_terms_form`, `_TERMS_WORDS`); `ap_coder/capture/confidence.py`
+  (`run_checks`, new `_due_by_terms`)
+- **Symptom:** The rule reader wrote the terms in a short form of the first number it found: "Net 30 EOM" and
+  "30 jours fin de mois" became "Net 30", "Net 10th prox" "Net 10", "Net 1 month" "Net 1", "Net 2 weeks" "Net 2", a
+  discount's days "2% 10 days" (or "2% discount if paid within 10 days") "Net 10", and "Net 45, 1% 15 days" lost its
+  discount. The app counts the due date from the value read when none is printed: 15 to 30 days off, or one day
+  for "Net 1". A due date printed with "Net 30 EOM" failed the reader's own check (invoice date + 30 days) and was
+  marked down.
+- **Cause:** `_terms` kept one number per pattern ("net N", "N days"); the app's own terms parser
+  (`coding.terms.parse_terms`) reads end of month, prox, months, weeks, discounts and late-payment clauses, but the
+  reader never asked it. The due-date check took the number after "net" too.
+- **Reproduce:** `_terms("Net 30 EOM")`; a PDF with "Terms Net 30 EOM" and "Due Date" 45 days after the invoice date.
+- **Reproduced:** yes (`Net 30`; the due date's reason "invoice date + 30 days ≠ due date")
+- **Fix:** the reader puts the printed terms in the words `parse_terms` reads (OCR's specks and glued words, and
+  other languages' days, discount and "at once": B-373), lets it read them, and writes what it read back in a short
+  form it reads the same way ("Net 30 EOM", "Net 10 prox", "Net 1 month", "Net 14", "2% 10 days", "1% 15 Net 45",
+  "Due on receipt"); the due-date check counts the due date the way the app does.
+- **Test:** `tests/test_terms_po_sweep4.py::test_terms_are_read_in_the_form_the_app_counts_the_due_date_from`,
+  `tests/test_terms_po_sweep4.py::test_eom_terms_on_an_invoice_are_kept_and_checked_against_the_due_date`
+- **Lesson:** Don't keep two readers of the same text: the one that reads less hands the other a different value.

@@ -213,11 +213,12 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
         ok = inv <= due <= inv + dt.timedelta(days=400)
         checks.append({"code": "DUE_AFTER_INVOICE", "ok": ok, "fields": ["due_date", "invoice_date"],
                        "detail": f"due {due} vs invoice {inv}"})  # fmt: skip
-        net = re.search(r"net\s*(\d{1,3})", str(values.get("payment_terms") or ""), re.I)
-        if net:
-            ok = (due - inv).days == int(net.group(1))
+        by_terms = _due_by_terms(inv, values.get("payment_terms"))
+        if by_terms:
+            ok = by_terms == due
             checks.append({"code": "DUE_MATCHES_TERMS", "ok": ok, "fields": ["due_date", "invoice_date", "payment_terms"],
-                           "detail": f"invoice date + {net.group(1)} days {'=' if ok else '≠'} due date"})  # fmt: skip
+                           "detail": f"invoice date + {(by_terms - inv).days} days ({values['payment_terms']}) "
+                                     f"{'=' if ok else '≠'} due date"})  # fmt: skip
     inv_no, po = values.get("invoice_number"), values.get("po_number")
     if inv_no and po and normalize_value("invoice_number", inv_no) == normalize_value("po_number", po):
         checks.append({"code": "INVOICE_NOT_PO", "ok": False, "fields": ["invoice_number", "po_number"],
@@ -236,6 +237,18 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
             checks.append({"code": "VENDOR_NAME_MATCH", "ok": ok, "fields": ["vendor_name"],
                            "detail": "supplier name " + ("matches" if ok else "differs from") + " the vendor master"})  # fmt: skip
     return checks
+
+
+def _due_by_terms(invoice_date: dt.date, terms: Any) -> dt.date | None:
+    """The due date the terms give, counted as the app counts it ("Net 30 EOM" from the end of the month, "Net 10
+    prox" on the 10th of the next month); None for terms with no net days, or due on receipt."""
+    from ..coding.terms import parse_terms, payment
+
+    t = parse_terms(str(terms or ""))
+    if t.net_days is None or t.on_receipt:
+        return None
+    p = payment({"invoice_date": invoice_date.isoformat(), "payment_terms": str(terms)})
+    return p.due if p.source == "terms" else None
 
 
 def _date(v: Any) -> dt.date | None:

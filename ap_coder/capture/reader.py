@@ -631,13 +631,67 @@ _ON_RECEIPT = re.compile(
 )
 
 
+# Terms as printed, put in the words the terms parser (``coding.terms.parse_terms``) reads, on plain text (accents off):
+# OCR's specks and glued words, and other languages' days, discount and "at once" ("14 Tage netto", "30 días",
+# "50 gg DF", "3% Skonto innerhalb 10 Tagen", "zahlbar sofort").
+_TERMS_WORDS = [
+    (re.compile(r"(?<=\d)\s*(?:tag(?:en|e)(?=netto)|(?:tag(?:en|e)|dias|giorni|gg|dagen)(?![a-z]))"), " days "),
+    (re.compile(r"(?<=\d)\s*j(?![a-z])"), " jours"),  # "solde à 30 j"
+    (re.compile(r"(?<![a-z])skonto(?![a-z])"), "discount"),
+    (re.compile(r"(?<![a-z])(?:innerhalb|binnen)(?:\s*von)?(?![a-z])"), "within"),
+    (re.compile(r"(?<![a-z])bei\s*zahlung(?![a-z])"), "if paid"),
+    (re.compile(r"(?<![a-z])(?:df\s*fm|dffm|fine\s*mese|fin\s*de\s*mes)(?![a-z])"), " eom "),
+    (
+        re.compile(r"zahlbar\s*sofort|sofort\s*(?:zahlbar|fallig)|paiement\s*immediat|payable\s*immediatement"),
+        "due on receipt",
+    ),  # fmt: skip
+    (re.compile(r"(?<![a-z])net[\s.:]+(?=\d)"), "net "),  # "Net: 30", "Net.30"
+    (re.compile(r"(?<=on)[\s.]*(?=receipt)"), " "),  # "on.receipt", "uponreceipt"
+    (re.compile(r"(?<![a-z])(?:a|des|sur)[\s.]*(?=reception)"), "a "),  # "à.réception", "dès réception"
+]
+# "Bei Zahlung innerhalb 14 Tagen gewähren wir 2,0% Skonto": the discount's days printed before its rate.
+_DAYS_THEN_RATE = re.compile(r"within\s*(\d{1,2})\s*days\b[^%\d]{0,40}?(\d{1,2}(?:[.,]\d{1,2})?)\s*%\s*discount")
+
+
 def _terms(text: str) -> str | None:
+    """The terms printed in ``text``, in the short form the app counts the due date from ("Net 30", "2% 10 Net 30",
+    "Net 30 EOM", "Net 10 prox", "Net 1 month", "2% 10 days", "Due on receipt"): what ``parse_terms`` reads in the
+    printed text, written so that it reads the same in the short form."""
+    from ..coding.terms import parse_terms
+
     # OCR's full-width comma ("2%10，Net30") and a speck read as a middle dot ("Net·30")
-    text = unicodedata.normalize("NFKC", text).replace("·", " ")
-    for rx, fmt in _TERMS:
-        m = rx.search(text)
-        if m:
-            return fmt.format(*m.groups())
+    text = plain(unicodedata.normalize("NFKC", text).replace("·", " "))
+    # "2%10,.Net45", "2.10 net 30": a rate, its days and the net days as OCR runs them together.
+    text = _TERMS[0][0].sub(lambda m: f" {m.group(1)}% {m.group(2)} net {m.group(3)} ", text)
+    for rx, words in _TERMS_WORDS:
+        text = rx.sub(words, text)
+    text = _DAYS_THEN_RATE.sub(lambda m: f"{m.group(2)}% discount within {m.group(1)} days", text)
+    return _terms_form(parse_terms(text))
+
+
+def _terms_form(t) -> str | None:  # noqa: ANN001 - a coding.terms.Terms
+    """``t`` written as short terms that ``parse_terms`` reads back as ``t``."""
+    if t.on_receipt:
+        return "Due on receipt"
+    eom = " EOM" if t.eom else ""
+    rate = f"{t.discount_pct:g}%" if t.discount_pct else ""
+    if rate and t.discount_prox_day:
+        if t.prox_day == t.discount_prox_day:
+            return f"{rate} {t.discount_prox_day} prox"
+        return f"{rate} {t.discount_prox_day} prox, Net " + (f"{t.prox_day} prox" if t.prox_day else f"{t.net_days}")
+    if t.prox_day:
+        return f"Net {t.prox_day} prox"
+    if t.net_months:
+        net = f"Net {t.net_months} month{'s' if t.net_months > 1 else ''}{eom}"
+        return f"{rate} {t.discount_days} days, {net}" if rate and t.discount_days is not None else net
+    if rate and t.discount_days is not None:
+        return (
+            f"{rate} {t.discount_days} days"
+            if t.net_days is None
+            else f"{rate} {t.discount_days} Net {t.net_days}{eom}"
+        )
+    if t.net_days is not None:
+        return "Due EOM" if t.net_days == 0 and t.eom else f"Net {t.net_days}{eom}"
     return None
 
 
