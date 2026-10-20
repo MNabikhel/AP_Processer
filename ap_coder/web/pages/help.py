@@ -145,6 +145,7 @@ def help_page(request: Request, q: str = "", area: str = "") -> HTMLResponse:
         where=[
             ("Database", short_path(store.path)),
             ("Backups", short_path(data / "backups")),
-            ("Settings file", ".env in the data folder"),
+            ("Settings", "the Settings page (kept in the data folder)"),
+            ("Logs, for IT", short_path(paths.user_settings_path().parent / "logs")),
         ],
     )

@@ -485,3 +485,39 @@ def test_the_review_queue_asks_for_a_name_while_approvals_carry_the_computer_log
     assert "Approvals are recorded under jsmith" in page and 'href="/settings/review"' in page
     paths.write_user_settings(reviewer="Pat Tester")
     assert "Approvals are recorded under" not in client.get("/review").text
+
+
+# --- The dashboard's words: no file names of the code, settings files or commands for the tester -------------------
+
+
+def _visible(page: str) -> str:
+    """The words a person reads: no tags, scripts or styles."""
+    page = re.sub(r"<(script|style)\b.*?</\1>", " ", page, flags=re.S)
+    return html.unescape(re.sub(r"<[^>]+>", " ", page))
+
+
+def test_help_and_settings_send_the_tester_to_pages_not_to_files_of_the_code(fresh):
+    """Help said "Settings file: .env in the data folder"; Settings → About "see docs/GETTING_STARTED.md in the code
+    folder"; Settings → Review "(docs/PILOT.md, "What is sent over the network")"."""
+    client = _client(fresh)
+    for url in ("/help", "/settings/about", "/settings/review", "/review", "/process", "/accounts"):
+        page = re.sub(r'<details[^>]*id="whats-new".*?</details>', "", client.get(url).text, flags=re.S)  # (notes)
+        text = _visible(page)
+        for jargon in ("docs/", ".env in", "python -m", "terminal.bat", "AP_REVIEWER"):
+            assert jargon not in text, (url, jargon)
+    about = client.get("/settings/about").text
+    assert 'href="/help/quick-start"' in about and 'href="/help/report"' in about
+    assert "Logs" in _visible(client.get("/help").text)  # where IT finds the details
+
+
+def test_help_names_the_pages_by_the_names_the_menu_gives_them():
+    """B-243: Help's answer on emails said they wait "under Emails that need a person on Process invoices": the page
+    is called Import invoices (renamed; the answer kept the old name, as B-203's guide did)."""
+    from ap_coder.ops.help import FAQ
+    from ap_coder.web.pages import PAGES
+
+    titles = {p.title for p in PAGES}
+    assert "Import invoices" in titles and "Process invoices" not in titles
+    for question, answer in FAQ:
+        for old in ("Process invoices", "Load sample setup"):  # former names of a page and a button
+            assert old not in answer, (question, old)

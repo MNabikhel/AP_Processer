@@ -2413,3 +2413,13 @@ invoices, the first approval, the first export and Help, read as a pilot tester 
 - **Fix:** `cannot_set_up()` asks first whether the core packages are missing with nowhere to install them from; if so the start stops there, before anything running is touched, and says "The AP Coder already open was left running." when one is open. A copy that can set itself up takes over as before.
 - **Test:** `tests/test_sweep4_first_launch.py::test_a_copy_that_cannot_set_itself_up_leaves_the_running_ap_coder_alone`, `…::test_a_copy_that_can_set_itself_up_still_takes_over`
 - **Lesson:** Don't stop what works before knowing the replacement can start.
+
+#### B-243 · Help sent emails "on Process invoices", a page the menu doesn't have · low
+- **Where:** `ap_coder/ops/help.py:496` (`FAQ`, "Our invoices arrive by email…")
+- **Symptom:** Help → Questions said the emails that need a person wait "under Emails that need a person on Process invoices"; the menu and the page say **Import invoices**. The same answer sent IT to `docs/MAILBOX_SETUP.md`, a path in the code folder.
+- **Cause:** the page was renamed and the answer kept the old name (as B-203's guide did with a button).
+- **Reproduce:** open /help, Questions, the email question; compare with the menu.
+- **Reproduced:** yes (`… waits under Emails that need a person on Process invoices.`)
+- **Fix:** the answer says "on Import invoices", and "the mailbox setup guide that comes with AP Coder" instead of the path.
+- **Test:** `tests/test_sweep4_first_launch.py::test_help_names_the_pages_by_the_names_the_menu_gives_them`
+- **Lesson:** Don't rename a page without searching Help's own texts for its old name, not only the guides.
