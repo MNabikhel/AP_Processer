@@ -2444,3 +2444,23 @@ Found by reading a hard corpus of 150 synthetic Canadian invoices with exact tru
 - **Fix:** On a scan or a photo, an amount no check confirms (no total read, no sum adding up with it) is likely at most (`SINGLE_READER_CAP`), with the reason "no total or sum on the page confirms this amount". Amounts the totals or lines confirm are verified as before.
 - **Test:** `tests/test_sweep4_layouts.py::test_an_amount_nothing_confirms_on_a_scan_is_not_verified`
 - **Lesson:** Don't count two OCR engines reading the same misplaced row as two witnesses to an amount: the arithmetic is the independent witness.
+
+#### B-286 · On a tilted scan, a value right of its label is read from the next row · high
+- **Where:** `ap_coder/capture/reader.py` (`read_fields`)
+- **Symptom:** A scan tilted about 2.5 degrees: the credit note's number read from the next column's "Applies to Invoice" value; on two-column headers, the value beside a label read from the row under or over it (a near-identical number one digit off).
+- **Cause:** The line items were read on the page straightened (`straightened`), the header fields on the page as tilted: two inches right of a label, the text sits a row lower.
+- **Reproduce:** `read_fields()` on a layout tilted 0.045 with "B/L No." / "Invoice Number" rows and their values at x 0.44 (`_tilted_scan` in the test).
+- **Reproduced:** yes (`1803062`, the B/L number)
+- **Fix:** A tilted scan's header is read straightened like its line items; each reading's box is given back on the page as scanned (`_on_tilted_page`). A page whose tilt is not measured (`skew` 0) is read as before.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_tilted_scans_label_is_read_level_with_its_value`
+- **Lesson:** Don't straighten half the page: every reading that compares positions needs the same geometry.
+
+#### B-287 · Labels under values: the value to the right of a label is the next label's · medium
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, `_over_its_own_label`)
+- **Symptom:** On a labels-under page with rows a little off, "A-26-54597" (over "Applies to Invoice") level with "Credit Note #" was read as the credit's number, before the value over the label was looked at.
+- **Cause:** B-280 reads the value over a label only after the line's right side; a value with a label of its own under it is that label's, and a distractor label ("Applies to Invoice", "Quote #") did not count as one.
+- **Reproduce:** the rows of `test_labels_under_values_the_value_to_the_right_is_the_next_labels`; `read_fields()`.
+- **Reproduced:** yes (`A-26-54597`)
+- **Fix:** On a labels-under page, a value printed right over a label of its own (any label, wanted or a distractor) is never read as the value of a label beside or over it.
+- **Test:** `tests/test_sweep4_layouts.py::test_labels_under_values_the_value_to_the_right_is_the_next_labels`
+- **Lesson:** Don't let "to the right" outrank the page's own convention: on a labels-under page, a value belongs to the label under it.

@@ -155,6 +155,56 @@ def test_an_amount_nothing_confirms_on_a_scan_is_not_verified():
     assert scan.value == 171.03 and scan.status != VERIFIED
 
 
+def _tilted_scan(rows: list[tuple[float, float, str]], skew: float):
+    """A scanned page's layout, tilted by ``skew`` (down per across): (x, y on the straight page, text) per segment."""
+    from ap_coder.capture.layout import group_lines
+    from ap_coder.capture.types import Box, DocLayout, PageLayout, Word
+
+    words = []
+    for x, y, text in rows:
+        at = x
+        for w in text.split():
+            width = 0.0085 * len(w)
+            dy = skew * (at + width / 2 - 0.5)
+            words.append(Word(w, Box(1, at, y + dy, at + width, y + 0.016 + dy), 0.95, "ocr"))
+            at += width + 0.006
+    page = PageLayout(1, 1700, 2200, words, group_lines(words, 1), skew=skew)
+    return DocLayout([page], "ocr")
+
+
+def test_a_tilted_scans_label_is_read_level_with_its_value():
+    """A scan tilted 2.5 degrees: the value two inches right of "Invoice Number" sits a row lower, level with "Bill of
+    lading No."'s value, and the next row's number (one digit off) was read as the invoice number. The line items were
+    read straightened; the header was not."""
+    from ap_coder.capture.reader import read_fields
+
+    rows = [
+        (0.08, 0.237, "B/L No."), (0.44, 0.237, "1803062"),
+        (0.08, 0.258, "Invoice Number"), (0.44, 0.258, "1803462"),
+        (0.08, 0.279, "Ship Via"), (0.44, 0.279, "UPS Ground"),
+    ]  # fmt: skip
+    got = read_fields(_tilted_scan(rows, 0.045))["invoice_number"][0]
+    assert got.value == "1803462"
+    printed = 0.258 + 0.045 * (0.44 + 0.0085 * 7 / 2 - 0.5)  # where the number is printed on the tilted page
+    assert got.boxes[0].y0 <= printed + 0.001 and got.boxes[0].y1 >= printed + 0.015
+
+
+def test_labels_under_values_the_value_to_the_right_is_the_next_labels():
+    """Labels under their values, on a scan whose rows are a little off: the next column's value ("A-26-54597", over
+    "Applies to Invoice") sits level with "Credit Note #" and was read as the credit's number."""
+    from ap_coder.capture.reader import read_fields
+
+    rows = [
+        (0.08, 0.282, "2025-09-11"), (0.08, 0.300, "Credit Date"),
+        (0.25, 0.291, "CM2026-77832"), (0.25, 0.308, "Credit Note #"),
+        (0.43, 0.302, "A-26-54597"), (0.43, 0.319, "Applies to Invoice"),
+        (0.60, 0.305, "4500070761"), (0.60, 0.322, "Customer PO"),
+    ]  # fmt: skip
+    got = read_fields(_tilted_scan(rows, 0.0))
+    assert got["invoice_number"][0].value == "CM2026-77832"
+    assert got["po_number"][0].value == "4500070761"
+
+
 def test_compact_dates_with_a_month_name(tmp_path):
     """ "12APR26" (day, month and two-digit year run together) and "Oct-15-26" (month, day and year by dashes) were
     not read as dates at all; a number with such a date inside it is still a number."""

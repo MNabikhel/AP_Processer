@@ -10,6 +10,7 @@ amounts). Totals are chosen together: the subtotal, taxes and total that add up 
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import functools
 import re
@@ -647,7 +648,7 @@ def _over_its_own_label(lines: list[Line], value: Line) -> bool:
         and other.box.cy > value.box.cy
         and -0.3 * h <= other.box.y0 - value.box.y1 <= LABEL_UNDER_GAP * h
         and _aligned(value.box, other.box)
-        and _bare_hits(other)
+        and (_bare_hits(other) or _labelish(other))
         for other in lines
     )
 
@@ -778,6 +779,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = Fals
                 break  # the next thing to the right is another label ("Ship Date"): look below instead
             if _under_another_label(lines, other, line):
                 break  # a header grid's value, under its own label ("Order No." over "SO-28797"): look below
+            if under and _over_its_own_label(lines, other):
+                break  # labels under values: the value over the next label ("A-26-54597" over "Applies to Invoice")
             got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
             if got and _after_another_label(other, got):
                 got = None
@@ -1643,7 +1646,24 @@ def _canadian_vendor(layout: DocLayout) -> bool:
 
 def read_fields(layout: DocLayout, received: dt.date | None = None) -> dict[str, list[Reading]]:
     """Candidate readings for every header field, best first. ``received``: the day the invoice came
-    in (it settles a 03/04/2026 the page itself does not: invoices arrive days after their date)."""
+    in (it settles a 03/04/2026 the page itself does not: invoices arrive days after their date).
+    A tilted scan is read straightened, as its line items are (``straightened``): at 2.5 degrees a value two inches
+    right of its label sits a row lower, level with the next label's. The boxes are given on the page as scanned."""
+    skews = {page.number: page.skew for page in layout.pages if abs(page.skew) >= STRAIGHTEN_FROM}
+    if not skews:
+        return _read_fields_on(layout, received)
+    level = straightened(layout)
+    level = DocLayout([dataclasses.replace(p, skew=0.0, turn=page.turn, dpi=page.dpi) for p, page in
+                       zip(level.pages, layout.pages, strict=True)], layout.source, layout.pages_left_out,
+                      layout.pages_unread_locally)  # fmt: skip
+    cands = _read_fields_on(level, received)
+    for readings in cands.values():
+        for r in readings:
+            r.boxes = [_on_tilted_page(b, skews[b.page]) if b.page in skews else b for b in r.boxes]
+    return cands
+
+
+def _read_fields_on(layout: DocLayout, received: dt.date | None) -> dict[str, list[Reading]]:
     text = layout.text()
     order = infer_day_first(text)
     # US invoices print month first. A Canadian supplier need not, whatever its currency or a US line on its letterhead
