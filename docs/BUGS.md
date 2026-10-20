@@ -3101,3 +3101,72 @@ table finder's model on. None of the corpus is in the repo: each test makes its 
   page read as it lay happened to get right. Reading an annotated explainer is not an invoice question: left.
 - **N-101** · Speckled scans (12) read 85.6% of fields right, as before: a median filter removed specks but also
   thin strokes (75.3% of printed values read, against 79.0%), and a blur did nothing. Left.
+
+### Reading: dates and invoice numbers
+
+Measured on a corpus of 135 public sample invoices and receipts with known answers (German ZUGFeRD samples, French,
+Dutch and English invoices, scanned and photographed receipts), read with OCR only where there is no text layer, the
+table finder's model on. None of the corpus is in the repo: each test makes its own page. Most of what was missing
+was printed in ways the labels did not know: a German invoice's title that carries its number and date ("Rechnung
+Nr. 471102 vom 05.03.2018"), "Facture n° 562044 du 2 juillet 2015", "Beleg-Nr | : RK21012345", other languages'
+month names, a receipt's "Receipt Number", a page number run into the label. Those are read now; a date read from
+after the number (`number-dated`) is measured apart from labelled dates, so it is never verified on their record.
+
+#### B-353 · A credit note's own number was not read: the invoice it credits was taken for it · medium
+- **Where:** `ap_coder/capture/reader.py` (`MORE_LABELS["invoice_number"]`, `DISTRACTORS["invoice_number"]`, `_hits_at`)
+- **Symptom:** a French credit note ("Avoir AV-2017-0005", with "Facture liée FA-2017-0010") came back with the
+  invoice number FA-2017-0010, *likely*: posted, the credit would carry the number of the invoice it credits. Its scan,
+  where OCR glued the title to its number ("AvoirAV-2017-0005"), gave FA-2017-0010 too (*check*).
+- **Cause:** "Avoir" (a credit note, in France) was no label; "Facture liée" ("linked invoice") read as "Facture",
+  the invoice number's weakest label. A label glued to the letters of its value was never a label.
+- **Reproduce:** a PDF with "Avoir AV-2017-0005" as its title and "Facture liée | FA-2017-0010" in its header grid.
+- **Reproduced:** yes (`invoice_number FA-2017-0010`)
+- **Fix:** "Avoir" followed by a number, and "N° d'avoir", are a credit note's number labels (as "Note de crédit
+  051527-CR" is); "Facture liée / associée / initiale / concernée / corrigée / de référence" and "Ursprungsbeleg" /
+  "Bezugsrechnung" are the credited invoice, not this one's number. A label OCR glued to its number is read when the
+  number starts with capitals and a digit follows ("AvoirAV-2017-0005").
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_credit_notes_own_number_not_the_invoice_it_credits`
+- **Lesson:** A credit note names two documents; the one it is, and the one it credits. Know the words for both.
+
+#### B-354 · A US customer's invoice dated 9/10/2020 was shown as October 9 · low
+- **Where:** `ap_coder/capture/reader.py` (`_read_fields_on`)
+- **Symptom:** a statement to a customer in Walnut, WY ("Date: 9/10/2020", nothing Canadian on it) and a synthetic
+  invoice between two US addresses ("Date of issue: 05/11/2021") came back as 2020-10-09 and 2021-11-05 (*check*):
+  the person checking was shown the wrong day.
+- **Cause:** with no date on the page over 12 and no due date or terms to settle the order, a date that reads both
+  ways was shown day first. The supplier's US address turns the order to month first, but only when the reader takes
+  that address for the supplier's (outside the customer's block), and "WY, 98432" (a comma before the ZIP code) was no
+  US address at all.
+- **Reproduce:** a PDF with "Date: 9/10/2020", "Sold To ... Walnut, WY, 98432", no GST number, no postal code.
+- **Reproduced:** yes (`invoice_date 2020-10-09 check`)
+- **Fix:** when nothing settles the order and the first page prints a US address anywhere (and nothing Canadian),
+  the date is shown month first, still marked as reading both ways: confidence at most 60%, a person checks it.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_us_customers_invoice_shows_an_unsettled_date_month_first_for_a_person_to_check`
+- **Lesson:** When a value must be guessed, guess with what the page says; and keep it marked a guess.
+
+#### B-355 · A German supplier's 05.03.2018 was read as May 3: "DE 80333" read as a Delaware ZIP code · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_fields_on`, new `_dotted_dates`)
+- **Symptom:** a German invoice ("Lieferant GmbH, DE 80333 München", "Rechnungsdatum: 05.03.2018") came back dated
+  2018-05-03 with no mark that the date reads both ways (so not held to *check* for that). On the real corpus it
+  showed once German dates were read (this section): two invoices dated 2018-03-05 and 2018-08-06 came back May 3
+  and June 8.
+- **Cause:** a supplier with a US address prints dates month first; "DE 80333 München" (the country code before a
+  German postcode) matched a US state and ZIP code, and the same followed for an invoice in US dollars.
+- **Reproduce:** a PDF with "DE 80333 München" at the top and "Rechnungsdatum: 05.03.2018".
+- **Reproduced:** yes (`invoice_date 2018-05-03`)
+- **Fix:** a page whose numeric dates are mostly printed with points (05.03.2018) is not turned to month first by a
+  US address or US dollars: the US does not print dates so, Europe does, day first.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_date_printed_with_points_is_not_turned_month_first_by_a_german_postcode`
+- **Lesson:** A country guessed from an address needs a second sign; the way the page prints its dates is one.
+
+#### B-356 · A receipt's "02/15/10 11:10AM" was dated 1011-02-15 · low
+- **Where:** `ap_coder/capture/normalize.py` (`_make`, `parse_dates`)
+- **Symptom:** a scanned receipt's date and time, which OCR read without the space ("02/15/1011:10AM"), came back as
+  the invoice date 1011-02-15 (*check*).
+- **Cause:** a four-digit year was taken whatever it was.
+- **Reproduce:** `parse_date("02/15/1011:10AM")`
+- **Reproduced:** yes (`1011-02-15`)
+- **Fix:** a year outside 1900-2099 is no date; a four-digit "year" run into a time ("1011:10") is the two-digit
+  year and the hour.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_year_run_into_the_time_is_not_read_as_the_year`
+- **Lesson:** Bound what a value can be: no invoice is dated a thousand years ago.

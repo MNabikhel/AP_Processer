@@ -166,6 +166,22 @@ MONTHS = {
     "nov": 11, "november": 11, "novembre": 11,
     "dec": 12, "december": 12, "decembre": 12,
 }  # fmt: skip
+# The months as German, Dutch, Spanish, Italian and Portuguese invoices print them ("24. Januar 2014", "29 maart
+# 2014", "10 de febrero de 2022"), accents off. Not their short forms that are English words ("set", "out", "ago").
+MONTHS.update({
+    "januar": 1, "januari": 1, "enero": 1, "ene": 1, "gennaio": 1, "janeiro": 1,
+    "februar": 2, "februari": 2, "febrero": 2, "febbraio": 2, "fevereiro": 2,
+    "marz": 3, "maerz": 3, "maart": 3, "mrt": 3, "marzo": 3, "marco": 3,
+    "abril": 4, "abr": 4, "aprile": 4,
+    "mei": 5, "mayo": 5, "maggio": 5, "maio": 5,
+    "juni": 6, "junio": 6, "giugno": 6, "junho": 6,
+    "juli": 7, "julio": 7, "luglio": 7, "julho": 7,
+    "augustus": 8, "agosto": 8,
+    "septiembre": 9, "setiembre": 9, "settembre": 9, "setembro": 9,
+    "oktober": 10, "okt": 10, "octubre": 10, "ottobre": 10, "outubro": 10,
+    "noviembre": 11, "novembro": 11,
+    "dezember": 12, "dez": 12, "diciembre": 12, "dic": 12, "dicembre": 12, "dezembro": 12,
+})  # fmt: skip
 
 
 # Letters Unicode does not decompose: dropped with the accents, "Œuvres" became "uvres".
@@ -183,7 +199,10 @@ _NUMERIC = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})\b")
 # Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
 # Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026".
 _WORDY_MDY = re.compile(r"\b([a-z]{3,9})\.?[\s-]*(\d{1,2})(?:st|nd|rd|th)?(?:\s*[,.]){0,2}\s*(\d{4})\b")
-_WORDY_DMY = re.compile(r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*([a-z]{3,9})(?:\s*[,.]){0,2}\s*(\d{4})\b")
+# Spanish and Portuguese put "de" between the parts: "10 de febrero de 2022".
+_WORDY_DMY = re.compile(
+    r"\b(\d{1,2})(?:er|st|nd|rd|th)?[\s.]*(?:de\s+)?([a-z]{3,9})(?:\s*[,.]){0,2}\s*(?:del?\s+)?(\d{4})\b"
+)
 # OCR reads letters of a month as digits ("0ct", "Ju1", "N0v"); fixed in place, same length.
 _OCR_MONTHS = [
     (re.compile(r"0ct"), "oct"),
@@ -227,6 +246,8 @@ _GLUED_DMY = re.compile(r"(?<![\w/-])(\d{1,2})([a-z]{3,4})(\d{2})(?![\w/-])")
 def _make(y: int, m: int, d: int) -> dt.date | None:
     if y < 100:
         y += 2000
+    if not 1900 <= y <= 2099:
+        return None  # "02/15/1011:10AM": OCR ran the year into the time; no invoice is dated 1011
     try:
         return dt.date(y, m, d)
     except ValueError:
@@ -267,6 +288,8 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
         if not free(*m.span()):
             continue
         a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if len(m.group(3)) == 4 and not 1900 <= y <= 2099 and s[m.end() : m.end() + 1] == ":":
+            y = int(m.group(3)[:2])  # "02/15/1011:10AM": the year 10, then the time 11:10 (OCR lost the space)
         dmy, mdy = _make(y, b, a), _make(y, a, b)
         if dmy and mdy and dmy != mdy:
             if prefer_day_first is None:
