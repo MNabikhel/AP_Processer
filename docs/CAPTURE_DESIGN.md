@@ -577,7 +577,9 @@ against the subtotal under its column. Also: "Net price", "Net worth" and "Exten
 run into the amount's is another column, a row with no words printing the lines' sum ends them, page subtotals and
 balances brought forward are no lines, a description wrapped under its row is read whole, and a discount printed
 without its minus is taken off when that makes the lines add up. On 128 real invoices and receipts the line count
-came out exactly right on 64 (was 40) and wrong lines fell from 234 to 12.
+came out exactly right on 65 (was 40), every line right on 63 (was 29), and wrong lines fell from 234 to 3; on the
+150 hard generated invoices, 124 (was 117), 122 (was 112) and 100 to 53 (most of those left on one page OCR read
+upside down).
 
 **In tandem with OvisOCR2** (`capture/line_items.py`). Once OvisOCR2 has read the invoice, its table is compared row
 by row with the page's readings: the same amount, the same quantity when both read one, and descriptions at least
