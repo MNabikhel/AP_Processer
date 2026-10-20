@@ -3,10 +3,13 @@
 import datetime as dt
 import io
 import json
+import subprocess
+import sys
 
 import pymupdf
 from openpyxl import load_workbook
 
+from ap_coder.ai import page_worker
 from ap_coder.core.store import Store, load_sample_setup
 from ap_coder.erp import accruals, spend, stamp
 
@@ -53,3 +56,25 @@ def test_an_invoice_approved_without_a_stored_distribution_has_its_posting_on_th
     with pymupdf.open("pdf", pdf) as opened:
         coding = opened[opened.page_count - 1].get_text()
     assert f"{doc['grand_total']:,.2f}" in coding and "2310" in coding
+
+
+def test_a_reading_mark_whose_process_id_another_program_now_has_goes_back_in_line(tmp_path):
+    """B-218: a dashboard killed mid-read left its "being read" mark; its process id now belongs to another program.
+    The mark notes when its process started, so the invoice is read again at once, not two hours later."""
+    store = Store(tmp_path / "ap.db")
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        started = page_worker._process_started(other.pid)
+        assert started and page_worker._process_started(2**22 + 12345) == ""  # no such process
+        readers = {31: f"{other.pid}:dead:{started}x", 32: f"{other.pid}:alive:{started}", 33: f"{other.pid}:old"}
+        for invoice_id, reader in readers.items():
+            store.queue_page_read(invoice_id, "new invoice")
+            assert store.next_page_read(invoice_id, reader=reader)["reader"] == reader
+        assert page_worker.release_interrupted(store) == 1
+        # The program now under that id started at another time; a mark of its own and an older mark (no start
+        # noted: by its process id, as before) stand.
+        assert {i: store.page_read(i)["status"] for i in readers} == {31: "waiting", 32: "reading", 33: "reading"}
+    finally:
+        other.kill()
+        other.wait()
+    assert page_worker.READER_ID.count(":") == 2 and page_worker.reader_alive(page_worker.READER_ID) is False
