@@ -909,7 +909,7 @@ def without_wheelhouse(missing: list[str], total: int) -> tuple[str, str, bool]:
         scans = " (scanned invoices can't be read without the OCR add-on)" if any(map(is_ocr, missing)) else ""
         return ("warn", f"Packages: core in place; missing {names(missing)}: it must come from the offline "
                         f"bundle's wheelhouse folder{scans}", False)  # fmt: skip
-    return "ok", f"Packages: all {total} in place (AP Coder runs from this folder)", False
+    return "ok", f"Packages: all {total} in place", False  # (ap_coder itself runs from this folder: no need to say)
 
 
 def cannot_set_up() -> SetupError | None:
@@ -1802,6 +1802,11 @@ def start_dashboard(rest: list[str], state: dict) -> int:
                 open_browser(dashboard_url(port))
                 opened = True
         shown.join(timeout=5)
+        if proc.returncode:  # (stopped by an update or the window closed: 0, or nothing is left to read this)
+            say()
+            line("fail", f"AP Coder stopped on its own (code {proc.returncode}); the lines above may say why.")
+            say("  What to do: double-click AP Coder again. If it happens again, use Help → Report a problem, and "
+                f"send IT the log {log_path()}.")  # fmt: skip
         return proc.returncode
     except KeyboardInterrupt:
         proc.terminate()

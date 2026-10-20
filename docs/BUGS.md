@@ -2423,3 +2423,13 @@ invoices, the first approval, the first export and Help, read as a pilot tester 
 - **Fix:** the answer says "on Import invoices", and "the mailbox setup guide that comes with AP Coder" instead of the path.
 - **Test:** `tests/test_sweep4_first_launch.py::test_help_names_the_pages_by_the_names_the_menu_gives_them`
 - **Lesson:** Don't rename a page without searching Help's own texts for its old name, not only the guides.
+
+#### B-244 · A dashboard that stopped on its own left "The message above says what to do" with no message · medium
+- **Where:** `scripts/launch.py:1804` (`start_dashboard`: returns the server's exit code and says nothing)
+- **Symptom:** when the dashboard stopped on its own (it crashed, or something ended it), the window printed nothing more and closed with code 241 (Linux) or, on Windows, `APProcessor.bat` said "AP Coder stopped. The message above says what to do." under the dashboard's last normal line: a dead end.
+- **Cause:** a server exit was treated as the normal end of a start; only setup failures said what to do.
+- **Reproduce:** start AP Coder, then end its `python -m ap_coder serve` process (in the walk-through: `pkill -f "ap_coder serve"`).
+- **Reproduced:** yes (the window's last lines were "AP Coder is running at http://127.0.0.1:8501 …" then `[exited with code 241]`)
+- **Fix:** a server that ends with an error code adds "✗ AP Coder stopped on its own (code N); the lines above may say why. What to do: double-click AP Coder again. If it happens again, use Help → Report a problem, and send IT the log …". A stop asked for (an update taking over, Ctrl+C) says nothing, as before.
+- **Test:** `tests/test_sweep4_first_launch.py::test_a_dashboard_that_stops_on_its_own_says_so_and_what_to_do`
+- **Lesson:** Don't let a promise ("the message above says what to do") depend on every path having printed one.

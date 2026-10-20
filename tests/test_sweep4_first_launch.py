@@ -271,6 +271,18 @@ def test_installing_shows_progress_in_plain_words_and_keeps_pips_lines_in_the_lo
     assert "Processing ./wheelhouse/pandas" in logged and "Successfully installed et-xmlfile" in logged
 
 
+def test_a_dashboard_that_stops_on_its_own_says_so_and_what_to_do(launch, monkeypatch, capsys):
+    """B-244: when the dashboard stopped on its own (it crashed, or something ended it), the window said nothing, then
+    APProcessor.bat printed "AP Coder stopped. The message above says what to do." with no message above."""
+    monkeypatch.setattr(launch, "server_command", lambda port, rest: [sys.executable, "-c", "raise SystemExit(3)"])
+    monkeypatch.setattr(launch.running, "health", lambda port, timeout=1.0: None)
+    monkeypatch.setattr(launch, "open_browser", lambda url: None)
+    assert launch.start_dashboard(["--port", "8597"], {}) == 3
+    out = capsys.readouterr().out
+    assert "AP Coder stopped on its own" in out and "What to do:" in out
+    assert "double-click" in out and "Report a problem" in out and "launch.log" in out
+
+
 def test_the_server_window_does_not_repeat_the_address_with_ctrl_c(launch, monkeypatch, capsys):
     """Under the launcher the window said "Starting AP Coder: … close it to stop.", then "Dashboard: http://127.0.0.1:
     8501  (Ctrl+C here to stop)", then "AP Coder is running at http://127.0.0.1:8501"."""

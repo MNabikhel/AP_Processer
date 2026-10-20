@@ -235,7 +235,7 @@ def test_offline_without_wheelhouse_still_starts_when_the_core_is_there(launch, 
     assert "missing rapidocr" in text and "offline bundle" in text and "scanned invoices can't be read" in text
     monkeypatch.setattr(launch, "missing_packages", lambda extras: ([], "Missing: ap_coder (pip install -e .)"))
     level, text, _ = launch.ensure_packages({})
-    assert level == "ok" and "runs from this folder" in text and commands == []
+    assert level == "ok" and text.startswith("Packages: all ") and "(" not in text and commands == []
 
 
 # --- .venv: made once, remade only when broken ---------------------------------------------------------------
