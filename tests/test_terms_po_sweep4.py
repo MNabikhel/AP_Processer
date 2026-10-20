@@ -143,3 +143,57 @@ def test_terms_printed_in_other_words_are_read_for_a_person_to_check(tmp_path, l
 def test_days_in_a_note_that_is_not_the_terms_are_not_read_as_terms(tmp_path, note):
     got = _read(_pdf(tmp_path, [*_HEAD, (60, 600, note), *_TABLE]))
     assert got["payment_terms"].value is None
+
+
+# ---------------------------------------------------------------- the customer's order number
+
+
+@pytest.mark.parametrize(
+    "lines, po",
+    [
+        # European invoices give the customer's order number as "your reference", and German ones as the order.
+        (
+            [(60, 140, "Your Reference"), (200, 140, "COMPRA0832"), (60, 155, "Agreement Ref."), (200, 155, "FR2017")],
+            "COMPRA0832",
+        ),
+        ([(60, 140, "Votre référence"), (200, 140, "PO445")], "PO445"),
+        ([(60, 140, "Bestellung:"), (200, 140, "B123456789")], "B123456789"),
+        (
+            [
+                (60, 140, "Bestell-Nr"),
+                (160, 140, ": B123456789"),
+                (60, 152, "Bestell-Datum"),
+                (160, 152, ": 01.08.2026"),
+            ],
+            "B123456789",
+        ),
+        # The label in the middle of a line, after the customer's name or in a sentence.
+        ([(60, 140, "York University Purchase Order Number: PO12345")], "PO12345"),
+        ([(60, 140, "Rechnung gemäß Bestellung Nr. 2026-471331 vom 01.09.2026.")], "2026-471331"),
+    ],
+)
+def test_the_customers_order_number_under_other_labels_is_read_for_a_person_to_check(tmp_path, lines, po):
+    got = _read(_pdf(tmp_path, _HEAD + lines + _TABLE))
+    assert got["po_number"].value == po
+    assert got["po_number"].status != VERIFIED
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        [(60, 140, "Customer#: 10045  Contract/Purchase Order Number:___________")],
+        [(60, 140, "Your reference: John Smith")],
+        [(60, 140, "Rechnung gemäß Bestellung vom 01.09.2026.")],
+        # Two orders named in the lines' details: neither is the invoice's.
+        [(60, 140, "* Bestellung Nr. ORDER84359 Zeile 1"), (60, 155, "* Bestellung Nr. ORDER84753 Zeile 7")],
+    ],
+)
+def test_no_order_number_is_made_up_from_a_label_without_one(tmp_path, lines):
+    assert _read(_pdf(tmp_path, _HEAD + lines + _TABLE))["po_number"].value is None
+
+
+def test_a_po_label_wins_over_your_reference(tmp_path):
+    lines = [(60, 140, "Your Reference"), (200, 140, "J-SMITH-7"), (60, 155, "PO Number"), (200, 155, "4500012345")]
+    got = _read(_pdf(tmp_path, _HEAD + lines + _TABLE))["po_number"]
+    assert got.value == "4500012345"
+    assert not any("J-SMITH-7" in r for r in got.reasons)  # not even a second reading to cast doubt on it

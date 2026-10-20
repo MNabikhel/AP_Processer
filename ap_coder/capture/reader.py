@@ -251,6 +251,10 @@ UNMEASURED_LABELS: dict[str, list[tuple[str, float]]] = {
         (r"condicion(?:es)?\s*de\s*pago", 0.9), (r"(?:termini|condizioni)\s*(?:di\s*)?pagamento", 0.9),
         (r"zahlungs\s*-?\s*(?:bedingungen|konditionen|ziel)", 0.85), (r"betalings\s*-?\s*(?:voorwaarden|termijn|conditie)s?", 0.85),
     ],
+    # German: the customer's order ("Bestellung: B123456789", "Bestell-Nr"), not its date ("Bestellung vom 01.03.").
+    "po_number": [
+        (r"(?:ihre\s*)?bestellung(?:\s*(?:nr\b\.?|nummer))?(?!\s*vom)", 0.85), (r"(?:ihre\s*)?bestell\s*-?\s*(?:nr\b\.?|nummer)", 0.85),
+    ],
 }  # fmt: skip
 for _field, _pats in UNMEASURED_LABELS.items():
     LABELS[_field] = [*LABELS[_field], *_pats]
@@ -924,6 +928,9 @@ def _own_label(line: Line, field: str) -> bool:
     return any(h.field == field for h in _label_hits(line))
 
 
+_COLON_CELL_FIELDS = ("po_number", "due_date", "payment_terms")
+
+
 def _after_another_label(line: Line, got: Reading) -> bool:
     """``got``, read from ``line`` for a label on another line, comes after a label of its own on ``line``
     ("Delivery Date: Sep 20, 2026"): it is that label's value."""
@@ -931,6 +938,8 @@ def _after_another_label(line: Line, got: Reading) -> bool:
     before = plain(line.text[: max(at, 0)]).strip()
     if at <= 0 or not before:
         return False
+    if got.field in _COLON_CELL_FIELDS and not re.search(r"[a-z0-9]", before):
+        return False  # "Bestell-Nr | : B123456789": the colon of the label on the left, set in the value's cell
     return bool(_LABEL_SHAPE.search(before) or before.endswith(":") or any(
         h.field != got.field and h.end <= at for h in _label_hits(line)))  # fmt: skip
 
@@ -2710,6 +2719,8 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                 break
     if not cands.get("payment_terms"):
         cands["payment_terms"] = _terms_sentences(lines)
+    if not cands.get("po_number") and by_page:
+        cands["po_number"] = _po_mentions(by_page[min(by_page)]) or _po_as_your_reference(by_page, under)
     if credit_printed_positive(layout):
         for field in AMOUNT_FIELDS:
             for r in cands.get(field, []):
@@ -2784,6 +2795,51 @@ def _terms_sentences(lines: list[Line]) -> list[Reading]:
                                      0.6 * _min_conf(words), "sentence" + UNMEASURED))  # fmt: skip
     values = {normalize_value("payment_terms", r.value) for r in found}
     return found[:1] if len(values) == 1 else []
+
+
+# A PO label inside a line, after other words (plain text): "York University Purchase Order Number: PO12345" (OCR may
+# glue it: "UniversityPurchaseOrderNumber:PO12345"), "Rechnung gemäß Bestellung Nr. 2013-471331 vom 01.03.2013". With
+# its "number", so "PO Box" and a "purchase order" in a sentence are not.
+_PO_MENTION = re.compile(
+    r"(?:purchase\s*order|(?<![a-z])p\.?\s?o\.?)\s*(?:number|no(?![a-z])\.?|#|n\s?°)\s*[:#]?"
+    r"|(?<![a-z])bestell(?:ung)?\s*-?\s*(?:nr(?![a-z])\.?|nummer)\s*[:#]?"
+    r"|(?<![a-z])bon\s*de\s*commande\s*(?:n\s?[o°]|numero)(?![a-z])\.?\s*[:#]?"
+)
+# "Your reference" / "Votre référence": European invoices give the customer's order number so, but it may be another
+# reference of the customer's. Read only when no PO label gives one.
+_YOUR_REFERENCE = re.compile(r"(?:your|votre)\s*ref(?:erence)?(?![a-z])\.?")
+
+
+def _po_mentions(page_lines: list[Line]) -> list[Reading]:
+    """The PO named mid-line on the first page, for a person to check; none when two different ones are (the order
+    of each line item: "* Bestellung Nr. ORDER84359 Zeile 1")."""
+    from .normalize import normalize_value
+
+    found = []
+    for line in page_lines:
+        for m in _PO_MENTION.finditer(plain(line.text)):
+            if m.start() == 0:
+                continue  # a label starting its line: read as one
+            got = _value_reading("po_number", line, m.end(), 0.55, "mention" + UNMEASURED)
+            if got:
+                found.append(got)
+    return found[:1] if len({normalize_value("po_number", r.value) for r in found}) == 1 else []
+
+
+def _po_as_your_reference(by_page: dict[int, list[Line]], under: set[int]) -> list[Reading]:
+    """The customer's reference read as the PO, for a person to check; none when two different ones are printed."""
+    from .normalize import normalize_value
+
+    found = []
+    for page, page_lines in by_page.items():
+        for line in page_lines:
+            m = _YOUR_REFERENCE.match(plain(line.text))
+            if m:
+                hit = _LabelHit("po_number", line, 0.6, m.end(), plain(line.text)[: m.end()])
+                for r in _labelled([hit], page_lines, page in under):
+                    r.method += UNMEASURED
+                    found.append(r)
+    return found[:1] if len({normalize_value("po_number", r.value) for r in found}) == 1 else []
 
 
 def _negative_totals(cands: dict[str, list[Reading]]) -> bool:

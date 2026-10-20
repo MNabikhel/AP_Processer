@@ -3159,3 +3159,29 @@ corpus is not in the repo). B- numbers start at B-372 and N- numbers at N-121, a
   `tests/test_terms_po_sweep4.py::test_days_in_a_note_that_is_not_the_terms_are_not_read_as_terms`
 - **Lesson:** Don't wait for a label the supplier never prints: the terms are a sentence anyone can recognise, as
   long as the sentence is about paying.
+
+#### B-374 · The customer's order number under "Your reference", a German label or mid-line was not read · medium
+- **Where:** `ap_coder/capture/reader.py` (`UNMEASURED_LABELS`, new `_po_mentions`, `_po_as_your_reference`,
+  `_after_another_label`)
+- **Symptom:** PO numbers were right on 5 of the 21 real invoices that print one. French and Spanish Factur-X
+  invoices give it as "Votre référence PO445" / "Your Reference COMPRA0832"; German ones as "Bestellung:
+  B123456789", "Bestell-Nr : B123456789" (the colon set in the value's cell) or in a sentence, "Rechnung gemäß
+  Bestellung Nr. 2013-471331 vom 01.03.2013"; York University's sample (a scan) after the customer's name, which OCR
+  glued to it: "York UniversityPurchaseOrderNumber:PO12345". All missing.
+- **Cause:** a PO label was looked for only at the start of a line or after a separator, in English and French; a
+  value whose cell starts with a colon was taken for the value of a label on its own line ("Delivery Date: ...").
+- **Reproduce:** a PDF with "Your Reference" beside "COMPRA0832", or "York University Purchase Order Number:
+  PO12345" on one line; `analyze()`.
+- **Reproduced:** yes (`po_number` missing)
+- **Fix:** German labels "Bestellung", "Bestell-Nr", "Bestellnummer" (not "Bestellung vom", its date); with no PO
+  label, a PO label with its number word inside a line on the first page ("Purchase Order Number:", "P.O. No.",
+  "Bestellung Nr.", "Bon de commande n°"), then "Your reference" / "Votre référence"; either gives nothing when two
+  different numbers are printed so (each line item's own order). A value cell holding only the colon of the label on
+  its left is that label's value (for the PO, the due date and the terms). Each reading is marked `UNMEASURED`
+  (D-44): check at best likely, never verified. "Your reference" is never read when a PO label is printed, so it does
+  not cast doubt on the PO either. A "Purchase Order Number:" with blanks after it gives nothing, as before.
+- **Test:** `tests/test_terms_po_sweep4.py::test_the_customers_order_number_under_other_labels_is_read_for_a_person_to_check`,
+  `tests/test_terms_po_sweep4.py::test_no_order_number_is_made_up_from_a_label_without_one`,
+  `tests/test_terms_po_sweep4.py::test_a_po_label_wins_over_your_reference`
+- **Lesson:** Don't look for a label only where a line starts: OCR glues a label to the words before it, and a
+  sentence names the order as clearly as a label does.
