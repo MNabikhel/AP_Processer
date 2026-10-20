@@ -112,7 +112,7 @@ def test_each_page_renders_on_a_busy_database(client, busy, path):
 
 def test_learning_shows_accuracy_lessons_vendors_and_memory(client, busy):
     text = client.get("/learning").text
-    for label in ("Coding accuracy", "Lines reviewed", "Corrections taught", "Approved without edits",
+    for label in ("Coding accuracy", "Lines reviewed", "Corrections taught", "Approved as coded",
                   "Accuracy by week", "Recent lessons", "Accuracy by vendor", "Most common corrections",
                   "Memory: every lesson", "Teach from past coding"):  # fmt: skip
         assert label in text, label

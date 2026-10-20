@@ -298,9 +298,10 @@ STATUS_PILLS = {
 
 
 def recent_row(inv: dict[str, Any], now: dt.datetime | None = None) -> str:
-    """One line in the "recently processed" list: who, what, when, and where it is now."""
+    """One line in the "recently processed" list: who, what, when, and where it is now. ``needs_attention``: the
+    queue's answer (``review.attention``), else the checks' flag."""
     state = inv.get("status") or "review"
-    if state == "review" and inv.get("requires_review"):
+    if state == "review" and inv.get("needs_attention", inv.get("requires_review")):
         state = "attention"
     label, tone, icon_name = STATUS_PILLS.get(state, (state.title(), "gray", ""))
     name = inv.get("vendor_name") or inv.get("file_name") or ""

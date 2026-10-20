@@ -13,6 +13,7 @@ from typing import Any
 from ..coding.po import po_key
 from ..coding.rules import _plain
 from ..coding.vendors import norm_invoice_number
+from ..core.memory import vendor_key
 from ..core.safe import parse_amount
 from ..core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store
 
@@ -90,6 +91,13 @@ def _score(row: dict[str, Any], words: list[str], numbers: list[str]) -> int:
     return score
 
 
+def _same_vendor(a: str, b: str) -> bool:
+    """Two vendor keys of one vendor: the same, or one the start of the other (the ERP's short name for it:
+    "chinook courier" for "chinook courier and office services")."""
+    short, long_ = sorted((a.split(), b.split()), key=len)
+    return bool(short) and long_[: len(short)] == short
+
+
 def _tokens(query: str) -> list[str]:
     """The query's parts; "18 017,85" (an amount written the French way) stays one part."""
     parts = [p.strip("\"'?!;:") for p in query.split()]
@@ -110,11 +118,16 @@ def find(store: Store, query: str, limit: int = LIMIT) -> list[Hit]:
     words = [_plain(w.strip(",.")) for w in tokens if w not in numbers and len(w.strip(",.")) > 1]
     rows = store.search_rows()
     hits = [Hit(s, r) for r in rows if (s := _score(r, words, numbers))]
-    # An exported invoice's own row in the ERP register is the same bill: shown once, as the AP Coder invoice.
-    ours = {(norm_invoice_number(r["invoice_number"] or ""), round(abs(r["grand_total"] or 0), 2)) for r in rows
-            if r["export_batch"]}  # fmt: skip
+    # An exported invoice's own row in the ERP register is the same bill: shown once, as the AP Coder invoice. Its
+    # own row: the same number and amount (with its sign: a credit is another document), and the same vendor.
+    ours: dict[tuple[str, float], list[str]] = {}
+    for r in rows:
+        if r["export_batch"]:
+            key = (norm_invoice_number(r["invoice_number"] or ""), round(r["grand_total"] or 0, 2))
+            ours.setdefault(key, []).append(vendor_key(r["vendor_name"] or ""))
     for r in store.erp_register():
-        if (r["number_key"], round(abs(r["total"] or 0), 2)) in ours:
+        vendors = ours.get((r["number_key"], round(r["total"] or 0, 2)), [])
+        if any(_same_vendor(r["vendor_key"], v) for v in vendors):
             continue
         row = {"vendor_name": r["vendor_name"], "invoice_number": r["invoice_number"], "grand_total": r["total"],
                "invoice_date": r["invoice_date"], "po_key": ""}  # fmt: skip

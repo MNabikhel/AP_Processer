@@ -8,7 +8,7 @@ the invoices AP Coder holds for that vendor, by invoice number (compared the way
 * amount differs: same number, different amount
 * not received: on the statement but not in AP Coder (ask the vendor for a copy)
 * not on statement: in AP Coder for the statement period but not on the statement
-* payment / credit without a number: shown for information
+* payment / credit: without a number, or with an invoice's number and the opposite sign: shown for information
 """
 
 from __future__ import annotations
@@ -35,7 +35,9 @@ LABELS = {
     PAYMENT: "Payment / credit",
 }
 TOLERANCE = 0.01
-_PAYMENT_WORDS = re.compile(r"\b(payments?|paiements?|receipts?|cheques?|checks?|eft|wire|virement|remittance)\b")
+_PAYMENT_WORDS = re.compile(
+    r"\b(payments?|paiements?|receipts?|cheques?|checks?|chqs?|pmts?|pymts?|eft|wire|virement|remittance)\b"
+)
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "number": ("invoicenumber", "invoice", "invoiceno", "invno", "number", "document", "documentnumber", "docno",
@@ -174,20 +176,25 @@ def reconcile(records: list[dict[str, Any]], columns: dict[str, str], invoices: 
         if date:
             dates.append(date)
         key = norm_invoice_number(raw_number)
-        paid = bool(_PAYMENT_WORDS.search(kind))
-        if paid and free_text and by_number.get(key):
-            # Statements often print the invoice's number on its payment line: with a payment word it is the
-            # payment when its sign is the opposite of the invoices with that number ("Brass check valves" billed
-            # again stays an invoice). With no amount, only when every invoice with that number is matched already.
-            same_number = by_number[key]
-            if amount is None:
-                paid = all(i["id"] in seen for i in same_number)
-            else:
-                paid = all(amount * (i["grand_total"] or 0) < 0 for i in same_number)
+        same_number = by_number.get(key, [])
+
+        def opposite(inv: dict[str, Any], amount: float | None = amount) -> bool:
+            return amount is not None and amount * (inv["grand_total"] or 0) < 0
+
+        # Statements often print the invoice's number on its payment or credit line: a sign opposite to every
+        # document AP Coder holds with that number makes it the payment / credit applied, whatever its words
+        # (a Credit column, "PMT", "CHQ"), before or after the invoice.
+        reversed_ = bool(same_number) and all(opposite(i) for i in same_number)
+        paid = reversed_ or bool(_PAYMENT_WORDS.search(kind))
+        if paid and not reversed_ and free_text and same_number:
+            # A payment word in a description, with the invoice's sign: an invoice ("Brass check valves" billed
+            # again). With no amount, a payment only when every invoice with that number is matched already.
+            paid = amount is None and all(i["id"] in seen for i in same_number)
         if not key or paid:
             result.lines.append(Line(PAYMENT, raw_number, date, amount, note=kind_text or "no invoice number"))
             continue
-        candidates = [i for i in by_number.get(key, []) if i["id"] not in seen]
+        # Never a document of the opposite sign: a credit line does not take the invoice, nor an invoice the credit.
+        candidates = [i for i in same_number if i["id"] not in seen and not opposite(i)]
         if not candidates:
             result.lines.append(Line(NOT_RECEIVED, raw_number, date, amount))
             continue

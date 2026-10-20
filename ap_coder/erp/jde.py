@@ -52,6 +52,10 @@ from ..core.memory import refresh_vendor_key, vendor_key
 SETTING_KEY = "jde_e1"
 FORMAT = "jde"
 LABEL = "JD Edwards E1 (F0411Z1 / F0911Z1)"
+# The two reasons an invoice is held back for its supplier number: the Exports page links them to Settings → JD
+# Edwards E1 → Supplier address numbers (``an8_problem``).
+NO_AN8 = "no JDE supplier number (AN8)"
+BAD_AN8 = "is not a JDE address number"
 
 AMOUNT_GROSS, AMOUNT_TAX = "gross", "tax"
 AMOUNT_MODES = {
@@ -106,6 +110,8 @@ MATCH_COLUMNS = [
 UNCONFIRMED = (
     "the PO-matched extra columns (e.g. VLATFLG, VLPSTE) and the whole F0411Z1T match file",
     "VNEDLN numbering (sequential, or matching VLEDLN)",
+    "VLEDLN / VNEDLN as written (1, 2, 3): E1 shows EDLN with display decimals, so a direct table load of 1 may "
+    "read as 0.001 (1000 needed) where a table conversion would not",
     "the tax area names (ON-HST, QC-GSTQST, …) and explanation codes",
     "VLCRR (exchange rate): left blank when no rate is set, so E1 takes it from the exchange-rate table",
 )
@@ -408,23 +414,20 @@ def _place_of_supply(final: dict[str, Any]) -> str:
 
 
 def _distribution(final: dict[str, Any]) -> list[dict[str, Any]]:
-    dist = final.get("gl_distribution")
-    if dist:
-        return list(dist)
-    # Not stored (an old invoice): rebuild it with the default tax treatments; recoverable taxes are dropped
-    # from the F0911Z1 lines anyway, so their GL accounts do not matter here.
-    from ..coding.tax import TaxRateTable, TaxSetup, build_gl_distribution
-    from ..core.schema import InvoiceCoding
+    # Not stored (an old invoice): rebuilt with the default tax treatments (``exports.distribution``); recoverable
+    # taxes are dropped from the F0911Z1 lines anyway, so their GL accounts do not matter here.
+    from .exports import distribution
 
-    try:
-        coding = InvoiceCoding.model_validate({k: v for k, v in final.items() if k != "gl_distribution"})
-    except ValueError:
-        return []
-    return build_gl_distribution(coding, TaxSetup(TaxRateTable(()), {}))
+    return distribution(final)
 
 
 def _is_recoverable_entry(e: dict[str, Any]) -> bool:
     return e.get("kind") == "tax" and abs(float(e.get("non_recoverable_tax") or 0)) < 0.005
+
+
+def an8_problem(reason: str) -> bool:
+    """Whether a reason ``validate`` gives is about the supplier's address number (set in Settings → JD Edwards E1)."""
+    return reason.startswith(NO_AN8) or BAD_AN8 in reason
 
 
 def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
@@ -433,9 +436,9 @@ def _prepare(inv: dict[str, Any], settings: JdeSettings, an8: str) -> _Voucher:
     add = v.problems.append
 
     if not an8:
-        add("no JDE supplier number (AN8): set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards")
+        add(f"{NO_AN8}: set the vendor's ERP ID in the vendor master, or in Settings → JD Edwards")
     elif not an8.isdigit() or len(an8) > 8:
-        add(f"supplier number {an8!r} is not a JDE address number (digits only, up to 8)")
+        add(f"supplier number {an8!r} {BAD_AN8} (digits only, up to 8)")
     number = str(final.get("invoice_number") or "").strip()
     if not number:
         add("no invoice number (VLVINV)")
@@ -552,6 +555,15 @@ def _keys(prefix: str, settings: JdeSettings, batch: int | str, inv_id: int) -> 
     }
 
 
+def _rate(fx_rates: Mapping[str, float] | None, currency: str, domestic: str) -> float | None:
+    """VLCRR: units of the domestic currency per unit of ``currency``. AP Coder's rates are CAD per unit (Settings →
+    Review), so with books in another currency it is the rate across CAD (USD books, a CAD invoice: 1 / 1.37), and
+    None (left blank: E1's exchange-rate table) without a rate for both."""
+    rates = {"CAD": 1.0, **(fx_rates or {})}
+    foreign, home = rates.get(_norm(currency)), rates.get(_norm(domestic))
+    return foreign / home if foreign and home else None
+
+
 def _doc_type(v: _Voucher, settings: JdeSettings) -> str:
     if v.gross < 0 and settings.credit_document_type.strip():
         return settings.credit_document_type.strip().upper()
@@ -574,7 +586,7 @@ def voucher_rows(
         due = invoice_date  # a credit note is not "due"; E1 needs a date
     doc_type = _doc_type(v, settings)
     po = str(final.get("po_number") or "").strip()
-    rate = (fx_rates or {}).get(v.currency) if v.foreign else None
+    rate = _rate(fx_rates, v.currency, settings.domestic_currency) if v.foreign else None
     common = {
         **keys, "VLDCT": doc_type, "VLCO": settings.company_code, "VLMCU": settings.header_bu.strip(),
         "VLAN8": str(vendor_an8 or "").strip(), "VLVINV": str(final.get("invoice_number") or "").strip()[:25],

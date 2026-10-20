@@ -9,6 +9,7 @@ in one go, and the small actions of the other lists, are POSTs answered with whe
 from __future__ import annotations
 
 import datetime as dt
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -17,11 +18,13 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ap_coder.coding.bulk import bulk_approve, clean_candidates
+from ap_coder.coding.bulk import bulk_approve, sort_for_bulk
+from ap_coder.coding.review import codes_to_pick, uses_cost_centers
 from ap_coder.coding.tax import OUTSIDE_CANADA, PROVINCE_NAMES, province_label, stored_supply
 from ap_coder.coding.terms import DUE_SOON_DAYS, payment
 from ap_coder.core import ui
 from ap_coder.core.memory import vendor_key
+from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
 from ap_coder.erp import recurring
 from ap_coder.web.core import (
@@ -111,8 +114,73 @@ def due_note(ai: dict[str, Any], default_days: int, vendor_terms: str = "") -> t
     return f"Due {p.due:%b} {p.due.day}", ""
 
 
-def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float) -> list[dict[str, Any]]:
-    """What each row of the queue shows (plain values; the template escapes them)."""
+_TO_FIX: dict[int, tuple[int, tuple[str, int]]] = {}  # ``_to_fix`` by invoice id: (what it was asked, the answer)
+
+
+def _to_fix(invoice_id: int, final: str | None, ai: str | None, validation: str | None,
+            cost_centers: bool) -> tuple[str, int]:  # fmt: skip
+    """(what the lines still need to be approved, how many errors the checks found) of one invoice, from its stored
+    coding and checks (their JSON text). Remembered with the hash of that text: the queue asks it of every waiting
+    invoice on each load (also to count them on the other tabs), and decoding them all again took most of the
+    page's time (0.34 s at 5,000 waiting); a changed invoice is asked again."""
+    asked = hash((cost_centers, final, ai, validation))
+    known = _TO_FIX.get(invoice_id)
+    if known and known[0] == asked:
+        return known[1]
+    coded = (json.loads(final) if final else None) or (json.loads(ai) if ai else None) or {}
+    issues = ((json.loads(validation) if validation else None) or {}).get("issues") or []
+    answer = (
+        codes_to_pick(coded.get("line_items"), cost_centers).removesuffix(" to approve"),
+        sum(1 for i in issues if i.get("severity") == "error"),
+    )
+    _TO_FIX[invoice_id] = (asked, answer)
+    return answer
+
+
+def attention(store: Store, reference: ReferenceData | None, pending: list[dict[str, Any]],
+              threshold: float | None = None) -> dict[int, str]:  # fmt: skip
+    """Why each invoice of ``pending`` (the queue) needs attention, by id; one not listed is Ready: its review
+    screen's Approve is open as it stands. The lines' codes are asked as the review screen asks (``codes_to_pick``),
+    then the checks' flag (an error, or confidence under ``threshold``; None: the flag alone, without its words)."""
+    cost_centers = reference is not None and uses_cost_centers(reference)
+    stored = {  # one query, not one per invoice; the text is decoded only for an invoice not asked before
+        r["id"]: r
+        for r in store.invoice_columns(
+            ("id", "validation", "ai_output", "final_output"), ids=[i["id"] for i in pending], decode=False
+        )
+    }
+    out = {}
+    for inv in pending:
+        r = stored.get(inv["id"]) or {}
+        to_pick, errors = _to_fix(
+            inv["id"], r.get("final_output"), r.get("ai_output"), r.get("validation"), cost_centers
+        )
+        low = threshold is not None and (inv.get("adjusted_confidence") or 0.0) < threshold
+        why = [
+            to_pick,
+            f"{ui.plural(errors, 'error')} to fix" if errors else "",
+            f"confidence under {threshold:.0%}" if low and inv.get("requires_review") else "",
+        ]
+        why = [w for w in why if w]
+        if why or inv.get("requires_review"):
+            out[inv["id"]] = (why[0][0].upper() + "; ".join(why)[1:]) if why else "Flagged by the checks"
+    return out
+
+
+def left_out(pending: list[dict[str, Any]], reasons: dict[int, str], left: dict[int, str]) -> str:
+    """Why the queue's Ready invoices not offered for bulk approval are left out (``sort_for_bulk``'s ``left``):
+    "1 credit note and 2 with a warning left for a person", or "" when none is."""
+    ready = [left[i["id"]] for i in pending if i["id"] not in reasons and i["id"] in left]
+    credit, warned = ready.count("credit note"), ready.count("warning")
+    parts = [ui.plural(credit, "credit note") if credit else "", f"{warned} with a warning" if warned else ""]
+    text = " and ".join(p for p in parts if p)
+    return f"{text} left for a person" if text else ""
+
+
+def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float,
+               reasons: dict[int, str] | None = None) -> list[dict[str, Any]]:  # fmt: skip
+    """What each row of the queue shows (plain values; the template escapes them). ``reasons``: ``attention()``."""
+    reasons = reasons or {}
     ids = [i["id"] for i in shown]
     outputs = {  # a sent-back invoice shows the first approver's corrections, as its review screen does
         r["id"]: r["final_output"] or r["ai_output"] or {}
@@ -134,7 +202,8 @@ def queue_rows(store: Store, shown: list[dict[str, Any]], threshold: float) -> l
             "province": prov if prov in PROVINCE_NAMES else ("Int’l" if prov == OUTSIDE_CANADA else "—"),
             "province_title": province_label(prov, "Province unknown"),
             "taxes": [t for t in dict.fromkeys(t.get("tax_type", "") for t in ai.get("tax_lines", [])) if t],
-            "flagged": bool(inv.get("requires_review")),
+            "flagged": inv["id"] in reasons,
+            "reason": reasons.get(inv["id"], ""),
             "confidence": confidence,
             "confidence_text": confidence_pct(confidence, threshold),
             "confidence_ok": confidence >= threshold,
@@ -180,11 +249,11 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     accuracy = metrics["line_accuracy"]
     corrections = metrics["lines_corrected"]
     return [
-        {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} flagged by checks"},
+        {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
          "sub": f"of {total_today:,} today · {len(approved):,} approved in all",
          "bar": done_today / total_today if total_today else 0.0},
-        {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.0%}",
+        {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
          "sub": "after the first approvals" if accuracy is None else "vs 90% target",
          "delta": "" if accuracy is None else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace("-", "−"),
          "good": accuracy is not None and accuracy >= TARGET_ACCURACY},
@@ -215,8 +284,10 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     sort = sort if sort in SORTS else "priority"
     limit = max(QUEUE_PAGE, min(limit, 5000))
 
+    threshold = settings.engine.review_threshold
     pending = [i for i in invoices if i["status"] == REVIEW]
-    flagged = [i for i in pending if i["requires_review"]]
+    reasons = attention(store, reference, pending, threshold)  # Ready means its Approve is open
+    flagged = [i for i in pending if i["id"] in reasons]
     approved = [i for i in invoices if i["status"] == APPROVED]
     awaiting = [i for i in invoices if i["status"] == PENDING]
     parked = [i for i in invoices if i["status"] == PARKED]
@@ -239,19 +310,19 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
                                "kpis": kpis(store, pending, flagged, approved), "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     if tab == "review":
-        threshold = settings.engine.review_threshold
-        shown = {"attention": flagged, "ready": [i for i in pending if not i["requires_review"]]}.get(show, pending)
+        shown = {"attention": flagged, "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)
         shown = sort_queue(filter_queue(shown, q), sort)
-        candidates = clean_candidates(store) if show != "attention" else []
+        candidates, left = sort_for_bulk(store) if show != "attention" else ([], {})
         context.update(
             pending=pending,
             counts={"all": len(pending), "attention": len(flagged), "ready": len(pending) - len(flagged)},
-            rows=queue_rows(store, shown[:limit], threshold),
+            rows=queue_rows(store, shown[:limit], threshold, reasons),
             more=max(0, len(shown) - limit),
             next_limit=limit + QUEUE_PAGE,
             threshold=threshold,
             candidates=candidates if len(candidates) >= 2 else [],
             candidates_total=by_currency(candidates),
+            candidates_left=left_out(pending, reasons, left),
         )  # fmt: skip
     elif tab == "approved":
         recent = sorted(approved, key=lambda i: i["reviewed_at"] or "", reverse=True)[:APPROVED_SHOWN]
@@ -288,20 +359,17 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
-    from ap_coder.web.pages.process import setup_steps
+    from ap_coder.web.pages.process import first_steps
 
-    steps = setup_steps(store, get_settings(request))
-    has_invoices = bool(invoices)
-    steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
-    needed = [s for s, _, _ in steps if s != "opt"]  # as the Process page counts: the chat model is optional
-    done_steps = sum(1 for s in needed if s == "ok")
+    steps, done_steps, needed = first_steps(store, get_settings(request), bool(invoices))  # as Import invoices counts
     return render(
         request, "review_welcome.html", "review",
         greeting=f"{ui.greeting()}, {first_name()}",
         steps=steps,
-        ring_value=done_steps / len(needed),
-        ring_label=f"{done_steps}/{len(needed)}",
+        ring_value=done_steps / needed,
+        ring_label=f"{done_steps}/{needed}",
         chat_ready=steps[1][0] == "ok",
+        name_todo=steps[5][0] != "ok",  # approvals are recorded in the computer login until a name is given
         waiting=sum(1 for i in invoices if i["status"] == REVIEW) if reference_or_none(store) is None else 0,
         demo_available=demo_available(),
         demo_count=store.demo_count(),

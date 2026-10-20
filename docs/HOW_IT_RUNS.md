@@ -9,6 +9,9 @@ this file is wrong.
 AP Coder is an **offline** build: nothing it runs connects to the internet unless a developer or the bundle builder
 sets `AP_ALLOW_INTERNET=1` (`ap_coder/ops/offline.py:internet_allowed`). The one exception, by design, is the optional
 Azure check, which AP switches on in Settings (it is off by default; [section 10](#10-the-network-every-place-and-its-gate)).
+The setup is offline too from the offline bundle; from the code alone (GitHub's ZIP or a git checkout: no
+`bundle_manifest.json`, `wheelhouse/` or `models/`) it downloads its packages and OCR models once, unless
+`AP_ALLOW_INTERNET=0` (`scripts/launch.py:plain_download`); the dashboard it starts stays offline.
 
 Contents: [1 The files](#1-the-files-that-start-ap-coder) ·
 [2 Flowchart](#2-the-launcher-at-a-glance) ·
@@ -115,7 +118,8 @@ launchers never pick one older than 3.11. Python is never installed by the offli
    given arguments, prints a hint and exits 9009 instead of opening the Store. A Python older than 3.11 is
    remembered (`OLDPY`) so the message says *"Python 3.10 is installed, but AP Coder needs 3.11 or newer"*, not
    "not installed".
-6. Only with `AP_ALLOW_INTERNET=1` and `winget` present: `:installpython` offers `winget install Python.Python.3.12
+6. From the code alone (no `bundle_manifest.json`, `wheelhouse\` or `models\`), or with `AP_ALLOW_INTERNET=1`, and
+   never with `AP_ALLOW_INTERNET=0`; `winget` present: `:installpython` offers `winget install Python.Python.3.12
    --scope user`, then searches again.
 7. None: the message says to ask IT for Python 3.12 from python.org with *Add python.exe to PATH*; `:fail` pauses
    (unless `AP_NO_PAUSE`) and exits 1.
@@ -173,7 +177,8 @@ What the .venv has been through is kept in `.venv/ap_coder_launcher.json` (`STAT
    itself is installed (editable) *from this folder* (read from pip's `direct_url.json`, network shares included).
    Nothing missing: "Packages: all N in place", nothing runs.
 2. **Where from** (`pip_source`): the offline bundle's `wheelhouse/` with `--no-index --find-links` (never the
-   internet). Without one: PyPI only with `AP_ALLOW_INTERNET=1`, else nowhere (`without_wheelhouse`: AP Coder still
+   internet). Without one: PyPI from the code alone (`setup_online`, unless `AP_ALLOW_INTERNET=0`) or with
+   `AP_ALLOW_INTERNET=1`; else (a bundle missing its wheelhouse) nowhere (`without_wheelhouse`: AP Coder still
    starts when its core packages are there, and says what is missing; core missing stops with "unzip the full
    offline bundle").
 3. **The wheelhouse folder** (`wheelhouse_dir`): `wheelhouse/`, or the one folder of wheels inside it (a wheelhouse
@@ -213,13 +218,20 @@ record so the newest cleans it up.
 this folder's last, every install's last, 8501, and the one in `<data>/.ap_coder_server.json`. On each:
 
 * **0.2+ server**: `GET http://127.0.0.1:<port>/healthz` (no proxy) answers `{"app": "ap-coder", version, folder,
-  pid, port}`. Same folder and version: opened, nothing started. Newer: opened, never stopped. Older, or another
-  folder: `POST /shutdown` with `X-AP-Coder-Token` from the server file; if that fails, the process listening on
+  pid, port, user}` (`user`, the computer account running it, only to this computer). Another account's (a second
+  Windows user sharing the folder): never opened (it works under that person's name) nor stopped; the start says
+  whose it is and stops (`scripts/launch.py:someone_elses`). Same folder and version: opened, nothing started.
+  Newer: opened, never stopped. Older, or another folder: `POST /shutdown` with `X-AP-Coder-Token` from the server file; if that fails, the process listening on
   the port (`port_owner`: `/proc` on Linux, `lsof` on a Mac, `Get-NetTCPConnection` on Windows) is ended, but only
   when its command line is AP Coder's (`is_ap_coder_process`).
 * **0.1 Streamlit dashboard** (no `/healthz`): recognised by its font `/app/static/InterVariable.woff2`, stopped
   through its process (`streamlit run …ap_coder…dashboard.py`); its folder (from the command line) is remembered for
   the clean-up.
+* **`watch` / `read-pages`** (`scripts/running.py:workers`): each leaves `<data>/.ap_coder_worker-<pid>.json` (pid,
+  command, folder, version) while it runs (`ap_coder/ops/cli.py:running_note`). An older one, or one from another
+  folder, is stopped (`stop_worker`: as Ctrl+C, then ended; only a process whose command line is AP Coder's
+  `watch` / `read-pages`) before the clean-up deletes the `.venv` it runs from: it would otherwise mark every new
+  invoice failed. A note whose process is gone is removed.
 * Can't be stopped: "close the old AP Coder window", waiting up to a minute, then the start stops (`blocked`).
 
 **"Updated AP Coder from X to Y"** (`previous_install`): this folder's `.venv` state names another fingerprint,
@@ -300,7 +312,7 @@ or data) is not found again on later starts (`upgrade.left_to_clean`), so it is 
 * **Address** (`ap_coder/ops/offline.py:dashboard_address`): `127.0.0.1`, unless `AP_DASHBOARD_ADDRESS` (or
   `--address`) says otherwise; listening beyond this computer prints a warning (there is no login).
 * **Server** (`ap_coder/web/server.py:serve`): uvicorn in that process; a random token; the server file
-  `<data>/.ap_coder_server.json` (`pid`, `port`, `folder`, `version`, `token`, `started`; mode 0600 on macOS/Linux),
+  `<data>/.ap_coder_server.json` (`pid`, `port`, `folder`, `version`, `token`, `user`, `started`; mode 0600 on macOS/Linux),
   removed when it stops if it is still its own.
 * **App** (`ap_coder/web/app.py:create_app`): `LocalOnly` middleware (`ap_coder/web/security.py`: a Host header
   that is not this computer is refused, against DNS rebinding; a POST must carry `X-AP-Coder: 1` and come from the
@@ -339,7 +351,8 @@ can corrupt an open SQLite database).
 | `backups/ap_coder-YYYYMMDD-HHMMSS.db` | daily backup when the dashboard starts, newest 14 kept; `-manual`; `-before-update-from-schema-<n>`; `-before-update-file-paths` | `Store.auto_backup`, `backup_now`, `_before_migrating`, `upgrade._backed_up` |
 | `backups/from-<folder>-<date>/` | an older install's data when the data folder had its own | `upgrade.adopt_legacy` |
 | `.env` | settings (Azure for developers, LM Studio address, reviewer…) | installer, Settings page, `adopt_legacy`, `envfile.retire` |
-| `.ap_coder_server.json` | the running server: pid, port, folder, version, token | `web/server.write_server_file` |
+| `.ap_coder_server.json` | the running server: pid, port, folder, version, token, user (the computer account) | `web/server.write_server_file` |
+| `.ap_coder_worker-<pid>.json` | a running `watch` or `read-pages`: pid, command, folder, version | `ops/cli.running_note` |
 | `.cache/extraction/`, `.cache/page_reader/` | text read from each file, OvisOCR2's readings (by SHA-256) | capture, `page_reader` |
 | `.cache/ocr/` | each scanned page's OCR, per engine (by the page image's SHA-256): a page is OCR'd once however often its invoice is read; at most 4,000, the oldest removed first | `capture/layout.ocr_cache` (the pipeline) |
 | `output/`, `share_report.md`, `share_report_key.csv`, `labels.xlsx` | command-line outputs | `ap_coder/ops/cli.py` |
@@ -364,9 +377,9 @@ messages, so it stays on the computer like the data. The dashboard's Activity pa
 
 | # | Where (file:function) | What it contacts | Gate |
 | --- | --- | --- | --- |
-| 1 | `scripts/launch.py:pip_install` / `pip_source` | pip: the `wheelhouse/` folder (`--no-index`) | PyPI only with `AP_ALLOW_INTERNET=1`; the Azure extra never from PyPI |
-| 2 | `APProcessor.bat:installpython` | winget (Python 3.12 from the internet) | only with `AP_ALLOW_INTERNET=1`, and asked |
-| 3 | `scripts/fetch_models.py:download` | www.modelscope.cn (OCR, table finder models) | raises without `AP_ALLOW_INTERNET=1` |
+| 1 | `scripts/launch.py:pip_install` / `pip_source` | pip: the `wheelhouse/` folder (`--no-index`) | PyPI from the code alone (no bundle: `scripts/launch.py:setup_online`) or with `AP_ALLOW_INTERNET=1`; never with `AP_ALLOW_INTERNET=0`; the Azure extra never from PyPI |
+| 2 | `APProcessor.bat:installpython` | winget (Python 3.12 from the internet) | from the code alone or with `AP_ALLOW_INTERNET=1`, never with `AP_ALLOW_INTERNET=0`; when no Python is found, and asked |
+| 3 | `scripts/fetch_models.py:download` | www.modelscope.cn (OCR, table finder models) | raises without `AP_ALLOW_INTERNET=1`; the launcher sets it for this step only from the code alone (`scripts/launch.py:ensure_models`, `setup_downloads`), never with `AP_ALLOW_INTERNET=0` |
 | 4 | `scripts/install.py:update_code` | `git fetch` / `git pull` of a checkout | only with `AP_ALLOW_INTERNET=1` |
 | 5 | `scripts/build_offline_bundle.py` | PyPI, modelscope | IT's online computer; sets the opt-in for itself |
 | 6 | `scripts/running.py:health`, `ask_to_stop`, `legacy_dashboard` | `127.0.0.1:<port>` only | never through a proxy (`ProxyHandler({})`) |

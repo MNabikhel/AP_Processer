@@ -212,12 +212,16 @@ def no_network(monkeypatch):
 
 
 def test_the_reading_settings_show_the_table_finder(monkeypatch, tmp_path):
-    from ap_coder.ai.reading import OK, WARN, _table_finder
+    from ap_coder.ai.reading import OK, OPTIONAL, WARN, _table_finder
 
     monkeypatch.setattr(offline, "onnxruntime_installed", lambda: True)
     monkeypatch.setattr(offline, "table_finder_path", lambda: None)
+    monkeypatch.setattr(offline, "from_bundle", lambda: True)  # the offline bundle should have brought it
     line = _table_finder()
     assert line.name == "Table finder" and line.state == WARN and "offline bundle" in line.detail
+    monkeypatch.setattr(offline, "from_bundle", lambda: False)  # set up from the code alone: optional, not set up
+    line = _table_finder()
+    assert line.state == OPTIONAL and "offline bundle" in line.detail
     monkeypatch.setattr(offline, "table_finder_path", lambda: tmp_path / "model.onnx")
     assert _table_finder().state == OK
     checks = {area: status for area, status, _ in offline.offline_checks()}

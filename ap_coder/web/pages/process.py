@@ -8,6 +8,7 @@ too; the review queue's welcome card uses the same routes.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -18,14 +19,16 @@ from starlette.concurrency import run_in_threadpool
 from ap_coder.ai import page_reader
 from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS
 from ap_coder.ai.local_llm import provider_status
-from ap_coder.ai.pipeline import InvoicePipeline, invoice_files
+from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files
 from ap_coder.capture.layout import ocr_available
 from ap_coder.coding.tax import TAX_TYPES
-from ap_coder.core import ui
+from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
+from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.intake import inbox
 from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, Unpacked, emails_in, safe_name, unpack, unpack_folder
+from ap_coder.web import identity
 from ap_coder.web.core import (
     cache_dir,
     done,
@@ -38,12 +41,14 @@ from ap_coder.web.core import (
     message,
     open_folder,
     reading_status_or_none,
+    reference_or_none,
     refuse,
     render,
     reviewer,
     short_path,
 )
 from ap_coder.web.jobs import Job
+from ap_coder.web.pages.review import attention
 
 router = APIRouter()
 
@@ -138,13 +143,35 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         second = ("bad", "OvisOCR2", "failed its self-test (Settings → Reading)")
     else:
         second = ("todo", "OvisOCR2", "not running in LM Studio: invoices wait for it (Settings → Reading)")
-    return [  # the review queue's getting-started card reads the chat model at index 1
+    return [  # the review queue's getting-started card reads the chat model at index 1; process.html 2 to 5
         reader,
         ("ok" if ai.ready else "opt", "Chat model for GL suggestions", ai.label if ai.ready else "optional"),
         ("ok" if gl_count else "todo", "GL accounts", f"{gl_count} imported" if gl_count else "import them"),
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
         second,
+        name_step(),
     ]
+
+
+def name_step() -> tuple[str, str, str]:
+    """Whether the person approving gave their name: each approval records it, and without one it is the computer
+    login ("root", "jsmith"). Given in Settings → Review (or AP_REVIEWER), or by a colleague on the "Who are you?"
+    page."""
+    colleague = identity.person()
+    name = colleague.name if colleague is not None else ""
+    name = name or str(paths.read_user_settings().get("reviewer") or "") or os.environ.get("AP_REVIEWER", "")
+    if name.strip():
+        return "ok", "Your name", name.strip()
+    return "todo", "Your name", "Settings → Review: each approval is recorded in it"
+
+
+def first_steps(store: Store, settings: Settings, has_invoices: bool) -> tuple[list[tuple[str, str, str]], int, int]:
+    """(steps, done, needed) of getting started, the same on Import invoices' Setup card and the review queue's
+    welcome page: ``setup_steps``, then processing the first invoices; the optional chat model is not counted."""
+    steps = setup_steps(store, settings)
+    steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
+    needed = [s for s, _, _ in steps if s != "opt"]
+    return steps, sum(1 for s in needed if s == "ok"), len(needed)
 
 
 def ready_to_read(steps: list[tuple[str, str, str]]) -> bool:
@@ -176,6 +203,17 @@ def queued_note(settings: Settings, store: Store, queued: int) -> str:
 # --- Reading and coding (the background job) ------------------------------------------------------------------------
 
 
+def needs_attention(store: Store, reference: ReferenceData | None, result: PipelineResult) -> bool:
+    """Whether the import list says "needs attention" of a processed invoice: as the review queue says it
+    (``review.attention``: its Approve isn't open as it stands, B-197) for one waiting there; the checks' flag for one
+    that isn't (approved on its own, or not saved)."""
+    invoice_id = getattr(result, "invoice_id", None)
+    inv = store.get_invoice(invoice_id) if invoice_id is not None else None
+    if inv is None or inv["status"] != REVIEW:
+        return bool(result.report and result.report.requires_review)
+    return inv["id"] in attention(store, reference, [inv])
+
+
 def process_files(store: Store, settings: Settings, paths: list[Path], *, already: list[Path] | None = None,
                   emails: list[Unpacked] | None = None, notes: list[dict[str, Any]] | None = None,
                   folder_emails: bool = False) -> Any:  # fmt: skip
@@ -198,15 +236,16 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
         job.step(0, len(todo), "Starting")
         ok = 0
         waiting = store.page_reads_waiting()
-        pipeline = None
+        pipeline = reference = None
         if todo:
-            pipeline = InvoicePipeline(settings, store.reference_data(), cache_dir=cache_dir(store), store=store)
+            reference = store.reference_data()
+            pipeline = InvoicePipeline(settings, reference, cache_dir=cache_dir(store), store=store)
         for n, path in enumerate(todo, start=1):
             job.step(n - 1, len(todo), f"Reading and coding {path.name} ({n}/{len(todo)})", stage="reading")
             result = pipeline.process(path)
             if result.ok:
                 ok += 1
-                attention = bool(result.report and result.report.requires_review)
+                attention = needs_attention(store, reference, result)
                 name = result.output.get("vendor_name") or path.name
                 job.log(f"{name}: {'needs attention' if attention else 'ready'}", "warn" if attention else "ok",
                         "flag" if attention else "check_circle")  # fmt: skip
@@ -272,14 +311,17 @@ def process_page(request: Request) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
 
     store, settings = get_store(request), get_settings(request)
-    steps = setup_steps(store, settings)
-    needed = [s for s, _, _ in steps if s != "opt"]
-    recent = sorted(store.list_invoices(), key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
+    invoices = store.list_invoices()
+    steps, steps_done, steps_needed = first_steps(store, settings, bool(invoices))
+    recent = sorted(invoices, key=lambda i: (i["created_at"] or "", i["id"]), reverse=True)[:6]
+    waiting = [i for i in recent if i["status"] == REVIEW]
+    reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
+    recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
     return render(
         request, "process.html", "process",
         steps=steps,
-        steps_done=sum(1 for s in needed if s == "ok"),
-        steps_needed=len(needed),
+        steps_done=steps_done,
+        steps_needed=steps_needed,
         ready=ready_to_read(steps),
         recent=recent,
         recent_waiting=any(i["status"] == REVIEW for i in recent),
@@ -385,7 +427,10 @@ def inbox_file(request: Request, entry_id: str, n: int) -> FileResponse:
 @router.post("/process/inbox/{entry_id}/to-queue/{n}")
 def inbox_to_queue(request: Request, entry_id: str, n: int) -> JSONResponse:
     store = get_store(request)
-    moved = inbox.to_queue(store, invoice_dir(store), entry_id, n, reviewer())
+    try:
+        moved = inbox.to_queue(store, invoice_dir(store), entry_id, n, reviewer())
+    except ValueError as exc:  # a spreadsheet: never read from the invoices folder
+        return refuse(str(exc))
     if moved is None:
         return refuse("That file is no longer where AP Coder put it.")
     text = f"{moved.name} is in the invoices folder: process the folder to read it into the review queue."

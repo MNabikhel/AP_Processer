@@ -159,3 +159,14 @@ def test_the_worksheet_answer_and_code_cells_are_text():
     for sheet, columns in code_columns.items():
         for col in columns:
             assert wb[sheet][f"{col}2"].number_format == "@", (sheet, col)
+
+
+def test_how_the_line_numbers_load_is_asked_of_the_jde_team():
+    """E1 shows EDLN with display decimals: a direct table load of VLEDLN 1 may read 0.001. Until the JDE team says,
+    it is an open question in the README, the worksheet and docs/JDE_E1.md."""
+    assert any("VLEDLN / VNEDLN" in item and "0.001" in item for item in jde.UNCONFIRMED)
+    asked = [q for q in jde_worksheet.QUESTIONS if "EDLN" in q.jde_field and "0.001" in q.question]
+    assert [q.kind for q in asked] == [jde_worksheet.INFO]
+    texts = [str(c.value or "") for row in _sheet()["Questions"].iter_rows() for c in row]
+    assert any("0.001" in t for t in texts)
+    assert "0.001" in (ROOT / "docs" / "JDE_E1.md").read_text(encoding="utf-8").split("## Open questions", 1)[1]

@@ -201,3 +201,64 @@ def test_invoices_read_in_parallel_keep_the_colleague_who_started_them(monkeypat
     finally:
         EVENT_ORIGIN.reset(token)
     assert seen == ["10.0.0.5"] * 3
+
+
+def test_this_computers_browser_at_its_own_network_address_cannot_give_the_second_approval(app, store):
+    """B-190: opened at this computer's own network address (http://192.0.2.2:8501, not localhost), the server PC's
+    browser came from that address, not a loopback one, so it was taken for a colleague: the first approver could say
+    another name on /who and give the second approval from the same computer (D-34 refuses that)."""
+    from ap_coder.web import core
+
+    store.set_setting("approval_limit", "1")
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    store.approve_invoice(invoice_id, store.get_invoice(invoice_id)["ai_output"], core.reviewer(), login=core.login())
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+    same = TestClient(app, base_url="http://192.0.2.2:8501", client=("192.0.2.2", 50001), follow_redirects=False)
+    assert same.get("/review").status_code == 200  # this computer: no "Who are you?"
+    assert not same.post("/who", data={"name": "S. Owner"}, headers=PAGE).json()["ok"]
+    same.post(f"/review/{invoice_id}/final-approve", headers=PAGE)
+    assert store.get_invoice(invoice_id)["status"] == PENDING
+    assert colleague(app, "10.0.0.5").get("/review").status_code == 303  # another computer is still asked
+
+
+def test_two_colleagues_who_give_one_name_on_two_computers_keep_their_own_edits(app, store):
+    """B-192: the drafts were kept by name only, so "Mike" on one computer and "mike" on another saw each other's
+    unsaved edits on the review screen."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    mike_a, mike_b = colleague(app, "10.0.0.5", "Mike"), colleague(app, "10.0.0.9", "mike")
+    mike_a.post(f"/review/{invoice_id}/check", data={"po_number": "PO-TYPED-BY-A"}, headers=PAGE)
+    assert "PO-TYPED-BY-A" in mike_a.get(f"/review/{invoice_id}").text
+    assert "PO-TYPED-BY-A" not in mike_b.get(f"/review/{invoice_id}").text
+
+
+def test_a_colleague_who_changes_their_name_keeps_their_edits_and_can_start_over(app, store):
+    """B-192: after a new name on /who, the edits left under the old one were no one's: not on the screen, not
+    dropped by Start over, and bulk approval skipped the invoice until AP Coder restarted."""
+    invoice_id = store.list_invoices(REVIEW)[0]["id"]
+    ana = colleague(app, "10.0.0.6", "Ana")
+    ana.post(f"/review/{invoice_id}/check", data={"po_number": "PO-ANA-1"}, headers=PAGE)
+    assert ana.post("/who", data={"name": "Ana Silva"}, headers=PAGE).json()["ok"]
+    assert "PO-ANA-1" in ana.get(f"/review/{invoice_id}").text
+    ana.post(f"/review/{invoice_id}/start-over", headers=PAGE)
+    assert not any(invoice_id in drafts for drafts in app.state.person_drafts.values())
+
+
+def test_a_link_from_another_site_keeps_who_the_colleague_is(app):
+    """B-193: the name cookie was SameSite=Strict, so a link to the dashboard from another site (the intranet, a
+    webmail) came without it and asked "Who are you?" again. Lax sends it on such a link (a GET, which never changes
+    anything); a POST from another site is still refused by the header and origin checks (web/security.py)."""
+    client = colleague(app, "10.0.0.5")
+    answer = client.post("/who", data={"name": "Ana"}, headers=PAGE)
+    cookie = answer.headers["set-cookie"].lower()
+    assert "samesite=lax" in cookie and "httponly" in cookie
+    refused = client.post(
+        "/review/bulk-approve",
+        data={},
+        headers={**PAGE, "Origin": "http://example.com", "Sec-Fetch-Site": "cross-site"},
+    )
+    assert refused.status_code == 403
+
+
+def test_an_ipv4_mapped_loopback_address_is_this_computer():
+    assert identity.is_this_computer("::ffff:127.0.0.1")
+    assert not identity.is_this_computer("::ffff:10.0.0.5")

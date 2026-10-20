@@ -1472,3 +1472,876 @@ the code at the time of the sweep.
 - **N-74** · Intake · `ui.money(NaN)` shows "nan", and `ui.time_ago` would crash on a timestamp with a time zone. Not run; the store writes timestamps without one.
 - **N-75** · Intake · `inbox.done_ids()` reads only the last 20,000 "email marked done" events, so past that, emails marked done long ago would come back as open. Noted by the B-117 fix; left.
 - **N-76** · Codebase map · Depends on / Used by is worked out only for `ap_coder`, so `scripts` and `tests` are never counted as users of a module, and the Depends on lines of `scripts`, `tests`, `.github` and `.claude` are not checked. By design; the `ap_coder/MODULES.md` "Imported by" column now lists the scripts that import each module.
+
+## Sweep 3 (before the pilot tester starts testing), October 2026
+
+The codebase map was removed first (decisions D-38). Each section was then reviewed by a fresh agent that reproduced every finding by running it; a pilot tester's day-one walk-through of the dashboard was added. Each reproduced bug got a failing test first, then the fix.
+
+| Section | Found | Reproduced and fixed | Not reproduced / left |
+|---|---|---|---|
+| Store and config | 10 | 9 (B-158 to B-166) | 1 (N-77) |
+| Tax and coding rules | 8 | 7 (B-132 to B-138) | 1 (N-78) |
+| Exports, ERP and reports | 12 | 9 (B-150 to B-157, B-208) | 3 (N-79 to N-81) |
+| AI and readers | 11 | 9 (B-174 to B-181, B-209) | 2 (N-82 to N-83) |
+| Document capture | 12 | 9 (B-182 to B-189, B-205) | 3 (N-84 to N-86) |
+| Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
+| Intake, email and command line | 14 | 12 (B-140 to B-149, B-206 to B-207) | 2 (N-88 to N-89) |
+| Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
+| Day-one walk-through | 11 | 11 (B-197 to B-204, B-210 to B-212) | 0 |
+| **Total** | **95** | **78** | **17** |
+
+### Store and config
+
+#### B-158 · A withdrawn approval kept teaching the AI its lessons · medium
+- **Where:** `ap_coder/core/store.py:1238` (`_forget_learning`, `delete_invoice(forget_lessons=True)`, `record_lesson`)
+- **Symptom:** an approval with a wrong GL, reopened (or sent back, rejected, deleted with its lessons), still told the AI "lines like “dell latitude laptop gb” are coded to GL 6999"; a correction reopened and approved again counted twice, so the "why?" question came early.
+- **Cause:** withdrawing an approval removed its feedback, supplier and reader outcomes but not what it had added to the `lessons` counts and value; nothing recorded which approval added what.
+- **Reproduce:** approve an invoice with line 1 changed to 6999 and learn from it, reopen it, approve it as read: `lessons.prompt_lines()` still names GL 6999; approve, reopen, approve the same correction: `corrected` and `since_why` are 2.
+- **Reproduced:** yes (`AI is told: ['Northwind IT Solutions Inc.: lines like “dell latitude laptop gb” are coded to GL 6999, 1 time.']` after the reopen, the re-approval and a reject; `one invoice, corrected: 2 since_why: 2`)
+- **Fix:** each approval's part of a lesson is kept in a new table `lesson_approvals` (invoice, situation, corrected, confirmed, value, proposed, when); `_withdraw_lessons` takes it back (seen, corrected, confirmed, and the count towards "why" unless a reason was given since; the value falls back to the latest correction still standing) from `_forget_learning` (reopen, send back, reject) and `delete_invoice(forget_lessons=True)`; the same invoice recorded again replaces its earlier part.
+- **Test:** `tests/test_sweep3_core.py::test_a_withdrawn_approval_no_longer_teaches_its_lessons`, `tests/test_sweep3_core.py::test_a_reopened_and_reapproved_correction_counts_once`, `tests/test_sweep3_core.py::test_an_invoice_deleted_with_its_lessons_forgets_them`
+- **Lesson:** Don't fold an approval into running totals without keeping what it added: withdrawing it must be able to take that back.
+
+#### B-159 · Replacing the GL list with a file whose code column is blank deleted every account · medium
+- **Where:** `ap_coder/core/store.py:685` (`import_accounts`), `ap_coder/web/pages/accounts.py` (`accounts_import`)
+- **Symptom:** an import with "Replace all" where the wrong (or a blank) column was picked as the code said "Imported: 0 added, 0 updated, 2 skipped" and left no GL account at all; coding then failed ("No GL accounts imported yet").
+- **Cause:** `replace_all` deleted the table before looking at the rows, and nothing checked that any row had a code.
+- **Reproduce:** `import_accounts("gl_accounts", [{"GL": ""}, {"GL": ""}], "GL", None, replace_all=True)` on the sample setup.
+- **Reproduced:** yes (`before: 26`, `{'added': 0, 'updated': 0, 'skipped': 2}`, `after: 0`, `coding now fails: No GL accounts imported yet`)
+- **Fix:** a replace whose rows (there are some) have no code at all is refused before anything is deleted, with a plain message; the accounts page shows it (400) instead of "0 added". The editable grid's save (rows with codes only, or none when everything was deleted on purpose) is unchanged.
+- **Test:** `tests/test_sweep3_core.py::test_an_import_with_no_usable_code_never_replaces_the_gl_accounts`, `tests/test_sweep3_core.py::test_the_accounts_page_says_why_an_import_with_no_codes_is_refused`
+- **Lesson:** Don't delete what an import replaces before checking the import has something to put in its place.
+
+#### B-160 · A semicolon CSV with a comma in a header cell was split on commas · low
+- **Where:** `ap_coder/core/csvio.py:16` (`sniff_delimiter`, was `_dialect`), `ap_coder/web/files.py:152` (`read_sheet`)
+- **Symptom:** a GL list saved by French-Canadian Excel (semicolons) whose header reads "Compte GL;Description;Catégorie (dépenses, revenus)" came in as two columns, "Compte GL;Description;Catégorie (dépenses" and " revenus)", with whole lines in the first one; the import page offered the same wrong columns.
+- **Cause:** the reference-file reader sniffed the delimiter from the header line alone, and pandas' `sep=None` on uploads also sniffs a single line: a comma inside a header cell made comma look like the delimiter.
+- **Reproduce:** `read_csv_rows()` on `Compte GL;Description;Catégorie (dépenses, revenus)` / `6000;Fournitures de bureau;Dépenses`.
+- **Reproduced:** yes (`{'Compte GL;Description;Catégorie (dépenses': '6000;Fournitures de bureau;Dépenses', ' revenus)': None}`)
+- **Fix:** `sniff_delimiter` reads the header and the first 20 rows with Excel's quoting for each of comma, semicolon, tab and pipe, and picks the one that splits the most rows into the header's number of cells (more than one; a comma on a tie or when nothing fits); `read_csv_rows` and the dashboard's upload reader both use it (Excel's quoting is kept, B-02).
+- **Test:** `tests/test_sweep3_core.py::test_a_semicolon_csv_with_a_comma_in_its_header_is_split_on_semicolons`, `tests/test_sweep3_core.py::test_a_plain_comma_csv_is_still_read_on_commas`
+- **Lesson:** Don't guess a file's delimiter from one line: check that it fits the rows under it too.
+
+#### B-161 · A backup dated in the future stopped the daily automatic backups · low
+- **Where:** `ap_coder/core/store.py:3316` (`auto_backup`)
+- **Symptom:** after a day the laptop's clock was ahead (a backup named and dated in the future), AP Coder made no automatic backup at start-up again, for as long as that file was the newest by name.
+- **Cause:** the newest daily backup's age was compared with 20 hours, and a negative age (made "later" than now) is less than 20 hours; it was always the newest by name, so it was the only one looked at.
+- **Reproduce:** a daily backup `ap_coder-20271019-090000.db` with a modified time a year ahead, then `auto_backup()` three times.
+- **Reproduced:** yes (`auto backups made: [None, None, None]`)
+- **Fix:** each daily backup's age is looked at, and only one made between now and 20 hours ago skips the backup: one dated in the future counts as old.
+- **Test:** `tests/test_sweep3_core.py::test_a_backup_dated_in_the_future_does_not_stop_daily_backups`
+- **Lesson:** Don't trust a file time to be in the past: a negative age is not a recent one.
+
+#### B-162 · A held supplier could go touchless after the vendor-matching rules changed · low
+- **Where:** `ap_coder/core/store.py:497` (`_recompute_vendor_keys`; new `_merge_supplier_profiles`, `_merge_lesson_rows`)
+- **Symptom:** with profiles under both "name:energir sec" (held by an AP lead) and "name:energir", the update that recomputes vendor keys left the hold on the old key, which no invoice gives any more: the supplier's profile now read "supervised" and could be made touchless. Two lessons that became the same situation stayed apart, one under a key nothing reads.
+- **Cause:** the re-keying used `UPDATE OR IGNORE` for supplier profiles and lessons: where the new key was taken, the old row (with its hold, its counts) was silently left behind, unlike vendor list rows (B-73).
+- **Reproduce:** two profiles as above, `set_supplier_state("name:energir sec", "held", ...)`, set `vendor_key_rules` to 1 and open the store again.
+- **Reproduced:** yes (`name:energir supervised`, `name:energir sec held`; `lessons-style lookup of 'name:energir': supervised`)
+- **Fix:** a profile that collides is folded into the one under the new key, the stricter state winning (held, suspended, supervised, touchless) with its dates and audit rate, blank fields filled from the other; a lesson that collides is folded in with its counts added up (the newer value, the latest reason), and each approval's part (B-158) follows its lesson.
+- **Test:** `tests/test_sweep3_core.py::test_a_held_supplier_stays_held_when_its_key_merges_under_new_rules`, `tests/test_sweep3_core.py::test_two_lessons_that_become_one_vendor_add_up`
+- **Lesson:** Don't re-key rows with `UPDATE OR IGNORE` alone: a row left behind under a dead key takes its controls and counts with it.
+
+#### B-163 · Amounts written "CA$1,234.50", "US$99.00", "250.00 DR" or with a typeset minus were not read · low
+- **Where:** `ap_coder/core/safe.py:48` (`_CURRENCY`, `parse_amount`)
+- **Symptom:** ERP-register, statement, PO and history rows with amounts like "CA$1,234.50", "C$5", "US$99.00", "250.00 DR" or "−150.00" (U+2212, as Word and some ERP PDFs write it) were skipped as having no amount.
+- **Cause:** the currency pattern removed "$" but left "CA", "C" or "US" in front of the number; "DR" was not known (only "CR"); only the ASCII hyphen was read as a minus.
+- **Reproduce:** `parse_amount("CA$1,234.50")`, `parse_amount("250.00 DR")`, `parse_amount("−150.00")`.
+- **Reproduced:** yes (`None` for each)
+- **Fix:** "CA$", "C$", "US$" and "CDN" are removed with the currency (longest first); U+2212 is read as a minus; a trailing "DR" (a debit) is dropped and leaves the amount positive, the counterpart of "CR" (a credit, negative), as registers and statements show them.
+- **Test:** `tests/test_sweep3_core.py::test_parse_amount_reads_currency_prefixes_debits_and_the_minus_sign`
+- **Lesson:** Don't strip a currency symbol and leave its country letters: remove the whole prefix as people write it.
+
+#### B-164 · The update's safety copy of a schema-1 database could not be restored · low
+- **Where:** `ap_coder/core/store.py:3420` (`_check_backup_file`, `check_backup`)
+- **Symptom:** after an update from the first version, restoring `ap_coder-…-before-update-from-schema-1.db` (the copy made to undo the update) was refused: "… is not an AP Coder database".
+- **Cause:** the check required a `schema_version` row, which the first version never wrote; the store itself (`_migrate`, `database_schema`) reads a missing row as version 1.
+- **Reproduce:** a database with the first version's tables and no `schema_version` row, opened by `Store()` (it makes the safety copy), then `Store.check_backup(safety_copy)`.
+- **Reproduced:** yes (`restore refused: ap_coder-20261019-210038-before-update-from-schema-1.db is not an AP Coder database`)
+- **Fix:** a missing row is version 1 when the file has the first version's shape (AP Coder's `invoices` and `feedback` tables, `invoices` without the `export_batch` column added in version 3); a newer database whose row was removed is still refused (tests/test_backups.py).
+- **Test:** `tests/test_sweep3_core.py::test_the_safety_copy_of_a_schema_1_database_can_be_restored`, `tests/test_sweep3_core.py::test_a_database_without_ap_coders_tables_is_still_refused`
+- **Lesson:** Don't make a check stricter than the code it guards: read a missing version the way the migration reads it.
+
+#### B-165 · A GL CSV with Excel's trailing blank rows was refused · low
+- **Where:** `ap_coder/core/reference_data.py:161` (`load_table`)
+- **Symptom:** a chart of accounts saved from Excel with empty rows under the list (`,` lines) was refused: "row 3 has an empty 'gl_code'".
+- **Cause:** every row was checked for a code, including rows with nothing in any cell.
+- **Reproduce:** `load_table()` on `GL Code,Description` / `6000,Office` / `6100,Travel` / `,` / `,`.
+- **Reproduced:** yes (`ValueError: …gl.csv: row 3 has an empty 'gl_code'`)
+- **Fix:** a row with every cell blank is skipped before the checks; a row with a description and no code is still refused, under its row number in the file.
+- **Test:** `tests/test_sweep3_core.py::test_a_gl_csv_with_excels_trailing_blank_rows_loads`
+- **Lesson:** Don't treat an all-blank row from a spreadsheet as a row with a missing value: skip it first.
+
+#### B-166 · A supplier abroad ("London, UK", "Paris, France") made the coding invalid · low
+- **Where:** `ap_coder/core/schema.py:245` (`province_code`, `_province_at_end`)
+- **Symptom:** a model that wrote the supplier's place as "London, UK" or "Paris, France" got its answer refused ("province must be a Canadian province code"), using up its one repair turn (or failing the read) for an invoice that simply comes from outside Canada.
+- **Cause:** only US states and the USA were known as outside Canada; any other country fell through to the error.
+- **Reproduce:** `province_code("London, UK")`, `province_code("Paris, France")`.
+- **Reproduced:** yes (`ValueError: province must be a Canadian province code, got 'London, UK'`)
+- **Fix:** an address ending with a country Canadian businesses commonly buy from (UK, France, Germany, China, Mexico, Ireland…) is OUTSIDE_CANADA; the province at the end still wins ("London, ON"), and a place nothing identifies is still an error.
+- **Test:** `tests/test_sweep3_core.py::test_a_place_abroad_is_outside_canada`, `tests/test_sweep3_core.py::test_canadian_places_named_like_places_abroad_stay_canadian`
+- **Lesson:** Don't treat "not a province" as "an error" when the value is a place abroad: outside Canada is an answer.
+
+### Tax and coding rules
+
+#### B-132 · Bulk approval takes a clean credit note · medium
+- **Where:** `ap_coder/coding/bulk.py:22-24` (`_needs_a_person`, used by `clean_candidates` and `bulk_approve`)
+- **Symptom:** a credit note with no warning (it credits an approved invoice) is listed as clean on the queue and approved by "Approve all clean" with nobody opening it, although Settings → Automation says a credit is always applied by a person.
+- **Cause:** bulk approval only looked at the findings' severity and `ALWAYS_A_PERSON`; the credit-note gate lives in `capture/supplier.touchless_gates` (a total below zero, or titled a credit note) and bulk.py never asked it.
+- **Reproduce:** approve the Northwind ON sample, then process a negated copy `CN-1` with `original_invoice_number` set (only info findings `CREDIT_NOTE_FOR`), and call `clean_candidates` / `bulk_approve`.
+- **Reproduced:** yes (`assert (2 not in [2, 3])`: the credit note and a positive one titled a credit note were both listed and approved)
+- **Fix:** `_credit_note()` asks `touchless_gates(grand_total=..., credit_note=<capture's credit_note>)`, the touchless rules' own notion; `clean_candidates` leaves such an invoice out and `bulk_approve` skips it with "it is a credit note: a credit is always applied by a person".
+- **Test:** `tests/test_exports_bulk.py::test_bulk_approval_never_takes_a_credit_note`
+- **Lesson:** Don't write a second list of what always needs a person: ask the gate the touchless rules use.
+
+#### B-133 · A line on an unlisted home cost center lets another site decide the place of supply · medium-low
+- **Where:** `ap_coder/coding/tax.py:311-314` (`supply_source`)
+- **Symptom:** we are in Alberta with `CC400=BC` in Settings → Review; an invoice with one line to CC400 and one to the home cost center CC100 is checked (and self-assessed in the tax return) as a BC supply: PST expected on the whole invoice.
+- **Cause:** cost centers not in `site_provinces` (and blank ones) were dropped from the set of sites, so the one listed site looked like "every line goes to BC".
+- **Reproduce:** `supply_source(coding([(1000, ["GST"], "CC400"), (1000, ["GST"], "CC100")], ...), TaxSetup(our_province="AB", site_provinces={"CC400": "BC"}))`.
+- **Reproduced:** yes (`('BC', 'site')`, expected `('AB', 'ours')`)
+- **Fix:** an unlisted (or blank) cost center counts as our province; a site's province is used only when every line maps to it. Without `our_province` set, unlisted cost centers still say nothing (as before). taxreturn.py goes through the same `supply_source` (B-13), so the tax return follows.
+- **Test:** `tests/test_tax.py::test_a_line_on_an_unlisted_site_is_delivered_to_our_province`
+- **Lesson:** Don't drop the values a lookup doesn't list: an unlisted key has a default meaning too.
+
+#### B-134 · A site typed in lower case in Settings is never matched · low
+- **Where:** `ap_coder/coding/tax.py:311` (`supply_source`)
+- **Symptom:** "cc400=BC" typed in Settings → Review is saved, but lines coded to CC400 are still taxed as delivered to our province.
+- **Cause:** `site_provinces` keys were compared with the line's cost center exactly (case and spaces), while the JD Edwards mapping compares cost centers upper-cased.
+- **Reproduce:** `supply_source(<one line on CC400>, TaxSetup(our_province="AB", site_provinces={"cc400": "BC"}))`.
+- **Reproduced:** yes (`('AB', 'ours')`, expected `('BC', 'site')`)
+- **Fix:** both sides are trimmed and upper-cased before the lookup.
+- **Test:** `tests/test_tax.py::test_a_site_typed_in_lower_case_is_still_that_cost_center`
+- **Lesson:** Don't compare codes a person types more strictly than the rest of the app compares them.
+
+#### B-135 · "End of month" in the interest clause makes Net 30 count from month end · medium-low
+- **Where:** `ap_coder/coding/terms.py:141` (`parse_terms`)
+- **Symptom:** "Net 30, interest of 2% per month charged at end of month on overdue accounts" on an invoice of 2026-09-10 is due 2026-10-30 instead of 2026-10-10: the due-date sort and the overdue check are 20 days late.
+- **Cause:** EOM was any "end of month" anywhere in the terms, including the late-payment clause.
+- **Reproduce:** `payment({"invoice_date": "2026-09-10", "payment_terms": "Net 30, interest of 2% per month charged at end of month on overdue accounts", "grand_total": 1130}).due`.
+- **Reproduced:** yes (`2026-10-30`, eom=True)
+- **Fix:** `_eom()` leaves out an EOM whose clause has interest words before it ("interest ... at end of month", "Overdue accounts are charged ... at the end of the month"); "Net 30 EOM, interest 2% per month" keeps its EOM.
+- **Test:** `tests/test_terms.py::test_end_of_month_in_the_interest_clause_does_not_make_the_terms_eom`
+- **Lesson:** Don't read the words of the late-payment clause as the payment terms (B-83 again, for EOM).
+
+#### B-136 · "Net 2 weeks", "Net 3 semaines" and "Net 10 prox" are read as days · low
+- **Where:** `ap_coder/coding/terms.py:76-79` (`_NET`)
+- **Symptom:** "Net 2 weeks" is due 2 days after the invoice, "Net 3 semaines" 3 days, "Net 10 prox" 10 days (instead of the 10th of the next month); "2% 2 weeks net 30" offers a 2-day discount.
+- **Cause:** the "net N" pattern only refused months after the number; weeks and prox were never parsed.
+- **Reproduce:** `payment({"invoice_date": "2026-09-10", "payment_terms": "Net 2 weeks", "grand_total": 1}).due`.
+- **Reproduced:** yes (`2026-09-12` net=2; "Net 3 semaines" `2026-09-13`; "Net 10 prox" `2026-09-20`)
+- **Fix:** weeks / semaines count 7 days each (also "Payable within 2 weeks"); "Net N prox" (also "10th prox", "proximo") is due on day N of the month after the invoice's (last day of a shorter month), `Terms.prox_day`; a discount's number before weeks is not its days. A slash discount's "2/10th prox" is not read as prox.
+- **Test:** `tests/test_terms.py::test_weeks_and_prox_terms_are_never_read_as_days`
+- **Lesson:** Don't take the number after "net" as days without looking at the unit that follows it.
+
+#### B-137 · "Net EOM" with no days is due 30 days after the invoice · low
+- **Where:** `ap_coder/coding/terms.py:172` (`parse_terms`, `payment`)
+- **Symptom:** "Net EOM" / "Due EOM" on an invoice of 2026-09-10 is due 2026-10-10 (the default days, source "default") instead of 2026-09-30.
+- **Cause:** EOM terms with no day count gave no net days, so `payment()` fell back to the default days from the invoice date.
+- **Reproduce:** `payment({"invoice_date": "2026-09-10", "payment_terms": "Net EOM", "grand_total": 1})`.
+- **Reproduced:** yes (`due=2026-10-10 src=default`)
+- **Fix:** EOM terms with no days are net 0 from the end of the invoice's month.
+- **Test:** `tests/test_terms.py::test_eom_terms_with_no_days_are_due_at_the_end_of_the_month`
+- **Lesson:** Don't fall back to the default when the terms printed say when it is due, only without a number.
+
+#### B-138 · A PO export's "Item" column (an SKU) is taken as the PO line number · low
+- **Where:** `ap_coder/coding/po.py:52` (`COLUMN_ALIASES`, `map_columns`)
+- **Symptom:** importing a PO file with columns "PO Number, Vendor, Item, Description, ..." guesses "Item" as the line number: SKU 88341 becomes PO line 88341 (and "WID-0042" no number), shown on the PO and its matches.
+- **Cause:** "item" and "itemnumber" were aliases of the line number, though in most exports they hold the part number.
+- **Reproduce:** `map_columns(["PO Number","Vendor","Item","Description","Qty","Unit Price","Amount"])` then `rows_from_records` with Item "88341".
+- **Reproduced:** yes (`'line_number': 'Item'`, row `line_number: 88341`)
+- **Fix:** "item" / "itemnumber" are no longer guessed as the line number; lines without a line column are numbered in file order on import, and a person can still pick the column by hand.
+- **Test:** `tests/test_po.py::test_an_item_column_is_an_sku_never_the_po_line_number`
+- **Lesson:** Don't guess a column from a header that usually means something else.
+
+### Exports, ERP and reports
+
+#### B-150 · A statement's payment line with the invoice's number is taken for the invoice · medium
+- **Where:** `ap_coder/erp/statements.py:177` (`reconcile`)
+- **Symptom:** a vendor statement whose payment or credit line carries the invoice's number (a Credit column, or a Type of PMT / CHQ) shows "Not received" for it, so AP chases a bill it has; listed newest first, the payment takes the invoice's match ("Amount differs") and the invoice itself shows "Not received".
+- **Cause:** only a payment word in a free-text column was checked against the sign; a Debit/Credit line or a Type code the word list did not know (PMT, CHQ) was matched like an invoice, against any document with that number whatever its sign.
+- **Reproduce:** statement rows `PMT 1001 -500.00`, `INV 1001 500.00` (or `Credit 500.00` before `Debit 500.00`) against invoice 1001 for 500.00.
+- **Reproduced:** yes (`amount_differs 1001 -500.0 1`, `not_received 1001 500.0 None`; with a Type column `not_received 1001 -500.0` and `not_received CHQ 88123`)
+- **Fix:** a line whose sign is opposite to every AP Coder document with its number is the payment / credit applied, whatever its words; a line never takes a document of the opposite sign (a credit line still matches a credit note AP holds under that number); pmt, pymt and chq are payment words.
+- **Test:** `tests/test_statements.py::test_a_payment_line_carrying_the_invoice_number_never_takes_the_invoice`
+- **Lesson:** Don't match a signed line to a document of the opposite sign because the number agrees.
+
+#### B-151 · An invoice approved without a stored distribution is missing from the CSV exports · low-medium
+- **Where:** `ap_coder/erp/exports.py:104` (`line_rows`)
+- **Symptom:** an approved invoice from an older version (no `gl_distribution` stored) is marked as in the batch, but the CSV, Custom CSV and the xlsx "GL lines" sheet have no row for it; the JD Edwards files of the same batch have its lines.
+- **Cause:** `line_rows` read only the stored distribution; `jde._distribution` rebuilt it, but only for jde.py.
+- **Reproduce:** `exports.build("csv", [{"id": 5, "final_output": <ground truth without gl_distribution>}], {}, 3, {})`.
+- **Reproduced:** yes (`csv rows: 0`, `custom rows: 0`, `jde F0911Z1 rows: 5`)
+- **Fix:** `exports.distribution()` returns the stored lines, else builds them again from the coding with the store's tax treatments (passed by web/pages/exports.py as `tax_treatments`, so a recoverable tax line keeps its GL account); jde.py uses the same helper.
+- **Test:** `tests/test_exports_bulk.py::test_an_invoice_approved_without_a_stored_distribution_still_has_its_lines_in_the_export`
+- **Lesson:** Don't give one reader of a stored record a fallback the others don't share: put it in one helper.
+
+#### B-152 · Quick search hides another vendor's ERP bill with an exported invoice's number and amount · low-medium
+- **Where:** `ap_coder/erp/search.py:113` (`find`)
+- **Symptom:** an ERP-register row is missing from the quick search whenever any exported invoice, of any vendor, has the same number and amount (or the same amount with the other sign); searching the other vendor's name finds nothing.
+- **Cause:** the "its own ERP entry" key was (invoice number, absolute amount): no vendor, no sign.
+- **Reproduce:** export Chinook's invoice 1001 for 500.00, import an ERP register row `Other Supplies Ltd, 1001, 500.00`, search "1001" and "other supplies".
+- **Reproduced:** yes (`[('AP Coder', 'Chinook Courier & Office Services Ltd.')]` and `[]`)
+- **Fix:** the key keeps the amount's sign and the vendor: the same vendor key, or one the start of the other (the ERP's short name, "CHINOOK COURIER", still counts as the same vendor).
+- **Test:** `tests/test_search.py::test_another_vendors_erp_bill_with_the_same_number_and_amount_is_still_found`
+- **Lesson:** Don't de-duplicate two records on a key that leaves out who they belong to.
+
+#### B-153 · The ERP's document number is guessed as the supplier's invoice number · low-medium
+- **Where:** `ap_coder/erp/registers.py:18` (`COLUMN_ALIASES`)
+- **Symptom:** an ERP register with both "Document Number" (or "Doc No") and "Supplier Invoice" / "Vendor Invoice" columns is imported with the ERP's own document number as the invoice number, so the duplicate check against the ERP never matches.
+- **Cause:** the aliases were tried in order and "documentnumber" / "docno" came before "vendorinvoice" / "supplierinvoice".
+- **Reproduce:** `registers.map_columns(["Supplier Name", "Document Number", "Supplier Invoice", "Date", "Amount"])`.
+- **Reproduced:** yes (`invoice_number: 'Document Number'`)
+- **Fix:** the supplier / vendor invoice aliases (and their "number" / "no" forms) come first; the document number only when there is nothing better.
+- **Test:** `tests/test_registers.py::test_the_suppliers_invoice_number_is_chosen_over_the_erps_document_number`
+- **Lesson:** Don't order column guesses so that a generic name wins over the specific one.
+
+#### B-154 · A bill entered twice in the ERP collapses into one register row · low-medium
+- **Where:** `ap_coder/core/store.py:956` (`import_erp_register`), `ap_coder/erp/dupaudit.py:116` (`bills`)
+- **Symptom:** the same bill keyed twice in the ERP (same vendor, number and amount) is one row in AP Coder's ERP register, so the duplicate payment audit can never flag it.
+- **Cause:** `erp_invoices` has the primary key (vendor_key, number_key, total) and the import upserts on it: the second entry only overwrote the first one's date.
+- **Reproduce:** import `[Acme Ltd A-77 812.50 2026-01-05, Acme Ltd A-77 812.50 2026-02-05]`, run `dupaudit.find`.
+- **Reproduced:** yes (`stored 1`, `pairs []`)
+- **Fix:** `erp_invoices.copies` (a column added whatever the schema version) counts how many times the file lists the bill, kept at the highest count when an overlapping register is imported again (never added up); the audit pairs such a row with itself as EXACT ("entered 2 times"), and the register import's message names how many bills the ERP holds more than once (`Store.erp_register_repeats()`).
+- **Test:** `tests/test_dupaudit.py::test_the_same_bill_entered_twice_in_the_erp_is_a_duplicate`
+- **Lesson:** Don't make the primary key of imported records the very thing a duplicate check needs to see twice.
+
+#### B-155 · VLCRR is 1 for a CAD invoice when JD Edwards keeps its books in another currency · low-medium
+- **Where:** `ap_coder/erp/jde.py:577` (`voucher_rows`)
+- **Symptom:** with the JDE domestic currency set to USD, a CAD invoice's F0411Z1 row has VLCRR `1` (and a EUR invoice its CAD rate), so E1 converts at a wrong rate instead of its own table.
+- **Cause:** VLCRR was the invoice currency's rate from Settings → Review, which are CAD per unit, whatever the domestic currency.
+- **Reproduce:** `jde.export_batch([<CAD invoice>], JdeSettings(domestic_currency="USD", currencies=["CAD","USD"]), AN8, fx_rates={"CAD": 1.0, "USD": 1.37})`.
+- **Reproduced:** yes (`CRRM F CRCD CAD CRR 1`)
+- **Fix:** `jde._rate()`: domestic units per unit of the invoice's currency, the rate across CAD (1 / 1.37 = 0.729927; EUR 1.50 / 1.37), and blank (E1's exchange-rate table) without a rate for the domestic currency; docs/JDE_E1.md says so.
+- **Test:** `tests/test_jde.py::test_the_exchange_rate_is_in_the_domestic_currency_when_it_is_not_cad`
+- **Lesson:** Don't send a rate without saying, and converting to, the currency it is quoted in.
+
+#### B-156 · Custom CSV whole-yen lines don't add up to the invoice total · low
+- **Where:** `ap_coder/erp/export_layout.py:97` (`_value`)
+- **Symptom:** a JPY invoice whose distribution was spread in cents (10.66 + 10.67 + 10.67 + 1000 + 52) is written 11, 11, 11, 1000, 52: 1,085 against an InvoiceTotal of 1,084; and 2.5 yen is written 2.
+- **Cause:** each money cell was formatted on its own with `f"{x:.0f}"` (round half to even), with no balancing per invoice as jde.py's vouchers have.
+- **Reproduce:** `exports.build("custom", [_yen_invoice(old_distribution=True)], {}, 1, {})`.
+- **Reproduced:** yes (`['11', '11', '11', '1000', '52'] sum 1085 total 1084`; `f"{2.5:.0f}"` is `2`)
+- **Fix:** money rounds half away from zero on the decimal value; in a currency without cents, when an invoice's lines balance in cents, the largest line takes the difference to the rounded total (11, 11, 11, 999, 52).
+- **Test:** `tests/test_export_layout.py::test_whole_yen_lines_add_up_to_the_invoice_total`
+- **Lesson:** Don't round posting lines one by one in a coarser unit without giving the remainder to one of them.
+
+#### B-157 · How the line numbers VLEDLN / VNEDLN load is never asked of the JDE team · low
+- **Where:** `ap_coder/erp/jde.py:106` (`UNCONFIRMED`), `ap_coder/erp/jde_worksheet.py:44` (`QUESTIONS`)
+- **Symptom:** the Z-files write VLEDLN / VNEDLN as 1, 2, 3; E1 shows EDLN with display decimals, so a direct table load may read line 1 as 0.001, and nothing in the README, the worksheet or docs/JDE_E1.md asks the JDE team about it.
+- **Cause:** the unconfirmed list and the open questions covered VNEDLN numbering (sequential or matching) but not how the number itself is stored.
+- **Reproduce:** read the README's "To confirm with your JDE team" line and the worksheet's Amounts questions.
+- **Reproduced:** yes (no mention of EDLN's decimals)
+- **Fix:** an UNCONFIRMED entry (in the README), an Amounts question in the worksheet (free text), and the open-questions bullet in docs/JDE_E1.md (still 8 bullets, so test_jde_readiness keeps its count).
+- **Test:** `tests/test_jde_readiness.py::test_how_the_line_numbers_load_is_asked_of_the_jde_team`
+- **Lesson:** Don't leave a load assumption out of the questions list because the value looks obvious.
+
+#### B-208 · A register listing a bill once per GL line made every multi-line bill an "entered 3 times" duplicate · medium-low
+- **Where:** `ap_coder/core/store.py:1038` (`import_erp_register`), `ap_coder/erp/dupaudit.py:158` (`find`)
+- **Symptom:** since B-154, an ERP register exported one row per GL line (the bill's total repeated on each line) or with equal JD Edwards pay items showed every multi-line bill as an EXACT duplicate, "entered 3 times", and the import said the ERP holds those bills more than once.
+- **Cause:** `copies` counted every row alike in vendor, number and amount, also rows alike in their date: one bill's lines, not a bill keyed again.
+- **Reproduce:** review33/s/t2.py: import Acme Ltd A-77 812.50 2026-01-05 three times, then `erp_register_repeats()` and `dupaudit.find()`.
+- **Reproduced:** yes (`repeats 1 [Pair(reason='EXACT', ... copies=3) ...]`)
+- **Fix:** `copies` is the number of different dates the file lists the bill with (a row with no date adds none); rows alike in their date too collapse into one bill as before B-154. The register has no ERP document number column to tell two entries on the same day apart, so those still collapse.
+- **Test:** `tests/test_dupaudit.py::test_a_register_listing_a_bill_once_per_gl_line_is_not_a_bill_entered_three_times` (and B-154's `test_the_same_bill_entered_twice_in_the_erp_is_a_duplicate`)
+- **Lesson:** Don't count identical rows as repeated entries: an export at line level repeats its header on every line.
+
+### AI and readers
+
+#### B-174 · A credit note with unsigned lines under a negative subtotal got an invented charge line · medium
+- **Where:** `ap_coder/ai/offline_coder.py:287` (`code_from_capture`)
+- **Symptom:** a credit note that prints its lines positive (1,450.00 and 600.00) but its subtotal and total negative (-2,050.00) was coded as two lines owed (+1,450, +600) plus a "Charges not in the line table" line of -4,100, with no check raised.
+- **Cause:** the lines read were compared with the subtotal as printed: the difference, minus twice the subtotal, was taken for a charge printed outside the table.
+- **Reproduce:** the sample `northwind_ON_HST_CN-2026-0047.md` with the lines' minus signs removed (or a PDF credit note so printed), through the offline pipeline.
+- **Reproduced:** yes (`[('Return - Dell Latitude 7450 la', 1450.0), ('Credit - implementation consul', 600.0), ('Charges not in the line table', -4100.0)]`, issues only GL/CC unassigned)
+- **Fix:** when the lines sum to minus the (negative) subtotal, they are the credit: their amounts and unit prices take the credit's sign (the quantity keeps its own, as the rule reader codes a credit's line); no charge line is added.
+- **Test:** `tests/test_sweep3_ai.py::test_a_credit_note_with_positive_lines_and_negative_totals_codes_the_lines_as_credits`
+- **Lesson:** Don't explain a difference of exactly twice a total as something extra: check whether the sign is what differs.
+
+#### B-175 · Past 50,000 lessons, the vendors imported first lost all their learning · medium
+- **Where:** `ap_coder/ai/pipeline.py:374` (`InvoicePipeline.process`), `ap_coder/core/store.py:3425` (`learning_rows`)
+- **Symptom:** once the learning memory held more than 50,000 rows, every line of a vendor whose history was imported first stayed UNASSIGNED, and the history check (`finalise_coding`) saw none of its past coding.
+- **Cause:** the pipeline coded with `store.feedback_rows()`, the newest 50,000 rows: an old vendor's rows were all cut off.
+- **Reproduce:** import 6 history rows for one vendor, then 50,000 for others; code an invoice from the first vendor.
+- **Reproduced:** yes (`50000 rows read: 50000 acme rows read: 0 -> UNASSIGNED`, against 6100 with 1,000 other rows)
+- **Fix:** `Store.learning_rows(vendor)`: the shared capped list, with this vendor's lessons that fell past the cap added after it (the shared list itself while nothing is missing, so the suggestion index is not rebuilt). The pipeline (once the vendor is read) and the review screen's suggestions use it; the cap is `store.FEEDBACK_READ`.
+- **Test:** `tests/test_sweep3_ai.py::test_a_vendor_imported_first_keeps_its_learning_past_the_memory_read_cap`
+- **Lesson:** Don't cap a shared read newest-first and then look up one key in it: read that key's rows too.
+
+#### B-176 · A banking line quoting the invoice number made every later invoice a changed bank account · medium
+- **Where:** `ap_coder/ai/offline_coder.py:196` (`bank_details`)
+- **Symptom:** a supplier whose banking line reads "EFT payments: Transit 12345 Inst 001 Account 1234567, quoting invoice NW-2026-0912" got VENDOR_BANK_CHANGED on every invoice after the first approved one.
+- **Cause:** everything after the first banking word was kept, the invoice number included, so the digits compared differed on each invoice.
+- **Reproduce:** two PDFs from the same supplier with that line and their own invoice numbers; approve the first, read the second.
+- **Reproduced:** yes (`bank 2: ... Account 1234567, quoting invoice NW-2026-0987`, `VENDOR_BANK_CHANGED`)
+- **Fix:** the details stop at the first word that starts something else (invoice, ref, quoting, date, call, phone...) once 5 digits are in, then at the end of the last labelled number (transit, institution, account..., an IBAN or SWIFT after its label).
+- **Test:** `tests/test_sweep3_ai.py::test_a_banking_line_that_quotes_the_invoice_number_keeps_only_the_account`
+- **Lesson:** Don't keep "the rest of the line" as an identifier: cut it to the part that identifies.
+
+#### B-177 · A self-test mark left by a crash stayed "under way" forever once its process id was reused · medium
+- **Where:** `ap_coder/ai/page_worker.py:681` (`test_under_way`), `:790` (`_mark_test`)
+- **Symptom:** after a dashboard died during OvisOCR2's self-test, Settings > Reading showed the test running for good, the page reader read nothing, a new test was refused and nothing went touchless, as long as another program had that process id.
+- **Cause:** another process's mark was judged by its process id alone; the random token in READER_ID can't be checked from another process.
+- **Reproduce:** set the `page_reader_testing` mark with a start three days ago and the pid of a running `sleep`; call `test_under_way`, `self_test`, `start_test`.
+- **Reproduced:** yes (`self_test: ('running', 'OvisOCR2 is reading the test invoice now (page 1 of 2)...')`, `start_test: False`)
+- **Fix:** the mark notes when it was last renewed (`updated`, at each page); another process's mark not renewed for `TEST_STALE_HOURS` (1 hour) is not under way.
+- **Test:** `tests/test_sweep3_ai.py::test_a_self_test_mark_whose_process_id_another_program_now_has_is_not_under_way`
+- **Lesson:** Don't take a live process id as proof the process that wrote a mark is alive: give the mark an age limit.
+
+#### B-178 · An unlisted charge was labelled with part of another amount · low
+- **Where:** `ap_coder/ai/offline_coder.py:227` (`_unlisted_charge`)
+- **Symptom:** a $50.00 delivery charge printed outside the line table became a line described "1,2".
+- **Cause:** the figure "50.00" was looked for as a substring and found inside "1,250.00" first.
+- **Reproduce:** a capture with one line of 1,250.00, subtotal 1,300.00, and the page text "...1,250.00\nDelivery charge\n50.00".
+- **Reproduced:** yes (`[('Widgets', 1250.0), ('1,2', 50.0)]`)
+- **Fix:** the amount is matched as a whole figure (no digit, comma or point before it, no digit after); a figure alone on its line takes the line above as its label; a label needs a letter.
+- **Test:** `tests/test_sweep3_ai.py::test_an_unlisted_charge_is_labelled_from_its_own_figure_not_part_of_another`
+- **Lesson:** Don't search for a number as a substring: match it as a whole figure.
+
+#### B-179 · A Mac's "._" files and Office lock files in the invoices folder failed as damaged invoices · low
+- **Where:** `ap_coder/ai/pipeline.py:80` (`invoice_files`)
+- **Symptom:** "._inv.pdf" (a Mac's file details, copied beside "inv.pdf" on a shared or USB drive), other hidden files and "~$" lock files were listed and each failed as a damaged invoice.
+- **Cause:** every file with an invoice extension was listed, whatever its name.
+- **Reproduce:** a folder with "inv.pdf", "._inv.pdf", ".hidden.pdf", "~$notes.txt": `invoice_files(folder)`.
+- **Reproduced:** yes (`['._inv.pdf', '.hidden.pdf', 'inv.pdf', '~$notes.txt']`)
+- **Fix:** names starting with "." or "~$" are skipped, like README files.
+- **Test:** `tests/test_sweep3_ai.py::test_hidden_files_and_lock_files_in_the_invoices_folder_are_not_invoices`
+- **Lesson:** Don't take every file with the right extension for a document: hidden and lock files share it.
+
+#### B-180 · A bug in the checks after coding stopped a whole batch · medium
+- **Where:** `ap_coder/ai/pipeline.py:428-462` (`InvoicePipeline.process`)
+- **Symptom:** an exception in the capture, review issues, touchless decision or holds escaped `process()`, so `process_many()` (a batch import) stopped at that invoice and the rest were not read.
+- **Cause:** only the reading and coding were inside the "one bad invoice must not stop a batch" guard; the checks after it were not.
+- **Reproduce:** make `autonomy_decision` raise, then `process_many` two sample invoices.
+- **Reproduced:** yes (`RuntimeError: a bug` out of `process_many`)
+- **Fix:** those checks run inside a guard: the exception is logged, the invoice is saved for a person (never touchless) and the batch goes on.
+- **Test:** `tests/test_sweep3_ai.py::test_a_bug_in_the_touchless_decision_does_not_stop_the_batch`
+- **Lesson:** Don't guard only part of the work a batch promises to survive: the guard covers every step of one item.
+
+#### B-181 · The AI reviewer's "confident": "false" written as text counted as confident · low
+- **Where:** `ap_coder/ai/verifier.py:248` (`_parse`)
+- **Symptom:** in json_object or text response modes, a model answering `"confident": "false"` (a string) was taken as confident, so its agreement could clear the reviewer's hold.
+- **Cause:** `bool(data.get("confident"))`: any non-empty string is true.
+- **Reproduce:** `verifier._parse({"confident": "false", "fields": [{"field": "vendor_name", "agree": true}], "lines": [{"line_number": 1, "agree": true}]}, ["vendor_name"], [1])`.
+- **Reproduced:** yes (confident `True`)
+- **Fix:** only a boolean `true` counts, as for each item's "agree".
+- **Test:** `tests/test_sweep3_ai.py::test_the_reviewer_saying_confident_false_as_text_is_not_confident`
+- **Lesson:** Don't read a model's yes/no with `bool()`: accept only a real boolean.
+
+#### B-209 · Bank details approved before B-176 made the vendor's next invoice a changed bank account · medium-low
+- **Where:** `ap_coder/coding/vendors.py:161` (`same_bank_account`), `ap_coder/coding/vendors.py:146` (`cut_bank_details`)
+- **Symptom:** a vendor whose banking line runs on past the account ("... Account 1234567. Questions? Call 416-555-1212", "..., ref. invoice 88231") got VENDOR_BANK_CHANGED on its first invoice read after B-176, which holds it out of bulk approval and touchless.
+- **Cause:** B-176 cut the details read from new invoices after the account, but the approved invoices compared with kept the whole line they were stored with, so their digits (the phone or reference number included) differed.
+- **Reproduce:** review33/s/t7.py, then `same_bank_account(bank_details(old), old)` for the stored lines above.
+- **Reproduced:** yes (`False 'EFT: Transit 00012, Institution 003, Account 1234567' | stored: '... Account 1234567. Questions? Call 416-555-1212'`, the same for the wire and "Ref 88231" lines)
+- **Fix:** the cutting moved from `offline_coder.bank_details` to `vendors.cut_bank_details` (with `bank_digit_count`); `same_bank_account` also compares both sides cut at the account (each of the "; "-joined details), so a stored long line matches the same account read now; another account number still differs.
+- **Test:** `tests/test_sweep3_ai.py::test_bank_details_stored_before_they_were_cut_at_the_account_are_the_same_account`
+- **Lesson:** Don't change how a value is read without comparing the values already stored the same way.
+
+### Document capture
+
+#### B-182 · A currency code in an equivalent note wins over the code on the total's label · high
+- **Where:** `ap_coder/capture/normalize.py:476` (`currency_evidence`)
+- **Symptom:** A US-dollar invoice printing "Total USD" (its amount in the next column) and a note "CAD equivalent: CAD 1,438.50" is read as Canadian dollars, verified.
+- **Cause:** Only a code printed on an amount on the same line counted as on the amounts; the layout reads "Total USD" and "1,050.00" as two lines, so the only code "on an amount" was the equivalent note's. Several codes fell back to the first in the list of currencies (CAD), not the first printed.
+- **Reproduce:** `currency_evidence("Total USD\n1,050.00\nCAD equivalent: CAD 1,438.50")`; on a page, `analyze()` with the page reader.
+- **Reproduced:** yes (`{'currency': ('CAD', 'verified', 0.998)}`)
+- **Fix:** A code on the total's label line ("Total USD", "Amount Due CAD", "Montant dû") counts as on the total and comes before codes on other amounts; an equivalent note is an exchange note (not on the invoice's amounts); several codes give the first printed.
+- **Test:** `tests/test_sweep3_capture.py::test_the_code_on_the_total_line_is_the_currency_not_one_in_an_equivalent_note`, `tests/test_sweep3_capture.py::test_several_currency_codes_are_given_in_page_order`
+- **Lesson:** Don't decide that a code is on an amount from one line of text when the layout can put the label and the amount in two columns.
+
+#### B-183 · "Order ID 77812" read as an Idaho address makes a Calgary supplier's dates month first · high
+- **Where:** `ap_coder/capture/reader.py:1419` (`_US_ADDRESS`, `us_address`, `read_fields`)
+- **Symptom:** A Calgary supplier's invoice dated 03/04/2026 with "Order ID 77812" near the top is verified as March 4 (and its due date 03/05/2026 as March 5), not left ambiguous or settled by its other dates.
+- **Cause:** The US address pattern took any two capitals and five digits ("ID 77812": Idaho), and a US address forced month-first dates before the Canadian postal code was looked at; the order then dropped the ambiguous mark. `offline_coder.provinces()` used the same pattern, so the same line above the letterhead's address made the supplier OUTSIDE_CANADA.
+- **Reproduce:** the Acme invoice with "Order ID 77812", Invoice Date 03/04/2026, Due Date 03/05/2026, `analyze(..., page_text=[...])`, today 2026-04-10.
+- **Reproduced:** yes (`{'invoice_date': ('2026-03-04', 'verified', 0.997), 'due_date': ('2026-03-05', 'verified', 0.991)}`)
+- **Fix:** A state and ZIP code count as an address only after a city, a comma or at the start of a line, never after a label word (Order, Vendor, Store, Job, Ticket...): `us_address()`, used by the reader and `provinces()`. Month first is never forced on a supplier with a Canadian postal code or a valid GST/HST number.
+- **Test:** `tests/test_sweep3_capture.py::test_an_order_id_is_not_a_us_address_and_a_calgary_suppliers_date_is_not_read_month_first`, `tests/test_sweep3_capture.py::test_a_label_with_an_id_is_not_a_us_address`, `tests/test_sweep3_capture.py::test_a_canadian_supplier_billing_in_us_dollars_is_not_read_month_first`
+- **Lesson:** Don't let a two-letter code and five digits stand for an address: check the shape around it, and the evidence against it.
+
+#### B-184 · "Due Date: Upon Receipt" takes the delivery date printed under it · medium
+- **Where:** `ap_coder/capture/reader.py:635` (`_labelled`)
+- **Symptom:** An invoice printing "Due Date: Upon Receipt" (or "Due Date: N/A") over "Delivery Date: Sep 20, 2026" has its due date verified as 2026-09-20; its terms are not read.
+- **Cause:** When the label's own line held no date, the reader looked right of it and then below it, and took the first date it found there even when that date came after a label of its own ("Delivery Date:"). The page reader's transcription, read by the same rules, agreed. "Upon Receipt" after a due-date label was never read as the terms.
+- **Reproduce:** the Acme invoice with "Invoice Date: Sep 14, 2026", "Due Date: Upon Receipt", "Delivery Date: Sep 20, 2026" on three lines, `analyze(..., page_text=[...])`.
+- **Reproduced:** yes (`{'due_date': ('2026-09-20', 'verified', 0.99), 'payment_terms': (None, 'missing', 0.0)}`)
+- **Fix:** A value right of or below a label is not taken when it comes after another label on its own line (`_after_another_label`: a label shape, a colon, or another field's label before it). A due-date label followed by "Upon Receipt" gives the payment terms "Due on receipt" when no terms label was read.
+- **Test:** `tests/test_sweep3_capture.py::test_due_upon_receipt_does_not_take_the_delivery_date_below_it`
+- **Lesson:** Don't take a value from a neighbouring line without checking it isn't already another label's value.
+
+#### B-185 · An invoice number printed in groups of three is cut at the first space · medium
+- **Where:** `ap_coder/capture/reader.py:328` (`_id_from`)
+- **Symptom:** "No de facture 123 456" is read as invoice number 123, verified (the page reader's transcription, read by the same rules, agrees).
+- **Cause:** An identifier ended at the first space unless a short prefix of letters came before it ("INV 4471"); digit groups set apart the French way were never joined.
+- **Reproduce:** the Acme invoice with "No de facture" and "123 456" in the next column, `analyze(..., page_text=[...])`.
+- **Reproduced:** yes (`{'invoice_number': ('123', 'verified', 0.998)}`)
+- **Fix:** A number of one to three digits followed only by groups of three digits, each one space apart, with nothing else after it on the line, is read whole ("123 456"; compared without spaces).
+- **Test:** `tests/test_sweep3_capture.py::test_an_invoice_number_in_french_digit_groups_is_read_whole`
+- **Lesson:** Don't end a number at a space before checking whether the space is part of how the number is printed.
+
+#### B-186 · Text drawn twice for bold is read twice ("Acme Acme Supply Supply") · low
+- **Where:** `ap_coder/capture/layout.py:192` (`_text_layer_page`)
+- **Symptom:** On a PDF whose writer makes bold by drawing the text twice a hair apart, every bold word is read twice: the supplier is "Acme Acme Supply Supply Ltd. Ltd." and a bold "Invoice Date:" label is not recognised, so the invoice date is missing.
+- **Cause:** The text layer's words went into the layout as they were stored; only the text-layer check (`_printed_once` in `capture/__init__.py`) kept a word drawn over itself once, so the readers saw both copies.
+- **Reproduce:** the Acme invoice with "Acme Supply Ltd." and "Invoice Date:" each inserted again 0.3 pt to the right, `analyze(..., ocr=False)`.
+- **Reproduced:** yes (`{'vendor_name': ('Acme Acme Supply Supply Ltd. Ltd.', 'likely'), 'invoice_date': (None, 'missing')}`)
+- **Fix:** The layout drops a text-layer word with the same text as one of the last few words that covers mostly the same spot; the text-layer check now reads the layout's lines as they are (its `_printed_once` moved into the layout).
+- **Test:** `tests/test_sweep3_capture.py::test_text_drawn_twice_for_bold_is_read_once`
+- **Lesson:** Don't clean the input in one consumer only: clean it where it is built, so every reader sees the same page.
+
+#### B-187 · "HST 13% on $1,000.00" reads the base as the tax · low
+- **Where:** `ap_coder/capture/reader.py:487` (`_value_reading`)
+- **Symptom:** A tax line "HST 13% on $1,000.00" with 130.00 in the amount column reads the HST as 1,000.00 (both readers agree), so the totals fail and the subtotal, tax and total all go to Check.
+- **Cause:** The amount after the label on its own line was taken first, and the base the tax is charged on is an amount on that line.
+- **Reproduce:** the Acme invoice with "HST 13% on $1,000.00" and "130.00" in the next column, total 1,130.00, `analyze(..., page_text=[...])`.
+- **Reproduced:** yes (`hst_amount 1000.0 check`, `TOTALS_ADD_UP` and `TAX_RATE` failed)
+- **Fix:** For a tax or tax total, an amount right after "on" / "sur" is the base, not the tax: it is skipped, and the tax is read further right or in the next column.
+- **Test:** `tests/test_sweep3_capture.py::test_the_amount_a_tax_is_charged_on_is_not_the_tax`
+- **Lesson:** Don't take the first amount after a tax label without asking whether it is the tax or what the tax is charged on.
+
+#### B-188 · "Modalités : Net 30 jours" is not read as the terms · low
+- **Where:** `ap_coder/capture/reader.py:139` (`LABELS["payment_terms"]`)
+- **Symptom:** A French invoice printing "Modalités : Net 30 jours" has no payment terms.
+- **Cause:** "Modalités" was a terms label only as "Modalités de paiement".
+- **Reproduce:** the Acme invoice with "Modalités : Net 30 jours", `analyze(..., page_text=[...])`.
+- **Reproduced:** yes (`{'payment_terms': (None, 'missing', 0.0)}`)
+- **Fix:** "Modalités" alone labels the terms (strength 0.8, as "Termes"); "Modalités de/du/d'..." (livraison, expédition) does not.
+- **Test:** `tests/test_sweep3_capture.py::test_modalites_alone_labels_the_payment_terms`
+- **Lesson:** Don't list only the long form of a label when invoices print its short form too.
+
+#### B-189 · Payment terms printed only in a note were not read, so a "payable on receipt" invoice showed as overdue · low
+- **Where:** `ap_coder/capture/reader.py` (`read_fields`, payment terms)
+- **Symptom:** the Harbourview sample prints "HST charged at 14%, ... Payable on receipt." with no "Terms:" label: terms came out "not found", the due date fell back to 30 days and the invoice showed "Overdue by 50 days".
+- **Cause:** payment terms were only read after a terms label (or a due-date label); a terms phrase inside a sentence was never looked at.
+- **Reproduce:** read `samples/harbourview_NS_HST_HPS-2026-0347.pdf`: `payment_terms` missing. Found by the pilot tester's day-one walk-through.
+- **Reproduced:** yes (`payment_terms` status missing).
+- **Fix:** when no labelled terms are found, a "payable/due (up)on receipt" or "payable à réception" phrase anywhere on the page is read as "Due on receipt", at a lower strength than a labelled value.
+- **Test:** `tests/test_sweep3_capture.py::test_payable_on_receipt_in_a_note_is_read_as_the_terms`
+- **Lesson:** Don't look for a value only beside its label when documents also state it in a sentence.
+
+#### B-205 · Printed discount terms "2/10 Net 30" were read as "1% 0 Net 30" · medium
+- **Where:** `ap_coder/capture/reader.py` (`_TERMS`, the discount pattern)
+- **Symptom:** an invoice printing "2/10 Net 30" offered a 1% discount within 0 days; "2% 10 days, Net 30" lost its discount (plain Net 30). Found while taking the guide's screenshots.
+- **Cause:** the pattern allowed no "/" between the rate and the days, so it started inside "10" ("1", "0"); the word "days" after the discount days broke the match.
+- **Reproduce:** `reader._terms("2/10 Net 30")`.
+- **Reproduced:** yes (`1% 0 Net 30`).
+- **Fix:** a separator is required between the rate and the days ("%", "/", a space or a dot), neither number may start or end inside another, "days"/"jours" may follow the discount days, and "n/30" counts as net.
+- **Test:** `tests/test_sweep3_capture.py::test_printed_early_payment_discount_terms_keep_the_discount`
+- **Lesson:** Don't let a number pattern start inside another number: anchor both ends.
+
+### Web routes
+
+#### B-190 · This computer's browser at its own network address was taken for a colleague · medium
+- **Where:** `ap_coder/web/identity.py:126` (`Identity.__call__`, `is_this_computer`)
+- **Symptom:** with `AP_DASHBOARD_ADDRESS=0.0.0.0`, the person on the computer running AP Coder opens
+  `http://<this PC's IP>:8501`, is asked "Who are you?", gives another name and gives the second approval of an
+  invoice they approved first on the same computer (D-34 says it must be refused).
+- **Cause:** only a loopback client address counted as this computer; a browser on the server PC that opens its LAN
+  address connects from that address, so it was "network <ip>", a login different from the OS user's. Also
+  `is_this_computer("::ffff:127.0.0.1")` was False.
+- **Reproduce:** approve on this computer, then a client at 192.0.2.2 to `http://192.0.2.2:8501` posts `/who`
+  "S. Owner" and `/review/{id}/final-approve`.
+- **Reproduced:** yes (`STATUS approved Server Owner S. Owner`, event `final_approved` by `network 192.0.2.2`)
+- **Fix:** `identity.from_this_computer(scope)`: a client whose address is the one the connection arrived on
+  (`scope["server"][0]`) is this computer; `is_this_computer` unwraps IPv4-mapped addresses. `Identity` and
+  `pages/who.py` use it (`/shutdown` stays loopback only).
+- **Test:** `tests/test_network_identity.py::test_this_computers_browser_at_its_own_network_address_cannot_give_the_second_approval`
+- **Lesson:** Don't decide "this computer" from loopback alone: the same machine also reaches itself at its own network address.
+
+#### B-191 · Two bank accounts ending in the same 4 digits were one row of the vendor's bank history · medium
+- **Where:** `ap_coder/web/pages/vendors.py:138` (`vendor_detail`, `history`)
+- **Symptom:** a vendor's invoices switch to another account at another bank that ends in the same 4 digits: the
+  review screen warns VENDOR_BANK_CHANGED, but the vendor's "Bank account and GST/HST number history" shows one row
+  (…4567, 2 invoices) and no "Changed" pill.
+- **Cause:** the history grouped values by their masked form (`mask_account(a) == mask_account(b)`), not by the
+  account (`same_bank_account`, which the check uses).
+- **Reproduce:** approve an invoice paid into "Transit 00012, Institution 003, Account 5011234567", add one with
+  "Transit 47210, Institution 815, Account 9907754567", open the vendor on /vendors.
+- **Reproduced:** yes (`bank history rows: [('…4567', False, '2026-08-01', '2026-09-01', '2')]`)
+- **Fix:** grouped with `same_bank_account` (details without any number still go together); rows that mask alike
+  also show their bank and branch numbers (`coding/vendors.bank_branch()`, never the account's digits), or "another
+  account number" when those are alike too.
+- **Test:** `tests/test_web_masterdata.py::test_a_new_bank_account_ending_in_the_same_four_digits_shows_as_changed`
+- **Lesson:** Don't group records by their masked display value: compare what they are, then mask for showing.
+
+#### B-192 · Colleagues' unsaved edits were kept by name only · low-medium
+- **Where:** `ap_coder/web/pages/invoice.py:93` (`_drafts`)
+- **Symptom:** "Mike" on one computer and "mike" on another see each other's unsaved edits on the review screen; a
+  colleague who gives a new name on /who loses the edits made under the old one, Start over can't drop them, and bulk
+  approval skips that invoice ("it has edits open on its review screen") until AP Coder restarts.
+- **Cause:** `person_drafts` was keyed by `name.casefold()` alone, and nothing moved the drafts when the cookie's name changed.
+- **Reproduce:** colleagues at 10.0.0.5 "Mike" and 10.0.0.9 "mike"; A posts `/review/{id}/check` with a PO; B opens
+  `/review/{id}`. Then "Ana" edits, renames to "Ana Silva" on /who, presses Start over, and this computer bulk-approves.
+- **Reproduced:** yes (`Mike B's screen shows Mike A's unsaved edit: True`, `Ana Silva sees her edit: False`,
+  `after Start over, draft still held: True`, bulk approval skipped it)
+- **Fix:** drafts keyed by (name, case aside, and the colleague's address); `who_save` moves the asker's drafts to
+  their new name (`invoice.rename_drafts()`).
+- **Test:** `tests/test_network_identity.py::test_two_colleagues_who_give_one_name_on_two_computers_keep_their_own_edits`,
+  `tests/test_network_identity.py::test_a_colleague_who_changes_their_name_keeps_their_edits_and_can_start_over`
+- **Lesson:** Don't key a person's state by the name they typed alone: a name is neither unique nor fixed.
+
+#### B-193 · A link from another site to the dashboard asked a colleague "Who are you?" again · low
+- **Where:** `ap_coder/web/pages/who.py:36` (`who_save`)
+- **Symptom:** a colleague who gave their name follows a link to AP Coder from another site (the intranet, a webmail)
+  and is asked "Who are you?" again; typing the address works.
+- **Cause:** the signed name cookie was `SameSite=Strict`, which the browser leaves out of a navigation started on
+  another site.
+- **Reproduce:** in Chromium, give a name on `http://<server>:<port>/who`, then click a link to `/review` on a page
+  served from another origin.
+- **Reproduced:** yes (`link from another site: .../who?next=%2Freview True False`)
+- **Fix:** `SameSite=Lax`: the cookie comes with a top-level GET from a link (a GET never changes anything); a POST
+  from another site is still refused by LocalOnly (header `X-AP-Coder`, Origin, Sec-Fetch-Site).
+- **Test:** `tests/test_network_identity.py::test_a_link_from_another_site_keeps_who_the_colleague_is` (the cookie's
+  attributes, and a cross-site POST still 403; the sweep's browser repro used the server's own address, which B-190
+  now counts as this computer)
+- **Lesson:** Don't make a login cookie Strict when the CSRF defence is already elsewhere: it only breaks incoming links.
+
+#### B-194 · "Bring back" on the directory said "Back in the review queue." for an invoice rejected meanwhile · low
+- **Where:** `ap_coder/web/pages/search.py:217` (`bring_back`)
+- **Symptom:** a parked invoice is rejected in another tab (or by a colleague) after the directory was drawn; "Bring
+  back" then opens it with "Back in the review queue." though it is rejected.
+- **Cause:** the store's refusal (`ValueError: not parked`) was swallowed as "someone else brought it back
+  meanwhile", whatever the invoice's state now.
+- **Reproduce:** park an invoice, reject it, POST `/search/{id}/unpark`.
+- **Reproduced:** yes (`answer: /review/1 | message shown: ['Back in the review queue.'] | status now: rejected`)
+- **Fix:** on the refusal, unless the invoice is in the review queue now, answer with `invoice.changed_meanwhile()`
+  ("Not done: this invoice changed meanwhile ... It is rejected.").
+- **Test:** `tests/test_web_finance.py::test_bring_back_of_an_invoice_rejected_meanwhile_says_it_changed`
+- **Lesson:** Don't swallow a store's refusal on the guess that the wanted state was reached: check the state now.
+
+### Intake, email and command line
+
+#### B-140 · An email whose attachments were partly left out was filed as an ordinary invoice · high
+- **Where:** `ap_coder/intake/mailbox.py:113` (`_keep`), `ap_coder/intake/triage.py:231` (`EmailTriage.needs_person`)
+- **Symptom:** an email with one PDF invoice plus a .zip of more invoices, an attached .eml/.msg file, a .docx, an unreadable part or a small black-and-white TIFF scan read the one PDF into the queue and moved the email to `emails/`; the other invoices were never seen again.
+- **Cause:** anything `_keep` could not keep went to `skipped` only, which triage never looked at; an email attached as a file (not as message/rfc822) was "not a PDF or image"; a Group 4 TIFF page (~12 KB) was under `MIN_IMAGE_BYTES` and dropped as a logo.
+- **Reproduce:** sweep3/intake/skip_repro.py: an email with INV-1.pdf, more-invoices.zip and forwarded.eml (application/octet-stream) holding INV-3.pdf, then `mailbox.unpack()`.
+- **Reproduced:** yes (`saved: ['mail - INV-1.pdf']`, `skipped: ['more-invoices.zip (not a PDF or image)', 'forwarded.eml (not a PDF or image)']`, `needs_person: False`, `email moved to: ['emails/mail.eml']`)
+- **Fix:** `Mail.left_out` (everything skipped but logos and digital signatures/contact cards) goes to `classify_email(..., left_out)`; `EmailTriage.needs_person` is true when any was left out, with the reason "left out, not read: ...". Attached .eml/.msg files (in an .eml or a .msg) are opened like forwarded emails, within `MAX_FORWARD_DEPTH` and with their sum bounded (`_Opened`: bytes and boundary lines). A TIFF is never dropped as a logo. Two existing tests whose invoice email also carries terms.docx now expect it in `emails/needs a person/`.
+- **Test:** `tests/test_sweep3_intake.py::test_an_email_with_an_attachment_left_out_waits_for_a_person_with_the_reason` (also `test_a_signed_email_or_a_small_logo_does_not_need_a_person`, `test_a_small_black_and_white_tiff_scan_is_read_not_dropped_as_a_logo`, `test_an_outlook_email_attached_to_an_eml_is_opened`, `test_an_eml_file_attached_to_an_outlook_email_is_opened`, `test_emails_attached_as_files_inside_each_other_are_opened_only_so_deep`)
+- **Lesson:** Don't let a "skipped" list be a log nobody acts on: what may be an invoice and wasn't read must reach a person.
+
+#### B-141 · A forwarded email sent in base64 was dropped · medium
+- **Where:** `ap_coder/intake/mailbox.py:174` (`read_eml.parts`)
+- **Symptom:** an email forwarded as an attachment (message/rfc822) with Content-Transfer-Encoding: base64 gave nothing: no invoice, nothing in "left out".
+- **Cause:** the parser reads such a part as an email with no headers whose text is the base64; `walk()` then skipped the text because its part was "message".
+- **Reproduce:** sweep3/intake/rfc822_b64.py: the same forwarded email as 7bit, base64 and quoted-printable.
+- **Reproduced:** yes (`base64 found: [] skipped: []`; 7bit and quoted-printable found `INV-3.pdf`)
+- **Fix:** `_in_base64()` / `_base64_email()`: such a part is not descended into; its decoded bytes are opened like an attached .eml (`_open_attached`, same depth and size limits).
+- **Test:** `tests/test_sweep3_intake.py::test_a_forwarded_email_sent_in_base64_is_opened`
+- **Lesson:** Don't assume the parser decoded a nested part: test every transfer encoding of it.
+
+#### B-142 · A scanned invoice in an Outlook .msg was dropped as a logo · medium
+- **Where:** `ap_coder/intake/mailbox.py:153` (`read_msg_mail`), `ap_coder/intake/msgfile.py:231` (`_message`)
+- **Symptom:** a 105 KB scanned invoice JPEG in a .msg (an email Outlook received from Gmail) was left out as "a small or inline picture, e.g. a logo"; the same email as .eml kept it.
+- **Cause:** any attachment with a Content-ID counted as inline in a .msg, and Outlook keeps the Content-ID Gmail gives every attachment; inline pictures under `MAX_LOGO_BYTES` are dropped.
+- **Reproduce:** sweep3/intake/cid_repro.py: the same JPEG with Content-ID `f_lx3abc0` in a .msg and an .eml.
+- **Reproduced:** yes (`scan.jpg .msg found: [] skipped: ['scan.jpg (a small or inline picture, e.g. a logo)']`, `.eml found: ['scan.jpg']`)
+- **Fix:** `MsgAttachment.inline`: a Content-ID and either PidTagAttachmentHidden (read from the attachment's properties stream) or `cid:<id>` in the message's HTML body; `read_msg_mail` uses it. The bench's msgwriter can write the hidden flag.
+- **Test:** `tests/test_sweep3_intake.py::test_a_scanned_invoice_with_a_content_id_in_an_outlook_email_is_kept` (also `test_a_picture_the_outlook_email_shows_in_its_text_is_a_logo`, `test_a_picture_outlook_marks_hidden_is_a_logo`)
+- **Lesson:** Don't take a header every message carries as the signal for a rare case: check what the two formats' rules mean, not their field names.
+
+#### B-143 · The doctor crashed on a damaged database file · medium
+- **Where:** `ap_coder/ops/cli.py:227` (`cmd_doctor`) -> `ap_coder/ops/cli.py:80` (`reference_source`)
+- **Symptom:** `python -m ap_coder doctor` with a damaged `ap_coder.db` printed a `sqlite3.DatabaseError: file is not a database` traceback and no report.
+- **Cause:** `run_checks` caught the error while loading the reference data, but `cmd_doctor` then called `reference_source()` again, outside any handling, to print the source line.
+- **Reproduce:** write junk to the data folder's ap_coder.db, run `python -m ap_coder doctor` (sweep3/intake/doc.out).
+- **Reproduced:** yes (the traceback ending `sqlite3.DatabaseError: file is not a database`)
+- **Fix:** `cmd_doctor` catches it and adds a FAIL "database" check naming the file and the backups folder next to it. Also: a WARN "package pillow-heif" check when it is missing (iPhone HEIC photos can't be read).
+- **Test:** `tests/test_sweep3_intake.py::test_the_doctor_reports_a_damaged_database_instead_of_crashing` (also `test_the_doctor_warns_when_iphone_photos_cannot_be_read`)
+- **Lesson:** Don't call the step a check guards a second time outside the guard.
+
+#### B-144 · An emailed statement left the Statements page after 500 newer emails · low
+- **Where:** `ap_coder/intake/inbox.py:60` (`statements`)
+- **Symptom:** a statement received by email, not marked done, disappeared from *Statements received by email* once 500 more emails were sorted.
+- **Cause:** `triage_log(folder)` returned only the 500 newest entries before the statement filter was applied (what B-117 fixed for `needs_person`).
+- **Reproduce:** sweep3/intake/stmt_repro.py: a statement entry followed by 499, then 500, invoice entries.
+- **Reproduced:** yes (`499 newer emails -> ['stmt01']`, `500 newer emails -> []`)
+- **Fix:** `statements()` passes `keep=` (has a statement document, not marked done), so the whole log is searched and the limit counts only open statements.
+- **Test:** `tests/test_sweep3_intake.py::test_an_emailed_statement_stays_listed_however_many_emails_were_sorted_after_it`
+- **Lesson:** Don't fix a "most recent N before the filter" bug in one list and leave its sibling list reading the same log.
+
+#### B-145 · "Read as invoice" on a spreadsheet made it disappear · low
+- **Where:** `ap_coder/intake/inbox.py:89` (`to_queue`), `ap_coder/web/templates/process.html:51`
+- **Symptom:** "Read as invoice" on a .csv/.xlsx set aside as Not for AP moved it into the invoices folder, where it is never read; the button disappeared and the file was in no list.
+- **Cause:** `to_queue` moved any attachment; the folder pick-up reads only PDFs and pictures.
+- **Reproduce:** sweep3/intake/sheet_queue.py: an email with october.csv, `inbox.to_queue()`, then `invoice_files(folder)`.
+- **Reproduced:** yes (`Read as invoice -> m - october.csv`, `invoice_files(folder): []`, `after: docs shown with a button: []`)
+- **Fix:** `to_queue` refuses a spreadsheet (ValueError, in plain words: save it as a PDF and add that on Import invoices), the page answers with that message, and `needs_person` marks each document `sheet` so the page offers no button for one.
+- **Test:** `tests/test_sweep3_intake.py::test_a_spreadsheet_set_aside_cannot_be_sent_to_the_review_queue` (also `test_the_process_page_offers_no_read_as_invoice_for_a_spreadsheet`)
+- **Lesson:** Don't offer an action that hands a file to a step that never reads its kind.
+
+#### B-146 · Removing the demo left the sample setup it loaded · low
+- **Where:** `ap_coder/ops/demo.py:132` (`load_demo`), `ap_coder/ops/demo.py:184` (`remove_demo`)
+- **Symptom:** after loading the demo into a fresh database and removing it, the sample GL accounts, cost centers, tax treatments and policy stayed: AP Coder looked set up with made-up accounts.
+- **Cause:** `load_demo` called `load_sample_setup` without recording it (unlike the POs and vendors, `DEMO_POS_SETTING`, `DEMO_VENDORS_SETTING`), so `remove_demo` could not know.
+- **Reproduce:** sweep3/intake/demo_left.py: table counts before, after `load_demo`, after `remove_demo`.
+- **Reproduced:** yes (`gl_accounts: before 0 loaded 26 after 26`, `cost_centers: before 0 loaded 10 after 10`, `has_reference after remove: True`)
+- **Fix:** `DEMO_SETUP_SETTING` keeps the reference data before and after the sample setup was loaded; `remove_demo` puts each part (GL accounts, cost centers, tax setup, policy) back as it was, unless it changed since the demo loaded it.
+- **Test:** `tests/test_sweep3_intake.py::test_removing_the_demo_removes_the_sample_setup_it_loaded` (also `test_removing_the_demo_keeps_the_setup_once_the_user_changed_it`)
+- **Lesson:** Don't record only some of what a removable mode adds: everything it loads needs its marker.
+
+#### B-147 · `process` sorted emails without logging them, then failed · low
+- **Where:** `ap_coder/ops/cli.py:262` (`_inputs`, `cmd_process`)
+- **Symptom:** `python -m ap_coder process <folder>` on a folder holding a bank-detail change email sorted it, wrote no Activity event (watch does: `email_bank_change`), and exited 2 "No supported invoice files found".
+- **Cause:** `_inputs` unpacked emails without `inbox.log_sorted`, and `cmd_process` treated "no invoice files" as a usage error even when emails had been sorted.
+- **Reproduce:** sweep3/intake/fraud_cli.py: the same email through `process` and `watch --once`.
+- **Reproduced:** yes (`process: exit 2; 'email_bank_change' events in the Activity log: 0`; `watch: exit 0; ... 1`)
+- **Fix:** `_inputs(paths, store)` logs each sorted email in the store (as watch does) and returns how many were sorted; `process` (and `extract`) say "No invoices to read: N email(s) sorted." and exit 0 (1 if an email could not be read).
+- **Test:** `tests/test_sweep3_intake.py::test_process_logs_the_emails_it_sorted_and_does_not_fail_when_there_was_nothing_else`
+- **Lesson:** Don't let two commands that do the same step diverge on its side effects: share the step.
+
+#### B-148 · A 200-megapixel phone photo was called damaged · low
+- **Where:** `ap_coder/ai/pipeline.py:159` (`plain_error`), via `ap_coder/intake/pictures.py:158` (`image_to_pdf`)
+- **Symptom:** a photo from a phone's 200 MP mode failed with "can't be opened as a picture: the file is damaged ... Ask the vendor for a new copy".
+- **Cause:** Pillow refuses pictures over ~179 million pixels (DecompressionBombError), which `DAMAGED_PICTURE` worded as a damaged file.
+- **Reproduce:** sweep3/intake/big_img.py: a 16320 x 12240 JPEG through `to_pdf()` and `plain_error()`.
+- **Reproduced:** yes (`RAISED DecompressionBombError`, `AP sees: IMG_20261019.jpg can't be opened as a picture: the file is damaged or not really a JPG. ...`)
+- **Fix:** `plain_error` says the picture is too large (with its megapixels, as the page reader does) and to take it at the phone's normal resolution or scan the page.
+- **Test:** `tests/test_sweep3_intake.py::test_a_picture_too_large_to_open_is_said_to_be_too_large_not_damaged`
+- **Lesson:** Don't file a safety limit under "damaged": say which limit, and what to do.
+
+#### B-149 · `evaluate` without a labels file printed a traceback · low
+- **Where:** `ap_coder/ops/cli.py:590` (`cmd_evaluate`)
+- **Symptom:** `python -m ap_coder evaluate` before any labels workbook exists printed a FileNotFoundError traceback.
+- **Cause:** `cmd_evaluate` passed the default `labels.xlsx` path straight to `evaluate()`.
+- **Reproduce:** `python -m ap_coder evaluate` in a data folder without labels.xlsx.
+- **Reproduced:** yes (`FileNotFoundError: [Errno 2] No such file or directory: '.../labels.xlsx'`, in the new test before the fix)
+- **Fix:** a one-line message naming the file and `python -m ap_coder labels`, exit 2.
+- **Test:** `tests/test_sweep3_intake.py::test_evaluate_without_a_labels_file_says_so_in_one_line`
+- **Lesson:** Don't hand a default path to a loader without checking the file is there: a first run has none.
+
+#### B-206 · Exchange's ATT00001.htm, winmail.dat or a calendar invite made every invoice email wait for a person · medium
+- **Where:** `ap_coder/intake/mailbox.py:98` (`Mail.left_out`), `ap_coder/intake/mailbox.py:183` (`_not_read`)
+- **Symptom:** since B-140, an ordinary invoice email with Exchange's ATT00001.htm / ATT00001.txt footer, Outlook's winmail.dat or a calendar invite went to `emails/needs a person/` with "left out, not read: ATT00001.txt ... an invoice in it must be added by hand".
+- **Cause:** `Mail.left_out` counted every skipped part but logos and signatures, also those that never hold an invoice.
+- **Reproduce:** review33/s/t1.py: an email with INV1234.pdf plus one of those parts, then `mailbox.unpack()`.
+- **Reproduced:** yes (`ATT00001.txt needs_person=True ... reasons=['left out, not read: ATT00001.txt (not a PDF or image). ...']`, the same for .htm, winmail.dat and invite.ics)
+- **Fix:** `_not_read` marks a .txt/.htm/.html/.ics part (or an unnamed text/plain, text/html or calendar one) as the email's own text or a calendar invite unless its name mentions an invoice (`triage.mentions_invoice`), and winmail.dat (application/ms-tnef) as Outlook's formatting. `left_out` leaves out the first always and winmail.dat when the email gave a PDF, a picture or a spreadsheet (alone it may hold the attachments). A zip, Word, RTF or XML file, an HTML file named as an invoice, a damaged part and the depth/size limits still make the email wait; spreadsheets keep their own "Not for AP" path.
+- **Test:** `tests/test_sweep3_intake.py::test_exchange_footers_outlook_formatting_and_invites_do_not_make_an_invoice_email_wait` (also `test_parts_that_may_hold_an_invoice_still_make_the_email_wait`, `test_an_outlook_winmail_dat_alone_is_left_out_since_it_may_hold_the_attachments`)
+- **Lesson:** Don't make "may be an invoice" mean "anything that isn't a PDF": list what can really hold one, or every email waits.
+
+#### B-207 · A small fax scan named .tiff (not .tif) was still dropped as a logo · low
+- **Where:** `ap_coder/intake/mailbox.py:174` (`_keep`)
+- **Symptom:** a black-and-white fax page under 15 KB attached as fax.tiff or scan.TIFF was left out as "a small or inline picture, e.g. a logo"; the same file named .tif was read.
+- **Cause:** B-140's exemption checked `suffix not in (".pdf", ".tif")`, but `_kind` keeps a ".tiff" name's extension as ".tiff".
+- **Reproduce:** review33/s/t10.py: `_keep` with fax.tif, fax.tiff and scan.TIFF (5 KB, image/tiff).
+- **Reproduced:** yes (`fax.tif found`, `fax.tiff ['fax.tiff (a small or inline picture, e.g. a logo)']`, the same for scan.TIFF)
+- **Fix:** the exemption lists ".tiff" too.
+- **Test:** `tests/test_sweep3_intake.py::test_a_small_tiff_scan_named_tiff_is_read_not_dropped_as_a_logo`
+- **Lesson:** Don't compare against one spelling of an extension when the function before it keeps both.
+
+### Setup, launcher and update
+
+#### B-167 · An update leaves the older version's `watch` / `read-pages` running, and it fails every new invoice · medium
+- **Where:** `scripts/running.py:404` (`take_over`), `ap_coder/ops/cli.py:441` (`cmd_watch`), `scripts/upgrade.py:816` (`clean_up`)
+- **Symptom:** after an update, invoices dropped in the invoices folder show as failed ("No module named 'pymupdf'") and the new version never reads them again.
+- **Cause:** `take_over` found and stopped only servers (by their server file and `/healthz`); a `python -m ap_coder watch` (or `read-pages`) of the older version left no trace, kept running on the same database, and the clean-up then deleted the `.venv` it ran from. A failed attempt counts as seen, so nothing retried it.
+- **Reproduce:** start `python -m ap_coder watch` from version A, update to B in another folder (double-click), drop an invoice in the invoices folder.
+- **Reproduced:** yes (`<old>/ap_coder/capture/layout.py ... import pymupdf ... ModuleNotFoundError: No module named 'pymupdf'` / `chinook_AB_GST_CCO-26-10418.pdf: FAILED ModuleNotFoundError`); the new test failed with the old watch still running after `take_over`.
+- **Fix:** `watch` and `read-pages` leave `<data>/.ap_coder_worker-<pid>.json` (pid, command, folder, version) while they run (`cli.running_note`); `take_over` reads them (`running.workers`, a note whose process is gone is removed) and stops an older one, or one from another folder, before setup (`stop_worker`: as Ctrl+C, then ended; only a process whose command line is AP Coder's `watch` / `read-pages`). GETTING_STARTED says to point a scheduled task at the new folder after an update unzipped into a new one (no command follows the current version by itself).
+- **Test:** `tests/test_running.py::test_an_older_versions_watch_is_stopped_before_the_update`, `tests/test_config_and_cli.py::test_watch_and_read_pages_say_in_the_data_folder_that_they_run`
+- **Lesson:** Don't make way for a new version by stopping only the process you can see on a port: every long-running command on the same data must say it runs.
+
+#### B-168 · A second Windows account's double-click opens the first person's dashboard, under their name · medium
+- **Where:** `scripts/running.py:164` (`judge`), `scripts/launch.py:1624` (`wait_for_other`), `ap_coder/web/app.py` (`healthz`), `ap_coder/web/server.py` (`write_server_file`)
+- **Symptom:** with two Windows accounts sharing one code and data folder (GETTING_STARTED, "Two people approving"), the second person's double-click opens the AP Coder the first person left running, and approves under the first person's name.
+- **Cause:** a running server was judged by folder and version only: the same folder and version was "same", so it was opened (or, older, stopped under the other person).
+- **Reproduce:** A starts AP Coder; B (another account, same folders) double-clicks APProcessor.bat.
+- **Reproduced:** yes (`take_over` returned `("open", port)` for a server whose `/healthz` names another user; `running_dashboard` returned its port).
+- **Fix:** the server file and `/healthz` (to this computer only) carry `user`, the computer account running it (`app.os_user`); `judge` says "other" for another account's server (names compared ignoring case; a server that doesn't say is judged as before); `take_over` returns `("other", port)` and the launcher says whose AP Coder is open and to ask them to close it (`someone_elses`), in `run`, `wait_for_other` and `stop_older`. It is never opened nor stopped.
+- **Test:** `tests/test_running.py::test_another_accounts_ap_coder_is_never_opened_nor_stopped`, `tests/test_launch.py::test_another_accounts_running_ap_coder_is_named_never_opened`, `tests/test_web_app.py::test_healthz_and_the_server_file_say_which_account_runs_it`
+- **Lesson:** Don't identify a running program by its folder and version alone when two accounts can share that folder: record whose it is.
+
+#### B-169 · On a new data folder the readiness summary says the GL account checks all passed · low
+- **Where:** `scripts/launch.py:1400` (`setup_check_lines`)
+- **Symptom:** a fresh install with no GL accounts imported prints "Setup checks: all 9 passed (GL accounts, tax mapping, coding rules, settings)".
+- **Cause:** with nothing imported, the reference data falls back to the bundled sample (`ap_coder/ops/cli.py:reference_dir`), and the doctor's checks pass on it; the summary never said where the GL accounts came from.
+- **Reproduce:** a new data folder, double-click: read the summary.
+- **Reproduced:** yes (`[('ok', 'Setup checks: all 9 passed (GL accounts, tax mapping, coding rules, settings)')]`)
+- **Fix:** when `reference_source` is the bundled sample, a warning line "GL accounts: none imported yet, so the sample ones are used: import yours on GL accounts & tax" comes first, and the summary line says "the sample GL accounts" (CI's `Setup checks: all \d+ passed` still matches).
+- **Test:** `tests/test_launch.py::test_the_start_says_no_gl_accounts_were_imported_yet`
+- **Lesson:** Don't report a check as passed without saying it ran on stand-in data.
+
+#### B-170 · An update from GitHub's ZIP always keeps the older folder ("files AP Coder didn't put there (CLAUDE.md)") · low
+- **Where:** `scripts/upgrade.py:59` (`BUNDLE_TOP`)
+- **Symptom:** after updating over a folder made from GitHub's ZIP, the older folder stays: "the folder itself stays because it has files AP Coder didn't put there (CLAUDE.md)".
+- **Cause:** a folder with no manifest file list is judged by `BUNDLE_TOP`, which lacked `CLAUDE.md` and `.claude`, both top-level names git tracks (and GitHub's ZIP holds).
+- **Reproduce:** GitHub's ZIP of an older version, set up; update from a bundle beside it.
+- **Reproduced:** yes (`Kept the older AP Coder folder .../app: the folder itself stays because it has files AP Coder didn't put there (CLAUDE.md)`)
+- **Fix:** `CLAUDE.md` and `.claude` in `BUNDLE_TOP` (`.claude` also in `RETIRED_KEPT`: the bundle leaves it out, so it is never pruned); a test checks every top-level name git tracks is in `BUNDLE_TOP` (skipped outside a git checkout).
+- **Test:** `tests/test_update.py::test_every_top_level_name_git_tracks_is_one_ap_coder_put_there`, `tests/test_update.py::test_an_older_folder_from_githubs_zip_is_removed_whole`
+- **Lesson:** Don't keep a hand list of what a folder holds without a test that compares it with the source of truth.
+
+#### B-171 · `--installer --full-tests` from an offline bundle fails the CI workflow tests · low
+- **Where:** `tests/test_ci_workflow.py:44` (`needs_ci`), `scripts/build_offline_bundle.py:70` (`EXCLUDE_DIRS`)
+- **Symptom:** the installer's full test run in an unzipped offline bundle reports failures.
+- **Cause:** the bundle leaves `.github` out, but two tests read `.github/workflows/ci.yml` unconditionally (FileNotFoundError).
+- **Reproduce:** copy the bundle's files (`build_offline_bundle.source_files()`) to a folder; `python -m pytest tests/test_ci_workflow.py` there.
+- **Reproduced:** yes (`FileNotFoundError: ... .github/workflows/ci.yml` / `2 failed, 1 passed, 1 skipped`)
+- **Fix:** the tests that read ci.yml skip when it isn't there (`needs_ci`); the parametrized one already had nothing to run. The other suites a bundle copy runs (check_map, map_review_gate, launcher scripts, update, doc) were checked to pass there.
+- **Test:** `tests/test_ci_workflow.py::test_the_workflow_tests_skip_where_there_is_no_workflow`
+- **Lesson:** Don't let a shipped test read a file the shipping step leaves out.
+
+#### B-172 · HOW_IT_RUNS says the setup downloads only with AP_ALLOW_INTERNET=1 · low
+- **Where:** `docs/HOW_IT_RUNS.md:380` (the network table), `docs/HOW_IT_RUNS.md:121` (`:installpython`)
+- **Symptom:** IT reading the map believes GitHub's ZIP never downloads; it does (PyPI, the OCR models, winget's Python).
+- **Cause:** the map predates `scripts/launch.py:plain_download`: from the code alone (no manifest, wheelhouse or models) the setup downloads unless `AP_ALLOW_INTERNET=0`; APProcessor.bat does the same for winget.
+- **Reproduce:** read rows 1 to 3 of section 10 and step 6 of "Windows", then `plain_download` / `setup_online` and APProcessor.bat lines 30-34.
+- **Reproduced:** yes (`PyPI only with AP_ALLOW_INTERNET=1` against `return [] if setup_online() else None`)
+- **Fix:** the intro, step 6, section 5 item 2 and rows 1 to 3 say: from the code alone, or with `AP_ALLOW_INTERNET=1`; never with `AP_ALLOW_INTERNET=0`.
+- **Test:** `tests/test_how_it_runs_doc.py::test_the_setups_downloads_from_the_code_alone_are_said`
+- **Lesson:** Don't leave a network table behind when a new path to the internet is added.
+
+#### B-173 · `--fresh-start` moves the data folder's models/ (and the guide says "your settings stay") · low
+- **Where:** `scripts/install.py:278` (`fresh_start`), `docs/GETTING_STARTED.md` (Step 4)
+- **Symptom:** after `--installer --fresh-start`, the table finder IT put in `<data>/models/` (or the setup downloaded there) is gone into `backup-<date>/`, so line items are read without it; and Settings → Review, Automation and Data & backups are back to their defaults though Step 4 promises "your settings stay".
+- **Cause:** `fresh_start` kept only `.env`, `.cache` and `backups`; the dashboard's settings live in the database, which moves.
+- **Reproduce:** put `yolov8n_layout_general6.onnx` in `<data>/models/`, run `fresh_start`.
+- **Reproduced:** yes (`FileNotFoundError: .../models/yolov8n_layout_general6.onnx`)
+- **Fix:** `models` is kept; GETTING_STARTED (the option table and Step 4) says the `.env` settings and models stay while what was set in the dashboard's Settings moves with the database (set it again in Step 5). Carrying database settings over was left as a choice for later (it is the sample trial's database).
+- **Test:** `tests/test_install.py::test_fresh_start_keeps_the_models_ap_coder_reads`
+- **Lesson:** Don't sweep a folder by "everything but a short keep list" without checking what else is read from it.
+
+### Day-one walk-through
+
+#### B-197 · The review queue called "Ready" an invoice its review screen won't approve · high
+- **Where:** `ap_coder/web/pages/review.py:116` (`attention`, used by `review_page` and invoice.py's `navigation`); `ap_coder/coding/review.py:100` (`codes_to_pick`)
+- **Symptom:** with the sample setup every uploaded sample invoice whose checks found no error showed a green "Ready" in the queue (and under "Ready" in the filter), yet its review screen said "Pick a cost center for lines 1, 2, 3 … to approve" with Approve disabled.
+- **Cause:** the queue's status was the stored `requires_review` flag (an error, or confidence under the threshold); a line without a cost center is only a warning (`CC_UNASSIGNED`), so it never set the flag, while the review screen's Approve bar refuses any line without a GL account or (with cost centers imported) a cost center. Two rules for one question.
+- **Reproduce:** demo data; blank the cost centers of a clean invoice's lines; open /review: the row says Ready; /review/<id>/check answers `allow: false`.
+- **Reproduced:** yes (`'<li><a class="rq-row ready" href="/review/6" …Agence Créative Mont-Royal inc.'` while its check answered `allow: False`)
+- **Fix:** one rule, `codes_to_pick()` in coding/review.py, asked by the review screen's Approve bar (invoice_view.analyse) and by the queue's new `attention()`; the queue's Ready / Needs attention, its filters, the Waiting tile ("N need attention") and the review screen's Previous/Next within a filter all use it. A row that needs attention says why under its pill ("Pick a cost center for lines 1, 2, 3", "1 error to fix", "Confidence under 85%").
+- **Test:** `tests/test_sweep3_dayone.py::test_the_queue_never_calls_ready_an_invoice_whose_review_screen_blocks_approval`, `tests/test_sweep3_dayone.py::test_every_invoice_the_queue_calls_ready_can_be_approved_on_its_screen`
+- **Lesson:** Don't answer "can this be approved?" with a stored flag in one place and the approval rule in another: ask one shared function.
+
+#### B-198 · "Not in the vendor list" warned on every new vendor when no vendor master was imported · medium
+- **Where:** `ap_coder/web/static/js/invoice.js:402` (`showVendorMatch`)
+- **Symptom:** with no vendor master imported (the sample setup), once one invoice was approved every other new vendor showed an amber "Not in the vendor list: pick one, or add it as a new vendor." under the vendor field, asking the pilot tester to fix something that isn't wrong.
+- **Cause:** `store.vendor_choices()` falls back to the vendors approved before when there is no vendor master, so the list is not empty, and the script warned whenever the typed name was not in that list, whether or not a vendor master is enforced (`vendors.enforced`).
+- **Reproduce:** no vendor master; approve one invoice; open another and type a new vendor's name.
+- **Reproduced:** yes (`'gpp_maybe\nNot in the vendor list: pick one, or add it as a new vendor.'`)
+- **Fix:** the warning (and "Pick the vendor from the list") only with a vendor master; without one a new vendor gets no note, and a vendor approved before reads "Approved before" (not "In the vendor list").
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_not_in_the_vendor_list_is_said_only_once_a_vendor_master_is_imported`
+- **Lesson:** Don't warn against a fallback list as if it were the master list it stands in for.
+
+#### B-199 · Settings → Reading showed the Azure check's form in the offline build · medium
+- **Where:** `ap_coder/web/pages/settings_reading.py:339` (`reading_context`, `show_azure_check`); `ap_coder/web/templates/settings_reading.html`
+- **Symptom:** on a pilot laptop (no `AP_ALLOW_INTERNET`), Settings → Reading ended with an "Azure check · optional" card asking for an Azure endpoint and key, while docs/PILOT.md tells the pilot tester the offline build never uses cloud services.
+- **Cause:** the card was included on the Reading tab unconditionally (only the developer's Azure connection form looked at `internet_allowed()`).
+- **Reproduce:** GET /settings/reading without `AP_ALLOW_INTERNET`: `id="azure-check"` is in the page.
+- **Reproduced:** yes (`'re-check" id="azure-check" aria-labelledby="azure-check-title">'` in the offline page)
+- **Fix:** the card shows only where the internet is allowed, or while the check is still switched on from before (so it can be switched off); /settings/azure-check itself is unchanged.
+- **Test:** `tests/test_sweep3_dayone.py::test_the_reading_tab_shows_the_azure_check_only_where_the_internet_is_allowed` (and `tests/test_azure_check.py::test_settings_reading_shows_the_azure_card_and_its_own_page_is_not_taken_for_a_tab`, updated: it asserted the card in the offline build)
+- **Lesson:** Don't offer a cloud setting on a screen of the build that promises it uses none.
+
+#### B-200 · Optional parts that are simply not set up showed as red "Not working" / "Needs a look" · low
+- **Where:** `ap_coder/ai/reading.py:124` (`_table_finder`, `_gl_model`); `ap_coder/web/pages/settings_reading.py` (`READER_PILL`)
+- **Symptom:** a fresh pilot laptop showed "GL coding model · Not working" in red and, on a copy set up from the code alone, "Table finder · Needs a look", for parts that are optional and not set up; the pilot tester reads that as something broken.
+- **Cause:** the readers' status had only ok / warn / off / testing, so "optional and not there" fell into off or warn.
+- **Reproduce:** `reading_status(Settings(), None)` with no LM Studio: the GL coding model's state is `off`; `_table_finder()` without the model file on a non-bundle copy: `warn`.
+- **Reproduced:** yes (`AssertionError: assert ('off' == 'off' and 'optional' == 'off')` once the test expected the new state)
+- **Fix:** a new state `optional`, drawn as a grey "Not set up (optional)": the GL coding model when not running or not asked, and the table finder's missing model on a copy that didn't come from the offline bundle (`offline.from_bundle()`: no models/ folder next to the app). From the bundle, a missing model is still "Needs a look".
+- **Test:** `tests/test_sweep3_dayone.py::test_optional_readers_not_set_up_are_grey_not_red` (and `tests/test_table_reading.py::test_the_reading_settings_show_the_table_finder`, `tests/test_uniform_reading.py::test_reading_status_with_nothing_running`, updated where the old state was the bug)
+- **Lesson:** Don't show "optional and not set up" in the colour of "broken".
+
+#### B-201 · Four pages gave four answers to "how many were approved as coded" · medium
+- **Where:** `ap_coder/erp/insights.py:59` (`corrected`, `approved_as_coded`); `ap_coder/web/pages/learning.py` (`coding_context`), `ap_coder/web/pages/activity.py` (`activity_page`), `ap_coder/web/pages/review.py` (`kpis`)
+- **Symptom:** after the same four approvals the pilot tester saw Insights "Approved as coded 75%, 3 of 4", Learning "Approved without edits 1/3", Activity "4 with reviewer changes", and Coding accuracy 88% on the queue but 87.5% on Learning.
+- **Cause:** three definitions: Insights left out blanks filled in, Learning counted invoices with an empty `edits` list among the approved only (not those waiting for a second approval), Activity counted any change in the audit trail; and the queue rounded the line accuracy to a whole percent where Learning kept one decimal.
+- **Reproduce:** demo data; approve four invoices, each with a cost center filled in where the coder left none, one also with a GL account changed; open Insights, Learning, Activity and the queue.
+- **Reproduced:** yes (`ImportError: cannot import name 'approved_as_coded'`, and the walk's 75% / 1/3 / "4 with reviewer changes" / 88% vs 87.5%)
+- **Fix:** one definition (D-39), `insights.corrected()`: a value changed or a line added or removed is a change, a blank filled in is not; `approved_as_coded()` gives the pair Insights and Learning show, both under the label "Approved as coded" with "N of M needed no change"; Activity says "N approvals: X approved as coded, Y corrected" with the same rule; Coding accuracy is written to one decimal on the queue as on Learning.
+- **Test:** `tests/test_sweep3_dayone.py::test_insights_learning_activity_and_the_queue_count_approved_as_coded_alike`, `tests/test_sweep3_dayone.py::test_a_change_is_a_value_the_reviewer_changed_or_a_line_added_not_a_blank_filled_in`
+- **Lesson:** Don't compute one business figure in three pages with three rules: define it once and import it.
+
+#### B-202 · With ten files chosen to import, the sixth name ran under the "Process" button · low
+- **Where:** `ap_coder/web/static/app.css:594` (`.picked`)
+- **Symptom:** Import invoices with the ten sample PDFs chosen: the list was a 180 px scroll box with no gap or edge, so the sixth name was cut in half right against the "Process 10 uploaded invoices" button and looked overlapped (shots/06_process_selected.png); the other four were hidden in the box.
+- **Cause:** `.picked` had `max-height: 180px` (about five names) and no margin below it.
+- **Reproduce:** /process, choose ten PDFs: the list's box ends at the button's top (630.5 px both) with the sixth row from 609.8 to 641.6 px.
+- **Reproduced:** yes (`AssertionError: (5, {'y': 609.75, 'height': 31.84}, {'y': 630.53})`)
+- **Fix:** the list shows about a dozen names (`max-height: min(55vh, 440px)`) before it scrolls, with a closing line and a gap above the button.
+- **Test:** `tests/test_web_invoice.py::test_in_a_browser_ten_files_chosen_to_import_are_listed_clear_of_the_process_button`
+- **Lesson:** Don't give a scroll box no edge and no gap: the row it cuts looks like it slides under the next control.
+
+#### B-203 · The getting-started guide named a button the app doesn't have · low
+- **Where:** `docs/GETTING_STARTED.md:158`
+- **Symptom:** "Reading the samples for real", step 1 said **GL accounts & tax** → *Load sample setup*; the button there (and on the Import invoices page and the welcome page) says "Use the sample GL accounts".
+- **Cause:** the button was renamed and the guide kept the old words.
+- **Reproduce:** search the guide for "Load sample setup" and the templates for it.
+- **Reproduced:** yes (`'Load sample setup' is contained here: tax** → *Load sample setup* (skip this…`)
+- **Fix:** the guide says *Use the sample GL accounts*, as the button does (the button's words read better: they say what is loaded).
+- **Test:** `tests/test_sweep3_dayone.py::test_the_getting_started_guide_names_the_sample_button_as_the_app_does`
+- **Lesson:** Don't rename a button without searching the guides for its old name.
+
+#### B-204 · A batch just created offered "Download again" for a file never downloaded · low
+- **Where:** `ap_coder/web/templates/exports.html:196` (the past batches' download button)
+- **Symptom:** after Export, the message said "Download it below", and below the "Batch 2 is ready" card the batch list, with batch 2 picked, offered "Download again".
+- **Cause:** the list's button always read "Download again", also for the batch the page had just made (`?made=` picks it in the list too).
+- **Reproduce:** approve an invoice, Export it as CSV, look at the page the export leads to.
+- **Reproduced:** yes (`assert ('Download it below' in page and 'Download again' not in page)` failed)
+- **Fix:** for the batch just made the list's button reads "Download"; a batch picked later in the list still reads "Download again".
+- **Test:** `tests/test_sweep3_dayone.py::test_a_batch_just_made_offers_download_not_download_again`
+- **Lesson:** Don't say "again" about something the page has no record of happening once.
+
+Improvements made with these fixes:
+- Review screen, line grid: "Apply to all lines…" gives one GL account and / or cost center to every line that has none (lines already coded keep theirs; POST /review/<id>/fill-lines, like the other grid actions); when every past approval of the vendor used one cost center, it is pre-selected there as a suggestion (`invoice_view.usual_cost_center`; the coder itself is unchanged). `tests/test_sweep3_dayone.py::test_apply_to_all_lines_codes_only_the_lines_that_have_none`, `tests/test_sweep3_dayone.py::test_apply_to_all_lines_refuses_a_code_not_in_the_lists`, `tests/test_sweep3_dayone.py::test_a_vendors_one_usual_cost_center_is_offered_for_its_lines`, `tests/test_web_invoice.py::test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank`
+- Second approval on one laptop: Settings → Review ("Approval and payment"), the waiting invoice's screen and the Second approval tab say it takes another person on another computer login, so one Windows login can't give it; how to test it (a second Windows account on the laptop, or a colleague over the office network); and that Send back returns it to the queue. The control is unchanged. `tests/test_sweep3_dayone.py::test_the_second_approval_says_how_to_give_it_when_one_login_cannot`
+- Exports, JD Edwards: an invoice held back for its supplier number (AN8 missing or not a JDE address number) links straight to Settings → JD Edwards E1 → Supplier address numbers (`/settings/jde#an8`), in its "Why not" cell and in the message above the list (`jde.an8_problem`). `tests/test_sweep3_dayone.py::test_an_export_held_back_for_a_supplier_number_links_to_the_address_numbers`
+- First run: the getting-started steps (Import invoices's Setup card and the review queue's welcome page) end with "Your name", a to-do linking to Settings → Review until a name is given (saved there, `AP_REVIEWER`, or a colleague's "Who are you?"), so approvals are not recorded under the computer login. `tests/test_sweep3_dayone.py::test_the_first_steps_ask_for_your_name_until_it_is_given` (and `tests/test_dashboard_sweep_fixes.py::test_getting_started_counts_only_the_steps_that_are_needed`, its counts now 1/6 and 3/6 with the new step)
+- Review queue, bulk approval: when Ready invoices are not offered ("N invoices look clean" beside more Ready rows), the banner says why: "· 1 credit note left for a person" (a credit is always applied by a person), "· 2 with a warning left for a person" (`review.left_out`, `bulk.sort_for_bulk`; the candidates are unchanged). `tests/test_sweep3_dayone.py::test_the_bulk_banner_says_why_a_ready_invoice_is_left_out`
+- First run: the welcome page's ring ("4/6", with "Process your first invoices") and Import invoices' Setup card ("4 of 5 done", without it) counted different steps; both now show the same steps and count (`process.first_steps`: the setup steps, then the first invoices; the optional chat model not counted), so the Setup card reads "4 of 6 done" and "6 of 6" once invoices are in. `tests/test_sweep3_dayone.py::test_the_welcome_page_and_import_invoices_count_the_same_setup_steps`
+- `python -m ap_coder serve --no-browser` no longer prints "(it opens in your browser; …)": it says only "(Ctrl+C here to stop)" (the launcher, which passes --no-browser, opens the browser and says so itself). `tests/test_sweep3_dayone.py::test_serve_with_no_browser_does_not_say_it_opens_in_your_browser`
+- Review screen: a message after an action ("Cost center CC400 set on 3 lines…" after Apply to all lines) sat in the bottom-right corner over "Approve & teach"; messages now rise above the sticky approve bar (`app.js` `toast`; other pages keep the corner). `tests/test_web_invoice.py::test_in_a_browser_a_message_after_apply_to_all_lines_leaves_the_approve_bar_clear`
+
+#### B-210 · /review decoded every waiting invoice's coding on each load: 0.23 s became 0.57 s at 5,000 waiting · medium-low
+- **Where:** `ap_coder/web/pages/review.py:140` (`attention`, also used by invoice.py's `navigation`), `ap_coder/web/pages/review.py:120` (`_to_fix`)
+- **Symptom:** since B-197 every /review load (all tabs: the Waiting tile counts "N need attention" on each) took 0.55 s, Ready 0.59 s and Approved 0.39 s with 5,000 invoices waiting.
+- **Cause:** `attention` read and decoded `ai_output`, `final_output` and `validation` (about 4 KB of JSON each) of every waiting invoice on each load, to ask `codes_to_pick` of their lines; the decoding was 0.22 s of its 0.34 s. Reading the line codes with SQLite's JSON functions instead costs as much (0.17 s): the parse is the cost.
+- **Reproduce:** review33/s/t3.py (5,000 waiting invoices, 10 lines each; /review timed) and t8.py (`attention` alone).
+- **Reproduced:** yes (`/review 0.548`, `/review?show=ready 0.595`, `/review?tab=approved 0.406`, `attention over 5000 pending: 0.341 s`)
+- **Fix:** `invoice_columns(..., decode=False)` gives the stored text; `_to_fix` remembers each invoice's answer (lines to code, errors) with the hash of that text and decodes only an invoice new or changed since it was last asked. Same rule, same answers ("Ready means Approve is open"). After: `/review 0.27`, Ready 0.26, Approved 0.18, `attention` 0.04 s (0.24 s the first time after a start).
+- **Test:** `tests/test_sweep3_dayone.py::test_the_queue_decodes_each_invoices_coding_once_not_on_every_load` (and B-197's two tests)
+- **Lesson:** Don't redo per-row work on every page load for rows that haven't changed: remember it by what it was computed from.
+
+#### B-211 · Import invoices said "ready" of invoices the queue lists as "Needs attention" · medium
+- **Where:** `ap_coder/web/pages/process.py:197` (`needs_attention`, used by `process_files`; `process_page`'s Recently processed); `ap_coder/core/ui.py:300` (`recent_row`)
+- **Symptom:** the sample setup, LM Studio not running, the ten samples imported: the result list said "Pacific Office Supply Ltd.: ready" (and Harbourview, both Northwinds) and Recently processed showed "In queue", while the review queue showed each as "Needs attention · Pick a cost center for lines 1, 2, 3".
+- **Cause:** the import list and the Recently processed pill still used the checks' stored flag (`requires_review`); a line without a cost center is only a warning there. B-197 gave the queue one rule (`review.attention`: Approve open as it stands) but left these two places on the old one.
+- **Reproduce:** sample setup; chat model at an address nothing answers (weak matches coded, cost centers blank); upload the ten samples; compare the job's lines with `attention()`.
+- **Reproduced:** yes (`AssertionError: (['Pacific Office Supply Ltd.: ready'], 'Pick a cost center for lines 1, 2, 3')`)
+- **Fix:** both ask `review.attention()` for an invoice waiting in the queue (the checks' flag only for one approved on its own or not saved), so "ready" means Approve is open everywhere. Insights' "Sent for a closer look: N% of processed invoices" is the checks' flag on every invoice ever processed (approved ones too), a different figure on purpose: it now reads "Flagged by the checks when processed" (also in the pilot report), so it no longer reads as the queue's Needs attention.
+- **Test:** `tests/test_web_process.py::test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready`
+- **Lesson:** Don't fix "one rule for one question" in the main screen only: search for every other place that answers it.
+
+#### B-212 · Activity counted approvals, not invoices approved: "4 approvals: 4 approved as coded" for 3 · low
+- **Where:** `ap_coder/web/pages/activity.py:160` (`activity_page`, the "Invoices approved" tile)
+- **Symptom:** three invoices approved, one of them sent back and approved again: Insights and Learning said "Approved as coded … 3 of 3", Activity "Invoices approved 3 · 4 approvals: 4 approved as coded, 0 corrected"; an approval taken back and not given again still counted as an invoice approved.
+- **Cause:** B-201 gave Activity the same rule for a change (`insights.corrected`) but applied it to every `approved` event in the trail, where Insights and Learning count each invoice's standing approval once (`insights.latest_approvals`, D-39).
+- **Reproduce:** demo data; approve three invoices; reopen one and approve it again, reopen another; open /activity.
+- **Reproduced:** yes (`Invoices approved 5 · 6 approvals: 5 approved as coded, 1 corrected` against `approved_as_coded` = 3 of 4)
+- **Fix:** the tile is `insights.approved_as_coded()`: "Invoices approved N · X approved as coded, Y corrected", the figures Insights and Learning show. The events themselves are still all listed below.
+- **Test:** `tests/test_sweep3_dayone.py::test_activity_counts_each_invoices_standing_approval_once_as_insights_does` (and `test_insights_learning_activity_and_the_queue_count_approved_as_coded_alike`)
+- **Lesson:** Don't share the rule but not the population: the same figure needs the same rows as well as the same test.
+
+### Not reproduced or left as they are
+
+- **N-77** · Store and config · B-158 can only take back an approval's part of a lesson recorded from this version on (`lesson_approvals`): an approval made before the update and withdrawn after it still leaves its counts and value in `lessons` (nothing recorded which approval added what; rebuilding the lessons from past approvals would need each approval's proposed and final coding replayed in order, a bigger change than the fix).
+- **N-78** · Tax and coding rules · Discount terms written with prox or weeks ("2/10th prox net 30th", "2% 10th prox", "2% 2 weeks net 30") still give no discount (the due date is the default or the prox day): the discount date model has only days from the invoice or month end; rare, left for a design of prox discounts.
+- **N-79** · Exports, ERP and reports · The ERP CSV export (`ap_coder/erp/exports.py` `build_csv`) and the Custom CSV (`export_layout.build`) are written with a UTF-8 byte-order mark ("Excel shows accents correctly"), while the JDE Z-files are deliberately without one (docs/JDE_E1.md). D-28 / B-92 decided only the quoting, not the BOM. A loader that reads plain UTF-8 (SQL*Loader, a bulk insert) sees the first header as "﻿Batch"; but some Windows import tools need the BOM to read UTF-8 at all. Which one the pilot's ERP wants is a choice (a setting, or a D-NN), not a bug fix: left as it is.
+- **N-80** · Exports, ERP and reports · `dupaudit._same_bill` treats an exported invoice and an ERP-register row with the same number as the same bill when the vendor OR the amount agrees; the audit only compares rows with equal amounts, so another vendor's bill with the same number and amount is never flagged OTHER_VENDOR once ours is exported. That is the documented choice (the ERP's own name for the vendor, `test_an_exported_invoice_is_not_its_own_duplicate_in_the_erp`); quick search (B-152) now asks for the same vendor or the ERP's short name. Aligning the audit is a decision about false alarms, left.
+- **N-81** · Exports, ERP and reports · Besides the exports (B-151), `spend.py`, `accruals.py` and `stamp.py` also read only a stored `gl_distribution`, so an invoice approved by an older version has no lines in the spend report, the accrual detail or the stamp's posting table. They could use `exports.distribution()`; outside this finding's scope, left.
+- **N-82** · AI and readers · `page_worker.reader_alive` (an invoice's "being read" mark) has the same reused-process-id weakness as the self-test mark (B-177), but there the store's `STALE_READING_HOURS` (2 hours) already puts a stale read back in line, so it only delays; left as is.
+- **N-83** · AI and readers · `Store.learning_rows` (B-175) gives an old vendor's invoice a list of its own, so the suggestion index (one slot) is rebuilt when invoices of such vendors alternate in a batch (about 0.3 s at 50,000 lessons); a per-vendor index would avoid it, a bigger change than this fix.
+- **N-84** · Document capture · The page reader's transcription is read by the same rule reader as the page (`capture/__init__.py` `_page_reader`, `transcript.py`), so a rule-parsing mistake (B-183, B-184, B-185 here) appears in both readings and fusion counts it as two independent readers agreeing (verified). Making the transcript an independent reader needs its own parsing or a fusion rule that discounts agreement on the same rule path; a design change, not a bug fix.
+- **N-85** · Document capture · A day/month order taken only from a real US supplier address (`read_fields`, B-183) still settles 03/04/2026 without the ambiguous mark, as docs/CAPTURE_DESIGN.md describes. Marking it ambiguous (or likely at best) would send every US invoice dated on day 1 to 12 to a person; a policy choice, left. B-183 removed the false addresses and the Canadian suppliers from that path.
+- **N-86** · Document capture · An invoice number in groups of three followed by more text on its line ("No de facture 123 456 Date ...") is still cut at the first space (B-185 joins it only when nothing follows); capping its confidence would need a new method name, which changes calibration keys. Left.
+- **N-87** · Web routes · B-192 keys a colleague's drafts by (name, address): a colleague whose computer gets a new address
+- **N-88** · Intake, email and command line · A photo over Pillow's ~179 MP limit is still refused (B-148 only words it truthfully). Reading it would mean raising `Image.MAX_IMAGE_PIXELS`, which is process-wide and shared by the reading threads, or decoding JPEGs at a reduced size (`draft`); either is a decision about memory on a laptop, not a bug fix.
+- **N-89** · Intake, email and command line · A .msg picture's Content-ID referenced only from an RTF body (no HTML stream) counts as inline only when Outlook marked it hidden: the compressed RTF is not decompressed to look for `cid:`.
+- **N-90** · Setup, launcher and update · B-167 finds a running `watch` / `read-pages` by the note it leaves; one started by a version from before the fix leaves none, so the first update from such a version still can't stop it (finding it would mean scanning every process and telling which data folder it uses). Stop it by hand before that one update (worth a line in WHATS_NEW / UPGRADING when released).
+- **N-91** · Setup, launcher and update · `watch` still treats an invoice that failed for a missing module as seen (no retry). Not changed, as the finding suggested: with the older watcher stopped, nothing fails that way; a retry rule for failures is a design choice.
+- **N-92** · Setup, launcher and update · an older `watch` / `read-pages` run by another computer account (or a scheduled task under one) can't be ended by this account: the start waits a minute ("close the window it runs in, or end its task in Task Scheduler"), then stops. Worker notes don't carry the account (B-168 covers servers only).
+- **N-93** · Setup, launcher and update · two accounts sharing one folder on macOS/Linux: the server file is mode 0600 and the code folder's lock file belongs to the first account, so the second account's start can't read the token or take the lock; it now relies on `/healthz`'s `user` (B-168). Sharing one folder between accounts is documented for Windows only.

@@ -19,10 +19,11 @@ from typing import Any
 
 from ..capture import analyze, build_layout
 from ..capture.bridge import vendor_record
-from ..capture.reader import _US_ADDRESS
+from ..capture.reader import us_address
 from ..capture.types import LIKELY, VERIFIED, CaptureResult, DocLayout
 from ..capture.workflow import local_evidence, supplier_for
 from ..coding.tax import OUTSIDE_CANADA, TaxRateTable
+from ..coding.vendors import bank_digit_count, cut_bank_details
 from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
@@ -112,7 +113,7 @@ def provinces(text: str) -> tuple[str, str]:
             after_label = True
             pending.append("bill")
         m = _PROVINCE_AT.search(line)
-        where = m.group(1) if m else (OUTSIDE_CANADA if _US_ADDRESS.search(line) else "")
+        where = m.group(1) if m else (OUTSIDE_CANADA if us_address(line) else "")
         if not where:
             continue
         if not supplier and not after_label:
@@ -179,7 +180,6 @@ _BANK_WORDS = re.compile(
     r"(?i)\b(?:transit|institution|inst\b|iban|swift|bic|routing|aba|bank(?!\s+(?:st|street|ave|avenue|rd|road|"
     r"blvd)\b)|banque|account|acct|compte|virement|eft|wire|direct)"
 )
-_MONEY = re.compile(r"\d[\d,. ]*[.,]\d{2}(?!\d)")
 
 
 def bank_details(text: str) -> str:
@@ -188,29 +188,32 @@ def bank_details(text: str) -> str:
     next is found (``vendors.VENDOR_BANK_CHANGED``, a payment-fraud signal that always needs a person): lines that
     name banking details with at least 5 digits on them, and the account lines under a "Banking details" heading."""
 
-    def digits(s: str) -> int:
-        return sum(c.isdigit() for c in _MONEY.sub(" ", s))
-
     found: list[str] = []
     lines = [ln.strip() for ln in (text or "").splitlines()]
     for i, line in enumerate(lines):
         if not _BANKING.search(line):
             continue
-        heading = digits(line) < 5 and (line.endswith(":") or len(line.split()) <= 4)  # "Banking details:"
+        heading = bank_digit_count(line) < 5 and (line.endswith(":") or len(line.split()) <= 4)  # "Banking details:"
         for row in [line] if not heading else lines[i + 1 : i + 4]:  # under a heading: the account lines
             m = _BANK_WORDS.search(row)
-            if m and digits(row[m.start() :]) >= 5 and row[m.start() :] not in found:
-                found.append(row[m.start() :])
+            details = cut_bank_details(row[m.start() :]) if m else ""
+            if bank_digit_count(details) >= 5 and details not in found:
+                found.append(details)
     return "; ".join(found)[:200]
 
 
 def _unlisted_charge(text: str, amount: float) -> str:
     """The label printed beside an amount outside the line table ("Delivery & handling: $95.00")."""
-    figure = f"{abs(amount):,.2f}"
-    for line in text.splitlines():
-        if figure in line:
-            label = line.split(figure)[0].strip(" :$-–\t")
-            if 2 < len(label) < 60 and not re.search(r"(?i)sub\s*-?total|total|tax|gst|hst|pst|qst|tps|tvq", label):
+    figure = re.compile(rf"(?<![\d,.]){re.escape(f'{abs(amount):,.2f}')}(?!\d)")  # whole: not "50.00" in "1,250.00"
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = figure.search(line)
+        if m:
+            label = line[: m.start()].strip(" :$-–\t")
+            if not label and i:  # the figure alone on its line (a PDF's text, a cell a line): its label just above
+                label = lines[i - 1].strip(" :$-–\t")
+            if (2 < len(label) < 60 and re.search(r"[^\W\d_]", label)
+                    and not re.search(r"(?i)sub\s*-?total|total|tax|gst|hst|pst|qst|tps|tvq", label)):  # fmt: skip
                 return label
     return "Charges not in the line table"
 
@@ -259,6 +262,12 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
              else float(li.amount) / li.quantity if li.quantity else float(li.amount), float(li.amount))
             for i, li in enumerate(readings, 1)
         ]  # fmt: skip
+    # A credit note that prints its lines without a sign but its subtotal negative: the lines are the credit (their
+    # sum is minus the subtotal), not lines owed with a charge twice their size taking them back. The quantity
+    # keeps its sign and the unit price carries the credit's, as the reader codes a credit's line.
+    listed = round(sum(r[3] for r in readings_data), 2)
+    if readings and subtotal < 0 < listed and abs(listed + subtotal) < 0.01:
+        readings_data = [(d, q, -u, -a) for d, q, u, a in readings_data]
     # Lines that fall short of the subtotal (plus freight read beside it): a charge printed outside the table.
     short = round(subtotal + freight - sum(r[3] for r in readings_data), 2)
     if (readings or freight) and abs(short) >= 0.01:

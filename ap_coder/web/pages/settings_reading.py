@@ -58,6 +58,7 @@ READER_PILL = {
     "warn": ("Needs a look", "warn", "warning"),
     "testing": ("Testing itself", "info", "hourglass_top"),
     "off": ("Not working", "err", "error"),
+    "optional": ("Not set up (optional)", "gray", "do_not_disturb_on"),  # nothing wrong: an optional part left out
 }
 SELF_TEST_PILL = {
     "passed": ("Self-test passed", "ok", "verified"),
@@ -313,6 +314,15 @@ def azure_context(settings: Settings, request: Request) -> dict[str, Any]:
     }
 
 
+def azure_check_on(store: Any) -> bool:
+    try:
+        from ap_coder.ai import azure_check
+
+        return azure_check.load_settings(store).enabled
+    except Exception:  # noqa: BLE001 - its state can't be read: the card says so where it is shown
+        return False
+
+
 def reading_context(request: Request, *, fresh: bool = False) -> dict[str, Any]:
     """Everything the Reading tab shows. Never raises over LM Studio: a status that can't be worked out is said."""
     settings, store = get_settings(request), get_store(request)
@@ -324,6 +334,9 @@ def reading_context(request: Request, *, fresh: bool = False) -> dict[str, Any]:
         "models": model_rows(settings),
         "poll_seconds": TEST_POLL_SECONDS,
         "developer": internet_allowed(),
+        # The Azure check's card: only where the internet is allowed (the offline build uses no cloud service), or
+        # while it is still switched on from before, so it can be switched off.
+        "show_azure_check": internet_allowed() or azure_check_on(store),
     }
     if status is not None:
         context["reader"] = page_reader_context(settings, store, status)

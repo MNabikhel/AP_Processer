@@ -48,7 +48,7 @@
             {% if e.email_there %}<a class="btn" href="/process/inbox/{{ e.id }}/file/-1"><span class="ms" aria-hidden="true">mail</span>Open the email</a>{% endif %}
             {% for d in e.docs %}{% if d.there %}
             <a class="btn" href="/process/inbox/{{ e.id }}/file/{{ d.n }}"><span class="ms" aria-hidden="true">attach_file</span>{{ d.name }}</a>
-            <form method="post" action="/process/inbox/{{ e.id }}/to-queue/{{ d.n }}"><button class="btn" type="submit" title="It is an invoice after all: read it into the review queue"><span class="ms" aria-hidden="true">move_to_inbox</span>Read as invoice</button></form>
+            {% if not d.sheet %}<form method="post" action="/process/inbox/{{ e.id }}/to-queue/{{ d.n }}"><button class="btn" type="submit" title="It is an invoice after all: read it into the review queue"><span class="ms" aria-hidden="true">move_to_inbox</span>Read as invoice</button></form>{% endif %}
             {% endif %}{% endfor %}
             <form method="post" action="/process/inbox/{{ e.id }}/done"><button class="btn" type="submit"><span class="ms" aria-hidden="true">done_all</span>Dealt with</button></form>
           </div>
@@ -122,13 +122,14 @@
   <div class="col">
     <section class="card">
       <div class="card-head">
-        <div><h4>Setup</h4><p class="muted">What AP Coder needs before it reads invoices.</p></div>
+        <div><h4>Setup</h4><p class="muted">What AP Coder needs before it reads invoices, then your first ones.</p></div>
         {{ ui.pill(steps_done ~ " of " ~ steps_needed ~ " done", "ok" if steps_done == steps_needed else "gray") }}
       </div>
       <div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail) }}{% endfor %}</div>
       <div class="row">
         {% if steps[2][0] != "ok" or steps[3][0] != "ok" %}<a class="link" href="/accounts">Finish setup <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
         {% if steps[4][0] != "ok" %}<a class="link" href="/settings#reading">Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
+        {% if steps[5][0] != "ok" %}<a class="link" href="/settings/review">Your name <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
       </div>
     </section>
 

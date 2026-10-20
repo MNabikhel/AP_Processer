@@ -5,8 +5,8 @@ The server runs in this process (uvicorn). Once it answers, it prints ``AP Coder
 ``BROWSER=none`` or a Linux computer with no desktop (``offline.browser_wanted``).
 
 While it runs, ``<data folder>/.ap_coder_server.json`` says which server this is: {"pid", "port", "folder",
-"version", "token", "started"}. The launcher stops it with ``POST /shutdown`` and the header
-``X-AP-Coder-Token: <token>``; the file is removed when the server stops.
+"version", "token", "user" (the computer account running it), "started"}. The launcher stops it with
+``POST /shutdown`` and the header ``X-AP-Coder-Token: <token>``; the file is removed when the server stops.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from ap_coder import __version__
 from ap_coder.core import paths
 from ap_coder.core.store import Store
 from ap_coder.ops.offline import browser_wanted, listening
-from ap_coder.web.app import CODE_FOLDER, create_app
+from ap_coder.web.app import CODE_FOLDER, create_app, os_user
 
 SERVER_FILE = ".ap_coder_server.json"
 
@@ -47,7 +47,7 @@ def write_server_file(port: int, token: str) -> Path:
     path = server_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     info = {"pid": os.getpid(), "port": port, "folder": str(CODE_FOLDER), "version": __version__, "token": token,
-            "started": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
+            "user": os_user(), "started": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(info, indent=2), encoding="utf-8")
     if os.name != "nt":

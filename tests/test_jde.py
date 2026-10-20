@@ -299,6 +299,23 @@ def test_exchange_rate_keeps_every_decimal():
         assert head["VLCRR"] == text
 
 
+def test_the_exchange_rate_is_in_the_domestic_currency_when_it_is_not_cad():
+    """AP Coder's rates are CAD per unit: with JDE's domestic currency USD, a CAD invoice's VLCRR is USD per CAD
+    (1 / 1.37), never the CAD rate 1; without a rate for the domestic currency it is left blank (E1's table)."""
+    usd_books = jde.JdeSettings(domestic_currency="USD", currencies=["CAD", "USD", "EUR"])
+    rates = {"CAD": 1.0, "USD": 1.37, "EUR": 1.5}
+    (head,) = _files([_invoice(ON)], usd_books, fx_rates=rates)[jde.HEADER_FILE]
+    assert (head["VLCRRM"], head["VLCRCD"], head["VLCRR"]) == ("F", "CAD", "0.729927")
+    euro = _invoice(ON)
+    euro["final_output"]["currency"] = "EUR"
+    (head,) = _files([euro], usd_books, fx_rates=rates)[jde.HEADER_FILE]
+    assert head["VLCRR"] == "1.0948905"  # USD per EUR: 1.50 / 1.37
+    (head,) = _files([_invoice(ON)], usd_books, fx_rates={"CAD": 1.0, "EUR": 1.5})[jde.HEADER_FILE]
+    assert head["VLCRR"] == ""  # no USD rate: E1 takes it from its exchange-rate table
+    (usd,) = _files([_invoice(USD)], usd_books, fx_rates=rates)[jde.HEADER_FILE]
+    assert (usd["VLCRRM"], usd["VLCRR"]) == ("D", "")  # domestic: no rate
+
+
 def test_account_columns_mode_and_mapping():
     settings = jde.JdeSettings(
         account_mode=jde.ACCOUNT_COLUMNS,

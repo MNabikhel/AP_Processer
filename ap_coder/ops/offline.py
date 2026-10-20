@@ -249,6 +249,14 @@ def table_finder_dirs() -> list[Path]:
     return [PROJECT_DIR / "models", private_dir() / "models"]
 
 
+def from_bundle() -> bool:
+    """Whether this copy was unzipped from the offline bundle: its models/ folder is next to the app (a copy set up
+    from the code alone has none, and no table finder model unless one is copied in)."""
+    from ..core.paths import PROJECT_DIR
+
+    return (PROJECT_DIR / "models").is_dir()
+
+
 def table_finder_path() -> Path | None:
     """The table finder's model on this computer, intact (its SHA-256 checked once per file version), or None: the
     path in ``AP_TABLE_FINDER_MODEL``, else the first of :func:`table_finder_dirs` that has it. Never downloaded."""

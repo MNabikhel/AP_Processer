@@ -74,11 +74,11 @@ invoices from across Canada, with sample POs and a vendor list.
    Studio) reads every page of every invoice again on its own, in the background, as an independent second
    reader.
 2. **Codes each line** to your GL accounts and cost centers. It tries, in order:
-   - fixed rules set by AP;
    - what AP approved before for that vendor (shortened words, plurals, French or English allowed for);
    - what AP approved for the same item from other vendors, when they agree;
    - the vendor's usual account, once all of its lines went to one account;
-   - the local model, only for what is left.
+   - the local model, only for what is left;
+   - then the fixed rules set by AP, applied last, so they always win.
 
    It can only pick codes from your chart, never invent one. A weak match (the vendor master's default account,
    an account's name) is offered on the review screen, not used on its own. Measured without any AI model in

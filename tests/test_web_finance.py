@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from ap_coder.coding import taxreturn
 from ap_coder.core.config import Settings
-from ap_coder.core.store import APPROVED, PARKED, REVIEW, Store, load_sample_setup
+from ap_coder.core.store import APPROVED, PARKED, REJECTED, REVIEW, Store, load_sample_setup
 from ap_coder.erp import accruals, dupaudit, export_layout, exports, jde, stamp
 from ap_coder.erp import statements as stm
 from ap_coder.ops.demo import load_demo
@@ -142,6 +142,22 @@ def test_search_brings_a_parked_invoice_back(client, busy):
     assert page.url.path == f"/review/{inv['id']}"
     assert busy.get_invoice(inv["id"])["status"] == REVIEW
     assert busy.get_invoice(inv["id"])["status"] != PARKED
+
+
+def test_bring_back_of_an_invoice_rejected_meanwhile_says_it_changed(client, busy):
+    """B-194: "Bring back" on the directory swallowed the store's refusal and said "Back in the review queue." for
+    an invoice rejected in another tab after the directory was drawn."""
+    inv = busy.list_invoices(REVIEW)[0]
+    busy.park_invoice(inv["id"], "Pat", "waiting for the buyer")
+    busy.reject_invoice(inv["id"], "Sam", "not ours")
+    page = follow(client, client.post(f"/search/{inv['id']}/unpark", headers=PAGE)).text
+    assert "Back in the review queue." not in page and "changed meanwhile" in page and "rejected" in page
+    assert busy.get_invoice(inv["id"])["status"] == REJECTED
+    other = busy.list_invoices(REVIEW)[0]  # brought back meanwhile by someone else: it is in the queue, as asked
+    busy.park_invoice(other["id"], "Pat", "waiting")
+    busy.unpark_invoice(other["id"], "Sam")
+    page = follow(client, client.post(f"/search/{other['id']}/unpark", headers=PAGE)).text
+    assert "Back in the review queue." in page
 
 
 def test_search_escapes_what_an_invoice_says(client, store, tmp_path):
@@ -342,6 +358,19 @@ def test_the_erp_register_is_uploaded_checked_imported_and_cleared(client, busy)
     assert busy.erp_register_count() == 0
     gone = client.post("/exports/register/import", data={"file": token}, headers=PAGE)
     assert gone.status_code == 400 and "Upload the file again" in gone.json()["error"]
+
+
+def test_a_bill_entered_twice_in_the_erp_is_named_when_the_register_is_imported(client, busy):
+    sheet = "Supplier,Invoice,Date,Amount\nAcme Ltd,A-1,2026-01-05,100.00\nAcme Ltd,A-1,2026-02-05,100.00\n"
+    page = follow(
+        client,
+        client.post("/exports/register/upload", files={"file": ("erp.csv", sheet.encode(), "text/csv")}, headers=PAGE),
+    )
+    data = {"file": page.url.params["register"], "col_vendor_name": "Supplier", "col_invoice_number": "Invoice",
+            "col_invoice_date": "Date", "col_total": "Amount"}  # fmt: skip
+    page = follow(client, client.post("/exports/register/import", data=data, headers=PAGE))
+    assert "1 ERP invoices known" in page.text
+    assert "1 bill entered more than once in the ERP: see the duplicate payment audit." in page.text
 
 
 def test_the_duplicate_audit_and_its_csv(client, busy):

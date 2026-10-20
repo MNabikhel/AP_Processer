@@ -14,8 +14,9 @@ page viewer ``static/js/invoice_viewer.js``.
 Routes (all under ``/review/<id>``): GET the screen, ``page/<n>.png`` (a page's picture), ``words`` (the words on
 the pages, to teach a field), ``reader`` (OvisOCR2's progress on it), ``approved.pdf``; POST ``check``,
 ``approve``, ``park``, ``reject``, ``note``, ``teach``, ``split``, ``apply-rules``, ``po-coding``,
-``suggestion``, ``vendor`` (add the printed vendor), ``read-pages``, ``review-again`` (the AI reviewer),
-``start-over``, ``resume`` (a parked invoice), ``restore`` (a rejected one), ``correct`` (an approved one).
+``suggestion``, ``fill-lines`` (Apply to all lines), ``vendor`` (add the printed vendor), ``read-pages``,
+``review-again`` (the AI reviewer), ``start-over``, ``resume`` (a parked invoice), ``restore`` (a rejected one),
+``correct`` (an approved one).
 Delete, final approval and send back are the queue's own POSTs (``pages/review.py``).
 """
 
@@ -56,7 +57,7 @@ from ap_coder.web.core import (
     templates,
 )
 from ap_coder.web.files import download
-from ap_coder.web.pages.review import filter_queue, sort_queue
+from ap_coder.web.pages.review import attention, filter_queue, sort_queue
 
 router = APIRouter()
 
@@ -68,7 +69,8 @@ NAV_PARAMS = ("show", "q", "sort")  # the queue's view, carried along so Previou
 # --- Drafts: edits not approved yet --------------------------------------------------------------------------------
 # Kept in memory for the dashboard's lifetime, per invoice and per person: this computer's in
 # ``app.state.invoice_drafts``, each colleague's on the office network (web/identity.py) in
-# ``app.state.person_drafts[<their name>]``, so one person's edits never open on another's screen.
+# ``app.state.person_drafts[(<their name, case aside>, <their address>)]``, so one person's edits never open on
+# another's screen, even one who gives the same name on another computer; a new name on /who takes them along.
 
 _drafts_lock = threading.Lock()
 
@@ -90,7 +92,22 @@ def _drafts(request: Request) -> dict[int, dict[str, Any]]:
     if found is None:
         return request.app.state.invoice_drafts
     with _drafts_lock:
-        return request.app.state.person_drafts.setdefault(found.name.casefold(), {})
+        return request.app.state.person_drafts.setdefault(_draft_key(found), {})
+
+
+def _draft_key(found: identity.Person) -> tuple[str, str]:
+    return found.name.casefold(), found.address
+
+
+def rename_drafts(request: Request, found: identity.Person, name: str) -> None:
+    """A colleague gave a new name on /who: their edits go with them (else they would be no one's, and bulk approval
+    would leave those invoices alone until a restart)."""
+    _all_drafts(request)
+    everyone = request.app.state.person_drafts
+    with _drafts_lock:
+        kept = everyone.pop(_draft_key(found), None)
+        if kept:
+            everyone.setdefault(_draft_key(identity.Person(name, found.address)), {}).update(kept)
 
 
 def unsaved_edits(request: Request) -> set[int]:
@@ -167,8 +184,9 @@ def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str
     whole queue if this invoice isn't part of that view."""
     pending = store.list_invoices(REVIEW)
     show = query.get("show", "all")
-    shown = {"attention": [i for i in pending if i["requires_review"]],
-             "ready": [i for i in pending if not i["requires_review"]]}.get(show, pending)  # fmt: skip
+    reasons = attention(store, reference_or_none(store), pending) if show in ("attention", "ready") else {}
+    shown = {"attention": [i for i in pending if i["id"] in reasons],
+             "ready": [i for i in pending if i["id"] not in reasons]}.get(show, pending)  # fmt: skip
     shown = sort_queue(filter_queue(shown, query.get("q", "")), query.get("sort", "priority"))
     ids = [i["id"] for i in shown]
     if invoice_id not in ids:
@@ -366,6 +384,7 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
         sent_back=_sent_back(store, invoice_id), poll_seconds=PAGE_READER_POLL_SECONDS,
         today=dt.date.today().isoformat(), taught_json=draft.taught, vendors=vendor_options(store),
         supply=view.supply_line(draft.header, draft.lines, reference.tax),
+        usual_cc=view.usual_cost_center(store, reference, draft.header.get("vendor_name") or ""),
     )  # fmt: skip
 
 
@@ -745,6 +764,30 @@ async def use_suggestion(request: Request, invoice_id: int) -> JSONResponse:
         return refuse(f"Not changed: {exc}.")
     number = analysis.coding.line_items[position].line_number
     return _new_lines(request, invoice_id, reference, draft, lines, f"Line {number} coded to GL {gl}.", "add_task")
+
+
+@router.post("/review/{invoice_id:int}/fill-lines")
+async def fill_lines(request: Request, invoice_id: int) -> JSONResponse:
+    """Apply to all lines: one GL account and / or cost center for every line that has none yet (lines already
+    coded keep theirs)."""
+    store = get_store(request)
+    inv = _invoice(store, invoice_id)
+    if inv["status"] != REVIEW:
+        return refuse("This invoice is no longer in the review queue: reload the page.", 409)
+    reference = _reference(store)
+    form, draft = await _posted(request, inv)
+    gl, cc = str(form.get("fill_gl") or "").strip(), str(form.get("fill_cc") or "").strip()
+    if not gl and not cc:
+        return refuse("Pick a GL account or a cost center to apply to the lines without one.")
+    if gl and (reference.chart_of_accounts.get(gl) is None or gl in reference.tax.tax_gl_codes()):
+        return refuse(f"GL {gl} is not in your GL accounts (or it is a sales-tax account).")
+    if cc and (reference.cost_centers is None or reference.cost_centers.get(cc) is None):
+        return refuse(f"Cost center {cc} is not in your cost center list.")
+    lines, n_gl, n_cc = view.fill_lines(draft, gl, cc)
+    done_text = [f"GL {gl} set on {ui.plural(n_gl, 'line')}" if gl else "",
+                 f"Cost center {cc} set on {ui.plural(n_cc, 'line')}" if cc else ""]  # fmt: skip
+    text = "; ".join(t for t in done_text if t) + ". Lines already coded kept theirs."
+    return _new_lines(request, invoice_id, reference, draft, lines, text, "playlist_add_check")
 
 
 # --- OvisOCR2 ---------------------------------------------------------------------------------------------------------

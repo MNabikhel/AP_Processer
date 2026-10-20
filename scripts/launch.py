@@ -1399,23 +1399,28 @@ COVERED_CHECKS = ("python", "package ", "OCR", "table finder", "data folder", "l
 
 def setup_check_lines() -> list[tuple[str, str]]:
     """The rest of ``python -m ap_coder doctor`` (offline): the GL accounts, cost centers, tax mapping, coding rules
-    and settings. One line when all is well, else one line for each problem, with the doctor's own words."""
+    and settings. One line when all is well, else one line for each problem, with the doctor's own words; and one
+    when no GL accounts were imported yet (the checks then ran on the bundled sample's)."""
     try:
         from ap_coder.core.config import Settings
-        from ap_coder.ops.cli import _load_reference, build_parser
+        from ap_coder.ops.cli import _load_reference, build_parser, reference_source
         from ap_coder.ops.doctor import FAIL, WARN, run_checks
 
         args = build_parser().parse_args(["doctor"])
         checks = run_checks(Settings.from_env(), lambda: _load_reference(args), online=False, llm_checks=False)
+        sample = reference_source(args).startswith("BUNDLED")
     except Exception as exc:  # noqa: BLE001 - the summary never stops the start
         return [("warn", f"Setup checks: not run ({type(exc).__name__}: {exc})")]
+    lines = [("warn", "GL accounts: none imported yet, so the sample ones are used: import yours on GL accounts & "
+                      "tax")] if sample else []  # fmt: skip
     shown = [c for c in checks if not c.area.startswith(COVERED_CHECKS)]
     problems = [("fail" if c.status == FAIL else "warn", f"{c.area}: {c.detail}") for c in shown
                 if c.status in (FAIL, WARN)]  # fmt: skip
     if problems:
-        return problems
+        return lines + problems
     passed = sum(1 for c in shown if c.status == "PASS")
-    return [("ok", f"Setup checks: all {passed} passed (GL accounts, tax mapping, coding rules, settings)")]
+    gl = "the sample GL accounts" if sample else "GL accounts"
+    return lines + [("ok", f"Setup checks: all {passed} passed ({gl}, tax mapping, coding rules, settings)")]
 
 
 def page_reader_line() -> tuple[str, str]:
@@ -1541,6 +1546,26 @@ def running_dashboard(rest: list[str], state: dict) -> int | None:
     return None
 
 
+def other_users_dashboard(rest: list[str], state: dict) -> int | None:
+    """The port of an AP Coder another computer account runs on this data (a second Windows user sharing this
+    folder), else None: never opened here, it works under that person's name."""
+    version = identity()["version"]
+    for server in running.find(candidate_ports(rest, state), paths.private_dir()):
+        if running.judge(server, ROOT, version) == "other":
+            return server.port
+    return None
+
+
+def someone_elses(port: int) -> SetupError:
+    """What a start says when another computer account's AP Coder is open (``running.take_over``'s "other")."""
+    user = running.owner(port)
+    who = f"{user}'s account" if user else "another account"
+    return SetupError(f"AP Coder is open in {who} on this computer (port {port}): it works under that person's name, "
+                      "so it is not opened here, and one person at a time uses AP Coder's data.",
+                      f"Ask {user or 'the person signed in to it'} to close their AP Coder window, then start AP "
+                      "Coder again.")  # fmt: skip
+
+
 def dashboard_url(port: int) -> str:
     """The address the browser opens: the one the dashboard listens on (127.0.0.1 by default). Never "localhost": a
     Mac or Windows browser tries it as ::1 first, where another program may answer."""
@@ -1602,6 +1627,9 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
     port = running_dashboard(argv, load_state())
     if port:
         return open_running(port)
+    theirs = other_users_dashboard(argv, load_state())
+    if theirs:
+        return failed(someone_elses(theirs))
     blocked = stop_older(argv)
     if blocked is not None:
         return blocked
@@ -1614,11 +1642,22 @@ def wait_for_other(argv: list[str], timeout: float = WAIT_FOR_OTHER, every: floa
         port = running_dashboard(argv, load_state())
         if port:
             return open_running(port)
+        theirs = other_users_dashboard(argv, load_state())
+        if theirs:
+            return failed(someone_elses(theirs))
         if take_lock():
             return None
     say("The other AP Coder window has not opened the dashboard yet: look at that window, or close it and start "
         "AP Coder again.")  # fmt: skip
     return 1
+
+
+def older_still_running(port: int | None) -> SetupError:
+    """What ``running.take_over``'s "blocked" says: an older server on ``port``, or (None) an older watch or
+    read-pages."""
+    what = f"port {port}" if port else "python -m ap_coder watch or read-pages"
+    return SetupError(f"An older AP Coder is still running ({what}): two versions never use the same data at once.",
+                      "Close the old AP Coder window, then start again.")  # fmt: skip
 
 
 def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
@@ -1631,8 +1670,9 @@ def stop_older(argv: list[str], wait: float = 30.0) -> int | None:
         return None
     verdict, port = running.take_over(ROOT, version, ports, paths.private_dir(), say)
     if verdict == "blocked":
-        return failed(SetupError(f"An older AP Coder is still running (port {port}): two versions never use the same "
-                                 "data at once.", "Close the old AP Coder window, then start again."))  # fmt: skip
+        return failed(older_still_running(port))
+    if verdict == "other":
+        return failed(someone_elses(port))
     if verdict in ("open", "newer"):
         return open_running(port)
     deadline = time.monotonic() + wait  # its start ends once its dashboard stopped
@@ -1795,14 +1835,15 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
 
     # An AP Coder already running: this one opened; an older one (or another folder's) stopped first.
     verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, state), paths.private_dir(), say)
+    if verdict == "other":  # another computer account's: never opened under their name, nor stopped under them
+        return failed(someone_elses(port))
     if verdict == "open":
         return open_running(port)
     if verdict == "newer":
         say("A newer AP Coder is already running: opening it (this older version starts nothing).")
         return open_running(port)
     if verdict == "blocked":
-        return failed(SetupError(f"An older AP Coder is still running (port {port}): two versions never use the same "
-                                 "data at once.", "Close the old AP Coder window, then start again."))  # fmt: skip
+        return failed(older_still_running(port))
 
     legacy = legacy_folders()  # (before the shortcut is pointed here: an AP Coder 0.1 shortcut names its folder)
     previous = previous_install(state, ident, legacy)

@@ -19,6 +19,7 @@ from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REV
 from ap_coder.erp import directory, search, stamp
 from ap_coder.web.core import done, get_store, local_url, reference_or_none, refuse, render, reviewer
 from ap_coder.web.files import download
+from ap_coder.web.pages.invoice import changed_meanwhile
 
 router = APIRouter()
 
@@ -214,6 +215,8 @@ def bring_back(request: Request, invoice_id: int) -> JSONResponse:
         return refuse("That invoice is not in AP Coder.", 404)
     try:
         store.unpark_invoice(invoice_id, reviewer())
-    except ValueError:
-        pass  # someone else brought it back meanwhile: it is opened all the same
+    except ValueError as exc:
+        if (store.get_invoice(invoice_id) or {}).get("status") != REVIEW:  # rejected, approved, deleted meanwhile
+            return changed_meanwhile(request, invoice_id, exc)
+        # else someone else brought it back meanwhile: it is opened all the same
     return done(request, f"/review/{invoice_id}", "Back in the review queue.")

@@ -92,7 +92,7 @@ after the name in **`scripts\terminal.bat`** (double-click it, then type e.g.
 
 | Option (after `--installer`) | What it does |
 |---|---|
-| `--fresh-start` | moves the database, invoices and outputs into a dated `backup-…` folder inside the data folder (the `.env` settings are kept) |
+| `--fresh-start` | moves the database, invoices and outputs into a dated `backup-…` folder inside the data folder (the `.env` settings and `models/` are kept; what you set in the dashboard's Settings is in the database, so it moves too) |
 | `--yes` | no questions; keeps current answers |
 | `--no-update` | developers online only: don't check GitHub for a newer version (the offline build never does) |
 | `--data-dir <folder>` | use a different data folder |
@@ -155,7 +155,7 @@ Things to try:
 **Reading the samples for real:** first click *Remove demo invoices* if you loaded the demo (the same
 sample files would otherwise be recognised as already processed).
 
-1. **GL accounts & tax** → *Load sample setup* (skip this if you tried the demo: the sample setup is
+1. **GL accounts & tax** → *Use the sample GL accounts* (skip this if you tried the demo: the sample setup is
    already loaded).
 2. Copy the sample PDFs from `samples\` into your invoices folder (**Import invoices** →
    *Open folder* shows it). `samples\README.md` lists what each one shows: HST, GST+PST,
@@ -168,7 +168,8 @@ These invoices are synthetic, so screenshots of this step are fine to share.
 
 When you're done, close the AP Coder window, double-click **`scripts\terminal.bat`** and type
 **`APProcessor.bat --installer --fresh-start`** so your real setup starts clean: the sample database, memory and invoices move to a backup folder, and your
-settings stay.
+settings file (`.env`: the LM Studio address and the like) stays. What you set in the dashboard's **Settings** while
+trying it (approval limit, exchange rates, second backup folder, automation) was kept in that database: set it again in Step 5.
 
 ## Step 5: Your setup, in the dashboard
 
@@ -322,12 +323,20 @@ Run these in `scripts\terminal.bat` as `python -m ap_coder <command>`.
 | `read-pages [--minutes 240]` | have OvisOCR2 read the invoices waiting for it, then stop (Task Scheduler overnight) |
 | `schema` | the exact JSON Schema sent to Azure OpenAI (developers) |
 
+**A scheduled task after an update.** There is no command that follows the current version by itself: a task
+names one folder's `.venv`. An update unzipped **over** the old folder keeps that path. One unzipped into a **new**
+folder removes the old folder's `.venv` once it has checked itself, and the task then fails to start: open it in
+Task Scheduler and change the program and *start in* folder to the new one. An update also stops a `watch` or
+`read-pages` of the older version that is still running, so old code never reads invoices into your data.
+
 ### Two people approving (second approval)
 
 The second approval needs both people to use the same AP Coder database. The simplest set-up is one
 AP PC that both sign in to with their own Windows accounts: put the code in a folder both can open
 (e.g. `C:\APCoder\app`) and have each person run `APProcessor.bat --installer --data-dir C:\APCoder\data`
 once (in `scripts\terminal.bat`). Each person sets *Your name* in Settings → Review; it is kept per Windows account.
+One person at a time has AP Coder open: while the other's is still running (a switched user, not signed out), a
+double-click says whose AP Coder is open and asks them to close it, instead of opening theirs under their name.
 Keep the data folder on a local disk: the database must not live on a network share. To protect it
 against a lost or broken PC, set *Also copy each backup to* in Settings → Data & backups to a OneDrive or
 network folder: the daily backup copies go there (that is safe; only the live database must stay local).

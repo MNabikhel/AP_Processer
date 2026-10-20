@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
+import datetime as dt
 import hashlib
 import json
 import logging
 import os
 import sys
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from ..ai.evaluation import evaluate
 from ..ai.extraction import DocumentExtractor
 from ..ai.labels import _prediction_files, export_labels
@@ -27,12 +30,12 @@ from ..ai.pipeline import (
 )
 from ..coding.tax import TaxSetup, load_tax_mapping
 from ..core.config import Settings
-from ..core.paths import env_path
+from ..core.paths import PROJECT_DIR, env_path
 from ..core.reference_data import ReferenceData, load_reference_data, load_table, parse_policy_notes
 from ..core.schema import build_json_schema
 from ..core.store import Store, default_db_path, private_dir
 from ..intake.mailbox import EMAIL_EXTENSIONS, emails_in, unpack, unpack_folder
-from .doctor import exit_code, format_checks, run_checks
+from .doctor import FAIL, Check, exit_code, format_checks, run_checks
 from .share_report import build_share_report
 
 SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
@@ -223,8 +226,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
     checks = run_checks(settings, lambda: _load_reference(args), online=args.online)
+    try:
+        source = reference_source(args)
+    except Exception as exc:  # noqa: BLE001 - a damaged database file: the doctor reports it, it never crashes
+        db = Path(getattr(args, "db", None) or default_db_path())
+        checks.append(Check("database", FAIL, f"{db} cannot be opened ({exc}): it is damaged or not an AP Coder "
+                            "database. Put back a copy from the backups folder next to it."))  # fmt: skip
+        source = "none (the database cannot be opened)"
     report = format_checks(checks)
-    print(report.replace("\n\n", f"\n\nreference data source: {reference_source(args)}\n\n", 1))
+    print(report.replace("\n\n", f"\n\nreference data source: {source}\n\n", 1))
     return exit_code(checks)
 
 
@@ -238,18 +248,22 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     host = args.host or dashboard_address()
     port = args.port or free_port(address=host)  # (the launcher's own choice: 8501, else the next free one)
-    print(f"Dashboard: {browser_url(host, port)}  (it opens in your browser; Ctrl+C here to stop)", file=sys.stderr)
+    opens = "" if args.no_browser else "it opens in your browser; "  # (the launcher opens it, and says so itself)
+    print(f"Dashboard: {browser_url(host, port)}  ({opens}Ctrl+C here to stop)", file=sys.stderr)
     if not is_loopback(host if host not in ("", "localhost") else "127.0.0.1"):
         print(f"Listening on {host}: other computers on the network can open the dashboard. There is no login: "
               "anyone who can reach this address can see the invoices.", file=sys.stderr)  # fmt: skip
     return serve(host, port, open_browser=not args.no_browser, store=Store(Path(args.db)))
 
 
-def _inputs(paths: list[str]) -> tuple[list[Path], bool] | None:
+def _inputs(paths: list[str], store: Store | None = None) -> tuple[list[Path], bool, int] | None:
     """The invoice files named on the command line (folders expanded, the invoices taken out of saved emails, as
     the dashboard and ``watch`` do), each invoice once: a file named twice, or two identical copies, is one invoice;
-    and whether an email could not be read (said on screen: the command then exits 1). None, said in one line, when
-    one of them is not there (a typo)."""
+    whether an email could not be read (said on screen: the command then exits 1); and how many emails were sorted
+    (each in the Activity log of ``store``, as ``watch`` logs them). None, said in one line, when one of them is not
+    there (a typo)."""
+    from ..intake.inbox import log_sorted
+
     try:
         found = discover_inputs(paths)
     except FileNotFoundError as exc:
@@ -258,7 +272,7 @@ def _inputs(paths: list[str]) -> tuple[list[Path], bool] | None:
     files = [p for p in found if p.suffix.lower() not in EMAIL_EXTENSIONS]
     emails = [p for p in found if p.suffix.lower() in EMAIL_EXTENSIONS]
     emails += [e for raw in paths if Path(raw).is_dir() for e in emails_in(Path(raw))]
-    unread = False
+    unread, sorted_emails = False, 0
     for path in dict.fromkeys(emails):
         try:
             mail = unpack(path)  # attachments saved next to the email; the email moves to emails/
@@ -272,6 +286,9 @@ def _inputs(paths: list[str]) -> tuple[list[Path], bool] | None:
         else:
             print(f"{mail.email}: {_sorted_line(mail)}", file=sys.stderr)
             files += mail.saved
+            sorted_emails += 1
+            if store is not None:
+                log_sorted(store, mail)
     unique: dict[str, Path] = {}
     for path in files:
         try:
@@ -281,7 +298,7 @@ def _inputs(paths: list[str]) -> tuple[list[Path], bool] | None:
         unique.setdefault(key, path)
     if len(unique) < len(files):
         print(f"{len(files) - len(unique)} file(s) left out: the same invoice as another file given.", file=sys.stderr)
-    return list(unique.values()), unread
+    return list(unique.values()), unread, sorted_emails
 
 
 def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
@@ -291,18 +308,21 @@ def cmd_process(args: argparse.Namespace, settings: Settings) -> int:
         model_name=args.model_name,
         vision=args.vision,
     )
-    given = _inputs(args.inputs)
+    store = None if args.no_db else Store(args.db)
+    given = _inputs(args.inputs, store)
     if given is None:
         return 2
-    inputs, unread = given
+    inputs, unread, sorted_emails = given
     if not inputs:
+        if sorted_emails:  # only emails, each sorted (said above): nothing wrong, nothing else to read
+            print(f"No invoices to read: {sorted_emails} email(s) sorted.", file=sys.stderr)
+            return 1 if unread else 0
         print("No supported invoice files found.", file=sys.stderr)
         return 2
     source = reference_source(args)
     if source.startswith("BUNDLED"):
         print("NOTE: using the bundled SAMPLE GL accounts (import yours in the dashboard).", file=sys.stderr)
     reference = _load_reference(args)
-    store = None if args.no_db else Store(args.db)
     pipeline = InvoicePipeline(settings, reference, cache_dir=args.cache_dir or None, store=store)
     if store is not None and not args.force:
         done = [p for p in inputs if store.find_by_hash(p) is not None]
@@ -408,7 +428,39 @@ def watch_once(args: argparse.Namespace, settings: Settings, store: Store, folde
     return done, failed
 
 
+WORKER_FILE = ".ap_coder_worker-{pid}.json"  # in the data folder while watch or read-pages runs
+
+
+@contextlib.contextmanager
+def running_note(command: str) -> Iterator[None]:
+    """While ``watch`` or ``read-pages`` runs, ``<data folder>/.ap_coder_worker-<pid>.json`` says which AP Coder it is
+    (pid, command, folder, version, started), as the server's file does: a newer version's launcher stops an older
+    one before it updates (scripts/running.py), so old code never reads invoices into the same database. A note
+    that can't be written never stops the command."""
+    path: Path | None = private_dir() / WORKER_FILE.format(pid=os.getpid())
+    note = {"pid": os.getpid(), "command": command, "folder": str(PROJECT_DIR), "version": __version__,
+            "started": dt.datetime.now().isoformat(timespec="seconds")}  # fmt: skip
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")  # whole or not at all: the launcher may read it meanwhile
+        tmp.write_text(json.dumps(note, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        path = None
+    try:
+        yield
+    finally:
+        if path is not None:
+            with contextlib.suppress(OSError):
+                path.unlink()
+
+
 def cmd_watch(args: argparse.Namespace, settings: Settings) -> int:
+    with running_note("watch"):
+        return _watch(args, settings)
+
+
+def _watch(args: argparse.Namespace, settings: Settings) -> int:
     # Like the dashboard: without Azure the invoices are read on this computer, and coded from AP's approvals
     # (plus LM Studio when its server answers), so there is nothing to refuse here.
     store = Store(args.db)
@@ -440,7 +492,8 @@ def cmd_read_pages(args: argparse.Namespace, settings: Settings) -> int:
     invoice being read goes back in line, its pages read so far kept."""
     store = Store(args.db)
     try:
-        return _read_pages(args, settings, store)
+        with running_note("read-pages"):
+            return _read_pages(args, settings, store)
     except KeyboardInterrupt:
         print("Stopped: the invoice being read is back in line (pages already read are kept).", file=sys.stderr)
         return 130
@@ -549,8 +602,11 @@ def cmd_extract(args: argparse.Namespace, settings: Settings) -> int:
     given = _inputs(args.inputs)
     if given is None:
         return 2
-    paths, unread = given
+    paths, unread, sorted_emails = given
     if not paths:
+        if sorted_emails:
+            print(f"No invoices to read: {sorted_emails} email(s) sorted.", file=sys.stderr)
+            return 1 if unread else 0
         print("No supported invoice files found.", file=sys.stderr)
         return 2
     out = Path(args.out)
@@ -587,6 +643,10 @@ def cmd_labels(args: argparse.Namespace) -> int:
 
 
 def cmd_evaluate(args: argparse.Namespace) -> int:
+    if not Path(args.ground_truth).exists():
+        print(f"No labels file at {args.ground_truth}: make one with `python -m ap_coder labels` and have AP "
+              "correct it, or give the path of yours with --ground-truth.", file=sys.stderr)  # fmt: skip
+        return 2
     report = evaluate(args.predictions, args.ground_truth, target=args.target)
     data = report.to_dict()
     if not args.show_mismatches:

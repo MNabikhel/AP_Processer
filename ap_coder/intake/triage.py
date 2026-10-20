@@ -227,12 +227,14 @@ class EmailTriage:
     reasons: list[str] = field(default_factory=list)
     documents: list[tuple[Document, Decision]] = field(default_factory=list)
     possible_fraud: bool = False
+    left_out: list[str] = field(default_factory=list)  # attachments not read (a zip, a Word file ...): may be invoices
 
     @property
     def needs_person(self) -> bool:
         """Someone has to look at this email (not just at its invoices in the review queue)."""
         return (
             self.possible_fraud
+            or bool(self.left_out)
             or self.kind in (REMINDER, BANK_CHANGE, NOT_FOR_AP)
             or any(d.kind not in (*QUEUE_KINDS, STATEMENT) for _, d in self.documents)
         )
@@ -240,6 +242,11 @@ class EmailTriage:
     @property
     def label(self) -> str:
         return LABELS[self.kind]
+
+
+def mentions_invoice(text: str) -> bool:
+    """The text (a file name, say) names an invoice, a bill, a credit note or a statement."""
+    return bool(_find(_INVOICE_MENTION, fold(text.replace("_", " ").replace("-", " "))))
 
 
 def _find(pattern: re.Pattern[str], text: str) -> str:
@@ -288,12 +295,16 @@ def classify_document(doc: Document, email_text: str = "") -> Decision:
     return Decision(INVOICE, "it does not say what it is: sent to the review queue to be read")
 
 
-def classify_email(subject: str, body: str, documents: list[Document]) -> EmailTriage:
-    """What the email is, each attachment's decision, and whether it may be fraud."""
+def classify_email(
+    subject: str, body: str, documents: list[Document], left_out: list[str] | None = None
+) -> EmailTriage:
+    """What the email is, each attachment's decision, and whether it may be fraud. ``left_out``: the attachments that
+    were not read (not a PDF, a picture or a spreadsheet, or damaged): the email then waits for a person, since one of
+    them may be an invoice."""
     words = fold(f"{subject}\n{body}")
     decisions = [(d, classify_document(d, f"{subject}\n{body}")) for d in documents]
     kinds = [dec.kind for _, dec in decisions]
-    out = EmailTriage(NOT_FOR_AP, documents=decisions)
+    out = EmailTriage(NOT_FOR_AP, documents=decisions, left_out=list(left_out or []))
     bank = _find(_BANK, words) or next(
         (_find(_BANK, fold(d.text[:MAX_TEXT])) for d in documents if _find(_BANK, fold(d.text[:MAX_TEXT]))), ""
     )
@@ -322,17 +333,22 @@ def classify_email(subject: str, body: str, documents: list[Document]) -> EmailT
         out.reasons.append(f'a payment reminder ("{reminder or "reminder attached"}") with no invoice attached')
     else:
         why = next((f'{what} ("{_find(p, words)}")' for what, p in _NOT_AP_EMAIL.items() if _find(p, words)), "")
-        if not why and _find(_INVOICE_MENTION, words) and not documents:
+        if not why and _find(_INVOICE_MENTION, words) and not documents and not out.left_out:
             why = "it mentions an invoice but has none attached" + (
                 " (it may be a link to a portal: download it and add it on Import invoices)"
                 if _LINK.search(words)
                 else ""
             )
         why = why or next((f"{doc.name}: {dec.reason}" for doc, dec in decisions if dec.kind == NOT_FOR_AP), "")
-        out.reasons.append(why or "nothing in it for AP")
+        if why or not out.left_out:
+            out.reasons.append(why or "nothing in it for AP")
     for doc, dec in decisions:
         if dec.kind not in (*QUEUE_KINDS, STATEMENT) and f"{doc.name}: {dec.reason}" not in out.reasons:
             out.reasons.append(f"{doc.name}: {dec.reason}")
+    if out.left_out:
+        more = len(out.left_out) - 5
+        listed = "; ".join(out.left_out[:5]) + (f"; and {more} more" if more > 0 else "")
+        out.reasons.append(f"left out, not read: {listed}. Open the email: an invoice in it must be added by hand")
     return out
 
 

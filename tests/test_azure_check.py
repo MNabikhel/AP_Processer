@@ -591,10 +591,13 @@ def test_the_card_can_be_included_anywhere_without_context(store):
     assert 'id="azure-check"' in html and "Off — AP Coder works fully offline without it." in html
 
 
-def test_settings_reading_shows_the_azure_card_and_its_own_page_is_not_taken_for_a_tab(store):
-    """Settings → Reading includes the card; /settings/azure-check is the card's page, not "Settings has no such tab"
-    from Settings' /settings/{tab}."""
+def test_settings_reading_shows_the_azure_card_and_its_own_page_is_not_taken_for_a_tab(store, monkeypatch):
+    """Settings → Reading includes the card where the internet is allowed (the offline build uses no cloud service,
+    docs/PILOT.md); /settings/azure-check is the card's page, not "Settings has no such tab" from Settings'
+    /settings/{tab}."""
     client = _client(store)
+    assert 'id="azure-check"' not in client.get("/settings/reading").text
+    monkeypatch.setenv("AP_ALLOW_INTERNET", "1")
     reading = client.get("/settings/reading")
     assert reading.status_code == 200 and 'id="azure-check"' in reading.text
     assert "works fully offline without it" in reading.text

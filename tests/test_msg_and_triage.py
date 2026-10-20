@@ -67,7 +67,9 @@ def test_a_msg_email_is_read_like_an_eml(tmp_path):
         "Invoice from Northwind - INV-4471.pdf",
         "Invoice from Northwind - INV-0.pdf",
     ]
-    assert (tmp_path / "emails" / "Invoice from Northwind.msg").exists() and result.triage.kind == triage.INVOICE
+    # terms.docx is not read: the email waits for a person, in case it is an invoice (B-140)
+    assert (tmp_path / "emails" / PERSON_FOLDER / "Invoice from Northwind.msg").exists()
+    assert result.triage.kind == triage.INVOICE and any("terms.docx" in r for r in result.triage.reasons)
 
 
 def test_a_large_attachment_outside_the_mini_stream(tmp_path):

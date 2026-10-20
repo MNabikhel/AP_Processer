@@ -3,7 +3,8 @@
 Looks across the invoices approved in AP Coder (including those waiting for a second approval) and the
 ERP's invoice register (Exports page), for pairs that are probably the same bill:
 
-* EXACT: same vendor, same invoice number, same amount, approved twice (or in the ERP twice)
+* EXACT: same vendor, same invoice number, same amount, approved twice (or in the ERP twice: also one register row
+  the ERP lists more than once, its ``copies``)
 * NUMBER_TYPO: same vendor and amount, invoice numbers one keystroke apart ("10482" / "10428",
   "INV-5531" / "INV-5531A")
 * OTHER_VENDOR: same invoice number and amount under two vendor names (a duplicate vendor record)
@@ -53,11 +54,13 @@ class Bill:
     total: float
     currency: str = ""
     exported: bool = False  # an AP Coder invoice already sent to the ERP
+    copies: int = 1  # an ERP bill the register lists more than once (entered twice in the ERP)
 
     @property
     def label(self) -> str:
         where = f"#{self.invoice_id}" if self.invoice_id else "ERP"
-        return f"{self.number} ({where}{', ' + self.date if self.date else ''})"
+        again = f", entered {self.copies} times" if self.copies > 1 else ""
+        return f"{self.number} ({where}{', ' + self.date if self.date else ''}{again})"
 
 
 @dataclass(frozen=True)
@@ -117,7 +120,7 @@ def bills(store: Store) -> list[Bill]:
         if (r["total"] or 0) <= 0:
             continue
         out.append(Bill("ERP", None, r["vendor_key"], r["vendor_name"], r["invoice_number"], r["number_key"],
-                        r["invoice_date"] or "", round(r["total"], 2)))  # fmt: skip
+                        r["invoice_date"] or "", round(r["total"], 2), copies=int(r.get("copies") or 1)))  # fmt: skip
     return out
 
 
@@ -151,6 +154,9 @@ def find(store: Store) -> list[Pair]:
         if bill.number_key:
             by_number_amount[(bill.number_key, bill.total)].append(bill)
 
+    for bill in all_bills:
+        if bill.copies > 1:  # the same bill entered more than once in the ERP: one register row, paired with itself
+            add(EXACT, bill, bill)
     for group in by_vendor_amount.values():
         for a, b in combinations(group, 2):
             if a.number_key and a.number_key == b.number_key:

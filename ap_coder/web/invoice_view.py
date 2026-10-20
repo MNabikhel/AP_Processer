@@ -30,7 +30,14 @@ from ap_coder.capture.normalize import parse_amount, parse_date
 from ap_coder.capture.types import MISSING, Box, CaptureResult
 from ap_coder.coding import rules, vendor_mail
 from ap_coder.coding.po import match_invoice, po_label
-from ap_coder.coding.review import coding_from_inputs, is_blank, split_line, to_number
+from ap_coder.coding.review import (
+    codes_to_pick,
+    coding_from_inputs,
+    is_blank,
+    split_line,
+    to_number,
+    uses_cost_centers,
+)
 from ap_coder.coding.tax import (
     OUTSIDE_CANADA,
     PLACE_OF_SUPPLY,
@@ -812,7 +819,7 @@ def suggestions(store: Store, reference: ReferenceData, coding: InvoiceCoding) -
              if li.predicted_gl_code == UNASSIGNED or accounts.get(li.predicted_gl_code) is None]  # fmt: skip
     if not lines:
         return []
-    feedback = store.feedback_rows()
+    feedback = store.learning_rows(coding.vendor_name)
     default_gl = (store.get_vendor(vendor_key(coding.vendor_name)) or {}).get("default_gl") or ""
     out = []
     for pos, li in lines:
@@ -1002,19 +1009,10 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     terms = store.vendor_terms(vendor_key(coding.vendor_name))
 
     # The approve bar: never post to UNASSIGNED; where cost centers are used, a line without one isn't posted either.
-    uncoded = [str(li.line_number) for li in coding.line_items if li.predicted_gl_code == UNASSIGNED]
-    no_cc = ([str(li.line_number) for li in coding.line_items if li.predicted_cost_center == UNASSIGNED]
-             if has_cc and reference.cost_centers.codes else [])  # fmt: skip
-    pick = ""
+    # The queue asks the same question (pages/review.py attention), so its Ready means Approve is open here.
+    pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
     key = override_key(errors) if errors else ""
-    if uncoded or no_cc:
-        which = lambda numbers: f"line{'s' if len(numbers) > 1 else ''} {', '.join(numbers)}"  # noqa: E731
-        parts = ([f"a GL account for {which(uncoded)}"] if uncoded else []) + (
-            [f"a cost center for {which(no_cc)}"] if no_cc else [])  # fmt: skip
-        pick = f"Pick {' and '.join(parts)} to approve"
-        allow = False
-    else:
-        allow = not errors or draft.override == key
+    allow = not pick and (not errors or draft.override == key)
     changed = ai_changes(coding, ai)
     lines_n = len(coding.line_items)
     _, rule_changes = rules.apply(coding, store.coding_rules())
@@ -1149,6 +1147,30 @@ def po_coding(store: Store, coding: InvoiceCoding, draft: Draft, invoice_id: int
         if m.po_cc:
             frame.loc[at, "predicted_cost_center"] = m.po_cc
     return lines_records(frame), len(differs)
+
+
+def fill_lines(draft: Draft, gl: str, cc: str) -> tuple[list[dict[str, Any]], int, int]:
+    """Give every line without a GL account ``gl`` and every line without a cost center ``cc`` (either may be "":
+    left as it is); a line already coded keeps its code. Returns the new rows and how many lines got each."""
+    frame = lines_frame(draft.lines)
+    real = ~frame.apply(lambda row: all(is_blank(row.get(k)) for k in ("description", "amount")), axis=1)
+    counts = []
+    for column, code in (("predicted_gl_code", gl), ("predicted_cost_center", cc)):
+        missing = real & frame[column].apply(lambda v: is_blank(v) or v == UNASSIGNED)
+        if code:
+            frame.loc[missing, column] = code
+        counts.append(int(missing.sum()) if code else 0)
+    return lines_records(frame), counts[0], counts[1]
+
+
+def usual_cost_center(store: Store, reference: ReferenceData, vendor_name: str) -> str:
+    """The one cost center every past decision on this vendor's lines used (still in the list), else "": offered
+    for its lines without one. Two cost centers, or a line without one, and there is no usual one."""
+    if not uses_cost_centers(reference) or not (vendor_name or "").strip():
+        return ""
+    used = {r.get("final_cc") or "" for r in store.feedback_rows(vendor_name=vendor_name)}
+    only = next(iter(used)) if len(used) == 1 else ""
+    return only if only != UNASSIGNED and reference.cost_centers.get(only) is not None else ""
 
 
 def use_suggestion(reference: ReferenceData, coding: InvoiceCoding, draft: Draft, position: int, gl: str,

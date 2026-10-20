@@ -33,6 +33,7 @@
       {% if not chat_ready %}<span class="muted"><span class="ms" aria-hidden="true">info</span> Optional: start LM Studio's server, then check Settings → Reading.</span>{% endif %}
       <a class="btn" href="/accounts"><span class="ms" aria-hidden="true">account_tree</span>GL accounts &amp; tax</a>
       <a class="btn" href="/process"><span class="ms" aria-hidden="true">upload_file</span>Import invoices</a>
+      {% if name_todo %}<a class="btn" href="/settings/review"><span class="ms" aria-hidden="true">badge</span>Your name</a>{% endif %}
     </div>
   </section>
   {% if not demo_first %}{% include "_demo_card.html" %}{% endif %}

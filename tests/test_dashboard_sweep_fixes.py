@@ -262,6 +262,7 @@ def test_getting_started_counts_only_the_steps_that_are_needed(tmp_path, monkeyp
     client = client_for(store)
     page = client.get("/review").text
     assert "Chat model for GL suggestions" in page and "optional" in page
-    assert "aria-label='1/5'" in page, page  # reading invoices done; GL, tax mapping, OvisOCR2, first invoices to do
+    # reading invoices done; GL, tax mapping, OvisOCR2, your name and the first invoices to do
+    assert "aria-label='1/6'" in page, page
     load_sample_setup(store)
-    assert "aria-label='3/5'" in client.get("/review").text
+    assert "aria-label='3/6'" in client.get("/review").text

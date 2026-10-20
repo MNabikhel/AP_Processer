@@ -48,7 +48,7 @@
     <div class="rq-bulk-bar">
       <div class="rq-bulk" title="No errors or warnings, confidence above the threshold">
         <span class="ms" aria-hidden="true">done_all</span>
-        <span><b>{{ candidates | length }} invoices look clean</b><span class="rq-bulk-sub"> · no errors or warnings · {{ candidates_total }}</span></span>
+        <span><b>{{ candidates | length }} invoices look clean</b><span class="rq-bulk-sub"> · no errors or warnings · {{ candidates_total }}{% if candidates_left %} · {{ candidates_left }}{% endif %}</span></span>
       </div>
       <details class="pop">
         <summary class="btn sm"><span class="ms" aria-hidden="true">done_all</span>Approve {{ candidates | length }}</summary>
@@ -84,7 +84,8 @@
         <div class="c-date">{{ r.date }}</div>
         <div class="c-prov" title="{{ r.province_title }}">{{ r.province }}</div>
         <div class="c-tax">{% for t in r.taxes %}<span class="rq-tax">{{ "Other tax" if t == "OTHER" else t }}</span>{% endfor %}</div>
-        <div class="c-status">{{ ui.pill("Needs attention", "warn") if r.flagged else ui.pill("Ready", "ok") }}</div>
+        <div class="c-status"{% if r.reason %} title="{{ r.reason }}"{% endif %}>{{ ui.pill("Needs attention", "warn") if r.flagged else ui.pill("Ready", "ok") }}
+          {% if r.reason %}<div class="why">{{ r.reason }}</div>{% endif %}</div>
         <div class="c-conf"><span class="rq-conf {{ 'ok' if r.confidence_ok else 'warn' }}" title="Confidence; {{ threshold | pct }} or more needs no second look">
           <span class="bar" aria-hidden="true"><i style="width: {{ (r.confidence * 100) | round | int }}%"></i></span><b>{{ r.confidence_text }}</b></span></div>
         <div class="c-amt">{{ r.amount }}<small>{{ r.currency }}</small></div>
@@ -170,7 +171,10 @@
   </section>
 
 {% elif tab == "second" %}
-  <p class="muted">{% if limit_amount %}Invoices over {{ limit_amount | money }} CAD need a second approver before they can be exported. {% endif %}The second approver must be someone other than the first.</p>
+  <p class="muted">{% if limit_amount %}Invoices over {{ limit_amount | money }} CAD need a second approver before they can be exported. {% endif %}The second approver must be someone other than the first,
+    on another computer login: on one laptop with one Windows login it can't be given. To test it, sign in to this laptop
+    with a second Windows account and open AP Coder there, or have a colleague open it from their computer over the
+    office network. Not going ahead? Send back returns an invoice to the review queue.</p>
   <section class="card list">
     {% if not awaiting %}
     {{ ui.empty_note("Nothing waiting", " Invoices over the approval limit appear here once approved.", "how_to_reg") }}

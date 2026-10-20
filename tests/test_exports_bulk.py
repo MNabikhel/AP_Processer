@@ -143,6 +143,52 @@ def test_bulk_approve_never_takes_a_check_that_always_needs_a_person(tmp_path):
     assert store.get_invoice(invoice_id)["status"] == REVIEW
 
 
+def _negated(doc):
+    """A credit note for ``doc``: every amount with its sign turned."""
+    d = json.loads(json.dumps(doc))
+    for k in ("subtotal", "tax_total", "grand_total"):
+        d[k] = -d[k]
+    for li in d["line_items"]:
+        li["amount"], li["unit_price"] = -li["amount"], -li["unit_price"]
+    for tl in d["tax_lines"]:
+        tl["taxable_amount"], tl["tax_amount"] = -tl["taxable_amount"], -tl["tax_amount"]
+    return d
+
+
+def test_bulk_approval_never_takes_a_credit_note(tmp_path):
+    """B-132: a clean credit note (it credits an approved invoice, no warning) is applied by a person, as the
+    touchless rules say: bulk approval does not list it nor approve it. Titled a credit note but printed with a
+    positive total is one too (what capture read)."""
+    from ap_coder.ai.pipeline import finalise_coding
+    from ap_coder.core.schema import InvoiceCoding
+    from ap_coder.core.store import load_sample_setup
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    ref = store.reference_data()
+    known = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    out, _ = finalise_coding(InvoiceCoding.model_validate(known), ref, Settings(), store=store)
+    store.approve_invoice(store.add_invoice(tmp_path / "a.pdf", out, {}), out, "jane")
+    credit = {**_negated(known), "invoice_number": "CN-1", "original_invoice_number": known["invoice_number"],
+              "confidence_score": 0.99, "due_date": ""}  # fmt: skip
+    out, report = finalise_coding(InvoiceCoding.model_validate(credit), ref, Settings(), store=store)
+    assert not [i for i in report.issues if i.severity != "info"] and not report.requires_review
+    credit_id = store.add_invoice(tmp_path / "b.pdf", out, report.to_dict())
+    # Titled a credit note, with its total printed positive (without the delivery line: not the same amount).
+    tax = {**known["tax_lines"][0], "taxable_amount": 15850.0, "tax_amount": 2060.5}
+    titled = {**known, "invoice_number": "CN-2", "confidence_score": 0.99, "line_items": known["line_items"][:4],
+              "subtotal": 15850.0, "tax_lines": [tax], "tax_total": 2060.5, "grand_total": 17910.5}  # fmt: skip
+    out, report = finalise_coding(InvoiceCoding.model_validate(titled), ref, Settings(), store=store)
+    assert not [i for i in report.issues if i.severity != "info"] and not report.requires_review
+    titled_id = store.add_invoice(tmp_path / "c.pdf", out, report.to_dict())
+    store.save_capture(titled_id, {"credit_note": True})
+    listed = [c["id"] for c in clean_candidates(store)]
+    assert credit_id not in listed and titled_id not in listed
+    result = bulk_approve(store, ref, Settings(), [credit_id, titled_id], "jane")
+    assert result["approved"] == [] and all("credit note" in why for _, why in result["skipped"])
+    assert store.get_invoice(credit_id)["status"] == REVIEW and store.get_invoice(titled_id)["status"] == REVIEW
+
+
 def test_every_list_query_takes_more_ids_than_sqlite_takes_variables(demo_store, monkeypatch, few_sql_variables):
     """Each store call that takes a list of ids or keys: past an older SQLite build's 999 bound variables."""
     s = demo_store
@@ -185,3 +231,25 @@ def test_xlsx_export_still_neutralises_formulas():
     cells = [c for ws in load_workbook(io.BytesIO(data)).worksheets for row in ws.iter_rows() for c in row]
     assert not [c.coordinate for c in cells if c.data_type == "f"]
     assert any(c.value == "=1+1" and c.data_type == "s" for c in cells)
+
+
+def test_an_invoice_approved_without_a_stored_distribution_still_has_its_lines_in_the_export():
+    """An invoice approved by an older version has no gl_distribution stored: its posting lines are built again
+    from its coding (as for JD Edwards), with the tax setup's accounts, instead of the file leaving it out."""
+    from ap_coder.coding.tax import load_tax_mapping
+
+    from .conftest import DATA
+
+    doc = json.loads((SAMPLES / "ground_truth" / "northwind_ON_HST_NW-2026-0912.json").read_text())
+    assert "gl_distribution" not in doc
+    inv = {"id": 5, "final_output": doc}
+    treatments = load_tax_mapping(DATA / "tax_gl_mapping.csv")
+    for fmt in ("csv", "custom"):
+        data, _, _ = exports.build(fmt, [inv], {}, 3, {}, tax_treatments=treatments)
+        rows = list(csv.DictReader(io.StringIO(data.decode("utf-8-sig"))))
+        assert len(rows) == len(doc["line_items"]) + 1, fmt  # each line and the HST
+        assert round(sum(float(r["Amount"]) for r in rows), 2) == doc["grand_total"]
+        assert "2310" in {r.get("GL account") or r.get("GLAccount") for r in rows}  # the HST account
+    (lines,) = [ws for ws in load_workbook(io.BytesIO(exports.build("xlsx", [inv], {}, 3)[0])).worksheets
+                if ws.title == "GL lines"]  # fmt: skip
+    assert lines.max_row == len(doc["line_items"]) + 2  # the header, each line and the HST

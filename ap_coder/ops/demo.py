@@ -9,7 +9,8 @@ Learning page has history to show.
 
 Everything it adds is marked ``meta.demo`` and can be removed with ``remove_demo`` without touching
 real invoices. If no purchase orders are loaded, the sample POs that go with the invoices are loaded too
-(and removed with the demo).
+(and removed with the demo); so are the sample GL accounts, cost centers, tax setup and policy on a database
+without GL accounts (put back as they were when the demo is removed, unless the user changed them meanwhile).
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from ..core.store import Store, load_sample_purchase_orders, load_sample_setup, 
 SAMPLES_DIR = PROJECT_DIR / "samples"
 DEMO_POS_SETTING = "demo_purchase_orders"  # PO keys the demo loaded, removed with it
 DEMO_VENDORS_SETTING = "demo_vendor_master"  # vendor keys of the sample vendor master the demo loaded
+DEMO_SETUP_SETTING = "demo_reference_setup"  # the reference data before and after the demo loaded the sample setup
 DEMO_REVIEWER = "Demo reviewer"
 
 
@@ -124,13 +126,44 @@ def is_demo(invoice: dict[str, Any]) -> bool:
     return bool((invoice.get("meta") or {}).get("demo"))
 
 
+def _setup(store: Store) -> dict[str, Any]:
+    """The reference data the sample setup fills in, as the demo compares and puts it back."""
+    return {
+        "gl_accounts": store.list_accounts("gl_accounts"),
+        "cost_centers": store.list_accounts("cost_centers"),
+        "tax": {t: [x.treatment, x.gl_code] for t, x in store.tax_treatments().items()},
+        "policy_notes": store.get_setting("policy_notes"),
+    }
+
+
+def _put_back_setup(store: Store) -> None:
+    """Each part of the sample setup the demo loaded (GL accounts, cost centers, tax setup, policy) as it was before,
+    when it is still as the demo left it: a part the user changed meanwhile is theirs now and stays."""
+    saved = json.loads(store.get_setting(DEMO_SETUP_SETTING) or "{}")
+    before, after = saved.get("before"), saved.get("after")
+    if not before or not after:
+        return
+    now = _setup(store)
+    for table in ("gl_accounts", "cost_centers"):
+        if now[table] == after[table]:
+            store.save_accounts(table, before[table])
+    if now["tax"] == after["tax"]:
+        for tax_type, (treatment, gl_code) in before["tax"].items():
+            store.set_tax_treatment(tax_type, treatment, gl_code)
+    if now["policy_notes"] == after["policy_notes"]:
+        store.set_setting("policy_notes", before["policy_notes"])
+    store.set_setting(DEMO_SETUP_SETTING, "")
+
+
 def load_demo(store: Store, settings: Settings | None = None) -> dict[str, int]:
     """Add the demo invoices (once). Returns how many were added to the queue and pre-approved."""
     if not demo_available():
         raise FileNotFoundError(f"sample invoices not found in {SAMPLES_DIR}")
     settings = settings or Settings()
     if not store.list_accounts("gl_accounts"):
+        before = _setup(store)
         load_sample_setup(store)
+        store.set_setting(DEMO_SETUP_SETTING, json.dumps({"before": before, "after": _setup(store)}))
     real_invoices = len(store.list_invoices()) - store.demo_count()
     if not store.has_vendor_master() and not real_invoices:
         # A sample vendor master (Cascade left out on purpose). Only on a database without real invoices (they
@@ -198,4 +231,5 @@ def remove_demo(store: Store) -> int:
     if po_keys:
         store.delete_purchase_orders(po_keys)
         store.set_setting(DEMO_POS_SETTING, "")
+    _put_back_setup(store)
     return len(ids)

@@ -15,8 +15,10 @@ from .statements import day_first_order, read_date
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "vendor_name": ("vendorname", "vendor", "supplier", "suppliername", "name", "fournisseur"),
-    "invoice_number": ("invoicenumber", "invoice", "invoiceno", "invno", "documentnumber", "document", "docno",
-                       "reference", "facture", "vendorinvoice", "supplierinvoice"),
+    # The supplier's own number first: a register lists the ERP's document number next to it.
+    "invoice_number": ("supplierinvoice", "supplierinvoicenumber", "supplierinvoiceno", "vendorinvoice",
+                       "vendorinvoicenumber", "vendorinvoiceno", "invoicenumber", "invoice", "invoiceno", "invno",
+                       "facture", "documentnumber", "document", "docno", "reference"),
     "invoice_date": ("invoicedate", "date", "documentdate", "postingdate"),
     "total": ("total", "invoicetotal", "amount", "grossamount", "totalamount", "montant", "invoiceamount"),
 }  # fmt: skip

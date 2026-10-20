@@ -188,6 +188,27 @@ def test_bank_and_tax_number_history_is_masked(client, store, tmp_path):
     assert "987654321RT0001" in text and "Changed" in text
 
 
+def test_a_new_bank_account_ending_in_the_same_four_digits_shows_as_changed(client, store, tmp_path):
+    """B-191: the history grouped accounts by their last 4 digits, so another account at another bank that ends in
+    the same 4 digits counted as the old one: one row, no "Changed", while the review screen warned."""
+    old = "Transit 00012, Institution 003, Account 5011234567"
+    new = "Transit 47210, Institution 815, Account 9907754567"
+    for n, bank in enumerate([old, new]):
+        pdf = tmp_path / f"{n}.pdf"
+        pdf.write_bytes(b"%PDF-1.4 " + bytes([n]))
+        store.add_invoice(
+            pdf,
+            {"vendor_name": "Acme Ltd", "invoice_number": f"A-{n}", "invoice_date": f"2026-0{n + 1}-01",
+             "grand_total": 10, "remit_bank_account": bank},
+            {"issues": []},
+        )  # fmt: skip
+    key = store.vendor_summaries()[0]["vendor_key"]
+    text = client.get("/vendors", params={"open": key}).text
+    assert "Changed" in text
+    assert "00012 003" in text and "47210 815" in text  # the bank and branch tell the two apart
+    assert "5011234567" not in text and "9907754567" not in text
+
+
 def test_ask_the_vendor_drafts_an_email_for_its_invoices_in_the_queue(client, store, tmp_path):
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"%PDF-1.4")

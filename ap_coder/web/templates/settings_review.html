@@ -30,6 +30,11 @@
                title="Above this amount, an approved invoice waits for a second, different approver before export."></label>
       <p class="muted">Above this amount, an approved invoice waits for a second, different approver before export. A
         foreign-currency invoice is converted to CAD at the exchange rates below (as it is, without a rate).</p>
+      <p class="muted">The second approver needs their own name and their own computer login, so on one laptop with
+        one Windows login it can't be given. To test it, sign in to this laptop with a second Windows account and open
+        AP Coder there (each account sets its own name above), or have a colleague open it from their computer over the
+        office network (docs/PILOT.md, "What is sent over the network"). An invoice waiting for it can always be sent
+        back to the review queue with Send back.</p>
       <label class="field">Days to pay when an invoice prints no due date and no terms
         <input type="number" name="terms_days" min="0" max="180" step="1" value="{{ terms_days }}"
                title="Used to show when an invoice is due, to sort the queue by due date and in exports."></label>

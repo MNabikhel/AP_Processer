@@ -3,7 +3,8 @@
 Every page is a module of ``ap_coder/web/pages`` listed in ``pages.PAGES``; pages not built yet answer with the
 placeholder template. Besides the pages:
 
-* ``GET /healthz``: {"ok", "app", "version", "folder", "pid", "port"} for the launcher (no secrets).
+* ``GET /healthz``: {"ok", "app", "version", "folder", "pid", "port"} for the launcher (no secrets); to this
+  computer, also "user" (the account running it).
 * ``POST /shutdown``: stops the server cleanly; only from this computer, with the token ``serve`` wrote to the
   data folder's ``.ap_coder_server.json`` (header ``X-AP-Coder-Token``).
 * ``GET /jobs/<name>``: how far a background job got (``ap_coder/web/jobs.py``).
@@ -13,6 +14,7 @@ placeholder template. Besides the pages:
 from __future__ import annotations
 
 import contextlib
+import getpass
 import hmac
 import importlib
 import os
@@ -36,6 +38,15 @@ from ap_coder.web.pages import MORE_MODULES, PAGES, Page
 from ap_coder.web.security import TOKEN_HEADER, LocalOnly
 
 CODE_FOLDER = core.WEB_DIR.parent.parent  # the folder holding ap_coder/ (the launcher checks it is its own)
+
+
+def os_user() -> str:
+    """The computer account running this server ("" when it can't be told): two Windows accounts may share one AP
+    Coder folder and data folder, and the launcher opens only its own person's (scripts/running.py)."""
+    try:
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001 - no login name available (unusual service accounts)
+        return ""
 
 
 class CheckedStaticFiles(StaticFiles):
@@ -122,7 +133,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, Any]:
         server = request.scope.get("server") or (None, None)
-        return {
+        found = {
             "ok": True,
             "app": "ap-coder",
             "version": __version__,
@@ -130,6 +141,9 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
             "pid": os.getpid(),
             "port": request.app.state.port or server[1],
         }
+        if is_this_computer(request.client.host if request.client else ""):  # (never said to the network)
+            found["user"] = os_user()  # another account's double-click must not open this one (B-168)
+        return found
 
     @app.post("/shutdown")
     def shutdown(request: Request) -> JSONResponse:

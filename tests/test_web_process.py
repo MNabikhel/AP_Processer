@@ -9,6 +9,7 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
+from ap_coder.core import ui
 from ap_coder.core.config import Settings
 from ap_coder.core.store import REVIEW, Store, load_sample_setup
 from ap_coder.web.app import create_app
@@ -157,3 +158,32 @@ def test_the_reading_banner_shows_on_process_and_review_only(client):
     assert banner in client.get("/process").text  # no LM Studio in tests: OvisOCR2 isn't running
     assert banner in client.get("/review").text
     assert banner not in client.get("/help").text
+
+
+def test_the_import_list_says_ready_only_for_an_invoice_the_queue_calls_ready(store):
+    """With the sample setup (no cost centers picked by the coder) and LM Studio not answering (weak matches coded),
+    a sample whose checks found no error is still one whose lines need a cost center: not "ready"."""
+    from ap_coder.web.pages.review import attention
+
+    s = Settings()
+    llm = replace(s.llm, provider="local", base_url="http://127.0.0.1:9/v1")  # nothing answers there
+    app = create_app(replace(s, llm=llm), store, start_reader=False)
+    client = TestClient(app, base_url="http://localhost")
+    upload(client, *sorted(p.name for p in SAMPLES.glob("*.pdf")))
+    snap = finished(app, client)
+    pending = store.list_invoices(REVIEW)
+    reasons = attention(store, store.reference_data(), pending)
+    assert any(not i["requires_review"] for i in pending if i["id"] in reasons)  # the case the import list missed
+    lines = [line["text"] for line in snap["lines"]]
+    for inv in pending:
+        said = [t for t in lines if t.startswith(f"{inv['vendor_name']}:")]
+        assert said and all(t.endswith("needs attention" if inv["id"] in reasons else "ready") for t in said), (
+            said,
+            reasons.get(inv["id"]),
+        )
+    insights = client.get("/insights").text  # its share is the checks' flag, said so: not the queue's "Ready"
+    assert "Flagged by the checks when processed" in insights and "Sent for a closer look" not in insights
+    rows = client.get("/process").text.split("<div class='apc-rrow'>")[1:]  # Recently processed: the same pill
+    for inv in pending:
+        row = next((r for r in rows if ui.esc(inv["vendor_name"]) in r and inv["invoice_number"] in r), None)
+        assert row is None or ("Needs attention" in row) == (inv["id"] in reasons), (inv["vendor_name"], row)
