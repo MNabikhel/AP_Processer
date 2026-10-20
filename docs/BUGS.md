@@ -2994,3 +2994,110 @@ Found by reading a hard corpus of 150 synthetic Canadian invoices with exact tru
 - **Fix:** A last token that repeats the end of the token before it is OCR's second reading of the number, and is dropped first.
 - **Test:** `tests/test_sweep4_layouts.py::test_a_title_glued_to_its_number_read_twice_by_ocr`
 - **Lesson:** Don't join every OCR token on a line: a number read twice is still one number.
+
+### Reading: photos and poor scans
+
+Measured on a corpus of 150 hard synthetic invoices with exact answers (26 phone photos of a page on a desk, 74 poor
+scans: 22 scans, 16 faxes, 12 speckled, 12 upside down, 12 faint), read with OCR only (no page reader, no AI), the
+table finder's model on. None of the corpus is in the repo: each test makes its own picture, degraded the same way.
+
+#### B-300 · A shadow across a photographed page cut the page short at the shadow: its totals were lost · high
+- **Where:** `ap_coder/capture/layout.py` (`flatten_photo`, new `_page_outline`)
+- **Symptom:** of 26 desk photos, 9 were flattened to part of the page: a hand's, a phone's or a lamp's shadow over
+  the right side or the bottom made that part as dark as the desk, and the page was cut off there (the totals column
+  gone: subtotal, taxes and total *missing*), or squared up on a wrong four-cornered outline (h-0086, h-0127: the page
+  warped). Photos read 75.4% of their fields right, 46% of invoices fully right.
+- **Cause:** the page was told from the desk by one brightness threshold (Otsu) over the whole photo: paper in shadow
+  falls below it.
+- **Fix:** the paper in the light is only the seed. The photo is flooded from that seed and from the picture's border
+  at once (OpenCV's watershed): the two floods meet where the colour changes sharply, the page's edge, and not at a
+  shadow's soft edge. The checks that tell a desk photo from a scan are unchanged (the page must not touch the
+  picture's edge, the desk must be darker than the paper): on the corpus's 93 scanned, faxed and speckled pictures,
+  none is flattened, as before. It costs a few milliseconds.
+- **Measured:** photos 75.4% → 96.2% of fields right, 46.2% → 80.8% fully right, no silent error 80.8% → 92.3%
+  (all 26 pages now whole). What is left on photos is the rule reader's (labels under values, credits printed
+  positive).
+- **Test:** `tests/test_photo_scan_quality.py::test_a_shadow_across_the_page_does_not_cut_the_page_short`
+- **Lesson:** Don't find an object by its brightness when the light is uneven: find its edge.
+
+#### B-301 · A page scanned upside down was read upside down when too few amounts stood beside their labels · high
+- **Where:** `ap_coder/capture/layout.py` (`_upright_turn`, new `_letters_upright`)
+- **Symptom:** of 12 invoices scanned upside down (14 pages turned), 7 pages were read as they lay: a credit note whose
+  amounts read "$326.64CR" (h-0064: nothing found but the currency), a 3-page credit (h-0044: the vendor read as
+  "Monthly maintenance contract", the totals' signs lost, *verified*) and a 2-page long table whose first page alone
+  was turned (h-0123: the vendor read as "Continued.", *likely*).
+- **Cause:** a page was turned only when at least two amounts stood left of their labels (`_label_side` ≤ −2). An
+  amount ending in "CR", or a label sharing its line with its amount, does not count, so a page with few such rows
+  scored −1 or 0 and was left as it was.
+- **Fix:** the letters say which way up a page is. In each OCR line of five characters or more, Latin capitals,
+  figures and tall letters rise above the small letters' band far more than g, j, p, q, y hang below it; on a page
+  on its head it is the other way round. A page is turned when at least 8 lines stand on their heads and three
+  times as many as stand upright (a line of capitals alone says nothing); a page whose letters clearly stand upright
+  is never turned; otherwise the labels' side decides, as before. Measured on the corpus's 66 upright scanned pages
+  (scans, faxes, speckled, faint) and 26 photos: at worst 7 lines stood on their heads against 14 upright; the 14
+  turned pages: at least 18 on their heads, at most a third as many upright. A few milliseconds a page.
+- **Measured:** upside down 83.5% → 95.0% of fields right, 58.3% → 75.0% fully right, no silent error 75.0% →
+  100%. bench (60, seed 3, half scans) 99.8%, verified 100%.
+- **Test:** `tests/test_photo_scan_quality.py::test_a_page_scanned_upside_down_is_known_by_its_letters`
+- **Lesson:** Don't infer a page's orientation from the layout alone (it varies from invoice to invoice): the
+  print's own shape says it on every line.
+
+#### B-302 · On a scan fed askew, an amount at the right edge was read with the label of the row above · high
+- **Where:** `ap_coder/capture/__init__.py` (new `_read_straight`, used by `analyze` for the rule reader on the
+  first and the second OCR read); `ap_coder/capture/layout.py` (`_skew`)
+- **Symptom:** of 22 scans tilted 2 to 5 degrees, 11 had a value wrong or missing. On a landscape page tilted 4.2
+  degrees (h-0085) the subtotal was read as 99.52 (the GST), the GST as 139.33, the PST as 2,229.33 (the total); on
+  others the invoice number took the PO's line, the due date the invoice date's. No silent error on 77.3% of scans.
+- **Cause:** the header fields were read on the page as tilted: a label and its amount at the other end of the row
+  lie a row apart on a page tilted 4 degrees. Only the line items were read straightened (`reader.straightened`),
+  and a tilt over 4 degrees was not measured at all (taken for a page turned).
+- **Fix:** the rule reader reads a tilted scan straightened too: each line (words set close together on one
+  baseline) is moved up or down as one piece to where it would be on a straight page, the lines are formed again,
+  and each reading's boxes are put back where the words are printed, so the highlight still falls on the scan as
+  shown. A line is moved whole, not word by word: moved word by word, a title's words came apart ("Liberty" lost
+  from "Liberty Consulting Group Co."). A tilt of up to 8 degrees is measured (it was 4; `MAX_TILT`, as B-345 also found).
+- **Measured:** scans 85.8% → 93.8% of fields right, 50.0% → 72.7% fully right, no silent error 77.3% → 95.5%;
+  faxes, speckled, faint and photos unchanged; bench (60, seed 3, half scans) 99.8%, verified 100%. Left: on a 5
+  degree scan OCR itself joins two neighbouring lines' words ("1880 Industrial Pkwy Kingsway Mechanical Limited"),
+  so the vendor was taken from a salesperson's name (*likely*, h-0008).
+- **Test:** `tests/test_photo_scan_quality.py::test_a_scan_fed_askew_reads_each_label_with_its_own_amount`
+- **Lesson:** Don't straighten only part of the reading: every reader that pairs things across a row needs it.
+
+#### B-303 · On a page scanned at 5 degrees, a long line's box covered the line under it: the two were read as one · medium
+- **Where:** `ap_coder/capture/layout.py` (`ocr_image`, `_split_ocr_line`, new `_edges`, `TIGHT_FROM`);
+  `ap_coder/capture/__init__.py` (`_read_straight`)
+- **Symptom:** after B-302, a scan tilted 5 degrees (h-0008) still read its vendor as "K. Singh" (*likely*, a
+  salesperson): its name in large print and the address under it were one line, "1880 Industrial Pkwy Kingsway
+  Mechanical Limited"; on others a due date or the terms were missed for the same reason.
+- **Cause:** an OCR line's words were given the box around the whole line. On a tilted page that box is as tall as
+  the print plus the tilt over the line's length (a 600-pixel line at 5 degrees: 50 pixels more), and it reached
+  over the next line down.
+- **Fix:** on a page tilted more than about 1.7 degrees, each word's box follows the OCR line's top and bottom edges
+  where the word stands (the line's four corners), so it is as high as the print there. The reader then moves each
+  word on its own to the straightened page (B-302 moves whole lines, right while a word's box was its line's). Pages
+  tilted less, as the benchmark's scans (at most 1.5 degrees), are read as before.
+- **Measured:** scans 93.8% → 95.1% of fields right, 72.7% → 81.8% fully right, no silent error 95.5% → 100%; other
+  pictures unchanged; bench (60, seed 3, half scans) 99.8%, verified 100%. On such a page the lines as formed on the
+  tilted page (not read by the rule reader) may now break a long line in two; the rule reader and the line items read
+  the page straightened.
+- **Test:** `tests/test_photo_scan_quality.py::test_on_a_steeply_tilted_scan_two_lines_close_together_stay_apart`
+- **Lesson:** Don't give a part the box of its whole when the whole is tilted: the box grows with the tilt.
+
+#### Left as they are (photos and poor scans)
+
+- **N-98** · Softening a black-and-white page before OCR (a 3 × 3 blur: a fax's strokes are jagged and broken, and the
+  OCR models were trained on grey print) made the first engine read 87.0% of the values printed on 16 faxes against
+  83.9%, but no more fields came out right; softened for both engines, both read a fax's "Solutions" as
+  "Solutlons" and agreed on it (a vendor name shown as *verified* wrongly). Not done. Faxes stay at 80.5% of fields
+  right, 25% fully right: most of what is left is the rule reader's (labels under their values, credits printed
+  positive) and OCR's broken characters on 100-dpi rows.
+- **N-99** · On a real photo of a German invoice tilted 3 degrees (`drv_de_hetzner_photo`), the logo "HETZNER" and
+  the small "ONLINE" under it were one line only because their boxes happened to overlap; read straightened
+  (B-303) they are two, and the vendor became the customer's name (*likely*). A logo in two OCR lines is a vendor
+  reading question (the logo's parts are not joined), left for the rule reader.
+- **N-100** · A page turned upside down is now read upright by its letters (B-301), also the real
+  `drv_ca_yorku_upsidedown` (York University's annotated sample invoice, turned): upright, its side panel's
+  "2. Vendor's FULL LEGAL NAME" is read as the vendor (*check*) and the invoice number is not found, which the
+  page read as it lay happened to get right. Reading an annotated explainer is not an invoice question: left.
+- **N-101** · Speckled scans (12) read 85.6% of fields right, as before: a median filter removed specks but also
+  thin strokes (75.3% of printed values read, against 79.0%), and a blur did nothing. Left.
