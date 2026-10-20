@@ -2375,3 +2375,19 @@ Improvements made with these fixes:
 - **N-91** · Setup, launcher and update · `watch` still treats an invoice that failed for a missing module as seen (no retry). Not changed, as the finding suggested: with the older watcher stopped, nothing fails that way; a retry rule for failures is a design choice.
 - **N-92** · Setup, launcher and update · an older `watch` / `read-pages` run by another computer account (or a scheduled task under one) can't be ended by this account: the start waits a minute ("close the window it runs in, or end its task in Task Scheduler"), then stops. Worker notes don't carry the account (B-168 covers servers only).
 - **N-93** · Setup, launcher and update · two accounts sharing one folder on macOS/Linux: the server file is mode 0600 and the code folder's lock file belongs to the first account, so the second account's start can't read the token or take the lock; it now relies on `/healthz`'s `user` (B-168). Sharing one folder between accounts is documented for Windows only.
+
+## Sweep 4 (real-world testing), October 2026
+
+### Unusual files
+
+A robustness corpus (about 120 files: public PDF and picture test files from pdf.js and Pillow, and files made from a sample invoice: encrypted, empty, cut off, outlined text, huge pages, 300 pages, forms and attachments, PDF/A, CCITT scans, CMYK and 16-bit pictures, multi-page TIFFs, GIF, WEBP, HEIC, tiny pictures, wrong extensions, Unicode and very long names, read-only files, a file still being written) was run through the pipeline (`process_many` on the invoices folder), the dashboard upload and `python -m ap_coder process`. No file crashed or hung (the slowest took 34 s) and none was lost; the findings below are files read wrongly or refused with a message that did not say what to do. Each test makes its own fixture (`tests/test_unusual_files.py`).
+
+#### B-260 · A PDF named ".jpg" was refused, a picture named ".pdf" could not be stamped, a web page named ".pdf" went to the queue as a blank invoice · medium
+- **Where:** `ap_coder/ai/pipeline.py` (`_as_pdf`), `ap_coder/intake/pictures.py` (`content_kind`, `as_its_kind`)
+- **Symptom:** a PDF saved as `scan from vendor.jpg` failed with "can't be opened as a picture: the file is damaged or not really a JPG"; a phone's PNG saved as `invoice 77.pdf` was read (PyMuPDF looks at the content) but stayed a PNG named .pdf, so its approval stamp failed ("is no PDF", `stamp.stamped_pdf`); a vendor portal's sign-in page saved as `invoice.pdf` was read as a one-page invoice with nothing on it and went to the queue.
+- **Cause:** every reader chose by the file's extension, never by its content.
+- **Reproduce:** the sample PDF copied to `pdf_named.jpg`, a PNG to `png_named.pdf`, an HTML page to `vendor_portal_login.pdf`, each through the three ways in.
+- **Reproduced:** yes (`pdf_named.jpg can't be opened as a picture…`; `ValueError: is no PDF` from `stamped_pdf`; `vendor_portal_login.pdf: needs attention`, vendor and number empty).
+- **Fix:** a file coming in is renamed to the extension its first bytes say (PDF, PNG, JPEG, TIFF, BMP, HEIC) when its name says another, then read as usual (a picture made into a PDF and kept in `originals/`); a web page is refused: "invoice.pdf is a web page saved with a .pdf name, not the invoice itself: open the vendor's email or portal and download the invoice again (as a PDF)." A file that can't be renamed is read under its own name as before.
+- **Test:** `tests/test_unusual_files.py::test_a_pdf_named_as_a_photo_is_read_as_the_pdf_it_is`, `::test_a_picture_named_as_a_pdf_is_made_into_a_pdf_and_kept`, `::test_a_web_page_saved_as_a_pdf_is_refused_in_plain_words`
+- **Lesson:** Don't trust a file's extension for what it holds: look at its first bytes before choosing a reader.

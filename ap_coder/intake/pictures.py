@@ -64,6 +64,57 @@ def is_image(path: str | Path) -> bool:
     return Path(path).suffix.lower() in IMAGE_EXTENSIONS
 
 
+_PICTURE_MAGIC = ((b"\x89PNG\r\n\x1a\n", ".png"), (b"\xff\xd8\xff", ".jpg"), (b"II*\x00", ".tif"), (b"MM\x00*", ".tif"),
+                  (b"BM", ".bmp"), (b"GIF87a", ".gif"), (b"GIF89a", ".gif"))  # fmt: skip
+_HEIF_BRANDS = (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1")
+_SAME_KIND = {".jpeg": ".jpg", ".tiff": ".tif", ".heif": ".heic"}
+WEB_PAGE = ("{name} is a web page saved with a {ext} name, not the invoice itself: open the vendor's email or portal "
+            "and download the invoice again (as a PDF).")  # fmt: skip
+
+
+def content_kind(path: str | Path) -> str:
+    """What a file is by its first bytes, whatever its name says: ".pdf", a picture's extension (".png", ".jpg",
+    ".tif", ".bmp", ".gif", ".webp", ".heic"), ".html" for a web page, "" when none of these."""
+    with open(path, "rb") as fh:
+        head = fh.read(1024)
+    if b"%PDF-" in head:  # a few stray bytes may come before it (readers accept that)
+        return ".pdf"
+    for magic, kind in _PICTURE_MAGIC:
+        if head.startswith(magic):
+            return kind
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ".webp"
+    if head[4:8] == b"ftyp" and head[8:12] in _HEIF_BRANDS:
+        return ".heic"
+    if head.lstrip(b"\xef\xbb\xbf \t\r\n").lower().startswith((b"<!doctype html", b"<html", b"<head", b"<body")):
+        return ".html"
+    return ""
+
+
+def as_its_kind(path: str | Path) -> Path:
+    """``path`` renamed to the extension its content has when it is a PDF or a picture named as another (a PDF saved
+    as ".jpg", a phone's PNG as ".pdf"), so it is read, kept and stamped as what it is. As it was when its name is
+    right, its content unknown (said by the reader that fails on it), or it can't be renamed. Raises ``CannotRead``
+    for a web page saved with an invoice's name (a vendor portal's sign-in page instead of the PDF)."""
+    from ..capture.layout import CannotRead
+
+    path = Path(path)
+    suffix = path.suffix.lower()
+    kind = content_kind(path)
+    if kind == ".html":
+        raise CannotRead(WEB_PAGE.format(name=path.name, ext=suffix or "file"))
+    if not kind or kind == _SAME_KIND.get(suffix, suffix) or (kind != ".pdf" and kind not in IMAGE_EXTENSIONS):
+        return path
+    target = _free_name(path.parent, path.stem + kind)
+    try:
+        os.replace(path, target)
+    except OSError as exc:  # locked or read-only: read under its own name (the reader for that name says what fails)
+        log.warning("%s is a %s file but could not be renamed (%s)", path.name, kind, exc)
+        return path
+    log.info("%s is a %s file: renamed %s", path.name, kind.lstrip(".").upper(), target.name)
+    return target
+
+
 def file_sha256(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
