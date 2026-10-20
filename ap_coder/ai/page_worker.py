@@ -69,7 +69,7 @@ def _process_started(pid: int) -> str:
                 kernel32.CloseHandle(handle)
         stat = Path(f"/proc/{pid}/stat")
         if stat.parent.parent.joinpath("self").exists():  # Linux: clock ticks since start-up, after the name
-            return stat.read_text().rpartition(")")[2].split()[19]
+            return stat.read_text(encoding="utf-8", errors="replace").rpartition(")")[2].split()[19]
         out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
         return "_".join(out.stdout.split())  # macOS: "Tue_Oct_20_09:15:02_2026"
     except (OSError, IndexError, ValueError, subprocess.SubprocessError):
