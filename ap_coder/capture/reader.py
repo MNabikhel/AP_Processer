@@ -259,7 +259,7 @@ UNMEASURED_LABELS: dict[str, list[tuple[str, float]]] = {
     # August 3, 2014", Dutch and German labels ("Zahlungsziel" may be the terms instead: only a date is read).
     "due_date": [
         (r"invoice\s*due\s*date", 0.95), (r"(?:your\s*)?payment\s*is\s*due\s*(?:by|on)\b", 0.9),
-        (r"(?:total\s*)?(?:amount|balance)\s*due\s*(?:on|by)\b", 0.85), (r"vervaldag", 0.95), (r"falligkeitstag", 0.9),
+        (r"(?:total\s*)?(?:amount|balance)\s*due\s*(?:on|by)\b(?![^|]*(?:deliver|account|as\s*of|discount|after|livraison))", 0.85), (r"vervaldag", 0.95), (r"falligkeitstag", 0.9),
         (r"zahlungsziel", 0.8),
     ],
 }  # fmt: skip
@@ -315,6 +315,11 @@ def _label_hits(line: Line) -> list[_LabelHit]:
         seen = {h.field for h in hits}
         hits += [h for h in _hits_at(line, text, after_colon, chained=set(after_colon))
                  if "/" in h.label_text and h.field not in seen]  # fmt: skip
+    if len(text) != len(line.text):
+        # "Fittings ½ in., PO # 4500123456": "½" is three characters in plain text; the value is read from the line.
+        at = plain_with_offsets(line.text)[1]
+        for h in hits:
+            h.start, h.end = at[min(h.start, len(at) - 1)], at[min(h.end, len(at) - 1)]
     return hits
 
 
@@ -528,6 +533,14 @@ _LABEL_WORDS = {"invoice", "facture", "number", "numero", "date", "total", "amou
                 "account", "customer", "client", "reference", "receipt", "statement", "credit"}  # fmt: skip
 
 
+# A due date's label and its date are in one sentence; a discount's deadline is no due date.
+_SENTENCE_BREAK = re.compile(r"[.;!?]\s+[A-Z]")
+_DUE_DISCOUNT = re.compile(r"discount|escompte|skonto")
+_RATE_CLAUSE = re.compile(
+    r"[,;]\s*\d{1,2}(?:[.,]\d{1,2})?\s*%"
+)  # "..., 2% Skonto innerhalb 10 Tagen": a clause of its own
+
+
 def _value_reading(field: str, line: Line, start: int, base: float, method: str) -> Reading | None:
     """Read ``field`` from ``line.text[start:]``."""
     text = line.text
@@ -572,6 +585,10 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
         d, a, b, ambiguous = found[0]
         if a > 30:  # the date must be close to its label
             return None
+        if field == "due_date" and (
+            _SENTENCE_BREAK.search(rest[:a]) or _DUE_DISCOUNT.search(_RATE_CLAUSE.split(plain(rest))[0])
+        ):
+            return None  # "Payment is due by the 15th. Next service 2026-12-01", "Please pay by ... to take the 2% discount"
         words = _span_words(line, start + a, start + b)
         raw = rest[a:b]
         return Reading(field, d.isoformat(), raw, _boxes(words), base * (0.6 if ambiguous else 1.0) * _min_conf(words),
@@ -679,20 +696,104 @@ _DAYS_THEN_RATE = re.compile(
 )  # but not "zahlbar innerhalb 30 Tagen netto, 2% Skonto innerhalb 10 Tagen": that rate has its own days
 
 
+# Where the terms phrase ends on its line: a sentence's end ("Net 30 days. Statements are issued at the end of the
+# month."), a wide gap, or another label ("Ship Via: UPS 2 Day", "Lead time 2 weeks", "Freight: 2 Day").
+_TERMS_SENTENCE_END = re.compile(r"(?<=[\w)%])[.;!?](?=\s+[A-Z])(?!\s+(?i:net|n\s*/)(?![a-z]))")
+_TERMS_NEXT_LABEL = re.compile(
+    r"\s{2,}|(?<=\S)\s+(?=[A-Z][A-Za-z.#/'-]*(?: [A-Za-z#][A-Za-z.#/'-]*)?\s?:)"
+    r"|(?<=\S)\s+(?=(?i:ship(?:ping)?\s*(?:via|date)|lead\s*time|freight|(?<!on )deliver(?:y|ed)|livraison|statements?|"
+    r"f\.?o\.?b|(?:sales\s*)?rep|carrier|due\s*date|customer|account|p\.?o\.?\s*(?:#|no|number))(?![a-z]))"
+)
+_TERMS_LABEL_WORDS = re.compile(r"(?i)\s*(?:payment\s*)?terms?(?:\s*of\s*payment)?\s*:|\s*conditions?\b[^:]{0,30}:")
+# A discount stated in a sentence of its own, after or before the net terms: "2% discount if paid within 10 days".
+_DISCOUNT_SENTENCE = re.compile(r"(?i)^\W*\d{1,2}(?:[.,]\d{1,2})?\s*%\s*(?:discount|escompte|skonto)")
+# End of month, said of the net days themselves ("Net 30 EOM", "30 days end of month", "Net 30 days from end of
+# month", "within 30 days of month end", "2/10 EOM", "Net EOM"): not a month's end said of something else
+# ("Statements are issued at the end of the month").
+_EOM_WORDS = r"(?:eom|e\.o\.m\.?|end\s*of\s*(?:the\s*)?month|month\s*end|fin\s*de\s*mois)"
+_EOM_ATTACHED = re.compile(
+    r"\d{1,3}(?:st|nd|rd|th)?\s*(?:days?|jours?|months?|mois)?\s*(?:net\s*)?"
+    r"(?:(?:from|after|of|following)\s*(?:the\s*)?(?:invoice\s*date\s*)?)?"
+    + _EOM_WORDS
+    + r"|(?:^|\bnet|\bdue)\W*"
+    + _EOM_WORDS
+    + r"|"
+    + _EOM_WORDS
+    + r"\s*(?:net\s*)?\d"
+)
+_EOM_ANY = re.compile(_EOM_WORDS)
+# Due on receipt (or paid ahead): days elsewhere on the line are not its net days, unless the net days are printed
+# with it ("Net 30 days upon receipt of invoice").
+_AT_ONCE = re.compile(
+    r"(?:up)?on\s*receipt|a\s*reception|\bc\.?o\.?d\b|cash\s*on\s*delivery|comptant|immediate|due\s*now"
+)
+_PREPAID = re.compile(r"(?<![a-z])pre-?paid(?![a-z])")
+_NET_PRINTED = re.compile(r"\bn(?:et)?\s*/?\s*\d|\d{1,3}\s*(?:days?|jours?)\s*net")
+# A net day of the next month ("Net 10th prox"), or net months: not the net days of OCR's run-together discount.
+# "2% 10 net 1 month": the discount's days stated as days, so the net is read as months, not as 1 day.
+_RATE_THEN_MONTHS = re.compile(
+    r"(\d{1,2}(?:[.,]\d{1,2})?\s*%\s*\d{1,2})(?!\s*(?:days?|jours?))\s*[,;]?\s*(?=n(?:et)?\s*/?\s*\d{1,2}\s*(?:months?|mois))"
+)
+# "Net 15th following (month)": the 15th of the next month, as "15 prox".
+_FOLLOWING = re.compile(r"(\d{1,2})(?:st|nd|rd|th)\s*(?:of\s*(?:the\s*)?)?following(?:\s*month)?(?![a-z])")
+_AFTER_NET_NUMBER = re.compile(r"\s*(?:st|nd|rd|th|months?|mois|weeks?|wks?|semaines?|prox)(?![a-z])")
+
+
+def _terms_phrase(text: str) -> str:
+    """The terms phrase at the start of ``text`` (a terms label's value, or a sentence): up to the next sentence, wide
+    gap or label, with a discount stated in the next sentence."""
+    text = unicodedata.normalize("NFKC", text)  # a speck read as a middle dot is a space later, not a gap
+    label = _TERMS_LABEL_WORDS.match(text)
+    start = label.end() if label else 0
+    sentences = []
+    pos = start
+    for m in _TERMS_SENTENCE_END.finditer(text, start):
+        sentences.append(text[pos : m.start()])
+        pos = m.end()
+    sentences.append(text[pos:])
+    first = _clip_at_label(sentences[0])
+    rest = [_clip_at_label(x) for x in sentences[1:] if _DISCOUNT_SENTENCE.match(x)]
+    return ". ".join([first, *rest[:1]]) if first.strip() else first
+
+
+def _clip_at_label(text: str) -> str:
+    m = _TERMS_NEXT_LABEL.search(text.strip())
+    return text.strip()[: m.start()] if m else text.strip()
+
+
 def _terms(text: str) -> str | None:
     """The terms printed in ``text``, in the short form the app counts the due date from ("Net 30", "2% 10 Net 30",
     "Net 30 EOM", "Net 10 prox", "Net 1 month", "2% 10 days", "Due on receipt"): what ``parse_terms`` reads in the
-    printed text, written so that it reads the same in the short form."""
+    terms phrase, written so that it reads the same in the short form."""
     from ..coding.terms import parse_terms
 
     # OCR's full-width comma ("2%10，Net30") and a speck read as a middle dot ("Net·30")
-    text = plain(unicodedata.normalize("NFKC", text).replace("·", " "))
+    text = plain(_terms_phrase(text))
     # "2%10,.Net45", "2.10 net 30": a rate, its days and the net days as OCR runs them together.
-    text = _TERMS[0][0].sub(lambda m: f" {m.group(1)}% {m.group(2)} net {m.group(3)} ", text)
+    text = _TERMS[0][0].sub(
+        lambda m: (
+            m.group(0) if _AFTER_NET_NUMBER.match(text, m.end()) else f" {m.group(1)}% {m.group(2)} net {m.group(3)} "
+        ),
+        text,
+    )
     for rx, words in _TERMS_WORDS:
         text = rx.sub(words, text)
     text = _DAYS_THEN_RATE.sub(lambda m: f"{m.group(2)}% discount within {m.group(1)} days", text)
-    return _terms_form(parse_terms(text))
+    text = _RATE_THEN_MONTHS.sub(r"\1 days, ", text)
+    text = _FOLLOWING.sub(r"\1 prox", text)
+    if not _NET_PRINTED.search(text):
+        if _AT_ONCE.search(text):
+            return "Due on receipt"
+        if _PREPAID.search(text):
+            return None
+    text = _EOM_ANY.sub(" eom " if _EOM_ATTACHED.search(text) else " ", text)  # "month end" too, as "EOM"
+    t = parse_terms(text)
+    if t.discount_days is not None and not t.prox_day and not t.discount_prox_day:
+        from ..coding.terms import _prox_day
+
+        if day := _prox_day(text):  # "2% 10 days, Net 10th prox": the app counts no discount with prox net days
+            return f"Net {day} prox"
+    return _terms_form(t)
 
 
 def _terms_form(t) -> str | None:  # noqa: ANN001 - a coding.terms.Terms
@@ -2786,23 +2887,57 @@ _TERMS_SENTENCE = re.compile(
 )  # fmt: skip
 # Where a sentence ends: ".", "!", "?" or ";" (a full stop between two digits is a date's or an amount's).
 _SENTENCE_END = re.compile(r"[!?;]|\.(?!\d)|(?<!\d)\.")
+# A sentence about something other than paying the invoice: its days are a warranty's, a claim's, a return's, a
+# holdback's, a statement's or an interest charge's (plain text).
+_NOT_TERMS = re.compile(
+    r"warrant|guarant|garanti|return|retour|claim|reclamation|holdback|retenue|completion|achevement|dispute|"
+    r"discrepanc|restocking|statement|releve|valid|einwand|beanstand"
+)
+# Interest or late charges: a sentence that starts with the days and speaks of them counts the days to the charge.
+_LATE_WORDS = re.compile(r"interest|interet|zinsen|per\s*month|par\s*mois|overdue|late|retard|souffrance|past\s*due")
+
+
+def plain_with_offsets(text: str) -> tuple[str, list[int]]:
+    """``plain(text)`` and, for each of its characters, where it comes from in ``text`` (one more for the end): "½",
+    "™" and "…" are one character in ``text`` and several in ``plain(text)``."""
+    out, index = [], []
+    for i, ch in enumerate(text):
+        p = plain(ch)
+        out.append(p)
+        index += [i] * len(p)
+    return "".join(out), [*index, len(text)]
+
+
+def _sentences(text: str) -> list[tuple[int, int]]:
+    starts = [0] + [m.end() for m in _SENTENCE_END.finditer(text)]
+    return list(zip(starts, [*starts[1:], len(text)], strict=True))
 
 
 def _terms_sentences(lines: list[Line]) -> list[Reading]:
     """The terms in the first sentence on the invoice that states them, read for a person to check: one reading, or
-    none when two sentences state different terms."""
+    none when two sentences state different terms. A discount stated in the sentence before or after belongs to
+    them."""
     from .normalize import normalize_value
 
     found: list[Reading] = []
     for line in lines:
-        text = plain(line.text)
-        starts = [0] + [m.end() for m in _SENTENCE_END.finditer(text)]
-        for a, b in zip(starts, [*starts[1:], len(text)], strict=True):
-            value = _terms(text[a:b]) if _TERMS_SENTENCE.search(text[a:b].strip()) else None
+        text, at = plain_with_offsets(line.text)
+        spans = _sentences(text)
+        for k, (a, b) in enumerate(spans):
+            sentence = text[a:b].strip()
+            m = _TERMS_SENTENCE.search(sentence)
+            if not m or _NOT_TERMS.search(sentence):
+                continue  # "90 days from date of invoice: warranty", "Holdback of 10% is payable within 60 days..."
+            if m.start() == 0 and sentence[:1].isdigit() and _LATE_WORDS.search(sentence):
+                continue  # "30 days from date of invoice, interest at 2% per month is charged"
+            near = [text[x:y].strip() for x, y in spans[max(k - 1, 0) : k] + spans[k + 1 : k + 2]]
+            discount = next((x for x in near if _DISCOUNT_SENTENCE.match(x)), "")
+            value = _terms(f"{sentence.rstrip('.')}. {discount}" if discount else sentence)
             if value:
-                words = _span_words(line, a, b)
-                found.append(Reading("payment_terms", value, line.text[a:b].strip(), _boxes(words),
-                                     0.6 * _min_conf(words), "sentence" + UNMEASURED))  # fmt: skip
+                words = _span_words(line, at[a], at[b])
+                method = "sentence" + UNMEASURED + (PART_OF_TERMS if _DEPOSIT.search(sentence) else "")
+                found.append(Reading("payment_terms", value, line.text[at[a] : at[b]].strip(), _boxes(words),
+                                     0.6 * _min_conf(words), method))  # fmt: skip
     values = {normalize_value("payment_terms", r.value) for r in found}
     return found[:1] if len(values) == 1 else []
 
@@ -2818,6 +2953,13 @@ _PO_MENTION = re.compile(
 # "Your reference" / "Votre référence": European invoices give the customer's order number so, but it may be another
 # reference of the customer's. Read only when no PO label gives one.
 _YOUR_REFERENCE = re.compile(r"(?:your|votre)\s*ref(?:erence)?(?![a-z])\.?")
+_PHONE_SHAPE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]\d{4}")
+
+
+def _a_plain_po(r: Reading) -> bool:
+    """A number read for the PO without a PO label: one token, not a phone number ("call 416-555-1212")."""
+    value = str(r.value)
+    return not re.search(r"\s", value) and not _PHONE_SHAPE.search(value) and not _looks_like_phone_or_postal(value)
 
 
 def _po_mentions(page_lines: list[Line]) -> list[Reading]:
@@ -2827,11 +2969,12 @@ def _po_mentions(page_lines: list[Line]) -> list[Reading]:
 
     found = []
     for line in page_lines:
-        for m in _PO_MENTION.finditer(plain(line.text)):
+        text, at = plain_with_offsets(line.text)
+        for m in _PO_MENTION.finditer(text):
             if m.start() == 0:
                 continue  # a label starting its line: read as one
-            got = _value_reading("po_number", line, m.end(), 0.55, "mention" + UNMEASURED)
-            if got:
+            got = _value_reading("po_number", line, at[m.end()], 0.55, "mention" + UNMEASURED)
+            if got and _a_plain_po(got):
                 found.append(got)
     return found[:1] if len({normalize_value("po_number", r.value) for r in found}) == 1 else []
 
@@ -2843,24 +2986,32 @@ def _po_as_your_reference(by_page: dict[int, list[Line]], under: set[int]) -> li
     found = []
     for page, page_lines in by_page.items():
         for line in page_lines:
-            m = _YOUR_REFERENCE.match(plain(line.text))
+            text, at = plain_with_offsets(line.text)
+            m = _YOUR_REFERENCE.match(text)
             if m:
-                hit = _LabelHit("po_number", line, 0.6, m.end(), plain(line.text)[: m.end()])
+                hit = _LabelHit("po_number", line, 0.6, at[m.end()], text[: m.end()])
                 for r in _labelled([hit], page_lines, page in under):
-                    r.method += UNMEASURED
-                    found.append(r)
+                    if _a_plain_po(r):
+                        r.method += UNMEASURED
+                        found.append(r)
     return found[:1] if len({normalize_value("po_number", r.value) for r in found}) == 1 else []
 
 
 # A due date stated in a sentence (plain text): "Bitte überweisen Sie bis zum 09.06.2014", "Zahlbar innerhalb 30 Tagen
 # netto bis 04.04.2013" (the net amount's date: not the discount's "3% Skonto ... bis 15.03.2013"), "Payment is due by
-# October 15, 2026", "Payable avant le 15 octobre 2026". The date follows the words.
+# October 15, 2026", "Payable avant le 15 octobre 2026". The date follows the words, in the same sentence.
 _DUE_SENTENCE = re.compile(
     r"(?:netto|ohne\s*(?:abzug|abschlag))\s*bis\s*(?:zum\s*)?"
     r"|(?:uberweisen|zahlen|begleichen)\s*sie\s*(?:[a-z]+\s*){0,3}?bis\s*(?:zum\s*)?"
     r"|(?:payment|amount|balance|total)\s*(?:is\s*)?due\s*(?:on|by)\s*|please\s*pay\s*(?:on\s*or\s*)?(?:by|before)\s*"
     r"|(?:payable|a\s*payer)\s*(?:avant|au\s*plus\s*tard)\s*(?:le\s*)?"
 )  # fmt: skip
+# A date in such a sentence that is not the one to pay by: a balance as of a day, a discount's deadline, a delivery,
+# a later charge.
+_NOT_DUE = re.compile(
+    r"as\s*of|on\s*account|discount|escompte|rabatt|deliver|livraison|interest|interet|after|apres|through|"
+    r"until|valid|service|quote"
+)
 
 
 def _due_sentences(lines: list[Line]) -> list[Reading]:
@@ -2868,10 +3019,18 @@ def _due_sentences(lines: list[Line]) -> list[Reading]:
     ones."""
     found = []
     for line in lines:
-        for m in _DUE_SENTENCE.finditer(plain(line.text)):
-            got = _value_reading("due_date", line, m.end(), 0.6, "sentence" + UNMEASURED)
-            if got and plain(line.text)[m.end() : m.end() + 3].strip()[:1].isalnum():
-                found.append(got)
+        text, at = plain_with_offsets(line.text)
+        for a, b in _sentences(text):
+            sentence = text[a:b]
+            if _NOT_DUE.search(sentence):
+                continue
+            for m in _DUE_SENTENCE.finditer(sentence):
+                dates = parse_dates(line.text[at[a + m.end()] : at[b]], prefer_day_first=_DAY_FIRST.get())
+                if not dates or dates[0][1] > 2:
+                    continue  # the date must follow the words, before the sentence ends ("due by the 15th. Next...")
+                got = _value_reading("due_date", line, at[a + m.end()], 0.6, "sentence" + UNMEASURED)
+                if got:
+                    found.append(got)
     return found[:1] if len({r.value for r in found}) == 1 else []
 
 

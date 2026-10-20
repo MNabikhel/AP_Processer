@@ -210,7 +210,7 @@ Three rules sit on top, because the benchmark is synthetic and real invoices wil
   The order is taken from the document's other dates, a US supplier address, or the terms;
 - a value found by wording the benchmark never prints (terms stated in a footer sentence, a German
   or Spanish label, a PO under "Your reference", a due date in a sentence) keeps the reader's own
-  score, not its reading family's measured record, and is never *verified* on its own (D-44).
+  score, not its reading family's measured record, and is never *verified* on its own (D-45).
 
 Terms are read in the short form the app counts the due date from ("Net 30", "2% 10 Net 30", "Net 30
 EOM", "Net 10 prox", "Net 1 month", "2% 10 days", "Due on receipt"): the reader hands the printed

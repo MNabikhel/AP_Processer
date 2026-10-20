@@ -3161,7 +3161,7 @@ a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the a
   state different terms give none. Days in a sentence about something else ("discrepancies must be communicated
   within 90 days of the invoice date", returns, objections, interest) are not terms. All of this is wording the
   benchmark never prints, so each reading is marked `UNMEASURED`: it keeps its own score (a sentence 0.6) and is
-  never verified (D-44).
+  never verified (D-45).
 - **Test:** `tests/test_terms_po_sweep4.py::test_terms_printed_in_other_words_are_read_for_a_person_to_check`,
   `tests/test_terms_po_sweep4.py::test_days_in_a_note_that_is_not_the_terms_are_not_read_as_terms`
 - **Lesson:** Don't wait for a label the supplier never prints: the terms are a sentence anyone can recognise, as
@@ -3185,7 +3185,7 @@ a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the a
   "Bestellung Nr.", "Bon de commande n°"), then "Your reference" / "Votre référence"; either gives nothing when two
   different numbers are printed so (each line item's own order). A value cell holding only the colon of the label on
   its left is that label's value (for the PO, the due date and the terms). Each reading is marked `UNMEASURED`
-  (D-44): check at best likely, never verified. "Your reference" is never read when a PO label is printed, so it does
+  (D-45): check at best likely, never verified. "Your reference" is never read when a PO label is printed, so it does
   not cast doubt on the PO either. A "Purchase Order Number:" with blanks after it gives nothing, as before.
 - **Test:** `tests/test_terms_po_sweep4.py::test_the_customers_order_number_under_other_labels_is_read_for_a_person_to_check`,
   `tests/test_terms_po_sweep4.py::test_no_order_number_is_made_up_from_a_label_without_one`,
@@ -3208,12 +3208,127 @@ a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the a
   "Vervaldag", "Fälligkeitstag", "Zahlungsziel" (only a date is read under it: it may give the terms instead); with
   no due-date label, a date right after "netto bis", "ohne Abzug bis", "überweisen Sie ... bis zum", "payment is due
   by", "please pay by/before", "payable avant le" (the net amount's date, never a discount's "Skonto ... bis"); two
-  sentences that state different dates give none. Each reading is marked `UNMEASURED` (D-44). Where the terms are
+  sentences that state different dates give none. Each reading is marked `UNMEASURED` (D-45). Where the terms are
   read too, the due-date check (B-372) can confirm both.
 - **Test:** `tests/test_terms_po_sweep4.py::test_due_dates_under_other_labels_or_in_a_sentence_are_read_for_a_person_to_check`,
   `tests/test_terms_po_sweep4.py::test_a_date_in_a_note_that_is_not_about_the_due_date_is_not_read_as_it`
 - **Lesson:** Don't take a label's words only as a line's first words: "Invoice Due Date" and "Total amount due on"
   carry the due date's label inside them.
+
+#### B-376 · Terms read from the whole line: "Net 30 days. Statements are issued at the end of the month." as Net 30 EOM, "Due on receipt  Ship Via: UPS 2 Day" as Net 2 · high
+- **Where:** `ap_coder/capture/reader.py` (`_terms`, new `_terms_phrase`, `_TERMS_NEXT_LABEL`, `_EOM_ATTACHED`, `_AT_ONCE`)
+- **Symptom:** found by a review of B-372: the terms parser was handed everything after the terms label, so a month's
+  end said of something else made the terms EOM ("Net 30 days. Statements are issued at the end of the month.",
+  "Net 30   Statement date: end of month": *verified* Net 30 EOM on an invoice of Oct 31 due Nov 30), and days
+  printed after due-on-receipt terms became their net days ("Due on receipt. Delivery within 2 weeks." Net 14,
+  "Due on receipt  Ship Via: UPS 2 Day" and "Prepaid  Freight: 2 Day" Net 2, "Upon receipt   Lead time: 2 weeks"
+  Net 14; "Due on receipt, 5% discount if paid in 7 days" 5% 7 days). The reader before B-372 got these right by
+  taking the first pattern.
+- **Cause:** B-372 parsed the whole rest of the line as one terms text.
+- **Reproduce:** `_terms("Net 30 days. Statements are issued at the end of the month.")`; `_terms("Due on receipt  Ship
+  Via: UPS 2 Day")`.
+- **Reproduced:** yes (`Net 30 EOM`, `Net 2`)
+- **Fix:** only the terms phrase is parsed: the text up to a sentence's end, a wide gap or another label ("Ship Via:",
+  "Lead time", "Freight", "Delivery", "Statement", "FOB", "Rep", "Due Date", any "Word:" or "Two Words:"), with a
+  discount stated in the next sentence; end of month counts only when said of the net days ("Net 30 EOM", "30 days
+  end of month", "Net 30 days from end of month", "within 30 days of month end", "2/10 EOM", "Net EOM"); due on
+  receipt (or COD, cash, immediate) with no net days printed stays due on receipt, whatever discount or days follow;
+  prepaid with no net days gives no terms.
+- **Test:** `tests/test_terms_po_sweep4.py::test_only_the_terms_phrase_is_read_as_the_terms`,
+  `tests/test_terms_po_sweep4.py::test_a_terms_label_line_on_an_invoice_reads_only_its_terms`
+- **Lesson:** Don't hand a parser more text than the value: it finds meaning in whatever it is given.
+
+#### B-377 · A discount with net months or a net day of the next month: "1% 15 days, net 1 month" read as "1% 15 Net 1" · high
+- **Where:** `ap_coder/capture/reader.py` (`_terms`, new `_RATE_THEN_MONTHS`, `_FOLLOWING`, `_AFTER_NET_NUMBER`)
+- **Symptom:** "1% 15 days, net 1 month" and "2% 10 net 1 month" read as due 1 day after the invoice; "2% 10 days, Net
+  10th prox" and "2/10 Net 25 prox" as Net 10 and Net 25 days (the 10th or 25th of the next month printed); "Net 15th
+  following" as Net 15.
+- **Cause:** OCR's run-together discount ("2%10,.Net45") was rewritten before parsing as "rate days net N" even when N
+  was months or a day of the month; and the app's terms parser reads "2% 10 net 1 month" as 1 net day, and has no
+  form for a discount in days with a net day of the next month.
+- **Reproduce:** `_terms("1% 15 days, net 1 month")`, `_terms("2% 10 days, Net 10th prox")`.
+- **Reproduced:** yes (`1% 15 Net 1`, `2% 10 Net 10` in the review's branch run)
+- **Fix:** the run-together rewrite leaves a number followed by months, weeks, prox or st/nd/rd/th alone; a discount
+  before net months is written "2% 10 days, Net 1 month"; "15th following (month)" is "15 prox"; a discount in days
+  with prox net days is read "Net 10 prox" (the due date kept, the discount for a person to add: the app cannot hold
+  both).
+- **Test:** `tests/test_terms_po_sweep4.py::test_only_the_terms_phrase_is_read_as_the_terms`
+- **Lesson:** Don't rewrite a number before you know its unit.
+
+#### B-378 · A PO after "½", "™" or "…" on its line was cut short: "Bolts ½ in. per PO # 4500123456" read as "00123456" · high
+- **Where:** `ap_coder/capture/reader.py` (new `plain_with_offsets`; `_po_mentions`, `_po_as_your_reference`,
+  `_terms_sentences`, `_due_sentences`, `_label_hits`)
+- **Symptom:** the new mid-line readers found their words in the line's plain text (accents and ligatures taken apart)
+  and read the value from the line as printed at the same offset: "½" is three characters in plain text, so the PO
+  lost its first two digits. The older label reader had the same slip after a label behind a separator ("Fittings ½
+  in., PO # 4500123456" read 500123456).
+- **Cause:** offsets in `plain(line.text)` used on `line.text`; `plain()` can lengthen the text.
+- **Reproduce:** a PDF line "Bolts ½ in. per PO # 4500123456"; `analyze()`.
+- **Reproduced:** yes (`po_number 00123456`)
+- **Fix:** `plain_with_offsets` gives each plain character's place in the printed text; the readers map their offsets
+  back before reading the value, and `_label_hits` maps its labels' ends the same way when the plain text is longer.
+- **Test:** `tests/test_terms_po_sweep4.py::test_a_po_after_a_character_written_as_several_is_read_whole`,
+  `tests/test_terms_po_sweep4.py::test_a_label_after_a_character_written_as_several_reads_its_whole_value`,
+  `tests/test_terms_po_sweep4.py::test_a_terms_sentence_after_a_ligature_is_read`
+- **Lesson:** Don't read from one string at an offset found in another, unless the two are the same length.
+
+#### B-379 · Due-date sentences and labels took dates that are not the due date · medium
+- **Where:** `ap_coder/capture/reader.py` (`_due_sentences`, new `_NOT_DUE`, `_value_reading`, `UNMEASURED_LABELS`)
+- **Symptom:** "Amount due on account as of 2026-10-01: 0.00", "Amount due by October 25, 2026 with discount" (the
+  discount's deadline), "Payment is due by the 15th. Next service 2026-12-01." (the next sentence's date), "Balance
+  due on delivery October 30, 2026", "Balance due on or after 2026-11-14 is subject to 2% interest", and (an older
+  label) "Please pay by October 25, 2026 to take the 2% discount" each gave a due date.
+- **Cause:** the date was the first one within 30 characters, wherever the sentence ended and whatever it was said of.
+- **Reproduce:** a PDF with "Payment is due by the 15th. Next service 2026-12-01." in its footer; `analyze()`.
+- **Reproduced:** yes (`due_date 2026-12-01`)
+- **Fix:** a due date is read only in the sentence of its words, right after them; a sentence that speaks of a
+  balance as of a day, an account, a discount, a delivery, interest, "after", "through", "until", a quote or a
+  service gives none; "Amount/Balance due on" is no label when delivery, account, "as of", a discount or "after"
+  follows on its line; a due-date label's date is not read across a sentence's end or with a discount of its own.
+- **Test:** `tests/test_terms_po_sweep4.py::test_a_date_that_is_not_the_due_date_in_a_due_sentence_is_not_read`,
+  `tests/test_terms_po_sweep4.py::test_a_balance_due_on_delivery_label_is_not_a_due_date`
+- **Lesson:** Don't take the nearest date: take the date the sentence is about.
+
+#### B-380 · Terms sentences about a warranty, claims, returns or a holdback read as terms; a sentence's month end and discount lost · medium
+- **Where:** `ap_coder/capture/reader.py` (`_terms_sentences`, new `_NOT_TERMS`, `_LATE_WORDS`, `_DISCOUNT_SENTENCE`)
+- **Symptom:** "90 days from date of invoice: warranty on all workmanship." read as Net 90, "5 days after invoice: no
+  claims ..." Net 5, "30 days from the invoice date for returns" Net 30, "Holdback of 10% is payable within 60 days of
+  substantial completion" Net 60, "30 days from date of invoice, interest at 2% per month is charged" Net 30,
+  "Payable within 10 days of statement date" Net 10; and "Payment is due within 30 days of month end." lost its end
+  of month, "Payment due within 30 days. 2% discount if paid within 10 days." its discount.
+- **Cause:** the sentence patterns looked only at the words around the days; "month end" is not a word the app's
+  parser knows; each sentence was read alone.
+- **Reproduce:** a PDF with "90 days from date of invoice: warranty on all workmanship." in its footer; `analyze()`.
+- **Reproduced:** yes (`payment_terms Net 90`)
+- **Fix:** a sentence that speaks of a warranty, guarantee, returns, claims, a holdback, completion, a dispute,
+  discrepancies, restocking, a statement or validity is not the terms, nor one that starts with the days and speaks
+  of interest or late charges; "month end" is read as EOM when said of the net days (B-376); a discount stated in the
+  sentence before or after joins the terms; a deposit in the sentence marks the terms as the balance's (B-328).
+- **Test:** `tests/test_terms_po_sweep4.py::test_a_days_sentence_about_warranty_claims_returns_or_holdback_is_not_the_terms`,
+  `tests/test_terms_po_sweep4.py::test_a_terms_sentence_keeps_its_end_of_month_and_its_discount`
+- **Lesson:** Don't recognise terms by their shape alone: a warranty is counted in days from the invoice date too.
+
+#### B-381 · "Your ref: call 416-555-1212" read as the PO · low
+- **Where:** `ap_coder/capture/reader.py` (new `_a_plain_po`; `_po_mentions`, `_po_as_your_reference`)
+- **Symptom:** the customer's reference read as the PO was "call 416-555-1212".
+- **Cause:** an identifier may join a short word to the number after it ("PO 4471"); the phone check saw the word too.
+- **Reproduce:** a PDF line "Your ref: call 416-555-1212"; `analyze()`.
+- **Reproduced:** yes (`po_number call 416-555-1212`)
+- **Fix:** a PO read without a PO label is one token and not shaped like a phone number.
+- **Test:** `tests/test_terms_po_sweep4.py::test_your_reference_that_is_a_phone_number_or_words_is_no_po`
+- **Lesson:** Don't accept a value with words in it where a number is expected.
+
+#### B-382 · EOM or prox terms matching the due date confirmed the invoice date · low
+- **Where:** `ap_coder/capture/confidence.py` (`run_checks`, new `_counts_from_month`)
+- **Symptom:** "Net 30 EOM" with a due date of Nov 30 confirmed an invoice date of Oct 3 as well as Oct 15: the check
+  marked the invoice date confirmed (B-372 made it count EOM and prox terms).
+- **Cause:** the due-date check confirmed all three fields; end-of-month and prox terms give the same due date from
+  any day of the invoice's month.
+- **Reproduce:** "Terms Net 30 EOM", "Due Date 2026-10-30" on an invoice of 2026-09-15; the invoice date's reasons.
+- **Reproduced:** yes (`confirmed by due matches terms` on the invoice date)
+- **Fix:** with EOM or prox terms the check confirms the due date and the terms only.
+- **Test:** `tests/test_terms_po_sweep4.py::test_eom_terms_matching_the_due_date_do_not_confirm_the_invoice_date`
+- **Lesson:** Don't let a check confirm a field it cannot tell apart from its neighbours.
 
 #### Left as they are (terms, PO numbers and due dates)
 

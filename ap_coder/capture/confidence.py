@@ -217,7 +217,11 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
         by_terms = _due_by_terms(inv, values.get("payment_terms"))
         if by_terms:
             ok = by_terms == due
-            checks.append({"code": "DUE_MATCHES_TERMS", "ok": ok, "fields": ["due_date", "invoice_date", "payment_terms"],
+            # "Net 30 EOM", "Net 10 prox": the same due date from any day of the invoice's month, so the invoice's own
+            # day is not confirmed by it.
+            month_only = _counts_from_month(values.get("payment_terms"))
+            fields = ["due_date", "payment_terms"] if month_only else ["due_date", "invoice_date", "payment_terms"]
+            checks.append({"code": "DUE_MATCHES_TERMS", "ok": ok, "fields": fields,
                            "detail": f"invoice date + {(by_terms - inv).days} days ({values['payment_terms']}) "
                                      f"{'=' if ok else '≠'} due date"})  # fmt: skip
     inv_no, po = values.get("invoice_number"), values.get("po_number")
@@ -250,6 +254,13 @@ def _due_by_terms(invoice_date: dt.date, terms: Any) -> dt.date | None:
         return None
     p = payment({"invoice_date": invoice_date.isoformat(), "payment_terms": str(terms)})
     return p.due if p.source == "terms" else None
+
+
+def _counts_from_month(terms: Any) -> bool:
+    from ..coding.terms import parse_terms
+
+    t = parse_terms(str(terms or ""))
+    return bool(t.eom or t.prox_day)
 
 
 def _date(v: Any) -> dt.date | None:

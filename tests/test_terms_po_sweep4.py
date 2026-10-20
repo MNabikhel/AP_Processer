@@ -241,3 +241,146 @@ def test_due_dates_under_other_labels_or_in_a_sentence_are_read_for_a_person_to_
 )
 def test_a_date_in_a_note_that_is_not_about_the_due_date_is_not_read_as_it(tmp_path, note):
     assert _read(_pdf(tmp_path, [*_HEAD, (60, 600, note), *_TABLE]))["due_date"].value is None
+
+
+# ---------------------------------------------------------------- review of B-372 to B-375: what else shares the line
+
+
+@pytest.mark.parametrize(
+    "printed, read",
+    [
+        # Only the terms phrase is the terms: not a sentence after it, nor another label's value on the same line.
+        ("Net 30 days. Statements are issued at the end of the month.", "Net 30"),
+        ("Net 30   Statement date: end of month", "Net 30"),
+        ("Net 30 Statement date: end of month", "Net 30"),
+        ("Net 30, payment by end of month", "Net 30"),
+        ("Net 30 days from end of month", "Net 30 EOM"),
+        ("30 days end of month", "Net 30 EOM"),
+        ("Net 30   Ship Via: UPS 2 Day", "Net 30"),
+        ("Net 30  Sales Rep: John 12", "Net 30"),
+        # Due on receipt (or prepaid) stays so, whatever days another clause or label prints.
+        ("Due on receipt. Delivery within 2 weeks.", "Due on receipt"),
+        ("Due on receipt  Ship Via: UPS 2 Day", "Due on receipt"),
+        ("Due on receipt Ship Via: UPS 2 Day", "Due on receipt"),
+        ("Upon receipt   Lead time: 2 weeks", "Due on receipt"),
+        ("Upon receipt Lead time 2 weeks", "Due on receipt"),
+        ("Prepaid  Freight: 2 Day", None),
+        ("Prepaid Freight 2 Day", None),
+        ("Due on receipt, 5% discount if paid in 7 days", "Due on receipt"),
+        ("Net 30 days upon receipt of invoice", "Net 30"),
+        # A discount with net months or a day of the next month: the net is not the months' or the day's number.
+        ("1% 15 days, net 1 month", "1% 15 days, Net 1 month"),
+        ("2% 10 days, Net 10th prox", "Net 10 prox"),  # the app has no form for both: the due date is kept
+        ("2% 10 net 1 month", "2% 10 days, Net 1 month"),
+        ("Net 15th following", "Net 15 prox"),
+        ("EOM. Interest 1.5% per month after 30 days", "Due EOM"),
+        # A discount in the next sentence still belongs to the terms.
+        ("Payable in 30 days. 2% discount if paid within 10 days", "2% 10 Net 30"),
+    ],
+)
+def test_only_the_terms_phrase_is_read_as_the_terms(printed, read):
+    assert _terms(printed) == read
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Terms: Net 30 days. Statements are issued at the end of the month.",
+        "Terms: Due on receipt. Delivery within 2 weeks.",
+    ],
+)
+def test_a_terms_label_line_on_an_invoice_reads_only_its_terms(tmp_path, line):
+    got = _read(_pdf(tmp_path, [*_HEAD, (60, 140, line), *_TABLE]))["payment_terms"]
+    assert got.value in ("Net 30", "Due on receipt")
+
+
+def test_eom_terms_matching_the_due_date_do_not_confirm_the_invoice_date(tmp_path):
+    # Net 30 EOM gives Nov 30 from any day of October: it says nothing about which day the invoice is dated.
+    lines = [(380, 115, "Terms"), (470, 115, "Net 30 EOM"), (380, 130, "Due Date"), (470, 130, "2026-10-30")]
+    got = _read(_pdf(tmp_path, _HEAD + lines + _TABLE))
+    assert not any("terms" in r for r in got["invoice_date"].reasons if r.startswith("confirmed"))
+
+
+@pytest.mark.parametrize(
+    "line, po",
+    [
+        ("Bolts ½ in. per PO # 4500123456", "4500123456"),
+        ("Shipped with FastTrack™ against your PO # 4500123456", "4500123456"),
+        ("Order received… shipped per Purchase Order No. 4500123456", "4500123456"),
+    ],
+)
+def test_a_po_after_a_character_written_as_several_is_read_whole(tmp_path, line, po):
+    # "½", "™" and "…" are one character printed, several once accents and ligatures are taken apart: the PO read
+    # from the line was cut short ("00123456").
+    assert _read(_pdf(tmp_path, [*_HEAD, (60, 300, line), *_TABLE]))["po_number"].value == po
+
+
+def test_a_terms_sentence_after_a_ligature_is_read(tmp_path):
+    got = _read(
+        _pdf(tmp_path, [*_HEAD, (60, 600, "Thank you ½ off next order. Payment is due within 45 days."), *_TABLE])
+    )
+    assert got["payment_terms"].value == "Net 45"
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "Amount due on account as of 2026-10-01: 0.00",
+        "Amount due by October 25, 2026 with discount: 1,107.40",
+        "Payment is due by the 15th. Next service 2026-12-01.",
+        "Balance due on delivery October 30, 2026.",
+        "Please pay by October 25, 2026 to take the 2% discount.",
+        "Balance due on or after 2026-11-14 is subject to 2% interest.",
+    ],
+)
+def test_a_date_that_is_not_the_due_date_in_a_due_sentence_is_not_read(tmp_path, note):
+    assert _read(_pdf(tmp_path, [*_HEAD, (60, 600, note), *_TABLE]))["due_date"].value is None
+
+
+def test_a_balance_due_on_delivery_label_is_not_a_due_date(tmp_path):
+    lines = [(360, 345, "Balance due on delivery: 2026-10-30")]
+    assert _read(_pdf(tmp_path, _HEAD + lines + _TABLE))["due_date"].value is None
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "90 days from date of invoice: warranty on all workmanship.",
+        "5 days after invoice: no claims for shortages accepted.",
+        "30 days from the invoice date for returns; restocking fee 15%.",
+        "Holdback of 10% is payable within 60 days of substantial completion.",
+        "30 days from date of invoice, interest at 2% per month is charged on overdue accounts.",
+        "Payable within 10 days of statement date.",
+    ],
+)
+def test_a_days_sentence_about_warranty_claims_returns_or_holdback_is_not_the_terms(tmp_path, note):
+    assert _read(_pdf(tmp_path, [*_HEAD, (60, 600, note), *_TABLE]))["payment_terms"].value is None
+
+
+@pytest.mark.parametrize(
+    "note, terms",
+    [
+        ("Payment is due within 30 days of month end.", "Net 30 EOM"),
+        ("Payment due within 30 days. 2% discount if paid within 10 days.", "2% 10 Net 30"),
+        ("2% discount if paid within 10 days. Payment due within 30 days.", "2% 10 Net 30"),
+        ("Payment due within 30 days; overdue accounts subject to 1.5% per month.", "Net 30"),
+    ],
+)
+def test_a_terms_sentence_keeps_its_end_of_month_and_its_discount(tmp_path, note, terms):
+    assert _read(_pdf(tmp_path, [*_HEAD, (60, 600, note), *_TABLE]))["payment_terms"].value == terms
+
+
+@pytest.mark.parametrize("line", ["Your ref: call 416-555-1212", "Your reference: J. Smith 12"])
+def test_your_reference_that_is_a_phone_number_or_words_is_no_po(tmp_path, line):
+    assert _read(_pdf(tmp_path, [*_HEAD, (60, 140, line), *_TABLE]))["po_number"].value is None
+
+
+@pytest.mark.parametrize(
+    "line, field, value",
+    [
+        ("Fittings ½ in., PO # 4500123456", "po_number", "4500123456"),
+        ("Bolts ½ in. | Due Date: 2026-11-30", "due_date", "2026-11-30"),
+    ],
+)
+def test_a_label_after_a_character_written_as_several_reads_its_whole_value(tmp_path, line, field, value):
+    assert _read(_pdf(tmp_path, [*_HEAD, (60, 300, line), *_TABLE]))[field].value == value
