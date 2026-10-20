@@ -338,7 +338,8 @@ def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None 
                 if m.end() < len(text) and text[m.end() - 1].isalpha() and text[m.end()].isalpha():
                     # Unless OCR glued a title to its number: "AvoirAV-2017-0005" (lower case, then the number's
                     # capitals and a digit).
-                    if not (line.text[m.end() - 1 : m.end()].islower() and _GLUED_NUMBER.match(line.text, m.end())):
+                    glued = field in ("invoice_number", "po_number") and line.text[m.end() - 1 : m.end()].islower()
+                    if not (glued and _GLUED_NUMBER.match(line.text, m.end())):
                         continue
                 end = m.end()
                 # "Invoice No. / No facture: 123": the value follows the second (translated) label.
