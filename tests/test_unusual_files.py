@@ -113,3 +113,43 @@ def test_a_multi_page_tiff_with_a_palette_page_is_made_into_a_pdf(tmp_path):
     with pymupdf.open(converted.pdf) as doc:
         assert doc.page_count == 4
     assert (tmp_path / "originals" / scan.name).exists()
+
+
+# --- B-262: a PDF with no pages -------------------------------------------------------------------------------------
+
+
+def _pdf_without_pages() -> bytes:
+    body, offsets = b"%PDF-1.4\n", []
+    for n, obj in enumerate((b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [] /Count 0 >>"), 1):
+        offsets.append(len(body))
+        body += f"{n} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref = len(body)
+    body += b"xref\n0 3\n0000000000 65535 f \n" + b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
+    return body + f"trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+
+
+def test_a_pdf_with_no_pages_is_refused_in_plain_words_not_queued_blank(pipeline):
+    store, pipe, folder = pipeline
+    empty = folder / "statement.pdf"
+    empty.write_bytes(_pdf_without_pages())
+    with pymupdf.open(empty) as doc:
+        assert doc.page_count == 0  # a real PDF, as some programs save one, with no page in it
+    result = pipe.process(empty)
+    assert not result.ok
+    assert result.error == ("statement.pdf has no pages in it: the file is empty or was not saved completely. Ask the "
+                            "vendor for a new copy.")  # fmt: skip
+    assert store.get_invoice(result.invoice_id)["status"] == FAILED and empty.exists()
+
+
+def test_a_password_protected_pdf_says_so_and_one_with_only_an_owner_password_is_read(pipeline, tmp_path):
+    """Not a bug: these already worked; kept so the page check above never words a password as "no pages"."""
+    store, pipe, folder = pipeline
+    with pymupdf.open(SAMPLE) as doc:
+        doc.save(folder / "locked.pdf", encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="secret", owner_pw="owner")
+        doc.save(folder / "print only.pdf", encryption=pymupdf.PDF_ENCRYPT_AES_128, owner_pw="owner",
+                 permissions=pymupdf.PDF_PERM_PRINT)  # fmt: skip
+    locked = pipe.process(folder / "locked.pdf")
+    assert locked.error == ("locked.pdf is protected by a password, so it can't be read. Ask the vendor for a copy "
+                            "without one.")  # fmt: skip
+    opened = pipe.process(folder / "print only.pdf")  # an empty user password: opened without asking
+    assert opened.ok and opened.output["grand_total"] == 18017.85

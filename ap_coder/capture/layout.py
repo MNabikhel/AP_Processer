@@ -44,7 +44,8 @@ NO_HEIF = ("this iPhone photo (HEIC) can't be opened: the photo add-on (pillow-h
 
 class CannotRead(RuntimeError):
     """The file can't be read on this computer, for a reason AP can act on (said in plain words): OCR or the photo
-    add-on isn't installed. Never an empty reading: an invoice with nothing read would look like a blank one."""
+    add-on isn't installed, a PDF with no pages, a web page saved as an invoice. Never an empty reading: an invoice
+    with nothing read would look like a blank one."""
 
 
 _heif_registered: bool | None = None

@@ -186,6 +186,25 @@ def plain_error(exc: Exception, path: Path) -> str:
     return f"{name}: {exc}"
 
 
+NO_PAGES = "{name} has no pages in it: the file is empty or was not saved completely. Ask the vendor for a new copy."
+
+
+def _check_pdf(path: Path) -> None:
+    """Raises ``CannotRead`` for a PDF with no pages (read, it would go to the queue as a blank invoice). A PDF that
+    can't be opened is left to the readers, whose error is worded by ``plain_error``."""
+    if path.suffix.lower() != ".pdf":
+        return
+    try:
+        import pymupdf
+
+        with pymupdf.open(path) as doc:
+            pages = None if doc.needs_pass else doc.page_count  # a password: said as such (``plain_error``)
+    except Exception:  # noqa: BLE001 - damaged, or not a PDF: said by the reader that fails on it
+        return
+    if pages == 0:
+        raise CannotRead(NO_PAGES.format(name=path.name))
+
+
 def _needs_password(path: Path) -> bool:
     try:
         import pymupdf
@@ -362,6 +381,7 @@ class InvoicePipeline:
             # A photo or a scanned picture coming in is made a PDF first; one stored as a picture by an older version
             # (read again by the page reader) stays where the database has it.
             path = result.source = _as_pdf(path, result, convert=invoice_id is None)
+            _check_pdf(path)
             t0 = time.perf_counter()
             layout = None
             if self._reads_locally(path):  # offline: the page's text layer, or local OCR for a scan
@@ -422,7 +442,7 @@ class InvoicePipeline:
                 exclude_invoice_id=invoice_id,
                 feedback=feedback,
             )
-        except CannotRead as exc:  # OCR or the photo add-on isn't installed: said plainly, never an empty reading
+        except CannotRead as exc:  # no OCR or photo add-on, no pages, a web page: said plainly, never an empty reading
             log.warning("%s: %s", path.name, exc)
             result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch

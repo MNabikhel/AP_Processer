@@ -2401,3 +2401,13 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **Fix:** a page that is not a palette page drops the palette left from another page before it is loaded; all four pages become the PDF.
 - **Test:** `tests/test_unusual_files.py::test_a_multi_page_tiff_with_a_palette_page_is_made_into_a_pdf`
 - **Lesson:** Don't assume a multi-page picture's pages share one mode: test one whose pages differ.
+
+#### B-262 · A PDF with no pages went to the review queue as a blank invoice · medium-low
+- **Where:** `ap_coder/ai/pipeline.py` (`_check_pdf`, called by `_process`)
+- **Symptom:** a PDF with no page in it (a program that saved before writing a page; pdf.js's `bug1020226.pdf`) was "read and coded" and waited in the queue as "needs attention" with an empty vendor and number and no page to show (its page image 404).
+- **Cause:** nothing checked the page count: the readers read zero pages and the coder made an invoice of nothing.
+- **Reproduce:** a hand-written PDF whose page tree is empty (`/Count 0`), through the three ways in.
+- **Reproduced:** yes (`zero_pages.pdf: needs attention`, vendor and invoice number empty, `/review/1/page/1.png` 404).
+- **Fix:** a PDF with no pages is refused before it is read: "statement.pdf has no pages in it: the file is empty or was not saved completely. Ask the vendor for a new copy." (Failed / rejected; the file stays in the folder.) A password-protected PDF is still worded as such (a test now guards that message, and that a PDF with only an owner password is opened with the empty user password).
+- **Test:** `tests/test_unusual_files.py::test_a_pdf_with_no_pages_is_refused_in_plain_words_not_queued_blank`, `::test_a_password_protected_pdf_says_so_and_one_with_only_an_owner_password_is_read`
+- **Lesson:** Don't let "read nothing" pass as "read an invoice with nothing on it": check there is something to read first.
