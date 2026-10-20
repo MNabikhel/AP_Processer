@@ -3208,3 +3208,25 @@ corpus is not in the repo). B- numbers start at B-372 and N- numbers at N-121, a
   `tests/test_terms_po_sweep4.py::test_a_date_in_a_note_that_is_not_about_the_due_date_is_not_read_as_it`
 - **Lesson:** Don't take a label's words only as a line's first words: "Invoice Due Date" and "Total amount due on"
   carry the due date's label inside them.
+
+#### Left as they are (terms, PO numbers and due dates)
+
+- **N-121** · The corpus writes German terms as the whole printed sentence, dates included ("Zahlbar innerhalb 30
+  Tagen netto bis 04.04.2013, 3% Skonto innerhalb 10 Tagen bis 15.03.2013"); the reader gives the app's short form
+  ("3% 10 Net 30", "2% 14 days", "Due on receipt" for "Zahlbar sofort rein netto" and "sofort fällig"). The app reads
+  both the same way, but the corpus scorer compares the numbers in the text, so 10 such readings count as wrong
+  there (all *check* or *likely*, none verified). Left: the short form is what the due date is counted from.
+- **N-122** · York University's sample invoice as a PDF (`ca_yorku_sample`) is a picture of the invoice on a page
+  whose side panel is text: only the text is read, so its PO and terms are not seen (the photo of it, read with
+  OCR, reads both now). Reading the picture inside a text page is a layout question, left.
+- **N-123** · Insurance notices and direct debits (ZUGFeRD "Beitragsrechnung", "wird am 20.03.2014 von Ihrem Konto
+  ... eingezogen", Hetzner's "Bankeinzug"): their "terms" are a paragraph on how the amount is collected and the
+  due date the day of the debit. Not read; a debit date is not a due date AP pays by.
+- **N-124** · Printed but left out of the corpus's answers, and read: "30% d'acompte, solde à 30 j" as Net 30
+  (marked as the balance's terms, B-328), "Paiement immédiat" as due on receipt, "Bestellung Nr. 2014-471331" and
+  "Bestell-Nr: B610061523500010" as the PO, the net date of a German terms sentence as the due date. The scorer
+  counts them as spurious; they are on the page.
+- **N-125** · The same "Bestell-Nr", "Bestellung:" and colon-in-the-value's-cell layouts give the invoice number and
+  date on the same invoices ("Rechnungs-Nr : 471102", "Leistungs-Datum : 05.08.2013"); B-374 lets a cell holding the
+  label's colon be read only for the PO, due date and terms, so as not to change how the invoice number and date are
+  read in this change. The same rule likely helps them.
