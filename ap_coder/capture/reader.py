@@ -438,6 +438,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None
         if any(da <= a - start < db for _d, da, db, _amb in parse_dates(rest)):
             return None  # the day of a date ("30 Jun 2025"), not a number
+        if any(ga == a for _v, ga, _gb, _ok in find_gst_numbers(text)):
+            return None  # "782311542 RT 0001", "No. 123456782 RT0001": a business number, not an invoice or a PO
         if value.isdigit() and _STREET.search(text[b:]):
             return None  # a street number ("4833 Barrington St", "9777, boul. des Laurentides"), not an ID
         if re.fullmatch(r"(?i)(?:unit|suite|ste|bureau|apt|room|local|piece|box)\s*#?\s*\d+[a-z]?", value):
@@ -650,6 +652,42 @@ def _over_its_own_label(lines: list[Line], value: Line) -> bool:
     )
 
 
+def _labelish(line: Line) -> bool:
+    """A line that reads as some field's label, a wanted one or not ("Quote # / Soumission", "Account #"): no figures,
+    and a label's words or marks."""
+    p = plain(line.text).strip()
+    if not p or any(c.isdigit() for c in p):
+        return False
+    return _a_label(line) or "#" in p or p.endswith(":") or any(rx.match(p) for rxs in _DISTRACT.values() for rx in rxs)
+
+
+def _value_over_label(lines: list[Line], line: Line, hit: _LabelHit) -> Reading | None:
+    """One label printed under its value on a page not found to print them all so (a scan's tilt runs a row of
+    labels into one line): the line just over the label reads as its value, and the one under it is another label's,
+    printed right over that label and farther from this one."""
+    lb = _label_box(hit)
+    up = _over(lines, line, lb)
+    if up is None or _a_label(up):
+        return None
+    above = _value_reading(hit.field, up, 0, 0.85 * hit.strength, "label-above")
+    down = next(iter(_below(lines, line, lb)[:1]), None)
+    if above is None or down is None or not _value_reading(hit.field, down, 0, 1.0, "x"):
+        return None
+    h = max(down.box.height, 0.008)
+    over_its_label = any(
+        other is not down
+        and other.box.page == down.box.page
+        and other.box.cy > down.box.cy
+        and -0.3 * h <= other.box.y0 - down.box.y1 <= LABEL_UNDER_GAP * h
+        and _aligned(down.box, other.box)
+        and _labelish(other)
+        for other in lines
+    )
+    if over_its_label and line.box.y0 - up.box.y1 < 0.5 * (down.box.y0 - line.box.y1):
+        return above
+    return None
+
+
 def _under_another_label(lines: list[Line], value: Line, label: Line) -> bool:
     """``value`` sits right under a label of its own (a header grid: a row of labels over a row of values), not
     ``label``: on a scan, where the rows are a little off, it can look level with the label on its left."""
@@ -752,6 +790,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = Fals
             up = _over(lines, line, _label_box(hit))
             if up is not None and not _a_label(up):
                 got = _value_reading(field, up, 0, 0.85 * hit.strength, "label-above")
+        elif got is None and field not in AMOUNT_FIELDS:
+            got = _value_over_label(lines, line, hit)
         if got is None:
             lb = _label_box(hit)
             for other in _below(lines, line, lb)[:3]:
@@ -927,6 +967,22 @@ _TITLE_PREFIX = re.compile(
 )
 
 
+_ATTENTION = re.compile(r"^(?:attn|attention|a\s*l'?\s*attention\s*de|c\s*/\s*o)\b|^accounts\s*payable\b")
+
+
+def _over_attention(lines: list[Line], line: Line) -> bool:
+    """``line`` is printed just over an "Attn: Accounts Payable" or "c/o ..." line starting where it starts: a
+    customer's name in its address block."""
+    h = max(line.box.height, 0.008)
+    return any(
+        other is not line
+        and abs(other.box.x0 - line.box.x0) < 0.02
+        and 0 < other.box.cy - line.box.cy < 2.2 * h
+        and _ATTENTION.match(plain(other.text).strip())
+        for other in lines
+    )
+
+
 def _vendor_names(layout: DocLayout) -> list[Reading]:
     if not layout.pages:
         return []
@@ -954,6 +1010,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             continue
         if line.box.cy > 0.33 or line.box.y0 >= table_top - 0.002 or _in_bill_to(layout, line):
             continue
+        if _over_attention(page.lines, line):
+            continue  # "Groupe Boisvert ltée" over "Attn: Accounts Payable": the customer, its "Bill To" unread
         if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
             continue
         if _POSTAL_CODE.search(text) or us_address(text) or _CONTACT.search(p):
@@ -1099,12 +1157,37 @@ def _printed_as_money(token: str) -> bool:
 _CREDIT_TITLE = re.compile(r"^(?:" + "|".join(CREDIT_TITLES) + r")(?![a-z])")  # as email triage reads them
 
 
+# A total's label that says the document credits: "CREDIT TOTAL:", "Total Credit / Montant crédité", "Amount credited".
+_CREDIT_TOTAL = re.compile(
+    r"^(?:credit\s*total|total\s*(?:du\s*)?credit(?:ed)?|amount\s*credited|montant\s*(?:total\s*)?credite|"
+    r"total\s*(?:de\s*la\s*)?note\s*de\s*credit)(?![a-z])(?!\s*(?:applied|available|used|received|applique|utilise))"
+)
+
+
 def credit_titled(layout: DocLayout) -> bool:
     """The document calls itself a credit note ("CREDIT MEMO", "Note de crédit", "AVOIR" ...) at the top of its
-    first page."""
+    first page, or its total is labelled a credit ("CREDIT TOTAL", "Total Credit / Montant crédité"): a fax or a scan
+    can lose the title, never both."""
     if not layout.pages:
         return False
-    return any(ln.box.cy < 0.35 and _CREDIT_TITLE.match(plain(ln.text).strip()) for ln in layout.pages[0].lines)
+    if any(ln.box.cy < 0.35 and _CREDIT_TITLE.match(plain(ln.text).strip()) for ln in layout.pages[0].lines):
+        return True
+    from .normalize import find_amounts
+
+    for page in layout.pages:
+        amounts = {id(ln): [abs(v) for v, a, b in find_amounts(ln.text) if looks_like_money(ln.text[a:b])]
+                   for ln in page.lines}  # fmt: skip
+        largest = max((v for vs in amounts.values() for v in vs), default=0.0)
+        for line in page.lines:
+            if not _CREDIT_TOTAL.match(plain(line.text).strip()):
+                continue
+            # The credit total is the document's largest amount (an invoice's "Credit total" line is not its total).
+            row = [line] + sorted((o for o in page.lines if o is not line and abs(o.box.cy - line.box.cy) < 0.006
+                                   and o.box.x0 >= line.box.x0), key=lambda o: o.box.x0)  # fmt: skip
+            got = next((amounts[id(o)] for o in row if amounts[id(o)]), [])
+            if got and got[-1] >= largest - 0.005:
+                return True
+    return False
 
 
 def credit_printed_positive(layout: DocLayout) -> bool:

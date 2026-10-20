@@ -2403,3 +2403,44 @@ Found by reading a hard corpus of 150 synthetic Canadian invoices with exact tru
 - **Test:** `tests/test_sweep4_layouts.py::test_compact_dates_with_a_month_name`
 - **Hard corpus (digital):** 99.4% / 96.0% → 100% / 100%; date_odd 95.4% / 71.4% → 100% / 100%.
 - **Lesson:** Don't let a date pattern assume the spaces and the century are printed: supplier systems print what fits in seven characters.
+
+#### B-282 · A quote number under a label printed under its value is verified as the invoice number · high
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, new `_value_over_label`)
+- **Symptom:** A speckled scan of a bilingual labels-under grid: "Q-2026-625" (the quote number, printed over "Quote # / Soumission") verified as the invoice number; the invoice's own "075037" sat just over "Inv # / No de facture". The same on a photographed credit note: "SO-42032" verified for "CN-63312".
+- **Cause:** The scan's tilt runs the grid's other labels into one line, so B-280 does not see a page of labels under values; the label's value was then looked for below it, where the next label's value is. Both OCR reads agree on the words, so the wrong value was verified.
+- **Reproduce:** the grid of `test_one_label_under_its_value_with_a_quote_number_under_the_next`; `analyze(..., page_text=...)`.
+- **Reproduced:** yes (the business number or the quote number read, with the page reader agreeing)
+- **Fix:** One label is read from the line just over it (`label-above`) when that line reads as its value and the line under it reads as one too but sits right over a label of its own (any label: "Quote #", "Account #", a distractor) and farther from this label than the line over it.
+- **Test:** `tests/test_sweep4_layouts.py::test_one_label_under_its_value_with_a_quote_number_under_the_next`
+- **Hard corpus:** h-0024 and h-0061 no longer verified wrong (both now right).
+- **Lesson:** Don't decide a layout only page-wide: a scan breaks the rows that would show it, and each label can still tell by its own gaps.
+
+#### B-283 · A business number ("782311542 RT 0001") read as the invoice number · medium
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`)
+- **Symptom:** "GST/HST No. 123456782 RT0001" gave the invoice number 123456782 (its "No." matches the invoice number's weakest label), and "782311542 RT 0001" under a grid's "Invoice #" was read as the number.
+- **Cause:** The number reader took the nine digits of a business number as an identifier; only amounts checked for registration numbers.
+- **Reproduce:** `_value_reading("invoice_number", <line "782311542 RT 0001">, 0, 1.0, "x")`.
+- **Reproduced:** yes (`782311542`)
+- **Fix:** An invoice or PO number that starts a GST/HST business number on its line is not read.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_business_number_is_not_an_invoice_number`
+- **Lesson:** Don't let the weakest label ("No.") read whatever number follows it: rule out the numbers that have a shape of their own first.
+
+#### B-284 · A credit printed positive whose title was lost is read and verified as a bill · high
+- **Where:** `ap_coder/capture/reader.py` (`credit_titled`, used by `credit_printed_positive`), `_vendor_names`
+- **Symptom:** A faxed BC credit memo printed with positive amounts: subtotal 3,667.00, GST 183.35 and the total 4,107.04 verified positive (a credit read as a bill to pay), and the customer "Groupe Boisvert ltée" verified as the supplier. An upside-down credit (h-0044) the same: HST and "Total Credit / Montant crédité" verified positive.
+- **Cause:** A credit printed positive was known only by its title at the top of page 1, which the fax and the turned page lost; the total's own label, "CREDIT TOTAL", was not used. The customer's name was taken for the supplier's because its "Bill To" label was unreadable, though "Attn: Accounts Payable" was printed under it.
+- **Reproduce:** the page of `test_a_credit_whose_title_is_lost_is_known_by_its_credit_total`; `analyze()`.
+- **Reproduced:** yes (`1000.0, 50.0, 1050.0`, vendor "Groupe Boisvert ltee")
+- **Fix:** A document whose largest amount is on a credit total's label ("CREDIT TOTAL", "Total Credit", "Amount credited", "Montant crédité"; not "credit applied") is a credit, as a title would say; an invoice's smaller "Credit total" line does not make it one. A name printed just over "Attn: ..." / "c/o ..." / "Accounts Payable" is the customer's, never the supplier's.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_credit_whose_title_is_lost_is_known_by_its_credit_total`, `::test_an_invoices_credit_line_does_not_make_it_a_credit`
+- **Lesson:** Don't hang a sign on one line of the page: a credit says so in its title and on its total, and a scan may keep only one.
+
+#### B-285 · On a photo, a subtotal nothing confirms is verified · high
+- **Where:** `ap_coder/capture/confidence.py` (`fuse`)
+- **Symptom:** A keystoned EUR photo: the shipping line's 171,03 read on the "Sub Total" label (the tilt ran the rows together), no total read, nothing adding up, and the subtotal verified at 0.9886.
+- **Cause:** Both OCR reads count as independent readers, and the evidence pattern's measured record alone reached *verified*; but the two reads share the page's geometry, so a row put on the wrong label is a mistake they share.
+- **Reproduce:** `fuse()` with the same subtotal from `rules` and `ocr2`, `layout_source="ocr"`, no other field.
+- **Reproduced:** yes (`verified`)
+- **Fix:** On a scan or a photo, an amount no check confirms (no total read, no sum adding up with it) is likely at most (`SINGLE_READER_CAP`), with the reason "no total or sum on the page confirms this amount". Amounts the totals or lines confirm are verified as before.
+- **Test:** `tests/test_sweep4_layouts.py::test_an_amount_nothing_confirms_on_a_scan_is_not_verified`
+- **Lesson:** Don't count two OCR engines reading the same misplaced row as two witnesses to an amount: the arithmetic is the independent witness.

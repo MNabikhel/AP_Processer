@@ -74,6 +74,87 @@ def test_a_grid_of_labels_over_values_is_still_read_below(tmp_path):
     )
 
 
+def test_one_label_under_its_value_with_a_quote_number_under_the_next(tmp_path):
+    """A scan's tilt runs most of a labels-under grid's labels into one line, so the page is not seen to print its
+    labels under their values; "Inv # / No de facture" still has its number just over it, and the number under it is
+    the quote's, printed right over "Quote # / Soumission". The quote number was verified as the invoice number (the
+    page reader, reading the same words, agreed)."""
+    import pymupdf
+
+    grid = [
+        (60, 200, "075037"), (60, 209, "Inv # / No de facture", 7),
+        (160, 200, "4 Mar 2026"), (260, 200, "3 Apr 2026"),
+        (160, 209, "Billing Date / Date de facturation Payment Due / Payable avant le", 7),
+        (60, 232, "Q-2026-625"), (60, 241, "Quote # / Soumission", 7),
+    ]  # fmt: skip
+    path = _pdf(tmp_path, _VENDOR + grid + _TABLE)
+    with pymupdf.open(path) as doc:
+        text = [page.get_text() for page in doc]
+    got = analyze(path, ocr=False, today=TODAY, page_text=text).fields["invoice_number"]
+    assert got.value == "075037"
+    assert got.status != VERIFIED
+
+
+def test_a_business_number_is_not_an_invoice_number(tmp_path):
+    """ "GST/HST No. 123456782 RT0001" (its "No." a label of the invoice number's shape) and "782311542 RT 0001" under
+    a grid's label were read as the invoice number."""
+    from ap_coder.capture.reader import _value_reading
+    from ap_coder.capture.types import Box, Line, Word
+
+    def line(text: str) -> Line:
+        box = Box(1, 0.1, 0.1, 0.5, 0.12)
+        return Line([Word(w, box) for w in text.split()], box, text)
+
+    assert _value_reading("invoice_number", line("782311542 RT 0001"), 0, 1.0, "x") is None
+    assert _value_reading("invoice_number", line("No. 123456782 RT0001"), 4, 1.0, "x") is None
+    assert _value_reading("invoice_number", line("No. 123456782"), 4, 1.0, "x").value == "123456782"
+
+
+def test_a_credit_whose_title_is_lost_is_known_by_its_credit_total(tmp_path):
+    """A faxed credit memo printed with positive amounts lost its "CREDIT MEMO" title (and the supplier's name) to the
+    fax: the amounts were verified as a bill's, positive, and the customer's name over "Attn: Accounts Payable" was
+    verified as the supplier."""
+    lines = [
+        (300, 120, "6484 Main St, Vancouver, BC V9Y 9N3"), (300, 135, "GST No. 123456782 RT0001"),
+        (60, 205, "Groupe Boisvert ltee", 12), (60, 220, "Attn: Accounts Payable"), (60, 235, "2818 Albert St"),
+        (60, 280, "Credit No: CM2025-59874"), (300, 280, "Date: 2026-04-21"),
+        (60, 330, "Description"), (400, 330, "Qty"), (500, 330, "Amount"),
+        (60, 345, "Forklift rental (weekly)"), (400, 345, "2"), (500, 345, "1,000.00"),
+        (380, 500, "Sub Total:"), (500, 500, "1,000.00"), (380, 515, "G.S.T. (5%):"), (500, 515, "50.00"),
+        (380, 530, "CREDIT TOTAL:"), (500, 530, "1,050.00"),
+    ]  # fmt: skip
+    got = _read(_pdf(tmp_path, lines))
+    assert (got.fields["subtotal"].value, got.fields["gst_amount"].value, got.fields["grand_total"].value) == (
+        -1000.0,
+        -50.0,
+        -1050.0,
+    )
+    assert got.line_items[0].amount == -1000.0
+    assert got.fields["vendor_name"].value != "Groupe Boisvert ltee"
+
+
+def test_an_invoices_credit_line_does_not_make_it_a_credit(tmp_path):
+    """ "Credit total" on an invoice (a line smaller than its total) is not the document's total."""
+    lines = _VENDOR + [(380, 150, "Invoice No:"), (460, 150, "INV-7781")] + _TABLE + [
+        (380, 560, "Credit total"), (500, 560, "25.00"),
+    ]  # fmt: skip
+    assert _read(_pdf(tmp_path, lines)).fields["grand_total"].value == 1150.0
+
+
+def test_an_amount_nothing_confirms_on_a_scan_is_not_verified():
+    """A photo's tilt put the shipping line's amount on the "Sub Total" label; both OCR reads agreed, no total was read
+    and nothing added up, and the wrong subtotal was verified on the measured record of its evidence alone."""
+    from ap_coder.capture.confidence import fuse
+    from ap_coder.capture.types import Box, Reading
+
+    box = [Box(1, 0.8, 0.57, 0.95, 0.6)]
+    by_source = {
+        s: {"subtotal": [Reading("subtotal", 171.03, "171,03", box, 0.95, "label-inline")]} for s in ("rules", "ocr2")
+    }
+    scan = fuse(by_source, [], layout_source="ocr", fields=("subtotal",))[0]["subtotal"]
+    assert scan.value == 171.03 and scan.status != VERIFIED
+
+
 def test_compact_dates_with_a_month_name(tmp_path):
     """ "12APR26" (day, month and two-digit year run together) and "Oct-15-26" (month, day and year by dashes) were
     not read as dates at all; a number with such a date inside it is still a number."""
