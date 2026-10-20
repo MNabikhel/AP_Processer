@@ -89,7 +89,8 @@ def test_small_invoices_need_no_number(tmp_path):
 
 
 def test_registration_number_needed_from_100_dollars_since_2021(tmp_path):
-    """Since 2021-01-01 the supplier's registration number is needed on an invoice of $100 or more (it was $30)."""
+    """Since April 21, 2021 (Budget 2021's amendment of the ITC information rules), the supplier's registration number
+    is needed on an invoice of $100 or more (it was $30)."""
     store = Store(tmp_path / "t.db")
     load_sample_setup(store)
     doc = json.loads((SAMPLES / "ground_truth" / "chinook_AB_GST_CCO-26-10418.json").read_text())
@@ -103,7 +104,7 @@ def test_registration_number_needed_from_100_dollars_since_2021(tmp_path):
         store.create_export_batch([invoice_id], "csv")
     issues = {c.invoice_number: c.issues for c in taxreturn.build(store, *YEAR).claims}
     assert issues == {"S-0": [], "S-1": [taxreturn.NO_GST_NUMBER]}  # $84: needs no number since 2021, did before
-    assert taxreturn.document_threshold("2021-01-01") == 100.0 and taxreturn.document_threshold("2020-12-31") == 30.0
+    assert taxreturn.document_threshold("2021-04-21") == 100.0 and taxreturn.document_threshold("2021-04-20") == 30.0
 
 
 def test_demo_and_default_period(tmp_path):

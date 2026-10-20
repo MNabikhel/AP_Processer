@@ -1480,15 +1480,15 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 | Section | Found | Reproduced and fixed | Not reproduced / left |
 |---|---|---|---|
 | Store and config | 10 | 9 (B-158 to B-166) | 1 (N-77) |
-| Tax and coding rules | 8 | 7 (B-132 to B-138) | 1 (N-78) |
+| Tax and coding rules | 9 | 8 (B-132 to B-138, B-214) | 1 (N-78) |
 | Exports, ERP and reports | 12 | 9 (B-150 to B-157, B-208) | 3 (N-79 to N-81) |
 | AI and readers | 11 | 9 (B-174 to B-181, B-209) | 2 (N-82 to N-83) |
 | Document capture | 12 | 9 (B-182 to B-189, B-205) | 3 (N-84 to N-86) |
 | Web routes | 6 | 5 (B-190 to B-194) | 1 (N-87) |
 | Intake, email and command line | 14 | 12 (B-140 to B-149, B-206 to B-207) | 2 (N-88 to N-89) |
 | Setup, launcher and update | 11 | 7 (B-167 to B-173) | 4 (N-90 to N-93) |
-| Day-one walk-through | 12 | 12 (B-197 to B-204, B-210 to B-213) | 0 |
-| **Total** | **96** | **79** | **17** |
+| Day-one walk-through | 13 | 13 (B-197 to B-204, B-210 to B-213, B-215) | 0 |
+| **Total** | **98** | **81** | **17** |
 
 ### Store and config
 
@@ -1930,6 +1930,16 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 - **Test:** `tests/test_sweep3_capture.py::test_printed_early_payment_discount_terms_keep_the_discount`
 - **Lesson:** Don't let a number pattern start inside another number: anchor both ends.
 
+#### B-214 · The GST/HST registration-number threshold rose to $100 from 2021-01-01, but the law changed on April 21, 2021 · low
+- **Where:** `ap_coder/coding/taxreturn.py` (`document_threshold`)
+- **Symptom:** an invoice of $30 to $99.99 dated between January 1 and April 20, 2021, with no registration number, was not listed among the claims at risk on the Sales tax page.
+- **Cause:** the cutoff date was set to the start of 2021; the Input Tax Credit Information (GST/HST) Regulations were amended by Budget 2021 with effect from April 21, 2021 (Justice Canada's current text; a tax-law summary gives the date). Found while fact-checking the guide.
+- **Reproduce:** `taxreturn.document_threshold("2021-04-20")`.
+- **Reproduced:** yes (100.0, not 30.0).
+- **Fix:** the cutoff is April 21, 2021 (`DOCUMENT_THRESHOLD_FROM`); the Sales tax page and WHATS_NEW say so.
+- **Test:** `tests/test_taxreturn.py::test_registration_number_needed_from_100_dollars_since_2021`
+- **Lesson:** Don't round a legal effective date to the start of a year: take the date the rule names.
+
 ### Web routes
 
 #### B-190 · This computer's browser at its own network address was taken for a colleague · medium
@@ -2295,6 +2305,16 @@ The codebase map was removed first (decisions D-38). Each section was then revie
 - **Fix:** the line now reads "of N today · 1 waiting for a second approval · 1 fully approved in all".
 - **Test:** `tests/test_sweep3_dayone.py::test_the_approved_today_tile_says_how_many_wait_for_a_second_approval`
 - **Lesson:** Don't put two counts side by side that count different things without saying what each counts.
+
+#### B-215 · The JD Edwards dry run read "Will load: 0 voucher(s), -." when every invoice was held back · low
+- **Where:** `ap_coder/erp/jde.py` (`dry_run_text`)
+- **Symptom:** the first line of the dry run, shown on Exports and kept in each batch's ZIP, ended in a stray "-" when nothing could load.
+- **Cause:** an empty list of totals was shown as "-".
+- **Reproduce:** a dry run where every invoice is held back (no supplier AN8). Found by the final walk-through.
+- **Reproduced:** yes ("Will load: 0 voucher(s), -. Held back: 2.").
+- **Fix:** it now reads "Will load: 0 voucher(s), nothing to load. Held back: 2.".
+- **Test:** `tests/test_sweep3_dayone.py::test_a_dry_run_with_nothing_to_load_has_no_stray_dash`
+- **Lesson:** Don't stand a placeholder character in for a sentence a person reads.
 
 Improvements made with these fixes:
 - Review screen, line grid: "Apply to all lines…" gives one GL account and / or cost center to every line that has none (lines already coded keep theirs; POST /review/<id>/fill-lines, like the other grid actions); when every past approval of the vendor used one cost center, it is pre-selected there as a suggestion (`invoice_view.usual_cost_center`; the coder itself is unchanged). `tests/test_sweep3_dayone.py::test_apply_to_all_lines_codes_only_the_lines_that_have_none`, `tests/test_sweep3_dayone.py::test_apply_to_all_lines_refuses_a_code_not_in_the_lists`, `tests/test_sweep3_dayone.py::test_a_vendors_one_usual_cost_center_is_offered_for_its_lines`, `tests/test_web_invoice.py::test_in_a_browser_apply_to_all_lines_fills_the_cost_centers_left_blank`

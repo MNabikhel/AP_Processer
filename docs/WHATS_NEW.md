@@ -430,7 +430,7 @@ folder.
   the ERP yet, and regular bills that have not arrived; totals by GL; CSV.
 - **Sales tax:** the GST/HST input tax credits and QST input tax refunds to claim for a period
   (by invoice date, credit notes deducted), by tax and rate, and the claims to check before filing:
-  an invoice of $100 or more ($30 before 2021) without a valid registration number, tax in a foreign currency. CSV.
+  an invoice of $100 or more ($30 before April 21, 2021) without a valid registration number, tax in a foreign currency. CSV.
   Also the **PST / QST possibly to self-assess**: approved invoices for a supply in BC, SK, MB or
   Quebec where the vendor charged none, with an estimate at the official rate.
 - **Vendors that make work** (Vendors page): how often each vendor's invoices arrive with something

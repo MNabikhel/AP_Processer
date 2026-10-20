@@ -1058,7 +1058,7 @@ def dry_run_text(report: dict[str, Any]) -> str:
     if report["blocking"]:
         lines += ["NOTHING CAN LOAD until these JD Edwards settings are fixed (Settings -> JD Edwards E1):"]
         lines += [f"  - {p}" for p in report["blocking"]] + [""]
-    money = ", ".join(f"{c} {t:,.2f}" for c, t in sorted(report["totals"].items())) or "-"
+    money = ", ".join(f"{c} {t:,.2f}" for c, t in sorted(report["totals"].items())) or "nothing to load"
     lines += [
         f"Will load: {len(report['vouchers'])} voucher(s), {money}. Held back: {len(report['held'])}.",
         "Rows: " + ", ".join(f"{f} {n}" for f, n in report["files"].items() if n or f != MATCH_FILE),
