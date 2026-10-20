@@ -2375,3 +2375,29 @@ Improvements made with these fixes:
 - **N-91** · Setup, launcher and update · `watch` still treats an invoice that failed for a missing module as seen (no retry). Not changed, as the finding suggested: with the older watcher stopped, nothing fails that way; a retry rule for failures is a design choice.
 - **N-92** · Setup, launcher and update · an older `watch` / `read-pages` run by another computer account (or a scheduled task under one) can't be ended by this account: the start waits a minute ("close the window it runs in, or end its task in Task Scheduler"), then stops. Worker notes don't carry the account (B-168 covers servers only).
 - **N-93** · Setup, launcher and update · two accounts sharing one folder on macOS/Linux: the server file is mode 0600 and the code folder's lock file belongs to the first account, so the second account's start can't read the token or take the lock; it now relies on `/healthz`'s `user` (B-168). Sharing one folder between accounts is documented for Windows only.
+
+## Sweep 4 (real-world testing), October 2026
+
+Reading measured on 135 public invoices, receipts and credit notes from the internet (Canada Post, York University, March of Dimes, City of Winnipeg samples, WildReceipt photos of Canadian receipts, Factur-X / ZUGFeRD, Azure and other open samples). Each pattern found there got a small generated fixture and a failing test first; no corpus file is in the repo.
+
+### Reading: real-world vendors and totals
+
+#### B-320 · A summary table's first row read as the invoice's subtotal, GST and total, verified · high
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, new `_totals_heading_row`, `_column_below`, `_column_foot`)
+- **Symptom:** Canada Post's invoice (English and French, and a scan of the French one) prints its totals as a table: "Subtotal | GST | HST | PST/QST | Total" over one row per kind of charge (Parcels, Marketing mail, ...) and an unlabelled row of column totals. The first row was read as the invoice's: subtotal 72.05, GST 3.60, total 75.65 (the invoice: 1,720.18, 72.01, 1,936.72), all verified because 72.05 + 3.60 = 75.65; in English subtotal and total 97.98 for 1,673.01.
+- **Cause:** A label with no value beside it took the first amount under it ("label-below", made for a header grid's one row of values), and the totals solver verified the first row because a row adds up as well as the invoice does.
+- **Reproduce:** a PDF with "Subtotal | GST | HST | PST/QST | Total" over four rows of charges and a row of column totals; `analyze()`.
+- **Reproduced:** yes (`subtotal 72.05 verified ('label-below+adds-up', 'confirmed by totals add up, tax rate')`)
+- **Fix:** three or more total labels side by side with nothing after them are a summary table's headings: each one reads its column (the words under the heading, past a watermark), and its value is the column's foot when the foot is the sum of the rows above it (or the only row); a column with no such foot gives nothing.
+- **Test:** `tests/test_real_vendors_totals.py::test_a_summary_tables_column_totals_are_the_invoice_totals_not_its_first_row`, `tests/test_real_vendors_totals.py::test_a_column_whose_foot_is_not_its_sum_gives_no_total`
+- **Lesson:** Don't take the first figure under a label as its value when the label heads a column of figures: a section of the invoice adds up as well as the whole.
+
+#### B-321 · An amount under "PST/QST" ("TVP/TVQ") always read as PST · medium
+- **Where:** `ap_coder/capture/reader.py` (`_hits_at`, new `_settle_pst_or_qst`), `ap_coder/capture/confidence.py` (`fuse`), `ap_coder/capture/types.py` (`EITHER_TAX`)
+- **Symptom:** Canada Post's French invoice charges its 136,47 under "TVP/TVQ" and prints its QST number ("TVQ 1006393299"); it was read as PST (verified once the column totals of B-320 added up).
+- **Cause:** The label "PST/QST" matched the PST label and stopped there; which of the two taxes a combined column holds was never asked.
+- **Reproduce:** the summary table of B-320 with its QST in the "PST/QST" column and "Registration nos.: GST 119321495; QST 1006393299" printed.
+- **Reproduced:** yes (`pst_amount 9.98 likely`, `qst_amount` missing, for the first row; 29.93 expected as QST)
+- **Fix:** "PST/QST" and "TVP/TVQ" propose both taxes. The supplier's QST number printed and no PST number makes it the QST (and the other way round); otherwise the solver picks by the rate and the value is never verified ("printed under a PST/QST label: which of the two it is, the page does not say").
+- **Test:** `tests/test_real_vendors_totals.py::test_a_pst_or_qst_column_is_the_qst_when_the_supplier_prints_its_qst_number`, `tests/test_real_vendors_totals.py::test_a_pst_or_qst_column_the_page_does_not_settle_is_never_verified`
+- **Lesson:** Don't settle a label that names two taxes by the first one it names: ask the page which one the supplier charges, and say so when it does not.

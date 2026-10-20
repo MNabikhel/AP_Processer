@@ -34,6 +34,7 @@ from .normalize import (
 from .types import (
     AMOUNT_FIELDS,
     BILL_TO_READING,
+    EITHER_TAX,
     Box,
     DocLayout,
     Line,
@@ -231,6 +232,13 @@ def _label_hits(line: Line) -> list[_LabelHit]:
 
 
 _NEXT_WORD = re.compile(r"\s+(?=[a-z])")
+_PST_OR_QST = re.compile(rf"\s*/\s*(?:{_A('qst')}|{_A('tvq')})")
+# The supplier's QST or PST registration number, as printed beside its label: the province's tax it charges.
+_QST_REG = re.compile(
+    r"(?<![a-z])(?:q\.?s\.?t|t\.?v\.?q)(?![a-z])[\s.:#]*(?:(?:no|n°|reg|registration)\.?[\s:#]*)?\d{10}"
+)
+_PST_REG = re.compile(r"(?<![a-z])(?:p\.?s\.?t|r\.?s\.?t|t\.?v\.?p)(?![a-z])[\s.:#-]*(?:(?:no|n°|reg|registration)\.?[\s:#]*)?"
+                      r"(?:pst-?)?\d[\d-]{5,12}\d(?![\d.,%])")  # fmt: skip
 
 
 def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None = None) -> list[_LabelHit]:
@@ -266,9 +274,14 @@ def _hits_at(line: Line, text: str, starts: list[int], chained: set[int] | None 
                 box_start = st if chained and st in chained else 0
                 if _distracted(field, text[st:]):
                     continue
+                both = _PST_OR_QST.match(text, end) if field == "pst_amount" else None
                 if field == "hst_amount" and "/" in label_text:
                     for hit_field in _combined_tax_fields(text):
                         hits.append(_LabelHit(hit_field, line, strength, end, label_text, box_start))
+                elif both:  # "PST/QST", "TVP/TVQ": one column for whichever the province charges
+                    end = both.end()
+                    for hit_field in ("pst_amount", "qst_amount"):
+                        hits.append(_LabelHit(hit_field, line, strength, end, text[st:end], box_start))
                 else:
                     hits.append(_LabelHit(field, line, strength, end, label_text, box_start))
                 break
@@ -646,6 +659,78 @@ def _after_another_label(line: Line, got: Reading) -> bool:
         h.field != got.field and h.end <= at for h in _label_hits(line)))  # fmt: skip
 
 
+_TOTALS_ROW_FIELDS = (*AMOUNT_FIELDS,)
+COLUMN_GAP = 0.15  # a column of amounts ends at a gap taller than this (fraction of the page)
+_AMOUNT_PART = re.compile(r"^[$€£]?-?[\d.,]+\$?$|^[$€£]$")
+
+
+def _totals_heading_row(lines: list[Line], line: Line) -> bool:
+    """``line`` is one of three or more total labels printed side by side with nothing after them ("Subtotal | GST |
+    HST | Total"): the headings of a summary table, one row per kind of charge under them."""
+    if line.box.height <= 0:
+        return False
+    beside = 0
+    for other in lines:
+        if other is line or other.box.page != line.box.page or abs(other.box.cy - line.box.cy) > 0.5 * line.box.height:
+            continue
+        hits = [h for h in _label_hits(other) if h.field in _TOTALS_ROW_FIELDS]
+        if hits and not any(_value_reading(h.field, other, h.end, 1.0, "x") for h in hits):
+            beside += 1
+    return beside >= 2
+
+
+def _column_below(lines: list[Line], line: Line, label_box: Box) -> list[tuple[float, list[Word]]] | None:
+    """The amounts printed under a summary table's heading, top to bottom: in each line below, the words under the
+    heading (their boxes overlap its width) when they print one amount. ``None`` when text that is no amount is
+    printed under it first (another table, a note: no column of figures). A line far taller than the heading (a
+    watermark, a logo) is passed over; the column ends at a gap taller than ``COLUMN_GAP``."""
+    out: list[tuple[float, list[Word]]] = []
+    last = line.box.y1
+    for other in sorted(lines, key=lambda ln: ln.box.y0):
+        if other is line or other.box.page != line.box.page or other.box.y0 < line.box.y1 - 0.2 * line.box.height:
+            continue
+        if other.box.height > 3 * max(line.box.height, 0.008):
+            continue
+        idx = [i for i, w in enumerate(other.words) if min(w.box.x1, label_box.x1) - max(w.box.x0, label_box.x0) > 0]
+        if not idx:
+            continue
+        a, b = idx[0], idx[-1]
+        # The rest of an amount that sticks out of the heading's width: "1 936,72 $" under "Total".
+        while (
+            a > 0
+            and _AMOUNT_PART.match(other.words[a - 1].text)
+            and other.words[a].box.x0 - other.words[a - 1].box.x1 < 0.012
+        ):
+            a -= 1
+        while (b + 1 < len(other.words) and _AMOUNT_PART.match(other.words[b + 1].text)
+               and other.words[b + 1].box.x0 - other.words[b].box.x1 < 0.012):  # fmt: skip
+            b += 1
+        under = other.words[a : b + 1]
+        if other.box.y0 - last > COLUMN_GAP:
+            break
+        text = " ".join(w.text for w in under)
+        amounts = _amounts_in(text)
+        if len(amounts) != 1 or not looks_like_money(text) or re.sub(r"[\d\s$€£.,()\-–+]", "", text):
+            return out or None
+        out.append((round(amounts[0][0], 2), under))
+        last = other.box.y1
+    return out
+
+
+def _column_foot(field: str, hit: _LabelHit, lines: list[Line]) -> list[Reading]:
+    """A summary table's column: its foot when it is the sum of the rows above it (one row: the row, printed again
+    as the foot, or alone). A column of rows with no foot that sums them has no invoice total in it."""
+    label_box = _label_box(hit)
+    column = _column_below(lines, hit.line, label_box)
+    if not column:
+        return []
+    *rows, (foot, words) = column
+    if rows and abs(round(sum(v for v, _ in rows), 2) - foot) > 0.011:
+        return []
+    raw = " ".join(w.text for w in words)
+    return [Reading(field, foot, raw, _boxes(words), 0.95 * hit.strength * _min_conf(words), "label-column-foot")]
+
+
 def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
     """For each label: the value after it on the same line, else just right of it, else just below it
     (header grids print a row of labels over a row of values)."""
@@ -655,6 +740,9 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
         inline = _value_reading(field, line, hit.end, 0.95 * hit.strength, "label-inline")
         if inline:
             out.append(inline)
+            continue
+        if field in AMOUNT_FIELDS and _totals_heading_row(lines, line):
+            out += _column_foot(field, hit, lines)
             continue
         if field in AMOUNT_FIELDS and _registration_line(line, hit):
             continue  # "GST/HST Reg. No.: 988130969 RT0003": the number's label, not the tax amount's
@@ -1616,6 +1704,9 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             if field == "other_charges" and _DISCOUNT.match(plain(hit.label_text)):
                 for r in got:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
+            if field in ("pst_amount", "qst_amount") and _PST_OR_QST.search(hit.label_text):
+                for r in got:
+                    r.method += EITHER_TAX
             readings += got
         cands[field] = readings
     if not cands.get("payment_terms"):
@@ -1649,6 +1740,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                 r.score -= 0.03 * (r.boxes[0].page - 1) + 0.01 * r.boxes[0].cy
     cands.setdefault("invoice_number", []).extend(_glued_title_numbers(layout))
     cands.update(_registration_numbers(layout))
+    _settle_pst_or_qst(cands, plain(layout.text()))
     cands["vendor_name"] = _vendor_names(layout)
     currency = currency_evidence(layout.text())
     if currency:
@@ -1662,6 +1754,23 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         readings.sort(key=lambda r: -r.score) if field not in AMOUNT_FIELDS else None
         cands[field] = _dedupe(readings)
     return cands
+
+
+def _settle_pst_or_qst(cands: dict[str, list[Reading]], text: str) -> None:
+    """An amount under a "PST/QST" (or "TVP/TVQ") label is the QST when the supplier prints a QST registration number
+    and no PST one, and the PST the other way round. Otherwise both stay proposed, marked ``EITHER_TAX``: the totals
+    solver picks one by its rate, and it is never verified."""
+    either = {f: [r for r in cands.get(f, []) if EITHER_TAX in r.method] for f in ("pst_amount", "qst_amount")}
+    if not either["pst_amount"] and not either["qst_amount"]:
+        return
+    qst = bool(cands.get("qst_registration_number")) or bool(_QST_REG.search(text))
+    pst = bool(cands.get("pst_registration_number")) or bool(_PST_REG.search(text))
+    if qst == pst:
+        return
+    keep, drop = ("qst_amount", "pst_amount") if qst else ("pst_amount", "qst_amount")
+    cands[drop] = [r for r in cands.get(drop, []) if EITHER_TAX not in r.method]
+    for r in either[keep]:
+        r.method = r.method.replace(EITHER_TAX, "")
 
 
 def _dedupe(readings: list[Reading]) -> list[Reading]:

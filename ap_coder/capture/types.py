@@ -40,6 +40,9 @@ VERIFIED, LIKELY, CHECK, MISSING = "verified", "likely", "check", "missing"
 # Added to a reading's method when it was printed for the customer (the bill-to block, after "Client:"): a
 # registration number read only so may be the customer's. The calibration reads the method by its family ("pattern").
 BILL_TO_READING = "+bill-to"
+# Added to an amount read under a "PST/QST" label the page does not settle (no QST or PST number of the supplier's):
+# which of the two taxes it is stays a person's call, however well it adds up.
+EITHER_TAX = "+pst-or-qst"
 STATUSES = (VERIFIED, LIKELY, CHECK, MISSING)
 
 

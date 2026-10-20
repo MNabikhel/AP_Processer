@@ -35,6 +35,7 @@ from .types import (
     BILL_TO_READING,
     CHECK,
     DATE_FIELDS,
+    EITHER_TAX,
     FIELDS,
     LIKELY,
     MISSING,
@@ -489,6 +490,11 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # formed, not that it is the supplier's. Only the vendor master can say it is.
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("read only in the bill-to block: it may be the customer's number")
+        if any(EITHER_TAX in r.method for _, r in g.readings):
+            # Printed under "PST/QST" with nothing on the page to say which the supplier charges: the amount adds up,
+            # which tax it is does not follow from that. A person says.
+            conf = min(conf, SINGLE_READER_CAP)
+            reasons.append("printed under a PST/QST label: which of the two it is, the page does not say")
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
         # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
         unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []
