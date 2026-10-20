@@ -174,6 +174,45 @@ def first_steps(store: Store, settings: Settings, has_invoices: bool) -> tuple[l
     return steps, sum(1 for s in needed if s == "ok"), len(needed)
 
 
+# Where each getting-started step is done: its row on the welcome page and Import invoices links there until it is.
+STEP_LINKS = {
+    "Reading invoices": "/settings/reading",
+    "Chat model for GL suggestions": "/settings/reading",
+    "GL accounts": "/accounts",
+    "Sales tax GL mapping": "/accounts?tab=tax",
+    "OvisOCR2": "/settings/reading",
+    "Your name": "/settings/review",
+    "Process your first invoices": "/process",
+}
+
+
+def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
+    """The one thing to do next on a new laptop, as the welcome page and Import invoices show it: the name (each
+    approval is recorded under it), the GL accounts (or the sample ones, to look around first), the sales tax
+    accounts, then the first invoices. None once all four are done (LM Studio has its own banner)."""
+    state = {label: (s, detail) for s, label, detail in steps}
+    if state["Your name"][0] != "ok":
+        return {"title": "Add your name", "icon": "badge", "href": STEP_LINKS["Your name"], "button": "Add your name",
+                "text": "Each approval is recorded under it. Until you add it, approvals carry this computer's "
+                        "login."}  # fmt: skip
+    if state["GL accounts"][0] != "ok":
+        return {"title": "Import your GL accounts", "icon": "account_tree", "href": STEP_LINKS["GL accounts"],
+                "button": "Import GL accounts", "sample": True,
+                "text": "AP Coder codes each invoice line to one of your GL accounts. To look around first, use the "
+                        "sample accounts and switch to yours later."}  # fmt: skip
+    if state["Sales tax GL mapping"][0] != "ok":
+        return {"title": "Pick a GL account for each sales tax", "icon": "percent", "button": "Set up sales tax",
+                "href": STEP_LINKS["Sales tax GL mapping"],
+                "text": f"{state['Sales tax GL mapping'][1]}: GST, HST, PST and QST each need a GL account (or PST "
+                        "added to the expense line), so approved invoices can be posted."}  # fmt: skip
+    if state["Process your first invoices"][0] != "ok":
+        return {"title": "Import your first invoices", "icon": "upload_file", "button": "Import invoices",
+                "href": STEP_LINKS["Process your first invoices"],
+                "text": "Upload a few PDFs, scans or photos: each is read, coded and checked, then waits for you in "
+                        "the review queue."}  # fmt: skip
+    return None
+
+
 def ready_to_read(steps: list[tuple[str, str, str]]) -> bool:
     """PDF text / OCR and GL accounts are enough: OvisOCR2 reads invoices once it runs, the chat model is optional."""
     return steps[0][0] != "bad" and steps[2][0] == "ok"
@@ -317,11 +356,15 @@ def process_page(request: Request) -> HTMLResponse:
     waiting = [i for i in recent if i["status"] == REVIEW]
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
+    coming = next_step(steps)
     return render(
         request, "process.html", "process",
         steps=steps,
+        step_links=STEP_LINKS,
         steps_done=steps_done,
         steps_needed=steps_needed,
+        next=coming if coming and coming["href"] != "/process" else None,  # (this page's own step: choose files)
+        first_invoices=bool(coming) and coming["href"] == "/process",
         ready=ready_to_read(steps),
         recent=recent,
         recent_waiting=any(i["status"] == REVIEW for i in recent),

@@ -9,7 +9,7 @@
     sample vendor list. Uses the sample GL accounts if you haven't imported yours.</p>
   <form method="post" action="/demo/load" data-busy="Loading the demo invoices…">
     <input type="hidden" name="back" value="{{ where }}">
-    <button class="btn primary" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Load demo invoices</button>
+    <button class="btn{{ "" if next else " primary" }}" type="submit"><span class="ms" aria-hidden="true">play_circle</span>Load demo invoices</button>
   </form>
   {% else %}
   <p class="muted">{{ demo_count | plural("demo invoice") }} loaded. Removing them also forgets what the AI learned from

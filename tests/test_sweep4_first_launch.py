@@ -404,3 +404,84 @@ def test_the_quick_start_is_a_printable_page_under_help(fresh):
     assert "@media print" in css and ".rail" in css.split("@media print", 1)[1]  # printed without the menu
     assert 'href="/help/quick-start"' in client.get("/help").text
     assert 'href="/help/quick-start"' in client.get("/review").text  # the welcome page
+
+
+# --- The first hour: the next step is always one obvious button ---------------------------------------------------
+
+
+def _title(page: str) -> str:
+    return re.search(r'<h1 class="apc-title">(.*?)</h1>', page, re.S).group(1)
+
+
+def _next_step(page: str) -> str:
+    """The "Next step" card of a page ("" when there is none)."""
+    found = re.search(r'<section class="card next-step".*?</section>', page, re.S)
+    return found.group(0) if found else ""
+
+
+def test_the_welcome_page_leads_through_name_gl_accounts_and_first_invoices_one_button_at_a_time(fresh, monkeypatch):
+    """The welcome page listed seven steps with three buttons of equal weight under them ("GL accounts & tax",
+    "Import invoices", "Your name"), greeted "Good morning, root" (the computer login) and said "Optional: start LM
+    Studio's server" under a row saying OvisOCR2 must run: nothing said which to do first."""
+    from ap_coder.core import paths
+    from ap_coder.core.store import load_sample_setup
+    from ap_coder.web import core
+
+    monkeypatch.delenv("AP_REVIEWER", raising=False)
+    monkeypatch.setattr(core, "login", lambda: "jsmith")
+    client = _client(fresh)
+
+    page = client.get("/review").text
+    card = _next_step(page)
+    assert "Add your name" in card and 'class="btn primary" href="/settings/review"' in card
+    assert "jsmith" not in _title(page)  # no "Good morning, jsmith" before a name is given
+    assert "Optional: start LM Studio" not in page
+    for href in ("/accounts", "/accounts?tab=tax", "/settings/review", "/settings/reading", "/process"):
+        assert f'href="{href}"' in page.split("Getting started", 1)[1], href  # each step to do opens its page
+
+    paths.write_user_settings(reviewer="Pat Tester")
+    page = client.get("/review").text
+    card = _next_step(page)
+    assert "Import your GL accounts" in card and 'href="/accounts"' in card
+    assert 'action="/review/sample-gl"' in card and "Use the sample GL accounts" in card  # or look around first
+    assert "Pat" in _title(page)
+
+    load_sample_setup(fresh)
+    card = _next_step(client.get("/review").text)
+    assert "Import your first invoices" in card and 'class="btn primary" href="/process"' in card
+
+
+def test_import_invoices_shows_the_next_step_until_it_is_its_own(fresh, monkeypatch):
+    """Import invoices showed a disabled "Process uploaded invoices" and "Finish the setup first (GL accounts)": the
+    name, asked first on the welcome page, was a link at the foot of the Setup card."""
+    from ap_coder.core import paths
+    from ap_coder.core.store import load_sample_setup
+
+    monkeypatch.delenv("AP_REVIEWER", raising=False)
+    client = _client(fresh)
+    assert "Add your name" in _next_step(client.get("/process").text)
+
+    paths.write_user_settings(reviewer="Pat Tester")
+    load_sample_setup(fresh)
+    page = client.get("/process").text
+    assert _next_step(page) == ""  # the next step is this page's own: choose files
+    assert "Start here" in page and "Load demo invoices" in page
+
+
+def test_the_review_queue_asks_for_a_name_while_approvals_carry_the_computer_login(demo_db, tmp_path, monkeypatch):
+    """With invoices in the queue and no name given, nothing said that approvals were recorded under "root"."""
+    import shutil
+
+    from ap_coder.core import paths
+    from ap_coder.web import core
+
+    monkeypatch.delenv("AP_REVIEWER", raising=False)
+    monkeypatch.setattr(core, "login", lambda: "jsmith")
+    target = tmp_path / "private" / "ap_coder.db"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(demo_db, target)
+    client = _client(Store(target))
+    page = client.get("/review").text
+    assert "Approvals are recorded under jsmith" in page and 'href="/settings/review"' in page
+    paths.write_user_settings(reviewer="Pat Tester")
+    assert "Approvals are recorded under" not in client.get("/review").text
