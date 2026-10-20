@@ -179,6 +179,8 @@ def date_candidates(text: Any) -> list[tuple[str, str]]:
         return []
     year = next((int(n) for n in numbers if len(n) == 4), None)
     day = next((int(n) for n in numbers if len(n) <= 2), None)
+    if year is None and words[-1] == numbers[-1] and len(numbers[-1]) == 2 and len(numbers[0]) <= 2:
+        day, year = int(numbers[0]), int(numbers[-1])  # "15OCT26", "Oct-15-26": a two-digit year last
     iso = _iso(year, month, day) if year and day else None
     return [(iso, "text")] if iso else []
 
@@ -1296,6 +1298,7 @@ ALWAYS_A_PERSON: dict[str, str] = {
     "AMOUNT_UNUSUAL": "the amount is unusual for this vendor",
     "VENDOR_NOT_IN_MASTER": "the vendor is not in the vendor master",
     "VENDOR_ON_HOLD": "the vendor is on hold",
+    "FILE_CUT_OFF": "the file looks cut off",  # its end is missing: part of the invoice may be (B-266)
     # A name never approved before, or not in the vendor master though its GST/HST number is: the supplier's record
     # (kept by its business number) is not this name's.
     "VENDOR_NEW": "no invoice under this vendor name was approved before",
@@ -1331,6 +1334,7 @@ ALWAYS_A_PERSON_RULES: list[tuple[str, str]] = [
     ("A new vendor name", "no invoice under that name approved yet, even with a touchless vendor's GST/HST number"),
     ("Purchase order exception", "the PO is unknown, closed or another vendor's, or billed beyond what was ordered or "
      "received"),
+    ("File cut off", "a PDF whose end is missing (a download that stopped): part of the invoice may be too"),
     ("Not read by every reader", "the page reader has not read it yet, not every page of it (nor the local readers, "
      "past its first 20 pages), or it is a text file"),
     ("Any failed check", "totals, tax, GST/HST check digit, line items read differently by two readers, or any field "

@@ -228,3 +228,28 @@ def test_eom_terms_with_no_days_are_due_at_the_end_of_the_month(text):
     """B-137: "Net EOM" prints no days: it is due at the end of the invoice's month, not the default 30 days later."""
     p = payment({"invoice_date": "2026-09-10", "payment_terms": text, "grand_total": 100})
     assert (p.due, p.source) == (dt.date(2026, 9, 30), "terms")
+
+
+@pytest.mark.parametrize(
+    "text, discount_by, due",
+    [
+        ("2/10th prox net 30th", dt.date(2026, 10, 10), dt.date(2026, 10, 30)),  # both days of the next month
+        ("2% 10th prox", dt.date(2026, 10, 10), dt.date(2026, 10, 10)),  # no net printed: due that day too
+        ("2% 10 prox, net 25th prox", dt.date(2026, 10, 10), dt.date(2026, 10, 25)),
+        ("1/10 prox net 25 prox", dt.date(2026, 10, 10), dt.date(2026, 10, 25)),
+        ("2/10 prox net 30", dt.date(2026, 10, 10), dt.date(2026, 10, 10)),  # net 30 days from Sep 10
+        ("2% 2 weeks net 30", dt.date(2026, 9, 24), dt.date(2026, 10, 10)),  # 14 days
+        ("2% 2 wks, net 45", dt.date(2026, 9, 24), dt.date(2026, 10, 25)),
+    ],
+)
+def test_discount_terms_in_prox_or_weeks_give_the_discount(text, discount_by, due):
+    """B-216: "2/10th prox net 30th" is 2% off until the 10th of the next month, due on its 30th; "2% 2 weeks net 30"
+    is 2% off for 14 days. Neither gave a discount."""
+    p = payment({"invoice_date": "2026-09-10", "payment_terms": text, "grand_total": 113, "subtotal": 100})
+    pct = float(text[0])
+    assert (p.terms.discount_pct, p.discount_by, p.due, p.discount_amount) == (pct, discount_by, due, pct)
+
+
+def test_a_prox_late_payment_rate_is_still_no_discount():
+    """B-216: a rate charged on the 10th prox on overdue accounts is a late-payment rate, not a discount."""
+    assert parse_terms("Net 30, 1.5% 10th prox interest on overdue accounts").discount_pct is None

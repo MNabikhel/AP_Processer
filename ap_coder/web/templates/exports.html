@@ -117,6 +117,7 @@
         <select name="delimiter">{% for key, label in delimiters.items() %}<option value="{{ key }}"{% if key == layout.delimiter %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       <label class="check"><input type="checkbox" name="decimal_comma" value="1"{% if layout.decimal_comma %} checked{% endif %}> Decimal comma (12,50)</label>
       <label class="check"><input type="checkbox" name="header_row" value="1"{% if layout.header_row %} checked{% endif %}> Header row</label>
+      <label class="check" title="Excel needs it to show accents; untick it when your ERP's loader reads the first header wrong"><input type="checkbox" name="byte_order_mark" value="1"{% if layout.byte_order_mark %} checked{% endif %}> Byte-order mark (for Excel)</label>
     </div>
     <div id="layout-warnings" class="stack"></div>
     <div class="stack full" id="layout-preview-box"{% if not csv_preview %} hidden{% endif %}>

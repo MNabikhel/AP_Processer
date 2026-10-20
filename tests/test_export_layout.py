@@ -91,3 +91,19 @@ def test_custom_csv_keeps_text_exactly_as_typed():
     layout = el.Layout([el.Column("Doc", "invoice_number"), el.Column("Text", "description")])
     text = exports.build("custom", [inv], {}, 3, {}, layout)[0].decode("utf-8-sig")
     assert sorted(text.splitlines()[1:]) == ["+A-100,- Labour", "+A-100,=1+1", "+A-100,=Laptops"]
+
+
+def test_the_custom_csv_can_leave_out_the_byte_order_mark_for_a_database_loader():
+    """B-224: the custom CSV (for an ERP's loader) always began with a UTF-8 byte-order mark, which a loader that
+    reads plain UTF-8 (SQL*Loader, a bulk insert) takes as part of the first header ("\\ufeffVendor"). It stays on by
+    default (Excel shows accents correctly), and a layout can now leave it out."""
+    import codecs
+
+    columns = [el.Column("Vendor", "vendor_name"), el.Column("Amount", "amount")]
+    data = exports.build("custom", [_invoice()], {}, 3, {}, el.Layout(columns))[0]
+    assert data.startswith(codecs.BOM_UTF8)  # as before
+    plain = el.Layout(columns, byte_order_mark=False)
+    data = exports.build("custom", [_invoice()], {}, 3, {}, plain)[0]
+    assert not data.startswith(codecs.BOM_UTF8) and data.decode("utf-8").startswith("Vendor,Amount\r\n")
+    assert el.Layout.from_json(plain.to_json()).byte_order_mark is False
+    assert el.Layout.from_json('{"delimiter": ";"}').byte_order_mark is True  # a layout saved before: as it was

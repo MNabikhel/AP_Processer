@@ -309,7 +309,11 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     if tab not in dict(tabs):
         tab = "review"
 
+    from ap_coder.web.pages.process import name_step
+
+    unnamed = reviewer() if name_step()[0] != "ok" else ""  # approvals carry the computer login until a name is given
     context: dict[str, Any] = {"tab": tab, "tabs": tabs, "lead": lead, "show": show, "q": q, "sort": sort,
+                               "unnamed": unnamed,
                                "kpis": kpis(store, pending, flagged, approved, awaiting),
                                "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
@@ -363,17 +367,18 @@ def _second(inv: dict[str, Any], first: dict[str, Any] | None, me: str, my_login
 
 def _getting_started(request: Request, store: Store, invoices: list[dict[str, Any]]) -> HTMLResponse:
     from ap_coder.ops.demo import demo_available
-    from ap_coder.web.pages.process import first_steps
+    from ap_coder.web.pages.process import STEP_LINKS, first_steps, next_step
 
     steps, done_steps, needed = first_steps(store, get_settings(request), bool(invoices))  # as Import invoices counts
+    named = steps[5][0] == "ok"  # (before a name is given, first_name() is the computer login: "Good morning, root")
     return render(
         request, "review_welcome.html", "review",
-        greeting=f"{ui.greeting()}, {first_name()}",
+        greeting=f"{ui.greeting()}, {first_name()}" if named else ui.greeting(),
+        next=next_step(steps),
+        step_links=STEP_LINKS,
         steps=steps,
         ring_value=done_steps / needed,
         ring_label=f"{done_steps}/{needed}",
-        chat_ready=steps[1][0] == "ok",
-        name_todo=steps[5][0] != "ok",  # approvals are recorded in the computer login until a name is given
         waiting=sum(1 for i in invoices if i["status"] == REVIEW) if reference_or_none(store) is None else 0,
         demo_available=demo_available(),
         demo_count=store.demo_count(),

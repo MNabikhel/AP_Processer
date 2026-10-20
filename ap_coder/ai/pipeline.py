@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +21,7 @@ from ..coding.po import po_findings
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
 from ..coding.terms import payment_findings
-from ..coding.validation import Issue, ValidationReport, validate_coding
+from ..coding.validation import WARNING, Issue, ValidationReport, validate_coding
 from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_with_history, format_examples, select_examples, vendor_key
@@ -95,6 +95,24 @@ def invoice_files(folder: Path) -> list[Path]:
     )
     documents = {c.stem.lower() for c in files if c.suffix.lower() not in TEXT_EXTENSIONS}
     return [c for c in files if c.suffix.lower() not in TEXT_EXTENSIONS or c.stem.lower() not in documents]
+
+
+NOT_A_FILE_TO_MENTION = {"desktop.ini", "thumbs.db"}  # Windows' own, in any folder
+STILL_ARRIVING = {".part", ".partial", ".crdownload", ".download", ".tmp"}  # a copy or a download not finished
+
+
+def other_files(folder: Path, also: Collection[str] = ()) -> list[Path]:
+    """The files in ``folder`` (not its subfolders) that are not a kind AP Coder reads, nor one of the extensions
+    ``also`` (saved emails): said to the person, never passed over in silence. Hidden files, README files, Office
+    lock files, Windows' own files and downloads still arriving are not mentioned."""
+    return sorted(
+        c
+        for c in folder.iterdir()
+        if c.is_file()
+        and c.suffix.lower() not in SUPPORTED_EXTENSIONS | set(also) | STILL_ARRIVING
+        and c.name.lower() not in NOT_A_FILE_TO_MENTION
+        and not c.name.lower().startswith(("readme", ".", "~$"))
+    )
 
 
 def discover_inputs(paths: list[str | Path]) -> list[Path]:
@@ -184,6 +202,41 @@ def plain_error(exc: Exception, path: Path) -> str:
     if path.suffix.lower() == ".pdf" and _needs_password(path):  # PyMuPDF says "document closed or encrypted"
         return f"{path.name} is protected by a password, so it can't be read. Ask the vendor for a copy without one."
     return f"{name}: {exc}"
+
+
+NO_PAGES = "{name} has no pages in it: the file is empty or was not saved completely. Ask the vendor for a new copy."
+
+
+def _check_pdf(path: Path) -> None:
+    """Raises ``CannotRead`` for a PDF with no pages (read, it would go to the queue as a blank invoice). A PDF that
+    can't be opened is left to the readers, whose error is worded by ``plain_error``."""
+    if path.suffix.lower() != ".pdf":
+        return
+    try:
+        import pymupdf
+
+        with pymupdf.open(path) as doc:
+            pages = None if doc.needs_pass else doc.page_count  # a password: said as such (``plain_error``)
+    except Exception:  # noqa: BLE001 - damaged, or not a PDF: said by the reader that fails on it
+        return
+    if pages == 0:
+        raise CannotRead(NO_PAGES.format(name=path.name))
+
+
+CUT_OFF = "FILE_CUT_OFF"
+CUT_OFF_TEXT = ("{name} looks cut off (its end is missing: it was still downloading or being saved when it came in), "
+                "so part of the invoice may be missing. Compare it with the vendor's copy, or ask the vendor for a new "
+                "one.")  # fmt: skip
+
+
+def _cut_off(path: Path) -> bool:
+    """A PDF whose end is missing (``intake.looks_incomplete``): PyMuPDF reads what is there, maybe part of it."""
+    from ..intake.pictures import looks_incomplete
+
+    try:
+        return path.suffix.lower() == ".pdf" and looks_incomplete(path)
+    except OSError:
+        return False
 
 
 def _needs_password(path: Path) -> bool:
@@ -362,6 +415,7 @@ class InvoicePipeline:
             # A photo or a scanned picture coming in is made a PDF first; one stored as a picture by an older version
             # (read again by the page reader) stays where the database has it.
             path = result.source = _as_pdf(path, result, convert=invoice_id is None)
+            _check_pdf(path)
             t0 = time.perf_counter()
             layout = None
             if self._reads_locally(path):  # offline: the page's text layer, or local OCR for a scan
@@ -422,7 +476,9 @@ class InvoicePipeline:
                 exclude_invoice_id=invoice_id,
                 feedback=feedback,
             )
-        except CannotRead as exc:  # OCR or the photo add-on isn't installed: said plainly, never an empty reading
+            if _cut_off(path):  # what is there is read and shown; the person is told part may be missing
+                result.report.issues.append(Issue(WARNING, CUT_OFF, CUT_OFF_TEXT.format(name=path.name)))
+        except CannotRead as exc:  # no OCR or photo add-on, no pages, a web page: said plainly, never an empty reading
             log.warning("%s: %s", path.name, exc)
             result.error = str(exc)
         except Exception as exc:  # one bad invoice must not stop a batch
@@ -535,10 +591,13 @@ class InvoicePipeline:
 
 
 def _as_pdf(path: Path, result: PipelineResult, convert: bool = True) -> Path:
-    """The PDF to read: a picture (JPEG, PNG, HEIC, TIFF, BMP) is made into one first (``convert``), the picture kept
-    in ``originals/`` (``intake.to_pdf``); a PDF made from a picture before says which (``result.original``)."""
+    """The PDF to read. A file coming in (``convert``) named as another kind is renamed to what it is
+    (``intake.as_its_kind``), and a picture (JPEG, PNG, HEIC, TIFF, BMP, WEBP, GIF) is made into one, the picture
+    kept in ``originals/`` (``intake.to_pdf``); a PDF made from a picture before says which (``result.original``)."""
     from ..intake import pictures as intake
 
+    if convert and path.suffix.lower() not in TEXT_EXTENSIONS:  # a PDF named .jpg, a PNG named .pdf: what it is
+        path = result.source = intake.as_its_kind(path)
     if intake.is_image(path) and convert:
         converted = intake.to_pdf(path)
         result.original = {"file": path.name, "kept": str(converted.original), "sha256": converted.sha256,

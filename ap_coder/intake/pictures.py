@@ -1,13 +1,15 @@
 """Every invoice is a PDF: a photo or a scan saved as a picture is turned into one when it comes in.
 
-AP processes PDFs. A JPEG, PNG, iPhone photo (HEIC/HEIF), TIFF (every page of a multi-page TIFF) or BMP that
-arrives by upload, in the invoices folder or attached to an email is made into a PDF before it is read
-(``InvoicePipeline.process`` calls :func:`to_pdf` first, so every way in is covered): one page a picture, turned
-upright as the photo's EXIF says, at the resolution it was taken or scanned at. The invoice is then stored,
-read, shown and stamped as that PDF.
+AP processes PDFs. A JPEG, PNG, iPhone photo (HEIC/HEIF), TIFF (every page of a multi-page TIFF), BMP, WEBP or GIF
+(its first frame) that arrives by upload, in the invoices folder or attached to an email is made into a PDF before
+it is read (``InvoicePipeline.process`` calls :func:`to_pdf` first, so every way in is covered): one page a
+picture, turned upright as the photo's EXIF says, at the resolution it was taken or scanned at. The invoice is then
+stored, read, shown and stamped as that PDF.
 
-Nothing is recompressed that need not be: a JPEG goes into the PDF as it is (a photo taken sideways is turned
-by the page's rotation, not by re-encoding it), a PNG, TIFF or BMP losslessly. Only an iPhone photo, which a
+Nothing is recompressed that need not be: a JPEG goes into the PDF as it is (unless it is over twice Pillow's
+pixel limit, a phone's 200 MP mode: it is then decoded at half, a quarter or an eighth of its size, the page keeping
+its size, and re-encoded: :func:`_within_pixel_limit`) (a photo taken sideways is turned by the page's rotation, not
+by re-encoding it), a PNG, TIFF, BMP, WEBP or GIF losslessly. Only an iPhone photo, which a
 PDF can't hold as it is, is re-encoded, as a high-quality JPEG; and a phone photo of a page lying on a desk,
 which is flattened as a scanner app would (the page cut out of the desk and squared up: ``flatten_photo``), so
 it is read, shown and highlighted as the page it is.
@@ -33,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..capture.layout import HEIF_EXTENSIONS, IMAGE_EXTENSIONS, open_image
+from ..capture.layout import HEIF_EXTENSIONS, IMAGE_EXTENSIONS, ONE_FRAME_EXTENSIONS, open_image
 
 log = logging.getLogger(__name__)
 
@@ -60,8 +62,74 @@ class Converted:
 
 
 def is_image(path: str | Path) -> bool:
-    """A picture AP Coder turns into a PDF (JPEG, PNG, HEIC/HEIF, TIFF, BMP)."""
+    """A picture AP Coder turns into a PDF (JPEG, PNG, HEIC/HEIF, TIFF, BMP, WEBP, GIF)."""
     return Path(path).suffix.lower() in IMAGE_EXTENSIONS
+
+
+_PICTURE_MAGIC = ((b"\x89PNG\r\n\x1a\n", ".png"), (b"\xff\xd8\xff", ".jpg"), (b"II*\x00", ".tif"), (b"MM\x00*", ".tif"),
+                  (b"BM", ".bmp"), (b"GIF87a", ".gif"), (b"GIF89a", ".gif"))  # fmt: skip
+_HEIF_BRANDS = (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1")
+_SAME_KIND = {".jpeg": ".jpg", ".tiff": ".tif", ".heif": ".heic"}
+WEB_PAGE = ("{name} is a web page saved with a {ext} name, not the invoice itself: open the vendor's email or portal "
+            "and download the invoice again (as a PDF).")  # fmt: skip
+
+
+def content_kind(path: str | Path) -> str:
+    """What a file is by its first bytes, whatever its name says: ".pdf", a picture's extension (".png", ".jpg",
+    ".tif", ".bmp", ".gif", ".webp", ".heic"), ".html" for a web page, "" when none of these."""
+    with open(path, "rb") as fh:
+        head = fh.read(1024)
+    if b"%PDF-" in head:  # a few stray bytes may come before it (readers accept that)
+        return ".pdf"
+    for magic, kind in _PICTURE_MAGIC:
+        if head.startswith(magic):
+            return kind
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ".webp"
+    if head[4:8] == b"ftyp" and head[8:12] in _HEIF_BRANDS:
+        return ".heic"
+    if head.lstrip(b"\xef\xbb\xbf \t\r\n").lower().startswith((b"<!doctype html", b"<html", b"<head", b"<body")):
+        return ".html"
+    return ""
+
+
+def looks_incomplete(path: str | Path) -> bool:
+    """A file whose end is missing: empty, a PDF without its closing "%%EOF", a JPEG without its end marker or a PNG
+    without its end chunk (still being written by a scanner or a download, or cut off). Other kinds: False."""
+    path = Path(path)
+    size = path.stat().st_size
+    if not size:
+        return True
+    kind = content_kind(path)
+    with open(path, "rb") as fh:
+        fh.seek(max(0, size - 1024))
+        tail = fh.read()
+    end = {".pdf": b"%%EOF", ".jpg": b"\xff\xd9", ".png": b"IEND"}.get(kind)
+    return end is not None and end not in tail
+
+
+def as_its_kind(path: str | Path) -> Path:
+    """``path`` renamed to the extension its content has when it is a PDF or a picture named as another (a PDF saved
+    as ".jpg", a phone's PNG as ".pdf"), so it is read, kept and stamped as what it is. As it was when its name is
+    right, its content unknown (said by the reader that fails on it), or it can't be renamed. Raises ``CannotRead``
+    for a web page saved with an invoice's name (a vendor portal's sign-in page instead of the PDF)."""
+    from ..capture.layout import CannotRead
+
+    path = Path(path)
+    suffix = path.suffix.lower()
+    kind = content_kind(path)
+    if kind == ".html":
+        raise CannotRead(WEB_PAGE.format(name=path.name, ext=suffix or "file"))
+    if not kind or kind == _SAME_KIND.get(suffix, suffix) or (kind != ".pdf" and kind not in IMAGE_EXTENSIONS):
+        return path
+    target = _free_name(path.parent, path.stem + kind)
+    try:
+        os.replace(path, target)
+    except OSError as exc:  # locked or read-only: read under its own name (the reader for that name says what fails)
+        log.warning("%s is a %s file but could not be renamed (%s)", path.name, kind, exc)
+        return path
+    log.info("%s is a %s file: renamed %s", path.name, kind.lstrip(".").upper(), target.name)
+    return target
 
 
 def file_sha256(path: str | Path) -> str:
@@ -144,6 +212,40 @@ def _encoded(frame: Any, source: Path, raw: bytes, single: bool) -> tuple[bytes,
     return buf.getvalue(), 0, frame
 
 
+def _within_pixel_limit(raw: bytes) -> bytes:
+    """``raw``, or for a JPEG over twice Pillow's limit (which Pillow refuses to open: a phone's 200 MP mode) the
+    same photo decoded at the smallest reduction JPEG allows (half, a quarter, an eighth) that brings it under the
+    limit, as a high-quality JPEG with its EXIF and its resolution scaled to match (the page keeps its size). A
+    picture too large even at an eighth, or any other kind, is left as it is (and refused)."""
+    from PIL import Image, JpegImagePlugin
+
+    limit = Image.MAX_IMAGE_PIXELS
+    if not limit or raw[:3] != b"\xff\xd8\xff":
+        return raw
+    try:
+        img = JpegImagePlugin.JpegImageFile(io.BytesIO(raw))  # the header only: Image.open would refuse it
+    except Exception:  # noqa: BLE001 - not a JPEG Pillow can read: as it is (and its own error later)
+        return raw
+    with img:
+        width, height = img.size
+        if width * height <= 2 * limit:
+            return raw
+        scale = next((f for f in (2, 4, 8) if width * height <= limit * f * f), 0)
+        if not scale or img.mode not in ("RGB", "L", "CMYK"):
+            return raw
+        img.draft(img.mode, (width // scale, height // scale))  # decoded at that size: never at full size
+        img.load()
+        extra: dict[str, Any] = {"exif": img.info["exif"]} if img.info.get("exif") else {}
+        dpi = img.info.get("dpi")
+        with contextlib.suppress(TypeError, ValueError, IndexError, ZeroDivisionError):
+            extra["dpi"] = (float(dpi[0]) * img.width / width, float(dpi[1]) * img.height / height)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=FLAT_QUALITY, subsampling=0, **extra)
+    log.info("a %d x %d photo, over the %d-megapixel limit, was read at 1/%d of its size", width, height,
+             2 * limit // 1_000_000, scale)  # fmt: skip
+    return buf.getvalue()
+
+
 def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any] | None = None) -> int:
     """Write ``source`` (a picture) as a PDF at ``target``: one page a picture (every frame of a multi-page TIFF),
     upright, at its resolution. ``note`` is recorded in the PDF (:func:`original_of`). Returns the page count.
@@ -152,14 +254,17 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
     from PIL import ImageSequence
 
     source, target = Path(source), Path(target)
-    raw = source.read_bytes()
+    raw = _within_pixel_limit(source.read_bytes())
     doc = pymupdf.open()
     try:
         with open_image(io.BytesIO(raw), source.name) as img:
-            frames = getattr(img, "n_frames", 1)
+            one = source.suffix.lower() in ONE_FRAME_EXTENSIONS  # an animated GIF or WEBP: the page it shows first
+            frames = 1 if one else getattr(img, "n_frames", 1)
             for i, frame in enumerate(ImageSequence.Iterator(img)):
-                if i >= MAX_FRAMES:
+                if i >= (1 if one else MAX_FRAMES):
                     break
+                if frame.mode not in ("P", "PA"):  # counting the pages read the last one: its palette is not this
+                    frame.palette = None  # page's (Pillow keeps it, and a black-and-white page then can't load)
                 frame.load()
                 data, turn, shown = _encoded(frame, source, raw, frames == 1)
                 width, height = shown.size

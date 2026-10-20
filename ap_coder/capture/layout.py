@@ -31,9 +31,11 @@ from .types import Box, DocLayout, Line, PageLayout, Word
 log = logging.getLogger(__name__)
 
 HEIF_EXTENSIONS = {".heic", ".heif"}  # an iPhone's photos
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} | HEIF_EXTENSIONS
+ONE_FRAME_EXTENSIONS = {".gif", ".webp"}  # a picture that may be animated: its first frame is the page
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} | HEIF_EXTENSIONS | ONE_FRAME_EXTENSIONS
 MIN_TEXT_WORDS = 5  # fewer words than this on a page means it is a scan
 OCR_DPI = 200
+READ_PAGES = 20  # a file's pages read on this computer (``build_layout``): the rest are said not read (B-267)
 OCR_MAX_SIDE = 2400
 NO_OCR = "OCR isn't installed on this computer, so a scan or a photo can't be read: run APProcessor.bat"
 # The OCR model also reads Chinese, and now and then prints a percent sign as 号 ("GST@5号", "(9,975号)").
@@ -44,7 +46,8 @@ NO_HEIF = ("this iPhone photo (HEIC) can't be opened: the photo add-on (pillow-h
 
 class CannotRead(RuntimeError):
     """The file can't be read on this computer, for a reason AP can act on (said in plain words): OCR or the photo
-    add-on isn't installed. Never an empty reading: an invoice with nothing read would look like a blank one."""
+    add-on isn't installed, a PDF with no pages, a web page saved as an invoice. Never an empty reading: an invoice
+    with nothing read would look like a blank one."""
 
 
 _heif_registered: bool | None = None
@@ -97,13 +100,10 @@ def flatten_photo(picture: Any) -> Any | None:
     height, width = rgb.shape[:2]
     scale = min(1.0, 800 / max(height, width, 1))
     small = cv2.resize(rgb, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
-    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY), (5, 5), 0)
-    _, paper = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))  # the print inside is paper too
-    contours, _ = cv2.findContours(paper, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
+    page = _page_outline(small)
+    if page is None:
         return None
-    page = max(contours, key=cv2.contourArea)
+    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY), (5, 5), 0)
     if not PHOTO_PAGE_SHARE[0] <= cv2.contourArea(page) / gray.size <= PHOTO_PAGE_SHARE[1]:
         return None
     hull = cv2.convexHull(page)
@@ -135,6 +135,35 @@ def flatten_photo(picture: Any) -> Any | None:
                                flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)  # fmt: skip
     out = Image.fromarray(flat)
     return out.convert("L") if picture.mode in ("1", "L") else out
+
+
+def _page_outline(small: Any) -> Any | None:
+    """The outline of the page in a (small) photo, or None. The paper's lit part (lighter than the desk) is grown out
+    to the page's edge: the picture is flooded from that part and from the picture's border at once, and the two
+    meet where the colour changes sharply, the page's edge. A shadow falling across the page (a hand, the phone, a
+    lamp) darkens part of it as much as the desk, but its edge is soft: the page is not cut short there."""
+    import cv2
+    import numpy as np
+
+    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY), (5, 5), 0)
+    _, paper = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))  # the print inside is paper too
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(paper)
+    if count < 2:
+        return None
+    lit = labels == 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))  # the paper in the light
+    inset = max(3, round(0.02 * max(gray.shape)))
+    seed = cv2.erode(lit.astype(np.uint8), np.ones((inset, inset), np.uint8))
+    if not seed.any():
+        return None
+    markers = np.zeros(gray.shape, np.int32)
+    markers[seed > 0] = 2
+    markers[:2, :] = markers[-2:, :] = 1  # the picture's border is desk (or the page runs off it: not a desk photo)
+    markers[:, :2] = markers[:, -2:] = 1
+    cv2.watershed(cv2.GaussianBlur(small, (5, 5), 0), markers)
+    region = cv2.morphologyEx((markers == 2).astype(np.uint8) * 255, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    contours, _ = cv2.findContours(region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return max(contours, key=cv2.contourArea) if contours else None
 
 
 # ---------------------------------------------------------------- lines
@@ -389,20 +418,23 @@ def ocr_image(png_bytes: bytes, number: int, engine: str | None = None) -> PageL
     img = _on_paper(picture)
     width, height = img.size
     result = _ocr_cached(png_bytes, lambda: _engine(engine)(np.asarray(img)), engine)
-    turn = _upright_turn(result or [], width, height)
+    turn = _upright_turn(result or [], width, height, img)
     if turn:
         result = _turned(result, turn, width, height)
         if turn != 180:
             width, height = height, width
+    skew = _skew(result or [], width, height)
+    tilted = abs(skew * height / max(width, 1.0)) >= TIGHT_FROM
     words: list[Word] = []
     for quad, text, score in result or []:
         xs = [p[0] for p in quad]
         ys = [p[1] for p in quad]
         x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
         text = _OCR_PERCENT.sub("%", str(text))
-        words.extend(_split_ocr_line(text, x0, y0, x1, y1, float(score), width, height, number))
+        edges = _edges(quad) if tilted else None
+        words.extend(_split_ocr_line(text, x0, y0, x1, y1, float(score), width, height, number, edges))
     page = PageLayout(number, float(width), float(height), words, group_lines(words, number))
-    page.skew = _skew(result or [], width, height)
+    page.skew = skew
     page.turn = turn
     page.dpi = stated or round(max(width, height) / 11, 1)  # else a letter page's long side
     return page
@@ -507,11 +539,12 @@ def _top_down(result: Any) -> float:
     return statistics.mean(totals) - statistics.mean(heads)
 
 
-def _upright_turn(result: Any, width: float, height: float) -> int:
+def _upright_turn(result: Any, width: float, height: float, picture: Any = None) -> int:
     """The clockwise quarter turn that sets a page scanned turned upright: 90 or 270 when most of its long lines run
-    down the page (whichever puts the amounts right of their labels), 180 when they run across but the amounts
-    stand left of their labels; else 0. The OCR reads each line's words right (it turns the line to read it):
-    only where the lines are on the page is turned."""
+    down the page (whichever puts the amounts right of their labels), 180 when they run across but the letters
+    stand on their heads (``_letters_upright``) or, when the letters don't tell, the amounts stand left of their
+    labels; else 0. The OCR reads each line's words right (it turns the line to read it): only where the lines are
+    on the page is turned."""
     long = [q for q, t, _s in result if len(str(t).strip()) >= 4]
     if len(long) < 6:
         return 0
@@ -524,7 +557,57 @@ def _upright_turn(result: Any, width: float, height: float) -> int:
         # The amounts beside their labels; when they say nothing (each label on one line with its amount), the
         # totals below the invoice's title and dates.
         return max(turned, key=lambda t: (_label_side(turned[t]), _top_down(turned[t])))
+    upright, upside_down = _letters_upright(picture, result) if picture is not None else (0, 0)
+    if upside_down >= LETTERS_SURE and upside_down >= 3 * upright:
+        return 180
+    if upright >= LETTERS_SURE and upright >= 3 * upside_down:
+        return 0
     return 180 if _label_side(result) <= -2 else 0  # an upright page never scores below 0 (1,300 benchmark scans)
+
+
+LETTERS_SURE = 8  # text lines that must say which way up the page is, three times as many as say the other way
+
+
+def _letters_upright(picture: Any, result: Any) -> tuple[int, int]:
+    """(lines whose letters stand upright, lines whose letters stand on their heads), from the ink of each OCR line
+    of five characters or more: in Latin print, capitals, figures and the tall letters (b, d, f, h, k, l, t) rise
+    above the small letters' band far more than g, j, p, q, y hang below it. A line of capitals and figures alone has
+    no such band and says nothing."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return 0, 0
+    gray = cv2.cvtColor(np.asarray(picture.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    upright = upside_down = 0
+    for quad, text, _score in result:
+        if len(str(text).strip()) < 5:
+            continue
+        corners = np.array([[float(v) for v in p[:2]] for p in quad[:4]], dtype=np.float32)
+        if corners.shape != (4, 2):
+            continue
+        across = int(max(np.linalg.norm(corners[1] - corners[0]), np.linalg.norm(corners[2] - corners[3])))
+        down = int(max(np.linalg.norm(corners[3] - corners[0]), np.linalg.norm(corners[2] - corners[1])))
+        if down < 8 or across < 3 * down:
+            continue  # too small to tell, or a line running down the page
+        square = np.array([[0, 0], [across, 0], [across, down], [0, down]], dtype=np.float32)
+        line = cv2.warpPerspective(gray, cv2.getPerspectiveTransform(corners, square), (across, down),
+                                   flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)  # fmt: skip
+        _, ink = cv2.threshold(line, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        rows = ink.sum(axis=1).astype(float)
+        if rows.max() <= 0:
+            continue
+        band = np.nonzero(rows >= 0.5 * rows.max())[0]  # the small letters' band
+        above, below = rows[: band.min()].sum(), rows[band.max() + 1 :].sum()
+        if above + below < 0.05 * rows.sum():
+            continue
+        lean = float((above - below) / (above + below))
+        upright += lean > 0.15
+        upside_down += lean < -0.15
+    return upright, upside_down
+
+
+MAX_TILT = 0.15  # about 8.5 degrees (down per across): a scan fed askew is straightened; more is a page turned
 
 
 def _skew(result: Any, width: float, height: float) -> float:
@@ -543,11 +626,34 @@ def _skew(result: Any, width: float, height: float) -> float:
     if len(slopes) < 5:
         return 0.0
     slope = statistics.median(slopes)
-    return slope * width / max(height, 1.0) if abs(slope) <= 0.07 else 0.0  # within 4 degrees: a tilt, not a turn
+    return slope * width / max(height, 1.0) if abs(slope) <= MAX_TILT else 0.0  # a tilt, not a turn
+
+
+TIGHT_FROM = 0.03  # on a page tilted more than this (down per across, in pixels: about 1.7 degrees), words follow it
+
+
+def _edges(quad: Any) -> Any:
+    """For an OCR line's four corners (top left, top right, bottom right, bottom left), a function giving the line's top
+    and bottom at a point across it; None when the corners are not in that order."""
+    try:
+        (ax, ay), (bx, by), (cx, cy), (dx, dy) = ((float(p[0]), float(p[1])) for p in quad[:4])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if bx - ax < 1 or cx - dx < 1 or dy <= ay or cy <= by:
+        return None
+
+    def at(x: float) -> tuple[float, float]:
+        return ay + (x - ax) * (by - ay) / (bx - ax), dy + (x - dx) * (cy - dy) / (cx - dx)
+
+    return at
 
 
 def _split_ocr_line(text: str, x0: float, y0: float, x1: float, y1: float, score: float, width: float,
-                    height: float, number: int) -> list[Word]:  # fmt: skip
+                    height: float, number: int, edges: Any = None) -> list[Word]:  # fmt: skip
+    """An OCR line's words, the line's box shared among them by length. ``edges`` (on a tilted page): the line's top
+    and bottom across it (``_edges``), so each word's box is as high as the print where it stands, not the whole tilted
+    line's: on a page tilted 5 degrees, a long line's box reached down over the next line, and the two were read as
+    one."""
     parts = text.split()
     if not parts:
         return []
@@ -557,7 +663,13 @@ def _split_ocr_line(text: str, x0: float, y0: float, x1: float, y1: float, score
     for p in parts:
         a = x0 + (x1 - x0) * pos / total
         b = x0 + (x1 - x0) * (pos + len(p)) / total
-        out.append(Word(p, Box(number, a / width, y0 / height, b / width, y1 / height), score, "ocr"))
+        top, bottom = y0, y1
+        if edges is not None:
+            (ta, ba), (tb, bb) = edges(a), edges(b)
+            top, bottom = max(y0, min(ta, tb)), min(y1, max(ba, bb))
+            if bottom <= top:
+                top, bottom = y0, y1
+        out.append(Word(p, Box(number, a / width, top / height, b / width, bottom / height), score, "ocr"))
         pos += len(p) + 1
     return out
 
@@ -689,7 +801,7 @@ def _looks_scanned(page: Any) -> bool:
 
 
 def build_layout(path: str | Path, *, di_raw: dict[str, Any] | None = None, ocr: str | bool = "auto",
-                 max_pages: int = 20) -> DocLayout:  # fmt: skip
+                 max_pages: int = READ_PAGES) -> DocLayout:  # fmt: skip
     """The words of ``path``. ``ocr``: "auto" (scanned pages only), True (force OCR on every page), False (never).
 
     With "auto", a photo or a scanned page on a computer without OCR raises ``CannotRead`` ("OCR isn't installed"),
@@ -795,7 +907,7 @@ def _second_image(png_bytes: bytes) -> bytes:
     return png_bytes if second_engine_name() != _engine_name() else _prepared(png_bytes)
 
 
-def second_read_layout(path: str | Path, max_pages: int = 20) -> DocLayout | None:
+def second_read_layout(path: str | Path, max_pages: int = READ_PAGES) -> DocLayout | None:
     """An independent second OCR of a scanned invoice, from a straightened, enlarged copy of each page.
     Its boxes are fractions of the page like the first read's (the straightening moves them by at most
     a few thousandths). None for a text PDF or when OCR is not installed."""

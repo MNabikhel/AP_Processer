@@ -40,6 +40,18 @@ VERIFIED, LIKELY, CHECK, MISSING = "verified", "likely", "check", "missing"
 # Added to a reading's method when it was printed for the customer (the bill-to block, after "Client:"): a
 # registration number read only so may be the customer's. The calibration reads the method by its family ("pattern").
 BILL_TO_READING = "+bill-to"
+# Added to an amount read under a "PST/QST" label the page does not settle (no QST or PST number of the supplier's):
+# which of the two taxes it is stays a person's call, however well it adds up.
+EITHER_TAX = "+pst-or-qst"
+# Added to terms read from a line that asks for a deposit first ("30% d'acompte, solde à 30 j"): the net days read are
+# only the balance's terms, never verified.
+PART_OF_TERMS = "+with-deposit"
+# Added to a supplier's name read from the top of the page when another name there scored nearly as well (a store's
+# brand and its operator's legal name): never verified unless the vendor master confirms it.
+RIVAL_NAME = "+rival-name"
+# Added to a subtotal when the totals add up with another subtotal printed too (before and after the discounts and
+# charges): never verified.
+TWO_SUBTOTALS = "+two-subtotals"
 STATUSES = (VERIFIED, LIKELY, CHECK, MISSING)
 
 
@@ -184,6 +196,7 @@ LINE_SOURCES = {
     "table": "the table finder",  # the words inside the table the layout model found on the page
     "text table": "the PDF's table",  # the PDF's text, in the columns its ruling lines and gaps draw
     "words": "the words on the page",  # the PDF's text or OCR, the whole page (no table found)
+    "listed": "the amounts listed above the subtotal",  # a receipt's items: no headings, adding up to the subtotal
     "vlm": "OvisOCR2",  # the page reader's transcription of the table
 }
 

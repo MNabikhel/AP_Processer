@@ -106,7 +106,7 @@ jobs:
         run: |
           $out = cmd /c "APProcessor.bat --installer --yes --no-update --skip-tests --no-start" 2>&1 | Out-String
           Write-Host $out
-          if ($out -notmatch 'reusing \.venv') { throw 'venv was not reused' }
+          if ($out -match 'First run') { throw 'venv was not reused (it set up again)' }
           if ($out -notmatch 'all \d+ in place' -or $out -match 'Collecting|Installing collected') { throw 'packages were reinstalled' }
           $count = (Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk').Count
           if ($count -ne 1) { throw "expected 1 desktop shortcut, found $count" }
@@ -186,7 +186,7 @@ jobs:
             Write-Host ".venv made from: $venvHome (setup-python: $env:pythonLocation)"
             if (-not (Test-Path (Join-Path $venvHome 'python.exe'))) { throw ".venv home $venvHome has no python.exe" }
             foreach ($m in @('First run', 'AP Coder readiness:', 'Python 3\.12', 'Packages: installed what was missing',
-                             'OCR for scanned invoices', 'Data folder', 'LM Studio: not running', 'Setup checks: all \d+ passed',
+                             'OCR for scanned invoices', 'Data folder', 'LM Studio isn.t running', 'Setup checks: all \d+ passed',
                              'Self-check OK: \d+ of \d+')) {
               if ($out -notmatch $m) { throw "the first start did not print: $m" }
             }
@@ -248,9 +248,8 @@ jobs:
           Write-Host "dashboard served after $seconds s"
           if (-not $ok) { throw 'the later start did not serve the dashboard within a minute' }
           if ($out -match 'First run|Collecting|Installing|Running the self-check|Fetching the OCR models') { throw 'the later start set something up again' }
-          # (.venv reused: its Python in the summary; nothing set up again, above. A later start of the same version
-          # no longer prints "reusing .venv".)
-          foreach ($m in @('Python 3\.12\.\d+ \(\.venv\)', 'AP Coder readiness:', 'Packages: all \d+ in place', 'Self-check OK at setup')) {
+          # (.venv reused: nothing set up again, above. The window no longer names .venv: B-240's plain wording.)
+          foreach ($m in @('Python 3\.12\.\d+', 'AP Coder readiness:', 'Packages: all \d+ in place', 'Self-check OK at setup')) {
             if ($out -notmatch $m) { throw "the later start did not print: $m" }
           }
           $links = @(Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'AP Coder*.lnk')

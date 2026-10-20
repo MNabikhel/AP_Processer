@@ -10,9 +10,11 @@ reports, and you can read both before sending:
 
 | You paste back | Produced by | Contains | Never contains |
 |---|---|---|---|
-| **Doctor report** | `python -m ap_coder doctor --online` | pass/fail of setup, package versions, row counts and column *names*, tax setup status | keys, endpoint URLs, codes, account names |
-| **Share report** | `python -m ap_coder share-report` | counts, confidence buckets, issue codes, accuracy %, token usage | vendor names, amounts, descriptions, file names, invoice numbers |
+| **Doctor report** | **Help → Report a problem** → *The setup report* → **Copy** (or `python -m ap_coder doctor --online`) | pass/fail of setup, package versions, row counts and column *names*, tax setup status | keys, endpoint URLs, codes, account names |
+| **Share report** | **Help → Report a problem** → *The activity summary* → **Copy** (or `python -m ap_coder share-report`) | counts, confidence buckets, issue codes, accuracy %, token usage | vendor names, amounts, descriptions, file names, invoice numbers |
 
+The pilot tester's one-page summary of this guide, to print, is [QUICK_START.md](QUICK_START.md); in the dashboard,
+**Help → Quick start → Print**.
 Invoices appear in the share report as `doc-01`, `doc-02`, … The file
 `share_report_key.csv` in your data folder maps them back to file names and stays on your machine. If I ask
 about `doc-07`, you can look it up there.
@@ -114,8 +116,9 @@ one plain line there; AP Coder still starts. **Settings → Reading** in the das
 
 Start LM Studio's server, with the chat model loaded, **before** you double-click, so the check covers it.
 
-Only if something is wrong, or I ask for it: `python -m ap_coder doctor --online` in `scripts\terminal.bat` gives
-the same checks as a report to paste into the chat (no keys, codes or invoice data).
+Only if something is wrong, or I ask for it: **Help → Report a problem** in the dashboard gives the same checks as
+a report to copy and paste into the chat (no keys, codes or invoice data). If the dashboard won't open,
+`python -m ap_coder doctor --online` in `scripts\terminal.bat` gives it too.
 
 ## Step 4: Try the dashboard with the sample data (no enterprise data)
 
@@ -206,9 +209,9 @@ Optional, any time later:
   terms, and exchange rates to CAD if you are billed in other currencies.
 - **Settings → Data & backups:** a **second backup folder** (OneDrive or network) for the daily backups.
 
-Then run `python -m ap_coder doctor` in `scripts\terminal.bat` (offline is fine) and **paste the output**. From it I can see
-row counts, whether every tax type is mapped, and the prompt size, but none of your codes or
-names.
+Then open **Help → Report a problem**, click **Copy** next to *The setup report* and **paste it** (or run
+`python -m ap_coder doctor` in `scripts\terminal.bat`). From it I can see row counts, whether every tax type is
+mapped, and the prompt size, but none of your codes or names.
 
 ## Step 6: Process a test set
 
@@ -273,16 +276,11 @@ without a person*, 5,000.00 CAD by default, and others: Settings → Automation 
 
 ## Step 8: Send me the share report
 
-In `scripts\terminal.bat`:
-
-```bat
-python -m ap_coder share-report --include-codes
-```
-
-**Paste it.** It includes the review statistics and which GL codes get corrected to which
-(e.g. `6000 -> 6010 x4`). That is what lets me improve the prompts and checks. Drop
-`--include-codes` if account codes may not leave the building; the percentages still come
-through.
+Open **Help → Report a problem**, click *Include them* under *The activity summary* (so it lists the GL codes),
+then **Copy**, and **paste it**. It includes the review statistics and which GL codes get corrected to which
+(e.g. `6000 -> 6010 x4`). That is what lets me improve the prompts and checks. Leave the codes out if account
+codes may not leave the building; the percentages still come through. (The same report from a command prompt:
+`python -m ap_coder share-report --include-codes` in `scripts\terminal.bat`.)
 
 ## Step 9: Iterate
 

@@ -92,6 +92,14 @@ _NET = [
 ]
 # "Net 10 prox" (proximo): due on the 10th of the month after the invoice's. Not a discount's day ("2/10th prox").
 _PROX = re.compile(r"(?<![\d/.,])\b(?:n(?:et)?\s*/?\s*)?(\d{1,2})(?:st|nd|rd|th)?\s*prox(?:imo)?\b", re.I)
+# A discount by a day of the next month: "2/10th prox net 30th", "2% 10th prox", "1/10 prox net 25 prox".
+_PROX_DISCOUNT = re.compile(
+    r"(?<![\d/.,])(\d(?:[.,]\d+)?)\s*(?:%\s*/?|/)\s*(\d{1,2})(?:st|nd|rd|th)?\s*prox(?:imo)?\b", re.I
+)
+# After a prox discount, "net 30th" is the 30th of the next month (a plain "net 30" stays 30 days).
+_NET_ORDINAL = re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,2})(?:st|nd|rd|th)\b", re.I)
+# Weeks, counted as days before anything else is read: "2% 2 weeks net 30" is a 14-day discount.
+_IN_WEEKS = re.compile(r"(?<![\d/.,])\b(\d{1,2})\s*" + _WEEKS, re.I)
 # Net months ("Net 1 month", "net 2 mois"): calendar months from the invoice date.
 _NET_MONTHS = re.compile(r"\bn(?:et)?\s*/?\s*(\d{1,2})\s*" + _MONTHS, re.I)
 
@@ -124,6 +132,27 @@ def _net_days(text: str, *, outside_interest: bool = False) -> int | None:
     return None
 
 
+def _prox_discount(text: str) -> Terms | None:
+    """A discount by a day of the next month, with the net due on a later prox day, in net days or (none printed)
+    on the discount's day."""
+    for m in _PROX_DISCOUNT.finditer(text):
+        if _INTEREST.search(_discount_clause(text, m.start(), m.end())):
+            continue
+        pct, day = float(m.group(1).replace(",", ".")), int(m.group(2))
+        if not (0 < pct < 20 and 1 <= day <= 31):
+            continue
+        rest = text[m.end() :]
+        ordinal = _NET_ORDINAL.search(rest)
+        net_day = _prox_day(rest) or (int(ordinal.group(1)) if ordinal and 1 <= int(ordinal.group(1)) <= 31 else None)
+        if net_day:
+            return Terms(net_days=30, discount_pct=pct, discount_prox_day=day, prox_day=net_day)
+        net = _net_days(rest, outside_interest=True)
+        if net is not None:
+            return Terms(net_days=net, discount_pct=pct, discount_prox_day=day)
+        return Terms(net_days=30, discount_pct=pct, discount_prox_day=day, prox_day=day)
+    return None
+
+
 def _prox_day(text: str) -> int | None:
     for m in _PROX.finditer(text):
         if not _INTEREST.search(_clause(text, m.start(), m.end())) and 1 <= int(m.group(1)) <= 31:
@@ -140,6 +169,7 @@ class Terms:
     eom: bool = False  # counted from the end of the invoice's month ("Net 30 EOM")
     net_months: int | None = None  # "Net 1 month": calendar months (net_days then holds about 30 a month)
     prox_day: int | None = None  # "Net 10 prox": that day of the next month (net_days then holds about 30)
+    discount_prox_day: int | None = None  # "2/10th prox": the discount runs to that day of the next month
 
 
 @dataclass(frozen=True)
@@ -165,6 +195,9 @@ def parse_terms(text: str | None) -> Terms:
     text = _FRACTION_PCT.sub(
         lambda m: f"{int(m.group(1)) / int(m.group(2)):g}%" if int(m.group(2)) else m.group(0), text
     )
+    text = _IN_WEEKS.sub(lambda m: f"{int(m.group(1)) * 7} days", text)
+    if prox_discount := _prox_discount(text):
+        return prox_discount
     months = _net_months(text)
     for pattern in _DISCOUNT:
         for m in pattern.finditer(text):
@@ -230,7 +263,10 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
         vendor = parse_terms(vendor_terms)
         if vendor.net_days is not None or vendor.on_receipt:
             if terms.discount_pct:  # "2% 10 days" printed: the vendor master gives the net days, not the discount
-                vendor = replace(vendor, discount_pct=terms.discount_pct, discount_days=terms.discount_days)
+                vendor = replace(
+                    vendor, discount_pct=terms.discount_pct, discount_days=terms.discount_days,
+                    discount_prox_day=terms.discount_prox_day,
+                )  # fmt: skip
             terms, from_vendor = vendor, True
     invoice_date = _date(coding.get("invoice_date"))
     try:
@@ -239,8 +275,9 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
                                                                 default_days, 0))  # fmt: skip
             if terms.net_months:
                 _add_months(_start(invoice_date, terms), terms.net_months)
-            if terms.prox_day:
-                _prox(invoice_date, terms.prox_day)
+            for day in (terms.prox_day, terms.discount_prox_day):
+                if day:
+                    _prox(invoice_date, day)
     except OverflowError:
         invoice_date = None
     printed = _date(coding.get("due_date"))
@@ -261,7 +298,10 @@ def payment(coding: dict[str, Any], default_days: int = DEFAULT_TERMS_DAYS, vend
         due, source = None, ""
     discount_by, amount = None, 0.0
     total = float(coding.get("grand_total") or 0)
-    if terms.discount_pct and terms.discount_days is not None and invoice_date and total > 0:
+    if terms.discount_pct and terms.discount_prox_day and invoice_date and total > 0:
+        discount_by = _prox(invoice_date, terms.discount_prox_day)
+        amount = round(float(coding.get("subtotal") or total) * terms.discount_pct / 100, 2)
+    elif terms.discount_pct and terms.discount_days is not None and invoice_date and total > 0:
         discount_by = _start(invoice_date, terms) + dt.timedelta(days=terms.discount_days)
         amount = round(float(coding.get("subtotal") or total) * terms.discount_pct / 100, 2)
     return Payment(due, source, terms, discount_by, amount)

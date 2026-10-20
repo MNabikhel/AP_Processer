@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{# Help → Report a problem (pages/help.py report_page): what to write, and the two reports to copy. Both are the
+   command line's own (doctor, share-report): no keys, vendor names, amounts or file names. #}
+{% block title %}Report a problem · AP Coder{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/settings.css?v={{ static_version }}">{% endblock %}
+{% block heading %}Report a problem{% endblock %}
+{% block subtitle %}What to send so a problem can be fixed. Nothing here is sent by AP Coder: you copy it and send it yourself.{% endblock %}
+{% block aside %}<a class="btn" href="/help"><span class="ms" aria-hidden="true">arrow_back</span>Back to Help</a>{% endblock %}
+{% block content %}
+<div class="narrow">
+  <section class="card">
+    <h4><span class="ms" aria-hidden="true">edit_note</span> 1. Describe it in words</h4>
+    <ul>
+      <li>What you were doing (the page, the button you clicked) and what you expected.</li>
+      <li>What happened instead: copy the message AP Coder showed, word for word.</li>
+      <li>Name an invoice by its <b>doc</b> number from report 3 below (for example "doc-07"), never by sending the
+        invoice: the file <code>{{ key_file }}</code> on this computer says which invoice each doc number is.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div>
+      <h4><span class="ms" aria-hidden="true">fact_check</span> 2. The setup report</h4>
+      <p class="muted">Whether each part of AP Coder is set up and working: no keys, account codes or names.</p></div>
+      <button type="button" class="btn" data-copy-from="setup-report"><span class="ms" aria-hidden="true">content_copy</span>Copy</button>
+    </div>
+    <textarea id="setup-report" class="hp-report" rows="12" readonly aria-label="The setup report">{{ setup }}</textarea>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><div>
+      <h4><span class="ms" aria-hidden="true">summarize</span> 3. The activity summary</h4>
+      <p class="muted">How many invoices were read and how often the AI was right: no vendor names, amounts or file
+        names.</p></div>
+      {% if activity %}<button type="button" class="btn" data-copy-from="activity-report"><span class="ms" aria-hidden="true">content_copy</span>Copy</button>{% endif %}
+    </div>
+    {% if activity %}
+    <textarea id="activity-report" class="hp-report" rows="12" readonly aria-label="The activity summary">{{ activity }}</textarea>
+    <p class="muted small">{% if codes %}It includes which GL account codes were corrected to which.
+      <a href="/help/report">Leave the codes out</a>{% else %}GL account codes are left out.
+      <a href="/help/report?codes=1">Include them</a> (if your codes may leave the building): they show which
+      accounts the AI gets wrong.{% endif %}</p>
+    {% else %}
+    <p class="muted">No invoices processed yet: nothing to summarise. Send the setup report alone.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h4><span class="ms" aria-hidden="true">description</span> If AP Coder would not start, or a page went wrong</h4>
+    <p class="muted">The full details are kept in these files on this computer. Attach them if you are asked to.</p>
+    <ul>{% for path in logs %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script type="module" src="/static/js/help.js?v={{ static_version }}"></script>{% endblock %}
