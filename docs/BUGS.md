@@ -3101,3 +3101,278 @@ table finder's model on. None of the corpus is in the repo: each test makes its 
   page read as it lay happened to get right. Reading an annotated explainer is not an invoice question: left.
 - **N-101** · Speckled scans (12) read 85.6% of fields right, as before: a median filter removed specks but also
   thin strokes (75.3% of printed values read, against 79.0%), and a blur did nothing. Left.
+
+### Reading: dates and invoice numbers
+
+Measured on a corpus of 135 public sample invoices and receipts with known answers (German ZUGFeRD samples, French,
+Dutch and English invoices, scanned and photographed receipts), read with OCR only where there is no text layer, the
+table finder's model on. None of the corpus is in the repo: each test makes its own page. Most of what was missing
+was printed in ways the labels did not know: a German invoice's title that carries its number and date ("Rechnung
+Nr. 471102 vom 05.03.2018"), "Facture n° 562044 du 2 juillet 2015", "Beleg-Nr | : RK21012345", other languages'
+month names, a receipt's "Receipt Number" and its unlabelled date and time ("6/10/2019 13:59", which OCR often runs
+together: "27Mar201818:46"), a header row printed across the page ("N° Facture ........ INV-81250"), a date alone beside
+the title ("Beitragsrechnung | 24. Januar 2014"), a page number run into the label. Those are read now. What is read
+without a label of its own (`number-dated`, `date-time`, `title-dated`, `label-far-right`) is weaker than a labelled
+value, so a labelled date or number comes first, and is measured apart: never verified on a labelled value's record.
+A date with no label at all (`date-time`, `title-dated`) is held to *check* however many readers see it, and a stamp
+along the page's top edge (a fax's "SEP-13-2025 11:26 FROM: ...", a printer's) is not taken for the invoice's date.
+**Measured:** real corpus, invoice date right 57 → 109 of 120 (wrong 2 → 0, missing 61 → 11), invoice number right
+54 → 89 of 107 (wrong 8 → 0, missing 45 → 18), none verified wrong; the other fields unchanged. Hard corpus (150) 96.9%
+of fields right as before, verified precision 100%; bench (60, seed 3, half scans) 99.8%, verified 100%. What is
+still missing is mostly OCR's (a slash or a letter lost: "Date demission:332024", "Recelpt No.", "Bjll#"), labels
+run into a heading row ("Termini di Pagamento Data Documento Numero Documento"), a restaurant's "Check: 37820" (a
+check number is also how a cheque paid is printed: not read as the invoice's number), and an insurer's policy number
+taken as the invoice number by the sample's own answers.
+
+#### B-353 · A credit note's own number was not read: the invoice it credits was taken for it · medium
+- **Where:** `ap_coder/capture/reader.py` (`MORE_LABELS["invoice_number"]`, `DISTRACTORS["invoice_number"]`, `_hits_at`)
+- **Symptom:** a French credit note ("Avoir AV-2017-0005", with "Facture liée FA-2017-0010") came back with the
+  invoice number FA-2017-0010, *likely*: posted, the credit would carry the number of the invoice it credits. Its scan,
+  where OCR glued the title to its number ("AvoirAV-2017-0005"), gave FA-2017-0010 too (*check*).
+- **Cause:** "Avoir" (a credit note, in France) was no label; "Facture liée" ("linked invoice") read as "Facture",
+  the invoice number's weakest label. A label glued to the letters of its value was never a label.
+- **Reproduce:** a PDF with "Avoir AV-2017-0005" as its title and "Facture liée | FA-2017-0010" in its header grid.
+- **Reproduced:** yes (`invoice_number FA-2017-0010`)
+- **Fix:** "Avoir" followed by a number, and "N° d'avoir", are a credit note's number labels (as "Note de crédit
+  051527-CR" is); "Facture liée / associée / initiale / concernée / corrigée / de référence" and "Ursprungsbeleg" /
+  "Bezugsrechnung" are the credited invoice, not this one's number. A label OCR glued to its number is read when the
+  number starts with capitals and a digit follows ("AvoirAV-2017-0005").
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_credit_notes_own_number_not_the_invoice_it_credits`
+- **Lesson:** A credit note names two documents; the one it is, and the one it credits. Know the words for both.
+
+#### B-354 · A US customer's invoice dated 9/10/2020 was shown as October 9 · low
+- **Where:** `ap_coder/capture/reader.py` (`_read_fields_on`)
+- **Symptom:** a statement to a customer in Walnut, WY ("Date: 9/10/2020", nothing Canadian on it) and a synthetic
+  invoice between two US addresses ("Date of issue: 05/11/2021") came back as 2020-10-09 and 2021-11-05 (*check*):
+  the person checking was shown the wrong day.
+- **Cause:** with no date on the page over 12 and no due date or terms to settle the order, a date that reads both
+  ways was shown day first. The supplier's US address turns the order to month first, but only when the reader takes
+  that address for the supplier's (outside the customer's block), and "WY, 98432" (a comma before the ZIP code) was no
+  US address at all.
+- **Reproduce:** a PDF with "Date: 9/10/2020", "Sold To ... Walnut, WY, 98432", no GST number, no postal code.
+- **Reproduced:** yes (`invoice_date 2020-10-09 check`)
+- **Fix:** when nothing settles the order and the first page prints a US address anywhere (and nothing Canadian),
+  the date is shown month first, still marked as reading both ways: confidence at most 60%, a person checks it.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_us_customers_invoice_shows_an_unsettled_date_month_first_for_a_person_to_check`
+- **Lesson:** When a value must be guessed, guess with what the page says; and keep it marked a guess.
+
+#### B-355 · A German supplier's 05.03.2018 was read as May 3: "DE 80333" read as a Delaware ZIP code · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_fields_on`, new `_dotted_dates`)
+- **Symptom:** a German invoice ("Lieferant GmbH, DE 80333 München", "Rechnungsdatum: 05.03.2018") came back dated
+  2018-05-03 with no mark that the date reads both ways (so not held to *check* for that). On the real corpus it
+  showed once German dates were read (this section): two invoices dated 2018-03-05 and 2018-08-06 came back May 3
+  and June 8.
+- **Cause:** a supplier with a US address prints dates month first; "DE 80333 München" (the country code before a
+  German postcode) matched a US state and ZIP code, and the same followed for an invoice in US dollars.
+- **Reproduce:** a PDF with "DE 80333 München" at the top and "Rechnungsdatum: 05.03.2018".
+- **Reproduced:** yes (`invoice_date 2018-05-03`)
+- **Fix:** a page whose numeric dates are mostly printed with points (05.03.2018) is not turned to month first by a
+  US address or US dollars: the US does not print dates so, Europe does, day first.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_date_printed_with_points_is_not_turned_month_first_by_a_german_postcode`
+- **Lesson:** A country guessed from an address needs a second sign; the way the page prints its dates is one.
+
+#### B-356 · A receipt's "02/15/10 11:10AM" was dated 1011-02-15 · low
+- **Where:** `ap_coder/capture/normalize.py` (`_make`, `parse_dates`)
+- **Symptom:** a scanned receipt's date and time, which OCR read without the space ("02/15/1011:10AM"), came back as
+  the invoice date 1011-02-15 (*check*).
+- **Cause:** a four-digit year was taken whatever it was.
+- **Reproduce:** `parse_date("02/15/1011:10AM")`
+- **Reproduced:** yes (`1011-02-15`)
+- **Fix:** a year outside 1900-2099 is no date; a four-digit "year" run into a time ("1011:10") is the two-digit
+  year and the hour.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_year_run_into_the_time_is_not_read_as_the_year`
+- **Lesson:** Bound what a value can be: no invoice is dated a thousand years ago.
+
+#### B-357 · An invoice number OCR ran into the next word was read with it: "1128461Cashier" · low
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`, new `_unglue_next_word`)
+- **Symptom:** a scanned receipt's "INV No.: 1128461 Cashier: Thandar", which OCR read without the space, came back
+  with the invoice number "1128461Cashier" (*check*).
+- **Cause:** a number is read up to the next space; OCR left none.
+- **Reproduce:** an OCR line "INV No.:1128461Cashier:Thandar".
+- **Reproduced:** yes (`invoice_number 1128461Cashier`)
+- **Fix:** on OCR's words, a number followed by a capitalised word of four letters or more ends before the word.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_an_invoice_number_run_into_the_next_word_is_cut_at_the_word`
+- **Lesson:** OCR's lost spaces join a value to its neighbour on either side; undo both.
+
+#### B-358 · A receipt's item number and description were read as the invoice number: "15.Dumplings" · low
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`)
+- **Symptom:** a restaurant receipt's first item, "15.Dumplings au porc et nappa", printed a few lines under the
+  guest's "#1", came back as the invoice number "15.Dumplings" (*check*).
+- **Cause:** the value under a label is read as a number when it has a digit; an item's number run into its name
+  ("15." then "Dumplings") has one.
+- **Reproduce:** OCR lines "#1", "2015-08-23 20:45:57 Waiter", "15.Dumplings au porc et nappa | $7.95", close
+  together; or "Bill No." over "15.Dumplings au porc et nappa".
+- **Reproduced:** yes (`invoice_number 15.Dumplings label-below`)
+- **Fix:** a short number with a point or bracket run into a word ("15.Dumplings", "3)Coffee") is no invoice or PO
+  number.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_receipts_item_number_is_not_its_number`
+- **Lesson:** A number that starts a line of words is the line's number, not the document's.
+
+#### B-359 · A label whose own value is no number took the value of a line under it: a postal code · low
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, new `_OWN_VALUE`)
+- **Symptom:** a receipt's address "GROUND FLOOR, NO.4 &6," gave the invoice number 47500 (*check*): the postal
+  code two lines down ("47500 SUBANG JAYA").
+- **Cause:** "No." followed by a value on its own line ("4", too short to be a number) was treated as a label with
+  nothing after it, whose value is looked for to the right and below.
+- **Reproduce:** OCR lines "GROUND FLOOR, NO.4 &6,", "JALAN SS 15/4B,", "47500 SUBANG JAYA, SELANGOR".
+- **Reproduced:** yes (`invoice_number 47500 label-below`)
+- **Fix:** an invoice-number or PO label followed on its line by a value of its own that is not a number gives
+  nothing; its value is not looked for elsewhere.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_label_whose_value_is_printed_after_it_does_not_take_the_next_lines`
+- **Lesson:** A label that has a value beside it, however bad, does not own the next line's.
+
+#### B-360 · "InvoiceINV/2023/03/0008" not read: the customer's reference was taken for the invoice number · medium
+- **Where:** `ap_coder/capture/reader.py` (`_GLUED_TITLE`, `_GLUED_NUMBER`)
+- **Symptom:** a scan of an invoice titled "Invoice INV/2023/03/0008" came back with the invoice number CUSTREF123
+  (*check*), read under "Reference:" (the customer's reference).
+- **Cause:** the second OCR read the title glued to its number ("InvoiceINV/2023/03/0008"); a glued title was read
+  only when its number had a hyphen or none after its letters, not a slash. Only the first read had the number, under
+  the weak "Invoice" label, and the two reads agreed on the reference.
+- **Reproduce:** OCR lines "InvoiceINV/2023/03/0008", "Reference:" over "CUSTREF123".
+- **Reproduced:** yes (`invoice_number CUSTREF123`)
+- **Fix:** a number glued to its title may have a slash after its letters ("INV/2023/03/0008"),
+  and a label glued to such a number is read too.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_title_glued_to_a_number_with_slashes_beats_a_customer_reference`
+- **Lesson:** Numbers are written with slashes as often as with hyphens; a pattern for one is a pattern for both.
+
+An independent review of the work above, on ordinary Canadian invoice layouts (one-page PDFs: a supplier in Toronto,
+Subtotal / HST / Total), found the new readings wrong where an invoice prints a second date or number they were not
+made for: B-361 to B-367. Each was fixed with its test first.
+
+#### B-361 · "Receipt Date" and "Receipt No." outranked the invoice's own date and number, likely · high
+- **Where:** `ap_coder/capture/reader.py` (new `WEAK_LABELS`, `_LabelHit.fallback`, `_read_fields`)
+- **Symptom:** an invoice with "Date: 2026-10-01" and "Receipt Date: 2026-10-05" came back dated 2026-10-05; one
+  titled "INVOICE / No. 20417" with a payment's "Receipt No: 556677" lower down came back with the number 556677.
+  Both *likely*.
+- **Cause:** the receipt labels added for receipts (B-353's section) were as strong as an invoice's own labels, and
+  their values were measured on the record of "label-inline", a pattern right every time on the benchmark.
+- **Reproduce:** those two PDFs, `analyze(ocr=False)`.
+- **Reproduced:** yes (`invoice_date 2026-10-05 likely`, `invoice_number 556677 likely`)
+- **Fix:** "Receipt Date", "Receipt No./#/ID" and "Folio No." are fallback labels: read only when no other label for
+  the field reads a value on the document. On a Canadian invoice "Receipt Date" is the day the goods came in.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_receipt_date_is_not_the_invoice_date_when_the_invoice_prints_its_date`, `tests/test_dates_numbers_sweep4.py::test_a_receipt_number_is_not_the_invoice_number_beside_the_invoices_own`
+- **Lesson:** A label made for one kind of document means something else on another; let it speak only when nothing
+  else does.
+
+#### B-362 · A customer's "Numéro : C-4471" was read as the invoice number, likely · high
+- **Where:** `ap_coder/capture/reader.py` (`WEAK_LABELS`, new `_customer_line`, `_read_fields`)
+- **Symptom:** a Quebec "FACTURE" with "Client / Numéro : C-4471" came back with the invoice number C-4471, *likely*.
+- **Cause:** "Numéro :" (added for a Spanish invoice's "NUMERO:") fired under the customer's heading, and a value
+  read after any label borrowed the measured record of "label-inline", so a weak label read as sure as a strong one.
+- **Reproduce:** a PDF with "FACTURE", "Client" over "Numéro : C-4471", "Date : 2026-10-01".
+- **Reproduced:** yes (`invoice_number C-4471 likely`)
+- **Fix:** the weak labels ("Nr.", "Numéro :", "Factuur", "Fecha", the receipt and folio labels) give values of their
+  own method ("weak-label-..."), with no measured record: on a text PDF they are *check*. An invoice-number weak label
+  in the customer's block (a bill-to region, or a client / customer / compte / account heading just above it) is no
+  label.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_customers_numero_is_not_the_invoice_number`, `tests/test_dates_numbers_sweep4.py::test_a_weak_label_is_never_likely_on_a_real_labels_record`
+- **Lesson:** A new label must not inherit an old label's record; measure it apart (D-22, D-44).
+
+#### B-363 · A bare "INVOICE" title read a GST number or a customer number across the page as the invoice number · medium
+- **Where:** `ap_coder/capture/reader.py` (`_far_right_header`)
+- **Symptom:** "INVOICE" at the left margin with "R123456789" (a GST number) or "C-10045" alone at the right, and
+  "No. 20417" under the title: the invoice number came back R123456789 or C-10045 (*check*).
+- **Cause:** the far-right reading took any label with nothing after it, the title's weak "Invoice" too.
+- **Reproduce:** those PDFs.
+- **Reproduced:** yes (`invoice_number R123456789 check`)
+- **Fix:** only a real label (strength 0.55 and up, not a weak one) reads across the page; a value shaped like a
+  GST/HST, business or QST number is never an invoice or PO number there; and only the invoice number is read so (a
+  date or PO number alone across the page may be the due date or an account number).
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_bare_title_does_not_read_a_value_across_the_page`, `tests/test_dates_numbers_sweep4.py::test_a_header_row_printed_across_the_page_reads_its_value_at_the_right_margin`
+- **Lesson:** A title is no label; reading far from a label needs a label that names its field.
+
+#### B-364 · A date with no label of its own outranked the labelled "Date: 03/04/2026" · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_fields`, `_stamped_dates`, new `_NOT_ISSUED`)
+- **Symptom:** a service call's "Time in: 2026-03-02 08:15" or a "Payment received 2026-04-15 14:22" line was the
+  invoice date over "Date: 03/04/2026"; a credit note's body "Invoice # 20417 dated 2026-08-15" over its "Date:
+  2026-10-01"; with no labelled date, "Completed 2026-03-02 16:15" was taken (*check*).
+- **Cause:** an unlabelled reading (0.45, 0.5) scored above a labelled date that reads both ways (0.33).
+- **Reproduce:** those PDFs.
+- **Reproduced:** yes (`invoice_date 2026-03-02`, `2026-04-15`, `2026-08-15`)
+- **Fix:** a date read with no label of its own (`number-dated`, `date-time`, `title-dated`) scores at most half the
+  weakest labelled date on the document; a dated line that says what else happened (received, paid, payment,
+  completed, time in / out, arrival, call, delivered, shipped, period, ending, from / to ...) is no stamp of the
+  invoice.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_an_unlabelled_date_never_outranks_a_labelled_one`
+- **Lesson:** A fallback must lose to every labelled value, however weak; rank it so, not by its own score.
+
+#### B-365 · "Invoice Due Date | Nov 1, 2026" was read as the invoice date beside the title · medium
+- **Where:** `ap_coder/capture/reader.py` (`_DOC_TITLE`, `_title_dates`)
+- **Symptom:** the due date came back as the invoice date (*check*); "Invoice Period Ending | Sep 30, 2026" likewise.
+- **Cause:** any line starting with "Invoice" was taken for the title.
+- **Reproduce:** a PDF with "Invoice Due Date" and "Nov 1, 2026" on one row, "Invoice # 20417" under it.
+- **Reproduced:** yes (`invoice_date 2026-11-01`)
+- **Fix:** a title is not followed by due, period, total, amount, date, balance, number, ref or to; and its line
+  says nothing of another event (B-364).
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_label_starting_with_invoice_is_not_the_title`
+- **Lesson:** "Invoice" starts a dozen labels; a title is the word alone.
+
+#### B-366 · A Canadian invoice shipping to the US had its 03/04/2026 shown month first · low
+- **Where:** `ap_coder/capture/reader.py` (`_read_fields_on`, new `_us_page`)
+- **Symptom:** a Toronto supplier whose address is in the footer, shipping to Buffalo, NY (and one remitting to a
+  Pittsburgh PO box), came back dated 2026-03-04 (*check*) for "Date: 03/04/2026", which it means as April 3.
+- **Cause:** B-354's rule counted only the supplier's block (top of the page) and a valid GST number as Canadian.
+- **Reproduce:** that PDF.
+- **Reproduced:** yes (`invoice_date 2026-03-04 check`)
+- **Fix:** a Canadian postal code or province, or a Canadian tax (GST, HST, PST, QST, TPS, TVQ) anywhere on the page
+  is something Canadian; and "CA 90210" alone is no US address (CA may be Canada).
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_canadian_page_with_a_us_address_keeps_its_date_order`
+- **Lesson:** Ask the whole page where it is from, not the corner the reader takes for the supplier's.
+
+#### B-367 · Dates pulled out of references, and "Marco" read as March · low
+- **Where:** `ap_coder/capture/normalize.py` (`parse_dates`, `MONTHS`)
+- **Symptom:** "Ref 45/13/12/2026" gave 2026-12-13, and "Marco 12, 2026" (a name) gave 2026-03-12.
+- **Cause:** after a run of numbers that is no date, the next date was looked for one character on, inside the same
+  run (made for "REG#19-21/05/2018"); and the Portuguese "março" (accents off: "marco") was a month word.
+- **Reproduce:** `parse_date("Ref 45/13/12/2026")`, `parse_date("Marco 12, 2026")`
+- **Reproduced:** yes (`2026-12-13`, `2026-03-12`)
+- **Fix:** a date is looked for again only from the next word; "marco" is March only in "12 de março de 2020".
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_date_after_a_failed_one_is_read_and_a_time_may_be_the_next_piece_of_the_row`, `tests/test_dates_numbers_sweep4.py::test_a_name_like_a_month_is_not_a_month`
+- **Lesson:** A pattern loosened for one OCR slip finds dates in every reference; loosen it only where words part.
+
+#### B-368 · On a scan, a weak label's value was likely when the two OCR reads agreed · medium
+- **Where:** `ap_coder/capture/confidence.py` (`fuse`, new `WEAK_LABEL_METHOD`)
+- **Symptom:** a scanned receipt's "Receipt No: 556677" came back *likely* (0.97), "Receipt Date: 2026-10-05"
+  *likely* (0.98) and "Numéro : 4471" *likely* (0.91), against D-44 (B-362 made them check on text PDFs only).
+- **Cause:** B-362 gave the weak labels' values a method of their own with no measured record, so their confidence was
+  the readers' combined score; two OCR reads agreeing lift that past "likely".
+- **Reproduce:** a scan layout read by "rules" and "ocr2" alike, `fuse(..., layout_source="ocr")`.
+- **Reproduced:** yes (`556677 likely 0.97`)
+- **Fix:** a value read only after weak labels (`weak-...`) is held to check however many readers agree, with the
+  reason: the word also names other numbers or dates.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_weak_label_stays_checked_however_many_readers_agree`
+- **Lesson:** Two readers agreeing confirms what is printed, not what it is; a cap on meaning must not depend on the
+  number of readers.
+
+#### B-369 · A work order's time line or a report's footer stamp was read as the invoice date · low
+- **Where:** `ap_coder/capture/reader.py` (`_NOT_ISSUED`, `_stamped_dates`)
+- **Symptom:** "2026-03-01 09:12 Labour - J. Smith" (a technician's time on a work order) and "Generated 2026-10-20
+  14:33 by SAP" at the foot of the page came back as the invoice date (*check*), on an invoice that prints no date
+  label.
+- **Cause:** a date with a time, unlabelled, is a receipt's stamp; a stamp printed for another reason was not told
+  apart unless it said received, paid, delivered and the like (B-364), and only the page's top edge was skipped.
+- **Reproduce:** OCR lines "Invoice # 20417" and "2026-03-01 09:12 Labour - J. Smith".
+- **Reproduced:** yes (`invoice_date 2026-03-01 date-time`)
+- **Fix:** labour (main-d'oeuvre), generated (généré), created (créé), run, report (rapport), log (journal) and printed
+  (imprimé) mark a line as another event's; a stamp along the page's bottom edge is a printer's or a report's, like
+  one along its top.
+- **Test:** `tests/test_dates_numbers_sweep4.py::test_a_work_log_or_report_stamp_is_not_the_invoice_date`
+- **Lesson:** An unlabelled date is the issue date only when nothing on its line says what else it dates.
+
+#### Left as they are (dates and invoice numbers)
+
+- **N-102** · A Canadian-looking supplier (a ".ca" address, "Ltée" or "Inc.") with no postal code, province or
+  Canadian tax on the page, whose page prints a US address: an unsettled date (03/04/2026) is shown month first
+  (B-354), still *check*. Those signs are weak (US companies use them too) and the date is checked either way: left.
+- **N-103** · "Invoice # 20417" (the invoice a credit note credits, printed with no "Re:" or "Original") beside
+  "Credit Memo # CM-1029" gives 20417, *likely*. Already so before this work: "Invoice #" is a stronger label than a
+  credit memo's, and nothing on that line says it is the credited invoice. Telling them apart needs the document's
+  title weighed against the labels; left for the credit-note work.
+- **N-104** · "Account No: 55123   Invoice No: 20417" on one line gives no invoice number. Already so before this work:
+  the line comes as one run of words, and a label after another label's value on its line is read only when it is a
+  bilingual one ("Issued / Date de facturation"). Reading any strong label there risks a total's or a note's words: left.
+- **N-105** · "Invoice Date: Oct 1/26" (month, day and a two-digit year after a slash) is not read. Read as a date,
+  "Mar 3/4" or "Unit Oct 1/26" would give years like 2004 from a fraction; left until a real invoice shows the form.
+- **N-106** · A US supplier (WA 98101 in its letterhead) with an ambiguous date gets it month first and *likely*,
+  through the older supplier-address rule (`_us_vendor`, before this work), not B-354's (which is checked). A US
+  supplier prints month first nearly always; left as it was.
