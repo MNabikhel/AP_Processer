@@ -1765,12 +1765,16 @@ _GLUED_TITLE = re.compile(
 
 
 def _glued_title_numbers(layout: DocLayout) -> list[Reading]:
-    """OCR glued the title to the number beside it: "INVOICEA-2026-29266", "TAXINVOICEA-90595"."""
+    """OCR glued the title to the number beside it: "INVOICEA-2026-29266", "TAXINVOICEA-90595"; and read the number
+    a second time on its own ("TAX INVOICE82-78605 82-78605"): once."""
     out = []
     for line in layout.lines():
         if all(w.source in _AS_PRINTED for w in line.words):
             continue
-        m = _GLUED_TITLE.match(line.text.replace(" ", ""))
+        tokens = line.text.split()
+        if len(tokens) >= 2 and len(tokens[-1]) >= 3 and tokens[-2].endswith(tokens[-1]) and tokens[-2] != tokens[-1]:
+            tokens = tokens[:-1]
+        m = _GLUED_TITLE.match("".join(tokens))
         if m and len(m.group(1)) >= 3:
             out.append(Reading("invoice_number", m.group(1), m.group(1), [line.box], 0.75 * _min_conf(line.words),
                                "glued-title"))  # fmt: skip

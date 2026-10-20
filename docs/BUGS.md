@@ -2474,3 +2474,13 @@ Found by reading a hard corpus of 150 synthetic Canadian invoices with exact tru
 - **Fix:** When nothing under a label reads as its value, the line just over it does, unless that line is another label's value (a label of its own just over it). "Net30days" / "Net-45" is never an invoice or PO number.
 - **Test:** `tests/test_sweep4_layouts.py::test_one_label_under_its_value_with_a_quote_number_under_the_next`, `::test_a_business_number_is_not_an_invoice_number`
 - **Lesson:** Don't make one side of a label the fallback for nothing: with no value under it, the value over it is the only one there is.
+
+#### B-289 · An invoice number OCR read twice beside its title is read as the two run together · low
+- **Where:** `ap_coder/capture/reader.py` (`_glued_title_numbers`)
+- **Symptom:** A tilted US scan: "TAX INVOICE82-78605 82-78605" (OCR glued the title to the number and read the number again) gave the invoice number "82-7860582-78605", ranked over the right "82-78605".
+- **Cause:** The glued-title reading took the whole line with its spaces removed.
+- **Reproduce:** `_glued_title_numbers()` on an OCR line "TAX INVOICE82-78605 82-78605".
+- **Reproduced:** yes (`82-7860582-78605`)
+- **Fix:** A last token that repeats the end of the token before it is OCR's second reading of the number, and is dropped first.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_title_glued_to_its_number_read_twice_by_ocr`
+- **Lesson:** Don't join every OCR token on a line: a number read twice is still one number.

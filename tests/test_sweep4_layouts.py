@@ -211,6 +211,15 @@ def test_labels_under_values_the_value_to_the_right_is_the_next_labels():
     assert got["po_number"][0].value == "4500070761"
 
 
+def test_a_title_glued_to_its_number_read_twice_by_ocr():
+    """OCR read "TAX INVOICE 82-78605" as "TAX INVOICE82-78605 82-78605": the invoice number was the two run together,
+    "82-7860582-78605"."""
+    from ap_coder.capture.reader import _glued_title_numbers
+
+    rows = [(0.5, 0.05, "TAX INVOICE82-78605 82-78605"), (0.5, 0.2, "INVOICEA-2026-29266")]
+    assert [r.value for r in _glued_title_numbers(_tilted_scan(rows, 0.0))] == ["82-78605", "A-2026-29266"]
+
+
 def test_compact_dates_with_a_month_name(tmp_path):
     """ "12APR26" (day, month and two-digit year run together) and "Oct-15-26" (month, day and year by dashes) were
     not read as dates at all; a number with such a date inside it is still a number."""
