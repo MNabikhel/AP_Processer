@@ -69,8 +69,9 @@ NAV_PARAMS = ("show", "q", "sort")  # the queue's view, carried along so Previou
 # --- Drafts: edits not approved yet --------------------------------------------------------------------------------
 # Kept in memory for the dashboard's lifetime, per invoice and per person: this computer's in
 # ``app.state.invoice_drafts``, each colleague's on the office network (web/identity.py) in
-# ``app.state.person_drafts[(<their name, case aside>, <their address>)]``, so one person's edits never open on
-# another's screen, even one who gives the same name on another computer; a new name on /who takes them along.
+# ``app.state.person_drafts[(<their name, case aside>, <their browser's id>)]``, so one person's edits never open on
+# another's screen, even one who gives the same name on another computer, and stay theirs when their computer gets a
+# new address on the office network; a new name on /who takes them along.
 
 _drafts_lock = threading.Lock()
 
@@ -96,18 +97,18 @@ def _drafts(request: Request) -> dict[int, dict[str, Any]]:
 
 
 def _draft_key(found: identity.Person) -> tuple[str, str]:
-    return found.name.casefold(), found.address
+    return found.name.casefold(), found.browser or found.address  # by address: a cookie made without a browser id
 
 
-def rename_drafts(request: Request, found: identity.Person, name: str) -> None:
+def rename_drafts(request: Request, found: identity.Person, now: identity.Person) -> None:
     """A colleague gave a new name on /who: their edits go with them (else they would be no one's, and bulk approval
     would leave those invoices alone until a restart)."""
     _all_drafts(request)
     everyone = request.app.state.person_drafts
     with _drafts_lock:
-        kept = everyone.pop(_draft_key(found), None)
+        kept = everyone.pop(_draft_key(found), None) if _draft_key(found) != _draft_key(now) else None
         if kept:
-            everyone.setdefault(_draft_key(identity.Person(name, found.address)), {}).update(kept)
+            everyone.setdefault(_draft_key(now), {}).update(kept)
 
 
 def unsaved_edits(request: Request) -> set[int]:

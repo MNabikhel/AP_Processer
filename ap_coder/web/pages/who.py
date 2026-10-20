@@ -33,11 +33,12 @@ def who_save(request: Request, name: str = Form(""), next: str = Form("/review")
     if not cleaned:
         return refuse("Type your name: it goes on every invoice you approve.")
     found = identity.person()
-    if found is not None and found.name != cleaned:
-        rename_drafts(request, found, cleaned)  # their unsaved edits on the review screen stay theirs
+    browser = found.browser if found is not None and found.browser else identity.new_browser()
+    if found is not None:  # their unsaved edits on the review screen stay theirs
+        rename_drafts(request, found, identity.Person(cleaned, found.address, browser))
     answer = done(request, next or "/review", f"Thanks, {cleaned}. Your approvals are now in your name.")
     # Lax, not Strict: a link from another site (the intranet, a webmail) still knows who they are. That opens a page
     # only (a GET never changes anything); a POST from another site is refused by LocalOnly (web/security.py).
-    answer.set_cookie(identity.COOKIE, identity.cookie_value(request.app.state.identity_secret, cleaned),
+    answer.set_cookie(identity.COOKIE, identity.cookie_value(request.app.state.identity_secret, cleaned, browser),
                       max_age=COOKIE_DAYS * 86400, httponly=True, samesite="lax", path="/")  # fmt: skip
     return answer
