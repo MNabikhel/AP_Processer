@@ -1,13 +1,13 @@
 """Every invoice is a PDF: a photo or a scan saved as a picture is turned into one when it comes in.
 
-AP processes PDFs. A JPEG, PNG, iPhone photo (HEIC/HEIF), TIFF (every page of a multi-page TIFF) or BMP that
-arrives by upload, in the invoices folder or attached to an email is made into a PDF before it is read
-(``InvoicePipeline.process`` calls :func:`to_pdf` first, so every way in is covered): one page a picture, turned
-upright as the photo's EXIF says, at the resolution it was taken or scanned at. The invoice is then stored,
-read, shown and stamped as that PDF.
+AP processes PDFs. A JPEG, PNG, iPhone photo (HEIC/HEIF), TIFF (every page of a multi-page TIFF), BMP, WEBP or GIF
+(its first frame) that arrives by upload, in the invoices folder or attached to an email is made into a PDF before
+it is read (``InvoicePipeline.process`` calls :func:`to_pdf` first, so every way in is covered): one page a
+picture, turned upright as the photo's EXIF says, at the resolution it was taken or scanned at. The invoice is then
+stored, read, shown and stamped as that PDF.
 
 Nothing is recompressed that need not be: a JPEG goes into the PDF as it is (a photo taken sideways is turned
-by the page's rotation, not by re-encoding it), a PNG, TIFF or BMP losslessly. Only an iPhone photo, which a
+by the page's rotation, not by re-encoding it), a PNG, TIFF, BMP, WEBP or GIF losslessly. Only an iPhone photo, which a
 PDF can't hold as it is, is re-encoded, as a high-quality JPEG; and a phone photo of a page lying on a desk,
 which is flattened as a scanner app would (the page cut out of the desk and squared up: ``flatten_photo``), so
 it is read, shown and highlighted as the page it is.
@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..capture.layout import HEIF_EXTENSIONS, IMAGE_EXTENSIONS, open_image
+from ..capture.layout import HEIF_EXTENSIONS, IMAGE_EXTENSIONS, ONE_FRAME_EXTENSIONS, open_image
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class Converted:
 
 
 def is_image(path: str | Path) -> bool:
-    """A picture AP Coder turns into a PDF (JPEG, PNG, HEIC/HEIF, TIFF, BMP)."""
+    """A picture AP Coder turns into a PDF (JPEG, PNG, HEIC/HEIF, TIFF, BMP, WEBP, GIF)."""
     return Path(path).suffix.lower() in IMAGE_EXTENSIONS
 
 
@@ -207,9 +207,10 @@ def image_to_pdf(source: str | Path, target: str | Path, *, note: dict[str, Any]
     doc = pymupdf.open()
     try:
         with open_image(io.BytesIO(raw), source.name) as img:
-            frames = getattr(img, "n_frames", 1)
+            one = source.suffix.lower() in ONE_FRAME_EXTENSIONS  # an animated GIF or WEBP: the page it shows first
+            frames = 1 if one else getattr(img, "n_frames", 1)
             for i, frame in enumerate(ImageSequence.Iterator(img)):
-                if i >= MAX_FRAMES:
+                if i >= (1 if one else MAX_FRAMES):
                     break
                 if frame.mode not in ("P", "PA"):  # counting the pages read the last one: its palette is not this
                     frame.palette = None  # page's (Pillow keeps it, and a black-and-white page then can't load)

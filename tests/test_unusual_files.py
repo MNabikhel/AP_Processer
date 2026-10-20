@@ -184,3 +184,49 @@ def test_a_txt_file_that_is_not_text_is_refused_in_plain_words(pipeline):
     assert result.error == ("scan.txt isn't a text file: it holds something else under a .txt name. Ask the vendor for "
                             "the invoice as a PDF.")  # fmt: skip
     assert store.get_invoice(result.invoice_id)["status"] == FAILED and junk.exists()
+
+
+# --- B-264: WEBP and GIF pictures ------------------------------------------------------------------------------------
+
+
+def _picture() -> Image.Image:
+    img = Image.new("RGB", (600, 800), "white")
+    ImageDraw.Draw(img).rectangle([50, 60, 250, 120], fill="black")
+    return img
+
+
+def test_a_webp_or_gif_picture_in_the_invoices_folder_is_read_as_a_pdf(pipeline):
+    from ap_coder.ai.pipeline import invoice_files
+
+    store, pipe, folder = pipeline
+    _picture().save(folder / "whatsapp photo.webp", "WEBP", quality=90)
+    first, second = _picture(), _picture().rotate(90)
+    first.save(folder / "scan.gif", save_all=True, append_images=[second], duration=500)  # animated: two frames
+    assert [p.name for p in invoice_files(folder)] == ["scan.gif", "whatsapp photo.webp"]  # no longer passed over
+    for name in ("whatsapp photo.webp", "scan.gif"):
+        result = pipe.process(folder / name)
+        assert result.ok, result.error
+        assert result.source.suffix == ".pdf" and (folder / "originals" / name).exists()
+        with pymupdf.open(result.source) as doc:
+            assert doc.page_count == 1  # an animated picture's first frame: the page it shows
+
+
+def test_the_upload_takes_a_webp_photo(tmp_path, monkeypatch):
+    from .webclient import PAGE, client_for
+
+    monkeypatch.setattr(layout, "ocr_available", lambda: True)
+    monkeypatch.setattr(layout, "ocr_image", lambda png, number, engine=None: _words_page(number))
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = client_for(store)
+    buf = io.BytesIO()
+    _picture().save(buf, "WEBP")
+    response = client.post("/process/upload", files=[("files", ("photo.webp", buf.getvalue(), "image/webp"))],
+                           headers=PAGE)  # fmt: skip
+    assert response.status_code == 200 and response.json()["ok"], response.text
+    job = client.app.state.jobs.get("process")
+    assert job.wait(180)
+    snap = client.get("/process/status").json()
+    assert not any("was not read" in m["text"] for m in snap["result"]["messages"]), snap
+    assert snap["result"]["processed"] == 1
+    assert ".webp" in client.get("/process").text  # the file picker offers it

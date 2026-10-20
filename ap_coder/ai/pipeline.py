@@ -556,8 +556,8 @@ class InvoicePipeline:
 
 def _as_pdf(path: Path, result: PipelineResult, convert: bool = True) -> Path:
     """The PDF to read. A file coming in (``convert``) named as another kind is renamed to what it is
-    (``intake.as_its_kind``), and a picture (JPEG, PNG, HEIC, TIFF, BMP) is made into one, the picture kept in
-    ``originals/`` (``intake.to_pdf``); a PDF made from a picture before says which (``result.original``)."""
+    (``intake.as_its_kind``), and a picture (JPEG, PNG, HEIC, TIFF, BMP, WEBP, GIF) is made into one, the picture
+    kept in ``originals/`` (``intake.to_pdf``); a PDF made from a picture before says which (``result.original``)."""
     from ..intake import pictures as intake
 
     if convert and path.suffix.lower() not in TEXT_EXTENSIONS:  # a PDF named .jpg, a PNG named .pdf: what it is

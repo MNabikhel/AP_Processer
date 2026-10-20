@@ -2421,3 +2421,13 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **Fix:** a text file starting with a UTF-16 byte-order mark (either order) is decoded as UTF-16; one that still holds a NUL or more than 5% control characters is refused: "scan.txt isn't a text file: it holds something else under a .txt name. Ask the vendor for the invoice as a PDF."
 - **Test:** `tests/test_unusual_files.py::test_a_text_invoice_saved_as_unicode_is_read_as_its_text`, `::test_a_txt_file_that_is_not_text_is_refused_in_plain_words`
 - **Lesson:** Don't decode with `errors="replace"` and call the result text: check it looks like text before reading it.
+
+#### B-264 · A WEBP or GIF invoice was refused at upload as if it were not a photo, and passed over in silence in the invoices folder · medium-low
+- **Where:** `ap_coder/capture/layout.py` (`IMAGE_EXTENSIONS`), `ap_coder/ai/extraction.py` (`DOCUMENT_EXTENSIONS`), `ap_coder/intake/pictures.py` (`image_to_pdf`)
+- **Symptom:** a photo saved from a chat app or a browser as `.webp` (or a `.gif`) was refused on upload with "photo.webp was not read: AP Coder reads PDFs, scans, photos and saved emails", though it is a photo; dropped in the invoices folder it was never listed, read or mentioned, and `python -m ap_coder process` said "No supported invoice files found."
+- **Cause:** the picture types were a fixed list without WEBP and GIF, although Pillow (already used for every picture) reads both.
+- **Reproduce:** a WEBP and an animated GIF of a page, through the three ways in.
+- **Reproduced:** yes (the upload message above; the folder's file list and `invoice_files` without them; exit 2 from `process`).
+- **Fix:** WEBP and GIF are pictures like the others: made into a PDF on arrival (losslessly), the picture kept in `originals/`. An animated one gives its first frame, the page it shows, not a page per frame. JPEG 2000, AVIF and Photoshop files are still refused at upload in plain words (rare for invoices).
+- **Test:** `tests/test_unusual_files.py::test_a_webp_or_gif_picture_in_the_invoices_folder_is_read_as_a_pdf`, `::test_the_upload_takes_a_webp_photo`
+- **Lesson:** Don't keep a list of accepted types narrower than what the reader behind it reads: the person sees only "not read".

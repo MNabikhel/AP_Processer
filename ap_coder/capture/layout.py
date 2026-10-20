@@ -31,7 +31,8 @@ from .types import Box, DocLayout, Line, PageLayout, Word
 log = logging.getLogger(__name__)
 
 HEIF_EXTENSIONS = {".heic", ".heif"}  # an iPhone's photos
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} | HEIF_EXTENSIONS
+ONE_FRAME_EXTENSIONS = {".gif", ".webp"}  # a picture that may be animated: its first frame is the page
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} | HEIF_EXTENSIONS | ONE_FRAME_EXTENSIONS
 MIN_TEXT_WORDS = 5  # fewer words than this on a page means it is a scan
 OCR_DPI = 200
 OCR_MAX_SIDE = 2400

@@ -20,7 +20,7 @@ from ..core.config import DocumentIntelligenceSettings
 
 log = logging.getLogger(__name__)
 
-DOCUMENT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".heif", ".heic"}
+DOCUMENT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".heif", ".heic", ".webp", ".gif"}
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt"}
 SUPPORTED_EXTENSIONS = DOCUMENT_EXTENSIONS | TEXT_EXTENSIONS
 
