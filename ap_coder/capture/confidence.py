@@ -485,6 +485,16 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         if len(independent) < 2 and not (n_conf and field not in failed):
             conf = min(conf, SINGLE_READER_CAP)
         if (
+            field in AMOUNT_FIELDS
+            and layout_source != "text"
+            and not (n_conf and field not in failed)
+            and conf > SINGLE_READER_CAP
+        ):
+            # On a scan or a photo, an amount no sum confirms (no total read, or nothing adds up with it): the two OCR
+            # reads share the page's geometry, and a tilted row can put the next row's amount on its label.
+            conf = SINGLE_READER_CAP
+            reasons.append("no total or sum on the page confirms this amount")
+        if (
             field in REGISTRATION_FIELDS
             and all(BILL_TO_READING in r.method for _, r in g.readings)
             and not any(c["ok"] and c["code"] == "VENDOR_GST_MATCH" and field in c["fields"] for c in checks)

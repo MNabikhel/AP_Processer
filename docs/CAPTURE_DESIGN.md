@@ -124,7 +124,7 @@ class Reading:                       # one candidate value from one reader
     raw: str                         # the text as printed
     boxes: list[Box]
     score: float                     # reader's own 0..1 score
-    method: str                      # "label-right", "label-below", "pattern", "totals-block",
+    method: str                      # "label-right", "label-below", "label-above", "pattern", "totals-block",
                                      # "template", "di", "ai-located", ...
 
 @dataclass

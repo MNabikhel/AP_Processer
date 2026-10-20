@@ -179,6 +179,8 @@ def date_candidates(text: Any) -> list[tuple[str, str]]:
         return []
     year = next((int(n) for n in numbers if len(n) == 4), None)
     day = next((int(n) for n in numbers if len(n) <= 2), None)
+    if year is None and words[-1] == numbers[-1] and len(numbers[-1]) == 2 and len(numbers[0]) <= 2:
+        day, year = int(numbers[0]), int(numbers[-1])  # "15OCT26", "Oct-15-26": a two-digit year last
     iso = _iso(year, month, day) if year and day else None
     return [(iso, "text")] if iso else []
 

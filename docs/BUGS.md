@@ -2887,3 +2887,110 @@ the lines adding up, and how alike the descriptions read.
 - **Fix:** a registration number in brackets right after the tax's label leaves the amount right of it to the tax; a rate may come before a tax's label.
 - **Test:** `tests/test_real_vendors_totals.py::test_a_receipts_tax_lines_with_the_number_in_brackets_or_the_rate_first_are_read`
 - **Lesson:** Don't give a whole line to the number printed in it: a receipt squeezes the label, the number and the amount onto one row.
+
+### Reading: layouts and formats
+
+Found by reading a hard corpus of 150 synthetic Canadian invoices with exact truth (labels under values, odd date formats, near-identical numbers, totals at the top, deposits, credits printed positive); each fix has a small generated fixture in `tests/test_sweep4_layouts.py` (the corpus is not in the repo). Figures are the corpus's 50 digital invoices: fields right / invoices fully right.
+
+#### B-280 · A grid that prints each label under its value is read one row off · high
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, new `labels_under_values`)
+- **Symptom:** A header grid printing values with their small labels UNDER them ("5874088" over "Invoice Number", the next row's "5874082" over "PO #"): the invoice number was the next row's value (the PO, one digit off, or a business number "782311542 RT 0001"), and the invoice date, due date, PO and terms were missing. 0 of 8 such invoices fully right.
+- **Cause:** A label's value was looked for on its line, to its right, then below it, never above: the value below a label in such a grid is the next label's.
+- **Reproduce:** the grid of `test_a_grid_that_prints_each_label_under_its_value`; `analyze()`.
+- **Reproduced:** yes (`invoice_number 5874082`, invoice date, due date and PO missing)
+- **Fix:** A page whose bare labels mostly have a value of theirs just over them (closer than any under them) prints labels under values: a label's value is the line just over it (method `label-above`, not measured by the benchmark, so never verified on its own record), and a line with a label of its own under it is never read as the value of the label above it. Grids of labels over values are read as before.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_grid_that_prints_each_label_under_its_value`, `::test_a_grid_of_labels_over_values_is_still_read_below`
+- **Hard corpus (digital):** 93.9% / 80.0% → 99.4% / 96.0%; labels_under 66.7% / 0% → 100% / 100%; no silent error 90% → 100%.
+- **Lesson:** Don't assume a label reads left to right and top to bottom: which side of a value its label sits on is the page's convention, and the gaps show it.
+
+#### B-281 · Compact dates with a month name ("12APR26", "Oct-15-26") are not read · medium
+- **Where:** `ap_coder/capture/normalize.py` (`parse_dates`), `ap_coder/capture/supplier.py` (`date_candidates`)
+- **Symptom:** "Billing Date 12APR26", "Please pay by 27APR26", "Date 24NOV25": the invoice and due dates missing.
+- **Cause:** Dates with a month name needed a four-digit year or spaces and dashes around the month ("15-Oct-26"); a day, month and two-digit year run together, or a month, day and year joined by dashes, matched no pattern. The supplier template's date reader needed a four-digit year too.
+- **Reproduce:** `parse_date("12APR26")`, `parse_date("Oct-15-26")`.
+- **Reproduced:** yes (`None`, `None`)
+- **Fix:** Two more patterns: day, month and two-digit year run together ("15OCT26") and month-day-year by dashes ("Oct-15-26", "Sept-05-2026"), never inside a longer number ("INV-12MAR26" stays an invoice number). The template's reader takes a two-digit year printed last.
+- **Test:** `tests/test_sweep4_layouts.py::test_compact_dates_with_a_month_name`
+- **Hard corpus (digital):** 99.4% / 96.0% → 100% / 100%; date_odd 95.4% / 71.4% → 100% / 100%.
+- **Lesson:** Don't let a date pattern assume the spaces and the century are printed: supplier systems print what fits in seven characters.
+
+#### B-282 · A quote number under a label printed under its value is verified as the invoice number · high
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, new `_value_over_label`)
+- **Symptom:** A speckled scan of a bilingual labels-under grid: "Q-2026-625" (the quote number, printed over "Quote # / Soumission") verified as the invoice number; the invoice's own "075037" sat just over "Inv # / No de facture". The same on a photographed credit note: "SO-42032" verified for "CN-63312".
+- **Cause:** The scan's tilt runs the grid's other labels into one line, so B-280 does not see a page of labels under values; the label's value was then looked for below it, where the next label's value is. Both OCR reads agree on the words, so the wrong value was verified.
+- **Reproduce:** the grid of `test_one_label_under_its_value_with_a_quote_number_under_the_next`; `analyze(..., page_text=...)`.
+- **Reproduced:** yes (the business number or the quote number read, with the page reader agreeing)
+- **Fix:** One label is read from the line just over it (`label-above`) when that line reads as its value and the line under it reads as one too but sits right over a label of its own (any label: "Quote #", "Account #", a distractor) and farther from this label than the line over it.
+- **Test:** `tests/test_sweep4_layouts.py::test_one_label_under_its_value_with_a_quote_number_under_the_next`
+- **Hard corpus:** h-0024 and h-0061 no longer verified wrong (both now right).
+- **Lesson:** Don't decide a layout only page-wide: a scan breaks the rows that would show it, and each label can still tell by its own gaps.
+
+#### B-283 · A business number ("782311542 RT 0001") read as the invoice number · medium
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`)
+- **Symptom:** "GST/HST No. 123456782 RT0001" gave the invoice number 123456782 (its "No." matches the invoice number's weakest label), and "782311542 RT 0001" under a grid's "Invoice #" was read as the number.
+- **Cause:** The number reader took the nine digits of a business number as an identifier; only amounts checked for registration numbers.
+- **Reproduce:** `_value_reading("invoice_number", <line "782311542 RT 0001">, 0, 1.0, "x")`.
+- **Reproduced:** yes (`782311542`)
+- **Fix:** An invoice or PO number that starts a GST/HST business number on its line is not read.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_business_number_is_not_an_invoice_number`
+- **Lesson:** Don't let the weakest label ("No.") read whatever number follows it: rule out the numbers that have a shape of their own first.
+
+#### B-284 · A credit printed positive whose title was lost is read and verified as a bill · high
+- **Where:** `ap_coder/capture/reader.py` (`credit_titled`, used by `credit_printed_positive`), `_vendor_names`
+- **Symptom:** A faxed BC credit memo printed with positive amounts: subtotal 3,667.00, GST 183.35 and the total 4,107.04 verified positive (a credit read as a bill to pay), and the customer "Groupe Boisvert ltée" verified as the supplier. An upside-down credit (h-0044) the same: HST and "Total Credit / Montant crédité" verified positive.
+- **Cause:** A credit printed positive was known only by its title at the top of page 1, which the fax and the turned page lost; the total's own label, "CREDIT TOTAL", was not used. The customer's name was taken for the supplier's because its "Bill To" label was unreadable, though "Attn: Accounts Payable" was printed under it.
+- **Reproduce:** the page of `test_a_credit_whose_title_is_lost_is_known_by_its_credit_total`; `analyze()`.
+- **Reproduced:** yes (`1000.0, 50.0, 1050.0`, vendor "Groupe Boisvert ltee")
+- **Fix:** A document whose largest amount is on a credit total's label ("CREDIT TOTAL", "Total Credit", "Amount credited", "Montant crédité"; not "credit applied") is a credit, as a title would say; an invoice's smaller "Credit total" line does not make it one. A name printed just over "Attn: ..." / "c/o ..." / "Accounts Payable" is the customer's, never the supplier's.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_credit_whose_title_is_lost_is_known_by_its_credit_total`, `::test_an_invoices_credit_line_does_not_make_it_a_credit`
+- **Lesson:** Don't hang a sign on one line of the page: a credit says so in its title and on its total, and a scan may keep only one.
+
+#### B-285 · On a photo, a subtotal nothing confirms is verified · high
+- **Where:** `ap_coder/capture/confidence.py` (`fuse`)
+- **Symptom:** A keystoned EUR photo: the shipping line's 171,03 read on the "Sub Total" label (the tilt ran the rows together), no total read, nothing adding up, and the subtotal verified at 0.9886.
+- **Cause:** Both OCR reads count as independent readers, and the evidence pattern's measured record alone reached *verified*; but the two reads share the page's geometry, so a row put on the wrong label is a mistake they share.
+- **Reproduce:** `fuse()` with the same subtotal from `rules` and `ocr2`, `layout_source="ocr"`, no other field.
+- **Reproduced:** yes (`verified`)
+- **Fix:** On a scan or a photo, an amount no check confirms (no total read, no sum adding up with it) is likely at most (`SINGLE_READER_CAP`), with the reason "no total or sum on the page confirms this amount". Amounts the totals or lines confirm are verified as before.
+- **Test:** `tests/test_sweep4_layouts.py::test_an_amount_nothing_confirms_on_a_scan_is_not_verified`
+- **Lesson:** Don't count two OCR engines reading the same misplaced row as two witnesses to an amount: the arithmetic is the independent witness.
+
+#### B-286 · On a tilted scan, a value right of its label is read from the next row · high
+- **Where:** `ap_coder/capture/reader.py` (`read_fields`)
+- **Symptom:** A scan tilted about 2.5 degrees: the credit note's number read from the next column's "Applies to Invoice" value; on two-column headers, the value beside a label read from the row under or over it (a near-identical number one digit off).
+- **Cause:** The line items were read on the page straightened (`straightened`), the header fields on the page as tilted: two inches right of a label, the text sits a row lower.
+- **Reproduce:** `read_fields()` on a layout tilted 0.045 with "B/L No." / "Invoice Number" rows and their values at x 0.44 (`_tilted_scan` in the test).
+- **Reproduced:** yes (`1803062`, the B/L number)
+- **Fix:** A tilted scan's header is read straightened like its line items; each reading's box is given back on the page as scanned (`_on_tilted_page`). A page whose tilt is not measured (`skew` 0) is read as before.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_tilted_scans_label_is_read_level_with_its_value`
+- **Lesson:** Don't straighten half the page: every reading that compares positions needs the same geometry.
+
+#### B-287 · Labels under values: the value to the right of a label is the next label's · medium
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, `_over_its_own_label`)
+- **Symptom:** On a labels-under page with rows a little off, "A-26-54597" (over "Applies to Invoice") level with "Credit Note #" was read as the credit's number, before the value over the label was looked at.
+- **Cause:** B-280 reads the value over a label only after the line's right side; a value with a label of its own under it is that label's, and a distractor label ("Applies to Invoice", "Quote #") did not count as one.
+- **Reproduce:** the rows of `test_labels_under_values_the_value_to_the_right_is_the_next_labels`; `read_fields()`.
+- **Reproduced:** yes (`A-26-54597`)
+- **Fix:** On a labels-under page, a value printed right over a label of its own (any label, wanted or a distractor) is never read as the value of a label beside or over it.
+- **Test:** `tests/test_sweep4_layouts.py::test_labels_under_values_the_value_to_the_right_is_the_next_labels`
+- **Lesson:** Don't let "to the right" outrank the page's own convention: on a labels-under page, a value belongs to the label under it.
+
+#### B-288 · Dates printed over labels that a scan runs into one line are missed · medium
+- **Where:** `ap_coder/capture/reader.py` (`_value_over_label`, `_value_reading`)
+- **Symptom:** A speckled bilingual scan printing "4 Mar 2026" and "3 Apr 2026" over "Billing Date / Date de facturation" and "Payment Due / Payable avant le", the two labels read as one line: both dates missing; "Net30days" (the terms run together) offered as an invoice number.
+- **Cause:** B-282 reads a label's value from over it only when a value under it belongs to another label; here nothing under the label reads as a date at all. An identifier was any token with a digit in it.
+- **Reproduce:** the grid of `test_one_label_under_its_value_with_a_quote_number_under_the_next`, read without the page reader.
+- **Reproduced:** yes (invoice and due dates missing)
+- **Fix:** When nothing under a label reads as its value, the line just over it does, unless that line is another label's value (a label of its own just over it). "Net30days" / "Net-45" is never an invoice or PO number.
+- **Test:** `tests/test_sweep4_layouts.py::test_one_label_under_its_value_with_a_quote_number_under_the_next`, `::test_a_business_number_is_not_an_invoice_number`
+- **Lesson:** Don't make one side of a label the fallback for nothing: with no value under it, the value over it is the only one there is.
+
+#### B-289 · An invoice number OCR read twice beside its title is read as the two run together · low
+- **Where:** `ap_coder/capture/reader.py` (`_glued_title_numbers`)
+- **Symptom:** A tilted US scan: "TAX INVOICE82-78605 82-78605" (OCR glued the title to the number and read the number again) gave the invoice number "82-7860582-78605", ranked over the right "82-78605".
+- **Cause:** The glued-title reading took the whole line with its spaces removed.
+- **Reproduce:** `_glued_title_numbers()` on an OCR line "TAX INVOICE82-78605 82-78605".
+- **Reproduced:** yes (`82-7860582-78605`)
+- **Fix:** A last token that repeats the end of the token before it is OCR's second reading of the number, and is dropped first.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_title_glued_to_its_number_read_twice_by_ocr`
+- **Lesson:** Don't join every OCR token on a line: a number read twice is still one number.

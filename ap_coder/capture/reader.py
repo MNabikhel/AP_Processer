@@ -10,6 +10,7 @@ amounts). Totals are chosen together: the subtotal, taxes and total that add up 
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import functools
 import re
@@ -517,12 +518,16 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None
         if any(da <= a - start < db for _d, da, db, _amb in parse_dates(rest)):
             return None  # the day of a date ("30 Jun 2025"), not a number
+        if any(ga == a for _v, ga, _gb, _ok in find_gst_numbers(text)):
+            return None  # "782311542 RT 0001", "No. 123456782 RT0001": a business number, not an invoice or a PO
         if value.isdigit() and _STREET.search(text[b:]):
             return None  # a street number ("4833 Barrington St", "9777, boul. des Laurentides"), not an ID
         if re.fullmatch(r"(?i)(?:unit|suite|ste|bureau|apt|room|local|piece|box)\s*#?\s*\d+[a-z]?", value):
             return None  # part of an address ("Unit 7")
         if value.translate(_DIGIT_LOOKALIKES).strip("#:.-").casefold() in _LABEL_WORDS:
             return None  # a label OCR misread ("INVO1CE"), not its value
+        if re.fullmatch(r"(?i)net-?\d{1,3}(?:days?|jours?)?", value):
+            return None  # "Net30days": the terms (OCR ran them together), not a number
         if re.fullmatch(r"(?i)page-?\d{1,3}", value):
             return None  # "Page - 1" (OCR's spaces beside the hyphen joined), not a number
         if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
@@ -666,6 +671,125 @@ def _below(lines: list[Line], line: Line, label_box: Box) -> list[Line]:
         if overlap > 0 or aligned:
             out.append(other)
     return sorted(out, key=lambda ln: ln.box.y0)
+
+
+def _aligned(a: Box, b: Box) -> bool:
+    """``b`` is in ``a``'s column: they overlap across, or their left edges or centres line up."""
+    overlap = min(a.x1, b.x1) - max(a.x0, b.x0)
+    return overlap > 0 or abs(b.x0 - a.x0) < 0.03 or abs(b.cx - a.cx) < 0.04
+
+
+LABEL_UNDER_GAP = 0.6  # a value printed over its label sits this close to it, in label heights
+
+
+def _over(lines: list[Line], line: Line, label_box: Box) -> Line | None:
+    """The line printed just over ``line`` in the label's column (within ``LABEL_UNDER_GAP`` of its height), if any."""
+    h = max(line.box.height, 0.008)
+    near = [
+        other
+        for other in lines
+        if other is not line
+        and other.box.page == line.box.page
+        and other.box.cy < line.box.cy
+        and -0.3 * h <= line.box.y0 - other.box.y1 <= LABEL_UNDER_GAP * h
+        and _aligned(label_box, other.box)
+    ]
+    return min(near, key=lambda o: abs(o.box.x0 - label_box.x0), default=None)
+
+
+def _a_label(line: Line) -> bool:
+    return bool(_label_hits(line) or _LABEL_SHAPE.search(plain(line.text).strip()))
+
+
+def _bare_hits(line: Line) -> list[_LabelHit]:
+    """The labels that are all of their line ("Invoice Number", "PO #:"): a grid's label, its value elsewhere."""
+    return [h for h in _label_hits(line) if h.start == 0 and not plain(line.text[h.end :]).strip(" :#.")]
+
+
+def labels_under_values(lines: list[Line]) -> bool:
+    """The page prints its header grid's labels UNDER their values ("5874088" over "Invoice Number", the next row's
+    "5874082" over "PO #" below it): most bare labels have a value of theirs just over them, closer than any value
+    under them. Then a label's value is the one over it, and the one under it is the next label's."""
+    under = over = 0
+    for line in lines:
+        for hit in _bare_hits(line)[:1]:
+            if hit.field in AMOUNT_FIELDS:
+                continue
+            lb = _label_box(hit)
+            up = _over(lines, line, lb)
+            up_gap = line.box.y0 - up.box.y1 if up and not _a_label(up) and _value_reading(
+                hit.field, up, 0, 1.0, "x") else None  # fmt: skip
+            down = next((o for o in _below(lines, line, lb)[:1] if _value_reading(hit.field, o, 0, 1.0, "x")), None)
+            down_gap = down.box.y0 - line.box.y1 if down else None
+            if up_gap is not None and (down_gap is None or up_gap < 0.6 * down_gap):
+                under += 1
+            elif down_gap is not None and (up_gap is None or down_gap < 0.6 * up_gap):
+                over += 1
+    return under >= 2 and under > over
+
+
+def _over_its_own_label(lines: list[Line], value: Line) -> bool:
+    """On a page that prints labels under their values: ``value`` has a label of its own just under it."""
+    h = max(value.box.height, 0.008)
+    return any(
+        other is not value
+        and other.box.page == value.box.page
+        and other.box.cy > value.box.cy
+        and -0.3 * h <= other.box.y0 - value.box.y1 <= LABEL_UNDER_GAP * h
+        and _aligned(value.box, other.box)
+        and (_bare_hits(other) or _labelish(other))
+        for other in lines
+    )
+
+
+def _labelish(line: Line) -> bool:
+    """A line that reads as some field's label, a wanted one or not ("Quote # / Soumission", "Account #"): no figures,
+    and a label's words or marks."""
+    p = plain(line.text).strip()
+    if not p or any(c.isdigit() for c in p):
+        return False
+    return _a_label(line) or "#" in p or p.endswith(":") or any(rx.match(p) for rxs in _DISTRACT.values() for rx in rxs)
+
+
+def _value_over_label(lines: list[Line], line: Line, hit: _LabelHit) -> Reading | None:
+    """One label printed under its value on a page not found to print them all so (a scan's tilt runs a row of
+    labels into one line): the line just over the label reads as its value, and the one under it is another label's,
+    printed right over that label and farther from this one; or nothing under the label reads as its value, and the
+    line over it is no other label's value (no label of its own just over it)."""
+    lb = _label_box(hit)
+    up = _over(lines, line, lb)
+    if up is None or _a_label(up):
+        return None
+    above = _value_reading(hit.field, up, 0, 0.85 * hit.strength, "label-above")
+    if above is None:
+        return None
+    down = next(iter(_below(lines, line, lb)[:1]), None)
+    if down is None or not _value_reading(hit.field, down, 0, 1.0, "x"):
+        hu = max(up.box.height, 0.008)
+        labelled = any(
+            other is not up
+            and other is not line
+            and other.box.page == up.box.page
+            and other.box.cy < up.box.cy
+            and -0.3 * hu <= up.box.y0 - other.box.y1 <= LABEL_UNDER_GAP * hu
+            and _aligned(up.box, other.box)
+            and (_labelish(other) or bool(_label_hits(other)))
+            for other in lines
+        )
+        return None if labelled else above
+    h = max(down.box.height, 0.008)
+    over_its_label = any(
+        other is not down
+        and other.box.page == down.box.page
+        and other.box.cy > down.box.cy
+        and -0.3 * h <= other.box.y0 - down.box.y1 <= LABEL_UNDER_GAP * h
+        and _aligned(down.box, other.box)
+        and _labelish(other)
+        for other in lines
+    )
+    if over_its_label and line.box.y0 - up.box.y1 < 0.5 * (down.box.y0 - line.box.y1):
+        return above
+    return None
 
 
 def _under_another_label(lines: list[Line], value: Line, label: Line) -> bool:
@@ -881,9 +1005,10 @@ def _far_right(field: str, hit: _LabelHit, lines: list[Line]) -> Reading | None:
     return got
 
 
-def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
+def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = False) -> list[Reading]:
     """For each label: the value after it on the same line, else just right of it, else just below it
-    (header grids print a row of labels over a row of values)."""
+    (header grids print a row of labels over a row of values). ``under``: the page prints its labels under their
+    values (``labels_under_values``): the value just over the label, before any below it."""
     out: list[Reading] = []
     for hit in field_hits:
         field, line = hit.field, hit.line
@@ -913,6 +1038,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
                 break  # the next thing to the right is another label ("Ship Date"): look below instead
             if _under_another_label(lines, other, line):
                 break  # a header grid's value, under its own label ("Order No." over "SO-28797"): look below
+            if under and _over_its_own_label(lines, other):
+                break  # labels under values: the value over the next label ("A-26-54597" over "Applies to Invoice")
             got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
             if got and _after_another_label(other, got):
                 got = None
@@ -925,6 +1052,13 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
                     out.append(got)
                     got = rightmost
                 break
+        if got is None and under and field not in AMOUNT_FIELDS:
+            # A grid that prints each label under its value: the value is the line just over the label.
+            up = _over(lines, line, _label_box(hit))
+            if up is not None and not _a_label(up):
+                got = _value_reading(field, up, 0, 0.85 * hit.strength, "label-above")
+        elif got is None and field not in AMOUNT_FIELDS:
+            got = _value_over_label(lines, line, hit)
         if got is None and field in AMOUNT_FIELDS:
             got = _far_right(field, hit, lines)
         if got is None and field in _RIGHTMOST:
@@ -935,6 +1069,8 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
             for other in _below(lines, line, lb)[:3]:
                 if _own_label(other, field):
                     break
+                if under and _over_its_own_label(lines, other):
+                    break  # the value of the label printed under it, not this one's
                 got = _value_reading(field, other, 0, 0.85 * hit.strength, "label-below")
                 if got and _after_another_label(other, got):
                     got = None
@@ -1101,6 +1237,22 @@ _POSTAL_CODE = re.compile(r"[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d|,\s*(?:ON|QC|BC|AB
 _TITLE_PREFIX = re.compile(
     r"^(?:sales\s*|tax\s*|commercial\s*)?(?:invoice|facture)\s*(?:#|no\.?|n°)?\s*[a-z]{0,3}[\d/-]*\d\S*\s+"
 )
+
+
+_ATTENTION = re.compile(r"^(?:attn|attention|a\s*l'?\s*attention\s*de|c\s*/\s*o)\b|^accounts\s*payable\b")
+
+
+def _over_attention(lines: list[Line], line: Line) -> bool:
+    """``line`` is printed just over an "Attn: Accounts Payable" or "c/o ..." line starting where it starts: a
+    customer's name in its address block."""
+    h = max(line.box.height, 0.008)
+    return any(
+        other is not line
+        and abs(other.box.x0 - line.box.x0) < 0.02
+        and 0 < other.box.cy - line.box.cy < 2.2 * h
+        and _ATTENTION.match(plain(other.text).strip())
+        for other in lines
+    )
 
 
 # Lines at the top of a page that are no supplier's name, however they are printed (sweep 4, real invoices): a
@@ -1314,6 +1466,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             continue
         if line.box.cy > 0.33 or line.box.y0 >= table_top - 0.002 or _in_bill_to(layout, line):
             continue
+        if _over_attention(page.lines, line):
+            continue  # "Groupe Boisvert ltée" over "Attn: Accounts Payable": the customer, its "Bill To" unread
         if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
             continue
         if _not_a_name(text) or _SELLER_LABEL.fullmatch(p):
@@ -1525,12 +1679,37 @@ def _printed_as_money(token: str) -> bool:
 _CREDIT_TITLE = re.compile(r"^(?:" + "|".join(CREDIT_TITLES) + r")(?![a-z])")  # as email triage reads them
 
 
+# A total's label that says the document credits: "CREDIT TOTAL:", "Total Credit / Montant crédité", "Amount credited".
+_CREDIT_TOTAL = re.compile(
+    r"^(?:credit\s*total|total\s*(?:du\s*)?credit(?:ed)?|amount\s*credited|montant\s*(?:total\s*)?credite|"
+    r"total\s*(?:de\s*la\s*)?note\s*de\s*credit)(?![a-z])(?!\s*(?:applied|available|used|received|applique|utilise))"
+)
+
+
 def credit_titled(layout: DocLayout) -> bool:
     """The document calls itself a credit note ("CREDIT MEMO", "Note de crédit", "AVOIR" ...) at the top of its
-    first page."""
+    first page, or its total is labelled a credit ("CREDIT TOTAL", "Total Credit / Montant crédité"): a fax or a scan
+    can lose the title, never both."""
     if not layout.pages:
         return False
-    return any(ln.box.cy < 0.35 and _CREDIT_TITLE.match(plain(ln.text).strip()) for ln in layout.pages[0].lines)
+    if any(ln.box.cy < 0.35 and _CREDIT_TITLE.match(plain(ln.text).strip()) for ln in layout.pages[0].lines):
+        return True
+    from .normalize import find_amounts
+
+    for page in layout.pages:
+        amounts = {id(ln): [abs(v) for v, a, b in find_amounts(ln.text) if looks_like_money(ln.text[a:b])]
+                   for ln in page.lines}  # fmt: skip
+        largest = max((v for vs in amounts.values() for v in vs), default=0.0)
+        for line in page.lines:
+            if not _CREDIT_TOTAL.match(plain(line.text).strip()):
+                continue
+            # The credit total is the document's largest amount (an invoice's "Credit total" line is not its total).
+            row = [line] + sorted((o for o in page.lines if o is not line and abs(o.box.cy - line.box.cy) < 0.006
+                                   and o.box.x0 >= line.box.x0), key=lambda o: o.box.x0)  # fmt: skip
+            got = next((amounts[id(o)] for o in row if amounts[id(o)]), [])
+            if got and got[-1] >= largest - 0.005:
+                return True
+    return False
 
 
 def credit_printed_positive(layout: DocLayout) -> bool:
@@ -2282,7 +2461,24 @@ def _canadian_vendor(layout: DocLayout) -> bool:
 
 def read_fields(layout: DocLayout, received: dt.date | None = None) -> dict[str, list[Reading]]:
     """Candidate readings for every header field, best first. ``received``: the day the invoice came
-    in (it settles a 03/04/2026 the page itself does not: invoices arrive days after their date)."""
+    in (it settles a 03/04/2026 the page itself does not: invoices arrive days after their date).
+    A tilted scan is read straightened, as its line items are (``straightened``): at 2.5 degrees a value two inches
+    right of its label sits a row lower, level with the next label's. The boxes are given on the page as scanned."""
+    skews = {page.number: page.skew for page in layout.pages if abs(page.skew) >= STRAIGHTEN_FROM}
+    if not skews:
+        return _read_fields_on(layout, received)
+    level = straightened(layout)
+    level = DocLayout([dataclasses.replace(p, skew=0.0, turn=page.turn, dpi=page.dpi) for p, page in
+                       zip(level.pages, layout.pages, strict=True)], layout.source, layout.pages_left_out,
+                      layout.pages_unread_locally)  # fmt: skip
+    cands = _read_fields_on(level, received)
+    for readings in cands.values():
+        for r in readings:
+            r.boxes = [_on_tilted_page(b, skews[b.page]) if b.page in skews else b for b in r.boxes]
+    return cands
+
+
+def _read_fields_on(layout: DocLayout, received: dt.date | None) -> dict[str, list[Reading]]:
     text = layout.text()
     order = infer_day_first(text)
     # US invoices print month first. A Canadian supplier need not, whatever its currency or a US line on its letterhead
@@ -2368,12 +2564,16 @@ _GLUED_TITLE = re.compile(
 
 
 def _glued_title_numbers(layout: DocLayout) -> list[Reading]:
-    """OCR glued the title to the number beside it: "INVOICEA-2026-29266", "TAXINVOICEA-90595"."""
+    """OCR glued the title to the number beside it: "INVOICEA-2026-29266", "TAXINVOICEA-90595"; and read the number
+    a second time on its own ("TAX INVOICE82-78605 82-78605"): once."""
     out = []
     for line in layout.lines():
         if all(w.source in _AS_PRINTED for w in line.words):
             continue
-        m = _GLUED_TITLE.match(line.text.replace(" ", ""))
+        tokens = line.text.split()
+        if len(tokens) >= 2 and len(tokens[-1]) >= 3 and tokens[-2].endswith(tokens[-1]) and tokens[-2] != tokens[-1]:
+            tokens = tokens[:-1]
+        m = _GLUED_TITLE.match("".join(tokens))
         if m and len(m.group(1)) >= 3:
             out.append(Reading("invoice_number", m.group(1), m.group(1), [line.box], 0.75 * _min_conf(line.words),
                                "glued-title"))  # fmt: skip
@@ -2396,6 +2596,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     by_page: dict[int, list[Line]] = {}
     for ln in lines:
         by_page.setdefault(ln.box.page, []).append(ln)
+    under = {page for page, page_lines in by_page.items() if labels_under_values(page_lines)}
     hits: dict[str, list[_LabelHit]] = {}
     discounts: list[Reading] = []
     for ln in lines:
@@ -2412,7 +2613,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         page_lines = by_page
         readings: list[Reading] = []
         for hit in fhits:
-            got = _labelled([hit], page_lines.get(hit.line.box.page, []))
+            got = _labelled([hit], page_lines.get(hit.line.box.page, []), hit.line.box.page in under)
             if field == "other_charges" and _DISCOUNT.match(plain(hit.label_text)):
                 for r in got:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
