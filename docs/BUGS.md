@@ -2375,3 +2375,30 @@ Improvements made with these fixes:
 - **N-91** · Setup, launcher and update · `watch` still treats an invoice that failed for a missing module as seen (no retry). Not changed, as the finding suggested: with the older watcher stopped, nothing fails that way; a retry rule for failures is a design choice.
 - **N-92** · Setup, launcher and update · an older `watch` / `read-pages` run by another computer account (or a scheduled task under one) can't be ended by this account: the start waits a minute ("close the window it runs in, or end its task in Task Scheduler"), then stops. Worker notes don't carry the account (B-168 covers servers only).
 - **N-93** · Setup, launcher and update · two accounts sharing one folder on macOS/Linux: the server file is mode 0600 and the code folder's lock file belongs to the first account, so the second account's start can't read the token or take the lock; it now relies on `/healthz`'s `user` (B-168). Sharing one folder between accounts is documented for Windows only.
+
+## Sweep 4 (real-world testing), October 2026
+
+### Reading: photos and poor scans
+
+Measured on a corpus of 150 hard synthetic invoices with exact answers (26 phone photos of a page on a desk, 74 poor
+scans: 22 scans, 16 faxes, 12 speckled, 12 upside down, 12 faint), read with OCR only (no page reader, no AI), the
+table finder's model on. None of the corpus is in the repo: each test makes its own picture, degraded the same way.
+
+#### B-300 · A shadow across a photographed page cut the page short at the shadow: its totals were lost · high
+- **Where:** `ap_coder/capture/layout.py` (`flatten_photo`, new `_page_outline`)
+- **Symptom:** of 26 desk photos, 9 were flattened to part of the page: a hand's, a phone's or a lamp's shadow over
+  the right side or the bottom made that part as dark as the desk, and the page was cut off there (the totals column
+  gone: subtotal, taxes and total *missing*), or squared up on a wrong four-cornered outline (h-0086, h-0127: the page
+  warped). Photos read 75.4% of their fields right, 46% of invoices fully right.
+- **Cause:** the page was told from the desk by one brightness threshold (Otsu) over the whole photo: paper in shadow
+  falls below it.
+- **Fix:** the paper in the light is only the seed. The photo is flooded from that seed and from the picture's border
+  at once (OpenCV's watershed): the two floods meet where the colour changes sharply, the page's edge, and not at a
+  shadow's soft edge. The checks that tell a desk photo from a scan are unchanged (the page must not touch the
+  picture's edge, the desk must be darker than the paper): on the corpus's 93 scanned, faxed and speckled pictures,
+  none is flattened, as before. It costs a few milliseconds.
+- **Measured:** photos 75.4% → 96.2% of fields right, 46.2% → 80.8% fully right, no silent error 80.8% → 92.3%
+  (all 26 pages now whole). What is left on photos is the rule reader's (labels under values, credits printed
+  positive).
+- **Test:** `tests/test_photo_scan_quality.py::test_a_shadow_across_the_page_does_not_cut_the_page_short`
+- **Lesson:** Don't find an object by its brightness when the light is uneven: find its edge.

@@ -97,13 +97,10 @@ def flatten_photo(picture: Any) -> Any | None:
     height, width = rgb.shape[:2]
     scale = min(1.0, 800 / max(height, width, 1))
     small = cv2.resize(rgb, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
-    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY), (5, 5), 0)
-    _, paper = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))  # the print inside is paper too
-    contours, _ = cv2.findContours(paper, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
+    page = _page_outline(small)
+    if page is None:
         return None
-    page = max(contours, key=cv2.contourArea)
+    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY), (5, 5), 0)
     if not PHOTO_PAGE_SHARE[0] <= cv2.contourArea(page) / gray.size <= PHOTO_PAGE_SHARE[1]:
         return None
     hull = cv2.convexHull(page)
@@ -135,6 +132,35 @@ def flatten_photo(picture: Any) -> Any | None:
                                flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)  # fmt: skip
     out = Image.fromarray(flat)
     return out.convert("L") if picture.mode in ("1", "L") else out
+
+
+def _page_outline(small: Any) -> Any | None:
+    """The outline of the page in a (small) photo, or None. The paper's lit part (lighter than the desk) is grown out
+    to the page's edge: the picture is flooded from that part and from the picture's border at once, and the two
+    meet where the colour changes sharply, the page's edge. A shadow falling across the page (a hand, the phone, a
+    lamp) darkens part of it as much as the desk, but its edge is soft: the page is not cut short there."""
+    import cv2
+    import numpy as np
+
+    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_RGB2GRAY), (5, 5), 0)
+    _, paper = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))  # the print inside is paper too
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(paper)
+    if count < 2:
+        return None
+    lit = labels == 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))  # the paper in the light
+    inset = max(3, round(0.02 * max(gray.shape)))
+    seed = cv2.erode(lit.astype(np.uint8), np.ones((inset, inset), np.uint8))
+    if not seed.any():
+        return None
+    markers = np.zeros(gray.shape, np.int32)
+    markers[seed > 0] = 2
+    markers[:2, :] = markers[-2:, :] = 1  # the picture's border is desk (or the page runs off it: not a desk photo)
+    markers[:, :2] = markers[:, -2:] = 1
+    cv2.watershed(cv2.GaussianBlur(small, (5, 5), 0), markers)
+    region = cv2.morphologyEx((markers == 2).astype(np.uint8) * 255, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    contours, _ = cv2.findContours(region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return max(contours, key=cv2.contourArea) if contours else None
 
 
 # ---------------------------------------------------------------- lines
