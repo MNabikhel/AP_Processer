@@ -2403,3 +2403,13 @@ invoices, the first approval, the first export and Help, read as a pilot tester 
 - **Fix:** `web/errors.py`: the dashboard's own error page, with the menu, "What to do: go back and try again; if it happens again, Help → Report a problem", and "Details for IT" folded away (the error in one line, and where the full details are). The traceback goes to `~/.ap_coder/logs/dashboard-errors.log`, the window says one line. A form gets `{"ok": false, "error": …}` with the same advice; when the page frame itself can't be drawn (it reads the database), a plain page says the same.
 - **Test:** `tests/test_sweep4_first_launch.py::test_a_page_that_fails_says_what_to_do_in_the_dashboard_with_the_details_folded_away`, `…::test_a_page_that_fails_still_answers_when_the_page_frame_itself_fails`
 - **Lesson:** Don't leave the unexpected error to the framework's default: it is the one page a person most needs help on.
+
+#### B-242 · A second copy that could not set itself up stopped the AP Coder that worked · medium
+- **Where:** `scripts/launch.py:1840` (`run`: `running.take_over` before `ensure_packages`)
+- **Symptom:** with AP Coder open, a second folder double-clicked by mistake (GitHub's ZIP, or a bundle unzipped without its `wheelhouse` folder) printed "AP Coder 0.2.0 from … is still running (port 8501): stopping it, so this version takes over. Stopped it.", then "✗ Missing packages: openpyxl, openai, pandas, … What to do: Unzip the full offline bundle …": the tester was left with no AP Coder at all.
+- **Cause:** the start makes way for itself (stops an older or other folder's AP Coder) before it installs packages; when nothing can be installed (offline, no wheelhouse) it can only fail after that.
+- **Reproduce:** start AP Coder from one folder; extract the code alone into another folder and double-click its launcher with `AP_ALLOW_INTERNET=0`.
+- **Reproduced:** yes (the lines above, in the walk-through; the first dashboard stopped answering)
+- **Fix:** `cannot_set_up()` asks first whether the core packages are missing with nowhere to install them from; if so the start stops there, before anything running is touched, and says "The AP Coder already open was left running." when one is open. A copy that can set itself up takes over as before.
+- **Test:** `tests/test_sweep4_first_launch.py::test_a_copy_that_cannot_set_itself_up_leaves_the_running_ap_coder_alone`, `…::test_a_copy_that_can_set_itself_up_still_takes_over`
+- **Lesson:** Don't stop what works before knowing the replacement can start.

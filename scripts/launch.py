@@ -892,6 +892,21 @@ def without_wheelhouse(missing: list[str], total: int) -> tuple[str, str, bool]:
     return "ok", f"Packages: all {total} in place (AP Coder runs from this folder)", False
 
 
+def cannot_set_up() -> SetupError | None:
+    """Why this folder can't set itself up at all (core packages missing, and nowhere to install them from), else
+    None. Asked before an AP Coder already running is stopped: a second copy double-clicked by mistake (GitHub's ZIP,
+    a bundle without its wheelhouse) stopped the one that worked, then stopped itself (B-242)."""
+    if pip_source() is not None or wheelhouse_candidates():
+        return None
+    importlib.invalidate_caches()
+    missing = [r for r in check_deps.requirements() if check_deps.problem(r)]
+    try:
+        without_wheelhouse(missing, len(missing))
+    except SetupError as exc:
+        return exc
+    return None
+
+
 # The second OCR engine (PP-OCRv4, models inside the package) is pure Python but says "Python below 3.13" in its
 # metadata, so pip leaves it out on 3.13 and newer (pyproject's marker). It works there: installed on its own,
 # without that check, so a scan is read by two engines on every Python.
@@ -1832,6 +1847,11 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     if args.venv in (None, "reused") and (first or state.get("fingerprint") != ident["fingerprint"]):
         say(f"Python {sys.version.split()[0]}: reusing .venv")  # (a later start of the same version: said nothing)
     unblock_launchers()
+    blocker = cannot_set_up()  # before anything running is stopped: a copy that can't start leaves it alone (B-242)
+    if blocker is not None:
+        if running.find(candidate_ports(rest, state), paths.private_dir()):
+            blocker = SetupError(f"{blocker} The AP Coder already open was left running.", blocker.hint)
+        return failed(blocker)
 
     # An AP Coder already running: this one opened; an older one (or another folder's) stopped first.
     verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, state), paths.private_dir(), say)

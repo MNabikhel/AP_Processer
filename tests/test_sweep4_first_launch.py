@@ -4,16 +4,22 @@ Import pages, and the dashboard's words)."""
 
 from __future__ import annotations
 
+import importlib.util
 import io
+import json
 import logging
+import sys
 from dataclasses import replace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store
 from ap_coder.ops import cli
 from ap_coder.web.app import create_app
+
+from .conftest import ROOT
 
 # --- B-240: the AP Coder window fills with technical lines once a scan is read -----------------------------------
 
@@ -96,3 +102,61 @@ def test_a_page_that_fails_still_answers_when_the_page_frame_itself_fails(tmp_pa
     page = client.get("/boom", headers={"accept": "text/html"})
     assert page.status_code == 500 and "Something went wrong" in page.text and "href='/review'" in page.text
     assert "What to do:" in page.text and "Report a problem" in page.text
+
+
+# --- The launcher (scripts/launch.py) ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def launch(tmp_path, monkeypatch):
+    """scripts/launch.py, as an offline bundle's copy in its own folder (as tests/test_launch_update.py loads it)."""
+    spec = importlib.util.spec_from_file_location("ap_script_launch_sweep4", ROOT / "scripts" / "launch.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    here = tmp_path / "AP Coder 0.2"
+    (here / "ap_coder").mkdir(parents=True)
+    (here / "scripts").mkdir()
+    (here / "pyproject.toml").write_text('[project]\nname = "ap-coder"\nversion = "0.2.0"\n')
+    (here / "bundle_manifest.json").write_text(json.dumps({"version": "0.2.0", "built": "2026-10-11T09:00:00"}))
+    venv = here / ".venv"
+    venv.mkdir()
+    monkeypatch.setattr(module, "ROOT", here)
+    monkeypatch.setattr(module, "VENV", venv)
+    monkeypatch.setattr(module, "VENV_PY", venv / "bin" / "python")
+    monkeypatch.setattr(module, "STATE", venv / "ap_coder_launcher.json")
+    monkeypatch.setattr(module, "WINDOWS", False)
+    monkeypatch.setattr(module, "MAC", False)
+    return module
+
+
+# --- B-242: a second copy that can't set itself up stops the AP Coder that works --------------------------------
+
+
+def test_a_copy_that_cannot_set_itself_up_leaves_the_running_ap_coder_alone(launch, monkeypatch, capsys):
+    """A second folder (GitHub's ZIP, or a bundle unzipped without its wheelhouse) double-clicked while AP Coder ran:
+    it stopped the running AP Coder ("stopping it, so this version takes over"), then said "Missing packages" and
+    stopped too, leaving the tester with no AP Coder at all."""
+    core = ["fastapi>=0.110", "pandas>=2.0"]
+    monkeypatch.setattr(launch, "pip_source", lambda: None)  # no wheelhouse, and the internet is not allowed
+    monkeypatch.setattr(launch.check_deps, "requirements", lambda extras=(): list(core))
+    monkeypatch.setattr(launch.check_deps, "problem", lambda requirement: "not installed")
+    stopped: list[int] = []
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: stopped.append(1) or ("clear", None))
+    monkeypatch.setattr(launch.running, "find", lambda ports, data: ["the AP Coder on port 8501"])
+    assert launch.run(*launch.parse([])) == 1
+    out = capsys.readouterr().out
+    assert not stopped, "the running AP Coder was stopped by a copy that could not start"
+    assert "Missing packages: fastapi, pandas" in out and "What to do:" in out
+    assert "The AP Coder already open was left running" in out
+
+    monkeypatch.setattr(launch.running, "find", lambda ports, data: [])  # nothing open: nothing said about one
+    assert launch.run(*launch.parse([])) == 1 and "left running" not in capsys.readouterr().out
+
+
+def test_a_copy_that_can_set_itself_up_still_takes_over(launch, monkeypatch):
+    monkeypatch.setattr(launch, "pip_source", lambda: ["--no-index", "--find-links", "wheelhouse"])
+    monkeypatch.setattr(launch.check_deps, "problem", lambda requirement: "not installed")
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("blocked", 8501))  # (stops the start here)
+    assert launch.cannot_set_up() is None
+    assert launch.run(*launch.parse([])) == 1  # it went on to take over
