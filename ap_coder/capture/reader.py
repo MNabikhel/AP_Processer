@@ -447,6 +447,8 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None  # part of an address ("Unit 7")
         if value.translate(_DIGIT_LOOKALIKES).strip("#:.-").casefold() in _LABEL_WORDS:
             return None  # a label OCR misread ("INVO1CE"), not its value
+        if re.fullmatch(r"(?i)net-?\d{1,3}(?:days?|jours?)?", value):
+            return None  # "Net30days": the terms (OCR ran them together), not a number
         if re.fullmatch(r"(?i)page-?\d{1,3}", value):
             return None  # "Page - 1" (OCR's spaces beside the hyphen joined), not a number
         if re.fullmatch(r"[A-Za-z]{1,4}-?\d+[.,]\d{2}", value):
@@ -665,15 +667,29 @@ def _labelish(line: Line) -> bool:
 def _value_over_label(lines: list[Line], line: Line, hit: _LabelHit) -> Reading | None:
     """One label printed under its value on a page not found to print them all so (a scan's tilt runs a row of
     labels into one line): the line just over the label reads as its value, and the one under it is another label's,
-    printed right over that label and farther from this one."""
+    printed right over that label and farther from this one; or nothing under the label reads as its value, and the
+    line over it is no other label's value (no label of its own just over it)."""
     lb = _label_box(hit)
     up = _over(lines, line, lb)
     if up is None or _a_label(up):
         return None
     above = _value_reading(hit.field, up, 0, 0.85 * hit.strength, "label-above")
-    down = next(iter(_below(lines, line, lb)[:1]), None)
-    if above is None or down is None or not _value_reading(hit.field, down, 0, 1.0, "x"):
+    if above is None:
         return None
+    down = next(iter(_below(lines, line, lb)[:1]), None)
+    if down is None or not _value_reading(hit.field, down, 0, 1.0, "x"):
+        hu = max(up.box.height, 0.008)
+        labelled = any(
+            other is not up
+            and other is not line
+            and other.box.page == up.box.page
+            and other.box.cy < up.box.cy
+            and -0.3 * hu <= up.box.y0 - other.box.y1 <= LABEL_UNDER_GAP * hu
+            and _aligned(up.box, other.box)
+            and (_labelish(other) or bool(_label_hits(other)))
+            for other in lines
+        )
+        return None if labelled else above
     h = max(down.box.height, 0.008)
     over_its_label = any(
         other is not down

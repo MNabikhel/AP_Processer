@@ -90,9 +90,14 @@ def test_one_label_under_its_value_with_a_quote_number_under_the_next(tmp_path):
     path = _pdf(tmp_path, _VENDOR + grid + _TABLE)
     with pymupdf.open(path) as doc:
         text = [page.get_text() for page in doc]
-    got = analyze(path, ocr=False, today=TODAY, page_text=text).fields["invoice_number"]
+    fields = analyze(path, ocr=False, today=TODAY, page_text=text).fields
+    got = fields["invoice_number"]
     assert got.value == "075037"
     assert got.status != VERIFIED
+    # The labels of the dates over them run into one line: nothing under it reads as a date, the line over each label
+    # does (the page reader's transcription, a column of text, is left to disagree: a person checks).
+    alone = _read(path).fields
+    assert (alone["invoice_date"].value, alone["due_date"].value) == ("2026-03-04", "2026-04-03")
 
 
 def test_a_business_number_is_not_an_invoice_number(tmp_path):
@@ -108,6 +113,7 @@ def test_a_business_number_is_not_an_invoice_number(tmp_path):
     assert _value_reading("invoice_number", line("782311542 RT 0001"), 0, 1.0, "x") is None
     assert _value_reading("invoice_number", line("No. 123456782 RT0001"), 4, 1.0, "x") is None
     assert _value_reading("invoice_number", line("No. 123456782"), 4, 1.0, "x").value == "123456782"
+    assert _value_reading("invoice_number", line("Net30days"), 0, 1.0, "x") is None  # the terms, OCR run together
 
 
 def test_a_credit_whose_title_is_lost_is_known_by_its_credit_total(tmp_path):

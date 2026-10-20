@@ -2464,3 +2464,13 @@ Found by reading a hard corpus of 150 synthetic Canadian invoices with exact tru
 - **Fix:** On a labels-under page, a value printed right over a label of its own (any label, wanted or a distractor) is never read as the value of a label beside or over it.
 - **Test:** `tests/test_sweep4_layouts.py::test_labels_under_values_the_value_to_the_right_is_the_next_labels`
 - **Lesson:** Don't let "to the right" outrank the page's own convention: on a labels-under page, a value belongs to the label under it.
+
+#### B-288 · Dates printed over labels that a scan runs into one line are missed · medium
+- **Where:** `ap_coder/capture/reader.py` (`_value_over_label`, `_value_reading`)
+- **Symptom:** A speckled bilingual scan printing "4 Mar 2026" and "3 Apr 2026" over "Billing Date / Date de facturation" and "Payment Due / Payable avant le", the two labels read as one line: both dates missing; "Net30days" (the terms run together) offered as an invoice number.
+- **Cause:** B-282 reads a label's value from over it only when a value under it belongs to another label; here nothing under the label reads as a date at all. An identifier was any token with a digit in it.
+- **Reproduce:** the grid of `test_one_label_under_its_value_with_a_quote_number_under_the_next`, read without the page reader.
+- **Reproduced:** yes (invoice and due dates missing)
+- **Fix:** When nothing under a label reads as its value, the line just over it does, unless that line is another label's value (a label of its own just over it). "Net30days" / "Net-45" is never an invoice or PO number.
+- **Test:** `tests/test_sweep4_layouts.py::test_one_label_under_its_value_with_a_quote_number_under_the_next`, `::test_a_business_number_is_not_an_invoice_number`
+- **Lesson:** Don't make one side of a label the fallback for nothing: with no value under it, the value over it is the only one there is.
