@@ -2375,3 +2375,21 @@ Improvements made with these fixes:
 - **N-91** · Setup, launcher and update · `watch` still treats an invoice that failed for a missing module as seen (no retry). Not changed, as the finding suggested: with the older watcher stopped, nothing fails that way; a retry rule for failures is a design choice.
 - **N-92** · Setup, launcher and update · an older `watch` / `read-pages` run by another computer account (or a scheduled task under one) can't be ended by this account: the start waits a minute ("close the window it runs in, or end its task in Task Scheduler"), then stops. Worker notes don't carry the account (B-168 covers servers only).
 - **N-93** · Setup, launcher and update · two accounts sharing one folder on macOS/Linux: the server file is mode 0600 and the code folder's lock file belongs to the first account, so the second account's start can't read the token or take the lock; it now relies on `/healthz`'s `user` (B-168). Sharing one folder between accounts is documented for Windows only.
+
+## Sweep 4 (real-world testing), October 2026
+
+### Reading: line items
+
+Measured on a corpus of 128 real invoices and receipts with known line counts and 150 hard generated Canadian invoices
+(long tables, no ruled lines, landscape, photos, poor scans), scored line by line: count exact, each line's amount,
+the lines adding up, and how alike the descriptions read.
+
+#### B-340 · A long table's page subtotal and "Balance brought forward" rows were read as line items · medium
+- **Where:** `ap_coder/capture/reader.py` (`_CARRIED`, used by `_read_line_items`, `_headerless_rows` and `tables.py`)
+- **Symptom:** a 77-line invoice over three pages came back with 78 lines, one of them "Balance brought forward 13,447.80"; another had "Page subtotal 17,525.34" and two "Balance brought forward" rows as lines. The lines no longer added up to the subtotal, and the coder balanced them with a large negative "charge".
+- **Cause:** the rows a long table prints between its pages were known only as "Brought forward", "Balance forward", "Carried forward" and "Page total"; "Balance brought forward", "Balance carried forward", "Page subtotal", "Sous-total de la page", "Montant reporté" and OCR's "Balancebrought forward" read as lines.
+- **Reproduce:** a table with a "Balance brought forward 1,234.56" row above its lines, or "Page subtotal 427.74" under them.
+- **Reproduced:** yes (the row read as a line with no quantity).
+- **Fix:** those wordings (and German "Übertrag", "Total de la page") are rows that sum the lines, never lines. On the hard corpus's four digital long tables that had them: 9 wrong lines → 0, every line right on 4 of 4 (was 0).
+- **Test:** `tests/test_line_items_sweep4.py::test_page_subtotals_and_balances_carried_between_pages_are_no_lines`
+- **Lesson:** A table's running sums come in many wordings; list the phrase families (brought/carried, page subtotal) in both languages, not the one seen first.

@@ -1005,8 +1005,12 @@ _FIGURE = re.compile(r"[#(]?[\d.,:/-]*\d[\d.,:/-]*[)%]?")  # a word that is a nu
 
 
 _NUMBER_CELL = re.compile(r"^[\s$€£¢()+\-–.,'%x×@#]*\d[\d\s$€£¢()+\-–.,'%x×@]*(?:[a-z]{1,3}\.?)?\s*$", re.I)
-_CARRIED = re.compile(r"^(a\s*reporter|report\b|reporte|carried\s*forward|brought\s*forward|balance\s*forward|"
-                      r"continued|suite|sub\s*-?\s*total|sous\s*-?\s*total|page\s*total)")  # fmt: skip
+# A row of a long table that sums its lines: carried from page to page ("Balance brought forward / Montant reporté",
+# "Übertrag"), or the page's own subtotal ("Page subtotal", "Sous-total de la page", "Total de la page").
+_CARRIED = re.compile(r"^(a\s*reporter|report\b|reporte|carried\s*forward|brought\s*forward|"
+                      r"balance\s*(?:brought\s*|carried\s*)?forward|montant\s*report|u(?:e)?bertrag|"
+                      r"continued|suite|sub\s*-?\s*total|sous\s*-?\s*total|page\s*(?:sub\s*-?\s*)?total|"
+                      r"total\s*(?:de\s*la\s*)?page)")  # fmt: skip
 _CREDIT_MARK = re.compile(r"\d[.,]\d{2}cr", re.I)  # "342.18CR": a credit's mark run into its amount
 
 
