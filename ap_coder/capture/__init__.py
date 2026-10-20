@@ -17,7 +17,14 @@ from .confidence import LABELS, TAX_FIELDS, fuse
 from .layout import IMAGE_EXTENSIONS, CannotRead, build_layout, ocr_available
 from .locate import locate
 from .normalize import find_amounts
-from .reader import _table_header_line, credit_titled, read_fields, read_line_items
+from .reader import (
+    STRAIGHTEN_FROM,
+    _on_tilted_page,
+    _table_header_line,
+    credit_titled,
+    read_fields,
+    read_line_items,
+)
 from .types import (
     AMOUNT_FIELDS,
     CHECK,
@@ -327,6 +334,38 @@ def text_layer_check(layout: DocLayout, page_text: list[str], fields: dict[str, 
     return check
 
 
+def _read_straight(layout: DocLayout, received: dt.date | None) -> dict[str, list[Reading]]:
+    """``read_fields`` of a scan as if it lay straight: on each tilted page every line (words on one baseline, set close
+    together) is moved up or down, as one piece, to where it would be on the straightened page, so a label and its
+    amount at the other end of the row stay on one row (on a page scanned at 4 degrees, "GST" sat level with the
+    subtotal's amount); each reading's boxes are then put back where the words are printed on the page as scanned.
+    A line is moved whole, not word by word: a title's words would come apart."""
+    from .layout import group_lines
+    from .types import PageLayout, Word
+
+    skews = {page.number: page.skew for page in layout.pages if abs(page.skew) >= STRAIGHTEN_FROM}
+    if not skews:
+        return read_fields(layout, received=received)
+    pages = []
+    for page in layout.pages:
+        if page.number not in skews:
+            pages.append(page)
+            continue
+        words = []
+        for line in page.lines:
+            dy = -page.skew * (line.box.cx - 0.5)
+            words += [Word(w.text, Box(w.box.page, w.box.x0, w.box.y0 + dy, w.box.x1, w.box.y1 + dy), w.conf, w.source)
+                      for w in line.words]  # fmt: skip
+        pages.append(PageLayout(page.number, page.width, page.height, words, group_lines(words, page.number),
+                                page.rotation, 0.0, page.turn, page.dpi))  # fmt: skip
+    straight = DocLayout(pages, layout.source, layout.pages_left_out, layout.pages_unread_locally)
+    readings = read_fields(straight, received=received)
+    for found in readings.values():
+        for reading in found:
+            reading.boxes = [_on_tilted_page(b, skews[b.page]) if b.page in skews else b for b in reading.boxes]
+    return readings
+
+
 def _cross_read(path: Path, layout: DocLayout) -> dict[str, list[Reading]]:
     """A second, independent reading of a digital PDF through OCR of the rendered page."""
     if layout.source != "text" or not ocr_available():
@@ -350,7 +389,7 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
     (True, when its model is on this computer), the tables found already ({page: boxes}), or not (False)."""
     path = Path(path)
     layout = layout or build_layout(path, di_raw=di_raw, ocr=ocr)
-    sources: dict[str, dict[str, list[Reading]]] = {"rules": read_fields(layout, received=today)}
+    sources: dict[str, dict[str, list[Reading]]] = {"rules": _read_straight(layout, today)}
     if template is not None:
         try:
             from .supplier import apply_template
@@ -371,7 +410,7 @@ def analyze(path: str | Path, *, di_raw: dict[str, Any] | None = None, ai_values
                 # Another OCR model makes its own mistakes: an independent reader ("ocr2"). The same
                 # model on a straightened page shares the first read's blind spots ("ocr").
                 name = "ocr2" if second_engine_name() != _engine_name() else "ocr"
-                sources[name] = read_fields(second_layout, received=today)
+                sources[name] = _read_straight(second_layout, today)
         except Exception as exc:  # an extra reader: never fatal
             log.warning("%s: second read failed (%s)", path.name, exc)
     if cross_read:

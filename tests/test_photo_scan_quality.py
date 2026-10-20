@@ -3,6 +3,8 @@ the way the failing pages were (no corpus file is kept in the repo)."""
 
 from __future__ import annotations
 
+import io
+
 import pytest
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -64,7 +66,6 @@ _LINES = [
 def _printed_page(upside_down: bool) -> tuple[bytes, list]:
     """A page of mixed-case print with no amount beside a label (nothing for the labels' side to go by), and the
     OCR's lines for it as the page lies: upside down, the lines' boxes are where the turned page has them."""
-    import io
 
     from PIL import ImageFont
 
@@ -100,3 +101,49 @@ def test_a_page_scanned_upside_down_is_known_by_its_letters(monkeypatch, upside_
     if upside_down:
         first = min(page.lines, key=lambda ln: ln.box.y0)
         assert first.text == _LINES[0]  # read from the top of the upright page
+
+
+_TOTALS = [  # (label, amount) rows of a totals block, a row apart
+    ("Net amount", "1,990.48"),
+    ("GST 5%", "99.52"),
+    ("PST 7%", "139.33"),
+    ("Total (incl. tax)", "2,229.33"),
+]
+
+
+def _tilted_scan(degrees: float):
+    """The totals block of a scan fed askew, as OCR reports it: each line where it lies on the tilted page (the labels
+    at the middle of the page, their amounts at its right edge, a row's worth higher)."""
+    import math
+
+    from ap_coder.capture.types import DocLayout, PageLayout
+
+    w, h = 2200, 1700  # a landscape page
+    slope = math.tan(math.radians(degrees))
+    words = []
+    for i, (label, amount) in enumerate(_TOTALS):
+        y = 900 + 34 * i
+        for text, x0, x1 in ((label, 1350, 1350 + 18 * len(label)), (amount, 1900, 1900 + 18 * len(amount))):
+            dy = -slope * ((x0 + x1) / 2 - w / 2)  # the page turned anticlockwise: the right side rises
+            words += layout._split_ocr_line(text, x0, y + dy, x1, y + dy + 24, 0.98, w, h, 1)
+    words += layout._split_ocr_line("Invoice No: A-1001", 100, 200, 420, 224, 0.98, w, h, 1)
+    page = PageLayout(1, w, h, words, layout.group_lines(words, 1))
+    page.skew = -slope * w / h  # down per across, as fractions of the page (as ``layout._skew`` measures it)
+    page.dpi = 200
+    return DocLayout([page], "ocr")
+
+
+def test_a_scan_fed_askew_reads_each_label_with_its_own_amount(tmp_path):
+    """Sweep 4: on a landscape scan tilted 4 degrees, an amount at the right edge stood level with the label of the row
+    above: subtotal 99.52, GST 139.33, PST 2,229.33 (h-0085). The header fields are now read on the page straightened,
+    as the line items were, with their boxes where the amounts are printed."""
+    from ap_coder.capture import analyze
+
+    path = tmp_path / "scan.png"
+    Image.new("RGB", (2200, 1700), "white").save(path)
+    fields = analyze(path, layout=_tilted_scan(4.2), second_read=False, tables=False).fields
+    assert fields["subtotal"].value == 1990.48
+    assert fields["gst_amount"].value == 99.52
+    assert fields["grand_total"].value == 2229.33
+    box = fields["subtotal"].boxes[0]
+    assert box.x0 > 0.8 and box.y0 < 900 / 1700  # where it is printed: right, and higher than its label's row

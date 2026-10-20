@@ -2424,3 +2424,24 @@ table finder's model on. None of the corpus is in the repo: each test makes its 
 - **Test:** `tests/test_photo_scan_quality.py::test_a_page_scanned_upside_down_is_known_by_its_letters`
 - **Lesson:** Don't infer a page's orientation from the layout alone (it varies from invoice to invoice): the
   print's own shape says it on every line.
+
+#### B-302 · On a scan fed askew, an amount at the right edge was read with the label of the row above · high
+- **Where:** `ap_coder/capture/__init__.py` (new `_read_straight`, used by `analyze` for the rule reader on the
+  first and the second OCR read); `ap_coder/capture/layout.py` (`_skew`, `SKEW_MAX`)
+- **Symptom:** of 22 scans tilted 2 to 5 degrees, 11 had a value wrong or missing. On a landscape page tilted 4.2
+  degrees (h-0085) the subtotal was read as 99.52 (the GST), the GST as 139.33, the PST as 2,229.33 (the total); on
+  others the invoice number took the PO's line, the due date the invoice date's. No silent error on 77.3% of scans.
+- **Cause:** the header fields were read on the page as tilted: a label and its amount at the other end of the row
+  lie a row apart on a page tilted 4 degrees. Only the line items were read straightened (`reader.straightened`),
+  and a tilt over 4 degrees was not measured at all (taken for a page turned).
+- **Fix:** the rule reader reads a tilted scan straightened too: each line (words set close together on one
+  baseline) is moved up or down as one piece to where it would be on a straight page, the lines are formed again,
+  and each reading's boxes are put back where the words are printed, so the highlight still falls on the scan as
+  shown. A line is moved whole, not word by word: moved word by word, a title's words came apart ("Liberty" lost
+  from "Liberty Consulting Group Co."). A tilt of up to 8 degrees is measured (it was 4).
+- **Measured:** scans 85.8% → 93.8% of fields right, 50.0% → 72.7% fully right, no silent error 77.3% → 95.5%;
+  faxes, speckled, faint and photos unchanged; bench (60, seed 3, half scans) 99.8%, verified 100%. Left: on a 5
+  degree scan OCR itself joins two neighbouring lines' words ("1880 Industrial Pkwy Kingsway Mechanical Limited"),
+  so the vendor was taken from a salesperson's name (*likely*, h-0008).
+- **Test:** `tests/test_photo_scan_quality.py::test_a_scan_fed_askew_reads_each_label_with_its_own_amount`
+- **Lesson:** Don't straighten only part of the reading: every reader that pairs things across a row needs it.
