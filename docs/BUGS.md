@@ -3116,6 +3116,13 @@ without a label of its own (`number-dated`, `date-time`, `title-dated`, `label-f
 value, so a labelled date or number comes first, and is measured apart: never verified on a labelled value's record.
 A date with no label at all (`date-time`, `title-dated`) is held to *check* however many readers see it, and a stamp
 along the page's top edge (a fax's "SEP-13-2025 11:26 FROM: ...", a printer's) is not taken for the invoice's date.
+**Measured:** real corpus, invoice date right 57 → 111 of 120 (wrong 2 → 0, missing 61 → 9), invoice number right
+54 → 89 of 107 (wrong 8 → 0, missing 45 → 18), none verified wrong; the other fields unchanged. Hard corpus (150) 96.9%
+of fields right as before, verified precision 100%; bench (60, seed 3, half scans) 99.8%, verified 100%. What is
+still missing is mostly OCR's (a slash or a letter lost: "Date demission:332024", "Recelpt No.", "Bjll#"), labels
+run into a heading row ("Termini di Pagamento Data Documento Numero Documento"), a restaurant's "Check: 37820" (a
+check number is also how a cheque paid is printed: not read as the invoice's number), and an insurer's policy number
+taken as the invoice number by the sample's own answers.
 
 #### B-353 · A credit note's own number was not read: the invoice it credits was taken for it · medium
 - **Where:** `ap_coder/capture/reader.py` (`MORE_LABELS["invoice_number"]`, `DISTRACTORS["invoice_number"]`, `_hits_at`)
