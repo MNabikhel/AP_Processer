@@ -324,6 +324,17 @@ def test_the_custom_layout_is_saved_and_previewed(client, busy):
     assert empty.status_code == 400
 
 
+def test_the_custom_layout_keeps_or_leaves_out_the_byte_order_mark(client, busy):
+    """B-224: a checkbox on the layout, ticked unless it was unticked, says whether the file starts with a BOM."""
+    assert 'name="byte_order_mark" value="1" checked' in client.get("/exports?fmt=custom").text
+    form = {"header": ["Vendor"], "field": ["vendor_name"], "text": [""], "header_row": "1"}
+    follow(client, client.post("/exports/layout", data=form, headers=PAGE))
+    assert export_page.layout(busy).byte_order_mark is False
+    assert 'name="byte_order_mark" value="1">' in client.get("/exports?fmt=custom").text
+    follow(client, client.post("/exports/layout", data={**form, "byte_order_mark": "1"}, headers=PAGE))
+    assert export_page.layout(busy).byte_order_mark is True
+
+
 def test_the_erp_register_is_uploaded_checked_imported_and_cleared(client, busy):
     sheet = "Supplier,Doc No,Doc Date,Amount\nAcme Ltd,A-1,2026-01-05,100.00\nBeta Inc,B-7,2026-02-01,55.10\n"
     bad = client.post(

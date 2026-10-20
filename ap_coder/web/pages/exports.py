@@ -173,7 +173,8 @@ def layout_from_form(form: Any) -> tuple[export_layout.Layout, list[str], list[s
     date_format = date_format if date_format in export_layout.DATE_FORMATS else next(iter(export_layout.DATE_FORMATS))
     delimiter = delimiter if delimiter in export_layout.DELIMITERS else ","
     comma = bool(form.get("decimal_comma"))
-    new = export_layout.Layout(columns, date_format, delimiter, comma, bool(form.get("header_row")))
+    new = export_layout.Layout(columns, date_format, delimiter, comma, bool(form.get("header_row")),
+                               bool(form.get("byte_order_mark")))  # fmt: skip
     warnings = []
     if incomplete:
         warnings.append(f"Not in the layout until it has both a Header and a Value: {', '.join(incomplete)}.")

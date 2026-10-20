@@ -2,7 +2,9 @@
 
 One row per GL posting line (expense lines and recoverable-tax lines), with the columns, their order and
 headers chosen on the Exports page. A column takes a field (invoice or line), or fixed text such as a
-company code or a journal name. Dates, decimal mark and delimiter follow the ERP's expectations.
+company code or a journal name. Dates, decimal mark and delimiter follow the ERP's expectations, and so does the
+UTF-8 byte-order mark at the start (on unless the layout leaves it out: Excel needs it to show accents, a loader
+that reads plain UTF-8 takes it as part of the first header).
 
 The file is for the ERP's loader, so text is written exactly as it is: no spreadsheet apostrophe in front of
 ``+A-100`` or ``- Labour``, which would no longer match what the ERP holds.
@@ -52,6 +54,7 @@ class Layout:
     delimiter: str = ","
     decimal_comma: bool = False
     header_row: bool = True
+    byte_order_mark: bool = True
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -72,6 +75,7 @@ class Layout:
             layout.delimiter = data["delimiter"]
         layout.decimal_comma = bool(data.get("decimal_comma", False))
         layout.header_row = bool(data.get("header_row", True))
+        layout.byte_order_mark = bool(data.get("byte_order_mark", True))
         return layout
 
 
@@ -139,4 +143,4 @@ def build(rows: list[dict[str, Any]], layout: Layout) -> bytes:
     amounts = _line_amounts(rows)
     for i, row in enumerate(rows):
         writer.writerow([_value(row, c, layout, amounts.get(i)) for c in layout.columns])
-    return out.getvalue().encode("utf-8-sig")
+    return out.getvalue().encode("utf-8-sig" if layout.byte_order_mark else "utf-8")
