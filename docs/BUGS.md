@@ -3110,6 +3110,12 @@ on 5 of 21, due dates on 32 of 47. Each fix has a small generated fixture in `te
 corpus is not in the repo). B- numbers start at B-372 and N- numbers at N-121, apart from the numbers another sweep
 4 change takes at the same time.
 
+Measured after B-372 to B-375 (rule reader and OCR, table finder on; right / wrong / missing / printed but not in the
+corpus's answers, wrong and verified): terms 4/0/32/2/0 → 13/10/13/4/0, the 10 "wrong" all the app's short form of
+a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the app reads them; PO numbers 5/0/16/1/0
+→ 19/0/2/3/0; due dates 31/0/16/0/0 → 43/0/4/3/0; every other field unchanged. Hard corpus (150) and the benchmark
+(200, seed 77, 60% scans) as before: no value wrong and verified.
+
 #### B-372 · Terms whose meaning the short form dropped: "Net 30 EOM" read as "Net 30", "Net 2 weeks" as "Net 2" · high
 - **Where:** `ap_coder/capture/reader.py` (`_terms`, new `_terms_form`, `_TERMS_WORDS`); `ap_coder/capture/confidence.py`
   (`run_checks`, new `_due_by_terms`)
