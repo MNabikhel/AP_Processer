@@ -2413,3 +2413,23 @@ the lines adding up, and how alike the descriptions read.
 - **Fix:** when no reading of the page adds up to the subtotal, the amounts in the column right above the subtotal (or total) label, each with the words left of it on its row (product codes left out), are read upward from the label until they add up exactly to the subtotal or the total less the taxes (a coupon taken off too). Kept only when they do; never when one of them names a tax or a total ("Montant HT", "TVA", "Remise totale"), nor a single amount with no words (the subtotal printed twice). The review screen names them "the amounts listed above the subtotal". On the 38 real receipts that were not read right: line count exactly right 2 → 12, every line right 0 → 11, lines found 6 → 29, wrong lines 11 → 1 (with B-341).
 - **Test:** `tests/test_line_items_sweep4.py::test_a_receipts_items_are_the_amounts_above_its_subtotal_that_add_up_to_it`, `::test_a_bills_totals_above_its_total_are_not_listed_items`
 - **Lesson:** A receipt has no table, but it has a proof: its items add up to its subtotal. Read the column and keep it only when the proof holds.
+
+#### B-343 · "Net price / Net worth / VAT [%] / Gross worth" tables: every line's amount read from the gross or the VAT column · medium
+- **Where:** `ap_coder/capture/reader.py` (`_HEAD`, `_heading_name`, `_heading_cells`, `_read_line_items`)
+- **Symptom:** on 8 real invoices with the columns "No. Description | Qty | UM | Net price | Net worth | VAT [%] | Gross worth", the right number of lines came back with every amount wrong: the gross amount (with VAT), or 10.00 from the "10%" VAT cell, so the lines never added up to the subtotal; under the lines a summary row ("10% 44 364,64 4 436,46 48 801,10") was read as one more line.
+- **Cause:** "Net worth" and "Net price" were not headings, nor "No. Description" (the row number's heading before it), so the table was read by its amount column, the last one (gross). Where OCR ran "Net worth VAT[%]" into one segment, "VAT[%]" was taken as more words of the amount's heading, and of the cells under the heading the last one, the VAT rate, was taken as the amount. A row with no words under the lines was a line unless its own amount was their sum.
+- **Reproduce:** the table above, with "Net price Net worth VAT[%]" as one segment.
+- **Reproduced:** yes (amounts 1,490.55 and 308.55 for 1,355.05 and 280.50).
+- **Fix:** "Net price" is the unit price, "Net worth", "Net amount" and "Extension" the amount; a row number's heading ("No.", "#", "Pos.") before a heading is no part of it; a tax's heading ("VAT", "Tax", "TPS" …) after another heading is another column; of the cells under the amount's heading, the nearest to it is the amount; a row with no words that prints the sum of the rows above it among its figures ends the lines. The 8 such real invoices: every line right 0 → 7 (the 8th has one line, its amount misread by OCR).
+- **Test:** `tests/test_line_items_sweep4.py::test_net_price_and_net_worth_headings_name_the_price_and_the_amount`, `::test_a_summary_row_with_no_words_under_the_lines_is_no_line`
+- **Lesson:** When a table has both a net and a gross column, the one that adds up to the subtotal is the line's amount; the headings that say so are worth knowing by name.
+
+#### B-344 · A description wrapped onto a second line under its row was cut to its first line · low
+- **Where:** `ap_coder/capture/reader.py` (`_wrapped`, `_read_line_items`)
+- **Symptom:** "Marble Beautiful White Coffee Table Top Malachite Inlay Art Home Decor H5372" (three lines in the description column) was coded as "MarbleBeautifulWhiteCoffee": the account suggestion and the reviewer saw a third of it.
+- **Cause:** the reader under the column headings takes the rows that have an amount; a row without one was skipped, though `tables.py` (the PDF's own table) already joined such rows to the line above.
+- **Reproduce:** a line item whose description wraps onto two more lines in the description column.
+- **Reproduced:** yes.
+- **Fix:** a row with no amount right under a line item (within 1.2 text heights), whose words all sit in the description's column (from its heading, else the page's left, to the next heading) and are neither an amount printed as money nor a total's label, is the rest of that line's description. Real corpus, descriptions of the lines found: 0.80 → 0.85 alike (with B-343).
+- **Test:** `tests/test_line_items_sweep4.py::test_a_description_wrapped_onto_the_lines_under_its_row_is_read_whole`
+- **Lesson:** Two readers of the same table should share their row rules: the wrapped-description rule existed in one of them only.

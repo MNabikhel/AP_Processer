@@ -146,3 +146,42 @@ def test_a_bills_totals_above_its_total_are_not_listed_items():
     assert listed_items(_layout(summary, source="ocr"), [1200.0]) == []
     again = _words(("1,200.00", 0.80, 0.90, 0.62), ("TOTAL", 0.50, 0.58, 0.66), ("1,200.00", 0.80, 0.90, 0.66))
     assert listed_items(_layout(again, source="ocr"), [1200.0]) == []
+
+
+def test_net_price_and_net_worth_headings_name_the_price_and_the_amount():
+    """ "Net price" is the unit price and "Net worth" the line's amount, its "VAT [%]" set close beside it another
+    column, and "No. Description" the description; the "Gross worth" (with VAT) is not the line's amount: the lines
+    add up to the subtotal before tax."""
+    words = _words(
+        ("No. Description", 0.09, 0.23, 0.36), ("Qty", 0.41, 0.44, 0.36), ("UM", 0.47, 0.50, 0.36),
+        ("Net price Net worth VAT[%]", 0.54, 0.81, 0.36), ("Gross worth", 0.84, 0.91, 0.36),
+        ("1.", 0.10, 0.12, 0.40), ("Marble coffee table", 0.15, 0.35, 0.40), ("5,00", 0.41, 0.44, 0.40),
+        ("each", 0.46, 0.50, 0.40), ("271,01", 0.57, 0.62, 0.40), ("1 355,05", 0.65, 0.72, 0.40),
+        ("10%", 0.77, 0.81, 0.40), ("1 490,55", 0.84, 0.91, 0.40),
+        ("with malachite inlay", 0.15, 0.33, 0.413), ("Home Decor H5372", 0.15, 0.30, 0.426),
+        ("2.", 0.10, 0.12, 0.45), ("Black marble top", 0.15, 0.35, 0.45), ("1,00", 0.41, 0.44, 0.45),
+        ("each", 0.46, 0.50, 0.45), ("280,50", 0.57, 0.62, 0.45), ("280,50", 0.67, 0.72, 0.45),
+        ("10%", 0.77, 0.81, 0.45), ("308,55", 0.86, 0.91, 0.45),
+    )  # fmt: skip
+    assert [(q, p, a) for _d, q, p, a in _read(words)] == [(5.0, 271.01, 1355.05), (1.0, 280.5, 280.5)]
+
+
+def test_a_description_wrapped_onto_the_lines_under_its_row_is_read_whole():
+    """A long description wraps onto one or two more lines under its row, in the description's column: they are the
+    rest of it, not dropped. A line under the table that reaches other columns, or a total, is not."""
+    words = _words(*HEADINGS, *_row(0.24, "Marble coffee table", "5", "271.01", "1,355.05"),
+                   ("with malachite inlay", 0.10, 0.26, 0.253), ("Home Decor H5372", 0.10, 0.23, 0.266),
+                   *_row(0.29, "Black marble top", "1", "280.50", "280.50"),
+                   ("Thank you for your business, payment due in 30 days", 0.10, 0.80, 0.303))  # fmt: skip
+    assert [d for d, *_ in _read(words)] == ["Marble coffee table with malachite inlay Home Decor H5372",
+                                            "Black marble top"]  # fmt: skip
+
+
+def test_a_summary_row_with_no_words_under_the_lines_is_no_line():
+    """Under the lines, a summary row with no words prints the rate, the lines' sum, the tax and the gross ("10%
+    1 635,55 163,56 1 799,11"): it prints the sum of the rows above it, so it is no line."""
+    words = _words(*HEADINGS, *_row(0.24, "Marble coffee table", "5", "271.01", "1,355.05"),
+                   *_row(0.27, "Black marble top", "1", "280.50", "280.50"),
+                   ("10%", 0.50, 0.53, 0.31), ("1,635.55", 0.62, 0.70, 0.31), ("163.56", 0.74, 0.80, 0.31),
+                   ("1,799.11", 0.84, 0.90, 0.31))  # fmt: skip
+    assert [a for *_r, a in _read(words)] == [1355.05, 280.5]

@@ -997,8 +997,8 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
 _HEAD = {
     "description": re.compile(r"^(description|desc\.?|item|article|details|designation|produit|service|libelle|particulars)"),
     "quantity": re.compile(r"^(qty|quantity|qte|quantite|qte\.|units?|hrs?|hours|heures)\b"),
-    "unit_price": re.compile(r"^(unit\s*price|price|rate|unit\s*cost|prix(\s*unit(?:aire|\.)?)?|taux|p\.?u\.?|cost)(?![a-z0-9])"),
-    "amount": re.compile(r"^(amount|total(?:\s*price)?|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|value|valeur|prix\s*total|fees|honoraires|frais)\b"),
+    "unit_price": re.compile(r"^(unit\s*price|price|rate|unit\s*cost|net\s*price|prix(\s*unit(?:aire|\.)?)?|taux|p\.?u\.?|cost)(?![a-z0-9])"),
+    "amount": re.compile(r"^(amount|total(?:\s*price)?|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|extension|net\s*(?:worth|amount|value)|value|valeur|prix\s*total|fees|honoraires|frais)\b"),
 }  # fmt: skip
 _TOTAL_LABELS = ("subtotal", "grand_total", "tax_total")  # the line table ends at these
 _FIGURE = re.compile(r"[#(]?[\d.,:/-]*\d[\d.,:/-]*[)%]?")  # a word that is a number: "9", "(2)", "5%", "2026-01"
@@ -1067,10 +1067,16 @@ def credit_printed_positive(layout: DocLayout) -> bool:
     return not any(v < 0 for line in layout.lines() for v in money(line))  # the signs are printed: read as they are
 
 
+_TAX_HEAD = re.compile(r"^(?:vat|tax|gst|hst|pst|qst|tps|tvq|tvh|tva|ust|mwst|iva)\b")  # a tax column's heading word
+_ROW_NUMBER_HEAD = re.compile(r"^(?:no\.?|#|pos\.?|n\s?°)\s+(?=[a-z])")  # "No. Description": the row number's heading
+
+
 def _heading_name(text: str) -> str | None:
     """The column a heading names, by the longest heading it starts with ("Unit Cost" is the unit price, not a
     quantity in "Unit"; "Prix total" the amount, not a price); a heading printed in two languages ("Product /
-    Service / Désignation") by its parts, when they name one column. None when it names none, or two."""
+    Service / Désignation") by its parts, when they name one column; a row number's heading before it is no part of
+    it ("No. Description", "# Item"). None when it names none, or two."""
+    text = _ROW_NUMBER_HEAD.sub("", text)
     longest = {name: m.end() for name, rx in _HEAD.items() if (m := rx.match(text))}
     if longest:
         top = max(longest.values())
@@ -1122,6 +1128,11 @@ def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
             m = rx.match(rest)
             if m and m.end() in ends and (best is None or m.end() > best[1]):
                 best = (heading, m.end())  # the longest heading here: "Unit Price", not "Unit"
+        if best is None and cells and not joined and _TAX_HEAD.match(words[i]):
+            cells.append(("", i, i + 1))  # a tax's column ("Net worth VAT[%]"): another column, without a name
+            extra = 0
+            i += 1
+            continue
         if best is None and cells:  # more words of the heading before: "Price Each", "Qty Shipped"
             extra += not joined
             noise += not joined
@@ -1449,18 +1460,29 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             key = next((k for k in rows if abs(k - line.box.cy) < 0.006), line.box.cy)
             rows.setdefault(key, []).append(line)
         amount_x = cols["amount"].cx
+        last: tuple[LineReading, float] | None = None  # the line item last read on this page, and its bottom
         for _, segs in sorted(rows.items()):
             if any(_CARRIED.match(plain(s.text).strip()) for s in segs):
+                last = None
                 continue
             nums = [(s, _amounts_in(s.text)) for s in segs]
             amount = None
             amt_seg = None
             amt_token = ""
+            near = 1.0  # of the cells under the amount's heading, the nearest to it ("10%" in a VAT column beside)
             for s, found in nums:
-                if found and abs(s.box.x1 - cols["amount"].x1) < 0.08 or (found and abs(s.box.cx - amount_x) < 0.08):
-                    amount, amt_seg = found[-1][0], s
+                off = min(abs(s.box.x1 - cols["amount"].x1), abs(s.box.cx - amount_x))
+                if found and off < 0.08 and off <= near:
+                    amount, amt_seg, near = found[-1][0], s, off
                     amt_token = s.text[found[-1][1] : found[-1][2]]
             if amount is None:
+                if last is not None and _wrapped(segs, cols, last[1]):  # the rest of the description above
+                    li = last[0]
+                    li.description = " ".join([li.description, *(s.text for s in segs)]).strip()
+                    li.boxes = [union_all([*li.boxes, *(s.box for s in segs)]) or li.boxes[0]] if li.boxes else []
+                    last = (li, max(s.box.y1 for s in segs))
+                else:
+                    last = None
                 continue
             # A number cell (qty, price, amount, row number) is not part of the description; a description
             # with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is.
@@ -1488,6 +1510,7 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
             items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score))
             money.append(_printed_as_money(amt_token))
+            last = (items[-1], max(seg.box.y1 for seg in segs))
     if guessed:  # kept only when they add up
         ids = {id(li) for li in guessed}
         kept = {id(li) for li in _proven_rows(guessed, [li for li in items if id(li) not in ids], printed_sum,
@@ -1505,6 +1528,15 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
         above = [li.amount for li in items[:-1] if li.amount is not None]
         if abs(round(sum(above), 2) - items[-1].amount) <= 0.011:
             items.pop()
+    # A row with no words that prints the sum of the rows above it among its figures is the table's summary ("10%
+    # 44 364,64 4 436,46 48 801,10": the rate, the net sum, the tax, the gross): the lines end above it.
+    for k in range(1, len(items)):
+        above = round(sum(li.amount or 0.0 for li in items[:k]), 2)
+        # (under one line, its own amount printed again is not enough: a figure beside it must print the sum)
+        figures = (items[k].quantity, items[k].unit_price, *([items[k].amount] if k >= 2 else []))
+        if not items[k].description.strip() and any(v is not None and abs(v - above) <= 0.011 for v in figures):
+            items = items[:k]
+            break
     # A "#" column read into the description: "1 Observability…", "2 Premium…". Only when every row starts
     # with its own number, so "6 Dell monitors" on its own is left alone.
     numbered = [re.match(rf"^{i}\s+(?=\S)", li.description) for i, li in enumerate(items, 1)]
@@ -1512,6 +1544,28 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
         for li, m in zip(items, numbered, strict=True):
             li.description = li.description[m.end() :]
     return items
+
+
+WRAP_GAP = 1.2  # a description's next line starts at most this many text heights under the line above it
+
+
+def _wrapped(segs: list[Line], cols: dict[str, Box], bottom: float) -> bool:
+    """A row with no amount right under a line item (``bottom``: the item's last row) is the rest of its description
+    wrapped onto another line: its words all sit in the description's column (from its heading, else the page's
+    left, to the next heading on the right), none is an amount printed as money or a total's label, and it starts
+    within ``WRAP_GAP`` text heights."""
+    if not segs:
+        return False
+    head = cols.get("description")
+    left = head.x0 - 0.03 if head is not None else 0.0
+    right = min((b.x0 for b in cols.values() if head is None or b.x0 > head.x1), default=1.0)
+    height = max(statistics.median(s.box.height for s in segs), 0.004)
+    return (
+        min(s.box.y0 for s in segs) - bottom <= WRAP_GAP * height
+        and all(s.box.x0 >= left and s.box.x1 <= right + 0.005 for s in segs)
+        and not any(_printed_as_money(s.text[a:b]) for s in segs for _v, a, b in _amounts_in(s.text))
+        and not any(rx.match(plain(s.text).strip()) for s in segs for f in _TOTAL_LABELS for rx, _ in _LABELS[f])
+    )
 
 
 LISTED_COLUMN = 0.06  # an item's amount ends this close to the subtotal's amount (fraction of the page width)
