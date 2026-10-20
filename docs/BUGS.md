@@ -2649,3 +2649,139 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **N-95** · A page far larger than the invoice on it (the invoice drawn on a 200-inch page, or in the corner of a sheet 30 times its size) is read in 2 to 9 s and the vendor found, but not the total (`grand_total` 0.00, "subtotal + tax = 14050.00 but grand_total = 0.00" on the review screen, so it is never missed). The reading rules work in fractions of the page; rare for an invoice, a reading question rather than a file one: left.
 - **N-96** · Every picture made from the same 200-dpi render of the sample (CMYK JPEG and TIFF, 16-bit grey and 48-bit colour PNG and TIFF, Group 3 fax, Group 4 CCITT in a PDF, HEIC, BMP, 32-bit BMP, WEBP, outlined text with no text layer) is read alike: vendor and subtotal found, total not, with the same "subtotal + tax" warning. The formats are handled the same way; the total is an OCR reading matter for the reading sweep, not these files.
 - **N-97** · A read-only file could not be tested as such here: the tests run as root, which writes to read-only files. The code paths that write next to an invoice (`to_pdf` moving a picture to `originals/`, `as_its_kind` renaming a misnamed file, `turn_upright`) each catch the `OSError` and read the file where it is.
+
+### Reading: line items
+
+Measured on a corpus of 128 real invoices and receipts with known line counts and 150 hard generated Canadian invoices
+(long tables, no ruled lines, landscape, photos, poor scans), scored line by line: count exact, each line's amount,
+the lines adding up, and how alike the descriptions read.
+
+#### B-340 · A long table's page subtotal and "Balance brought forward" rows were read as line items · medium
+- **Where:** `ap_coder/capture/reader.py` (`_CARRIED`, used by `_read_line_items`, `_headerless_rows` and `tables.py`)
+- **Symptom:** a 77-line invoice over three pages came back with 78 lines, one of them "Balance brought forward 13,447.80"; another had "Page subtotal 17,525.34" and two "Balance brought forward" rows as lines. The lines no longer added up to the subtotal, and the coder balanced them with a large negative "charge".
+- **Cause:** the rows a long table prints between its pages were known only as "Brought forward", "Balance forward", "Carried forward" and "Page total"; "Balance brought forward", "Balance carried forward", "Page subtotal", "Sous-total de la page", "Montant reporté" and OCR's "Balancebrought forward" read as lines.
+- **Reproduce:** a table with a "Balance brought forward 1,234.56" row above its lines, or "Page subtotal 427.74" under them.
+- **Reproduced:** yes (the row read as a line with no quantity).
+- **Fix:** those wordings (and German "Übertrag", "Total de la page") are rows that sum the lines, never lines. On the hard corpus's four digital long tables that had them: 9 wrong lines → 0, every line right on 4 of 4 (was 0).
+- **Test:** `tests/test_line_items_sweep4.py::test_page_subtotals_and_balances_carried_between_pages_are_no_lines`
+- **Lesson:** A table's running sums come in many wordings; list the phrase families (brought/carried, page subtotal) in both languages, not the one seen first.
+
+#### B-341 · A table whose headings the reader can't read gave its totals and taxes as line items · high
+- **Where:** `ap_coder/capture/reader.py` (`_headerless_rows`, `_proven_rows`, `_read_line_items`, `read_line_items`), `ap_coder/capture/__init__.py` (`_page_lines` passes the line targets)
+- **Symptom:** on 34 of the 47 real digital invoices (German, Dutch and French invoices, a Hetzner bill), the lines came back with the invoice's totals block read as lines: "Positionssumme 473,00", "Steuerbetrag 56,87", "Bruttosumme 529,87", "Umsatzsteuer (S) 19,25", "Netto 87,39". 164 wrong lines over the 47 invoices; a 2-line invoice coded as 10 lines.
+- **Cause:** a table the table finder found whose column headings can't be read is read by its amount column (`_headerless_rows`, made for bilingual headings OCR runs together), down to a subtotal label the reader knows. Headings and totals in other wordings ("Beschreibung … Nettobetrag", "Positionssumme", "Summe netto") were neither; the totals' block, a table of its own, was read in full; and nothing checked that the rows add up.
+- **Reproduce:** a table with headings "Bezeichnung / Menge / Einzelpreis / Betrag", two lines, then "Umsatzsteuer 7 % 19,25 … Rechnungsbetrag netto 473,00 … Bruttosumme 529,87" inside the table found.
+- **Reproduced:** yes (the two lines, the two taxes and two totals).
+- **Fix:** rows read by their amounts are a guess, kept only when they add up: to a row under them that prints their sum (whatever its label: the rows end there), to the totals' row they end at, to the invoice's subtotal or total less taxes, or (two lines or more) to an amount printed elsewhere on the invoice, together with the rows read on the invoice's other pages; else none (a wrong line is worse than a missing one). A row whose words name a tax or a total in any of the invoice languages ("…steuer", "…summe", "netto", "total", "USt."), or a zero with no quantity, is no line, and a total's label before the rows is skipped. Real digital invoices: wrong lines 164 → 2 (both on an invoice whose truth gives no amounts), line count exactly right 13 → 18 of 47, every line right 12 → 17; lines found 83 → 60 (partial readings that didn't add up are no longer returned).
+- **Test:** `tests/test_line_items_sweep4.py::test_rows_read_by_their_amounts_end_at_the_row_that_sums_them`, `::test_rows_read_by_their_amounts_are_kept_only_when_they_add_up`
+- **Lesson:** A fallback reader that guesses must prove its guess: here the proof (the lines add up to a printed sum) is on the page, so look for it before returning anything.
+
+#### B-342 · A receipt's items were never read: no column headings, no line items · medium
+- **Where:** `ap_coder/capture/reader.py` (`listed_items`, `_listed_lines`), `ap_coder/capture/__init__.py` (`_page_lines`), `ap_coder/capture/types.py` (`LINE_SOURCES["listed"]`)
+- **Symptom:** a Walmart receipt of 15 items (subtotal $84.85, read right) came back with no line items, as did 23 of the 47 receipts in the real corpus (most of them Canadian WildReceipt photos) and the short bills that print no column headings; the invoice was coded as one line for the subtotal.
+- **Cause:** every line-item reader starts from a row of column headings (Description, Qty, Amount) or a table the table finder found and could read by its amounts; a till receipt prints neither: just a name, a product code and an amount with its tax flag ("$7.97J"), item after item, down to SUBTOTAL.
+- **Reproduce:** a receipt with "GR MN 6PK 085430100956 $12.97", "BATH TOWEL … $7.97J", "OPP BT … $4.00 J", "COUPON 1.00-", then "SUBTOTAL $27.94", "GST 5% $1.40", "TOTAL $29.34".
+- **Reproduced:** yes (no lines).
+- **Fix:** when no reading of the page adds up to the subtotal, the amounts in the column right above the subtotal (or total) label, each with the words left of it on its row (product codes left out), are read upward from the label until they add up exactly to the subtotal or the total less the taxes (a coupon taken off too). Kept only when they do; never when one of them names a tax or a total ("Montant HT", "TVA", "Remise totale"), nor a single amount with no words (the subtotal printed twice). The review screen names them "the amounts listed above the subtotal". On the 38 real receipts that were not read right: line count exactly right 2 → 12, every line right 0 → 11, lines found 6 → 29, wrong lines 11 → 1 (with B-341).
+- **Test:** `tests/test_line_items_sweep4.py::test_a_receipts_items_are_the_amounts_above_its_subtotal_that_add_up_to_it`, `::test_a_bills_totals_above_its_total_are_not_listed_items`
+- **Lesson:** A receipt has no table, but it has a proof: its items add up to its subtotal. Read the column and keep it only when the proof holds.
+
+#### B-343 · "Net price / Net worth / VAT [%] / Gross worth" tables: every line's amount read from the gross or the VAT column · medium
+- **Where:** `ap_coder/capture/reader.py` (`_HEAD`, `_heading_name`, `_heading_cells`, `_read_line_items`)
+- **Symptom:** on 8 real invoices with the columns "No. Description | Qty | UM | Net price | Net worth | VAT [%] | Gross worth", the right number of lines came back with every amount wrong: the gross amount (with VAT), or 10.00 from the "10%" VAT cell, so the lines never added up to the subtotal; under the lines a summary row ("10% 44 364,64 4 436,46 48 801,10") was read as one more line.
+- **Cause:** "Net worth" and "Net price" were not headings, nor "No. Description" (the row number's heading before it), so the table was read by its amount column, the last one (gross). Where OCR ran "Net worth VAT[%]" into one segment, "VAT[%]" was taken as more words of the amount's heading, and of the cells under the heading the last one, the VAT rate, was taken as the amount. A row with no words under the lines was a line unless its own amount was their sum.
+- **Reproduce:** the table above, with "Net price Net worth VAT[%]" as one segment.
+- **Reproduced:** yes (amounts 1,490.55 and 308.55 for 1,355.05 and 280.50).
+- **Fix:** "Net price" is the unit price, "Net worth", "Net amount" and "Extension" the amount; a row number's heading ("No.", "#", "Pos.") before a heading is no part of it; a tax's heading ("VAT", "Tax", "TPS" …) after another heading is another column; of the cells under the amount's heading, the nearest to it is the amount; a row with no words that prints the sum of the rows above it among its figures ends the lines. The 8 such real invoices: every line right 0 → 7 (the 8th has one line, its amount misread by OCR).
+- **Test:** `tests/test_line_items_sweep4.py::test_net_price_and_net_worth_headings_name_the_price_and_the_amount`, `::test_a_summary_row_with_no_words_under_the_lines_is_no_line`
+- **Lesson:** When a table has both a net and a gross column, the one that adds up to the subtotal is the line's amount; the headings that say so are worth knowing by name.
+
+#### B-344 · A description wrapped onto a second line under its row was cut to its first line · low
+- **Where:** `ap_coder/capture/reader.py` (`_wrapped`, `_read_line_items`)
+- **Symptom:** "Marble Beautiful White Coffee Table Top Malachite Inlay Art Home Decor H5372" (three lines in the description column) was coded as "MarbleBeautifulWhiteCoffee": the account suggestion and the reviewer saw a third of it.
+- **Cause:** the reader under the column headings takes the rows that have an amount; a row without one was skipped, though `tables.py` (the PDF's own table) already joined such rows to the line above.
+- **Reproduce:** a line item whose description wraps onto two more lines in the description column.
+- **Reproduced:** yes.
+- **Fix:** a row with no amount right under a line item (within 1.2 text heights), whose words all sit in the description's column (from its heading, else the page's left, to the next heading) and are neither an amount printed as money nor a total's label, is the rest of that line's description. Real corpus, descriptions of the lines found: 0.80 → 0.85 alike (with B-343).
+- **Test:** `tests/test_line_items_sweep4.py::test_a_description_wrapped_onto_the_lines_under_its_row_is_read_whole`
+- **Lesson:** Two readers of the same table should share their row rules: the wrapped-description rule existed in one of them only.
+
+#### B-345 · A page scanned more than 4 degrees off was not straightened: its table read a row off, or not at all · medium
+- **Where:** `ap_coder/capture/layout.py` (`_skew`, `MAX_TILT`)
+- **Symptom:** on a three-page scanned long table fed 4.9 degrees askew, the column headings of page 1 were not found ("Description" sat five rows above "Line Total") and only 30 of its 57 lines came back; a landscape scan at 5 degrees gave no lines at all.
+- **Cause:** the page's tilt (`PageLayout.skew`, used only to straighten the rows of the line table) was taken as zero past a slope of 0.07 (4 degrees), there to tell a tilt from a page turned a quarter; a scanner fed by hand or a phone held askew easily passes 4 degrees, and at 5 degrees a row's description sits more than three rows from its amount across a letter page.
+- **Reproduce:** OCR text lines sloping 5 degrees: `_skew` gave 0.0.
+- **Reproduced:** yes.
+- **Fix:** a slope up to 0.15 (about 8.5 degrees) is a tilt, straightened; a page turned a quarter (text running down it) is still not. Hard corpus scans: the 57-line table 30 → 56 lines right; the two landscape scans 0 → 3 of 3 and 0 → 5 of 6.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_scan_tilted_five_degrees_is_straightened`
+- **Lesson:** A threshold set from the scans at hand (under 4 degrees) is not the world's: give a margin to what a person will feed the scanner.
+
+#### B-346 · A discount line printed without its minus was added to the lines instead of taken off · low
+- **Where:** `ap_coder/capture/__init__.py` (`_discounts_taken_off`, `_page_lines`)
+- **Symptom:** "Promotional discount 15%  600.51" (the minus lost by OCR, or the discount printed in a column of its own) was coded as a charge of +600.51: the lines came to 1,201.02 more than the subtotal and the invoice failed `LINES_ADD_UP`.
+- **Cause:** a line's amount is read as printed; nothing used the subtotal to settle the sign of a discount's line.
+- **Reproduce:** lines 100.00, 50.00 and "Discount 5% 7.50" under a subtotal of 142.50.
+- **Reproduced:** yes (+7.50).
+- **Fix:** when the lines don't add up to the subtotal but do with each discount's line (discount, escompte, rabais, remise, rebate, coupon; no quantity) taken off, it is taken off. Hard corpus: the 10-line scan with a discount now right on every line.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_discount_printed_without_its_sign_is_taken_off_when_that_adds_up`
+- **Lesson:** The subtotal is the proof of every line's sign as well as its amount.
+
+#### B-347 · Header text read off an upside-down page came back as line items with phone and customer numbers for amounts · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_line_items`)
+- **Symptom:** a credit note scanned upside down gave six "lines" such as "Cust.ID: Billed To 774,320.00" and "#O T:1-899-555-4176 -9,692.00".
+- **Cause:** a row's amount is any number under the amount's heading; the rule that drops numbers not printed as money ("12", "5%") only applied when at least two lines' amounts were printed as money, so a reading with none at all kept every row.
+- **Reproduce:** under the column headings, "Cust. ID: Billed To 774320" and "Ordered: www.liberty.com -9692".
+- **Reproduced:** yes (two lines).
+- **Fix:** a reading in which not one amount is printed as money (two decimals or a currency sign) is no line table, unless its rows add up to the subtotal or the total less taxes. Hard corpus: that credit note's wrong lines 6 → 0 (it is coded as one line for its subtotal).
+- **Test:** `tests/test_line_items_sweep4.py::test_a_table_with_no_amount_printed_as_money_is_no_line_table`
+- **Lesson:** A rule that needs a majority must also say what happens when there is no majority at all.
+
+#### B-348 · Canada Post's "Summary of charges" gave no line items · medium
+- **Where:** `ap_coder/capture/reader.py` (`_charges_summary`, `_read_line_items`)
+- **Symptom:** a Canada Post invoice (English or French: "Summary of charges / Sommaire des frais", Parcels, Commercial/Smartmail Marketing, Specialized services, Shipments, Adjustments) came back with no line items: coded as one line for the whole bill, though each service goes to its own account.
+- **Cause:** its table heads its columns "Subtotal | GST | HST | PST/QST | Total" and leaves the services' column without a heading; the reader looks for a description or quantity heading beside an amount heading, and "Subtotal" and "Total" are the invoice's totals' labels, not column headings.
+- **Reproduce:** the table above (five services, the subtotal 1,673.01 under the Subtotal column on the last row).
+- **Reproduced:** yes (no lines).
+- **Fix:** a heading row that holds a subtotal's label, a tax's (GST, HST, PST, QST, TPS, TVH, TVQ) and a total's is a summary of charges: each row's words are its description and its amount is the one under "Subtotal" (before tax), down to the row with no words or labelled "Total"; kept only when they add up to the amount that row prints under "Subtotal". The three Canada Post invoices in the real corpus (two digital, one scan): 0 → 5 of 5 lines right each.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_summary_of_charges_reads_each_service_before_tax`
+- **Lesson:** The suppliers a Canadian AP desk sees every month (Canada Post, the utilities) deserve their own table shapes, checked by the sum they print.
+
+#### B-349 · A table found cut short of its last column was read by a tax's column, and "proven" by the tax's total · medium
+- **Where:** `ap_coder/capture/reader.py` (`_headerless_rows`, `read_line_items`)
+- **Symptom:** a scanned Canada Post invoice came back with three lines of 3.60, 60.00 and 8.41: its GST amounts, whose sum (72.01) the invoice prints as its GST.
+- **Cause:** the table finder's box stopped before the Total column; the rows read by their amounts (B-341) took the last amount inside the box (the GST's) and found their sum printed on the page.
+- **Reproduce:** rows "Colis 72,05 3,60 … 75,65", "Envois 168,13 8,41 … 176,54", the box ending after the second column, "12,01" printed under them.
+- **Reproduced:** yes (lines 3.60 and 8.41).
+- **Fix:** rows read by their amounts are none when the page prints another amount right of a row's last one in the box: the box cut the table, and its last column is not theirs.
+- **Test:** `tests/test_line_items_sweep4.py::test_rows_read_by_their_amounts_in_a_table_found_cut_short_are_no_lines`
+- **Lesson:** A proof is only as good as what it is checked against: amounts that add up to *some* printed figure need to be the right column first.
+
+#### B-350 · A balance brought forward whose label OCR lost cut off the rest of a long table · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_line_items`)
+- **Symptom:** on two scanned three-page tables, the lines of page 3 were missing (58 lines read as 52; 69 as 21) once a row with no words printing the sum of the rows above ended the lines (B-343); before that rule, the same row came back as a line of 38,547.58 with no description.
+- **Cause:** at the top of the next page the "Balance brought forward" row had lost its label to OCR (the words on a tilted line of their own): a row with no words printing the lines' sum, which B-343 took for the summary under the table and ended the lines at.
+- **Reproduce:** two lines, a row "1,635.55" with no words, then a third line.
+- **Reproduced:** yes (the third line dropped).
+- **Fix:** such a row is dropped, not taken as the end of the lines; the tax's and total's rows that follow it ("GST (5%)") are no lines either. Hard corpus: those two tables 52 → 58 of 58 and 21 → 68 of 69 lines right.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_summary_row_with_no_words_under_the_lines_is_no_line`
+- **Lesson:** "This row sums the lines" says what the row is, not where the table ends: drop the row, let the labels end the table.
+
+#### B-351 · "Montant HT", "Remise totale" and "TVA" under the lines were read as three more lines · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_line_items`, `_TAX_ROW`)
+- **Symptom:** a French invoice of 5 lines came back with 8: "Montant HT 21 242,65", "Remise totale 1 021,06", "TVA 4 248,53"; a scanned Indian invoice had two lines of 0.00 with no words.
+- **Cause:** the table ends at a subtotal label the reader knows; "Montant HT" (amount before tax) is not one of them, and a row with no words and no amount was kept as a line.
+- **Reproduce:** two lines, then "Montant HT 1,635.55", "Remise totale 81.78", "TVA 310.75" in the amount column; a row "0.00" with no words.
+- **Reproduced:** yes.
+- **Fix:** a row with no quantity that names a total in any wording (HT, TTC, total, Summe, netto …) and prints the sum of two or more lines above it ends the lines; a row with no words, no quantity and no amount is no line. Real corpus: wrong lines on those two invoices 5 → 0.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_subtotal_row_under_a_label_the_reader_doesnt_know_ends_the_lines`
+- **Lesson:** The sum is the label: a row that prints the lines' sum and calls itself a total of any kind is the subtotal, whatever the wording.
+
+#### B-352 · An amount OCR ran together with the VAT rate beside it was read as the rate · medium
+- **Where:** `ap_coder/capture/reader.py` (`_heading_cells`, `_under`, `_read_line_items`)
+- **Symptom:** a UK invoice's lines of 100.00 and 50.00 came back as 20.00 and 20.00 (the VAT rate), with the bank details as a third line.
+- **Cause:** OCR ran the headings "Amount VAT" and each row's "100.00 20.00" into one segment; "VAT" was taken as more words of the amount's heading (whose box then covered both columns), and of the amounts in a cell the last one was taken.
+- **Reproduce:** headings "Description | Qty | Amount VAT", rows "Wood Pallet 1 100.00 20.00" and "Steel rods 2 50.00 20.00".
+- **Reproduced:** yes (20.00 and 20.00).
+- **Fix:** a tax's heading word after a heading is a column of its own even when that heading is the segment's only other one; of two or more amounts printed as money in one cell reaching past the heading, the one nearest the heading's middle is the amount. Real corpus: that invoice 0 → 2 of 2 lines right, 4 wrong lines → 0.
+- **Test:** `tests/test_line_items_sweep4.py::test_an_amount_run_together_with_the_vat_rate_beside_it_is_read_under_its_heading`
+- **Lesson:** OCR joins neighbours; when a cell holds two amounts, the heading's position says which one is the column's.

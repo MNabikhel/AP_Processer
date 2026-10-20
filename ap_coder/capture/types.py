@@ -184,6 +184,7 @@ LINE_SOURCES = {
     "table": "the table finder",  # the words inside the table the layout model found on the page
     "text table": "the PDF's table",  # the PDF's text, in the columns its ruling lines and gaps draw
     "words": "the words on the page",  # the PDF's text or OCR, the whole page (no table found)
+    "listed": "the amounts listed above the subtotal",  # a receipt's items: no headings, adding up to the subtotal
     "vlm": "OvisOCR2",  # the page reader's transcription of the table
 }
 

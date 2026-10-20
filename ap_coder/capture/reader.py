@@ -1000,16 +1000,20 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
 _HEAD = {
     "description": re.compile(r"^(description|desc\.?|item|article|details|designation|produit|service|libelle|particulars)"),
     "quantity": re.compile(r"^(qty|quantity|qte|quantite|qte\.|units?|hrs?|hours|heures)\b"),
-    "unit_price": re.compile(r"^(unit\s*price|price|rate|unit\s*cost|prix(\s*unit(?:aire|\.)?)?|taux|p\.?u\.?|cost)(?![a-z0-9])"),
-    "amount": re.compile(r"^(amount|total(?:\s*price)?|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|value|valeur|prix\s*total|fees|honoraires|frais)\b"),
+    "unit_price": re.compile(r"^(unit\s*price|price|rate|unit\s*cost|net\s*price|prix(\s*unit(?:aire|\.)?)?|taux|p\.?u\.?|cost)(?![a-z0-9])"),
+    "amount": re.compile(r"^(amount|total(?:\s*price)?|montant|line\s*total|ext(?:ended)?\.?\s*(?:price|amount)?|extension|net\s*(?:worth|amount|value)|value|valeur|prix\s*total|fees|honoraires|frais)\b"),
 }  # fmt: skip
 _TOTAL_LABELS = ("subtotal", "grand_total", "tax_total")  # the line table ends at these
 _FIGURE = re.compile(r"[#(]?[\d.,:/-]*\d[\d.,:/-]*[)%]?")  # a word that is a number: "9", "(2)", "5%", "2026-01"
 
 
 _NUMBER_CELL = re.compile(r"^[\s$€£¢()+\-–.,'%x×@#]*\d[\d\s$€£¢()+\-–.,'%x×@]*(?:[a-z]{1,3}\.?)?\s*$", re.I)
-_CARRIED = re.compile(r"^(a\s*reporter|report\b|reporte|carried\s*forward|brought\s*forward|balance\s*forward|"
-                      r"continued|suite|sub\s*-?\s*total|sous\s*-?\s*total|page\s*total)")  # fmt: skip
+# A row of a long table that sums its lines: carried from page to page ("Balance brought forward / Montant reporté",
+# "Übertrag"), or the page's own subtotal ("Page subtotal", "Sous-total de la page", "Total de la page").
+_CARRIED = re.compile(r"^(a\s*reporter|report\b|reporte|carried\s*forward|brought\s*forward|"
+                      r"balance\s*(?:brought\s*|carried\s*)?forward|montant\s*report|u(?:e)?bertrag|"
+                      r"continued|suite|sub\s*-?\s*total|sous\s*-?\s*total|page\s*(?:sub\s*-?\s*)?total|"
+                      r"total\s*(?:de\s*la\s*)?page)")  # fmt: skip
 _CREDIT_MARK = re.compile(r"\d[.,]\d{2}cr", re.I)  # "342.18CR": a credit's mark run into its amount
 
 
@@ -1066,10 +1070,16 @@ def credit_printed_positive(layout: DocLayout) -> bool:
     return not any(v < 0 for line in layout.lines() for v in money(line))  # the signs are printed: read as they are
 
 
+_TAX_HEAD = re.compile(r"^(?:vat|tax|gst|hst|pst|qst|tps|tvq|tvh|tva|ust|mwst|iva)\b")  # a tax column's heading word
+_ROW_NUMBER_HEAD = re.compile(r"^(?:no\.?|#|pos\.?|n\s?°)\s+(?=[a-z])")  # "No. Description": the row number's heading
+
+
 def _heading_name(text: str) -> str | None:
     """The column a heading names, by the longest heading it starts with ("Unit Cost" is the unit price, not a
     quantity in "Unit"; "Prix total" the amount, not a price); a heading printed in two languages ("Product /
-    Service / Désignation") by its parts, when they name one column. None when it names none, or two."""
+    Service / Désignation") by its parts, when they name one column; a row number's heading before it is no part of
+    it ("No. Description", "# Item"). None when it names none, or two."""
+    text = _ROW_NUMBER_HEAD.sub("", text)
     longest = {name: m.end() for name, rx in _HEAD.items() if (m := rx.match(text))}
     if longest:
         top = max(longest.values())
@@ -1109,6 +1119,7 @@ def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
         return whole
     cells: list[tuple[str, int, int]] = []  # (heading, first token, last token + 1); "" another column's heading
     extra = 0  # words of the last heading that are no heading themselves, not counting its other language's
+    taxed = False  # a tax's column set close beside a heading ("Amount VAT")
     noise = 0  # such words, and headings naming a column already named, in the whole segment
     i = 0
     while i < len(words):
@@ -1121,6 +1132,12 @@ def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
             m = rx.match(rest)
             if m and m.end() in ends and (best is None or m.end() > best[1]):
                 best = (heading, m.end())  # the longest heading here: "Unit Price", not "Unit"
+        if best is None and cells and not joined and _TAX_HEAD.match(words[i]):
+            cells.append(("", i, i + 1))  # a tax's column ("Net worth VAT[%]"): another column, without a name
+            taxed = True
+            extra = 0
+            i += 1
+            continue
         if best is None and cells:  # more words of the heading before: "Price Each", "Qty Shipped"
             extra += not joined
             noise += not joined
@@ -1141,7 +1158,7 @@ def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
             noise += seen
         i += n
     columns = sum(1 for c in cells if c[0])
-    if columns < 2 or noise > columns:  # (more words that are no heading than headings: a sentence)
+    if (columns < 2 and not (columns and taxed)) or noise > columns:  # (more words that are no heading: a sentence)
         return whole
     out = []
     for heading, a, b in cells:
@@ -1297,10 +1314,22 @@ def _on_tilted_page(box: Box, skew: float) -> Box:
 AMOUNT_COLUMN = 0.04  # a row's amount ends this close to the amount column's right edge (fraction of the page)
 
 
-def _headerless_rows(page: PageLayout) -> list[LineReading]:
+# A tax's or a total's row in a table read without its headings, in any wording ("Umsatzsteuer 19 %", "Steuerbasisbetrag
+# USt. 7%", "GST 5%", "Positionssumme", "Rechnungssumme netto", "Total TTC"): no line.
+_TAX_ROW = re.compile(r"\b(?:tax(?:es)?|gst|hst|pst|qst|tps|tvq|tvh|rst|vat|tva|ust|mwst|iva|btw|ppn)\b|"
+                      r"steuer|summe|gesamt|\btotal|totaal|\bsomme\b|\bnetto\b|\bbrutto\b|betrag\b|\bh\.?t\.?$|\bttc\b|"
+                      r"amount\s*due|balance\s*due")  # fmt: skip
+SUM_ROWS_ABOVE = 2  # a row is the sum of the rows above it when they are at least this many lines with an amount
+
+
+def _headerless_rows(page: PageLayout, whole: PageLayout | None = None) -> tuple[list[LineReading], float | None]:
     """The rows of one table the table finder found whose column headings can't be read (OCR runs bilingual headings
-    together): each row whose last cell is an amount, in the column where most rows end, down to the subtotal. The
-    numbers before it are the quantity and unit price when they make the amount; the words are the description."""
+    together, or they are in a language the reader doesn't know): each row whose last cell is an amount, in the
+    column where most rows end, down to the subtotal. The numbers before it are the quantity and unit price when they
+    make the amount; the words are the description. With the amount on the totals' row the rows end at (None: none).
+    Rows read this way are a guess, kept only when they add up (``_proven_rows``). None when the table found stops
+    short of the rows' last amount on the page (``whole``: the whole page): its last column is not theirs (a tax's
+    column, the total's beside it)."""
     rows: dict[float, list[Line]] = {}
     for line in page.lines:
         key = next((k for k in rows if abs(k - line.box.cy) < 0.006), line.box.cy)
@@ -1312,37 +1341,90 @@ def _headerless_rows(page: PageLayout) -> list[LineReading]:
 
     ends = [segs[-1].box.x1 for segs in ordered if len(segs) >= 2 and money(segs[-1])]
     if len(ends) < 2:
-        return []
+        return [], None
     right = statistics.median(ends)
     items: list[LineReading] = []
+    printed_sum = None  # the amount on the totals' row the rows end at
     for segs in ordered:
         p = plain(" ".join(s.text for s in segs))
-        if items and any(rx.match(plain(s.text)) for s in segs for f in ("subtotal", "grand_total", "tax_total")
-                         for rx, _ in _LABELS[f]):  # fmt: skip
+        if any(rx.match(plain(s.text)) for s in segs for f in ("subtotal", "grand_total", "tax_total")
+               for rx, _ in _LABELS[f]):  # fmt: skip
+            if not items:
+                continue  # a total's row before the rows: no line either
+            found = money(segs[-1])
+            printed_sum = found[-1][0] if found else None
             break  # the table's totals: its rows end above
         last = segs[-1]
         found = money(last)
         if not found or abs(last.box.x1 - right) > AMOUNT_COLUMN or len(segs) < 2 or _CARRIED.match(p.strip()):
             continue
+        if whole is not None and any(abs(o.box.cy - last.box.cy) < 0.006 and o.box.x0 > last.box.x1 + 0.005 and money(o)
+                                     for o in whole.lines):  # fmt: skip
+            return [], None
         amount = found[-1][0]
         desc = " ".join(s.text for s in segs if s is not last and not _NUMBER_CELL.match(s.text)).strip()
-        if not desc:
+        if not desc or _TAX_ROW.search(plain(desc)):
             continue
         fit = _qty_times_price(segs, [(s, _amounts_in(s.text)) for s in segs], last, amount)
         qty, price = fit if fit else (None, None)
+        if not amount and qty is None:
+            continue  # "Erhaltene Anzahlungen 0,00": nothing to code
         row_box = union_all([s.box for s in segs])
         items.append(LineReading(desc, qty, price, amount, [row_box] if row_box else [], 0.6))
-    return items if len(items) >= 2 else []
+    return items, printed_sum
 
 
-def read_line_items(layout: DocLayout, tables: dict[int, list[Box]] | None = None) -> list[LineReading]:
+def _proven_rows(items: list[LineReading], others: list[LineReading], printed_sum: float | None,
+                 targets: list[float] | None, printed: set[float] | None = None) -> list[LineReading]:  # fmt: skip
+    """The rows read by their amounts (``items``, of every page in order) that add up, else none. They end at the
+    first one that prints the sum of the rows above it (at least ``SUM_ROWS_ABOVE`` lines: a subtotal in a wording the
+    reader doesn't know, "Positionssumme", "Summe netto"), the rows between them (allowances, taxes) and after it left
+    out; else they are all kept when they add up, alone or with the lines read under column headings on other pages
+    (``others``), to the totals' row they end at (``printed_sum``), to one of ``targets`` (the invoice's subtotal, or
+    its total less the taxes) or, two lines or more, to an amount printed elsewhere on the invoice (``printed``: its
+    subtotal under a label the reader doesn't know)."""
+    for k, li in enumerate(items):
+        above = 0.0
+        lines = 0
+        best = None
+        for j, prev in enumerate(items[:k], 1):
+            above += prev.amount or 0.0
+            lines += bool(prev.amount)
+            if (
+                lines >= SUM_ROWS_ABOVE
+                and li.amount
+                and li.quantity is None
+                and abs(round(above, 2) - li.amount) <= 0.011
+            ):  # (a row with a quantity is a line)
+                best = j
+        if best is not None:
+            return items[:best]
+    sums = [t for t in (printed_sum, *(targets or [])) if t is not None]
+    own = {round(li.amount, 2) for li in [*others, *items] if li.amount is not None}
+    for rows in (items, [*others, *items]) if others else (items,):
+        total = round(sum(li.amount or 0.0 for li in rows), 2)
+        more = [t for t in printed or () if t and t not in own]  # (not one of the rows' own amounts)
+        if any(abs(total - t) <= 0.02 for t in sums) or (
+            sum(1 for li in rows if li.amount) >= SUM_ROWS_ABOVE and any(abs(total - t) <= 0.02 for t in more)
+        ):
+            return items
+    return []
+
+
+def read_line_items(layout: DocLayout, tables: dict[int, list[Box]] | None = None,
+                    targets: list[float] | None = None) -> list[LineReading]:  # fmt: skip
     """The line items under the line table's column headings, read on the page straightened (``straightened``).
     ``tables``: the tables the table finder found on each page (``table_finder.find_tables``); the rows are then read
-    from the words inside them only (``inside_tables``)."""
+    from the words inside them only (``inside_tables``). ``targets``: what the lines should add up to (the subtotal,
+    the total less the taxes), for a table whose headings can't be read (``_headerless_rows``)."""
     skews = {page.number: page.skew for page in layout.pages if abs(page.skew) >= STRAIGHTEN_FROM}
     one_table = {n: [straightened(inside_tables(layout, {n: [box]})) for box in boxes]
                  for n, boxes in (tables or {}).items() if boxes}  # fmt: skip
-    items = _read_line_items(straightened(inside_tables(layout, tables) if tables else layout), one_table)
+    printed = {round(v, 2) for line in layout.lines() for v, a, b in _amounts_in(line.text)
+               if _printed_as_money(line.text[a:b])} if tables else set()  # fmt: skip
+    whole = straightened(layout) if tables else None
+    items = _read_line_items(straightened(inside_tables(layout, tables) if tables else layout), one_table, targets,
+                             printed, whole)  # fmt: skip
     for li in items if skews else []:
         li.boxes = [_on_tilted_page(b, skews[b.page]) if b.page in skews else b for b in li.boxes]
     if items and credit_printed_positive(layout):
@@ -1352,20 +1434,33 @@ def read_line_items(layout: DocLayout, tables: dict[int, list[Box]] | None = Non
     return items
 
 
-def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | None = None) -> list[LineReading]:
+def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | None = None,
+                     targets: list[float] | None = None, printed: set[float] | None = None,
+                     whole: DocLayout | None = None) -> list[LineReading]:  # fmt: skip
     """``one_table``: for each page where the table finder found tables, the words of each table on its own; on a
     page whose column headings can't be read, the table whose rows read best by their amounts is read
     (``_headerless_rows``)."""
     items: list[LineReading] = []
     money: list[bool] = []  # each line's amount is printed as money ("1,450.00", "$12"), not "5%" or "12"
+    guessed: list[LineReading] = []  # rows read by their amounts, on pages whose headings can't be read
+    printed_sum = None
     for page in layout.pages:
         found = heading_row(page)
         header = (found[0].box.y1, found[2]) if found else None
+        summary = _charges_summary(page) if header is None else []
+        if summary:
+            items += summary
+            money += [True] * len(summary)
+            continue
         if header is None:
             tables = [t.pages[page.number - 1] for t in (one_table or {}).get(page.number, [])]
-            rows_read = max((_headerless_rows(t) for t in tables), key=len, default=[])
+            page_whole = whole.pages[page.number - 1] if whole is not None else None
+            rows_read, at_sum = max((_headerless_rows(t, page_whole) for t in tables), key=lambda r: len(r[0]),
+                                    default=([], None))  # fmt: skip
             items += rows_read
             money += [True] * len(rows_read)
+            guessed += rows_read
+            printed_sum = at_sum if rows_read else printed_sum
             continue
         y_top, cols = header
         rows: dict[float, list[Line]] = {}
@@ -1383,18 +1478,30 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             key = next((k for k in rows if abs(k - line.box.cy) < 0.006), line.box.cy)
             rows.setdefault(key, []).append(line)
         amount_x = cols["amount"].cx
+        last: tuple[LineReading, float] | None = None  # the line item last read on this page, and its bottom
         for _, segs in sorted(rows.items()):
             if any(_CARRIED.match(plain(s.text).strip()) for s in segs):
+                last = None
                 continue
             nums = [(s, _amounts_in(s.text)) for s in segs]
             amount = None
             amt_seg = None
             amt_token = ""
+            near = 1.0  # of the cells under the amount's heading, the nearest to it ("10%" in a VAT column beside)
             for s, found in nums:
-                if found and abs(s.box.x1 - cols["amount"].x1) < 0.08 or (found and abs(s.box.cx - amount_x) < 0.08):
-                    amount, amt_seg = found[-1][0], s
-                    amt_token = s.text[found[-1][1] : found[-1][2]]
+                off = min(abs(s.box.x1 - cols["amount"].x1), abs(s.box.cx - amount_x))
+                if found and off < 0.08 and off <= near:
+                    pick = _under(s, found, cols["amount"])
+                    amount, amt_seg, near = pick[0], s, off
+                    amt_token = s.text[pick[1] : pick[2]]
             if amount is None:
+                if last is not None and _wrapped(segs, cols, last[1]):  # the rest of the description above
+                    li = last[0]
+                    li.description = " ".join([li.description, *(s.text for s in segs)]).strip()
+                    li.boxes = [union_all([*li.boxes, *(s.box for s in segs)]) or li.boxes[0]] if li.boxes else []
+                    last = (li, max(s.box.y1 for s in segs))
+                else:
+                    last = None
                 continue
             # A number cell (qty, price, amount, row number) is not part of the description; a description
             # with a number in it ("Meraki MR46", "Cat6 cables", "1 year licence") is.
@@ -1422,16 +1529,54 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             score = 0.8 if (qty is None or price is None or abs(qty * price - amount) <= 0.011) else 0.5
             items.append(LineReading(desc.strip(), qty, price, amount, [row_box] if row_box else [], score))
             money.append(_printed_as_money(amt_token))
+            last = (items[-1], max(seg.box.y1 for seg in segs))
+    if guessed:  # kept only when they add up
+        ids = {id(li) for li in guessed}
+        kept = {id(li) for li in _proven_rows(guessed, [li for li in items if id(li) not in ids], printed_sum,
+                                               targets, printed)}  # fmt: skip
+        keep = [id(li) in kept or id(li) not in ids for li in items]
+        items = [li for li, k in zip(items, keep, strict=True) if k]
+        money = [m for m, k in zip(money, keep, strict=True) if k]
     # Where the lines' amounts are printed as money, a "line" whose amount isn't is a sentence under the table ("All
     # services subject to GST 5%", "4 of 12 hours cancelled") that reaches the amount column.
     if sum(money) >= 2 and not all(money):
         items = [li for li, m in zip(items, money, strict=True) if m]
+    # Not one amount printed as money ("774320", "-9692": a customer number, a phone number read from a page upside
+    # down): no line table, unless the rows add up to what the lines should.
+    if len(items) >= 2 and not any(money):
+        total = round(sum(li.amount or 0.0 for li in items), 2)
+        if not any(abs(total - t) <= 0.02 for t in targets or []):
+            return []
     # A last row with no words of its own whose amount is the sum of the rows above: the table's total row, its label
     # read as no label (OCR runs "Total before tax" together).
     if len(items) >= 3 and not items[-1].description.strip() and items[-1].amount is not None:
         above = [li.amount for li in items[:-1] if li.amount is not None]
         if abs(round(sum(above), 2) - items[-1].amount) <= 0.011:
             items.pop()
+    # A row with no words that prints the sum of the lines above it among its figures is no line: the table's summary
+    # ("10% 44 364,64 4 436,46 48 801,10": the rate, the net sum, the tax, the gross), or a balance brought forward
+    # whose label OCR lost.
+    # The tax's and total's rows after such a sum ("GST (5%)") are no lines either.
+    kept: list[LineReading] = []
+    summed = False
+    for li in items:
+        above = round(sum(k.amount or 0.0 for k in kept), 2)
+        # (under one line, its own amount printed again is not enough: a figure beside it must print the sum)
+        figures = (li.quantity, li.unit_price, *([li.amount] if len(kept) >= 2 else []))
+        if kept and not li.description.strip() and any(v is not None and abs(v - above) <= 0.011 for v in figures):
+            summed = True
+        elif not (summed and li.quantity is None and _TAX_ROW.search(plain(li.description))):
+            kept.append(li)
+    items = kept
+    # A row naming a total in a wording the totals' labels don't know ("Montant HT", "Summe netto") that prints the sum
+    # of the lines above it is the subtotal: the lines end above it. A row with no words and nothing to pay is no line.
+    for k, li in enumerate(items):
+        lines = [x for x in items[:k] if x.amount]
+        if (len(lines) >= 2 and li.quantity is None and li.amount is not None and _TAX_ROW.search(plain(li.description))
+                and abs(round(sum(x.amount for x in lines), 2) - li.amount) <= 0.011):  # fmt: skip
+            items = items[:k]
+            break
+    items = [li for li in items if li.amount or li.description.strip() or li.quantity is not None]
     # A "#" column read into the description: "1 Observability…", "2 Premium…". Only when every row starts
     # with its own number, so "6 Dell monitors" on its own is left alone.
     numbered = [re.match(rf"^{i}\s+(?=\S)", li.description) for i, li in enumerate(items, 1)]
@@ -1439,6 +1584,161 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
         for li, m in zip(items, numbered, strict=True):
             li.description = li.description[m.end() :]
     return items
+
+
+_SUMMARY_SUBTOTAL = re.compile(r"^(?:sub\s*-?\s*total|sous\s*-?\s*total)$")
+_SUMMARY_TAX = re.compile(r"^(?:gst|hst|pst|qst|tps|tvh|tvp|tvq|rst)\b")
+_SUMMARY_TOTAL = re.compile(r"^total$")
+
+
+def _charges_summary(page: PageLayout) -> list[LineReading]:
+    """The lines of a summary of charges (Canada Post: "Parcels | Subtotal | GST | HST | PST/QST | Total", one row a
+    service): the columns are headed by the subtotal, the taxes and the total, the description column has no heading.
+    Each row's amount is the one under "Subtotal" (before tax). Kept only when they add up to the amount printed
+    under "Subtotal" on the row with no words that ends them (the invoice's subtotal)."""
+    for line in page.lines:
+        if not _SUMMARY_SUBTOTAL.match(plain(line.text).strip()):
+            continue
+        row = [o for o in page.lines if abs(o.box.cy - line.box.cy) < 0.006 and o.box.x0 > line.box.x1]
+        if not any(_SUMMARY_TAX.match(plain(o.text).strip()) for o in row) or not any(
+            _SUMMARY_TOTAL.match(plain(o.text).strip()) for o in row
+        ):
+            continue
+        col = line.box
+        rows: dict[float, list[Line]] = {}
+        for other in page.lines:
+            if other.box.y0 > line.box.y1:
+                key = next((k for k in rows if abs(k - other.box.cy) < 0.006), other.box.cy)
+                rows.setdefault(key, []).append(other)
+        items: list[LineReading] = []
+        for _, segs in sorted(rows.items()):
+            segs.sort(key=lambda o: o.box.x0)
+            under = [(o, f) for o in segs if (f := _amounts_in(o.text)) and abs(o.box.x1 - col.x1) < 0.03]
+            if not under:
+                break
+            amount = under[0][1][-1][0]
+            words = " ".join(o.text for o in segs if o.box.x1 < col.x0 and not _NUMBER_CELL.match(o.text)).strip()
+            if not words or any(rx.match(plain(words)) for f in _TOTAL_LABELS for rx, _ in _LABELS[f]):
+                # the total row (with no words, or "Total"): the lines end, proven when they add up to it
+                total = round(sum(li.amount or 0.0 for li in items), 2)
+                return items if items and abs(total - amount) <= 0.011 else []
+            box = union_all([o.box for o in segs])
+            items.append(LineReading(words, None, None, amount, [box] if box else [], 0.8))
+        return []
+    return []
+
+
+def _under(seg: Line, found: list[tuple[float, int, int]], head: Box) -> tuple[float, int, int]:
+    """Of the amounts in one cell, the one under the heading: the last, unless OCR ran two columns' amounts together
+    ("100.00 20.00": the amount and the VAT rate beside it) and another sits nearer the heading's middle."""
+    if (len(found) < 2 or seg.box.x1 <= head.x1 + 0.01
+            or not all(_printed_as_money(seg.text[a:b]) for _v, a, b in found)):  # fmt: skip
+        return found[-1]  # ("2 500.00" is one amount, not 2 and 500.00)
+
+    def middle(f: tuple[float, int, int]) -> float:
+        box = union_all([w.box for w in _span_words(seg, f[1], f[2])])
+        return box.cx if box is not None else seg.box.cx
+
+    return min(found, key=lambda f: abs(middle(f) - head.cx))
+
+
+WRAP_GAP = 1.2  # a description's next line starts at most this many text heights under the line above it
+
+
+def _wrapped(segs: list[Line], cols: dict[str, Box], bottom: float) -> bool:
+    """A row with no amount right under a line item (``bottom``: the item's last row) is the rest of its description
+    wrapped onto another line: its words all sit in the description's column (from its heading, else the page's
+    left, to the next heading on the right), none is an amount printed as money or a total's label, and it starts
+    within ``WRAP_GAP`` text heights."""
+    if not segs:
+        return False
+    head = cols.get("description")
+    left = head.x0 - 0.03 if head is not None else 0.0
+    right = min((b.x0 for b in cols.values() if head is None or b.x0 > head.x1), default=1.0)
+    height = max(statistics.median(s.box.height for s in segs), 0.004)
+    return (
+        min(s.box.y0 for s in segs) - bottom <= WRAP_GAP * height
+        and all(s.box.x0 >= left and s.box.x1 <= right + 0.005 for s in segs)
+        and not any(_printed_as_money(s.text[a:b]) for s in segs for _v, a, b in _amounts_in(s.text))
+        and not any(rx.match(plain(s.text).strip()) for s in segs for f in _TOTAL_LABELS for rx, _ in _LABELS[f])
+    )
+
+
+_RUNNING = re.compile(
+    r"brought\s*forward|carried\s*forward|balance\s*forward|report|ubertrag|page\s*(?:sub\s*-?\s*)?total"
+)
+LISTED_COLUMN = 0.06  # an item's amount ends this close to the subtotal's amount (fraction of the page width)
+LISTED_MAX = 150  # amounts looked at above the subtotal
+_LISTED_FLAG = re.compile(r"^[\s*-]*(?:[a-z]{1,2}\b)?[\s*]*$", re.I)  # a receipt's tax flag after the amount: "J", "*"
+
+
+def listed_items(layout: DocLayout, targets: list[float]) -> list[LineReading]:
+    """The lines of a bill that prints no column headings (a till receipt, a short bill): the amounts in the column
+    right above its subtotal (or total), each with the words on its row (product codes left out), read upward from
+    the subtotal until they add up to one of ``targets`` (the subtotal, the total less the taxes). None when they
+    never add up exactly: amounts in a column are a guess, kept only when the bill proves them."""
+    if not targets:
+        return []
+    for page in straightened(layout).pages:
+        ends = [ln for ln in page.lines
+                if any(rx.match(plain(ln.text).strip()) for f in ("subtotal", "grand_total") for rx, _ in _LABELS[f])]  # fmt: skip
+        if not ends:
+            continue
+        end = min(ends, key=lambda ln: ln.box.y0)
+        height = max(end.box.height, 0.004)
+        found: list[tuple[float, float, float, Line, int]] = []  # (middle, right end, amount, line, where it starts)
+        for line in page.lines:
+            amounts = [(v, a, b) for v, a, b in _amounts_in(line.text) if _printed_as_money(line.text[a:b])]
+            if not amounts or not _LISTED_FLAG.match(line.text[amounts[-1][2] :]):
+                continue  # no amount at the line's end
+            value, a, b = amounts[-1]
+            box = union_all([w.box for w in _span_words(line, a, b)]) or line.box
+            found.append((box.cy, box.x1, value, line, a))
+        # The subtotal's own amount: on the label's row, right of it.
+        mine = [f for f in found if abs(f[0] - end.box.cy) < 0.7 * height and f[1] > end.box.x0]
+        right = min(mine, key=lambda f: f[1] - end.box.x1)[1] if mine else None
+        above = sorted((f for f in found if f[0] < end.box.cy - 0.7 * height), key=lambda f: -f[0])[:LISTED_MAX]
+        if right is None:
+            if not above:
+                continue
+            right = statistics.median(f[1] for f in above)
+        column = [f for f in above if abs(f[1] - right) <= LISTED_COLUMN]
+        total = 0.0
+        for k, (_cy, _x1, value, _line, _a) in enumerate(column, 1):
+            total += value
+            if any(abs(round(total, 2) - t) <= 0.011 for t in targets):
+                lines = _listed_lines(page, list(reversed(column[:k])), {id(f[3]) for f in found}, height)
+                # Amounts that name a tax, a total or a balance carried from another page ("Montant HT", "TVA",
+                # "Remise totale", "Balance brought forward") are sums, not items; one amount with no words is the
+                # subtotal printed twice.
+                if any(
+                    _TAX_ROW.search(plain(li.description)) or _RUNNING.search(plain(li.description)) for li in lines
+                ) or (len(lines) == 1 and not lines[0].description):
+                    break
+                return lines
+    return []
+
+
+def _listed_lines(page: PageLayout, rows: list[tuple[float, float, float, Line, int]], priced: set[int],
+                  height: float) -> list[LineReading]:  # fmt: skip
+    """The listed items: each amount, and the words left of it on its row that aren't a number (a product code); a
+    line of words beside two amounts' rows goes with the nearer one."""
+    words: dict[int, list[Line]] = {}
+    for ln in page.lines:
+        if id(ln) in priced:
+            continue
+        near = [(abs(ln.box.cy - cy), k) for k, (cy, _x1, _v, line, _a) in enumerate(rows)
+                if abs(ln.box.cy - cy) < 0.7 * height and ln.box.x1 <= line.box.x0 + 0.01]  # fmt: skip
+        if near:
+            words.setdefault(min(near)[1], []).append(ln)
+    out = []
+    for k, (_cy, _x1, amount, line, at) in enumerate(rows):
+        row = sorted(words.get(k, []), key=lambda ln: ln.box.x0)
+        parts = [ln.text for ln in row] + [line.text[:at]]
+        text = " ".join(w for part in parts for w in part.split() if not _FIGURE.fullmatch(w))
+        box = union_all([ln.box for ln in [*row, line]])
+        out.append(LineReading(text.strip(), None, None, amount, [box] if box else [], 0.6))
+    return out
 
 
 # ---------------------------------------------------------------- entry point
