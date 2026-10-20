@@ -1361,9 +1361,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
                 words = _span_words(line, m.end(), len(line.text))
                 out.append(Reading("vendor_name", name, name, _boxes(words), 0.8 * _min_conf(words), "remit-to"))
     out.sort(key=lambda r: -r.score)
-    # A rival is printed above the name chosen (a letterhead's brand over the operator's legal name).
-    rivals = [r for r in out[1:] if not _same_name(r.value, out[0].value) and r.boxes and out[0].boxes
-              and r.method == "top-of-page" and r.boxes[0].y0 < out[0].boxes[0].y0]  # fmt: skip
+    # A rival: another name at the top of the page (a letterhead's brand and the operator's legal name).
+    rivals = [r for r in out[1:] if not _same_name(r.value, out[0].value) and r.method == "top-of-page"]
     if out and out[0].method == "top-of-page" and rivals and rivals[0].score >= RIVAL_SHARE * out[0].score:
         # "CANADIAN TIRE 235" over "Gestions Daniel Picard Inc": a store's brand and its operator's legal name, or a
         # name and another line of the letterhead. Which one is the supplier the page does not say.

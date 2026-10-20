@@ -163,6 +163,12 @@ def test_a_stores_brand_and_its_operators_name_leave_the_supplier_unverified(tmp
     fr = fields["vendor_name"]
     assert fr.value == "Gestions Exemple Inc" and fr.status != "verified"
     assert any("another name" in r for r in fr.reasons)
+    # The real receipt prints its header twice: the brand is also below the operator's name.
+    below = [(60, 40, "Gestions Exemple Inc"), (60, 54, "TPS: 123456782RT0001"), (150, 68, "MAPLE AUTO 112", 13),
+             (60, 200, "TOTAL"), (300, 200, "38.85")]  # fmt: skip
+    cands = read_fields(build_layout(_pdf(tmp_path / "below.pdf", below)))
+    fr = fuse({"rules": cands, "ocr2": cands}, [])[0]["vendor_name"]
+    assert fr.status != "verified" and any("another name" in r for r in fr.reasons)
 
 
 # --- totals: tax rows, several rates, labels in other languages, amounts across the page --------------------------
