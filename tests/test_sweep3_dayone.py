@@ -416,3 +416,14 @@ def test_the_approved_today_tile_says_how_many_wait_for_a_second_approval():
     assert tile["value"] == "2"
     assert "1 waiting for a second approval" in tile["sub"]
     assert "1 fully approved in all" in tile["sub"]
+
+
+def test_a_dry_run_with_nothing_to_load_has_no_stray_dash():
+    """ "Will load: 0 voucher(s), -." read oddly when every invoice was held back: it now says "nothing to load"."""
+    from ap_coder.erp.jde import dry_run_text
+
+    held = {"id": 1, "vendor": "Harbourview", "number": "HPS-1", "date": "2026-09-01", "reasons": ["no AN8"]}
+    report = {"batch": 1, "user": "AP", "company": "00001", "blocking": [], "totals": {}, "vouchers": [],
+              "held": [held], "files": {}}  # fmt: skip
+    first = next(line for line in dry_run_text(report).splitlines() if line.startswith("Will load"))
+    assert first == "Will load: 0 voucher(s), nothing to load. Held back: 1."

@@ -3,8 +3,8 @@
 * Input tax credits (ITCs): GST and HST on approved invoices dated in the period, where the tax setup
   treats the tax as recoverable
 * Input tax refunds (ITRs): the same for Quebec's QST
-* Claims at risk: tax claimed on an invoice of $100 or more ($30 before 2021) that shows no valid GST/HST (or QST)
-  registration number (a documentary requirement for the claim; a GST/HST number failing the CRA's check
+* Claims at risk: tax claimed on an invoice of $100 or more ($30 before April 21, 2021) that shows no valid GST/HST
+  (or QST) registration number (a documentary requirement for the claim; a GST/HST number failing the CRA's check
   digit is not a valid one), tax in a foreign currency (the return
   is in Canadian dollars), and approved invoices not exported to the ERP yet (the ERP's receivable will
   not match)
@@ -40,15 +40,17 @@ from .tax import (
 
 ITC, ITR = "GST/HST input tax credits (ITCs)", "QST input tax refunds (ITRs)"
 GROUPS = {"GST": ITC, "HST": ITC, "QST": ITR}
-# Below this total, no registration number is required on the invoice: $100 for invoices dated from 2021-01-01, $30
-# before (Input Tax Credit Information (GST/HST) Regulations, amended 2021; Quebec's QST rules follow the same amounts).
+# Below this total, no registration number is required on the invoice: $100 for invoices dated from 2021-04-21, $30
+# before (Input Tax Credit Information (GST/HST) Regulations, amended by Budget 2021 with effect from April 21, 2021;
+# Quebec's QST rules follow the same amounts).
 DOCUMENT_THRESHOLD = 100.0
 DOCUMENT_THRESHOLD_BEFORE_2021 = 30.0
+DOCUMENT_THRESHOLD_FROM = "2021-04-21"
 
 
 def document_threshold(invoice_date: str) -> float:
     """The invoice total from which the supplier's registration number is needed to claim the tax."""
-    return DOCUMENT_THRESHOLD if str(invoice_date or "") >= "2021-01-01" else DOCUMENT_THRESHOLD_BEFORE_2021
+    return DOCUMENT_THRESHOLD if str(invoice_date or "") >= DOCUMENT_THRESHOLD_FROM else DOCUMENT_THRESHOLD_BEFORE_2021
 
 
 NO_GST_NUMBER = "No valid GST/HST number"
