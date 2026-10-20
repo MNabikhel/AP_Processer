@@ -116,3 +116,30 @@ def test_an_invoice_number_in_digit_groups_with_more_text_after_it_is_read_whole
     lines = _NO_NUMBER + [(380, 120, "No de facture 123 456 Page 1 de 1")]
     fr = _read(_pdf(tmp_path, lines)).fields["invoice_number"]
     assert fr.value.replace(" ", "") == "123456", fr
+
+
+def test_a_jpeg_photo_too_large_to_open_is_read_at_a_smaller_size(tmp_path, monkeypatch):
+    """B-222: a photo from a phone's 200 MP mode (over twice Pillow's limit) was refused; a JPEG is now decoded at
+    half, a quarter or an eighth of its size, the smallest reduction that brings it under the limit, and the page
+    keeps its size. The photo itself is kept as it came."""
+    import pytest
+    from PIL import Image
+
+    from ap_coder.intake.pictures import to_pdf
+
+    photo = tmp_path / "IMG_2026.jpg"
+    Image.new("RGB", (800, 600), (200, 200, 200)).save(photo, "JPEG", dpi=(200, 200))
+    original = photo.read_bytes()
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 40_000)  # 480,000 pixels: over twice the limit, as 200 MP is
+    converted = to_pdf(photo)
+    with pymupdf.open(converted.pdf) as doc:
+        (xref, *_), *_ = doc[0].get_images()
+        shown = doc.extract_image(xref)
+        assert (shown["width"], shown["height"]) == (200, 150)  # a quarter: half would still be 120,000 pixels
+        assert (round(doc[0].rect.width), round(doc[0].rect.height)) == (288, 216)  # 4 x 3 inches, as photographed
+    assert converted.original.read_bytes() == original
+    # A picture that can't be decoded smaller (a PNG) is still refused, in plain words (B-148).
+    big = tmp_path / "scan.png"
+    Image.new("L", (800, 600), 200).save(big, "PNG")
+    with pytest.raises(Image.DecompressionBombError):
+        to_pdf(big)
