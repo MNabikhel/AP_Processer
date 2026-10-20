@@ -255,6 +255,13 @@ UNMEASURED_LABELS: dict[str, list[tuple[str, float]]] = {
     "po_number": [
         (r"(?:ihre\s*)?bestellung(?:\s*(?:nr\b\.?|nummer))?(?!\s*vom)", 0.85), (r"(?:ihre\s*)?bestell\s*-?\s*(?:nr\b\.?|nummer)", 0.85),
     ],
+    # "Invoice Due Date" (a grid's heading), Canada Post's "Your payment is due by", Amazon's "TOTAL AMOUNT DUE ON
+    # August 3, 2014", Dutch and German labels ("Zahlungsziel" may be the terms instead: only a date is read).
+    "due_date": [
+        (r"invoice\s*due\s*date", 0.95), (r"(?:your\s*)?payment\s*is\s*due\s*(?:by|on)\b", 0.9),
+        (r"(?:total\s*)?(?:amount|balance)\s*due\s*(?:on|by)\b", 0.85), (r"vervaldag", 0.95), (r"falligkeitstag", 0.9),
+        (r"zahlungsziel", 0.8),
+    ],
 }  # fmt: skip
 for _field, _pats in UNMEASURED_LABELS.items():
     LABELS[_field] = [*LABELS[_field], *_pats]
@@ -2719,6 +2726,8 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
                 break
     if not cands.get("payment_terms"):
         cands["payment_terms"] = _terms_sentences(lines)
+    if not cands.get("due_date"):
+        cands["due_date"] = _due_sentences(lines)
     if not cands.get("po_number") and by_page:
         cands["po_number"] = _po_mentions(by_page[min(by_page)]) or _po_as_your_reference(by_page, under)
     if credit_printed_positive(layout):
@@ -2840,6 +2849,29 @@ def _po_as_your_reference(by_page: dict[int, list[Line]], under: set[int]) -> li
                     r.method += UNMEASURED
                     found.append(r)
     return found[:1] if len({normalize_value("po_number", r.value) for r in found}) == 1 else []
+
+
+# A due date stated in a sentence (plain text): "Bitte überweisen Sie bis zum 09.06.2014", "Zahlbar innerhalb 30 Tagen
+# netto bis 04.04.2013" (the net amount's date: not the discount's "3% Skonto ... bis 15.03.2013"), "Payment is due by
+# October 15, 2026", "Payable avant le 15 octobre 2026". The date follows the words.
+_DUE_SENTENCE = re.compile(
+    r"(?:netto|ohne\s*(?:abzug|abschlag))\s*bis\s*(?:zum\s*)?"
+    r"|(?:uberweisen|zahlen|begleichen)\s*sie\s*(?:[a-z]+\s*){0,3}?bis\s*(?:zum\s*)?"
+    r"|(?:payment|amount|balance|total)\s*(?:is\s*)?due\s*(?:on|by)\s*|please\s*pay\s*(?:on\s*or\s*)?(?:by|before)\s*"
+    r"|(?:payable|a\s*payer)\s*(?:avant|au\s*plus\s*tard)\s*(?:le\s*)?"
+)  # fmt: skip
+
+
+def _due_sentences(lines: list[Line]) -> list[Reading]:
+    """The due date a sentence on the invoice states, for a person to check; none when two sentences state different
+    ones."""
+    found = []
+    for line in lines:
+        for m in _DUE_SENTENCE.finditer(plain(line.text)):
+            got = _value_reading("due_date", line, m.end(), 0.6, "sentence" + UNMEASURED)
+            if got and plain(line.text)[m.end() : m.end() + 3].strip()[:1].isalnum():
+                found.append(got)
+    return found[:1] if len({r.value for r in found}) == 1 else []
 
 
 def _negative_totals(cands: dict[str, list[Reading]]) -> bool:

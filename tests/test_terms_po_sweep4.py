@@ -197,3 +197,46 @@ def test_a_po_label_wins_over_your_reference(tmp_path):
     got = _read(_pdf(tmp_path, _HEAD + lines + _TABLE))["po_number"]
     assert got.value == "4500012345"
     assert not any("J-SMITH-7" in r for r in got.reasons)  # not even a second reading to cast doubt on it
+
+
+# ---------------------------------------------------------------- due dates
+
+
+@pytest.mark.parametrize(
+    "lines, due",
+    [
+        # A header grid: the labels over their values.
+        (
+            [(60, 140, "Invoice Number"), (160, 140, "Invoice Due Date"), (60, 155, "88120"), (160, 155, "10/15/2026")],
+            "2026-10-15",
+        ),
+        ([(60, 140, "TOTAL AMOUNT DUE ON October 15, 2026"), (60, 155, "$1,150.00")], "2026-10-15"),
+        ([(60, 140, "Your payment is due by (Y-M-D)"), (60, 155, "2026-10-15")], "2026-10-15"),
+        ([(60, 140, "Vervaldag: 15.10.2026")], "2026-10-15"),
+        ([(60, 140, "Fälligkeitstag: 15.10.2026")], "2026-10-15"),
+        ([(60, 140, "Zahlungsziel"), (200, 140, "15.10.26")], "2026-10-15"),
+        # In a sentence: the net amount's date, not the discount's.
+        ([(60, 600, "Bitte überweisen Sie bis zum 15.10.2026.")], "2026-10-15"),
+        (
+            [(60, 600, "Zahlbar innerhalb 30 Tagen netto bis 15.10.2026, 2% Skonto innerhalb 10 Tagen bis 25.09.2026")],
+            "2026-10-15",
+        ),
+        ([(60, 600, "Thank you for your business. Payment is due by October 15, 2026.")], "2026-10-15"),
+    ],
+)
+def test_due_dates_under_other_labels_or_in_a_sentence_are_read_for_a_person_to_check(tmp_path, lines, due):
+    got = _read(_pdf(tmp_path, _HEAD + lines + _TABLE))
+    assert got["due_date"].value == due
+    assert got["due_date"].status != VERIFIED
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "Wichtige Information: Bei Bestellungen bis zum 19.12.2026 ist die Auslieferung bis 23.12.2026 garantiert.",
+        "Prices are valid until 2026-12-31.",
+        "Bei Zahlung innerhalb 10 Tagen bis 25.09.2026 gewähren wir 2% Skonto.",
+    ],
+)
+def test_a_date_in_a_note_that_is_not_about_the_due_date_is_not_read_as_it(tmp_path, note):
+    assert _read(_pdf(tmp_path, [*_HEAD, (60, 600, note), *_TABLE]))["due_date"].value is None

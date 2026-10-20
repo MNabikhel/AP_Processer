@@ -3185,3 +3185,25 @@ corpus is not in the repo). B- numbers start at B-372 and N- numbers at N-121, a
   `tests/test_terms_po_sweep4.py::test_a_po_label_wins_over_your_reference`
 - **Lesson:** Don't look for a label only where a line starts: OCR glues a label to the words before it, and a
   sentence names the order as clearly as a label does.
+
+#### B-375 · Due dates under "Invoice Due Date", Dutch and German labels, or in a sentence were not read · medium
+- **Where:** `ap_coder/capture/reader.py` (`UNMEASURED_LABELS`, new `_due_sentences`)
+- **Symptom:** due dates were right on 32 of the 47 real invoices that print one. Missing: Azure's samples' grid
+  heading "Invoice Due Date" (over "6/24/2017"), Amazon's "TOTAL AMOUNT DUE ON August 3 , 2014", Dutch "Vervaldag:
+  03.04.2020", German "Fälligkeitstag: 01.04.2014", "Zahlungsziel 21.05.14", and the German sentences "Bitte
+  überweisen Sie bis zum 09.06.2014" and "Zahlbar innerhalb 30 Tagen netto bis 04.04.2013, 3% Skonto innerhalb 10
+  Tagen bis 15.03.2013".
+- **Cause:** a due-date label was looked for at the start of a line ("Due Date", "Payment Due", "Fällig"), so
+  "Invoice Due Date" and "Total amount due on" were not one, and a date was never read from a sentence.
+- **Reproduce:** a PDF with "Invoice Number | Invoice Due Date" over "88120 | 10/15/2026"; `analyze()`.
+- **Reproduced:** yes (`due_date` missing)
+- **Fix:** labels "Invoice Due Date", "(Your) payment is due by/on", "(Total) amount/balance due on/by",
+  "Vervaldag", "Fälligkeitstag", "Zahlungsziel" (only a date is read under it: it may give the terms instead); with
+  no due-date label, a date right after "netto bis", "ohne Abzug bis", "überweisen Sie ... bis zum", "payment is due
+  by", "please pay by/before", "payable avant le" (the net amount's date, never a discount's "Skonto ... bis"); two
+  sentences that state different dates give none. Each reading is marked `UNMEASURED` (D-44). Where the terms are
+  read too, the due-date check (B-372) can confirm both.
+- **Test:** `tests/test_terms_po_sweep4.py::test_due_dates_under_other_labels_or_in_a_sentence_are_read_for_a_person_to_check`,
+  `tests/test_terms_po_sweep4.py::test_a_date_in_a_note_that_is_not_about_the_due_date_is_not_read_as_it`
+- **Lesson:** Don't take a label's words only as a line's first words: "Invoice Due Date" and "Total amount due on"
+  carry the due date's label inside them.
