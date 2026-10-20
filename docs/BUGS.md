@@ -2375,3 +2375,20 @@ Improvements made with these fixes:
 - **N-91** · Setup, launcher and update · `watch` still treats an invoice that failed for a missing module as seen (no retry). Not changed, as the finding suggested: with the older watcher stopped, nothing fails that way; a retry rule for failures is a design choice.
 - **N-92** · Setup, launcher and update · an older `watch` / `read-pages` run by another computer account (or a scheduled task under one) can't be ended by this account: the start waits a minute ("close the window it runs in, or end its task in Task Scheduler"), then stops. Worker notes don't carry the account (B-168 covers servers only).
 - **N-93** · Setup, launcher and update · two accounts sharing one folder on macOS/Linux: the server file is mode 0600 and the code folder's lock file belongs to the first account, so the second account's start can't read the token or take the lock; it now relies on `/healthz`'s `user` (B-168). Sharing one folder between accounts is documented for Windows only.
+
+## Sweep 4 (real-world testing), October 2026
+
+### Reading: layouts and formats
+
+Found by reading a hard corpus of 150 synthetic Canadian invoices with exact truth (labels under values, odd date formats, near-identical numbers, totals at the top, deposits, credits printed positive); each fix has a small generated fixture in `tests/test_sweep4_layouts.py` (the corpus is not in the repo). Figures are the corpus's 50 digital invoices: fields right / invoices fully right.
+
+#### B-280 · A grid that prints each label under its value is read one row off · high
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, new `labels_under_values`)
+- **Symptom:** A header grid printing values with their small labels UNDER them ("5874088" over "Invoice Number", the next row's "5874082" over "PO #"): the invoice number was the next row's value (the PO, one digit off, or a business number "782311542 RT 0001"), and the invoice date, due date, PO and terms were missing. 0 of 8 such invoices fully right.
+- **Cause:** A label's value was looked for on its line, to its right, then below it, never above: the value below a label in such a grid is the next label's.
+- **Reproduce:** the grid of `test_a_grid_that_prints_each_label_under_its_value`; `analyze()`.
+- **Reproduced:** yes (`invoice_number 5874082`, invoice date, due date and PO missing)
+- **Fix:** A page whose bare labels mostly have a value of theirs just over them (closer than any under them) prints labels under values: a label's value is the line just over it (method `label-above`, not measured by the benchmark, so never verified on its own record), and a line with a label of its own under it is never read as the value of the label above it. Grids of labels over values are read as before.
+- **Test:** `tests/test_sweep4_layouts.py::test_a_grid_that_prints_each_label_under_its_value`, `::test_a_grid_of_labels_over_values_is_still_read_below`
+- **Hard corpus (digital):** 93.9% / 80.0% → 99.4% / 96.0%; labels_under 66.7% / 0% → 100% / 100%; no silent error 90% → 100%.
+- **Lesson:** Don't assume a label reads left to right and top to bottom: which side of a value its label sits on is the page's convention, and the gaps show it.

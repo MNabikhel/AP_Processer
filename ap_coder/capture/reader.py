@@ -581,6 +581,75 @@ def _below(lines: list[Line], line: Line, label_box: Box) -> list[Line]:
     return sorted(out, key=lambda ln: ln.box.y0)
 
 
+def _aligned(a: Box, b: Box) -> bool:
+    """``b`` is in ``a``'s column: they overlap across, or their left edges or centres line up."""
+    overlap = min(a.x1, b.x1) - max(a.x0, b.x0)
+    return overlap > 0 or abs(b.x0 - a.x0) < 0.03 or abs(b.cx - a.cx) < 0.04
+
+
+LABEL_UNDER_GAP = 0.6  # a value printed over its label sits this close to it, in label heights
+
+
+def _over(lines: list[Line], line: Line, label_box: Box) -> Line | None:
+    """The line printed just over ``line`` in the label's column (within ``LABEL_UNDER_GAP`` of its height), if any."""
+    h = max(line.box.height, 0.008)
+    near = [
+        other
+        for other in lines
+        if other is not line
+        and other.box.page == line.box.page
+        and other.box.cy < line.box.cy
+        and -0.3 * h <= line.box.y0 - other.box.y1 <= LABEL_UNDER_GAP * h
+        and _aligned(label_box, other.box)
+    ]
+    return min(near, key=lambda o: abs(o.box.x0 - label_box.x0), default=None)
+
+
+def _a_label(line: Line) -> bool:
+    return bool(_label_hits(line) or _LABEL_SHAPE.search(plain(line.text).strip()))
+
+
+def _bare_hits(line: Line) -> list[_LabelHit]:
+    """The labels that are all of their line ("Invoice Number", "PO #:"): a grid's label, its value elsewhere."""
+    return [h for h in _label_hits(line) if h.start == 0 and not plain(line.text[h.end :]).strip(" :#.")]
+
+
+def labels_under_values(lines: list[Line]) -> bool:
+    """The page prints its header grid's labels UNDER their values ("5874088" over "Invoice Number", the next row's
+    "5874082" over "PO #" below it): most bare labels have a value of theirs just over them, closer than any value
+    under them. Then a label's value is the one over it, and the one under it is the next label's."""
+    under = over = 0
+    for line in lines:
+        for hit in _bare_hits(line)[:1]:
+            if hit.field in AMOUNT_FIELDS:
+                continue
+            lb = _label_box(hit)
+            up = _over(lines, line, lb)
+            up_gap = line.box.y0 - up.box.y1 if up and not _a_label(up) and _value_reading(
+                hit.field, up, 0, 1.0, "x") else None  # fmt: skip
+            down = next((o for o in _below(lines, line, lb)[:1] if _value_reading(hit.field, o, 0, 1.0, "x")), None)
+            down_gap = down.box.y0 - line.box.y1 if down else None
+            if up_gap is not None and (down_gap is None or up_gap < 0.6 * down_gap):
+                under += 1
+            elif down_gap is not None and (up_gap is None or down_gap < 0.6 * up_gap):
+                over += 1
+    return under >= 2 and under > over
+
+
+def _over_its_own_label(lines: list[Line], value: Line) -> bool:
+    """On a page that prints labels under their values: ``value`` has a label of its own just under it."""
+    h = max(value.box.height, 0.008)
+    return any(
+        other is not value
+        and other.box.page == value.box.page
+        and other.box.cy > value.box.cy
+        and -0.3 * h <= other.box.y0 - value.box.y1 <= LABEL_UNDER_GAP * h
+        and _aligned(value.box, other.box)
+        and _bare_hits(other)
+        for other in lines
+    )
+
+
 def _under_another_label(lines: list[Line], value: Line, label: Line) -> bool:
     """``value`` sits right under a label of its own (a header grid: a row of labels over a row of values), not
     ``label``: on a scan, where the rows are a little off, it can look level with the label on its left."""
@@ -646,9 +715,10 @@ def _after_another_label(line: Line, got: Reading) -> bool:
         h.field != got.field and h.end <= at for h in _label_hits(line)))  # fmt: skip
 
 
-def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
+def _labelled(field_hits: list[_LabelHit], lines: list[Line], under: bool = False) -> list[Reading]:
     """For each label: the value after it on the same line, else just right of it, else just below it
-    (header grids print a row of labels over a row of values)."""
+    (header grids print a row of labels over a row of values). ``under``: the page prints its labels under their
+    values (``labels_under_values``): the value just over the label, before any below it."""
     out: list[Reading] = []
     for hit in field_hits:
         field, line = hit.field, hit.line
@@ -677,11 +747,18 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
             if got:
                 got.score *= 1.0 - min(other.box.x0 - line.box.x1, 0.4) * 0.5
                 break
+        if got is None and under and field not in AMOUNT_FIELDS:
+            # A grid that prints each label under its value: the value is the line just over the label.
+            up = _over(lines, line, _label_box(hit))
+            if up is not None and not _a_label(up):
+                got = _value_reading(field, up, 0, 0.85 * hit.strength, "label-above")
         if got is None:
             lb = _label_box(hit)
             for other in _below(lines, line, lb)[:3]:
                 if _own_label(other, field):
                     break
+                if under and _over_its_own_label(lines, other):
+                    break  # the value of the label printed under it, not this one's
                 got = _value_reading(field, other, 0, 0.85 * hit.strength, "label-below")
                 if got and _after_another_label(other, got):
                     got = None
@@ -1597,6 +1674,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     by_page: dict[int, list[Line]] = {}
     for ln in lines:
         by_page.setdefault(ln.box.page, []).append(ln)
+    under = {page for page, page_lines in by_page.items() if labels_under_values(page_lines)}
     hits: dict[str, list[_LabelHit]] = {}
     for ln in lines:
         in_table_head = None
@@ -1612,7 +1690,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         page_lines = by_page
         readings: list[Reading] = []
         for hit in fhits:
-            got = _labelled([hit], page_lines.get(hit.line.box.page, []))
+            got = _labelled([hit], page_lines.get(hit.line.box.page, []), hit.line.box.page in under)
             if field == "other_charges" and _DISCOUNT.match(plain(hit.label_text)):
                 for r in got:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
