@@ -2367,7 +2367,7 @@ Improvements made with these fixes:
 - **N-83** · AI and readers · `Store.learning_rows` (B-175) gives an old vendor's invoice a list of its own, so the suggestion index (one slot) is rebuilt when invoices of such vendors alternate in a batch (about 0.3 s at 50,000 lessons); a per-vendor index would avoid it, a bigger change than this fix. Fixed in Sweep 4 (B-219).
 - **N-84** · Document capture · The page reader's transcription is read by the same rule reader as the page (`capture/__init__.py` `_page_reader`, `transcript.py`), so a rule-parsing mistake (B-183, B-184, B-185 here) appears in both readings and fusion counts it as two independent readers agreeing (verified). Making the transcript an independent reader needs its own parsing or a fusion rule that discounts agreement on the same rule path; a design change, not a bug fix.
 - **N-85** · Document capture · A day/month order taken only from a real US supplier address (`read_fields`, B-183) still settles 03/04/2026 without the ambiguous mark, as docs/CAPTURE_DESIGN.md describes. Marking it ambiguous (or likely at best) would send every US invoice dated on day 1 to 12 to a person; a policy choice, left. B-183 removed the false addresses and the Canadian suppliers from that path.
-- **N-86** · Document capture · An invoice number in groups of three followed by more text on its line ("No de facture 123 456 Date ...") is still cut at the first space (B-185 joins it only when nothing follows); capping its confidence would need a new method name, which changes calibration keys. Left.
+- **N-86** · Document capture · An invoice number in groups of three followed by more text on its line ("No de facture 123 456 Date ...") is still cut at the first space (B-185 joins it only when nothing follows); capping its confidence would need a new method name, which changes calibration keys. Left. Fixed in Sweep 4 (B-220).
 - **N-87** · Web routes · B-192 keys a colleague's drafts by (name, address): a colleague whose computer gets a new address
 - **N-88** · Intake, email and command line · A photo over Pillow's ~179 MP limit is still refused (B-148 only words it truthfully). Reading it would mean raising `Image.MAX_IMAGE_PIXELS`, which is process-wide and shared by the reading threads, or decoding JPEGs at a reduced size (`draft`); either is a decision about memory on a laptop, not a bug fix.
 - **N-89** · Intake, email and command line · A .msg picture's Content-ID referenced only from an RTF body (no HTML stream) counts as inline only when Outlook marked it hidden: the compressed RTF is not decompressed to look for `cid:`.
@@ -2421,3 +2421,13 @@ The findings Sweep 3 left (N-77 to N-93) were looked at again with real-world us
 - **Fix:** `RowsCache` keeps the latest two lists (the shared one and the old vendor's), the most recent first; a list seen again is found by the same row objects or by what they say, as before. The second index is the only memory added (about 40 MB at 50,000 lessons).
 - **Test:** `tests/test_sweep4.py::test_invoices_of_an_old_vendor_and_others_in_turn_share_the_suggestion_indexes`
 - **Lesson:** When a fix gives some callers their own variant of a shared input, give the cache in front of it room for that variant.
+
+#### B-220 · An invoice number in groups of three was still cut when more text followed it on its line · low-medium
+- **Where:** `ap_coder/capture/reader.py:331` (`_id_from`, `_DIGIT_GROUPS`)
+- **Symptom:** "No de facture 123 456 Page 1 de 1" (or "... 123 456 Date ...", common when a scan merges the columns of a French-Canadian invoice header) was read as invoice number 123, verified.
+- **Cause:** B-185 joined the digit groups only when nothing followed them on the line.
+- **Reproduce:** `_id_from(" 123 456 Date 2026-09-14", 0)`; the Acme test invoice with "No de facture 123 456 Page 1 de 1" on one line.
+- **Reproduced:** yes (`'123'`)
+- **Fix:** the groups of three are joined when the line ends after them or a word follows them; another figure after them ("123 456 2026-09-14") or a group that is not three digits still leaves the first number alone, as before. The method name and confidence are unchanged (no calibration key moves): the join is as sure as B-185's.
+- **Test:** `tests/test_sweep4.py::test_an_invoice_number_in_digit_groups_with_more_text_after_it_is_read_whole`
+- **Lesson:** When a rule needs "nothing after it" to be safe, ask what may safely follow instead: a word is not part of a number.

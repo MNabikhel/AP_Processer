@@ -100,3 +100,19 @@ def test_invoices_of_an_old_vendor_and_others_in_turn_share_the_suggestion_index
                    "Zenith Freight 28", "Northwind IT Solutions Inc."]:  # fmt: skip
         suggest.suggest_gl("Dell Latitude laptop", vendor, store.learning_rows(vendor), reference)
     assert len(builds) == 2  # Northwind's own list, and the shared one
+
+
+def test_an_invoice_number_in_digit_groups_with_more_text_after_it_is_read_whole(tmp_path):
+    """B-220: "No de facture 123 456 Page 1 de 1": the number is 123 456, not 123 (B-185 joined the groups only
+    when nothing followed them on the line)."""
+    from ap_coder.capture.reader import _id_from
+    from tests.test_capture_edge_cases import _pdf
+    from tests.test_sweep3_capture import _NO_NUMBER, _read
+
+    assert _id_from(" 123 456 Date 2026-09-14", 0)[0] == "123 456"
+    assert _id_from(": 12 345 678 Réf. client A-77", 0)[0] == "12 345 678"
+    # Another figure after it, or a group that is not three digits: still the first number alone.
+    assert [_id_from(t, 0)[0] for t in (" 123 456 2026-09-14", " 123 45 Date", " 123 4567 Date")] == ["123"] * 3
+    lines = _NO_NUMBER + [(380, 120, "No de facture 123 456 Page 1 de 1")]
+    fr = _read(_pdf(tmp_path, lines)).fields["invoice_number"]
+    assert fr.value.replace(" ", "") == "123456", fr
