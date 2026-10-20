@@ -2483,3 +2483,33 @@ the lines adding up, and how alike the descriptions read.
 - **Fix:** rows read by their amounts are none when the page prints another amount right of a row's last one in the box: the box cut the table, and its last column is not theirs.
 - **Test:** `tests/test_line_items_sweep4.py::test_rows_read_by_their_amounts_in_a_table_found_cut_short_are_no_lines`
 - **Lesson:** A proof is only as good as what it is checked against: amounts that add up to *some* printed figure need to be the right column first.
+
+#### B-350 · A balance brought forward whose label OCR lost cut off the rest of a long table · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_line_items`)
+- **Symptom:** on two scanned three-page tables, the lines of page 3 were missing (58 lines read as 52; 69 as 21) once a row with no words printing the sum of the rows above ended the lines (B-343); before that rule, the same row came back as a line of 38,547.58 with no description.
+- **Cause:** at the top of the next page the "Balance brought forward" row had lost its label to OCR (the words on a tilted line of their own): a row with no words printing the lines' sum, which B-343 took for the summary under the table and ended the lines at.
+- **Reproduce:** two lines, a row "1,635.55" with no words, then a third line.
+- **Reproduced:** yes (the third line dropped).
+- **Fix:** such a row is dropped, not taken as the end of the lines; the tax's and total's rows that follow it ("GST (5%)") are no lines either. Hard corpus: those two tables 52 → 58 of 58 and 21 → 68 of 69 lines right.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_summary_row_with_no_words_under_the_lines_is_no_line`
+- **Lesson:** "This row sums the lines" says what the row is, not where the table ends: drop the row, let the labels end the table.
+
+#### B-351 · "Montant HT", "Remise totale" and "TVA" under the lines were read as three more lines · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_line_items`, `_TAX_ROW`)
+- **Symptom:** a French invoice of 5 lines came back with 8: "Montant HT 21 242,65", "Remise totale 1 021,06", "TVA 4 248,53"; a scanned Indian invoice had two lines of 0.00 with no words.
+- **Cause:** the table ends at a subtotal label the reader knows; "Montant HT" (amount before tax) is not one of them, and a row with no words and no amount was kept as a line.
+- **Reproduce:** two lines, then "Montant HT 1,635.55", "Remise totale 81.78", "TVA 310.75" in the amount column; a row "0.00" with no words.
+- **Reproduced:** yes.
+- **Fix:** a row with no quantity that names a total in any wording (HT, TTC, total, Summe, netto …) and prints the sum of two or more lines above it ends the lines; a row with no words, no quantity and no amount is no line. Real corpus: wrong lines on those two invoices 5 → 0.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_subtotal_row_under_a_label_the_reader_doesnt_know_ends_the_lines`
+- **Lesson:** The sum is the label: a row that prints the lines' sum and calls itself a total of any kind is the subtotal, whatever the wording.
+
+#### B-352 · An amount OCR ran together with the VAT rate beside it was read as the rate · medium
+- **Where:** `ap_coder/capture/reader.py` (`_heading_cells`, `_under`, `_read_line_items`)
+- **Symptom:** a UK invoice's lines of 100.00 and 50.00 came back as 20.00 and 20.00 (the VAT rate), with the bank details as a third line.
+- **Cause:** OCR ran the headings "Amount VAT" and each row's "100.00 20.00" into one segment; "VAT" was taken as more words of the amount's heading (whose box then covered both columns), and of the amounts in a cell the last one was taken.
+- **Reproduce:** headings "Description | Qty | Amount VAT", rows "Wood Pallet 1 100.00 20.00" and "Steel rods 2 50.00 20.00".
+- **Reproduced:** yes (20.00 and 20.00).
+- **Fix:** a tax's heading word after a heading is a column of its own even when that heading is the segment's only other one; of two or more amounts printed as money in one cell reaching past the heading, the one nearest the heading's middle is the amount. Real corpus: that invoice 0 → 2 of 2 lines right, 4 wrong lines → 0.
+- **Test:** `tests/test_line_items_sweep4.py::test_an_amount_run_together_with_the_vat_rate_beside_it_is_read_under_its_heading`
+- **Lesson:** OCR joins neighbours; when a cell holds two amounts, the heading's position says which one is the column's.

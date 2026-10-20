@@ -565,6 +565,20 @@ Camelot (CloseDesk's other table reader) is not used: it installs from wheels fo
 macOS, but it needs `opencv-python-headless`, which can't sit beside the `opencv-python` the OCR engines need (both
 are the `cv2` module), and adds about 45 MB a platform to the bundle.
 
+**Lines with no headings to go by prove themselves** (D-40, sweep 4). A table found whose headings can't be read is
+read by its amount column (`reader._headerless_rows`) only when the rows add up: to a row under them printing their sum
+(whatever its wording, "Positionssumme", "Summe netto": the rows end there), to the subtotal or the total less the
+taxes, or to an amount printed elsewhere on the invoice; rows naming a tax or a total in any language are no lines,
+and a box that stops short of the rows' last amount on the page is not read at all. A receipt (no headings, no table:
+"BATH TOWEL 002215445066 $7.97J") is read by `reader.listed_items` when nothing else adds up: the amounts in the column
+right above the subtotal, read upward until they add up to it exactly. A summary of charges (Canada Post: "Subtotal |
+GST | HST | PST/QST | Total") gives each service at its amount before tax (`reader._charges_summary`), checked
+against the subtotal under its column. Also: "Net price", "Net worth" and "Extension" are headings, a tax's heading
+run into the amount's is another column, a row with no words printing the lines' sum ends them, page subtotals and
+balances brought forward are no lines, a description wrapped under its row is read whole, and a discount printed
+without its minus is taken off when that makes the lines add up. On 128 real invoices and receipts the line count
+came out exactly right on 64 (was 40) and wrong lines fell from 234 to 12.
+
 **In tandem with OvisOCR2** (`capture/line_items.py`). Once OvisOCR2 has read the invoice, its table is compared row
 by row with the page's readings: the same amount, the same quantity when both read one, and descriptions at least
 60% alike (letters, or one's words all in the other: OCR runs words together, a code may be in one only). The first

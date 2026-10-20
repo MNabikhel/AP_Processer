@@ -1116,6 +1116,7 @@ def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
         return whole
     cells: list[tuple[str, int, int]] = []  # (heading, first token, last token + 1); "" another column's heading
     extra = 0  # words of the last heading that are no heading themselves, not counting its other language's
+    taxed = False  # a tax's column set close beside a heading ("Amount VAT")
     noise = 0  # such words, and headings naming a column already named, in the whole segment
     i = 0
     while i < len(words):
@@ -1130,6 +1131,7 @@ def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
                 best = (heading, m.end())  # the longest heading here: "Unit Price", not "Unit"
         if best is None and cells and not joined and _TAX_HEAD.match(words[i]):
             cells.append(("", i, i + 1))  # a tax's column ("Net worth VAT[%]"): another column, without a name
+            taxed = True
             extra = 0
             i += 1
             continue
@@ -1153,7 +1155,7 @@ def _heading_cells(line: Line, taken: dict[str, Box]) -> list[tuple[str, Box]]:
             noise += seen
         i += n
     columns = sum(1 for c in cells if c[0])
-    if columns < 2 or noise > columns:  # (more words that are no heading than headings: a sentence)
+    if (columns < 2 and not (columns and taxed)) or noise > columns:  # (more words that are no heading: a sentence)
         return whole
     out = []
     for heading, a, b in cells:
@@ -1312,7 +1314,7 @@ AMOUNT_COLUMN = 0.04  # a row's amount ends this close to the amount column's ri
 # A tax's or a total's row in a table read without its headings, in any wording ("Umsatzsteuer 19 %", "Steuerbasisbetrag
 # USt. 7%", "GST 5%", "Positionssumme", "Rechnungssumme netto", "Total TTC"): no line.
 _TAX_ROW = re.compile(r"\b(?:tax(?:es)?|gst|hst|pst|qst|tps|tvq|tvh|rst|vat|tva|ust|mwst|iva|btw|ppn)\b|"
-                      r"steuer|summe|gesamt|\btotal|totaal|\bsomme\b|\bnetto\b|\bbrutto\b|betrag\b|"
+                      r"steuer|summe|gesamt|\btotal|totaal|\bsomme\b|\bnetto\b|\bbrutto\b|betrag\b|\bh\.?t\.?$|\bttc\b|"
                       r"amount\s*due|balance\s*due")  # fmt: skip
 SUM_ROWS_ABOVE = 2  # a row is the sum of the rows above it when they are at least this many lines with an amount
 
@@ -1486,8 +1488,9 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
             for s, found in nums:
                 off = min(abs(s.box.x1 - cols["amount"].x1), abs(s.box.cx - amount_x))
                 if found and off < 0.08 and off <= near:
-                    amount, amt_seg, near = found[-1][0], s, off
-                    amt_token = s.text[found[-1][1] : found[-1][2]]
+                    pick = _under(s, found, cols["amount"])
+                    amount, amt_seg, near = pick[0], s, off
+                    amt_token = s.text[pick[1] : pick[2]]
             if amount is None:
                 if last is not None and _wrapped(segs, cols, last[1]):  # the rest of the description above
                     li = last[0]
@@ -1547,15 +1550,30 @@ def _read_line_items(layout: DocLayout, one_table: dict[int, list[DocLayout]] | 
         above = [li.amount for li in items[:-1] if li.amount is not None]
         if abs(round(sum(above), 2) - items[-1].amount) <= 0.011:
             items.pop()
-    # A row with no words that prints the sum of the rows above it among its figures is the table's summary ("10%
-    # 44 364,64 4 436,46 48 801,10": the rate, the net sum, the tax, the gross): the lines end above it.
-    for k in range(1, len(items)):
-        above = round(sum(li.amount or 0.0 for li in items[:k]), 2)
+    # A row with no words that prints the sum of the lines above it among its figures is no line: the table's summary
+    # ("10% 44 364,64 4 436,46 48 801,10": the rate, the net sum, the tax, the gross), or a balance brought forward
+    # whose label OCR lost.
+    # The tax's and total's rows after such a sum ("GST (5%)") are no lines either.
+    kept: list[LineReading] = []
+    summed = False
+    for li in items:
+        above = round(sum(k.amount or 0.0 for k in kept), 2)
         # (under one line, its own amount printed again is not enough: a figure beside it must print the sum)
-        figures = (items[k].quantity, items[k].unit_price, *([items[k].amount] if k >= 2 else []))
-        if not items[k].description.strip() and any(v is not None and abs(v - above) <= 0.011 for v in figures):
+        figures = (li.quantity, li.unit_price, *([li.amount] if len(kept) >= 2 else []))
+        if kept and not li.description.strip() and any(v is not None and abs(v - above) <= 0.011 for v in figures):
+            summed = True
+        elif not (summed and li.quantity is None and _TAX_ROW.search(plain(li.description))):
+            kept.append(li)
+    items = kept
+    # A row naming a total in a wording the totals' labels don't know ("Montant HT", "Summe netto") that prints the sum
+    # of the lines above it is the subtotal: the lines end above it. A row with no words and nothing to pay is no line.
+    for k, li in enumerate(items):
+        lines = [x for x in items[:k] if x.amount]
+        if (len(lines) >= 2 and li.quantity is None and li.amount is not None and _TAX_ROW.search(plain(li.description))
+                and abs(round(sum(x.amount for x in lines), 2) - li.amount) <= 0.011):  # fmt: skip
             items = items[:k]
             break
+    items = [li for li in items if li.amount or li.description.strip() or li.quantity is not None]
     # A "#" column read into the description: "1 Observability…", "2 Premium…". Only when every row starts
     # with its own number, so "6 Dell monitors" on its own is left alone.
     numbered = [re.match(rf"^{i}\s+(?=\S)", li.description) for i, li in enumerate(items, 1)]
@@ -1605,6 +1623,20 @@ def _charges_summary(page: PageLayout) -> list[LineReading]:
             items.append(LineReading(words, None, None, amount, [box] if box else [], 0.8))
         return []
     return []
+
+
+def _under(seg: Line, found: list[tuple[float, int, int]], head: Box) -> tuple[float, int, int]:
+    """Of the amounts in one cell, the one under the heading: the last, unless OCR ran two columns' amounts together
+    ("100.00 20.00": the amount and the VAT rate beside it) and another sits nearer the heading's middle."""
+    if (len(found) < 2 or seg.box.x1 <= head.x1 + 0.01
+            or not all(_printed_as_money(seg.text[a:b]) for _v, a, b in found)):  # fmt: skip
+        return found[-1]  # ("2 500.00" is one amount, not 2 and 500.00)
+
+    def middle(f: tuple[float, int, int]) -> float:
+        box = union_all([w.box for w in _span_words(seg, f[1], f[2])])
+        return box.cx if box is not None else seg.box.cx
+
+    return min(found, key=lambda f: abs(middle(f) - head.cx))
 
 
 WRAP_GAP = 1.2  # a description's next line starts at most this many text heights under the line above it

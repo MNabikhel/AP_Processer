@@ -185,6 +185,17 @@ def test_a_summary_row_with_no_words_under_the_lines_is_no_line():
                    ("10%", 0.50, 0.53, 0.31), ("1,635.55", 0.62, 0.70, 0.31), ("163.56", 0.74, 0.80, 0.31),
                    ("1,799.11", 0.84, 0.90, 0.31))  # fmt: skip
     assert [a for *_r, a in _read(words)] == [1355.05, 280.5]
+    # A balance brought forward whose label OCR lost, at the top of the next page's rows: dropped, the lines after it
+    # kept.
+    words = _words(*HEADINGS, *_row(0.24, "Marble coffee table", "5", "271.01", "1,355.05"),
+                   *_row(0.27, "Black marble top", "1", "280.50", "280.50"), ("1,635.55", 0.82, 0.90, 0.30),
+                   *_row(0.33, "Copy paper", "2", "10.00", "20.00"))  # fmt: skip
+    assert [a for *_r, a in _read(words)] == [1355.05, 280.5, 20.0]
+    # The subtotal's row whose label OCR lost, then the tax: neither is a line.
+    words = _words(*HEADINGS, *_row(0.24, "Marble coffee table", "5", "271.01", "1,355.05"),
+                   *_row(0.27, "Black marble top", "1", "280.50", "280.50"), ("1,635.55", 0.82, 0.90, 0.30),
+                   ("GST (5%)", 0.10, 0.17, 0.33), ("81.78", 0.86, 0.90, 0.33))  # fmt: skip
+    assert [a for *_r, a in _read(words)] == [1355.05, 280.5]
 
 
 def test_a_scan_tilted_five_degrees_is_straightened():
@@ -265,3 +276,28 @@ def test_rows_read_by_their_amounts_in_a_table_found_cut_short_are_no_lines():
              ("176,54", 0.87, 0.91, 0.41),
              ("12,01", 0.55, 0.59, 0.46)]  # fmt: skip
     assert _table_rows(cells, Box(1, 0.08, 0.37, 0.62, 0.43)) == []
+
+
+def test_a_subtotal_row_under_a_label_the_reader_doesnt_know_ends_the_lines():
+    """ "Montant HT 1 635,55" under the lines (a French subtotal's wording no totals' label knows), then the discount
+    and the tax: the row that names a total and prints the lines' sum ends them. A row with no words and nothing to
+    pay ("0.00") is no line."""
+    words = _words(*HEADINGS, *_row(0.24, "Marble coffee table", "5", "271.01", "1,355.05"),
+                   *_row(0.27, "Black marble top", "1", "280.50", "280.50"),
+                   ("Montant HT", 0.10, 0.20, 0.30), ("1,635.55", 0.84, 0.90, 0.30),
+                   ("Remise totale", 0.10, 0.22, 0.33), ("81.78", 0.86, 0.90, 0.33),
+                   ("TVA", 0.10, 0.13, 0.36), ("310.75", 0.85, 0.90, 0.36))  # fmt: skip
+    assert [a for *_r, a in _read(words)] == [1355.05, 280.5]
+    zero = _words(*HEADINGS, *_row(0.24, "Consulting", "2", "50.00", "100.00"), ("0.00", 0.86, 0.90, 0.27))
+    assert [a for *_r, a in _read(zero)] == [100.0]
+
+
+def test_an_amount_run_together_with_the_vat_rate_beside_it_is_read_under_its_heading():
+    """OCR ran "Amount VAT" (two headings) and each row's "100.00 20.00" (the amount and the VAT rate) together: the
+    amount is the one under "Amount", not the rate."""
+    words = _words(
+        ("Description", 0.36, 0.42, 0.39), ("Qty", 0.52, 0.55, 0.39), ("Amount VAT", 0.606, 0.74, 0.39),
+        ("Wood Pallet", 0.28, 0.37, 0.44), ("1", 0.54, 0.55, 0.44), ("100.00 20.00", 0.618, 0.74, 0.44),
+        ("Steel rods", 0.28, 0.36, 0.46), ("2", 0.54, 0.55, 0.46), ("50.00 20.00", 0.619, 0.74, 0.46),
+    )  # fmt: skip
+    assert [a for *_r, a in _read(words)] == [100.0, 50.0]
