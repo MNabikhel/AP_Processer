@@ -58,8 +58,14 @@
     </section>
     {% endif %}
 
+    {% include "_next_step.html" %}
     <section class="card">
       <h4>Upload invoices</h4>
+      {% if first_invoices %}
+      <div class="flash info" role="status"><span class="ms" aria-hidden="true">flag</span>
+        <div><b>Start here:</b> choose one invoice or a few, then click <b>Process</b>. They wait for you in the review
+          queue. No invoices at hand? <b>Load demo invoices</b> (on this page) gives you ten to practise on.</div></div>
+      {% endif %}
       <p class="muted">Each file is saved to the invoices folder on this computer, then read, coded and checked. A photo or
         a scanned picture is made into a PDF first; the picture is kept in the <code>originals</code> folder there.</p>
       <form id="upload-form" method="post" action="/process/upload" enctype="multipart/form-data" data-upload>
@@ -125,12 +131,7 @@
         <div><h4>Setup</h4><p class="muted">What AP Coder needs before it reads invoices, then your first ones.</p></div>
         {{ ui.pill(steps_done ~ " of " ~ steps_needed ~ " done", "ok" if steps_done == steps_needed else "gray") }}
       </div>
-      <div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail) }}{% endfor %}</div>
-      <div class="row">
-        {% if steps[2][0] != "ok" or steps[3][0] != "ok" %}<a class="link" href="/accounts">Finish setup <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
-        {% if steps[4][0] != "ok" %}<a class="link" href="/settings#reading">Settings → Reading <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
-        {% if steps[5][0] != "ok" %}<a class="link" href="/settings/review">Your name <span class="ms" aria-hidden="true">arrow_forward</span></a>{% endif %}
-      </div>
+      <div>{% for state, label, detail in steps %}{{ ui.step(state, label, detail, step_links.get(label, "") if label != "Process your first invoices" else "") }}{% endfor %}</div>
     </section>
 
     {% if recent %}

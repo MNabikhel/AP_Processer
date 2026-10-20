@@ -2482,3 +2482,59 @@ The 17 findings Sweep 3 left (N-77 to N-93) were looked at again with real-world
 - **N-91** · An invoice that failed (for a missing module or anything else) is not read again by `watch` on its own: it shows as failed in the review queue with **Retry**, and an automatic retry rule would fail it again at every check while the install is broken. Since B-167 nothing fails that way after an update.
 - **N-92** · An older `watch` run by another computer account can't be ended by this one (Windows lets only that account or an administrator end it); the start already says to close its window or end its task in Task Scheduler.
 - **N-93** · Two accounts sharing one folder on macOS/Linux: the file permissions are the system's; sharing one folder between accounts is documented for Windows only.
+
+### First launch
+
+A fresh copy of the code (`git archive`), its own home folder and `AP_ALLOW_INTERNET=0`, started with
+`scripts/launch.py` as a double-click does, then the first hour in Chromium: welcome, name, GL accounts, the first
+invoices, the first approval, the first export and Help, read as a pilot tester with no developer knowledge would.
+
+#### B-240 · The AP Coder window filled with technical lines once a scan was read · medium
+- **Where:** `ap_coder/ops/cli.py:745` (`main`: `logging.basicConfig(level=WARNING)`)
+- **Symptom:** the black window the tester keeps open printed `2026-10-20 03:31:57,765 INFO ap_coder.ai.pipeline: local model could not suggest accounts (The local model isn't answering at http://127.0.0.1:1234/v1 …); left for AP` for every invoice processed, and `INFO ap_coder.ai.page_worker: AI reviewer: invoice 1 postponed (0 round(s), 0 s)` every minute, though `serve` runs without `-v`.
+- **Cause:** importing rapidocr (the OCR engine) sets the root logger to INFO; the window's handler had no level of its own, so the root logger's level was the only filter.
+- **Reproduce:** `logging.basicConfig(level=logging.WARNING)`, then `import rapidocr`: `logging.getLogger().level` is 20; or start AP Coder and process an invoice without LM Studio.
+- **Reproduced:** yes (the lines above in the launcher's window; `before 30 … after rapidocr 20`)
+- **Fix:** `configure_logging()` sets the level on the window's own handler as well, so a library changing the root logger no longer changes what the window shows; `-v` still shows everything.
+- **Test:** `tests/test_sweep4_first_launch.py::test_the_window_shows_warnings_only_even_after_the_ocr_engine_turns_the_root_logger_to_info`
+- **Lesson:** Don't let the root logger's level be the only filter of what a person sees: a library may change it.
+
+#### B-241 · A page that failed showed the bare text "Internal Server Error" · medium
+- **Where:** `ap_coder/web/app.py:168` (only `HTTPException` had a handler)
+- **Symptom:** any error a page did not expect (a locked database, a damaged file) answered with a white page reading `Internal Server Error`: no menu, no way back, nothing on what to do; a form sent from a page said only "That didn't work (500)."; the window printed a traceback.
+- **Cause:** the dashboard drew its own page for "not found" only; everything else fell through to Starlette's default answer.
+- **Reproduce:** a route that raises `RuntimeError("database is locked")`; GET it with `Accept: text/html`.
+- **Reproduced:** yes (`500 text/plain; charset=utf-8 'Internal Server Error'`)
+- **Fix:** `web/errors.py`: the dashboard's own error page, with the menu, "What to do: go back and try again; if it happens again, Help → Report a problem", and "Details for IT" folded away (the error in one line, and where the full details are). The traceback goes to `~/.ap_coder/logs/dashboard-errors.log`, the window says one line. A form gets `{"ok": false, "error": …}` with the same advice; when the page frame itself can't be drawn (it reads the database), a plain page says the same.
+- **Test:** `tests/test_sweep4_first_launch.py::test_a_page_that_fails_says_what_to_do_in_the_dashboard_with_the_details_folded_away`, `…::test_a_page_that_fails_still_answers_when_the_page_frame_itself_fails`
+- **Lesson:** Don't leave the unexpected error to the framework's default: it is the one page a person most needs help on.
+
+#### B-242 · A second copy that could not set itself up stopped the AP Coder that worked · medium
+- **Where:** `scripts/launch.py:1840` (`run`: `running.take_over` before `ensure_packages`)
+- **Symptom:** with AP Coder open, a second folder double-clicked by mistake (GitHub's ZIP, or a bundle unzipped without its `wheelhouse` folder) printed "AP Coder 0.2.0 from … is still running (port 8501): stopping it, so this version takes over. Stopped it.", then "✗ Missing packages: openpyxl, openai, pandas, … What to do: Unzip the full offline bundle …": the tester was left with no AP Coder at all.
+- **Cause:** the start makes way for itself (stops an older or other folder's AP Coder) before it installs packages; when nothing can be installed (offline, no wheelhouse) it can only fail after that.
+- **Reproduce:** start AP Coder from one folder; extract the code alone into another folder and double-click its launcher with `AP_ALLOW_INTERNET=0`.
+- **Reproduced:** yes (the lines above, in the walk-through; the first dashboard stopped answering)
+- **Fix:** `cannot_set_up()` asks first whether the core packages are missing with nowhere to install them from; if so the start stops there, before anything running is touched, and says "The AP Coder already open was left running." when one is open. A copy that can set itself up takes over as before.
+- **Test:** `tests/test_sweep4_first_launch.py::test_a_copy_that_cannot_set_itself_up_leaves_the_running_ap_coder_alone`, `…::test_a_copy_that_can_set_itself_up_still_takes_over`
+- **Lesson:** Don't stop what works before knowing the replacement can start.
+
+#### B-243 · Help sent emails "on Process invoices", a page the menu doesn't have · low
+- **Where:** `ap_coder/ops/help.py:496` (`FAQ`, "Our invoices arrive by email…")
+- **Symptom:** Help → Questions said the emails that need a person wait "under Emails that need a person on Process invoices"; the menu and the page say **Import invoices**. The same answer sent IT to `docs/MAILBOX_SETUP.md`, a path in the code folder.
+- **Cause:** the page was renamed and the answer kept the old name (as B-203's guide did with a button).
+- **Reproduce:** open /help, Questions, the email question; compare with the menu.
+- **Reproduced:** yes (`… waits under Emails that need a person on Process invoices.`)
+- **Fix:** the answer says "on Import invoices", and "the mailbox setup guide that comes with AP Coder" instead of the path.
+- **Test:** `tests/test_sweep4_first_launch.py::test_help_names_the_pages_by_the_names_the_menu_gives_them`
+- **Lesson:** Don't rename a page without searching Help's own texts for its old name, not only the guides.
+
+#### B-244 · A dashboard that stopped on its own left "The message above says what to do" with no message · medium
+- **Where:** `scripts/launch.py:1804` (`start_dashboard`: returns the server's exit code and says nothing)
+- **Symptom:** when the dashboard stopped on its own (it crashed, or something ended it), the window printed nothing more and closed with code 241 (Linux) or, on Windows, `APProcessor.bat` said "AP Coder stopped. The message above says what to do." under the dashboard's last normal line: a dead end.
+- **Cause:** a server exit was treated as the normal end of a start; only setup failures said what to do.
+- **Reproduce:** start AP Coder, then end its `python -m ap_coder serve` process (in the walk-through: `pkill -f "ap_coder serve"`).
+- **Reproduced:** yes (the window's last lines were "AP Coder is running at http://127.0.0.1:8501 …" then `[exited with code 241]`)
+- **Fix:** a server that ends with an error code adds "✗ AP Coder stopped on its own (code N); the lines above may say why. What to do: double-click AP Coder again. If it happens again, use Help → Report a problem, and send IT the log …". A stop asked for (an update taking over, Ctrl+C) says nothing, as before.
+- **Test:** `tests/test_sweep4_first_launch.py::test_a_dashboard_that_stops_on_its_own_says_so_and_what_to_do`
+- **Lesson:** Don't let a promise ("the message above says what to do") depend on every path having printed one.

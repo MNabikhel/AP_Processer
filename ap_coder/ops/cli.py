@@ -741,17 +741,27 @@ def cmd_schema(args: argparse.Namespace) -> int:
     return 0
 
 
+def configure_logging(verbose: bool, stream: Any = None) -> None:
+    """What the window shows: warnings and errors (everything with ``-v``). The level is set on the window's own
+    handler too, not only on the root logger: importing the OCR engine (rapidocr) sets the root logger to INFO, and
+    the pilot tester's window then filled with technical lines (B-240)."""
+    level = logging.INFO if verbose else logging.WARNING
+    root = logging.getLogger()
+    before = list(root.handlers)
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=stream)
+    for handler in root.handlers:
+        if handler not in before:
+            handler.setLevel(level)
+    # Azure SDK HTTP logging is extremely noisy at INFO.
+    logging.getLogger("azure").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):  # a Windows console or log file (cp1252) can't show every character of a
         sys.stdout.reconfigure(errors="replace")  # file name or vendor: "?", never a crash (stderr escapes them)
-    logging.basicConfig(
-        level=logging.INFO if args.verbose else logging.WARNING,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    # Azure SDK HTTP logging is extremely noisy at INFO.
-    logging.getLogger("azure").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    configure_logging(args.verbose)
 
     settings = Settings.from_env(args.env_file)
     commands = {

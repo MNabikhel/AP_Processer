@@ -121,7 +121,7 @@ Then it checks itself and prints a short summary before the browser opens:
 
 ```
 AP Coder readiness:
-  [OK] Python 3.12.4 (.venv)
+  [OK] Python 3.12.4
   [OK] Packages: all 15 in place
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder
@@ -137,8 +137,9 @@ first start and after an update; later starts show its last result and take a fe
 the summary says so plainly and AP Coder still starts. LM Studio is never installed by AP Coder: the
 summary only says whether it is running, which chat model is loaded, and whether OvisOCR2 was found and
 passed its self-test. Once it has: *[OK] Page reader: ath-maas_ovisocr2 found, self-test passed (reads every
-page of every invoice)*. Without LM Studio: *[!!] Page reader: OvisOCR2 isn't running in LM Studio: invoices
-are read by OCR only and wait for a person*.
+page of every invoice)*. Without LM Studio, one line says so and what to do: *[!!] LM Studio isn't running:
+invoices are read by OCR only and wait for a person. To use it: open LM Studio, Developer tab → Start server, then
+start AP Coder again*.
 
 ### Set up LM Studio: start the server, nothing to choose
 

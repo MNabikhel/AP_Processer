@@ -492,9 +492,9 @@ FAQ: list[tuple[str, str]] = [
         "No: save the email itself into the invoices folder (classic Outlook: drag it there, a .msg; Outlook on the "
         "web or new Outlook: Download, a .eml), or upload it on Import invoices. Each email is sorted: invoices "
         "and credit notes go to the review queue, statements to Statements, and anything else (a reminder, a "
-        "quote, a bank-detail change, flagged as possible fraud) waits under Emails that need a person on Process "
-        "invoices. Signature logos are left out. IT can have the AP mailbox save every email there: "
-        "docs/MAILBOX_SETUP.md.",
+        "quote, a bank-detail change, flagged as possible fraud) waits under Emails that need a person on Import "
+        "invoices. Signature logos are left out. IT can have the AP mailbox save every email there (the mailbox "
+        "setup guide that comes with AP Coder says how).",
     ),
     (
         "Can I attach the approved invoice to the ERP entry?",

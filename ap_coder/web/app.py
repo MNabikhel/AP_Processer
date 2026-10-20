@@ -32,6 +32,7 @@ from ap_coder.core import paths
 from ap_coder.core.config import Settings
 from ap_coder.core.store import Store, default_db_path
 from ap_coder.web import core
+from ap_coder.web.errors import FriendlyErrors
 from ap_coder.web.identity import Identity, is_this_computer
 from ap_coder.web.jobs import Jobs
 from ap_coder.web.pages import MORE_MODULES, PAGES, Page
@@ -110,6 +111,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, *, 
     app.state.server = None  # the uvicorn.Server, set by server.serve
     # A colleague on the office network says who they are once (web/identity.py); LocalOnly, added last, runs first.
     app.state.identity_secret = secrets.token_bytes(32)  # made at each start: a cookie from another start is refused
+    app.add_middleware(FriendlyErrors)  # innermost: an error no page expected is drawn as a page, with the menu
     app.add_middleware(Identity, secret=app.state.identity_secret, address=address)
     app.add_middleware(LocalOnly, address=address)
     app.mount("/static", CheckedStaticFiles(directory=str(core.STATIC_DIR)), name="static")
