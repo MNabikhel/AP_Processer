@@ -39,6 +39,7 @@ from .types import (
     FIELDS,
     LIKELY,
     MISSING,
+    RIVAL_NAME,
     VERIFIED,
     FieldResult,
     LineReading,
@@ -495,6 +496,13 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # which tax it is does not follow from that. A person says.
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("printed under a PST/QST label: which of the two it is, the page does not say")
+        if any(RIVAL_NAME in r.method for _, r in g.readings) and "template" not in sources and not n_conf:
+            conf = min(conf, SINGLE_READER_CAP)
+            reasons.append(
+                f"another name is printed at the top as well: {all_groups[field][1].value}"
+                if len(all_groups[field]) > 1
+                else "another name is printed at the top as well"
+            )
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
         # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
         unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []

@@ -43,6 +43,9 @@ BILL_TO_READING = "+bill-to"
 # Added to an amount read under a "PST/QST" label the page does not settle (no QST or PST number of the supplier's):
 # which of the two taxes it is stays a person's call, however well it adds up.
 EITHER_TAX = "+pst-or-qst"
+# Added to a supplier's name read from the top of the page when another name there scored nearly as well (a store's
+# brand and its operator's legal name): never verified unless the vendor master confirms it.
+RIVAL_NAME = "+rival-name"
 STATUSES = (VERIFIED, LIKELY, CHECK, MISSING)
 
 

@@ -6,17 +6,18 @@ from pathlib import Path
 import pymupdf
 
 from ap_coder.capture import analyze, build_layout, read_fields
+from ap_coder.capture.confidence import fuse
 
 
-def _pdf(path: Path, cells: list[tuple[float, float, str]], pages: int = 1) -> Path:
-    """A digital PDF: each (x, y, text) cell set at that point (in points, letter size); cells with y > 792 go on the
-    next page."""
+def _pdf(path: Path, cells: list[tuple], pages: int = 1) -> Path:
+    """A digital PDF: each (x, y, text[, font size]) cell set at that point (in points, letter size); cells with
+    y > 792 go on the next page."""
     doc = pymupdf.open()
     for n in range(pages):
         page = doc.new_page(width=612, height=792)
-        for x, y, text in cells:
+        for x, y, text, *size in cells:
             if n * 792 <= y < (n + 1) * 792:
-                page.insert_text((x, y - n * 792), text, fontsize=9)
+                page.insert_text((x, y - n * 792), text, fontsize=size[0] if size else 9)
     doc.save(path)
     return path
 
@@ -103,3 +104,62 @@ def test_a_pst_or_qst_column_the_page_does_not_settle_is_never_verified(tmp_path
     (tax,) = [f[n] for n in ("pst_amount", "qst_amount") if f[n].status != "missing"]
     assert tax.value == 29.93 and tax.status != "verified"
     assert any("PST/QST" in r for r in tax.reasons)
+
+
+# --- the supplier's name ------------------------------------------------------------------------------------------
+
+
+def _vendor(path: Path, cells: list[tuple[float, float, str]], pages: int = 1) -> str | None:
+    cands = read_fields(build_layout(_pdf(path, cells, pages))).get("vendor_name") or []
+    return cands[0].value if cands else None
+
+
+def test_a_heading_or_title_is_not_the_supplier_but_the_name_with_its_registration_numbers_is(tmp_path):
+    # Canada Post (sweep 4): its name is in its logo, a picture; "Summary of charges" (French "Sommaire des frais"),
+    # the biggest text at the top, was read as the supplier. The page names it with its registration numbers.
+    cells = [(60, 200, "Summary of charges"), (420, 60, "Invoice number 7700012"), (420, 140, "Contact us"),
+             (60, 270, "Total amount of this invoice"), (240, 270, "$ 1,653.25"),
+             (60, 520, "Northern Parcel registration nos.: HST/GST 123456789; QST 1234567890")]  # fmt: skip
+    assert _vendor(tmp_path / "en.pdf", cells) == "Northern Parcel"
+    cells_fr = [(60, 200, "Sommaire des frais"), (420, 140, "Contactez-nous"),
+                (60, 520, "Numéros d'enregistrement de Colis Boréal TVH/TPS 123456789; TVQ 1234567890")]  # fmt: skip
+    assert _vendor(tmp_path / "fr.pdf", cells_fr) == "Colis Boréal"
+    titled = [(150, 60, "SAMPLE INVOICE WITH REQUIRED INFORMATION"), (60, 100, "From: Lions and Co."),
+              (60, 114, "4700 Keele St, Toronto ON M3J 1P3")]  # fmt: skip
+    assert _vendor(tmp_path / "title.pdf", titled) == "Lions and Co."
+
+
+def test_a_city_a_staff_line_or_a_placeholder_is_not_the_supplier(tmp_path):
+    # Receipts photographed in Canada (WildReceipt): "VAUGHAN ON", "Montreal,Quebec", "Server: Bhomik" were read as
+    # the supplier; a form's "Company Name" and "Registered Business Name" too.
+    for n, junk in enumerate(["VAUGHAN ON", "Montreal,Quebec", "MONTREAL", "Server: Bhomik", "Company Name",
+                              "Registered Business Name", "Table 23"]):  # fmt: skip
+        cells = [(60, 40, junk), (60, 60, "Maple Leaf Hardware"), (60, 74, "GST/HST 123456789RT0001")]
+        assert _vendor(tmp_path / f"r{n}.pdf", cells) == "Maple Leaf Hardware", junk
+
+
+def test_the_name_under_a_sellers_label_is_the_supplier(tmp_path):
+    # Factur-X / ZUGFeRD samples print "Verkäufer" (seller) or "Lieferant" over the supplier's name.
+    cells = [(60, 60, "Verkäufer"), (60, 74, "Lieferant GmbH"), (60, 88, "Lieferantenstraße 20"),
+             (320, 60, "Käufer"), (320, 74, "Kunden AG Mitte")]  # fmt: skip
+    assert _vendor(tmp_path / "de.pdf", cells) == "Lieferant GmbH"
+    # The sender's line over the envelope's window (Hetzner's invoice): the customer's address under it is no name.
+    sender = [(60, 100, "Nordlicht Hosting GmbH • Industriestr. 25 • 91710 Gunzenhausen"),
+              (60, 114, "Usegroup Inh. Jochen Stärk"), (60, 128, "Huswertstr. 14"),
+              (60, 142, "60435 Frankfurt")]  # fmt: skip
+    assert _vendor(tmp_path / "sender.pdf", sender) == "Nordlicht Hosting GmbH"
+
+
+def test_a_stores_brand_and_its_operators_name_leave_the_supplier_unverified(tmp_path):
+    # A Canadian Tire receipt (WildReceipt): "CANADIAN TIRE 235" at the top, "Gestions Daniel Picard Inc" (the store's
+    # operator) over its GST number. Two OCR reads agreed on the operator and verified it; the receipt's supplier is
+    # the store. Which one AP pays, the page does not say: a person (or the vendor master) does.
+    cells = [(150, 40, "MAPLE AUTO 112", 13), (150, 56, "11200 BOUL. CAVENDISH"), (150, 70, "Ville St-Laurent H4R 2J7"),
+             (60, 84, "Gestions Exemple Inc"), (60, 98, "TPS: 123456782RT0001 TVQ: 1234567890TQ0001"),
+             (60, 200, "SOUS-TOTAL"), (300, 200, "33.79"), (60, 214, "TPS 5%"), (300, 214, "1.69"),
+             (60, 228, "TVQ 9.975%"), (300, 228, "3.37"), (60, 242, "TOTAL"), (300, 242, "38.85")]  # fmt: skip
+    cands = read_fields(build_layout(_pdf(tmp_path / "store.pdf", cells)))
+    fields, _ = fuse({"rules": cands, "ocr2": cands}, [])  # two OCR engines reading the receipt alike
+    fr = fields["vendor_name"]
+    assert fr.value == "Gestions Exemple Inc" and fr.status != "verified"
+    assert any("another name" in r for r in fr.reasons)

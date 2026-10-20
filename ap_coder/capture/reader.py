@@ -35,6 +35,7 @@ from .types import (
     AMOUNT_FIELDS,
     BILL_TO_READING,
     EITHER_TAX,
+    RIVAL_NAME,
     Box,
     DocLayout,
     Line,
@@ -865,7 +866,7 @@ def _in_bill_to(layout: DocLayout, line: Line) -> bool:
 
 
 _COMPANY = re.compile(r"\b(inc|lnc|ltd|ltee|itee|limited|limitee|llc|llp|lp|l\.p|ulc|plc|corp|corporation|co\.|company|cie|enr|"
-                      r"s\.?e\.?n\.?c|products|"
+                      r"s\.?e\.?n\.?c|s\.e\.c|products|gmbh|ag|kg|b\.v|n\.v|s\.a\.?s?|sarl|eurl|sas|s\.r\.l|s\.p\.a|sdn\.?\s*bhd|bhd|pvt|pte|"
                       r"group|groupe|services|solutions|supply|supplies|industries|technologies|consulting|"
                       r"distribution|holdings|partners|associates|enterprises|entreprises)\b\.?", re.I)  # fmt: skip
 _NOT_NAME = re.compile(r"^(invoice|facture|credit\s*memo|debit\s*(?:note|memo)|avis\s*de\s*credit|(?:sales|tax|commercial|proforma|pro\s*forma)\s*invoice|please\s*pay|your\b|votre\b|credit\s*note|note\s*de\s*credit|statement|page\b|date|bill|"
@@ -938,11 +939,195 @@ _TITLE_PREFIX = re.compile(
 )
 
 
+# Lines at the top of a page that are no supplier's name, however they are printed (sweep 4, real invoices): a
+# document's title or a section's heading ("SAMPLE INVOICE WITH REQUIRED INFORMATION", "Summary of charges",
+# "Sommaire des frais"), a form's placeholder ("Company Name", "Address Line1"), a receipt's staff or table line
+# ("Server: Bhomik", "Table 23"), a field's label with its value ("Guest Name: Sanjay"), and a city or province
+# printed alone ("VAUGHAN ON", "Montreal,Quebec", "Toronto").
+_TITLE_WORDS = re.compile(
+    r"(?<![a-z])(?:invoices?|invoicing|facture|facturation|receipt|recu|statement|summary|sommaire|details|"
+    r"requirements|rechnung(?:en)?|gutschrift|factura|fattura|factuur|bon\s+de\s+commande|purchase\s+order|quotation|"
+    r"soumission|estimate|devis|charges|frais|contact(?:ez)?|renseignements|information|inquiries|questions|"
+    r"thank\s+you|merci|important|message|notice)(?![a-z])"
+)
+_PLACEHOLDER = re.compile(
+    r"^(?:(?:registered\s+)?(?:company|business|vendor|supplier|legal)\s+name|address(?:\s*line\s*\d*)?|"
+    r"postal\s+code|city|province|phone|logo|your\s+(?:company|logo|name))\b"
+)
+_STAFF = re.compile(
+    r"^(?:server|cashier|caissiere?|serveu(?:r|se)|table|tbl|guests?|host|clerk|operator|register|till|"
+    r"trans(?:action)?|chk|check\s*#|check\s*(?:in|out)|cover|station|terminal|store\s*#|order\s*#)(?![a-z])"
+)
+_FIELD_AND_VALUE = re.compile(r"^[a-z][a-z .'/#-]{1,24}:\s*\S")
+# A receipt's other words: "SEE BACK", "SALE", "PROMO****", "Welcome", "Customer copy"; a slogan ("always more for
+# less!"); a line item ("+MASHED POTATO").
+_RECEIPT_WORDS = re.compile(
+    r"^(?:see\s+back|sale|promo|welcome|bienvenue|thank|merci|customer\s+copy|copie\s+client|duplicate|reprint|"
+    r"approved|approuvee?|void|annule)(?![a-z])|!\s*$|^[+=]"
+)
+_PROVINCES = (
+    r"ontario|quebec|british\s+columbia|alberta|manitoba|saskatchewan|nova\s+scotia|new\s+brunswick|"
+    r"newfoundland(?:\s+and\s+labrador)?|prince\s+edward\s+island|yukon|nunavut|northwest\s+territories"
+)
+_CITIES = (
+    r"toronto|montreal|vancouver|calgary|edmonton|ottawa|winnipeg|quebec(?:\s+city)?|hamilton|kitchener|london|"
+    r"victoria|halifax|oshawa|windsor|saskatoon|regina|st\.?\s+john'?s|barrie|kelowna|abbotsford|sherbrooke|"
+    r"guelph|kingston|moncton|trois-rivieres|saguenay|levis|laval|gatineau|longueuil|mississauga|brampton|"
+    r"markham|vaughan|richmond(?:\s+hill)?|burnaby|surrey|oakville|burlington|scarborough|north\s+york|"
+    r"etobicoke|waterloo|whitby|ajax|pickering|thornhill|concord|woodbridge|brossard|terrebonne|"
+    r"repentigny|boucherville|dorval|pointe-claire|saint-laurent|anjou|lachine|verdun|montreal-nord"
+)
+_COUNTRIES = (
+    r"canada|usa|u\.s\.a\.?|united\s+states(?:\s+of\s+america)?|united\s+kingdom|deutschland|germany|france|"
+    r"espana|spain|italia|italy|nederland|netherlands|belgique|belgie|osterreich|schweiz|suisse|portugal|mexico"
+)
+_PLACE = re.compile(
+    rf"^(?:(?:{_CITIES})(?:\s*,?\s*(?:{_PROVINCES}|on|qc|bc|ab|mb|sk|ns|nb|nl|pe|yt|nt|nu|{_COUNTRIES}))?|"
+    rf"(?:[a-z.'-]+\s*){{1,3}},?\s*(?:{_PROVINCES}|on|qc|bc|ab|mb|sk|ns|nb|nl|pe|yt|nt|nu)|"
+    rf"(?:[a-z.'-]+\s*){{1,3}},\s*(?:{_COUNTRIES})|"
+    rf"(?:{_PROVINCES}|{_COUNTRIES}))"
+    r"\s*[.,]?$"
+)
+# A street address: "15Wertheim Court", "70 La Gauchetiere Ouest, 2etage", "Jalan SS 15/4B".
+_ADDRESS_LINE = re.compile(
+    r"^(?:\d+[a-z]?[\s,-]*(?:[a-z.'-]+\s+){0,4}(?:rue|boul|blvd|ave|av|avenue|st|street|rd|road|chemin|ch|route|hwy|"
+    r"dr|drive|way|cres|crescent|pkwy|court|ct|lane|ln|place|pl|ouest|est|nord|sud|west|east|north|south|square|sq)"
+    r"(?![a-z])|(?:jalan|jln|lorong)(?![a-z]))"
+)
+_GLUED_TITLE_WORDS = re.compile(r"invoice|facture|renseignements|summary|sommaire|statement|account|question")
+_CURRENCY_CODE = re.compile(r"^(?:eur|usd|cad|gbp|chf|aud|jpy|inr|myr|idr|sgd|nzd|mxn)$")
+_LIST_ITEM = re.compile(r"^\(?\d{1,2}[.)]\s")  # "2. Vendor's FULL LEGAL NAME, remit": a numbered note
+# A legal form OCR glued to the name: "CONTOSOLTD.", "AcmeInc".
+_GLUED_FORM = re.compile(r"[a-z]{3}(?:ltd|inc|llc|gmbh|ltee|corp)\b\.?", re.I)
+
+
+def _not_a_name(text: str) -> bool:
+    """``text`` is a title, heading, placeholder, staff line, field label with its value, a sentence or a place."""
+    p = plain(text).strip()
+    if _PLACEHOLDER.match(p) or _STAFF.match(p) or _PLACE.match(p) or _LIST_ITEM.match(p) or _CURRENCY_CODE.match(p):
+        return True
+    if _RECEIPT_WORDS.search(p) or _ADDRESS_LINE.match(p):
+        return True
+    if any(len(w) > 14 for w in p.split()) and _GLUED_TITLE_WORDS.search(p):
+        return True  # OCR's words run together: "Questionsaboutyourinvoice/account", "Renseignementsgeneraux"
+    words = p.split()
+    if len(words) > 8:
+        return True  # a sentence of the page's notes, not a name
+    if _COMPANY.search(p):
+        return False  # "Chinook Courier & Office Services Ltd."
+    if len(words) >= 4 and (text.strip()[:1].islower() or (p.endswith(".") and len(words[-1].strip(".")) > 4)):
+        return True  # a sentence ("Thank you for your business."), not "Bluewater Equipment Rentals Co."
+    return bool(_TITLE_WORDS.search(p) or _FIELD_AND_VALUE.match(p))
+
+
+# The supplier's own label: "From:", "Seller", "Verkäufer", "Lieferant", "Fournisseur". Its value (after it, or on the
+# line below) is the supplier's name.
+_SELLER_LABEL = re.compile(
+    r"^(?:from|seller|vendor|supplier|sold\s+by|issued\s+by|bill(?:ed)?\s+from|verkaufer|lieferant|"
+    r"rechnungsersteller|leistungserbringer|fournisseur|vendeur|emetteur|leverancier|proveedor|fornitore)"
+    r"(?![a-z])\s*:?\s*"
+)
+_SENDER_SPLIT = re.compile(r"\s+[•·|–-]\s+")
+_SELLER_NOT = re.compile(r"^(?:#|no\b|nr\b|n°|number|id\b|code\b|num)|^\d")  # "Vendor # 4471", "Supplier ID"
+# The supplier named with its registration numbers: "Canada Post registration nos.: HST/GST 119321495", "Numéros
+# d'enregistrement de Postes Canada TVH/TPS 119321495".
+_REG_NAMED_EN = re.compile(
+    r"^(?P<name>[A-Z][\w&'’.\- ]{1,60}?)\s*(?:'s\s+)?(?:(?:gst|hst|tps|tvh|qst|tvq)[\s/]*)*"
+    r"(?:registration|reg\.)\s*(?:nos?\.?|numbers?|#)?\s*:?\s*(?:gst|hst|tps|tvh|qst|tvq|bn|business)",
+    re.I,
+)
+_REG_NAMED_FR = re.compile(
+    r"^num[ée]ros?\s+d['’]\s*(?:enregistrement|inscription)\s+(?:de\s+la\s+|de\s+l['’]|du\s+|des\s+|de\s+)"
+    r"(?P<name>[A-Z][\w&'’.\- ]{1,60}?)\s*:?\s*(?:gst|hst|tps|tvh|qst|tvq)",
+    re.I,
+)
+
+
+def _seller_named(page: PageLayout) -> list[Reading]:
+    """The supplier's name where the page gives it as such: after a seller's label ("From: Lions and Co.", or on
+    the line under "Verkäufer"), or with its registration numbers ("Canada Post registration nos.: HST/GST ...")."""
+    out: list[Reading] = []
+    for line in page.lines:
+        text = line.text.strip()
+        p = plain(text)
+        for rx in (_REG_NAMED_EN, _REG_NAMED_FR):
+            m = rx.match(text)
+            if m:
+                name = m.group("name").strip(" .,:;")
+                a = line.text.find(name)
+                if _name_like(name) and a >= 0:
+                    words = _span_words(line, a, a + len(name))
+                    out.append(Reading("vendor_name", name, name, _boxes(words), 0.85 * _min_conf(words),
+                                       "registration-line"))  # fmt: skip
+                break
+        parts = _SENDER_SPLIT.split(text)
+        if len(parts) >= 3 and page.number == 1 and line.box.cy < 0.4:
+            # The sender's line over the window of the envelope: "Hetzner Online GmbH • Industriestr. 25 • 91710
+            # Gunzenhausen". Its first part is the supplier when it is a company's name.
+            name = parts[0].strip()
+            if _name_like(name) and _COMPANY.search(plain(name)):
+                words = _span_words(line, 0, len(line.text.split(name, 1)[0]) + len(name))
+                out.append(Reading("vendor_name", name, name, _boxes(words), 0.9 * _min_conf(words), "sender-line"))
+            continue
+        m = _SELLER_LABEL.match(p)
+        if not m or _SELLER_NOT.match(p[m.end() :]) or (m.end() < len(p) and ":" not in p[: m.end()]):
+            continue  # "Vendor # 4471"; "Lieferant GmbH" (a name that starts with the word), not "Lieferant: ..."
+        rest = text[m.end() :].strip(" :")
+        if rest:
+            if _name_like(rest):
+                words = _span_words(line, len(text) - len(rest), len(text))
+                out.append(Reading("vendor_name", rest, rest, _boxes(words), 0.85 * _min_conf(words), "seller-label"))
+            continue
+        got = _under_seller_label(page, line)
+        if got is not None:
+            name, box, conf = got
+            out.append(Reading("vendor_name", name, name, [box], 0.85 * conf, "seller-label"))
+    return out
+
+
+_NAME_LABEL = re.compile(r"^(?:name|firma|firmenname|company(?:\s*name)?|raison\s*sociale|nom)\s*:?$")
+
+
+def _under_seller_label(page: PageLayout, label: Line) -> tuple[str, Box, float] | None:
+    """The name under a seller's label: the first line below it (left edges lined up) that could be a name, past the
+    seller's own fields printed first ("Nummer : 12345676"); "Name:" gives the value beside it."""
+    h = max(label.box.height, 0.008)
+    below = sorted((ln for ln in page.lines if ln is not label and 0 <= ln.box.y0 - label.box.y1 + 0.2 * h <= 6 * h
+                    and abs(ln.box.x0 - label.box.x0) < 0.03), key=lambda ln: ln.box.y0)  # fmt: skip
+    for nxt in below[:4]:
+        p = plain(nxt.text).strip()
+        beside = _right_of(page.lines, nxt)
+        if _NAME_LABEL.match(p):
+            if beside and _name_like(beside[0].text.strip(" :")):
+                return beside[0].text.strip(" :"), beside[0].box, _min_conf(beside[0].words)
+            return None
+        if p.endswith(":") or (beside and beside[0].text.lstrip().startswith(":")) or _label_hits(nxt):
+            continue  # one of the seller's fields: "Nummer : 12345676", "Globale Nummer:"
+        name = nxt.text.strip()
+        return (name, nxt.box, _min_conf(nxt.words)) if _name_like(name) else None
+    return None
+
+
+def _name_like(name: str) -> bool:
+    """``name`` could be a supplier's name: a few words, letters, no address, contact or label."""
+    p = plain(name)
+    return (
+        2 < len(name) < 70
+        and sum(c.isalpha() for c in name) >= 3
+        and sum(c.isdigit() for c in name) <= 3
+        and not _NOT_NAME.match(p)
+        and not _not_a_name(name)
+        and not _CONTACT.search(p)
+        and not _POSTAL_CODE.search(name)
+        and not us_address(name)
+    )
+
+
 def _vendor_names(layout: DocLayout) -> list[Reading]:
     if not layout.pages:
         return []
     page = layout.pages[0]
-    out: list[Reading] = []
+    out: list[Reading] = [r for pg in layout.pages[:2] for r in _seller_named(pg)]
     heights = sorted((ln.box.height for ln in page.lines), reverse=True)
     tall = heights[min(2, len(heights) - 1)] if heights else 0.0
     customer_names = {plain(ln.text.strip()) for ln in layout.lines() if _in_bill_to(layout, ln)}
@@ -967,6 +1152,8 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             continue
         if len(text) < 3 or len(text) > 70 or _NOT_NAME.match(p) or sum(c.isdigit() for c in text) > 3:
             continue
+        if _not_a_name(text) or _SELLER_LABEL.fullmatch(p):
+            continue  # a title, heading, placeholder, staff line, place, or the seller's label itself
         if _POSTAL_CODE.search(text) or us_address(text) or _CONTACT.search(p):
             continue  # an address, e-mail or web line
         heading = (
@@ -980,7 +1167,7 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
         if letters < 3:
             continue
         score = 0.35
-        if _COMPANY.search(p):
+        if _COMPANY.search(p) or (_GLUED_FORM.search(p) and any(w.source not in _AS_PRINTED for w in line.words)):
             score += 0.35
         if line.box.height >= tall * 0.95:
             score += 0.15
@@ -996,8 +1183,42 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             text = _ocr_name_fix(text)
         out.append(Reading("vendor_name", text, text, [union_all([w.box for w in words])] if words else [line.box],
                            min(score, 0.95) * _min_conf(line.words), "top-of-page"))  # fmt: skip
+    for sender in [r for r in out if r.method == "sender-line" and r.boxes]:
+        # The address block under the sender's line is the customer's, shown through the envelope's window.
+        sb = sender.boxes[0]
+        for r in out:
+            b = r.boxes[0] if r.boxes else None
+            if r.method == "top-of-page" and b and b.page == sb.page and 0 < b.y0 - sb.y1 < 0.12 and b.x0 < sb.x1:
+                r.score *= 0.5
+    for pg in layout.pages[1:2]:
+        # "... cheque or money order payable to Canada Post Corporation;" in the payment notes on the back: a
+        # company's name only (notes say "payable to your bank" too).
+        for line in pg.lines:
+            m = _REMIT.search(plain(line.text))
+            name = line.text[m.end() :].strip(" :.,;") if m else ""
+            if m and _name_like(name) and _COMPANY.search(plain(name)):
+                words = _span_words(line, m.end(), len(line.text))
+                out.append(Reading("vendor_name", name, name, _boxes(words), 0.8 * _min_conf(words), "remit-to"))
     out.sort(key=lambda r: -r.score)
+    # A rival is printed above the name chosen (a letterhead's brand over the operator's legal name).
+    rivals = [r for r in out[1:] if not _same_name(r.value, out[0].value) and r.boxes and out[0].boxes
+              and r.method == "top-of-page" and r.boxes[0].y0 < out[0].boxes[0].y0]  # fmt: skip
+    if out and out[0].method == "top-of-page" and rivals and rivals[0].score >= RIVAL_SHARE * out[0].score:
+        # "CANADIAN TIRE 235" over "Gestions Daniel Picard Inc": a store's brand and its operator's legal name, or a
+        # name and another line of the letterhead. Which one is the supplier the page does not say.
+        out[0].method += RIVAL_NAME
     return out
+
+
+RIVAL_SHARE = 0.6  # a second name scored this close to the first one is its rival
+
+
+def _same_name(a: str, b: str) -> bool:
+    """Two readings of one name: one inside the other, or an OCR slip apart ("ANADIANTIRE235", "CANADIAN TIRE235")."""
+    from difflib import SequenceMatcher
+
+    x, y = re.sub(r"[^a-z0-9]", "", plain(str(a))), re.sub(r"[^a-z0-9]", "", plain(str(b)))
+    return bool(x and y) and (x in y or y in x or SequenceMatcher(None, x, y).ratio() >= 0.85)
 
 
 # ---------------------------------------------------------------- totals solver
