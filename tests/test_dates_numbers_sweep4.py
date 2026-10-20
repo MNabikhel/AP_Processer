@@ -299,3 +299,28 @@ def test_a_date_alone_beside_the_title_is_the_invoice_date_but_a_labelled_one_co
     assert got.value == "2014-01-24" and got.method == "title-dated"
     labelled = _scan([(0.1, 0.1, "INVOICE"), (0.7, 0.1, "March 3, 2026"), (0.1, 0.2, "Invoice Date: 2026-03-04")])
     assert _top(labelled, "invoice_date").value == "2026-03-04"
+
+
+def test_a_spanish_numero_label_reads_the_number_but_not_a_phone_number():
+    assert _top(_scan([(0.66, 0.13, "NUMERO: ABC12345")]), "invoice_number").value == "ABC12345"
+    assert _top(_scan([(0.1, 0.1, "Numéro : 514 555 1234")]), "invoice_number") is None
+    assert _top(_scan([(0.1, 0.1, "Numéro: (514) 555-1234")]), "invoice_number") is None
+
+
+def test_a_fax_or_printer_stamp_is_not_the_invoice_date():
+    # A faxed invoice: "SEP-13-2025 11:26 FROM:..." along the top edge is when it was faxed; its date is labelled
+    # "Date: le 9 septembre 2025" (OCR glued "le9").
+    layout = _scan([(0.04, 0.0, "SEP-13-2025 11:26 FROM:LOCATION PELLETIER INC 2392789463"), (0.55, 0.27, "Date:"),
+                    (0.76, 0.27, "le9 septembre .2025")])  # fmt: skip
+    assert _top(layout, "invoice_date").value == "2025-09-09"
+    printed = _scan([(0.02, 0.01, "2026/05/07 16:51"), (0.3, 0.3, "Northline Energy")])
+    assert _top(printed, "invoice_date") is None
+
+
+def test_a_date_read_without_a_label_is_checked_however_many_readers_see_it():
+    from ap_coder.capture.confidence import fuse
+
+    layout = _scan([(0.18, 0.40, "6/22/2019 13:59"), (0.27, 0.74, "Sub-Total"), (0.55, 0.74, "$1098.99")])
+    by_source = {"rules": read_fields(layout), "ocr2": read_fields(layout)}
+    got = fuse(by_source, [], layout_source="ocr", fields=("invoice_date",))[0]["invoice_date"]
+    assert got.value == "2019-06-22" and got.status == "check"

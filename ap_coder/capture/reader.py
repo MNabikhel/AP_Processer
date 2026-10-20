@@ -210,7 +210,7 @@ MORE_LABELS: dict[str, list[tuple[str, float]]] = {
         # A receipt's or a hotel bill's own number: "Receipt Number 334567", "Receipt # No.: 9876", "Folio Number: 12345".
         (rf"receipt\s*(?:{_NO}|id\b)", 0.8), (rf"folio\s*{_NO}", 0.7),
         (rf"(?:cash|tax|sales|commercial)\s*inv(?:oice)?\.?\s*{_NO}", 0.95),  # "Cash Inv No.: 7803F712", "Tax Invoice No."
-        (r"factuur\b(?!\s*(?:datum|adres|totaal|bedrag|nummer))", 0.45), (r"numero\s*:", 0.45),  # "NUMERO: ABC12345"
+        (r"factuur\b(?!\s*(?:datum|adres|totaal|bedrag|nummer))", 0.45), (r"numero\s*:(?!\s*\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4})", 0.45),  # "NUMERO: ABC12345", not a phone number
     ],
     "invoice_date": [
         (r"rechnungsdatum", 1.0), (r"factuur\s*datum", 1.0), (r"data\s*(?:della\s*)?fattura", 0.95),
@@ -2712,6 +2712,12 @@ def _dated_number(hit: _LabelHit, lines: list[Line]) -> Reading | None:
 _TIME_AFTER = re.compile(r"[\s_,.@-]*(?:a\s+|at\s+|à\s+)?\d{1,2}\s?:\s?\d(?:\d(?::\d\d)?(?:\s?[ap]\.?m\.?)?)?", re.I)
 
 
+STAMP_MARGIN = (
+    0.04  # a stamp printed this close to the top of the page (fraction of its height) is a printer's or a fax's
+)
+_FAX_HEADER = re.compile(r"(?<![a-z])(?:from|to|fax|de|a)\s*:|(?<![a-z])p\.\s?\d{1,3}(?!\d)|page\s*\d")
+
+
 def _stamped_dates(layout: DocLayout) -> list[Reading]:
     """A receipt's date and time, printed with no label ("6/10/2019 13:59", "27Mar2018 18:46"): when it was issued.
     The topmost one on each page, outranked by any labelled date ("date-time": measured apart, never verified on a
@@ -2720,8 +2726,8 @@ def _stamped_dates(layout: DocLayout) -> list[Reading]:
     lines = sorted(layout.lines(), key=lambda ln: (ln.box.page, ln.box.y0))
     for line in lines:
         page = line.box.page
-        if page in out:
-            continue
+        if page in out or line.box.y0 < STAMP_MARGIN or _FAX_HEADER.search(plain(line.text)):
+            continue  # a printer's or a fax's stamp in the page's top margin ("SEP-13-2025 11:26 FROM: ..."), not the date
         found = parse_dates(line.text, prefer_day_first=_DAY_FIRST.get())
         if not found:
             continue

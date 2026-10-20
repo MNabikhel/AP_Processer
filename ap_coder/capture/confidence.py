@@ -62,6 +62,9 @@ WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE"}
 LIKELY_AT = 0.85
 REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
 SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
+# Values read with no label of their own (``reader``: a receipt's date and time, a date beside the title): checked.
+UNLABELLED_METHODS = ("date-time", "title-dated")
+UNLABELLED_CAP = 0.8
 
 TAX_FIELDS = ("gst_amount", "hst_amount", "pst_amount", "qst_amount")
 KNOWN_RATES = {
@@ -515,6 +518,11 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                 if len(all_groups[field]) > 1
                 else "another name is printed at the top as well"
             )
+        if all(r.method.startswith(UNLABELLED_METHODS) for _, r in g.readings):
+            # A receipt's date and time, or a date beside the title, with no label to say which date it is: however
+            # many readers see it, a person checks it.
+            conf = min(conf, UNLABELLED_CAP)
+            reasons.append("read without a label: printed where an invoice's date usually is")
         if any(TWO_SUBTOTALS in r.method for _, r in g.readings):
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("the totals add up with another subtotal printed too (before or after the charges)")

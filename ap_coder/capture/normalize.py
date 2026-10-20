@@ -225,6 +225,8 @@ _OCR_MONTHS = [
     (re.compile(r"(?<![a-z])eeb(?=[\s.,]*\d)"), "feb"),  # OCR's E for F: "15Eeb.2025"
     # French "1er" (the first) as OCR reads it, "ler" or "ier": "ler octobre 2026" (same length, so offsets hold)
     (re.compile(r"(?<![a-z\d])[li]er(?=\s+(?:janv|fevr|mars|avr|mai|juin|juil|aout|sept|oct|nov|dec))"), "1er"),
+    # "le 9 septembre 2025" as OCR glues it: "le9 septembre" (same length: the e becomes the space)
+    (re.compile(r"(?<![a-z])le(?=\d{1,2}\s*[a-z]{3})"), "l "),
 ]
 
 

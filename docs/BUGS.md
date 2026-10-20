@@ -3114,6 +3114,8 @@ together: "27Mar201818:46"), a header row printed across the page ("Date .......
 the title ("Beitragsrechnung | 24. Januar 2014"), a page number run into the label. Those are read now. What is read
 without a label of its own (`number-dated`, `date-time`, `title-dated`, `label-far-right`) is weaker than a labelled
 value, so a labelled date or number comes first, and is measured apart: never verified on a labelled value's record.
+A date with no label at all (`date-time`, `title-dated`) is held to *check* however many readers see it, and a stamp
+along the page's top edge (a fax's "SEP-13-2025 11:26 FROM: ...", a printer's) is not taken for the invoice's date.
 
 #### B-353 · A credit note's own number was not read: the invoice it credits was taken for it · medium
 - **Where:** `ap_coder/capture/reader.py` (`MORE_LABELS["invoice_number"]`, `DISTRACTORS["invoice_number"]`, `_hits_at`)
