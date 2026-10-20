@@ -224,3 +224,44 @@ def test_a_table_with_no_amount_printed_as_money_is_no_line_table():
     assert _read(words) == []
     doc = _layout(words)
     assert len(read_line_items(doc, {1: [Box(1, 0.05, 0.15, 0.95, 0.30)]}, targets=[764628.0])) == 2
+
+
+def _summary(rows: list[tuple[str, str, str, str]], total: str) -> list[Word]:
+    cells = [("Summary of charges", 0.10, 0.35, 0.29),
+             ("Subtotal", 0.44, 0.50, 0.37), ("GST", 0.57, 0.59, 0.37), ("HST", 0.62, 0.65, 0.37),
+             ("PST/QST", 0.75, 0.80, 0.37), ("Total", 0.88, 0.92, 0.37)]  # fmt: skip
+    for k, (desc, sub, tax, tot) in enumerate(rows):
+        y = 0.39 + 0.016 * k
+        cells += [(desc, 0.10, 0.10 + 0.007 * len(desc), y), (sub, 0.50 - 0.007 * len(sub), 0.50, y),
+                  (tot, 0.92 - 0.007 * len(tot), 0.92, y)]  # fmt: skip
+        if tax:
+            cells.append((tax, 0.59 - 0.007 * len(tax), 0.59, y))
+    y = 0.39 + 0.016 * (len(rows) + 5)
+    cells += [(total, 0.50 - 0.007 * len(total), 0.50, y), ("$ " + total, 0.86, 0.92, y)]
+    return _words(*cells)
+
+
+def test_a_summary_of_charges_reads_each_service_before_tax():
+    """Canada Post's "Summary of charges": no heading over the services, the columns headed Subtotal, GST, HST,
+    PST/QST and Total. Each service is a line at its amount before tax (the Subtotal column), checked against the
+    subtotal printed under the column."""
+    rows = [("Parcels", "97.98", "", "97.98"), ("Commercial/Smartmail Marketing", "216.90", "", "216.90"),
+            ("Specialized services", "1,240.00", "", "1,240.00"), ("Shipments", "168.13", "8.41", "176.54"),
+            ("Adjustments", "-50.00", "", "-50.00")]  # fmt: skip
+    assert [(d, a) for d, _q, _p, a in _read(_summary(rows, "1,673.01"))] == [
+        ("Parcels", 97.98), ("Commercial/Smartmail Marketing", 216.9), ("Specialized services", 1240.0),
+        ("Shipments", 168.13), ("Adjustments", -50.0)]  # fmt: skip
+    assert _read(_summary(rows, "1,999.99")) == []  # they don't add up to the subtotal printed: none
+    total_row = [*_summary(rows, "1,673.01"), *_words(("Total", 0.10, 0.14, 0.39 + 0.016 * 10))]
+    assert len(_read(total_row)) == 5  # the total row labelled "Total" ends them too
+
+
+def test_rows_read_by_their_amounts_in_a_table_found_cut_short_are_no_lines():
+    """The table found stops short of the rows' last amounts (a summary of charges whose total column was left out):
+    the rows' last amounts in the box are a tax's, even when their sum is printed (the tax's total under them)."""
+    cells = [("Colis", 0.10, 0.14, 0.39), ("72,05", 0.46, 0.50, 0.39), ("3,60", 0.56, 0.59, 0.39),
+             ("75,65", 0.87, 0.91, 0.39),
+             ("Envois", 0.10, 0.15, 0.41), ("168,13", 0.46, 0.50, 0.41), ("8,41", 0.56, 0.59, 0.41),
+             ("176,54", 0.87, 0.91, 0.41),
+             ("12,01", 0.55, 0.59, 0.46)]  # fmt: skip
+    assert _table_rows(cells, Box(1, 0.08, 0.37, 0.62, 0.43)) == []

@@ -2463,3 +2463,23 @@ the lines adding up, and how alike the descriptions read.
 - **Fix:** a reading in which not one amount is printed as money (two decimals or a currency sign) is no line table, unless its rows add up to the subtotal or the total less taxes. Hard corpus: that credit note's wrong lines 6 → 0 (it is coded as one line for its subtotal).
 - **Test:** `tests/test_line_items_sweep4.py::test_a_table_with_no_amount_printed_as_money_is_no_line_table`
 - **Lesson:** A rule that needs a majority must also say what happens when there is no majority at all.
+
+#### B-348 · Canada Post's "Summary of charges" gave no line items · medium
+- **Where:** `ap_coder/capture/reader.py` (`_charges_summary`, `_read_line_items`)
+- **Symptom:** a Canada Post invoice (English or French: "Summary of charges / Sommaire des frais", Parcels, Commercial/Smartmail Marketing, Specialized services, Shipments, Adjustments) came back with no line items: coded as one line for the whole bill, though each service goes to its own account.
+- **Cause:** its table heads its columns "Subtotal | GST | HST | PST/QST | Total" and leaves the services' column without a heading; the reader looks for a description or quantity heading beside an amount heading, and "Subtotal" and "Total" are the invoice's totals' labels, not column headings.
+- **Reproduce:** the table above (five services, the subtotal 1,673.01 under the Subtotal column on the last row).
+- **Reproduced:** yes (no lines).
+- **Fix:** a heading row that holds a subtotal's label, a tax's (GST, HST, PST, QST, TPS, TVH, TVQ) and a total's is a summary of charges: each row's words are its description and its amount is the one under "Subtotal" (before tax), down to the row with no words or labelled "Total"; kept only when they add up to the amount that row prints under "Subtotal". The three Canada Post invoices in the real corpus (two digital, one scan): 0 → 5 of 5 lines right each.
+- **Test:** `tests/test_line_items_sweep4.py::test_a_summary_of_charges_reads_each_service_before_tax`
+- **Lesson:** The suppliers a Canadian AP desk sees every month (Canada Post, the utilities) deserve their own table shapes, checked by the sum they print.
+
+#### B-349 · A table found cut short of its last column was read by a tax's column, and "proven" by the tax's total · medium
+- **Where:** `ap_coder/capture/reader.py` (`_headerless_rows`, `read_line_items`)
+- **Symptom:** a scanned Canada Post invoice came back with three lines of 3.60, 60.00 and 8.41: its GST amounts, whose sum (72.01) the invoice prints as its GST.
+- **Cause:** the table finder's box stopped before the Total column; the rows read by their amounts (B-341) took the last amount inside the box (the GST's) and found their sum printed on the page.
+- **Reproduce:** rows "Colis 72,05 3,60 … 75,65", "Envois 168,13 8,41 … 176,54", the box ending after the second column, "12,01" printed under them.
+- **Reproduced:** yes (lines 3.60 and 8.41).
+- **Fix:** rows read by their amounts are none when the page prints another amount right of a row's last one in the box: the box cut the table, and its last column is not theirs.
+- **Test:** `tests/test_line_items_sweep4.py::test_rows_read_by_their_amounts_in_a_table_found_cut_short_are_no_lines`
+- **Lesson:** A proof is only as good as what it is checked against: amounts that add up to *some* printed figure need to be the right column first.
