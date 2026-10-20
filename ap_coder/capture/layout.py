@@ -415,7 +415,7 @@ def ocr_image(png_bytes: bytes, number: int, engine: str | None = None) -> PageL
     img = _on_paper(picture)
     width, height = img.size
     result = _ocr_cached(png_bytes, lambda: _engine(engine)(np.asarray(img)), engine)
-    turn = _upright_turn(result or [], width, height)
+    turn = _upright_turn(result or [], width, height, img)
     if turn:
         result = _turned(result, turn, width, height)
         if turn != 180:
@@ -533,11 +533,12 @@ def _top_down(result: Any) -> float:
     return statistics.mean(totals) - statistics.mean(heads)
 
 
-def _upright_turn(result: Any, width: float, height: float) -> int:
+def _upright_turn(result: Any, width: float, height: float, picture: Any = None) -> int:
     """The clockwise quarter turn that sets a page scanned turned upright: 90 or 270 when most of its long lines run
-    down the page (whichever puts the amounts right of their labels), 180 when they run across but the amounts
-    stand left of their labels; else 0. The OCR reads each line's words right (it turns the line to read it):
-    only where the lines are on the page is turned."""
+    down the page (whichever puts the amounts right of their labels), 180 when they run across but the letters
+    stand on their heads (``_letters_upright``) or, when the letters don't tell, the amounts stand left of their
+    labels; else 0. The OCR reads each line's words right (it turns the line to read it): only where the lines are
+    on the page is turned."""
     long = [q for q, t, _s in result if len(str(t).strip()) >= 4]
     if len(long) < 6:
         return 0
@@ -550,7 +551,54 @@ def _upright_turn(result: Any, width: float, height: float) -> int:
         # The amounts beside their labels; when they say nothing (each label on one line with its amount), the
         # totals below the invoice's title and dates.
         return max(turned, key=lambda t: (_label_side(turned[t]), _top_down(turned[t])))
+    upright, upside_down = _letters_upright(picture, result) if picture is not None else (0, 0)
+    if upside_down >= LETTERS_SURE and upside_down >= 3 * upright:
+        return 180
+    if upright >= LETTERS_SURE and upright >= 3 * upside_down:
+        return 0
     return 180 if _label_side(result) <= -2 else 0  # an upright page never scores below 0 (1,300 benchmark scans)
+
+
+LETTERS_SURE = 8  # text lines that must say which way up the page is, three times as many as say the other way
+
+
+def _letters_upright(picture: Any, result: Any) -> tuple[int, int]:
+    """(lines whose letters stand upright, lines whose letters stand on their heads), from the ink of each OCR line
+    of five characters or more: in Latin print, capitals, figures and the tall letters (b, d, f, h, k, l, t) rise
+    above the small letters' band far more than g, j, p, q, y hang below it. A line of capitals and figures alone has
+    no such band and says nothing."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return 0, 0
+    gray = cv2.cvtColor(np.asarray(picture.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    upright = upside_down = 0
+    for quad, text, _score in result:
+        if len(str(text).strip()) < 5:
+            continue
+        corners = np.array([[float(v) for v in p[:2]] for p in quad[:4]], dtype=np.float32)
+        if corners.shape != (4, 2):
+            continue
+        across = int(max(np.linalg.norm(corners[1] - corners[0]), np.linalg.norm(corners[2] - corners[3])))
+        down = int(max(np.linalg.norm(corners[3] - corners[0]), np.linalg.norm(corners[2] - corners[1])))
+        if down < 8 or across < 3 * down:
+            continue  # too small to tell, or a line running down the page
+        square = np.array([[0, 0], [across, 0], [across, down], [0, down]], dtype=np.float32)
+        line = cv2.warpPerspective(gray, cv2.getPerspectiveTransform(corners, square), (across, down),
+                                   flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)  # fmt: skip
+        _, ink = cv2.threshold(line, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        rows = ink.sum(axis=1).astype(float)
+        if rows.max() <= 0:
+            continue
+        band = np.nonzero(rows >= 0.5 * rows.max())[0]  # the small letters' band
+        above, below = rows[: band.min()].sum(), rows[band.max() + 1 :].sum()
+        if above + below < 0.05 * rows.sum():
+            continue
+        lean = float((above - below) / (above + below))
+        upright += lean > 0.15
+        upside_down += lean < -0.15
+    return upright, upside_down
 
 
 def _skew(result: Any, width: float, height: float) -> float:

@@ -2402,3 +2402,25 @@ table finder's model on. None of the corpus is in the repo: each test makes its 
   positive).
 - **Test:** `tests/test_photo_scan_quality.py::test_a_shadow_across_the_page_does_not_cut_the_page_short`
 - **Lesson:** Don't find an object by its brightness when the light is uneven: find its edge.
+
+#### B-301 · A page scanned upside down was read upside down when too few amounts stood beside their labels · high
+- **Where:** `ap_coder/capture/layout.py` (`_upright_turn`, new `_letters_upright`)
+- **Symptom:** of 12 invoices scanned upside down (14 pages turned), 7 pages were read as they lay: a credit note whose
+  amounts read "$326.64CR" (h-0064: nothing found but the currency), a 3-page credit (h-0044: the vendor read as
+  "Monthly maintenance contract", the totals' signs lost, *verified*) and a 2-page long table whose first page alone
+  was turned (h-0123: the vendor read as "Continued.", *likely*).
+- **Cause:** a page was turned only when at least two amounts stood left of their labels (`_label_side` ≤ −2). An
+  amount ending in "CR", or a label sharing its line with its amount, does not count, so a page with few such rows
+  scored −1 or 0 and was left as it was.
+- **Fix:** the letters say which way up a page is. In each OCR line of five characters or more, Latin capitals,
+  figures and tall letters rise above the small letters' band far more than g, j, p, q, y hang below it; on a page
+  on its head it is the other way round. A page is turned when at least 8 lines stand on their heads and three
+  times as many as stand upright (a line of capitals alone says nothing); a page whose letters clearly stand upright
+  is never turned; otherwise the labels' side decides, as before. Measured on the corpus's 66 upright scanned pages
+  (scans, faxes, speckled, faint) and 26 photos: at worst 7 lines stood on their heads against 14 upright; the 14
+  turned pages: at least 18 on their heads, at most a third as many upright. A few milliseconds a page.
+- **Measured:** upside down 83.5% → 95.0% of fields right, 58.3% → 75.0% fully right, no silent error 75.0% →
+  100%. bench (60, seed 3, half scans) 99.8%, verified 100%.
+- **Test:** `tests/test_photo_scan_quality.py::test_a_page_scanned_upside_down_is_known_by_its_letters`
+- **Lesson:** Don't infer a page's orientation from the layout alone (it varies from invoice to invoice): the
+  print's own shape says it on every line.

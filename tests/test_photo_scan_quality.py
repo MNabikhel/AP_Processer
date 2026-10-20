@@ -43,3 +43,60 @@ def test_a_shadow_across_the_page_does_not_cut_the_page_short():
     assert abs(flat.width / flat.height - 600 / 800) < 0.04  # the whole page, not the part in the light
     right = flat.getpixel((round((600 - 80) / 600 * flat.width), round(420 / 800 * flat.height)))
     assert max(right) < 60  # the mark at the page's right edge, inside the shadow, is on the flattened page
+
+
+_LINES = [
+    "Kingsway Mechanical Limited",
+    "Invoice date: April 23, 2026",
+    "Bill to: Northline Energy Corp.",
+    "Hydraulic hose assembly, half inch",
+    "Monthly maintenance contract",
+    "Shipping cartons, heavy duty",
+    "Forklift rental, weekly",
+    "Janitorial service, Unit 4",
+    "Disinfectant, four litres",
+    "Payment due within thirty days",
+    "Thank you for your business",
+    "Questions? Call the billing desk",
+]
+
+
+def _printed_page(upside_down: bool) -> tuple[bytes, list]:
+    """A page of mixed-case print with no amount beside a label (nothing for the labels' side to go by), and the
+    OCR's lines for it as the page lies: upside down, the lines' boxes are where the turned page has them."""
+    import io
+
+    from PIL import ImageFont
+
+    w, h = 1000, 1300
+    page = Image.new("L", (w, h), 255)
+    draw = ImageDraw.Draw(page)
+    font = ImageFont.load_default(size=28)
+    boxes = []
+    for i, text in enumerate(_LINES):
+        x, y = 80, 80 + 90 * i
+        x0, y0, x1, y1 = draw.textbbox((x, y), text, font=font)
+        draw.text((x, y), text, fill=0, font=font)
+        boxes.append((text, x0 - 4, y0 - 6, x1 + 4, y1 + 6))
+    if upside_down:
+        page = page.rotate(180)
+        boxes = [(t, w - x1, h - y1, w - x0, h - y0) for t, x0, y0, x1, y1 in boxes]
+    result = [[[[x0, y0], [x1, y0], [x1, y1], [x0, y1]], t, 0.95] for t, x0, y0, x1, y1 in boxes]
+    png = io.BytesIO()
+    page.save(png, "PNG")
+    return png.getvalue(), result
+
+
+@pytest.mark.parametrize("upside_down", [False, True])
+def test_a_page_scanned_upside_down_is_known_by_its_letters(monkeypatch, upside_down):
+    """Sweep 4: a page scanned upside down was turned only when its amounts stood left of their labels; a credit's
+    "1,234.56 CR" amounts or a page of descriptions gave too few, so h-0064 was read upside down (nothing found).
+    The letters say it: capitals and tall letters rise above the small letters' band, few letters hang below."""
+    pytest.importorskip("cv2")
+    png, result = _printed_page(upside_down)
+    monkeypatch.setattr(layout, "_ocr_cached", lambda *a, **k: result)
+    page = layout.ocr_image(png, 1)
+    assert page.turn == (180 if upside_down else 0)
+    if upside_down:
+        first = min(page.lines, key=lambda ln: ln.box.y0)
+        assert first.text == _LINES[0]  # read from the top of the upright page
