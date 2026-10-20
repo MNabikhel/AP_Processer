@@ -512,7 +512,7 @@ def test_first_start_runs_the_self_check_later_starts_do_not(launch, monkeypatch
     out = capsys.readouterr().out
     assert checks == [1] and started == [["--port", "8597"]]
     assert "AP Coder readiness:" in out and "Self-check OK: 10 of 10" in out and "Packages: all 13" in out
-    assert "LM Studio: not running (optional" in out and "Data folder" in out
+    assert "LM Studio isn't running" in out and "Data folder" in out
 
     args, rest = launch.parse([])
     assert launch.run(args, rest) == 0
@@ -581,7 +581,7 @@ def test_lm_studio_is_only_reported(launch, monkeypatch):
     from ap_coder.ai import local_llm
 
     _lm_studio(local_llm, monkeypatch)  # nothing answers
-    assert launch.lm_studio_line()[1].startswith("LM Studio: not running (optional")
+    assert launch.lm_studio_line()[1].startswith("LM Studio isn't running")
     _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True)
     assert launch.lm_studio_line()[0] == "warn" and "no chat model is loaded" in launch.lm_studio_line()[1]
     _lm_studio(local_llm, monkeypatch, reachable=True, lm_studio=True, model=GEMMA, vision=True,

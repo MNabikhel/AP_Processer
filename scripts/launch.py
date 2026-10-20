@@ -105,9 +105,24 @@ SHORTCUT = "AP Coder.lnk"  # on the Windows desktop
 MAC_LAUNCHER = "AP Coder.command"  # on a Mac's desktop: a two-line script that opens the current install
 LAUNCHER_MARK = "# AP Coder: opens the current version"  # the first comment line of that script (ours to rewrite)
 READY = "AP Coder is running at"  # what `python -m ap_coder serve` prints once it answers
+SERVER_SAYS_AGAIN = ("Dashboard: ",)  # the server's first line: the launcher already said where, and how to stop it
 SELF_CHECK_TIMEOUT = 600
-QUIET_PIP_LINES = (
+QUIET_PIP_LINES = (  # pip's progress lines: in the log, not in the window
     "Requirement already satisfied",
+    "Looking in links",
+    "Looking in indexes",
+    "Processing ",
+    "Collecting ",
+    "Obtaining ",
+    "Downloading ",
+    "Installing collected packages",
+    "Attempting uninstall",
+    "Found existing installation",
+    "Uninstalling ",
+    "Successfully uninstalled",
+    "Successfully built",
+    "WARNING: The script",
+    "Consider adding this directory to PATH",
     "Using cached",
     "Checking if build backend",
     "Getting requirements",
@@ -776,8 +791,13 @@ def pip_install(args: list[str]) -> bool:
     assert proc.stdout is not None
     for out in proc.stdout:
         text = out.rstrip()
-        if text and not text.startswith(QUIET_PIP_LINES):
+        if text.startswith("Successfully installed"):  # sixty names: said as a count, the names in the log
+            log(text)
+            say(f"    Installed {plural(len(text.split()) - 2, 'package')}.")
+        elif text and not text.startswith(QUIET_PIP_LINES):
             say(f"    {text}")
+        elif text:
+            log(text)  # pip's progress, a line a package: for IT, in the log only
         if any(sign in text for sign in DISK_FULL):
             _disk_full.append(text)
         if any(sign in text for sign in PATH_TOO_LONG):
@@ -1330,8 +1350,8 @@ def lm_studio_line(status: Any = None) -> tuple[str, str]:
     if status is None:
         return "info", "Chat model: not checked (optional)"
     if not status.reachable:
-        return "info", ("LM Studio: not running (optional: invoices are still read and coded without it; start its "
-                        "server before AP Coder to use it)")  # fmt: skip
+        return "warn", ("LM Studio isn't running: invoices are read by OCR only and wait for a person. To use it: open "
+                        "LM Studio, Developer tab → Start server, then start AP Coder again")  # fmt: skip
     if not status.active:
         return "warn", f"{status.server}: running, but no chat model is loaded (optional: load Gemma 4 12B to use it)"
     sees = "can see pages" if status.vision else "reads text only"
@@ -1466,7 +1486,7 @@ def readiness(packages: tuple[str, str], state: dict | None = None, force: bool 
     from ap_coder.core import paths
     from ap_coder.ops import offline
 
-    lines = [("ok", f"Python {sys.version.split()[0]} (.venv)"), packages]
+    lines = [("ok", f"Python {sys.version.split()[0]}"), packages]
     v4, v5 = offline.ppocrv4_installed(), offline.ppocrv5_installed()
     if v5 and not offline.missing_models():
         lines.append(("ok", "OCR for scanned invoices"))
@@ -1490,7 +1510,8 @@ def readiness(packages: tuple[str, str], state: dict | None = None, force: bool 
         test = chat_test_line(state, force, chat)
         if test:
             lines.append(test)
-    lines.append(page_reader_line())
+    if chat is None or chat.reachable:  # (LM Studio not running: its line above says so, and what to do)
+        lines.append(page_reader_line())
     lines += setup_check_lines()
     return lines
 
@@ -1514,6 +1535,7 @@ def self_check() -> tuple[bool, str]:
             return True, f"Self-check OK: {count} sample invoices read right; no scan tried (no OCR) ({seconds} s)"
         return True, f"Self-check OK: {count} sample invoices read right, and a scan with local OCR ({seconds} s)"
     wrong = [t.strip() for t in text if t.startswith("FAIL")] or (out.stderr.strip().splitlines() or ["?"])[-1:]
+    log(f"The self-check's own report (scripts/pilot_check.py):\n{out.stdout}{out.stderr}")  # the details, for IT
     return False, f"Self-check FAILED: {'; '.join(wrong[:3])}"
 
 
@@ -1762,8 +1784,9 @@ def start_dashboard(rest: list[str], state: dict) -> int:
     def show_output() -> None:
         assert proc.stdout is not None
         for text in proc.stdout:
-            sys.stdout.write(text)
-            sys.stdout.flush()
+            if not text.startswith(SERVER_SAYS_AGAIN):  # (said once already, without "Ctrl+C")
+                sys.stdout.write(text)
+                sys.stdout.flush()
             log(text)
             if READY in text:
                 ready.set()
@@ -1845,7 +1868,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     ident = identity()
     first = args.venv in ("created", "recreated") or not state.get("setup_done")
     if args.venv in (None, "reused") and (first or state.get("fingerprint") != ident["fingerprint"]):
-        say(f"Python {sys.version.split()[0]}: reusing .venv")  # (a later start of the same version: said nothing)
+        say(f"Python {sys.version.split()[0]} found: using AP Coder's setup in this folder")  # (a later start: quiet)
     unblock_launchers()
     blocker = cannot_set_up()  # before anything running is stopped: a copy that can't start leaves it alone (B-242)
     if blocker is not None:
@@ -1906,13 +1929,13 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
         state["self_check"] = {"ok": ok, "at": time.strftime("%Y-%m-%d %H:%M"), "result": result}
         lines.append(("ok" if ok else "fail", result))
         if not ok:
-            lines.append(("info", "AP Coder still starts. For the details run  python scripts/pilot_check.py  "
-                                  f"{IN_TERMINAL}, and send its output to whoever set up the pilot."))  # fmt: skip
+            lines.append(("info", f"AP Coder still starts. The details are in {log_path()}: send it with Help → "
+                                  "Report a problem in AP Coder."))  # fmt: skip
     elif state.get("self_check"):
         last = state["self_check"]
         word = "OK" if last.get("ok") else "FAILED"
         lines.append(("ok" if last.get("ok") else "warn",
-                      f"Self-check {word} at setup ({last.get('at', '?')}); --check runs it again"))  # fmt: skip
+                      f"Self-check {word} at setup ({last.get('at', '?')})"))  # fmt: skip
     if old and (state.get("self_check") or {}).get("ok"):
         say("Cleaning up the older AP Coder:")
         freed = upgrade.clean_up(ROOT, data, old, say)

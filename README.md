@@ -26,7 +26,7 @@ the code, so updates never touch it) and one desktop shortcut. Every start then 
 
 ```
 AP Coder readiness:
-  [OK] Python 3.12.10 (.venv)
+  [OK] Python 3.12.10
   [OK] Packages: all 15 in place
   [OK] OCR for scanned invoices
   [OK] Data folder: C:\Users\you\APCoder

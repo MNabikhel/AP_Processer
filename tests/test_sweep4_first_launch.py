@@ -10,6 +10,7 @@ import json
 import logging
 import sys
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -160,3 +161,139 @@ def test_a_copy_that_can_set_itself_up_still_takes_over(launch, monkeypatch):
     monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("blocked", 8501))  # (stops the start here)
     assert launch.cannot_set_up() is None
     assert launch.run(*launch.parse([])) == 1  # it went on to take over
+
+
+# --- What the launcher's window says, read by someone who is not a developer -------------------------------------
+
+
+def _readiness(launch, monkeypatch, reachable: bool):
+    status = SimpleNamespace(reachable=reachable, active=False, server="LM Studio")
+    monkeypatch.setattr(launch, "chat_status", lambda: status)
+    monkeypatch.setattr(launch, "page_reader_line", lambda: ("warn", "Page reader: OvisOCR2 isn't running"))
+    monkeypatch.setattr(launch, "setup_check_lines", lambda: [("ok", "Setup checks: -")])
+    return launch.readiness(("ok", "Packages: all 15 in place"), None)
+
+
+def test_the_readiness_summary_has_no_developer_words_and_one_lm_studio_line_with_what_to_do(launch, monkeypatch):
+    """It said "Python 3.12.3 (.venv)", then "· LM Studio: not running (optional …)" right above "! Page reader:
+    OvisOCR2 isn't running in LM Studio …": optional or not, two lines on one thing, and neither said how to start
+    it."""
+    lines = _readiness(launch, monkeypatch, reachable=False)
+    texts = [t for _, t in lines]
+    assert texts[0] == f"Python {sys.version.split()[0]}" and not any(".venv" in t for t in texts)
+    studio = [(level, t) for level, t in lines if "LM Studio" in t]
+    assert len(studio) == 1, studio
+    level, text = studio[0]
+    assert level == "warn" and "isn't running" in text and "Developer tab → Start server" in text
+    assert "optional" not in text
+
+    texts = [t for _, t in _readiness(launch, monkeypatch, reachable=True)]  # LM Studio runs: the reader's own line
+    assert "Page reader: OvisOCR2 isn't running" in texts
+
+
+def test_a_later_start_names_no_command_line_option(launch, monkeypatch, capsys):
+    """It said "Self-check OK at setup (2026-10-20 03:29); --check runs it again": an option only a command line
+    can give."""
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("clear", None))
+    monkeypatch.setattr(launch, "cannot_set_up", lambda: None)
+    monkeypatch.setattr(launch, "ensure_packages", lambda state: ("ok", "Packages: all 15 in place", False))
+    monkeypatch.setattr(launch, "ensure_data_folder", lambda: launch.VENV.parent / "data")
+    monkeypatch.setattr(launch, "ensure_models", lambda first, state: None)
+    monkeypatch.setattr(launch, "ensure_shortcut", lambda: "")
+    monkeypatch.setattr(launch, "readiness", lambda packages, state, force=False: [packages])
+    monkeypatch.setattr(launch, "start_dashboard", lambda rest, state: 0)
+    monkeypatch.setattr(launch, "self_check", lambda: (True, "Self-check OK: 10 of 10"))
+    assert launch.run(*launch.parse(["--venv=created"])) == 0
+    capsys.readouterr()
+    assert launch.run(*launch.parse([])) == 0
+    out = capsys.readouterr().out
+    assert "Self-check OK at setup" in out and "--check" not in out and "reusing .venv" not in out
+
+
+def test_a_failed_self_check_keeps_its_details_in_the_log_instead_of_asking_for_a_command(launch, monkeypatch,
+                                                                                           capsys):  # fmt: skip
+    """It said "For the details run  python scripts/pilot_check.py  in scripts\\terminal.bat, and send its output to
+    whoever set up the pilot": a command line for the tester, though the self-check had just printed those details."""
+    from ap_coder.core import paths
+
+    bad = "FAIL a.pdf\n       grand_total: 1 (expected 2)\n\n9 of 10 sample invoices read right.\n"
+    monkeypatch.setattr(launch.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout=bad, stderr=""))
+    assert launch.self_check() == (False, "Self-check FAILED: FAIL a.pdf")
+    logged = (paths.user_settings_path().parent / "logs" / "launch.log").read_text(encoding="utf-8")
+    assert "grand_total: 1 (expected 2)" in logged  # the whole output, for IT
+
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("clear", None))
+    monkeypatch.setattr(launch, "cannot_set_up", lambda: None)
+    monkeypatch.setattr(launch, "ensure_packages", lambda state: ("ok", "Packages: all 15 in place", False))
+    monkeypatch.setattr(launch, "ensure_data_folder", lambda: launch.VENV.parent / "data")
+    monkeypatch.setattr(launch, "ensure_models", lambda first, state: None)
+    monkeypatch.setattr(launch, "ensure_shortcut", lambda: "")
+    monkeypatch.setattr(launch, "readiness", lambda packages, state, force=False: [packages])
+    monkeypatch.setattr(launch, "start_dashboard", lambda rest, state: 0)
+    capsys.readouterr()
+    assert launch.run(*launch.parse(["--venv=created"])) == 0
+    out = capsys.readouterr().out
+    assert "AP Coder still starts" in out and "python " not in out and "terminal.bat" not in out
+    assert "Report a problem" in out and "launch.log" in out
+
+
+def test_installing_shows_progress_in_plain_words_and_keeps_pips_lines_in_the_log(launch, monkeypatch, capsys):
+    """The first start printed pip's own lines, one per package: "Looking in links: …", "Processing ./wheelhouse/
+    pandas-3.0.6-cp312-…whl" and a "Successfully installed …" line of sixty names."""
+    from ap_coder.core import paths
+
+    (launch.ROOT / "wheelhouse").mkdir()
+    (launch.ROOT / "wheelhouse" / "openpyxl-3.1.5-py2.py3-none-any.whl").write_bytes(b"")
+    lines = ["Looking in links: wheelhouse\n",
+             "Processing ./wheelhouse/pandas-3.0.6-cp312-cp312-manylinux_2_28_x86_64.whl\n",
+             "Collecting openpyxl>=3.1\n",
+             "Installing collected packages: et-xmlfile, openpyxl, pandas\n",
+             "Successfully installed et-xmlfile-2.0.0 openpyxl-3.1.5 pandas-3.0.6\n",
+             "WARNING: The script f2py is installed in '/x/.venv/bin' which is not on PATH.\n",
+             "ERROR: Could not find a version that satisfies the requirement nope\n"]  # fmt: skip
+
+    class Pip:
+        def __init__(self, *args, **kwargs):
+            self.stdout = iter(lines)
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Pip)
+    assert launch.pip_install(["pandas"])
+    out = capsys.readouterr().out
+    assert "Processing" not in out and "Looking in links" not in out and "Collecting" not in out
+    assert "et-xmlfile" not in out and "Installed 3 packages." in out
+    assert "ERROR: Could not find a version" in out  # what went wrong is still said
+    logged = (paths.user_settings_path().parent / "logs" / "launch.log").read_text(encoding="utf-8")
+    assert "Processing ./wheelhouse/pandas" in logged and "Successfully installed et-xmlfile" in logged
+
+
+def test_the_server_window_does_not_repeat_the_address_with_ctrl_c(launch, monkeypatch, capsys):
+    """Under the launcher the window said "Starting AP Coder: … close it to stop.", then "Dashboard: http://127.0.0.1:
+    8501  (Ctrl+C here to stop)", then "AP Coder is running at http://127.0.0.1:8501"."""
+    output = [
+        "Dashboard: http://127.0.0.1:8501  (Ctrl+C here to stop)\n",
+        "AP Coder is running at http://127.0.0.1:8501\n",
+    ]
+
+    class Server:
+        def __init__(self, *args, **kwargs):
+            self.stdout = iter(output)
+            self.returncode = 0
+            self._polls = 0
+
+        def poll(self):
+            self._polls += 1
+            return None if self._polls < 3 else 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(launch.subprocess, "Popen", Server)
+    monkeypatch.setattr(launch, "free_port", lambda: 8501)
+    monkeypatch.setattr(launch, "open_browser", lambda url: None)
+    monkeypatch.setattr(launch.running, "health", lambda port, timeout=1.0: False)
+    launch.start_dashboard([], {})
+    out = capsys.readouterr().out
+    assert "Ctrl+C" not in out and "AP Coder is running at http://127.0.0.1:8501" in out
