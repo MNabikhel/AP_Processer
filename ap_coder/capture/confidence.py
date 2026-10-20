@@ -39,7 +39,9 @@ from .types import (
     FIELDS,
     LIKELY,
     MISSING,
+    PART_OF_TERMS,
     RIVAL_NAME,
+    TWO_SUBTOTALS,
     VERIFIED,
     FieldResult,
     LineReading,
@@ -503,6 +505,12 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                 if len(all_groups[field]) > 1
                 else "another name is printed at the top as well"
             )
+        if any(TWO_SUBTOTALS in r.method for _, r in g.readings):
+            conf = min(conf, SINGLE_READER_CAP)
+            reasons.append("the totals add up with another subtotal printed too (before or after the charges)")
+        if any(PART_OF_TERMS in r.method for _, r in g.readings):
+            conf = min(conf, SINGLE_READER_CAP)
+            reasons.append("the terms ask for a deposit first: these days are only the balance's")
         # 03/04/2026 with nothing on the page to settle it: however many readers chose the same order, the
         # page does not confirm it. Settled only by the day it arrived, it is likely at best, never verified.
         unsure = [_date_unsure(r) for _, r in g.readings] if field in DATE_FIELDS else []
@@ -575,7 +583,8 @@ def _vendor_master_name(
         fr.value = vendor["name"]
 
 
-_TOTAL_PARTS = ("subtotal", "other_charges", *TAX_FIELDS)
+# The total tax stands in for the separate taxes when none of them is read ("VAT 88.92", a US sales tax).
+_TOTAL_PARTS = ("subtotal", "other_charges", *TAX_FIELDS, "tax_total")
 
 
 def _totals_that_add_up(chosen: dict[str, Any], all_groups: dict[str, list[Any]], contest: dict[str, float]) -> None:
@@ -591,20 +600,34 @@ def _totals_that_add_up(chosen: dict[str, Any], all_groups: dict[str, list[Any]]
     total_groups = all_groups.get("grand_total") or []
     if not total_groups or not all_groups.get("subtotal"):
         return
+
+    def added(parts: Any) -> float:
+        # The total tax counts only when no separate tax is in the sum (it is their total, not one more tax).
+        taxes = any(g is not None for f, g in zip(_TOTAL_PARTS, parts, strict=True) if f in TAX_FIELDS)
+        return sum(amount(g) for f, g in zip(_TOTAL_PARTS, parts, strict=True) if f != "tax_total" or not taxes)
+
     current = [chosen.get(f) for f in _TOTAL_PARTS]
-    if abs(sum(amount(g) for g in current) - amount(chosen.get("grand_total"))) <= 0.011:
+    if abs(added(current) - amount(chosen.get("grand_total"))) <= 0.011:
         return
     options = [(all_groups.get(f) or [])[:2] + ([None] if f != "subtotal" else []) for f in _TOTAL_PARTS]
     best, best_strength = None, -1.0
     for total in total_groups[:2]:
         for parts in product(*options):
-            if abs(sum(amount(g) for g in parts) - amount(total)) > 0.011:
+            if parts[-1] is not None and any(g is not None for g in parts[2:-1]):
+                continue  # the total tax and a separate tax: one of them is in the sum, not both
+            if abs(added(parts) - amount(total)) > 0.011:
                 continue
             if any(
                 g is None and chosen.get(f) is not None and f in TAX_FIELDS
                 for f, g in zip(_TOTAL_PARTS, parts, strict=True)
             ):
                 continue  # dropping a tax the readers agreed on is not "adding up"
+            if (
+                parts[-1] is None
+                and chosen.get("tax_total") is not None
+                and not any(g is not None for g in parts[2:-1])
+            ):
+                continue  # nor is dropping the total tax ("Total 889.20" read for the total of 889.20 + VAT 88.92)
             strength = total.strength() + sum(g.strength() for g in parts if g is not None)
             if strength > best_strength:
                 best, best_strength = (total, parts), strength

@@ -163,3 +163,106 @@ def test_a_stores_brand_and_its_operators_name_leave_the_supplier_unverified(tmp
     fr = fields["vendor_name"]
     assert fr.value == "Gestions Exemple Inc" and fr.status != "verified"
     assert any("another name" in r for r in fr.reasons)
+
+
+# --- totals: tax rows, several rates, labels in other languages, amounts across the page --------------------------
+
+
+def _amounts(path: Path, cells: list[tuple[float, float, str]]) -> dict:
+    f = analyze(_pdf(path, cells), tables=False).fields
+    return {n: f[n].value for n in ("subtotal", "tax_total", "grand_total") if f[n].status != "missing"}
+
+
+def test_the_total_tax_the_totals_add_up_with_is_the_one_read(tmp_path):
+    # Factur-X samples (sweep 4): a VAT breakdown ("Umsatzsteuer (S) | 275,00 | 7 | 19,25") over the totals block
+    # ("Steuerbetrag 56,87"). The solver found that 473,00 + 56,87 = 529,87 but kept the breakdown's first figure as
+    # the total tax: the subtotal and total were then failed for a tax that was not theirs.
+    cells = [(60, 60, "Lieferant GmbH"), (60, 300, "Umsatzsteuer ( S )"), (380, 300, "275,00"), (470, 300, "7"),
+             (530, 300, "19,25"), (60, 320, "Umsatzsteuer ( S )"), (380, 320, "198,00"), (470, 320, "19"),
+             (530, 320, "37,62"), (220, 380, "Rechnungssumme ohne USt."), (530, 380, "473,00"),
+             (220, 400, "Steuerbetrag"), (530, 400, "56,87"), (220, 420, "Bruttosumme"),
+             (530, 420, "529,87")]  # fmt: skip
+    assert _amounts(tmp_path / "vat.pdf", cells) == {"subtotal": 473.0, "tax_total": 56.87, "grand_total": 529.87}
+
+
+def test_vat_at_two_rates_with_no_total_of_it_is_their_sum(tmp_path):
+    cells = [(60, 60, "Lieferant GmbH"), (60, 300, "Rechnungssumme Netto (excl. USt.)"), (530, 300, "473,00"),
+             (60, 320, "Steuerbasisbetrag USt. 7%"), (480, 320, "275,00"), (530, 320, "19,25"),
+             (60, 340, "Steuerbasisbetrag USt. 19%"), (480, 340, "198,00"), (530, 340, "37,62"),
+             (60, 360, "Rechnungssumme Brutto (inkl. USt.)"), (530, 360, "529,87")]  # fmt: skip
+    assert _amounts(tmp_path / "two.pdf", cells) == {"subtotal": 473.0, "tax_total": 56.87, "grand_total": 529.87}
+
+
+def test_a_discount_and_freight_between_two_subtotals_are_read_and_the_subtotal_is_not_verified(tmp_path):
+    # Factur-X "Rabatte" sample: "Zwischensumme 202,76", "abzgl. Sondernachlass 10% von 147,30 -14,73", "zzgl.
+    # Versandkosten 5,80 7", "Rechnungssumme Netto 193,83". The totals add up with either subtotal; 193,83 was verified.
+    cells = [(60, 60, "Lieferant GmbH"), (180, 300, "Zwischensumme"), (530, 300, "202,76"),
+             (180, 314, "abzgl. Sondernachlass"), (340, 314, "10%"), (390, 314, "von"), (460, 314, "147,30"),
+             (530, 314, "-14,73"), (180, 328, "zzgl. Versandkosten"), (535, 328, "5,80"), (580, 328, "7"),
+             (60, 350, "Rechnungssumme Netto (exkl. USt.)"), (530, 350, "193,83"),
+             (180, 364, "Summe Umsatzsteuer"), (535, 364, "21,31"),
+             (60, 378, "Rechnungssumme Brutto (inkl. USt.)"), (530, 378, "215,14")]  # fmt: skip
+    f = analyze(_pdf(tmp_path / "rabatte.pdf", cells), tables=False).fields
+    assert (f["subtotal"].value, f["other_charges"].value, f["grand_total"].value) == (202.76, -8.93, 215.14)
+    assert f["subtotal"].status != "verified"
+
+
+def test_a_note_about_vat_is_no_tax_amount(tmp_path):
+    # With "VAT" a label (B-327), the note "VAT 0% - export of goods outside the EU" took the figure under it.
+    cells = [(60, 60, "Acme Exports Ltd."), (60, 300, "VAT 0% - export of goods outside the EU"), (60, 314, "8004"),
+             (380, 340, "Total"), (500, 340, "1,250.00")]  # fmt: skip
+    assert not read_fields(build_layout(_pdf(tmp_path / "note.pdf", cells))).get("tax_total")
+
+
+def test_totals_labelled_in_german_dutch_and_french_are_read(tmp_path):
+    de = [(60, 60, "Nordlicht Hosting GmbH"), (440, 300, "Netto"), (500, 300, "87,39 EUR"), (430, 314, "USt. (19 %)"),
+          (500, 314, "16,61 EUR"), (440, 328, "Brutto"), (500, 328, "104,00 EUR")]  # fmt: skip
+    assert _amounts(tmp_path / "de.pdf", de) == {"subtotal": 87.39, "tax_total": 16.61, "grand_total": 104.0}
+    nl = [(60, 60, "Contoso B.V."), (380, 300, "Subtotaal"), (500, 300, "100,00"), (380, 314, "BTW 21%"),
+          (500, 314, "21,00"), (380, 328, "Totaal"), (500, 328, "121,00")]  # fmt: skip
+    assert _amounts(tmp_path / "nl.pdf", nl) == {"subtotal": 100.0, "tax_total": 21.0, "grand_total": 121.0}
+    fr = [(60, 60, "Au bon moulin SARL"), (380, 300, "Total HT"), (500, 300, "100,00 EUR"), (380, 314, "TVA 20%"),
+          (500, 314, "20,00 EUR"), (380, 328, "Total TTC"), (500, 328, "120,00 EUR")]  # fmt: skip
+    assert _amounts(tmp_path / "fr.pdf", fr) == {"subtotal": 100.0, "tax_total": 20.0, "grand_total": 120.0}
+
+
+def test_a_totals_row_printed_across_the_page_is_read(tmp_path):
+    # March of Dimes' sample (sweep 4): "Subtotal" at the left margin, "$3,050" at the right one, more than half the
+    # page apart: the subtotal, HST and total were all missing.
+    cells = [(20, 60, "Registered Business Name"), (20, 400, "Subtotal"), (520, 400, "$3,050"), (20, 420, "HST"),
+             (520, 420, "$6.50"), (20, 440, "Total"), (520, 440, "$3,056.50")]  # fmt: skip
+    f = analyze(_pdf(tmp_path / "wide.pdf", cells), tables=False).fields
+    assert (f["subtotal"].value, f["hst_amount"].value, f["grand_total"].value) == (3050.0, 6.5, 3056.5)
+
+
+def test_a_summary_rows_total_is_its_last_figure(tmp_path):
+    # katanaml samples: "Total  $889,20  $88,92  $ 978,12" under "Net worth | VAT | Gross worth".
+    cells = [(60, 60, "Acme Supplies Inc."), (240, 380, "VAT [%]"), (340, 380, "Net worth"), (440, 380, "VAT"),
+             (500, 380, "Gross worth"), (240, 400, "10%"), (350, 400, "889,20"), (440, 400, "88,92"),
+             (520, 400, "978,12"), (180, 420, "Total"), (345, 420, "$889,20"), (430, 420, "$88,92"),
+             (510, 420, "$ 978,12")]  # fmt: skip
+    assert _amounts(tmp_path / "sum.pdf", cells) == {"subtotal": 889.2, "tax_total": 88.92, "grand_total": 978.12}
+
+
+def test_terms_with_a_deposit_first_are_never_verified(tmp_path):
+    # FNFE samples (sweep 4): "30% d'acompte, solde à 30 j" was verified as "Net 30" by its due date 30 days on.
+    cells = [(60, 60, "Au bon moulin SARL - 1242 chemin de l'olive - 84340 Malaucène - France"),
+             (60, 200, "Date de facture"), (200, 200, "13/11/2017"), (60, 214, "Conditions de paiement"),
+             (200, 214, "30% d'acompte, solde à 30 j"), (60, 228, "Date d'échéance"),
+             (200, 228, "13/12/2017")]  # fmt: skip
+    fr = analyze(_pdf(tmp_path / "terms.pdf", cells), tables=False).fields["payment_terms"]
+    assert fr.value == "Net 30" and fr.status != "verified"
+    assert any("deposit" in r for r in fr.reasons)
+
+
+def test_a_receipts_tax_lines_with_the_number_in_brackets_or_the_rate_first_are_read(tmp_path):
+    # WildReceipt photos (sweep 4): "TPS (824373609RT0001)  $3.82" in Quebec, "13%HST  14.69" in Ontario.
+    qc = [(60, 40, "Restaurant Exemple"), (60, 300, "SUB-TOTAL"), (300, 300, "$76.30"),
+          (60, 314, "TPS (123456782RT0001)"), (300, 314, "$3.82"), (60, 328, "TVQ (1234567890TQ0001)"),
+          (300, 328, "$7.61"), (60, 342, "TOTAL"), (300, 342, "$87.73")]  # fmt: skip
+    f = analyze(_pdf(tmp_path / "qc.pdf", qc), tables=False).fields
+    assert (f["gst_amount"].value, f["qst_amount"].value, f["grand_total"].value) == (3.82, 7.61, 87.73)
+    on = [(60, 40, "Exemple Grill"), (60, 300, "SUBTOTAL"), (300, 300, "112.99"), (60, 314, "13%HST"),
+          (300, 314, "14.69"), (60, 328, "TOTAL"), (300, 328, "127.68")]  # fmt: skip
+    f = analyze(_pdf(tmp_path / "on.pdf", on), tables=False).fields
+    assert (f["subtotal"].value, f["hst_amount"].value, f["grand_total"].value) == (112.99, 14.69, 127.68)

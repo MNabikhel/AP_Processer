@@ -2421,3 +2421,63 @@ Reading measured on 135 public invoices, receipts and credit notes from the inte
 - **Fix:** read, best first: the name with the registration numbers (English and French), the name after or under a seller's label (From, Seller, Vendor, Supplier, Verkäufer, Lieferant, Rechnungsersteller, Fournisseur, Vendeur...; past the seller's own fields such as "Nummer : 12345676", and "Name:" gives the value beside it), the first part of a sender's line when it is a company's name (the address block under it is then the customer's and counts less), and "payable to <company>" in the payment notes of page 2. Legal forms of Germany, the Netherlands, France, Spain, Italy and Malaysia count as company names.
 - **Test:** `tests/test_real_vendors_totals.py::test_a_heading_or_title_is_not_the_supplier_but_the_name_with_its_registration_numbers_is`, `tests/test_real_vendors_totals.py::test_the_name_under_a_sellers_label_is_the_supplier`
 - **Lesson:** Don't look for the supplier's name only where it is usually printed: look where the page says whose name it is.
+
+#### B-324 · The total tax the totals add up with was not the one kept · medium
+- **Where:** `ap_coder/capture/reader.py` (`_solve_totals`), `ap_coder/capture/confidence.py` (`_totals_that_add_up`)
+- **Symptom:** A Factur-X invoice (473,00 + Steuerbetrag 56,87 = 529,87, under a VAT breakdown 19,25 / 37,62) had its total tax read as 19,25 and its right subtotal and total failed ("subtotal 473.00 + tax 19.25 ≠ total 529.87"). A katanaml sample with "VAT 88,92" (no GST/HST) had its total swapped for its subtotal: 889,20 for 978,12.
+- **Cause:** The rule reader's solver tried the total tax in its sums but never put the one that added up first (only the subtotal, total, separate taxes and charges); fusion's re-balancing left the total tax out of the sum altogether, so "subtotal = total" balanced.
+- **Reproduce:** the PDFs of the tests below; `analyze()`.
+- **Reproduced:** yes (`{'subtotal': 473.0, 'grand_total': 529.87}` with the total tax 19.25 failed; `grand_total 889.2`)
+- **Fix:** the solver ranks the total tax it added up with first; fusion counts the total tax in the sum when no separate tax is read, never with one, and does not drop it to make the subtotal equal the total.
+- **Test:** `tests/test_real_vendors_totals.py::test_the_total_tax_the_totals_add_up_with_is_the_one_read`, `tests/test_real_vendors_totals.py::test_a_summary_rows_total_is_its_last_figure`
+- **Lesson:** Don't let a value take part in a sum without letting the sum choose it: every part that makes a total balance is chosen by it.
+
+#### B-325 · A tax's row in cells gave its base; two VAT rates, or a charge and a discount, could not be added · medium
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, new `_rightmost_tax`, `_summed`; `_solve_totals`)
+- **Symptom:** "Umsatzsteuer (S) | 275,00 | 7 | 19,25": the tax read as 275,00 (its base). "Steuerbasisbetrag USt. 7% ... 19,25" and "... 19% ... 37,62" with no total of them: no total tax. "Gesamtbetrag der Zuschläge 5,80" and "der Abschläge -9,07": the totals could only add up with the net amount after them, so the subtotal was verified as 177,49 for 180,76; on the "Rabatte" sample "abzgl. Sondernachlass 10% von 147,30 -14,73" and "zzgl. Versandkosten 5,80 7" were taken for product rows, and 193,83 (after them) was verified for 202,76. "USt. %" (a column of rates) read 19 as the tax.
+- **Cause:** right of a label, the first figure was taken; the solver tried one total tax and one charge at a time; a label followed by "%" only was read like a tax.
+- **Reproduce:** the PDFs of the tests below; `analyze()`.
+- **Reproduced:** yes (`tax_total` missing for two rates; `subtotal 177.49 verified` on the Factur-X sample)
+- **Fix:** on a tax's (or a total's, or a charge's) row of figures, the last one printed as money is its value, the first one a runner-up; two total taxes on rows of their own, or two charges (a discount among them), are also tried as their sum; "zzgl." / "abzgl." ("plus" / "less") lines are a totals block's, never a product's; a tax label with only "%" after it heads a column of rates and is passed over. When the totals add up with two printed subtotals (before and after the charges), the one chosen is never verified: which one is the subtotal is AP's convention.
+- **Test:** `tests/test_real_vendors_totals.py::test_the_total_tax_the_totals_add_up_with_is_the_one_read`, `tests/test_real_vendors_totals.py::test_vat_at_two_rates_with_no_total_of_it_is_their_sum`, `tests/test_real_vendors_totals.py::test_a_discount_and_freight_between_two_subtotals_are_read_and_the_subtotal_is_not_verified`
+- **Lesson:** Don't read a row of figures as one value: the base, the rate and the tax are all on it, and the tax comes last.
+
+#### B-326 · A totals row printed across the page was not read · medium
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, new `_far_right`)
+- **Symptom:** March of Dimes' sample prints "Subtotal" at the left margin and "$3,050" at the right one: subtotal, HST and total all missing on a clean digital invoice.
+- **Cause:** a value right of a label is looked for within half the page's width only.
+- **Reproduce:** a PDF with "Subtotal" at x 20 and "$3,050" at x 520 (same for HST, Total); `analyze()`.
+- **Reproduced:** yes (`subtotal`, `hst_amount`, `grand_total` missing)
+- **Fix:** past half the width (up to 85%), a totals label takes the amount on its row when the row holds only figures and is level with the label to a quarter of a line (a tilted scan otherwise pairs it with the next row's amount).
+- **Test:** `tests/test_real_vendors_totals.py::test_a_totals_row_printed_across_the_page_is_read`
+- **Lesson:** Don't bound a label's reach by a fixed distance alone: what is between the label and the value says more.
+
+#### B-327 · Totals labels of real invoices not known (German, Dutch, Italian, Spanish, French; "Invoice Subtotal", "VAT") · low
+- **Where:** `ap_coder/capture/reader.py` (`MORE_LABELS`, `DISTRACTORS`, `_DISCOUNT`, new `_negative_totals`)
+- **Symptom:** 29 German Factur-X / ZUGFeRD invoices had no total ("Bruttosumme", "Rechnungssumme Brutto", "Zahlbetrag", "Gesamtbetrag"), subtotal ("Rechnungssumme ohne USt.", "Positionssumme", "Netto") or tax ("USt.", "MwSt", "Steuerbetrag"); Dutch ("Subtotaal", "Totaal", "BTW"), Italian ("Imponibile", "Imposta IVA", "Totale"), French ("Total HT", "TVA", "Total TTC") likewise; "Net worth / VAT / Gross worth" (katanaml); Winnipeg's "Invoice Subtotal" was missing, and its 1020.58 read as the invoice number. A credit note's discount printed as a positive figure was subtracted.
+- **Cause:** the labels were English and Canadian French only; "Invoice Subtotal" matched the invoice number's weak "invoice" label.
+- **Reproduce:** the PDFs of the test below; `analyze()`.
+- **Reproduced:** yes (all three totals missing on the German, Dutch and French fixtures)
+- **Fix:** the labels above (and Rechnungsnummer, Rechnungsdatum, Fälligkeit, factuurnummer, fattura n., fecha de factura...), with their distractors (USt-IdNr., BTW-nummer, TVA intracommunautaire, Totaal excl.); "Invoice Subtotal" is no invoice number; a discount on a credit printed with negative totals is added to the credit; a tax label followed by a note and no money ("VAT 0% - export of goods outside the EU") gives no tax.
+- **Test:** `tests/test_real_vendors_totals.py::test_totals_labelled_in_german_dutch_and_french_are_read`, `tests/test_real_vendors_totals.py::test_a_note_about_vat_is_no_tax_amount`
+- **Lesson:** Don't assume the labels of the invoices you have seen: suppliers abroad bill Canadian companies in their own words.
+
+#### B-328 · Terms that ask for a deposit first verified as "Net 30" · low
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`), `ap_coder/capture/confidence.py` (`fuse`), `ap_coder/capture/types.py` (`PART_OF_TERMS`)
+- **Symptom:** "Conditions de paiement : 30% d'acompte, solde à 30 j" (FNFE samples) was verified as "Net 30" (the due date 30 days after confirmed it); 30% of the amount is due at once.
+- **Cause:** the terms pattern reads the days and nothing else on the line.
+- **Reproduce:** `analyze()` on an invoice with those terms and a due date 30 days after its date.
+- **Reproduced:** yes (`payment_terms 'Net 30' verified`)
+- **Fix:** terms on a line that asks for a deposit (acompte, deposit, down payment, advance payment, Anzahlung) are never verified: "the terms ask for a deposit first: these days are only the balance's".
+- **Test:** `tests/test_real_vendors_totals.py::test_terms_with_a_deposit_first_are_never_verified`
+- **Lesson:** Don't summarise terms by the part you can parse when the rest of the line changes what is due.
+
+#### B-329 · A receipt's tax lines "TPS (824373609RT0001) $3.82" and "13%HST 14.69" not read · low
+- **Where:** `ap_coder/capture/reader.py` (`_labelled`, `_BRACKETED_REG`, `MORE_LABELS`)
+- **Symptom:** Quebec restaurant receipts (WildReceipt) print the supplier's number in brackets after the tax's label and the amount further right: GST 3.82 and QST 7.61 were missing. Ontario receipts print the rate before the label ("13%HST", "15.00%HST:"): the HST was missing.
+- **Cause:** a tax label followed by a registration number was taken for the number's label (right, for "GST/HST Reg. No.: 988130969 RT0003"); tax labels had to start the line.
+- **Reproduce:** the receipts above; `read_fields()["gst_amount"]`, `["hst_amount"]`.
+- **Reproduced:** yes (both missing on the real receipts' OCR)
+- **Fix:** a registration number in brackets right after the tax's label leaves the amount right of it to the tax; a rate may come before a tax's label.
+- **Test:** `tests/test_real_vendors_totals.py::test_a_receipts_tax_lines_with_the_number_in_brackets_or_the_rate_first_are_read`
+- **Lesson:** Don't give a whole line to the number printed in it: a receipt squeezes the label, the number and the amount onto one row.

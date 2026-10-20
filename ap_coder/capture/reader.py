@@ -35,7 +35,9 @@ from .types import (
     AMOUNT_FIELDS,
     BILL_TO_READING,
     EITHER_TAX,
+    PART_OF_TERMS,
     RIVAL_NAME,
+    TWO_SUBTOTALS,
     Box,
     DocLayout,
     Line,
@@ -184,6 +186,66 @@ class _LabelHit:
     end: int  # character offset in the line text where the value may start
     label_text: str
     start: int = 0  # where the label's box starts: a label after another label on the line starts there
+
+
+# Labels seen on real invoices (sweep 4): an English variant, and the German, Dutch, Italian, Spanish and French
+# (France) words for the totals, the invoice's number and its dates. Tried after the labels above. (Plain text:
+# accents off, "fällig" is "fallig".)
+_RATE_FIRST = r"\d{1,2}(?:[.,]\d{1,3})?\s*%\s*"  # a receipt's "13%HST", "15.00%HST:", "5% GST"
+MORE_LABELS: dict[str, list[tuple[str, float]]] = {
+    "hst_amount": [(rf"{_RATE_FIRST}(?:{_A('hst')}|{_A('tvh')})", 0.95)],
+    "gst_amount": [(rf"{_RATE_FIRST}(?:{_A('gst')}|{_A('tps')})(?!\s*/\s*(?:hst|tvh))", 0.95)],
+    "pst_amount": [(rf"{_RATE_FIRST}(?:{_A('pst')}|{_A('rst')}|{_A('tvp')})", 0.95)],
+    "qst_amount": [(rf"{_RATE_FIRST}(?:{_A('qst')}|{_A('tvq')})", 0.95)],
+    "invoice_number": [
+        (r"rechnungs\s*-?\s*(?:nummer|nr\b\.?)", 1.0), (r"factuur\s*-?\s*(?:nummer|nr\b\.?)", 1.0),
+        (r"(?:numero|n\.?)\s*(?:de\s*)?factura|factura\s*(?:n\s?[°ºo]\.?|numero)", 0.95),
+        (r"fattura\s*(?:n\s?[°ºo]\.?|numero)|numero\s*(?:di\s*)?fattura", 0.95), (r"belegnummer", 0.8),
+    ],
+    "invoice_date": [
+        (r"rechnungsdatum", 1.0), (r"factuurdatum", 1.0), (r"data\s*(?:della\s*)?fattura", 0.95),
+        (r"fecha\s*(?:de\s*(?:la\s*)?)?(?:factura|emision)", 0.95), (r"belegdatum", 0.8), (r"datum\b", 0.55),
+    ],
+    "due_date": [
+        (r"fallig(?:keit|keitsdatum)?(?:\s*am)?\b", 0.9), (r"zahlbar\s*bis", 0.9), (r"vervaldatum", 1.0),
+        (r"(?:data\s*di\s*)?scadenza", 0.9), (r"(?:fecha\s*de\s*)?vencimiento", 0.9),
+    ],
+    "subtotal": [
+        (r"(?:invoice|order)\s*sub\s*-?\s*total", 1.0), (r"rechnungssumme\s*(?:netto|ohne\s*u\.?\s?st|exkl|excl)", 0.9),
+        (r"netto\s*-?\s*summe|summe\s*netto|zwischensumme|gesamt\s*netto|netto\s*gesamt|nettobetrag\s*gesamt", 0.95),
+        (r"netto\b", 0.6), (r"subtotaal", 1.0), (r"totaal\s*excl\b\.?(?:\s*btw)?", 0.95), (r"(?:totale\s*)?imponibile", 0.9),
+        (r"base\s*imponible", 0.9), (r"montant\s*h\.?\s?t\b\.?", 0.9), (r"total\s*h\.?\s?t\b\.?", 0.9),
+        (r"net\s*worth", 0.85), (r"positionssumme|summe\s*(?:der\s*)?positionen", 1.0),
+        (r"(?:totaal\s*)?excl(?:\.|usief)?\s*btw", 0.95),
+    ],
+    "other_charges": [
+        (r"(?:gesamtbetrag\s*der\s*)?zuschlage?\b", 0.85), (r"(?:gesamtbetrag\s*der\s*)?abschlage?\b|rabatt\b", 0.85),
+        (r"(?:zzgl\.?|zuzuglich)\s*(?:versand|fracht|porto|verpackung)\w*|versandkosten|frachtkosten", 0.85),
+        (r"(?:abzgl\.?|abzuglich)\s*\w+|sondernachlass|nachlass\b", 0.85),
+    ],
+    "tax_total": [
+        (r"(?:summe\s*)?(?:mwst|mehrwertsteuer|umsatzsteuer(?!\s*-?\s*(?:aufschl|id))|u\.?\s?st\b\.?(?!\s*[.-]?\s*(?:id|nr)))", 0.85),
+        (r"steuerbetrag", 0.8), (r"steuerbasisbetrag", 0.7),
+        (r"(?:zzgl\.?|zuzuglich)\s*(?:umsatzsteuer|mehrwertsteuer|mwst|u\.?\s?st\b)", 0.85), (r"btw\b(?!\s*-?\s*(?:nr|nummer|id))", 0.85), (r"iva\b", 0.7), (r"imposta(?:\s*iva)?", 0.9),
+        (r"(?:total\s*|montant\s*)?t\.?v\.?a\b\.?(?!\s*intra)", 0.85), (r"(?:total\s*)?vat\b(?:\s*amount)?", 0.85),
+    ],
+    "grand_total": [
+        (r"rechnungssumme\s*(?:brutto|inkl)", 1.0),
+        (r"brutto\s*-?\s*summe|summe\s*brutto|bruttobetrag|gesamt\s*brutto|brutto\s*gesamt", 1.0),
+        (r"gesamtbetrag(?!\s*der\s*(?:zu|ab)schl)|gesamtsumme|rechnungsbetrag|zahlbetrag|endbetrag", 0.95),
+        (r"zu\s*zahlen(?:der\s*betrag)?", 0.9), (r"brutto\b", 0.75),
+        (r"totaal(?:\s*(?:incl\b\.?(?:\s*btw)?|bedrag|te\s*betalen))?", 0.9), (r"te\s*betalen", 0.9),
+        (r"totale(?:\s*(?:documento|fattura|da\s*pagare))?", 0.9), (r"total\s*a\s*pagar|importe\s*total", 1.0),
+        (r"total\s*t\.?\s?t\.?\s?c\b\.?|montant\s*t\.?\s?t\.?\s?c\b\.?|net\s*a\s*payer", 1.0),
+        (r"gross\s*(?:worth|total|amount)", 0.9),
+    ],
+}  # fmt: skip
+for _field, _pats in MORE_LABELS.items():
+    LABELS[_field] = [*LABELS[_field], *_pats]
+DISTRACTORS["tax_total"] += [r"btw\s*[a-z]{2}\s*\d", r"btw\s*prijs", r"u\.?\s?st\.?\s*[.-]?\s*id", r"btw\s*-?\s*(?:nr|nummer|id)", r"tva\s*intra",
+                             r"(?:n\s?[°º]|no\b\.?|numero)\s*(?:de\s*)?tva", r"vat\s*(?:no\b|reg|number|id\b|#)"]  # fmt: skip
+DISTRACTORS["grand_total"] += [r"totaal\s*excl", r"totale\s*imponibile"]
+DISTRACTORS["invoice_number"] += [r"invoice\s*sub\s*-?\s*total"]  # "Invoice Subtotal 1020.58" is no invoice number
 
 
 def _compile() -> dict[str, list[tuple[re.Pattern[str], float]]]:
@@ -518,8 +580,16 @@ def _value_reading(field: str, line: Line, start: int, base: float, method: str)
             return None
         a = plain(rest).find(plain(value)[:6]) if value else 0
         words = _span_words(line, start + max(a, 0), start + max(a, 0) + len(value))
+        if _DEPOSIT.search(plain(rest)):
+            method += PART_OF_TERMS  # "30% d'acompte, solde à 30 j": the net days are only the balance's
         return Reading(field, value, value, _boxes(words), base * _min_conf(words), method)
     return None
+
+
+# Terms that ask for part of the amount first (a deposit): "Net 30" is only the balance's terms.
+_DEPOSIT = re.compile(
+    r"acompte|deposit|down\s*payment|advance\s*payment|anzahlung|\d\s*%\s*(?:a|à|on|upon|at)\s*(?:la\s*)?(?:commande|order|signature)"
+)
 
 
 def _amounts_in(text: str) -> list[tuple[float, int, int]]:
@@ -622,6 +692,11 @@ def _label_box(hit: _LabelHit) -> Box:
     return union_all([w.box for w in words]) or hit.line.box
 
 
+# "TPS (824373609RT0001)  $3.82": a receipt prints the supplier's number in brackets after the tax's label, its amount
+# further right.
+_BRACKETED_REG = re.compile(r"\s*[(（\[]\s*\d{9,10}\s*(?:RT|TQ)\s*\d{4}\s*[)）\]]\s*$", re.I)
+
+
 def _registration_line(line: Line, hit: _LabelHit) -> bool:
     after = line.text[hit.end :]
     return bool(
@@ -630,6 +705,11 @@ def _registration_line(line: Line, hit: _LabelHit) -> bool:
         or find_qst_numbers(after)
         or find_pst_numbers(f"PST {after[:40]}")
     )
+
+
+# "zzgl. Versandkosten 5,80 7", "abzgl. Sondernachlass 10% von 147,30 -14,73": "plus" and "less" open the lines of a
+# totals block (the charge, its base, its VAT rate), never a product's row.
+_TOTALS_BLOCK_WORD = re.compile(r"(?:zzgl|abzgl|zuzuglich|abzuglich)(?![a-z])")
 
 
 def _table_row(lines: list[Line], line: Line) -> bool:
@@ -732,22 +812,93 @@ def _column_foot(field: str, hit: _LabelHit, lines: list[Line]) -> list[Reading]
     return [Reading(field, foot, raw, _boxes(words), 0.95 * hit.strength * _min_conf(words), "label-column-foot")]
 
 
+_TAX_OR_TOTAL = ("gst_amount", "hst_amount", "pst_amount", "qst_amount", "tax_total")
+_RIGHTMOST = (
+    *_TAX_OR_TOTAL,
+    "grand_total",
+    "other_charges",
+)  # a row of figures after the label: the last one is the field's
+
+
+def _rightmost_tax(field: str, hit: _LabelHit, lines: list[Line], first: Line) -> Reading | None:
+    """A tax's row printed in cells, its base first and the tax last ("Umsatzsteuer (S) | 275,00 | 7 | 19,25"): the
+    rightmost amount printed as money, further right than ``first`` with no label between them."""
+    best = None
+    row = [
+        o
+        for o in lines
+        if o.box.page == first.box.page
+        and o.box.x0 > first.box.x0
+        and min(first.box.y1, o.box.y1) - max(first.box.y0, o.box.y0) > 0.5 * min(first.box.height, o.box.height)
+    ]
+    label = hit.line.box
+    for other in sorted(row, key=lambda o: o.box.x0):
+        if _label_hits(other):
+            break
+        far = other.box.x0 - label.x1
+        if far > FAR_RIGHT or (
+            far > MAX_RIGHT and abs(other.box.cy - label.cy) >= 0.25 * min(label.height, other.box.height)
+        ):
+            break  # so far across, only a figure level with the label is its (a tilted scan pairs it with the next row)
+        got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
+        if got and looks_like_money(str(got.raw)):
+            got.score *= 1.0 - min(other.box.x0 - hit.line.box.x1, 0.4) * 0.5
+            best = got
+    return best
+
+
+FAR_RIGHT = 0.85  # a totals label at the left margin, its amount at the right one (fraction of the page width)
+
+
+def _far_right(field: str, hit: _LabelHit, lines: list[Line]) -> Reading | None:
+    """A totals row printed across the page ("Subtotal ........ $3,050" with the label at the left margin and the
+    amount at the right one, further than ``MAX_RIGHT``): its amount printed as money, when the row holds only figures
+    (a tax's row may print its base and rate before it: the tax is the last one)."""
+    line = hit.line
+    # Level with the label (a quarter of a line): so far across, a scan's tilt puts the next row's amount beside it.
+    row = [
+        o
+        for o in lines
+        if o is not line
+        and o.box.page == line.box.page
+        and o.box.x0 >= line.box.x1 - 0.002
+        and abs(o.box.cy - line.box.cy) < 0.25 * min(line.box.height, o.box.height)
+    ]
+    if not row or any(re.sub(r"[\d\s$€£.,()%\-–+]", "", o.text) or o.box.x0 - line.box.x1 > FAR_RIGHT for o in row):
+        return None  # something else than figures on the row, or too far
+    money = [
+        o for o in sorted(row, key=lambda o: o.box.x0) if len(_amounts_in(o.text)) == 1 and looks_like_money(o.text)
+    ]
+    if not money or (len(money) > 1 and field not in _RIGHTMOST):
+        return None
+    other = money[-1]  # a tax's row: its base, its rate, the tax last
+    got = _value_reading(field, other, 0, 0.9 * hit.strength, "label-right")
+    if got:
+        got.score *= 0.8
+    return got
+
+
 def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
     """For each label: the value after it on the same line, else just right of it, else just below it
     (header grids print a row of labels over a row of values)."""
     out: list[Reading] = []
     for hit in field_hits:
         field, line = hit.field, hit.line
+        rest = line.text[hit.end :]
+        if field in _TAX_OR_TOTAL and len(re.findall(r"[a-z]{3,}", plain(rest))) >= 3 and not looks_like_money(rest):
+            continue  # "VAT 0% - export of goods outside the EU": a note about the tax, no amount of it
         inline = _value_reading(field, line, hit.end, 0.95 * hit.strength, "label-inline")
         if inline:
             out.append(inline)
             continue
+        if field in _TAX_OR_TOTAL and re.fullmatch(r"\s*[(\[]?\s*%\s*[)\]]?\s*", line.text[hit.end :]):
+            continue  # "USt. %", "Tax [%]": the heading of a column of rates, not of the tax
         if field in AMOUNT_FIELDS and _totals_heading_row(lines, line):
             out += _column_foot(field, hit, lines)
             continue
-        if field in AMOUNT_FIELDS and _registration_line(line, hit):
+        if field in AMOUNT_FIELDS and _registration_line(line, hit) and not _BRACKETED_REG.match(line.text[hit.end :]):
             continue  # "GST/HST Reg. No.: 988130969 RT0003": the number's label, not the tax amount's
-        if field == "other_charges" and _table_row(lines, line):
+        if field == "other_charges" and not _TOTALS_BLOCK_WORD.match(hit.label_text) and _table_row(lines, line):
             continue  # "Shipping cartons 18x12x12 | 100 | 47.04 | 4,704.00": a product, not the freight
         got = None
         for other in _right_of(lines, line)[:2]:
@@ -765,7 +916,17 @@ def _labelled(field_hits: list[_LabelHit], lines: list[Line]) -> list[Reading]:
                 break  # "Delivery Date: Sep 20, 2026": that label's value, not this one's
             if got:
                 got.score *= 1.0 - min(other.box.x0 - line.box.x1, 0.4) * 0.5
+                rightmost = _rightmost_tax(field, hit, lines, other) if field in _RIGHTMOST else None
+                if rightmost is not None:
+                    got.score *= 0.85
+                    out.append(got)
+                    got = rightmost
                 break
+        if got is None and field in AMOUNT_FIELDS:
+            got = _far_right(field, hit, lines)
+        if got is None and field in _RIGHTMOST:
+            # "abzgl. Sondernachlass | 10% | von | 147,30 | -14,73": words and a base before the amount.
+            got = _rightmost_tax(field, hit, lines, line)
         if got is None:
             lb = _label_box(hit)
             for other in _below(lines, line, lb)[:3]:
@@ -1238,16 +1399,31 @@ def _where(r: Reading) -> tuple:
     return (b.page, round(b.x0, 3), round(b.y0, 3)) if b else (id(r),)
 
 
+def _summed(readings: list[Reading], same_sign: bool = True) -> list[Reading]:
+    """Two amounts of one kind on rows of their own, with no total of them printed: a tax charged at two rates
+    ("USt. 7% 19,25", "USt. 19% 37,62"), or charges and discounts ("Gesamtbetrag der Zuschläge 5,80", "... der
+    Abschläge -9,07"). Their sum, as one more option for the solver to try."""
+    out = []
+    for i, a in enumerate(readings):
+        for b in readings[i + 1 :]:
+            if a.boxes and b.boxes and _where(a)[:1] == _where(b)[:1] and abs(a.boxes[0].cy - b.boxes[0].cy) > 0.005:
+                if a.value and b.value and (not same_sign or (a.value > 0) == (b.value > 0)):
+                    out.append(Reading(a.field, round(a.value + b.value, 2), f"{a.raw} + {b.raw}",
+                                       [*a.boxes, *b.boxes], 0.9 * min(a.score, b.score), a.method + "+summed"))  # fmt: skip
+    return out[:3]
+
+
 def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> dict[str, list[Reading]]:
     """Re-rank amount candidates so that the subtotal, taxes and total that add up come first."""
     top = {f: sorted(cands.get(f, []), key=lambda r: -r.score)[:4] for f in AMOUNT_FIELDS}
     subs = top["subtotal"] or [None]
     totals = top["grand_total"] or [None]
     tax_options = {f: [*top[f], None] for f in _TAX_FIELDS}
-    charge_options = [*top["other_charges"][:2], None]
+    charge_options = [*top["other_charges"][:2], *_summed(top["other_charges"][:3], same_sign=False), None]
     # A sales tax that is no GST/HST/PST/QST ("WA Sales Tax 10.35%"): only its total is printed.
-    total_tax_options = [*top["tax_total"][:2], None]
+    total_tax_options = [*top["tax_total"][:4], *_summed(top["tax_total"]), None]
     best = None
+    balanced: set[float] = set()  # the subtotals some combination adds up with
     for sub, total, charge, total_tax in product(subs, totals, charge_options, total_tax_options):
         extra = charge.value if charge else 0.0
         for taxes in product(*tax_options.values()):
@@ -1277,9 +1453,17 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
                         for base in {sub.value, sub.value + extra}  # taxed with or without the freight
                     ):
                         bonus += 0.3
+            if sub and bonus >= 3.0:
+                balanced.add(round(sub.value, 2))
             if best is None or score + bonus > best[0]:
                 chosen_taxes = dict(zip(tax_options, taxes, strict=True))
-                best = (score + bonus, sub, total, {**chosen_taxes, "other_charges": charge}, bonus)
+                best = (
+                    score + bonus,
+                    sub,
+                    total,
+                    {**chosen_taxes, "other_charges": charge, "tax_total": total_tax},
+                    bonus,
+                )
     if best is None:
         return cands
     _, sub, total, taxes, bonus = best
@@ -1296,6 +1480,10 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
         if bonus >= 3.0:
             r.score = min(1.0, r.score + 0.15)
             r.method += "+adds-up"
+            if f == "subtotal" and len(balanced) > 1:
+                # "Zwischensumme 202,76 ... Rechnungssumme Netto 193,83": the totals add up with either, with the
+                # discount and freight between them or without. Which one is the subtotal is AP's convention.
+                r.method += TWO_SUBTOTALS
         rest = [x for x in cands.get(f, []) if x is not r]
         out[f] = [r, *sorted(rest, key=lambda x: -x.score)]
     return out
@@ -1869,7 +2057,7 @@ def _date_fit(cands: dict[str, list[Reading]]) -> int:
     return 2 if days in (0, 7, 10, 14, 15, 20, 21, 30, 45, 60, 90) else 1
 
 
-_DISCOUNT = re.compile(r".*(discount|escompte|rabais|remise)")
+_DISCOUNT = re.compile(r".*(discount|escompte|rabais|remise|abschlag|rabatt|abzgl|abzuglich|nachlass)")
 
 
 _GLUED_TITLE = re.compile(
@@ -1907,6 +2095,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
     for ln in lines:
         by_page.setdefault(ln.box.page, []).append(ln)
     hits: dict[str, list[_LabelHit]] = {}
+    discounts: list[Reading] = []
     for ln in lines:
         in_table_head = None
         for hit in _label_hits(ln):
@@ -1925,6 +2114,7 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
             if field == "other_charges" and _DISCOUNT.match(plain(hit.label_text)):
                 for r in got:
                     r.value = -abs(r.value)  # a discount lowers the total, however it is printed
+                    discounts.append(r)
             if field in ("pst_amount", "qst_amount") and _PST_OR_QST.search(hit.label_text):
                 for r in got:
                     r.method += EITHER_TAX
@@ -1948,6 +2138,11 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         for field in AMOUNT_FIELDS:
             for r in cands.get(field, []):
                 r.value = -r.value if r.value else r.value
+    elif discounts and _negative_totals(cands):
+        # A credit note printed with negative totals ("Positionssumme -7,90") and its discount as printed (0,23): the
+        # discount lowers the credit, it is added to it.
+        for r in discounts:
+            r.value = abs(r.value)
     # Totals: the lowest "total" on the last page with one is usually the invoice total.
     if cands.get("grand_total"):
         last_page = max(r.boxes[0].page for r in cands["grand_total"] if r.boxes)
@@ -1975,6 +2170,12 @@ def _read_fields(layout: DocLayout) -> dict[str, list[Reading]]:
         readings.sort(key=lambda r: -r.score) if field not in AMOUNT_FIELDS else None
         cands[field] = _dedupe(readings)
     return cands
+
+
+def _negative_totals(cands: dict[str, list[Reading]]) -> bool:
+    """The subtotal and total read are printed negative (a credit note's)."""
+    tops = [r.value for f in ("subtotal", "grand_total") for r in cands.get(f, [])[:2] if r.value]
+    return bool(tops) and all(v < 0 for v in tops)
 
 
 def _settle_pst_or_qst(cands: dict[str, list[Reading]], text: str) -> None:

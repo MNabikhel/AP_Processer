@@ -43,9 +43,15 @@ BILL_TO_READING = "+bill-to"
 # Added to an amount read under a "PST/QST" label the page does not settle (no QST or PST number of the supplier's):
 # which of the two taxes it is stays a person's call, however well it adds up.
 EITHER_TAX = "+pst-or-qst"
+# Added to terms read from a line that asks for a deposit first ("30% d'acompte, solde à 30 j"): the net days read are
+# only the balance's terms, never verified.
+PART_OF_TERMS = "+with-deposit"
 # Added to a supplier's name read from the top of the page when another name there scored nearly as well (a store's
 # brand and its operator's legal name): never verified unless the vendor master confirms it.
 RIVAL_NAME = "+rival-name"
+# Added to a subtotal when the totals add up with another subtotal printed too (before and after the discounts and
+# charges): never verified.
+TWO_SUBTOTALS = "+two-subtotals"
 STATUSES = (VERIFIED, LIKELY, CHECK, MISSING)
 
 
