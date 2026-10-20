@@ -173,7 +173,8 @@ def layout_from_form(form: Any) -> tuple[export_layout.Layout, list[str], list[s
     date_format = date_format if date_format in export_layout.DATE_FORMATS else next(iter(export_layout.DATE_FORMATS))
     delimiter = delimiter if delimiter in export_layout.DELIMITERS else ","
     comma = bool(form.get("decimal_comma"))
-    new = export_layout.Layout(columns, date_format, delimiter, comma, bool(form.get("header_row")))
+    new = export_layout.Layout(columns, date_format, delimiter, comma, bool(form.get("header_row")),
+                               bool(form.get("byte_order_mark")))  # fmt: skip
     warnings = []
     if incomplete:
         warnings.append(f"Not in the layout until it has both a Header and a Value: {', '.join(incomplete)}.")
@@ -373,7 +374,7 @@ def approved_pdfs(request: Request, batch: int) -> Response:
     store = get_store(request)
     live_batch(store, batch)
     invoices = store.get_invoices(store.batch_invoice_ids(batch))
-    data = stamp.batch_zip(invoices, gl_names(store))
+    data = stamp.batch_zip(invoices, gl_names(store), store.tax_treatments())
     return download(data, f"ap_coder_batch_{batch}_approved_pdfs.zip", "application/zip")
 
 

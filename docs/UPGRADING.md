@@ -67,6 +67,11 @@ connects to the internet (ONNX Runtime's own usage reports to Microsoft included
   web app does not know to hand over to the newest. Unzip the new bundle **over** that folder, or next to it, or
   start the new version while the old one is still open, or delete the old folder by hand.
 - **Data kept in `private/` of such a folder** (run by hand) stays there for the same reason: the same remedies.
+- **A folder watcher or overnight page reader of a version from before October 19, 2026** (`python -m ap_coder
+  watch` or `read-pages`, in a window or a scheduled task) is not found: only the versions since leave a note
+  saying they run. Close its window, or end its task in Task Scheduler, before this one update; left running, it
+  reads new invoices with the old code and fails them once its folder is cleaned up (they then show as failed, with
+  **Retry**). Updates after this one stop it by themselves.
 - **Demo invoices, unzipped over PR #2 to #5.** A demo invoice's file is the old version's sample PDF in its
   `samples/` folder. Unzipped elsewhere, the update copies each one into `~/APCoder/invoices/` before the old
   folder goes. Unzipped over the old folder, the new bundle has already replaced them by its own samples (the

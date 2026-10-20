@@ -40,8 +40,24 @@ class Message:
     sender_email: str = ""
     body: str = ""
     html: str = ""
+    rtf: str = ""  # a rich-text body, written compressed (PidTagRtfCompressed)
     attachments: list[Attachment] = field(default_factory=list)
     attached_emails: list[Message] = field(default_factory=list)
+
+
+def _compressed_rtf(raw: bytes) -> bytes:
+    """``raw`` as compressed RTF (MS-OXRTFCP, "LZFu"), every byte a literal, then the end mark (no CRC checked)."""
+    pos, out = (207 + len(raw)) % 4096, bytearray()
+    groups = [raw[i : i + 8] for i in range(0, len(raw), 8)]
+    if not groups or len(groups[-1]) == 8:
+        groups.append(b"")
+    for n, group in enumerate(groups):
+        last = n == len(groups) - 1
+        out.append(1 << len(group) if last else 0)
+        out += group
+        if last:
+            out += struct.pack(">H", pos << 4)
+    return struct.pack("<IIII", len(out) + 12, len(raw), 0x75465A4C, 0) + bytes(out)
 
 
 def _text(tag: str, value: str) -> _Node:
@@ -67,6 +83,8 @@ def _message_nodes(msg: Message, top: bool) -> list[_Node]:
             nodes.append(_text(tag, value))
     if msg.html:
         nodes.append(_Node("__substg1.0_10130102", msg.html.encode()))
+    if msg.rtf:
+        nodes.append(_Node("__substg1.0_10090102", _compressed_rtf(msg.rtf.encode("latin-1"))))
     n = 0
     for a in msg.attachments:
         props = _props(0, False)

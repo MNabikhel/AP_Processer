@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -19,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from ap_coder.ai import page_reader
 from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS
 from ap_coder.ai.local_llm import provider_status
-from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files
+from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files, other_files
 from ap_coder.capture.layout import ocr_available
 from ap_coder.coding.tax import TAX_TYPES
 from ap_coder.core import paths, ui
@@ -28,6 +29,7 @@ from ap_coder.core.reference_data import ReferenceData
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.intake import inbox
 from ap_coder.intake.mailbox import EMAIL_EXTENSIONS, Unpacked, emails_in, safe_name, unpack, unpack_folder
+from ap_coder.intake.pictures import looks_incomplete
 from ap_coder.web import identity
 from ap_coder.web.core import (
     cache_dir,
@@ -53,6 +55,7 @@ from ap_coder.web.pages.review import attention
 router = APIRouter()
 
 JOB = "process"
+STILL_SAVING_SECONDS = 60  # a file changed this recently whose end is missing is still being written
 ACCEPT = sorted(SUPPORTED_EXTENSIONS | EMAIL_EXTENSIONS)  # what the upload takes: PDFs, scans, photos, saved emails
 
 
@@ -174,6 +177,45 @@ def first_steps(store: Store, settings: Settings, has_invoices: bool) -> tuple[l
     return steps, sum(1 for s in needed if s == "ok"), len(needed)
 
 
+# Where each getting-started step is done: its row on the welcome page and Import invoices links there until it is.
+STEP_LINKS = {
+    "Reading invoices": "/settings/reading",
+    "Chat model for GL suggestions": "/settings/reading",
+    "GL accounts": "/accounts",
+    "Sales tax GL mapping": "/accounts?tab=tax",
+    "OvisOCR2": "/settings/reading",
+    "Your name": "/settings/review",
+    "Process your first invoices": "/process",
+}
+
+
+def next_step(steps: list[tuple[str, str, str]]) -> dict[str, Any] | None:
+    """The one thing to do next on a new laptop, as the welcome page and Import invoices show it: the name (each
+    approval is recorded under it), the GL accounts (or the sample ones, to look around first), the sales tax
+    accounts, then the first invoices. None once all four are done (LM Studio has its own banner)."""
+    state = {label: (s, detail) for s, label, detail in steps}
+    if state["Your name"][0] != "ok":
+        return {"title": "Add your name", "icon": "badge", "href": STEP_LINKS["Your name"], "button": "Add your name",
+                "text": "Each approval is recorded under it. Until you add it, approvals carry this computer's "
+                        "login."}  # fmt: skip
+    if state["GL accounts"][0] != "ok":
+        return {"title": "Import your GL accounts", "icon": "account_tree", "href": STEP_LINKS["GL accounts"],
+                "button": "Import GL accounts", "sample": True,
+                "text": "AP Coder codes each invoice line to one of your GL accounts. To look around first, use the "
+                        "sample accounts and switch to yours later."}  # fmt: skip
+    if state["Sales tax GL mapping"][0] != "ok":
+        return {"title": "Pick a GL account for each sales tax", "icon": "percent", "button": "Set up sales tax",
+                "href": STEP_LINKS["Sales tax GL mapping"],
+                "text": f"{state['Sales tax GL mapping'][1]}: GST, HST, PST and QST each need a GL account (or PST "
+                        "added to the expense line), so approved invoices can be posted."}  # fmt: skip
+    if state["Process your first invoices"][0] != "ok":
+        return {"title": "Import your first invoices", "icon": "upload_file", "button": "Import invoices",
+                "href": STEP_LINKS["Process your first invoices"],
+                "text": "Upload a few PDFs, scans or photos: each is read, coded and checked, then waits for you in "
+                        "the review queue."}  # fmt: skip
+    return None
+
+
 def ready_to_read(steps: list[tuple[str, str, str]]) -> bool:
     """PDF text / OCR and GL accounts are enough: OvisOCR2 reads invoices once it runs, the chat model is optional."""
     return steps[0][0] != "bad" and steps[2][0] == "ok"
@@ -288,6 +330,25 @@ def not_processed(store: Store, files: list[Path]) -> tuple[list[Path], list[Pat
     return new, unreadable
 
 
+def not_read_here(folder: Path) -> list[str]:
+    """The names of the files in the invoices folder of a kind AP Coder does not read (B-268)."""
+    try:
+        return [p.name for p in other_files(folder, EMAIL_EXTENSIONS)] if folder.exists() else []
+    except OSError:
+        return []
+
+
+def still_being_saved(path: Path, now: float | None = None) -> bool:
+    """Changed in the last minute and its end missing (``intake.looks_incomplete``): a scanner or a download is still
+    writing it. Read now, half an invoice would be stored (and the whole one read again later as another). A file
+    that is complete is read at once, however new."""
+    try:
+        recent = abs((time.time() if now is None else now) - path.stat().st_mtime) < STILL_SAVING_SECONDS
+        return recent and looks_incomplete(path)
+    except OSError:  # gone or locked meanwhile: next time
+        return True
+
+
 def folder_files(store: Store) -> list[dict[str, Any]]:
     """The files in the invoices folder not processed yet (saved emails too: their attachments are read)."""
     folder = invoice_dir(store)
@@ -317,15 +378,20 @@ def process_page(request: Request) -> HTMLResponse:
     waiting = [i for i in recent if i["status"] == REVIEW]
     reasons = attention(store, reference_or_none(store), waiting) if waiting else {}
     recent = [{**i, "needs_attention": i["id"] in reasons} for i in recent]  # its pill says what the queue says
+    coming = next_step(steps)
     return render(
         request, "process.html", "process",
         steps=steps,
+        step_links=STEP_LINKS,
         steps_done=steps_done,
         steps_needed=steps_needed,
+        next=coming if coming and coming["href"] != "/process" else None,  # (this page's own step: choose files)
+        first_invoices=bool(coming) and coming["href"] == "/process",
         ready=ready_to_read(steps),
         recent=recent,
         recent_waiting=any(i["status"] == REVIEW for i in recent),
         files=folder_files(store),
+        not_read=not_read_here(invoice_dir(store)),
         set_aside=inbox.needs_person(store, invoice_dir(store)),
         folder=short_path(invoice_dir(store)),
         accept=",".join(ACCEPT),
@@ -360,8 +426,9 @@ def _save_and_start(request: Request, received: list[tuple[str, bytes]]) -> JSON
     saved, mails, notes = [], [], []
     for name, content in received:
         if Path(name).suffix.lower() not in ACCEPT:
-            notes.append(flash_message(f"{name} was not read: AP Coder reads PDFs, scans, photos and saved emails "
-                                       "(.eml, .msg).", "warn"))  # fmt: skip
+            notes.append(flash_message(f"{name} was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, "
+                                       "BMP, WEBP, GIF) and saved emails (.eml, .msg). Save it as PDF or JPEG to have "
+                                       "it read.", "warn"))  # fmt: skip
             continue
         try:  # one file that cannot be saved (a name Windows refuses, disk full) is said and skipped
             target = save_upload(folder, name, content)
@@ -389,10 +456,21 @@ def process_folder(request: Request) -> JSONResponse:
         return refuse("Finish the setup first: import your GL accounts (GL accounts & tax).")
     folder = invoice_dir(store)
     files, unreadable = not_processed(store, invoice_files(folder) if folder.exists() else [])
+    saving = [p for p in files if still_being_saved(p)]  # a scanner or a download still writing it (B-265)
+    files, unreadable = [p for p in files if p not in saving], unreadable + saving
     todo, already = split_new(store, files)
-    notes = [flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, or open in "
-                           "another program): picked up next time.", "warn", [p.name for p in unreadable])]  # fmt: skip
-    work = process_files(store, settings, todo, already=already, folder_emails=True, notes=notes if unreadable else [])
+    notes = []
+    if unreadable:
+        notes.append(flash_message(f"{ui.plural(len(unreadable), 'file')} could not be opened (still being saved, or "
+                                   "open in another program): picked up next time.", "warn",
+                                   [p.name for p in unreadable]))  # fmt: skip
+    others = not_read_here(folder)
+    if others:
+        are = "are" if len(others) > 1 else "is"
+        notes.append(flash_message(f"{ui.plural(len(others), 'file')} in the invoices folder {are} not a kind AP Coder "
+                                   "reads (PDFs, scans, photos and saved emails): save them as PDF (or JPEG) to have "
+                                   "them read.", "warn", others))  # fmt: skip
+    work = process_files(store, settings, todo, already=already, folder_emails=True, notes=notes)
     return _start(request, work, len(todo))
 
 

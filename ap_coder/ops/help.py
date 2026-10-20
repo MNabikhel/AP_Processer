@@ -408,6 +408,21 @@ CHECKS: dict[str, CheckHelp] = {
         "highlighted in amber on the page.",
         "Click each amber field and compare it with the page before approving.",
     ),
+    "PAGES_NOT_READ": CheckHelp(
+        READING, "Pages not read",
+        "The file has more pages than were read on this computer: its first 20 pages are read (a statement, a "
+        "catalogue or several invoices scanned as one file can be longer), and a scanned page OCR couldn't read is "
+        "left out. Nothing on those pages is in the fields, lines or totals shown.",
+        "Look through the other pages yourself before approving; for a long file, ask the vendor for the invoice on "
+        "its own. It is never approved without a person.",
+    ),
+    "FILE_CUT_OFF": CheckHelp(
+        READING, "File cut off",
+        "The PDF's end is missing: it was still downloading or being saved when it came in, or an email cut it "
+        "short. What is there is read and shown, but part of the invoice (often the totals or the last page) may "
+        "be missing.",
+        "Compare it with the vendor's copy, or ask the vendor for a new one. It is never approved without a person.",
+    ),
     "TEXT_LAYER_MATCHES_PAGE": CheckHelp(
         FRAUD, "Hidden text differs from the page",
         "This PDF carries text (what a computer reads) that is not what its page shows: the page reader, which "
@@ -492,9 +507,9 @@ FAQ: list[tuple[str, str]] = [
         "No: save the email itself into the invoices folder (classic Outlook: drag it there, a .msg; Outlook on the "
         "web or new Outlook: Download, a .eml), or upload it on Import invoices. Each email is sorted: invoices "
         "and credit notes go to the review queue, statements to Statements, and anything else (a reminder, a "
-        "quote, a bank-detail change, flagged as possible fraud) waits under Emails that need a person on Process "
-        "invoices. Signature logos are left out. IT can have the AP mailbox save every email there: "
-        "docs/MAILBOX_SETUP.md.",
+        "quote, a bank-detail change, flagged as possible fraud) waits under Emails that need a person on Import "
+        "invoices. Signature logos are left out. IT can have the AP mailbox save every email there (the mailbox "
+        "setup guide that comes with AP Coder says how).",
     ),
     (
         "Can I attach the approved invoice to the ERP entry?",

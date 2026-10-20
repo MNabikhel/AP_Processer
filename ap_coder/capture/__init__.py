@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from .reader import (
     _on_tilted_page,
     _table_header_line,
     credit_titled,
+    listed_items,
     read_fields,
     read_line_items,
 )
@@ -187,6 +189,21 @@ def _to_subtotal(items: list[LineReading], targets: list[float]) -> list[LineRea
     return items
 
 
+_DISCOUNT_LINE = re.compile(r"\b(?:discount|escompte|rabais|remise|rebate|coupon)", re.I)
+
+
+def _discounts_taken_off(items: list[LineReading], targets: list[float]) -> list[LineReading]:
+    """``items`` with a discount's line printed without its sign ("Discount 5%  2,689.02", OCR's lost "-" or
+    brackets) taken off, when that, and not adding it, makes the lines add up to the subtotal."""
+    if not targets or _adds_up(items, targets):
+        return items
+    off = [LineReading(li.description, li.quantity, li.unit_price, -li.amount, list(li.boxes), li.score, li.source,
+                       list(li.agreed))
+           if li.amount and li.amount > 0 and li.quantity is None and _DISCOUNT_LINE.search(li.description) else li
+           for li in items]  # fmt: skip
+    return off if off != items and _adds_up(off, targets) else items
+
+
 def _labelled(items: list[LineReading], source: str) -> list[LineReading]:
     for li in items:
         li.source = li.source or source
@@ -198,7 +215,8 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
     """The line items read from the page itself, and every reading of them, best first: the words inside the tables
     the table finder found (``tables``: True finds them now, a {page: boxes} dict found before, None/False: not
     looked for), the words under the column headings across the page (``words``, the reading as before) and the
-    PDF's table from its text layer. The first reading that adds up to the subtotal is kept, else the first one
+    PDF's table from its text layer. The first reading that adds up to the subtotal is kept, else the amounts
+    listed above the subtotal when they add up to it (a receipt, ``reader.listed_items``), else the first one
     found inside a table, else the words across the page. The PDF's table is last: it is a second reading of the
     same text, there to be compared with OvisOCR2's when the others read the lines differently from it. A reading
     that ran on into the totals under the table is cut at its subtotal row first (``_to_subtotal``)."""
@@ -209,16 +227,20 @@ def _page_lines(path: Path, layout: DocLayout, fields: dict[str, FieldResult], w
 
         tables = find_tables(path, max_pages=len(layout.pages) or 1)
     found = tables if isinstance(tables, dict) else None
-    in_tables = _labelled(read_line_items(layout, found), "table") if found else []
+    targets = _line_targets(fields)
+    in_tables = _labelled(read_line_items(layout, found, targets), "table") if found else []
     text_table: list[LineReading] = []
     if layout.source == "text":
         text_table = _labelled(text_table_items(path, layout, found), "text table")
-    targets = _line_targets(fields)
-    in_tables, words, text_table = (_to_subtotal(r, targets) for r in (in_tables, words, text_table))
+    in_tables, words, text_table = (_discounts_taken_off(_to_subtotal(r, targets), targets)
+                                    for r in (in_tables, words, text_table))  # fmt: skip
     readings = [r for r in (in_tables, words, text_table) if r]
     adds = [r for r in readings if targets and _adds_up(r, targets)]
     if adds:
         return adds[0], [adds[0], *[r for r in readings if r is not adds[0]]]
+    listed = _labelled(listed_items(layout, targets), "listed")  # no reading adds up: a receipt's list of amounts
+    if listed:
+        return listed, [listed, *readings]
     return (in_tables or words), readings
 
 

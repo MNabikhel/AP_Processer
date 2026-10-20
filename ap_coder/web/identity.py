@@ -25,6 +25,7 @@ import contextvars
 import hashlib
 import hmac
 import ipaddress
+import secrets
 import unicodedata
 from dataclasses import dataclass
 from typing import Any
@@ -44,10 +45,12 @@ THIS_COMPUTER = {"127.0.0.1", "localhost", "::1"}
 
 @dataclass(frozen=True)
 class Person:
-    """A colleague on another computer: the name they gave and the address their browser came from."""
+    """A colleague on another computer: the name they gave, the address their browser came from and the browser's
+    own id (kept in its name cookie: the same browser after its computer got a new address)."""
 
     name: str
     address: str
+    browser: str = ""
 
 
 PERSON: contextvars.ContextVar[Person | None] = contextvars.ContextVar("ap_coder_person", default=None)
@@ -77,22 +80,35 @@ def _signature(secret: bytes, encoded: str) -> str:
     return hmac.new(secret, encoded.encode("ascii"), hashlib.sha256).hexdigest()
 
 
-def cookie_value(secret: bytes, name: str) -> str:
-    """``<name, base64>.<HMAC-SHA256 of it>``: only this start of the server could have made it."""
-    encoded = encode_name(name)
-    return f"{encoded}.{_signature(secret, encoded)}"
+def new_browser() -> str:
+    """An id for a browser that gives its name for the first time."""
+    return secrets.token_hex(8)
 
 
-def name_from_cookie(secret: bytes, value: str | None) -> str | None:
-    """The name a cookie holds, or None when it was not made by this start of the server (made up, changed, old)."""
-    encoded, _, signature = str(value or "").partition(".")
-    if not encoded or not signature or not hmac.compare_digest(signature, _signature(secret, encoded)):
+def cookie_value(secret: bytes, name: str, browser: str = "") -> str:
+    """``<name, base64>.<browser id>.<HMAC-SHA256 of both>``: only this start of the server could have made it."""
+    signed = f"{encode_name(name)}.{browser}" if browser else encode_name(name)
+    return f"{signed}.{_signature(secret, signed)}"
+
+
+def from_cookie(secret: bytes, value: str | None) -> tuple[str, str] | None:
+    """(name, browser id) a cookie holds (the id "" in one without), or None when it was not made by this start of
+    the server (made up, changed, old)."""
+    signed, _, signature = str(value or "").rpartition(".")
+    if not signed or not signature or not hmac.compare_digest(signature, _signature(secret, signed)):
         return None
+    encoded, _, browser = signed.partition(".")
     try:
         name = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError, ValueError):
         return None
-    return clean_name(name) or None
+    return (clean_name(name), browser) if clean_name(name) else None
+
+
+def name_from_cookie(secret: bytes, value: str | None) -> str | None:
+    """The name a cookie holds, or None when it was not made by this start of the server (made up, changed, old)."""
+    found = from_cookie(secret, value)
+    return found[0] if found else None
 
 
 def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -144,8 +160,8 @@ class Identity:
         if scope["type"] != "http" or not self.network or from_this_computer(scope):
             await self.app(scope, receive, send)
             return
-        name = name_from_cookie(self.secret, _cookies(scope.get("headers") or []).get(COOKIE))
-        if name is None:
+        found = from_cookie(self.secret, _cookies(scope.get("headers") or []).get(COOKIE))
+        if found is None:
             path = scope.get("path") or ""
             if path in OPEN_PATHS or path.startswith(OPEN_PREFIXES):
                 await self.app(scope, receive, send)
@@ -162,7 +178,7 @@ class Identity:
             response.headers["Cache-Control"] = "no-store"
             await response(scope, receive, send)
             return
-        tokens = PERSON.set(Person(name, client)), EVENT_ORIGIN.set(client)
+        tokens = PERSON.set(Person(found[0], client, found[1])), EVENT_ORIGIN.set(client)
         try:
             await self.app(scope, receive, send)
         finally:
