@@ -283,3 +283,22 @@ def test_a_pdf_cut_off_is_read_with_a_warning_and_never_approved_without_a_perso
     assert "the file looks cut off" in touchless_gates([{"code": "FILE_CUT_OFF"}])
     whole = pipe.process(SAMPLE)
     assert not any(i.code == "FILE_CUT_OFF" for i in whole.report.issues)
+
+
+# --- B-267: a file longer than the pages read ------------------------------------------------------------------------
+
+
+def test_a_300_page_pdf_says_on_the_review_screen_that_only_its_first_pages_were_read(pipeline):
+    store, pipe, folder = pipeline
+    long = folder / "statement and invoice.pdf"
+    with pymupdf.open() as doc, pymupdf.open(SAMPLE) as sample:
+        for _ in range(150):
+            doc.insert_pdf(sample)  # 300 pages
+        doc.save(long)
+    result = pipe.process(long)
+    assert result.ok, result.error
+    issue = next(i for i in result.report.issues if i.code == "PAGES_NOT_READ")
+    assert issue.severity == "warning"
+    assert issue.message == ("only 20 of its 300 pages were read (a file's first 20 pages are read, and a page OCR "
+                             "can't read is left out): check the other pages yourself before approving")  # fmt: skip
+    assert not any(i.code == "PAGES_NOT_READ" for i in pipe.process(SAMPLE).report.issues)

@@ -408,6 +408,14 @@ CHECKS: dict[str, CheckHelp] = {
         "highlighted in amber on the page.",
         "Click each amber field and compare it with the page before approving.",
     ),
+    "PAGES_NOT_READ": CheckHelp(
+        READING, "Pages not read",
+        "The file has more pages than were read on this computer: its first 20 pages are read (a statement, a "
+        "catalogue or several invoices scanned as one file can be longer), and a scanned page OCR couldn't read is "
+        "left out. Nothing on those pages is in the fields, lines or totals shown.",
+        "Look through the other pages yourself before approving; for a long file, ask the vendor for the invoice on "
+        "its own. It is never approved without a person.",
+    ),
     "FILE_CUT_OFF": CheckHelp(
         READING, "File cut off",
         "The PDF's end is missing: it was still downloading or being saved when it came in, or an email cut it "

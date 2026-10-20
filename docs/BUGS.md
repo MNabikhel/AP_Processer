@@ -2451,3 +2451,13 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **Fix:** a PDF without "%%EOF" in its last kilobyte is still read and shown, with a warning on the review screen (and its entry in Help, "File cut off"): "download.pdf looks cut off (its end is missing: it was still downloading or being saved when it came in), so part of the invoice may be missing. Compare it with the vendor's copy, or ask the vendor for a new one." It is never approved without a person ("the file looks cut off", listed in Settings → Automation). Across the pdf.js test files and the ten samples no complete PDF gets the warning.
 - **Test:** `tests/test_unusual_files.py::test_a_pdf_cut_off_is_read_with_a_warning_and_never_approved_without_a_person`
 - **Lesson:** Don't let a reader's silent repair stand for a whole file: when a file had to be repaired, say so to the person.
+
+#### B-267 · A 300-page PDF was read from its first 20 pages with nothing on the review screen to say so · medium-low
+- **Where:** `ap_coder/capture/bridge.py` (`review_issues`), `ap_coder/capture/layout.py` (`READ_PAGES`)
+- **Symptom:** a 300-page file (a statement with the invoice on page 140, several invoices scanned as one file) was read from its first 20 pages only, as designed, but the review screen said nothing of it: the fields, lines and totals looked like a reading of the whole file. `CaptureResult.pages_left_out` (280) kept it from touchless approval, but that reason is never shown on the review screen.
+- **Cause:** the pages left out were passed to the touchless gates only, not to the review report.
+- **Reproduce:** the sample's two pages repeated to 300 (text) and a 300-page scan whose pages all differ, through the three ways in.
+- **Reproduced:** yes (`capture.page_count` 300, `pages_left_out` 280; no mention on `/review/1`).
+- **Fix:** a warning on the review screen: "only 20 of its 300 pages were read (a file's first 20 pages are read, and a page OCR can't read is left out): check the other pages yourself before approving", with its entry in Help ("Pages not read"). Time stays bounded by the 20 pages read: 2 s for the 300 text pages; for scans each page read costs an OCR (the 250-page fax took 285 s here, with the computer shared by several test runs at a load of 40 on 4 cores; see N-94).
+- **Test:** `tests/test_unusual_files.py::test_a_300_page_pdf_says_on_the_review_screen_that_only_its_first_pages_were_read`
+- **Lesson:** Don't keep a limit silent: what isn't read must be said where the person checks what was.
