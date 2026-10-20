@@ -21,7 +21,7 @@ from ..coding.po import po_findings
 from ..coding.rules import apply as apply_rules
 from ..coding.tax import PLACE_OF_SUPPLY, SUPPLY_OURS, SUPPLY_SITE, build_gl_distribution, supply_source
 from ..coding.terms import payment_findings
-from ..coding.validation import Issue, ValidationReport, validate_coding
+from ..coding.validation import WARNING, Issue, ValidationReport, validate_coding
 from ..coding.vendors import vendor_findings
 from ..core.config import Settings
 from ..core.memory import compare_with_history, format_examples, select_examples, vendor_key
@@ -203,6 +203,22 @@ def _check_pdf(path: Path) -> None:
         return
     if pages == 0:
         raise CannotRead(NO_PAGES.format(name=path.name))
+
+
+CUT_OFF = "FILE_CUT_OFF"
+CUT_OFF_TEXT = ("{name} looks cut off (its end is missing: it was still downloading or being saved when it came in), "
+                "so part of the invoice may be missing. Compare it with the vendor's copy, or ask the vendor for a new "
+                "one.")  # fmt: skip
+
+
+def _cut_off(path: Path) -> bool:
+    """A PDF whose end is missing (``intake.looks_incomplete``): PyMuPDF reads what is there, maybe part of it."""
+    from ..intake.pictures import looks_incomplete
+
+    try:
+        return path.suffix.lower() == ".pdf" and looks_incomplete(path)
+    except OSError:
+        return False
 
 
 def _needs_password(path: Path) -> bool:
@@ -442,6 +458,8 @@ class InvoicePipeline:
                 exclude_invoice_id=invoice_id,
                 feedback=feedback,
             )
+            if _cut_off(path):  # what is there is read and shown; the person is told part may be missing
+                result.report.issues.append(Issue(WARNING, CUT_OFF, CUT_OFF_TEXT.format(name=path.name)))
         except CannotRead as exc:  # no OCR or photo add-on, no pages, a web page: said plainly, never an empty reading
             log.warning("%s: %s", path.name, exc)
             result.error = str(exc)

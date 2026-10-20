@@ -261,3 +261,25 @@ def test_the_folder_pick_up_leaves_a_pdf_still_being_written_for_next_time(tmp_p
     assert client.post("/process/folder", headers=PAGE).json()["ok"]
     assert job.wait(180)
     assert sorted(i["file_name"] for i in store.list_invoices()) == ["done.pdf", "scanner output.pdf"]
+
+
+# --- B-266: a PDF cut off (a download that stopped) ------------------------------------------------------------------
+
+
+def test_a_pdf_cut_off_is_read_with_a_warning_and_never_approved_without_a_person(pipeline):
+    from ap_coder.capture.supplier import touchless_gates
+
+    store, pipe, folder = pipeline
+    raw = SAMPLE.read_bytes()
+    cut = folder / "download.pdf"
+    cut.write_bytes(raw[: int(len(raw) * 0.6)])  # the browser stopped at 60%
+    result = pipe.process(cut)
+    assert result.ok, result.error  # what is there is still read and shown
+    issue = next(i for i in result.report.issues if i.code == "FILE_CUT_OFF")
+    assert issue.severity == "warning"
+    assert issue.message == ("download.pdf looks cut off (its end is missing: it was still downloading or being saved "
+                             "when it came in), so part of the invoice may be missing. Compare it with the vendor's "
+                             "copy, or ask the vendor for a new one.")  # fmt: skip
+    assert "the file looks cut off" in touchless_gates([{"code": "FILE_CUT_OFF"}])
+    whole = pipe.process(SAMPLE)
+    assert not any(i.code == "FILE_CUT_OFF" for i in whole.report.issues)

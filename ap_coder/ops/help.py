@@ -408,6 +408,13 @@ CHECKS: dict[str, CheckHelp] = {
         "highlighted in amber on the page.",
         "Click each amber field and compare it with the page before approving.",
     ),
+    "FILE_CUT_OFF": CheckHelp(
+        READING, "File cut off",
+        "The PDF's end is missing: it was still downloading or being saved when it came in, or an email cut it "
+        "short. What is there is read and shown, but part of the invoice (often the totals or the last page) may "
+        "be missing.",
+        "Compare it with the vendor's copy, or ask the vendor for a new one. It is never approved without a person.",
+    ),
     "TEXT_LAYER_MATCHES_PAGE": CheckHelp(
         FRAUD, "Hidden text differs from the page",
         "This PDF carries text (what a computer reads) that is not what its page shows: the page reader, which "

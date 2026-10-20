@@ -2441,3 +2441,13 @@ A robustness corpus (about 120 files: public PDF and picture test files from pdf
 - **Fix:** a file changed in the last minute whose end is missing (a PDF without "%%EOF", a JPEG without its end marker, a PNG without its end chunk, or an empty file) is left for next time with the message already used for a locked file: "1 file could not be opened (still being saved, or open in another program): picked up next time." A complete file is read at once, however new. (A file that is still cut off after a minute is read, with a warning: B-266.)
 - **Test:** `tests/test_unusual_files.py::test_the_folder_pick_up_leaves_a_pdf_still_being_written_for_next_time`
 - **Lesson:** Don't take "it opens" for "it is finished": check the file's end is there before reading one that has just changed.
+
+#### B-266 · A PDF cut off in a download went to the queue with nothing to say part of it was missing · medium-low
+- **Where:** `ap_coder/ai/pipeline.py` (`_cut_off`, `_process`), `ap_coder/capture/supplier.py` (`ALWAYS_A_PERSON`)
+- **Symptom:** the first 40% of an invoice PDF (a browser download that stopped, an email attachment cut short) was read as an invoice: PyMuPDF repairs what is there, so the header and some lines were read but not the total, and the review screen showed only "subtotal + tax = 4350.00 but grand_total = 0.00". Nothing said the file itself was incomplete, so the pilot tester would correct the figures from a page that is not all there; a cut-off file whose figures happened to add up could have been approved without a person.
+- **Cause:** nothing looked at whether the file ended as a PDF ends.
+- **Reproduce:** the sample PDF cut at 40% (and at its last 300 bytes), through the three ways in.
+- **Reproduced:** yes (`truncated_40pct.pdf … total=0.0`, no word of the file; PyMuPDF's `is_repaired` true, no "%%EOF" in the last kilobyte).
+- **Fix:** a PDF without "%%EOF" in its last kilobyte is still read and shown, with a warning on the review screen (and its entry in Help, "File cut off"): "download.pdf looks cut off (its end is missing: it was still downloading or being saved when it came in), so part of the invoice may be missing. Compare it with the vendor's copy, or ask the vendor for a new one." It is never approved without a person ("the file looks cut off", listed in Settings → Automation). Across the pdf.js test files and the ten samples no complete PDF gets the warning.
+- **Test:** `tests/test_unusual_files.py::test_a_pdf_cut_off_is_read_with_a_warning_and_never_approved_without_a_person`
+- **Lesson:** Don't let a reader's silent repair stand for a whole file: when a file had to be repaired, say so to the person.
