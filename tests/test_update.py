@@ -593,7 +593,7 @@ def test_the_bundle_manifest_lists_every_file_with_its_sha256(tmp_path):
 def test_ap_coder_has_a_real_version():
     import ap_coder
 
-    assert ap_coder.__version__ == paths.project_version() == "0.2.0"
+    assert ap_coder.__version__ == paths.project_version() == "0.3.0"
     assert paths.version_key(ap_coder.__version__) > paths.version_key("0.1.0")
 
 

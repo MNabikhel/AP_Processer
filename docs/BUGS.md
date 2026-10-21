@@ -4897,3 +4897,188 @@ were approved, parked and exported and a backup was made every 2 seconds (no loc
 - **N-171** · Capture's findings (B-458, B-459) are added after the confidence is worked out: a warning about the page
   keeps an invoice from bulk approval, but does not by itself flag it in the queue
   (Ready means Approve is open, which a warning does not close).
+
+### Before testing: install, launcher and updates
+
+A fresh install of main (3dacb6f) the way the pilot tester does it, on Linux standing in for Windows: GitHub's ZIP
+(`git archive`) unzipped into a new home folder and double-clicked, four times from cold, then a newer ZIP unzipped
+into a new folder and over the old one. Then each fix below was run the same way again (a newer ZIP of the same
+version unzipped over a running one: the old window said a newer AP Coder took over, the new one said *Updated AP
+Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21)* and ran the self-check).
+
+#### B-542 · A newer GitHub ZIP of the same version could not be told from the older one · high
+- **Where:** `ap_coder/core/paths.py` (`install_identity`, `describe`), `scripts/launch.py` (`previous_install`,
+  `run`), `scripts/running.py` (`judge`), `ap_coder/web/app.py` (`/healthz`), `ap_coder/web/pages/settings.py`
+  (About), `ap_coder/ops/doctor.py`
+- **Symptom:** unzipped over the old folder, a newer ZIP said no *Updated* line, showed the older one's *Self-check
+  OK at setup* and ran no new self-check; Settings → About said only "0.2.0". Unzipped over a folder whose dashboard
+  was still running, the new start opened the old dashboard ("already running").
+- **Cause:** every version was 0.2.0, a ZIP carries no build information, and the install fingerprint was a hash of
+  `pyproject.toml`, which most changes leave alone; the running dashboard was judged by folder and version only.
+- **Reproduce:** `git archive` two commits of main, unzip the older one and double-click it, unzip the newer one over
+  it and double-click again.
+- **Reproduced:** yes (run2.log of the audit: *Self-check OK at setup (2026-10-21 20:14)*, no update said)
+- **Fix:** `ap_coder/BUILD` holds `$Format:%h %cI$`, marked `export-subst` in `.gitattributes`: GitHub's Download
+  ZIP and `git archive` write the commit and its time into it; the offline bundle builder writes it for its copy; a
+  checkout uses `git log -1`; a folder with neither, a hash of its code (`paths.build_stamp`). The fingerprint is the
+  pyproject plus that build, a ZIP's build time is its commit's (so an older ZIP in another folder is older), and the
+  launcher's state records the commit: *Updated AP Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build
+  87db17f, 2026-10-21)*, then the self-check. `/healthz` says the build, so a dashboard from before this folder was
+  unzipped over is stopped, not opened. Settings → About, the doctor and Help → Report a problem say the build. The
+  version is 0.3.0 for this pilot drop (D-54).
+- **Test:** `tests/test_launch_build.py::test_a_newer_zip_unzipped_over_the_older_one_is_an_update`,
+  `::test_a_stamped_zip_says_its_commit_and_time`, `::test_two_zips_of_one_version_are_two_builds`,
+  `::test_a_dashboard_of_this_folder_from_before_its_code_changed_is_older`, `::test_the_dashboard_says_its_build`,
+  `::test_settings_about_and_the_doctor_say_the_build`, `::test_the_bundle_builder_stamps_its_copy`; CI
+  `windows-github-zip`
+- **Lesson:** An identity built from a version number that nobody bumps is no identity: take it from what changes
+  with every build, the commit, and put it where every way of getting the code carries it.
+
+#### B-543 · The first run said nothing for about three of its first four minutes · medium
+- **Where:** `scripts/launch.py` (`ensure_venv`, `pip_install`, `PipProgress`, `heartbeat`)
+- **Symptom:** making `.venv` (30 s on the audit's run), pip installing 56 packages (135 s) and a 22 s gap after it
+  showed no line: a pilot tester would think it hung and close the window.
+- **Cause:** pip's own lines (one a package) are kept for the log, and nothing replaced them in the window; `python -m
+  venv` was run without a word.
+- **Reproduce:** GitHub's ZIP, a fresh home folder, double-click; time the window's lines.
+- **Reproduced:** yes (run1.log of the audit). The 22 s gap did not come back on any of the later runs, cold or warm
+  (3 s between pip's last line and the next step; nothing between the steps after it took more than 0.4 s): it was
+  pip itself finishing on a cold cache, and the heartbeat now covers it.
+- **Fix:** *Making AP Coder's own Python environment (the .venv folder; under a minute)...* before `venv`; while pip
+  runs, every 12 s without a line the window says how far it is, from pip's lines and the `.dist-info` folders that
+  appear: *Working out which packages are needed: 12 so far (pandas)...*, *Getting packages: 29 of 55
+  (opencv_python)...*, *Installing packages: 41 of 56 (onnxruntime)...*.
+- **Test:** `tests/test_launch_build.py::test_pip_progress_counts_what_it_found_fetched_and_installed`,
+  `::test_pip_progress_from_the_wheelhouse`, `::test_pip_says_how_far_it_is_while_it_is_quiet`,
+  `::test_making_the_venv_is_said`
+- **Lesson:** Moving noise to the log is half the job: whatever took its place in the window must still say that
+  something is happening.
+
+#### B-544 · A model download that lost its connection showed urllib's error and waited a day · medium
+- **Where:** `scripts/fetch_models.py` (`download`, `fetch`, `plain_reason`, `setup`), `scripts/launch.py`
+  (`ensure_models`, `models_due`, `readiness`, `one_engine`)
+- **Symptom:** 2 of 4 cold installs lost the connection to www.modelscope.cn. The window said *could not get
+  ch_PP-OCRv5_rec_mobile_infer.onnx: URLError: <urlopen error [Errno 104] Connection reset by peer>*, *Run this again
+  when the download works* (run what?), *Tried again tomorrow*, and the readiness line said the PP-OCRv5 models *come
+  from the offline bundle's models folder*, of a GitHub ZIP that has none.
+- **Cause:** one try per file; the launcher ran `fetch_models.main`, written for a person at the command line; the
+  failure was recorded with the day in it; the readiness line had one wording for both sources.
+- **Reproduce:** a first run from GitHub's ZIP on a flaky connection (or a proxy that resets every connection).
+- **Reproduced:** yes (old_run1.log in the audit's up/ and up2/)
+- **Fix:** each download is tried 3 times (after 3 s and 10 s; a 404 is not tried again); the window says *Couldn't
+  get X: the connection dropped, tried 3 times.* and *Couldn't download the OCR models (the connection dropped). AP
+  Coder will try again next time it starts; scans are still read with one engine meanwhile.*, the error itself goes
+  to the log; the next start tries again (twice a file, 20 s each), up to 3 starts a day, then *tomorrow*; the
+  readiness line says *one engine for now: the PP-OCRv5 models couldn't be downloaded yet; AP Coder tries again when
+  it starts* from the code alone, and the bundle wording only for a bundle.
+- **Test:** `tests/test_launch.py::test_a_failed_model_download_is_tried_again_and_said_plainly`,
+  `::test_plain_reasons_for_a_failed_download`, `tests/test_launch_build.py::test_the_ocr_line_says_where_the_models_come_from`
+- **Lesson:** A download over someone else's network fails now and then: try again before saying so, say it in the
+  words of the person reading, and say what happens next.
+
+#### B-545 · The window of an older AP Coder just ended when a newer one took over · low
+- **Where:** `scripts/running.py` (`take_over`, `note_takeover`, `taken_over`), `scripts/launch.py`
+  (`start_dashboard`, `main`, `keep_open`)
+- **Symptom:** the old window closed (Windows) or ended with nothing said, or with *AP Coder stopped on its own*;
+  the pilot tester could not tell an update from a crash.
+- **Cause:** the old start only saw its server end; nothing told it why.
+- **Reproduce:** start AP Coder, unzip a newer build (over it or elsewhere), double-click the new one.
+- **Reproduced:** yes
+- **Fix:** before stopping it, the new start notes in the settings file which port it stops; the old window, seeing
+  its dashboard end with that note fresh, says *A newer AP Coder took over; you can close this window.*, frees the
+  launch lock (the new start waits for it), and waits for Enter instead of vanishing (not with `AP_NO_PAUSE=1` or no
+  one at the window). Only windows of 0.3.0 and later can say it (N-252).
+- **Test:** `tests/test_launch_build.py::test_the_old_window_says_a_newer_ap_coder_took_over`,
+  `::test_an_old_note_or_another_port_is_not_this_window`, `::test_the_window_frees_the_lock_before_it_waits`
+- **Lesson:** When one process ends another on purpose, leave a note the other can read: the reason is the message.
+
+#### B-546 · The first run's counts and GL line did not add up · low
+- **Where:** `scripts/launch.py` (`_ensure_packages`, `pip_install`, `models_said`, `setup_check_lines`),
+  `scripts/fetch_models.py` (`came_with_package`)
+- **Symptom:** *Installing AP Coder's packages (15 missing)* then *Installed 56 packages*; *OCR models ready: 1
+  already there, 2 downloaded* on a brand-new computer; *Table finder: ... downloaded into <the whole data folder
+  path>/models.*; *GL accounts: none imported yet, so the sample ones are used* next to *Setup checks: all 9 passed
+  (the sample GL accounts, ...)* while the GL page showed 0 accounts.
+- **Cause:** pip installs what the 15 need too; the "already there" model is RapidOCR's angle classifier, inside its
+  package; the table finder line came from the command-line tool; the sample chart's checks were counted as passes
+  of this setup.
+- **Reproduce:** a first run from GitHub's ZIP.
+- **Reproduced:** yes (run1.log of the audit)
+- **Fix:** *Installing AP Coder's packages: 15 missing, with the packages they need in turn* and *Installed 56
+  packages (the 15 missing and the ones they need)*; *OCR models ready: 2 downloaded, and the table finder's; 1 came
+  with the OCR package.* (no path); *· GL accounts: none imported yet (import yours in GL accounts & tax, or use the
+  sample ones)* as a note, and *Setup checks: all 7 passed (tax mapping, coding rules, settings)* without the
+  sample's GL accounts and cost centers.
+- **Test:** `tests/test_launch.py::test_the_start_says_no_gl_accounts_were_imported_yet`,
+  `tests/test_launch.py::test_the_model_count_says_where_each_came_from`
+- **Lesson:** Two numbers on two lines are read together: say how they relate, or the reader decides something went
+  wrong.
+
+#### B-547 · The LM Studio line said to start AP Coder again · low
+- **Where:** `scripts/launch.py` (`lm_studio_line`)
+- **Symptom:** *To use it: open LM Studio, Developer tab → Start server, then start AP Coder again*; the pilot runs
+  LM Studio, and the dashboard picks it up without a restart.
+- **Cause:** written before Settings → Reading had *Check again*.
+- **Reproduce:** start AP Coder with LM Studio closed.
+- **Reproduced:** yes
+- **Fix:** *LM Studio isn't running yet: until it is, invoices are read by OCR only and wait for a person. To start
+  it: open LM Studio, Developer tab → Start server; then press Check again in AP Coder's Settings → Reading (no need
+  to restart AP Coder)*.
+- **Test:** `tests/test_launch_build.py::test_lm_studio_not_running_says_how_to_start_it_and_to_check_again`
+- **Lesson:** Advice in a start-up message ages with the app: check it against what the dashboard can do now.
+
+#### B-548 · pyproject allowed Python 3.10 while everything else said 3.11 · low
+- **Where:** `pyproject.toml` (`requires-python`, ruff `target-version`), `.github/workflows/ci.yml` (tests matrix),
+  `ap_coder/ops/doctor.py` (`_python_check`), `scripts/launch.py` (`venv_fits`, `bootstrap`)
+- **Symptom:** `requires-python = ">=3.10"` and CI tested 3.10, while APProcessor.bat / .command, the launcher, the
+  bundle (3.11 to 3.14), the doctor and the guides said 3.11 or newer.
+- **Cause:** the floor was raised in the launcher and the guides, not in the package or CI.
+- **Reproduce:** compare them.
+- **Reproduced:** yes
+- **Fix:** 3.11 everywhere: `requires-python = ">=3.11"`, ruff `py311`, CI tests 3.11, 3.12, 3.13 and 3.14, the doctor
+  fails a 3.10. A `.venv` made with 3.10 by AP Coder 0.1 (PR #1 and #2 allowed it) is made again with the newer Python
+  (it could no longer install 0.3), instead of being reused.
+- **Test:** `tests/test_launch_build.py::test_one_python_version_everywhere`,
+  `::test_a_venv_made_with_an_older_python_is_made_again`, `tests/test_config_and_cli.py::test_doctor_python_range_matches_the_launcher`
+- **Lesson:** A version floor lives in several places: change the package metadata and CI with the launcher, or the
+  one that is not changed is the one that is tested.
+
+#### B-549 · No CI job ran GitHub's ZIP the way the pilot tester does · medium
+- **Where:** `.github/workflows/ci.yml` (`windows-github-zip`)
+- **Symptom:** every Windows job set `AP_ALLOW_INTERNET=1` or used the offline bundle, from a plain folder, with no
+  Mark of the Web; none updated one ZIP with a newer one. B-542 and B-544 passed CI.
+- **Cause:** the jobs were written for the offline bundle, the path the pilot was first meant to use.
+- **Reproduce:** read the workflow.
+- **Reproduced:** yes
+- **Fix:** a Windows job makes two `git archive` ZIPs (this commit and an empty commit on top), marks them as
+  downloaded, `Expand-Archive`s the older into `Pilot tester Ré\` (a space and an accent), double-clicks
+  `APProcessor.bat` with no `AP_ALLOW_INTERNET` until the dashboard answers (checking the first run's lines and the
+  build on `/healthz`), leaves an invoice and a `.env` line in the data folder, unzips the newer ZIP over it while it
+  runs and double-clicks again: *Updated AP Coder from ... (build old ...) to ... (build new ...)*, the self-check,
+  the old window's *A newer AP Coder took over*, the data kept, Settings → About showing the new build.
+- **Test:** `tests/test_ci_workflow.py::test_ci_runs_github_zip_as_the_pilot_tester_does`
+- **Lesson:** Test the path the user takes, not the one the plan said they would take.
+
+#### B-550 · The bundle builder's dry run did not say where it downloads from · low
+- **Where:** `scripts/build_offline_bundle.py` (`plan`, `download_hosts`, `main`)
+- **Symptom:** IT behind a firewall that lets only named hosts through had no list: `--dry-run` printed pip commands
+  and model names, not the addresses.
+- **Cause:** the plan kept each model's checksum, not its URL.
+- **Reproduce:** `python scripts/build_offline_bundle.py --dry-run`
+- **Reproduced:** yes
+- **Fix:** the plan has each model's `url`, `download_hosts` (`pypi.org`, `files.pythonhosted.org`,
+  `www.modelscope.cn`) and what is not in the bundle (LM Studio and its models); stderr says the same in three lines
+  (stdout stays the JSON plan). PILOT.md §B has a *For IT* box: what the default build holds, why it carries the
+  `azure` extra, what it leaves out.
+- **Test:** `tests/test_launch_build.py::test_the_dry_run_names_every_address_the_build_downloads_from`
+- **Lesson:** A build that downloads needs a list of where from, for whoever runs the firewall.
+
+#### Looked at and left (install, launcher and updates)
+
+- **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline
+  bundle's manifest lists its files, so a bundle removes them: `upgrade.prune_stale`; a ZIP has no list). A file
+  left in `ap_coder/` could still be imported; none is today. A ZIP could carry a file list, but GitHub builds it.
+- **N-252** · A window of AP Coder 0.2.0 or older, still open when 0.3.0 takes over, still just ends: the message
+  comes from the old window's own code (B-545).
+- **N-253** · The `windows-github-zip` CI job (B-549) was written without a Windows computer to run it on; its first
+  runs may need a fix of the job itself (the steps it checks were run on Linux with the same ZIPs).
