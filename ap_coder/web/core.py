@@ -44,7 +44,7 @@ from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import identity
 from ap_coder.web.jobs import Jobs
-from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, SECTIONS
+from ap_coder.web.pages import BANNER_PAGES, BY_KEY, PAGES, PINNED
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -336,13 +336,19 @@ def nav_counts(store: Store) -> dict[str, int]:
     return {"review": len(store.list_invoices(REVIEW)), "exports": len(store.unexported_approved())}
 
 
-def rail(store: Store) -> list[dict[str, Any]]:
-    """The rail's sections, each with its pages and counts."""
+def rail(store: Store) -> dict[str, list[dict[str, Any]]]:
+    """The rail's three groups, each page with its count: the everyday pages (``main``), the pages folded under More
+    (``more``) and Settings and Help, pinned at its foot (``pinned``)."""
     counts = nav_counts(store)
-    return [
-        {"title": section, "pages": [{"page": p, "count": counts.get(p.key, 0)} for p in PAGES if p.section == section]}
-        for section in SECTIONS
-    ]
+
+    def items(pages: list[Any]) -> list[dict[str, Any]]:
+        return [{"page": p, "count": counts.get(p.key, 0)} for p in pages]
+
+    return {
+        "main": items([p for p in PAGES if not p.more and p.key not in PINNED]),
+        "more": items([p for p in PAGES if p.more]),
+        "pinned": items([p for p in PAGES if p.key in PINNED]),
+    }
 
 
 def render(request: Request, template: str, page: str, status_code: int = 200, **context: Any) -> HTMLResponse:

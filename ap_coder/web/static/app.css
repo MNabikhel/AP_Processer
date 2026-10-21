@@ -451,13 +451,22 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 
 /* ==== Shell: the left rail and the page ====================================================================== */
 .shell {min-height: 100vh;}
+/* The rail never scrolls as a whole: the pages scroll inside .nav, while Settings, Help (.nav-pinned) and the footer
+   stay on screen, even at 1366 x 650 with More open (B-502). */
 .rail {position: fixed; top: 0; left: 0; bottom: 0; width: 256px; z-index: 10; display: flex; flex-direction: column; background: var(--lg-surface);
-  border-right: 1px solid var(--lg-border); padding: 20px 12px 0; overflow-y: auto;}
-.brand {display: block; padding: 0 10px 4px;}
+  border-right: 1px solid var(--lg-border); padding: 16px 12px 0; overflow: hidden;}
+.brand {display: block; padding: 0 10px 10px;}
 .brand img {display: block;}
 .nav {display: flex; flex-direction: column;}
-.nav-section {margin: 16px 0 4px; padding-left: 10px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
-  font-weight: 600; color: var(--lg-subtle);}
+.rail > .nav:not(.nav-pinned) {flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;}
+.nav > *, .nav-more > * {flex: none;}
+.nav-pinned {flex: none; padding: 6px 0; border-top: 1px solid var(--lg-hairline);}
+.nav-more > summary {list-style: none; cursor: pointer; color: var(--lg-muted);}
+.nav-more > summary::-webkit-details-marker {display: none;}
+.nav-more > summary .chev {color: var(--lg-subtle); transition: transform .15s;}
+.nav-more[open] > summary .chev {transform: rotate(180deg);}
+.nav-more[open] {padding-bottom: 4px;}
+.nav-more > .nav-link {padding-left: 18px;}
 .nav-link {display: flex; align-items: center; gap: 10px; height: 32px; margin: 1px 0; padding: 0 10px;
   border-radius: var(--lg-r-sm); color: var(--lg-text); font-size: 13.5px; font-weight: 450;}
 .nav-link:hover {background: var(--lg-nav-hover); text-decoration: none;}
@@ -470,9 +479,9 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
   font-variant-numeric: tabular-nums; line-height: 1;}
 .nav-link .count.accent {background: var(--lg-accent-weak); color: var(--lg-accent);}
 .nav-link.on .count.accent {background: var(--lg-surface);}
-.rail-foot {margin-top: auto; padding: 14px 0 16px 10px; border-top: 1px solid var(--lg-hairline);
-  position: sticky; bottom: 0; background: var(--lg-surface);}
-.rail-demo {margin-bottom: 10px;}
+.rail-foot {flex: none; padding: 10px 0 12px 10px; border-top: 1px solid var(--lg-hairline); background: var(--lg-surface);
+  display: flex; flex-direction: column; gap: 8px;}
+.rail-demo {margin: 0;}
 /* Keyboard: the first Tab of every page offers to skip the rail */
 .skip {position: absolute; left: 8px; top: -48px; z-index: 100; padding: 8px 14px; border-radius: var(--lg-r);
   background: var(--lg-surface); color: var(--lg-text); box-shadow: var(--lg-focus); font-weight: 500;}
@@ -483,9 +492,13 @@ pre {white-space: pre-wrap; overflow-wrap: anywhere; background: var(--lg-head);
 .main > .apc-head + * {margin-top: 12px;}
 .apc-head h1 {margin: 4px 0 0;}
 @media (max-width: 900px) {
-  .rail {position: static; width: auto; border-right: 0; border-bottom: 1px solid var(--lg-border);}
+  .rail {position: static; width: auto; border-right: 0; border-bottom: 1px solid var(--lg-border); overflow: visible;}
   .nav {flex-direction: row; flex-wrap: wrap; gap: 2px 6px;}
-  .nav-section {width: 100%; margin: 8px 0 2px;}
+  .rail > .nav:not(.nav-pinned) {overflow: visible;}
+  .nav-more {width: 100%;}
+  .nav-more[open] {display: flex; flex-wrap: wrap; gap: 2px 6px;}
+  .nav-more > summary {width: 100%;}
+  .nav-pinned {border-top: 0; padding: 0;}
   .rail-foot {position: static;}
   .main {margin-left: 0; padding: 20px 16px 64px;}
 }
