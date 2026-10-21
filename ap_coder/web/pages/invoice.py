@@ -193,7 +193,7 @@ def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str
     if invoice_id not in ids:
         ids = [i["id"] for i in pending]
     if invoice_id not in ids:
-        return {"ids": ids, "position": None, "count": len(ids), "prev": "", "next": ""}
+        return {"ids": ids, "position": None, "count": len(ids), "prev": "", "next": "", "next_id": None}
     position = ids.index(invoice_id)
     url = lambda i: _with_query(f"/review/{i}", query)  # noqa: E731
     return {
@@ -204,16 +204,28 @@ def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str
         # Always enabled (wrapping around), so Alt+Left/Right never fall through to the browser's Back/Forward.
         "prev": url(ids[(position - 1) % len(ids)]),
         "next": url(ids[(position + 1) % len(ids)]),
+        # The one after it as the screen showed it (none for the last): where an action on it goes next, even if
+        # editing moved it in the queue's order meanwhile (B-426).
+        "next_id": ids[position + 1] if position + 1 < len(ids) else None,
     }
 
 
-def next_url(store: Store, invoice_id: int, query: dict[str, str]) -> str:
-    """After an action on this invoice: the next one in the queue as shown (or the queue when none is left)."""
+def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: Any = None) -> str:
+    """After an action on this invoice: the next one in the queue as shown (or the queue when none is left).
+    ``seen_next``: the invoice that followed it when its screen was drawn (the form's ``next_id``), opened when it is
+    still waiting: the edits refresh the invoice's confidence, which moves it in the queue's order while it is open,
+    and the one after its new place would skip those in between (B-426)."""
     nav = navigation(store, invoice_id, query)
     ids, position = nav["ids"], nav["position"]
     remaining = [i for i in ids if i != invoice_id]
     if not remaining:
         return _with_query("/review", query)
+    try:
+        seen = int(seen_next or 0)
+    except (TypeError, ValueError):
+        seen = 0
+    if seen in remaining:
+        return _with_query(f"/review/{seen}", query)
     at = min(position if position is not None else 0, len(remaining) - 1)
     return _with_query(f"/review/{remaining[at]}", query)
 
@@ -558,7 +570,7 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     asked = lessons.due_for_why(store, inv.get("ai_output") or {}, analysis.output)
     if asked and not form.get("why_done"):
         return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
-    after = next_url(store, invoice_id, query)
+    after = next_url(store, invoice_id, query, form.get("next_id"))
     open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number}
                    for i in analysis.errors + analysis.warnings]  # fmt: skip
     me = reviewer()
@@ -602,7 +614,8 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
 
 @router.post("/review/{invoice_id:int}/park")
 def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: str = Form(""),
-         show: str = Form(""), q: str = Form(""), sort: str = Form("")) -> JSONResponse:  # fmt: skip
+         show: str = Form(""), q: str = Form(""), sort: str = Form(""),
+         next_id: str = Form("")) -> JSONResponse:  # fmt: skip
     """Set it aside while waiting for information (out of the queue until brought back)."""
     store = get_store(request)
     _invoice(store, invoice_id)
@@ -617,7 +630,7 @@ def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: s
         if follow < dt.date.today():
             return refuse("Pick a follow-up date from today on.")
     query = _nav_query({"show": show, "q": q, "sort": sort})
-    after = next_url(store, invoice_id, query)
+    after = next_url(store, invoice_id, query, next_id)
     try:
         store.park_invoice(invoice_id, reviewer(), reason.strip(), follow.isoformat() if follow else None)
     except ValueError as exc:
@@ -628,11 +641,11 @@ def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: s
 
 @router.post("/review/{invoice_id:int}/reject")
 def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str = Form(""), q: str = Form(""),
-           sort: str = Form("")) -> JSONResponse:  # fmt: skip
+           sort: str = Form(""), next_id: str = Form("")) -> JSONResponse:  # fmt: skip
     """Not ours, or not to be paid. It can be reopened later."""
     store = get_store(request)
     _invoice(store, invoice_id)
-    after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort}))
+    after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort}), next_id)
     try:
         store.reject_invoice(invoice_id, reviewer(), reason.strip())
     except ValueError as exc:

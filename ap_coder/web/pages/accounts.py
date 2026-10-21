@@ -149,8 +149,9 @@ def accounts_page(request: Request, tab: str = "gl", file: str = "", sheet: str 
     mapped = tax_types_mapped(store)
     policy = store.get_setting("policy_notes")
     policy_lines = [n for n in policy.splitlines() if n.strip() and not n.lstrip().startswith("#")]
+    categories = len({a["category"] for a in gl if a["category"]})
     tiles = [
-        ("GL accounts", len(gl), f"{len({a['category'] for a in gl if a['category']})} categories"),
+        ("GL accounts", len(gl), ui.plural(categories, "category", "categories")),
         ("Cost centers", len(cc) or "—", "in use" if cc else "optional"),
         ("Sales taxes mapped", f"{mapped}/{len(TAX_TYPES)}", "GST · HST · PST · QST · other"),
         (

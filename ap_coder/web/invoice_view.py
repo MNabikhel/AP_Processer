@@ -103,6 +103,14 @@ EDIT_LABELS = {
 # How sure the capture is of a field, beside its label in the form: (tone, icon).
 CAPTURE_BADGES = {"verified": ("ok", "check_circle"), "likely": ("info", "check"), "check": ("warn", "error"),
                   "failed": ("err", "cancel")}  # fmt: skip
+# ... in the words of the page's colour key (static/js/invoice_viewer.js, STATUS_HELP), with what each means (B-435).
+CAPTURE_WORDS = {"verified": "Verified", "likely": "Likely", "check": "Check", "failed": "Failed check"}
+CAPTURE_HELP = {
+    "verified": "Verified: the readers agree and the checks pass.",
+    "likely": "Likely: one strong reading and the checks pass. A quick look.",
+    "check": "Check: the readers disagree or are unsure. Look at it on the page.",
+    "failed": "Failed check: a check on this value failed. Look at it on the page.",
+}
 
 
 def _text(value: Any) -> str:
@@ -476,9 +484,11 @@ def capture_confidence(capture: CaptureResult | None) -> dict[str, dict[str, str
         if status not in CAPTURE_BADGES:
             continue
         tone, icon_name = CAPTURE_BADGES[status]
-        # never rounds up to certainty
-        words = "check" if status == "failed" else f"{math.floor(fr.confidence * 100 + 1e-9)}%"
-        out[name] = {"tone": tone, "icon": icon_name, "text": words, "status": status}
+        # the status in words, and how sure in figures where that tells more (never rounded up to certainty)
+        sure = f"{math.floor(fr.confidence * 100 + 1e-9)}%"
+        words = CAPTURE_WORDS[status] + (f" {sure}" if status in ("likely", "check") else "")
+        out[name] = {"tone": tone, "icon": icon_name, "text": words, "status": status,
+                     "help": f"{CAPTURE_HELP[status]} How sure: {sure}."}  # fmt: skip
     return out
 
 
@@ -629,8 +639,16 @@ def reader_state(store: Store, settings: Settings, inv: dict[str, Any], status: 
 _PLAIN_AMOUNT = re.compile(r"(?<![\d.,])(-?\d{4,})\.(\d{2})(?![\d%])")
 
 
+# The code's field names in the checks' messages ("but grand_total = 0.00"), as the form names them (B-429).
+_PLAIN_FIELDS = (("quantity x unit_price", "quantity × unit price"), ("grand_total", "the total"),
+                 ("tax_total", "the tax total"), ("unit_price", "unit price"))  # fmt: skip
+
+
 def readable(message: str, cap: bool = True) -> str:
-    """A check message as a clerk reads it: a capital first letter, amounts with thousands separators."""
+    """A check message as a clerk reads it: plain words for field names, a capital first letter, amounts with
+    thousands separators."""
+    for code, words in _PLAIN_FIELDS:
+        message = message.replace(code, words)
     message = _PLAIN_AMOUNT.sub(lambda m: f"{int(m.group(1)):,}.{m.group(2)}", message)
     return message[:1].upper() + message[1:] if cap else message
 
@@ -686,7 +704,8 @@ def checks_details(report: Any) -> list[dict[str, str]]:
         kind, title = {"error": ("error", "Must fix"), "info": ("info", "Good to know")}.get(
             issue.severity, ("warning", "Worth a look")
         )
-        items.append({"kind": kind, "title": title, "message": where + issue.message, "code": issue.code,
+        items.append({"kind": kind, "title": title, "message": where + readable(issue.message, cap=not where),
+                      "code": issue.code,
                       "hint": "" if kind == "info" else hint})  # fmt: skip
     errors = [i for i in report.issues if i.severity == "error"]
     if report.requires_review and not errors:

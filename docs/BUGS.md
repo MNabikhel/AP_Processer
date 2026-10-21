@@ -4361,3 +4361,203 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 - **N-135** · The review's `freight` stream (merchandise, freight, then "Subtotal" of both): the reader takes the printed
   "Subtotal" (merchandise + freight), AP codes the merchandise as the subtotal and the freight apart; every invoice is
   "wrong and verified" on the main branch and here alike. A coding convention, not a reading or learning question.
+
+### Pilot walkthrough (UI)
+
+The dashboard walked through as the pilot tester will meet it, before the first real invoices: a new data folder, no
+LM Studio (no OvisOCR2, no chat model), the name, the GL accounts (the sample ones, and a small CSV imported), the
+sales tax mapping, 15 real English vendor PDFs (a credit memo, US invoices, a two-page Microsoft invoice, HST
+invoices), corrections, a field taught by clicking, approvals with Ctrl+Enter, JD Edwards and Excel exports,
+Learning, Help, Settings, the keyboard alone, a 1280 px window, and bad, empty and repeated files. Screenshots at
+1366 x 768 and 1920 x 1080, the browser's console watched (no errors). Pages answered in 0.05 to 0.3 s (Help → Report
+a problem: 3 s the first time, N-140); 15 PDFs were read and coded in 6 s. 14 fixed (B-424 to B-437), each with a
+failing test first, all in `tests/test_web_pilot_walkthrough.py`; 6 left (N-136 to N-141).
+
+#### B-424 · Settings → Review: the threshold's label broke onto three lines · low
+- **Where:** `ap_coder/web/templates/settings_review.html` (the *Needs attention* threshold)
+- **Symptom:** the label read "Send to" / "*Needs attention*" / "when the AI's confidence is below", one piece per
+  line, on the page the welcome screen sends the tester to first (*Add your name*).
+- **Cause:** a `.field` label is a flex column; its text and the `<i>` inside it were separate items of it.
+- **Reproduce:** open Settings → Review.
+- **Reproduced:** yes
+- **Fix:** the sentence is one `<span>`. No other `.field` label mixes text and inline tags.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_the_needs_attention_threshold_label_is_one_sentence`
+- **Lesson:** Don't put loose text and inline tags in a flex container: each becomes its own box.
+
+#### B-425 · The Shortcuts list was half hidden behind the Document card · low-medium
+- **Where:** `ap_coder/web/static/invoice.css` (`.inv-top`)
+- **Symptom:** on a 1366 x 768 laptop, *Shortcuts* on the review screen opened under the Document card: "Next field
+  to check" and "Stop teaching a field" were covered.
+- **Cause:** the header fades in (an opacity animation, so its own stacking context at level 0); the Document card
+  is sticky with `z-index: 2`, so it painted over everything the header opened, whatever the list's own z-index.
+- **Reproduce:** open an invoice at 1366 x 768, click *Shortcuts*.
+- **Reproduced:** yes (screenshot `17_shortcuts_1366.png` of the walk)
+- **Fix:** the review screen's header is positioned with `z-index: 25` (above the card, below the approve bar's
+  popovers, which open upwards from the bottom).
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_the_shortcuts_list_is_not_hidden_behind_the_document`
+- **Lesson:** Don't trust a popover's z-index alone: it only counts inside its ancestors' stacking context.
+
+#### B-426 · After Approve, Park or Reject the next invoice skipped the ones in between · medium-high
+- **Where:** `ap_coder/web/pages/invoice.py` (`navigation`, `next_url`, `approve`, `park`, `reject`),
+  `ap_coder/web/templates/invoice.html`
+- **Symptom:** approving the 4th invoice of 15 ("Reviewing 4 of 15") opened the 8th ("Reviewing 8 of 14"): the
+  invoices 5 to 7 were passed over, and a tester working down the queue with Ctrl+Enter would not know.
+- **Cause:** each edit refreshes the invoice's confidence in the queue (so the queue shows what the screen shows);
+  the queue is ordered by that confidence, so the open invoice moved down while it was edited (27% → 33%, past three
+  others), and "the next one" was taken after its new place.
+- **Reproduce:** open an invoice that is not last, pick its GL account and cost center, approve.
+- **Reproduced:** yes
+- **Fix:** the screen carries the invoice that followed it when it was drawn (`next_id`, none for the last one); the
+  action opens that one while it is still waiting, else the queue's next as before.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_after_an_action_the_next_invoice_is_the_one_that_followed_on_screen`,
+  `tests/test_web_pilot_walkthrough.py::test_approve_also_opens_the_invoice_that_followed_on_screen`,
+  `tests/test_web_pilot_walkthrough.py::test_the_last_invoice_offers_no_next_one_to_wrap_to`
+- **Lesson:** Don't recompute "what comes next" from an order the user's own edits change: remember what they saw.
+
+#### B-427 · On a laptop the boxes' colours had no key · medium
+- **Where:** `ap_coder/web/static/invoice_viewer.css` (the narrow layout of the viewer)
+- **Symptom:** at 1366 x 768 (and 1280) the page showed green, blue, amber and red boxes but not the key under the
+  toolbar (Verified, Likely, Check, Failed check, Line item): it showed only on screens wide enough for the fields
+  list beside the page (about 1400 px and up).
+- **Cause:** the viewer's narrow layout hid the legend with the field count (`display: none`), though the same rule
+  block also set its compact padding.
+- **Reproduce:** open an invoice at 1366 x 768.
+- **Reproduced:** yes
+- **Fix:** the key stays in the narrow layout (one short line); only the count is hidden.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_the_colour_key_shows_on_a_laptop`
+- **Lesson:** Don't hide the key to a colour code to save a line: the colours mean nothing without it.
+
+#### B-428 · Park, Reject and Approve jumped to the left while a line needed an account · low
+- **Where:** `ap_coder/web/static/invoice.css` (`.inv-actionbar-right`)
+- **Symptom:** at 1366 px the approve bar wrapped under "Pick a GL account for line 1 and a cost center for line 1 to
+  approve" and its buttons moved to the left edge; once picked, they jumped back to the right, under the mouse.
+- **Cause:** `justify-content: space-between` puts a wrapped last item at the start of its line.
+- **Reproduce:** open an invoice with a line without an account at 1366 x 768.
+- **Reproduced:** yes (`16_invoice_credit_1366.png` against `18_credit_coded_1366.png`)
+- **Fix:** the buttons' group has `margin-left: auto`: right-aligned on its own line too.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_approve_stays_at_the_right_while_a_line_needs_an_account`
+- **Lesson:** Don't let the main button move when a hint appears beside it.
+
+#### B-429 · Check messages named fields by their code names · low
+- **Where:** `ap_coder/web/invoice_view.py` (`readable`, `checks_details`)
+- **Symptom:** "Subtotal + tax = 62.00 but grand_total = 0.00", "Line 1: quantity x unit_price = 20.00 but amount =
+  40.00" and "… but tax_total = …" under the checks and in *Details and what to do*.
+- **Cause:** the messages come from `coding/validation.py` and `coding/tax.py`, written with the code's field names;
+  the review screen showed them as they are (the details without `readable` at all).
+- **Reproduce:** open `us_arizona_example.pdf` (total read as 0.00).
+- **Reproduced:** yes
+- **Fix:** `readable` says them as the form does ("the total", "unit price", "quantity × unit price", "the tax
+  total"), and the details go through it too. The stored messages (exports, logs, tests) are unchanged.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_check_messages_name_fields_in_plain_english`,
+  `tests/test_web_pilot_walkthrough.py::test_the_details_use_the_same_plain_words`
+- **Lesson:** Don't show an internal name to a clerk: translate it where the page says it.
+
+#### B-430 · "1 invoice read and coded. They're waiting in the review queue." · low
+- **Where:** `ap_coder/web/pages/process.py` (`process_files`)
+- **Symptom:** the message after processing one invoice said "They're waiting".
+- **Fix:** "It's waiting" for one.
+- **Reproduced:** yes (a bad, an empty and a repeated file with one good one)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_one_invoice_read_is_waiting_not_they_are`
+- **Lesson:** Don't write a plural verb after a count: it can be 1.
+
+#### B-431 · "5 GL accounts, 1 categories" · low
+- **Where:** `ap_coder/web/pages/accounts.py` (the GL accounts tile)
+- **Symptom:** after importing a small chart with one category, the tile said "1 categories".
+- **Fix:** `ui.plural` (category, categories).
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_one_category_is_not_one_categories`
+- **Lesson:** Same as B-430.
+
+#### B-432 · Learning showed "UNASSIGNED" struck through as the account corrected · low
+- **Where:** `ap_coder/web/templates/learning.html`, `ap_coder/web/core.py` (template global `unassigned`)
+- **Symptom:** "Pat Tester corrected Line 2 ~~UNASSIGNED~~ → 6110", in the feed, the top corrections and the memory
+  table: the code's word for a line with no account, shown as if it were a GL account.
+- **Cause:** without a chat model every line starts with no account; the pages printed the stored value.
+- **Reproduce:** approve an invoice after picking an account for a line without one, open Learning & accuracy.
+- **Reproduced:** yes
+- **Fix:** shown as *no account*.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_a_line_picked_where_nothing_was_suggested_is_not_shown_as_unassigned`
+- **Lesson:** Same as B-429.
+
+#### B-433 · The keyboard focus was almost invisible on buttons and links · medium
+- **Where:** `ap_coder/web/static/app.css` (`:focus-visible`), `ap_coder/web/static/invoice.css`
+- **Symptom:** tabbing through the review screen, a focused button or link had only a faint glow (a 3 px ring of
+  the accent at 18%, about 1.3:1 against the page): the tester could not see where the keyboard was. Text boxes
+  were fine (their border turns blue).
+- **Cause:** the focus style was the text boxes' soft halo, used for everything.
+- **Reproduce:** open an invoice and press Tab.
+- **Reproduced:** yes
+- **Fix:** a 2 px solid ring in the accent colour (5:1 on white) for everything but text boxes, as the page viewer
+  already had; the queue's rows draw it inside, the tax and language choices likewise.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_the_keyboard_focus_is_easy_to_see`
+- **Lesson:** Don't use a decorative halo as the focus mark: it must stand out at 3:1 (WCAG 2.4.7, 1.4.11).
+
+#### B-434 · "Pick a GL account for line 1…" said what to do but not where · medium
+- **Where:** `ap_coder/web/templates/_invoice_live.html` (`bar`), `ap_coder/web/static/js/invoice.js` (`goToPick`),
+  `ap_coder/web/templates/invoice.html` (Shortcuts)
+- **Symptom:** on a 1366 x 768 laptop the line grid is two screens below the top; with the keyboard the line's GL
+  account was 57 presses of Tab away. The hint in the approve bar was a label.
+- **Fix:** the hint is a button that scrolls to the first line still without a GL account or cost center and puts
+  the focus in it; G does the same (listed under *Shortcuts*). The approve bar redraws it after each edit.
+- **Reproduced:** yes (57 Tabs counted)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_the_pick_hint_is_a_button_to_the_line_that_needs_it`,
+  `tests/test_web_pilot_walkthrough.py::test_in_a_browser_approve_stays_at_the_right_while_a_line_needs_an_account`
+- **Lesson:** Don't stop at saying what is missing: take the person there.
+
+#### B-435 · The form's field labels said "97%" or "check", never Verified or Likely · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`capture_confidence`, `CAPTURE_WORDS`, `CAPTURE_HELP`),
+  `ap_coder/web/templates/invoice.html`
+- **Symptom:** beside each label: "✓ 99%" (verified), "✓ 97%" (likely), "! 51%" (check) and "⊗ check" (a failed
+  check): the words of the page's key (Verified, Likely, Check, Failed check) appeared nowhere in the form, and a
+  red "check" read like a green tick's opposite only by its icon. The tooltip said only "How sure AP Coder is of what
+  it read".
+- **Fix:** "Verified", "Likely 97%", "Check 51%", "Failed check", each with a tooltip saying what it means (as the
+  key's tooltips do) and how sure, in figures. The amounts' boxes stay in line when a label wraps under its status.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_each_field_says_how_sure_it_is_in_words`
+- **Lesson:** Don't make a person learn two codes for one thing: use the key's own words everywhere.
+
+#### B-436 · On a wide screen the queue cut the reason an invoice needs attention · low
+- **Where:** `ap_coder/web/static/app.css` (`.rq-row`)
+- **Symptom:** at 1920 px the vendor column took about 750 px while the status column kept 112 px: "Pick a GL account
+  for line 1 and a cos…" (two lines, cut).
+- **Fix:** the status column takes a share of the extra width (`minmax(112px, 1fr)` beside the vendor's `1.4fr`): at
+  1920 px the whole reason shows; at 1366 px both columns keep about what they had.
+- **Reproduced:** yes (`15_review_queue_1920.png`)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_the_queue_gives_the_reason_room_on_a_wide_screen`
+- **Lesson:** Don't give all the spare width to one column: give it where text is being cut.
+
+#### B-437 · Nothing asked where invoices are delivered: "Province of supply unknown" on most invoices · medium
+- **Where:** `ap_coder/web/pages/process.py` (`setup_steps`, `province_step`, `first_steps`, `STEP_LINKS`),
+  `docs/QUICK_START.md`, `docs/GETTING_STARTED.md`
+- **Symptom:** after the welcome page's steps, invoices whose ship-to wasn't read said "Province of supply unknown;
+  tax regime cannot be verified", and their sales tax went unchecked (4 of the 13 Canadian PDFs on the walk). The
+  province that fixes it (Settings → Review, *Your province*) was mentioned by no step or guide.
+  With it set (Ontario), `ca_uoft_ex3_gst.pdf` was checked: "GST charged but Ontario normally charges HST".
+- **Fix:** *Your province* is a getting-started row on the welcome page and Import invoices, linking to Settings →
+  Review, "recommended" until set and then the province's name; it is not counted in the ring (the steps needed stay
+  as they were). The Quick start's first step names it.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_getting_started_asks_for_your_province_without_counting_it`
+- **Lesson:** Don't leave a setting the checks depend on out of the first steps.
+
+#### Left as they are (pilot walkthrough)
+
+- **N-136** · Without a chat model every line starts with no GL account, and picking one counts against the coding:
+  Learning and the review queue show "Coding accuracy 28.6%, -61.4 pts vs 90% target" in red after the first
+  approvals, though nothing wrong was suggested. That is D-39 (a line the coder left blank is not right: it gave no
+  answer); the pilot tester should know the figure means little until the chat model runs. Left as decided.
+- **N-137** · The approval message says "about 34 more clean invoices to go touchless": *touchless* is not explained
+  on the review screen. The text is made in `capture/supplier.py` (outside this sweep's area); suggested wording:
+  "about 34 more clean invoices before AP Coder may approve this vendor's invoices on its own".
+- **N-138** · With LM Studio off, every review screen shows the banner and two more notes above the page ("OvisOCR2
+  isn't running…", "The AI reviewer checks this invoice…"): on a 1366 x 768 laptop the invoice's picture starts
+  near the bottom of the screen. Folding the three into one line when LM Studio is off is a layout change for the
+  page's owner to decide.
+- **N-139** · The upload takes `.txt` files (text invoices, on purpose) but its hint lists only PDFs, scans, photos and
+  saved emails; a notes file uploaded by mistake became an invoice from "hello". Left: the hint is long already.
+- **N-140** · Help → *Report a problem* takes about 3 s the first time (it runs the setup check), with no sign that
+  it is loading; later opens take 0.05 s.
+- **N-141** · A US vendor's invoice says "Province unknown" in its header while *Place of supply* says "Outside
+  Canada": the header shows the supplier's province, the form the place of supply. Left: both are right, but the
+  header could say "Outside Canada" for a foreign vendor.

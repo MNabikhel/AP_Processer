@@ -40,7 +40,7 @@ from markupsafe import Markup
 from ap_coder import __version__
 from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
-from ap_coder.core.reference_data import ReferenceData
+from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import identity
 from ap_coder.web.jobs import Jobs
@@ -93,7 +93,9 @@ def money(value: Any, currency: str = "") -> str:
 
 # Autoescape on for every template: text from invoices and files is always escaped.
 templates = Jinja2Templates(env=jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_DIR), autoescape=True))
-templates.env.globals.update(ui=_UiHelpers(), static_version=_static_version(), version=__version__)
+templates.env.globals.update(
+    ui=_UiHelpers(), static_version=_static_version(), version=__version__, unassigned=UNASSIGNED
+)  # (a line without a GL account, as the pages say it)
 templates.env.filters.update(
     money=money,
     plural=ui.plural,

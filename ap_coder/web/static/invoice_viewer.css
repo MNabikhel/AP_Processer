@@ -317,7 +317,7 @@ details.iv-group > summary:focus-visible { outline: 2px solid var(--brand); outl
   .iv:not(.fields-open) .iv-list, .iv:not(.fields-open) .iv-meter { display: none; }
   .iv:not(.fields-open) .iv-panel-head { padding-bottom: 10px; }
   .iv-fold { display: inline-flex; }
-  .iv-count, .iv-legend { display: none; }
+  .iv-count { display: none; }
   .iv-list { max-height: 176px; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 8px; gap: 2px; scrollbar-width: thin;
     /* the list scrolls: fade its last line so a half-cut row reads as "more below" */
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);

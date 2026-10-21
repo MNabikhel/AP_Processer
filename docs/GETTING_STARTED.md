@@ -237,7 +237,8 @@ Then click *Process*. Each invoice lands in the **Review queue**.
 For each invoice:
 
 1. Compare the image with the extracted header, lines and tax lines. A field the readers agree on is
-   *verified*; one they read differently is marked *Check* and boxed in amber on the page.
+   *verified*; one they read differently is marked *Check* and boxed in amber on the page. The label of each
+   field in the form says the same in words: Verified, Likely, Check or Failed check.
 2. Read **Checks**. Red items are errors, for example:
    - tax math wrong
    - QST charged on a GST-inclusive amount
@@ -249,7 +250,8 @@ For each invoice:
    Each check says what to do; **Help** lists them all.
 3. Fix anything wrong in the grids. GL and cost-center cells are dropdowns of your own codes. Lines
    without a GL account get **suggestions**; an invoice quoting a PO shows the **PO match**. When
-   the vendor has to fix something, **Ask the vendor** under the checks writes the email.
+   the vendor has to fix something, **Ask the vendor** under the checks writes the email. While a line still
+   needs a GL account or cost center, the note beside Approve says which: click it (or press G) to go to it.
 4. Click **Approve & teach** (Ctrl+Enter). Each field you corrected is recorded for that vendor and
    updates its template; the confirmation says what was learned and how far the vendor is from touchless
    (e.g. *Learned from your 2 corrections (invoice number, due date). Acme Ltd: 14 invoices reviewed, about

@@ -830,7 +830,29 @@ function typing(target) {
   return target.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "reset"].includes(target.type);
 }
 
+/* ---------- The line that needs an account ---------- */
+
+/** The first line's GL account or cost center still to pick (the approve bar's hint, and G): scrolled to and focused,
+    where it was a label and the line far down the page (B-434). */
+function goToPick() {
+  const boxes = [...document.querySelectorAll('select[form="inv"][name="line_gl"], select[form="inv"][name="line_cc"]')];
+  const box = boxes.find((b) => !b.value || b.value === "UNASSIGNED");
+  if (!box) return false;
+  box.scrollIntoView({ block: "center", behavior: "smooth" });
+  box.focus({ preventScroll: true });
+  return true;
+}
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest?.("[data-goto-pick]")) goToPick();
+});
+
 document.addEventListener("keydown", (e) => {
+  if ((e.key === "g" || e.key === "G") && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e.target) &&
+      !e.target.closest?.("dialog, [role=dialog]")) {
+    if (goToPick()) e.preventDefault();
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && approveButton && form) {
     if (elsewhere(e.target)) return;
     e.preventDefault();

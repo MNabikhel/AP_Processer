@@ -228,7 +228,8 @@
   <div class="rvw-post-sub" title="Approving teaches AP Coder from {{ b.lines | plural('line') }}: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
     Teaches from {{ b.lines | plural("line") }} · <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
 </div>
-{% if b.pick %}{{ ui.pill(b.pick, "warn") }}
+{% if b.pick %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}
+<button type="button" class="apc-pill warn inv-pick" data-goto-pick aria-keyshortcuts="G" title="Go to the line (G)">{{ b.pick }}<span class="ms" aria-hidden="true">arrow_downward</span></button>
 {% elif b.errors %}
 <label class="check inv-override"><input type="checkbox" name="override" value="{{ b.override_key }}" form="inv"{% if b.override %} checked{% endif %}>
   Approve anyway, despite {{ b.errors | plural("error") }}</label>

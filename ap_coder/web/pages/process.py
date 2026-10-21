@@ -22,7 +22,7 @@ from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS
 from ap_coder.ai.local_llm import provider_status
 from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files, other_files
 from ap_coder.capture.layout import ocr_available
-from ap_coder.coding.tax import TAX_TYPES
+from ap_coder.coding.tax import PROVINCE_NAMES, TAX_TYPES
 from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import ReferenceData
@@ -153,7 +153,18 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
         second,
         name_step(),
+        province_step(store),
     ]
+
+
+def province_step(store: Store) -> tuple[str, str, str]:
+    """Where invoices are delivered to you (Settings → Review): the sales tax check's province when an invoice prints
+    no ship-to. Recommended, not counted ("opt" until given): without it such an invoice says "Province of supply
+    unknown" and its tax goes unchecked."""
+    code = store.our_province()
+    if code:
+        return "ok", "Your province", PROVINCE_NAMES.get(code, code)
+    return "opt", "Your province", "recommended: the sales tax check uses it when an invoice prints no ship-to"
 
 
 def name_step() -> tuple[str, str, str]:
@@ -170,10 +181,11 @@ def name_step() -> tuple[str, str, str]:
 
 def first_steps(store: Store, settings: Settings, has_invoices: bool) -> tuple[list[tuple[str, str, str]], int, int]:
     """(steps, done, needed) of getting started, the same on Import invoices' Setup card and the review queue's
-    welcome page: ``setup_steps``, then processing the first invoices; the optional chat model is not counted."""
+    welcome page: ``setup_steps``, then processing the first invoices; the optional chat model and the recommended
+    province are not counted."""
     steps = setup_steps(store, settings)
     steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
-    needed = [s for s, _, _ in steps if s != "opt"]
+    needed = [s for s, label, _ in steps if s != "opt" and label != "Your province"]  # (recommended, never counted)
     return steps, sum(1 for s in needed if s == "ok"), len(needed)
 
 
@@ -185,6 +197,7 @@ STEP_LINKS = {
     "Sales tax GL mapping": "/accounts?tab=tax",
     "OvisOCR2": "/settings/reading",
     "Your name": "/settings/review",
+    "Your province": "/settings/review",
     "Process your first invoices": "/process",
 }
 
@@ -298,7 +311,8 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
         messages = list(notes or [])
         if ok:
             note = queued_note(settings, store, queued)
-            messages.append(flash_message(f"{ui.plural(ok, 'invoice')} read and coded. They're waiting in the review "
+            waiting = "It's" if ok == 1 else "They're"  # (B-430)
+            messages.append(flash_message(f"{ui.plural(ok, 'invoice')} read and coded. {waiting} waiting in the review "
                                           f"queue. {note}".strip(), "ok", icon="inbox"))  # fmt: skip
         if failed:
             messages.append(flash_message(f"{ui.plural(failed, 'file')} could not be processed. See Review queue → "
