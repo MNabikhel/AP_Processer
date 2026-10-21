@@ -785,9 +785,15 @@ def pip_env(source: list[str]) -> dict[str, str]:
     return env
 
 
+# How many of AP Coder's own requirements the pip run under way installs (_ensure_packages): pip installs what those
+# need too, so the count it ends with is larger, and says so.
+_wanted = {"count": 0}
+
+
 def pip_install(args: list[str]) -> bool:
     """``pip install`` with its progress lines (not the long "already satisfied" list). Offline without a
     wheelhouse it runs nothing: there is nowhere to install from."""
+    wanted = _wanted["count"]
     source = pip_source()
     if source is None:
         say("    Nothing installed: this offline build installs packages only from the bundle's wheelhouse folder.")
@@ -805,7 +811,9 @@ def pip_install(args: list[str]) -> bool:
             if text.startswith("Successfully installed"):  # sixty names: said as a count, the names in the log
                 log(text)
                 progress.said()
-                say(f"    Installed {plural(len(text.split()) - 2, 'package')}.")
+                count = len(text.split()) - 2
+                also = f" (the {wanted} missing and the ones they need)" if 0 < wanted < count else ""
+                say(f"    Installed {plural(count, 'package')}{also}.")
             elif text and not text.startswith(QUIET_PIP_LINES):
                 progress.said()
                 say(f"    {text}")
@@ -1166,7 +1174,8 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
             "from the internet once, for the setup only. AP Coder itself never goes online.")  # fmt: skip
     plain = tuple(e for e in extras if e != "ocr")
     if self_problem and missing:
-        say(f"Installing AP Coder's packages ({len(missing)} missing). The first time takes a few minutes.")
+        say(f"Installing AP Coder's packages: {len(missing)} missing, with the packages they need in turn. The first "
+            "time takes a few minutes.")  # fmt: skip
         tries = [editable(extras)] + ([editable(plain)] if plain != extras else [])
     elif self_problem:
         say("Registering this AP Coder folder in .venv (nothing to download).")
@@ -1178,8 +1187,12 @@ def _ensure_packages(state: dict, extras: tuple[str, ...]) -> tuple[str, str, bo
     for number, pip_args in enumerate(tries):
         if number:
             say("The OCR add-on (for scanned invoices) could not be installed here; trying without it.")
-        if pip_install(pip_args):
-            break
+        _wanted["count"] = len(missing)
+        try:
+            if pip_install(pip_args):
+                break
+        finally:
+            _wanted["count"] = 0
     left, self_left = missing_packages(extras)
     if (self_left or left) and _disk_full:
         raise disk_full_error()
