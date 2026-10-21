@@ -204,7 +204,10 @@ def test_an_invoice_with_no_date_found_says_the_date_was_assumed(tmp_path):
     found = [i for i in result.report.issues if i.code == "INVOICE_DATE_NOT_FOUND"]
     assert [i.severity for i in found] == ["warning"] and today in found[0].message
     stored = store.get_invoice(result.invoice_id)
-    assert stored["requires_review"]  # flagged in the queue, never approved in bulk
+    assert "INVOICE_DATE_NOT_FOUND" in {i["code"] for i in stored["validation"]["issues"]}
+    from ap_coder.coding.bulk import sort_for_bulk
+
+    assert result.invoice_id not in {i["id"] for i in sort_for_bulk(store)[0]}  # never approved in bulk
     client = _web(store)
     data = _form(store, result.invoice_id)
     assert "INVOICE_DATE_NOT_FOUND" in str(client.post(f"/review/{result.invoice_id}/check", data=data,

@@ -4471,7 +4471,7 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
 - **Reproduce:** process a PDF that prints no date.
 - **Reproduced:** yes (invoice date today, no issue, requires_review false)
 - **Fix:** a warning, INVOICE_DATE_NOT_FOUND ("no invoice date was found on the page: <date> is assumed (the day it
-  was read); put in the invoice's date…"), with its Help entry; it flags the invoice in the queue and keeps it from
-  bulk approval, and leaves the review screen once the reviewer puts in another date.
+  was read); put in the invoice's date…"), with its Help entry; it is kept with the invoice (which keeps it from
+  bulk approval) and shown on the review screen until the reviewer puts in another date.
 - **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_with_no_date_found_says_the_date_was_assumed`
 - **Lesson:** Don't fill a missing value with a default without saying so where the person decides.
