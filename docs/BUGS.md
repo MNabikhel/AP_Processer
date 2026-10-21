@@ -5171,6 +5171,50 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_ci_workflow.py`
 - **Lesson:** A CI check for a line is only as good as the line's current wording: grep for what the code says.
 
+#### B-558 · A data folder inside an old GitHub ZIP folder was deleted with it · high
+- **Where:** `scripts/upgrade.py` (`removable`, `holds_data`, `data_folders`, `user_files`)
+- **Symptom:** with the data folder recorded as `OLD/data/mine`, `OLD/data` or `OLD/samples/mydata` (database and
+  invoices in it), the clean-up after an update said *Removed the older AP Coder folder ...* and the data was gone.
+- **Cause:** for a folder without a bundle manifest, `user_files` counts `data/` and `samples/` as AP Coder's own and
+  exempts a `.db` there; nothing asked whether a data folder lay inside the folder being removed.
+- **Reproduce:** an old GitHub ZIP folder set up, `data_dir` recorded inside its `data/`, `clean_up` from a new folder.
+- **Reproduced:** yes (in the review, and `tests/test_update_cleanup_data.py` before the fix)
+- **Fix:** a folder is kept whole (*... because it holds your data folder (X)*) when this start's data folder, the
+  data folder now, the one on record or the database's folder (`AP_DB_PATH`) is inside it and still holds files, or
+  when a database (`.db`, `.sqlite`, their journals) or an `invoices` folder is anywhere in it (its `.venv` and caches
+  aside). A clean-up never deletes a database file.
+- **Test:** `tests/test_update_cleanup_data.py::test_a_data_folder_inside_the_old_folder_is_never_deleted`,
+  `::test_a_database_or_invoices_anywhere_in_the_old_folder_keep_it`
+- **Lesson:** Before deleting a folder, ask whether the person's data is in it, wherever the rules say data belongs:
+  data ends up where people put it.
+
+#### B-559 · A recorded folder that was no longer an AP Coder install lost its .venv and models · medium
+- **Where:** `scripts/upgrade.py` (`clean_up`)
+- **Symptom:** a folder on record whose `ap_coder/` was gone still had its `.venv` and `models/` removed (*removed its
+  .venv and models; the folder itself stays ...*); and when the data folder was the old folder itself, its `models/`
+  (where the table finder's model is kept) went.
+- **Cause:** the partial clean-up ran for any folder `removable` refused, install or not.
+- **Reproduce:** record an install, delete its `ap_coder/`, start a newer one.
+- **Reproduced:** yes
+- **Fix:** only an AP Coder install is touched; any other recorded folder is said (*Kept X: it is no longer an AP Coder
+  folder, so nothing in it was touched*) and taken off the record. A folder that is the data folder keeps its
+  `models/`; a link inside one is never followed.
+- **Test:** `tests/test_update_cleanup_data.py::test_a_recorded_folder_that_is_no_longer_an_install_is_not_touched`,
+  `::test_the_data_folders_models_are_kept_when_the_data_folder_is_the_old_folder`
+- **Lesson:** A record says what a folder was, not what it is: check again before acting on it.
+
+#### B-560 · A link to an old folder was renamed and said to be "mostly removed" at every start · low
+- **Where:** `scripts/upgrade.py` (`clean_up`, `is_link`)
+- **Symptom:** a symlinked old folder: the link became `<link>.removing-<date>`, the window said *most of it was
+  removed; the rest is removed on a later start*, again at later starts; nothing behind it was deleted.
+- **Cause:** `remove_folder` renames first; renaming a link moves only the link.
+- **Reproduce:** record a symlink to an older install as an install, start a newer one.
+- **Reproduced:** yes
+- **Fix:** links (and Windows junctions) are never renamed, followed or emptied: *Skipped X: it is a link to another
+  folder, so nothing was removed*, and they are taken off the record.
+- **Test:** `tests/test_update_cleanup_data.py::test_a_link_to_an_old_folder_is_skipped_not_renamed`
+- **Lesson:** Clean-up code that walks or renames must decide what to do with links before it touches anything.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline
