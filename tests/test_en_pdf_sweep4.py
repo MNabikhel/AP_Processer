@@ -424,5 +424,7 @@ def test_a_deposit_under_a_printed_total_leaves_the_total_as_printed(tmp_path):
 def test_a_whole_business_number_misread_is_not_read_as_its_nine_digits(tmp_path):
     from ap_coder.capture.reader import _bare_business_numbers
 
-    path = _pdf(tmp_path, [(40, 40, "GC Strategies Inc.", 14), (40, 80, "GST/HST Reg. No. 232672980-RT-O001"), *_AMOUNTS])
+    path = _pdf(
+        tmp_path, [(40, 40, "GC Strategies Inc.", 14), (40, 80, "GST/HST Reg. No. 232672980-RT-O001"), *_AMOUNTS]
+    )
     assert _bare_business_numbers(build_layout(path, ocr=False)) == []
