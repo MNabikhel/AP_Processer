@@ -42,8 +42,8 @@ from .types import (
     PART_OF_TERMS,
     RIVAL_NAME,
     TWO_SUBTOTALS,
-    UNANCHORED,
     UNMEASURED,
+    UNSETTLED,
     VERIFIED,
     FieldResult,
     LineReading,
@@ -56,7 +56,6 @@ RELIABILITY = {"rules": 0.85, "template": 0.92, "di": 0.85, "ai": 0.8, "ocr": 0.
 PAGE_READERS = ("rules", "ocr", "ocr2", "template", "di")
 VERIFIED_AT = 0.985
 SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
-NEAR_TIE = 0.02  # a reader's candidates scoring within this of its first choice: it could not tell them apart
 # Checks whose failure has innocent explanations (exempt lines, shipping not taxed, line items the
 # reader could not separate): they lower confidence but do not force a field to "check".
 SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE", "DUE_MATCHES_TERMS"}
@@ -108,11 +107,16 @@ class _Group:
     readings: list[tuple[str, Reading]]
     top: set[str] = _field(default_factory=set)  # sources for which this is their first choice
 
-    def strength(self) -> float:
+    def strength(self, vouched: bool = False) -> float:
+        """How likely this value is right, by its readers. ``vouched``: leaving out the template's readings it does
+        not vouch for (``UNSETTLED``), which agree but never decide."""
+        readings = [(s, r) for s, r in self.readings if not (vouched and UNSETTLED in r.method)]
+        if not readings:
+            return 0.0
         p_wrong = 1.0
-        sources = {s for s, _ in self.readings}
+        sources = {s for s, _ in readings}
         for source in sources:
-            best = max(r.score for s, r in self.readings if s == source)
+            best = max(r.score for s, r in readings if s == source)
             p_wrong *= 1.0 - RELIABILITY.get(source, 0.7) * max(0.0, min(best, 1.0))
         # Readers that are wrong rarely produce the *same* wrong value: each extra agreeing reader
         # divides the chance of a shared misread further. A reader that only listed the value as a
@@ -378,33 +382,25 @@ def _page_reader_differs(
     return None
 
 
-def _unanchored_fill_only(field: str, per_source: dict[str, list[Reading]]) -> None:
-    """The template's readings taken where the value was learned, its label not found on this page (``UNANCHORED``),
-    only fill a field the other readers left empty, or agree with one of their first choices: the layout may have
-    changed, and what is printed at the old spot does not replace what another reader read. Changes ``per_source``."""
-    template = per_source.get("template") or []
-    if not any(UNANCHORED in r.method for r in template):
-        return
-    # A reader's first choice, and what it scored as high (a tie the template may settle).
-    firsts = {
-        _key(field, r.value)
-        for s, cands in per_source.items()
-        if s != "template" and cands
-        for r in cands
-        if r.score >= cands[0].score - NEAR_TIE
-    }
-    firsts.discard(None)
-    if not firsts:
-        return
-    kept = [r for r in template if UNANCHORED not in r.method or _key(field, r.value) in firsts]
-    if kept:
-        per_source["template"] = kept
-    else:
-        del per_source["template"]
+def _unsettled(g: _Group | None) -> bool:
+    """Read only by the template, at a spot it does not vouch for (``UNSETTLED``)."""
+    return g is not None and all(UNSETTLED in r.method for _, r in g.readings)
 
 
-def _unanchored(g: _Group | None) -> bool:
-    return g is not None and all(UNANCHORED in r.method for _, r in g.readings)
+def _vouched_first(groups: list[_Group]) -> None:
+    """The template's readings it does not vouch for (``UNSETTLED``: its label not on this page, or a spot never
+    settled) do not choose: the value first is the one the other readers make strongest, and those readings only add
+    their agreement to it. A value only they read fills the field when nothing else is read, and otherwise stays as a
+    rival: it still contests the value chosen (the layout may have changed under the template, or not). In place."""
+    if not any(UNSETTLED in r.method for g in groups for _, r in g.readings):
+        return
+    if all(_unsettled(g) for g in groups):
+        return
+    groups.sort(key=lambda g: (-g.strength(vouched=True), -g.strength()))
+    if len(groups) > 2:  # the strongest rival next, as the contest is measured against it
+        rival = max(groups[1:], key=lambda g: g.strength())
+        groups.remove(rival)
+        groups.insert(1, rival)
 
 
 def _whole_first_word(groups: list[_Group]) -> None:
@@ -433,8 +429,8 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
     all_groups: dict[str, list[_Group]] = {}
     for field in fields:
         per_source = {s: cands.get(field, []) for s, cands in by_source.items() if cands.get(field)}
-        _unanchored_fill_only(field, per_source)
         groups = _groups(field, per_source)
+        _vouched_first(groups)
         if field == "vendor_name":
             _whole_first_word(groups)
         all_groups[field] = groups
@@ -477,6 +473,8 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             continue
         raw = g.strength()
         sources = sorted({s for s, _ in g.readings})
+        # The template agreeing at a spot it does not vouch for is not a reader of its own: the evidence is the others'.
+        vouched = sorted({s for s, r in g.readings if UNSETTLED not in r.method}) or sources
         reasons = []
         if len(sources) > 1:
             reasons.append(f"{len(sources)} readers agree ({', '.join(sources)})")
@@ -500,14 +498,16 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             raw = min(raw, 0.97)
             reasons += [f"note: {d}" for d in soft[field]]
         best = g.best()
-        evidence = evidence_key(field, sources, best.method, layout_source=layout_source,
+        if best.method.endswith(UNSETTLED) and vouched != sources:
+            best = max((r for _, r in g.readings if UNSETTLED not in r.method), key=lambda r: (bool(r.boxes), r.score))
+        evidence = evidence_key(field, vouched, best.method, layout_source=layout_source,
                                 contested=contest.get(field, 0.0) > 0.25, confirmed=bool(n_conf) and field not in failed,
                                 soft=field in soft)  # fmt: skip
         conf = calibrate(max(0.0, min(raw, 1.0)), evidence, local_evidence)
-        if "vlm" in sources and len(sources) > 1:
+        if "vlm" in vouched and len(vouched) > 1:
             # The page reader agreeing is one more reader on top of a pattern the benchmark may have measured
             # without it (patterns with it are not measured yet): it never makes the value less certain.
-            without = evidence_key(field, [s for s in sources if s != "vlm"], best.method, layout_source=layout_source,
+            without = evidence_key(field, [s for s in vouched if s != "vlm"], best.method, layout_source=layout_source,
                                    contested=contest.get(field, 0.0) > 0.25,
                                    confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
             conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), without, local_evidence))
@@ -521,12 +521,12 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
                                    contested=contest.get(field, 0.0) > 0.25,
                                    confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
             conf = max(conf, min(calibrate(max(0.0, min(raw, 1.0)), without, local_evidence), SINGLE_READER_CAP))
-        if len(sources) > 1:
+        if len(vouched) > 1:
             # Readers that agree each describe the same evidence their own way (the supplier template's "template",
             # the rule reader's "label-right+adds-up"); which reading ranks first is chance, so the description
             # with the better measured record counts.
-            for method in {r.method for _, r in g.readings} - {best.method}:
-                alt = evidence_key(field, sources, method, layout_source=layout_source,
+            for method in {r.method for _, r in g.readings if UNSETTLED not in r.method} - {best.method}:
+                alt = evidence_key(field, vouched, method, layout_source=layout_source,
                                    contested=contest.get(field, 0.0) > 0.25,
                                    confirmed=bool(n_conf) and field not in failed, soft=field in soft)  # fmt: skip
                 conf = max(conf, calibrate(max(0.0, min(raw, 1.0)), alt, local_evidence))
@@ -537,7 +537,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
         # verified also needs a second reader or a check to agree. The second OCR read of a scan
         # shares the first one's blind spots (a word OCR never saw), so with the rule reader it
         # counts as one reader.
-        independent = {"rules" if s == "ocr" else s for s in sources}
+        independent = {"rules" if s == "ocr" else s for s in vouched}
         texts = {" ".join(str(r.value).split()).casefold() for _, r in g.readings}
         if field == "vendor_name" and len(texts) > 1:
             independent = {"one"}  # they agree on the supplier, not on how its name is printed
@@ -591,7 +591,7 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # which tax it is does not follow from that. A person says.
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("printed under a PST/QST label: which of the two it is, the page does not say")
-        if any(RIVAL_NAME in r.method for _, r in g.readings) and "template" not in sources and not n_conf:
+        if any(RIVAL_NAME in r.method for _, r in g.readings) and "template" not in vouched and not n_conf:
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append(
                 f"another name is printed at the top as well: {all_groups[field][1].value}"
@@ -608,11 +608,11 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # agree on what is printed after one, which number it is the page does not say: a person checks it.
             conf = min(conf, UNLABELLED_CAP)
             reasons.append("read after a word that also names other numbers or dates (a receipt's, a customer's)")
-        if all(UNANCHORED in r.method for _, r in g.readings):
-            # Read by the supplier's template where the value used to be, its label not on this page: what is
-            # printed there now may be something else. A person checks it.
+        if _unsettled(g):
+            # Read only by the supplier's template where the value used to be, without its label on this page or at a
+            # spot another value was printed at too: what is printed there now may be something else. A person checks.
             conf = min(conf, UNLABELLED_CAP)
-            reasons.append("read where this supplier's value was before, without its label on this page")
+            reasons.append("read only where this supplier's value was before, and the template cannot vouch for it")
         if any(TWO_SUBTOTALS in r.method for _, r in g.readings):
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("the totals add up with another subtotal printed too (before or after the charges)")
@@ -751,8 +751,8 @@ def _totals_that_add_up(chosen: dict[str, Any], all_groups: dict[str, list[Any]]
             ):
                 continue  # nor is dropping the total tax ("Total 889.20" read for the total of 889.20 + VAT 88.92)
             picked = (("grand_total", total), *zip(_TOTAL_PARTS, parts, strict=True))
-            if any(_unanchored(g) for _, g in picked) and any(
-                g is not chosen.get(f) for f, g in picked if not _unanchored(g)
+            if any(_unsettled(g) for _, g in picked) and any(
+                g is not chosen.get(f) for f, g in picked if not _unsettled(g)
             ):
                 continue  # a template reading without its label fills a field; it does not re-decide the others
             strength = total.strength() + sum(g.strength() for g in parts if g is not None)

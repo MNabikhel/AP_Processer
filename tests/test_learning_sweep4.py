@@ -15,7 +15,7 @@ from ap_coder.capture.types import (
     FIELDS,
     LIKELY,
     RIVAL_NAME,
-    UNANCHORED,
+    UNSETTLED,
     VERIFIED,
     Box,
     DocLayout,
@@ -43,10 +43,11 @@ def _values(readings: dict[str, list[Reading]], field: str) -> list:
     return [r.value for r in readings.get(field, [])]
 
 
-def test_a_date_printed_twice_is_learned_where_the_reader_reads_it(tmp_path):
+def test_a_date_printed_twice_does_not_settle_where_it_was_learned(tmp_path):
     """The delivery date was the invoice date on the first invoices: the template learned the invoice date at the
     delivery date's label, and read the delivery date as the invoice date once they differed (fx_en16931_teilrechnung:
-    2018-06-05 read as 2018-06-03)."""
+    2018-06-05 read as 2018-06-03). Printed twice, the spot is not settled: what the template reads there does not
+    replace the rule reader's labelled date; an approval where the date is printed only once settles the spot."""
 
     def invoice(name: str, delivered: str, dated: str) -> Path:
         return _pdf(tmp_path / name, [
@@ -58,11 +59,18 @@ def test_a_date_printed_twice_is_learned_where_the_reader_reads_it(tmp_path):
     for n in range(2):
         layout = _layout(invoice(f"a{n}.pdf", "05.06.2018", "05.06.2018"))
         template = learn(template, layout, {"invoice_date": ("2018-06-05", None), "invoice_number": ("471102", None)})
-    got = apply_template(template, _layout(invoice("b.pdf", "03.06.2018", "05.06.2018")))
-    assert _values(got, "invoice_date")[:1] == ["2018-06-05"]
+    later = _layout(invoice("b.pdf", "03.06.2018", "05.06.2018"))
+    got = apply_template(template, later)
+    assert all(UNSETTLED in r.method for r in got["invoice_date"])
+    rules = {"invoice_date": [_rule("invoice_date", "2018-06-05", 0.86)]}
+    fields, _ = fuse({"rules": rules, "template": got}, [], fields=("invoice_date",))
+    assert fields["invoice_date"].value == "2018-06-05" and fields["invoice_date"].status != VERIFIED
+    template = learn(template, later, {"invoice_date": ("2018-06-05", None)})  # printed once: the spot is settled
+    vouched = apply_template(template, _layout(invoice("c.pdf", "01.06.2018", "05.06.2018")))["invoice_date"]
+    assert [(r.value, UNSETTLED in r.method) for r in vouched][:1] == [("2018-06-05", False)]
 
 
-def test_one_printed_date_does_not_teach_two_fields(tmp_path):
+def test_one_printed_date_for_two_fields_settles_neither(tmp_path):
     """A credit note dated and due the same day prints the date once: the due date was learned at the invoice date's
     label and read the invoice date as the due date on the next invoice (fx_fnfe_facture_dom: 2017-12-05 verified,
     2017-11-05 by the template)."""
@@ -73,8 +81,10 @@ def test_one_printed_date_does_not_teach_two_fields(tmp_path):
                                               (450, 90, "05/11/2017"), (330, 110, "Date d'échéance :"),
                                               (450, 110, "05/12/2017")]))  # fmt: skip
     got = apply_template(template, later)
-    assert _values(got, "invoice_date")[:1] == ["2017-11-05"]
-    assert "2017-11-05" not in _values(got, "due_date")
+    assert all(UNSETTLED in r.method for f in ("invoice_date", "due_date") for r in got[f])
+    rules = {"due_date": [_rule("due_date", "2017-12-05", 0.865)]}
+    fields, _ = fuse({"rules": rules, "template": got}, [], fields=("due_date",))
+    assert fields["due_date"].value == "2017-12-05"
 
 
 def test_the_suppliers_name_printed_again_is_not_a_label(tmp_path):
@@ -87,7 +97,7 @@ def test_the_suppliers_name_printed_again_is_not_a_label(tmp_path):
     later = _layout(_pdf(tmp_path / "b.pdf", [(40, 50, "CONTOSOLTD.", 20), (40, 66, "Calle de"), (40, 82, "Atocha 27"),
                                               (330, 90, "Invoice No:"), (430, 90, "INV-101")]))  # fmt: skip
     got = apply_template(template, later)
-    assert all(UNANCHORED in r.method for r in got.get("vendor_name", []))  # where the name was, nothing more
+    assert all(r.score < 0.69 for r in got.get("vendor_name", []))  # read by position only: weaker than by a label
     rules = {"vendor_name": [_rule("vendor_name", "CONTOSOLTD.", 0.69, "top-of-page")]}
     fields, _ = fuse({"rules": rules, "template": got}, [], fields=("vendor_name",))
     assert fields["vendor_name"].value == "CONTOSOLTD."
@@ -164,7 +174,7 @@ def test_runner_ups_that_add_up_do_not_replace_amounts_two_readers_chose():
 def test_a_template_reading_without_its_label_does_not_re_decide_the_other_totals():
     """A subtotal filled by the template at its old spot (no label on the page) made "-7,90 + 0,03 - 0,92 = -8,79" add
     up with the rule reader's runner-up tax: the wrong tax was shown likely (zf1_comfort_korrektur, -1,12 printed)."""
-    unanchored = "template" + UNANCHORED
+    unanchored = "template" + UNSETTLED
     rules = {"tax_total": [_rule("tax_total", 12.09, 0.722, "label-below"),
                            _rule("tax_total", -0.92, 0.722, "label-below")],
              "other_charges": [_rule("other_charges", 0.03, 0.9, "label-inline")],
@@ -195,9 +205,126 @@ def test_the_template_agreeing_never_makes_a_value_less_certain():
     evidence pattern with the template is not measured yet: az_contoso_invoice_pdf, Bei Spiel GmbH, Coolblue)."""
     rules = {"vendor_name": [_rule("vendor_name", "CONTOSO LTD.", 0.944, "top-of-page" + RIVAL_NAME),
                              _rule("vendor_name", "Microsoft Corp", 0.73, "top-of-page")]}  # fmt: skip
-    template = {"vendor_name": [_rule("vendor_name", "CONTOSO LTD.", 0.571, "template" + UNANCHORED)]}
+    template = {"vendor_name": [_rule("vendor_name", "CONTOSO LTD.", 0.571, "template" + UNSETTLED)]}
     plain, _ = fuse({"rules": rules}, [], fields=("vendor_name",))
     taught, _ = fuse({"rules": rules, "template": template}, [], fields=("vendor_name",))
     assert taught["vendor_name"].value == "CONTOSO LTD."
     assert taught["vendor_name"].confidence >= plain["vendor_name"].confidence
     assert taught["vendor_name"].status == plain["vendor_name"].status == LIKELY
+
+
+def test_a_reading_the_template_cannot_vouch_for_is_never_an_independent_reader():
+    """The template, its label gone, read the true date first and the order date next; its first choice was dropped,
+    its runner-up agreed with the rule reader's wrong first choice and counted as a second reader: verified (review
+    of B-387, `relayout3`)."""
+    for field, x, y in (("invoice_date", "2026-06-15", "2026-06-11"), ("invoice_number", "INV-555", "SO-778")):
+        rules = {field: [_rule(field, y, 0.6, "label-inline")]}
+        template = {
+            field: [_rule(field, x, 0.62, "template" + UNSETTLED), _rule(field, y, 0.55, "template" + UNSETTLED)]
+        }
+        fields, _ = fuse({"rules": rules, "template": template}, [], fields=(field,))
+        got = fields[field]
+        assert got.value == y and got.status != VERIFIED and "contested" in got.evidence
+        assert any(f"another reading: {x}" in r for r in got.reasons)  # the template's first choice still contests
+
+
+def test_the_template_agreeing_is_never_enough_for_verified():
+    """The floor of B-393 keeps a value as certain as the other readers alone make it, never more than likely."""
+    rules = {"invoice_number": [_rule("invoice_number", "INV-10230", 0.95, "label-inline")]}
+    for method in ("template", "template" + UNSETTLED):
+        template = {"invoice_number": [_rule("invoice_number", "INV-10230", 0.6, method)]}
+        plain, _ = fuse({"rules": rules}, [], fields=("invoice_number",))
+        taught, _ = fuse({"rules": rules, "template": template}, [], fields=("invoice_number",))
+        assert plain["invoice_number"].status != VERIFIED
+        if method != "template":
+            assert taught["invoice_number"].status != VERIFIED
+            assert taught["invoice_number"].confidence <= max(plain["invoice_number"].confidence, 0.97)
+
+
+# --- A supplier's stream: touchless after a layout change ------------------------------------------------------
+
+
+def _stream_page(path: Path, i: int, header: list[tuple[str, str]], top: list[tuple] = ()) -> Path:
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    items = [(50, 60, "Northwind Supply Ltd.", 16, "hebo"), (50, 78, "200 Industrial Rd, Burnaby BC", 9, "helv"),
+             (50, 90, "GST/HST No. 123456709RT0001", 9, "helv"), (400, 60, "INVOICE", 18, "hebo"),
+             (50, 130, "Bill To:", 10, "hebo"), (50, 144, "Acme Holdings Inc.", 10, "helv"), *top]  # fmt: skip
+    for k, (label, value) in enumerate(header):
+        items += [(360, 130 + 14 * k, label, 10, "hebo"), (460, 130 + 14 * k, value, 10, "helv")]
+    sub = 1000.0 + 37 * i
+    rows = [("Subtotal", sub), ("GST 5%", round(sub * 0.05, 2)), ("Total", round(sub * 1.05, 2))]
+    items += [(50, 260, "Description", 10, "hebo"), (500, 260, "Amount", 10, "hebo"),
+              (50, 276, "Industrial fasteners", 10, "helv"), (500, 276, f"{sub:,.2f}", 10, "helv")]  # fmt: skip
+    items += [(x, 420 + 14 * k, t, 10, f) for k, (lab, v) in enumerate(rows) for x, t, f in
+              ((380, lab, "hebo"), (500, f"{v:,.2f}", "helv"))]  # fmt: skip
+    for x, y, text, size, font in items:
+        page.insert_text((x, y), text, fontsize=size, fontname=font)
+    doc.save(path)
+    return path
+
+
+def _stream(tmp_path: Path, pages) -> list:
+    """Read each invoice with the template learned from the approved earlier ones; (truth date, result) per invoice."""
+    import datetime as dt
+
+    from ap_coder.capture import analyze
+    from ap_coder.capture.supplier import confirmed_values
+
+    template, out = None, []
+    for i, (header, top, date) in enumerate(pages):
+        path = _stream_page(tmp_path / f"s{i}.pdf", i, header, top)
+        layout = _layout(path)
+        sub = 1000.0 + 37 * i
+        truth = {"vendor_name": "Northwind Supply Ltd.", "invoice_number": f"INV-{10230 + i}", "invoice_date": date,
+                 "subtotal": sub, "gst_amount": round(sub * 0.05, 2), "grand_total": round(sub * 1.05, 2),
+                 "gst_hst_registration_number": "123456709RT0001"}  # fmt: skip
+        vendor = {"name": truth["vendor_name"], "gst_number": truth["gst_hst_registration_number"], "erp_id": ""}
+        today = dt.date.fromisoformat(date) + dt.timedelta(days=3)
+        out.append((date, analyze(path, template=template, vendor=vendor, layout=layout, today=today, tables=False)))
+        template = learn(template, layout, confirmed_values(truth))
+    return out
+
+
+def _date(i: int, back: int = 0) -> str:
+    import datetime as dt
+
+    return (dt.date(2026, 1, 5) + dt.timedelta(days=7 * i - back)).isoformat()
+
+
+def test_a_renamed_label_does_not_make_the_order_date_a_verified_invoice_date(tmp_path):
+    """The supplier renames "Invoice Date:" to "Billed on:" and adds an order "Date:" row under it: the invoice date
+    was the order date, verified, and the invoice went touchless (review of B-387, `relayout3`)."""
+    from ap_coder.capture.supplier import AUTONOMOUS, should_auto_approve
+
+    old = [([("Invoice #", f"INV-{10230 + i}"), ("Invoice Date:", _date(i))], [], _date(i)) for i in range(4)]
+    new = [([("Invoice #", f"INV-{10230 + i}"), ("Billed on:", _date(i)), ("Date:", _date(i, 2 + i % 3))], [], _date(i))
+           for i in range(4, 7)]  # fmt: skip
+    for date, result in _stream(tmp_path, old + new)[4:]:
+        got = result.fields["invoice_date"]
+        if got.value != date:
+            assert got.status != VERIFIED
+            assert not should_auto_approve(AUTONOMOUS, result, checks_ok=True)[0]
+
+
+def test_a_date_learned_where_the_reader_read_another_date_is_not_a_second_reader(tmp_path):
+    """The invoice date printed only beside the title; "Date:" (the order date) was the same day on the first invoice:
+    the template learned the date where the rule reader read it, at "Date:", and agreed with the reader's wrong date
+    on the next invoice: verified (review of B-388, `p2`)."""
+    pages = [([("Invoice No.:", f"INV-{10230 + i}"), ("Date:", _date(i, 0 if i == 0 else 2 + i % 3))],
+              [(400, 80, _date(i), 10, "helv")], _date(i)) for i in range(4)]  # fmt: skip
+    for date, result in _stream(tmp_path, pages)[1:]:
+        got = result.fields["invoice_date"]
+        assert got.value == date or got.status != VERIFIED
+
+
+def test_a_new_label_at_the_old_spot_starts_unsettled(tmp_path):
+    """The supplier's new layout prints an order "Date:" where "Invoice Date:" was, and the invoice date beside the
+    title; on its first invoice the two were the same day. The template took the new label for the old spot's, kept the
+    spot's settled record, and verified the order date as the invoice date from then on (`relayout`, base too)."""
+    old = [([("Invoice #", f"INV-{10230 + i}"), ("Invoice Date:", _date(i))], [], _date(i)) for i in range(4)]
+    new = [([("Invoice #", f"INV-{10230 + i}"), ("Date:", _date(i, 0 if i == 4 else 2 + i % 3))],
+            [(400, 80, _date(i), 10, "helv")], _date(i)) for i in range(4, 8)]  # fmt: skip
+    for date, result in _stream(tmp_path, old + new)[4:]:
+        got = result.fields["invoice_date"]
+        assert got.value == date or got.status != VERIFIED

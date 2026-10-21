@@ -42,7 +42,7 @@ from .types import (
     DATE_FIELDS,
     FIELDS,
     MISSING,
-    UNANCHORED,
+    UNSETTLED,
     VERIFIED,
     Box,
     CaptureResult,
@@ -416,12 +416,17 @@ class Variant:
     count: int = 0
     last_seen: str = ""
     date_order: str | None = None  # "dmy" / "mdy" when the supplier's numeric dates told us
+    # Confirmations where the value was printed at this spot and nowhere else (or clicked there): until one, the spot
+    # may be another field's that held the same value (an order date the day of the invoice), and the template does
+    # not vouch for what it reads there. A template stored before this was counted starts at 0.
+    settled: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "page": self.page, "box": [round(v, 5) for v in self.box],
             "anchor": self.anchor.to_dict() if self.anchor else None, "shape": self.shape.to_dict(),
             "count": self.count, "last_seen": self.last_seen, "date_order": self.date_order,
+            "settled": self.settled,
         }  # fmt: skip
 
     @classmethod
@@ -431,6 +436,7 @@ class Variant:
             page="last" if page == "last" else int(page), box=[float(v) for v in d["box"]],
             anchor=Anchor.from_dict(d.get("anchor")), shape=Shape.from_dict(d.get("shape")),
             count=int(d.get("count") or 0), last_seen=d.get("last_seen") or "", date_order=d.get("date_order"),
+            settled=int(d.get("settled") or 0),
         )  # fmt: skip
 
 
@@ -624,9 +630,10 @@ def learn(
     ``boxes`` are the words the reviewer clicked (teach-by-click) and are authoritative; without them the
     value is looked for on the page. A value that cannot be found on the page teaches nothing.
 
-    A value printed more than once (an invoice date that is also the delivery date) is learned where the rule
-    reader reads the field, when it reads that value; and words learned for one field this way are not learned
-    for another one (a date printed once that is both the invoice and the due date teaches the invoice date)."""
+    A value printed in more than one place on the page (an invoice date that is also the order date), or on words
+    another confirmed field's value is printed on too (a credit note dated and due the same day), is learned where it
+    most likely is, but the spot is not *settled*: the template reads it there without vouching for it (``UNSETTLED``)
+    until an approval where the value is printed there and nowhere else."""
     if isinstance(template, dict):
         template = Template.from_dict(template)
     template = template or Template()
@@ -636,23 +643,20 @@ def learn(
         value, boxes = item if isinstance(item, tuple) else (item, None)
         if value is not None and value != "" and name in FIELDS:
             items.append((name, value, boxes))
-    read = _read_where(layout, items)
-    # First the values the reviewer clicked or the rule reader read where they are printed, then the rest, on words
-    # not taken by those.
-    items.sort(key=lambda it: not (it[2] or read.get(it[0])))
-    taken: set[int] = set()
+    spans = {name: _find_spans(layout, name, value) for name, value, boxes in items if not boxes}
     learned = 0
     for name, value, boxes in items:
         variants = template.fields.setdefault(name, [])
-        if boxes:
-            hit = _taught(layout, boxes, name, value)
-        else:
-            hit = _best_span(layout, name, value, variants, read.get(name, []), taken)
+        hit = _taught(layout, boxes, name, value) if boxes else _best_span(layout, name, spans[name], variants)
         if hit is None:
             continue
         page_no, words, raw, order = hit
-        if boxes or _read_here(words, read.get(name, [])):
-            taken |= {id(w) for w in words}
+        ids = {id(w) for w in words}
+        # A reviewer's click settles the spot; a value found on the page only when it is printed there alone.
+        settled = bool(boxes) or (
+            len(spans[name]) == 1
+            and not any(ids & {id(w) for w in s[1]} for other, found in spans.items() if other != name for s in found)
+        )
         page = _page(layout, page_no)
         rows = _rows(page.words) if page is not None else []
         vbox = union_all(boxes) if boxes else _span_box(words)  # a taught box is authoritative
@@ -661,7 +665,7 @@ def learn(
         anchor = _make_anchor(rows, words) if words else None
         if anchor is not None and name == "vendor_name" and _name_again(anchor.text, value):
             anchor = None  # the name printed again (a logo over the address) is not its label
-        _update_variants(variants, _page_ref(layout, page_no), _box4(vbox), anchor, raw, order, when)
+        _update_variants(variants, _page_ref(layout, page_no), _box4(vbox), anchor, raw, order, when, settled)
         learned += 1
     if learned:
         template.invoices += 1
@@ -688,41 +692,6 @@ def _taught(
     return box.page, words, raw, (orders[0] if len(orders) == 1 and orders[0] in ("dmy", "mdy") else None)
 
 
-def _same_value(name: str, a: Any, b: Any) -> bool:
-    if name in AMOUNT_FIELDS:  # a credit printed without its sign is the same amount
-        x, y = parse_amount(a), parse_amount(b)
-        return x is not None and y is not None and abs(abs(x) - abs(y)) < 0.005
-    key = compare_key(name, a)
-    return key is not None and key == compare_key(name, b)
-
-
-def _read_where(layout: DocLayout, items: list[tuple[str, Any, Any]]) -> dict[str, list[Box]]:
-    """{field: the boxes of the rule reader's readings of the confirmed value}: where the page's own label says the
-    value is printed."""
-    try:
-        from .reader import read_fields
-
-        readings = read_fields(layout)
-    except Exception:  # the reader only helps choose where to learn: never fatal
-        return {}
-    out: dict[str, list[Box]] = {}
-    for name, value, boxes in items:
-        if boxes:
-            continue
-        found = [b for r in readings.get(name, []) if r.boxes and _same_value(name, r.value, value) for b in r.boxes]
-        if found:
-            out[name] = found
-    return out
-
-
-def _read_here(words: list[Word], boxes: list[Box]) -> bool:
-    return any(
-        w.box.page == b.page and w.box.cx >= b.x0 and w.box.cx <= b.x1 and w.box.cy >= b.y0 and w.box.cy <= b.y1
-        for w in words
-        for b in boxes
-    )
-
-
 def _name_again(text: str, value: Any) -> bool:
     """``text`` holds the supplier's name ``value`` itself ("CONTOSOLTD." over "CONTOSO")."""
     name = _compact(vendor_key(str(value)))
@@ -730,18 +699,13 @@ def _name_again(text: str, value: Any) -> bool:
 
 
 def _best_span(
-    layout: DocLayout, name: str, value: Any, variants: list[Variant], read: list[Box] | None = None,
-    taken: set[int] | None = None,
-) -> tuple[int, list[Word], str, str | None] | None:  # fmt: skip
-    """Where on the page to learn ``value``: where the rule reader read it (``read``), else near where it was
-    learned before, by a label, and not on words another field was learned at this time (``taken``)."""
-    spans = _find_spans(layout, name, value)
-    if not read and taken:
-        spans = [s for s in spans if not taken & {id(w) for w in s[1]}]
+    layout: DocLayout, name: str, spans: list[tuple[int, list[Word], str]], variants: list[Variant]
+) -> tuple[int, list[Word], str, str | None] | None:
+    """Of the places the value is printed (``spans``), the one to learn: near where it was learned, by a label."""
     if not spans:
         return None
 
-    def rank(item: tuple[int, tuple[int, list[Word], str]]) -> tuple[bool, float, float]:
+    def rank(item: tuple[int, tuple[int, list[Word], str]]) -> tuple[float, float]:
         pos, (page_no, words, _) = item
         box = _box4(_span_box(words))
         ref = _page_ref(layout, page_no)
@@ -751,7 +715,7 @@ def _best_span(
         label = 1.0 if found and _looks_like_label(_join(found[0])) else 0.5 if found else 0.0
         # Totals are at the bottom: of equal amounts, the last one; for the rest, the first one.
         order = pos / len(spans) if name in AMOUNT_FIELDS else -pos / len(spans)
-        return (_read_here(words, read or []), 2 * near + label, order)
+        return (2 * near + label, order)
 
     _, (page_no, words, order) = max(enumerate(spans), key=rank)
     return page_no, words, _join(words), (order if order in ("dmy", "mdy") else None)
@@ -759,7 +723,7 @@ def _best_span(
 
 def _update_variants(
     variants: list[Variant], page: int | str, box: list[float], anchor: Anchor | None, raw: str,
-    order: str | None, when: str,
+    order: str | None, when: str, settled: bool = True,
 ) -> None:  # fmt: skip
     def same(v: Variant) -> bool:
         if v.page != page:
@@ -779,6 +743,8 @@ def _update_variants(
     weight = min(match.count, 4)  # recent invoices count more than old ones
     match.box = [(a * weight + b) / (weight + 1) for a, b in zip(match.box, box, strict=True)] if match.count else box
     if anchor is not None:
+        if match.anchor is None or match.anchor.key != anchor.key:
+            match.settled = 0  # another label at the spot: what settled the old label's spot says nothing of the new
         if match.anchor is not None and match.anchor.key == anchor.key and match.count:
             anchor.offset = [
                 (a * weight + b) / (weight + 1) for a, b in zip(match.anchor.offset, anchor.offset, strict=True)
@@ -788,6 +754,7 @@ def _update_variants(
     if order in ("dmy", "mdy"):
         match.date_order = order
     match.count += 1
+    match.settled += settled
     match.last_seen = when
     variants.sort(key=lambda v: (-v.count, v.last_seen))
 
@@ -910,7 +877,11 @@ def apply_template(template: Template | dict[str, Any] | None, layout: DocLayout
                 if credit and name in AMOUNT_FIELDS and isinstance(reading.value, float) and reading.value > 0:
                     reading.value = -reading.value
                 key = compare_key(name, reading.value)
-                if key not in best or reading.score > best[key].score:
+                # Of the variants' readings of one value, the one the template vouches for (then the higher score).
+                if key not in best or (UNSETTLED not in reading.method, reading.score) > (
+                    UNSETTLED not in best[key].method,
+                    best[key].score,
+                ):
                     best[key] = reading
         if best:
             ranked = sorted(best.values(), key=lambda r: -r.score)
@@ -977,7 +948,10 @@ def _apply_variant(name: str, variant: Variant, layout: DocLayout) -> list[Readi
         found.append((reading, {id(w) for w in words}, rank))
 
     hits = _anchor_hits(rows, variant.anchor) if variant.anchor else []
-    method = "template" if hits else "template" + UNANCHORED  # without its label: read where the value used to be
+    # Learned by a label that is not on this page (read where the value used to be), or at a spot never settled: read,
+    # not vouched for. A value learned with no label (a name at the top) is read by its position as it always was.
+    vouched = (hits or variant.anchor is None) and variant.settled
+    method = "template" if vouched else "template" + UNSETTLED
     if hits:
         learned = variant.anchor.box
         abox, awords, glued, sim, _whole = min(

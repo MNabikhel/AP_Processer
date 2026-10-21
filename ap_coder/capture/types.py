@@ -56,10 +56,12 @@ TWO_SUBTOTALS = "+two-subtotals"
 # label, "Your reference" for the PO): the measured record of its reading's family ("label-inline") is not its
 # own, so it keeps the reader's own score and is never verified on its own.
 UNMEASURED = "+unmeasured"
-# Added to a supplier template's reading taken where the value was learned, with its label not found on the page:
-# whatever is printed there now. It fills a field no other reader read (to be checked), never replaces another
-# reader's value. The calibration reads it by its family ("template").
-UNANCHORED = "+unanchored"
+# Added to a supplier template's reading it cannot vouch for: read where the value was learned with its label not
+# found on the page (whatever is printed there now), or at a spot never settled (on every invoice learned from, the
+# value was printed somewhere else too: an order date the day of the invoice). It fills a field no other reader read
+# (to be checked) or agrees, but is never a reader of its own: not counted towards verified, not first over another
+# reader's value, and measured apart from the template's labelled readings (its own family, "template-unsettled").
+UNSETTLED = "-unsettled"
 STATUSES = (VERIFIED, LIKELY, CHECK, MISSING)
 
 
