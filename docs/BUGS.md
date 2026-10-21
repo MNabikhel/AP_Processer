@@ -4557,7 +4557,8 @@ N-141), then fixed in a second round; none is left.
 - **Lesson:** Don't name a feature in a message to someone who has not met it: say what it does.
 
 #### B-439 · A notes file uploaded by mistake became an invoice from "hello" · low
-- **Where:** `ap_coder/web/pages/process.py` (`looks_like_an_invoice_text`, `_save_and_start`),
+- **Where:** `ap_coder/web/pages/process.py` (`looks_like_an_invoice_text`, `_save_and_start`; the message in
+  `tests/test_unusual_files.py` kept in step),
   `ap_coder/web/templates/process.html`, `ap_coder/web/static/js/process.js`
 - **Symptom:** (was N-139) the upload takes `.txt` (invoices saved as text, on purpose) but its hint named only PDFs,
   scans, photos and saved emails; a `notes.txt` reading "hello" went to the review queue as an invoice from

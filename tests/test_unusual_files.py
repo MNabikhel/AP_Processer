@@ -357,5 +357,6 @@ def test_an_upload_of_a_picture_kind_not_read_says_which_kinds_are(tmp_path):
     assert client.post("/process/upload", files=files, headers=PAGE).json()["ok"]
     assert job.wait(60)
     texts = [m["text"] for m in client.get("/process/status").json()["result"]["messages"]]
-    assert ("photo.avif was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, BMP, WEBP, GIF) and saved "
-            "emails (.eml, .msg). Save it as PDF or JPEG to have it read.") in texts  # fmt: skip
+    assert ("photo.avif was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, BMP, WEBP, GIF), saved "
+            "emails (.eml, .msg) and invoices saved as text (.txt). Save it as PDF or JPEG to have it "
+            "read.") in texts  # fmt: skip
