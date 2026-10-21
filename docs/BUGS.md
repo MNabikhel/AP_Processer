@@ -4431,3 +4431,14 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
 - **Fix:** both fold accents and case as the vendor and invoice filters elsewhere do.
 - **Test:** `tests/test_pilot_path_backend.py::test_the_queue_search_and_vendor_order_read_accents_as_people_do`
 - **Lesson:** Don't compare names with `lower()`: fold them the way the rest of the app does.
+
+#### B-457 · The JD Edwards pay item sent a PO company without its PO number · low
+- **Where:** `ap_coder/erp/jde.py` (`voucher_rows`), docs/JDE_E1.md
+- **Symptom:** with *Send the PO number as a reference* off, an invoice quoting a PO went out with VLPO and VLPDCT
+  blank but VLPKCO (the PO company) filled: a PO key with no PO, unlike the mapping in docs/JDE_E1.md.
+- **Cause:** VLPO and VLPDCT followed the setting; VLPKCO only asked whether the invoice printed a PO.
+- **Reproduce:** `jde.export_batch([the Northwind invoice], JdeSettings(send_po_reference=False), ...)`.
+- **Reproduced:** yes (`VLPKCO = 00001`)
+- **Fix:** the three PO columns go out together, when the PO number is sent (as a reference, or PO-matched).
+- **Test:** `tests/test_pilot_path_backend.py::test_the_po_company_goes_out_only_with_the_po_number`
+- **Lesson:** Columns that make one key are filled by one condition.

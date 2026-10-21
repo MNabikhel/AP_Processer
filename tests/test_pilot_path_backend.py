@@ -154,6 +154,19 @@ def test_a_value_corrected_on_an_invoice_approved_again_is_still_learned(tmp_pat
     assert template.invoices == 1
 
 
+def test_the_po_company_goes_out_only_with_the_po_number():
+    """With "Send the PO number" off, the pay item had no PO number (VLPO) nor PO type (VLPDCT) but still the PO
+    company (VLPKCO), where docs/JDE_E1.md says all three go out together when there is a PO to send."""
+    from ap_coder.erp import jde
+
+    from .test_jde import AN8, ON, _files, _invoice
+
+    off = _files([_invoice(ON)], jde.JdeSettings(send_po_reference=False))[jde.HEADER_FILE][0]
+    assert (off["VLPO"], off["VLPDCT"], off["VLPKCO"]) == ("", "", "")
+    on = _files([_invoice(ON)], jde.JdeSettings())[jde.HEADER_FILE][0]
+    assert (on["VLPO"], on["VLPDCT"], on["VLPKCO"]) == ("PO-88213", "OP", "00001")
+
+
 def test_the_queue_search_and_vendor_order_read_accents_as_people_do():
     """Typing "quebec" in the review queue's search found no "Hydro-Québec", and "Vendor A–Z" put "Énergir" after
     "Zenith" (é sorts after z by its code)."""
