@@ -185,9 +185,9 @@ def test_what_capture_found_about_the_page_is_on_the_review_screen(tmp_path, gro
     store.save_capture(inv_id, {"fields": {}, "page_count": 300, "pages_left_out": 280})
     client = _web(store)
     said = "only 20 of its 300 pages were read"
-    assert said in client.get(f"/review/{inv_id}").text
+    assert said in client.get(f"/review/{inv_id}").text.lower()  # the screen starts a check's message with a capital
     checked = client.post(f"/review/{inv_id}/check", data=_form(store, inv_id), headers=PAGE).json()
-    assert said in str(checked["sections"]) and checked["allow"]  # a warning: Approve stays open
+    assert said in str(checked["sections"]).lower() and checked["allow"]  # a warning: Approve stays open
 
 
 def _undated(path):
