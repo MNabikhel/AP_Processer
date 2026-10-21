@@ -284,8 +284,9 @@ That is all. The new version takes over:
   *Close the old AP Coder window, then start again* and waits up to a minute for you to do it.
 - **It says what changed**: *Updated AP Coder from 0.2.0 to 0.3.0 (build 3dacb6f, 2026-10-21)*, also between two
   builds of one version (two GitHub ZIPs, or two bundles). It sets up only what is new (from the new bundle's
-  `wheelhouse/`, never the internet) and runs the self-check. The old window, if it was still open, says *A newer
-  AP Coder took over; you can close this window.*
+  `wheelhouse/`, never the internet) and runs the self-check. An older build unzipped over a newer one says
+  *Replaced AP Coder X with an older build, Y*. The old window, if it was still open, simply ends when it is 0.2.0
+  (this update); from 0.3.0 on it says *A newer AP Coder took over; you can close this window.*
 - **Your data is kept.** The data folder (`C:\Users\<you>\APCoder`) is never replaced. Before the new version
   brings the database up to date, it copies it to the `backups` folder
   (`ap_coder-<date>-before-update-from-schema-<n>.db`). Data an older version kept inside its own folder

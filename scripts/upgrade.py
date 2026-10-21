@@ -791,6 +791,13 @@ def user_files(folder: Path, limit: int = 3) -> list[str]:
     return found
 
 
+def replaced_by(folder: Path, mine: dict) -> bool:
+    """The install in ``folder`` is certainly older than ``mine`` (an install identity), or another copy of the same
+    build: the only kind a clean-up may take. A folder whose build can't be ordered with this one (the same version
+    from before the build stamp, copied by hand, a checkout) is never taken: never deleted when in doubt (B-551)."""
+    return paths.compare(paths.install_identity(folder), mine) in ("older", "same")
+
+
 def removable(folder: Path, root: Path) -> str:
     """Why ``folder`` (an older install) must be kept whole ("" when it can go): it is this folder or holds it, a
     git checkout, not an AP Coder bundle folder, running, or holds files AP Coder did not put there."""
@@ -819,6 +826,7 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
     A folder done is taken off the record; one in use is tried again on a later start. Returns the bytes freed (and
     says what was removed)."""
     freed = 0
+    mine = paths.install_identity(root)  # (no version: not an install folder, e.g. a test's: nothing to order by)
     for folder in old:
         if paths.same_folder(folder, root) or (folder / ".git").exists():
             continue
@@ -832,6 +840,10 @@ def clean_up(root: Path, data: Path, old: list[Path], say: Say = print) -> int:
             continue
         if lock_held(folder):
             say(f"  {folder}: AP Coder is running from it; it is cleaned up on a later start.")
+            continue
+        if mine["version"] and is_install(folder) and not replaced_by(folder, mine):  # (whoever passed it)
+            say(f"  Kept {folder}: it can't be told whether it is older than this AP Coder, so nothing in it was "
+                "touched.")  # fmt: skip
             continue
         try:
             adopt_legacy(folder, data, say)

@@ -5075,6 +5075,100 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Test:** `tests/test_launch_build.py::test_the_dry_run_names_every_address_the_build_downloads_from`
 - **Lesson:** A build that downloads needs a list of where from, for whoever runs the firewall.
 
+#### Found by the review of these fixes
+
+#### B-551 · The clean-up could delete a newer offline bundle's folder · high
+- **Where:** `ap_coder/core/paths.py` (`install_identity`, `compare`, `is_older`), `scripts/upgrade.py`
+  (`replaced_by`, `clean_up`), `scripts/launch.py` (`older_installs`)
+- **Symptom:** a GitHub ZIP started after a newer offline bundle of the same version, in Canada, took the bundle for
+  the older one: after its self-check the clean-up removed the bundle's `.venv` and then its whole folder.
+- **Cause:** B-542 ordered a ZIP by its commit's time (UTC) and a bundle by its manifest's `built` (IT's local time,
+  no zone), compared as text: 17:30 in Toronto sorted before 20:00 UTC. And the clean-up took every install on record
+  that was not newer, so a build that could not be ordered at all counted as older.
+- **Reproduce:** ZIP X stamped 2026-10-21T20:00Z, bundle Y stamped 21:00Z and built 17:30 local; start X.
+- **Reproduced:** yes (`is_older(Y, X)` was true)
+- **Fix:** a stamped build (a ZIP, or a bundle from 0.3.0 on: its builder writes the stamp) is ordered by its commit's
+  time in UTC; a bundle from before the stamp by its build time, and only against another such bundle. `compare`
+  answers older, newer, same (one commit, or the same code) or unknown; the clean-up takes only a folder certainly
+  older or another copy of this very build, and `clean_up` itself refuses any other (*Kept X: it can't be told
+  whether it is older than this AP Coder, so nothing in it was touched*). Never delete when in doubt.
+- **Test:** `tests/test_launch_build.py::test_a_newer_bundle_is_never_taken_for_an_older_one_across_time_zones`,
+  `::test_a_build_that_cant_be_ordered_is_never_cleaned_up`
+- **Lesson:** Two times compare only when they are on one clock: a local time without its zone is not comparable
+  with UTC, and a comparison that can't be made must say so rather than answer.
+
+#### B-552 · Python 3.10 stopped with AttributeError before it was told it is too old · low
+- **Where:** `ap_coder/core/paths.py` (`_utc`)
+- **Symptom:** `python scripts/launch.py` under 3.10: *AttributeError: module 'datetime' has no attribute 'UTC'*.
+- **Cause:** `datetime.UTC` is new in 3.11 (ruff's py311 target suggests it); the launcher's first phase runs on any
+  Python to say which one it needs.
+- **Reproduce:** `python3.10 -c "from ap_coder.core import paths; paths.install_identity()"`
+- **Reproduced:** yes
+- **Fix:** `datetime.timezone.utc` (with a note for ruff).
+- **Test:** `tests/test_launch_build.py::test_build_times_need_no_python_3_11`
+- **Lesson:** Code that exists to tell an old Python it is too old must itself run on that Python.
+
+#### B-553 · An older build over a newer one said "Updated", and a copied folder "from 0.3.0 to 0.3.0" · low
+- **Where:** `scripts/launch.py` (`update_line`)
+- **Symptom:** *Updated AP Coder from 0.3.0 (build new) to 0.3.0 (build old)*; *Updated AP Coder from 0.3.0 to 0.3.0.*
+- **Cause:** any change of fingerprint was said as an update.
+- **Reproduce:** unzip an older ZIP over a newer one; change a file of a folder with no build stamp.
+- **Reproduced:** yes
+- **Fix:** *Replaced AP Coder X with an older build, Y.* (it still starts and runs the self-check: going back is
+  sometimes what IT wants, and a database a newer AP Coder changed is refused anyway); *AP Coder's files in this
+  folder changed since it was last set up: checking it again.* when nothing names the two.
+- **Test:** `tests/test_launch_build.py::test_an_older_build_unzipped_over_a_newer_one_is_said_as_such`
+- **Lesson:** Say the direction of a change, not only that there was one.
+
+#### B-554 · A network that dropped the models' site silently held a first setup for about 10 minutes · medium
+- **Where:** `scripts/fetch_models.py` (`fetch`, `setup`, `unreached`), `scripts/launch.py` (`ensure_models`)
+- **Symptom:** each of 4 model files waited out 3 tries of 60 s; every later start about 2 minutes more; the window
+  said only that each could not be got.
+- **Cause:** every file was tried on its own, whatever had happened to the one before.
+- **Reproduce:** a firewall that drops www.modelscope.cn without answering.
+- **Reproduced:** yes (in the review)
+- **Fix:** a site not reached at all (no answer in time, no such name, refused) is asked for nothing more in that
+  run; the first setup waits 30 s an answer (3 tries), a later start 10 s (1 try); the window says once *AP Coder
+  couldn't reach www.modelscope.cn (a firewall may block it): ask IT, or use the offline bundle.*
+- **Test:** `tests/test_launch.py::test_a_site_that_never_answers_is_asked_once_and_said_once`
+- **Lesson:** When a server does not answer, the next request to it will not either: give up on the server, not on
+  each file.
+
+#### B-555 · The pip progress line could stay on one package's name · low
+- **Where:** `scripts/launch.py` (`PipProgress.status`)
+- **Symptom:** *Installing packages: 40 of 56 (Odd.Name)...* to the end, when a `.dist-info` was spelled otherwise.
+- **Cause:** the line named the first package not yet found installed.
+- **Reproduce:** a package list where one name never matches its `.dist-info` folder.
+- **Reproduced:** yes
+- **Fix:** it names the package after the last one found installed (pip installs in its list's order).
+- **Test:** `tests/test_launch_build.py::test_pip_progress_never_sticks_on_a_name_it_cant_match`
+- **Lesson:** Progress worked out from outside must move on when one item can't be matched.
+
+#### B-556 · A 3.10 .venv was remade before the old dashboard using it was stopped · low
+- **Where:** `scripts/launch.py` (`bootstrap`, `make_way_for_venv`)
+- **Symptom:** an old AP Coder window still open from that .venv: Windows refused to delete it (*Could not remove the
+  .venv folder*).
+- **Cause:** the first phase remakes .venv; old dashboards were stopped only in the second.
+- **Reproduce:** a 0.1 install made with Python 3.10, left running; unzip 0.3.0 over it and double-click.
+- **Reproduced:** yes (in the review, on its order of steps)
+- **Fix:** before .venv is made again, the older AP Coder running is stopped (as the second phase does).
+- **Test:** `tests/test_launch_build.py::test_an_older_venv_is_made_again_only_after_old_dashboards_stopped`
+- **Lesson:** Stop what uses a folder before deleting the folder.
+
+#### B-557 · The new CI job could fail wrongly, and checked the Mark of the Web only on the way in · low
+- **Where:** `.github/workflows/ci.yml` (`windows-github-zip`, `windows-pilot-launcher`)
+- **Symptom:** a first run whose only failed download was the table finder's (*Couldn't download the table finder's
+  model*) failed the job; the Mark of the Web was put on the files but never checked as taken off APProcessor.bat;
+  the later start's check for *Fetching the OCR models* matched nothing the launcher says.
+- **Cause:** the expected lines were written before the final wording.
+- **Reproduce:** read the workflow against the launcher's lines.
+- **Reproduced:** yes
+- **Fix:** the job accepts either download message (and the unreachable one), checks APProcessor.bat has lost its
+  Zone.Identifier while the other files keep it; the later start checks for *Downloading the OCR models*. PILOT and
+  UPGRADING say the 0.2.0 window just ends on this update (only 0.3.0 and later say a newer one took over).
+- **Test:** `tests/test_ci_workflow.py`
+- **Lesson:** A CI check for a line is only as good as the line's current wording: grep for what the code says.
+
 #### Looked at and left (install, launcher and updates)
 
 - **N-251** · A GitHub ZIP unzipped over an older one leaves the files the newer one no longer has (the offline

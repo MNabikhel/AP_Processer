@@ -353,6 +353,7 @@ def test_a_venv_made_with_an_older_python_is_made_again(launch, monkeypatch, cap
     launch.VENV_PY.write_text("")
     monkeypatch.setattr(launch, "fitting_pythons", lambda: [])
     made: list[bool] = []
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: ("clear", None))
     monkeypatch.setattr(launch, "ensure_venv", lambda rebuild=False: made.append(rebuild) or "recreated")
     monkeypatch.setattr(launch.subprocess, "call", lambda cmd: 0)
     assert launch.bootstrap([]) == 0 and made == [True]
@@ -382,3 +383,96 @@ def test_a_quiet_step_after_pip_says_it_is_still_working(launch, capsys):
     out = capsys.readouterr().out
     assert "  Still working: getting the OCR models..." in out
     assert launch.Step().status() == ""  # nothing named: nothing said
+
+
+# --- Review: never clean up a folder that may be newer; Python 3.10; wording ------------------------------------------
+
+
+def _bundle(folder: Path, stamp: str | None, built: str) -> Path:
+    _code(folder, stamp=stamp)
+    (folder / "bundle_manifest.json").write_text(json.dumps({"version": "0.3.0", "built": built}))
+    return folder
+
+
+def test_a_newer_bundle_is_never_taken_for_an_older_one_across_time_zones(tmp_path):
+    """B-551: a bundle's `built` is IT's local time with no zone, a ZIP's build its commit's time in UTC; compared as
+    text, a bundle built in Canada after the ZIP looked older, and the ZIP's clean-up could delete it."""
+    zip_x = _code(tmp_path / "zip X", stamp="1a2b3c4 2026-10-21T20:00:00+00:00\n")  # 16:00 in Toronto
+    bundle_y = _bundle(tmp_path / "bundle Y", "5e6f7a8 2026-10-21T21:00:00Z\n", "2026-10-21T17:30:00")  # 17:30 there
+    x, y = paths.install_identity(zip_x), paths.install_identity(bundle_y)
+    assert paths.compare(x, y) == "older" and paths.compare(y, x) == "newer"
+    assert paths.is_older(x, y) and not paths.is_older(y, x)
+
+
+def test_a_build_that_cant_be_ordered_is_never_cleaned_up(launch, tmp_path):
+    """Never delete when in doubt: a same-version folder whose build can't be ordered with this one (a bundle from
+    before the build stamp, a hand-copied folder) is neither handed over to nor cleaned up."""
+    old_bundle = _bundle(tmp_path / "0.3 bundle without a stamp", None, "2026-10-21T09:00:00")
+    copied = _code(tmp_path / "copied by hand", stamp="$Format:%h %cI$\n")
+    older = _code(tmp_path / "older ZIP", stamp="0a0a0a0 2026-10-01T10:00:00+00:00\n")
+    mine = launch.identity()
+    for folder in (old_bundle, copied):
+        assert paths.compare(paths.install_identity(folder), mine) == "unknown"
+        paths.record_install(paths.install_identity(folder), current=False)
+    paths.record_install(paths.install_identity(older), current=False)
+    assert launch.older_installs(mine, []) == [older]
+    data = tmp_path / "data"
+    data.mkdir()
+    launch.upgrade.clean_up(launch.ROOT, data, [old_bundle, copied], print)  # (even when handed them)
+    assert (old_bundle / "ap_coder").is_dir() and (copied / "ap_coder").is_dir()
+
+
+def test_build_times_need_no_python_3_11(monkeypatch):
+    """B-552: datetime.UTC is new in 3.11: `python scripts/launch.py` under 3.10 stopped with AttributeError before it
+    could say that Python is too old."""
+    import datetime
+
+    monkeypatch.delattr(datetime, "UTC", raising=False)
+    assert paths._utc("2026-10-21T16:14:00-04:00") == "2026-10-21T20:14:00"
+
+
+def test_an_older_build_unzipped_over_a_newer_one_is_said_as_such(launch, monkeypatch, capsys):
+    """B-553: "Updated AP Coder from <newer> to <older>"; and "Updated AP Coder from 0.3.0 to 0.3.0" for a folder whose
+    files changed without a build stamp."""
+    _quiet(launch, monkeypatch)
+    (launch.ROOT / "ap_coder" / "BUILD").write_text(STAMP_B)
+    assert launch.run(*launch.parse(["--venv=reused"])) == 0
+    capsys.readouterr()
+    (launch.ROOT / "ap_coder" / "BUILD").write_text(STAMP_A)  # the older ZIP, over the newer one
+    assert launch.run(*launch.parse(["--venv=reused"])) == 0
+    out = capsys.readouterr().out
+    assert ("Replaced AP Coder 0.3.0 (build 5e6f7a8, 2026-10-21) with an older build, 0.3.0 (build 1a2b3c4, "
+            "2026-10-20)") in out  # fmt: skip
+    assert "Updated AP Coder" not in out
+    (launch.ROOT / "ap_coder" / "BUILD").write_text("$Format:%h %cI$\n")  # copied by hand: no build to name
+    assert launch.run(*launch.parse(["--venv=reused"])) == 0
+    capsys.readouterr()
+    (launch.ROOT / "ap_coder" / "x.py").write_text("changed = True\n")
+    assert launch.run(*launch.parse(["--venv=reused"])) == 0
+    out = capsys.readouterr().out
+    assert "AP Coder's files in this folder changed since it was last set up" in out and "Updated" not in out
+
+
+def test_pip_progress_never_sticks_on_a_name_it_cant_match(launch, tmp_path):
+    """B-555: a package whose .dist-info never matched its name in pip's list kept the line on that name."""
+    site = tmp_path / "site"
+    site.mkdir()
+    progress = launch.PipProgress(site)
+    progress.feed("Installing collected packages: alpha, Odd.Name, beta, gamma")
+    (site / "alpha-1.0.dist-info").mkdir()
+    (site / "beta-1.0.dist-info").mkdir()
+    assert progress.status() == "    Installing packages: 2 of 4 (gamma)..."
+
+
+def test_an_older_venv_is_made_again_only_after_old_dashboards_stopped(launch, monkeypatch):
+    """B-556: the 3.10 .venv of a running old AP Coder window can't be deleted (Windows: files in use): the old
+    dashboards are stopped first."""
+    (launch.VENV / "pyvenv.cfg").write_text("home = /usr/bin\nversion = 3.10.12\n")
+    launch.VENV_PY.parent.mkdir(parents=True)
+    launch.VENV_PY.write_text("")
+    monkeypatch.setattr(launch, "fitting_pythons", lambda: [])
+    order: list[str] = []
+    monkeypatch.setattr(launch.running, "take_over", lambda *a, **k: order.append("take_over") or ("clear", None))
+    monkeypatch.setattr(launch, "ensure_venv", lambda rebuild=False: order.append("venv") or "recreated")
+    monkeypatch.setattr(launch.subprocess, "call", lambda cmd: 0)
+    assert launch.bootstrap([]) == 0 and order == ["take_over", "venv"]

@@ -37,6 +37,7 @@ from ap_coder.ops import offline  # noqa: E402
 
 BUNDLE_MODELS = ROOT / "models"  # the offline bundle's copy (scripts/build_offline_bundle.py)
 TIMEOUT = 60
+FIRST_TIMEOUT, LATER_TIMEOUT = 30.0, 10.0  # the launcher's patience for an answer, at the first setup and later starts
 # A download that fails on the way (2 of 4 first setups from GitHub's ZIP: "Connection reset by peer") is tried again
 # after these waits (seconds): 3 tries in all. A refusal by the server (404, 403) is not tried again.
 RETRY_WAITS = (3.0, 10.0)
@@ -50,13 +51,14 @@ class Result:
     downloaded: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)  # why each download failed, in plain words (plain_reason)
+    unreachable: list[str] = field(default_factory=list)  # the hosts that could not be reached at all (unreached)
 
     @property
     def ok(self) -> bool:
         return not self.failed
 
     def add(self, other: Result) -> Result:
-        for name in ("kept", "copied", "downloaded", "failed", "reasons"):
+        for name in ("kept", "copied", "downloaded", "failed", "reasons", "unreachable"):
             getattr(self, name).extend(getattr(other, name))
         return self
 
@@ -81,6 +83,13 @@ def plain_reason(exc: BaseException) -> str:
     if "certificate" in text or "ssl" in text:
         return "the download site's certificate couldn't be checked (a company proxy?)"
     return "the download didn't finish"
+
+
+def unreached(exc: BaseException) -> bool:
+    """The download site was not reached at all (no answer in time, no such name, refused): a firewall that drops or
+    blocks it, or no internet. Every other model from that site would wait as long again, so none is tried (B-554)."""
+    return plain_reason(exc) in ("the connection timed out", "this computer couldn't reach the download site") or (
+        plain_reason(exc).startswith("this computer couldn't find the download site"))  # fmt: skip
 
 
 def _retry(exc: BaseException) -> bool:
@@ -116,11 +125,16 @@ def download(url: str, dest: Path, waits: tuple[float, ...] | None = None, timeo
 def fetch(target: Path, source: Path | None = None, *, online: bool | None = None,
           get: Callable[[str, Path], None] | None = None, say: Callable[[str], None] = print,
           models: tuple[offline.ModelFile, ...] | None = None, log: Callable[[str], None] | None = None,
-          waits: tuple[float, ...] | None = None, timeout: float | None = None) -> Result:  # fmt: skip
+          waits: tuple[float, ...] | None = None, timeout: float | None = None,
+          skip_hosts: set[str] | None = None) -> Result:  # fmt: skip
     """Make ``target`` hold every model file of ``models`` (default: the PP-OCRv5 ones), intact: keep what is there,
     copy from ``source`` (a folder of model files) what it has, and download the rest only when ``online`` (default:
     only with the ``AP_ALLOW_INTERNET=1`` opt-in). ``log``: where the error itself goes (the launcher's log), the
-    window getting only the plain reason. ``waits`` and ``timeout``: the download's (:func:`download`)."""
+    window getting only the plain reason. ``waits`` and ``timeout``: the download's (:func:`download`). ``skip_hosts``:
+    the sites already found unreachable in this run (shared between calls, added to): nothing more is asked of them."""
+    from urllib.parse import urlsplit
+
+    skip_hosts = set() if skip_hosts is None else skip_hosts
     online = offline.internet_allowed() if online is None else online
     tries = len(RETRY_WAITS if waits is None else waits) + 1 if get is None else 1
     get = get or functools.partial(download, waits=waits, timeout=timeout)
@@ -136,6 +150,9 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
             if source is not None and intact(source / model.name, model):
                 shutil.copyfile(source / model.name, part)
                 how = result.copied
+            elif online and (urlsplit(model.url).hostname or "") in skip_hosts:
+                result.failed.append(model.name)  # (said once, for the site: see unreachable)
+                continue
             elif online:
                 say(f"Downloading {model.name} ...")
                 get(model.url, part)
@@ -157,6 +174,10 @@ def fetch(target: Path, source: Path | None = None, *, online: bool | None = Non
                 log(f"  ({model.name}: {type(exc).__name__}: {exc})")
             result.failed.append(model.name)
             result.reasons.append(reason)
+            host = urlsplit(model.url).hostname or ""
+            if online and host and unreached(exc) and host not in skip_hosts:
+                skip_hosts.add(host)
+                result.unreachable.append(host)
         finally:
             part.unlink(missing_ok=True)
     return result
@@ -166,18 +187,21 @@ def setup(*, online: bool, table_finder: bool, first: bool, say: Callable[[str],
           log: Callable[[str], None] | None = None) -> Result:  # fmt: skip
     """The launcher's step (scripts/launch.py, ensure_models): the PP-OCRv5 models into RapidOCR's folder, copied from
     the offline bundle's models/ folder, or downloaded when ``online``; with ``table_finder``, the table finder's
-    model too (online only, into the data folder's models/ folder). A first setup tries each download 3 times with a
-    minute's patience; a later start (trying again after a failed one) twice, more briefly."""
-    waits, timeout = (RETRY_WAITS, TIMEOUT) if first else (RETRY_WAITS[:1], 20.0)
+    model too (online only, into the data folder's models/ folder). A first setup tries each download 3 times, waiting
+    up to 30 s for an answer; a later start (trying again after a failed one) once, 10 s. A site not reached at all is
+    asked for nothing more in this run (on a network that drops it silently, the first setup took 10 minutes)."""
+    waits, timeout = (RETRY_WAITS, FIRST_TIMEOUT) if first else ((), LATER_TIMEOUT)
+    skip: set[str] = set()
     result = Result()
     target = offline.model_dir()
     if target is not None:
         source = BUNDLE_MODELS if BUNDLE_MODELS.is_dir() else None
-        result.add(fetch(target, source, online=online, say=say, log=log, waits=waits, timeout=timeout))
+        result.add(fetch(target, source, online=online, say=say, log=log, waits=waits, timeout=timeout,
+                         skip_hosts=skip))  # fmt: skip
     if table_finder and online and offline.table_finder_path() is None:
         folder = offline.table_finder_dirs()[-1]  # the data folder's (a models/ folder in the code is a bundle's)
         result.add(fetch(folder, None, online=True, say=say, log=log, waits=waits, timeout=timeout,
-                         models=(offline.table_finder_file(),)))  # fmt: skip
+                         models=(offline.table_finder_file(),), skip_hosts=skip))  # fmt: skip
     return result
 
 

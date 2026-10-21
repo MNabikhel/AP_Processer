@@ -559,6 +559,10 @@ def bootstrap(argv: list[str]) -> int:
     if not VENV_PY.exists():
         say("First run: setting up AP Coder. This takes a few minutes; later starts take seconds.")
     say(f"Python {sys.version.split()[0]} found on this computer: {sys.executable}")
+    if rebuild:  # an old window may still run from that .venv (Windows can't delete it then): stopped first (B-556)
+        code = make_way_for_venv(argv)
+        if code is not None:
+            return code
     try:
         status = ensure_venv(rebuild=True) if rebuild else ensure_venv()
     except SetupError as exc:
@@ -567,6 +571,22 @@ def bootstrap(argv: list[str]) -> int:
         return subprocess.call([str(VENV_PY), str(Path(__file__).resolve()), *argv, f"--venv={status}"])
     except KeyboardInterrupt:
         return 0
+
+
+def make_way_for_venv(argv: list[str]) -> int | None:
+    """Before .venv is made again: an older AP Coder still running (perhaps from that .venv) is stopped, as the second
+    phase would stop it. Returns an exit code when this start must stop, else None."""
+    ident = identity()
+    rest = parse(argv)[1]
+    verdict, port = running.take_over(ROOT, ident["version"], candidate_ports(rest, load_state()), paths.private_dir(),
+                                      say, build=ident["code"])  # fmt: skip
+    if verdict == "other":
+        return failed(someone_elses(port))
+    if verdict == "blocked":
+        return failed(older_still_running(port))
+    if verdict in ("open", "newer"):
+        return open_running(port)
+    return None
 
 
 def failed(exc: SetupError) -> int:
@@ -892,9 +912,11 @@ class PipProgress:
         """The line to say now ("" when there is nothing to tell yet)."""
         if self.installing:
             new = {_package_key(n.split("-")[0]) for n in self._dist_infos() - self.before}
-            done = [n for n in self.installing if _package_key(n) in new]
-            left = [n for n in self.installing if _package_key(n) not in new]
-            now = f" ({left[0]})" if left else ""
+            done = [i for i, n in enumerate(self.installing) if _package_key(n) in new]
+            # The one after the last installed (pip goes in its list's order): a name whose .dist-info is spelled
+            # another way never holds the line on itself (B-555).
+            after = done[-1] + 1 if done else 0
+            now = f" ({self.installing[after]})" if after < len(self.installing) else ""
             return f"    Installing packages: {len(done)} of {len(self.installing)}{now}..."
         if self.got:
             return f"    Getting packages: {len(self.got)} of {max(len(self.seen), len(self.got))} ({self.got[-1]})..."
@@ -1371,6 +1393,10 @@ def ensure_models(first: bool, state: dict) -> None:
     finder_only = result.failed == [offline.TABLE_FINDER_NAME]
     what = "the table finder's model" if finder_only else "the OCR models"
     meanwhile = "line items are still read without it" if finder_only else "scans are still read with one engine"
+    if result.unreachable:  # no answer at all: said once, with whom to ask (B-554)
+        say(f"AP Coder couldn't reach {', '.join(result.unreachable)} (a firewall may block it): ask IT, or use the "
+            f"offline bundle. AP Coder will try again {when}; {meanwhile} meanwhile.")  # fmt: skip
+        return
     why = result.reasons[0] if result.reasons else "the download didn't finish"
     say(f"Couldn't download {what} ({why}). AP Coder will try again {when}; {meanwhile} meanwhile.")
 
@@ -2038,6 +2064,19 @@ def start_dashboard(rest: list[str], state: dict) -> int:
         return 0
 
 
+def update_line(previous: dict, ident: dict) -> str:
+    """What changed since this folder was last set up: "Updated AP Coder from X to Y"; "Replaced AP Coder X with an
+    older build, Y" (an older ZIP or bundle unzipped over a newer one: it starts, and the self-check runs, B-553); or,
+    when nothing names the two (a folder copied by hand), that its files changed."""
+    exact = paths.describe(previous) == paths.describe(ident)  # the same version, rebuilt the same day
+    old, new = paths.describe(previous, exact), paths.describe(ident, exact)
+    if old == new:
+        return "AP Coder's files in this folder changed since it was last set up: checking it again."
+    if paths.compare(previous, ident) == "newer":
+        return f"Replaced AP Coder {old} with an older build, {new}."
+    return f"Updated AP Coder from {old} to {new}."
+
+
 TOOK_OVER = "A newer AP Coder took over; you can close this window."
 TOOK_OVER_CODE = 75  # the second phase tells the first (which holds the lock) to free it, then keep the window open
 
@@ -2091,14 +2130,15 @@ def legacy_folders() -> list[str]:
 
 
 def older_installs(ident: dict, legacy: list[str]) -> list[Path]:
-    """Every other install this one replaces (on record, or AP Coder 0.1's): never one that is newer."""
+    """Every other install this one replaces (on record, or AP Coder 0.1's): only one certainly older than this one, or
+    another copy of this very build; never one that is newer or whose build can't be ordered with this one (B-551)."""
     folders = [Path(e["folder"]) for e in paths.installs() if not paths.same_folder(e["folder"], ROOT)]
     folders += upgrade.legacy_installs(ROOT, legacy)
     found: list[Path] = []
     for folder in folders:
         if any(paths.same_folder(folder, f) for f in found):
             continue
-        if upgrade.is_install(folder) and paths.is_older(ident, paths.install_identity(folder)):
+        if upgrade.is_install(folder) and not upgrade.replaced_by(folder, ident):
             continue
         found.append(folder)
     return found
@@ -2209,8 +2249,7 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     previous = previous_install(state, ident, legacy)
     upgrade.remember(upgrade.legacy_installs(ROOT, legacy))  # (what found them changes below: kept on record)
     if previous:
-        exact = paths.describe(previous) == paths.describe(ident)  # the same version, rebuilt the same day
-        say(f"Updated AP Coder from {paths.describe(previous, exact)} to {paths.describe(ident, exact)}.")
+        say(update_line(previous, ident))
     removed, freed = upgrade.prune_stale(ROOT)
     if removed:
         say(f"Removed {plural(len(removed), 'file')} the older version left in this folder "

@@ -247,7 +247,7 @@ jobs:
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
           Write-Host "dashboard served after $seconds s"
           if (-not $ok) { throw 'the later start did not serve the dashboard within a minute' }
-          if ($out -match 'First run|Collecting|Installing|Running the self-check|Fetching the OCR models') { throw 'the later start set something up again' }
+          if ($out -match 'First run|Collecting|Installing|Running the self-check|Downloading the OCR models') { throw 'the later start set something up again' }
           # (.venv reused: nothing set up again, above. The window no longer names .venv: B-240's plain wording.)
           foreach ($m in @('Python 3\.12\.\d+', 'AP Coder readiness:', 'Packages: all \d+ in place', 'Self-check OK at setup')) {
             if ($out -notmatch $m) { throw "the later start did not print: $m" }
@@ -327,11 +327,16 @@ jobs:
             if (-not $health) { throw 'GitHub''s ZIP did not bring the dashboard up' }
             if ($health.build -ne $env:OLD) { throw "the dashboard says build $($health.build), not $env:OLD" }
             foreach ($m in @('First run', 'Making AP Coder.s own Python environment', 'GitHub.s ZIP', 'Installed \d+ packages',
-                             'OCR models ready|Couldn.t download the OCR models', 'LM Studio isn.t running',
+                             'OCR models ready|Couldn.t download the (OCR models|table finder)|couldn.t reach www', 'LM Studio isn.t running',
                              'GL accounts: none imported yet', 'Self-check OK: \d+ of \d+')) {
               if ($out -notmatch $m) { throw "the first start did not print: $m" }
             }
             if ($out -match 'AP_ALLOW_INTERNET=1 allows|URLError|Traceback') { throw 'it said something it should not' }
+            # The launcher takes the Mark of the Web off its own launchers (so Windows stops asking "Do you want to run
+            # this file?"): gone from APProcessor.bat, still on the rest.
+            $motw = Get-Item -LiteralPath "$folder\APProcessor.bat" -Stream Zone.Identifier -ErrorAction SilentlyContinue
+            if ($motw) { throw 'APProcessor.bat still has the Mark of the Web' }
+            if (-not (Get-Item -LiteralPath "$folder\pyproject.toml" -Stream Zone.Identifier -ErrorAction SilentlyContinue)) { throw 'the files were not marked as downloaded' }
             # Something of the pilot tester's in the data folder, to find again after the update.
             $data = (Get-Content (Join-Path $env:USERPROFILE '.ap_coder\settings.json') | ConvertFrom-Json).data_dir
             Copy-Item -LiteralPath "$folder\samples\harbourview_NS_HST_HPS-2026-0347.pdf" -Destination "$data\invoices\kept.pdf"

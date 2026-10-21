@@ -113,7 +113,8 @@ def _utc(stamp: str) -> str:
     except ValueError:
         return ""
     if moment.tzinfo is not None:
-        moment = moment.astimezone(dt.UTC).replace(tzinfo=None)
+        moment = moment.astimezone(dt.timezone.utc).replace(tzinfo=None)  # noqa: UP017 (no dt.UTC before 3.11: the
+        # launcher must run on an older Python long enough to say it is too old)
     return moment.isoformat(timespec="seconds")
 
 
@@ -170,8 +171,9 @@ def build_stamp(folder: Path = PROJECT_DIR) -> dict:
 
 
 def install_identity(folder: Path = PROJECT_DIR) -> dict:
-    """What AP Coder ``folder`` holds: its version (pyproject), its build (when it was built: the offline bundle's build
-    time, else the time of the commit GitHub's ZIP was made from; "" for a checkout, which is never older), its commit
+    """What AP Coder ``folder`` holds: its version (pyproject), its build (when it was built: the time, in UTC, of the
+    commit its build stamp names (a ZIP, or a bundle from 0.3.0 on); else an older bundle's build time, IT's
+    local time; "" for a checkout or a folder with neither, which can't be ordered: :func:`compare`), its commit
     (said to people: from the build stamp or git only), ``code`` (:func:`build_stamp`'s commit, or the hash of the code
     when there is no commit: what a running dashboard is compared with) and a fingerprint of its pyproject and code
     (changes whenever its code or packages do)."""
@@ -180,7 +182,8 @@ def install_identity(folder: Path = PROJECT_DIR) -> dict:
         fingerprint = hashlib.sha256((folder / "pyproject.toml").read_bytes() + stamp["commit"].encode()).hexdigest()
     except OSError:
         fingerprint = ""
-    built = str(bundle_manifest(folder).get("built") or "") or (stamp["time"] if stamp["source"] == "stamp" else "")
+    stamped = stamp["time"] if stamp["source"] == "stamp" else ""  # (UTC: comparable with any other stamp)
+    built = stamped or str(bundle_manifest(folder).get("built") or "")
     commit = stamp["commit"] if stamp["source"] in ("stamp", "git") else ""
     return {"folder": str(folder), "version": project_version(folder), "build": built, "commit": commit,
             "commit_time": stamp["time"], "code": stamp["commit"], "fingerprint": fingerprint[:16]}  # fmt: skip
@@ -201,14 +204,35 @@ def version_key(version: str) -> tuple[int, ...]:
     return tuple(int(re.match(r"\d*", part).group() or 0) for part in version.split(".")) if version else ()
 
 
-def is_older(this: dict, other: dict) -> bool:
-    """``this`` install (an :func:`install_identity`) is older than ``other``: a lower version, or the same version
-    built earlier (both built as offline bundles). The same version and build, or a checkout, is not older."""
+def _order(identity: dict) -> tuple[str, str]:
+    """(kind, time) a build is ordered by: ("commit", its commit's time in UTC) for a stamped build, ("bundle", the
+    builder's local time) for a bundle from before the stamp; ("", "") when it can't be ordered (a checkout, a folder
+    copied by hand). Times of two kinds are never compared: a local time without its zone is not a UTC time."""
+    built = str(identity.get("build") or "")
+    if not built:
+        return "", ""
+    return ("commit" if identity.get("commit") else "bundle"), built
+
+
+def compare(this: dict, other: dict) -> str:
+    """How install ``this`` stands to ``other``: "older", "newer", "same" (one build: the same commit, or the same code)
+    or "unknown" (the same version, and builds that can't be ordered with certainty). A lower version is older."""
     mine, theirs = version_key(this.get("version", "")), version_key(other.get("version", ""))
     if mine != theirs:
-        return mine < theirs
-    built, other_built = str(this.get("build") or ""), str(other.get("build") or "")
-    return bool(built and other_built and built < other_built)
+        return "older" if mine < theirs else "newer"
+    for key in ("commit", "code"):
+        if this.get(key) and this.get(key) == other.get(key):
+            return "same"
+    (kind, built), (other_kind, other_built) = _order(this), _order(other)
+    if kind and kind == other_kind:
+        return "older" if built < other_built else "newer" if built > other_built else "same"
+    return "unknown"
+
+
+def is_older(this: dict, other: dict) -> bool:
+    """``this`` install (an :func:`install_identity`) is certainly older than ``other`` (:func:`compare`): a lower
+    version, or the same version built earlier. A build that can't be ordered (a checkout) is not older."""
+    return compare(this, other) == "older"
 
 
 def describe(identity: dict, exact: bool = False) -> str:

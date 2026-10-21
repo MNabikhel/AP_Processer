@@ -33,8 +33,11 @@ self-check (docs/BUGS.md B-542). From `0.3.0` every copy says which build it is:
 The launcher's fingerprint of a folder is its `pyproject.toml` and that build, so a newer build of the same version
 is an update: *Updated AP Coder from 0.3.0 (build 1a2b3c4, 2026-10-20) to 0.3.0 (build 5e6f7a8, 2026-10-21)*, then
 the self-check again. A dashboard still running from before (this folder unzipped over while it ran) says its
-build on `/healthz` and is stopped, not opened; its window says *A newer AP Coder took over; you can close this
-window.* *Settings → About*, `python -m ap_coder doctor` and *Help → Report a problem* show the build.
+build on `/healthz` and is stopped, not opened; a window of 0.3.0 or later then says *A newer AP Coder took over;
+you can close this window.* (a 0.2.0 window, the one this update replaces, just ends). An older build unzipped over a
+newer one says *Replaced AP Coder X with an older build, Y*. Only a folder certainly older than this one (or another
+copy of this very build) is ever cleaned up: builds are ordered by their commit's time in UTC, and a folder of the same
+version whose build can't be ordered (a bundle from before the stamp, a copy made by hand) is left alone. *Settings → About*, `python -m ap_coder doctor` and *Help → Report a problem* show the build.
 
 ## The older versions
 

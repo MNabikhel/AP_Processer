@@ -804,9 +804,9 @@ def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_mode
     assert "offline bundle" not in launch.one_engine(True) and "tries again" in launch.one_engine(True)
 
     downloads.clear()
-    launch.ensure_models(first=False, state=state)  # the next start: tried again (twice each, more briefly)
+    launch.ensure_models(first=False, state=state)  # the next start: tried again (once each, more briefly)
     out = capsys.readouterr().out
-    assert len(downloads) == 4 * 2 and "Downloading the OCR models again" in out
+    assert len(downloads) == 4 and "Downloading the OCR models again" in out
     launch.ensure_models(first=False, state=state)  # the third start today: the next try is tomorrow
     assert "AP Coder will try again tomorrow" in capsys.readouterr().out
     downloads.clear()
@@ -814,13 +814,36 @@ def test_a_failed_model_download_is_tried_again_and_said_plainly(launch, no_mode
     assert downloads == []  # not a fourth time today
     state["models_tries"]["day"] = "2000-01-01"  # a later day
     launch.ensure_models(first=False, state=state)
-    assert len(downloads) == 4 * 2
+    assert len(downloads) == 4
 
     monkeypatch.setattr(fetch_models.urllib.request, "urlopen", lambda url, timeout=None: io.BytesIO(b"model"))
     monkeypatch.setattr(fetch_models, "intact", lambda path, model: path.is_file() and path.stat().st_size > 0)
     launch.ensure_models(first=False, state=state)  # the connection works again
     out = capsys.readouterr().out
     assert "OCR models ready: 3 downloaded, and the table finder's." in out and "models_failed" not in state
+
+
+def test_a_site_that_never_answers_is_asked_once_and_said_once(launch, no_models, monkeypatch, capsys):
+    """B-554: on a network that drops www.modelscope.cn silently, every model waited out every try: about 10 minutes
+    of a first setup, 2 of every later start. The site is given up on after its first file, and said once."""
+    fetch_models, downloads = no_models
+    monkeypatch.setattr(launch, "plain_download", lambda: True)  # GitHub's ZIP
+
+    def silent(url, timeout=None):
+        downloads.append((url, timeout))
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(fetch_models.urllib.request, "urlopen", silent)
+    state: dict = {}
+    launch.ensure_models(first=True, state=state)
+    out = capsys.readouterr().out
+    assert len(downloads) == 3 and {t for _u, t in downloads} == {fetch_models.FIRST_TIMEOUT}  # one file, 3 tries
+    assert out.count("Downloading ") == 2  # ("Downloading the OCR models", and the first file only)
+    assert ("AP Coder couldn't reach www.modelscope.cn (a firewall may block it): ask IT, or use the offline bundle."
+            in out) and out.count("couldn't reach") == 1  # fmt: skip
+    downloads.clear()
+    launch.ensure_models(first=False, state=state)  # a later start: one try, briefly
+    assert downloads == [(downloads[0][0], fetch_models.LATER_TIMEOUT)]
 
 
 def test_the_model_count_says_where_each_came_from(launch):
