@@ -4382,3 +4382,24 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
   with SQLite's reason, so every caller's existing handling applies; a restore whose safety copy fails says so.
 - **Test:** `tests/test_pilot_path_backend.py::test_a_backup_that_cannot_be_written_never_stops_the_dashboard_nor_counts_as_made`
 - **Lesson:** Don't name a file for what it will be before it is: a copy that fails half-way must not look made.
+
+#### B-454 · An invoice approved again taught the supplier's template a second time · medium
+- **Where:** `ap_coder/capture/supplier.py` (`learn`, `Template.documents`), `ap_coder/capture/workflow.py`
+  (`learn_from_approval`)
+- **Symptom:** an invoice approved, reopened for correction (or sent back by the second approver) and approved again
+  counted as two invoices in its supplier's template: a spot learned unsettled from it (one printed date approved as
+  both the invoice date and the due date, a value printed twice) had "two approvals in a row" from that one page and
+  was vouched for. On the supplier's next invoice the template read the invoice date as the due date, and the fused
+  due date became the template's 2017-11-05 instead of the labelled 2017-12-05 (*check* either way). The template's
+  invoice count went up by two.
+- **Cause:** a reopen or a send-back withdraws the coding memory, lessons and outcomes (B-14 and later), but the
+  template is a running record with no way to take one page back out, and nothing told it the page was seen before.
+- **Reproduce:** approve, reopen, approve the same PDF (dated and due the same day), then apply the template to an
+  invoice printing a due date.
+- **Reproduced:** yes (the due date spot vouched; fused due date 2017-11-05)
+- **Fix:** the template keeps the pages it learned from (the file's SHA-256, the newest 100) and the value of each field
+  learned from each: approved again, a page teaches only a value approved differently since (a correction: the spot of
+  the value approved first is a miss as before) or one the reviewer clicked; it no longer counts as another invoice.
+- **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_approved_again_teaches_the_template_once`,
+  `tests/test_pilot_path_backend.py::test_a_value_corrected_on_an_invoice_approved_again_is_still_learned`
+- **Lesson:** Don't count a second look at the same page as a second witness.

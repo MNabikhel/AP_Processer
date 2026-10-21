@@ -322,7 +322,8 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     try:
         layout = build_layout(path)
         profile = store.get_supplier_profile(key) or {}
-        template = learn(profile.get("template") or None, layout, confirmed_values(final, taught))
+        template = learn(profile.get("template") or None, layout, confirmed_values(final, taught),
+                         document=str(inv.get("file_sha256") or ""))  # fmt: skip
         store.save_supplier_profile(key, display_name=name, template=template, actor=actor or None)
         learned["template"] = True
     except Exception as exc:

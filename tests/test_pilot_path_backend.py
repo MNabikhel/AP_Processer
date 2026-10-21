@@ -38,3 +38,61 @@ def test_a_backup_that_cannot_be_written_never_stops_the_dashboard_nor_counts_as
     assert started == 200
     assert store.list_backups() == []  # no half-written copy offered to restore, nor taken for today's backup
     assert store.auto_backup() is not None  # with room again, today's backup is made
+
+
+def _pdf(path, lines, size: float = 10):
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    for x, y, text in lines:
+        page.insert_text((x, y), text, fontsize=size)
+    doc.save(path)
+    return path
+
+
+def test_an_invoice_approved_again_teaches_the_template_once(tmp_path, ground_truth):
+    """Approved, reopened for correction (or sent back by the second approver) and approved again: the second approval
+    of the same page counted as a second invoice, so a spot learned unsettled (the date printed once for the invoice
+    date and the due date) was vouched for by that one page and read the invoice date as the due date afterwards."""
+    from ap_coder.capture import build_layout
+    from ap_coder.capture.supplier import apply_template
+    from ap_coder.capture.types import UNSETTLED
+    from ap_coder.capture.workflow import learn_from_approval
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    dated = [(40, 50, "Au bon moulin"), (330, 90, "Date de facture :"), (450, 90, "05/11/2017")]
+    first = _pdf(tmp_path / "a.pdf", dated)
+    coding = {**ground_truth, "vendor_name": "Au bon moulin", "invoice_date": "2017-11-05", "due_date": "2017-11-05",
+              "payment_terms": ""}  # fmt: skip
+    inv_id = store.add_invoice(first, coding, {})
+    store.approve_invoice(inv_id, coding, "Jordan Lee")
+    learn_from_approval(store, inv_id, coding, actor="Jordan Lee")
+    store.reopen(inv_id, "Jordan Lee", "wrong cost center")
+    store.approve_invoice(inv_id, coding, "Jordan Lee")
+    learned = learn_from_approval(store, inv_id, coding, actor="Jordan Lee")
+    assert learned["template"]
+    template = store.get_supplier_profile(learned["supplier"])["template"]
+    assert template["invoices"] == 1
+    later = _pdf(tmp_path / "b.pdf", [*dated, (330, 110, "Date d'échéance :"), (450, 110, "05/12/2017")])
+    got = apply_template(template, build_layout(later, ocr=False))
+    assert got["due_date"] and all(UNSETTLED in r.method for r in got["due_date"])
+
+
+def test_a_value_corrected_on_an_invoice_approved_again_is_still_learned(tmp_path):
+    """What is learned once per page is each value as approved: a value corrected before the second approval is
+    learned (and the spot of the value approved first is a miss)."""
+    from ap_coder.capture import build_layout
+    from ap_coder.capture.supplier import Template, learn
+
+    page = _pdf(tmp_path / "a.pdf", [(40, 50, "Contoso"), (330, 90, "Order Date:"), (450, 90, "2026-03-02"),
+                                     (40, 300, "Invoice Date:"), (150, 300, "2026-03-05")])  # fmt: skip
+    layout = build_layout(page, ocr=False)
+    template = learn(None, layout, {"invoice_date": ("2026-03-02", None)}, document="abc")  # the order date, wrongly
+    template = learn(template, layout, {"invoice_date": ("2026-03-02", None)}, document="abc")  # approved again
+    spots = Template.from_dict(template.to_dict()).fields["invoice_date"]
+    assert [(v.count, v.settled) for v in spots] == [(1, 1)]
+    template = learn(template, layout, {"invoice_date": ("2026-03-05", None)}, document="abc")  # corrected
+    found = sorted((v.count, v.settled, v.missed) for v in template.fields["invoice_date"])
+    assert found == [(1, 0, 1), (1, 1, 0)]
+    assert template.invoices == 1
