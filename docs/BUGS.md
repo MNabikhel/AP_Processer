@@ -3686,6 +3686,451 @@ a German sentence the corpus writes out whole (N-121), so 23 of 36 read as the a
   "Net 10 prox": the due date is kept and the early-payment discount dropped, since the app's terms form cannot
   hold both (B-377). A person adds the discount if it is wanted. Left until the terms form can.
 
+### Reading: English vendor PDFs
+
+Found on 48 real English invoices that suppliers make as PDFs (sweep 4): Canadian cloud, consulting and staffing
+firms' invoices to a federal agency, a university's sample invoices, utility bills, US TV stations' advertising
+invoices to agencies, and a few templates. Each fix has a small generated fixture in `tests/test_en_pdf_sweep4.py`
+(the corpus is not in the repo). B- numbers start at B-394 and N- numbers at N-130.
+
+#### B-394 · An invoice date run into the next label, or printed with soft hyphens, was not read · medium
+- **Where:** `ap_coder/capture/normalize.py` (`_NUMERIC`, `parse_dates`, `infer_day_first`)
+- **Symptom:** "Invoice Date: 08-01-2016Contract ID: 1272709" (the PDF's text has no space before the next label) was
+  not read, so a spot's air date on the schedule page (06/27/16) became the invoice date; "Invoice Date: 10­31­2016",
+  printed with soft hyphens (U+00AD) between its parts, was missing.
+- **Cause:** a numeric date had to end on a word boundary, and only "-", "/" and "." separated its parts.
+- **Reproduce:** `parse_dates("08-01-2016Contract ID: 1272709")`, `parse_dates("10­31­2016")`.
+- **Reproduced:** yes (`[]` for both)
+- **Fix:** a four-digit year may run into a word of letters; a soft hyphen is read as a hyphen (same length, so the
+  date's place on the line holds).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_date_run_into_the_next_label_or_printed_with_soft_hyphens_is_read`,
+  `tests/test_en_pdf_sweep4.py::test_the_invoice_date_run_into_the_next_label_is_not_lost_to_a_date_in_the_schedule`
+- **Lesson:** Don't expect a PDF's text to put spaces where the page shows a gap: the next cell's text may follow
+  the value with nothing between them.
+
+#### B-395 · A credit memo that says so only in its body read as an invoice, its amounts verified positive · high
+- **Where:** `ap_coder/capture/reader.py` (`credit_titled`, new `_CREDIT_STATED`)
+- **Symptom:** A university's sample credit memo titled "EXERCISE 9", numbered CR4597, with "DO NOT PAY – THIS IS A
+  CREDIT MEMO" across its body and its amounts printed without a sign: subtotal 23.99, HST 3.12, tax total 3.12 and
+  total 27.11 were all verified, where AP posts -23.99, -3.12 and -27.11. The same exercise titled "Exercise 4 –
+  CREDIT MEMO" was read negative.
+- **Cause:** a document was a credit only when a line in the top third of its first page started with a credit
+  title, or its total was labelled a credit.
+- **Reproduce:** a PDF titled "EXERCISE 9" with "DO NOT PAY - THIS IS A CREDIT MEMO" in its body; `analyze()`.
+- **Reproduced:** yes (`grand_total 27.11 verified`)
+- **Fix:** a page that says "this is a credit memo" (or "credit note", "credit memorandum") anywhere on its first
+  page is a credit, as one titled so.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_credit_memo_that_says_so_only_in_its_body_is_read_as_a_credit`
+- **Lesson:** Don't look for what a document is only in its title: a sample or a form may say it in a sentence.
+
+#### B-396 · The amount due after a prepayment read as the subtotal printed again, verified · high
+- **Where:** `ap_coder/capture/reader.py` (`LABELS["grand_total"]`, `LABELS["other_charges"]`, `_DISCOUNT`, new
+  `_PREPAYMENT`, `PREPAID`, `_solve_totals`)
+- **Symptom:** Cox Media's invoice prints "Sub Total $611.00 | Posted Pre-Payments ($519.35) | Total This Invoice
+  $91.65", and its spot schedule on page 3 ends "Grand Total 24 $611.00". The total was 611.00, verified ("totals add
+  up": the subtotal with no tax); the 91.65 to pay was "another reading".
+- **Cause:** "Total This Invoice" was only the weak label "Total", the schedule's "Grand Total" on the last page
+  ranked first, and nothing read the prepayment, so the subtotal equal to a total was taken as proof.
+- **Reproduce:** a PDF with the three lines above and a second page with "Grand Total 24 $611.00"; `analyze()`.
+- **Reproduced:** yes (`grand_total 611.0 verified`)
+- **Fix:** "Total This Invoice" and "Net amount (balance) due" are total labels; a prepayment or deposit taken off
+  ("Posted Pre-Payments", "Less deposit", "Deposit applied") is read as an amount taken off the total, like a
+  discount, offered to the solver only when no tax is read (a deposit may come off before or after the tax). A total
+  that adds up only through one is marked `UNMEASURED`: likely at best. A subtotal and a total read from one printed
+  amount no longer add up with each other (B-397).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_the_amount_due_after_a_prepayment_is_the_total_and_not_verified_on_the_subtotal`
+- **Lesson:** Don't take a total equal to the subtotal as proof when a line between them takes something off.
+
+#### B-397 · An advertising invoice's gross read as its total and the net after the agency's commission as its subtotal · high
+- **Where:** `ap_coder/capture/reader.py` (new `_net_of_commission`, `_COMMISSION`, `_GROSS`, `_NET`, `_LabelHit.unmeasured`,
+  `_read_fields`, `_solve_totals`, `LABELS["tax_total"]`)
+- **Symptom:** TV stations bill agencies "Gross Total $17,000.00 | Commission ($2,550.00) | Net Total $14,450.00"
+  (or "Agency Commission", "Rep. Firm Commission", "Less: Agency Fee", "Net Amount Due"): the total was read as
+  17,000.00 and the subtotal as 14,450.00 on Sinclair's, WPXI's and WDTV's invoices, and Comcast's had no total at
+  all. KHON's prints the gross at the foot of page 6 and "Agency Commission | Net Amount Due 29,962.50 | HI General
+  Excise Tax 1,411.83 | Amount Due 31,374.33" on page 7: its tax was not read.
+- **Cause:** "Gross Total" is a total's label, "Net Total" a subtotal's (and kept off the total by a distractor);
+  nothing read the commission between them. "General Excise Tax" was no tax label.
+- **Reproduce:** a PDF with the gross, commission and net lines above; `analyze()`.
+- **Reproduced:** yes (`grand_total 17000.0`, `subtotal 14450.0`)
+- **Fix:** on a document that takes a commission off (a commission line with an amount), the gross is neither the
+  total nor the subtotal, and a net amount printed under the commission is also read as the total (`UNMEASURED`:
+  likely at best); it stays a subtotal only when a total is printed under it (a tax charged on the net). One printed
+  amount is never both the subtotal and the total. "General Excise Tax" (Hawaii's) is a tax total's label.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_an_agency_commission_is_taken_off_the_gross_the_net_is_the_total`,
+  `tests/test_en_pdf_sweep4.py::test_a_tax_charged_on_the_net_after_the_commission_still_adds_up`
+- **Lesson:** Don't read "Gross" and "Net" by their words alone: what is taken off between them says which one is
+  paid.
+
+#### B-398 · The name under a "Remit to" label on its own line was not read; the label's translation was · medium
+- **Where:** `ap_coder/capture/reader.py` (`_REMIT`, new `_TRAILING_LABEL`, `_under_remit_label`, `_vendor_names`)
+- **Symptom:** "PLEASE REMIT TO:" over "TEKSYSTEMS CANADA CORP": the customer printed lower, "CANADA BORDER SERVICES
+  AGENCY (CLOUD)", was read as the supplier (likely); "Please Remit To/S'il vous plaît remettre à:" gave
+  "/S'il vous plaît remettre à"; "REMIT TO Sinclair Broadcast G Advertiser" kept the next column's label;
+  "Remit Address:", "Send Payment To:" and "Mail to: Comcast Spotlight" (at the foot) were not remit labels, so KHON's
+  "Advertiser" and Comcast's "AGENCY" (box labels) were read as the supplier.
+- **Cause:** only a name after the remit label on its line was read, whatever it was.
+- **Reproduce:** the PDFs of the tests below; `analyze()`.
+- **Reproduced:** yes (`'CANADA BORDER SERVICES AGENCY (CLOUD)'`, `"/S'il vous plait remettre a"`)
+- **Fix:** a remit label with no name after it (or only its translation after a slash) reads the name beside it or
+  on the line under it; "Remit Address", "Send Payment To", "Mail (payments) to" are remit labels; a box's label
+  run onto the end of the name ("Advertiser", "Agency", "Customer"...) is dropped. A name read under the label is
+  marked `UNMEASURED` (a person checks it) unless the same name is printed elsewhere on the page; a remit name that
+  shares its first word with a company's name at the top ("Contoso Billing", "CONTOSO LTD.") ranks below it.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_the_name_under_a_remit_to_label_is_the_supplier_not_the_customer_above_it`,
+  `tests/test_en_pdf_sweep4.py::test_a_bilingual_remit_label_is_no_name_and_a_column_label_run_onto_a_name_is_dropped`,
+  `tests/test_en_pdf_sweep4.py::test_the_payee_beside_a_mail_to_label_at_the_foot_is_the_supplier`
+- **Lesson:** Don't read a label's value only after it on its line: a label printed alone has its value under it.
+
+#### B-399 · A subject line, a salutation, a box's label, a month, opening hours or a tagline read as the supplier, likely · medium
+- **Where:** `ap_coder/capture/reader.py` (`_not_a_name`, new `_NOT_A_PARTY`, `_over_address`, `WEAK_NAME`;
+  `_vendor_names`, `_seller_named`)
+- **Symptom:** read as the supplier, all likely: "Subject: Ongoing Planning Services – Municipality of Argyle" (a
+  letter-style invoice), "Closed Saturday, Sunday, and Stat. Holidays" (a water bill), "Dec" (a usage chart's month),
+  "Advertiser" and "AGENCY" (box labels), "A quick overview of your bill." (a utility bill's tagline), "International
+  Piping Company" (the tagline under "McWilliam Piping", printed larger); "Implementation Services" (a line item,
+  "Implementation Services - CA - GC", taken for an envelope's sender line "Name • Street • Town").
+- **Cause:** a line carrying a company word ("Services", "Company") was a name whatever else it was; a sentence
+  needed a last word of five letters; any top-of-page reading was likely on the benchmark's record of the method,
+  however little it scored; a sender's line needed no address in it.
+- **Reproduce:** the PDFs of the tests below; `analyze()["vendor_name"]`.
+- **Reproduced:** yes (`'Subject: Ongoing Planning Services - Municipality of Argyle' likely`, `'Dec' likely`)
+- **Fix:** never a name: a subject or "Re:" line, a salutation or an addressee ("Dear", "Mr."), a box's or column's
+  label printed alone, a month, opening hours, a sentence of four words and more ending with a period, a label with
+  its amount on its row ("Previous Balance 111.54"), the town under a street address. A name over its street address
+  counted a little more (taken out again, B-419). A sender's line needs an address after the name.
+  (A rule taking the line printed far larger than the rest for the letterhead was taken out again, B-416: the
+  larger line is as often a customer's or a project's name; McWilliam's tagline is read as before, likely.) A top-of-page name scoring below `WEAK_NAME`
+  (no company form, not larger, low on the page) is marked `UNMEASURED`: a person checks it.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_lines_that_name_no_supplier_are_not_read_as_its_name`,
+  `tests/test_en_pdf_sweep4.py::test_a_large_line_over_the_supplier_is_not_taken_for_its_letterhead`,
+  `tests/test_en_pdf_sweep4.py::test_a_line_item_with_dashes_is_not_an_envelope_s_sender_line`
+- **Lesson:** Don't let one word make a name: "Services" is in a subject line and a line item as often as in a
+  supplier's name.
+
+#### B-400 · A name ending in a province's two letters taken for a place: "KHON", "Johnson" · medium
+- **Where:** `ap_coder/capture/reader.py` (`_PLACE`)
+- **Symptom:** KHON (a TV station) under its "Remit Address:" label was never read as a name; "Johnson", "Allison",
+  "Hudson" printed alone would not be either.
+- **Cause:** a place was "a few words, then a province's code", with no word boundary before the code: "kh" + "on"
+  (Ontario) was "Toronto ON".
+- **Reproduce:** `_not_a_name("KHON")`.
+- **Reproduced:** yes (`True`)
+- **Fix:** the province's code starts a word.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_name_ending_in_a_province_s_letters_is_still_a_name`
+- **Lesson:** Don't match a short code without a word boundary before it: two letters end many names.
+
+#### B-401 · "Total HST", "TOTAL HST 13%" and "Total HST/Montant TVH Total" were not read as the HST · medium
+- **Where:** `ap_coder/capture/reader.py` (`LABELS["hst_amount"]`, `LABELS["gst_amount"]`, `DISTRACTORS["grand_total"]`,
+  `_labelled`)
+- **Symptom:** Distill Mobile's "TOTAL HST 13% 36,322.00" gave no HST and no tax total; Modis's "Total HST/Montant TVH
+  Total | 871072369RT: | 3,105.60" gave neither, and its total was only *check*.
+- **Cause:** the HST label allowed a province's code before it, not "Total"; "total" matched the grand total's label
+  instead. The French half after the slash ("Montant TVH Total") counted as a note about the tax (three words), which
+  has no amount.
+- **Reproduce:** the PDFs of the test below; `analyze()["hst_amount"]`.
+- **Reproduced:** yes (missing)
+- **Fix:** "Total" may start a GST or HST label (and "Total GST/HST/PST/QST..." is no grand total); a label's
+  translation after a slash is no note.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_total_hst_with_its_rate_and_a_bilingual_total_hst_label_are_the_hst`
+- **Lesson:** Don't stop a label's pattern at the words the benchmark prints before it.
+
+#### B-402 · A tax code printed on every line item crowded the invoice's HST out of the solver · medium
+- **Where:** `ap_coder/capture/reader.py` (`_read_fields`)
+- **Symptom:** GC Strategies prints "Services | qty | rate | HST ON | 35,844.00" on 18 rows over two pages and
+  "HST (ON) @ 13% 83,098.34" in its totals and its tax summary: the HST was missing on all three of its invoices.
+- **Cause:** every "HST ON" cell was an HST label with the line's amount beside it, scored like the real one; the
+  solver tries the four best of each tax, all of them line amounts.
+- **Reproduce:** the PDF of the test below; `analyze()["hst_amount"]`.
+- **Reproduced:** yes (missing)
+- **Fix:** a tax label printed with the same words on three rows or more of a page is a tax code's column, not a
+  tax: none of those rows is read for the tax.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_tax_code_column_does_not_crowd_out_the_hst_in_the_totals`
+- **Lesson:** Don't let the same label repeated down a column count as many readings of one field.
+
+#### B-403 · A tax printed only as "Tax (13%)" or "Total Taxes" was not read as the HST the page names · low
+- **Where:** `ap_coder/capture/reader.py` (new `_tax_named_by_page`, `_TAX_WORDS`)
+- **Symptom:** Distill Mobile's "Tax (13%) $26,000.00" with "HST Number: 835582081" in its notes, and WSP's "Total
+  Taxes : $1,255.50" over a tax table headed "HST-14015 0269 | 15.000 %": the tax total was read, the HST not (the
+  ERP's tax line needs which tax it is).
+- **Cause:** a tax's kind was read only from its own label.
+- **Reproduce:** the PDF of the test below; `analyze()["hst_amount"]`.
+- **Reproduced:** yes (missing)
+- **Fix:** with no GST, HST, PST or QST read and a tax total that is 13 to 15% of the subtotal, the HST when the page
+  names the HST (5%: the GST when it names the GST) and no provincial tax. Marked `UNMEASURED`: likely at best, when
+  the totals add up. A US invoice's "Tax (8%)" names no Canadian tax and is left as a tax total.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_tax_printed_as_tax_13_percent_is_the_hst_the_page_names`
+- **Lesson:** Don't look for what a figure is only beside it: the page may say it once, elsewhere.
+
+#### B-404 · A business number printed alone after "GST/HST Registration No." or "HST #" was not read · low
+- **Where:** `ap_coder/capture/reader.py` (new `_bare_business_numbers`, `_GST_REG_LABEL`, `_registration_numbers`);
+  `ap_coder/capture/confidence.py` (`run_checks`)
+- **Symptom:** "GST/HST Registration No.:" over "121628366", "HST (ON) Registration No.: 713892313", "HST Number:
+  835582081", "HST # 108162333": twelve invoices print the nine digits without "RT0001", and none was read.
+- **Cause:** only the whole number (nine digits, RT and four digits) was a GST/HST number.
+- **Reproduce:** the PDFs of the test below; `analyze()["gst_hst_registration_number"]`.
+- **Reproduced:** yes (missing)
+- **Fix:** nine digits after a GST/HST number's label (on its line, beside it or under it) are read as the number
+  ("label-bn", `UNMEASURED`), when no whole number is printed; a customer's ("Client GST/HST No.") is not. Its check
+  digit is checked: a valid one makes it likely, an invalid one (the university's made-up samples) leaves it *check*.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_business_number_after_its_gst_hst_label_is_read_alone`
+- **Lesson:** Don't wait for a number's full form when its label says what it is.
+
+#### B-405 · A US supplier's dollars were left with no currency (coded CAD) · medium
+- **Where:** `ap_coder/capture/reader.py` (new `_us_supplier`, `_PROVINCE_NAME`, `_read_fields`, `_US_ADDRESS`);
+  `ap_coder/capture/bridge.py` (`currency_read`)
+- **Symptom:** 16 US invoices that print only "$" (TV stations, utilities, templates) had no currency read; the
+  pipeline codes a missing currency as CAD.
+- **Cause:** only a printed code, sign or statement ("USD", "US$", "All amounts in US dollars") gave a currency. "DC"
+  (Washington) was no US state in the address pattern.
+- **Reproduce:** a PDF from "Bayside Media LLC, Atlanta, GA 30348" with "$1,000.00" amounts; `analyze()["currency"]`.
+- **Reproduced:** yes (missing)
+- **Fix:** amounts in "$" on a document whose first page prints a US address outside the customer's block and
+  nothing Canadian outside it (no GST/HST/PST/QST word or number anywhere, no postal code or province) are US dollars,
+  marked `UNMEASURED`: *check* (a Canadian supplier's "$" is Canadian dollars, and the page does not say it). The
+  offline coder already assumed US dollars for such a supplier; the review keeps its "Currency not printed" warning
+  (`capture.bridge.currency_read` does not count this reading as printed).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_dollars_from_a_us_supplier_are_us_dollars_never_more_than_checked`,
+  `tests/test_transcript.py::test_offline_coding_assumes_a_currency_by_the_suppliers_address` (now expects the
+  reading at *check*)
+- **Lesson:** Don't default a currency the page implies: say what it implies and let a person confirm it.
+
+#### B-406 · Text drawn sideways on a portrait page was read word by word down the page · high
+- **Where:** `ap_coder/capture/layout.py` (new `_text_turn`, `_turn_box`, `_text_layer_page`)
+- **Symptom:** Microsoft's three landscape invoices are set on portrait pages with their text drawn running up the
+  page (the page itself not rotated): the reader got columns of single words ("date", "invoice", "from", "days") and
+  read the supplier as "days", the invoice number as "30", the PO as "1950" (from the street address, likely), the
+  tax total as the subtotal 540,600.00 (likely), and missed the dates, the HST and the total.
+- **Cause:** the text layer's words were placed as drawn; rows of a sideways page are columns of words.
+- **Reproduce:** a PDF page with its lines inserted with `rotate=90`; `build_layout()` and `analyze()`.
+- **Reproduced:** yes (`turn 0`, invoice number missing)
+- **Fix:** when most of a page's characters are drawn in one other direction (up, down, upside down), the words are
+  read on the page turned that quarter turn and the page's `turn` says so: the pipeline shows the PDF turned the same
+  way (as for scans read turned), so each value is highlighted where it is read.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_page_whose_text_runs_up_the_page_is_read_turned`
+- **Lesson:** Don't assume a PDF's text runs the way its page is set: check the direction the text is drawn in.
+
+#### B-407 · Labels on Microsoft's and others' invoices not read: "Document Date", "Bill to PO Number", "Total Sale", "REMIT TO BANK" · medium
+- **Where:** `ap_coder/capture/reader.py` (`LABELS`, `_REMIT_WHERE`, `_ACCOUNT_NAME`, `_under_remit_label`, `_vendor_names`)
+- **Symptom:** once read the right way up (B-406): the invoice date ("Document Date:"), the PO ("Bill to PO Number:")
+  and the subtotal ("Total Sale") were missing, the PO was the line number "000010" under a "PO No" column heading,
+  and the supplier was "BANK" ("REMIT TO BANK") or "A/C Name: MICROSOFT CANADA INC".
+- **Cause:** none of these labels was known; "Remit to" took the next word whatever it was.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`vendor_name 'BANK'`)
+- **Fix:** "Document Date" is an invoice date's label (beside "Document No", read as the number before), "Bill to PO
+  Number" a PO's, "Total Sale(s)" a subtotal's; "remit to bank / address / account / the following" names nobody,
+  and an account's name ("A/C Name:", "Account Name:") under it, or at the top, is read without its label.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_page_whose_text_runs_up_the_page_is_read_turned`,
+  `tests/test_en_pdf_sweep4.py::test_remit_to_bank_is_no_name_the_account_s_name_under_it_is`
+- **Lesson:** Don't take the word after "Remit to" for a payee: it may say where, not to whom.
+
+#### B-408 · A GST/HST amount with no subtotal read could be verified as the GST; "QST/PST 0.00" verified as the QST · high
+- **Where:** `ap_coder/capture/reader.py` (`_solve_totals`, `_QST_OR_PST`, `_read_fields`); `ap_coder/capture/confidence.py` (`fuse`)
+- **Symptom:** Microsoft's support invoice (read turned, B-406, before "Total Sale" was a label) gave "GST/HST
+  16,874.00" as the GST, verified (it is the HST, 13%), and "QST/PST 0.00" as a verified QST.
+- **Cause:** a "GST/HST" label proposes both taxes and the solver picks by the rate on the subtotal; with no
+  subtotal nothing tells them apart, and the first one won. "QST/PST" (QST first) was not known as a label for
+  either of two taxes, as "PST/QST" is (B-321).
+- **Reproduce:** a PDF with "GST/HST 16,874.00", "QST/PST 0.00" and "Total Amount 146,674.00" and no subtotal.
+- **Reproduced:** no on main (found on this branch's turned pages, before "Total Sale" was read); the test guards it.
+- **Fix:** a GST or HST read with no subtotal, from an amount proposed for both, is marked `EITHER_TAX` (likely at
+  best: "printed under a label naming two taxes"); "QST/PST" is marked so as "PST/QST" is.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_gst_hst_amount_with_no_subtotal_to_tell_its_rate_is_not_verified_as_either_tax`
+- **Lesson:** Don't settle which of two taxes a figure is when the figure that tells them apart was not read.
+
+#### B-409 · Totals' rows: the hours read as the subtotal, an exchange rate or a date's year as the total · high
+- **Where:** `ap_coder/capture/reader.py` (`_RIGHTMOST`, `_value_reading`, new `_FX_RATE`)
+- **Symptom:** TEKsystems' "SUBTOTAL: | 23.00 | 23,115.00" (the hours' column, then the amount's) gave the subtotal
+  23.00; AWS's request for funds "Total Amount in CAD (1 USD = 1.235 CAD) | CAD 4,000,000" gave the total 1,235.00,
+  and with the rate left out "AMOUNT DUE ON | April 1, 2022 | CAD 4,000,000" gave 2,022.00 (likely).
+- **Cause:** a subtotal took the first figure to the right of its label (taxes and totals take the rightmost); an
+  amount's reader read every number on the label's line, a rate's and a date's included.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`subtotal 23.0`, `grand_total 1235.0`)
+- **Fix:** a subtotal's row of figures is read like a total's (the rightmost figure printed as money, the first one
+  kept as a weaker reading); a rate written "1 USD = 1.235 CAD" and a date written with its month's name are blanked
+  before the amounts are read.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_subtotal_row_with_the_hours_first_is_read_from_its_amount_column`,
+  `tests/test_en_pdf_sweep4.py::test_an_exchange_rate_or_a_date_s_year_on_the_total_s_row_is_no_amount`
+- **Lesson:** Don't read every number on a total's line as money: a rate and a year are numbers too.
+
+#### B-410 · A PO run into the next word after a slash: "474192803B/Contract", likely · medium
+- **Where:** `ap_coder/capture/reader.py` (`_value_reading`, new `_GLUED_WORD`)
+- **Symptom:** SADA's "PO#474192803B/Contract" was read as the PO "474192803B/Contract", likely.
+- **Cause:** a slash is part of an ID ("2021/0042"), so the next label's word after it was kept.
+- **Reproduce:** a PDF with "Customer PO #" over "PO#474192803B/Contract".
+- **Reproduced:** yes (`'474192803B/Contract'`)
+- **Fix:** a capitalised word of four letters and more after a slash, ending an ID with digits, is cut off.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_po_run_into_the_next_word_after_a_slash_is_cut_there`
+- **Lesson:** Don't keep a word in an ID because a separator joins it: IDs end in digits and codes, not in words.
+
+#### B-411 · Dates: a letter's date alone was not read; a date in another sentence over "DUE DATE" was the due date · medium
+- **Where:** `ap_coder/capture/reader.py` (new `_letter_dates`, `_in_a_sentence`, `_labelled`, `_value_over_label`);
+  `ap_coder/capture/confidence.py` (`UNLABELLED_METHODS`)
+- **Symptom:** BDO's letter-style invoice prints "June 30, 2021" alone under its letterhead: no invoice date. A utility
+  bill prints "Mailed 11/14/22 for Account #" over its "AMOUNT DUE | DUE DATE" box: the due date was 2022-11-14 (it
+  is 12/12/22 in the box).
+- **Cause:** a date was read only after a label or beside a title; a label printed under its value took the date
+  from the line over it whatever that line said.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (invoice date missing; due date 2022-11-14)
+- **Fix:** with no date labelled, the one line of the first page's top that is a date written out and nothing else is
+  the invoice date ("letter-dated": *check*, as other dates without a label). A date over its label is not taken from
+  a line that starts with words before it.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_letter_s_date_alone_under_the_letterhead_is_the_invoice_date_checked`,
+  `tests/test_en_pdf_sweep4.py::test_a_date_in_another_sentence_over_a_due_date_label_is_not_the_due_date`
+- **Lesson:** Don't take any date over a label as its value: the line over it may be a sentence about another date.
+
+#### B-412 · Found on the hard corpus after B-396 and B-404: a balance after a deposit read as the total, a misread whole business number read as nine digits, likely · high
+- **Where:** `ap_coder/capture/reader.py` (`_solve_totals`, `_bare_business_numbers`)
+- **Symptom:** two generated invoices that print "Total 2,344.90 | Deposit received | Balance due 1,758.67" gave the
+  balance as the total (likely; the corpus's total is the invoice's, 2,344.90); "GST/HST Reg. No. 232672980-RT-0001"
+  read badly on a scan gave "232672980" (likely; the number is the whole one).
+- **Cause:** B-396 let a deposit taken off make any later total add up; B-404 read nine digits after the label
+  whatever followed them.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`grand_total 1758.67`; `['232672980']` read)
+- **Fix:** a deposit is taken off only when no total on the subtotal's page equals the subtotal (Cox's "Total This
+  Invoice" is the only total on its page); nine digits followed by an "R" or a "T" are the whole number misread, not
+  a business number printed alone.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_deposit_under_a_printed_total_leaves_the_total_as_printed`,
+  `tests/test_en_pdf_sweep4.py::test_a_whole_business_number_misread_is_not_read_as_its_nine_digits`
+- **Lesson:** Don't let a new way for the totals to add up outrank the plain one the page prints.
+
+#### B-413 · A sentence about credit memos made an ordinary invoice a credit, its amounts verified negative · high
+- **Where:** `ap_coder/capture/reader.py` (`_CREDIT_STATED`, `credit_titled`, new `credit_stated`, `_credit_titled`,
+  `_read_fields`)
+- **Symptom:** found by the review of this sweep (generated invoices): "If this document is a credit memo, the amount
+  will be applied to your account.", "Where this is a credit note, no payment is required.", "Unless this is a credit
+  memo, payment is due ...", "If this is a credit memo, do not pay." in a footer: the whole invoice read negative,
+  verified (main read it right).
+- **Cause:** B-395 took "this is a credit memo" anywhere in a line, a condition included.
+- **Reproduce:** a plain invoice with one of the footers above; `analyze()["grand_total"]`.
+- **Reproduced:** yes (`-621.5 verified`)
+- **Fix:** the statement fills its line ("THIS IS A CREDIT MEMO", "DO NOT PAY – THIS IS A CREDIT MEMO", with "no
+  payment required" after it at most); a document that is a credit only by such a line has its amounts marked
+  `UNMEASURED` (likely at best: the title does not say it).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_sentence_about_credit_memos_does_not_make_an_invoice_a_credit`
+- **Lesson:** Don't read a statement out of a sentence: "if this is X" says the opposite of "this is X" as often.
+
+#### B-414 · A customer's block lower down outranked the supplier because the supplier's address starts with "Suite" · high
+- **Where:** `ap_coder/capture/reader.py` (`_STREET_START`, `_vendor_names`)
+- **Symptom:** the review's invoices with the supplier's "Suite 200, 123 King Street West" (or "Unit 4 - 88 Industrial
+  Rd") under its name and an unlabelled customer block below ("Acme Industries Inc." over "45 Queen Street" or "PO Box
+  455", where a window envelope shows it): the customer was the supplier, likely (main: the supplier).
+- **Cause:** B-399's "name over its street address" bonus knew only addresses starting with a number or a PO box, and
+  gave it to any line.
+- **Reproduce:** the PDFs of the test below.
+- **Reproduced:** yes (`'Acme Industries Inc.'`)
+- **Fix:** an address may start with "Suite", "Unit", "Ste", "Apt", "Bureau", "Floor" or "Room" and a number; the bonus
+  goes only to the first name on the page (no other candidate above it).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_an_unlabelled_customer_block_lower_down_is_not_the_supplier`
+- **Lesson:** Don't reward a pattern the customer's block has as well: the address under a name is everyone's.
+
+#### B-415 · Sideways text in a margin turned an upright page · high
+- **Where:** `ap_coder/capture/layout.py` (`_text_turn`)
+- **Symptom:** the review's invoices with four lines of 5.5 pt terms (or two form-number strips) printed up the right
+  margin: the page was read turned (B-406), the supplier became "No. ON Northwind", the invoice date the due date
+  (likely), and most fields were lost.
+- **Cause:** a page turned when 60% of its characters ran sideways; the small print had more characters than the
+  invoice.
+- **Reproduce:** the PDF of the test below; `build_layout().pages[0].turn`.
+- **Reproduced:** yes (`90`)
+- **Fix:** 80% of the characters sideways, and the sideways lines covering at least an eighth of the page across their
+  run (Microsoft's pages: 16 to 54%; a margin's strips: 2 to 8%).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_sideways_text_in_the_margin_does_not_turn_an_upright_page`
+- **Lesson:** Don't decide a page's orientation by counting characters alone: small print has many of them.
+
+#### B-416 · Totals: "Total Sale" under the tax read as the subtotal, verified; arithmetic blanked as a rate; "TOTAL HST INCL." lost · high
+- **Where:** `ap_coder/capture/reader.py` (`_solve_totals`, `_read_fields`, `_TOTAL_SALE`, `_FX_RATE`, `DISTRACTORS`,
+  `_vendor_names`)
+- **Symptom:** the review's invoices: "HST 13% 71.50 | Total Sale 621.50 | Balance Due 621.50" gave the subtotal 621.50,
+  verified, and no HST (main does the same with "Net Amount ... Amount Due"); "HST 13% of 550.00 = 71.50" lost the HST
+  and "Total: 10 x 62.15 = 621.50" read 10.00 (B-409's rate blanked any "a = b"); "TOTAL HST INCL. 621.50" lost the
+  total (B-401's exclusion); a large customer, project or promotion line over the supplier won as its letterhead
+  (B-399); the supplier's name was lost when "Amount Due: $621.50" sat across its row.
+- **Cause:** the solver let a subtotal equal to the total add up with no tax while a tax was printed; "Total Sale" was a
+  subtotal's label wherever it stood; the other causes as said.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`subtotal 621.5 verified`, `hst_amount` missing; `grand_total 10.0`; vendor missing)
+- **Fix:** a subtotal equal to the total with no tax adds up only when no tax is read at all; "Total Sale(s)" is a
+  subtotal only over a tax (not "incl."); only a rate for one unit ("1 USD = 1.235 CAD", "USD 1 = CAD 1.35") is blanked;
+  "Total HST incl." is a total, not the HST; the letterhead rule is taken out; a label's amount across the page is
+  not the name's row's amount (only the next cell, and not after another label).
+- **Test:** `tests/test_en_pdf_sweep4.py::test_total_sale_under_the_tax_is_the_total_and_the_hst_is_kept`,
+  `tests/test_en_pdf_sweep4.py::test_arithmetic_on_a_totals_line_is_not_an_exchange_rate`,
+  `tests/test_en_pdf_sweep4.py::test_total_hst_incl_is_the_invoice_total`,
+  `tests/test_en_pdf_sweep4.py::test_a_large_line_over_the_supplier_is_not_taken_for_its_letterhead`,
+  `tests/test_en_pdf_sweep4.py::test_the_supplier_s_name_with_an_amount_due_label_across_its_row_is_still_read`
+- **Lesson:** Don't let one printed figure prove itself: a subtotal equal to the total is no evidence beside a tax.
+
+#### B-417 · Currency, tax and number rules of this sweep that read other parties: lockbox USD, excise tax, a purchaser's HST number, invoice numbers cut · medium
+- **Where:** `ap_coder/capture/reader.py` (`_us_supplier`, `_CA_CITY`, `_LOCKBOX`, `LABELS["tax_total"]`, `_OTHER_PARTY`,
+  `_bare_business_numbers`, `_value_reading`); `ap_coder/capture/normalize.py` (`currency_evidence`);
+  `ap_coder/capture/confidence.py` (`run_checks`, `WEAK_CHECKS`)
+- **Symptom:** the review's invoices: a Canadian supplier with a US lockbox, or one printing "CA$", read USD (*check*);
+  "Excise Tax 40.00" on a GST-only fuel invoice read as a tax total; "Purchaser's HST #", "Exempt purchaser HST #",
+  "Carrier HST #", "Subcontractor HST # 876543216" read as the supplier's number, likely (the check digit lifted it
+  past `UNMEASURED`); "1234/Revised" and "INV-55/Final" cut to "1234" and "INV-55".
+- **Cause:** B-405 counted any US address and knew no "CA$"; B-397 made "excise tax" a tax label; B-404 knew only
+  customers as other parties, and its check digit counted as a confirmation; B-410 cut every ID.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes
+- **Fix:** "CA$", "C$", "CAD", "CDN" anywhere, a Canadian city outside the customer's block, or the US address only on a
+  remit-to or lockbox line: no USD ("CA$" is Canadian dollars in `currency_evidence`); only Hawaii's "General Excise
+  Tax" is a tax label; a purchaser's, buyer's, carrier's, subcontractor's, recipient's, agent's or broker's number is
+  not read, and the nine digits' check digit is a weak check (`BN_CHECK_DIGIT`: a failure marks it down, a pass does not
+  lift it, so it stays *check*); only a PO is cut at "/Word".
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_canadian_supplier_banking_in_the_us_is_not_billing_in_us_dollars`,
+  `tests/test_en_pdf_sweep4.py::test_an_excise_tax_in_a_fuel_price_is_no_sales_tax`,
+  `tests/test_en_pdf_sweep4.py::test_another_party_s_business_number_is_not_the_supplier_s`,
+  `tests/test_en_pdf_sweep4.py::test_an_invoice_number_ending_in_a_word_after_a_slash_is_kept_whole`
+- **Lesson:** Don't read a number or an address as the supplier's because of its shape: ask whose the page says it is.
+
+#### B-418 · Totals with a deposit or an agency's commission came out likely or verified, where D-47 says a person checks them · medium
+- **Where:** `ap_coder/capture/types.py` (new `TAKEN_OFF`); `ap_coder/capture/reader.py` (`PREPAID`, `_solve_totals`,
+  `_net_of_commission`, `_read_fields`); `ap_coder/capture/confidence.py` (`fuse`)
+- **Symptom:** the review's taxed invoices with "Deposit received (200.00) | Balance Due 421.50": the total likely and
+  the deposit verified (the totals check adds them up); the net after a commission ("Net Amount Due") likely.
+- **Cause:** `UNMEASURED` is lifted to likely by a check on other fields, and the deposit read as a charge was not marked
+  at all when the solver did not use it.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`grand_total likely`, `other_charges verified`)
+- **Fix:** a deposit or prepayment read, and every total on a document that prints one, and a total on a document that
+  takes a commission off the gross (or the net under the commission), are marked `TAKEN_OFF`: at most 0.8 (*check*),
+  "something is taken off before the amount to pay: a person checks it". Whether the gross or the net is posted is
+  AP's call.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_deposit_on_a_taxed_invoice_leaves_the_total_for_a_person_to_check`,
+  `tests/test_en_pdf_sweep4.py::test_the_net_after_an_agency_commission_is_checked`
+- **Lesson:** Don't let a check on other fields lift a reading whose question is not arithmetic: which amount to post.
+
+#### B-419 · A customer's block level with a right-aligned supplier was read as the supplier, likely · high
+- **Where:** `ap_coder/capture/reader.py` (`_vendor_names`)
+- **Symptom:** the re-review's sweep of 27 layouts: the supplier right-aligned at the top right ("Northwind Supply
+  Ltd." over "123 King Street West"), the customer's block at the top left at about the same height ("Acme Industries
+  Inc." over "45 Queen Street"): 7 layouts gave the customer at likely, where main gave the supplier.
+- **Cause:** B-399's "name over its street address" bonus (B-414 kept it for the first name on the page) needed the left
+  edges lined up, which a right-aligned supplier's lines are not, and "first" was judged by the bottom of the boxes.
+- **Reproduce:** the PDFs of the test below.
+- **Reproduced:** yes (`'Acme Industries Inc.' likely`)
+- **Fix:** the bonus is taken out: a supplier's and a customer's names both sit over their addresses, so it never told
+  them apart. (The town under a street address is still no name, B-399.) Distill Mobile's name, which it lifted to
+  likely, is *check* again.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_customer_block_level_with_a_right_aligned_supplier_is_not_the_supplier`
+- **Lesson:** Don't add a bonus for something both parties' blocks have.
+
+#### Left as they are (English vendor PDFs)
+
+- **N-130** · A zero printed under "QST/PST" on Microsoft's invoices ("QST/PST 0.00") is read as a QST of 0.00
+  (likely, `EITHER_TAX`); the corpus leaves it out, so it counts as spurious. It is what the page prints.
+- **N-131** · Payment terms printed as a phrase ("Accounts are due when rendered", "30 Net payment terms", "Pay upon
+  receival", "6 month contract") stay missing on 9 of the 36 invoices that print terms: not in this change's scope.
+- **N-132** · Where the supplier's name is only in a logo (Owen Sound's water bill, NorthWestern Energy's and Old
+  Dominion Power's bills, WSP's letter), the name read is a customer's or a label at *check*, or none; reading a logo
+  is not done.
+- **N-133** · A media invoice's agency commission is not read as an amount of its own (no field for it); the total is
+  the net, as the agency pays it, and the gross is not kept as the subtotal.
 ### Learning from approvals
 
 Found by reading the later invoices of the 15 repeat vendors among the sweep 4 real invoices (47 invoices after a
@@ -3694,13 +4139,13 @@ them, and without one. Learning helped (fields right 291 → 297) but replaced a
 one 9 times and marked 12 right values down (verified to likely, likely to check), all where the vendor's layout had
 changed. Each fix has a small generated fixture in `tests/test_learning_sweep4.py` (the corpus is not in the repo).
 
-Measured after B-387 to B-397 (B-394 to B-397 came from reviews with generated English supplier streams): fields
+Measured after B-387 to B-393 and B-420 to B-423 (B-420 to B-423 came from reviews with generated English supplier streams): fields
 right with learning 297 → 303 of 370 (291 without); on the English invoices among them 72 → 73 of 100 (71 without),
 none wrong and shown likely or verified; wrong and shown likely or verified 5 → 6 of 370 (6 without: the value the
-rule reader alone shows so); fields worse with learning than without 21 → 4 (N-127, N-128, N-129).
+rule reader alone shows so); fields worse with learning than without 21 → 4 (N-127, N-128, N-134).
 The reviews' 20 streams (a label renamed, an order date printed where the invoice date was, two layouts alternating,
 two divisions, a value printed twice, a stub's statement number): no value wrong and verified on any but `freight`
-(N-130, the same on the main branch), where the main branch verified a wrong invoice date on 7 invoices in each of two
+(N-135, the same on the main branch), where the main branch verified a wrong invoice date on 7 invoices in each of two
 (`relayout`, `relayout2`); invoices with a wrong value proposed (at check) 16 against the main branch's 32 over 544
 invoices, `freight` aside. Learning benchmark (12 suppliers × 30, seed 5): accuracy 100% as before, none wrong among the invoices
 that would go touchless (29/57/61/58% before, 25/48/55/58% after: a spot learned from a value printed twice waits for
@@ -3724,7 +4169,7 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 - **Fix:** a reading the template cannot vouch for, taken at the learned spot without the label it was learned by
   (or, since B-388, at a spot never settled), is marked `template-unsettled` (`UNSETTLED`, an evidence family of its
   own). It never decides: the value chosen is the one the other readers make strongest, and it only adds its
-  agreement to it (not as a reader of its own: B-394) or stays a rival that contests it; read by nothing else, it
+  agreement to it (not as a reader of its own: B-420) or stays a rival that contests it; read by nothing else, it
   fills the field at *check*. It never makes the totals add up by changing another field. A value learned with no
   label at all (a name at the top of the page) is read by its position, as before.
 - **Test:** `tests/test_learning_sweep4.py::test_a_reading_at_the_learned_spot_without_its_label_does_not_beat_a_labelled_reading`,
@@ -3754,7 +4199,7 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
   own vouched spots read different values on a page, it vouches for none. Until then what it reads is `UNSETTLED`
   (B-387): it agrees or contests, never decides. Templates stored before start unvouched. A label holding a number of
   three digits or more ("TAX INVOICE #1677326") is no anchor. (The first version of this fix learned where the rule
-  reader reads the value; it copied the reader's mistakes, B-395, and was taken out.)
+  reader reads the value; it copied the reader's mistakes, B-421, and was taken out.)
 - **Test:** `tests/test_learning_sweep4.py::test_a_date_printed_twice_does_not_settle_where_it_was_learned`,
   `tests/test_learning_sweep4.py::test_one_printed_date_for_two_fields_settles_neither`,
   `tests/test_learning_sweep4.py::test_a_value_printed_twice_alike_is_vouched_for_after_two_approvals`
@@ -3825,7 +4270,7 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
   `tests/test_learning_sweep4.py::test_a_template_rival_does_not_mark_down_an_amount_the_totals_confirm`
 - **Lesson:** Don't let one more agreeing reader cost confidence.
 
-#### B-394 · A template reading it could not vouch for counted as a second reader: a wrong date verified · high
+#### B-420 · A template reading it could not vouch for counted as a second reader: a wrong date verified · high
 - **Where:** `ap_coder/capture/confidence.py` (`fuse`, `_Group.strength`, `_vouched_first`); `ap_coder/capture/types.py`
   (`UNSETTLED`)
 - **Symptom:** Found by a review of B-387 with a generated supplier stream (English invoices): the supplier renames
@@ -3848,7 +4293,7 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 - **Lesson:** Don't let a reading that only agrees count as a reader: agreement from a reader that cannot vouch for
   its spot is no second opinion.
 
-#### B-395 · Learning where the rule reader reads copied the reader's mistake · high
+#### B-421 · Learning where the rule reader reads copied the reader's mistake · high
 - **Where:** `ap_coder/capture/supplier.py` (`learn`: `_read_where` taken out)
 - **Symptom:** Found by the same review: the invoice date printed only beside the title, an order "Date:" row the same
   day on the first invoice. The rule reader read the order date as the invoice date; B-388 learned the invoice date
@@ -3863,7 +4308,7 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 - **Test:** `tests/test_learning_sweep4.py::test_a_date_learned_where_the_reader_read_another_date_is_not_a_second_reader`
 - **Lesson:** Don't teach one reader from another and then count them as two.
 
-#### B-396 · A new label printed at an old spot kept the old spot's record · high
+#### B-422 · A new label printed at an old spot kept the old spot's record · high
 - **Where:** `ap_coder/capture/supplier.py` (`_update_variants`)
 - **Symptom:** The supplier's new layout prints an order "Date:" where "Invoice Date:" was, and the invoice date beside
   the title; on its first invoice the two were the same day. From the next invoice the order date was the invoice
@@ -3874,24 +4319,24 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 - **Reproduced:** yes (the order date verified)
 - **Fix:** a new label at a spot, the old one gone from the page, is a new spot with no record (two labels near one
   value, "Billing Date" beside and "Invoice #" over it, are one spot). (The first fix reset the spot's record in place;
-  a vendor alternating two layouts then never kept one: B-397.)
+  a vendor alternating two layouts then never kept one: B-423.)
 - **Test:** `tests/test_learning_sweep4.py::test_a_new_label_at_the_old_spot_starts_unsettled`
 - **Lesson:** Don't carry a spot's record across a change of its label.
 
-#### B-397 · A vendor alternating two layouts: the order date verified as the invoice date · high
+#### B-423 · A vendor alternating two layouts: the order date verified as the invoice date · high
 - **Where:** `ap_coder/capture/supplier.py` (`_update_variants`, `learn`, new `_vouch_once`, `Variant.twin`)
 - **Symptom:** Found by a re-review (English supplier stream): even invoices print "Invoice Date:", odd ones "Billed
   on:" at the same spot and an order "Date:" row under it, the order date the invoice date on invoices 1 and 3. On
   invoice 5 the invoice date was the order date, *verified*, and the invoice eligible for touchless (before this
   branch: check); with the two dates equal on every odd invoice up to 21, invoices 23 to 29 went touchless wrong.
-- **Cause:** the true spot was matched by its position and relabelled every invoice, so B-396 reset its record each
+- **Cause:** the true spot was matched by its position and relabelled every invoice, so B-422 reset its record each
   time; the "Date:" spot, learned as the other place of a date printed twice, was never missed on the even layout (no
   "Date:" there) and its two coincidences made it the only spot vouched for: it agreed with the rule reader's wrong
   date.
 - **Reproduce:** the stream in the test (8 invoices).
 - **Reproduced:** yes (the order date verified on invoice 5)
 - **Fix:** another label at a spot is another layout's spot with its own record (both labels printed by the value
-  still make one spot), so B-396's reset is no longer needed. A place learned from a value printed twice (a *twin*)
+  still make one spot), so B-422's reset is no longer needed. A place learned from a value printed twice (a *twin*)
   that only approvals in a row vouch for counts only when all the field's twin places are read on the page; when the
   spots it vouches for disagree, those settled by a printed-alone approval decide if they agree, else none.
 - **Test:** `tests/test_learning_sweep4.py::test_a_vendor_alternating_two_layouts_never_verifies_the_order_date`,
@@ -3908,11 +4353,11 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 - **N-128** · A German terms sentence ("Skontovereinbarung: 2% bei Zahlung innerhalb 10 Tagen nach Rechnungsdatum"):
   the template reads the part it learned ("10 Tagen nach Rechnungsdatum", at check) where the rule reader writes the
   short form ("2% 10 days", also check). Left with B-372's terms work.
-- **N-129** · Since B-394 a template reading at a spot it does not vouch for no longer decides, so it no longer corrects
+- **N-134** · Since B-420 a template reading at a spot it does not vouch for no longer decides, so it no longer corrects
   the rule reader there either: in the review's stream where the order date is the invoice date 4 times in 10, the
   order date is shown (at *check*) on 1 of 30 invoices where the template's title spot held the right date. On the real
   invoices the same rule leaves 2 right values at likely where they were verified (a due date and a total contested by
   the template's unvouched rival). Left: a person corrects a value at check; a wrong value verified is not corrected.
-- **N-130** · The review's `freight` stream (merchandise, freight, then "Subtotal" of both): the reader takes the printed
+- **N-135** · The review's `freight` stream (merchandise, freight, then "Subtotal" of both): the reader takes the printed
   "Subtotal" (merchandise + freight), AP codes the merchandise as the subtotal and the freight apart; every invoice is
   "wrong and verified" on the main branch and here alike. A coding convention, not a reading or learning question.

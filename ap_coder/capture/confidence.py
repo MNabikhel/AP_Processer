@@ -29,7 +29,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .normalize import amounts_equal, gst_valid, norm_name, normalize_value, parse_dates, qst_valid
+from .normalize import amounts_equal, gst_valid, luhn_ok, norm_name, normalize_value, parse_dates, qst_valid
 from .types import (
     AMOUNT_FIELDS,
     BILL_TO_READING,
@@ -41,6 +41,7 @@ from .types import (
     MISSING,
     PART_OF_TERMS,
     RIVAL_NAME,
+    TAKEN_OFF,
     TWO_SUBTOTALS,
     UNMEASURED,
     UNSETTLED,
@@ -60,13 +61,15 @@ SAME_MISREAD = 0.2  # chance that two independent wrong readings coincide
 # reader could not separate): they lower confidence but do not force a field to "check".
 SOFT_CHECKS = {"LINES_ADD_UP", "TAX_RATE", "DUE_AFTER_INVOICE", "DUE_MATCHES_TERMS"}
 # Checks that only show a value is reasonable, not that it is the printed one: passing them confirms nothing.
-WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE"}
+# "BN_CHECK_DIGIT": a business number printed without its RT program account passes its check digit; nine digits
+# pass one time in ten by chance, so it confirms nothing (D-47) though a failure marks it down.
+WEAK_CHECKS = {"DATE_PLAUSIBLE", "DUE_AFTER_INVOICE", "BN_CHECK_DIGIT"}
 LIKELY_AT = 0.85
 UNMEASURED_CAP = 0.8  # a value read only by wording the benchmark never prints (``UNMEASURED``), no check confirming
 REGISTRATION_FIELDS = ("gst_hst_registration_number", "qst_registration_number", "pst_registration_number")
 SINGLE_READER_CAP = 0.97  # highest confidence for a value only one reader found and no check confirms
 # Values read with no label of their own (``reader``: a receipt's date and time, a date beside the title): checked.
-UNLABELLED_METHODS = ("date-time", "title-dated")
+UNLABELLED_METHODS = ("date-time", "title-dated", "letter-dated")
 UNLABELLED_CAP = 0.8
 WEAK_LABEL_METHOD = "weak-"  # a value after a weak label (``reader.WEAK_LABELS``): checked as well
 
@@ -208,9 +211,16 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
             checks.append({"code": "LINES_ADD_UP", "ok": ok, "fields": ["subtotal"],
                            "detail": f"lines {line_sum:,.2f} {'=' if ok else '≠'} subtotal {sub:,.2f}"})  # fmt: skip
     if values.get("gst_hst_registration_number"):
-        ok = gst_valid(values["gst_hst_registration_number"])
-        checks.append({"code": "GST_NUMBER_VALID", "ok": ok, "fields": ["gst_hst_registration_number"],
-                       "detail": "check digit and format" + ("" if ok else " fail")})  # fmt: skip
+        number = values["gst_hst_registration_number"]
+        if re.fullmatch(r"\d{9}", str(number)):
+            # The business number printed alone ("HST # 108162333"), without its RT program account: its check digit.
+            ok = luhn_ok(str(number))
+            detail = "check digit (printed without its RT program number)" + ("" if ok else " fails")
+        else:
+            ok = gst_valid(number)
+            detail = "check digit and format" + ("" if ok else " fail")
+        code = "BN_CHECK_DIGIT" if re.fullmatch(r"\d{9}", str(number)) else "GST_NUMBER_VALID"
+        checks.append({"code": code, "ok": ok, "fields": ["gst_hst_registration_number"], "detail": detail})
     if values.get("qst_registration_number"):
         ok = qst_valid(values["qst_registration_number"])
         checks.append({"code": "QST_NUMBER_VALID", "ok": ok, "fields": ["qst_registration_number"],
@@ -594,7 +604,9 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # Printed under "PST/QST" with nothing on the page to say which the supplier charges: the amount adds up,
             # which tax it is does not follow from that. A person says.
             conf = min(conf, SINGLE_READER_CAP)
-            reasons.append("printed under a PST/QST label: which of the two it is, the page does not say")
+            reasons.append(
+                "printed under a label naming two taxes (PST/QST, GST/HST): which of the two it is, the page does not say"
+            )
         if any(RIVAL_NAME in r.method for _, r in g.readings) and "template" not in vouched and not n_conf:
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append(
@@ -617,6 +629,11 @@ def fuse(by_source: dict[str, dict[str, list[Reading]]], line_items: list[LineRe
             # spot another value was printed at too: what is printed there now may be something else. A person checks.
             conf = min(conf, UNLABELLED_CAP)
             reasons.append("read only where this supplier's value was before, and the template cannot vouch for it")
+        if any(TAKEN_OFF in r.method for _, r in g.readings):
+            conf = min(conf, max(0.0, min(raw, UNMEASURED_CAP)))
+            reasons.append(
+                "something is taken off before the amount to pay (a deposit, a commission): a person checks it"
+            )
         if any(TWO_SUBTOTALS in r.method for _, r in g.readings):
             conf = min(conf, SINGLE_READER_CAP)
             reasons.append("the totals add up with another subtotal printed too (before or after the charges)")

@@ -62,6 +62,10 @@ UNMEASURED = "+unmeasured"
 # (to be checked) or agrees, but is never a reader of its own: not counted towards verified, not first over another
 # reader's value, and measured apart from the template's labelled readings (its own family, "template-unsettled").
 UNSETTLED = "-unsettled"
+# Added to a total read on a document that takes something off before the amount to pay (a deposit or prepayment,
+# an agency's commission), and to that amount itself: whether the gross or the net is posted is AP's call, so a person
+# checks it, however well it adds up (D-47).
+TAKEN_OFF = "+taken-off"
 STATUSES = (VERIFIED, LIKELY, CHECK, MISSING)
 
 
