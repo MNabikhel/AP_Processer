@@ -3371,19 +3371,36 @@ class Store:
     # --- Backups -----------------------------------------------------------------------------------------
 
     def backup_to(self, dest: str | Path) -> Path:
-        """A consistent copy of the database (safe while the dashboard is running)."""
+        """A consistent copy of the database (safe while the dashboard is running). Written under a temporary name
+        and renamed once complete: a copy that fails (a full disk, a folder that cannot be written) leaves nothing
+        that looks like a backup, and raises OSError, as a file that cannot be written does (B-453)."""
         dest = Path(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        source = sqlite3.connect(self.path)
-        target = sqlite3.connect(dest)
+        part = dest.with_name(dest.name + ".part")
+        part.unlink(missing_ok=True)
         try:
-            source.backup(target)
-            # One self-contained file (not WAL, which needs -wal / -shm files beside it): it opens and restores from
-            # anywhere, also a read-only network share or USB stick.
-            target.execute("PRAGMA journal_mode=DELETE")
-        finally:
-            target.close()
-            source.close()
+            source = sqlite3.connect(self.path)
+            try:
+                target = sqlite3.connect(part)
+                try:
+                    source.backup(target)
+                    # One self-contained file (not WAL, which needs -wal / -shm files beside it): it opens and
+                    # restores from anywhere, also a read-only network share or USB stick.
+                    target.execute("PRAGMA journal_mode=DELETE")
+                finally:
+                    target.close()
+            finally:
+                source.close()
+            part.replace(dest)
+        except (sqlite3.Error, OSError) as exc:
+            for leftover in (part, part.with_name(part.name + "-journal")):
+                try:
+                    leftover.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if isinstance(exc, OSError):
+                raise
+            raise OSError(f"the backup {dest.name} could not be written ({exc})") from exc
         return dest
 
     def backup_dir(self) -> Path:
@@ -3401,6 +3418,12 @@ class Store:
         while dest.exists():  # never overwrite a backup made in the same second
             dest = self.backup_dir() / f"ap_coder-{stamp}{suffix or '-'}{n}.db"
             n += 1
+        for stale in self.backup_dir().glob("ap_coder-*.db.part"):  # left by a crash (B-453): gone after a day
+            try:
+                if time.time() - stale.stat().st_mtime > 86400:
+                    stale.unlink()
+            except OSError:
+                pass
         made = self.backup_to(dest)
         if label == "manual":
             self.log_event("backup_made", actor=actor, detail={"file": made.name})

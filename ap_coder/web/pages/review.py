@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from ap_coder.coding.bulk import bulk_approve, sort_for_bulk
 from ap_coder.coding.review import codes_to_pick, uses_cost_centers
@@ -25,7 +26,17 @@ from ap_coder.coding.terms import DUE_SOON_DAYS, payment
 from ap_coder.core import ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import ReferenceData
-from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
+from ap_coder.core.store import (
+    APPROVED,
+    FAILED,
+    PARKED,
+    PENDING,
+    REJECTED,
+    REVIEW,
+    Store,
+    fold_text,
+    load_sample_setup,
+)
 from ap_coder.erp import recurring
 from ap_coder.web.core import (
     TARGET_ACCURACY,
@@ -42,6 +53,7 @@ from ap_coder.web.core import (
     local_url,
     login,
     money,
+    posted_form,
     reference_or_none,
     refuse,
     render,
@@ -63,12 +75,13 @@ TABS = ("review", "second", "parked", "approved", "other")
 
 
 def filter_queue(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
-    """The rows whose vendor, invoice number or file name contains ``query`` (any case)."""
-    query = (query or "").strip().lower()
+    """The rows whose vendor, invoice number or file name contains ``query`` (any case, accents or not: "quebec"
+    finds "Hydro-Québec", B-456)."""
+    query = fold_text((query or "").strip())
     if not query:
         return rows
     fields = ("vendor_name", "invoice_number", "file_name")
-    return [r for r in rows if any(query in str(r.get(f) or "").lower() for f in fields)]
+    return [r for r in rows if any(query in fold_text(str(r.get(f) or "")) for f in fields)]
 
 
 def sort_queue(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
@@ -81,7 +94,7 @@ def sort_queue(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
     if order == "newest":
         return sorted(rows, key=lambda r: r.get("invoice_date") or "", reverse=True)
     if order == "vendor":
-        return sorted(rows, key=lambda r: (r.get("vendor_name") or r.get("file_name") or "").lower())
+        return sorted(rows, key=lambda r: fold_text(r.get("vendor_name") or r.get("file_name") or ""))
     return rows
 
 
@@ -405,9 +418,17 @@ def changed_meanwhile(request: Request, exc: Exception, back: str = "/review") -
 
 
 @router.post("/review/bulk-approve")
-def review_bulk_approve(request: Request, ids: list[int] = Form(default=[])) -> JSONResponse:  # noqa: B008
+async def review_bulk_approve(request: Request) -> JSONResponse:
     """Approve the clean invoices the page listed, exactly as coded. Each is re-checked first; any that is no
     longer clean is left for a person, with the reason."""
+    try:  # one field per invoice the page lists, however many (B-461)
+        ids = [int(str(i)) for i in (await posted_form(request)).getlist("ids")]
+    except ValueError:
+        return refuse("Nothing to approve.")
+    return await run_in_threadpool(_bulk_approve, request, ids)
+
+
+def _bulk_approve(request: Request, ids: list[int]) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     reference = reference_or_none(store)
     if reference is None or not ids:

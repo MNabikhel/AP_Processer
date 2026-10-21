@@ -586,6 +586,7 @@ def voucher_rows(
         due = invoice_date  # a credit note is not "due"; E1 needs a date
     doc_type = _doc_type(v, settings)
     po = str(final.get("po_number") or "").strip()
+    send_po = bool(po) and (settings.send_po_reference or v.po_matched)  # VLPO, VLPDCT and VLPKCO go together (B-457)
     rate = _rate(fx_rates, v.currency, settings.domestic_currency) if v.foreign else None
     common = {
         **keys, "VLDCT": doc_type, "VLCO": settings.company_code, "VLMCU": settings.header_bu.strip(),
@@ -597,10 +598,10 @@ def voucher_rows(
         # and ``validate`` lists it for the README's "check before loading".
         "VLDDJ": julian(due) if settings.send_due_date and due.year in E1_YEARS else "",
         "VLPST": settings.pay_status.strip(),
-        "VLPO": po[:8] if po and (settings.send_po_reference or v.po_matched) else "",
-        "VLPDCT": settings.po_document_type.strip() if po and (settings.send_po_reference or v.po_matched) else "",
+        "VLPO": po[:8] if send_po else "",
+        "VLPDCT": settings.po_document_type.strip() if send_po else "",
         "VLPKCO": (settings.po_company.strip().zfill(5) if settings.po_company.strip().isdigit()
-                   else settings.po_company.strip() or settings.company_code) if po else "",
+                   else settings.po_company.strip() or settings.company_code) if send_po else "",
         "VLRMK": f"AP Coder #{v.inv_id}"[:30],
     }  # fmt: skip
 

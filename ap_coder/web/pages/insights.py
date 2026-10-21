@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from ap_coder.core import ui
 from ap_coder.erp.insights import AS_CODED, Assumptions, compute, operations, report_html
 from ap_coder.web.charts import OK_GREEN, SERIES, WARN_AMBER, Series, bar_chart
-from ap_coder.web.core import done, get_store, refuse, render, reviewer
+from ap_coder.web.core import done, get_store, posted_form, refuse, render, reviewer
 
 router = APIRouter()
 
@@ -166,7 +166,7 @@ def insights_business_case(request: Request) -> Response:
 
 @router.post("/insights/assumptions")
 async def insights_assumptions(request: Request) -> JSONResponse:
-    form = await request.form()
+    form = await posted_form(request)
     values: dict[str, Any] = {}
     for f in fields(Assumptions):
         label = LABELS[f.name][0]

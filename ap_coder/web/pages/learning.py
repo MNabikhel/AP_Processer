@@ -41,6 +41,7 @@ from ap_coder.web.core import (
     done,
     get_settings,
     get_store,
+    posted_form,
     reference_or_none,
     refuse,
     render,
@@ -527,7 +528,11 @@ def supplier_allow(request: Request, key: str = Form(...)) -> JSONResponse:
 
 
 @router.post("/learning/memory/forget")
-def memory_forget(request: Request, ids: list[int] = Form(default=[])) -> JSONResponse:  # noqa: B008
+async def memory_forget(request: Request) -> JSONResponse:
+    try:  # one field per lesson ticked, however many (B-461)
+        ids = [int(str(i)) for i in (await posted_form(request)).getlist("ids")]
+    except ValueError:
+        ids = []
     if not ids:
         return refuse("Tick the lessons to forget first.")
     n = get_store(request).delete_feedback([int(i) for i in ids], actor=reviewer())
@@ -554,7 +559,7 @@ def flash_message_for_columns(name: str, sheets: dict[str, tuple[list[str], list
 
 @router.post("/learning/history/teach")
 async def history_teach(request: Request) -> JSONResponse:
-    form = await request.form()
+    form = await posted_form(request)
     token = str(form.get("token") or "")
     upload = get_upload(token)
     if upload is None:

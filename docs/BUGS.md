@@ -4701,3 +4701,199 @@ None is left.
 - **Reproduced:** yes
 - **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_a_slow_link_reads_as_before_when_the_page_does_not_come`
 - **Lesson:** Don't show "working…" without an end: a request can fail silently.
+
+### Pilot path (backend)
+
+The path the pilot tester takes with real English vendor PDFs, from the import to the export, read and then run end to
+end (48 English vendor PDFs processed, reviewed and approved through the dashboard's routes, exported as JD Edwards,
+Excel, CSV and custom CSV): each suspicion was reproduced before it was called a bug.
+
+#### B-453 · A backup that could not be written stopped the dashboard from starting · medium
+- **Where:** `ap_coder/core/store.py` (`backup_to`), `ap_coder/web/pages/settings.py` (`restore_backup`)
+- **Symptom:** with the disk full (or the backups folder failing to write), the daily backup made as the dashboard
+  starts raised `sqlite3.OperationalError: disk I/O error` and the dashboard did not open at all; the half-written
+  copy was left in `backups/`, listed to restore, and taken for today's backup, so the next start made none. A restore
+  whose safety copy failed showed an error page.
+- **Cause:** the dashboard and the Settings page catch `OSError` for a backup that fails ("a backup problem must never
+  stop the dashboard from opening"); SQLite's errors are not `OSError`, and the copy was written under its final name.
+- **Reproduce:** start the dashboard with the process's file size limit below the database's size (a full disk).
+- **Reproduced:** yes (the dashboard did not start; `ap_coder-<date>.db` left behind)
+- **Fix:** the copy is written as `<name>.part` and renamed once complete; any failure removes it and raises `OSError`
+  with SQLite's reason, so every caller's existing handling applies; a restore whose safety copy fails says so. A
+  `.part` a crash left behind is removed by the next backup once it is a day old (the review's follow-up).
+- **Test:** `tests/test_pilot_path_backend.py::test_a_backup_that_cannot_be_written_never_stops_the_dashboard_nor_counts_as_made`,
+  `tests/test_pilot_path_backend.py::test_a_part_backup_left_by_a_crash_is_removed_when_backups_run`
+- **Lesson:** Don't name a file for what it will be before it is: a copy that fails half-way must not look made.
+
+#### B-454 · An invoice approved again taught the supplier's template a second time · medium
+- **Where:** `ap_coder/capture/supplier.py` (`learn`, `Template.documents`), `ap_coder/capture/workflow.py`
+  (`learn_from_approval`)
+- **Symptom:** an invoice approved, reopened for correction (or sent back by the second approver) and approved again
+  counted as two invoices in its supplier's template: a spot learned unsettled from it (one printed date approved as
+  both the invoice date and the due date, a value printed twice) had "two approvals in a row" from that one page and
+  was vouched for. On the supplier's next invoice the template read the invoice date as the due date, and the fused
+  due date became the template's 2017-11-05 instead of the labelled 2017-12-05 (*check* either way). The template's
+  invoice count went up by two.
+- **Cause:** a reopen or a send-back withdraws the coding memory, lessons and outcomes (B-14 and later), but the
+  template is a running record with no way to take one page back out, and nothing told it the page was seen before.
+- **Reproduce:** approve, reopen, approve the same PDF (dated and due the same day), then apply the template to an
+  invoice printing a due date.
+- **Reproduced:** yes (the due date spot vouched; fused due date 2017-11-05)
+- **Fix:** the template keeps the pages it learned from (the file's SHA-256, the newest 100) and the value of each field
+  learned from each: approved again, a page teaches only a value approved differently since (a correction: the spot of
+  the value approved first is a miss as before) or one the reviewer clicked; it no longer counts as another invoice.
+- **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_approved_again_teaches_the_template_once`,
+  `tests/test_pilot_path_backend.py::test_a_value_corrected_on_an_invoice_approved_again_is_still_learned`
+- **Lesson:** Don't count a second look at the same page as a second witness.
+
+#### B-455 · An invoice of about 90 lines or more could not be checked or approved · high
+- **Where:** `ap_coder/web/pages/invoice.py` (`_posted`), `ap_coder/web/pages/exports.py` (`create_batch`),
+  `ap_coder/web/core.py` (new `posted_form`)
+- **Symptom:** a long invoice (a distributor's parts list, a phone bill: 150 lines) opened on the review screen, but
+  every check, line action (split, apply rules, fill) and Approve answered "Too many fields. Maximum number of fields
+  is 1000.": it could not be approved at all. The Exports page refused a batch of more than about 1,000 ticked
+  invoices the same way.
+- **Cause:** the screen posts some ten fields per line (number, description, amount, GL, cost center, quantity,
+  price, reason, key, ticked taxes); Starlette's form parser refuses more than 1,000 fields by default.
+- **Reproduce:** a 150-line invoice in the queue, posted as the review page posts it.
+- **Reproduced:** yes (2,159 named fields on the page for 150 lines)
+- **Fix:** the review screen's form and the Exports page's ticked invoices are read with a limit of 200,000 fields.
+- **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_of_a_hundred_and_fifty_lines_can_be_checked_and_approved`
+- **Lesson:** Don't leave a framework's default limit standing on a form whose size grows with the data.
+
+#### B-456 · The review queue's search missed vendors written with accents · low
+- **Where:** `ap_coder/web/pages/review.py` (`filter_queue`, `sort_queue`)
+- **Symptom:** typing "quebec" or "energir" in the review queue's search found no "Hydro-Québec" or "Énergir" (only
+  the accented spelling did), and the review screen's previous / next followed the same filter; "Vendor A–Z" put
+  "Énergir" after "Zenith Supply".
+- **Cause:** the search and the order compared lower-cased text; the folding the rest of AP Coder uses for names
+  (`store.fold_text`, B-04) was not used here.
+- **Reproduce:** `filter_queue([{"vendor_name": "Hydro-Québec"}], "quebec")`.
+- **Reproduced:** yes (`[]`)
+- **Fix:** both fold accents and case as the vendor and invoice filters elsewhere do.
+- **Test:** `tests/test_pilot_path_backend.py::test_the_queue_search_and_vendor_order_read_accents_as_people_do`
+- **Lesson:** Don't compare names with `lower()`: fold them the way the rest of the app does.
+
+#### B-457 · The JD Edwards pay item sent a PO company without its PO number · low
+- **Where:** `ap_coder/erp/jde.py` (`voucher_rows`), docs/JDE_E1.md
+- **Symptom:** with *Send the PO number as a reference* off, an invoice quoting a PO went out with VLPO and VLPDCT
+  blank but VLPKCO (the PO company) filled: a PO key with no PO, unlike the mapping in docs/JDE_E1.md.
+- **Cause:** VLPO and VLPDCT followed the setting; VLPKCO only asked whether the invoice printed a PO.
+- **Reproduce:** `jde.export_batch([the Northwind invoice], JdeSettings(send_po_reference=False), ...)`.
+- **Reproduced:** yes (`VLPKCO = 00001`)
+- **Fix:** the three PO columns go out together, when the PO number is sent (as a reference, or PO-matched).
+- **Test:** `tests/test_pilot_path_backend.py::test_the_po_company_goes_out_only_with_the_po_number`
+- **Lesson:** Columns that make one key are filled by one condition.
+
+#### B-458 · What capture found about the page never showed on the review screen · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`analyse`), `ap_coder/capture/bridge.py` (`review_issues`)
+- **Symptom:** "only 20 of its 300 pages were read: check the other pages yourself before approving" (B-267), "the
+  currency isn't printed clearly: taken as USD, check it", "as printed, the totals don't add up", "check on the page:
+  …", "line items read differently" were kept with the invoice when it was read (they flagged it in the queue and
+  kept it from bulk approval), but the review screen, where the person decides, showed none of them: on the real
+  English PDFs, `us_gcp_mcwilliam` was flagged for its currency and its screen never said why.
+- **Cause:** the review screen checks the coding again as it is edited (`finalise_coding`), and these findings come
+  from what capture read, not from the coding; only the AI reviewer's findings were added back. B-267's test checked
+  the pipeline's report, not the screen.
+- **Reproduce:** an invoice whose stored capture left 280 of 300 pages out; open it, check it.
+- **Reproduced:** yes (neither the page nor the check shows it)
+- **Fix:** the review screen adds the findings about the page from the stored capture to its checks (warnings and
+  notes: Approve stays open), worked out again for the screen's currency and date. "Check on the page: …" is left
+  out there: it is on nearly every invoice, and its fields are highlighted in amber (the review's follow-up).
+- **Test:** `tests/test_pilot_path_backend.py::test_what_capture_found_about_the_page_is_on_the_review_screen`,
+  `tests/test_pilot_path_backend.py::test_the_review_screen_leaves_the_fields_to_check_to_their_highlight`
+- **Lesson:** Don't test a message for the screen anywhere but on the screen.
+
+#### B-459 · An invoice with no date found was dated the day it was read, without a word · medium
+- **Where:** `ap_coder/capture/bridge.py` (`review_issues`), `ap_coder/ai/pipeline.py`, `ap_coder/ops/help.py`
+- **Symptom:** an invoice whose date no reader found got the day it was read as its invoice date (so its due date,
+  G/L period and sales tax period), shown on the review screen like a date read from the page (no "how sure" mark,
+  no check); 4 of the 48 English PDFs (`ca_ubc_google` was not even flagged: Ready in the queue, offered for bulk
+  approval once its cost center is known), 2 of them with a due date years before that "invoice date".
+- **Cause:** the offline coder puts in today's date ("capture already flags the date as missing"), but capture's
+  findings name only the fields to check, never a missing one.
+- **Reproduce:** process a PDF that prints no date.
+- **Reproduced:** yes (invoice date today, no issue, requires_review false)
+- **Fix:** a warning, INVOICE_DATE_NOT_FOUND ("no invoice date was found on the page: <date> is assumed (the day it
+  was read); put in the invoice's date…"), with its Help entry; it is kept with the invoice (which keeps it from
+  bulk approval) and shown on the review screen until the reviewer puts in another date, shows the date on the page,
+  or approves it with that date (reopened or sent back, it is no longer said: the date was confirmed).
+- **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_with_no_date_found_says_the_date_was_assumed`
+- **Lesson:** Don't fill a missing value with a default without saying so where the person decides.
+
+#### B-460 · B-454's fix settled a corrected value printed on another field's words · high
+- **Where:** `ap_coder/capture/supplier.py` (`learn`)
+- **Symptom:** found by the independent review of this branch. A page prints only "Date: 05/11/2017"; approved with
+  the due date 2017-12-05 (not printed), reopened, the due date corrected to 2017-11-05 (due on receipt) and approved
+  again: the due date was learned at the invoice date's words as *settled*, and on the next invoice the template
+  read the invoice date as the due date, vouched for (on the main branch: unsettled). And a page approved with one
+  value, then another, then the first again counted twice for the first.
+- **Cause:** B-454 left the values learned already out of the page's search, so a corrected value sharing their
+  words looked printed alone; and each page remembered only the last value of each field.
+- **Reproduce:** the review's probes (`p454.py`, `p454b.py`), as in the tests.
+- **Reproduced:** yes (due date read at the invoice date's spot, not unsettled; a spot counted 2 for one page)
+- **Fix:** every value approved is looked for on the page (those learned already included), and only the ones not
+  learned from this page before are learned; the page keeps every value of each field it taught.
+- **Test:** `tests/test_pilot_path_backend.py::test_a_value_corrected_onto_another_fields_words_is_not_settled_there`,
+  `tests/test_pilot_path_backend.py::test_a_page_approved_with_a_value_then_another_then_the_first_again_counts_it_once`
+- **Lesson:** When a fix skips work, keep what the skipped work told the rest.
+
+#### B-461 · B-455 left other long forms at Starlette's 1,000 fields · medium
+- **Where:** `ap_coder/web/pages/accounts.py`, `review.py` (`review_bulk_approve`), `learning.py` (`memory_forget`),
+  and every other page reading a posted form (`exports`, `purchase_orders`, `vendors`, `settings_jde`, `insights`)
+- **Symptom:** found by the independent review. Saving a GL list of 400 accounts on GL accounts & tax (three fields an
+  account: a JD Edwards chart of 334 or more) answered "Too many fields"; so did bulk approval of 1,200 invoices and
+  forgetting 1,200 lessons.
+- **Cause:** B-455 used `posted_form` on the review screen and Exports only; FastAPI's `Form` lists use the default.
+- **Reproduce:** the review's probe (`p455.py`).
+- **Reproduced:** yes (400 "Too many fields")
+- **Fix:** every page reading a posted form reads it with `posted_form`; bulk approval and forgetting lessons read
+  their ticked ids from it.
+- **Test:** `tests/test_pilot_path_backend.py::test_long_lists_are_saved_on_every_page_that_posts_them`
+- **Lesson:** A limit raised in one place: look for every place that has it.
+
+#### B-462 · A value put back on a page approved again left the corrected-to spot vouched for · high
+- **Where:** `ap_coder/capture/supplier.py` (`learn`)
+- **Symptom:** found by the second review of this branch. A page prints "Invoice Date" and "Order Date" 2026-03-05 and
+  "Ship Date" 2026-03-07; approved with 2026-03-05, reopened and changed to 2026-03-07, then reopened and put back to
+  2026-03-05: on the next invoice the template read the ship date as the invoice date, vouched for (0.855; on the main
+  branch nothing was vouched).
+- **Cause:** B-460 has the page remember every value it taught a field; the value put back counted as taught and was
+  skipped whole, so the misses were not looked for and the ship date's spot, settled by the correction, kept its mark.
+- **Reproduce:** the review's probe (`p454b.py`), as in the test.
+- **Reproduced:** yes (the ship date read, not unsettled)
+- **Fix:** every approved value is checked for misses (a spot holding another value starts over), the ones taught by
+  the page before included; only learning them again is skipped.
+- **Test:** `tests/test_pilot_path_backend.py::test_a_value_put_back_on_a_page_approved_again_still_misses_the_spot_corrected_away`
+- **Lesson:** Skip the counting, never the checking.
+
+#### Looked at and left (pilot path, backend)
+
+Run as well, and found to work: approving twice (a double click: the second is "changed meanwhile"), the second
+approval and its send-back with a corrected field (learning withdrawn and learned once again, the export holds the
+correction), a credit note through the checks, the approval limit and every export, splits of negative and tiny
+amounts (exact to the cent), the JD Edwards files of all 47 approved English PDFs in every mode (pay items add up to
+the invoice; a 150-line invoice included), an invoice whose file was deleted after import (review, approval,
+approved PDF and exports all work and say the file is gone), a missing GL list (the review screen says to import it),
+formula-looking vendor names in the Excel export (stored as text), and the import job reading 48 PDFs while invoices
+were approved, parked and exported and a backup was made every 2 seconds (no lock, no lost write).
+
+- **N-165** · A PDF renamed in the invoices folder after it was imported is not found again (`paths.find_moved_file`
+  looks for the same name, then checks the SHA-256): its review screen says the file is no longer where it was and
+  shows no page; approval and the exports still work. Finding it by content would read every file in the folder.
+- **N-166** · `python -m ap_coder process <folder>` sets upright, in place, a PDF whose text is drawn sideways (D-47)
+  and keeps the file as it came in an `originals/` folder beside it, also in a folder outside the data folder (it
+  changed 3 files of the test corpus here, put back since). The dashboard copies what it reads into its own invoices
+  folder first; the command line is for developers.
+- **N-167** · Two approvals of the same supplier at the same moment (two computers on the office network) each read,
+  update and save the supplier's template: one of the two lessons can be lost. Not reproduced (one pilot tester).
+- **N-168** · A GL account the coder left blank and AP filled in counts as a correction for the lessons, so the
+  "why" question comes after 3 invoices of a vendor imported together before any was approved (GCstrategies on the
+  English PDFs), where D-39 counts filling a blank as no change. The lesson is also what tells the AI the account,
+  so whether a filled blank asks "why" is a design question: left.
+- **N-169** · The approval limit typed with a thousands separator ("5,000") is refused ("must be numbers"): said, not
+  saved wrong.
+- **N-170** · The review queue's "Amount: high to low" compares totals in different currencies as they are.
+- **N-171** · Capture's findings (B-458, B-459) are added after the confidence is worked out: a warning about the page
+  keeps an invoice from bulk approval, but does not by itself flag it in the queue
+  (Ready means Approve is open, which a warning does not close).

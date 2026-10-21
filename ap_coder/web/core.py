@@ -144,6 +144,16 @@ def jobs(request: Request) -> Jobs:
     return request.app.state.jobs
 
 
+# Starlette refuses a form of more than 1,000 fields by default; the review screen posts about ten per invoice line
+# (an invoice of 100 lines is over), the Exports page one per invoice ticked (B-455).
+MAX_FORM_FIELDS = 200_000
+
+
+async def posted_form(request: Request) -> Any:
+    """The form the page posted, however many fields it has (``MAX_FORM_FIELDS``)."""
+    return await request.form(max_fields=MAX_FORM_FIELDS)
+
+
 def data_dir(store: Store) -> Path:
     return store.path.parent
 

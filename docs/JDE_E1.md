@@ -216,8 +216,8 @@ document type that is not 2 characters, a domestic currency that is not a 3-lett
 | VLDDJ | Due date (Julian): printed or worked out; the invoice date for a credit | setting can leave it blank |
 | VLPST | Pay status (default `A`) | |
 | VLPO | PO number (≤8) | as a reference, or for PO-matched vouchers |
-| VLPDCT | PO document type (default `OP`) | when there is a PO |
-| VLPKCO | PO company (default: the company) | when there is a PO |
+| VLPDCT | PO document type (default `OP`) | with VLPO |
+| VLPKCO | PO company (default: the company) | with VLPO |
 | VLRMK | `AP Coder #<id>` | remark |
 | *extra* | e.g. VLATFLG, VLPSTE | **unconfirmed**; only in PO-matched mode |
 
