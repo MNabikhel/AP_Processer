@@ -29,7 +29,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .normalize import amounts_equal, gst_valid, norm_name, normalize_value, parse_dates, qst_valid
+from .normalize import amounts_equal, gst_valid, luhn_ok, norm_name, normalize_value, parse_dates, qst_valid
 from .types import (
     AMOUNT_FIELDS,
     BILL_TO_READING,
@@ -202,9 +202,16 @@ def run_checks(values: dict[str, Any], line_items: list[LineReading], vendor: di
             checks.append({"code": "LINES_ADD_UP", "ok": ok, "fields": ["subtotal"],
                            "detail": f"lines {line_sum:,.2f} {'=' if ok else '≠'} subtotal {sub:,.2f}"})  # fmt: skip
     if values.get("gst_hst_registration_number"):
-        ok = gst_valid(values["gst_hst_registration_number"])
+        number = values["gst_hst_registration_number"]
+        if re.fullmatch(r"\d{9}", str(number)):
+            # The business number printed alone ("HST # 108162333"), without its RT program account: its check digit.
+            ok = luhn_ok(str(number))
+            detail = "check digit (printed without its RT program number)" + ("" if ok else " fails")
+        else:
+            ok = gst_valid(number)
+            detail = "check digit and format" + ("" if ok else " fail")
         checks.append({"code": "GST_NUMBER_VALID", "ok": ok, "fields": ["gst_hst_registration_number"],
-                       "detail": "check digit and format" + ("" if ok else " fail")})  # fmt: skip
+                       "detail": detail})  # fmt: skip
     if values.get("qst_registration_number"):
         ok = qst_valid(values["qst_registration_number"])
         checks.append({"code": "QST_NUMBER_VALID", "ok": ok, "fields": ["qst_registration_number"],

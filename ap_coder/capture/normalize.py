@@ -198,8 +198,9 @@ def _plain(text: str) -> str:
 # "2/25/125:21PM" (the year 12, then 5:21). The date ends where a time begins.
 _TIME_NEXT = r"(?=_?\d{1,2}:\d)"
 _ISO = re.compile(rf"\b(20\d{{2}}|19\d{{2}})[-/.](\d{{1,2}})[-/.](\d{{1,2}})(?:\b|{_TIME_NEXT})")
+# The year may run into the next label's word in a PDF's text: "Invoice Date: 08-01-2016Contract ID: 1272709".
 _NUMERIC = re.compile(
-    rf"\b(\d{{1,2}})[-/.](\d{{1,2}})[-/.](\d{{4}}{_TIME_NEXT}|\d{{2}}{_TIME_NEXT}|\d{{2}}\b|\d{{4}}\b)"
+    rf"\b(\d{{1,2}})[-/.](\d{{1,2}})[-/.](\d{{4}}{_TIME_NEXT}|\d{{2}}{_TIME_NEXT}|\d{{2}}\b|\d{{4}}\b|\d{{4}}(?=[a-z]{{3}}))"
 )
 # Spaces optional: OCR often drops them ("May14,2026", "20Jul2026"); the month name is looked up.
 # Between the day and the year, a comma and a speck OCR read as a point: "October 23, . 2026"; a receipt's slashes:
@@ -269,7 +270,8 @@ def _make(y: int, m: int, d: int) -> dt.date | None:
 def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tuple[dt.date, int, int, bool]]:
     """Every date in ``text``: (date, start, end, ambiguous). ``ambiguous`` is True for 03/04/2026
     when both day-first and month-first are valid and no preference resolves it."""
-    s = _ocr_date_text(_plain(unicodedata.normalize("NFKC", text)))
+    # A soft hyphen printed as the date's separator: "10\u00ad31\u00ad2016" (same length, so offsets hold).
+    s = _ocr_date_text(_plain(unicodedata.normalize("NFKC", text)).replace("\u00ad", "-"))
     found: list[tuple[dt.date, int, int, bool]] = []
     taken: list[tuple[int, int]] = []
 
@@ -324,7 +326,7 @@ def parse_dates(text: str, *, prefer_day_first: bool | None = None) -> list[tupl
 def infer_day_first(text: str) -> bool | None:
     """The document's numeric date order, from its unambiguous dates: 25/03/2026 means day first,
     03/25/2026 month first. None when nothing tells (or the document mixes both)."""
-    s = _plain(unicodedata.normalize("NFKC", text))
+    s = _plain(unicodedata.normalize("NFKC", text)).replace("\u00ad", "-")
     day = month = 0
     for m in _NUMERIC.finditer(s):
         a, b = int(m.group(1)), int(m.group(2))
