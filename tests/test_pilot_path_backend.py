@@ -40,6 +40,62 @@ def test_a_backup_that_cannot_be_written_never_stops_the_dashboard_nor_counts_as
     assert store.auto_backup() is not None  # with room again, today's backup is made
 
 
+PAGE = {"X-AP-Coder": "1"}
+
+
+def _form(store: Store, invoice_id: int) -> dict:
+    """The review form as the page posts it (tests/test_web_invoice.py ``form_of``)."""
+    from ap_coder.web import invoice_view
+    from ap_coder.web.invoice_view import Draft
+
+    inv = store.get_invoice(invoice_id)
+    draft = Draft.stored(inv["final_output"] or inv["ai_output"])
+    rows = [dict(r) for r in draft.lines]
+    data = {**draft.header, "grids": "1", "line_key": [f"r{i}" for i in range(len(rows))]}
+    for column, name in invoice_view.LINE_INPUTS.items():
+        data[name] = ["" if r.get(column) is None else str(r.get(column)) for r in rows]
+    for i, r in enumerate(rows):
+        data[f"line_tax_r{i}"] = list(r.get("taxes_applied") or [])
+    for column, name in invoice_view.TAX_INPUTS.items():
+        data[name] = ["" if t.get(column) is None else str(t.get(column)) for t in draft.taxes]
+    return data
+
+
+def _many_lines(ground_truth: dict, n: int) -> dict:
+    """The sample invoice (Ontario, HST) with ``n`` lines."""
+    lines = [{"line_number": i, "description": f"Part {i}", "quantity": 1.0, "unit_price": 1.0 + i / 10,
+              "amount": round(1.0 + i / 10, 2), "predicted_gl_code": "6100", "predicted_cost_center": "CC100",
+              "taxes_applied": ["HST"], "reasoning_justification": ""} for i in range(1, n + 1)]  # fmt: skip
+    subtotal = round(sum(li["amount"] for li in lines), 2)
+    hst = round(subtotal * 0.13, 2)
+    tax = {**ground_truth["tax_lines"][0], "taxable_amount": subtotal, "tax_amount": hst}
+    return {**ground_truth, "line_items": lines, "subtotal": subtotal, "tax_total": hst,
+            "grand_total": round(subtotal + hst, 2), "tax_lines": [tax]}  # fmt: skip
+
+
+def test_an_invoice_of_a_hundred_and_fifty_lines_can_be_checked_and_approved(tmp_path, ground_truth):
+    """A long invoice (a distributor's, a phone bill) posts some ten fields per line: past about 90 lines the review
+    screen answered every check, line action and Approve with "Too many fields. Maximum number of fields is 1000."."""
+    from ap_coder.core.store import APPROVED, load_sample_setup
+
+    from .conftest import SAMPLE_STEM, SAMPLES
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    inv_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", _many_lines(ground_truth, 150), {})
+    client = _web(store)
+    data = _form(store, inv_id)
+    checked = client.post(f"/review/{inv_id}/check", data=data, headers=PAGE).json()
+    assert checked.get("valid") and checked.get("allow"), checked
+    approved = client.post(f"/review/{inv_id}/approve", data=data, headers=PAGE).json()
+    assert approved.get("ok"), approved
+    inv = store.get_invoice(inv_id)
+    assert inv["status"] == APPROVED and len(inv["final_output"]["line_items"]) == 150
+    ticked = [inv_id, *range(10_000, 11_500)]  # the Exports page with 1,500 invoices ticked
+    made = client.post("/exports/create", data={"fmt": "xlsx", "ids": ticked}, headers=PAGE).json()
+    assert made.get("ok") and store.get_invoice(inv_id)["export_batch"], made
+
+
 def _pdf(path, lines, size: float = 10):
     import pymupdf
 

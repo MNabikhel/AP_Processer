@@ -49,6 +49,7 @@ from ap_coder.web.core import (
     get_store,
     login,
     message,
+    posted_form,
     reading_status_or_none,
     reference_or_none,
     refuse,
@@ -328,7 +329,7 @@ def _render_lines(reference: ReferenceData, draft: view.Draft) -> str:
 
 
 async def _posted(request: Request, inv: dict[str, Any]) -> tuple[Any, view.Draft]:
-    form = await request.form()
+    form = await posted_form(request)  # a long invoice posts thousands of fields (B-455)
     base, _ = current_draft(request, inv)
     return form, view.Draft.from_form(form, base)
 

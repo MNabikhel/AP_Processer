@@ -4403,3 +4403,18 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
 - **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_approved_again_teaches_the_template_once`,
   `tests/test_pilot_path_backend.py::test_a_value_corrected_on_an_invoice_approved_again_is_still_learned`
 - **Lesson:** Don't count a second look at the same page as a second witness.
+
+#### B-455 · An invoice of about 90 lines or more could not be checked or approved · high
+- **Where:** `ap_coder/web/pages/invoice.py` (`_posted`), `ap_coder/web/pages/exports.py` (`create_batch`),
+  `ap_coder/web/core.py` (new `posted_form`)
+- **Symptom:** a long invoice (a distributor's parts list, a phone bill: 150 lines) opened on the review screen, but
+  every check, line action (split, apply rules, fill) and Approve answered "Too many fields. Maximum number of fields
+  is 1000.": it could not be approved at all. The Exports page refused a batch of more than about 1,000 ticked
+  invoices the same way.
+- **Cause:** the screen posts some ten fields per line (number, description, amount, GL, cost center, quantity,
+  price, reason, key, ticked taxes); Starlette's form parser refuses more than 1,000 fields by default.
+- **Reproduce:** a 150-line invoice in the queue, posted as the review page posts it.
+- **Reproduced:** yes (2,159 named fields on the page for 150 lines)
+- **Fix:** the review screen's form and the Exports page's ticked invoices are read with a limit of 200,000 fields.
+- **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_of_a_hundred_and_fifty_lines_can_be_checked_and_approved`
+- **Lesson:** Don't leave a framework's default limit standing on a form whose size grows with the data.

@@ -21,7 +21,17 @@ from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import Store
 from ap_coder.erp import dupaudit, export_layout, exports, jde, registers, stamp
-from ap_coder.web.core import by_currency, done, flash_message, get_store, message, reference_or_none, refuse, render
+from ap_coder.web.core import (
+    by_currency,
+    done,
+    flash_message,
+    get_store,
+    message,
+    posted_form,
+    reference_or_none,
+    refuse,
+    render,
+)
 from ap_coder.web.core import reviewer as current_reviewer
 from ap_coder.web.files import (
     SheetError,
@@ -295,7 +305,7 @@ def exports_page(
 @router.post("/exports/create")
 async def create_batch(request: Request) -> JSONResponse:
     """A new batch of the ticked invoices, in the chosen format (JD Edwards: only those that pass its checks)."""
-    form = await request.form()
+    form = await posted_form(request)  # one field per invoice ticked
     store = get_store(request)
     fmt = str(form.get("fmt") or "")
     if fmt not in exports.FORMATS:
