@@ -167,9 +167,13 @@ def mark(level: str) -> str:
     return MARKS[fancy_marks()][level]
 
 
+_said = {"at": time.monotonic()}  # when the window last said something (the heartbeat speaks up after a silence)
+
+
 def say(message: str = "") -> None:
     print(message, flush=True)
     log(message)
+    _said["at"] = time.monotonic()
 
 
 # --- The log: what each start said, for IT after the window is closed ---------------------------------------------
@@ -810,12 +814,10 @@ def pip_install(args: list[str]) -> bool:
             progress.feed(text)
             if text.startswith("Successfully installed"):  # sixty names: said as a count, the names in the log
                 log(text)
-                progress.said()
                 count = len(text.split()) - 2
                 also = f" (the {wanted} missing and the ones they need)" if 0 < wanted < count else ""
                 say(f"    Installed {plural(count, 'package')}{also}.")
             elif text and not text.startswith(QUIET_PIP_LINES):
-                progress.said()
                 say(f"    {text}")
             elif text:
                 log(text)  # pip's progress, a line a package: for IT, in the log only
@@ -856,10 +858,6 @@ class PipProgress:
         self.got: list[str] = []  # the ones it has the files of ("Downloading x.whl", "Using cached x.whl")
         self.installing: list[str] = []  # "Installing collected packages: a, b, c"
         self.before: set[str] = set()  # the .dist-info folders there when it started installing
-        self.last = time.monotonic()  # the last time the window said something
-
-    def said(self) -> None:
-        self.last = time.monotonic()
 
     def _dist_infos(self) -> set[str]:
         try:
@@ -905,19 +903,30 @@ class PipProgress:
         return "    Starting pip..."
 
 
-class heartbeat:  # noqa: N801 - used as ``with heartbeat(progress):``
-    """While pip runs: a line every HEARTBEAT seconds the window has said nothing (said and logged like any other)."""
+class Step:
+    """What the setup is doing between its own lines, for the heartbeat: ``now`` ("checking the packages")."""
 
-    def __init__(self, progress: PipProgress, every: float | None = None) -> None:
+    def __init__(self, now: str = "") -> None:
+        self.now = now
+
+    def status(self) -> str:
+        return f"  Still working: {self.now}..." if self.now else ""
+
+
+class heartbeat:  # noqa: N801 - used as ``with heartbeat(progress):``
+    """While a long step runs (pip, the setup after it): a line every HEARTBEAT seconds the window has said nothing,
+    from ``progress.status()`` (said and logged like any other). A first setup was silent for minutes (B-543)."""
+
+    def __init__(self, progress: PipProgress | Step, every: float | None = None) -> None:
         self.progress, self.every = progress, every
         self.done = threading.Event()
 
     def _beat(self) -> None:
         every = HEARTBEAT if self.every is None else self.every
         while not self.done.wait(min(1.0, every)):
-            if time.monotonic() - self.progress.last >= every:
+            if time.monotonic() - _said["at"] >= every:
                 said = self.progress.status()
-                self.progress.said()
+                _said["at"] = time.monotonic()
                 if said:
                     say(said)
 
@@ -2099,6 +2108,77 @@ def plural(count: int, word: str) -> str:
     return f"{count} {word}{'' if count == 1 else 's'}"
 
 
+def settle_and_check(
+    args: argparse.Namespace,
+    state: dict,
+    ident: dict,
+    first: bool,
+    previous: dict | None,
+    legacy: list[str],
+    packages: tuple[str, str, bool],
+    step: Step,
+) -> list[tuple[str, str]] | int:
+    """Everything after the packages: the data folder and settings, the OCR models, the record of installs, the
+    readiness lines, the self-check and the clean-up of older installs. Returns the readiness lines, or the exit code
+    of a step that stops the start. ``step`` says what it is doing, for the heartbeat."""
+    level, summary, installed = packages
+    step.now = "checking the packages and the data folder"
+    if str(ROOT) not in sys.path:  # ap_coder itself, even when it was only just installed
+        sys.path.insert(0, str(ROOT))
+    try:
+        data = ensure_data_folder()
+    except upgrade.DataMoveError as exc:  # never started on half the data: the next start finishes the move
+        save_state(state)
+        return failed(SetupError(str(exc), exc.hint))
+    notes = settle_settings(data, ident["version"])
+    too_new = database_too_new(data, ident["version"])
+    if too_new:
+        save_state(state)
+        return failed(too_new)
+    step.now = "getting the OCR models"
+    ensure_models(first, state)
+    paths.record_install(ident)
+    upgrade.write_marker(ROOT, ident)
+    shortcut = ensure_shortcut()
+    step.now = "checking LM Studio and the setup"
+    lines = readiness((level, summary), state, force=args.check) + notes + sync_notes(data)
+    if shortcut:
+        lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
+    old = older_installs(ident, legacy)
+    unchecked = bool(old) and not state.get("self_check")  # (set up by --installer: checked before the clean-up)
+    if first or installed or args.check or previous or unchecked:
+        step.now = "the self-check, reading the sample invoices"
+        ok, result = self_check()
+        state["self_check"] = {"ok": ok, "at": time.strftime("%Y-%m-%d %H:%M"), "result": result}
+        lines.append(("ok" if ok else "fail", result))
+        if not ok:
+            lines.append(("info", f"AP Coder still starts. The details are in {log_path()}: send it with Help → "
+                                  "Report a problem in AP Coder."))  # fmt: skip
+    elif state.get("self_check"):
+        last = state["self_check"]
+        word = "OK" if last.get("ok") else "FAILED"
+        lines.append(("ok" if last.get("ok") else "warn",
+                      f"Self-check {word} at setup ({last.get('at', '?')})"))  # fmt: skip
+    if old and (state.get("self_check") or {}).get("ok"):
+        step.now = "cleaning up the older AP Coder"
+        say("Cleaning up the older AP Coder:")
+        freed = upgrade.clean_up(ROOT, data, old, say)
+        if freed:
+            lines.append(("ok", f"Cleaned up the older AP Coder: {upgrade.shown_size(freed)} freed"))
+        lines += retire_settings(data, ident["version"])  # (a settings file it moved in)
+    elif old:
+        kept = ", ".join(str(f) for f in old)
+        lines.append(("warn", f"The older AP Coder is kept in {kept} until the self-check passes"))
+    state.update(
+        setup_done=True,
+        fingerprint=ident["fingerprint"],
+        version=ident["version"],
+        build=ident["build"],
+        commit=ident["commit"],
+    )
+    return lines
+
+
 def run(args: argparse.Namespace, rest: list[str]) -> int:
     state = load_state()
     ident = identity()
@@ -2140,55 +2220,11 @@ def run(args: argparse.Namespace, rest: list[str]) -> int:
     except SetupError as exc:
         save_state(state)
         return failed(exc)
-    if str(ROOT) not in sys.path:  # ap_coder itself, even when it was only just installed
-        sys.path.insert(0, str(ROOT))
-    try:
-        data = ensure_data_folder()
-    except upgrade.DataMoveError as exc:  # never started on half the data: the next start finishes the move
-        save_state(state)
-        return failed(SetupError(str(exc), exc.hint))
-    notes = settle_settings(data, ident["version"])
-    too_new = database_too_new(data, ident["version"])
-    if too_new:
-        save_state(state)
-        return failed(too_new)
-    ensure_models(first, state)
-    paths.record_install(ident)
-    upgrade.write_marker(ROOT, ident)
-    shortcut = ensure_shortcut()
-    lines = readiness((level, packages), state, force=args.check) + notes + sync_notes(data)
-    if shortcut:
-        lines.append(("ok" if shortcut.startswith("Desktop") else "warn", shortcut))
-    old = older_installs(ident, legacy)
-    unchecked = bool(old) and not state.get("self_check")  # (set up by --installer: checked before the clean-up)
-    if first or installed or args.check or previous or unchecked:
-        ok, result = self_check()
-        state["self_check"] = {"ok": ok, "at": time.strftime("%Y-%m-%d %H:%M"), "result": result}
-        lines.append(("ok" if ok else "fail", result))
-        if not ok:
-            lines.append(("info", f"AP Coder still starts. The details are in {log_path()}: send it with Help → "
-                                  "Report a problem in AP Coder."))  # fmt: skip
-    elif state.get("self_check"):
-        last = state["self_check"]
-        word = "OK" if last.get("ok") else "FAILED"
-        lines.append(("ok" if last.get("ok") else "warn",
-                      f"Self-check {word} at setup ({last.get('at', '?')})"))  # fmt: skip
-    if old and (state.get("self_check") or {}).get("ok"):
-        say("Cleaning up the older AP Coder:")
-        freed = upgrade.clean_up(ROOT, data, old, say)
-        if freed:
-            lines.append(("ok", f"Cleaned up the older AP Coder: {upgrade.shown_size(freed)} freed"))
-        lines += retire_settings(data, ident["version"])  # (a settings file it moved in)
-    elif old:
-        kept = ", ".join(str(f) for f in old)
-        lines.append(("warn", f"The older AP Coder is kept in {kept} until the self-check passes"))
-    state.update(
-        setup_done=True,
-        fingerprint=ident["fingerprint"],
-        version=ident["version"],
-        build=ident["build"],
-        commit=ident["commit"],
-    )
+    step = Step()
+    with heartbeat(step):
+        lines = settle_and_check(args, state, ident, first, previous, legacy, (level, packages, installed), step)
+    if isinstance(lines, int):
+        return lines
     save_state(state)
     print_summary(lines)
     if args.no_start:

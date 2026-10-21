@@ -4947,10 +4947,12 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Fix:** *Making AP Coder's own Python environment (the .venv folder; under a minute)...* before `venv`; while pip
   runs, every 12 s without a line the window says how far it is, from pip's lines and the `.dist-info` folders that
   appear: *Working out which packages are needed: 12 so far (pandas)...*, *Getting packages: 29 of 55
-  (opencv_python)...*, *Installing packages: 41 of 56 (onnxruntime)...*.
+  (opencv_python)...*, *Installing packages: 41 of 56 (onnxruntime)...*. The steps after pip get the same watch
+  (`settle_and_check`): 12 s without a line says *Still working: getting the OCR models...* (or the checks, the
+  self-check, the clean-up).
 - **Test:** `tests/test_launch_build.py::test_pip_progress_counts_what_it_found_fetched_and_installed`,
   `::test_pip_progress_from_the_wheelhouse`, `::test_pip_says_how_far_it_is_while_it_is_quiet`,
-  `::test_making_the_venv_is_said`
+  `::test_making_the_venv_is_said`, `::test_a_quiet_step_after_pip_says_it_is_still_working`
 - **Lesson:** Moving noise to the log is half the job: whatever took its place in the window must still say that
   something is happening.
 

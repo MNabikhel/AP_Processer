@@ -371,3 +371,14 @@ def test_the_dry_run_names_every_address_the_build_downloads_from(capsys, monkey
     assert "www.modelscope.cn" in plan["download_hosts"]
     assert all(m["url"].startswith("https://") for m in plan["models"])
     assert "pypi.org, files.pythonhosted.org, www.modelscope.cn" in out.err and "LM Studio" in out.err
+
+
+def test_a_quiet_step_after_pip_says_it_is_still_working(launch, capsys):
+    """H2: the steps after pip (the models, the checks, the self-check) can each be quiet for a while too."""
+    step = launch.Step("getting the OCR models")
+    with launch.heartbeat(step, every=0.2):
+        time.sleep(0.7)
+        launch.say("Downloading ch_PP-OCRv5_mobile_det.onnx ...")
+    out = capsys.readouterr().out
+    assert "  Still working: getting the OCR models..." in out
+    assert launch.Step().status() == ""  # nothing named: nothing said
