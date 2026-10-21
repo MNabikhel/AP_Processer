@@ -3694,14 +3694,16 @@ them, and without one. Learning helped (fields right 291 → 297) but replaced a
 one 9 times and marked 12 right values down (verified to likely, likely to check), all where the vendor's layout had
 changed. Each fix has a small generated fixture in `tests/test_learning_sweep4.py` (the corpus is not in the repo).
 
-Measured after B-387 to B-396 (B-394 to B-396 came from a review with generated English supplier streams): fields
+Measured after B-387 to B-397 (B-394 to B-397 came from reviews with generated English supplier streams): fields
 right with learning 297 → 303 of 370 (291 without); on the English invoices among them 72 → 73 of 100 (71 without),
 none wrong and shown likely or verified; wrong and shown likely or verified 5 → 6 of 370 (6 without: the value the
 rule reader alone shows so); fields worse with learning than without 21 → 4 (N-127, N-128, N-129).
-The review's streams (a label renamed, an order date printed where the invoice date was, two divisions, a value printed
-twice): no value wrong and verified on any (the old layout's label pointing at an order date: 7 before, also on the
-main branch). Learning benchmark (12 suppliers × 30, seed 5): accuracy 100% as before, none wrong among the invoices
-that would go touchless (29/57/61/58% before, 27/48/55/59% after: a spot learned from a value printed twice waits for
+The reviews' 20 streams (a label renamed, an order date printed where the invoice date was, two layouts alternating,
+two divisions, a value printed twice, a stub's statement number): no value wrong and verified on any but `freight`
+(N-130, the same on the main branch), where the main branch verified a wrong invoice date on 7 invoices in each of two
+(`relayout`, `relayout2`); invoices with a wrong value proposed (at check) 16 against the main branch's 32 over 544
+invoices, `freight` aside. Learning benchmark (12 suppliers × 30, seed 5): accuracy 100% as before, none wrong among the invoices
+that would go touchless (29/57/61/58% before, 25/48/55/58% after: a spot learned from a value printed twice waits for
 two approvals). Benchmark (60, seed 3, 50% scans) and the hard corpus (150) unchanged: no template there (99.8% fields,
 verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 
@@ -3870,10 +3872,33 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
   confirmations of the old label.
 - **Reproduce:** the stream in the test (4 invoices, then the new layout).
 - **Reproduced:** yes (the order date verified)
-- **Fix:** a variant whose label changes, the old label gone from the page, starts unsettled again (two labels near
-  one value, "Billing Date" beside and "Invoice #" over it, are not a change).
+- **Fix:** a new label at a spot, the old one gone from the page, is a new spot with no record (two labels near one
+  value, "Billing Date" beside and "Invoice #" over it, are one spot). (The first fix reset the spot's record in place;
+  a vendor alternating two layouts then never kept one: B-397.)
 - **Test:** `tests/test_learning_sweep4.py::test_a_new_label_at_the_old_spot_starts_unsettled`
 - **Lesson:** Don't carry a spot's record across a change of its label.
+
+#### B-397 · A vendor alternating two layouts: the order date verified as the invoice date · high
+- **Where:** `ap_coder/capture/supplier.py` (`_update_variants`, `learn`, new `_vouch_once`, `Variant.twin`)
+- **Symptom:** Found by a re-review (English supplier stream): even invoices print "Invoice Date:", odd ones "Billed
+  on:" at the same spot and an order "Date:" row under it, the order date the invoice date on invoices 1 and 3. On
+  invoice 5 the invoice date was the order date, *verified*, and the invoice eligible for touchless (before this
+  branch: check); with the two dates equal on every odd invoice up to 21, invoices 23 to 29 went touchless wrong.
+- **Cause:** the true spot was matched by its position and relabelled every invoice, so B-396 reset its record each
+  time; the "Date:" spot, learned as the other place of a date printed twice, was never missed on the even layout (no
+  "Date:" there) and its two coincidences made it the only spot vouched for: it agreed with the rule reader's wrong
+  date.
+- **Reproduce:** the stream in the test (8 invoices).
+- **Reproduced:** yes (the order date verified on invoice 5)
+- **Fix:** another label at a spot is another layout's spot with its own record (both labels printed by the value
+  still make one spot), so B-396's reset is no longer needed. A place learned from a value printed twice (a *twin*)
+  that only approvals in a row vouch for counts only when all the field's twin places are read on the page; when the
+  spots it vouches for disagree, those settled by a printed-alone approval decide if they agree, else none.
+- **Test:** `tests/test_learning_sweep4.py::test_a_vendor_alternating_two_layouts_never_verifies_the_order_date`,
+  `tests/test_learning_sweep4.py::test_a_template_stored_before_the_spots_were_counted_loads_and_recovers`,
+  `tests/test_learning_sweep4.py::test_after_a_layout_change_the_settled_new_spot_shows_the_right_date`
+- **Lesson:** Don't let one witness stand when its partner has left the page: two places that coincided vouch only
+  together.
 
 #### Left as they are (learning from approvals)
 
@@ -3885,7 +3910,7 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
   short form ("2% 10 days", also check). Left with B-372's terms work.
 - **N-129** · Since B-394 a template reading at a spot it does not vouch for no longer decides, so it no longer corrects
   the rule reader there either: in the review's stream where the order date is the invoice date 4 times in 10, the
-  order date is shown (at *check*) on 4 of 30 invoices where the template's title spot held the right date. On the real
+  order date is shown (at *check*) on 1 of 30 invoices where the template's title spot held the right date. On the real
   invoices the same rule leaves 2 right values at likely where they were verified (a due date and a total contested by
   the template's unvouched rival). Left: a person corrects a value at check; a wrong value verified is not corrected.
 - **N-130** · The review's `freight` stream (merchandise, freight, then "Subtotal" of both): the reader takes the printed
