@@ -98,11 +98,12 @@ def test_the_review_screen_marks_a_guess_and_does_not_call_it_as_suggested(tmp_p
     store = Store(tmp_path / "ap.db")
     load_sample_setup(store)
     ai = _invoice([{"description": "Copy paper", "amount": 20.0, "predicted_gl_code": "6000",
+                    "predicted_cost_center": "CC200",
                     "reasoning_justification": f"{MODEL_SUGGESTED}: office supplies"}])  # fmt: skip
     iid = store.add_invoice(tmp_path / "a.pdf", ai, {"requires_review": True})
     page = client_for(store).get(f"/review/{iid}").text
     assert "is-guess" in page and "A guess, not learned yet: check it" in page
-    assert "all as suggested" not in page and "1 guessed account to check" in page
+    assert "all as suggested" not in page and "Teaches from 1 line: 1 guessed account to check" in page
 
 
 # --- B-466: Month-end -----------------------------------------------------------------------------------------------
@@ -282,3 +283,34 @@ def test_the_queue_says_no_vendor_name_and_marks_a_name_to_check(tmp_path):
     page = client_for(store).get("/review").text
     assert "No vendor name" in page and '<div class="name" title="scan_0042.pdf' not in page
     assert '<span class="rq-unsure">Inc.?</span>' in page and "Vendor name: check it" in page
+
+
+# --- B-473: the approve bar says what approving teaches --------------------------------------------------------------
+
+
+def test_the_approve_bar_says_lines_to_code_coded_by_you_or_kept_as_suggested(tmp_path):
+    """BDO's only line had no GL account yet and the bar said "Teaches from 1 line · all as suggested"."""
+    from ap_coder.web.invoice_view import learn_text
+
+    store = Store(tmp_path / "ap.db")
+    load_sample_setup(store)
+    blank = {"description": "Disbursements", "amount": 50.0, "predicted_gl_code": UNASSIGNED,
+             "reasoning_justification": "No earlier approval to learn from: pick the account."}  # fmt: skip
+    iid = store.add_invoice(tmp_path / "a.pdf", _invoice([blank]), {"requires_review": True})
+    page = client_for(store).get(f"/review/{iid}").text
+    assert "1 line to code" in page and "all as suggested" not in page and "Teaches from" not in page
+
+    learned = {"description": "Toner", "amount": 30.0, "predicted_gl_code": "6000",
+               "reasoning_justification": "Approved 3 times for this vendor"}  # fmt: skip
+    guess = {"description": "Paper", "amount": 20.0, "predicted_gl_code": "6000",
+             "reasoning_justification": f"{MODEL_SUGGESTED}: office supplies"}  # fmt: skip
+    ai = _invoice([blank, learned, dict(learned, description="Ink"), guess])
+
+    def bar(*gls):
+        doc = _invoice([dict(li, predicted_gl_code=gl) for li, gl in zip(ai["line_items"], gls, strict=True)])
+        return learn_text(InvoiceCoding.model_validate(doc), ai)
+
+    assert bar(UNASSIGNED, "6000", "6000", "6000") == (
+        "1 line to code · Teaches from 3 lines: 2 as suggested, 1 guessed account to check"
+    )
+    assert bar("6100", "6000", "6400", "6010") == "Teaches from 4 lines: 2 you coded, 1 you changed, 1 as suggested"

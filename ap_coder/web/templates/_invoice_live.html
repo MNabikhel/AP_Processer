@@ -239,8 +239,8 @@
 <div class="rvw-post">
   <div class="rvw-post-amount">Post <b>{{ b.amount }}</b> {{ b.currency }}
     {% if live.math %}<span class="rvw-math {{ 'ok' if live.math.ok else 'bad' }}" title="{% for r in live.math.rows %}{{ '✓' if r.ok else '✕' }} {{ r.what }}: {{ r.detail }}&#10;{% endfor %}"><span class="ms" aria-hidden="true">{{ 'check' if live.math.ok else 'calculate' }}</span>Math: {{ live.math.text }}</span>{% endif %}</div>
-  <div class="rvw-post-sub" title="Approving teaches AP Coder from {{ b.lines | plural('line') }}: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
-    Teaches from {{ b.lines | plural("line") }} · <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
+  <div class="rvw-post-sub" title="What approving teaches AP Coder: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
+    <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
 </div>
 {% if b.pick %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}
 <button type="button" class="apc-pill warn inv-pick" data-goto-pick aria-keyshortcuts="G" title="Go to the line (G)">{{ b.pick }}<span class="ms" aria-hidden="true">arrow_downward</span></button>

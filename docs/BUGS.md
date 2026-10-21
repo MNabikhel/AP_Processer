@@ -5065,6 +5065,23 @@ PDFs imported into a scratch data folder with the sample GL accounts and screens
 - **Test:** `tests/test_touchless.py`, `tests/test_touchless_pages.py` (the message)
 - **Lesson:** Say what is known (nothing changed), not what is hoped (all right).
 
+#### B-473 · "Teaches from 1 line · all as suggested" on a line with no GL account yet · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`learn_text`), `ap_coder/web/templates/_invoice_live.html` (the approve bar)
+- **Symptom:** BDO's only line had no GL account yet (nothing proposed, Approve closed) and the approve bar said
+  "Teaches from 1 line · all as suggested"; once the reviewer picked the account it still said "all as suggested".
+- **Cause:** the bar had two words only: "you changed N of its codes", else "all as suggested"; a line still to code,
+  or filled by the reviewer where nothing was proposed, fell under "all as suggested" (filling a blank is no change,
+  D-39, but it is not a suggestion kept either).
+- **Reproduce:** `ca_oc_bdo.pdf` among the 15 PDFs (`shots/after/review_4_vp.png`).
+- **Reproduced:** yes
+- **Fix:** the bar says what approving teaches, line by line, as the approval counts it: "1 line to code" (no GL
+  account, or no cost center where they are used: nothing taught from it yet), then "Teaches from N lines:" with
+  "1 you coded" (nothing proposed, or only a guess, and the reviewer picked the account), "1 you changed", "1 as
+  suggested" (an account proposed and kept), "1 guessed account to check" (B-463).
+- **Test:** `tests/test_trust_review.py::test_the_approve_bar_says_lines_to_code_coded_by_you_or_kept_as_suggested`;
+  `tests/test_dashboard_sweep_fixes.py`, `tests/test_web_invoice.py` (the bar's words)
+- **Lesson:** A default phrase ("all as suggested") must be earned by the data, not reached by falling through.
+
 #### Looked at and left (review screen and coding)
 
 - **N-172** · After Approve, the address bar was said to stay on the approved invoice's address. Not reproduced:
@@ -5074,8 +5091,7 @@ PDFs imported into a scratch data folder with the sample GL accounts and screens
 - **N-173** · Vendors still lists a name read off an invoice not approved yet ("Inc."), tagged "Not approved yet":
   hiding it would hide its bank-account and GST/HST history (a fraud signal) and "Ask the vendor" for its invoices
   in the queue.
-- **N-174** · The approve bar says "all as suggested" when the only lines were blank and the reviewer picked their
-  accounts: filling a blank is no change (D-39); a better word for "nothing proposed to keep" is a wording choice.
+- **N-174** · Fixed (B-473).
 - **N-175** · B-468 asks before the first real import; a demo kept after real invoices are imported still counts in
   the figures until removed (excluding it everywhere is a larger change across Activity, Learning, Insights and
   Vendors).

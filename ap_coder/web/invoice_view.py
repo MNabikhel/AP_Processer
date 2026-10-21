@@ -777,15 +777,36 @@ def ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
     return changed
 
 
-def guesses_kept(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
-    """The lines whose account was a guess (``offline_coder.guessed``: the chat model's own pick, no approval behind
-    it) and is still the one on screen: the reviewer confirms it by approving, it is not "as suggested" (B-463)."""
+def learn_text(coding: InvoiceCoding, ai: dict[str, Any], cost_centers: bool = False) -> str:
+    """What approving teaches, line by line, as the approval counts it (B-473): "1 line to code" (no GL account yet,
+    or no cost center where they are used: nothing taught from it), then "Teaches from 3 lines: 1 you coded (the AI
+    proposed nothing, or only a guess, and you picked it), 1 you changed, 1 as suggested (an account proposed and
+    kept), 1 guessed account to check (the chat model's guess, still on screen: B-463)"."""
     from ap_coder.ai.offline_coder import guessed
+    from ap_coder.core.store import proposed_coding
 
-    return sum(1 for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items))
-               if before and guessed(before.get("reasoning_justification"))
-               and li.predicted_gl_code not in (UNASSIGNED, "")
-               and li.predicted_gl_code == before.get("predicted_gl_code"))  # fmt: skip
+    todo = coded = changed = kept = guesses = 0
+    for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items)):
+        gl, cc = li.predicted_gl_code, li.predicted_cost_center or ""
+        if gl in (UNASSIGNED, "") or (cost_centers and cc in (UNASSIGNED, "")):
+            todo += 1
+            continue
+        s_gl, s_cc = proposed_coding(before)
+        if before and guessed(before.get("reasoning_justification")) and gl == before.get("predicted_gl_code"):
+            guesses += 1
+        elif s_gl in (None, "", UNASSIGNED):  # nothing proposed (or only a guess, changed): the reviewer's coding
+            coded += 1
+        elif suggestion_kept(s_gl, s_cc, gl, cc):
+            kept += 1
+        else:
+            changed += 1
+    parts = [f"{coded} you coded" if coded else "", f"{changed} you changed" if changed else "",
+             f"{kept} as suggested" if kept else "",
+             f"{plural(guesses, 'guessed account')} to check" if guesses else ""]  # fmt: skip
+    taught = coded + changed + kept + guesses
+    said = [f"{plural(todo, 'line')} to code" if todo else "",
+            f"Teaches from {plural(taught, 'line')}: {', '.join(p for p in parts if p)}" if taught else ""]  # fmt: skip
+    return " · ".join(s for s in said if s)
 
 
 def differs_from_stored(coding: InvoiceCoding, stored: dict[str, Any]) -> bool:
@@ -1111,7 +1132,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
     key = override_key(errors) if errors else ""
     allow = not pick and (not errors or draft.override == key)
-    changed, guesses = ai_changes(coding, ai), guesses_kept(coding, ai)
+    changed = ai_changes(coding, ai)
     lines_n = len(coding.line_items)
     _, rule_changes = rules.apply(coding, store.coding_rules())
     doc = coding.model_dump()
@@ -1148,8 +1169,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "posting": distribution(output, reference),
         "bar": {
             "amount": money(coding.grand_total), "currency": coding.currency, "lines": lines_n, "changed": changed,
-            "learn": f"you changed {changed} of its codes" if changed else
-                     f"{plural(guesses, 'guessed account')} to check" if guesses else "all as suggested",
+            "learn": learn_text(coding, ai, uses_cost_centers(reference)),
             "pick": pick, "errors": len(errors), "override_key": key, "override": bool(key) and draft.override == key,
             "allow": allow,
         },
