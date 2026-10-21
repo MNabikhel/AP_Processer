@@ -4418,3 +4418,16 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
 - **Fix:** the review screen's form and the Exports page's ticked invoices are read with a limit of 200,000 fields.
 - **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_of_a_hundred_and_fifty_lines_can_be_checked_and_approved`
 - **Lesson:** Don't leave a framework's default limit standing on a form whose size grows with the data.
+
+#### B-456 · The review queue's search missed vendors written with accents · low
+- **Where:** `ap_coder/web/pages/review.py` (`filter_queue`, `sort_queue`)
+- **Symptom:** typing "quebec" or "energir" in the review queue's search found no "Hydro-Québec" or "Énergir" (only
+  the accented spelling did), and the review screen's previous / next followed the same filter; "Vendor A–Z" put
+  "Énergir" after "Zenith Supply".
+- **Cause:** the search and the order compared lower-cased text; the folding the rest of AP Coder uses for names
+  (`store.fold_text`, B-04) was not used here.
+- **Reproduce:** `filter_queue([{"vendor_name": "Hydro-Québec"}], "quebec")`.
+- **Reproduced:** yes (`[]`)
+- **Fix:** both fold accents and case as the vendor and invoice filters elsewhere do.
+- **Test:** `tests/test_pilot_path_backend.py::test_the_queue_search_and_vendor_order_read_accents_as_people_do`
+- **Lesson:** Don't compare names with `lower()`: fold them the way the rest of the app does.

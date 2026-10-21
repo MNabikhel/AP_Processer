@@ -152,3 +152,14 @@ def test_a_value_corrected_on_an_invoice_approved_again_is_still_learned(tmp_pat
     found = sorted((v.count, v.settled, v.missed) for v in template.fields["invoice_date"])
     assert found == [(1, 0, 1), (1, 1, 0)]
     assert template.invoices == 1
+
+
+def test_the_queue_search_and_vendor_order_read_accents_as_people_do():
+    """Typing "quebec" in the review queue's search found no "Hydro-Québec", and "Vendor A–Z" put "Énergir" after
+    "Zenith" (é sorts after z by its code)."""
+    from ap_coder.web.pages.review import filter_queue, sort_queue
+
+    rows = [{"vendor_name": "Zenith Supply"}, {"vendor_name": "Hydro-Québec"}, {"vendor_name": "Énergir"}]
+    assert [r["vendor_name"] for r in filter_queue(rows, "quebec")] == ["Hydro-Québec"]
+    assert [r["vendor_name"] for r in filter_queue(rows, "ENERGIR")] == ["Énergir"]
+    assert [r["vendor_name"] for r in sort_queue(rows, "vendor")] == ["Énergir", "Hydro-Québec", "Zenith Supply"]
