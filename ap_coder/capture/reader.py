@@ -1496,9 +1496,10 @@ def _bare_business_numbers(layout: DocLayout) -> list[Reading]:
                     spots += [(o, 0) for o in _right_of(page.lines, line)[:1]]
                     spots += [(o, 0) for o in _below(page.lines, line, line.box)[:1]]
                 for where, at in spots:
-                    got = _NINE_DIGITS.match(where.text[at:].strip())
-                    if not got:
-                        continue
+                    rest = where.text[at:].strip()
+                    got = _NINE_DIGITS.match(rest)
+                    if not got or re.match(r"[\s.:-]*[RT]", rest[got.end() :], re.I):
+                        continue  # "232672980-RT-0001" misread: the whole number is printed, not read here
                     digits = re.sub(r"\s", "", got.group(1))
                     a = where.text.find(got.group(1), at)
                     words = _span_words(where, a, a + len(got.group(1)))
@@ -2063,8 +2064,18 @@ def _solve_totals(cands: dict[str, list[Reading]], line_sum: float | None) -> di
                 continue  # one printed amount ("GST/HST") is one tax
             if present and total_tax is not None:
                 continue  # the total tax stands in only when no component tax is read
-            if charge is not None and PREPAID in charge.method and (present or total_tax is not None):
-                continue  # a deposit taken off a taxed total may be off before or after the tax: not settled here
+            if charge is not None and PREPAID in charge.method:
+                if present or total_tax is not None:
+                    continue  # a deposit taken off a taxed total may be off before or after the tax: not settled here
+                if sub is not None and any(
+                    t is not None
+                    and t.boxes
+                    and sub.boxes
+                    and t.boxes[0].page == sub.boxes[0].page
+                    and abs(sub.value - t.value) <= 0.011
+                    for t in totals
+                ):
+                    continue  # "Total 2,344.90 | Deposit received | Balance due": the invoice's total is printed
             score = (sub.score if sub else 0) + (total.score if total else 0) + sum(t.score for t in present)
             score += (charge.score if charge else 0.0) + (total_tax.score if total_tax else 0.0)
             bonus = 0.0

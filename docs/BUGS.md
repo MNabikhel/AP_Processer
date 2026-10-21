@@ -3975,3 +3975,31 @@ invoices to agencies, and a few templates. Each fix has a small generated fixtur
 - **Test:** `tests/test_en_pdf_sweep4.py::test_a_letter_s_date_alone_under_the_letterhead_is_the_invoice_date_checked`,
   `tests/test_en_pdf_sweep4.py::test_a_date_in_another_sentence_over_a_due_date_label_is_not_the_due_date`
 - **Lesson:** Don't take any date over a label as its value: the line over it may be a sentence about another date.
+
+#### B-412 · Found on the hard corpus after B-396 and B-404: a balance after a deposit read as the total, a misread whole business number read as nine digits, likely · high
+- **Where:** `ap_coder/capture/reader.py` (`_solve_totals`, `_bare_business_numbers`)
+- **Symptom:** two generated invoices that print "Total 2,344.90 | Deposit received | Balance due 1,758.67" gave the
+  balance as the total (likely; the corpus's total is the invoice's, 2,344.90); "GST/HST Reg. No. 232672980-RT-0001"
+  read badly on a scan gave "232672980" (likely; the number is the whole one).
+- **Cause:** B-396 let a deposit taken off make any later total add up; B-404 read nine digits after the label
+  whatever followed them.
+- **Reproduce:** the PDFs of the tests below.
+- **Reproduced:** yes (`grand_total 1758.67`; `['232672980']` read)
+- **Fix:** a deposit is taken off only when no total on the subtotal's page equals the subtotal (Cox's "Total This
+  Invoice" is the only total on its page); nine digits followed by an "R" or a "T" are the whole number misread, not
+  a business number printed alone.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_deposit_under_a_printed_total_leaves_the_total_as_printed`,
+  `tests/test_en_pdf_sweep4.py::test_a_whole_business_number_misread_is_not_read_as_its_nine_digits`
+- **Lesson:** Don't let a new way for the totals to add up outrank the plain one the page prints.
+
+#### Left as they are (English vendor PDFs)
+
+- **N-130** · A zero printed under "QST/PST" on Microsoft's invoices ("QST/PST 0.00") is read as a QST of 0.00
+  (likely, `EITHER_TAX`); the corpus leaves it out, so it counts as spurious. It is what the page prints.
+- **N-131** · Payment terms printed as a phrase ("Accounts are due when rendered", "30 Net payment terms", "Pay upon
+  receival", "6 month contract") stay missing on 9 of the 36 invoices that print terms: not in this change's scope.
+- **N-132** · Where the supplier's name is only in a logo (Owen Sound's water bill, NorthWestern Energy's and Old
+  Dominion Power's bills, WSP's letter), the name read is a customer's or a label at *check*, or none; reading a logo
+  is not done.
+- **N-133** · A media invoice's agency commission is not read as an amount of its own (no field for it); the total is
+  the net, as the agency pays it, and the gross is not kept as the subtotal.

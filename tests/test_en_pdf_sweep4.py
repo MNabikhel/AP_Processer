@@ -408,3 +408,21 @@ def test_remit_to_bank_is_no_name_the_account_s_name_under_it_is(tmp_path):
         (420, 40, "Invoice", 18), (400, 85, "Document No:"), (480, 85, "9988434410"), *_AMOUNTS,
     ])  # fmt: skip
     assert _read(path)["vendor_name"].value == "MICROSOFT CANADA INC"
+
+
+def test_a_deposit_under_a_printed_total_leaves_the_total_as_printed(tmp_path):
+    # "Subtotal 2,344.90 | Total 2,344.90 | Deposit received (586.23) | Balance due 1,758.67": the invoice's total is
+    # printed; the balance after the deposit is not read as it.
+    path = _pdf(tmp_path, [
+        *_SUPPLIER, (40, 330, "Description"), (480, 330, "Amount"), (40, 345, "Furniture"), (480, 345, "2,344.90"),
+        (380, 500, "Subtotal"), (480, 500, "2,344.90"), (380, 515, "Total"), (480, 515, "2,344.90"),
+        (380, 530, "Deposit received"), (480, 530, "(586.23)"), (380, 545, "Balance due"), (480, 545, "1,758.67"),
+    ])  # fmt: skip
+    assert _read(path)["grand_total"].value == 2344.9
+
+
+def test_a_whole_business_number_misread_is_not_read_as_its_nine_digits(tmp_path):
+    from ap_coder.capture.reader import _bare_business_numbers
+
+    path = _pdf(tmp_path, [(40, 40, "GC Strategies Inc.", 14), (40, 80, "GST/HST Reg. No. 232672980-RT-O001"), *_AMOUNTS])
+    assert _bare_business_numbers(build_layout(path, ocr=False)) == []
