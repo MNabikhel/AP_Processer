@@ -593,3 +593,28 @@ def test_the_net_after_an_agency_commission_is_checked(tmp_path):
     f = _totals(tmp_path, [("Gross Total", "$1,400.00"), ("Agency Commission", "($210.00)"),
                            ("Net Amount Due", "$1,190.00")])  # fmt: skip
     assert f["grand_total"].value == 1190.0 and f["grand_total"].status == "check"
+
+
+def test_a_customer_block_level_with_a_right_aligned_supplier_is_not_the_supplier(tmp_path):
+    # The supplier right-aligned at the top right, the customer's block at the top left at about the same height
+    # (the review's sweep of layouts): the customer won by its "name over a street address" bonus (B-419).
+    import pymupdf
+
+    for i, (vy, cy) in enumerate([(50, 60), (60, 60), (50, 50)]):
+        doc = pymupdf.open()
+        page = doc.new_page(width=612, height=792)
+        for text, y, size in [("Northwind Supply Ltd.", vy, 11), ("123 King Street West", vy + 13, 9),
+                              ("Toronto, ON M5H 1A1", vy + 24, 9)]:  # fmt: skip
+            w = pymupdf.get_text_length(text, fontname="hebo" if size == 11 else "helv", fontsize=size)
+            page.insert_text((560 - w, y), text, fontsize=size, fontname="hebo" if size == 11 else "helv")
+        for x, y, text in [(50, cy, "Acme Industries Inc."), (50, cy + 13, "45 Queen Street"),
+                           (50, cy + 26, "Ottawa, ON K1P 1J9"), (380, 130, "Invoice #:"), (470, 130, "INV-1001"),
+                           (50, 220, "Description"), (500, 220, "Amount"), (50, 238, "Consulting"),
+                           (500, 238, "550.00"),
+                           (380, 280, "Subtotal"), (500, 280, "550.00"), (380, 295, "HST 13%"), (500, 295, "71.50"),
+                           (380, 310, "Total"), (500, 310, "621.50")]:  # fmt: skip
+            page.insert_text((x, y), text, fontsize=10)
+        path = tmp_path / f"tr{i}.pdf"
+        doc.save(path)
+        got = _read(path)["vendor_name"]
+        assert not (got.value == "Acme Industries Inc." and got.status in (VERIFIED, "likely")), (vy, cy, got)

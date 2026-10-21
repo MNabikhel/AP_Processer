@@ -3798,7 +3798,7 @@ invoices to agencies, and a few templates. Each fix has a small generated fixtur
 - **Fix:** never a name: a subject or "Re:" line, a salutation or an addressee ("Dear", "Mr."), a box's or column's
   label printed alone, a month, opening hours, a sentence of four words and more ending with a period, a label with
   its amount on its row ("Previous Balance 111.54"), the town under a street address. A name over its street address
-  counts a little more (B-414: only the first name on the page). A sender's line needs an address after the name.
+  counted a little more (taken out again, B-419). A sender's line needs an address after the name.
   (A rule taking the line printed far larger than the rest for the letterhead was taken out again, B-416: the
   larger line is as often a customer's or a project's name; McWilliam's tagline is read as before, likely.) A top-of-page name scoring below `WEAK_NAME`
   (no company form, not larger, low on the page) is marked `UNMEASURED`: a person checks it.
@@ -4104,6 +4104,21 @@ invoices to agencies, and a few templates. Each fix has a small generated fixtur
 - **Test:** `tests/test_en_pdf_sweep4.py::test_a_deposit_on_a_taxed_invoice_leaves_the_total_for_a_person_to_check`,
   `tests/test_en_pdf_sweep4.py::test_the_net_after_an_agency_commission_is_checked`
 - **Lesson:** Don't let a check on other fields lift a reading whose question is not arithmetic: which amount to post.
+
+#### B-419 · A customer's block level with a right-aligned supplier was read as the supplier, likely · high
+- **Where:** `ap_coder/capture/reader.py` (`_vendor_names`)
+- **Symptom:** the re-review's sweep of 27 layouts: the supplier right-aligned at the top right ("Northwind Supply
+  Ltd." over "123 King Street West"), the customer's block at the top left at about the same height ("Acme Industries
+  Inc." over "45 Queen Street"): 7 layouts gave the customer at likely, where main gave the supplier.
+- **Cause:** B-399's "name over its street address" bonus (B-414 kept it for the first name on the page) needed the left
+  edges lined up, which a right-aligned supplier's lines are not, and "first" was judged by the bottom of the boxes.
+- **Reproduce:** the PDFs of the test below.
+- **Reproduced:** yes (`'Acme Industries Inc.' likely`)
+- **Fix:** the bonus is taken out: a supplier's and a customer's names both sit over their addresses, so it never told
+  them apart. (The town under a street address is still no name, B-399.) Distill Mobile's name, which it lifted to
+  likely, is *check* again.
+- **Test:** `tests/test_en_pdf_sweep4.py::test_a_customer_block_level_with_a_right_aligned_supplier_is_not_the_supplier`
+- **Lesson:** Don't add a bonus for something both parties' blocks have.
 
 #### Left as they are (English vendor PDFs)
 

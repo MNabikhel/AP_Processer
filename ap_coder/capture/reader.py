@@ -1914,7 +1914,6 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
     customer_names = {plain(ln.text.strip()) for ln in layout.lines() if _in_bill_to(layout, ln)}
     # The line-items table starts below the header: nothing from it is the supplier's name.
     table_top = min((ln.box.y0 for ln in page.lines if _table_header_line(ln, page.lines)), default=1.0)
-    addressed: list[Reading] = []
     for line in page.lines:
         text = line.text.strip()
         p = plain(text)
@@ -1968,7 +1967,6 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
         if line.box.height >= tall * 0.95:
             score += 0.15
         score += 0.12 * (1 - min(line.box.cy / 0.33, 1))
-        over_address = _over_address(page.lines, line)
         if text.isupper() and len(text.split()) == 1:
             score -= 0.1
         if plain(text) in customer_names:
@@ -1980,14 +1978,6 @@ def _vendor_names(layout: DocLayout) -> list[Reading]:
             text = _ocr_name_fix(text)
         out.append(Reading("vendor_name", text, text, [union_all([w.box for w in words])] if words else [line.box],
                            min(score, 0.95) * _min_conf(line.words), "top-of-page"))  # fmt: skip
-        if over_address:
-            addressed.append(out[-1])
-    for r in addressed:
-        # A party's name over its street address, not a label or a heading: worth a little more when it is the first
-        # name on the page. A name over an address lower down (a window envelope's customer block) is not.
-        if not any(o is not r and o.method == "top-of-page" and o.boxes and o.boxes[0].y1 <= r.boxes[0].y0 + 0.002
-                   for o in out):  # fmt: skip
-            r.score = min(0.95, r.score + 0.1)
     for sender in [r for r in out if r.method == "sender-line" and r.boxes]:
         # The address block under the sender's line is the customer's, shown through the envelope's window.
         sb = sender.boxes[0]
