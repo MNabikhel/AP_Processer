@@ -31,7 +31,7 @@ function take(list) {
   for (const f of list) {
     const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
     if (accept.length && !accept.includes(ext)) {
-      toast({ text: `${f.name} was not added: AP Coder reads PDFs, scans, photos and saved emails (.eml).`, tone: "warn" });
+      toast({ text: `${f.name} was not added: AP Coder reads PDFs, scans, photos, saved emails (.eml, .msg) and invoices saved as text (.txt).`, tone: "warn" });
       continue;
     }
     if (!files.some((g) => g.name === f.name && g.size === f.size)) files.push(f);

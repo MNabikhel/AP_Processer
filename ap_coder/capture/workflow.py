@@ -322,7 +322,8 @@ def learn_from_approval(store: Any, invoice_id: int, final: dict[str, Any], *, a
     try:
         layout = build_layout(path)
         profile = store.get_supplier_profile(key) or {}
-        template = learn(profile.get("template") or None, layout, confirmed_values(final, taught))
+        template = learn(profile.get("template") or None, layout, confirmed_values(final, taught),
+                         document=str(inv.get("file_sha256") or ""))  # fmt: skip
         store.save_supplier_profile(key, display_name=name, template=template, actor=actor or None)
         learned["template"] = True
     except Exception as exc:
@@ -351,11 +352,13 @@ def supplier_progress(store: Any, key: str) -> tuple[str, int, str]:
     state, _, _ = autonomy_status(stats, policy, stored, profile.get("autonomous_since"), touchless_on=on,
                                   suspended_at=profile.get("suspended_at"))  # fmt: skip
     if state == AUTONOMOUS:
-        where = "touchless"
+        where = "its invoices skip review (touchless)"
     elif state == HELD:
         where = "kept supervised by an AP lead"
     elif state == READY:
-        where = "meets the bar to go touchless" + ("" if on else " (touchless processing is off)")
+        where = "approved often enough to skip review" + (
+            "" if on else ", once touchless processing is turned on (Settings → Automation)"
+        )
     else:
         to_go = clean_invoices_to_go(judged_stats(stats, stored, profile.get("suspended_at")), policy)
         where = to_go_text(to_go) + (" again" if state == SUSPENDED and to_go else "")
@@ -366,7 +369,8 @@ def supplier_progress(store: Any, key: str) -> tuple[str, int, str]:
 
 def taught_message(store: Any, learned: dict[str, Any]) -> str:
     """What an approval taught, in plain words: "Learned from your 2 corrections (invoice number, due date). Acme
-    Ltd: 14 invoices reviewed, about 6 more clean invoices to go touchless." "" when no supplier was found."""
+    Ltd: 14 invoices reviewed, about 6 more invoices approved without a correction before this vendor can skip
+    review." "" when no supplier was found."""
     from ..core.ui import plural
 
     key = learned.get("supplier")

@@ -40,7 +40,7 @@ from markupsafe import Markup
 from ap_coder import __version__
 from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
-from ap_coder.core.reference_data import ReferenceData
+from ap_coder.core.reference_data import UNASSIGNED, ReferenceData
 from ap_coder.core.store import REVIEW, Store
 from ap_coder.web import identity
 from ap_coder.web.jobs import Jobs
@@ -53,6 +53,25 @@ FONTS_DIR = WEB_DIR.parent / "static"  # Inter and the Material Symbols icons
 ASSETS_DIR = WEB_DIR.parent / "assets"  # logo and icon
 
 TARGET_ACCURACY = 0.90
+EARLY_LINES = 50  # reviewed lines before the coding accuracy is held against the target
+
+
+def accuracy_note(settings: Settings, lines_reviewed: int) -> tuple[str, bool]:
+    """(note, compared): what to say under the coding accuracy, and whether to show its distance to the 90% target.
+    Over the first lines (``EARLY_LINES``) one correction moves the figure by points, and without the chat model every
+    line starts with no account, which counts as not right (D-39): a plain note then, not a red distance (B-442).
+    After them the distance shows, with the note's first half while there is no chat model."""
+    from ap_coder.ai import local_llm
+
+    try:
+        ready = local_llm.provider_status(settings).ready
+    except Exception:  # noqa: BLE001 - a status never stops a page
+        ready = False
+    if lines_reviewed >= EARLY_LINES:
+        return ("" if ready else "GL suggestions improve as you approve"), True
+    return "GL suggestions improve as you approve" + (
+        "" if ready else "; with the AI model on they start sooner"
+    ), False
 
 
 # --- Templates ---------------------------------------------------------------------------------------------------
@@ -93,7 +112,9 @@ def money(value: Any, currency: str = "") -> str:
 
 # Autoescape on for every template: text from invoices and files is always escaped.
 templates = Jinja2Templates(env=jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_DIR), autoescape=True))
-templates.env.globals.update(ui=_UiHelpers(), static_version=_static_version(), version=__version__)
+templates.env.globals.update(
+    ui=_UiHelpers(), static_version=_static_version(), version=__version__, unassigned=UNASSIGNED
+)  # (a line without a GL account, as the pages say it)
 templates.env.filters.update(
     money=money,
     plural=ui.plural,
@@ -121,6 +142,16 @@ def get_settings(request: Request) -> Settings:
 def jobs(request: Request) -> Jobs:
     """The app's background jobs (``ap_coder/web/jobs.py``)."""
     return request.app.state.jobs
+
+
+# Starlette refuses a form of more than 1,000 fields by default; the review screen posts about ten per invoice line
+# (an invoice of 100 lines is over), the Exports page one per invoice ticked (B-455).
+MAX_FORM_FIELDS = 200_000
+
+
+async def posted_form(request: Request) -> Any:
+    """The form the page posted, however many fields it has (``MAX_FORM_FIELDS``)."""
+    return await request.form(max_fields=MAX_FORM_FIELDS)
 
 
 def data_dir(store: Store) -> Path:

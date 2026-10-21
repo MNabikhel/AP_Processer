@@ -21,7 +21,7 @@ from ap_coder.core.memory import vendor_key
 from ap_coder.core.store import Store
 from ap_coder.erp import jde, jde_worksheet
 from ap_coder.web import minimd
-from ap_coder.web.core import done, get_store, refuse, reviewer
+from ap_coder.web.core import done, get_store, posted_form, refuse, reviewer
 from ap_coder.web.files import SheetError, read_excel
 
 router = APIRouter()
@@ -114,7 +114,7 @@ def copy(js: jde.JdeSettings) -> jde.JdeSettings:
 @router.post("/settings/jde")
 async def save_general(request: Request) -> JSONResponse:
     store = get_store(request)
-    form = await request.form()
+    form = await posted_form(request)
 
     def text(name: str) -> str:
         return str(form.get(name) or "").strip()
@@ -150,7 +150,7 @@ async def save_general(request: Request) -> JSONResponse:
 @router.post("/settings/jde/gl-map")
 async def save_gl_map(request: Request) -> JSONResponse:
     store = get_store(request)
-    form = await request.form()
+    form = await posted_form(request)
     columns = {name: [str(v).strip() for v in form.getlist(name)] for name, _, _ in GL_COLUMNS}
     count = len(columns["gl_code"])
     if any(len(values) != count for values in columns.values()):
@@ -220,7 +220,7 @@ async def import_gl_map(
 @router.post("/settings/jde/tax-map")
 async def save_tax_map(request: Request) -> JSONResponse:
     store = get_store(request)
-    form = await request.form()
+    form = await posted_form(request)
     new = copy(jde.load(store))
     provinces = [str(p) for p in form.getlist("province")]
     areas = [str(a).strip().upper() for a in form.getlist("tax_area")]
@@ -240,7 +240,7 @@ async def save_tax_map(request: Request) -> JSONResponse:
 @router.post("/settings/jde/an8")
 async def save_an8(request: Request) -> JSONResponse:
     store = get_store(request)
-    form = await request.form()
+    form = await posted_form(request)
     vendors = [str(v).strip() for v in form.getlist("vendor")]
     numbers = [str(a).strip() for a in form.getlist("an8")]
     if len(vendors) != len(numbers):

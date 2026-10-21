@@ -21,7 +21,17 @@ from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import Store
 from ap_coder.erp import dupaudit, export_layout, exports, jde, registers, stamp
-from ap_coder.web.core import by_currency, done, flash_message, get_store, message, reference_or_none, refuse, render
+from ap_coder.web.core import (
+    by_currency,
+    done,
+    flash_message,
+    get_store,
+    message,
+    posted_form,
+    reference_or_none,
+    refuse,
+    render,
+)
 from ap_coder.web.core import reviewer as current_reviewer
 from ap_coder.web.files import (
     SheetError,
@@ -295,7 +305,7 @@ def exports_page(
 @router.post("/exports/create")
 async def create_batch(request: Request) -> JSONResponse:
     """A new batch of the ticked invoices, in the chosen format (JD Edwards: only those that pass its checks)."""
-    form = await request.form()
+    form = await posted_form(request)  # one field per invoice ticked
     store = get_store(request)
     fmt = str(form.get("fmt") or "")
     if fmt not in exports.FORMATS:
@@ -402,7 +412,7 @@ def undo_batch(request: Request, batch: int) -> JSONResponse:
 @router.post("/exports/layout")
 async def save_layout(request: Request) -> JSONResponse:
     store = get_store(request)
-    new, _incomplete, warnings = layout_from_form(await request.form())
+    new, _incomplete, warnings = layout_from_form(await posted_form(request))
     if not new.columns:
         return refuse("Give the layout at least one column (a header and a value).")
     store.set_setting(LAYOUT_SETTING, new.to_json(), actor=current_reviewer())
@@ -416,7 +426,7 @@ async def save_layout(request: Request) -> JSONResponse:
 async def preview_layout(request: Request) -> JSONResponse:
     """The first lines of the custom CSV as the form stands (nothing is saved)."""
     store = get_store(request)
-    new, _incomplete, warnings = layout_from_form(await request.form())
+    new, _incomplete, warnings = layout_from_form(await posted_form(request))
     return JSONResponse({"ok": True, "preview": layout_preview(store, new), "warnings": warnings})
 
 
@@ -433,7 +443,7 @@ async def register_upload(request: Request, file: UploadFile = File(...)) -> JSO
 
 @router.post("/exports/register/import")
 async def register_import(request: Request) -> JSONResponse:
-    form = await request.form()
+    form = await posted_form(request)
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:

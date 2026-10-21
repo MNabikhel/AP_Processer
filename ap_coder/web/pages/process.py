@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -18,11 +19,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from ap_coder.ai import page_reader
-from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS
+from ap_coder.ai.extraction import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
 from ap_coder.ai.local_llm import provider_status
 from ap_coder.ai.pipeline import InvoicePipeline, PipelineResult, invoice_files, other_files
 from ap_coder.capture.layout import ocr_available
-from ap_coder.coding.tax import TAX_TYPES
+from ap_coder.coding.tax import PROVINCE_NAMES, TAX_TYPES
 from ap_coder.core import paths, ui
 from ap_coder.core.config import Settings
 from ap_coder.core.reference_data import ReferenceData
@@ -67,6 +68,34 @@ def safe_file_name(name: str) -> str:
     enough for Windows paths (80 characters, the extension kept)."""
     base = PureWindowsPath(PurePosixPath(name or "").name).name.strip().lstrip(".")
     return safe_name(base) if base else "invoice"
+
+
+# An amount, as a text invoice prints one: with cents (12.50, 1 204,00), after a currency sign ($105), or after a word
+# that names one (Total 1,250; GST: 5).
+_AMOUNT = re.compile(
+    r"\d[\d,. \u00a0]*[.,]\d{2}\b"
+    r"|[$€£]\s*\d"
+    r"|\b(?:total|sub-?total|amount|balance|due|tax|gst|hst|pst|qst|tps|tvq|tvh|montant)\b[^\n\d]{0,20}\d",
+    re.IGNORECASE,
+)
+
+
+def text_of(content: bytes) -> str:
+    """The text of an uploaded text file, decoded as ``extraction.result_from_text`` reads it: Notepad's "Unicode"
+    (UTF-16, by its byte-order mark), UTF-8 (with or without a mark), else Windows' "ANSI" (cp1252)."""
+    if content.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return content.decode("utf-16", errors="replace")
+    try:
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return content.decode("cp1252", errors="replace")
+
+
+def looks_like_an_invoice_text(content: bytes) -> bool:
+    """An uploaded text file (.txt, .md) is read as an invoice only when it prints an amount: a notes file uploaded
+    by mistake ("hello") became an invoice from "hello" (B-439). Upload only: a text file copied into the invoices
+    folder is read as before (a person put it there as an invoice)."""
+    return bool(_AMOUNT.search(text_of(content)))
 
 
 def save_upload(folder: Path, name: str, content: bytes) -> Path:
@@ -153,7 +182,18 @@ def setup_steps(store: Store, settings: Settings) -> list[tuple[str, str, str]]:
         ("ok" if mapped == len(TAX_TYPES) else "todo", "Sales tax GL mapping", f"{mapped} of {len(TAX_TYPES)} set"),
         second,
         name_step(),
+        province_step(store),
     ]
+
+
+def province_step(store: Store) -> tuple[str, str, str]:
+    """Where invoices are delivered to you (Settings → Review): the sales tax check's province when an invoice prints
+    no ship-to. Recommended, not counted ("opt" until given): without it such an invoice says "Province of supply
+    unknown" and its tax goes unchecked."""
+    code = store.our_province()
+    if code:
+        return "ok", "Your province", PROVINCE_NAMES.get(code, code)
+    return "opt", "Your province", "recommended: the sales tax check uses it when an invoice prints no ship-to"
 
 
 def name_step() -> tuple[str, str, str]:
@@ -170,10 +210,11 @@ def name_step() -> tuple[str, str, str]:
 
 def first_steps(store: Store, settings: Settings, has_invoices: bool) -> tuple[list[tuple[str, str, str]], int, int]:
     """(steps, done, needed) of getting started, the same on Import invoices' Setup card and the review queue's
-    welcome page: ``setup_steps``, then processing the first invoices; the optional chat model is not counted."""
+    welcome page: ``setup_steps``, then processing the first invoices; the optional chat model and the recommended
+    province are not counted."""
     steps = setup_steps(store, settings)
     steps.append(("ok" if has_invoices else "todo", "Process your first invoices", "done" if has_invoices else "to do"))
-    needed = [s for s, _, _ in steps if s != "opt"]
+    needed = [s for s, label, _ in steps if s != "opt" and label != "Your province"]  # (recommended, never counted)
     return steps, sum(1 for s in needed if s == "ok"), len(needed)
 
 
@@ -185,6 +226,7 @@ STEP_LINKS = {
     "Sales tax GL mapping": "/accounts?tab=tax",
     "OvisOCR2": "/settings/reading",
     "Your name": "/settings/review",
+    "Your province": "/settings/review",
     "Process your first invoices": "/process",
 }
 
@@ -298,7 +340,8 @@ def process_files(store: Store, settings: Settings, paths: list[Path], *, alread
         messages = list(notes or [])
         if ok:
             note = queued_note(settings, store, queued)
-            messages.append(flash_message(f"{ui.plural(ok, 'invoice')} read and coded. They're waiting in the review "
+            waiting = "It's" if ok == 1 else "They're"  # (B-430)
+            messages.append(flash_message(f"{ui.plural(ok, 'invoice')} read and coded. {waiting} waiting in the review "
                                           f"queue. {note}".strip(), "ok", icon="inbox"))  # fmt: skip
         if failed:
             messages.append(flash_message(f"{ui.plural(failed, 'file')} could not be processed. See Review queue → "
@@ -427,8 +470,13 @@ def _save_and_start(request: Request, received: list[tuple[str, bytes]]) -> JSON
     for name, content in received:
         if Path(name).suffix.lower() not in ACCEPT:
             notes.append(flash_message(f"{name} was not read: AP Coder reads PDFs, pictures (JPEG, PNG, HEIC, TIFF, "
-                                       "BMP, WEBP, GIF) and saved emails (.eml, .msg). Save it as PDF or JPEG to have "
-                                       "it read.", "warn"))  # fmt: skip
+                                       "BMP, WEBP, GIF), saved emails (.eml, .msg) and invoices saved as text (.txt). "
+                                       "Save it as PDF or JPEG to have it read.", "warn"))  # fmt: skip
+            continue
+        if Path(name).suffix.lower() in TEXT_EXTENSIONS and not looks_like_an_invoice_text(content):
+            notes.append(flash_message(f"{name} was not read: a text file (.txt, .md) is read as an invoice only "
+                                       "when it has amounts in it (like 125.00 or Total $105), and this one has none.",
+                                       "warn"))  # fmt: skip
             continue
         try:  # one file that cannot be saved (a name Windows refuses, disk full) is said and skipped
             target = save_upload(folder, name, content)

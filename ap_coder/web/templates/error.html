@@ -12,7 +12,7 @@
   {% if what_to_do %}<p class="center"><b>What to do:</b> {{ what_to_do }}</p>{% endif %}
   <div class="row center">
     <a class="btn" href="/review"><span class="ms" aria-hidden="true">inbox</span>Go to the review queue</a>
-    {% if code != 404 %}<a class="btn" href="/help/report"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>{% endif %}
+    {% if code != 404 %}<a class="btn" href="/help/report" data-busy="Gathering the reports…"><span class="ms" aria-hidden="true">bug_report</span>Report a problem</a>{% endif %}
   </div>
   {% if error_text %}
   <details class="muted small">

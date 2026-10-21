@@ -73,6 +73,7 @@ ABOVE_MAX = 0.05  # a label above its value is at most this far above it (fracti
 EXPERIENCE_BONUS, EXPERIENCE_FULL = 0.04, 4
 RIVAL_MARGIN = 0.1  # template readings scoring this much below the best are not offered
 SETTLE_STREAK = 2  # approvals in a row with the value at a spot, printed elsewhere too, before the template vouches
+KEEP_DOCUMENTS = 100  # pages a template remembers having learned from (a page approved again teaches once)
 _LABEL_WORDS = {
     "invoice", "inv", "facture", "date", "total", "subtotal", "sous", "tps", "tvq", "gst", "hst", "pst", "qst", "rst",
     "tax", "taxe", "taxes", "po", "order", "commande", "bon", "due", "echeance", "terms", "conditions", "amount",
@@ -458,19 +459,25 @@ class Template:
     fields: dict[str, list[Variant]] = field(default_factory=dict)
     invoices: int = 0  # confirmed invoices learned from
     updated_at: str = ""
+    # The pages learned from (their file's SHA-256, the newest KEEP_DOCUMENTS) and the value of each field learned from
+    # each: a page approved again (reopened, sent back) teaches a value once, and a value corrected since (B-454).
+    documents: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": 1, "invoices": self.invoices, "updated_at": self.updated_at,
-            "fields": {k: [v.to_dict() for v in vs] for k, vs in self.fields.items()},
+            "fields": {k: [v.to_dict() for v in vs] for k, vs in self.fields.items()}, "documents": self.documents,
         }  # fmt: skip
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> Template:
         d = d or {}
+        documents = d.get("documents") if isinstance(d.get("documents"), dict) else {}
         return cls(
             fields={k: [Variant.from_dict(v) for v in vs] for k, vs in (d.get("fields") or {}).items()},
             invoices=int(d.get("invoices") or 0), updated_at=d.get("updated_at") or "",
+            documents={str(k): {f: [x] if isinstance(x, str) else [str(y) for y in x or []] for f, x in v.items()}
+                       for k, v in documents.items() if isinstance(v, dict)},
         )  # fmt: skip
 
     def learned_fields(self) -> list[str]:
@@ -637,10 +644,11 @@ def _box_distance(a: list[float], b: list[float]) -> float:
 
 def learn(
     template: Template | dict[str, Any] | None, layout: DocLayout, confirmed: dict[str, tuple[Any, list[Box] | None]],
-    when: str | None = None,
+    when: str | None = None, document: str = "",
 ) -> Template:  # fmt: skip
     """Update ``template`` (a ``Template`` or its dict, as the store keeps it) from the values AP
-    confirmed: ``{field: (value, boxes or None)}``.
+    confirmed: ``{field: (value, boxes or None)}``. ``document``: what tells this page from others (its file's
+    SHA-256): a page approved again teaches only the values approved differently since (B-454).
 
     ``boxes`` are the words the reviewer clicked (teach-by-click) and are authoritative; without them the
     value is looked for on the page. A value that cannot be found on the page teaches nothing.
@@ -654,16 +662,26 @@ def learn(
         template = Template.from_dict(template)
     template = template or Template()
     when = when or _now()
-    items = []
+    seen: dict[str, list[str]] = template.documents.get(document, {}) if document else {}
+    again = bool(seen)
+    items, known = [], set()
     for name, item in confirmed.items():
         value, boxes = item if isinstance(item, tuple) else (item, None)
         if value is not None and value != "" and name in FIELDS:
             items.append((name, value, boxes))
+            if str(compare_key(name, value)) in seen.get(name, []) and not boxes:
+                known.add(name)  # learned from this very page already: a second approval of it is no second invoice
+    # Every value approved is looked for, those learned already too: a corrected value printed on another field's
+    # words is not "printed alone" there (B-460).
     spans = {name: _find_spans(layout, name, value) for name, value, boxes in items if not boxes}
     learned = 0
     for name, value, boxes in items:
         variants = template.fields.setdefault(name, [])
+        # A spot that holds another value than the one approved is a miss even for a value this page taught before: put
+        # back after a correction, the corrected-to spot must not keep its mark (B-462).
         _misses(name, value, variants, layout)
+        if name in known:
+            continue
         hit = _taught(layout, boxes, name, value) if boxes else _best_span(layout, name, spans[name], variants)
         if hit is None:
             continue
@@ -712,8 +730,15 @@ def learn(
                     twin.twin = True
         learned += 1
     if learned:
-        template.invoices += 1
+        template.invoices += 0 if again else 1
         template.updated_at = when
+    if document:
+        values = template.documents.pop(document, {})  # put back last: the newest pages are kept
+        for name, value, _ in items:  # every value of a field learned from this page (A, then B, then A again)
+            values[name] = list(dict.fromkeys([*values.get(name, []), str(compare_key(name, value))]))
+        template.documents[document] = values
+        while len(template.documents) > KEEP_DOCUMENTS:
+            template.documents.pop(next(iter(template.documents)))
     return template
 
 
@@ -1289,7 +1314,7 @@ class AutonomyPolicy:
         return (
             f"at least {self.min_invoices} invoices reviewed, header-field accuracy of at least "
             f"{self.min_lower_bound:.0%} at 95% confidence over the last {self.window}, and the last "
-            f"{self.clean_streak} without a single correction; {self.audit_rate:.0%} of touchless invoices "
+            f"{self.clean_streak} without a single correction; {self.audit_rate:.0%} of the invoices that skip review "
             "are still audited, and one correction suspends it"
         )
 
@@ -1299,9 +1324,10 @@ class AutonomyPolicy:
             ("Invoices reviewed by a person", f"at least {self.min_invoices}"),
             ("Header fields read right",
              f"at least {self.min_lower_bound:.0%}, with 95% confidence, over its last {self.window} invoices"),
-            ("Clean invoices in a row", f"the last {self.clean_streak}, with no correction at all"),
-            ("Audit sample", f"{self.audit_rate:.0%} of touchless invoices still go to a person"),
-            ("A correction", "suspends the vendor at once; it needs a fresh clean streak to go touchless again"),
+            ("Invoices in a row without a correction", f"the last {self.clean_streak}"),
+            ("Audit sample", f"{self.audit_rate:.0%} of the invoices that skip review still go to a person"),
+            ("A correction", "suspends the vendor at once; it needs a fresh run without corrections to skip review "
+                             "again"),
         ]  # fmt: skip
 
 
@@ -1320,7 +1346,7 @@ def policy_gaps(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_POLICY) -
         gaps.append(f"{stats.invoices} of {policy.min_invoices} invoices")
     p_streak = min(1.0, stats.clean_streak / policy.clean_streak) if policy.clean_streak > 0 else 1.0
     if stats.clean_streak < policy.clean_streak:
-        gaps.append(f"{policy.clean_streak - stats.clean_streak} more clean in a row needed")
+        gaps.append(f"{policy.clean_streak - stats.clean_streak} more in a row without a correction needed")
     need = clean_fields_needed(stats.correct, stats.n, policy.min_lower_bound, policy.z)
     if need == 0:
         p_bound = 1.0
@@ -1334,7 +1360,7 @@ def policy_gaps(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_POLICY) -
         more = math.ceil(need / max(per_invoice, 1))
         if not gaps or more > max(policy.min_invoices - stats.invoices, policy.clean_streak - stats.clean_streak):
             bound = f"{policy.min_lower_bound:.0%}"
-            gaps.append(f"about {_plural(more, 'more clean invoice')} for a {bound} accuracy bound")
+            gaps.append(f"about {_plural(more, 'more invoice')} without a correction to show {bound} accuracy")
     progress = 1.0 if not gaps else min(0.99, (p_inv + p_streak + p_bound) / 3)
     return gaps, progress
 
@@ -1381,12 +1407,14 @@ def clean_invoices_to_go(stats: SupplierStats, policy: AutonomyPolicy = DEFAULT_
 
 
 def to_go_text(to_go: int | None) -> str:
-    """ "about 6 more clean invoices to go touchless" (plain English for ``clean_invoices_to_go``)."""
+    """ "about 6 more invoices approved without a correction before this vendor can skip review" (plain English for
+    ``clean_invoices_to_go``: the tester sees it after each approval, where "touchless" was explained nowhere)."""
     if to_go is None:
-        return "too many corrections in its recent invoices to go touchless yet"
+        return "too many corrections in its recent invoices to skip review yet"
     if to_go == 0:
-        return "meets the bar to go touchless"
-    return f"about {_plural(to_go, 'more clean invoice')} to go touchless"
+        return "approved often enough without a correction to skip review"
+    more = "more invoice" if to_go == 1 else "more invoices"
+    return f"about {to_go:,} {more} approved without a correction before this vendor can skip review"
 
 
 def autonomy_status(
@@ -1407,25 +1435,30 @@ def autonomy_status(
             if not touchless_on:
                 return (READY, 1.0, "Meets the bar, but touchless processing is off (Settings → Automation): "
                                     "every invoice is reviewed.")  # fmt: skip
-            return (AUTONOMOUS, 1.0, f"Touchless since {since or 'it met the bar'}; {policy.audit_rate:.0%} of its "
-                                     "invoices are still audited, and one correction suspends it.")  # fmt: skip
+            return (AUTONOMOUS, 1.0, f"Skips review since {since or 'it met the bar'}; {policy.audit_rate:.0%} of "
+                                     "its invoices are still audited, and one correction suspends it.")  # fmt: skip
         stored_state = SUSPENDED
     judged = judged_stats(stats, stored_state, suspended_at)
     gaps, progress = policy_gaps(judged, policy)
     if stored_state == SUSPENDED:
         when = (suspended_at or stats.last_correction_at or "")[:10]
-        head = "Suspended" + (f" on {when}" if when else "") + ": a person found an error in a touchless invoice"
+        head = (
+            "Suspended"
+            + (f" on {when}" if when else "")
+            + ": a person found an error in an invoice that skipped review"
+        )
         if not gaps:
-            tail = "goes touchless again on its next invoice" if touchless_on else "touchless processing is off"
+            tail = "skips review again from its next invoice" if touchless_on else "touchless processing is off"
             return SUSPENDED, 1.0, f"{head}; it meets the bar again ({tail})."
-        return SUSPENDED, progress, f"{head}; {to_go_text(clean_invoices_to_go(judged, policy))} again."
+        to_go = clean_invoices_to_go(judged, policy)
+        return SUSPENDED, progress, f"{head}; {to_go_text(to_go)}{' again' if to_go else ''}."
     if stats.invoices < policy.min_invoices:
         return LEARNING, progress, "; ".join(gaps) + "."
     if not gaps:
-        when = "on its next invoice" if touchless_on else "once touchless processing is on (Settings → Automation)"
+        when = "from its next invoice" if touchless_on else "once touchless processing is on (Settings → Automation)"
         return (READY, 1.0, f"Meets the bar: {stats.invoices} invoices, accuracy at least "
-                            f"{stats.lower_bound(policy.z):.1%}, last {policy.clean_streak} clean. Goes touchless "
-                            f"{when}.")  # fmt: skip
+                            f"{stats.lower_bound(policy.z):.1%}, last {policy.clean_streak} without a correction. "
+                            f"Skips review {when}.")  # fmt: skip
     return SUPERVISED, progress, "; ".join(gaps) + "."
 
 
@@ -1446,7 +1479,7 @@ def automatic_transition(
         return None
     if stored_state == AUTONOMOUS:
         if stats.corrections_since(autonomous_since):
-            return SUSPENDED, "a correction was found since it went touchless"
+            return SUSPENDED, "a correction was found since it began skipping review"
         if not meets_policy(stats, policy):
             return SUPERVISED, "it does not meet the standard bar for touchless processing"
         return None
@@ -1455,7 +1488,8 @@ def automatic_transition(
     if stored_state == SUSPENDED:
         return (
             AUTONOMOUS,
-            f"meets the bar again, with {policy.clean_streak} clean invoices in a row since it was suspended",
+            f"meets the bar again, with {policy.clean_streak} invoices in a row without a correction since it was "
+            "suspended",
         )
     return AUTONOMOUS, "meets the bar for touchless processing"
 

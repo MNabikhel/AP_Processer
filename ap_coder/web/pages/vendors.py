@@ -34,7 +34,7 @@ from ap_coder.core.store import PARKED, REVIEW, Store
 from ap_coder.erp import recurring
 from ap_coder.erp.insights import vendor_workload
 from ap_coder.ops.help import help_for
-from ap_coder.web.core import done, flash_message, get_store, reference_or_none, refuse, render, reviewer
+from ap_coder.web.core import done, flash_message, get_store, posted_form, reference_or_none, refuse, render, reviewer
 from ap_coder.web.files import SheetError, drop_upload, picked_columns, read_upload, receive_sheet, sheet_context
 
 router = APIRouter()
@@ -314,7 +314,7 @@ async def master_upload(request: Request, file: UploadFile = File(...)) -> JSONR
 @router.post("/vendors/master/import")
 async def master_import(request: Request) -> JSONResponse:
     """Import the ERP's vendor list: matched by name; ERP ID, GST/HST number, terms, status and default GL."""
-    form = await request.form()
+    form = await posted_form(request)
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:

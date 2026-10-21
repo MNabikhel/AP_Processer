@@ -49,6 +49,7 @@ from ap_coder.web.core import (
     get_store,
     login,
     message,
+    posted_form,
     reading_status_or_none,
     reference_or_none,
     refuse,
@@ -193,7 +194,7 @@ def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str
     if invoice_id not in ids:
         ids = [i["id"] for i in pending]
     if invoice_id not in ids:
-        return {"ids": ids, "position": None, "count": len(ids), "prev": "", "next": ""}
+        return {"ids": ids, "position": None, "count": len(ids), "prev": "", "next": "", "next_id": None}
     position = ids.index(invoice_id)
     url = lambda i: _with_query(f"/review/{i}", query)  # noqa: E731
     return {
@@ -204,16 +205,28 @@ def navigation(store: Store, invoice_id: int, query: dict[str, str]) -> dict[str
         # Always enabled (wrapping around), so Alt+Left/Right never fall through to the browser's Back/Forward.
         "prev": url(ids[(position - 1) % len(ids)]),
         "next": url(ids[(position + 1) % len(ids)]),
+        # The one after it as the screen showed it (none for the last): where an action on it goes next, even if
+        # editing moved it in the queue's order meanwhile (B-426).
+        "next_id": ids[position + 1] if position + 1 < len(ids) else None,
     }
 
 
-def next_url(store: Store, invoice_id: int, query: dict[str, str]) -> str:
-    """After an action on this invoice: the next one in the queue as shown (or the queue when none is left)."""
+def next_url(store: Store, invoice_id: int, query: dict[str, str], seen_next: Any = None) -> str:
+    """After an action on this invoice: the next one in the queue as shown (or the queue when none is left).
+    ``seen_next``: the invoice that followed it when its screen was drawn (the form's ``next_id``), opened when it is
+    still waiting: the edits refresh the invoice's confidence, which moves it in the queue's order while it is open,
+    and the one after its new place would skip those in between (B-426)."""
     nav = navigation(store, invoice_id, query)
     ids, position = nav["ids"], nav["position"]
     remaining = [i for i in ids if i != invoice_id]
     if not remaining:
         return _with_query("/review", query)
+    try:
+        seen = int(seen_next or 0)
+    except (TypeError, ValueError):
+        seen = 0
+    if seen in remaining:
+        return _with_query(f"/review/{seen}", query)
     at = min(position if position is not None else 0, len(remaining) - 1)
     return _with_query(f"/review/{remaining[at]}", query)
 
@@ -270,6 +283,35 @@ def viewer_data(inv: dict[str, Any], capture: Any, sizes: list[tuple[float, floa
     return {"pages": pages, "fields": fields, "line_items": lines, "height": VIEWER_HEIGHT}
 
 
+# With LM Studio off, the banner over an invoice being reviewed says what the two notes under the document title said
+# again (OvisOCR2 isn't running…; the AI reviewer checks it when the chat model is free…): one line, so the invoice's
+# picture shows on a 1366 x 768 laptop (B-444).
+LM_STUDIO_OFF = ("LM Studio isn't running: a person approves it; OvisOCR2 and the AI reviewer check it once LM Studio "
+                 "runs.")  # fmt: skip
+
+
+def lm_studio_off(status: Any) -> bool:
+    """LM Studio itself isn't running (not: OvisOCR2 missing, testing itself or failed, which keep their notes)."""
+    return (status is not None and not getattr(status, "page_reader_ready", True)
+            and not getattr(status, "lm_studio", True) and bool(getattr(status, "banner", "")))  # fmt: skip
+
+
+def folded_reader(state: dict[str, Any]) -> dict[str, Any]:
+    """OvisOCR2's line for an invoice waiting for it, or not queued, without "OvisOCR2 isn't running" (the banner
+    says it): its other lines (a try cut off last time) and its button stay."""
+    if state.get("state") not in ("waiting", "none"):
+        return state
+    return {
+        **state,
+        "lines": [(i, t) for i, t in state.get("lines") or [] if i not in ("pause_circle", "visibility_off")],
+    }
+
+
+def folded_reviewer(state: dict[str, Any]) -> dict[str, Any]:
+    """The AI reviewer's "checks this invoice when the chat model is free" line, left out (the banner says it)."""
+    return {**state, "lines": []} if state.get("state") == "waiting" else state
+
+
 def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, editable: bool) -> dict[str, Any]:
     """The document card: the pages (or the extracted text), what OvisOCR2 made of it, how the lines were read."""
     from ap_coder.capture.line_items import sources_line
@@ -294,14 +336,19 @@ def _document(store: Store, settings: Any, inv: dict[str, Any], status: Any, edi
         "teach_fields": [(f, LABELS.get(f, f)) for f in view.TEACHABLE],
         "problem": problem,
         "text": Markup(ui.document_text(inv.get("extraction_md") or "")),  # noqa: S704 - document_text escapes
-        "reader": view.reader_state(store, settings, inv, status),
-        "reviewer": view.reviewer_state(store, inv),
+        "reader": (folded_reader if editable and lm_studio_off(status) else _same)(
+            view.reader_state(store, settings, inv, status)),
+        "reviewer": (folded_reviewer if editable and lm_studio_off(status) else _same)(view.reviewer_state(store, inv)),
         "lessons": _lesson_hints(store, inv),
         "lines_note": sources_line(capture.line_items, capture.checks) if capture is not None else "",
         "original": {"file": str(original["file"]),
                      "folder": Path(str(original.get("kept") or "")).parent.name or "originals"}
         if original.get("file") else None,
     }  # fmt: skip
+
+
+def _same(state: dict[str, Any]) -> dict[str, Any]:
+    return state
 
 
 def _sent_back(store: Store, invoice_id: int) -> dict[str, str] | None:
@@ -328,7 +375,7 @@ def _render_lines(reference: ReferenceData, draft: view.Draft) -> str:
 
 
 async def _posted(request: Request, inv: dict[str, Any]) -> tuple[Any, view.Draft]:
-    form = await request.form()
+    form = await posted_form(request)  # a long invoice posts thousands of fields (B-455)
     base, _ = current_draft(request, inv)
     return form, view.Draft.from_form(form, base)
 
@@ -378,6 +425,8 @@ def invoice_page(request: Request, invoice_id: int) -> Any:
                                store.vendor_terms(vendor_key(draft.header.get("vendor_name") or ""))).due  # fmt: skip
     except (TypeError, ValueError):
         computed = None
+    if lm_studio_off(status):
+        context["banner"] = LM_STUDIO_OFF
     return render(
         request, "invoice.html", "review", mode="review", **context,
         draft=draft, kept=kept, live=analysis.live, grid=view.grid(reference, draft), sure=sure,
@@ -492,7 +541,10 @@ def reader_progress(request: Request, invoice_id: int) -> JSONResponse:
     """OvisOCR2's progress on this invoice, for the page to follow while it waits or reads."""
     store, settings = get_store(request), get_settings(request)
     inv = _invoice(store, invoice_id)
-    state = view.reader_state(store, settings, inv, reading_status_or_none(settings, store))
+    status = reading_status_or_none(settings, store)
+    state = view.reader_state(store, settings, inv, status)
+    if inv["status"] == REVIEW and lm_studio_off(status):
+        state = folded_reader(state)  # as the screen drew it (B-444)
     html = templates.env.get_template("_invoice_live.html").module.reader(state, invoice_id)
     return JSONResponse({"state": state["state"], "poll": state["poll"], "html": str(html)},
                         headers={"Cache-Control": "no-store"})  # fmt: skip
@@ -558,7 +610,7 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
     asked = lessons.due_for_why(store, inv.get("ai_output") or {}, analysis.output)
     if asked and not form.get("why_done"):
         return JSONResponse({"ok": False, "ask_why": {"fields": asked, "threshold": lessons.why_after(store)}})
-    after = next_url(store, invoice_id, query)
+    after = next_url(store, invoice_id, query, form.get("next_id"))
     open_issues = [{"code": i.code, "severity": i.severity, "line": i.line_number}
                    for i in analysis.errors + analysis.warnings]  # fmt: skip
     me = reviewer()
@@ -602,7 +654,8 @@ async def approve(request: Request, invoice_id: int) -> JSONResponse:
 
 @router.post("/review/{invoice_id:int}/park")
 def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: str = Form(""),
-         show: str = Form(""), q: str = Form(""), sort: str = Form("")) -> JSONResponse:  # fmt: skip
+         show: str = Form(""), q: str = Form(""), sort: str = Form(""),
+         next_id: str = Form("")) -> JSONResponse:  # fmt: skip
     """Set it aside while waiting for information (out of the queue until brought back)."""
     store = get_store(request)
     _invoice(store, invoice_id)
@@ -617,7 +670,7 @@ def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: s
         if follow < dt.date.today():
             return refuse("Pick a follow-up date from today on.")
     query = _nav_query({"show": show, "q": q, "sort": sort})
-    after = next_url(store, invoice_id, query)
+    after = next_url(store, invoice_id, query, next_id)
     try:
         store.park_invoice(invoice_id, reviewer(), reason.strip(), follow.isoformat() if follow else None)
     except ValueError as exc:
@@ -628,11 +681,11 @@ def park(request: Request, invoice_id: int, reason: str = Form(""), follow_up: s
 
 @router.post("/review/{invoice_id:int}/reject")
 def reject(request: Request, invoice_id: int, reason: str = Form(""), show: str = Form(""), q: str = Form(""),
-           sort: str = Form("")) -> JSONResponse:  # fmt: skip
+           sort: str = Form(""), next_id: str = Form("")) -> JSONResponse:  # fmt: skip
     """Not ours, or not to be paid. It can be reopened later."""
     store = get_store(request)
     _invoice(store, invoice_id)
-    after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort}))
+    after = next_url(store, invoice_id, _nav_query({"show": show, "q": q, "sort": sort}), next_id)
     try:
         store.reject_invoice(invoice_id, reviewer(), reason.strip())
     except ValueError as exc:

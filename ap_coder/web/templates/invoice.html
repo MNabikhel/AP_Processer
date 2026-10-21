@@ -29,6 +29,7 @@
           <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("←") }}</td><td>Previous invoice</td></tr>
           <tr><td>{{ ui.kbd("Alt") }} + {{ ui.kbd("↑") }}</td><td>Back to the queue</td></tr>
           <tr><td>{{ ui.kbd("N") }}</td><td>Next field to check (on the page)</td></tr>
+          <tr><td>{{ ui.kbd("G") }}</td><td>Go to the line still to code</td></tr>
           <tr><td>{{ ui.kbd("Esc") }}</td><td>Stop teaching a field</td></tr>
         </tbody></table>
       </div>
@@ -54,6 +55,7 @@
   <input type="hidden" name="reader_at" value="{{ draft.reader_at }}">
   <input type="hidden" name="taught" value="{{ taught_json | tojson | forceescape }}" data-taught>
   {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+  {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
 </form>
 
 <section class="card inv-summary" data-live="summary">{{ live_ui.summary(live, inv.id) }}</section>
@@ -75,7 +77,7 @@
       {% macro field(name, cls="", type="text", placeholder="", hint="", step="") -%}
       {% set s = sure.get(name) %}
       <label class="field {{ cls }}" data-field="{{ name }}">
-        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="How sure AP Coder is of what it read"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+        <span class="lbl">{{ labels[name] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
           {% if hint %}<span class="rvw-hint" title="{{ hint }}"><span class="ms" aria-hidden="true">info</span></span>{% endif %}</span>
         <input type="{{ type }}" name="{{ name }}" value="{{ draft.header[name] }}" form="inv"{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if step %} step="{{ step }}"{% endif %}{% if hint %} title="{{ hint }}"{% endif %}>
       </label>
@@ -88,7 +90,7 @@
       <div class="inv-grid">
         {% set s = sure.get("vendor_name") %}
         <div class="field wide inv-vendor" data-field="vendor_name">
-          <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="How sure AP Coder is of what it read"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
+          <label for="vendor-name"><span class="lbl">{{ labels["vendor_name"] }}{% if s %} <span class="inv-sure {{ s.tone }}" title="{{ s.help }}"><span class="ms" aria-hidden="true">{{ s.icon }}</span>{{ s.text }}</span>{% endif %}
             <span class="rvw-hint" title="Pick the vendor from the vendor list: start typing its name. A vendor that is not in it can be added as a new vendor."><span class="ms" aria-hidden="true">info</span></span></span></label>
           <input id="vendor-name" type="text" name="vendor_name" value="{{ draft.header["vendor_name"] }}" form="inv" list="vendor-list" autocomplete="off"
                  placeholder="Start typing to pick from the vendor list" aria-describedby="vendor-match">
@@ -230,6 +232,7 @@
         <label class="field">Waiting for<input type="text" name="reason" required placeholder="e.g. buyer to confirm the price"></label>
         <label class="field">Follow up on<input type="date" name="follow_up" min="{{ today }}"></label>
         {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">pause_circle</span>Park</button>
       </form>
     </details>
@@ -239,6 +242,7 @@
         <p class="muted">Not ours, or not to be paid. It can be reopened later.</p>
         <label class="field">Reason<input type="text" name="reason" placeholder="e.g. not our invoice"></label>
         {% for k, v in query.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        {% if nav.next_id %}<input type="hidden" name="next_id" value="{{ nav.next_id }}">{% endif %}
         <button class="btn" type="submit"><span class="ms" aria-hidden="true">block</span>Reject</button>
       </form>
     </details>

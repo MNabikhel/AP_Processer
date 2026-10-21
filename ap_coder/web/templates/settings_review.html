@@ -10,7 +10,7 @@
         <input type="text" name="reviewer_name" value="{{ reviewer_name }}" placeholder="shown on the invoices you approve"
                title="Saved for your Windows account: two people sharing one AP Coder each keep their own name."></label>
       {% endif %}
-      <label class="field st-wide">Send to <i>Needs attention</i> when the AI's confidence is below
+      <label class="field st-wide"><span>Send to <i>Needs attention</i> when the AI's confidence is below</span>
         <span class="st-range"><input type="range" name="threshold" min="50" max="99" step="1" value="{{ threshold }}"
           data-output="threshold-out"><output id="threshold-out">{{ threshold }}%</output></span></label>
       <p class="muted">Invoices with any error always need attention. Higher = more invoices get a closer look. Applies to

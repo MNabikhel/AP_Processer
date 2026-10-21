@@ -103,6 +103,14 @@ EDIT_LABELS = {
 # How sure the capture is of a field, beside its label in the form: (tone, icon).
 CAPTURE_BADGES = {"verified": ("ok", "check_circle"), "likely": ("info", "check"), "check": ("warn", "error"),
                   "failed": ("err", "cancel")}  # fmt: skip
+# ... in the words of the page's colour key (static/js/invoice_viewer.js, STATUS_HELP), with what each means (B-435).
+CAPTURE_WORDS = {"verified": "Verified", "likely": "Likely", "check": "Check", "failed": "Failed check"}
+CAPTURE_HELP = {
+    "verified": "Verified: the readers agree and the checks pass.",
+    "likely": "Likely: one strong reading and the checks pass. A quick look.",
+    "check": "Check: the readers disagree or are unsure. Look at it on the page.",
+    "failed": "Failed check: a check on this value failed. Look at it on the page.",
+}
 
 
 def _text(value: Any) -> str:
@@ -476,9 +484,11 @@ def capture_confidence(capture: CaptureResult | None) -> dict[str, dict[str, str
         if status not in CAPTURE_BADGES:
             continue
         tone, icon_name = CAPTURE_BADGES[status]
-        # never rounds up to certainty
-        words = "check" if status == "failed" else f"{math.floor(fr.confidence * 100 + 1e-9)}%"
-        out[name] = {"tone": tone, "icon": icon_name, "text": words, "status": status}
+        # the status in words, and how sure in figures where that tells more (never rounded up to certainty)
+        sure = f"{math.floor(fr.confidence * 100 + 1e-9)}%"
+        words = CAPTURE_WORDS[status] + (f" {sure}" if status in ("likely", "check") else "")
+        out[name] = {"tone": tone, "icon": icon_name, "text": words, "status": status,
+                     "help": f"{CAPTURE_HELP[status]} How sure: {sure}."}  # fmt: skip
     return out
 
 
@@ -629,27 +639,45 @@ def reader_state(store: Store, settings: Settings, inv: dict[str, Any], status: 
 _PLAIN_AMOUNT = re.compile(r"(?<![\d.,])(-?\d{4,})\.(\d{2})(?![\d%])")
 
 
+# The code's field names in the checks' messages ("but grand_total = 0.00"), as the form names them (B-429).
+_PLAIN_FIELDS = (("quantity x unit_price", "quantity × unit price"), ("grand_total", "the total"),
+                 ("tax_total", "the tax total"), ("unit_price", "unit price"))  # fmt: skip
+
+
 def readable(message: str, cap: bool = True) -> str:
-    """A check message as a clerk reads it: a capital first letter, amounts with thousands separators."""
+    """A check message as a clerk reads it: plain words for field names, a capital first letter, amounts with
+    thousands separators."""
+    for code, words in _PLAIN_FIELDS:
+        message = message.replace(code, words)
     message = _PLAIN_AMOUNT.sub(lambda m: f"{int(m.group(1)):,}.{m.group(2)}", message)
     return message[:1].upper() + message[1:] if cap else message
 
 
-def grouped(issues: list[Any]) -> list[tuple[bool, str]]:
-    """(is error, text) per distinct message: the same finding on several lines is one item ("Lines 1, 3, 4: …")."""
+def grouped_issues(issues: list[Any]) -> list[tuple[bool, str, str, list[int]]]:
+    """(is error, text, code, line numbers) per distinct message: the same finding on several lines is one item
+    ("Lines 1, 3, 4: …")."""
     order: dict[tuple[str, str, str], list[int]] = {}
     for issue in issues:
         order.setdefault((issue.severity, issue.code, issue.message), []).append(issue.line_number or 0)
     out = []
-    for (severity, _, message), lines in order.items():
+    for (severity, code, message), lines in order.items():
         numbers = sorted({n for n in lines if n})
         where = (
             (f"Line {numbers[0]}: " if len(numbers) == 1 else f"Lines {', '.join(map(str, numbers))}: ")
             if numbers
             else ""
         )
-        out.append((severity == "error", where + readable(message, cap=not where)))
+        out.append((severity == "error", where + readable(message, cap=not where), code, numbers))
     return out
+
+
+def grouped(issues: list[Any]) -> list[tuple[bool, str]]:
+    """(is error, text) per distinct message (``grouped_issues``)."""
+    return [(bad, text) for bad, text, _code, _lines in grouped_issues(issues)]
+
+
+# A finding about a line's account or cost center: its item in the checks is a button to that box (B-443).
+GOTO_BOX = {"GL_UNASSIGNED": "line_gl", "CC_UNASSIGNED": "line_cc"}
 
 
 def confidence_pct(value: float, threshold: float) -> str:
@@ -662,7 +690,9 @@ def checks_summary(report: Any, errors: list[Any], warnings: list[Any]) -> dict[
     """All the checks as one status: passed, or what needs attention (one line each; details below)."""
     low = report.requires_review and not errors
     look = sum(1 for bad, _ in grouped(warnings) if not bad) + (1 if low else 0)
-    items = [{"bad": bad, "text": text} for bad, text in grouped(errors + warnings)]
+    items = [{"bad": bad, "text": text,
+              "goto": {"box": GOTO_BOX[code], "line": lines[0]} if code in GOTO_BOX and lines else None}
+             for bad, text, code, lines in grouped_issues(errors + warnings)]  # fmt: skip
     if low:
         items.append({"bad": False, "text": f"Confidence {confidence_pct(report.adjusted_confidence, report.review_threshold)} "  # noqa: E501
                       f"is below the {report.review_threshold:.0%} threshold."})  # fmt: skip
@@ -686,7 +716,8 @@ def checks_details(report: Any) -> list[dict[str, str]]:
         kind, title = {"error": ("error", "Must fix"), "info": ("info", "Good to know")}.get(
             issue.severity, ("warning", "Worth a look")
         )
-        items.append({"kind": kind, "title": title, "message": where + issue.message, "code": issue.code,
+        items.append({"kind": kind, "title": title, "message": where + readable(issue.message, cap=not where),
+                      "code": issue.code,
                       "hint": "" if kind == "info" else hint})  # fmt: skip
     errors = [i for i in report.issues if i.severity == "error"]
     if report.requires_review and not errors:
@@ -759,6 +790,8 @@ def summary(coding: InvoiceCoding, report: Any, errors: list[Any], warnings: lis
             vendor_terms: str, setup: Any = None) -> dict[str, Any]:  # fmt: skip
     """The invoice at a glance: supplier, number, dates, status, confidence and the amount."""
     supply = place_of_supply(coding, setup)
+    if not supply and coding.ship_to_province == OUTSIDE_CANADA:  # as Place of supply says it (supply_line, B-441)
+        supply = OUTSIDE_CANADA
     meta = [
         (f"Invoice {coding.invoice_number}", "Invoice number"),
         (f"Issued {coding.invoice_date}" if coding.invoice_date else "", "Invoice date"),
@@ -1023,6 +1056,20 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     review = store.verification(inv["id"])
     for severity, code, message in verifier.issues((review or {}).get("result"), output):
         report.issues.append(Issue(severity, code, message))
+    # What capture found about the page (pages not read, a currency or a date not printed, totals that don't add up as
+    # printed...): kept with the invoice when it was read, and shown here too (B-458). A date not found is assumed
+    # only while the date is still the one put in for it.
+    capture = capture_of(store, inv["id"])
+    if capture is not None:
+        from ap_coder.capture.bridge import review_issues
+
+        # Assumed while the date is still the one put in, unless a person approved it so (reopened, sent back) or
+        # showed it on the page.
+        confirmed = bool(inv.get("final_output")) or "invoice_date" in draft.taught
+        assumed = coding.invoice_date if coding.invoice_date == ai.get("invoice_date") and not confirmed else None
+        for severity, code, message in review_issues(capture, coding.currency, assumed_date=assumed):
+            if code != "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
+                report.issues.append(Issue(severity, code, message))
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()

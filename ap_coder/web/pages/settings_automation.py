@@ -52,12 +52,12 @@ def automation_context(store: Store) -> dict[str, Any]:
         "touchless_on": store.touchless_enabled(),
         "touchless_limit": limit,
         "tiles": [
-            ("Vendors touchless", counts["Touchless"], "bolt", "green",
+            ("Vendors skipping review", counts["Touchless"], "bolt", "green",
              f"{counts['Ready']} ready · {counts['Suspended']} suspended"),
             ("Vendors learning", counts["Learning"], "school", "blue", f"{counts['Kept supervised']} kept supervised"),
-            ("Touchless, last 30 days", f"{s['touchless_rate']:.0%}" if s["touchless_rate"] is not None else "—",
+            ("Skipped review, last 30 days", f"{s['touchless_rate']:.0%}" if s["touchless_rate"] is not None else "—",
              "speed", "violet", f"{s['touchless']:,} of {ui.plural(s['processed'], 'invoice')} processed"),
-            ("Errors found in touchless invoices", errors, "gpp_maybe", "amber" if errors else "green",
+            ("Errors found after skipping review", errors, "gpp_maybe", "amber" if errors else "green",
              f"{s['audit_errors']} of {ui.plural(s['audited'], 'audited invoice')}"
              + (f", {s['reopened']} reopened" if s["reopened"] else "")),
         ],
@@ -82,7 +82,7 @@ def switch_touchless(request: Request, turn: str = Form(""), sure: str = Form(""
     if not on:
         return done(request, URL, "Touchless processing is off: every invoice is reviewed.")
     went = sum(1 for c in changes if c.get("to") == "autonomous")
-    now = f"{ui.plural(went, 'vendor')} touchless now" if went else "no vendor meets the bar yet"
+    now = f"{ui.plural(went, 'vendor')} skipping review now" if went else "no vendor meets the bar yet"
     return done(request, URL, f"Touchless processing is on: {now}.")
 
 

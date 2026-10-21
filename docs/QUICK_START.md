@@ -20,13 +20,15 @@ bold are pages and buttons in AP Coder.
 ## The first six steps
 
 1. Your name: **Settings** → **Review** → type your name → **Save review settings**. Each approval is
-   recorded under it.
+   recorded under it. On the same page choose your province (where invoices are delivered to you) → **Save**:
+   the sales tax check uses it when an invoice prints no ship-to.
 2. Your GL accounts: **GL accounts & tax** → **Import GL accounts from CSV or Excel**. To try AP Coder first,
    click **Use the sample GL accounts** instead. Then on the **Sales tax** tab, pick a GL account for each tax.
-3. Your first invoices: **Import invoices** → **Choose files** (PDFs, scans, photos or saved emails) →
+3. Your first invoices: **Import invoices** → **Choose files** (PDFs, scans, photos, saved emails or invoices saved as text) →
    **Process N uploaded invoices**.
 4. Review: **Review queue** → open an invoice. Compare it with the page and fix what the checks point to: a
-   line without a GL account or cost center, an amount marked in amber.
+   line without a GL account or cost center, an amount marked in amber. Beside each value: Verified, Likely,
+   Check or Failed check (how sure AP Coder is of what it read).
 5. Your first approval: **Approve & teach** (or Ctrl+Enter). AP Coder learns from each correction.
 6. Your first export: **Exports** → **Export N invoices** → **Download batch N**, then import that file into
    the ERP.
@@ -47,7 +49,7 @@ Just looking around? On the welcome page click **Load demo invoices**: ten sampl
 - "LM Studio isn't running": open LM Studio, *Developer* → *Start server*, then **Settings** → **Reading** →
   **Check again**.
 - **Approve & teach** is greyed out: the invoice still needs something, often a GL account or a cost center on a
-  line. The note next to the button says what.
+  line. The note next to the button says what; click it (or press G) to go to that line.
 - The dashboard is closed or won't load: double-click *AP Coder* on the desktop again. It opens the AP Coder that
   is running, or starts it.
 - A page says "Something went wrong": go back and try again. If it happens again, report it.

@@ -35,7 +35,18 @@ from ap_coder.core.reference_data import short_name
 from ap_coder.core.store import Store
 from ap_coder.erp import insights
 from ap_coder.web.charts import SERIES, Series, line_chart, percent
-from ap_coder.web.core import TARGET_ACCURACY, done, get_store, reference_or_none, refuse, render, reviewer
+from ap_coder.web.core import (
+    TARGET_ACCURACY,
+    accuracy_note,
+    done,
+    get_settings,
+    get_store,
+    posted_form,
+    reference_or_none,
+    refuse,
+    render,
+    reviewer,
+)
 from ap_coder.web.files import SheetError, read_excel
 
 router = APIRouter()
@@ -206,7 +217,7 @@ def _history_context(store: Store, token: str | None, sheet: str | None) -> dict
     return context
 
 
-def coding_context(store: Store, mem_q: str) -> dict[str, Any]:
+def coding_context(store: Store, mem_q: str, settings: Any = None) -> dict[str, Any]:
     m = store.metrics()
     if not m["lines_reviewed"]:
         return {"metrics": None}
@@ -217,9 +228,12 @@ def coding_context(store: Store, mem_q: str) -> dict[str, Any]:
         lines = w["accepted"] + w["corrected"]
         weekly.append({**w, "lines": lines, "accuracy": w["accepted"] / lines if lines else None})
     good = accuracy >= TARGET_ACCURACY
+    note, compared = accuracy_note(settings, m["lines_reviewed"]) if settings is not None else ("", True)
+    distance = f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target"  # early on: a plain note (B-442)
     tiles = [
         ui.tile("Coding accuracy", f"{accuracy:.1%}", "", "green" if good else "violet",
-                f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts vs 90% target", "up" if good else "down",
+                (distance + (f" · {note}" if note else "")) if compared else note,
+                ("up" if good else "down") if compared else "note",
                 [w["accuracy"] or 0 for w in weekly] if len(weekly) > 1 else None),
         ui.tile("Lines reviewed", f"{m['lines_reviewed']:,}", "", "blue", f"{m['lines_accepted']:,} confirmed"),
         ui.tile("Corrections taught", f"{m['lines_corrected']:,}", "", "amber", "used on the next invoice"),
@@ -444,7 +458,7 @@ def learning_page(request: Request) -> HTMLResponse:
     context: dict[str, Any] = {"tab": tab, "tabs": TABS, "url": _url}
     if tab == "coding":
         context.update(_history_context(store, q.get("history"), q.get("sheet")))
-        context.update(coding_context(store, q.get("mem_q") or ""))
+        context.update(coding_context(store, q.get("mem_q") or "", get_settings(request)))
     elif tab == "suppliers":
         context.update(suppliers_context(store))
     elif tab == "lessons":
@@ -510,11 +524,15 @@ def supplier_allow(request: Request, key: str = Form(...)) -> JSONResponse:
         return refuse("That vendor is no longer in AP Coder's supplier learning.", 404)
     name = profile["display_name"] or key
     store.set_supplier_state(key, SUPERVISED, reviewer(), reason="allowed again on the Learning page")
-    return done(request, "/learning?tab=suppliers", f"{name} can go touchless again once it meets the bar.")
+    return done(request, "/learning?tab=suppliers", f"{name} can skip review again once it meets the bar.")
 
 
 @router.post("/learning/memory/forget")
-def memory_forget(request: Request, ids: list[int] = Form(default=[])) -> JSONResponse:  # noqa: B008
+async def memory_forget(request: Request) -> JSONResponse:
+    try:  # one field per lesson ticked, however many (B-461)
+        ids = [int(str(i)) for i in (await posted_form(request)).getlist("ids")]
+    except ValueError:
+        ids = []
     if not ids:
         return refuse("Tick the lessons to forget first.")
     n = get_store(request).delete_feedback([int(i) for i in ids], actor=reviewer())
@@ -541,7 +559,7 @@ def flash_message_for_columns(name: str, sheets: dict[str, tuple[list[str], list
 
 @router.post("/learning/history/teach")
 async def history_teach(request: Request) -> JSONResponse:
-    form = await request.form()
+    form = await posted_form(request)
     token = str(form.get("token") or "")
     upload = get_upload(token)
     if upload is None:

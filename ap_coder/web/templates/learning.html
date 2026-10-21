@@ -82,7 +82,7 @@
         <div class="txt">
           {% if r.outcome == "corrected" %}
           <b>{{ r.reviewer }}</b> corrected <b>{{ r.short }}</b>
-          {% if r.suggested_gl %}<span class="apc-strike apc-mono">{{ r.suggested_gl }}</span>{% else %}<i>new line</i>{% endif %}<span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
+          {% if r.suggested_gl == unassigned %}<i>no account</i>{% elif r.suggested_gl %}<span class="apc-strike apc-mono">{{ r.suggested_gl }}</span>{% else %}<i>new line</i>{% endif %}<span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
           {% else %}
           <b>{{ r.reviewer }}</b> confirmed <b>{{ r.short }}</b> <span class="apc-arrow">→</span><b class="apc-mono">{{ r.final_gl }}</b>
           {% endif %}
@@ -106,7 +106,7 @@
     <div class="table-wrap"><table class="apc-table">
       <thead><tr><th>AI suggested</th><th></th><th>Reviewer chose</th><th class="r">Times</th></tr></thead>
       <tbody>{% for c in corrections %}
-        <tr><td><div class="gl">{{ c.suggested_gl }}<small>{{ c.before_name }}</small></div></td><td><span class="apc-arrow">→</span></td>
+        <tr><td><div class="gl">{% if c.suggested_gl == unassigned %}<i>no account</i>{% else %}{{ c.suggested_gl }}<small>{{ c.before_name }}</small>{% endif %}</div></td><td><span class="apc-arrow">→</span></td>
           <td><div class="gl">{{ c.final_gl }}<small>{{ c.after_name }}</small></div></td><td class="r">{{ ui.pill("×" ~ c.n, "violet") }}</td></tr>
       {% endfor %}</tbody>
     </table></div>
@@ -132,7 +132,7 @@
       <thead><tr><th>Forget?</th><th>Date</th><th>Vendor</th><th>Line</th><th>AI suggested</th><th>Final GL</th><th>Cost center</th><th>Outcome</th><th>Reviewer</th></tr></thead>
       <tbody>{% for r in memory %}
         <tr><td><input type="checkbox" name="ids" value="{{ r.id }}" aria-label="Forget the lesson {{ r.description }}"></td>
-          <td>{{ r.date }}</td><td>{{ r.vendor_name }}</td><td class="w">{{ r.description }}</td><td>{{ r.suggested_gl or "" }}</td>
+          <td>{{ r.date }}</td><td>{{ r.vendor_name }}</td><td class="w">{{ r.description }}</td><td>{{ "no account" if r.suggested_gl == unassigned else (r.suggested_gl or "") }}</td>
           <td>{{ r.final_gl }}</td><td>{{ r.final_cc or "" }}</td><td>{{ r.outcome_text }}</td><td>{{ r.reviewer or "" }}</td></tr>
       {% endfor %}</tbody>
     </table></div>
@@ -147,10 +147,10 @@
 
 {% elif tab == "suppliers" %}
 {% if not suppliers %}
-<section class="card">{{ ui.empty_state("No supplier learned yet", "Each approved invoice teaches AP Coder where that supplier prints its invoice number, dates and totals, and records each field the reviewer had to correct. Once a supplier has enough clean invoices in a row, it goes touchless by itself when touchless processing is on (Settings → Automation), and every invoice still goes through all the checks.") }}</section>
+<section class="card">{{ ui.empty_state("No supplier learned yet", "Each approved invoice teaches AP Coder where that supplier prints its invoice number, dates and totals, and records each field the reviewer had to correct. Once a supplier has enough invoices in a row without a correction, its invoices skip review by themselves when touchless processing is on (Settings → Automation), and every invoice still goes through all the checks.") }}</section>
 {% else %}
 <p class="muted">
-  {% if touchless_on %}Touchless processing is <b>on</b>: a vendor that meets the bar goes touchless by itself, and one correction sends it back to review.
+  {% if touchless_on %}Touchless processing is <b>on</b>: a vendor that meets the bar skips review by itself, and one correction sends it back to review.
   {% else %}Touchless processing is <b>off</b> (Settings → Automation): every invoice is reviewed by a person, and each approval keeps training its vendor.{% endif %}
   The bar, the same for every vendor: {{ policy }}.</p>
 {% for s in suppliers %}

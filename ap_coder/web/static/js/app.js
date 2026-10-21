@@ -10,6 +10,7 @@
    Attributes a template can use:
      form[data-confirm="Question?"]   ask first
      form[data-busy="Saving…"]        the button says so while the request runs
+     a[data-busy="Gathering…"]        a link to a slow page says so until the page comes
      form[data-job]                   after it starts a job, show its progress (#job card), reload when done
      select[data-autosubmit]          submit its (GET) form on change
      input[type=checkbox][data-enables]  enables the submit button of its form while ticked
@@ -179,6 +180,17 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  // A link to a page that takes a moment (Report a problem gathers its reports): it says so meanwhile (B-440).
+  const slow = event.target.closest("a[data-busy]");
+  if (slow && !event.defaultPrevented && event.button === 0 && !(event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)) {
+    slow.setAttribute("aria-busy", "true");
+    slow.classList.add("busy");
+    if (!slow.dataset.label) slow.dataset.label = slow.innerHTML;
+    slow.textContent = slow.dataset.busy;
+    // The page never came (AP Coder stopped, the network dropped): after a while the link reads as before.
+    clearTimeout(slow._busyTimer);
+    slow._busyTimer = setTimeout(() => resetSlowLink(slow), window.AP_SLOW_LINK_MS || 15000);
+  }
   const close = event.target.closest("[data-dismiss]");
   if (close) close.closest(".flash")?.remove();
   // A popover closes when you click elsewhere.
@@ -186,6 +198,15 @@ document.addEventListener("click", (event) => {
     if (!d.contains(event.target)) d.removeAttribute("open");
   });
 });
+
+function resetSlowLink(a) {
+  a.removeAttribute("aria-busy");
+  a.classList.remove("busy");
+  if (a.dataset.label) a.innerHTML = a.dataset.label;
+}
+
+// Back to a page whose slow link was clicked (the browser keeps it): the link reads as it did.
+window.addEventListener("pageshow", () => document.querySelectorAll("a[data-busy][aria-busy]").forEach(resetSlowLink));
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") document.querySelectorAll("details.pop[open]").forEach((d) => d.removeAttribute("open"));

@@ -4361,3 +4361,539 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 - **N-135** · The review's `freight` stream (merchandise, freight, then "Subtotal" of both): the reader takes the printed
   "Subtotal" (merchandise + freight), AP codes the merchandise as the subtotal and the freight apart; every invoice is
   "wrong and verified" on the main branch and here alike. A coding convention, not a reading or learning question.
+
+### Pilot walkthrough (UI)
+
+The dashboard walked through as the pilot tester will meet it, before the first real invoices: a new data folder, no
+LM Studio (no OvisOCR2, no chat model), the name, the GL accounts (the sample ones, and a small CSV imported), the
+sales tax mapping, 15 real English vendor PDFs (a credit memo, US invoices, a two-page Microsoft invoice, HST
+invoices), corrections, a field taught by clicking, approvals with Ctrl+Enter, JD Edwards and Excel exports,
+Learning, Help, Settings, the keyboard alone, a 1280 px window, and bad, empty and repeated files. Screenshots at
+1366 x 768 and 1920 x 1080, the browser's console watched (no errors). Pages answered in 0.05 to 0.3 s (Help → Report
+a problem: 3 s the first time, B-440); 15 PDFs were read and coded in 6 s. 26 fixed (B-424 to B-449), each with a
+failing test first, all in `tests/test_web_pilot_walkthrough.py`. B-438 to B-444 were first logged as left (N-136 to
+N-141), then fixed in a second round; B-445 to B-449 are what an independent review of the first two rounds found.
+None is left.
+
+#### B-424 · Settings → Review: the threshold's label broke onto three lines · low
+- **Where:** `ap_coder/web/templates/settings_review.html` (the *Needs attention* threshold)
+- **Symptom:** the label read "Send to" / "*Needs attention*" / "when the AI's confidence is below", one piece per
+  line, on the page the welcome screen sends the tester to first (*Add your name*).
+- **Cause:** a `.field` label is a flex column; its text and the `<i>` inside it were separate items of it.
+- **Reproduce:** open Settings → Review.
+- **Reproduced:** yes
+- **Fix:** the sentence is one `<span>`. No other `.field` label mixes text and inline tags.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_the_needs_attention_threshold_label_is_one_sentence`
+- **Lesson:** Don't put loose text and inline tags in a flex container: each becomes its own box.
+
+#### B-425 · The Shortcuts list was half hidden behind the Document card · low-medium
+- **Where:** `ap_coder/web/static/invoice.css` (`.inv-top`)
+- **Symptom:** on a 1366 x 768 laptop, *Shortcuts* on the review screen opened under the Document card: "Next field
+  to check" and "Stop teaching a field" were covered.
+- **Cause:** the header fades in (an opacity animation, so its own stacking context at level 0); the Document card
+  is sticky with `z-index: 2`, so it painted over everything the header opened, whatever the list's own z-index.
+- **Reproduce:** open an invoice at 1366 x 768, click *Shortcuts*.
+- **Reproduced:** yes (screenshot `17_shortcuts_1366.png` of the walk)
+- **Fix:** the review screen's header is positioned with `z-index: 25` (above the card, below the approve bar's
+  popovers, which open upwards from the bottom).
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_the_shortcuts_list_is_not_hidden_behind_the_document`
+- **Lesson:** Don't trust a popover's z-index alone: it only counts inside its ancestors' stacking context.
+
+#### B-426 · After Approve, Park or Reject the next invoice skipped the ones in between · medium-high
+- **Where:** `ap_coder/web/pages/invoice.py` (`navigation`, `next_url`, `approve`, `park`, `reject`),
+  `ap_coder/web/templates/invoice.html`
+- **Symptom:** approving the 4th invoice of 15 ("Reviewing 4 of 15") opened the 8th ("Reviewing 8 of 14"): the
+  invoices 5 to 7 were passed over, and a tester working down the queue with Ctrl+Enter would not know.
+- **Cause:** each edit refreshes the invoice's confidence in the queue (so the queue shows what the screen shows);
+  the queue is ordered by that confidence, so the open invoice moved down while it was edited (27% → 33%, past three
+  others), and "the next one" was taken after its new place.
+- **Reproduce:** open an invoice that is not last, pick its GL account and cost center, approve.
+- **Reproduced:** yes
+- **Fix:** the screen carries the invoice that followed it when it was drawn (`next_id`, none for the last one); the
+  action opens that one while it is still waiting, else the queue's next as before.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_after_an_action_the_next_invoice_is_the_one_that_followed_on_screen`,
+  `tests/test_web_pilot_walkthrough.py::test_approve_also_opens_the_invoice_that_followed_on_screen`,
+  `tests/test_web_pilot_walkthrough.py::test_the_last_invoice_offers_no_next_one_to_wrap_to`
+- **Lesson:** Don't recompute "what comes next" from an order the user's own edits change: remember what they saw.
+
+#### B-427 · On a laptop the boxes' colours had no key · medium
+- **Where:** `ap_coder/web/static/invoice_viewer.css` (the narrow layout of the viewer)
+- **Symptom:** at 1366 x 768 (and 1280) the page showed green, blue, amber and red boxes but not the key under the
+  toolbar (Verified, Likely, Check, Failed check, Line item): it showed only on screens wide enough for the fields
+  list beside the page (about 1400 px and up).
+- **Cause:** the viewer's narrow layout hid the legend with the field count (`display: none`), though the same rule
+  block also set its compact padding.
+- **Reproduce:** open an invoice at 1366 x 768.
+- **Reproduced:** yes
+- **Fix:** the key stays in the narrow layout (one short line); only the count is hidden.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_the_colour_key_shows_on_a_laptop`
+- **Lesson:** Don't hide the key to a colour code to save a line: the colours mean nothing without it.
+
+#### B-428 · Park, Reject and Approve jumped to the left while a line needed an account · low
+- **Where:** `ap_coder/web/static/invoice.css` (`.inv-actionbar-right`)
+- **Symptom:** at 1366 px the approve bar wrapped under "Pick a GL account for line 1 and a cost center for line 1 to
+  approve" and its buttons moved to the left edge; once picked, they jumped back to the right, under the mouse.
+- **Cause:** `justify-content: space-between` puts a wrapped last item at the start of its line.
+- **Reproduce:** open an invoice with a line without an account at 1366 x 768.
+- **Reproduced:** yes (`16_invoice_credit_1366.png` against `18_credit_coded_1366.png`)
+- **Fix:** the buttons' group has `margin-left: auto`: right-aligned on its own line too.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_approve_stays_at_the_right_while_a_line_needs_an_account`
+- **Lesson:** Don't let the main button move when a hint appears beside it.
+
+#### B-429 · Check messages named fields by their code names · low
+- **Where:** `ap_coder/web/invoice_view.py` (`readable`, `checks_details`)
+- **Symptom:** "Subtotal + tax = 62.00 but grand_total = 0.00", "Line 1: quantity x unit_price = 20.00 but amount =
+  40.00" and "… but tax_total = …" under the checks and in *Details and what to do*.
+- **Cause:** the messages come from `coding/validation.py` and `coding/tax.py`, written with the code's field names;
+  the review screen showed them as they are (the details without `readable` at all).
+- **Reproduce:** open `us_arizona_example.pdf` (total read as 0.00).
+- **Reproduced:** yes
+- **Fix:** `readable` says them as the form does ("the total", "unit price", "quantity × unit price", "the tax
+  total"), and the details go through it too. The stored messages (exports, logs, tests) are unchanged.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_check_messages_name_fields_in_plain_english`,
+  `tests/test_web_pilot_walkthrough.py::test_the_details_use_the_same_plain_words`
+- **Lesson:** Don't show an internal name to a clerk: translate it where the page says it.
+
+#### B-430 · "1 invoice read and coded. They're waiting in the review queue." · low
+- **Where:** `ap_coder/web/pages/process.py` (`process_files`)
+- **Symptom:** the message after processing one invoice said "They're waiting".
+- **Fix:** "It's waiting" for one.
+- **Reproduced:** yes (a bad, an empty and a repeated file with one good one)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_one_invoice_read_is_waiting_not_they_are`
+- **Lesson:** Don't write a plural verb after a count: it can be 1.
+
+#### B-431 · "5 GL accounts, 1 categories" · low
+- **Where:** `ap_coder/web/pages/accounts.py` (the GL accounts tile)
+- **Symptom:** after importing a small chart with one category, the tile said "1 categories".
+- **Fix:** `ui.plural` (category, categories).
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_one_category_is_not_one_categories`
+- **Lesson:** Same as B-430.
+
+#### B-432 · Learning showed "UNASSIGNED" struck through as the account corrected · low
+- **Where:** `ap_coder/web/templates/learning.html`, `ap_coder/web/core.py` (template global `unassigned`)
+- **Symptom:** "Pat Tester corrected Line 2 ~~UNASSIGNED~~ → 6110", in the feed, the top corrections and the memory
+  table: the code's word for a line with no account, shown as if it were a GL account.
+- **Cause:** without a chat model every line starts with no account; the pages printed the stored value.
+- **Reproduce:** approve an invoice after picking an account for a line without one, open Learning & accuracy.
+- **Reproduced:** yes
+- **Fix:** shown as *no account*.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_a_line_picked_where_nothing_was_suggested_is_not_shown_as_unassigned`
+- **Lesson:** Same as B-429.
+
+#### B-433 · The keyboard focus was almost invisible on buttons and links · medium
+- **Where:** `ap_coder/web/static/app.css` (`:focus-visible`), `ap_coder/web/static/invoice.css`
+- **Symptom:** tabbing through the review screen, a focused button or link had only a faint glow (a 3 px ring of
+  the accent at 18%, about 1.3:1 against the page): the tester could not see where the keyboard was. Text boxes
+  were fine (their border turns blue).
+- **Cause:** the focus style was the text boxes' soft halo, used for everything.
+- **Reproduce:** open an invoice and press Tab.
+- **Reproduced:** yes
+- **Fix:** a 2 px solid ring in the accent colour (5:1 on white) for everything but text boxes, as the page viewer
+  already had; the queue's rows draw it inside, the tax and language choices likewise.
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_the_keyboard_focus_is_easy_to_see`
+- **Lesson:** Don't use a decorative halo as the focus mark: it must stand out at 3:1 (WCAG 2.4.7, 1.4.11).
+
+#### B-434 · "Pick a GL account for line 1…" said what to do but not where · medium
+- **Where:** `ap_coder/web/templates/_invoice_live.html` (`bar`), `ap_coder/web/static/js/invoice.js` (`goToPick`),
+  `ap_coder/web/templates/invoice.html` (Shortcuts)
+- **Symptom:** on a 1366 x 768 laptop the line grid is two screens below the top; with the keyboard the line's GL
+  account was 57 presses of Tab away. The hint in the approve bar was a label.
+- **Fix:** the hint is a button that scrolls to the first line still without a GL account or cost center and puts
+  the focus in it; G does the same (listed under *Shortcuts*). The approve bar redraws it after each edit.
+- **Reproduced:** yes (57 Tabs counted)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_the_pick_hint_is_a_button_to_the_line_that_needs_it`,
+  `tests/test_web_pilot_walkthrough.py::test_in_a_browser_approve_stays_at_the_right_while_a_line_needs_an_account`
+- **Lesson:** Don't stop at saying what is missing: take the person there.
+
+#### B-435 · The form's field labels said "97%" or "check", never Verified or Likely · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`capture_confidence`, `CAPTURE_WORDS`, `CAPTURE_HELP`),
+  `ap_coder/web/templates/invoice.html`
+- **Symptom:** beside each label: "✓ 99%" (verified), "✓ 97%" (likely), "! 51%" (check) and "⊗ check" (a failed
+  check): the words of the page's key (Verified, Likely, Check, Failed check) appeared nowhere in the form, and a
+  red "check" read like a green tick's opposite only by its icon. The tooltip said only "How sure AP Coder is of what
+  it read".
+- **Fix:** "Verified", "Likely 97%", "Check 51%", "Failed check", each with a tooltip saying what it means (as the
+  key's tooltips do) and how sure, in figures. The amounts' boxes stay in line when a label wraps under its status.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_each_field_says_how_sure_it_is_in_words`
+- **Lesson:** Don't make a person learn two codes for one thing: use the key's own words everywhere.
+
+#### B-436 · On a wide screen the queue cut the reason an invoice needs attention · low
+- **Where:** `ap_coder/web/static/app.css` (`.rq-row`)
+- **Symptom:** at 1920 px the vendor column took about 750 px while the status column kept 112 px: "Pick a GL account
+  for line 1 and a cos…" (two lines, cut).
+- **Fix:** the status column takes a share of the extra width (`minmax(112px, 1fr)` beside the vendor's `1.4fr`): at
+  1920 px the whole reason shows; at 1366 px both columns keep about what they had.
+- **Reproduced:** yes (`15_review_queue_1920.png`)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_the_queue_gives_the_reason_room_on_a_wide_screen`
+- **Lesson:** Don't give all the spare width to one column: give it where text is being cut.
+
+#### B-437 · Nothing asked where invoices are delivered: "Province of supply unknown" on most invoices · medium
+- **Where:** `ap_coder/web/pages/process.py` (`setup_steps`, `province_step`, `first_steps`, `STEP_LINKS`),
+  `docs/QUICK_START.md`, `docs/GETTING_STARTED.md`
+- **Symptom:** after the welcome page's steps, invoices whose ship-to wasn't read said "Province of supply unknown;
+  tax regime cannot be verified", and their sales tax went unchecked (4 of the 13 Canadian PDFs on the walk). The
+  province that fixes it (Settings → Review, *Your province*) was mentioned by no step or guide.
+  With it set (Ontario), `ca_uoft_ex3_gst.pdf` was checked: "GST charged but Ontario normally charges HST".
+- **Fix:** *Your province* is a getting-started row on the welcome page and Import invoices, linking to Settings →
+  Review, "recommended" until set and then the province's name; it is not counted in the ring (the steps needed stay
+  as they were). The Quick start's first step names it.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_getting_started_asks_for_your_province_without_counting_it`
+- **Lesson:** Don't leave a setting the checks depend on out of the first steps.
+
+#### B-438 · "about 34 more clean invoices to go touchless": jargon after every approval · low-medium
+- **Where:** `ap_coder/capture/supplier.py` (`to_go_text`), `ap_coder/capture/workflow.py` (`supplier_progress`):
+  wording only; `tests/test_touchless.py`, `tests/test_touchless_pages.py`, `tests/test_supplier.py` kept in step
+- **Symptom:** (was N-137) the message after each approval ended "about 34 more clean invoices to go touchless";
+  *touchless* is explained only in Settings → Automation, which the pilot tester has no reason to open.
+- **Fix:** "about 34 more invoices approved without a correction before this vendor can skip review"; "too many
+  corrections in its recent invoices to skip review yet"; "approved often enough without a correction to skip
+  review"; a vendor that meets the bar while the switch is off: "…, once touchless processing is turned on
+  (Settings → Automation)", where the name of the setting is needed to find it. The rule behind the figures is
+  unchanged. The same words on Learning → Supplier learning and in the guides.
+- **Reproduced:** yes (every approval of the walk)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_the_way_to_skipping_review_is_said_in_plain_words`
+- **Lesson:** Don't name a feature in a message to someone who has not met it: say what it does.
+
+#### B-439 · A notes file uploaded by mistake became an invoice from "hello" · low
+- **Where:** `ap_coder/web/pages/process.py` (`looks_like_an_invoice_text`, `_save_and_start`; the message in
+  `tests/test_unusual_files.py` kept in step),
+  `ap_coder/web/templates/process.html`, `ap_coder/web/static/js/process.js`
+- **Symptom:** (was N-139) the upload takes `.txt` (invoices saved as text, on purpose) but its hint named only PDFs,
+  scans, photos and saved emails; a `notes.txt` reading "hello" went to the review queue as an invoice from
+  "hello", 0.00 CAD.
+- **Fix:** the hint and the messages name text files; a text file with no amount in it (nothing like 125.00) is not
+  read: "notes.txt was not read: a text file is read as an invoice only when it has amounts in it (like 125.00), and
+  this one has none." (The simpler of the two safe choices: one pattern, no guess at what an invoice says.)
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_a_text_file_without_amounts_is_not_read_as_an_invoice`
+- **Lesson:** Don't accept a file type quietly: say it is taken, and turn away what cannot be one.
+
+#### B-440 · Report a problem took 3 s the first time with nothing on the screen · low
+- **Where:** `ap_coder/web/static/js/app.js` (`a[data-busy]`), `ap_coder/web/templates/help.html`, `error.html`,
+  `settings_about.html`
+- **Symptom:** (was N-140) the first open of Help → Report a problem took about 3 s (loading the OCR package to
+  report on it is about 1 s of it, once per run; 0.05 s afterwards), and the page just sat there.
+- **Fix:** a link to a slow page can say so: each *Report a problem* link reads "Gathering the reports…" (dimmed,
+  `aria-busy`) until the page comes, and reads as before when the browser's Back returns to it. The 3 s were left:
+  the report loads the OCR package to say whether it works, which is its job.
+- **Reproduced:** yes (3.0 s measured)
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_report_a_problem_shows_it_is_working`
+- **Lesson:** Don't leave a click without an answer for more than a second.
+
+#### B-441 · A US invoice's header said "Province unknown", its Place of supply "Outside Canada" · low
+- **Where:** `ap_coder/web/invoice_view.py` (`summary`)
+- **Symptom:** (was N-141) `us_arizona_example.pdf` and the demo's Cascade Cloudworks invoice.
+- **Cause:** the place of supply is worked out without the ship-to "Outside Canada" (no Canadian tax to place); the
+  form said it from the ship-to (`supply_line`), the header did not.
+- **Fix:** the header says "Outside Canada" when the ship-to is outside Canada, as the form does.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_a_foreign_invoice_says_outside_canada_in_its_header`
+- **Lesson:** Don't work the same fact out twice for one screen.
+
+#### B-442 · On the first day the coding accuracy read "28.6%, −61.4 pts vs 90% target" in red · medium
+- **Where:** `ap_coder/web/core.py` (`accuracy_note`, `EARLY_LINES`), `ap_coder/web/pages/review.py` (`kpis`),
+  `ap_coder/web/pages/learning.py` (`coding_context`), `ap_coder/web/templates/review.html`,
+  `ap_coder/web/static/app.css`
+- **Symptom:** (was N-136) without a chat model every line starts with no account and counts as not right (D-39), so
+  the first approvals put a red "−61.4 pts" on the review queue and Learning, though nothing wrong was suggested.
+- **Fix:** D-39's figure is kept; while it says little (no chat model, or fewer than 50 lines reviewed) the note under
+  it is plain and not red: "GL suggestions improve as you approve; with the AI model on they start sooner" (the
+  second half only without the model). From 50 lines with the model on, the comparison with the 90% target is shown
+  as before.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_early_coding_accuracy_is_a_plain_note_not_a_red_figure`
+- **Lesson:** Don't score a measure against its target before it can be fair: say what moves it.
+
+#### B-443 · "Line 2: no GL account yet: pick one" in the checks didn't take you to line 2 · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`grouped_issues`, `GOTO_BOX`, `checks_summary`),
+  `ap_coder/web/templates/_invoice_live.html` (`status_block`), `ap_coder/web/static/js/invoice.js` (`goToLine`)
+- **Symptom:** the findings about a line's GL account or cost center were text, the line two screens down (B-434 made
+  the approve bar's hint a button; the same findings in the checks were not).
+- **Fix:** each is a button (underlined) to that line's GL account or cost center box, by its line number; "Lines 1,
+  3: …" goes to the first. Other findings stay text.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_each_line_without_an_account_in_the_checks_goes_to_its_line`,
+  `tests/test_web_pilot_walkthrough.py::test_in_a_browser_a_line_in_the_checks_takes_you_to_it`
+- **Lesson:** Same as B-434.
+
+#### B-444 · With LM Studio off the review screen said so three times, the invoice below the fold · medium
+- **Where:** `ap_coder/web/pages/invoice.py` (`LM_STUDIO_OFF`, `lm_studio_off`, `folded_reader`, `folded_reviewer`,
+  `invoice_page`, `reader_progress`); `tests/test_web_invoice.py` (two tests kept in step)
+- **Symptom:** (was N-138) the banner ("LM Studio isn't running…"), then under the document title "OvisOCR2 isn't
+  running: see Settings → Reading. It can't be approved without a person until OvisOCR2 has read it." and "The AI
+  reviewer checks this invoice against its pages when the chat model is free (after OvisOCR2)…": at 1366 x 768 the
+  invoice's picture started 583 px down, behind the approve bar.
+- **Fix:** on an invoice being reviewed, while LM Studio itself isn't running, the banner says it once: "LM Studio
+  isn't running: a person approves it; OvisOCR2 and the AI reviewer check it once LM Studio runs." (with its *Open
+  Settings → Reading* link), and the two notes are left out (also when the OvisOCR2 line is drawn again while it
+  waits). Other states (OvisOCR2 missing, testing itself, failed; a read cut off) keep their notes. The picture now
+  starts at 508 px, its top in view.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_with_lm_studio_off_the_review_screen_says_it_once`,
+  `tests/test_web_pilot_walkthrough.py::test_in_a_browser_with_lm_studio_off_the_invoice_shows_above_the_fold`
+- **Lesson:** Don't say one fact in three places on one screen: each copy pushes the work down.
+
+#### B-445 · B-439 turned away real text invoices: Notepad's Unicode files and whole-dollar amounts · high
+- **Where:** `ap_coder/web/pages/process.py` (`text_of`, `_AMOUNT`, `looks_like_an_invoice_text`)
+- **Symptom:** found by an independent review of this sweep: a text invoice saved by Notepad as "Unicode" (UTF-16,
+  read on purpose by `extraction.result_from_text`) and one printing whole dollars ("Subtotal: $100 / GST: $5 /
+  Total: $105", "Total 1,250") were refused at upload as having no amounts.
+- **Cause:** the check ran a pattern for "digits, a point, two digits" on the raw bytes: UTF-16 puts a zero byte
+  between every character, and whole dollars have no cents.
+- **Reproduce:** the review's `repro_txt.py` (both refused, 0 queued).
+- **Reproduced:** yes
+- **Fix:** the bytes are decoded as `result_from_text` decodes them (UTF-16 by its mark, UTF-8, else cp1252), and an
+  amount is a number with cents, a number after a currency sign, or a number after a word that names an amount
+  (total, subtotal, amount, balance, due, tax, GST, HST, PST, QST, TPS, TVQ, TVH, montant). The message says "a
+  text file (.txt, .md)". The check is the upload's only: a text file a person copies into the invoices folder is
+  read as before (it was put there as an invoice; the folder pick-up lists what it cannot read).
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_a_real_text_invoice_is_still_read` (UTF-16, whole dollars,
+  thousands, ANSI), `tests/test_web_pilot_walkthrough.py::test_a_markdown_file_without_amounts_is_refused_as_a_text_file`
+- **Lesson:** Don't test a file's content as bytes when the reader decodes it: check what the reader will see.
+
+#### B-446 · The walkthrough tests left "Pat Tester" as the reviewer for the rest of the run · medium (tests only)
+- **Where:** `tests/test_web_pilot_walkthrough.py` (the `me` fixture, the imports)
+- **Symptom:** `pytest tests/test_web_pilot_walkthrough.py tests/test_web_robustness.py::test_approving_in_a_second_tab_says_plainly_it_was_approved_meanwhile`
+  failed: the second test's approval was recorded under "Pat Tester".
+- **Cause:** the fixture patched `web.core.reviewer` before the page modules were first imported; they then copied
+  the patched function, and monkeypatch, restoring what it had found there, kept it as theirs.
+- **Fix:** the page modules are imported at the top of the file, before any patch.
+- **Reproduced:** yes
+- **Test:** the pair above, run in that order; the web tests run in two orders (walkthrough first and last).
+- **Lesson:** Don't patch a name in a module whose importers haven't imported it yet: they copy the patch.
+
+#### B-447 · Without a chat model B-442's note replaced the coding accuracy's comparison for good · low
+- **Where:** `ap_coder/web/core.py` (`accuracy_note`), `ap_coder/web/pages/review.py`, `ap_coder/web/pages/learning.py`
+- **Symptom:** found by the review: with no chat model the distance to the 90% target never showed again, however
+  many lines were reviewed.
+- **Fix:** the first 50 reviewed lines (`EARLY_LINES`) get the plain note in every case; after them the distance
+  shows, followed by "GL suggestions improve as you approve" while there is no chat model (D-49).
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_the_accuracy_note_gives_way_to_the_figure_after_the_first_lines`
+- **Lesson:** Don't make "early on" depend on a setting alone: give it an end.
+
+#### B-448 · Supplier learning and Automation still said "go touchless" and "clean in a row" · low
+- **Where:** `ap_coder/capture/supplier.py` (`describe`, `plain_rules`, `policy_gaps`, `autonomy_status`,
+  `automatic_transition`: wording only), `ap_coder/web/templates/learning.html`,
+  `ap_coder/web/templates/settings_automation.html`, `ap_coder/web/pages/settings_automation.py`,
+  `ap_coder/web/pages/learning.py`; `tests/test_supplier.py`, `tests/test_touchless_pages.py`,
+  `tests/test_web_settings.py` kept in step
+- **Symptom:** found by the review: after B-438 the approval message said "…before this vendor can skip review",
+  while Learning → Supplier learning said "6 more clean in a row needed", "about 32 more clean invoices for a 99%
+  accuracy bound", "Goes touchless on its next invoice", "a person found an error in a touchless invoice", and a
+  suspended vendor's line could end "…to skip review yet again.".
+- **Fix:** the same words throughout: "N more in a row without a correction needed", "about N more invoices without
+  a correction to show 99% accuracy", "Skips review from its next invoice", "Skips review since …", "an invoice that
+  skipped review"; "again" only after a number. *Touchless processing* stays the name of the setting (Settings →
+  Automation), and the tiles there read "Vendors skipping review", "Skipped review, last 30 days", "Errors found
+  after skipping review". The rules are unchanged.
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_supplier_learning_and_automation_use_the_same_plain_words`
+- **Lesson:** Don't change a term in one message: change it everywhere the same person reads it.
+
+#### B-449 · "Gathering the reports…" stayed for good when the page never came · low
+- **Where:** `ap_coder/web/static/js/app.js` (`a[data-busy]`, `resetSlowLink`)
+- **Symptom:** found by the review: with AP Coder stopped, the link kept saying it was gathering the reports.
+- **Fix:** after 15 s without the page the link reads as before (and on Back, as before).
+- **Reproduced:** yes
+- **Test:** `tests/test_web_pilot_walkthrough.py::test_in_a_browser_a_slow_link_reads_as_before_when_the_page_does_not_come`
+- **Lesson:** Don't show "working…" without an end: a request can fail silently.
+
+### Pilot path (backend)
+
+The path the pilot tester takes with real English vendor PDFs, from the import to the export, read and then run end to
+end (48 English vendor PDFs processed, reviewed and approved through the dashboard's routes, exported as JD Edwards,
+Excel, CSV and custom CSV): each suspicion was reproduced before it was called a bug.
+
+#### B-453 · A backup that could not be written stopped the dashboard from starting · medium
+- **Where:** `ap_coder/core/store.py` (`backup_to`), `ap_coder/web/pages/settings.py` (`restore_backup`)
+- **Symptom:** with the disk full (or the backups folder failing to write), the daily backup made as the dashboard
+  starts raised `sqlite3.OperationalError: disk I/O error` and the dashboard did not open at all; the half-written
+  copy was left in `backups/`, listed to restore, and taken for today's backup, so the next start made none. A restore
+  whose safety copy failed showed an error page.
+- **Cause:** the dashboard and the Settings page catch `OSError` for a backup that fails ("a backup problem must never
+  stop the dashboard from opening"); SQLite's errors are not `OSError`, and the copy was written under its final name.
+- **Reproduce:** start the dashboard with the process's file size limit below the database's size (a full disk).
+- **Reproduced:** yes (the dashboard did not start; `ap_coder-<date>.db` left behind)
+- **Fix:** the copy is written as `<name>.part` and renamed once complete; any failure removes it and raises `OSError`
+  with SQLite's reason, so every caller's existing handling applies; a restore whose safety copy fails says so. A
+  `.part` a crash left behind is removed by the next backup once it is a day old (the review's follow-up).
+- **Test:** `tests/test_pilot_path_backend.py::test_a_backup_that_cannot_be_written_never_stops_the_dashboard_nor_counts_as_made`,
+  `tests/test_pilot_path_backend.py::test_a_part_backup_left_by_a_crash_is_removed_when_backups_run`
+- **Lesson:** Don't name a file for what it will be before it is: a copy that fails half-way must not look made.
+
+#### B-454 · An invoice approved again taught the supplier's template a second time · medium
+- **Where:** `ap_coder/capture/supplier.py` (`learn`, `Template.documents`), `ap_coder/capture/workflow.py`
+  (`learn_from_approval`)
+- **Symptom:** an invoice approved, reopened for correction (or sent back by the second approver) and approved again
+  counted as two invoices in its supplier's template: a spot learned unsettled from it (one printed date approved as
+  both the invoice date and the due date, a value printed twice) had "two approvals in a row" from that one page and
+  was vouched for. On the supplier's next invoice the template read the invoice date as the due date, and the fused
+  due date became the template's 2017-11-05 instead of the labelled 2017-12-05 (*check* either way). The template's
+  invoice count went up by two.
+- **Cause:** a reopen or a send-back withdraws the coding memory, lessons and outcomes (B-14 and later), but the
+  template is a running record with no way to take one page back out, and nothing told it the page was seen before.
+- **Reproduce:** approve, reopen, approve the same PDF (dated and due the same day), then apply the template to an
+  invoice printing a due date.
+- **Reproduced:** yes (the due date spot vouched; fused due date 2017-11-05)
+- **Fix:** the template keeps the pages it learned from (the file's SHA-256, the newest 100) and the value of each field
+  learned from each: approved again, a page teaches only a value approved differently since (a correction: the spot of
+  the value approved first is a miss as before) or one the reviewer clicked; it no longer counts as another invoice.
+- **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_approved_again_teaches_the_template_once`,
+  `tests/test_pilot_path_backend.py::test_a_value_corrected_on_an_invoice_approved_again_is_still_learned`
+- **Lesson:** Don't count a second look at the same page as a second witness.
+
+#### B-455 · An invoice of about 90 lines or more could not be checked or approved · high
+- **Where:** `ap_coder/web/pages/invoice.py` (`_posted`), `ap_coder/web/pages/exports.py` (`create_batch`),
+  `ap_coder/web/core.py` (new `posted_form`)
+- **Symptom:** a long invoice (a distributor's parts list, a phone bill: 150 lines) opened on the review screen, but
+  every check, line action (split, apply rules, fill) and Approve answered "Too many fields. Maximum number of fields
+  is 1000.": it could not be approved at all. The Exports page refused a batch of more than about 1,000 ticked
+  invoices the same way.
+- **Cause:** the screen posts some ten fields per line (number, description, amount, GL, cost center, quantity,
+  price, reason, key, ticked taxes); Starlette's form parser refuses more than 1,000 fields by default.
+- **Reproduce:** a 150-line invoice in the queue, posted as the review page posts it.
+- **Reproduced:** yes (2,159 named fields on the page for 150 lines)
+- **Fix:** the review screen's form and the Exports page's ticked invoices are read with a limit of 200,000 fields.
+- **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_of_a_hundred_and_fifty_lines_can_be_checked_and_approved`
+- **Lesson:** Don't leave a framework's default limit standing on a form whose size grows with the data.
+
+#### B-456 · The review queue's search missed vendors written with accents · low
+- **Where:** `ap_coder/web/pages/review.py` (`filter_queue`, `sort_queue`)
+- **Symptom:** typing "quebec" or "energir" in the review queue's search found no "Hydro-Québec" or "Énergir" (only
+  the accented spelling did), and the review screen's previous / next followed the same filter; "Vendor A–Z" put
+  "Énergir" after "Zenith Supply".
+- **Cause:** the search and the order compared lower-cased text; the folding the rest of AP Coder uses for names
+  (`store.fold_text`, B-04) was not used here.
+- **Reproduce:** `filter_queue([{"vendor_name": "Hydro-Québec"}], "quebec")`.
+- **Reproduced:** yes (`[]`)
+- **Fix:** both fold accents and case as the vendor and invoice filters elsewhere do.
+- **Test:** `tests/test_pilot_path_backend.py::test_the_queue_search_and_vendor_order_read_accents_as_people_do`
+- **Lesson:** Don't compare names with `lower()`: fold them the way the rest of the app does.
+
+#### B-457 · The JD Edwards pay item sent a PO company without its PO number · low
+- **Where:** `ap_coder/erp/jde.py` (`voucher_rows`), docs/JDE_E1.md
+- **Symptom:** with *Send the PO number as a reference* off, an invoice quoting a PO went out with VLPO and VLPDCT
+  blank but VLPKCO (the PO company) filled: a PO key with no PO, unlike the mapping in docs/JDE_E1.md.
+- **Cause:** VLPO and VLPDCT followed the setting; VLPKCO only asked whether the invoice printed a PO.
+- **Reproduce:** `jde.export_batch([the Northwind invoice], JdeSettings(send_po_reference=False), ...)`.
+- **Reproduced:** yes (`VLPKCO = 00001`)
+- **Fix:** the three PO columns go out together, when the PO number is sent (as a reference, or PO-matched).
+- **Test:** `tests/test_pilot_path_backend.py::test_the_po_company_goes_out_only_with_the_po_number`
+- **Lesson:** Columns that make one key are filled by one condition.
+
+#### B-458 · What capture found about the page never showed on the review screen · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`analyse`), `ap_coder/capture/bridge.py` (`review_issues`)
+- **Symptom:** "only 20 of its 300 pages were read: check the other pages yourself before approving" (B-267), "the
+  currency isn't printed clearly: taken as USD, check it", "as printed, the totals don't add up", "check on the page:
+  …", "line items read differently" were kept with the invoice when it was read (they flagged it in the queue and
+  kept it from bulk approval), but the review screen, where the person decides, showed none of them: on the real
+  English PDFs, `us_gcp_mcwilliam` was flagged for its currency and its screen never said why.
+- **Cause:** the review screen checks the coding again as it is edited (`finalise_coding`), and these findings come
+  from what capture read, not from the coding; only the AI reviewer's findings were added back. B-267's test checked
+  the pipeline's report, not the screen.
+- **Reproduce:** an invoice whose stored capture left 280 of 300 pages out; open it, check it.
+- **Reproduced:** yes (neither the page nor the check shows it)
+- **Fix:** the review screen adds the findings about the page from the stored capture to its checks (warnings and
+  notes: Approve stays open), worked out again for the screen's currency and date. "Check on the page: …" is left
+  out there: it is on nearly every invoice, and its fields are highlighted in amber (the review's follow-up).
+- **Test:** `tests/test_pilot_path_backend.py::test_what_capture_found_about_the_page_is_on_the_review_screen`,
+  `tests/test_pilot_path_backend.py::test_the_review_screen_leaves_the_fields_to_check_to_their_highlight`
+- **Lesson:** Don't test a message for the screen anywhere but on the screen.
+
+#### B-459 · An invoice with no date found was dated the day it was read, without a word · medium
+- **Where:** `ap_coder/capture/bridge.py` (`review_issues`), `ap_coder/ai/pipeline.py`, `ap_coder/ops/help.py`
+- **Symptom:** an invoice whose date no reader found got the day it was read as its invoice date (so its due date,
+  G/L period and sales tax period), shown on the review screen like a date read from the page (no "how sure" mark,
+  no check); 4 of the 48 English PDFs (`ca_ubc_google` was not even flagged: Ready in the queue, offered for bulk
+  approval once its cost center is known), 2 of them with a due date years before that "invoice date".
+- **Cause:** the offline coder puts in today's date ("capture already flags the date as missing"), but capture's
+  findings name only the fields to check, never a missing one.
+- **Reproduce:** process a PDF that prints no date.
+- **Reproduced:** yes (invoice date today, no issue, requires_review false)
+- **Fix:** a warning, INVOICE_DATE_NOT_FOUND ("no invoice date was found on the page: <date> is assumed (the day it
+  was read); put in the invoice's date…"), with its Help entry; it is kept with the invoice (which keeps it from
+  bulk approval) and shown on the review screen until the reviewer puts in another date, shows the date on the page,
+  or approves it with that date (reopened or sent back, it is no longer said: the date was confirmed).
+- **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_with_no_date_found_says_the_date_was_assumed`
+- **Lesson:** Don't fill a missing value with a default without saying so where the person decides.
+
+#### B-460 · B-454's fix settled a corrected value printed on another field's words · high
+- **Where:** `ap_coder/capture/supplier.py` (`learn`)
+- **Symptom:** found by the independent review of this branch. A page prints only "Date: 05/11/2017"; approved with
+  the due date 2017-12-05 (not printed), reopened, the due date corrected to 2017-11-05 (due on receipt) and approved
+  again: the due date was learned at the invoice date's words as *settled*, and on the next invoice the template
+  read the invoice date as the due date, vouched for (on the main branch: unsettled). And a page approved with one
+  value, then another, then the first again counted twice for the first.
+- **Cause:** B-454 left the values learned already out of the page's search, so a corrected value sharing their
+  words looked printed alone; and each page remembered only the last value of each field.
+- **Reproduce:** the review's probes (`p454.py`, `p454b.py`), as in the tests.
+- **Reproduced:** yes (due date read at the invoice date's spot, not unsettled; a spot counted 2 for one page)
+- **Fix:** every value approved is looked for on the page (those learned already included), and only the ones not
+  learned from this page before are learned; the page keeps every value of each field it taught.
+- **Test:** `tests/test_pilot_path_backend.py::test_a_value_corrected_onto_another_fields_words_is_not_settled_there`,
+  `tests/test_pilot_path_backend.py::test_a_page_approved_with_a_value_then_another_then_the_first_again_counts_it_once`
+- **Lesson:** When a fix skips work, keep what the skipped work told the rest.
+
+#### B-461 · B-455 left other long forms at Starlette's 1,000 fields · medium
+- **Where:** `ap_coder/web/pages/accounts.py`, `review.py` (`review_bulk_approve`), `learning.py` (`memory_forget`),
+  and every other page reading a posted form (`exports`, `purchase_orders`, `vendors`, `settings_jde`, `insights`)
+- **Symptom:** found by the independent review. Saving a GL list of 400 accounts on GL accounts & tax (three fields an
+  account: a JD Edwards chart of 334 or more) answered "Too many fields"; so did bulk approval of 1,200 invoices and
+  forgetting 1,200 lessons.
+- **Cause:** B-455 used `posted_form` on the review screen and Exports only; FastAPI's `Form` lists use the default.
+- **Reproduce:** the review's probe (`p455.py`).
+- **Reproduced:** yes (400 "Too many fields")
+- **Fix:** every page reading a posted form reads it with `posted_form`; bulk approval and forgetting lessons read
+  their ticked ids from it.
+- **Test:** `tests/test_pilot_path_backend.py::test_long_lists_are_saved_on_every_page_that_posts_them`
+- **Lesson:** A limit raised in one place: look for every place that has it.
+
+#### B-462 · A value put back on a page approved again left the corrected-to spot vouched for · high
+- **Where:** `ap_coder/capture/supplier.py` (`learn`)
+- **Symptom:** found by the second review of this branch. A page prints "Invoice Date" and "Order Date" 2026-03-05 and
+  "Ship Date" 2026-03-07; approved with 2026-03-05, reopened and changed to 2026-03-07, then reopened and put back to
+  2026-03-05: on the next invoice the template read the ship date as the invoice date, vouched for (0.855; on the main
+  branch nothing was vouched).
+- **Cause:** B-460 has the page remember every value it taught a field; the value put back counted as taught and was
+  skipped whole, so the misses were not looked for and the ship date's spot, settled by the correction, kept its mark.
+- **Reproduce:** the review's probe (`p454b.py`), as in the test.
+- **Reproduced:** yes (the ship date read, not unsettled)
+- **Fix:** every approved value is checked for misses (a spot holding another value starts over), the ones taught by
+  the page before included; only learning them again is skipped.
+- **Test:** `tests/test_pilot_path_backend.py::test_a_value_put_back_on_a_page_approved_again_still_misses_the_spot_corrected_away`
+- **Lesson:** Skip the counting, never the checking.
+
+#### Looked at and left (pilot path, backend)
+
+Run as well, and found to work: approving twice (a double click: the second is "changed meanwhile"), the second
+approval and its send-back with a corrected field (learning withdrawn and learned once again, the export holds the
+correction), a credit note through the checks, the approval limit and every export, splits of negative and tiny
+amounts (exact to the cent), the JD Edwards files of all 47 approved English PDFs in every mode (pay items add up to
+the invoice; a 150-line invoice included), an invoice whose file was deleted after import (review, approval,
+approved PDF and exports all work and say the file is gone), a missing GL list (the review screen says to import it),
+formula-looking vendor names in the Excel export (stored as text), and the import job reading 48 PDFs while invoices
+were approved, parked and exported and a backup was made every 2 seconds (no lock, no lost write).
+
+- **N-165** · A PDF renamed in the invoices folder after it was imported is not found again (`paths.find_moved_file`
+  looks for the same name, then checks the SHA-256): its review screen says the file is no longer where it was and
+  shows no page; approval and the exports still work. Finding it by content would read every file in the folder.
+- **N-166** · `python -m ap_coder process <folder>` sets upright, in place, a PDF whose text is drawn sideways (D-47)
+  and keeps the file as it came in an `originals/` folder beside it, also in a folder outside the data folder (it
+  changed 3 files of the test corpus here, put back since). The dashboard copies what it reads into its own invoices
+  folder first; the command line is for developers.
+- **N-167** · Two approvals of the same supplier at the same moment (two computers on the office network) each read,
+  update and save the supplier's template: one of the two lessons can be lost. Not reproduced (one pilot tester).
+- **N-168** · A GL account the coder left blank and AP filled in counts as a correction for the lessons, so the
+  "why" question comes after 3 invoices of a vendor imported together before any was approved (GCstrategies on the
+  English PDFs), where D-39 counts filling a blank as no change. The lesson is also what tells the AI the account,
+  so whether a filled blank asks "why" is a design question: left.
+- **N-169** · The approval limit typed with a thousands separator ("5,000") is refused ("must be numbers"): said, not
+  saved wrong.
+- **N-170** · The review queue's "Amount: high to low" compares totals in different currencies as they are.
+- **N-171** · Capture's findings (B-458, B-459) are added after the confidence is worked out: a warning about the page
+  keeps an invoice from bulk approval, but does not by itself flag it in the queue
+  (Ready means Approve is open, which a warning does not close).

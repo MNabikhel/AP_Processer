@@ -1,7 +1,8 @@
 /* The invoice review screen (/review/<id>, templates/invoice.html): classes rvw-* and inv-*, on the dashboard's
    Ledger tokens (app.css). The page viewer's own styles are in invoice_viewer.css. */
 /* ---- Top: breadcrumb, then Queue · Reviewing 3 of 9 · Shortcuts · Previous · Next ---------------------------- */
-.inv-top {display: flex; flex-direction: column; gap: 8px;}
+/* Above the page below it: the Shortcuts list opens over the Document card (sticky, z-index 2; B-425) */
+.inv-top {display: flex; flex-direction: column; gap: 8px; position: relative; z-index: 25;}
 .rvw-nav {display: flex; align-items: center; gap: 8px; flex-wrap: wrap;}
 .rvw-nav .spacer {flex: 1;}
 .rvw-pos {display: block; font-size: 13px; color: var(--rv-muted); white-space: nowrap;
@@ -108,6 +109,10 @@
 .rvw-status li.err .m {background: var(--rv-danger);}
 .rvw-status li.warn .m {background: var(--rv-warning);}
 .rvw-status li .t {display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
+/* a line's missing account or cost center: a link-like button to its box (B-443) */
+.rvw-goto {border: 0; padding: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
+  text-decoration: underline; text-decoration-color: currentColor; text-underline-offset: 2px;}
+.rvw-goto:hover {text-decoration-thickness: 2px;}
 .inv-checks .inv-more {border-bottom: 1px solid var(--rv-hairline);}
 
 /* Ask the vendor */
@@ -115,7 +120,7 @@
   color: var(--lg-muted); font-size: 13px; font-weight: 500; cursor: pointer;}
 .seg-radio input {position: absolute; opacity: 0; width: 1px; height: 1px;}
 .seg-radio:has(input:checked) {background: var(--lg-surface); color: var(--lg-text); box-shadow: 0 0 0 1px var(--lg-border);}
-.seg-radio:has(input:focus-visible) {box-shadow: var(--lg-focus);}
+.seg-radio:has(input:focus-visible) {outline: 2px solid var(--lg-accent); outline-offset: 1px;}
 .inv-mail-draft > * + * {margin-top: 6px;}
 .inv-copy {display: flex; gap: 6px; align-items: flex-start;}
 .inv-copy pre {flex: 1; margin: 0; max-height: 220px; overflow: auto;}
@@ -124,6 +129,8 @@
 .inv-details > * + * {margin-top: 10px;}
 .inv-grid {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px;}
 .inv-grid.three {grid-template-columns: repeat(3, minmax(0, 1fr));}
+/* the amounts in a row: a label that wraps under its status ("Tax total ✓ Verified") keeps the boxes in line */
+.inv-grid.three .field {justify-content: flex-end;}
 .inv-grid .wide {grid-column: 1 / -1;}
 .inv-grid .field input, .inv-grid .field select {width: 100%; min-width: 0;}
 .inv-grid .field input[type="number"] {font-variant-numeric: tabular-nums; text-align: right;}
@@ -163,7 +170,7 @@
 .inv-taxes span {padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 22px; letter-spacing: .02em;
   color: var(--lg-subtle); border: 1px dashed var(--lg-border); white-space: nowrap;}
 .inv-taxes input:checked + span {color: var(--lg-text); border: 1px solid var(--lg-accent-line); background: var(--lg-accent-weak);}
-.inv-taxes input:focus-visible + span {box-shadow: var(--lg-focus);}
+.inv-taxes input:focus-visible + span {outline: 2px solid var(--lg-accent); outline-offset: 1px;}
 .inv-lines > .row {margin-top: 10px;}
 .inv-split-pop {width: min(560px, 92vw);}
 .inv-split-pop .field select {width: 100%;}
@@ -203,8 +210,13 @@
 .inv-actionbar-left {display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-width: 0;}
 /* "Pick a GL account for lines 1, 3 and a cost center for…" wraps instead of widening the page on a phone */
 .inv-actionbar-left .apc-pill {white-space: normal; max-width: 100%;}
+button.inv-pick {border: 0; font-family: inherit; text-align: left; cursor: pointer;}
+button.inv-pick:hover {text-decoration: underline;}
+button.inv-pick .ms {font-size: 14px;}
 @media (max-width: 600px) {.rvw-split .legend span {white-space: normal;}}
-.inv-actionbar-right {display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;}
+/* margin-left: auto: at the right also when the bar wraps under a long hint (B-428) */
+.inv-actionbar-right {display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
+  margin-left: auto;}
 .rvw-post {display: flex; flex-direction: column; min-width: 0;}
 .rvw-post-amount {font-size: 14px; color: var(--rv-muted); white-space: nowrap;}
 .rvw-post-amount b {font-weight: 600; color: var(--rv-text); font-variant-numeric: tabular-nums;}

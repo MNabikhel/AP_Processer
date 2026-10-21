@@ -830,7 +830,42 @@ function typing(target) {
   return target.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "reset"].includes(target.type);
 }
 
+/* ---------- The line that needs an account ---------- */
+
+/** The first line's GL account or cost center still to pick (the approve bar's hint, and G): scrolled to and focused,
+    where it was a label and the line far down the page (B-434). */
+function goToPick() {
+  const boxes = [...document.querySelectorAll('select[form="inv"][name="line_gl"], select[form="inv"][name="line_cc"]')];
+  const box = boxes.find((b) => !b.value || b.value === "UNASSIGNED");
+  if (!box) return false;
+  box.scrollIntoView({ block: "center", behavior: "smooth" });
+  box.focus({ preventScroll: true });
+  return true;
+}
+
+/** The box of one line (a finding in the checks: "Line 2: no GL account yet"), by its line number (B-443). */
+function goToLine(name, number) {
+  const rows = [...document.querySelectorAll('input[form="inv"][name="line_number"]')];
+  const row = rows.find((r) => r.value === number)?.closest("tr");
+  const box = row?.querySelector(`[form="inv"][name="${CSS.escape(name)}"]`);
+  if (!box) return goToPick();
+  box.scrollIntoView({ block: "center", behavior: "smooth" });
+  box.focus({ preventScroll: true });
+  return true;
+}
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest?.("[data-goto-pick]")) goToPick();
+  const line = e.target.closest?.("[data-goto-line]");
+  if (line) goToLine(line.dataset.gotoLine, line.dataset.line);
+});
+
 document.addEventListener("keydown", (e) => {
+  if ((e.key === "g" || e.key === "G") && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e.target) &&
+      !e.target.closest?.("dialog, [role=dialog]")) {
+    if (goToPick()) e.preventDefault();
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && approveButton && form) {
     if (elsewhere(e.target)) return;
     e.preventDefault();

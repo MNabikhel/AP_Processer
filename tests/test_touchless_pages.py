@@ -34,7 +34,8 @@ def test_automation_tab_turns_touchless_on_with_a_confirmation(client, store):
     _ready(store, 12, key="id:V2", name="Chinook")
     page = html.unescape(client.get("/settings/automation").text)
     assert "Off: every invoice is reviewed by a person" in page
-    assert "at least 20" in page and "the last 10, with no correction at all" in page and "5% of touchless" in page
+    assert "at least 20" in page and "Invoices in a row without a correction" in page and "the last 10" in page
+    assert "5% of the invoices that skip review" in page
     assert "Bank account changed" in page and "Possible duplicate" in page and "5,000.00 CAD" in page
     assert "Credit note" in page and "Not in the vendor master" in page and "Over the approval limit" in page
     assert re.search(r'<button[^>]*type="submit"[^>]*disabled', _switch(page))  # needs "I understand"
@@ -43,9 +44,9 @@ def test_automation_tab_turns_touchless_on_with_a_confirmation(client, store):
     page = follow(client, post(client, "/settings/automation/touchless", {"turn": "on", "sure": "1"}))
     assert store.touchless_enabled()
     assert store.events(actions=["touchless_on"])[0]["actor"] == "Lead Lee"
-    assert "Touchless processing is on: 1 vendor touchless now." in page
+    assert "Touchless processing is on: 1 vendor skipping review now." in page
     assert "On: a vendor that meets the bar" in page
-    assert "Vendors touchless" in page and "Touchless, last 30 days" in page
+    assert "Vendors skipping review" in page and "Skipped review, last 30 days" in page
 
 
 def test_the_touchless_confirmation_is_asked_again_for_the_opposite_switch(client, store):
@@ -79,7 +80,7 @@ def test_learning_tab_has_no_per_vendor_turn_on_button(client, store):
     _ready(store)
     store.set_touchless(True, "Mia")
     page = client.get("/learning?tab=suppliers").text
-    assert "Touchless" in page and "Touchless since" in page
+    assert "Touchless" in page and "Skips review since" in page
     assert "Turn on autonomy" not in page and "/learning/suppliers/on" not in page
     assert "/learning/suppliers/hold" in page  # keeping a vendor supervised is the one per-vendor control
 
@@ -92,4 +93,4 @@ def test_approving_says_what_the_vendor_learned(client, store):
     assert found, page
     text = found.group(0)
     assert "Every header field was read right." in text and ": 1 invoice reviewed, about " in text
-    assert "more clean invoices to go touchless." in text
+    assert "more invoices approved without a correction before this vendor can skip review." in text

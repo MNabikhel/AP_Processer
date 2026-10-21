@@ -500,7 +500,9 @@ class InvoicePipeline:
                     )  # fmt: skip
                 result.timings["capture"] = time.perf_counter() - t2
                 if result.capture is not None and result.report is not None:
-                    for severity, code, message in review_issues(result.capture, result.output.get("currency")):
+                    for severity, code, message in review_issues(
+                        result.capture, result.output.get("currency"), assumed_date=result.output.get("invoice_date")
+                    ):
                         result.report.issues.append(Issue(severity, code, message))
                     # The optional Azure check (off unless turned on): a check already done is folded in again (read
                     # again by the page reader); otherwise whether it goes in line, and waits for it.

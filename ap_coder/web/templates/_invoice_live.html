@@ -38,7 +38,9 @@
 {% macro status_block(tone, icon, title, items, sub="") -%}
 <div class="rvw-status {{ tone }}" role="status">
   <div class="rvw-status-title"><span class="ms" aria-hidden="true">{{ icon }}</span><span>{{ title }}</span></div>
-  {% if items %}<ul>{% for i in items %}<li class="{{ 'err' if i.bad else 'warn' }}" title="{{ i.text }}"><span class="m" aria-hidden="true">{{ '✕' if i.bad else '!' }}</span><span class="rvw-sr">{{ 'Must fix' if i.bad else 'Worth a look' }}: </span><span class="t">{{ i.text }}</span></li>{% endfor %}</ul>
+  {% if items %}<ul>{% for i in items %}<li class="{{ 'err' if i.bad else 'warn' }}" title="{{ i.text }}"><span class="m" aria-hidden="true">{{ '✕' if i.bad else '!' }}</span><span class="rvw-sr">{{ 'Must fix' if i.bad else 'Worth a look' }}: </span>
+    {%- if i.goto %}<button type="button" class="rvw-goto" data-goto-line="{{ i.goto.box }}" data-line="{{ i.goto.line }}" title="Go to line {{ i.goto.line }}"><span class="t">{{ i.text }}</span></button>
+    {%- else %}<span class="t">{{ i.text }}</span>{% endif %}</li>{% endfor %}</ul>
   {% elif sub %}<div class="rvw-status-sub">{{ sub }}</div>{% endif %}
 </div>
 {%- endmacro %}
@@ -228,7 +230,8 @@
   <div class="rvw-post-sub" title="Approving teaches AP Coder from {{ b.lines | plural('line') }}: {{ b.learn }}."><span class="ms" aria-hidden="true">school</span>
     Teaches from {{ b.lines | plural("line") }} · <span data-change-count="{{ b.changed }}">{{ b.learn }}</span></div>
 </div>
-{% if b.pick %}{{ ui.pill(b.pick, "warn") }}
+{% if b.pick %}{# a button to the first line that needs an account or a cost center (B-434; G does the same) #}
+<button type="button" class="apc-pill warn inv-pick" data-goto-pick aria-keyshortcuts="G" title="Go to the line (G)">{{ b.pick }}<span class="ms" aria-hidden="true">arrow_downward</span></button>
 {% elif b.errors %}
 <label class="check inv-override"><input type="checkbox" name="override" value="{{ b.override_key }}" form="inv"{% if b.override %} checked{% endif %}>
   Approve anyway, despite {{ b.errors | plural("error") }}</label>

@@ -60,11 +60,13 @@ def vendor_record(store: Any, vendor_name: str | None) -> dict[str, Any] | None:
             "erp_id": rec.get("erp_id") or ""}  # fmt: skip
 
 
-def review_issues(capture: CaptureResult, assumed_currency: str | None = None) -> list[tuple[str, str, str]]:
+def review_issues(capture: CaptureResult, assumed_currency: str | None = None, *,
+                  assumed_date: str | None = None) -> list[tuple[str, str, str]]:  # fmt: skip
     """(severity, code, message) for the review screen: header fields the readers could not confirm, totals that
     don't add up as printed, a PDF whose hidden text is not what its page shows, a currency the page does not show
-    (the coding's is then assumed: ``assumed_currency``, e.g. USD for a supplier with a US address), and pages the
-    local readers did not read (past ``layout.READ_PAGES``, or OCR failed on them)."""
+    (the coding's is then assumed: ``assumed_currency``, e.g. USD for a supplier with a US address), an invoice date
+    no reader found (the coding's ``assumed_date``, the day it was read, is then put in: B-459; None once a person
+    gave another), and pages the local readers did not read (past ``layout.READ_PAGES``, or OCR failed on them)."""
     from ..coding.validation import INFO, WARNING, currency_not_found
     from .confidence import LABELS
     from .layout import READ_PAGES
@@ -86,6 +88,16 @@ def review_issues(capture: CaptureResult, assumed_currency: str | None = None) -
     if currency is not None and not currency_read(currency):
         issue = currency_not_found(str(assumed_currency or currency.value or ""))
         out.append((issue.severity, issue.code, issue.message))
+    dated = capture.fields.get("invoice_date")
+    if assumed_date and dated is not None and (dated.status == MISSING or dated.value in (None, "")):
+        out.append(
+            (
+                WARNING,
+                "INVOICE_DATE_NOT_FOUND",
+                f"no invoice date was found on the page: {assumed_date} is "
+                "assumed (the day it was read); put in the invoice's date, it sets the due date and the period",
+            )
+        )
     if capture.pages_left_out > 0:  # nothing on those pages is in what the screen shows as read
         read, total = max(0, capture.page_count - capture.pages_left_out), capture.page_count
         out.append((WARNING, "PAGES_NOT_READ", f"only {read} of its {total} pages were read (a file's first "

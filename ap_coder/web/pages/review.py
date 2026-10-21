@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from ap_coder.coding.bulk import bulk_approve, sort_for_bulk
 from ap_coder.coding.review import codes_to_pick, uses_cost_centers
@@ -25,10 +26,21 @@ from ap_coder.coding.terms import DUE_SOON_DAYS, payment
 from ap_coder.core import ui
 from ap_coder.core.memory import vendor_key
 from ap_coder.core.reference_data import ReferenceData
-from ap_coder.core.store import APPROVED, FAILED, PARKED, PENDING, REJECTED, REVIEW, Store, load_sample_setup
+from ap_coder.core.store import (
+    APPROVED,
+    FAILED,
+    PARKED,
+    PENDING,
+    REJECTED,
+    REVIEW,
+    Store,
+    fold_text,
+    load_sample_setup,
+)
 from ap_coder.erp import recurring
 from ap_coder.web.core import (
     TARGET_ACCURACY,
+    accuracy_note,
     approved_today,
     by_currency,
     done,
@@ -41,6 +53,7 @@ from ap_coder.web.core import (
     local_url,
     login,
     money,
+    posted_form,
     reference_or_none,
     refuse,
     render,
@@ -62,12 +75,13 @@ TABS = ("review", "second", "parked", "approved", "other")
 
 
 def filter_queue(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
-    """The rows whose vendor, invoice number or file name contains ``query`` (any case)."""
-    query = (query or "").strip().lower()
+    """The rows whose vendor, invoice number or file name contains ``query`` (any case, accents or not: "quebec"
+    finds "Hydro-Québec", B-456)."""
+    query = fold_text((query or "").strip())
     if not query:
         return rows
     fields = ("vendor_name", "invoice_number", "file_name")
-    return [r for r in rows if any(query in str(r.get(f) or "").lower() for f in fields)]
+    return [r for r in rows if any(query in fold_text(str(r.get(f) or "")) for f in fields)]
 
 
 def sort_queue(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
@@ -80,7 +94,7 @@ def sort_queue(rows: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:
     if order == "newest":
         return sorted(rows, key=lambda r: r.get("invoice_date") or "", reverse=True)
     if order == "vendor":
-        return sorted(rows, key=lambda r: (r.get("vendor_name") or r.get("file_name") or "").lower())
+        return sorted(rows, key=lambda r: fold_text(r.get("vendor_name") or r.get("file_name") or ""))
     return rows
 
 
@@ -244,7 +258,8 @@ def today_pills(store: Store, invoices: list[dict[str, Any]]) -> list[tuple[str,
 
 
 def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, Any]],
-         approved: list[dict[str, Any]], awaiting: list[dict[str, Any]] = ()) -> list[dict[str, Any]]:  # fmt: skip
+         approved: list[dict[str, Any]], awaiting: list[dict[str, Any]] = (),
+         settings: Any = None) -> list[dict[str, Any]]:  # fmt: skip
     """The four figures at the top: waiting, approved today, coding accuracy, lessons learned. Approved today counts
     this reviewer's approvals, a first approval waiting for its second (``awaiting``) included, and says so."""
     metrics = store.metrics()
@@ -252,6 +267,9 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
     total_today = done_today + len(pending)
     accuracy = metrics["line_accuracy"]
     corrections = metrics["lines_corrected"]
+    note, compared = ("", True)
+    if settings is not None and accuracy is not None:
+        note, compared = accuracy_note(settings, metrics["lines_reviewed"])
     return [
         {"label": "Waiting", "value": f"{len(pending):,}", "sub": f"{len(flagged)} need attention"},
         {"label": "Approved today", "value": f"{done_today:,}",
@@ -260,9 +278,11 @@ def kpis(store: Store, pending: list[dict[str, Any]], flagged: list[dict[str, An
                 + f"{len(approved):,} fully approved in all",
          "bar": done_today / total_today if total_today else 0.0},
         {"label": "Coding accuracy", "value": "—" if accuracy is None else f"{accuracy:.1%}",  # as on Learning
-         "sub": "after the first approvals" if accuracy is None else "vs 90% target",
-         "delta": "" if accuracy is None else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace("-", "−"),
-         "good": accuracy is not None and accuracy >= TARGET_ACCURACY},
+         "sub": "after the first approvals" if accuracy is None
+                else ("vs 90% target" + (f" · {note}" if note else "")) if compared else note,
+         "delta": "" if accuracy is None or not compared else f"{(accuracy - TARGET_ACCURACY) * 100:+.1f} pts".replace(
+             "-", "−"),
+         "good": accuracy is not None and accuracy >= TARGET_ACCURACY, "wrap": bool(note)},
         {"label": "Lessons learned", "value": f"{metrics['lines_reviewed']:,}",
          "sub": f"{corrections} correction{'s' if corrections != 1 else ''} taught"},
     ]  # fmt: skip
@@ -317,7 +337,7 @@ def review_page(request: Request, tab: str = "review", show: str = "all", q: str
     unnamed = reviewer() if name_step()[0] != "ok" else ""  # approvals carry the computer login until a name is given
     context: dict[str, Any] = {"tab": tab, "tabs": tabs, "lead": lead, "show": show, "q": q, "sort": sort,
                                "unnamed": unnamed,
-                               "kpis": kpis(store, pending, flagged, approved, awaiting),
+                               "kpis": kpis(store, pending, flagged, approved, awaiting, settings),
                                "today": today_pills(store, invoices),
                                "shows": SHOWS, "sorts": SORTS, "view_url": view_url}  # fmt: skip
     if tab == "review":
@@ -398,9 +418,17 @@ def changed_meanwhile(request: Request, exc: Exception, back: str = "/review") -
 
 
 @router.post("/review/bulk-approve")
-def review_bulk_approve(request: Request, ids: list[int] = Form(default=[])) -> JSONResponse:  # noqa: B008
+async def review_bulk_approve(request: Request) -> JSONResponse:
     """Approve the clean invoices the page listed, exactly as coded. Each is re-checked first; any that is no
     longer clean is left for a person, with the reason."""
+    try:  # one field per invoice the page lists, however many (B-461)
+        ids = [int(str(i)) for i in (await posted_form(request)).getlist("ids")]
+    except ValueError:
+        return refuse("Nothing to approve.")
+    return await run_in_threadpool(_bulk_approve, request, ids)
+
+
+def _bulk_approve(request: Request, ids: list[int]) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     reference = reference_or_none(store)
     if reference is None or not ids:
