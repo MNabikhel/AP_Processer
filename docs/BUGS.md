@@ -5129,7 +5129,9 @@ Coder from 0.3.0 (build c384fc5, 2026-10-21) to 0.3.0 (build 87db17f, 2026-10-21
 - **Reproduced:** yes (in the review)
 - **Fix:** a site not reached at all (no answer in time, no such name, refused) is asked for nothing more in that
   run; the first setup waits 30 s an answer (3 tries), a later start 10 s (1 try); the window says once *AP Coder
-  couldn't reach www.modelscope.cn (a firewall may block it): ask IT, or use the offline bundle.*
+  couldn't reach www.modelscope.cn (a firewall may block it): ask IT, or use the offline bundle.* (measured: 104 s
+  for a first setup, 11 s for a later start). The *Still working* line comes less and less often when it would say
+  the same again.
 - **Test:** `tests/test_launch.py::test_a_site_that_never_answers_is_asked_once_and_said_once`
 - **Lesson:** When a server does not answer, the next request to it will not either: give up on the server, not on
   each file.

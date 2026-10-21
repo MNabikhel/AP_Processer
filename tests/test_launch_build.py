@@ -383,6 +383,9 @@ def test_a_quiet_step_after_pip_says_it_is_still_working(launch, capsys):
     out = capsys.readouterr().out
     assert "  Still working: getting the OCR models..." in out
     assert launch.Step().status() == ""  # nothing named: nothing said
+    with launch.heartbeat(step, every=0.2):  # the same line again and again: less and less often
+        time.sleep(1.7)
+    assert 2 <= capsys.readouterr().out.count("Still working") <= 4  # (every 0.2 s: 8)
 
 
 # --- Review: never clean up a folder that may be newer; Python 3.10; wording ------------------------------------------

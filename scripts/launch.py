@@ -945,10 +945,13 @@ class heartbeat:  # noqa: N801 - used as ``with heartbeat(progress):``
 
     def _beat(self) -> None:
         every = HEARTBEAT if self.every is None else self.every
+        wait, last = every, ""
         while not self.done.wait(min(1.0, every)):
-            if time.monotonic() - _said["at"] >= every:
+            if time.monotonic() - _said["at"] >= wait:
                 said = self.progress.status()
                 _said["at"] = time.monotonic()
+                wait = min(wait * 2, every * 5) if said == last else every  # the same line again: less often
+                last = said
                 if said:
                     say(said)
 
