@@ -117,6 +117,10 @@ if (form) {
   document.addEventListener("change", (e) => {
     if (e.target.form !== form) return;
     if (e.target.name === "mail_lang") return showMailLanguage();
+    if (e.target.name === "line_gl") {  // a guessed account the reviewer picked again is no longer a guess
+      const cell = e.target.closest(".is-guess");
+      if (cell) { cell.classList.remove("is-guess"); cell.querySelector(".inv-guess")?.remove(); }
+    }
     soon(e.target.tagName === "SELECT" || e.target.type === "checkbox" ? 0 : 200);
   });
 }

@@ -4897,3 +4897,54 @@ were approved, parked and exported and a backup was made every 2 seconds (no loc
 - **N-171** · Capture's findings (B-458, B-459) are added after the confidence is worked out: a warning about the page
   keeps an invoice from bulk approval, but does not by itself flag it in the queue
   (Ready means Approve is open, which a warning does not close).
+
+### Before testing: review screen and coding
+
+A product review before the pilot tester's first week, on the set-up they will use: LM Studio chosen as the chat
+model (and often not running yet), English vendor PDFs, no cost centers, Excel/CSV exports. Fifteen of the English
+PDFs imported into a scratch data folder with the sample GL accounts and screenshot at 1366×768.
+
+#### B-463 · With LM Studio chosen but not running, an account's name was put in the line as if learned · high
+- **Where:** `ap_coder/ai/pipeline.py` (`_process`, `_local_accounts`), `ap_coder/ai/offline_coder.py`
+  (`code_from_capture`), `ap_coder/core/store.py` (`approve_invoice`), `ap_coder/web/invoice_view.py`
+- **Symptom:** Google → 6320 Meals, AWS → 6110 Consulting, an IT consultancy → 6100 Legal, a $281k Microsoft bill →
+  1500 Computer Equipment: an account whose name shares a word with the line was filled in the GL dropdown, looked
+  like a learned code, left Approve open, and counted as "coded as suggested" in coding accuracy; Month-end accrued
+  on it. README and `offline_coder`'s own docstring say such a weak match is left blank and only suggested.
+- **Cause:** the pipeline coded with `assign_weak=provider == "local"`, and the provider is always "local" in this
+  offline build, whether or not LM Studio answers; the chat model was then asked only about lines with no
+  suggestion at all. The approval counted any account the AI put in a line as its proposal.
+- **Reproduce:** sample GL accounts, LM Studio at an address nothing answers, import `ca_ubc_google.pdf`,
+  `ca_oc_aws_10002100.pdf`: lines coded `WEAK_MATCH`, Approve open, "all as suggested".
+- **Reproduced:** yes (9 of 15 invoices had a weak match put in a line)
+- **Fix:** a weak match is never put in a line: it stays blank with "Not sure enough to code it (maybe 6110 …)" and
+  the review screen's suggestion, and is kept as a hint (`CodingResult.hints`). The chat model, when it answers, is
+  asked about these lines too; its account says whether the account's name agrees or pointed elsewhere. An account
+  no approval backs (the model's, or an older version's weak match: `offline_coder.guessed`) is marked on the review
+  screen ("A guess, not learned yet: check it"), the approve bar says "1 guessed account to check" instead of "all
+  as suggested", and when the reviewer keeps it, it counts as the reviewer's coding (`store.proposed_coding`: as if
+  left blank), never as "coded as suggested" in accuracy or the lessons (D-51).
+- **Test:** `tests/test_trust_review.py::test_with_lm_studio_chosen_but_not_answering_a_weak_match_is_left_blank`,
+  `::test_the_chat_models_answer_is_a_guess_and_says_how_it_compares_with_the_weak_match`,
+  `::test_a_kept_guess_is_the_reviewers_coding_not_coded_as_suggested`,
+  `::test_the_review_screen_marks_a_guess_and_does_not_call_it_as_suggested`
+- **Lesson:** "Is the model configured?" is not "did the model answer?": decide per invoice, from what happened.
+
+#### B-466 · Month-end accrued guesses, mixed CAD and USD rows, and said "already in the ERP" with nothing imported · medium
+- **Where:** `ap_coder/erp/accruals.py`, `ap_coder/web/pages/month_end.py`, `ap_coder/web/templates/month_end.html`
+- **Symptom:** invoices nobody had approved were accrued on their weak-match accounts with nothing to say so; the
+  by-account table listed one account twice (once in CAD, once in USD); an invoice dated 2012 was accrued without a
+  word; with no invoice and no register at all the page said "Everything incurred … is already in the ERP".
+- **Cause:** the accrual read any account in the coding; `by_gl` keyed on (account, currency); no date check; one
+  empty-state sentence for every case.
+- **Reproduce:** the 15 PDFs above, Month-end at the default period end; a fresh data folder's Month-end.
+- **Reproduced:** yes
+- **Fix:** an invoice in review or parked is accrued as "proposed: not approved yet" (a "Proposed" tag on screen,
+  the note in the CSV), on the accounts it was really given (a guessed account counts as none: "Needs an account");
+  the by-account table has one row per account and a column per currency; an invoice dated more than a year before
+  the period end is not accrued but listed ("Not accrued: dated more than a year before …", `accruals.old_dated`);
+  the empty state says what is true (nothing imported yet, or everything dated by then exported).
+- **Test:** `tests/test_trust_review.py::test_month_end_accrues_an_unapproved_invoice_as_proposed_and_never_on_a_guess`,
+  `::test_month_end_lists_an_invoice_dated_over_a_year_back_instead_of_accruing_it`,
+  `::test_month_end_groups_an_account_in_two_currencies_on_one_row`, `::test_month_end_with_nothing_imported_says_so`
+- **Lesson:** An empty state is a claim too: check it against an empty database.

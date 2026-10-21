@@ -42,7 +42,7 @@ def test_parked_invoices_are_still_accrued(tmp_path):
         {"kind": "expense", "gl_code": "6010", "cost_center": "", "amount": 100.0}]}, {})  # fmt: skip
     store.park_invoice(invoice_id, "Jane", "credit note promised")
     items = accruals.build(store, dt.date(2026, 9, 30))
-    assert [a.note for a in items if a.source == accruals.NOT_IN_ERP] == ["parked"]
+    assert [a.note for a in items if a.source == accruals.NOT_IN_ERP] == [f"parked, {accruals.PROPOSED}"]
 
 
 def test_notes(tmp_path):

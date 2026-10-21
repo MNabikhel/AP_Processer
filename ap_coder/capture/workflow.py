@@ -131,11 +131,9 @@ def invoice_gates(store: Any, capture: CaptureResult | None, report: Any, output
     unread = max(0, capture.page_count - pages_read) if capture is not None and pages_read is not None else 0
     currency = str(coding["currency"]).strip().upper()
     no_rate = "" if currency in store.fx_rates() else currency  # the limit is in CAD: unknown without a rate
-    from ..ai.inference import MODEL_SUGGESTED
-    from ..ai.offline_coder import WEAK_MATCH
+    from ..ai.offline_coder import guessed as is_guess
 
-    guessed = sum(1 for li in (output or {}).get("line_items") or []
-                  if str(li.get("reasoning_justification") or "").startswith((MODEL_SUGGESTED, WEAK_MATCH)))  # fmt: skip
+    guessed = sum(1 for li in (output or {}).get("line_items") or [] if is_guess(li.get("reasoning_justification")))
     return touchless_gates(issues, grand_total=coding["grand_total"], over_limit=over_limit,
                            over_approval_limit=store.over_approval_limit(coding),
                            awaiting_page_reader=awaiting_page_reader, pages_unread=unread,

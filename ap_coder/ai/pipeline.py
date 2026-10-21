@@ -272,11 +272,12 @@ class InvoicePipeline:
         from .inference import suggest_accounts
 
         coding = result.coding
-        # Lines nothing could code. A match on the account's name stays: on the samples a small model
-        # (1.5B) picked the right account less often (11 of 41) than the name match did (21 of 41).
+        # Lines nothing could code, weak matches included (an account's name: never put in a line on its own, B-463).
         # Each is numbered by its place on the invoice, not its printed line number: those can repeat (a second
-        # page that numbers from 1 again), and a suggestion must never land on a line already coded.
+        # page that numbers from 1 again), and a suggestion must never land on a line already coded. A line the model
+        # gives no account stays blank, its weak match shown as a suggestion on the review screen.
         todo = {n: li for n, li in enumerate(coding.line_items, start=1) if li.predicted_gl_code == UNASSIGNED}
+        hints = getattr(result, "hints", None) or {}
         if not todo:
             return
         from .lessons import prompt_lines
@@ -303,7 +304,13 @@ class InvoicePipeline:
             li.predicted_gl_code = gl
             if cc:
                 li.predicted_cost_center = cc
-            li.reasoning_justification = f"{MODEL_SUGGESTED}: {reason}" if reason else MODEL_SUGGESTED
+            why = f"{MODEL_SUGGESTED}: {reason}" if reason else MODEL_SUGGESTED
+            hint = hints.get(n)
+            if hint == gl:
+                why += " (the account's name matches the line too)"
+            elif hint:
+                why += f" (the account's name pointed to {hint} instead)"
+            li.reasoning_justification = why
         model = getattr(self.coder, "_local_model", "") or "local model"
         result.model = f"local reader + {model}"
 
@@ -454,9 +461,10 @@ class InvoicePipeline:
                 vendor = captured[0].fields.get("vendor_name")
                 if self.store is not None and vendor is not None and vendor.value:  # its lessons, past the cap too
                     feedback = self.store.learning_rows(str(vendor.value))
+                # A weak match (an account's name) is never put in the line: it is left blank, suggested on the
+                # review screen, and the chat model is asked about it when it answers (B-463).
                 result.coding = code_from_capture(
-                    captured[0], self.reference, feedback, self.store, text=result.extraction.content,
-                    assign_weak=provider == "local",
+                    captured[0], self.reference, feedback, self.store, text=result.extraction.content
                 )  # fmt: skip
                 if provider == "local":
                     self._local_accounts(result.coding, history_text)

@@ -172,6 +172,10 @@
 .inv-taxes input:checked + span {color: var(--lg-text); border: 1px solid var(--lg-accent-line); background: var(--lg-accent-weak);}
 .inv-taxes input:focus-visible + span {outline: 2px solid var(--lg-accent); outline-offset: 1px;}
 .inv-lines > .row {margin-top: 10px;}
+/* An account no approval backs (the chat model's own pick): marked until the reviewer picks it (B-463). */
+.inv-grid-table .is-guess select {border-color: var(--lg-warning); background: var(--lg-warning-weak);}
+.inv-guess {display: flex; align-items: center; gap: 3px; margin-top: 2px; font-size: 11px; line-height: 14px; color: var(--lg-warning);}
+.inv-guess .ms {font-size: 13px;}
 .inv-split-pop {width: min(560px, 92vw);}
 .inv-split-pop .field select {width: 100%;}
 .inv-parts td {padding: 4px 6px; height: auto;}

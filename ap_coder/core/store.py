@@ -284,6 +284,20 @@ def suggestion_kept(s_gl: str | None, s_cc: str | None, f_gl: str, f_cc: str | N
     return (gl_blank or s_gl == f_gl) and (cc_blank or s_cc == (f_cc or ""))
 
 
+def proposed_coding(suggestion: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """(GL account, cost center) the AI really proposed for a line (``suggestion``: the line as read, None: no line).
+    An account no approval backs (the chat model's own pick, an older version's weak match: ``offline_coder.guessed``)
+    was a guess for a person to check, not a proposal: it counts as left blank, so a reviewer who keeps it coded the
+    line, and coding accuracy and the lessons never count it as "coded as suggested" (B-463)."""
+    if not suggestion:
+        return None, None
+    from ..ai.offline_coder import guessed
+
+    if guessed(suggestion.get("reasoning_justification")):
+        return UNASSIGNED, ""
+    return suggestion.get("predicted_gl_code"), suggestion.get("predicted_cost_center", "")
+
+
 def fold_text(value: Any) -> Any:
     """The SQL function ``ap_fold(x)``: text without accents and its case folded ("Énergir" -> "energir"), so a
     filter compares names as people read them. SQLite's own lower() and LIKE fold only A to Z (B-04). Plain ASCII,
@@ -1472,8 +1486,7 @@ class Store:
         kept = suggestion_kept
 
         for suggestion, li in pair_lines(ai.get("line_items", []), final_output.get("line_items", [])):
-            s_gl = suggestion.get("predicted_gl_code") if suggestion else None
-            s_cc = suggestion.get("predicted_cost_center", "") if suggestion else None
+            s_gl, s_cc = proposed_coding(suggestion)  # a guess (no approval behind it) counts as blank
             f_gl, f_cc = li["predicted_gl_code"], li.get("predicted_cost_center", "")
             if f_gl == UNASSIGNED:
                 continue  # not a coding decision: nothing to learn from it

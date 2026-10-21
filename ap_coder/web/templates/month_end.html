@@ -19,8 +19,23 @@
   today, not by the period end.</p>
 {% endif %}
 
+{% if old %}
+<section class="card">
+  {{ ui.subhead("Not accrued: dated more than a year before " ~ end, old | length | plural("invoice"), first=True) }}
+  <p class="muted small">Their date may have been read wrong, or the bill is long overdue: check the date on the invoice
+    before accruing it.</p>
+  <div class="table-wrap">
+    <table class="apc-table">
+      <thead><tr><th>Vendor</th><th>Date</th><th class="r">Total</th></tr></thead>
+      <tbody>{% for a in old %}<tr><td class="w"><b>{{ a.vendor }}</b><div class="muted">{{ a.reference }}</div></td>
+        <td class="w">{{ a.description }}</td><td class="r">{{ a.amount | money }} <span class="muted">{{ a.currency }}</span></td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
 {% if not items %}
-<section class="card">{{ ui.empty_state("Nothing to accrue", "Everything incurred by " ~ end ~ " is already in the ERP.", inbox_art) }}</section>
+<section class="card">{{ ui.empty_state(empty[0], empty[1], inbox_art) }}</section>
 {% else %}
 <section class="card">
   <h4>By GL account</h4>
@@ -28,8 +43,8 @@
     {% for chunk in gl_columns %}
     <div class="table-wrap">
       <table class="apc-table">
-        <thead><tr><th>GL account</th><th class="r">Accrue</th></tr></thead>
-        <tbody>{% for r in chunk %}<tr><td>{{ gl(r.gl) }}</td><td class="r">{{ r.total | money }} <span class="muted">{{ r.currency }}</span></td></tr>{% endfor %}</tbody>
+        <thead><tr><th>GL account</th>{% for c in currencies %}<th class="r">Accrue {{ c }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for r in chunk %}<tr><td>{{ gl(r.gl) }}</td>{% for c in currencies %}<td class="r">{% if c in r.totals %}{{ r.totals[c] | money }}{% else %}<span class="muted">—</span>{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
       </table>
     </div>
     {% endfor %}
@@ -50,7 +65,7 @@
       <tbody>
         {% for a in g.rows %}
         <tr>
-          <td class="w"><b>{{ a.vendor }}</b><div class="muted">{{ a.reference }}</div></td>
+          <td class="w"><b>{{ a.vendor }}</b>{% if a.proposed %} <span class="apc-pill warn" title="No one has approved this invoice yet: its accounts are what AP Coder proposed">Proposed</span>{% endif %}<div class="muted">{{ a.reference }}</div></td>
           <td class="w">{{ a.description }}</td>
           <td class="w">{{ gl(a.gl) }}{% if a.cost_center %}<small class="muted">{{ a.cost_center }}</small>{% endif %}</td>
           <td class="r">{{ a.amount | money }} <span class="muted">{{ a.currency }}</span></td>

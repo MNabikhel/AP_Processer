@@ -66,10 +66,10 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
     for source, (n, by_currency) in accruals.summary(items).items():
         value, hint = tile_text(n, by_currency, rates)
         tiles.append((TITLES[source], value, hint))
-    reference = reference_or_none(store) if items else None
-    by_gl = [
-        {"gl": gl_cell(reference, gl), "currency": cur, "total": total} for gl, cur, total in accruals.by_gl(items)
-    ]
+    old = accruals.old_dated(store, period_end)
+    reference = reference_or_none(store) if items or old else None
+    currencies, by_account = accruals.by_gl_columns(items)
+    by_gl = [{"gl": gl_cell(reference, gl), "totals": totals} for gl, totals in by_account]
     half = (len(by_gl) + 1) // 2
     groups = []
     for source in accruals.SOURCES:
@@ -82,12 +82,22 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
                 "cost_center": (NEEDS_CC if a.cost_center == UNASSIGNED else a.cost_center) if a.cost_center else "",
                 "amount": a.amount,
                 "currency": a.currency,
+                "proposed": accruals.PROPOSED in a.note,
             }
             for a in items
             if a.source == source
         ]
         if rows:
             groups.append({"title": TITLES[source], "rows": rows})
+    # Nothing to accrue: what is true, not "already in the ERP" when nothing was ever imported (B-466).
+    empty = (
+        "Nothing to accrue yet",
+        "No invoices or purchase orders yet. Invoices you import show here until they are exported to the ERP.",
+    )
+    if store.invoice_columns(("id",)) or store.purchase_orders():
+        empty = ("Nothing to accrue",
+                 f"Every invoice dated by {period_end.isoformat()} has been exported, no goods received wait for an "
+                 "invoice, and no regular bill is overdue.")  # fmt: skip
     return render(
         request,
         "month_end.html",
@@ -96,6 +106,18 @@ def month_end_page(request: Request, end: str = "") -> HTMLResponse:
         tiles=tiles,
         old_period=period_end < dt.date.today() - dt.timedelta(days=31),
         items=bool(items),
+        empty=empty,
+        currencies=currencies,
+        old=[
+            {
+                "vendor": a.vendor,
+                "reference": _ROW_ID.sub("", a.reference),
+                "description": a.description,
+                "amount": a.amount,
+                "currency": a.currency,
+            }
+            for a in old
+        ],  # fmt: skip
         gl_columns=[by_gl[:half], by_gl[half:]] if len(by_gl) > 4 else [by_gl],
         groups=groups,
         inbox_art=ui.EMPTY_INBOX_SVG,

@@ -428,8 +428,18 @@ def tax_province_options() -> list[tuple[str, str]]:
 
 def grid(reference: ReferenceData, draft: Draft) -> dict[str, Any]:
     """What the line and tax grids need: the rows, with a stable key each, and the choices of every cell."""
-    return {
-        "lines": [{**row, "key": f"r{i}"} for i, row in enumerate(draft.lines)],
+    from ap_coder.ai.offline_coder import guessed
+
+    return {  # "guessed": an account no approval backs, marked for the reviewer to check (B-463)
+        "lines": [
+            {
+                **row,
+                "key": f"r{i}",
+                "guessed": guessed(row.get("reasoning_justification"))
+                and row.get("predicted_gl_code") not in (None, "", UNASSIGNED),
+            }
+            for i, row in enumerate(draft.lines)
+        ],
         "taxes": draft.taxes,
         "gl_options": gl_options(reference, draft.lines),
         "cc_options": cc_options(reference, draft.lines),
@@ -757,6 +767,17 @@ def ai_changes(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
     return changed
 
 
+def guesses_kept(coding: InvoiceCoding, ai: dict[str, Any]) -> int:
+    """The lines whose account was a guess (``offline_coder.guessed``: the chat model's own pick, no approval behind
+    it) and is still the one on screen: the reviewer confirms it by approving, it is not "as suggested" (B-463)."""
+    from ap_coder.ai.offline_coder import guessed
+
+    return sum(1 for before, li in pair_lines(ai.get("line_items", []), list(coding.line_items))
+               if before and guessed(before.get("reasoning_justification"))
+               and li.predicted_gl_code not in (UNASSIGNED, "")
+               and li.predicted_gl_code == before.get("predicted_gl_code"))  # fmt: skip
+
+
 def differs_from_stored(coding: InvoiceCoding, stored: dict[str, Any]) -> bool:
     """Whether the coding on screen is not the one stored for the invoice (the reviewer changed something)."""
     try:
@@ -1080,7 +1101,7 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     pick = codes_to_pick(coding.line_items, uses_cost_centers(reference))
     key = override_key(errors) if errors else ""
     allow = not pick and (not errors or draft.override == key)
-    changed = ai_changes(coding, ai)
+    changed, guesses = ai_changes(coding, ai), guesses_kept(coding, ai)
     lines_n = len(coding.line_items)
     _, rule_changes = rules.apply(coding, store.coding_rules())
     doc = coding.model_dump()
@@ -1117,7 +1138,8 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
         "posting": distribution(output, reference),
         "bar": {
             "amount": money(coding.grand_total), "currency": coding.currency, "lines": lines_n, "changed": changed,
-            "learn": f"you changed {changed} of its codes" if changed else "all as suggested",
+            "learn": f"you changed {changed} of its codes" if changed else
+                     f"{plural(guesses, 'guessed account')} to check" if guesses else "all as suggested",
             "pick": pick, "errors": len(errors), "override_key": key, "override": bool(key) and draft.override == key,
             "allow": allow,
         },

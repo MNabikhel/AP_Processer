@@ -21,7 +21,8 @@
     <input type="number" name="line_number" value="{{ num(row.line_number) }}" step="1" min="0" form="inv" aria-label="Line number"></td>
   <td class="c-desc"><input type="text" name="line_description" value="{{ row.description or '' }}" form="inv" aria-label="Description"></td>
   <td class="c-amt"><input type="number" name="line_amount" value="{{ cents(row.amount) }}" step="0.01" form="inv" aria-label="Amount"></td>
-  <td class="c-gl"><select name="line_gl" form="inv" aria-label="GL account" data-gl>{{ opts(g.gl_options, row.predicted_gl_code or "UNASSIGNED") }}</select></td>
+  <td class="c-gl{% if row.guessed %} is-guess{% endif %}"><select name="line_gl" form="inv" aria-label="GL account" data-gl>{{ opts(g.gl_options, row.predicted_gl_code or "UNASSIGNED") }}</select>
+    {%- if row.guessed %}<span class="inv-guess" title="{{ row.reasoning_justification }}"><span class="ms" aria-hidden="true">help</span>A guess, not learned yet: check it</span>{% endif %}</td>
   {% if g.has_cc %}<td class="c-cc"><select name="line_cc" form="inv" aria-label="Cost center">{{ opts(g.cc_options, row.predicted_cost_center or "UNASSIGNED") }}</select></td>{% endif %}
   <td class="c-tax"><div class="inv-taxes" role="group" aria-label="Taxes on this line">
     {% for t in g.tax_types %}<label title="{{ g.tax_labels[t] }}"><input type="checkbox" name="line_tax_{{ key }}" value="{{ t }}" form="inv"{% if t in (row.taxes_applied or []) %} checked{% endif %}><span>{{ g.tax_labels[t] }}</span></label>{% endfor %}

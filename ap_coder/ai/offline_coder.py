@@ -5,7 +5,8 @@ field and line as the local reader found them (capture, with its own confidence)
 from what AP approved before for this vendor and these words (``suggest.suggest_gl``), the vendor master's
 default account, and fixed coding rules (applied later by the pipeline). Nothing is guessed: a line with
 no history, or only a weak match, is left UNASSIGNED (the review screen suggests accounts for it) and a field
-the reader could not find stays empty, so review asks for it.
+the reader could not find stays empty, so review asks for it. A weak match is never put in the line, with or without
+the chat model (B-463): the model is asked about the line, and the weak match only shown as a suggestion.
 """
 
 from __future__ import annotations
@@ -28,14 +29,26 @@ from ..core.memory import vendor_key
 from ..core.reference_data import UNASSIGNED, ReferenceData
 from ..core.schema import PROVINCE_VALUES, InvoiceCoding, LineItem, TaxLine
 from .extraction import ExtractionResult
-from .inference import CodingResult
+from .inference import MODEL_SUGGESTED, CodingResult
 from .suggest import suggest_gl
 
 log = logging.getLogger(__name__)
 
 MODEL_NAME = "local reader (no AI model)"
 NO_HISTORY = "No earlier approval to learn from: pick the account."
-WEAK_MATCH = "A weak match, for a person to confirm"  # a line ``assign_weak`` coded: never approved without a person
+# A line an older version coded from a weak match (an account's name, the vendor's default): never approved without a
+# person. This version leaves such a line blank (B-463); invoices already in the queue may still carry it.
+WEAK_MATCH = "A weak match, for a person to confirm"
+# A line's account that no approval backs (the chat model's own pick, or an older weak match): a guess for a person to
+# check. Marked on the review screen, and a guess kept is the reviewer's coding, not "coded as suggested" (B-463).
+GUESSED = (MODEL_SUGGESTED, WEAK_MATCH)
+
+
+def guessed(reason: Any) -> bool:
+    """Whether a line's reasoning says its account is a guess (``GUESSED``), not learned from AP's approvals."""
+    return str(reason or "").startswith(GUESSED)
+
+
 _TAXES = (("gst_amount", "GST"), ("hst_amount", "HST"), ("pst_amount", "PST"), ("qst_amount", "QST"))
 # The rates a Canadian invoice charges (a rate worked out from rounded amounts snaps to the nearest one), and
 # the province a rate names when only one has it (HST 13% Ontario, 14% Nova Scotia from April 2025; PST 6% SK).
@@ -224,11 +237,11 @@ def not_sure(top: Any) -> str:
 
 
 def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback: list[dict[str, Any]],
-                      store: Any = None, text: str = "", assign_weak: bool = False) -> CodingResult:  # fmt: skip
+                      store: Any = None, text: str = "") -> CodingResult:  # fmt: skip
     """``text``: the page text (labels a charge printed outside the line table). A line gets an account only when
     the evidence is strong enough (``Suggestion.auto``); the others stay UNASSIGNED and the review screen suggests
-    accounts for them. ``assign_weak``: code those with the best suggestion anyway (the local chat model is asked
-    only about lines with no suggestion at all: an account name match beat a small model on the samples)."""
+    accounts for them. The weak match of each line left blank is kept in ``CodingResult.hints`` (its place on the
+    invoice, from 1 -> account), for the chat model's answer to be compared with (``pipeline._local_accounts``)."""
     values = _values(capture)
     vendor = str(values.get("vendor_name") or "")
     readings = [li for li in capture.line_items if li.amount is not None]
@@ -273,13 +286,14 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
     if (readings or freight) and abs(short) >= 0.01:
         readings_data.append((_unlisted_charge(text, short), 1.0, short, short))
     lines = []
+    hints: dict[int, str] = {}
     for number, (description, quantity, unit_price, amount) in enumerate(readings_data, 1):
         top = next(iter(suggest_gl(description, vendor, feedback, reference, limit=1, default_gl=default_gl)), None)
         # Only a strong match codes the line; a weaker one is left for AP, suggested on the review screen.
-        best = top if top is not None and (top.auto or assign_weak) else None
+        best = top if top is not None and top.auto else None
+        if top is not None and best is None:
+            hints[number] = top.gl_code
         why = "; ".join(best.reasons) if best else not_sure(top) if top is not None else NO_HISTORY
-        if best is not None and not best.auto:
-            why = f"{WEAK_MATCH}: {why}" if why else WEAK_MATCH
         lines.append(
             LineItem(
                 line_number=number,
@@ -324,7 +338,7 @@ def code_from_capture(capture: CaptureResult, reference: ReferenceData, feedback
         confidence_score=confidence,
         line_items=lines,
     )
-    return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0)
+    return CodingResult(coding=coding, raw_response="", model=MODEL_NAME, attempts=0, hints=hints)
 
 
 def _iso_or_empty(value: Any) -> str:

@@ -6,7 +6,9 @@ Three sources, none counted twice:
   invoiced so far, at the PO price, on the PO line's GL account
 * Invoices not yet in the ERP: invoices dated on or before the period end that are still in review,
   waiting for a second approval, or approved but not exported, by GL account (net of recoverable tax); a copy
-  flagged as a duplicate of a bill already exported or counted, or as already in the ERP, is left out
+  flagged as a duplicate of a bill already exported or counted, or as already in the ERP, is left out. One no
+  person has approved yet is "proposed", on the accounts it was given (a guessed account counts as none, B-466);
+  one dated more than a year before the period end is not accrued but listed to check (``old_dated``)
 * Expected recurring invoices: regular vendors whose next invoice was due by the period end and has not
   arrived, at their usual amount, on the GL account most used for them (an estimate)
 """
@@ -29,6 +31,9 @@ from .exports import distribution
 
 RECEIVED, NOT_IN_ERP, RECURRING = "Received, not invoiced", "Invoice not in the ERP yet", "Expected recurring invoice"
 SOURCES = (RECEIVED, NOT_IN_ERP, RECURRING)
+OLD_DAYS = 365  # an invoice dated more than this before the period end is not accrued: a misread date, or long overdue
+# Not approved by anyone yet: its coding is what AP Coder proposed, not what a person confirmed.
+PROPOSED = "proposed: not approved yet"
 
 
 @dataclass
@@ -94,8 +99,31 @@ def _flags(validation: object) -> set[str]:
     return {str(i.get("code")) for i in issues or [] if isinstance(i, dict)}
 
 
-def _not_in_erp(store: Store, period_end: dt.date) -> list[Accrual]:
+def _unguessed(doc: dict) -> dict:
+    """``doc`` with every guessed account (``offline_coder.guessed``: no approval behind it) taken out: an invoice no
+    person has approved accrues only on accounts it was really given, never on a guess (B-466)."""
+    from ..ai.offline_coder import guessed
+    from ..core.reference_data import UNASSIGNED
+
+    lines = doc.get("line_items") or []
+    if not any(guessed(li.get("reasoning_justification")) for li in lines):
+        return doc
+    lines = [{**li, "predicted_gl_code": UNASSIGNED} if guessed(li.get("reasoning_justification")) else li
+             for li in lines]  # fmt: skip
+    return {k: v for k, v in doc.items() if k != "gl_distribution"} | {"line_items": lines}
+
+
+def old_dated(store: Store, period_end: dt.date) -> list[Accrual]:
+    """Invoices not in the ERP yet dated more than ``OLD_DAYS`` before the period end: not accrued (a date read wrong,
+    or a bill long overdue), listed for a person to check (B-466)."""
+    old: list[Accrual] = []
+    _not_in_erp(store, period_end, old)
+    return old
+
+
+def _not_in_erp(store: Store, period_end: dt.date, old: list[Accrual] | None = None) -> list[Accrual]:
     end = period_end.isoformat()
+    oldest = (period_end - dt.timedelta(days=OLD_DAYS)).isoformat()
     rows = store.invoice_columns(("id", "status", "ai_output", "final_output", "validation"))
     exported = {r["id"] for r in store.list_invoices(APPROVED)} - {r["id"] for r in store.unexported_approved()}
     # A copy flagged as a duplicate of a bill already in the ERP (exported) or already accrued is not accrued
@@ -113,12 +141,23 @@ def _not_in_erp(store: Store, period_end: dt.date) -> list[Accrual]:
         if "DUPLICATE_IN_ERP" in flags or ("DUPLICATE_INVOICE" in flags and bill in counted):
             continue
         counted.add(bill)
+        proposed = r["status"] in (REVIEW, PARKED)  # no person has approved it: its coding is a proposal
+        if proposed:
+            doc = _unguessed(doc)
+        if str(doc.get("invoice_date") or "") < oldest:
+            if old is not None:
+                old.append(Accrual(NOT_IN_ERP, doc.get("vendor_name") or "",
+                                   f"Invoice {doc.get('invoice_number') or ''} (#{r['id']})",
+                                   f"invoice dated {doc.get('invoice_date')}", "", "",
+                                   round(float(doc.get("grand_total") or 0), 2), doc.get("currency") or "",
+                                   "dated more than a year before the period end: not accrued"))  # fmt: skip
+            continue
         by_gl: dict[tuple[str, str], float] = defaultdict(float)
         for e in distribution(doc, treatments):  # an invoice coded by an older version: built again
             if e.get("kind") == "expense" or e.get("non_recoverable_tax"):  # a cost; recoverable tax is not
                 by_gl[(e.get("gl_code") or "", e.get("cost_center") or "")] += float(e.get("amount") or 0)
-        state = {REVIEW: "in review", PARKED: "parked", PENDING: "waiting for a second approval",
-                 APPROVED: "approved, not exported"}  # fmt: skip
+        state = {REVIEW: f"in review, {PROPOSED}", PARKED: f"parked, {PROPOSED}",
+                 PENDING: "waiting for a second approval", APPROVED: "approved, not exported"}  # fmt: skip
         for (gl, cc), amount in by_gl.items():
             out.append(
                 Accrual(
@@ -172,6 +211,17 @@ def by_gl(accruals: list[Accrual]) -> list[tuple[str, str, float]]:
     for a in accruals:
         totals[(a.gl_code or "(no GL)", a.currency)] += a.amount
     return sorted(((gl, cur, round(t, 2)) for (gl, cur), t in totals.items()), key=lambda x: -x[2])
+
+
+def by_gl_columns(accruals: list[Accrual]) -> tuple[list[str], list[tuple[str, dict[str, float]]]]:
+    """(currencies, [(GL account, {currency: total})]): one row per account, a column per currency (CAD first),
+    largest first by its biggest amount. Currencies are never added together."""
+    totals: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for a in accruals:
+        totals[a.gl_code or "(no GL)"][a.currency or "CAD"] += a.amount
+    currencies = sorted({c for t in totals.values() for c in t}, key=lambda c: (c != "CAD", c))
+    rows = [(gl, {c: round(v, 2) for c, v in t.items()}) for gl, t in totals.items()]
+    return currencies, sorted(rows, key=lambda r: -max(r[1].values()))
 
 
 def to_csv(accruals: list[Accrual], period_end: dt.date) -> bytes:
