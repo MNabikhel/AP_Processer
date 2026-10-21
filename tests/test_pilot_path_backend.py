@@ -154,12 +154,72 @@ def test_a_value_corrected_on_an_invoice_approved_again_is_still_learned(tmp_pat
     assert template.invoices == 1
 
 
+def test_what_capture_found_about_the_page_is_on_the_review_screen(tmp_path, ground_truth):
+    """B-267 said "only 20 of its 300 pages were read: check the other pages yourself before approving" on the review
+    screen; it was kept with the invoice (it flagged it in the queue) but the review screen, which checks the coding
+    again as it is edited, never showed it, nor any other finding about the page (a currency not printed, totals that
+    don't add up as printed, fields to check)."""
+    from ap_coder.core.store import load_sample_setup
+
+    from .conftest import SAMPLE_STEM, SAMPLES
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    inv_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", ground_truth, {})
+    store.save_capture(inv_id, {"fields": {}, "page_count": 300, "pages_left_out": 280})
+    client = _web(store)
+    said = "only 20 of its 300 pages were read"
+    assert said in client.get(f"/review/{inv_id}").text
+    checked = client.post(f"/review/{inv_id}/check", data=_form(store, inv_id), headers=PAGE).json()
+    assert said in str(checked["sections"]) and checked["allow"]  # a warning: Approve stays open
+
+
+def _undated(path):
+    return _pdf(path, [(40, 50, "Contoso Supplies Ltd."), (40, 64, "12 Main Street, Toronto ON M5V 2T6"),
+                       (360, 50, "INVOICE"), (360, 70, "Invoice # INV-5521"),
+                       (40, 160, "Description"), (300, 160, "Qty"), (360, 160, "Price"), (460, 160, "Amount"),
+                       (40, 180, "Widgets"), (300, 180, "2"), (360, 180, "50.00"), (460, 180, "100.00"),
+                       (360, 240, "Subtotal"), (460, 240, "100.00"), (360, 256, "HST 13%"), (460, 256, "13.00"),
+                       (360, 272, "Total"), (460, 272, "113.00")])  # fmt: skip
+
+
+def test_an_invoice_with_no_date_found_says_the_date_was_assumed(tmp_path):
+    """An invoice printing no date the readers found was given the day it was read as its invoice date (so its due
+    date, its G/L period and its tax period), shown on the review screen like a date read from the page, and nothing
+    said so: no check, no flag in the queue (ca_ubc_google: Ready, 2026-10-21)."""
+    import dataclasses as dc
+    import datetime as dt
+
+    from ap_coder.ai.pipeline import InvoicePipeline
+    from ap_coder.core.store import load_sample_setup
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    settings = Settings()
+    settings = dc.replace(settings, llm=dc.replace(settings.llm, provider="off"))
+    result = InvoicePipeline(settings, store.reference_data(), store=store).process(_undated(tmp_path / "a.pdf"))
+    assert result.ok, result.error
+    today = dt.date.today().isoformat()
+    assert result.output["invoice_date"] == today
+    found = [i for i in result.report.issues if i.code == "INVOICE_DATE_NOT_FOUND"]
+    assert [i.severity for i in found] == ["warning"] and today in found[0].message
+    stored = store.get_invoice(result.invoice_id)
+    assert stored["requires_review"]  # flagged in the queue, never approved in bulk
+    client = _web(store)
+    data = _form(store, result.invoice_id)
+    assert "INVOICE_DATE_NOT_FOUND" in str(client.post(f"/review/{result.invoice_id}/check", data=data,
+                                                       headers=PAGE).json()["sections"])  # fmt: skip
+    data["invoice_date"] = "2026-09-30"  # the reviewer puts in the date (from the email, say): no longer assumed
+    sections = str(client.post(f"/review/{result.invoice_id}/check", data=data, headers=PAGE).json()["sections"])
+    assert "INVOICE_DATE_NOT_FOUND" not in sections
+
+
 def test_the_po_company_goes_out_only_with_the_po_number():
     """With "Send the PO number" off, the pay item had no PO number (VLPO) nor PO type (VLPDCT) but still the PO
     company (VLPKCO), where docs/JDE_E1.md says all three go out together when there is a PO to send."""
     from ap_coder.erp import jde
 
-    from .test_jde import AN8, ON, _files, _invoice
+    from .test_jde import ON, _files, _invoice
 
     off = _files([_invoice(ON)], jde.JdeSettings(send_po_reference=False))[jde.HEADER_FILE][0]
     assert (off["VLPO"], off["VLPDCT"], off["VLPKCO"]) == ("", "", "")

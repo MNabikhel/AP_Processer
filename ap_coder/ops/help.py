@@ -468,6 +468,13 @@ CHECKS: dict[str, CheckHelp] = {
         "Check the invoice against the page yourself, then approve. It isn't approved without a person. Set the "
         "Azure model back to prebuilt-invoice if it was changed.",
     ),
+    "INVOICE_DATE_NOT_FOUND": CheckHelp(
+        READING, "Invoice date not found",
+        "No reader found the invoice's date on the page, so the day it was read was put in. The due date, the G/L "
+        "period and the sales tax period follow from that date.",
+        "Find the invoice's date (on the page, in the email it came with, or from the vendor) and put it in before "
+        "approving.",
+    ),
     "CURRENCY_NOT_FOUND": CheckHelp(
         READING, "Currency not printed",
         "The invoice shows no currency the reader could read (no code such as CAD or USD, no € or £ sign), so "

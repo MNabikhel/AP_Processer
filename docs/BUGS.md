@@ -4442,3 +4442,36 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
 - **Fix:** the three PO columns go out together, when the PO number is sent (as a reference, or PO-matched).
 - **Test:** `tests/test_pilot_path_backend.py::test_the_po_company_goes_out_only_with_the_po_number`
 - **Lesson:** Columns that make one key are filled by one condition.
+
+#### B-458 · What capture found about the page never showed on the review screen · medium
+- **Where:** `ap_coder/web/invoice_view.py` (`analyse`), `ap_coder/capture/bridge.py` (`review_issues`)
+- **Symptom:** "only 20 of its 300 pages were read: check the other pages yourself before approving" (B-267), "the
+  currency isn't printed clearly: taken as USD, check it", "as printed, the totals don't add up", "check on the page:
+  …", "line items read differently" were kept with the invoice when it was read (they flagged it in the queue and
+  kept it from bulk approval), but the review screen, where the person decides, showed none of them: on the real
+  English PDFs, `us_gcp_mcwilliam` was flagged for its currency and its screen never said why.
+- **Cause:** the review screen checks the coding again as it is edited (`finalise_coding`), and these findings come
+  from what capture read, not from the coding; only the AI reviewer's findings were added back. B-267's test checked
+  the pipeline's report, not the screen.
+- **Reproduce:** an invoice whose stored capture left 280 of 300 pages out; open it, check it.
+- **Reproduced:** yes (neither the page nor the check shows it)
+- **Fix:** the review screen adds the findings about the page from the stored capture to its checks (warnings and
+  notes: Approve stays open), worked out again for the screen's currency and date.
+- **Test:** `tests/test_pilot_path_backend.py::test_what_capture_found_about_the_page_is_on_the_review_screen`
+- **Lesson:** Don't test a message for the screen anywhere but on the screen.
+
+#### B-459 · An invoice with no date found was dated the day it was read, without a word · medium
+- **Where:** `ap_coder/capture/bridge.py` (`review_issues`), `ap_coder/ai/pipeline.py`, `ap_coder/ops/help.py`
+- **Symptom:** an invoice whose date no reader found got the day it was read as its invoice date (so its due date,
+  G/L period and sales tax period), shown on the review screen like a date read from the page (no "how sure" mark,
+  no check); 4 of the 48 English PDFs (`ca_ubc_google` was not even flagged: Ready in the queue, offered for bulk
+  approval once its cost center is known), 2 of them with a due date years before that "invoice date".
+- **Cause:** the offline coder puts in today's date ("capture already flags the date as missing"), but capture's
+  findings name only the fields to check, never a missing one.
+- **Reproduce:** process a PDF that prints no date.
+- **Reproduced:** yes (invoice date today, no issue, requires_review false)
+- **Fix:** a warning, INVOICE_DATE_NOT_FOUND ("no invoice date was found on the page: <date> is assumed (the day it
+  was read); put in the invoice's date…"), with its Help entry; it flags the invoice in the queue and keeps it from
+  bulk approval, and leaves the review screen once the reviewer puts in another date.
+- **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_with_no_date_found_says_the_date_was_assumed`
+- **Lesson:** Don't fill a missing value with a default without saying so where the person decides.
