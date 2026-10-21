@@ -4361,3 +4361,24 @@ verified precision 100%; hard corpus 96.9% fields, no silent error 100%).
 - **N-135** · The review's `freight` stream (merchandise, freight, then "Subtotal" of both): the reader takes the printed
   "Subtotal" (merchandise + freight), AP codes the merchandise as the subtotal and the freight apart; every invoice is
   "wrong and verified" on the main branch and here alike. A coding convention, not a reading or learning question.
+
+### Pilot path (backend)
+
+The path the pilot tester takes with real English vendor PDFs, from the import to the export, read and then run end to
+end (48 English vendor PDFs processed, reviewed and approved through the dashboard's routes, exported as JD Edwards,
+Excel, CSV and custom CSV): each suspicion was reproduced before it was called a bug.
+
+#### B-453 · A backup that could not be written stopped the dashboard from starting · medium
+- **Where:** `ap_coder/core/store.py` (`backup_to`), `ap_coder/web/pages/settings.py` (`restore_backup`)
+- **Symptom:** with the disk full (or the backups folder failing to write), the daily backup made as the dashboard
+  starts raised `sqlite3.OperationalError: disk I/O error` and the dashboard did not open at all; the half-written
+  copy was left in `backups/`, listed to restore, and taken for today's backup, so the next start made none. A restore
+  whose safety copy failed showed an error page.
+- **Cause:** the dashboard and the Settings page catch `OSError` for a backup that fails ("a backup problem must never
+  stop the dashboard from opening"); SQLite's errors are not `OSError`, and the copy was written under its final name.
+- **Reproduce:** start the dashboard with the process's file size limit below the database's size (a full disk).
+- **Reproduced:** yes (the dashboard did not start; `ap_coder-<date>.db` left behind)
+- **Fix:** the copy is written as `<name>.part` and renamed once complete; any failure removes it and raises `OSError`
+  with SQLite's reason, so every caller's existing handling applies; a restore whose safety copy fails says so.
+- **Test:** `tests/test_pilot_path_backend.py::test_a_backup_that_cannot_be_written_never_stops_the_dashboard_nor_counts_as_made`
+- **Lesson:** Don't name a file for what it will be before it is: a copy that fails half-way must not look made.
