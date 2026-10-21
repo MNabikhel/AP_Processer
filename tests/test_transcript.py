@@ -320,7 +320,9 @@ def test_offline_coding_assumes_a_currency_by_the_suppliers_address(tmp_path, re
              (380, 530, "Total Due"), (500, 530, "$1,000.00")]  # fmt: skip
     pdf = _pdf(tmp_path, lines)
     capture = analyze(pdf, ocr=False, today=TODAY)
-    assert capture.fields["currency"].status == MISSING
+    # A US supplier's "$" is read as US dollars for a person to check (B-405); otherwise nothing is read.
+    got = capture.fields["currency"]
+    assert got.status == MISSING if currency == "CAD" else (got.value, got.status) == ("USD", "check")
     coding = code_from_capture(capture, reference, [], text=build_layout(pdf, ocr=False).text()).coding
     assert coding.currency == currency
     assert "CURRENCY_NOT_FOUND" in [code for _, code, _ in review_issues(capture)]
