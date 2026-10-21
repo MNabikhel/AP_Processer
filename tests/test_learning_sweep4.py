@@ -362,3 +362,61 @@ def test_a_total_tax_only_the_template_read_gives_way_to_the_taxes_on_the_page()
     fields, _ = fuse({"rules": rules, "template": template}, [])
     plain, _ = fuse({"rules": rules}, [])
     assert fields["tax_total"].value == 5.0 and fields["tax_total"].status == plain["tax_total"].status
+
+
+def test_a_vendor_alternating_two_layouts_never_verifies_the_order_date(tmp_path):
+    """Even invoices print "Invoice Date:"; odd ones "Billed on:" at the same spot and an order "Date:" row under it,
+    the same day on invoices 1 and 3. The true spot's label changed every invoice, so it never kept a record, while the
+    "Date:" spot (learned as the other place of the date) was never missed on the even layout: on invoice 5 it was the
+    only spot vouched for, and the order date was verified (re-review, `alternate`)."""
+    from ap_coder.capture.supplier import AUTONOMOUS, should_auto_approve
+
+    pages = []
+    for i in range(8):
+        if i % 2 == 0:
+            header = [("Invoice #", f"INV-{10230 + i}"), ("Invoice Date:", _date(i))]
+        else:
+            header = [("Invoice #", f"INV-{10230 + i}"), ("Billed on:", _date(i)),
+                      ("Date:", _date(i, 0 if i in (1, 3) else 2 + i % 3))]  # fmt: skip
+        pages.append((header, [], _date(i)))
+    results = _stream(tmp_path, pages)
+    for date, result in results[4:]:
+        got = result.fields["invoice_date"]
+        if got.value != date:
+            assert got.status != VERIFIED
+            assert not should_auto_approve(AUTONOMOUS, result, checks_ok=True)[0]
+    assert sum(result.fields["invoice_date"].value == date for date, result in results[4:]) >= 3
+
+
+def test_a_template_stored_before_the_spots_were_counted_loads_and_recovers(tmp_path):
+    """A template saved by the version before (no settled, streak or missed counts) reads unvouched at first, and is
+    vouched for again after an approval where the value is printed once."""
+    from ap_coder.capture.supplier import Template
+
+    def invoice(name: str, number: str) -> Path:
+        return _pdf(tmp_path / name, [(40, 50, "Acme Supply Ltd."), (330, 90, "Invoice No:"), (430, 90, number)])
+
+    learned = learn(None, _layout(invoice("a.pdf", "INV-1")), {"invoice_number": ("INV-1", None)})
+    old = learned.to_dict()
+    for variants in old["fields"].values():
+        for v in variants:
+            for key in ("settled", "streak", "missed", "twin"):
+                v.pop(key, None)
+    stored = Template.from_dict(old)
+    first = apply_template(stored.to_dict(), _layout(invoice("b.pdf", "INV-2")))["invoice_number"]
+    assert [r.value for r in first][:1] == ["INV-2"] and all(UNSETTLED in r.method for r in first)
+    again = learn(old, _layout(invoice("b.pdf", "INV-2")), {"invoice_number": ("INV-2", None)})
+    later = apply_template(again, _layout(invoice("c.pdf", "INV-3")))["invoice_number"]
+    assert [(r.value, UNSETTLED in r.method) for r in later][:1] == [("INV-3", False)]
+
+
+def test_after_a_layout_change_the_settled_new_spot_shows_the_right_date(tmp_path):
+    """After the supplier's new layout ("Billed on:" with an order "Date:" row under it, which the rule reader takes
+    for the invoice date), no wrong invoice date is verified, and once the new spot has been approved the template
+    shows the right date again (to be checked: the rule reader disagrees)."""
+    old = [([("Invoice #", f"INV-{10230 + i}"), ("Invoice Date:", _date(i))], [], _date(i)) for i in range(3)]
+    new = [([("Invoice #", f"INV-{10230 + i}"), ("Billed on:", _date(i)), ("Date:", _date(i, 2 + i % 3))], [], _date(i))
+           for i in range(3, 7)]  # fmt: skip
+    results = _stream(tmp_path, old + new)
+    assert all(r.fields["invoice_date"].value == d or r.fields["invoice_date"].status != VERIFIED for d, r in results)
+    assert all(r.fields["invoice_date"].value == d for d, r in results[-2:])
