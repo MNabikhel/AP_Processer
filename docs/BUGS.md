@@ -5034,10 +5034,11 @@ codes no cost centers (D-52, D-53). Tests: `tests/test_before_testing.py` unless
 - **Test:** `test_the_queue_figures_are_plain_and_the_coding_memory_has_one_name`, `tests/test_sweep3_dayone.py`
 
 #### B-518 · The guides' launcher window wasn't the real one · low
-- **Where:** `README.md`, `docs/PILOT.md`
+- **Where:** `README.md` (PILOT.md's quotes and the launcher's own LM Studio line: the launcher's change, merged
+  alongside)
 - **Symptom:** "[OK]" where the window shows ✓ and !; "then start AP Coder again" for LM Studio.
-- **Fix:** the window as it shows (the classic console's [OK] said once); LM Studio: start it, then Check again. The
-  launcher's own line is the launcher's (scripts/launch.py, another change).
+- **Fix:** README's window as it shows; the guides say: start LM Studio, then press Check again in Settings →
+  Reading, with no need to restart AP Coder (the launcher's wording).
 - **Test:** `test_the_guides_match_the_app`
 
 #### B-519 · Vendors said "Ask the vendor above" where there was none · low
@@ -5072,9 +5073,11 @@ codes no cost centers (D-52, D-53). Tests: `tests/test_before_testing.py` unless
 - **Test:** `test_exports_open_on_the_last_format_used`
 
 #### B-525 · The guides disagreed with each other · low
-- **Where:** `docs/PILOT.md`, `docs/GETTING_STARTED.md`, `templates/settings_about.html`
+- **Where:** `docs/GETTING_STARTED.md`, `docs/PILOT.md` ("No Azure"), `templates/settings_about.html`
 - **Symptom:** About said to close AP Coder before updating, PILOT that it may stay open (it may: the update stops it);
-  "never connects, not even to set up" where a GitHub ZIP downloads its packages and models once.
-- **Fix:** both said as they are. (Python: the guides and the launcher say 3.11 or newer; `pyproject.toml` still allows
-  3.10 for developers, left to the launcher's change.)
+  "never connects, not even to set up" where a GitHub ZIP downloads its packages and models once; PILOT's "No Azure"
+  where the Azure check exists, off by default.
+- **Fix:** each said as it is: the update may start with AP Coder open; a GitHub ZIP downloads once; the Azure check
+  is opt-in and sends nothing unless switched on. (Python 3.11 or newer, 3.12 recommended, everywhere: the launcher's
+  change, which also aligns `pyproject.toml`.)
 - **Test:** `test_about_folds_the_full_paths_for_it`, `test_the_guides_match_the_app`

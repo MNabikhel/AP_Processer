@@ -507,18 +507,16 @@ def git_version() -> str:
 
 
 def about_context(store: Store) -> dict[str, Any]:
-    version = git_version()
+    git = git_version()
     return {
         "about": [
-            ("Version", __version__ + (f" · {version}" if version else "")),
-            ("Computer", f"{platform.system()} {platform.release()}"),
-        ],
-        "for_it": [  # full paths and versions, folded under "For IT" (B-521)
-            ("Code folder", str(paths.PROJECT_DIR)),
-            ("Data folder", str(data_dir(store))),
-            ("Settings file", str(env_path())),
-            ("Python", platform.python_version()),
-            ("FastAPI", fastapi.__version__),
+            ("Version", __version__ + (f" · {git}" if git else ""), False),
+            ("Code folder", str(paths.PROJECT_DIR), True),
+            ("Data folder", str(data_dir(store)), True),
+            ("Settings file", str(env_path()), True),
+            ("Python", platform.python_version(), False),
+            ("FastAPI", fastapi.__version__, False),
+            ("Computer", f"{platform.system()} {platform.release()}", False),
         ],
         "show_jde": jde_shown(store),
         "developer_tools": developer_tools(store),

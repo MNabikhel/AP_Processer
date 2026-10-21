@@ -470,7 +470,7 @@ def test_the_guides_match_the_app():
     quick = (docs / "docs" / "QUICK_START.md").read_text(encoding="utf-8")
     assert "0. Start LM Studio" in quick and "Check again" in quick
     assert "there are no GL suggestions" not in quick and "Excel workbook" in quick
-    for name in ("README.md", "docs/PILOT.md"):
+    for name in ("README.md",):  # (PILOT.md's launcher quotes: the launcher's own change)
         text = (docs / name).read_text(encoding="utf-8")
         sample = text.split("AP Coder readiness:", 1)[1].split("```", 1)[0]
         assert "[OK]" not in sample and "✓" in sample, name  # as the window shows it

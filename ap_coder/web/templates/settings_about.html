@@ -3,7 +3,7 @@
 <section class="card">
   <h4>About this installation</h4>
   <dl class="apc-kv">
-    {% for label, value in about %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}
+    {% for label, value, is_path in about if not is_path %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}
   </dl>
   <div class="st-note">
     <p><b>Updating:</b> unzip the new bundle (over this folder or anywhere) and double-click its
@@ -29,9 +29,9 @@
 </section>
 
 <details class="card st-forit" id="for-it">
-  <summary><span class="ms" aria-hidden="true">engineering</span>For IT: folders and versions</summary>
+  <summary><span class="ms" aria-hidden="true">engineering</span>For IT: the folders</summary>{# full paths: B-521 #}
   <dl class="apc-kv">
-    {% for label, value in for_it %}<dt>{{ label }}</dt><dd><code>{{ value }}</code></dd>{% endfor %}
+    {% for label, value, is_path in about if is_path %}<dt>{{ label }}</dt><dd><code>{{ value }}</code></dd>{% endfor %}
   </dl>
 </details>
 </div>
