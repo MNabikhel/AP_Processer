@@ -325,6 +325,27 @@ def test_a_page_approved_with_a_value_then_another_then_the_first_again_counts_i
     assert max(v.count for v in template.fields["invoice_date"]) == 1
 
 
+def test_a_value_put_back_on_a_page_approved_again_still_misses_the_spot_corrected_away(tmp_path):
+    """Invoice date approved as the printed 2026-03-05, corrected to the ship date 2026-03-07, then put back: the
+    put-back value was skipped as learned from this page already, so the ship date's spot, settled at the correction,
+    missed nothing and the next invoice's ship date was read as its invoice date, vouched for (B-462)."""
+    from ap_coder.capture import build_layout
+    from ap_coder.capture.supplier import apply_template, learn
+    from ap_coder.capture.types import UNSETTLED
+
+    def page(name, invoice, order, ship):
+        lines = [(40, 50, "Contoso"), (330, 90, "Invoice Date:"), (450, 90, invoice), (330, 110, "Order Date:"),
+                 (450, 110, order), (40, 300, "Ship Date:"), (150, 300, ship)]  # fmt: skip
+        return build_layout(_pdf(tmp_path / name, lines), ocr=False)
+
+    first = page("a.pdf", "2026-03-05", "2026-03-05", "2026-03-07")
+    template = None
+    for value in ("2026-03-05", "2026-03-07", "2026-03-05"):
+        template = learn(template, first, {"invoice_date": (value, None)}, document="sha")
+    got = apply_template(template.to_dict(), page("b.pdf", "2026-04-09", "2026-04-01", "2026-04-11"))
+    assert all(UNSETTLED in r.method for r in got.get("invoice_date", []) if r.value == "2026-04-11")
+
+
 def test_the_queue_search_and_vendor_order_read_accents_as_people_do():
     """Typing "quebec" in the review queue's search found no "Hydro-Québec", and "Vendor A–Z" put "Énergir" after
     "Zenith" (é sorts after z by its code)."""

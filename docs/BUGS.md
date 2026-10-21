@@ -4512,6 +4512,21 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
 - **Test:** `tests/test_pilot_path_backend.py::test_long_lists_are_saved_on_every_page_that_posts_them`
 - **Lesson:** A limit raised in one place: look for every place that has it.
 
+#### B-462 · A value put back on a page approved again left the corrected-to spot vouched for · high
+- **Where:** `ap_coder/capture/supplier.py` (`learn`)
+- **Symptom:** found by the second review of this branch. A page prints "Invoice Date" and "Order Date" 2026-03-05 and
+  "Ship Date" 2026-03-07; approved with 2026-03-05, reopened and changed to 2026-03-07, then reopened and put back to
+  2026-03-05: on the next invoice the template read the ship date as the invoice date, vouched for (0.855; on the main
+  branch nothing was vouched).
+- **Cause:** B-460 has the page remember every value it taught a field; the value put back counted as taught and was
+  skipped whole, so the misses were not looked for and the ship date's spot, settled by the correction, kept its mark.
+- **Reproduce:** the review's probe (`p454b.py`), as in the test.
+- **Reproduced:** yes (the ship date read, not unsettled)
+- **Fix:** every approved value is checked for misses (a spot holding another value starts over), the ones taught by
+  the page before included; only learning them again is skipped.
+- **Test:** `tests/test_pilot_path_backend.py::test_a_value_put_back_on_a_page_approved_again_still_misses_the_spot_corrected_away`
+- **Lesson:** Skip the counting, never the checking.
+
 #### Looked at and left (pilot path, backend)
 
 Run as well, and found to work: approving twice (a double click: the second is "changed meanwhile"), the second

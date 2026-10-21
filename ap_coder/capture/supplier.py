@@ -676,10 +676,12 @@ def learn(
     spans = {name: _find_spans(layout, name, value) for name, value, boxes in items if not boxes}
     learned = 0
     for name, value, boxes in items:
+        variants = template.fields.setdefault(name, [])
+        # A spot that holds another value than the one approved is a miss even for a value this page taught before: put
+        # back after a correction, the corrected-to spot must not keep its mark (B-462).
+        _misses(name, value, variants, layout)
         if name in known:
             continue
-        variants = template.fields.setdefault(name, [])
-        _misses(name, value, variants, layout)
         hit = _taught(layout, boxes, name, value) if boxes else _best_span(layout, name, spans[name], variants)
         if hit is None:
             continue
