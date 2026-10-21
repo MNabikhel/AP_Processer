@@ -21,7 +21,7 @@ from ap_coder.core import ui
 from ap_coder.core.reference_data import short_name
 from ap_coder.core.safe import csv_cell
 from ap_coder.core.store import Store, load_sample_setup
-from ap_coder.web.core import done, flash_message, get_store, refuse, render, reviewer, short_path
+from ap_coder.web.core import done, flash_message, get_store, posted_form, refuse, render, reviewer, short_path
 from ap_coder.web.files import SheetError, download, drop_upload, read_upload, receive_sheet, sheet_context
 from ap_coder.web.pages.process import tax_types_mapped
 
@@ -201,7 +201,7 @@ async def accounts_upload(request: Request, table: str, file: UploadFile = File(
 @router.post("/accounts/{table}/import")
 async def accounts_import(request: Request, table: str) -> JSONResponse:
     tab, noun = table_for(table)
-    form = await request.form()
+    form = await posted_form(request)
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:
@@ -240,7 +240,7 @@ async def accounts_import(request: Request, table: str) -> JSONResponse:
 async def accounts_save(request: Request, table: str) -> JSONResponse:
     """The edited list replaces the stored one: ticked rows are deleted, blank codes left out."""
     tab, noun = table_for(table)
-    form = await request.form()
+    form = await posted_form(request)
     store = get_store(request)
     codes, descriptions, categories = form.getlist("code"), form.getlist("description"), form.getlist("category")
     deleted = {str(d) for d in form.getlist("delete")}
@@ -280,7 +280,7 @@ def accounts_csv(request: Request, table: str) -> Response:
 @router.post("/accounts/tax")
 async def save_tax(request: Request) -> JSONResponse:
     """How each sales tax posts: its treatment, and its GL account unless it is added to the expense lines."""
-    form = await request.form()
+    form = await posted_form(request)
     store = get_store(request)
     codes = {a["code"] for a in store.list_accounts("gl_accounts")}
     chosen = {}
@@ -325,7 +325,7 @@ async def save_rules(request: Request) -> JSONResponse:
     store = get_store(request)
     if not store.list_accounts("gl_accounts"):
         return refuse("Import your GL accounts first.")
-    rules, incomplete = rules_from_form(await request.form())
+    rules, incomplete = rules_from_form(await posted_form(request))
     saved = store.save_coding_rules(rules, actor=reviewer())
     left_out = f"; {ui.plural(len(incomplete), 'incomplete row')} left out (no GL account, or no vendor or words)"
     return done(

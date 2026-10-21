@@ -40,6 +40,22 @@ def test_a_backup_that_cannot_be_written_never_stops_the_dashboard_nor_counts_as
     assert store.auto_backup() is not None  # with room again, today's backup is made
 
 
+def test_a_part_backup_left_by_a_crash_is_removed_when_backups_run(tmp_path):
+    import os
+    import time
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    folder = store.backup_dir()
+    folder.mkdir(parents=True)
+    old, recent = folder / "ap_coder-20260101-080000.db.part", folder / "ap_coder-20990101-080000.db.part"
+    for leftover in (old, recent):
+        leftover.write_bytes(b"half")
+    two_days_ago = time.time() - 2 * 86400
+    os.utime(old, (two_days_ago, two_days_ago))
+    store.backup_now("manual")
+    assert not old.exists() and recent.exists()  # a copy still being written (another process) is left alone
+
+
 PAGE = {"X-AP-Coder": "1"}
 
 
@@ -215,6 +231,49 @@ def test_an_invoice_with_no_date_found_says_the_date_was_assumed(tmp_path):
     data["invoice_date"] = "2026-09-30"  # the reviewer puts in the date (from the email, say): no longer assumed
     sections = str(client.post(f"/review/{result.invoice_id}/check", data=data, headers=PAGE).json()["sections"])
     assert "INVOICE_DATE_NOT_FOUND" not in sections
+    # The reviewer approves it with the assumed date (it is the right one), then reopens it: the date was confirmed.
+    store.approve_invoice(result.invoice_id, {**result.output, "invoice_date": today}, "Jordan Lee")
+    store.reopen(result.invoice_id, "Jordan Lee", "cost center")
+    sections = str(client.post(f"/review/{result.invoice_id}/check", data=_form(store, result.invoice_id),
+                               headers=PAGE).json()["sections"])  # fmt: skip
+    assert "INVOICE_DATE_NOT_FOUND" not in sections
+
+
+def test_the_review_screen_leaves_the_fields_to_check_to_their_highlight(tmp_path, ground_truth):
+    """ "check on the page: …" is on nearly every invoice and the fields are highlighted in amber already: on the
+    review screen's checks it was noise (B-458's review)."""
+    from ap_coder.core.store import load_sample_setup
+
+    from .conftest import SAMPLE_STEM, SAMPLES
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    inv_id = store.add_invoice(SAMPLES / f"{SAMPLE_STEM}.pdf", ground_truth, {})
+    field = {"field": "po_number", "value": "PO-88213", "confidence": 0.6, "status": "check"}
+    store.save_capture(inv_id, {"fields": {"po_number": field}, "page_count": 1})
+    checked = _web(store).post(f"/review/{inv_id}/check", data=_form(store, inv_id), headers=PAGE).json()
+    assert "check on the page" not in str(checked["sections"])
+
+
+def test_long_lists_are_saved_on_every_page_that_posts_them(tmp_path):
+    """B-455 raised the form limit for the review screen and Exports only: a GL list of 400 accounts could not be
+    saved on GL accounts & tax (three fields an account), nor 1,200 invoices approved in bulk or lessons forgotten
+    (B-461)."""
+    from ap_coder.core.store import load_sample_setup
+
+    store = Store(tmp_path / "private" / "ap_coder.db")
+    load_sample_setup(store)
+    client = _web(store)
+    n = 400
+    data = {"code": [str(6000 + i) for i in range(n)], "description": [f"Account {i}" for i in range(n)],
+            "category": ["Expense"] * n}  # fmt: skip
+    saved = client.post("/accounts/gl_accounts/save", data=data, headers=PAGE)
+    assert saved.status_code == 200 and saved.json().get("ok"), saved.text[:200]
+    assert len(store.list_accounts("gl_accounts")) == n
+    bulk = client.post("/review/bulk-approve", data={"ids": list(range(1, 1201))}, headers=PAGE)
+    assert bulk.status_code == 200, bulk.text[:200]
+    forget = client.post("/learning/memory/forget", data={"ids": list(range(1, 1201))}, headers=PAGE)
+    assert forget.status_code == 200, forget.text[:200]
 
 
 def test_the_po_company_goes_out_only_with_the_po_number():
@@ -228,6 +287,42 @@ def test_the_po_company_goes_out_only_with_the_po_number():
     assert (off["VLPO"], off["VLPDCT"], off["VLPKCO"]) == ("", "", "")
     on = _files([_invoice(ON)], jde.JdeSettings())[jde.HEADER_FILE][0]
     assert (on["VLPO"], on["VLPDCT"], on["VLPKCO"]) == ("PO-88213", "OP", "00001")
+
+
+def test_a_value_corrected_onto_another_fields_words_is_not_settled_there(tmp_path):
+    """B-454's first fix looked for the corrected values only: a due date corrected to the day printed for the invoice
+    date was taken as printed alone there and its spot settled, so the next invoice's due date was read, vouched for,
+    as its invoice date (B-460)."""
+    from ap_coder.capture import build_layout
+    from ap_coder.capture.supplier import apply_template, learn
+    from ap_coder.capture.types import UNSETTLED
+
+    head = [(40, 50, "Contoso Supplies"), (330, 110, "Invoice #")]
+    page = build_layout(_pdf(tmp_path / "a.pdf", [*head, (330, 90, "Date:"), (450, 90, "05/11/2017"),
+                                                  (450, 110, "INV-100")]), ocr=False)  # fmt: skip
+    first = {"invoice_date": ("2017-11-05", None), "due_date": ("2017-12-05", None),
+             "invoice_number": ("INV-100", None)}  # fmt: skip
+    template = learn(None, page, first, document="a")
+    template = learn(template, page, {**first, "due_date": ("2017-11-05", None)}, document="a")  # corrected
+    later = build_layout(_pdf(tmp_path / "b.pdf", [*head, (330, 90, "Date:"), (450, 90, "06/01/2018"),
+                                                   (450, 110, "INV-200"), (330, 130, "Due date:"),
+                                                   (450, 130, "06/02/2018")]), ocr=False)  # fmt: skip
+    got = apply_template(template.to_dict(), later).get("due_date") or []
+    assert all(UNSETTLED in r.method for r in got if r.value == "2018-01-06")
+
+
+def test_a_page_approved_with_a_value_then_another_then_the_first_again_counts_it_once(tmp_path):
+    from ap_coder.capture import build_layout
+    from ap_coder.capture.supplier import learn
+
+    page = build_layout(_pdf(tmp_path / "a.pdf", [(40, 50, "Contoso"), (330, 90, "Invoice Date:"),
+                                                  (450, 90, "2026-03-05"), (40, 300, "Ship Date:"),
+                                                  (150, 300, "2026-03-07")]), ocr=False)  # fmt: skip
+    template = None
+    for value in ("2026-03-05", "2026-03-07", "2026-03-05"):
+        template = learn(template, page, {"invoice_date": (value, None)}, document="sha")
+    assert template.invoices == 1
+    assert max(v.count for v in template.fields["invoice_date"]) == 1
 
 
 def test_the_queue_search_and_vendor_order_read_accents_as_people_do():

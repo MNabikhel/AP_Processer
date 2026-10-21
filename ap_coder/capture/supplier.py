@@ -461,7 +461,7 @@ class Template:
     updated_at: str = ""
     # The pages learned from (their file's SHA-256, the newest KEEP_DOCUMENTS) and the value of each field learned from
     # each: a page approved again (reopened, sent back) teaches a value once, and a value corrected since (B-454).
-    documents: dict[str, dict[str, str]] = field(default_factory=dict)
+    documents: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -476,7 +476,8 @@ class Template:
         return cls(
             fields={k: [Variant.from_dict(v) for v in vs] for k, vs in (d.get("fields") or {}).items()},
             invoices=int(d.get("invoices") or 0), updated_at=d.get("updated_at") or "",
-            documents={str(k): dict(v) for k, v in documents.items() if isinstance(v, dict)},
+            documents={str(k): {f: [x] if isinstance(x, str) else [str(y) for y in x or []] for f, x in v.items()}
+                       for k, v in documents.items() if isinstance(v, dict)},
         )  # fmt: skip
 
     def learned_fields(self) -> list[str]:
@@ -661,18 +662,22 @@ def learn(
         template = Template.from_dict(template)
     template = template or Template()
     when = when or _now()
-    seen = template.documents.get(document, {}) if document else {}
+    seen: dict[str, list[str]] = template.documents.get(document, {}) if document else {}
     again = bool(seen)
-    items = []
+    items, known = [], set()
     for name, item in confirmed.items():
         value, boxes = item if isinstance(item, tuple) else (item, None)
         if value is not None and value != "" and name in FIELDS:
-            if seen.get(name) == str(compare_key(name, value)) and not boxes:
-                continue  # learned from this very page already: a second approval of it is no second invoice
             items.append((name, value, boxes))
+            if str(compare_key(name, value)) in seen.get(name, []) and not boxes:
+                known.add(name)  # learned from this very page already: a second approval of it is no second invoice
+    # Every value approved is looked for, those learned already too: a corrected value printed on another field's
+    # words is not "printed alone" there (B-460).
     spans = {name: _find_spans(layout, name, value) for name, value, boxes in items if not boxes}
     learned = 0
     for name, value, boxes in items:
+        if name in known:
+            continue
         variants = template.fields.setdefault(name, [])
         _misses(name, value, variants, layout)
         hit = _taught(layout, boxes, name, value) if boxes else _best_span(layout, name, spans[name], variants)
@@ -727,7 +732,8 @@ def learn(
         template.updated_at = when
     if document:
         values = template.documents.pop(document, {})  # put back last: the newest pages are kept
-        values.update({name: str(compare_key(name, value)) for name, value, _ in items})
+        for name, value, _ in items:  # every value of a field learned from this page (A, then B, then A again)
+            values[name] = list(dict.fromkeys([*values.get(name, []), str(compare_key(name, value))]))
         template.documents[document] = values
         while len(template.documents) > KEEP_DOCUMENTS:
             template.documents.pop(next(iter(template.documents)))

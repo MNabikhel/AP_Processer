@@ -4379,8 +4379,10 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
 - **Reproduce:** start the dashboard with the process's file size limit below the database's size (a full disk).
 - **Reproduced:** yes (the dashboard did not start; `ap_coder-<date>.db` left behind)
 - **Fix:** the copy is written as `<name>.part` and renamed once complete; any failure removes it and raises `OSError`
-  with SQLite's reason, so every caller's existing handling applies; a restore whose safety copy fails says so.
-- **Test:** `tests/test_pilot_path_backend.py::test_a_backup_that_cannot_be_written_never_stops_the_dashboard_nor_counts_as_made`
+  with SQLite's reason, so every caller's existing handling applies; a restore whose safety copy fails says so. A
+  `.part` a crash left behind is removed by the next backup once it is a day old (the review's follow-up).
+- **Test:** `tests/test_pilot_path_backend.py::test_a_backup_that_cannot_be_written_never_stops_the_dashboard_nor_counts_as_made`,
+  `tests/test_pilot_path_backend.py::test_a_part_backup_left_by_a_crash_is_removed_when_backups_run`
 - **Lesson:** Don't name a file for what it will be before it is: a copy that fails half-way must not look made.
 
 #### B-454 · An invoice approved again taught the supplier's template a second time · medium
@@ -4456,8 +4458,10 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
 - **Reproduce:** an invoice whose stored capture left 280 of 300 pages out; open it, check it.
 - **Reproduced:** yes (neither the page nor the check shows it)
 - **Fix:** the review screen adds the findings about the page from the stored capture to its checks (warnings and
-  notes: Approve stays open), worked out again for the screen's currency and date.
-- **Test:** `tests/test_pilot_path_backend.py::test_what_capture_found_about_the_page_is_on_the_review_screen`
+  notes: Approve stays open), worked out again for the screen's currency and date. "Check on the page: …" is left
+  out there: it is on nearly every invoice, and its fields are highlighted in amber (the review's follow-up).
+- **Test:** `tests/test_pilot_path_backend.py::test_what_capture_found_about_the_page_is_on_the_review_screen`,
+  `tests/test_pilot_path_backend.py::test_the_review_screen_leaves_the_fields_to_check_to_their_highlight`
 - **Lesson:** Don't test a message for the screen anywhere but on the screen.
 
 #### B-459 · An invoice with no date found was dated the day it was read, without a word · medium
@@ -4472,9 +4476,41 @@ Excel, CSV and custom CSV): each suspicion was reproduced before it was called a
 - **Reproduced:** yes (invoice date today, no issue, requires_review false)
 - **Fix:** a warning, INVOICE_DATE_NOT_FOUND ("no invoice date was found on the page: <date> is assumed (the day it
   was read); put in the invoice's date…"), with its Help entry; it is kept with the invoice (which keeps it from
-  bulk approval) and shown on the review screen until the reviewer puts in another date.
+  bulk approval) and shown on the review screen until the reviewer puts in another date, shows the date on the page,
+  or approves it with that date (reopened or sent back, it is no longer said: the date was confirmed).
 - **Test:** `tests/test_pilot_path_backend.py::test_an_invoice_with_no_date_found_says_the_date_was_assumed`
 - **Lesson:** Don't fill a missing value with a default without saying so where the person decides.
+
+#### B-460 · B-454's fix settled a corrected value printed on another field's words · high
+- **Where:** `ap_coder/capture/supplier.py` (`learn`)
+- **Symptom:** found by the independent review of this branch. A page prints only "Date: 05/11/2017"; approved with
+  the due date 2017-12-05 (not printed), reopened, the due date corrected to 2017-11-05 (due on receipt) and approved
+  again: the due date was learned at the invoice date's words as *settled*, and on the next invoice the template
+  read the invoice date as the due date, vouched for (on the main branch: unsettled). And a page approved with one
+  value, then another, then the first again counted twice for the first.
+- **Cause:** B-454 left the values learned already out of the page's search, so a corrected value sharing their
+  words looked printed alone; and each page remembered only the last value of each field.
+- **Reproduce:** the review's probes (`p454.py`, `p454b.py`), as in the tests.
+- **Reproduced:** yes (due date read at the invoice date's spot, not unsettled; a spot counted 2 for one page)
+- **Fix:** every value approved is looked for on the page (those learned already included), and only the ones not
+  learned from this page before are learned; the page keeps every value of each field it taught.
+- **Test:** `tests/test_pilot_path_backend.py::test_a_value_corrected_onto_another_fields_words_is_not_settled_there`,
+  `tests/test_pilot_path_backend.py::test_a_page_approved_with_a_value_then_another_then_the_first_again_counts_it_once`
+- **Lesson:** When a fix skips work, keep what the skipped work told the rest.
+
+#### B-461 · B-455 left other long forms at Starlette's 1,000 fields · medium
+- **Where:** `ap_coder/web/pages/accounts.py`, `review.py` (`review_bulk_approve`), `learning.py` (`memory_forget`),
+  and every other page reading a posted form (`exports`, `purchase_orders`, `vendors`, `settings_jde`, `insights`)
+- **Symptom:** found by the independent review. Saving a GL list of 400 accounts on GL accounts & tax (three fields an
+  account: a JD Edwards chart of 334 or more) answered "Too many fields"; so did bulk approval of 1,200 invoices and
+  forgetting 1,200 lessons.
+- **Cause:** B-455 used `posted_form` on the review screen and Exports only; FastAPI's `Form` lists use the default.
+- **Reproduce:** the review's probe (`p455.py`).
+- **Reproduced:** yes (400 "Too many fields")
+- **Fix:** every page reading a posted form reads it with `posted_form`; bulk approval and forgetting lessons read
+  their ticked ids from it.
+- **Test:** `tests/test_pilot_path_backend.py::test_long_lists_are_saved_on_every_page_that_posts_them`
+- **Lesson:** A limit raised in one place: look for every place that has it.
 
 #### Looked at and left (pilot path, backend)
 

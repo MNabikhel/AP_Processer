@@ -3418,6 +3418,12 @@ class Store:
         while dest.exists():  # never overwrite a backup made in the same second
             dest = self.backup_dir() / f"ap_coder-{stamp}{suffix or '-'}{n}.db"
             n += 1
+        for stale in self.backup_dir().glob("ap_coder-*.db.part"):  # left by a crash (B-453): gone after a day
+            try:
+                if time.time() - stale.stat().st_mtime > 86400:
+                    stale.unlink()
+            except OSError:
+                pass
         made = self.backup_to(dest)
         if label == "manual":
             self.log_event("backup_made", actor=actor, detail={"file": made.name})

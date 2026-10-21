@@ -1030,9 +1030,13 @@ def analyse(store: Store, settings: Settings, reference: ReferenceData, inv: dic
     if capture is not None:
         from ap_coder.capture.bridge import review_issues
 
-        assumed = coding.invoice_date if coding.invoice_date == ai.get("invoice_date") else None
+        # Assumed while the date is still the one put in, unless a person approved it so (reopened, sent back) or
+        # showed it on the page.
+        confirmed = bool(inv.get("final_output")) or "invoice_date" in draft.taught
+        assumed = coding.invoice_date if coding.invoice_date == ai.get("invoice_date") and not confirmed else None
         for severity, code, message in review_issues(capture, coding.currency, assumed_date=assumed):
-            report.issues.append(Issue(severity, code, message))
+            if code != "CAPTURE_CHECK_FIELDS":  # the fields to check are highlighted in amber: no need to list them
+                report.issues.append(Issue(severity, code, message))
     errors = [i for i in report.issues if i.severity == "error"]
     warnings = [i for i in report.issues if i.severity == "warning"]
     default_days = store.default_terms_days()

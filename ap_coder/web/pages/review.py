@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from ap_coder.coding.bulk import bulk_approve, sort_for_bulk
 from ap_coder.coding.review import codes_to_pick, uses_cost_centers
@@ -51,6 +52,7 @@ from ap_coder.web.core import (
     local_url,
     login,
     money,
+    posted_form,
     reference_or_none,
     refuse,
     render,
@@ -409,9 +411,17 @@ def changed_meanwhile(request: Request, exc: Exception, back: str = "/review") -
 
 
 @router.post("/review/bulk-approve")
-def review_bulk_approve(request: Request, ids: list[int] = Form(default=[])) -> JSONResponse:  # noqa: B008
+async def review_bulk_approve(request: Request) -> JSONResponse:
     """Approve the clean invoices the page listed, exactly as coded. Each is re-checked first; any that is no
     longer clean is left for a person, with the reason."""
+    try:  # one field per invoice the page lists, however many (B-461)
+        ids = [int(str(i)) for i in (await posted_form(request)).getlist("ids")]
+    except ValueError:
+        return refuse("Nothing to approve.")
+    return await run_in_threadpool(_bulk_approve, request, ids)
+
+
+def _bulk_approve(request: Request, ids: list[int]) -> JSONResponse:
     store, settings = get_store(request), get_settings(request)
     reference = reference_or_none(store)
     if reference is None or not ids:

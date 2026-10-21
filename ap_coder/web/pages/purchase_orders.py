@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from ap_coder.coding import po as po_mod
 from ap_coder.core import ui
 from ap_coder.core.store import Store, load_sample_purchase_orders
-from ap_coder.web.core import done, flash_message, get_store, message, refuse, render, reviewer
+from ap_coder.web.core import done, flash_message, get_store, message, posted_form, refuse, render, reviewer
 from ap_coder.web.files import (
     SheetError,
     download,
@@ -240,7 +240,7 @@ async def po_upload(request: Request, file: UploadFile = FileParam(...)) -> JSON
 @router.post("/purchase-orders/import")
 async def po_import(request: Request) -> JSONResponse:
     """One row per PO line; a PO in the file replaces its lines (a fresh export also updates what was received)."""
-    form = await request.form()
+    form = await posted_form(request)
     store = get_store(request)
     token, sheet = str(form.get("file") or ""), str(form.get("sheet") or "")
     try:
